@@ -7,38 +7,50 @@ Paquete reutilizable para instalar un harness de ingeniería agéntica en proyec
 - **npm:** https://www.npmjs.com/package/@kal-elsam/harness
 - **repo:** https://github.com/Kal-elSam/harness
 
-Nombre del paquete CLI:
+Nombre del paquete:
 
 ```txt
 @kal-elsam/harness
 ```
 
-Comandos:
+## Instalación rápida
 
-```bash
-sgs-harness
-harness-sgs
-```
-
-## Quick path
-
-Desde cualquier proyecto:
-
-```bash
-pnpm dlx @kal-elsam/harness init --mode enterprise
-```
-
-O con npm:
+Sin instalar globalmente, desde cualquier proyecto:
 
 ```bash
 npx @kal-elsam/harness init --mode enterprise
 ```
 
+```bash
+pnpm dlx @kal-elsam/harness init --mode enterprise
+```
+
+## Comandos CLI
+
+Instalación global opcional:
+
+```bash
+npm i -g @kal-elsam/harness
+```
+
+| Comando | Descripción |
+|---|---|
+| `harness` | Principal — corto y directo |
+| `agentic-harness` | Alias descriptivo |
+
+```bash
+harness init --mode enterprise
+harness init --mode standard --dry-run
+harness doctor
+```
+
+Alias legacy (compatibilidad): `sgs-harness`, `harness-sgs`
+
 Para probar localmente desde este repo:
 
 ```bash
-node ./bin/sgs-harness.js init --mode enterprise --dry-run
-node ./bin/sgs-harness.js doctor
+node ./bin/harness.js init --mode enterprise --dry-run
+node ./bin/harness.js doctor
 ```
 
 ## Qué instala

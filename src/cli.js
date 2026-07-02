@@ -1,11 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { detectProject } from "./project-detection.js";
 import { installHarness } from "./template-installer.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(__dirname, "..");
+const cliName = basename(process.argv[1] ?? "harness");
 
 export async function runCli(argv) {
   const { command, options } = parseArgs(argv);
@@ -31,7 +32,7 @@ export async function runCli(argv) {
     return;
   }
 
-  throw new Error(`Unknown command "${command}". Run "sgs-harness help".`);
+  throw new Error(`Unknown command "${command}". Run "${cliName} help".`);
 }
 
 function parseArgs(argv) {
@@ -72,7 +73,7 @@ async function runInit(options) {
     dryRun: options.dryRun
   });
 
-  console.log(`SGS Harness ${options.dryRun ? "plan" : "installed"} for ${project.name}`);
+  console.log(`Agentic Harness ${options.dryRun ? "plan" : "installed"} for ${project.name}`);
   console.log(`Mode: ${result.mode}`);
   console.log(`Created: ${result.created.length}`);
   console.log(`Skipped: ${result.skipped.length}`);
@@ -93,7 +94,7 @@ async function runDoctor(options) {
     if (!existsSync(resolve(project.root, relativePath))) missing.push(relativePath);
   }
 
-  console.log(`SGS Harness doctor for ${project.name}`);
+  console.log(`Agentic Harness doctor for ${project.name}`);
   console.log(`Root: ${project.root}`);
   console.log(`Package manager: ${project.packageManager}`);
   console.log(`Stack: ${project.stack}`);
@@ -108,16 +109,19 @@ async function runDoctor(options) {
 }
 
 function printHelp() {
-  console.log(`SGS Harness
+  console.log(`Agentic Harness (@kal-elsam/harness)
 
-Install a reusable AI governance harness into any repository.
+Install AI governance into any repository: SDD, TDD, evals, adapters and human approval gates.
 
 Usage:
-  sgs-harness init [--mode minimal|standard|enterprise] [--force] [--dry-run]
-  sgs-harness doctor
+  harness init [--mode minimal|standard|enterprise] [--force] [--dry-run]
+  harness doctor
 
 Examples:
-  pnpm dlx @kal-elsam/harness init --mode enterprise
-  npx @kal-elsam/harness init --mode standard
+  npx @kal-elsam/harness init --mode enterprise
+  pnpm dlx @kal-elsam/harness init --mode standard
+  harness doctor
+
+Aliases: agentic-harness, sgs-harness, harness-sgs
 `);
 }
