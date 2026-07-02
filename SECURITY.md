@@ -1,6 +1,6 @@
-# SGS Harness Security Policy
+# Agentic Harness Security Policy
 
-SGS Harness is a package installer for repository-level AI governance. Treat it as supply-chain infrastructure: if the package is compromised, every project that installs it can inherit bad instructions.
+Agentic Harness is a package installer for repository-level AI governance. Treat it as supply-chain infrastructure: if the package is compromised, every project that installs it can inherit bad instructions.
 
 ## Release standard
 

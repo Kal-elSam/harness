@@ -2,20 +2,20 @@
 
 [![npm version](https://img.shields.io/npm/v/@kal-elsam/harness.svg)](https://www.npmjs.com/package/@kal-elsam/harness)
 
-Paquete reutilizable para instalar un harness de ingeniería agéntica en proyectos nuevos o existentes.
+Reusable package to install an agentic engineering harness into new or existing projects.
 
 - **npm:** https://www.npmjs.com/package/@kal-elsam/harness
 - **repo:** https://github.com/Kal-elSam/harness
 
-Nombre del paquete:
+Package name:
 
 ```txt
 @kal-elsam/harness
 ```
 
-## Instalación rápida
+## Quick install
 
-Sin instalar globalmente, desde cualquier proyecto:
+From any project, without a global install:
 
 ```bash
 npx @kal-elsam/harness init --mode enterprise
@@ -25,18 +25,18 @@ npx @kal-elsam/harness init --mode enterprise
 pnpm dlx @kal-elsam/harness init --mode enterprise
 ```
 
-## Comandos CLI
+## CLI commands
 
-Instalación global opcional:
+Optional global install:
 
 ```bash
 npm i -g @kal-elsam/harness
 ```
 
-| Comando | Descripción |
+| Command | Description |
 |---|---|
-| `harness` | Principal — corto y directo |
-| `agentic-harness` | Alias descriptivo |
+| `harness` | Primary — short and direct |
+| `agentic-harness` | Descriptive alias |
 
 ```bash
 harness init --mode enterprise
@@ -44,18 +44,18 @@ harness init --mode standard --dry-run
 harness doctor
 ```
 
-Alias legacy (compatibilidad): `sgs-harness`, `harness-sgs`
+Legacy aliases (backward compatible): `sgs-harness`, `harness-sgs`
 
-Para probar localmente desde este repo:
+To try locally from this repo:
 
 ```bash
 node ./bin/harness.js init --mode enterprise --dry-run
 node ./bin/harness.js doctor
 ```
 
-## Qué instala
+## What it installs
 
-El CLI copia y personaliza `repo-template/` en el proyecto destino:
+The CLI copies and personalizes `repo-template/` into the target project:
 
 ```txt
 AGENTS.md
@@ -72,7 +72,7 @@ evals/
 scripts/harness/
 ```
 
-Regla central:
+Core rule:
 
 ```txt
 AGENTS.md governs.
@@ -81,17 +81,17 @@ MCPs observe and preserve context.
 Human approves impact.
 ```
 
-Engram y Graphify se documentan como integraciones externas: ayudan con memoria y grafo contextual, pero no reemplazan al repo como fuente de verdad.
+Engram and Graphify are documented as external integrations: they help with memory and context graphs, but they do not replace the repo as the source of truth.
 
-Diseñado para:
+Built for:
 
-- Cursor-first, pero no Cursor-only.
-- Gentle AI como referencia operativa para SDD/TDD.
-- AGENTS.md como fuente universal.
-- SDD, TDD, evals, checkpoints, review y aprobación humana.
-- Engram/Graphify como sistemas externos de memoria, análisis o grafo contextual, sin acoplar el repo a una sola herramienta.
+- Cursor-first, but not Cursor-only.
+- Gentle AI as the operational reference for SDD/TDD.
+- AGENTS.md as the universal source.
+- SDD, TDD, evals, checkpoints, review, and human approval.
+- Engram/Graphify as external memory, analysis, or context-graph systems without locking the repo to a single tool.
 
-## Archivos principales
+## Key files
 
 ```txt
 prompts/HARNESS_INSTALLER_MASTER.md
@@ -101,9 +101,9 @@ prompts/HARNESS_ENTERPRISE.md
 repo-template/
 ```
 
-## Uso recomendado
+## Recommended usage
 
-Para instalar desde paquete:
+Install from the package:
 
 ```bash
 pnpm dlx @kal-elsam/harness init --mode standard
@@ -111,57 +111,57 @@ pnpm dlx @kal-elsam/harness init --mode enterprise
 pnpm dlx @kal-elsam/harness doctor
 ```
 
-Para proyecto nuevo en Cursor sin usar el paquete npm (fallback manual):
+Manual fallback for a new Cursor project (without the npm package):
 
-1. Abre el proyecto.
-2. Copia el contenido de `prompts/HARNESS_INSTALLER_MASTER.md`.
-3. Pégalo en Cursor.
-4. Indica el modo:
-
-```txt
-Instala el harness en modo standard.
-```
-
-O:
+1. Open the project.
+2. Copy the contents of `prompts/HARNESS_INSTALLER_MASTER.md`.
+3. Paste it into Cursor.
+4. Specify the mode:
 
 ```txt
-Instala el harness en modo enterprise porque este proyecto tendrá IA, API, DB e integraciones externas.
+Install the harness in standard mode.
 ```
 
-## Modos
+Or:
 
-| Modo | Uso |
+```txt
+Install the harness in enterprise mode because this project will have AI, API, DB, and external integrations.
+```
+
+## Modes
+
+| Mode | Use case |
 |---|---|
-| minimal | scripts, pruebas técnicas, landing pages, prototipos pequeños |
-| standard | apps reales frontend/backend, SaaS simple, productos medianos |
-| enterprise | Kairo, agentes IA, workflows críticos, API/DB/auth/evals, multiagente |
+| minimal | scripts, technical spikes, landing pages, small prototypes |
+| standard | real frontend/backend apps, simple SaaS, medium products |
+| enterprise | AI agents, critical workflows, API/DB/auth/evals, multi-agent |
 
-## Publicación
+## Publishing
 
-Publicado en npm como `@kal-elsam/harness`. La release se hace con **npm Trusted Publishing/OIDC** desde GitHub Actions — sin `NPM_TOKEN`.
+Published on npm as `@kal-elsam/harness`. Releases use **npm Trusted Publishing/OIDC** from GitHub Actions — no `NPM_TOKEN`.
 
-Antes de taggear una nueva versión:
+Before tagging a new version:
 
 ```bash
 npm test
 npm pack --dry-run
 ```
 
-Flujo de release:
+Release flow:
 
 ```bash
-# actualizar version en package.json
+# bump version in package.json
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-El workflow `publish.yml` corre en tags `v*` y publica a npm usando el environment `npm-publish`.
+The `publish.yml` workflow runs on `v*` tags and publishes to npm using the `npm-publish` environment.
 
-Ver política completa en `SECURITY.md`.
+See the full policy in `SECURITY.md`.
 
-## Regla base
+## Base rule
 
-El agente no debe operar como programador libre.
+The agent must not operate as a free-form programmer.
 
 ```txt
 Requirement
@@ -174,9 +174,9 @@ Requirement
 → Human approval
 ```
 
-## Integración con Gentle AI
+## Gentle AI integration
 
-Después de instalar el harness en un repo, ejecuta:
+After installing the harness in a repo, run:
 
 ```bash
 /sdd-init
@@ -184,13 +184,13 @@ gentle-ai skill-registry refresh
 gentle-ai doctor
 ```
 
-`/sdd-init` detecta stack y testing.  
-`skill-registry refresh` actualiza el registro de skills.  
-`doctor` revisa salud del ecosistema.
+`/sdd-init` detects stack and testing.  
+`skill-registry refresh` updates the skill registry.  
+`doctor` checks ecosystem health.
 
-## Integración con Engram/Graphify
+## Engram/Graphify integration
 
-Este pack no asume una implementación específica. Define puntos de integración en:
+This pack does not assume a specific implementation. It defines integration points in:
 
 ```txt
 docs/ai/context-graph.md
@@ -198,16 +198,16 @@ docs/ai/memory.md
 docs/skills/context-graph.md
 ```
 
-La regla es:
+The rule:
 
-- El repo conserva la fuente de verdad en Markdown.
-- Engram puede indexar decisiones, specs, memoria y convenciones.
-- Graphify puede construir el grafo de arquitectura, módulos, dependencias, features y riesgos.
-- Ninguna memoria externa reemplaza `AGENTS.md`, `docs/ai/` o el código.
+- The repo keeps the source of truth in Markdown.
+- Engram can index decisions, specs, memory, and conventions.
+- Graphify can build the architecture graph: modules, dependencies, features, and risks.
+- No external memory replaces `AGENTS.md`, `docs/ai/`, or the code.
 
 ## v2 — Universal-first, adapter-based
 
-Esta versión agrega:
+This version adds:
 
 - `docs/ai/model-policy.md`
 - `docs/ai/provider-routing.md`
@@ -215,14 +215,14 @@ Esta versión agrega:
 - `docs/ai/context-budget.md`
 - `docs/skills/model-selection.md`
 - `docs/skills/tool-adapter-sync.md`
-- Adapters para Codex, Claude, Gemini, GitHub Copilot, Cursor y Gentle AI
+- Adapters for Codex, Claude, Gemini, GitHub Copilot, Cursor, and Gentle AI
 - Codex skills: SDD, TDD, evals, checkpoint
 - Claude agents/skills pointers
 - Gemini pointer
-- Subagentes SDD por fase
-- Política explícita para modelos económicos como DeepSeek
+- SDD subagents per phase
+- Explicit policy for cost-efficient models such as DeepSeek
 
-Principio v2:
+v2 principle:
 
 ```txt
 Universal core first.
@@ -230,11 +230,11 @@ Tool adapters second.
 Model providers third.
 ```
 
-Cursor sigue siendo el editor principal, pero no es la fuente de verdad.
+Cursor remains the primary editor, but not the source of truth.
 
 ## v3 — Loop Engineering + OpenCode-first execution adapter
 
-Esta versión agrega Loop Engineering como capa formal del harness y convierte OpenCode + Gentle AI + DeepSeek en el adapter principal de ejecución para este flujo.
+This version adds Loop Engineering as a formal harness layer and positions OpenCode + Gentle AI + DeepSeek as the primary execution adapter for this flow.
 
 ```txt
 OpenCode executes.
@@ -248,7 +248,7 @@ Engram preserves learning.
 Human approves impact.
 ```
 
-Nuevos módulos:
+New modules:
 
 ```txt
 docs/ai/loops.md
@@ -266,9 +266,9 @@ evals/loop-regression/
 
 ## v4 — Universal Adapter Parity
 
-Esta versión corrige la interpretación de que el harness está basado en OpenCode.
+This version corrects the interpretation that the harness is OpenCode-based.
 
-Regla v4:
+v4 rule:
 
 ```txt
 AGENTS.md governs.
@@ -281,15 +281,15 @@ Models execute.
 Humans approve impact.
 ```
 
-OpenCode puede ser el runtime preferido del usuario porque ahí vive Gentle AI + DeepSeek, pero no tiene autoridad superior sobre Cursor, Codex, Claude, Gemini o Pi.
+OpenCode may be the user's preferred runtime because Gentle AI + DeepSeek live there, but it has no higher authority than Cursor, Codex, Claude, Gemini, or Pi.
 
-Nuevo documento clave:
+Key new document:
 
 ```txt
 docs/ai/adapter-parity.md
 ```
 
-Nueva regla:
+New rule:
 
 ```txt
 No adapter is primary by authority.
@@ -299,7 +299,7 @@ The core universal remains the governance layer.
 
 ## v5 — Enforcement-first Harness
 
-Esta versión convierte el harness de metodología/documentación a una base más cercana a un control plane real.
+This version moves the harness closer to a real control plane — beyond methodology and documentation.
 
 ```txt
 Docs guide.
@@ -311,7 +311,7 @@ Trust policy protects skills/tools.
 Installer manages lifecycle.
 ```
 
-Nuevos módulos:
+New modules:
 
 ```txt
 docs/ai/enforcement.md
