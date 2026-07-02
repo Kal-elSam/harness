@@ -1,23 +1,15 @@
-import { constants } from "node:fs";
-import { access, copyFile, mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { dirname, relative, resolve, sep } from "node:path";
-import { renderTemplate } from "./text-template.js";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { COMPATIBILITY_LINKS, listTemplateFiles, pathExists, renderFileContent } from "./harness-files.js";
+import { hashBuffer } from "./hash.js";
+import { createManifest, readManifest, writeManifest } from "./manifest.js";
 
-const MODES = new Set(["minimal", "standard", "enterprise"]);
-const TEXT_EXTENSIONS = new Set([".md", ".mdc", ".json", ".yml", ".yaml", ".sample", ".sh", ".mjs"]);
-
-export async function installHarness({ project, packageRoot, mode, force = false, dryRun = false }) {
-  if (!MODES.has(mode)) {
-    throw new Error(`Invalid mode "${mode}". Use minimal, standard, or enterprise.`);
-  }
-
-  const templateRoot = resolve(packageRoot, "repo-template");
-  const files = await listFiles(templateRoot);
-  const selectedFiles = files.filter((filePath) => shouldInstall(relative(templateRoot, filePath), mode));
+export async function installHarness({ project, packageRoot, mode, packageName, cliVersion, force = false, dryRun = false }) {
+  const templateFiles = await listTemplateFiles(packageRoot, mode);
   const result = { mode, created: [], skipped: [], updated: [] };
+  const manifestFiles = {};
 
-  for (const sourcePath of selectedFiles) {
-    const relativePath = normalizePath(relative(templateRoot, sourcePath));
+  for (const { relativePath, sourcePath } of templateFiles) {
     const destinationPath = resolve(project.root, relativePath);
     const exists = await pathExists(destinationPath);
 
@@ -26,94 +18,35 @@ export async function installHarness({ project, packageRoot, mode, force = false
       continue;
     }
 
+    const content = await renderFileContent(sourcePath, project);
+
     if (!dryRun) {
       await mkdir(dirname(destinationPath), { recursive: true });
-
-      if (isTextFile(sourcePath)) {
-        const content = await readFile(sourcePath, "utf8");
-        await writeFile(destinationPath, renderTemplate(content, project), "utf8");
-      } else {
-        await copyFile(sourcePath, destinationPath);
-      }
+      await writeFile(destinationPath, content);
     }
 
     result[exists ? "updated" : "created"].push(relativePath);
+    manifestFiles[relativePath] = hashBuffer(content);
   }
 
   await createCompatibilityLinks(project.root, { force, dryRun, result });
+
+  if (!dryRun) {
+    const existingManifest = await readManifest(project.root);
+    await writeManifest(project.root, createManifest({
+      packageName,
+      cliVersion,
+      mode,
+      files: { ...existingManifest?.files, ...manifestFiles },
+      installedAt: existingManifest?.installedAt
+    }));
+  }
+
   return result;
 }
 
-async function listFiles(root) {
-  const entries = await readdir(root, { withFileTypes: true });
-  const files = [];
-
-  for (const entry of entries) {
-    const fullPath = resolve(root, entry.name);
-    if (entry.isDirectory()) files.push(...await listFiles(fullPath));
-    else if (entry.isFile()) files.push(fullPath);
-  }
-
-  return files;
-}
-
-function shouldInstall(relativePath, mode) {
-  if (mode === "enterprise") return true;
-
-  if (mode === "minimal") {
-    return [
-      "AGENTS.md",
-      "CLAUDE.md",
-      "GEMINI.md",
-      "AGENT.md",
-      "docs/ai/architecture.md",
-      "docs/ai/harness.md",
-      "docs/ai/testing.md",
-      "docs/ai/git-workflow.md",
-      "docs/ai/memory.md",
-      "docs/ai/context-graph.md",
-      ".cursor/rules/core.mdc",
-      ".cursor/rules/testing.mdc",
-      ".cursor/rules/git.mdc",
-      ".github/copilot-instructions.md",
-      "setup-agent-links.sh"
-    ].includes(relativePath);
-  }
-
-  return !relativePath.startsWith("evals/")
-    && !relativePath.startsWith(".github/workflows/")
-    && !relativePath.startsWith(".opencode/loops/")
-    && !relativePath.startsWith(".gentle-ai/loops/")
-    && !relativePath.startsWith("scripts/harness/");
-}
-
-function normalizePath(filePath) {
-  return sep === "/" ? filePath : filePath.split(sep).join("/");
-}
-
-function isTextFile(filePath) {
-  return TEXT_EXTENSIONS.has(filePath.slice(filePath.lastIndexOf(".")));
-}
-
-async function pathExists(filePath) {
-  try {
-    await access(filePath, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function createCompatibilityLinks(root, { force, dryRun, result }) {
-  const links = [
-    ["CLAUDE.md", "AGENTS.md"],
-    ["GEMINI.md", "AGENTS.md"],
-    [".claude/CLAUDE.md", "../AGENTS.md"],
-    [".agent/AGENTS.md", "../AGENTS.md"],
-    [".windsurfrules", "AGENTS.md"]
-  ];
-
-  for (const [linkPath, target] of links) {
+  for (const [linkPath, target] of COMPATIBILITY_LINKS) {
     const destination = resolve(root, linkPath);
     const exists = await pathExists(destination);
 

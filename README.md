@@ -41,6 +41,8 @@ npm i -g @kal-elsam/harness
 ```bash
 harness init --mode enterprise
 harness init --mode standard --dry-run
+harness update --dry-run
+harness update
 harness doctor
 ```
 
@@ -50,8 +52,82 @@ To try locally from this repo:
 
 ```bash
 node ./bin/harness.js init --mode enterprise --dry-run
+node ./bin/harness.js update --dry-run
 node ./bin/harness.js doctor
 ```
+
+## Lifecycle: init, update, doctor
+
+The harness is not a one-shot copy. Every `init` writes a manifest that later
+`update` and `doctor` runs rely on.
+
+### `harness init`
+
+Installs `repo-template/` into the target project and writes
+`.harness/manifest.json` with the installed mode, CLI version, and a content
+hash for every file the harness created.
+
+```bash
+harness init --mode enterprise
+```
+
+By default it never overwrites a file that already exists. Pass `--force` to
+overwrite, or `--dry-run` to preview without writing anything.
+
+### `harness update`
+
+Reapplies the current harness templates to an already-installed project.
+
+```bash
+harness update --dry-run   # preview: created / updated / unchanged / skipped
+harness update             # apply
+harness update --force     # also overwrite files you modified locally
+```
+
+`update` is conservative by design:
+
+- Files unchanged since install are safely refreshed to the latest template.
+- Files you edited locally are **skipped** unless `--force` is passed.
+- Files that exist but were never tracked by the harness are left alone.
+- New files added in newer harness releases are created.
+- `.harness/manifest.json` is rewritten with the new hashes and CLI version.
+
+### `harness doctor`
+
+Read-only health check. Never modifies files.
+
+```bash
+harness doctor
+```
+
+Reports each check as `OK`, `WARNING`, or `MISSING`:
+
+- **Required** files missing (`AGENTS.md`, `docs/ai/harness.md`,
+  `docs/ai/memory.md`) fail the check (non-zero exit code).
+- **Recommended** files missing are reported as warnings.
+- If `.harness/manifest.json` is missing, doctor warns and suggests
+  `harness init`.
+- If a file tracked in the manifest was deleted after install, doctor
+  reports manifest drift.
+
+### `.harness/manifest.json`
+
+```json
+{
+  "packageName": "@kal-elsam/harness",
+  "cliVersion": "0.2.0",
+  "mode": "enterprise",
+  "installedAt": "2026-07-02T18:00:00.000Z",
+  "updatedAt": "2026-07-02T18:00:00.000Z",
+  "files": {
+    "AGENTS.md": "3f9a...",
+    "docs/ai/harness.md": "8b21..."
+  }
+}
+```
+
+This file is the source of truth for what the harness owns in a project.
+Commit it to version control.
 
 ## What it installs
 
@@ -145,7 +221,12 @@ Before tagging a new version:
 ```bash
 npm test
 npm pack --dry-run
+npm run smoke
 ```
+
+`npm run smoke` packs the current source into a tarball, installs it in a
+throwaway temp project, and runs `init`, `doctor`, and `update --dry-run`
+against it end to end.
 
 Release flow:
 
