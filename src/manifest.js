@@ -21,13 +21,14 @@ export async function writeManifest(projectRoot, manifest) {
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
-export function createManifest({ packageName, cliVersion, mode, files, installedAt }) {
+export function createManifest({ packageName, cliVersion, mode, adapters, files, installedAt }) {
   const now = new Date().toISOString();
 
   return {
     packageName,
     cliVersion,
     mode,
+    adapters,
     installedAt: installedAt ?? now,
     updatedAt: now,
     files

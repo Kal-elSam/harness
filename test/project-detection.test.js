@@ -28,3 +28,16 @@ test("detects package metadata and pnpm commands", async () => {
   assert.equal(project.stack, "Vite");
   assert.equal(project.commands.test, "pnpm test");
 });
+
+test("detects configured adapters from project files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "sgs-harness-"));
+
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "demo-app" }));
+  await writeFile(join(root, "CLAUDE.md"), "claude\n");
+  await writeFile(join(root, "GEMINI.md"), "gemini\n");
+  await writeFile(join(root, "opencode.json"), "{}\n");
+
+  const project = await detectProject(root);
+
+  assert.deepEqual(project.detectedAdapters, ["claude", "gemini", "opencode"]);
+});

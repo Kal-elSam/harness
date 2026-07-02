@@ -1,12 +1,13 @@
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { COMPATIBILITY_LINKS, listTemplateFiles, pathExists, renderFileContent } from "./harness-files.js";
+import { COMPATIBILITY_LINKS, adapterForPath, listTemplateFiles, pathExists, renderFileContent } from "./harness-files.js";
 import { hashBuffer } from "./hash.js";
 import { createManifest, readManifest, writeManifest } from "./manifest.js";
 
-export async function installHarness({ project, packageRoot, mode, packageName, cliVersion, force = false, dryRun = false }) {
-  const templateFiles = await listTemplateFiles(packageRoot, mode);
-  const result = { mode, created: [], skipped: [], updated: [] };
+export async function installHarness({ project, packageRoot, mode, adapters, packageName, cliVersion, force = false, dryRun = false }) {
+  const templateFiles = await listTemplateFiles(packageRoot, mode, { adapters });
+  const normalizedAdapters = adapters == null ? null : [...adapters].sort();
+  const result = { mode, adapters: normalizedAdapters, created: [], skipped: [], updated: [] };
   const manifestFiles = {};
 
   for (const { relativePath, sourcePath } of templateFiles) {
@@ -29,7 +30,7 @@ export async function installHarness({ project, packageRoot, mode, packageName, 
     manifestFiles[relativePath] = hashBuffer(content);
   }
 
-  await createCompatibilityLinks(project.root, { force, dryRun, result });
+  await createCompatibilityLinks(project.root, { adapters: normalizedAdapters, force, dryRun, result });
 
   if (!dryRun) {
     const existingManifest = await readManifest(project.root);
@@ -37,6 +38,7 @@ export async function installHarness({ project, packageRoot, mode, packageName, 
       packageName,
       cliVersion,
       mode,
+      adapters: normalizedAdapters ?? existingManifest?.adapters,
       files: { ...existingManifest?.files, ...manifestFiles },
       installedAt: existingManifest?.installedAt
     }));
@@ -45,8 +47,11 @@ export async function installHarness({ project, packageRoot, mode, packageName, 
   return result;
 }
 
-async function createCompatibilityLinks(root, { force, dryRun, result }) {
+async function createCompatibilityLinks(root, { adapters, force, dryRun, result }) {
   for (const [linkPath, target] of COMPATIBILITY_LINKS) {
+    const adapter = adapterForPath(linkPath);
+    if (adapters && adapter && !adapters.includes(adapter)) continue;
+
     const destination = resolve(root, linkPath);
     const exists = await pathExists(destination);
 

@@ -19,6 +19,7 @@ export async function detectProject(cwd) {
     packageManager,
     stack: detectStack(root, packageJson),
     architecturePattern: detectArchitecture(root),
+    detectedAdapters: detectAdapters(root),
     commands: {
       install: installCommand(packageManager),
       dev: scriptCommand(packageManager, scripts, "dev"),
@@ -67,6 +68,27 @@ function detectArchitecture(root) {
   }
 
   return "To be documented";
+}
+
+function detectAdapters(root) {
+  const markers = [
+    ["codex", ".codex"],
+    ["cursor", ".cursor"],
+    ["claude", ".claude"],
+    ["claude", "CLAUDE.md"],
+    ["gemini", "GEMINI.md"],
+    ["copilot", ".github/copilot-instructions.md"],
+    ["opencode", ".opencode"],
+    ["opencode", "opencode.json"],
+    ["opencode", "opencode.json.sample"],
+    ["pi", ".pi"]
+  ];
+
+  return [...new Set(
+    markers
+      .filter(([, markerPath]) => existsSync(resolve(root, markerPath)))
+      .map(([adapter]) => adapter)
+  )].sort();
 }
 
 function installCommand(packageManager) {

@@ -1,10 +1,10 @@
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { COMPATIBILITY_LINKS, MODES, listTemplateFiles, pathExists, renderFileContent } from "./harness-files.js";
+import { COMPATIBILITY_LINKS, MODES, adapterForPath, listTemplateFiles, pathExists, renderFileContent } from "./harness-files.js";
 import { hashBuffer } from "./hash.js";
 import { createManifest, readManifest, writeManifest } from "./manifest.js";
 
-export async function updateHarness({ project, packageRoot, packageName, cliVersion, mode, force = false, dryRun = false }) {
+export async function updateHarness({ project, packageRoot, packageName, cliVersion, mode, adapters, force = false, dryRun = false }) {
   const manifest = await readManifest(project.root);
 
   if (!manifest) {
@@ -17,9 +17,11 @@ export async function updateHarness({ project, packageRoot, packageName, cliVers
     throw new Error(`Invalid mode "${effectiveMode}". Use minimal, standard, or enterprise.`);
   }
 
-  const templateFiles = await listTemplateFiles(packageRoot, effectiveMode);
+  const effectiveAdapters = adapters == null ? manifest.adapters ?? null : [...adapters].sort();
+  const templateFiles = await listTemplateFiles(packageRoot, effectiveMode, { adapters: effectiveAdapters });
   const result = {
     mode: effectiveMode,
+    adapters: effectiveAdapters,
     created: [],
     updated: [],
     unchanged: [],
@@ -32,13 +34,14 @@ export async function updateHarness({ project, packageRoot, packageName, cliVers
     await reconcileFile({ project, relativePath, sourcePath, manifest, force, dryRun, result, nextFiles });
   }
 
-  await createMissingCompatibilityLinks(project.root, { dryRun, result });
+  await createMissingCompatibilityLinks(project.root, { adapters: effectiveAdapters, dryRun, result });
 
   if (!dryRun) {
     await writeManifest(project.root, createManifest({
       packageName: manifest.packageName ?? packageName,
       cliVersion,
       mode: effectiveMode,
+      adapters: effectiveAdapters,
       files: nextFiles,
       installedAt: manifest.installedAt
     }));
@@ -92,8 +95,11 @@ async function writeManagedFile(destinationPath, content) {
   await writeFile(destinationPath, content);
 }
 
-async function createMissingCompatibilityLinks(root, { dryRun, result }) {
+async function createMissingCompatibilityLinks(root, { adapters, dryRun, result }) {
   for (const [linkPath, target] of COMPATIBILITY_LINKS) {
+    const adapter = adapterForPath(linkPath);
+    if (adapters && adapter && !adapters.includes(adapter)) continue;
+
     const destination = resolve(root, linkPath);
     const exists = await pathExists(destination);
 

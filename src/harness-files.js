@@ -4,6 +4,17 @@ import { relative, resolve, sep } from "node:path";
 import { renderTemplate } from "./text-template.js";
 
 export const MODES = new Set(["minimal", "standard", "enterprise"]);
+export const ADAPTERS = new Set(["codex", "cursor", "claude", "gemini", "copilot", "opencode", "pi"]);
+
+export const ADAPTER_PATHS = {
+  codex: [".codex/"],
+  cursor: [".cursor/"],
+  claude: [".claude/", "CLAUDE.md"],
+  gemini: ["GEMINI.md"],
+  copilot: [".github/copilot-instructions.md"],
+  opencode: [".opencode/", "opencode.json.sample"],
+  pi: [".pi/"]
+};
 
 const TEXT_EXTENSIONS = new Set([".md", ".mdc", ".json", ".yml", ".yaml", ".sample", ".sh", ".mjs"]);
 
@@ -41,17 +52,18 @@ export const COMPATIBILITY_LINKS = [
   [".windsurfrules", "AGENTS.md"]
 ];
 
-export async function listTemplateFiles(packageRoot, mode) {
+export async function listTemplateFiles(packageRoot, mode, options = {}) {
   if (!MODES.has(mode)) {
     throw new Error(`Invalid mode "${mode}". Use minimal, standard, or enterprise.`);
   }
 
   const templateRoot = resolve(packageRoot, "repo-template");
   const absolutePaths = await listFilesRecursive(templateRoot);
+  const selectedAdapters = normalizeAdapters(options.adapters);
 
   return absolutePaths
     .map((sourcePath) => ({ sourcePath, relativePath: normalizePath(relative(templateRoot, sourcePath)) }))
-    .filter(({ relativePath }) => shouldInstall(relativePath, mode));
+    .filter(({ relativePath }) => shouldInstall(relativePath, mode, selectedAdapters));
 }
 
 async function listFilesRecursive(root) {
@@ -67,10 +79,43 @@ async function listFilesRecursive(root) {
   return files;
 }
 
-function shouldInstall(relativePath, mode) {
-  if (mode === "enterprise") return true;
-  if (mode === "minimal") return MINIMAL_WHITELIST.has(relativePath);
-  return !STANDARD_EXCLUDED_PREFIXES.some((prefix) => relativePath.startsWith(prefix));
+function shouldInstall(relativePath, mode, selectedAdapters) {
+  const includedByMode = mode === "enterprise"
+    ? true
+    : mode === "minimal"
+      ? MINIMAL_WHITELIST.has(relativePath)
+      : !STANDARD_EXCLUDED_PREFIXES.some((prefix) => relativePath.startsWith(prefix));
+
+  if (!includedByMode) return false;
+  if (!selectedAdapters) return true;
+
+  const adapter = adapterForPath(relativePath);
+  if (!adapter) return true;
+
+  return selectedAdapters.has(adapter);
+}
+
+function normalizeAdapters(adapters) {
+  if (adapters == null) return null;
+
+  const normalized = new Set();
+  for (const adapter of adapters) {
+    if (!ADAPTERS.has(adapter)) {
+      throw new Error(`Invalid adapter "${adapter}". Use ${[...ADAPTERS].join(", ")}.`);
+    }
+    normalized.add(adapter);
+  }
+  return normalized;
+}
+
+export function adapterForPath(relativePath) {
+  for (const [adapter, patterns] of Object.entries(ADAPTER_PATHS)) {
+    if (patterns.some((pattern) => relativePath === pattern || relativePath.startsWith(pattern))) {
+      return adapter;
+    }
+  }
+
+  return null;
 }
 
 export function normalizePath(filePath) {

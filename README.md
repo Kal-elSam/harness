@@ -18,11 +18,11 @@ Package name:
 From any project, without a global install:
 
 ```bash
-npx @kal-elsam/harness init --mode enterprise
+npx @kal-elsam/harness
 ```
 
 ```bash
-pnpm dlx @kal-elsam/harness init --mode enterprise
+pnpm dlx @kal-elsam/harness
 ```
 
 ## CLI commands
@@ -39,8 +39,10 @@ npm i -g @kal-elsam/harness
 | `agentic-harness` | Descriptive alias |
 
 ```bash
-harness init --mode enterprise
-harness init --mode standard --dry-run
+harness
+harness detect
+harness install --mode enterprise --all-adapters
+harness --mode standard --adapters codex,cursor
 harness update --dry-run
 harness update
 harness doctor
@@ -61,18 +63,44 @@ node ./bin/harness.js doctor
 The harness is not a one-shot copy. Every `init` writes a manifest that later
 `update` and `doctor` runs rely on.
 
-### `harness init`
+### `harness init` / `harness install`
 
 Installs `repo-template/` into the target project and writes
 `.harness/manifest.json` with the installed mode, CLI version, and a content
 hash for every file the harness created.
 
 ```bash
-harness init --mode enterprise
+harness
+harness init --mode enterprise --all-adapters
+harness install --mode standard --adapters codex,cursor
 ```
 
 By default it never overwrites a file that already exists. Pass `--force` to
 overwrite, or `--dry-run` to preview without writing anything.
+
+Important behavior:
+
+- Running just `harness` (or `npx/pnpm dlx @kal-elsam/harness`) now defaults to:
+  - `mode=standard`
+  - adapter auto-detection from the current repo
+  - core files only when no adapter markers are detected
+- `--adapters` installs only the requested adapters.
+- `--all-adapters` keeps the previous “install everything” behavior.
+
+Supported adapters:
+
+```txt
+codex, cursor, claude, gemini, copilot, opencode, pi
+```
+
+### `harness detect`
+
+Read-only inspection command. It detects the current project stack and which
+adapter markers already exist, then prints the recommended install command.
+
+```bash
+harness detect
+```
 
 ### `harness update`
 
@@ -90,7 +118,7 @@ harness update --force     # also overwrite files you modified locally
 - Files you edited locally are **skipped** unless `--force` is passed.
 - Files that exist but were never tracked by the harness are left alone.
 - New files added in newer harness releases are created.
-- `.harness/manifest.json` is rewritten with the new hashes and CLI version.
+- `.harness/manifest.json` is rewritten with the new hashes, CLI version, and adapter selection.
 
 ### `harness doctor`
 
@@ -117,6 +145,7 @@ Reports each check as `OK`, `WARNING`, or `MISSING`:
   "packageName": "@kal-elsam/harness",
   "cliVersion": "0.2.0",
   "mode": "enterprise",
+  "adapters": ["codex", "cursor"],
   "installedAt": "2026-07-02T18:00:00.000Z",
   "updatedAt": "2026-07-02T18:00:00.000Z",
   "files": {
@@ -131,19 +160,40 @@ Commit it to version control.
 
 ## What it installs
 
-The CLI copies and personalizes `repo-template/` into the target project:
+The CLI copies and personalizes `repo-template/` into the target project.
+
+Always-installed core depends on the selected mode, and adapter folders are now
+filtered separately.
+
+Core examples:
 
 ```txt
 AGENTS.md
 docs/ai/
 docs/skills/
 docs/specs/
+.gentle-ai/
+.harness/
+setup-agent-links.sh
+```
+
+Adapter-specific examples:
+
+```txt
 .codex/
 .cursor/
 .claude/
-.github/
-.gentle-ai/
+.pi/
 .opencode/
+.github/copilot-instructions.md
+CLAUDE.md
+GEMINI.md
+```
+
+Feature/extended examples (mostly `standard`/`enterprise` depending on mode):
+
+```txt
+.github/
 evals/
 scripts/harness/
 ```
@@ -182,8 +232,10 @@ repo-template/
 Install from the package:
 
 ```bash
-pnpm dlx @kal-elsam/harness init --mode standard
-pnpm dlx @kal-elsam/harness init --mode enterprise
+pnpm dlx @kal-elsam/harness
+pnpm dlx @kal-elsam/harness detect
+pnpm dlx @kal-elsam/harness --mode standard --adapters codex,cursor
+pnpm dlx @kal-elsam/harness init --mode enterprise --all-adapters
 pnpm dlx @kal-elsam/harness doctor
 ```
 

@@ -12,10 +12,14 @@ async function setupInstalledFixture() {
   const packageRoot = await mkdtemp(join(tmpdir(), "harness-pkg-"));
   const templateRoot = join(packageRoot, "repo-template", "docs", "ai");
   await mkdir(templateRoot, { recursive: true });
+  await mkdir(join(packageRoot, "repo-template", ".cursor", "rules"), { recursive: true });
+  await mkdir(join(packageRoot, "repo-template", ".codex", "skills"), { recursive: true });
 
   await writeFile(join(packageRoot, "repo-template", "AGENTS.md"), "# [PROJECT_NAME] v1\n");
   await writeFile(join(templateRoot, "harness.md"), "harness v1\n");
   await writeFile(join(templateRoot, "memory.md"), "memory v1\n");
+  await writeFile(join(packageRoot, "repo-template", ".cursor", "rules", "core.mdc"), "cursor v1\n");
+  await writeFile(join(packageRoot, "repo-template", ".codex", "skills", "sdd.md"), "codex v1\n");
 
   const root = await mkdtemp(join(tmpdir(), "harness-project-"));
   await writeFile(join(root, "package.json"), JSON.stringify({ name: "demo-app" }));
@@ -119,4 +123,31 @@ test("update fails clearly when no manifest exists yet", async () => {
     () => updateHarness({ project, packageRoot, packageName: "@kal-elsam/harness", cliVersion: "0.2.0" }),
     /harness init/
   );
+});
+
+test("update preserves adapter selection from the manifest", async () => {
+  const { packageRoot, project } = await setupInstalledFixture();
+
+  await installHarness({
+    project,
+    packageRoot,
+    mode: "standard",
+    adapters: ["cursor"],
+    packageName: "@kal-elsam/harness",
+    cliVersion: "0.1.0",
+    force: true
+  });
+
+  await writeFile(join(packageRoot, "repo-template", ".codex", "skills", "advanced.md"), "codex v2\n");
+  await writeFile(join(packageRoot, "repo-template", ".cursor", "rules", "testing.mdc"), "cursor v2\n");
+
+  const result = await updateHarness({
+    project,
+    packageRoot,
+    packageName: "@kal-elsam/harness",
+    cliVersion: "0.2.0"
+  });
+
+  assert.ok(result.created.includes(".cursor/rules/testing.mdc"));
+  assert.ok(!result.created.includes(".codex/skills/advanced.md"));
 });

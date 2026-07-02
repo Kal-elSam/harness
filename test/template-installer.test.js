@@ -113,3 +113,25 @@ test("does not overwrite existing files without --force", async () => {
   assert.ok(result.skipped.includes("AGENTS.md"));
   assert.equal(await readFile(join(project.root, "AGENTS.md"), "utf8"), "custom\n");
 });
+
+test("installs only selected adapters plus core files", async () => {
+  const packageRoot = await createFixturePackageRoot();
+  const project = await createProject();
+
+  const result = await installHarness({
+    project,
+    packageRoot,
+    mode: "standard",
+    adapters: ["cursor"],
+    packageName: "@kal-elsam/harness",
+    cliVersion: "0.2.0"
+  });
+
+  assert.ok(result.created.includes("AGENTS.md"));
+  assert.ok(result.created.includes(".cursor/rules/core.mdc"));
+  assert.ok(!result.created.includes(".codex/skills/sdd.md"));
+  assert.ok(!result.created.includes(".claude/settings.md"));
+
+  const manifest = await readManifest(project.root);
+  assert.deepEqual(manifest.adapters, ["cursor"]);
+});
