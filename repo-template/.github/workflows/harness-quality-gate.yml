@@ -1,0 +1,67 @@
+name: Harness Quality Gate
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect package manager
+        id: pm
+        shell: bash
+        run: |
+          if [ -f pnpm-lock.yaml ]; then echo "pm=pnpm" >> "$GITHUB_OUTPUT";
+          elif [ -f yarn.lock ]; then echo "pm=yarn" >> "$GITHUB_OUTPUT";
+          else echo "pm=npm" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Setup Node
+        if: hashFiles('package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: ${{ steps.pm.outputs.pm }}
+
+      - name: Enable pnpm
+        if: steps.pm.outputs.pm == 'pnpm'
+        run: corepack enable
+
+      - name: Install dependencies
+        if: hashFiles('package.json') != ''
+        run: |
+          if [ "${{ steps.pm.outputs.pm }}" = "pnpm" ]; then pnpm install --frozen-lockfile; fi
+          if [ "${{ steps.pm.outputs.pm }}" = "yarn" ]; then yarn install --immutable || yarn install --frozen-lockfile; fi
+          if [ "${{ steps.pm.outputs.pm }}" = "npm" ]; then npm ci; fi
+
+      - name: Format check
+        if: hashFiles('package.json') != ''
+        run: npm run format:check --if-present
+
+      - name: Lint
+        if: hashFiles('package.json') != ''
+        run: npm run lint --if-present
+
+      - name: Typecheck
+        if: hashFiles('package.json') != ''
+        run: npm run typecheck --if-present
+
+      - name: Unit tests
+        if: hashFiles('package.json') != ''
+        run: npm test --if-present -- --runInBand
+
+      - name: Build
+        if: hashFiles('package.json') != ''
+        run: npm run build --if-present
+
+      - name: Harness doctor
+        run: |
+          if [ -f scripts/harness/doctor.mjs ]; then node scripts/harness/doctor.mjs; fi
+
+      - name: Harness evals
+        run: |
+          if [ -f scripts/harness/run-evals.mjs ]; then node scripts/harness/run-evals.mjs; fi

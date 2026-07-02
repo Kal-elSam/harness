@@ -1,0 +1,12 @@
+{
+  "id": "sample-schema-001",
+  "type": "schema",
+  "severity": "critical",
+  "input": "sample",
+  "expected": {
+    "valid": true
+  },
+  "must_not": [
+    "claim success without evidence"
+  ]
+}

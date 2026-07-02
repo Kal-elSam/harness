@@ -1,0 +1,16 @@
+---
+description: Enforcement-first rules for agentic coding.
+alwaysApply: true
+---
+
+# Enforcement Rule
+
+Read:
+
+- `docs/ai/enforcement.md`
+- `docs/ai/quality-gates.md`
+- `docs/ai/trust-policy.md`
+- `docs/ai/eval-strategy.md`
+
+Do not treat prompts as enforcement.
+Critical changes require quality gates and human approval.

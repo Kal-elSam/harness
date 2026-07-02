@@ -1,0 +1,12 @@
+---
+description: Reglas de API, contratos e integraciones.
+globs: "**/api/**,**/routes/**,**/services/**,**/server/**"
+alwaysApply: false
+---
+
+# API Rule
+
+Leer `docs/ai/api.md` antes de crear o modificar APIs.
+Validar request/response.
+Centralizar errores.
+Agregar integration test para endpoints nuevos.

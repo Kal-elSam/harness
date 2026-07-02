@@ -1,0 +1,13 @@
+---
+description: Reglas de testing para cambios de comportamiento.
+globs: "**/*.test.*,**/*.spec.*,**/tests/**,**/test/**"
+alwaysApply: false
+---
+
+# Testing Rule
+
+Bug fix → regression test primero.
+Feature → unit/integration/E2E según impacto.
+Refactor → tests existentes verdes.
+
+Mocks solo para dependencias externas.

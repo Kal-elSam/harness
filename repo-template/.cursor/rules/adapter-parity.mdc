@@ -1,0 +1,20 @@
+---
+description: Adapter parity rule. Cursor is an IDE adapter, not the governance source.
+alwaysApply: true
+---
+
+# Adapter Parity Rule
+
+Cursor is IDE-primary only when the user chooses it for editing.
+
+Cursor is not governance-primary.
+
+Governance order:
+
+1. Current user instruction
+2. `AGENTS.md`
+3. `docs/ai/`
+4. `docs/skills/`
+5. `.cursor/`
+
+Read `docs/ai/adapter-parity.md` if adapter behavior is unclear.

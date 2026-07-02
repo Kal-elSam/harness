@@ -1,0 +1,17 @@
+---
+description: Loop Engineering rules for bounded agentic execution.
+alwaysApply: true
+---
+
+# Loop Rule
+
+No autonomous loop without boundaries.
+No repair loop without max attempts.
+No learning loop without evals.
+No production loop without observability.
+No critical loop without human approval.
+
+Read:
+- `docs/ai/loops.md`
+- `docs/ai/loop-policy.md`
+- `docs/ai/loop-observability.md`

@@ -1,0 +1,32 @@
+name: Harness Security Gate
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+
+jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          deny-licenses: GPL-3.0, AGPL-3.0
+
+  secret-scan-basic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect obvious secrets
+        shell: bash
+        run: |
+          ! grep -RInE "(sk-[A-Za-z0-9_-]{20,}|api[_-]?key\s*=|secret\s*=|password\s*=)"             --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=dist .             || (echo "Potential secret detected" && exit 1)

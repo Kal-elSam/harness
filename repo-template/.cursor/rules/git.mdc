@@ -1,0 +1,19 @@
+---
+description: Pipeline de git y commits.
+alwaysApply: true
+---
+
+# Git Rule
+
+Antes de commit:
+
+1. Diff review
+2. Secrets check
+3. Lint
+4. Format
+5. Typecheck
+6. Test
+7. Build
+8. Conventional commit
+
+Nunca commitear `.env`, secrets, logs temporales o cambios no relacionados.

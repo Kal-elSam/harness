@@ -1,0 +1,34 @@
+{
+  "name": "@sgs/harness",
+  "version": "0.1.0",
+  "description": "Installable AI governance harness for Codex, Cursor, Claude, Gemini, Copilot, Engram, and Graphify.",
+  "type": "module",
+  "bin": {
+    "sgs-harness": "./bin/sgs-harness.js",
+    "harness-sgs": "./bin/sgs-harness.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "repo-template",
+    "prompts",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "doctor": "node ./bin/sgs-harness.js doctor"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "codex",
+    "cursor",
+    "harness",
+    "sdd",
+    "tdd"
+  ],
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=18.18"
+  }
+}

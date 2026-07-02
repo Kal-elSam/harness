@@ -1,0 +1,10 @@
+---
+description: Reglas para cambios de IA, prompts, agentes y tool calling.
+globs: "**/prompts/**,**/agents/**,**/evals/**,**/*prompt*.*,**/*agent*.*"
+alwaysApply: false
+---
+
+# Evals Rule
+
+Cambios de IA requieren eval o justificación.
+Validar tool-call correctness, schema adherence, safety y prompt regression cuando aplique.

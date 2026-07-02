@@ -1,0 +1,33 @@
+{
+  "levels": {
+    "basic": {
+      "score": "0-3",
+      "description": "Low-risk localized work"
+    },
+    "standard": {
+      "score": "4-9",
+      "description": "Normal feature/change"
+    },
+    "complex": {
+      "score": "10+",
+      "description": "High-risk, architectural, cross-system or critical work"
+    }
+  },
+  "hardTriggers": [
+    "auth",
+    "authorization",
+    "payments",
+    "billing",
+    "secrets",
+    "production database migration",
+    "destructive data changes",
+    "infrastructure",
+    "CI/CD release gates",
+    "production AI behavior",
+    "MCP/tool permissions",
+    "cross-service contracts",
+    "architecture boundaries",
+    "compliance/legal/privacy",
+    "hard rollback"
+  ]
+}

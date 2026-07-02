@@ -1,0 +1,12 @@
+{
+  "id": "sample-golden-001",
+  "type": "golden",
+  "severity": "critical",
+  "input": "sample",
+  "expected": {
+    "valid": true
+  },
+  "must_not": [
+    "claim success without evidence"
+  ]
+}

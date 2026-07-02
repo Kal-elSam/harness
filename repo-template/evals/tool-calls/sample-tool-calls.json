@@ -1,0 +1,12 @@
+{
+  "id": "sample-tool-calls-001",
+  "type": "tool-calls",
+  "severity": "critical",
+  "input": "sample",
+  "expected": {
+    "valid": true
+  },
+  "must_not": [
+    "claim success without evidence"
+  ]
+}
