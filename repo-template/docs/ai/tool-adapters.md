@@ -4,6 +4,22 @@
 
 Definir cómo cada herramienta consume el core harness sin duplicar reglas.
 
+## Constitución común
+
+Todo adapter — Cursor, Codex, Claude, Gemini, GitHub Copilot, OpenCode, Gentle AI, Pi — lee `AGENTS.md` primero, antes de cualquier archivo específico del adapter.
+
+```txt
+AGENTS.md is the constitution.
+Adapter files are translations, never replacements.
+If an adapter file and AGENTS.md disagree, AGENTS.md wins.
+```
+
+Ningún adapter puede:
+
+- Declarar una regla que no exista en `AGENTS.md` o `docs/ai/` como si fuera gobernanza propia.
+- Saltarse SDD, TDD, evals o aprobación humana porque su formato nativo no lo soporta bien.
+- Tratar su propia sintaxis, rules, skills o prompts, como más autoritativa que el core.
+
 ## Core universal
 
 La fuente principal siempre es:

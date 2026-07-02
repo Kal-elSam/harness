@@ -6,7 +6,8 @@ Uso de Engram/Graphify, memoria y grafo contextual.
 
 ## Fuente de verdad
 
-`docs/ai/context-graph.md`
+- Grafo/Graphify: `docs/ai/context-graph.md`
+- Memoria/Engram: `docs/ai/memory.md`
 
 ## Procedimiento
 

@@ -219,6 +219,8 @@ GEMINI.md
 
 Los adapters no deben contradecir el core.
 
+Todo adapter debe leer `AGENTS.md` primero, como constitución común, antes de cualquier archivo propio (`.cursor/`, `.codex/`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`, etc.). Si un archivo de adapter contradice `AGENTS.md`, gana `AGENTS.md`.
+
 ## Model routing
 
 Leer:
