@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "description": "Installable AI governance harness for Codex, Cursor, Claude, Gemini, Copilot, Engram, and Graphify.",
   "type": "module",
+  "homepage": "https://github.com/Kal-elSam/harness#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kal-elSam/harness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Kal-elSam/harness/issues"
+  },
   "bin": {
     "sgs-harness": "./bin/sgs-harness.js",
     "harness-sgs": "./bin/sgs-harness.js"
