@@ -9,7 +9,39 @@ import { ADAPTERS } from "./harness-files.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(__dirname, "..");
-const cliName = basename(process.argv[1] ?? "harness");
+const KNOWN_CLI_NAMES = new Set(["harness", "agentic-harness", "sgs-harness", "harness-sgs"]);
+
+export function resolveSuggestedInvocation(packageName, argv = process.argv) {
+  const invokedPath = argv[1] ?? "harness";
+  const invokedBase = basename(invokedPath);
+
+  if (!invokedBase.endsWith(".js") && KNOWN_CLI_NAMES.has(invokedBase)) {
+    return invokedBase;
+  }
+
+  const packageManager = detectInvocationPackageManager();
+
+  switch (packageManager) {
+    case "pnpm":
+      return `pnpm dlx ${packageName}`;
+    case "yarn":
+      return `yarn dlx ${packageName}`;
+    case "bun":
+      return `bunx ${packageName}`;
+    default:
+      return `npx ${packageName}`;
+  }
+}
+
+function detectInvocationPackageManager() {
+  const execPath = process.env.npm_execpath ?? "";
+  const userAgent = process.env.npm_config_user_agent ?? "";
+
+  if (execPath.includes("pnpm") || userAgent.startsWith("pnpm/")) return "pnpm";
+  if (execPath.includes("yarn") || userAgent.startsWith("yarn/")) return "yarn";
+  if (execPath.includes("bun") || userAgent.startsWith("bun/")) return "bun";
+  return "npm";
+}
 
 export async function runCli(argv) {
   const { command, options } = parseArgs(argv);
@@ -32,7 +64,7 @@ export async function runCli(argv) {
   }
 
   if (command === "detect") {
-    await runDetect(options);
+    await runDetect(options, packageManifest);
     return;
   }
 
@@ -46,7 +78,7 @@ export async function runCli(argv) {
     return;
   }
 
-  throw new Error(`Unknown command "${command}". Run "${cliName} help".`);
+  throw new Error(`Unknown command "${command}". Run "${resolveSuggestedInvocation(packageManifest.name)} help".`);
 }
 
 async function readPackageManifest() {
@@ -150,7 +182,8 @@ async function runInit(options, packageManifest) {
   }
 
   if (!options.dryRun) {
-    console.log('Tracked in .harness/manifest.json. Run "harness update" to apply future harness releases.');
+    const invoke = resolveSuggestedInvocation(packageManifest.name);
+    console.log(`Tracked in .harness/manifest.json. Run "${invoke} update" to apply future harness releases.`);
   }
 }
 
@@ -207,9 +240,10 @@ async function runDoctor(options) {
   if (!ok) process.exitCode = 1;
 }
 
-async function runDetect(options) {
+async function runDetect(options, packageManifest) {
   const project = await detectProject(options.cwd);
   const adapters = options.allAdapters ? null : options.adapters ?? project.detectedAdapters;
+  const invoke = resolveSuggestedInvocation(packageManifest.name);
 
   console.log(`Agentic Harness detect for ${project.name}`);
   console.log(`Root: ${project.root}`);
@@ -217,7 +251,7 @@ async function runDetect(options) {
   console.log(`Stack: ${project.stack}`);
   console.log(`Detected adapters: ${formatAdapters(project.detectedAdapters)}`);
   console.log(`Recommended adapters: ${formatAdapters(adapters)}`);
-  console.log(`Suggested install: ${cliName} --mode standard${adapters?.length ? ` --adapters ${adapters.join(",")}` : ""}`);
+  console.log(`Suggested install: ${invoke} --mode standard${adapters?.length ? ` --adapters ${adapters.join(",")}` : ""}`);
 }
 
 function resolveAdapters(project, options, config = {}) {
