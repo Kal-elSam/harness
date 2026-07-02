@@ -5,7 +5,7 @@ Paquete reutilizable para instalar un harness de ingeniería agéntica en proyec
 Nombre del paquete CLI:
 
 ```txt
-@sgs/harness
+@kal-elsam/harness
 ```
 
 Comandos:
@@ -20,13 +20,13 @@ harness-sgs
 Desde cualquier proyecto:
 
 ```bash
-pnpm dlx @sgs/harness init --mode enterprise
+pnpm dlx @kal-elsam/harness init --mode enterprise
 ```
 
 O con npm:
 
 ```bash
-npx @sgs/harness init --mode enterprise
+npx @kal-elsam/harness init --mode enterprise
 ```
 
 Para probar localmente desde este repo:
@@ -89,9 +89,9 @@ repo-template/
 Para instalar desde paquete:
 
 ```bash
-pnpm dlx @sgs/harness init --mode standard
-pnpm dlx @sgs/harness init --mode enterprise
-pnpm dlx @sgs/harness doctor
+pnpm dlx @kal-elsam/harness init --mode standard
+pnpm dlx @kal-elsam/harness init --mode enterprise
+pnpm dlx @kal-elsam/harness doctor
 ```
 
 Para proyecto nuevo en Cursor sin publicar el paquete todavía:
@@ -140,7 +140,7 @@ git push origin v0.1.0
 Después del workflow `publish.yml`, podrá usarse en cualquier repo con:
 
 ```bash
-pnpm dlx @sgs/harness init --mode enterprise
+pnpm dlx @kal-elsam/harness init --mode enterprise
 ```
 
 Ver política completa en `SECURITY.md`.

@@ -117,7 +117,7 @@ Usage:
   sgs-harness doctor
 
 Examples:
-  pnpm dlx @sgs/harness init --mode enterprise
-  npx @sgs/harness init --mode standard
+  pnpm dlx @kal-elsam/harness init --mode enterprise
+  npx @kal-elsam/harness init --mode standard
 `);
 }

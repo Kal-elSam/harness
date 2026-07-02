@@ -1,5 +1,5 @@
 {
-  "name": "@sgs/harness",
+  "name": "@kal-elsam/harness",
   "version": "0.1.0",
   "description": "Installable AI governance harness for Codex, Cursor, Claude, Gemini, Copilot, Engram, and Graphify.",
   "type": "module",
@@ -36,6 +36,9 @@
     "tdd"
   ],
   "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18.18"
   }
