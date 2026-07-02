@@ -1,6 +1,11 @@
 # Agentic Engineering Harness Pack
 
+[![npm version](https://img.shields.io/npm/v/@kal-elsam/harness.svg)](https://www.npmjs.com/package/@kal-elsam/harness)
+
 Paquete reutilizable para instalar un harness de ingeniería agéntica en proyectos nuevos o existentes.
+
+- **npm:** https://www.npmjs.com/package/@kal-elsam/harness
+- **repo:** https://github.com/Kal-elSam/harness
 
 Nombre del paquete CLI:
 
@@ -94,7 +99,7 @@ pnpm dlx @kal-elsam/harness init --mode enterprise
 pnpm dlx @kal-elsam/harness doctor
 ```
 
-Para proyecto nuevo en Cursor sin publicar el paquete todavía:
+Para proyecto nuevo en Cursor sin usar el paquete npm (fallback manual):
 
 1. Abre el proyecto.
 2. Copia el contenido de `prompts/HARNESS_INSTALLER_MASTER.md`.
@@ -121,27 +126,24 @@ Instala el harness en modo enterprise porque este proyecto tendrá IA, API, DB e
 
 ## Publicación
 
-Cuando el nombre final esté confirmado:
+Publicado en npm como `@kal-elsam/harness`. La release se hace con **npm Trusted Publishing/OIDC** desde GitHub Actions — sin `NPM_TOKEN`.
+
+Antes de taggear una nueva versión:
 
 ```bash
 npm test
 npm pack --dry-run
 ```
 
-La publicación debe hacerse desde GitHub Actions con npm Trusted Publishing/OIDC, no con `NPM_TOKEN`.
-
-Flujo:
+Flujo de release:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+# actualizar version en package.json
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-Después del workflow `publish.yml`, podrá usarse en cualquier repo con:
-
-```bash
-pnpm dlx @kal-elsam/harness init --mode enterprise
-```
+El workflow `publish.yml` corre en tags `v*` y publica a npm usando el environment `npm-publish`.
 
 Ver política completa en `SECURITY.md`.
 
