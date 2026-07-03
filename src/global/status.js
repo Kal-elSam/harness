@@ -70,13 +70,13 @@ function resolveOverallStatus({ state, doctor }) {
 function resolveNextAction(overall, { backups = 0 } = {}) {
   switch (overall) {
     case "missing":
-      return 'Run "harness install" (or "harness setup") to configure the local ecosystem.';
+      return 'Run "harness setup" (or "harness install") to configure the local ecosystem.';
     case "drift":
       return backups > 0
-        ? 'Run "harness update" to repair managed content. Use "harness rollback" to restore a prior snapshot.'
-        : 'Run "harness update" to repair managed content.';
+        ? 'Run "harness sync" to repair managed content. Use "harness rollback" to restore a prior snapshot.'
+        : 'Run "harness sync" to repair managed content.';
     case "failed":
-      return 'Run "harness doctor" for details, then "harness update" or "harness install".';
+      return 'Run "harness doctor" for details, then "harness sync" or "harness setup".';
     case "ok":
       return backups > 0
         ? 'Ecosystem healthy. Use "harness rollback" if you need a prior snapshot.'

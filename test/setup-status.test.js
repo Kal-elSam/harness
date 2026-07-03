@@ -127,7 +127,7 @@ test("status reports missing before install", async () => {
   const report = await buildStatusReport(homeDir, { packageRoot });
 
   assert.equal(report.overall, "missing");
-  assert.match(report.nextAction, /harness setup|harness install/);
+  assert.match(report.nextAction, /harness setup/);
   assert.equal(report.ok, false);
 });
 
@@ -144,7 +144,7 @@ test("status reports ok after install and drift after tamper", async () => {
   await writeFile(join(homeDir, ".harness", "components", "sdd-core", "workflow.md"), "tampered");
   const drifted = await buildStatusReport(homeDir, { packageRoot });
   assert.equal(drifted.overall, "drift");
-  assert.match(drifted.nextAction, /harness update/);
+  assert.match(drifted.nextAction, /harness sync/);
   assert.equal(
     drifted.components.find((component) => component.id === "sdd-core").status,
     "stale"
@@ -192,5 +192,5 @@ test("harness setup --dry-run and status CLI work", async () => {
   });
   assert.notEqual(driftStatus.status, 0);
   assert.match(driftStatus.stdout, /Overall: DRIFT/);
-  assert.match(driftStatus.stdout, /harness update/);
+  assert.match(driftStatus.stdout, /harness sync/);
 });

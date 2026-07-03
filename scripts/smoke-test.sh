@@ -108,8 +108,12 @@ if npx --no-install harness doctor; then
 fi
 
 echo
-echo "== harness update repairs drift =="
-npx --no-install harness update
+echo "== harness sync repairs drift =="
+npx --no-install harness sync
+
+echo
+echo "== harness status after sync =="
+npx --no-install harness status
 
 echo
 echo "== harness doctor after repair =="

@@ -40,9 +40,9 @@ npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,s
 Control plane:
 
 ```bash
+npx @kal-elsam/harness setup
 npx @kal-elsam/harness status
-npx @kal-elsam/harness doctor
-npx @kal-elsam/harness update
+npx @kal-elsam/harness sync
 ```
 
 Legacy opt-in: scaffold governance files into a repository:
@@ -67,11 +67,13 @@ npm i -g @kal-elsam/harness
 ```bash
 harness setup
 harness setup --dry-run
+harness status
+harness sync
+harness sync --dry-run
 harness install
 harness install --agents cursor,codex --components orchestrator,sdd-core
-harness status
-harness update
 harness doctor
+harness update
 harness detect
 harness components
 harness components validate
@@ -91,6 +93,7 @@ To try locally from this repo:
 ```bash
 node ./bin/harness.js setup --dry-run
 node ./bin/harness.js status
+node ./bin/harness.js sync --dry-run
 node ./bin/harness.js install --dry-run
 ```
 
@@ -116,12 +119,28 @@ harness setup --agents cursor,codex --components orchestrator,sdd-core --yes
 ### `harness status`
 
 Control panel for the local ecosystem: detected vs managed agents, installed
-components, check counts (ok/drift/missing), backups, overall status, and the
+components, check counts (ok/missing/stale), backups, overall status, and the
 recommended next action.
 
 ```bash
 harness status
 ```
+
+### `harness sync`
+
+Primary convergence command. Detects managed state, repairs drift with the same
+safe engine as `update` (managed content only, backups before config changes,
+user content preserved), then prints a status summary.
+
+```bash
+harness sync
+harness sync --dry-run
+```
+
+- No state → recommends `harness setup`, writes nothing.
+- Already OK → writes nothing.
+- Drift/missing/stale → repairs, then shows status.
+- `harness update` remains as a technical alias.
 
 ### `harness install` (agent-global)
 

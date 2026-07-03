@@ -2,6 +2,27 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.9.0 — 2026-07-03
+
+Minor release. Adds `harness sync` as the primary convergence command.
+
+### Sync command
+
+- `harness sync` detects managed state, repairs drift/missing/stale with the same
+  safe engine as `update`, and prints a status summary.
+- `harness sync --dry-run` reports planned repairs without writing.
+- No global state → recommends `harness setup` and writes nothing.
+- Already OK → writes nothing.
+- `update` remains as a technical/compatibility alias; `sync` is the day-to-day UX.
+
+### Recommended flow
+
+```bash
+harness setup
+harness status
+harness sync
+```
+
 ## 0.8.0 — 2026-07-03
 
 Minor release. Product pivot to a local AI ecosystem configurator, plus portable

@@ -8,6 +8,7 @@ import { runGlobalDoctorChecks } from "./global-doctor.js";
 import { describeBackupSnapshots, applyRollback, previewRollback } from "./rollback.js";
 import { runHarnessSetup } from "./setup.js";
 import { buildStatusReport } from "./status.js";
+import { runHarnessSync } from "./sync.js";
 
 export async function runGlobalInstall(options, packageManifest, packageRoot, { update = false } = {}) {
   const homeDir = resolveHomeDir();
@@ -51,10 +52,55 @@ export async function runGlobalSetup(options, packageManifest, packageRoot) {
   return outcome;
 }
 
-export async function runGlobalStatus(packageRoot, { workspaceRoot = process.cwd() } = {}) {
+export async function runGlobalStatus(packageRoot, { workspaceRoot = process.cwd(), setExitCode = true } = {}) {
   const homeDir = resolveHomeDir();
   const report = await buildStatusReport(homeDir, { packageRoot, workspaceRoot });
+  printStatusReport(report);
+  if (setExitCode && !report.ok) process.exitCode = 1;
+  return report;
+}
 
+export async function runGlobalSync(options, packageManifest, packageRoot) {
+  const homeDir = resolveHomeDir();
+  const outcome = await runHarnessSync({
+    packageRoot,
+    packageName: packageManifest.name,
+    cliVersion: packageManifest.version,
+    homeDir,
+    workspaceRoot: options.cwd,
+    dryRun: options.dryRun
+  });
+
+  console.log("Harness sync — converge local AI ecosystem");
+
+  switch (outcome.action) {
+    case "setup-required":
+      console.log('No managed state found. Run "harness setup" first.');
+      if (options.dryRun) console.log("Dry run: nothing was written.");
+      break;
+    case "noop":
+      console.log("Ecosystem already in sync. No changes needed.");
+      if (options.dryRun) console.log("Dry run: nothing was written.");
+      break;
+    case "plan":
+      printSyncRepairSummary(outcome.result, { dryRun: true });
+      break;
+    case "repaired":
+      printSyncRepairSummary(outcome.result, { dryRun: false });
+      break;
+    default: {
+      const _exhaustive = outcome.action;
+      throw new Error(`Unknown sync action: ${_exhaustive}`);
+    }
+  }
+
+  console.log("");
+  printStatusReport(outcome.report);
+  if (!outcome.report.ok) process.exitCode = 1;
+  return outcome;
+}
+
+function printStatusReport(report) {
   console.log("Harness status — local AI ecosystem");
   console.log(`Home: ${report.homeDir}`);
   console.log(`State root: ${report.stateRoot}`);
@@ -89,9 +135,25 @@ export async function runGlobalStatus(packageRoot, { workspaceRoot = process.cwd
   console.log(`Backups: ${report.backups} snapshot(s)`);
   console.log(`Overall: ${report.overall.toUpperCase()}`);
   console.log(`Next: ${report.nextAction}`);
+}
 
-  if (!report.ok) process.exitCode = 1;
-  return report;
+function printSyncRepairSummary(result, { dryRun = false } = {}) {
+  console.log(dryRun ? "Planned repairs:" : "Applied repairs:");
+  console.log(`  Drift detected: ${result.driftDetected ? "yes" : "no"}`);
+  console.log(`  Assets repaired: ${result.assetsRepaired.length}`);
+  console.log(`  Assets unchanged: ${result.assetsUnchanged.length}`);
+  console.log(`  Sections repaired: ${result.configsRepaired.length}`);
+  console.log(`  Backups: ${result.backups.length}`);
+
+  if (dryRun && result.repairs?.length) {
+    for (const repair of result.repairs) {
+      console.log(`  - [${repair.status.toUpperCase()}] ${repair.name}`);
+    }
+  }
+
+  if (dryRun) {
+    console.log("Dry run: nothing was written.");
+  }
 }
 
 function printInstallResult(result, { update = false, dryRun = false, command = null } = {}) {

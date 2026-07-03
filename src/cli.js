@@ -17,6 +17,7 @@ import {
   runGlobalRollback,
   runGlobalSetup,
   runGlobalStatus,
+  runGlobalSync,
   runGlobalUninstall
 } from "./global/global-cli.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
@@ -81,6 +82,9 @@ export async function runCli(argv) {
       return;
     case "status":
       await runGlobalStatus(packageRoot, { workspaceRoot: options.cwd });
+      return;
+    case "sync":
+      await runGlobalSync(options, packageManifest, packageRoot);
       return;
     case "install":
       await dispatchByScope(options, "agent-global", {
@@ -291,6 +295,7 @@ function normalizeCommand(command) {
   if (command === "install" || command === "i") return "install";
   if (command === "setup") return "setup";
   if (command === "status") return "status";
+  if (command === "sync") return "sync";
   if (command === "init") return "init";
   if (command === "update" || command === "u") return "update";
   if (command === "doctor") return "doctor";
@@ -325,11 +330,12 @@ sections, components, backups, and drift repair under ~/.harness.
 
 Usage:
   harness setup [--dry-run] [--yes] [--agents <list>] [--components <list>]
+  harness status
+  harness sync [--dry-run]
   harness install [--agents <list>] [--components <list>] [--dry-run]
   harness install --no-default-components
-  harness status
-  harness update [--dry-run]
   harness doctor
+  harness update [--dry-run]
   harness install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
   harness init [--mode minimal|standard|enterprise] (workspace alias)
   harness detect
@@ -347,10 +353,11 @@ Scopes:
 
 Commands:
   setup      Interactive wizard: detect agents, choose integrations, apply plan.
-  install    Non-interactive configure (agent-global) or legacy workspace scaffold.
   status     Control panel: agents, components, drift, backups, next action.
-  update     Refresh managed content without touching user-owned sections.
+  sync       Converge managed content (repair drift), then show status.
+  install    Non-interactive configure (agent-global) or legacy workspace scaffold.
   doctor     Detailed health checks for managed state and configs.
+  update     Technical repair alias (prefer sync for day-to-day use).
   detect     Inspect global agents and the current project. Read-only.
   backups    List config snapshots under ~/.harness/backups.
   rollback   Preview or restore a prior config snapshot (--apply to write).
@@ -360,12 +367,11 @@ Commands:
 
 Examples:
   npx @kal-elsam/harness setup
-  npx @kal-elsam/harness setup --dry-run
-  npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core
   harness status
-  harness update
+  harness sync
+  harness sync --dry-run
+  npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core
   harness install --scope=workspace --mode enterprise
-  harness components init team-rules --label "Team Rules"
   harness uninstall --dry-run
 
 Aliases: agentic-harness, sgs-harness, harness-sgs
