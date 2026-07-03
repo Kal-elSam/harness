@@ -2,6 +2,41 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.8.0 — 2026-07-03
+
+Minor release. Product pivot to a local AI ecosystem configurator, plus portable
+workspace component pack/import.
+
+### Terminal setup & control plane
+
+- `harness setup --dry-run` is the recommended entry: detects Cursor/Codex/OpenCode/Claude,
+  prints the agent-global plan, writes nothing, never touches the workspace.
+- `harness setup` applies the same safe agent-global result as `harness install`.
+- `harness status` control plane: detected agents, installed components, ok/missing/stale,
+  backups, and next action (`install`, `doctor`, `update`, `rollback`).
+- Non-interactive install remains: `harness install --agents … --components …`.
+- Workspace install is opt-in/legacy (`--scope=workspace`); agent-global is the primary path.
+- Mental model: Harness is the local configurator/orchestrator. npm is distribution only.
+  Terminal UX prioritizes clear non-interactive modes (Pi-inspired clarity, no Pi runtime).
+
+### Advanced: component distribution
+
+- `harness components pack <id> --out <file>` builds a `.tgz` with a one-component
+  `catalog.json` and declared assets only.
+- `harness components import <file>` installs into `.harness/components/` of the current
+  workspace without touching `~/.harness` or running package scripts.
+- Import refuses overwrites, bundled IDs, path traversal, symlinks, and undeclared assets.
+- Pack/import is an advanced capability, not the product identity.
+
+### Primary flow
+
+```bash
+harness setup --dry-run
+harness setup
+harness status
+harness install --agents cursor,codex --components orchestrator,sdd-core
+```
+
 ## 0.7.0 — 2026-07-03
 
 Minor release. Adds public authoring commands for workspace components.

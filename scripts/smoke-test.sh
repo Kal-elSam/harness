@@ -56,12 +56,27 @@ export HARNESS_HOME="$FAKE_HOME"
 assert_harness_home_isolated
 
 echo
+echo "== harness setup --dry-run =="
+npx --no-install harness setup --dry-run
+
+echo
+echo "== harness status (before install) =="
+if npx --no-install harness status; then
+  echo "Expected status to fail before install" >&2
+  exit 1
+fi
+
+echo
 echo "== harness install --dry-run (agent-global) =="
 npx --no-install harness install --dry-run
 
 echo
 echo "== harness install (agent-global) =="
 npx --no-install harness install
+
+echo
+echo "== harness status (after install) =="
+npx --no-install harness status
 
 SNAPSHOT="$(ls -A "$FAKE_HOME/.harness/backups" | head -1)"
 BACKUP_FILE="$(ls -A "$FAKE_HOME/.harness/backups/$SNAPSHOT" | head -1)"

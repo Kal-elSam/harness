@@ -1,10 +1,13 @@
 import { GLOBAL_AGENT_IDS, detectInstalledAdapters } from "./registry.js";
 import { describeBundledComponentCatalog, describeWorkspaceComponentCatalog } from "./component-registry.js";
 import { initWorkspaceComponent, validateWorkspaceComponentsCatalog } from "./component-authoring.js";
+import { importWorkspaceComponent, packWorkspaceComponent } from "./component-distribution.js";
 import { installGlobalHarness, uninstallGlobalHarness, updateGlobalHarness } from "./global-installer.js";
 import { resolveHomeDir, harnessHomePaths } from "./paths.js";
 import { runGlobalDoctorChecks } from "./global-doctor.js";
 import { describeBackupSnapshots, applyRollback, previewRollback } from "./rollback.js";
+import { runHarnessSetup } from "./setup.js";
+import { buildStatusReport } from "./status.js";
 
 export async function runGlobalInstall(options, packageManifest, packageRoot, { update = false } = {}) {
   const homeDir = resolveHomeDir();
@@ -22,9 +25,79 @@ export async function runGlobalInstall(options, packageManifest, packageRoot, { 
     dryRun: options.dryRun
   });
 
-  const verb = update ? "update" : "install";
-  const pastLabel = update ? "updated" : "installed";
-  console.log(`Agentic Harness global ${options.dryRun ? `${verb} plan` : pastLabel} (scope: agent-global)`);
+  printInstallResult(result, { update, dryRun: options.dryRun });
+  return result;
+}
+
+export async function runGlobalSetup(options, packageManifest, packageRoot) {
+  const homeDir = resolveHomeDir();
+  const outcome = await runHarnessSetup({
+    packageRoot,
+    packageName: packageManifest.name,
+    cliVersion: packageManifest.version,
+    homeDir,
+    workspaceRoot: options.cwd,
+    agents: options.adapters,
+    components: options.components,
+    noDefaultComponents: options.noDefaultComponents,
+    dryRun: options.dryRun,
+    yes: options.yes,
+    interactive: options.interactive
+  });
+
+  if (outcome.cancelled) return outcome;
+
+  printInstallResult(outcome.result, { update: false, dryRun: options.dryRun, command: "setup" });
+  return outcome;
+}
+
+export async function runGlobalStatus(packageRoot, { workspaceRoot = process.cwd() } = {}) {
+  const homeDir = resolveHomeDir();
+  const report = await buildStatusReport(homeDir, { packageRoot, workspaceRoot });
+
+  console.log("Harness status — local AI ecosystem");
+  console.log(`Home: ${report.homeDir}`);
+  console.log(`State root: ${report.stateRoot}`);
+  console.log(
+    report.state
+      ? `State: installed (cliVersion=${report.state.cliVersion ?? "unknown"})`
+      : "State: missing"
+  );
+  console.log("");
+
+  console.log("Agents:");
+  for (const agent of report.agents) {
+    const detected = agent.detected ? "detected" : "not detected";
+    const managed = agent.managed ? "managed" : "unmanaged";
+    console.log(`  ${agent.id.padEnd(10)} ${detected.padEnd(13)} ${managed}`);
+  }
+
+  console.log("");
+  console.log("Components:");
+  if (report.components.length === 0) {
+    console.log("  none");
+  } else {
+    for (const component of report.components) {
+      console.log(
+        `  ${component.id.padEnd(14)} ${String(component.version).padEnd(8)} ${component.status}`
+      );
+    }
+  }
+
+  console.log("");
+  console.log(`Checks: ok=${report.counts.ok} missing=${report.counts.missing} stale=${report.counts.stale} warning=${report.counts.warning}`);
+  console.log(`Backups: ${report.backups} snapshot(s)`);
+  console.log(`Overall: ${report.overall.toUpperCase()}`);
+  console.log(`Next: ${report.nextAction}`);
+
+  if (!report.ok) process.exitCode = 1;
+  return report;
+}
+
+function printInstallResult(result, { update = false, dryRun = false, command = null } = {}) {
+  const verb = update ? "update" : (command === "setup" ? "setup" : "install");
+  const pastLabel = update ? "updated" : (command === "setup" ? "configured" : "installed");
+  console.log(`Agentic Harness global ${dryRun ? `${verb} plan` : pastLabel} (scope: agent-global)`);
   console.log(`State root: ${result.stateRoot}`);
   console.log(`Agents: ${result.agents.join(", ")}`);
   console.log(`Components: ${result.components.join(", ") || "none (core plumbing only)"}`);
@@ -42,7 +115,7 @@ export async function runGlobalInstall(options, packageManifest, packageRoot, { 
   console.log(`Configs unchanged: ${result.configsUnchanged.length}`);
   console.log(`Backups: ${result.backups.length}`);
 
-  if (options.dryRun) {
+  if (dryRun) {
     if (result.repairs?.length) {
       console.log(`Planned repairs: ${result.repairs.length}`);
       for (const repair of result.repairs) {
@@ -53,7 +126,7 @@ export async function runGlobalInstall(options, packageManifest, packageRoot, { 
     return;
   }
 
-  console.log('State tracked in ~/.harness/state.json. Run "harness doctor" to verify.');
+  console.log('State tracked in ~/.harness/state.json. Run "harness status" or "harness doctor" to verify.');
 }
 
 export async function runGlobalUninstall(options) {
@@ -176,6 +249,38 @@ export async function runComponentsInit(options) {
   console.log(`  1. Edit .harness/components/${result.entry.id}/README.md`);
   console.log("  2. harness components validate");
   console.log(`  3. harness install --components ${result.entry.id}`);
+}
+
+export async function runComponentsPack(options) {
+  const result = await packWorkspaceComponent({
+    workspaceRoot: options.cwd,
+    id: options.componentId,
+    outPath: options.outPath
+  });
+
+  console.log("Workspace component packed");
+  console.log(`Id: ${result.entry.id}`);
+  console.log(`Version: ${result.entry.version}`);
+  console.log(`Bundle: ${result.outPath}`);
+  console.log(`Assets: ${result.entry.assetFiles.join(", ")}`);
+}
+
+export async function runComponentsImport(options) {
+  const result = await importWorkspaceComponent({
+    workspaceRoot: options.cwd,
+    bundlePath: options.bundlePath
+  });
+
+  console.log("Workspace component imported");
+  console.log(`Id: ${result.entry.id}`);
+  console.log(`Label: ${result.entry.label}`);
+  console.log(`Version: ${result.entry.version}`);
+  console.log(`Catalog: .harness/components/catalog.json`);
+  console.log(`Assets: ${result.entry.assetFiles.map((asset) => `.harness/components/${result.entry.id}/${asset}`).join(", ")}`);
+  console.log("");
+  console.log("Next:");
+  console.log("  1. harness components validate");
+  console.log(`  2. harness install --components ${result.entry.id}`);
 }
 
 export async function runGlobalBackups() {

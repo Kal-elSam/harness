@@ -7,12 +7,16 @@ import { COMPONENT_IDS, DEFAULT_COMPONENT_IDS } from "./global/component-registr
 import {
   printGlobalComponents,
   printGlobalDetect,
+  runComponentsImport,
   runComponentsInit,
+  runComponentsPack,
   runComponentsValidate,
   runGlobalBackups,
   runGlobalDoctor,
   runGlobalInstall,
   runGlobalRollback,
+  runGlobalSetup,
+  runGlobalStatus,
   runGlobalUninstall
 } from "./global/global-cli.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
@@ -72,6 +76,12 @@ export async function runCli(argv) {
   const invoke = resolveSuggestedInvocation(packageManifest.name);
 
   switch (command) {
+    case "setup":
+      await runGlobalSetup(options, packageManifest, packageRoot);
+      return;
+    case "status":
+      await runGlobalStatus(packageRoot, { workspaceRoot: options.cwd });
+      return;
     case "install":
       await dispatchByScope(options, "agent-global", {
         "agent-global": () => runGlobalInstall(options, packageManifest, packageRoot),
@@ -138,6 +148,12 @@ async function dispatchComponentsCommand(options, invoke) {
     case "init":
       await runComponentsInit(options);
       return;
+    case "pack":
+      await runComponentsPack(options);
+      return;
+    case "import":
+      await runComponentsImport(options);
+      return;
     default:
       throw new Error(
         `Unknown components action "${options.componentsAction}". Run "${invoke} help".`
@@ -167,9 +183,12 @@ function parseArgs(argv) {
     componentsAction: null,
     componentId: null,
     label: null,
+    outPath: null,
+    bundlePath: null,
     noDefaultComponents: false,
     force: false,
     dryRun: false,
+    yes: false,
     apply: false,
     snapshot: null,
     help: false,
@@ -209,11 +228,14 @@ function parseArgs(argv) {
     } else if (arg === "--no-default-components") options.noDefaultComponents = true;
     else if (arg === "--force") options.force = true;
     else if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--yes" || arg === "-y") options.yes = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--to") options.snapshot = args[++index];
     else if (arg.startsWith("--to=")) options.snapshot = arg.slice("--to=".length);
     else if (arg === "--label") options.label = args[++index];
     else if (arg.startsWith("--label=")) options.label = arg.slice("--label=".length);
+    else if (arg === "--out") options.outPath = resolve(args[++index]);
+    else if (arg.startsWith("--out=")) options.outPath = resolve(arg.slice("--out=".length));
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
     else throw new Error(`Unknown option "${arg}".`);
@@ -229,18 +251,30 @@ function parseComponentsAction(args, options) {
   args.shift();
   options.componentsAction = action;
 
-  if (action === "init") {
+  if (action === "init" || action === "pack") {
     const componentId = args[0];
     if (!componentId || componentId.startsWith("-")) {
-      throw new Error('Missing component id. Use: harness components init <id> --label "My Label"');
+      const usage = action === "init"
+        ? 'harness components init <id> --label "My Label"'
+        : "harness components pack <id> --out <file>";
+      throw new Error(`Missing component id. Use: ${usage}`);
     }
     options.componentId = args.shift();
     return;
   }
 
+  if (action === "import") {
+    const bundlePath = args[0];
+    if (!bundlePath || bundlePath.startsWith("-")) {
+      throw new Error("Missing bundle path. Use: harness components import <file>");
+    }
+    options.bundlePath = resolve(args.shift());
+    return;
+  }
+
   if (action === "validate") return;
 
-  throw new Error(`Unknown components action "${action}". Use validate or init.`);
+  throw new Error(`Unknown components action "${action}". Use validate, init, pack, or import.`);
 }
 
 function parseScope(value) {
@@ -255,6 +289,8 @@ function normalizeCommand(command) {
   if (!command) return "install";
 
   if (command === "install" || command === "i") return "install";
+  if (command === "setup") return "setup";
+  if (command === "status") return "status";
   if (command === "init") return "init";
   if (command === "update" || command === "u") return "update";
   if (command === "doctor") return "doctor";
@@ -283,55 +319,53 @@ function parseAdapters(value) {
 function printHelp() {
   console.log(`Agentic Harness (@kal-elsam/harness)
 
-Configure the local AI agent ecosystem (Cursor, Codex, OpenCode, Claude) or
-install AI governance into a repository: SDD, TDD, evals, adapters and gates.
+Local AI ecosystem configurator. Harness does not install AI apps — it powers and
+coordinates agents you already have (Cursor, Codex, OpenCode, Claude) with managed
+sections, components, backups, and drift repair under ~/.harness.
 
 Usage:
-  harness install [--scope=agent-global|workspace] [--components <list>] [--dry-run]
+  harness setup [--dry-run] [--yes] [--agents <list>] [--components <list>]
+  harness install [--agents <list>] [--components <list>] [--dry-run]
   harness install --no-default-components
-  harness install --scope=workspace [--mode minimal|standard|enterprise] [--adapters <list>] [--force]
-  harness init [--mode minimal|standard|enterprise] [--adapters <list>] (workspace alias)
+  harness status
+  harness update [--dry-run]
+  harness doctor
+  harness install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
+  harness init [--mode minimal|standard|enterprise] (workspace alias)
   harness detect
-  harness update [--scope=agent-global|workspace] [--dry-run]
-  harness doctor [--scope=agent-global|workspace]
   harness backups
   harness rollback --to <snapshot> [--apply]
   harness components
-  harness components validate [--cwd <path>]
-  harness components init <id> --label "<label>" [--cwd <path>]
+  harness components validate|init|pack|import ...
   harness uninstall [--dry-run]
 
 Scopes:
-  agent-global (default)  Configure local agent roots. Writes managed state to
-                          ~/.harness, installs orchestrator + sdd-core by default,
-                          and adds managed marker sections to agent configs with a
-                          backup before every change. No project files.
-  workspace               Scaffold governance files into the current repo
-                          (previous default behavior). Writes .harness/manifest.json.
+  agent-global (default)  Configure local agent roots and managed sections.
+                          Primary product path. Writes ~/.harness state.
+  workspace (opt-in)      Legacy repo scaffolding into the current project.
+                          Explicit --scope=workspace only.
 
 Commands:
-  install    Configure the ecosystem (agent-global) or scaffold a repo (workspace).
-  init       Alias for install --scope=workspace (compatibility).
-  detect     Inspect global agents and the current project. Read-only.
+  setup      Interactive wizard: detect agents, choose integrations, apply plan.
+  install    Non-interactive configure (agent-global) or legacy workspace scaffold.
+  status     Control panel: agents, components, drift, backups, next action.
   update     Refresh managed content without touching user-owned sections.
-  doctor     Report installed agents, state, backups, and missing configs.
+  doctor     Detailed health checks for managed state and configs.
+  detect     Inspect global agents and the current project. Read-only.
   backups    List config snapshots under ~/.harness/backups.
   rollback   Preview or restore a prior config snapshot (--apply to write).
-  components List, validate, or scaffold workspace components.
+  components List, validate, scaffold, pack, or import workspace components.
   uninstall  Remove managed sections and global state. Backups are preserved.
+  init       Alias for install --scope=workspace (legacy).
 
 Examples:
-  npx @kal-elsam/harness install
-  npx @kal-elsam/harness install --components orchestrator,sdd-core
-  npx @kal-elsam/harness install --no-default-components
-  npx @kal-elsam/harness install --dry-run
-  npx @kal-elsam/harness install --scope=workspace --mode enterprise
+  npx @kal-elsam/harness setup
+  npx @kal-elsam/harness setup --dry-run
+  npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core
+  harness status
+  harness update
+  harness install --scope=workspace --mode enterprise
   harness components init team-rules --label "Team Rules"
-  harness components validate
-  harness install --components team-rules
-  harness doctor
-  harness backups
-  harness rollback --to <snapshot>
   harness uninstall --dry-run
 
 Aliases: agentic-harness, sgs-harness, harness-sgs

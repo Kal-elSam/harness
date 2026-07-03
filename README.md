@@ -2,29 +2,50 @@
 
 [![npm version](https://img.shields.io/npm/v/@kal-elsam/harness.svg)](https://www.npmjs.com/package/@kal-elsam/harness)
 
-Local AI ecosystem configurator and agentic engineering harness. By default it
-configures your local agent roots (Cursor, Codex, OpenCode, Claude) with managed,
-backed-up sections and writes its state to `~/.harness`. Workspace scaffolding
-into a repository remains available as an explicit scope.
+**Harness is a local AI ecosystem configurator** — not a template dumper and not an
+installer for AI apps. It detects agents you already use (Cursor, Codex, OpenCode,
+Claude), writes managed sections into their configs, installs coordination components
+under `~/.harness`, and keeps that ecosystem healthy with status, update, backups,
+and rollback.
+
+The npm package (`@kal-elsam/harness`) is how Harness is distributed. The product
+identity is the local control plane: setup, status, install, doctor, update.
+
+Terminal UX aims for Pi-like clarity (clear modes, non-interactive flags, extensible
+commands) without depending on Pi as a runtime or adding a Pi adapter.
 
 - **npm:** https://www.npmjs.com/package/@kal-elsam/harness
 - **repo:** https://github.com/Kal-elSam/harness
 
-Package name:
+## Quick start
 
-```txt
-@kal-elsam/harness
-```
-
-## Quick install
-
-Configure the local agent ecosystem (default, no project files):
+Recommended entry — preview what would be configured (no writes, agent-global only):
 
 ```bash
-npx @kal-elsam/harness install
+npx @kal-elsam/harness setup --dry-run
 ```
 
-Scaffold governance files into the current repository (previous default):
+Apply interactively:
+
+```bash
+npx @kal-elsam/harness setup
+```
+
+Non-interactive install:
+
+```bash
+npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core
+```
+
+Control plane:
+
+```bash
+npx @kal-elsam/harness status
+npx @kal-elsam/harness doctor
+npx @kal-elsam/harness update
+```
+
+Legacy opt-in: scaffold governance files into a repository:
 
 ```bash
 npx @kal-elsam/harness install --scope=workspace
@@ -44,18 +65,23 @@ npm i -g @kal-elsam/harness
 | `agentic-harness` | Descriptive alias |
 
 ```bash
+harness setup
+harness setup --dry-run
 harness install
-harness install --scope=agent-global
-harness install --scope=workspace
-harness detect
-harness doctor
+harness install --agents cursor,codex --components orchestrator,sdd-core
+harness status
 harness update
+harness doctor
+harness detect
 harness components
 harness components validate
 harness components init <id> --label "<label>"
+harness components pack <id> --out <file>    # advanced
+harness components import <file>             # advanced
 harness backups
 harness rollback --to <snapshot> [--apply]
 harness uninstall
+harness install --scope=workspace   # opt-in / legacy
 ```
 
 Legacy aliases (backward compatible): `sgs-harness`, `harness-sgs`
@@ -63,19 +89,43 @@ Legacy aliases (backward compatible): `sgs-harness`, `harness-sgs`
 To try locally from this repo:
 
 ```bash
+node ./bin/harness.js setup --dry-run
+node ./bin/harness.js status
 node ./bin/harness.js install --dry-run
-node ./bin/harness.js doctor
-node ./bin/harness.js init --mode enterprise --dry-run
 ```
 
 ## Install scopes
 
 | Scope | Default for | Behavior |
 |---|---|---|
-| `agent-global` | `install`, `update`, `doctor`, `uninstall` | Configures local agent roots, writes managed state to `~/.harness`, installs orchestrator/core metadata. No project folders. |
-| `workspace` | `init` (compatibility alias) | Copies `repo-template/` into the current repo and writes `.harness/manifest.json`. |
+| `agent-global` | `setup`, `install`, `update`, `doctor`, `status`, `uninstall` | Primary path. Configures local agent roots, managed sections, `~/.harness` state. No project folders. |
+| `workspace` | `init` only (opt-in/legacy) | Explicit `--scope=workspace`. Copies `repo-template/` into the current repo. |
+
+### `harness setup`
+
+Interactive wizard for the local ecosystem. Detects agents, shows a plan, and
+lets you choose agents/components before applying. Use `--dry-run` to preview
+without writing, or `--yes` / flags to skip prompts.
+
+```bash
+harness setup
+harness setup --dry-run
+harness setup --agents cursor,codex --components orchestrator,sdd-core --yes
+```
+
+### `harness status`
+
+Control panel for the local ecosystem: detected vs managed agents, installed
+components, check counts (ok/drift/missing), backups, overall status, and the
+recommended next action.
+
+```bash
+harness status
+```
 
 ### `harness install` (agent-global)
+
+Non-interactive configure. Same engine as `setup`.
 
 ```bash
 harness install --dry-run   # preview the plan, writes nothing
@@ -134,11 +184,24 @@ harness components validate
 harness install --components team-rules
 ```
 
+Advanced: share a workspace component between repos (no remote registry):
+
+```bash
+harness components pack team-rules --out team-rules.tgz
+# copy team-rules.tgz into another repo
+harness components import team-rules.tgz
+harness components validate
+harness install --components team-rules
+```
+
 - `harness components` lists bundled and workspace catalogs.
 - `harness components validate [--cwd <path>]` runs the same loader used by install/doctor.
 - `harness components init <id> --label "<label>"` scaffolds `catalog.json`,
   `.harness/components/<id>/README.md`, and a catalog entry (`version: "0.1.0"`).
   It refuses existing IDs and bundled IDs, and does not write to `~/.harness`.
+- `harness components pack <id> --out <file>` builds a portable `.tgz` (partial catalog + assets).
+- `harness components import <file>` installs declared assets only; no overwrite by default,
+  no `~/.harness` writes, no package scripts.
 
 ## Workspace lifecycle: init, update, doctor
 
