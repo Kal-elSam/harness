@@ -1,15 +1,15 @@
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-import { detectProject } from "./project-detection.js";
-import { installHarness } from "./template-installer.js";
-import { updateHarness } from "./harness-updater.js";
-import { runDoctorChecks } from "./doctor.js";
 import { ADAPTERS } from "./harness-files.js";
+import { GLOBAL_AGENT_IDS } from "./global/agents.js";
+import { printGlobalDetect, runGlobalDoctor, runGlobalInstall, runGlobalUninstall } from "./global/global-cli.js";
+import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(__dirname, "..");
 const KNOWN_CLI_NAMES = new Set(["harness", "agentic-harness", "sgs-harness", "harness-sgs"]);
+const SCOPES = new Set(["agent-global", "workspace"]);
 
 export function resolveSuggestedInvocation(packageName, argv = process.argv) {
   const invokedPath = argv[1] ?? "harness";
@@ -58,27 +58,53 @@ export async function runCli(argv) {
     return;
   }
 
-  if (command === "doctor") {
-    await runDoctor(options);
-    return;
-  }
+  const invoke = resolveSuggestedInvocation(packageManifest.name);
 
-  if (command === "detect") {
-    await runDetect(options, packageManifest);
-    return;
+  switch (command) {
+    case "install":
+      await dispatchByScope(options, "agent-global", {
+        "agent-global": () => runGlobalInstall(options, packageManifest, packageRoot),
+        workspace: () => runWorkspaceInit(options, packageManifest, packageRoot, invoke)
+      });
+      return;
+    case "init":
+      await dispatchByScope(options, "workspace", {
+        "agent-global": () => runGlobalInstall(options, packageManifest, packageRoot),
+        workspace: () => runWorkspaceInit(options, packageManifest, packageRoot, invoke)
+      });
+      return;
+    case "update":
+      await dispatchByScope(options, "agent-global", {
+        "agent-global": () => runGlobalInstall(options, packageManifest, packageRoot, { update: true }),
+        workspace: () => runWorkspaceUpdate(options, packageManifest, packageRoot)
+      });
+      return;
+    case "doctor":
+      await dispatchByScope(options, "agent-global", {
+        "agent-global": () => runGlobalDoctor(),
+        workspace: () => runWorkspaceDoctor(options)
+      });
+      return;
+    case "uninstall":
+      if (options.scope === "workspace") {
+        throw new Error('Workspace uninstall is not supported yet. Remove workspace files manually or via git.');
+      }
+      await runGlobalUninstall(options);
+      return;
+    case "detect":
+      printGlobalDetect();
+      console.log("");
+      await runWorkspaceDetect(options, invoke);
+      return;
+    default:
+      throw new Error(`Unknown command "${command}". Run "${invoke} help".`);
   }
+}
 
-  if (command === "update") {
-    await runUpdate(options, packageManifest);
-    return;
-  }
-
-  if (!command || command === "init") {
-    await runInit(options, packageManifest);
-    return;
-  }
-
-  throw new Error(`Unknown command "${command}". Run "${resolveSuggestedInvocation(packageManifest.name)} help".`);
+async function dispatchByScope(options, defaultScope, handlers) {
+  const scope = options.scope ?? defaultScope;
+  const handler = handlers[scope];
+  await handler();
 }
 
 async function readPackageManifest() {
@@ -89,10 +115,11 @@ function parseArgs(argv) {
   const args = [...argv];
   const firstArg = args[0];
   const implicitCommand = !firstArg || firstArg.startsWith("-");
-  const rawCommand = implicitCommand ? "init" : args.shift();
+  const rawCommand = implicitCommand ? "install" : args.shift();
   const command = normalizeCommand(rawCommand);
   const options = {
     cwd: process.cwd(),
+    scope: null,
     mode: "standard",
     modeExplicit: false,
     detect: implicitCommand,
@@ -108,6 +135,8 @@ function parseArgs(argv) {
     const arg = args[index];
 
     if (arg === "--cwd") options.cwd = resolve(args[++index]);
+    else if (arg === "--scope") options.scope = parseScope(args[++index]);
+    else if (arg.startsWith("--scope=")) options.scope = parseScope(arg.slice("--scope=".length));
     else if (arg === "--mode") {
       options.mode = args[++index];
       options.modeExplicit = true;
@@ -118,10 +147,12 @@ function parseArgs(argv) {
     else if (arg === "--all-adapters") {
       options.allAdapters = true;
       options.adapters = null;
-    } else if (arg === "--adapters") {
+    } else if (arg === "--adapters" || arg === "--agents") {
       options.adapters = parseAdapters(args[++index]);
     } else if (arg.startsWith("--adapters=")) {
       options.adapters = parseAdapters(arg.slice("--adapters=".length));
+    } else if (arg.startsWith("--agents=")) {
+      options.adapters = parseAdapters(arg.slice("--agents=".length));
     } else if (arg === "--force") options.force = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
@@ -132,12 +163,22 @@ function parseArgs(argv) {
   return { command, options };
 }
 
-function normalizeCommand(command) {
-  if (!command) return "init";
+function parseScope(value) {
+  if (!SCOPES.has(value)) {
+    throw new Error(`Invalid scope "${value}". Use agent-global or workspace.`);
+  }
 
-  if (command === "install" || command === "i") return "init";
+  return value;
+}
+
+function normalizeCommand(command) {
+  if (!command) return "install";
+
+  if (command === "install" || command === "i") return "install";
+  if (command === "init") return "init";
   if (command === "update" || command === "u") return "update";
   if (command === "doctor") return "doctor";
+  if (command === "uninstall") return "uninstall";
   if (command === "detect" || command === "d") return "detect";
   if (command === "help") return "help";
   if (command === "version") return "version";
@@ -156,148 +197,46 @@ function parseAdapters(value) {
   )];
 }
 
-async function runInit(options, packageManifest) {
-  const project = await detectProject(options.cwd);
-  const adapters = resolveAdapters(project, options);
-  const result = await installHarness({
-    project,
-    packageRoot,
-    mode: options.mode,
-    adapters,
-    packageName: packageManifest.name,
-    cliVersion: packageManifest.version,
-    force: options.force,
-    dryRun: options.dryRun
-  });
-
-  console.log(`Agentic Harness ${options.dryRun ? "plan" : "installed"} for ${project.name}`);
-  console.log(`Mode: ${result.mode}`);
-  console.log(`Adapters: ${formatAdapters(result.adapters)}`);
-  console.log(`Created: ${result.created.length}`);
-  console.log(`Skipped: ${result.skipped.length}`);
-  console.log(`Updated: ${result.updated.length}`);
-
-  if (result.skipped.length > 0 && !options.force) {
-    console.log("Existing files were preserved. Re-run with --force to overwrite.");
-  }
-
-  if (!options.dryRun) {
-    const invoke = resolveSuggestedInvocation(packageManifest.name);
-    console.log(`Tracked in .harness/manifest.json. Run "${invoke} update" to apply future harness releases.`);
-  }
-}
-
-async function runUpdate(options, packageManifest) {
-  const project = await detectProject(options.cwd);
-  const adapters = resolveAdapters(project, options, { allowManifestFallback: true });
-  const result = await updateHarness({
-    project,
-    packageRoot,
-    packageName: packageManifest.name,
-    cliVersion: packageManifest.version,
-    mode: options.modeExplicit ? options.mode : undefined,
-    adapters,
-    force: options.force,
-    dryRun: options.dryRun
-  });
-
-  console.log(`Agentic Harness ${options.dryRun ? "update plan" : "updated"} for ${project.name}`);
-  console.log(`Mode: ${result.mode}`);
-  console.log(`Adapters: ${formatAdapters(result.adapters)}`);
-  console.log(`Created: ${result.created.length}`);
-  console.log(`Updated: ${result.updated.length}`);
-  console.log(`Unchanged: ${result.unchanged.length}`);
-
-  if (result.skippedModified.length > 0) {
-    console.log(`Skipped, modified locally: ${result.skippedModified.length}`);
-    console.log("Re-run with --force to overwrite locally modified files.");
-  }
-
-  if (result.skippedUntracked.length > 0) {
-    console.log(`Skipped, untracked pre-existing files: ${result.skippedUntracked.length}`);
-  }
-}
-
-async function runDoctor(options) {
-  const project = await detectProject(options.cwd);
-  const { checks, ok } = await runDoctorChecks(project);
-
-  console.log(`Agentic Harness doctor for ${project.name}`);
-  console.log(`Root: ${project.root}`);
-  console.log(`Package manager: ${project.packageManager}`);
-  console.log(`Stack: ${project.stack}`);
-  console.log("");
-
-  for (const check of checks) {
-    const label = check.status.toUpperCase().padEnd(8);
-    const detail = check.detail ? ` — ${check.detail}` : "";
-    console.log(`[${label}] ${check.name}${detail}`);
-  }
-
-  console.log("");
-  console.log(ok ? "Status: OK" : "Status: FAILED (missing required files)");
-
-  if (!ok) process.exitCode = 1;
-}
-
-async function runDetect(options, packageManifest) {
-  const project = await detectProject(options.cwd);
-  const adapters = options.allAdapters ? null : options.adapters ?? project.detectedAdapters;
-  const invoke = resolveSuggestedInvocation(packageManifest.name);
-
-  console.log(`Agentic Harness detect for ${project.name}`);
-  console.log(`Root: ${project.root}`);
-  console.log(`Package manager: ${project.packageManager}`);
-  console.log(`Stack: ${project.stack}`);
-  console.log(`Detected adapters: ${formatAdapters(project.detectedAdapters)}`);
-  console.log(`Recommended adapters: ${formatAdapters(adapters)}`);
-  console.log(`Suggested install: ${invoke} --mode standard${adapters?.length ? ` --adapters ${adapters.join(",")}` : ""}`);
-}
-
-function resolveAdapters(project, options, config = {}) {
-  if (options.allAdapters) return null;
-  if (options.adapters) return options.adapters;
-  if (options.detect) return project.detectedAdapters;
-  if (config.allowManifestFallback) return undefined;
-  return null;
-}
-
-function formatAdapters(adapters) {
-  if (adapters == null) return "all";
-  if (adapters.length === 0) return "core only";
-  return adapters.join(", ");
-}
-
 function printHelp() {
   console.log(`Agentic Harness (@kal-elsam/harness)
 
-Install and maintain AI governance in any repository: SDD, TDD, evals, adapters and human approval gates.
+Configure the local AI agent ecosystem (Cursor, Codex, OpenCode, Claude) or
+install AI governance into a repository: SDD, TDD, evals, adapters and gates.
 
 Usage:
-  harness [--mode minimal|standard|enterprise] [--detect] [--adapters <list>] [--force] [--dry-run]
-  harness init|install [--mode minimal|standard|enterprise] [--detect] [--adapters <list>] [--force] [--dry-run]
-  harness detect [--adapters <list>]
-  harness update [--mode minimal|standard|enterprise] [--detect] [--adapters <list>] [--force] [--dry-run]
-  harness doctor
+  harness install [--scope=agent-global|workspace] [--dry-run]
+  harness install --scope=workspace [--mode minimal|standard|enterprise] [--adapters <list>] [--force]
+  harness init [--mode minimal|standard|enterprise] [--adapters <list>] (workspace alias)
+  harness detect
+  harness update [--scope=agent-global|workspace] [--dry-run]
+  harness doctor [--scope=agent-global|workspace]
+  harness uninstall [--dry-run]
+
+Scopes:
+  agent-global (default)  Configure local agent roots. Writes managed state to
+                          ~/.harness, installs orchestrator/core metadata, and
+                          adds managed marker sections to agent configs with a
+                          backup before every change. No project files.
+  workspace               Scaffold governance files into the current repo
+                          (previous default behavior). Writes .harness/manifest.json.
 
 Commands:
-  init      Install the harness. Writes .harness/manifest.json.
-  install   Alias for init.
-  detect    Inspect the project and recommend adapters.
-  update    Reapply the current harness templates. Preserves files you
-            changed locally unless --force is passed. Use --dry-run to preview.
-  doctor    Check harness health. Never modifies files.
+  install    Configure the ecosystem (agent-global) or scaffold a repo (workspace).
+  init       Alias for install --scope=workspace (compatibility).
+  detect     Inspect global agents and the current project. Read-only.
+  update     Refresh managed content without touching user-owned sections.
+  doctor     Report installed agents, state, backups, and missing configs.
+  uninstall  Remove managed sections and global state. Backups are preserved.
 
 Examples:
-  npx @kal-elsam/harness
-  npx @kal-elsam/harness detect
-  npx @kal-elsam/harness init --mode enterprise --all-adapters
-  npx @kal-elsam/harness update --dry-run
-  harness detect
-  harness --mode standard --adapters codex,cursor
+  npx @kal-elsam/harness install
+  npx @kal-elsam/harness install --dry-run
+  npx @kal-elsam/harness install --scope=workspace --mode enterprise
   harness doctor
+  harness uninstall --dry-run
 
 Aliases: agentic-harness, sgs-harness, harness-sgs
-Adapters: ${[...ADAPTERS].join(", ")}
+Global agents: ${GLOBAL_AGENT_IDS.join(", ")}
+Workspace adapters: ${[...ADAPTERS].join(", ")}
 `);
 }

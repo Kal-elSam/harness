@@ -21,6 +21,7 @@
     "bin",
     "src",
     "repo-template",
+    "global-template",
     "prompts",
     "README.md"
   ],

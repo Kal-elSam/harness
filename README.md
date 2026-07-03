@@ -2,7 +2,10 @@
 
 [![npm version](https://img.shields.io/npm/v/@kal-elsam/harness.svg)](https://www.npmjs.com/package/@kal-elsam/harness)
 
-Reusable package to install an agentic engineering harness into new or existing projects.
+Local AI ecosystem configurator and agentic engineering harness. By default it
+configures your local agent roots (Cursor, Codex, OpenCode, Claude) with managed,
+backed-up sections and writes its state to `~/.harness`. Workspace scaffolding
+into a repository remains available as an explicit scope.
 
 - **npm:** https://www.npmjs.com/package/@kal-elsam/harness
 - **repo:** https://github.com/Kal-elSam/harness
@@ -15,14 +18,16 @@ Package name:
 
 ## Quick install
 
-From any project, without a global install:
+Configure the local agent ecosystem (default, no project files):
 
 ```bash
-npx @kal-elsam/harness
+npx @kal-elsam/harness install
 ```
 
+Scaffold governance files into the current repository (previous default):
+
 ```bash
-pnpm dlx @kal-elsam/harness
+npx @kal-elsam/harness install --scope=workspace
 ```
 
 ## CLI commands
@@ -39,13 +44,13 @@ npm i -g @kal-elsam/harness
 | `agentic-harness` | Descriptive alias |
 
 ```bash
-harness
+harness install
+harness install --scope=agent-global
+harness install --scope=workspace
 harness detect
-harness install --mode enterprise --all-adapters
-harness --mode standard --adapters codex,cursor
-harness update --dry-run
-harness update
 harness doctor
+harness update
+harness uninstall
 ```
 
 Legacy aliases (backward compatible): `sgs-harness`, `harness-sgs`
@@ -53,26 +58,77 @@ Legacy aliases (backward compatible): `sgs-harness`, `harness-sgs`
 To try locally from this repo:
 
 ```bash
-node ./bin/harness.js init --mode enterprise --dry-run
-node ./bin/harness.js update --dry-run
+node ./bin/harness.js install --dry-run
 node ./bin/harness.js doctor
+node ./bin/harness.js init --mode enterprise --dry-run
 ```
 
-## Lifecycle: init, update, doctor
+## Install scopes
 
-The harness is not a one-shot copy. Every `init` writes a manifest that later
-`update` and `doctor` runs rely on.
+| Scope | Default for | Behavior |
+|---|---|---|
+| `agent-global` | `install`, `update`, `doctor`, `uninstall` | Configures local agent roots, writes managed state to `~/.harness`, installs orchestrator/core metadata. No project folders. |
+| `workspace` | `init` (compatibility alias) | Copies `repo-template/` into the current repo and writes `.harness/manifest.json`. |
 
-### `harness init` / `harness install`
+### `harness install` (agent-global)
+
+```bash
+harness install --dry-run   # preview the plan, writes nothing
+harness install             # apply
+harness install --agents cursor,claude
+```
+
+What it does:
+
+- Detects local agents: `cursor`, `codex`, `opencode`, `claude`. If none are
+  detected, it targets all supported agents.
+- Installs the orchestrator/conductor contract to `~/.harness/core/`.
+- Adds a managed marker section to each agent config
+  (for example `~/.cursor/AGENTS.md`):
+
+```md
+<!-- harness:managed:start -->
+...managed content, refreshed by harness update...
+<!-- harness:managed:end -->
+```
+
+- Everything outside the markers is user-owned and always preserved.
+- Before modifying any existing config it snapshots the file to
+  `~/.harness/backups/<timestamp>/`.
+- Records everything in `~/.harness/state.json`.
+- Set `HARNESS_HOME=/some/dir` to redirect the whole managed root (useful for
+  testing and sandboxed environments).
+
+### `harness update` (agent-global)
+
+Refreshes managed core files and marker sections without touching user-owned
+content. Requires an existing `~/.harness/state.json`.
+
+### `harness doctor` (agent-global)
+
+Reports installed agents, managed state, backups, and missing configs.
+Exits non-zero when managed state or a tracked config is missing.
+
+### `harness uninstall` (agent-global)
+
+Removes managed sections from agent configs (with a fresh backup first),
+deletes `~/.harness/state.json` and `~/.harness/core/`. Backups are preserved.
+
+## Workspace lifecycle: init, update, doctor
+
+The workspace harness is not a one-shot copy. Every `init` writes a manifest
+that later `update` and `doctor` runs rely on. All workspace commands accept
+`--scope=workspace`; `init` implies it.
+
+### `harness init` / `harness install --scope=workspace`
 
 Installs `repo-template/` into the target project and writes
 `.harness/manifest.json` with the installed mode, CLI version, and a content
 hash for every file the harness created.
 
 ```bash
-harness
 harness init --mode enterprise --all-adapters
-harness install --mode standard --adapters codex,cursor
+harness install --scope=workspace --mode standard --adapters codex,cursor
 ```
 
 By default it never overwrites a file that already exists. Pass `--force` to
@@ -80,10 +136,9 @@ overwrite, or `--dry-run` to preview without writing anything.
 
 Important behavior:
 
-- Running just `harness` (or `npx/pnpm dlx @kal-elsam/harness`) now defaults to:
-  - `mode=standard`
-  - adapter auto-detection from the current repo
-  - core files only when no adapter markers are detected
+- Running just `harness` (or `npx/pnpm dlx @kal-elsam/harness`) now runs the
+  **agent-global** install, not the workspace scaffold.
+- Within workspace scope, `mode=standard` remains the default.
 - `--adapters` installs only the requested adapters.
 - `--all-adapters` keeps the previous “install everything” behavior.
 
@@ -95,21 +150,22 @@ codex, cursor, claude, gemini, copilot, opencode, pi
 
 ### `harness detect`
 
-Read-only inspection command. It detects the current project stack and which
-adapter markers already exist, then prints the recommended install command.
+Read-only inspection command. It reports the global agents detected on this
+machine, then the current project stack and adapter markers, and prints the
+recommended install command.
 
 ```bash
 harness detect
 ```
 
-### `harness update`
+### `harness update --scope=workspace`
 
 Reapplies the current harness templates to an already-installed project.
 
 ```bash
-harness update --dry-run   # preview: created / updated / unchanged / skipped
-harness update             # apply
-harness update --force     # also overwrite files you modified locally
+harness update --scope=workspace --dry-run   # preview: created / updated / unchanged / skipped
+harness update --scope=workspace             # apply
+harness update --scope=workspace --force     # also overwrite files you modified locally
 ```
 
 `update` is conservative by design:
@@ -120,12 +176,12 @@ harness update --force     # also overwrite files you modified locally
 - New files added in newer harness releases are created.
 - `.harness/manifest.json` is rewritten with the new hashes, CLI version, and adapter selection.
 
-### `harness doctor`
+### `harness doctor --scope=workspace`
 
 Read-only health check. Never modifies files.
 
 ```bash
-harness doctor
+harness doctor --scope=workspace
 ```
 
 Reports each check as `OK`, `WARNING`, or `MISSING`:
@@ -232,9 +288,9 @@ repo-template/
 Install from the package:
 
 ```bash
-pnpm dlx @kal-elsam/harness
+pnpm dlx @kal-elsam/harness install
 pnpm dlx @kal-elsam/harness detect
-pnpm dlx @kal-elsam/harness --mode standard --adapters codex,cursor
+pnpm dlx @kal-elsam/harness install --scope=workspace --mode standard --adapters codex,cursor
 pnpm dlx @kal-elsam/harness init --mode enterprise --all-adapters
 pnpm dlx @kal-elsam/harness doctor
 ```
@@ -277,8 +333,10 @@ npm run smoke
 ```
 
 `npm run smoke` packs the current source into a tarball, installs it in a
-throwaway temp project, and runs `init`, `doctor`, and `update --dry-run`
-against it end to end.
+throwaway temp project, and exercises both scopes end to end: the agent-global
+flow (`install --dry-run`, `install`, `doctor`, `uninstall` against a fake
+`HARNESS_HOME`) and the workspace flow (`install --scope=workspace`, `doctor`,
+`update --dry-run`).
 
 Release flow:
 
