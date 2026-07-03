@@ -38,6 +38,29 @@ echo "== harness doctor (agent-global) =="
 npx --no-install harness doctor
 
 echo
+echo "== simulate drift + doctor detects it =="
+rm -f "$FAKE_HOME/.harness/components/sdd-core/workflow.md"
+node -e "
+const fs = require('node:fs');
+const path = require('node:path');
+const config = path.join(process.env.HARNESS_HOME, '.cursor', 'AGENTS.md');
+const content = fs.readFileSync(config, 'utf8');
+fs.writeFileSync(config, content.replace('### SDD Core', '### Broken'));
+"
+if npx --no-install harness doctor; then
+  echo "Expected doctor to fail after drift simulation" >&2
+  exit 1
+fi
+
+echo
+echo "== harness update repairs drift =="
+npx --no-install harness update
+
+echo
+echo "== harness doctor after repair =="
+npx --no-install harness doctor
+
+echo
 echo "== harness uninstall (agent-global) =="
 npx --no-install harness uninstall
 

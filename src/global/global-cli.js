@@ -18,17 +18,32 @@ export async function runGlobalInstall(options, packageManifest, packageRoot, { 
   });
 
   const verb = update ? "update" : "install";
-  console.log(`Agentic Harness global ${options.dryRun ? `${verb} plan` : `${verb}ed`} (scope: agent-global)`);
+  const pastLabel = update ? "updated" : "installed";
+  console.log(`Agentic Harness global ${options.dryRun ? `${verb} plan` : pastLabel} (scope: agent-global)`);
   console.log(`State root: ${result.stateRoot}`);
   console.log(`Agents: ${result.agents.join(", ")}`);
   console.log(`Components: ${result.components.join(", ") || "none (core plumbing only)"}`);
   console.log(`Core files: ${result.coreFiles.join(", ") || "none"}`);
+
+  if (update) {
+    console.log(`Drift detected: ${result.driftDetected ? "yes" : "no"}`);
+    console.log(`Assets repaired: ${result.assetsRepaired.length}`);
+    console.log(`Assets unchanged: ${result.assetsUnchanged.length}`);
+    console.log(`Sections repaired: ${result.configsRepaired.length}`);
+  }
+
   console.log(`Configs created: ${result.configsCreated.length}`);
   console.log(`Configs updated: ${result.configsUpdated.length}`);
   console.log(`Configs unchanged: ${result.configsUnchanged.length}`);
   console.log(`Backups: ${result.backups.length}`);
 
   if (options.dryRun) {
+    if (result.repairs?.length) {
+      console.log(`Planned repairs: ${result.repairs.length}`);
+      for (const repair of result.repairs) {
+        console.log(`  - [${repair.status.toUpperCase()}] ${repair.name}`);
+      }
+    }
     console.log("Dry run: nothing was written.");
     return;
   }
@@ -50,9 +65,9 @@ export async function runGlobalUninstall(options) {
   console.log("Backups under ~/.harness/backups were preserved.");
 }
 
-export async function runGlobalDoctor() {
+export async function runGlobalDoctor(packageRoot) {
   const homeDir = resolveHomeDir();
-  const { checks, ok } = await runGlobalDoctorChecks(homeDir);
+  const { checks, ok, hasDrift } = await runGlobalDoctorChecks(homeDir, { packageRoot });
 
   console.log("Agentic Harness doctor (scope: agent-global)");
   console.log(`Home: ${homeDir}`);
@@ -65,7 +80,13 @@ export async function runGlobalDoctor() {
   }
 
   console.log("");
-  console.log(ok ? "Status: OK" : "Status: FAILED (missing managed state or configs)");
+  if (ok) {
+    console.log("Status: OK");
+  } else if (hasDrift) {
+    console.log('Status: DRIFT DETECTED — run "harness update" to auto-repair managed content');
+  } else {
+    console.log("Status: FAILED (missing managed state or configs)");
+  }
 
   if (!ok) process.exitCode = 1;
 }

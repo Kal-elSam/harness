@@ -76,15 +76,15 @@ test("doctor reports component assets and stale sections", async () => {
   const homeDir = await createFakeHome();
   await installGlobalHarness({ ...baseOptions, homeDir });
 
-  const healthy = await runGlobalDoctorChecks(homeDir);
-  assert.equal(healthy.checks.find((check) => check.name === "component:sdd-core").status, "ok");
+  const healthy = await runGlobalDoctorChecks(homeDir, { packageRoot });
+  assert.equal(healthy.checks.find((check) => check.name === "component-section:sdd-core:.cursor/AGENTS.md").status, "ok");
 
   const content = await readFile(join(homeDir, ".cursor", "AGENTS.md"), "utf8");
   const stripped = content.replace("### SDD Core", "### Missing");
   await writeFile(join(homeDir, ".cursor", "AGENTS.md"), stripped);
 
-  const stale = await runGlobalDoctorChecks(homeDir);
-  assert.equal(stale.checks.find((check) => check.name === "component:sdd-core").status, "warning");
+  const stale = await runGlobalDoctorChecks(homeDir, { packageRoot });
+  assert.equal(stale.checks.find((check) => check.name === "component-section:sdd-core:.cursor/AGENTS.md").status, "stale");
 });
 
 test("uninstall removes component-managed sections and assets", async () => {

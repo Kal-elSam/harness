@@ -7,6 +7,15 @@ export function hasManagedSection(content) {
   return start !== -1 && end !== -1 && end > start;
 }
 
+export function extractManagedBody(content) {
+  if (!hasManagedSection(content)) return null;
+
+  const start = content.indexOf(SECTION_START) + SECTION_START.length;
+  const end = content.indexOf(SECTION_END);
+
+  return content.slice(start, end).replace(/^\n/, "").replace(/\n$/, "");
+}
+
 export function buildManagedBlock(body) {
   return `${SECTION_START}\n${body.replace(/\s+$/, "")}\n${SECTION_END}\n`;
 }
@@ -45,6 +54,17 @@ export function removeManagedSection(content) {
   if (!after) return { content: `${before}\n`, removed: true };
 
   return { content: `${before}\n\n${after}`, removed: true };
+}
+
+export function userOwnedContent(content) {
+  if (!hasManagedSection(content)) return content;
+
+  const start = content.indexOf(SECTION_START);
+  const end = blockEndIndex(content);
+  const before = content.slice(0, start);
+  const after = content.slice(end);
+
+  return `${before}${after}`;
 }
 
 function blockEndIndex(content) {

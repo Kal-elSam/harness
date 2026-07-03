@@ -82,7 +82,7 @@ export async function runCli(argv) {
       return;
     case "doctor":
       await dispatchByScope(options, "agent-global", {
-        "agent-global": () => runGlobalDoctor(),
+        "agent-global": () => runGlobalDoctor(packageRoot),
         workspace: () => runWorkspaceDoctor(options)
       });
       return;

@@ -1,101 +1,91 @@
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { resolveComponent } from "./component-registry.js";
 import { hashBuffer } from "../hash.js";
 
 export async function installComponentAssets({ packageRoot, paths, components, dryRun = false }) {
   const coreFiles = {};
 
   for (const component of components) {
-    const templateDir = resolve(packageRoot, "global-template", "components", component.id);
-    if (!existsSync(templateDir)) continue;
-
-    const entries = await readdir(templateDir);
-
-    for (const entry of entries) {
-      const sourcePath = join(templateDir, entry);
-      const destinationPath = join(paths.root, "components", component.id, entry);
-      const content = await readFile(sourcePath);
-
-      if (!dryRun) {
-        await mkdir(dirname(destinationPath), { recursive: true });
-        await writeFile(destinationPath, content);
-      }
-
-      coreFiles[`components/${component.id}/${entry}`] = hashBuffer(content);
-    }
+    const installed = await installComponentFiles({
+      packageRoot,
+      paths,
+      component,
+      dryRun,
+      shouldRepair: () => true
+    });
+    Object.assign(coreFiles, installed);
   }
 
   return coreFiles;
 }
 
-export function componentFileChecks(paths, state) {
-  const componentFiles = Object.entries(state?.coreFiles ?? {})
-    .filter(([relativePath]) => relativePath.startsWith("components/"));
+export async function repairComponentAssets({ packageRoot, paths, components, state, dryRun = false }) {
+  const coreFiles = { ...state?.coreFiles };
+  const repaired = [];
+  const unchanged = [];
 
-  if (componentFiles.length === 0 && (state?.components?.length ?? 0) > 0) {
-    return [{
-      name: "~/.harness/components",
-      status: "missing",
-      detail: "Installed components recorded but no component assets found on disk."
-    }];
+  for (const component of components) {
+    const installed = await installComponentFiles({
+      packageRoot,
+      paths,
+      component,
+      dryRun,
+      shouldRepair: async (relativePath, destinationPath, templateContent) => {
+        const expectedHash = hashBuffer(templateContent);
+
+        if (!existsSync(destinationPath)) {
+          repaired.push(relativePath);
+          return true;
+        }
+
+        const diskContent = await readFile(destinationPath);
+        const diskHash = hashBuffer(diskContent);
+        const trackedHash = state?.coreFiles?.[relativePath];
+
+        if (diskHash !== expectedHash || trackedHash !== expectedHash) {
+          repaired.push(relativePath);
+          return true;
+        }
+
+        unchanged.push(relativePath);
+        return false;
+      }
+    });
+
+    Object.assign(coreFiles, installed);
   }
 
-  return componentFiles.map(([relativePath, expectedHash]) => {
-    const absolutePath = join(paths.root, relativePath);
-    const exists = existsSync(absolutePath);
-
-    if (!exists) {
-      return {
-        name: `~/.harness/${relativePath}`,
-        status: "missing",
-        detail: "Tracked component asset missing on disk."
-      };
-    }
-
-    return {
-      name: `~/.harness/${relativePath}`,
-      status: "ok",
-      detail: expectedHash ? `hash=${expectedHash.slice(0, 8)}` : undefined
-    };
-  });
+  return { coreFiles, repaired, unchanged };
 }
 
-export async function componentSectionChecks(homeDir, state) {
-  const checks = [];
+async function installComponentFiles({ packageRoot, paths, component, dryRun, shouldRepair }) {
+  const templateDir = resolve(packageRoot, "global-template", "components", component.id);
+  const coreFiles = {};
 
-  for (const stateEntry of state?.components ?? []) {
-    const component = resolveComponent(stateEntry.id);
-    const heading = component.id === "sdd-core" ? "### SDD Core" : "### Orchestrator";
-    const targets = stateEntry.managedTargets ?? [];
-    let missingTarget = false;
-    let staleSection = false;
+  if (!existsSync(templateDir)) return coreFiles;
 
-    for (const configFile of targets) {
-      const configPath = join(homeDir, configFile);
-      if (!existsSync(configPath)) {
-        missingTarget = true;
-        continue;
-      }
+  const entries = await readdir(templateDir);
 
-      const content = await readFile(configPath, "utf8");
-      if (!content.includes(heading)) staleSection = true;
+  for (const entry of entries) {
+    const sourcePath = join(templateDir, entry);
+    const relativePath = `components/${component.id}/${entry}`;
+    const destinationPath = join(paths.root, relativePath);
+    const content = await readFile(sourcePath);
+    const needsRepair = await shouldRepair(relativePath, destinationPath, content);
+
+    if (!needsRepair) {
+      coreFiles[relativePath] = hashBuffer(content);
+      continue;
     }
 
-    let status = "ok";
-    let detail = `Managed section present for ${component.id}`;
-
-    if (missingTarget) {
-      status = "missing";
-      detail = `Managed target missing for ${component.id}`;
-    } else if (staleSection) {
-      status = "warning";
-      detail = `Stale or missing managed section for ${component.id}. Run "harness update".`;
+    if (!dryRun) {
+      await mkdir(dirname(destinationPath), { recursive: true });
+      await writeFile(destinationPath, content);
     }
 
-    checks.push({ name: `component:${component.id}`, status, detail });
+    coreFiles[relativePath] = hashBuffer(content);
   }
 
-  return checks;
+  return coreFiles;
 }
