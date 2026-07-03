@@ -34,7 +34,8 @@ test("doctor passes after a global install and reports agents and backups", asyn
 
   assert.equal(ok, true);
   assert.equal(checks.find((check) => check.name === "~/.harness/state.json").status, "ok");
-  assert.equal(checks.find((check) => check.name === "~/.harness/core/orchestrator.md").status, "ok");
+  assert.equal(checks.find((check) => check.name === "~/.harness/components/orchestrator/orchestrator.md").status, "ok");
+  assert.equal(checks.find((check) => check.name === "component:sdd-core").status, "ok");
   assert.equal(checks.find((check) => check.name === "agent:cursor").status, "ok");
   assert.equal(checks.find((check) => check.name === "agent:claude").status, "info");
   assert.ok(checks.find((check) => check.name === "~/.harness/backups"));
@@ -62,15 +63,15 @@ test("doctor warns when a config exists without a managed section", async () => 
   assert.match(cursorCheck.detail, /No managed section/);
 });
 
-test("doctor flags a tracked core file missing on disk", async () => {
+test("doctor flags a tracked component asset missing on disk", async () => {
   const homeDir = await createFakeHome();
   await installGlobalHarness({ ...baseOptions, homeDir });
 
   const paths = harnessHomePaths(homeDir);
-  await rm(join(paths.coreDir, "orchestrator.md"));
+  await rm(join(paths.root, "components", "sdd-core", "workflow.md"));
 
   const { checks, ok } = await runGlobalDoctorChecks(homeDir);
 
   assert.equal(ok, false);
-  assert.equal(checks.find((check) => check.name === "~/.harness/core/orchestrator.md").status, "missing");
+  assert.equal(checks.find((check) => check.name === "~/.harness/components/sdd-core/workflow.md").status, "missing");
 });

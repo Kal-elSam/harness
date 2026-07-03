@@ -12,6 +12,8 @@ export async function runGlobalInstall(options, packageManifest, packageRoot, { 
     cliVersion: packageManifest.version,
     homeDir,
     agents: options.adapters,
+    components: options.components,
+    noDefaultComponents: options.noDefaultComponents,
     dryRun: options.dryRun
   });
 
@@ -19,6 +21,7 @@ export async function runGlobalInstall(options, packageManifest, packageRoot, { 
   console.log(`Agentic Harness global ${options.dryRun ? `${verb} plan` : `${verb}ed`} (scope: agent-global)`);
   console.log(`State root: ${result.stateRoot}`);
   console.log(`Agents: ${result.agents.join(", ")}`);
+  console.log(`Components: ${result.components.join(", ") || "none (core plumbing only)"}`);
   console.log(`Core files: ${result.coreFiles.join(", ") || "none"}`);
   console.log(`Configs created: ${result.configsCreated.length}`);
   console.log(`Configs updated: ${result.configsUpdated.length}`);

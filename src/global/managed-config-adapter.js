@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { backupFileBeforeChange } from "./backups.js";
-import { buildManagedBody } from "./adapter-context.js";
+import { buildManagedBody } from "./managed-body.js";
 import { hasManagedSection, removeManagedSection, upsertManagedSection } from "./managed-section.js";
 
 export function createManagedConfigAdapter({ id, label, rootDir, configFile }) {
@@ -25,7 +25,7 @@ export function createManagedConfigAdapter({ id, label, rootDir, configFile }) {
       const configPath = join(context.homeDir, configFile);
       const exists = existsSync(configPath);
       const current = exists ? readFileSync(configPath, "utf8") : "";
-      const body = buildManagedBody({ packageName: context.packageName, coreDir: context.coreDir });
+      const body = buildManagedBody(context, { id, assets });
       const { changed } = upsertManagedSection(current, body);
 
       let action = "unchanged";
@@ -47,7 +47,7 @@ export function createManagedConfigAdapter({ id, label, rootDir, configFile }) {
       }
 
       const current = plan.exists ? await readFile(plan.configPath, "utf8") : "";
-      const body = buildManagedBody({ packageName: context.packageName, coreDir: context.coreDir });
+      const body = buildManagedBody(context, { id, assets });
       const { content: next } = upsertManagedSection(current, body);
       let backupPath = null;
 

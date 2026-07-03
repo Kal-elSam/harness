@@ -32,7 +32,8 @@ test("dry-run plans agents without writing anything", async () => {
   const result = await installGlobalHarness({ ...baseOptions, homeDir, dryRun: true });
 
   assert.deepEqual(result.agents, ["cursor", "codex"]);
-  assert.ok(result.coreFiles.includes("core/orchestrator.md"));
+  assert.ok(result.coreFiles.includes("components/orchestrator/orchestrator.md"));
+  assert.ok(result.coreFiles.includes("components/sdd-core/workflow.md"));
   assert.equal(existsSync(paths.root), false);
   assert.equal(existsSync(join(homeDir, ".cursor", "AGENTS.md")), false);
 });
@@ -44,7 +45,8 @@ test("install writes state, core files and managed configs under the home", asyn
   const result = await installGlobalHarness({ ...baseOptions, homeDir });
 
   assert.ok(existsSync(paths.statePath));
-  assert.ok(existsSync(join(paths.coreDir, "orchestrator.md")));
+  assert.ok(existsSync(join(paths.coreDir, "orchestrator.md")) === false);
+  assert.ok(existsSync(join(paths.root, "components", "orchestrator", "orchestrator.md")));
 
   const state = await readGlobalState(paths.statePath);
   assert.equal(state.scope, "agent-global");
@@ -52,7 +54,7 @@ test("install writes state, core files and managed configs under the home", asyn
   assert.deepEqual(state.agents.map((agent) => agent.id), ["cursor", "codex"]);
   assert.equal(state.adapters[0].label, "Cursor");
   assert.deepEqual(state.adapters[0].managedTargets, [".cursor/AGENTS.md"]);
-  assert.match(state.coreFiles["core/orchestrator.md"], /^[0-9a-f]{64}$/);
+  assert.match(state.coreFiles["components/orchestrator/orchestrator.md"], /^[0-9a-f]{64}$/);
 
   const cursorConfig = await readFile(join(homeDir, ".cursor", "AGENTS.md"), "utf8");
   assert.ok(hasManagedSection(cursorConfig));

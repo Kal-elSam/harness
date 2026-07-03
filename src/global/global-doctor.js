@@ -1,22 +1,31 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { listBackupSnapshots } from "./backups.js";
 import { harnessHomePaths } from "./paths.js";
 import { buildAdapterContext } from "./adapter-context.js";
+import { componentFileChecks, componentSectionChecks } from "./component-installer.js";
+import { resolveComponent } from "./component-registry.js";
 import { listAdapters } from "./registry.js";
 import { readGlobalState } from "./state.js";
 
 export async function runGlobalDoctorChecks(homeDir) {
   const paths = harnessHomePaths(homeDir);
   const state = await readGlobalState(paths.statePath);
-  const context = buildAdapterContext({ homeDir, packageName: state?.packageName ?? "", coreDir: paths.coreDir });
-  const checks = [stateCheck(state), ...coreFileChecks(paths, state)];
+  const installedComponents = (state?.components ?? []).map((entry) => resolveComponent(entry.id));
+  const context = buildAdapterContext({
+    homeDir,
+    packageName: state?.packageName ?? "",
+    components: installedComponents
+  });
+  const checks = [stateCheck(state), ...legacyCoreFileChecks(paths, state), ...componentFileChecks(paths, state)];
 
   for (const adapter of listAdapters()) {
     const stateEntry = state?.adapters?.find((entry) => entry.id === adapter.id);
     checks.push(await adapter.doctor(context, stateEntry));
   }
 
+  checks.push(...await componentSectionChecks(homeDir, state));
   checks.push(await backupsCheck(paths));
 
   const hasMissingRequired = checks.some((check) => check.status === "missing");
@@ -32,30 +41,24 @@ function stateCheck(state) {
     };
   }
 
+  const componentCount = state.components?.length ?? 0;
+
   return {
     name: "~/.harness/state.json",
     status: "ok",
-    detail: `cliVersion=${state.cliVersion ?? "unknown"}, adapters=${state.adapters?.length ?? state.agents?.length ?? 0}`
+    detail: `cliVersion=${state.cliVersion ?? "unknown"}, adapters=${state.adapters?.length ?? state.agents?.length ?? 0}, components=${componentCount}`
   };
 }
 
-function coreFileChecks(paths, state) {
-  const coreFiles = Object.keys(state?.coreFiles ?? {});
+function legacyCoreFileChecks(paths, state) {
+  const legacyFiles = Object.keys(state?.coreFiles ?? {}).filter((path) => path.startsWith("core/"));
 
-  if (coreFiles.length === 0) {
-    return [{
-      name: "~/.harness/core",
-      status: state ? "warning" : "missing",
-      detail: "No managed core files recorded."
-    }];
-  }
-
-  return coreFiles.map((relativePath) => {
+  return legacyFiles.map((relativePath) => {
     const exists = existsSync(join(paths.root, relativePath));
     return {
       name: `~/.harness/${relativePath}`,
-      status: exists ? "ok" : "missing",
-      detail: exists ? undefined : "Tracked core file missing on disk."
+      status: exists ? "ok" : "warning",
+      detail: exists ? "legacy core asset" : "Legacy core asset missing. Run harness update."
     };
   });
 }

@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { normalizeGlobalState } from "./state-migration.js";
 
-export const STATE_VERSION = 2;
+export const STATE_VERSION = 3;
 
 export async function readGlobalState(statePath) {
   if (!existsSync(statePath)) return null;
@@ -21,9 +21,18 @@ export async function writeGlobalState(statePath, state) {
   await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
-export function createGlobalState({ packageName, cliVersion, adapters, coreFiles, backups, installedAt }) {
+export function createGlobalState({
+  packageName,
+  cliVersion,
+  adapters,
+  components = [],
+  coreFiles,
+  backups,
+  installedAt
+}) {
   const now = new Date().toISOString();
   const normalizedAdapters = adapters.map((entry) => ({ ...entry }));
+  const normalizedComponents = components.map((entry) => ({ ...entry }));
 
   return {
     stateVersion: STATE_VERSION,
@@ -34,6 +43,7 @@ export function createGlobalState({ packageName, cliVersion, adapters, coreFiles
     updatedAt: now,
     adapters: normalizedAdapters,
     agents: normalizedAdapters.map(({ id, configFile, present }) => ({ id, configFile, present })),
+    components: normalizedComponents,
     coreFiles,
     backups
   };

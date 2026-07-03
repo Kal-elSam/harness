@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { ADAPTERS } from "./harness-files.js";
 import { GLOBAL_AGENT_IDS } from "./global/registry.js";
+import { COMPONENT_IDS, DEFAULT_COMPONENT_IDS } from "./global/component-registry.js";
 import { printGlobalDetect, runGlobalDoctor, runGlobalInstall, runGlobalUninstall } from "./global/global-cli.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 
@@ -125,6 +126,8 @@ function parseArgs(argv) {
     detect: implicitCommand,
     adapters: null,
     allAdapters: false,
+    components: null,
+    noDefaultComponents: false,
     force: false,
     dryRun: false,
     help: false,
@@ -153,7 +156,12 @@ function parseArgs(argv) {
       options.adapters = parseAdapters(arg.slice("--adapters=".length));
     } else if (arg.startsWith("--agents=")) {
       options.adapters = parseAdapters(arg.slice("--agents=".length));
-    } else if (arg === "--force") options.force = true;
+    } else if (arg === "--components") {
+      options.components = parseAdapters(args[++index]);
+    } else if (arg.startsWith("--components=")) {
+      options.components = parseAdapters(arg.slice("--components=".length));
+    } else if (arg === "--no-default-components") options.noDefaultComponents = true;
+    else if (arg === "--force") options.force = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
@@ -204,7 +212,8 @@ Configure the local AI agent ecosystem (Cursor, Codex, OpenCode, Claude) or
 install AI governance into a repository: SDD, TDD, evals, adapters and gates.
 
 Usage:
-  harness install [--scope=agent-global|workspace] [--dry-run]
+  harness install [--scope=agent-global|workspace] [--components <list>] [--dry-run]
+  harness install --no-default-components
   harness install --scope=workspace [--mode minimal|standard|enterprise] [--adapters <list>] [--force]
   harness init [--mode minimal|standard|enterprise] [--adapters <list>] (workspace alias)
   harness detect
@@ -214,8 +223,8 @@ Usage:
 
 Scopes:
   agent-global (default)  Configure local agent roots. Writes managed state to
-                          ~/.harness, installs orchestrator/core metadata, and
-                          adds managed marker sections to agent configs with a
+                          ~/.harness, installs orchestrator + sdd-core by default,
+                          and adds managed marker sections to agent configs with a
                           backup before every change. No project files.
   workspace               Scaffold governance files into the current repo
                           (previous default behavior). Writes .harness/manifest.json.
@@ -230,6 +239,8 @@ Commands:
 
 Examples:
   npx @kal-elsam/harness install
+  npx @kal-elsam/harness install --components orchestrator,sdd-core
+  npx @kal-elsam/harness install --no-default-components
   npx @kal-elsam/harness install --dry-run
   npx @kal-elsam/harness install --scope=workspace --mode enterprise
   harness doctor
@@ -237,6 +248,7 @@ Examples:
 
 Aliases: agentic-harness, sgs-harness, harness-sgs
 Global agents: ${GLOBAL_AGENT_IDS.join(", ")}
+Global components: ${COMPONENT_IDS.join(", ")} (default: ${DEFAULT_COMPONENT_IDS.join(", ")})
 Workspace adapters: ${[...ADAPTERS].join(", ")}
 `);
 }

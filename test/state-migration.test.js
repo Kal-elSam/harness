@@ -28,6 +28,16 @@ test("normalizeGlobalState migrates legacy agents array", () => {
   assert.equal(normalized.adapters[0].rootDir, ".cursor");
   assert.deepEqual(normalized.adapters[0].managedTargets, [".cursor/AGENTS.md"]);
   assert.deepEqual(normalized.agents, legacy.agents);
+  assert.deepEqual(normalized.components[0].id, "orchestrator");
+});
+
+test("normalizeGlobalState preserves explicit empty components array", () => {
+  const state = normalizeGlobalState({
+    agents: [{ id: "cursor", configFile: ".cursor/AGENTS.md", present: true }],
+    components: []
+  });
+
+  assert.deepEqual(state.components, []);
 });
 
 test("getInstalledAdapterIds reads legacy and adapter-aware state", () => {
@@ -70,11 +80,13 @@ test("createGlobalState writes adapter-aware state with legacy agents mirror", a
     packageName: "@kal-elsam/harness",
     cliVersion: "0.5.0",
     adapters: [entry],
-    coreFiles: { "core/orchestrator.md": "hash" },
+    components: [{ id: "sdd-core", version: "1.0.0", managedTargets: [".cursor/AGENTS.md"] }],
+    coreFiles: { "components/sdd-core/workflow.md": "hash" },
     backups: []
   });
 
-  assert.equal(state.stateVersion, 2);
+  assert.equal(state.stateVersion, 3);
   assert.equal(state.adapters[0].label, "Cursor");
+  assert.equal(state.components[0].id, "sdd-core");
   assert.deepEqual(state.agents, [{ id: "cursor", configFile: ".cursor/AGENTS.md", present: false }]);
 });
