@@ -1,14 +1,20 @@
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  parseAttributionGuardArgs,
+  runAttributionGuard
+} from "./lib/attribution-guard.mjs";
 
-export function assertCleanReleaseMessage(message) {
-  if (/co-authored-by/i.test(message)) {
-    throw new Error("Release commit message must not contain Co-authored-by or AI attribution.");
-  }
-}
+export {
+  assertCleanReleaseMessage,
+  assertCleanReleaseMessages,
+  parseAttributionGuardArgs,
+  readCommitMessages,
+  runAttributionGuard
+} from "./lib/attribution-guard.mjs";
 
-function readHeadCommitMessage() {
-  return execSync("git log -1 --format=%B", { encoding: "utf8" });
+function defaultRunGit(command) {
+  return execSync(command, { encoding: "utf8" });
 }
 
 function isMainModule() {
@@ -18,6 +24,9 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
-  assertCleanReleaseMessage(readHeadCommitMessage());
-  console.log("Release commit message OK");
+  const { range } = parseAttributionGuardArgs(process.argv);
+  const result = runAttributionGuard({ range, runGit: defaultRunGit });
+  const scope = range ?? "HEAD";
+
+  console.log(`Release attribution guard OK (${result.checked} commit(s), range: ${scope})`);
 }

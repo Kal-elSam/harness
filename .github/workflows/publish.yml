@@ -42,5 +42,8 @@ jobs:
       - name: Verify package contents
         run: npm pack --dry-run
 
+      - name: Verify release commit hygiene
+        run: npm run release:check
+
       - name: Publish with npm Trusted Publishing
         run: npm publish --access public

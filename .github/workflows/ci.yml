@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -36,6 +38,16 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Check commit attribution
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            npm run release:check -- --range "origin/main...HEAD"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            npm run release:check
+          else
+            npm run release:check -- --range "${{ github.event.before }}..${{ github.sha }}"
+          fi
 
       - name: Run smoke tests
         run: npm run smoke

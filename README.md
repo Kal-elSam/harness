@@ -341,6 +341,12 @@ npm run release:check
 git log -1 --format=%B
 ```
 
+CI also scans commit ranges for attribution trailers:
+
+```bash
+npm run release:check -- --range origin/main...HEAD
+```
+
 Release commits must **not** include `Co-authored-by` or other AI attribution
 trailers. Do not rewrite published tags; ship a corrective patch version instead.
 
@@ -365,7 +371,18 @@ git push origin main
 git push origin v0.4.1
 ```
 
+After npm publishes the tag, verify published provenance against git and the registry:
+
+```bash
+git fetch --tags origin
+git fetch origin main
+npm run release:published -- --version 0.4.1
+```
+
+This checks npm `version`, npm `gitHead`, local tag `v*`, remote tag on `origin`, and `origin/main`.
+
 The `publish.yml` workflow runs on `v*` tags and publishes to npm using the `npm-publish` environment.
+It runs `npm run release:check` on `HEAD` immediately before `npm publish`.
 
 See the full policy in `SECURITY.md`.
 

@@ -20,6 +20,7 @@
   "files": [
     "bin",
     "src",
+    "scripts",
     "repo-template",
     "global-template",
     "prompts",
@@ -29,7 +30,8 @@
     "test": "node --test",
     "doctor": "node ./bin/harness.js doctor",
     "smoke": "bash scripts/smoke-test.sh",
-    "release:check": "node scripts/check-release-commit.mjs"
+    "release:check": "node scripts/check-release-commit.mjs",
+    "release:published": "node scripts/check-published-release.mjs"
   },
   "keywords": [
     "ai",
