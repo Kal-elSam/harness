@@ -1,7 +1,8 @@
 import { GLOBAL_AGENT_IDS, detectInstalledAdapters } from "./registry.js";
 import { installGlobalHarness, uninstallGlobalHarness, updateGlobalHarness } from "./global-installer.js";
-import { resolveHomeDir } from "./paths.js";
+import { resolveHomeDir, harnessHomePaths } from "./paths.js";
 import { runGlobalDoctorChecks } from "./global-doctor.js";
+import { describeBackupSnapshots, applyRollback, previewRollback } from "./rollback.js";
 
 export async function runGlobalInstall(options, packageManifest, packageRoot, { update = false } = {}) {
   const homeDir = resolveHomeDir();
@@ -99,4 +100,68 @@ export function printGlobalDetect() {
   console.log(`Home: ${homeDir}`);
   console.log(`Detected: ${detected.join(", ") || "none"}`);
   console.log(`Supported: ${GLOBAL_AGENT_IDS.join(", ")}`);
+}
+
+export async function runGlobalBackups() {
+  const homeDir = resolveHomeDir();
+  const { backupsDir } = harnessHomePaths(homeDir);
+  const snapshots = await describeBackupSnapshots(backupsDir);
+
+  console.log("Harness backups");
+  console.log("Directory: ~/.harness/backups");
+  console.log(`Snapshots: ${snapshots.length}`);
+
+  if (snapshots.length === 0) {
+    console.log("No snapshots yet. Backups are created before config changes.");
+    return;
+  }
+
+  for (const snapshot of snapshots) {
+    console.log(`- ${snapshot.name} (${snapshot.fileCount} file${snapshot.fileCount === 1 ? "" : "s"})`);
+  }
+}
+
+export async function runGlobalRollback(options) {
+  if (!options.snapshot) {
+    throw new Error('Missing snapshot. Use: harness rollback --to <snapshot>');
+  }
+
+  const homeDir = resolveHomeDir();
+
+  if (options.apply) {
+    const result = await applyRollback({ homeDir, snapshot: options.snapshot });
+
+    console.log("Harness rollback applied");
+    console.log(`Snapshot: ${result.snapshot}`);
+    console.log(`Restored: ${result.restored.length}`);
+
+    if (result.noop) {
+      console.log("No files to restore.");
+      return;
+    }
+
+    if (result.safetyBackup) {
+      console.log(`Safety backup: ${result.safetyBackup}`);
+    }
+    return;
+  }
+
+  const result = await previewRollback({ homeDir, snapshot: options.snapshot });
+
+  console.log("Harness rollback preview");
+  console.log(`Snapshot: ${result.snapshot}`);
+  console.log(`Files: ${result.plans.length}`);
+
+  if (result.noop) {
+    console.log("No files to restore.");
+    return;
+  }
+
+  console.log("Would restore:");
+  for (const plan of result.plans) {
+    console.log(`- ${plan.displayPath}`);
+  }
+
+  console.log("");
+  console.log("Run with --apply to restore.");
 }

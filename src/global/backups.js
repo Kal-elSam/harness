@@ -31,3 +31,23 @@ export async function listBackupSnapshots(backupsDir) {
     .map((entry) => entry.name)
     .sort();
 }
+
+export function assertValidSnapshotName(snapshotName) {
+  if (!snapshotName || snapshotName.includes("/") || snapshotName.includes("\\") || snapshotName.includes("..")) {
+    throw new Error(`Invalid snapshot "${snapshotName}".`);
+  }
+}
+
+export function resolveSnapshotDir(backupsDir, snapshotName) {
+  assertValidSnapshotName(snapshotName);
+
+  const snapshotDir = join(backupsDir, snapshotName);
+
+  if (!existsSync(snapshotDir)) {
+    throw new Error(
+      `Snapshot not found: "${snapshotName}". Run "harness backups" to list available snapshots.`
+    );
+  }
+
+  return snapshotDir;
+}

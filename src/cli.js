@@ -4,7 +4,7 @@ import { basename, dirname, resolve } from "node:path";
 import { ADAPTERS } from "./harness-files.js";
 import { GLOBAL_AGENT_IDS } from "./global/registry.js";
 import { COMPONENT_IDS, DEFAULT_COMPONENT_IDS } from "./global/component-registry.js";
-import { printGlobalDetect, runGlobalDoctor, runGlobalInstall, runGlobalUninstall } from "./global/global-cli.js";
+import { printGlobalDetect, runGlobalBackups, runGlobalDoctor, runGlobalInstall, runGlobalRollback, runGlobalUninstall } from "./global/global-cli.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -97,6 +97,12 @@ export async function runCli(argv) {
       console.log("");
       await runWorkspaceDetect(options, invoke);
       return;
+    case "backups":
+      await runGlobalBackups();
+      return;
+    case "rollback":
+      await runGlobalRollback(options);
+      return;
     default:
       throw new Error(`Unknown command "${command}". Run "${invoke} help".`);
   }
@@ -130,6 +136,8 @@ function parseArgs(argv) {
     noDefaultComponents: false,
     force: false,
     dryRun: false,
+    apply: false,
+    snapshot: null,
     help: false,
     version: false
   };
@@ -163,6 +171,9 @@ function parseArgs(argv) {
     } else if (arg === "--no-default-components") options.noDefaultComponents = true;
     else if (arg === "--force") options.force = true;
     else if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--apply") options.apply = true;
+    else if (arg === "--to") options.snapshot = args[++index];
+    else if (arg.startsWith("--to=")) options.snapshot = arg.slice("--to=".length);
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
     else throw new Error(`Unknown option "${arg}".`);
@@ -188,6 +199,8 @@ function normalizeCommand(command) {
   if (command === "doctor") return "doctor";
   if (command === "uninstall") return "uninstall";
   if (command === "detect" || command === "d") return "detect";
+  if (command === "backups") return "backups";
+  if (command === "rollback") return "rollback";
   if (command === "help") return "help";
   if (command === "version") return "version";
 
@@ -219,6 +232,8 @@ Usage:
   harness detect
   harness update [--scope=agent-global|workspace] [--dry-run]
   harness doctor [--scope=agent-global|workspace]
+  harness backups
+  harness rollback --to <snapshot> [--apply]
   harness uninstall [--dry-run]
 
 Scopes:
@@ -235,6 +250,8 @@ Commands:
   detect     Inspect global agents and the current project. Read-only.
   update     Refresh managed content without touching user-owned sections.
   doctor     Report installed agents, state, backups, and missing configs.
+  backups    List config snapshots under ~/.harness/backups.
+  rollback   Preview or restore a prior config snapshot (--apply to write).
   uninstall  Remove managed sections and global state. Backups are preserved.
 
 Examples:
@@ -244,6 +261,8 @@ Examples:
   npx @kal-elsam/harness install --dry-run
   npx @kal-elsam/harness install --scope=workspace --mode enterprise
   harness doctor
+  harness backups
+  harness rollback --to <snapshot>
   harness uninstall --dry-run
 
 Aliases: agentic-harness, sgs-harness, harness-sgs
