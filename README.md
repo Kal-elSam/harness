@@ -51,6 +51,8 @@ harness detect
 harness doctor
 harness update
 harness components
+harness components validate
+harness components init <id> --label "<label>"
 harness backups
 harness rollback --to <snapshot> [--apply]
 harness uninstall
@@ -116,6 +118,27 @@ Exits non-zero when managed state or a tracked config is missing.
 
 Removes managed sections from agent configs (with a fresh backup first),
 deletes `~/.harness/state.json` and `~/.harness/core/`. Backups are preserved.
+
+### Workspace components
+
+Opt-in custom components live in the current repo under `.harness/components/`.
+They never override bundled IDs (`orchestrator`, `sdd-core`) and install copies
+assets into `~/.harness/components/<id>/` only when you pass `--components`.
+
+Create, validate, and install:
+
+```bash
+harness components init team-rules --label "Team Rules"
+# edit .harness/components/team-rules/README.md
+harness components validate
+harness install --components team-rules
+```
+
+- `harness components` lists bundled and workspace catalogs.
+- `harness components validate [--cwd <path>]` runs the same loader used by install/doctor.
+- `harness components init <id> --label "<label>"` scaffolds `catalog.json`,
+  `.harness/components/<id>/README.md`, and a catalog entry (`version: "0.1.0"`).
+  It refuses existing IDs and bundled IDs, and does not write to `~/.harness`.
 
 ## Workspace lifecycle: init, update, doctor
 

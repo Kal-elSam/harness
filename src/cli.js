@@ -4,7 +4,17 @@ import { basename, dirname, resolve } from "node:path";
 import { ADAPTERS } from "./harness-files.js";
 import { GLOBAL_AGENT_IDS } from "./global/registry.js";
 import { COMPONENT_IDS, DEFAULT_COMPONENT_IDS } from "./global/component-registry.js";
-import { printGlobalComponents, printGlobalDetect, runGlobalBackups, runGlobalDoctor, runGlobalInstall, runGlobalRollback, runGlobalUninstall } from "./global/global-cli.js";
+import {
+  printGlobalComponents,
+  printGlobalDetect,
+  runComponentsInit,
+  runComponentsValidate,
+  runGlobalBackups,
+  runGlobalDoctor,
+  runGlobalInstall,
+  runGlobalRollback,
+  runGlobalUninstall
+} from "./global/global-cli.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -104,7 +114,7 @@ export async function runCli(argv) {
       await runGlobalRollback(options);
       return;
     case "components":
-      printGlobalComponents({ workspaceRoot: options.cwd });
+      await dispatchComponentsCommand(options, invoke);
       return;
     default:
       throw new Error(`Unknown command "${command}". Run "${invoke} help".`);
@@ -115,6 +125,24 @@ async function dispatchByScope(options, defaultScope, handlers) {
   const scope = options.scope ?? defaultScope;
   const handler = handlers[scope];
   await handler();
+}
+
+async function dispatchComponentsCommand(options, invoke) {
+  switch (options.componentsAction) {
+    case null:
+      printGlobalComponents({ workspaceRoot: options.cwd });
+      return;
+    case "validate":
+      runComponentsValidate({ workspaceRoot: options.cwd });
+      return;
+    case "init":
+      await runComponentsInit(options);
+      return;
+    default:
+      throw new Error(
+        `Unknown components action "${options.componentsAction}". Run "${invoke} help".`
+      );
+  }
 }
 
 async function readPackageManifest() {
@@ -136,6 +164,9 @@ function parseArgs(argv) {
     adapters: null,
     allAdapters: false,
     components: null,
+    componentsAction: null,
+    componentId: null,
+    label: null,
     noDefaultComponents: false,
     force: false,
     dryRun: false,
@@ -144,6 +175,10 @@ function parseArgs(argv) {
     help: false,
     version: false
   };
+
+  if (command === "components") {
+    parseComponentsAction(args, options);
+  }
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -177,12 +212,35 @@ function parseArgs(argv) {
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--to") options.snapshot = args[++index];
     else if (arg.startsWith("--to=")) options.snapshot = arg.slice("--to=".length);
+    else if (arg === "--label") options.label = args[++index];
+    else if (arg.startsWith("--label=")) options.label = arg.slice("--label=".length);
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
     else throw new Error(`Unknown option "${arg}".`);
   }
 
   return { command, options };
+}
+
+function parseComponentsAction(args, options) {
+  const action = args[0];
+  if (!action || action.startsWith("-")) return;
+
+  args.shift();
+  options.componentsAction = action;
+
+  if (action === "init") {
+    const componentId = args[0];
+    if (!componentId || componentId.startsWith("-")) {
+      throw new Error('Missing component id. Use: harness components init <id> --label "My Label"');
+    }
+    options.componentId = args.shift();
+    return;
+  }
+
+  if (action === "validate") return;
+
+  throw new Error(`Unknown components action "${action}". Use validate or init.`);
 }
 
 function parseScope(value) {
@@ -239,6 +297,8 @@ Usage:
   harness backups
   harness rollback --to <snapshot> [--apply]
   harness components
+  harness components validate [--cwd <path>]
+  harness components init <id> --label "<label>" [--cwd <path>]
   harness uninstall [--dry-run]
 
 Scopes:
@@ -257,7 +317,7 @@ Commands:
   doctor     Report installed agents, state, backups, and missing configs.
   backups    List config snapshots under ~/.harness/backups.
   rollback   Preview or restore a prior config snapshot (--apply to write).
-  components List bundled and workspace components, defaults, and assets.
+  components List, validate, or scaffold workspace components.
   uninstall  Remove managed sections and global state. Backups are preserved.
 
 Examples:
@@ -266,6 +326,9 @@ Examples:
   npx @kal-elsam/harness install --no-default-components
   npx @kal-elsam/harness install --dry-run
   npx @kal-elsam/harness install --scope=workspace --mode enterprise
+  harness components init team-rules --label "Team Rules"
+  harness components validate
+  harness install --components team-rules
   harness doctor
   harness backups
   harness rollback --to <snapshot>

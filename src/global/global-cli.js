@@ -1,5 +1,6 @@
 import { GLOBAL_AGENT_IDS, detectInstalledAdapters } from "./registry.js";
 import { describeBundledComponentCatalog, describeWorkspaceComponentCatalog } from "./component-registry.js";
+import { initWorkspaceComponent, validateWorkspaceComponentsCatalog } from "./component-authoring.js";
 import { installGlobalHarness, uninstallGlobalHarness, updateGlobalHarness } from "./global-installer.js";
 import { resolveHomeDir, harnessHomePaths } from "./paths.js";
 import { runGlobalDoctorChecks } from "./global-doctor.js";
@@ -143,6 +144,38 @@ function printComponentEntry(component, { workspace = false } = {}) {
   if (component.adapterHints.length > 0) {
     console.log(`  Adapter hints: ${component.adapterHints.join(", ")}`);
   }
+}
+
+export function runComponentsValidate({ workspaceRoot = process.cwd() } = {}) {
+  const result = validateWorkspaceComponentsCatalog(workspaceRoot);
+
+  console.log("Workspace component catalog is valid");
+  console.log(`Catalog: .harness/components/catalog.json`);
+  console.log(`Components: ${result.components.length}`);
+
+  for (const component of result.components) {
+    console.log(`- ${component.id} (${component.version}) — ${component.assetFiles.join(", ")}`);
+  }
+}
+
+export async function runComponentsInit(options) {
+  const result = await initWorkspaceComponent({
+    workspaceRoot: options.cwd,
+    id: options.componentId,
+    label: options.label
+  });
+
+  console.log("Workspace component created");
+  console.log(`Id: ${result.entry.id}`);
+  console.log(`Label: ${result.entry.label}`);
+  console.log(`Version: ${result.entry.version}`);
+  console.log(`Catalog: .harness/components/catalog.json`);
+  console.log(`Asset: .harness/components/${result.entry.id}/README.md`);
+  console.log("");
+  console.log("Next:");
+  console.log(`  1. Edit .harness/components/${result.entry.id}/README.md`);
+  console.log("  2. harness components validate");
+  console.log(`  3. harness install --components ${result.entry.id}`);
 }
 
 export async function runGlobalBackups() {

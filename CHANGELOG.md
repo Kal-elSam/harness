@@ -2,6 +2,27 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.7.0 — 2026-07-03
+
+Minor release. Adds public authoring commands for workspace components.
+
+### Component authoring CLI
+
+- `harness components validate [--cwd <path>]` validates `.harness/components/catalog.json`
+  with the same loader used by install/doctor.
+- `harness components init <id> --label "<label>"` scaffolds catalog entry, component directory,
+  and `README.md` (`version: "0.1.0"`).
+- Does not overwrite existing IDs, rejects bundled IDs, and never writes to `~/.harness`.
+
+### Authoring flow
+
+```bash
+harness components init team-rules --label "Team Rules"
+# edit .harness/components/team-rules/README.md
+harness components validate
+harness install --components team-rules
+```
+
 ## 0.6.0 — 2026-07-03
 
 Minor release. Adds opt-in workspace component sources for local custom components.
