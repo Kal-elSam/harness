@@ -1,14 +1,16 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { hashBuffer } from "../hash.js";
+import { resolveComponentTemplateDir } from "./component-paths.js";
 
-export async function installComponentAssets({ packageRoot, paths, components, dryRun = false }) {
+export async function installComponentAssets({ packageRoot, workspaceRoot = null, paths, components, dryRun = false }) {
   const coreFiles = {};
 
   for (const component of components) {
     const installed = await installComponentFiles({
       packageRoot,
+      workspaceRoot,
       paths,
       component,
       dryRun,
@@ -20,7 +22,14 @@ export async function installComponentAssets({ packageRoot, paths, components, d
   return coreFiles;
 }
 
-export async function repairComponentAssets({ packageRoot, paths, components, state, dryRun = false }) {
+export async function repairComponentAssets({
+  packageRoot,
+  workspaceRoot = null,
+  paths,
+  components,
+  state,
+  dryRun = false
+}) {
   const coreFiles = { ...state?.coreFiles };
   const repaired = [];
   const unchanged = [];
@@ -28,6 +37,7 @@ export async function repairComponentAssets({ packageRoot, paths, components, st
   for (const component of components) {
     const installed = await installComponentFiles({
       packageRoot,
+      workspaceRoot,
       paths,
       component,
       dryRun,
@@ -59,17 +69,22 @@ export async function repairComponentAssets({ packageRoot, paths, components, st
   return { coreFiles, repaired, unchanged };
 }
 
-async function installComponentFiles({ packageRoot, paths, component, dryRun, shouldRepair }) {
-  const templateDir = resolve(packageRoot, "global-template", "components", component.id);
+async function installComponentFiles({
+  packageRoot,
+  workspaceRoot,
+  paths,
+  component,
+  dryRun,
+  shouldRepair
+}) {
+  const templateDir = resolveComponentTemplateDir(component, { packageRoot, workspaceRoot });
   const coreFiles = {};
 
   if (!existsSync(templateDir)) return coreFiles;
 
-  const entries = await readdir(templateDir);
-
-  for (const entry of entries) {
-    const sourcePath = join(templateDir, entry);
-    const relativePath = `components/${component.id}/${entry}`;
+  for (const assetFile of component.assetFiles) {
+    const sourcePath = join(templateDir, assetFile);
+    const relativePath = `components/${component.id}/${assetFile}`;
     const destinationPath = join(paths.root, relativePath);
     const content = await readFile(sourcePath);
     const needsRepair = await shouldRepair(relativePath, destinationPath, content);

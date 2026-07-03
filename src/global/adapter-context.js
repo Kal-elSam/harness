@@ -5,6 +5,7 @@ export function buildAdapterContext({
   homeDir,
   packageName,
   packageRoot = null,
+  workspaceRoot = null,
   components = [],
   dryRun = false,
   timestamp = null
@@ -15,6 +16,7 @@ export function buildAdapterContext({
     homeDir,
     paths,
     packageRoot,
+    workspaceRoot,
     packageName,
     coreDir: paths.coreDir,
     componentsDir: join(paths.root, "components"),

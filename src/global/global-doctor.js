@@ -5,18 +5,19 @@ import { harnessHomePaths } from "./paths.js";
 import { resolveComponent } from "./component-registry.js";
 import { readGlobalState } from "./state.js";
 
-export async function runGlobalDoctorChecks(homeDir, { packageRoot } = {}) {
+export async function runGlobalDoctorChecks(homeDir, { packageRoot, workspaceRoot = null } = {}) {
   const paths = harnessHomePaths(homeDir);
   const state = await readGlobalState(paths.statePath);
-  const installedComponents = (state?.components ?? []).map((entry) => resolveComponent(entry.id));
+  const installedComponents = (state?.components ?? []).map((entry) => resolveComponent(entry.id, { workspaceRoot }));
   const context = buildAdapterContext({
     homeDir,
     packageName: state?.packageName ?? "",
     packageRoot,
+    workspaceRoot,
     components: installedComponents
   });
   const checks = packageRoot
-    ? await detectGlobalDrift({ homeDir, paths, state, packageRoot, context })
+    ? await detectGlobalDrift({ homeDir, paths, state, packageRoot, workspaceRoot, context })
     : [stateOnlyCheck(state)];
 
   if (packageRoot) {

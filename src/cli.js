@@ -82,7 +82,7 @@ export async function runCli(argv) {
       return;
     case "doctor":
       await dispatchByScope(options, "agent-global", {
-        "agent-global": () => runGlobalDoctor(packageRoot),
+        "agent-global": () => runGlobalDoctor(packageRoot, { workspaceRoot: options.cwd }),
         workspace: () => runWorkspaceDoctor(options)
       });
       return;
@@ -104,7 +104,7 @@ export async function runCli(argv) {
       await runGlobalRollback(options);
       return;
     case "components":
-      printGlobalComponents();
+      printGlobalComponents({ workspaceRoot: options.cwd });
       return;
     default:
       throw new Error(`Unknown command "${command}". Run "${invoke} help".`);
@@ -257,7 +257,7 @@ Commands:
   doctor     Report installed agents, state, backups, and missing configs.
   backups    List config snapshots under ~/.harness/backups.
   rollback   Preview or restore a prior config snapshot (--apply to write).
-  components List bundled global components, defaults, and assets.
+  components List bundled and workspace components, defaults, and assets.
   uninstall  Remove managed sections and global state. Backups are preserved.
 
 Examples:

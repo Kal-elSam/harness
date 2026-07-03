@@ -2,6 +2,26 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.6.0 — 2026-07-03
+
+Minor release. Adds opt-in workspace component sources for local custom components.
+
+### Workspace component catalog
+
+- Optional workspace catalog at `.harness/components/catalog.json` with assets under
+  `.harness/components/<component-id>/`.
+- `harness components` lists bundled and workspace components separately.
+- `harness install --components <ids>` resolves bundled and workspace IDs from the current cwd.
+- Workspace components use a generic managed section (label, installed assets, optional instructions).
+
+### Validation and safety
+
+- Workspace IDs must be unique and cannot override bundled components.
+- Asset paths must be relative, stay inside the component directory, exist on disk, and cannot
+  escape the workspace via symlinks.
+- `doctor` detects drift for installed workspace assets; `uninstall` removes copied assets and
+  managed sections.
+
 ## 0.5.0 — 2026-07-03
 
 Minor release. Adds a public component catalog and inspection command.

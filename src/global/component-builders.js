@@ -22,3 +22,22 @@ export function createManagedSectionBuilder(componentId, catalogEntry) {
 
   return (context, adapter) => builder(context, adapter, catalogEntry);
 }
+
+export function createWorkspaceManagedSectionBuilder(catalogEntry) {
+  return (context, adapter) => buildWorkspaceManagedSection(context, adapter, catalogEntry);
+}
+
+export function buildWorkspaceManagedSection(context, _adapter, catalogEntry) {
+  const baseDir = join(context.componentsDir, catalogEntry.id);
+  const lines = [`### ${catalogEntry.label}`, ""];
+
+  for (const asset of catalogEntry.assetFiles) {
+    lines.push(`- ${asset}: ${join(baseDir, asset)}`);
+  }
+
+  if (catalogEntry.instructions) {
+    lines.push("", catalogEntry.instructions);
+  }
+
+  return lines.join("\n");
+}

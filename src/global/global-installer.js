@@ -24,6 +24,7 @@ export async function installGlobalHarness({
   packageName,
   cliVersion,
   homeDir,
+  workspaceRoot = null,
   agents = null,
   components = null,
   noDefaultComponents = false,
@@ -31,11 +32,12 @@ export async function installGlobalHarness({
 }) {
   const paths = harnessHomePaths(homeDir);
   const timestamp = backupTimestamp();
-  const targetComponents = resolveTargetComponents({ components, noDefaultComponents });
+  const targetComponents = resolveTargetComponents({ components, noDefaultComponents, workspaceRoot });
   const context = buildAdapterContext({
     homeDir,
     packageName,
     packageRoot,
+    workspaceRoot,
     components: targetComponents,
     dryRun,
     timestamp
@@ -60,6 +62,7 @@ export async function installGlobalHarness({
 
   const componentFiles = await installComponentAssets({
     packageRoot,
+    workspaceRoot,
     paths,
     components: targetComponents,
     dryRun
@@ -105,6 +108,7 @@ export async function syncGlobalHarness({
   packageName,
   cliVersion,
   homeDir,
+  workspaceRoot = null,
   agents,
   components,
   dryRun = false
@@ -112,17 +116,18 @@ export async function syncGlobalHarness({
   const paths = harnessHomePaths(homeDir);
   const state = await readGlobalState(paths.statePath);
   const timestamp = backupTimestamp();
-  const targetComponents = resolveTargetComponents({ components });
+  const targetComponents = resolveTargetComponents({ components, workspaceRoot });
   const context = buildAdapterContext({
     homeDir,
     packageName: packageName ?? state.packageName,
     packageRoot,
+    workspaceRoot,
     components: targetComponents,
     dryRun,
     timestamp
   });
   const targetAdapters = resolveTargetAdapters(context, agents);
-  const driftChecks = await detectGlobalDrift({ homeDir, paths, state, packageRoot, context });
+  const driftChecks = await detectGlobalDrift({ homeDir, paths, state, packageRoot, workspaceRoot, context });
   const result = {
     scope: "agent-global",
     homeDir,
@@ -143,6 +148,7 @@ export async function syncGlobalHarness({
 
   const { coreFiles, repaired, unchanged } = await repairComponentAssets({
     packageRoot,
+    workspaceRoot,
     paths,
     components: targetComponents,
     state,

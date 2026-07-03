@@ -15,9 +15,11 @@ test("harness components prints bundled catalog", () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Harness components \(scope: agent-global\)/);
+  assert.match(result.stdout, /Bundled: 2/);
   assert.match(result.stdout, /orchestrator \(1\.0\.0\) \[default\]/);
   assert.match(result.stdout, /sdd-core \(1\.0\.0\) \[default\]/);
   assert.match(result.stdout, /Assets: orchestrator\.md/);
   assert.match(result.stdout, /Assets: workflow\.md, spec-sizing\.md, handoff\.md/);
   assert.match(result.stdout, /Adapter hints: cursor, codex, claude, opencode/);
+  assert.match(result.stdout, /Workspace: 0/);
 });

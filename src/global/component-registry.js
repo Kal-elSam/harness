@@ -1,49 +1,80 @@
 import { loadComponentCatalog } from "./load-component-catalog.js";
+import { loadWorkspaceComponentCatalog } from "./load-workspace-component-catalog.js";
 
-const COMPONENTS = loadComponentCatalog();
+const BUNDLED_COMPONENTS = loadComponentCatalog();
 
-export const DEFAULT_COMPONENT_IDS = COMPONENTS
+export const DEFAULT_COMPONENT_IDS = BUNDLED_COMPONENTS
   .filter((component) => component.defaultEnabled)
   .map((component) => component.id);
 
-export const COMPONENT_IDS = COMPONENTS.map((component) => component.id);
+export const COMPONENT_IDS = BUNDLED_COMPONENTS.map((component) => component.id);
 
-export function listComponents() {
-  return [...COMPONENTS];
+function loadWorkspaceComponents(workspaceRoot) {
+  if (!workspaceRoot) return [];
+
+  return loadWorkspaceComponentCatalog(workspaceRoot, { bundledIds: COMPONENT_IDS });
 }
 
-export function describeComponentCatalog() {
-  return listComponents().map((component) => ({
+function mergeComponents(workspaceRoot) {
+  return [...BUNDLED_COMPONENTS, ...loadWorkspaceComponents(workspaceRoot)];
+}
+
+function formatCatalogEntry(component) {
+  return {
     id: component.id,
     label: component.label,
     version: component.version,
+    source: component.source ?? "bundled",
     defaultEnabled: component.defaultEnabled,
     assetFiles: [...component.assetFiles],
-    adapterHints: Object.keys(component.adapterHints)
-  }));
+    adapterHints: Object.keys(component.adapterHints),
+    instructions: component.instructions ?? null
+  };
 }
 
-export function resolveComponent(id) {
-  const component = COMPONENTS.find((candidate) => candidate.id === id);
+export function listComponents({ workspaceRoot = null } = {}) {
+  return mergeComponents(workspaceRoot);
+}
+
+export function describeComponentCatalog({ workspaceRoot = null } = {}) {
+  return listComponents({ workspaceRoot }).map(formatCatalogEntry);
+}
+
+export function describeBundledComponentCatalog() {
+  return BUNDLED_COMPONENTS.map(formatCatalogEntry);
+}
+
+export function describeWorkspaceComponentCatalog(workspaceRoot) {
+  return loadWorkspaceComponents(workspaceRoot).map(formatCatalogEntry);
+}
+
+export function resolveComponent(id, { workspaceRoot = null } = {}) {
+  const component = mergeComponents(workspaceRoot).find((candidate) => candidate.id === id);
 
   if (!component) {
-    throw new Error(`Unknown component "${id}". Use ${COMPONENT_IDS.join(", ")}.`);
+    const available = mergeComponents(workspaceRoot).map((entry) => entry.id);
+    throw new Error(`Unknown component "${id}". Use ${available.join(", ")}.`);
   }
 
   return component;
 }
 
-export function validateComponentIds(ids) {
-  return ids.map((id) => resolveComponent(id).id);
+export function validateComponentIds(ids, { workspaceRoot = null } = {}) {
+  return ids.map((id) => resolveComponent(id, { workspaceRoot }).id);
 }
 
-export function resolveTargetComponents({ components = null, noDefaultComponents = false }) {
-  if (noDefaultComponents) return [];
+export function resolveTargetComponents({
+  components = null,
+  noDefaultComponents = false,
+  workspaceRoot = null
+} = {}) {
   if (components != null) {
-    return validateComponentIds(components).map((id) => resolveComponent(id));
+    return validateComponentIds(components, { workspaceRoot }).map((id) => resolveComponent(id, { workspaceRoot }));
   }
 
-  return DEFAULT_COMPONENT_IDS.map((id) => resolveComponent(id));
+  if (noDefaultComponents) return [];
+
+  return DEFAULT_COMPONENT_IDS.map((id) => resolveComponent(id, { workspaceRoot }));
 }
 
 export function buildComponentStateEntries(components, adapters) {
@@ -52,6 +83,7 @@ export function buildComponentStateEntries(components, adapters) {
   return components.map((component) => ({
     id: component.id,
     version: component.version,
+    source: component.source ?? "bundled",
     managedTargets: [...managedTargets]
   }));
 }

@@ -1,13 +1,14 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { hashBuffer } from "../hash.js";
 import { buildManagedBody } from "./managed-body.js";
 import { hasManagedSection, upsertManagedSection } from "./managed-section.js";
 import { resolveComponent } from "./component-registry.js";
+import { resolveComponentTemplateDir } from "./component-paths.js";
 import { listAdapters } from "./registry.js";
 
-export async function detectGlobalDrift({ homeDir, paths, state, packageRoot, context }) {
+export async function detectGlobalDrift({ homeDir, paths, state, packageRoot, workspaceRoot = null, context }) {
   if (!state) {
     return [{
       name: "~/.harness/state.json",
@@ -19,9 +20,9 @@ export async function detectGlobalDrift({ homeDir, paths, state, packageRoot, co
 
   const checks = [
     stateMetadataCheck(state),
-    ...await componentAssetDrift({ paths, state, packageRoot, context }),
+    ...await componentAssetDrift({ paths, state, packageRoot, workspaceRoot, context }),
     ...await managedSectionDrift({ homeDir, state, context }),
-    ...await componentSectionDrift({ homeDir, state, context }),
+    ...await componentSectionDrift({ homeDir, state, workspaceRoot, context }),
     ...await adapterConfigDrift({ homeDir, state, context })
   ];
 
@@ -45,12 +46,12 @@ function stateMetadataCheck(state) {
   };
 }
 
-async function componentAssetDrift({ paths, state, packageRoot, context }) {
+async function componentAssetDrift({ paths, state, packageRoot, workspaceRoot, context }) {
   const checks = [];
   const installedComponents = context.components;
 
   for (const component of installedComponents) {
-    const templateDir = resolve(packageRoot, "global-template", "components", component.id);
+    const templateDir = resolveComponentTemplateDir(component, { packageRoot, workspaceRoot });
     if (!existsSync(templateDir)) continue;
 
     for (const assetFile of component.assetFiles) {
@@ -146,12 +147,12 @@ async function managedSectionDrift({ homeDir, state, context }) {
   return checks;
 }
 
-async function componentSectionDrift({ homeDir, state, context }) {
+async function componentSectionDrift({ homeDir, state, workspaceRoot, context }) {
   const checks = [];
 
   for (const stateEntry of state.components ?? []) {
-    const component = resolveComponent(stateEntry.id);
-    const heading = componentHeading(component.id);
+    const component = resolveComponent(stateEntry.id, { workspaceRoot });
+    const heading = componentSectionHeading(component);
 
     for (const configFile of stateEntry.managedTargets ?? []) {
       const configPath = join(homeDir, configFile);
@@ -257,6 +258,6 @@ function componentSectionDetail(status, componentId, configFile) {
   }
 }
 
-function componentHeading(componentId) {
-  return componentId === "sdd-core" ? "### SDD Core" : "### Orchestrator";
+function componentSectionHeading(component) {
+  return `### ${component.label}`;
 }

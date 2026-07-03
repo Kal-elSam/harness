@@ -1,5 +1,5 @@
 import { GLOBAL_AGENT_IDS, detectInstalledAdapters } from "./registry.js";
-import { describeComponentCatalog } from "./component-registry.js";
+import { describeBundledComponentCatalog, describeWorkspaceComponentCatalog } from "./component-registry.js";
 import { installGlobalHarness, uninstallGlobalHarness, updateGlobalHarness } from "./global-installer.js";
 import { resolveHomeDir, harnessHomePaths } from "./paths.js";
 import { runGlobalDoctorChecks } from "./global-doctor.js";
@@ -7,12 +7,14 @@ import { describeBackupSnapshots, applyRollback, previewRollback } from "./rollb
 
 export async function runGlobalInstall(options, packageManifest, packageRoot, { update = false } = {}) {
   const homeDir = resolveHomeDir();
+  const workspaceRoot = options.cwd;
   const run = update ? updateGlobalHarness : installGlobalHarness;
   const result = await run({
     packageRoot,
     packageName: packageManifest.name,
     cliVersion: packageManifest.version,
     homeDir,
+    workspaceRoot,
     agents: options.adapters,
     components: options.components,
     noDefaultComponents: options.noDefaultComponents,
@@ -67,9 +69,9 @@ export async function runGlobalUninstall(options) {
   console.log("Backups under ~/.harness/backups were preserved.");
 }
 
-export async function runGlobalDoctor(packageRoot) {
+export async function runGlobalDoctor(packageRoot, { workspaceRoot = process.cwd() } = {}) {
   const homeDir = resolveHomeDir();
-  const { checks, ok, hasDrift } = await runGlobalDoctorChecks(homeDir, { packageRoot });
+  const { checks, ok, hasDrift } = await runGlobalDoctorChecks(homeDir, { packageRoot, workspaceRoot });
 
   console.log("Agentic Harness doctor (scope: agent-global)");
   console.log(`Home: ${homeDir}`);
@@ -103,22 +105,43 @@ export function printGlobalDetect() {
   console.log(`Supported: ${GLOBAL_AGENT_IDS.join(", ")}`);
 }
 
-export function printGlobalComponents() {
-  const components = describeComponentCatalog();
+export function printGlobalComponents({ workspaceRoot = process.cwd() } = {}) {
+  const bundled = describeBundledComponentCatalog();
+  const workspace = describeWorkspaceComponentCatalog(workspaceRoot);
 
   console.log("Harness components (scope: agent-global)");
-  console.log(`Bundled: ${components.length}`);
+  console.log(`Bundled: ${bundled.length}`);
+
+  for (const component of bundled) {
+    printComponentEntry(component);
+  }
+
   console.log("");
+  console.log(`Workspace: ${workspace.length}`);
 
-  for (const component of components) {
-    const defaultLabel = component.defaultEnabled ? "default" : "optional";
-    console.log(`${component.id} (${component.version}) [${defaultLabel}]`);
-    console.log(`  Label: ${component.label}`);
-    console.log(`  Assets: ${component.assetFiles.join(", ")}`);
+  if (workspace.length === 0) {
+    console.log("No workspace catalog at .harness/components/catalog.json");
+    return;
+  }
 
-    if (component.adapterHints.length > 0) {
-      console.log(`  Adapter hints: ${component.adapterHints.join(", ")}`);
-    }
+  for (const component of workspace) {
+    printComponentEntry(component, { workspace: true });
+  }
+}
+
+function printComponentEntry(component, { workspace = false } = {}) {
+  const defaultLabel = workspace ? "workspace" : (component.defaultEnabled ? "default" : "optional");
+  console.log("");
+  console.log(`${component.id} (${component.version}) [${defaultLabel}]`);
+  console.log(`  Label: ${component.label}`);
+  console.log(`  Assets: ${component.assetFiles.join(", ")}`);
+
+  if (component.instructions) {
+    console.log(`  Instructions: ${component.instructions}`);
+  }
+
+  if (component.adapterHints.length > 0) {
+    console.log(`  Adapter hints: ${component.adapterHints.join(", ")}`);
   }
 }
 

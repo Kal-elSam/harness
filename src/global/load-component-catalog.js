@@ -31,6 +31,7 @@ export function loadComponentCatalog(catalogUrl = defaultCatalogUrl) {
       id: entry.id,
       label: entry.label,
       version: entry.version,
+      source: "bundled",
       defaultEnabled: entry.defaultEnabled,
       assetFiles: [...entry.assetFiles],
       adapterHints: { ...(entry.adapterHints ?? {}) },
