@@ -50,6 +50,8 @@ harness install --scope=workspace
 harness detect
 harness doctor
 harness update
+harness backups
+harness rollback --to <snapshot> [--apply]
 harness uninstall
 ```
 
@@ -328,22 +330,28 @@ Before tagging a new version:
 
 ```bash
 npm test
-npm pack --dry-run
 npm run smoke
+npm pack --dry-run
 ```
 
 `npm run smoke` packs the current source into a tarball, installs it in a
-throwaway temp project, and exercises both scopes end to end: the agent-global
-flow (`install --dry-run`, `install`, `doctor`, `uninstall` against a fake
-`HARNESS_HOME`) and the workspace flow (`install --scope=workspace`, `doctor`,
-`update --dry-run`).
+throwaway temp project with a fake `HARNESS_HOME`, and exercises both scopes end
+to end:
+
+- **agent-global:** `install --dry-run`, `install`, `doctor`, drift simulation,
+  `doctor` failure, `update` repair, `backups`, rollback preview (no writes),
+  rollback apply (with safety backup), `uninstall`.
+- **workspace:** `install --scope=workspace`, `doctor`, `update --dry-run`.
 
 Release flow:
 
 ```bash
-# bump version in package.json
-git tag v0.2.0
-git push origin v0.2.0
+# bump version in package.json and package-lock.json
+git add .
+git commit -m "chore: release 0.4.0"
+git tag v0.4.0
+git push origin main
+git push origin v0.4.0
 ```
 
 The `publish.yml` workflow runs on `v*` tags and publishes to npm using the `npm-publish` environment.

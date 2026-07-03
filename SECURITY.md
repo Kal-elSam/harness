@@ -23,7 +23,7 @@ GitHub tag
 | Node/npm | Use Node 22.14+ and npm 11.5.1+ for trusted publishing support. |
 | Release trigger | Publish only from immutable `v*` tags. |
 | Install | Use `npm ci` with a committed lockfile. |
-| Package verification | Run tests and `npm pack --dry-run` before publish. |
+| Package verification | Run `npm test`, `npm run smoke`, and `npm pack --dry-run` before publish. |
 | Account security | Require 2FA on GitHub and npm maintainer accounts. |
 | Branch protection | Protect `main`; require review and passing CI before merge. |
 
