@@ -28,6 +28,7 @@ GitHub tag
 | CI attribution guard | Run `npm run release:check -- --range <rev-range>` on pull requests and pushes. |
 | Publish gate | Run `npm run release:check` on `HEAD` in `publish.yml` before `npm publish`. |
 | Post-publish provenance | Run `npm run release:published -- --version x.y.z` after npm publish. |
+| Post-publish registry smoke | Run `npm run smoke:registry -- --version x.y.z` manually after npm publish; not in CI. |
 | Published tag policy | Do not force-push or rewrite published `v*` tags; ship corrective versions instead. |
 | Account security | Require 2FA on GitHub and npm maintainer accounts. |
 | Branch protection | Protect `main`; require review and passing CI before merge. |

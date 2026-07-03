@@ -1,6 +1,6 @@
 {
   "name": "@kal-elsam/harness",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Installable AI governance harness for Codex, Cursor, Claude, Gemini, Copilot, Engram, and Graphify.",
   "type": "module",
   "homepage": "https://github.com/Kal-elSam/harness#readme",
@@ -30,6 +30,7 @@
     "test": "node --test",
     "doctor": "node ./bin/harness.js doctor",
     "smoke": "bash scripts/smoke-test.sh",
+    "smoke:registry": "bash scripts/registry-smoke-test.sh",
     "release:check": "node scripts/check-release-commit.mjs",
     "release:published": "node scripts/check-published-release.mjs"
   },

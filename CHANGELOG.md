@@ -2,6 +2,23 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.4.2 — 2026-07-03
+
+Patch release. Release confidence tooling only; no harness CLI behavior changes.
+
+### Registry install verification
+
+- Added `npm run smoke:registry` to install `@kal-elsam/harness` from the npm
+  registry in an isolated temp workspace and exercise the published CLI.
+- Documented post-publish steps: `release:published` and `smoke:registry`.
+
+### Release provenance
+
+- Attribution guard supports `--range` for CI/PR scans.
+- Added `npm run release:published` to verify npm `gitHead`, tags, and `origin/main`.
+- Published tarball now includes `scripts/` used by npm release/smoke commands.
+- CI and publish workflows run attribution checks; publish runs `release:check` before `npm publish`.
+
 ## 0.4.1 — 2026-07-03
 
 Corrective release. No functional changes from `0.4.0`.

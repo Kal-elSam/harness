@@ -364,11 +364,11 @@ Release flow:
 ```bash
 # bump version in package.json and package-lock.json
 git add .
-git commit -m "chore: release 0.4.1"
+git commit -m "chore: release 0.4.2"
 npm run release:check
-git tag v0.4.1
+git tag v0.4.2
 git push origin main
-git push origin v0.4.1
+git push origin v0.4.2
 ```
 
 After npm publishes the tag, verify published provenance against git and the registry:
@@ -376,10 +376,13 @@ After npm publishes the tag, verify published provenance against git and the reg
 ```bash
 git fetch --tags origin
 git fetch origin main
-npm run release:published -- --version 0.4.1
+npm run release:published -- --version 0.4.2
+npm run smoke:registry -- --version 0.4.2
 ```
 
-This checks npm `version`, npm `gitHead`, local tag `v*`, remote tag on `origin`, and `origin/main`.
+`release:published` checks npm `version`, npm `gitHead`, local tag `v*`, remote tag on `origin`, and `origin/main`.
+
+`smoke:registry` installs `@kal-elsam/harness` from the npm registry (not the local tarball) into a throwaway workspace with a fake `HARNESS_HOME` and npm cache, then runs `install`, `doctor`, `update --dry-run`, and `uninstall`. Use `latest` by default or pin with `--version x.y.z`. This step is manual post-publish only; it is not part of normal CI because it requires registry network access.
 
 The `publish.yml` workflow runs on `v*` tags and publishes to npm using the `npm-publish` environment.
 It runs `npm run release:check` on `HEAD` immediately before `npm publish`.
