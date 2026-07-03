@@ -1,7 +1,6 @@
-import orchestrator from "./components/orchestrator.js";
-import sddCore from "./components/sdd-core.js";
+import { loadComponentCatalog } from "./load-component-catalog.js";
 
-const COMPONENTS = [orchestrator, sddCore];
+const COMPONENTS = loadComponentCatalog();
 
 export const DEFAULT_COMPONENT_IDS = COMPONENTS
   .filter((component) => component.defaultEnabled)
@@ -11,6 +10,17 @@ export const COMPONENT_IDS = COMPONENTS.map((component) => component.id);
 
 export function listComponents() {
   return [...COMPONENTS];
+}
+
+export function describeComponentCatalog() {
+  return listComponents().map((component) => ({
+    id: component.id,
+    label: component.label,
+    version: component.version,
+    defaultEnabled: component.defaultEnabled,
+    assetFiles: [...component.assetFiles],
+    adapterHints: Object.keys(component.adapterHints)
+  }));
 }
 
 export function resolveComponent(id) {

@@ -1,0 +1,25 @@
+{
+  "components": [
+    {
+      "id": "orchestrator",
+      "label": "Orchestrator",
+      "version": "1.0.0",
+      "defaultEnabled": true,
+      "assetFiles": ["orchestrator.md"],
+      "adapterHints": {}
+    },
+    {
+      "id": "sdd-core",
+      "label": "SDD Core",
+      "version": "1.0.0",
+      "defaultEnabled": true,
+      "assetFiles": ["workflow.md", "spec-sizing.md", "handoff.md"],
+      "adapterHints": {
+        "cursor": "- In repos with workspace harness: also read `.cursor/rules/` and `docs/specs/`.",
+        "codex": "- In repos with workspace harness: also read `.codex/skills/sdd/` when present.",
+        "claude": "- In repos with workspace harness: repo `AGENTS.md` wins over `CLAUDE.md` pointers.",
+        "opencode": "- In repos with workspace harness: also read `.opencode/` SDD assets when present."
+      }
+    }
+  ]
+}

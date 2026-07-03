@@ -4,7 +4,7 @@ import { basename, dirname, resolve } from "node:path";
 import { ADAPTERS } from "./harness-files.js";
 import { GLOBAL_AGENT_IDS } from "./global/registry.js";
 import { COMPONENT_IDS, DEFAULT_COMPONENT_IDS } from "./global/component-registry.js";
-import { printGlobalDetect, runGlobalBackups, runGlobalDoctor, runGlobalInstall, runGlobalRollback, runGlobalUninstall } from "./global/global-cli.js";
+import { printGlobalComponents, printGlobalDetect, runGlobalBackups, runGlobalDoctor, runGlobalInstall, runGlobalRollback, runGlobalUninstall } from "./global/global-cli.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -102,6 +102,9 @@ export async function runCli(argv) {
       return;
     case "rollback":
       await runGlobalRollback(options);
+      return;
+    case "components":
+      printGlobalComponents();
       return;
     default:
       throw new Error(`Unknown command "${command}". Run "${invoke} help".`);
@@ -201,6 +204,7 @@ function normalizeCommand(command) {
   if (command === "detect" || command === "d") return "detect";
   if (command === "backups") return "backups";
   if (command === "rollback") return "rollback";
+  if (command === "components") return "components";
   if (command === "help") return "help";
   if (command === "version") return "version";
 
@@ -234,6 +238,7 @@ Usage:
   harness doctor [--scope=agent-global|workspace]
   harness backups
   harness rollback --to <snapshot> [--apply]
+  harness components
   harness uninstall [--dry-run]
 
 Scopes:
@@ -252,6 +257,7 @@ Commands:
   doctor     Report installed agents, state, backups, and missing configs.
   backups    List config snapshots under ~/.harness/backups.
   rollback   Preview or restore a prior config snapshot (--apply to write).
+  components List bundled global components, defaults, and assets.
   uninstall  Remove managed sections and global state. Backups are preserved.
 
 Examples:

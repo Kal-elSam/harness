@@ -1,4 +1,5 @@
 import { GLOBAL_AGENT_IDS, detectInstalledAdapters } from "./registry.js";
+import { describeComponentCatalog } from "./component-registry.js";
 import { installGlobalHarness, uninstallGlobalHarness, updateGlobalHarness } from "./global-installer.js";
 import { resolveHomeDir, harnessHomePaths } from "./paths.js";
 import { runGlobalDoctorChecks } from "./global-doctor.js";
@@ -100,6 +101,25 @@ export function printGlobalDetect() {
   console.log(`Home: ${homeDir}`);
   console.log(`Detected: ${detected.join(", ") || "none"}`);
   console.log(`Supported: ${GLOBAL_AGENT_IDS.join(", ")}`);
+}
+
+export function printGlobalComponents() {
+  const components = describeComponentCatalog();
+
+  console.log("Harness components (scope: agent-global)");
+  console.log(`Bundled: ${components.length}`);
+  console.log("");
+
+  for (const component of components) {
+    const defaultLabel = component.defaultEnabled ? "default" : "optional";
+    console.log(`${component.id} (${component.version}) [${defaultLabel}]`);
+    console.log(`  Label: ${component.label}`);
+    console.log(`  Assets: ${component.assetFiles.join(", ")}`);
+
+    if (component.adapterHints.length > 0) {
+      console.log(`  Adapter hints: ${component.adapterHints.join(", ")}`);
+    }
+  }
 }
 
 export async function runGlobalBackups() {

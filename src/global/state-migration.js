@@ -1,9 +1,9 @@
 import { resolveAdapter } from "./registry.js";
-import { ORCHESTRATOR_VERSION } from "./components/orchestrator.js";
+import { resolveComponent } from "./component-registry.js";
 
 const LEGACY_ORCHESTRATOR_COMPONENT = {
   id: "orchestrator",
-  version: ORCHESTRATOR_VERSION,
+  version: resolveComponent("orchestrator").version,
   managedTargets: []
 };
 

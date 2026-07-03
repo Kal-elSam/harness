@@ -26,6 +26,7 @@ test("packed tarball includes release scripts", () => {
     assert.ok(listing.includes("package/scripts/registry-smoke-test.sh"));
     assert.ok(listing.includes("package/scripts/check-published-release.mjs"));
     assert.ok(listing.includes("package/scripts/lib/attribution-guard.mjs"));
+    assert.ok(listing.includes("package/global-template/components/catalog.json"));
   } finally {
     if (existsSync(tarballPath)) unlinkSync(tarballPath);
   }

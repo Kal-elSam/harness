@@ -2,6 +2,26 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.5.0 — 2026-07-03
+
+Minor release. Adds a public component catalog and inspection command.
+
+### Component catalog
+
+- Bundled components are declared in `global-template/components/catalog.json`
+  (id, label, version, defaults, asset files, adapter hints).
+- `component-registry.js` loads from the catalog instead of hardcoded imports.
+- Default install still ships `orchestrator` and `sdd-core`; existing state remains valid.
+
+### New command
+
+- `harness components` lists bundled components, defaults, assets, and adapter hints.
+
+### Node compatibility
+
+- Catalog loader uses `readFileSync` + `JSON.parse` for Node `>=18.18` compliance.
+- CI matrix includes Node 18.
+
 ## 0.4.2 — 2026-07-03
 
 Patch release. Release confidence tooling only; no harness CLI behavior changes.

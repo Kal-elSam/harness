@@ -50,6 +50,7 @@ harness install --scope=workspace
 harness detect
 harness doctor
 harness update
+harness components
 harness backups
 harness rollback --to <snapshot> [--apply]
 harness uninstall
@@ -364,11 +365,11 @@ Release flow:
 ```bash
 # bump version in package.json and package-lock.json
 git add .
-git commit -m "chore: release 0.4.2"
+git commit -m "chore: release 0.5.0"
 npm run release:check
-git tag v0.4.2
+git tag v0.5.0
 git push origin main
-git push origin v0.4.2
+git push origin v0.5.0
 ```
 
 After npm publishes the tag, verify published provenance against git and the registry:
@@ -376,8 +377,8 @@ After npm publishes the tag, verify published provenance against git and the reg
 ```bash
 git fetch --tags origin
 git fetch origin main
-npm run release:published -- --version 0.4.2
-npm run smoke:registry -- --version 0.4.2
+npm run release:published -- --version 0.5.0
+npm run smoke:registry -- --version 0.5.0
 ```
 
 `release:published` checks npm `version`, npm `gitHead`, local tag `v*`, remote tag on `origin`, and `origin/main`.
