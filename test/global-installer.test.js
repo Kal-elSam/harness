@@ -50,6 +50,8 @@ test("install writes state, core files and managed configs under the home", asyn
   assert.equal(state.scope, "agent-global");
   assert.equal(state.cliVersion, "0.4.0");
   assert.deepEqual(state.agents.map((agent) => agent.id), ["cursor", "codex"]);
+  assert.equal(state.adapters[0].label, "Cursor");
+  assert.deepEqual(state.adapters[0].managedTargets, [".cursor/AGENTS.md"]);
   assert.match(state.coreFiles["core/orchestrator.md"], /^[0-9a-f]{64}$/);
 
   const cursorConfig = await readFile(join(homeDir, ".cursor", "AGENTS.md"), "utf8");

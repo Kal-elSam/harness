@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { ADAPTERS } from "./harness-files.js";
-import { GLOBAL_AGENT_IDS } from "./global/agents.js";
+import { GLOBAL_AGENT_IDS } from "./global/registry.js";
 import { printGlobalDetect, runGlobalDoctor, runGlobalInstall, runGlobalUninstall } from "./global/global-cli.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 

@@ -1,4 +1,4 @@
-import { GLOBAL_AGENT_IDS, detectGlobalAgents } from "./agents.js";
+import { GLOBAL_AGENT_IDS, detectInstalledAdapters } from "./registry.js";
 import { installGlobalHarness, uninstallGlobalHarness, updateGlobalHarness } from "./global-installer.js";
 import { resolveHomeDir } from "./paths.js";
 import { runGlobalDoctorChecks } from "./global-doctor.js";
@@ -69,7 +69,7 @@ export async function runGlobalDoctor() {
 
 export function printGlobalDetect() {
   const homeDir = resolveHomeDir();
-  const detected = detectGlobalAgents(homeDir);
+  const detected = detectInstalledAdapters({ homeDir });
 
   console.log("Global agents (scope: agent-global)");
   console.log(`Home: ${homeDir}`);

@@ -1,36 +1,29 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { hashBuffer } from "../hash.js";
-import { GLOBAL_AGENT_IDS, agentById, detectGlobalAgents } from "./agents.js";
-import { backupFileBeforeChange, backupTimestamp } from "./backups.js";
+import { buildAdapterContext } from "./adapter-context.js";
+import { backupTimestamp } from "./backups.js";
 import { harnessHomePaths } from "./paths.js";
-import { removeManagedSection, upsertManagedSection } from "./managed-section.js";
+import {
+  buildAdapterStateEntry,
+  detectInstalledAdapters,
+  resolveAdapter,
+  resolveTargetAdapters
+} from "./registry.js";
 import { createGlobalState, readGlobalState, writeGlobalState } from "./state.js";
-
-export function buildManagedBody({ packageName, coreDir }) {
-  return [
-    "## Harness (managed)",
-    "",
-    `Managed by \`${packageName}\`. Content inside these markers is refreshed by`,
-    "`harness update`. Everything outside the markers is yours and is preserved.",
-    "",
-    `- Orchestrator contract: ${join(coreDir, "orchestrator.md")}`,
-    "- When working inside a repository, its AGENTS.md governs first.",
-    "- Run `harness doctor` to check ecosystem health.",
-    "- Run `harness uninstall` to remove managed sections safely."
-  ].join("\n");
-}
+import { getInstalledAdapterIds, normalizeGlobalState } from "./state-migration.js";
 
 export async function installGlobalHarness({ packageRoot, packageName, cliVersion, homeDir, agents = null, dryRun = false }) {
   const paths = harnessHomePaths(homeDir);
-  const selectedAgents = resolveAgents(homeDir, agents);
   const timestamp = backupTimestamp();
+  const context = buildAdapterContext({ homeDir, packageName, coreDir: paths.coreDir, dryRun, timestamp });
+  const targetAdapters = resolveTargetAdapters(context, agents);
   const result = {
     scope: "agent-global",
     homeDir,
     stateRoot: paths.root,
-    agents: selectedAgents,
+    agents: targetAdapters.map((adapter) => adapter.id),
     coreFiles: [],
     configsCreated: [],
     configsUpdated: [],
@@ -40,16 +33,25 @@ export async function installGlobalHarness({ packageRoot, packageName, cliVersio
 
   const coreFiles = await installCoreFiles({ packageRoot, paths, dryRun, result });
 
-  for (const agentId of selectedAgents) {
-    await applyManagedSection({ agentId, paths, packageName, timestamp, dryRun, result });
+  for (const adapter of targetAdapters) {
+    const plan = adapter.plan(context);
+    const applied = await adapter.apply(context, plan);
+
+    if (applied.backupPath) result.backups.push(applied.backupPath);
+
+    if (applied.action === "create") result.configsCreated.push(applied.configFile);
+    else if (applied.action === "update") result.configsUpdated.push(applied.configFile);
+    else if (applied.action === "unchanged") result.configsUnchanged.push(applied.configFile);
   }
 
   if (!dryRun) {
     const existingState = await readGlobalState(paths.statePath);
+    const adapterEntries = targetAdapters.map((adapter) => buildAdapterStateEntry(adapter, homeDir));
+
     await writeGlobalState(paths.statePath, createGlobalState({
       packageName,
       cliVersion,
-      agents: buildAgentStateEntries(selectedAgents, homeDir),
+      adapters: adapterEntries,
       coreFiles,
       backups: [...(existingState?.backups ?? []), ...result.backups],
       installedAt: existingState?.installedAt
@@ -67,36 +69,27 @@ export async function updateGlobalHarness(options) {
     throw new Error('No global state found at ~/.harness/state.json. Run "harness install" first.');
   }
 
-  const agents = options.agents ?? state.agents.map((agent) => agent.id);
+  const agents = options.agents ?? getInstalledAdapterIds(state);
   return installGlobalHarness({ ...options, agents });
 }
 
 export async function uninstallGlobalHarness({ homeDir, dryRun = false }) {
   const paths = harnessHomePaths(homeDir);
-  const state = await readGlobalState(paths.statePath);
-  const agents = state?.agents?.map((agent) => agent.id) ?? detectGlobalAgents(homeDir);
+  const rawState = await readGlobalState(paths.statePath);
+  const state = normalizeGlobalState(rawState);
   const timestamp = backupTimestamp();
-  const result = { scope: "agent-global", agents, configsCleaned: [], backups: [], stateRemoved: false };
+  const context = buildAdapterContext({ homeDir, packageName: "", coreDir: paths.coreDir, dryRun, timestamp });
+  const adapterIds = state?.adapters?.map((entry) => entry.id)
+    ?? detectInstalledAdapters(context);
+  const result = { scope: "agent-global", agents: adapterIds, configsCleaned: [], backups: [], stateRemoved: false };
 
-  for (const agentId of agents) {
-    const configPath = join(homeDir, agentById(agentId).configFile);
-    if (!existsSync(configPath)) continue;
+  for (const adapterId of adapterIds) {
+    const adapter = resolveAdapter(adapterId);
+    const stateEntry = state?.adapters?.find((entry) => entry.id === adapterId);
+    const removed = await adapter.uninstall(context, stateEntry);
 
-    const content = await readFile(configPath, "utf8");
-    const { content: cleaned, removed } = removeManagedSection(content);
-    if (!removed) continue;
-
-    const backupPath = await backupFileBeforeChange({
-      backupsDir: paths.backupsDir,
-      homeDir,
-      filePath: configPath,
-      timestamp,
-      dryRun
-    });
-
-    if (backupPath) result.backups.push(backupPath);
-    if (!dryRun) await writeFile(configPath, cleaned, "utf8");
-    result.configsCleaned.push(relativeToHome(homeDir, configPath));
+    if (removed.backupPath) result.backups.push(removed.backupPath);
+    if (removed.cleaned) result.configsCleaned.push(removed.configFile);
   }
 
   if (state && !dryRun) {
@@ -128,57 +121,4 @@ async function installCoreFiles({ packageRoot, paths, dryRun, result }) {
   }
 
   return coreFiles;
-}
-
-async function applyManagedSection({ agentId, paths, packageName, timestamp, dryRun, result }) {
-  const agent = agentById(agentId);
-  const configPath = join(paths.homeDir, agent.configFile);
-  const exists = existsSync(configPath);
-  const current = exists ? await readFile(configPath, "utf8") : "";
-  const body = buildManagedBody({ packageName, coreDir: paths.coreDir });
-  const { content: next, changed } = upsertManagedSection(current, body);
-  const configLabel = agent.configFile;
-
-  if (!changed) {
-    result.configsUnchanged.push(configLabel);
-    return;
-  }
-
-  if (exists) {
-    const backupPath = await backupFileBeforeChange({
-      backupsDir: paths.backupsDir,
-      homeDir: paths.homeDir,
-      filePath: configPath,
-      timestamp,
-      dryRun
-    });
-    if (backupPath) result.backups.push(backupPath);
-  }
-
-  if (!dryRun) {
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(configPath, next, "utf8");
-  }
-
-  result[exists ? "configsUpdated" : "configsCreated"].push(configLabel);
-}
-
-function resolveAgents(homeDir, agents) {
-  if (agents == null) {
-    const detected = detectGlobalAgents(homeDir);
-    return detected.length > 0 ? detected : [...GLOBAL_AGENT_IDS];
-  }
-
-  return agents.map((agentId) => agentById(agentId).id);
-}
-
-function buildAgentStateEntries(agentIds, homeDir) {
-  return agentIds.map((agentId) => {
-    const agent = agentById(agentId);
-    return { id: agent.id, configFile: agent.configFile, present: existsSync(join(homeDir, agent.configFile)) };
-  });
-}
-
-function relativeToHome(homeDir, filePath) {
-  return relative(homeDir, filePath).split(sep).join("/");
 }
