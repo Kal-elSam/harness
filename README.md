@@ -334,6 +334,16 @@ npm run smoke
 npm pack --dry-run
 ```
 
+After the release commit, verify attribution was not added to the message:
+
+```bash
+npm run release:check
+git log -1 --format=%B
+```
+
+Release commits must **not** include `Co-authored-by` or other AI attribution
+trailers. Do not rewrite published tags; ship a corrective patch version instead.
+
 `npm run smoke` packs the current source into a tarball, installs it in a
 throwaway temp project with a fake `HARNESS_HOME`, and exercises both scopes end
 to end:
@@ -348,10 +358,11 @@ Release flow:
 ```bash
 # bump version in package.json and package-lock.json
 git add .
-git commit -m "chore: release 0.4.0"
-git tag v0.4.0
+git commit -m "chore: release 0.4.1"
+npm run release:check
+git tag v0.4.1
 git push origin main
-git push origin v0.4.0
+git push origin v0.4.1
 ```
 
 The `publish.yml` workflow runs on `v*` tags and publishes to npm using the `npm-publish` environment.

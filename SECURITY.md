@@ -24,6 +24,8 @@ GitHub tag
 | Release trigger | Publish only from immutable `v*` tags. |
 | Install | Use `npm ci` with a committed lockfile. |
 | Package verification | Run `npm test`, `npm run smoke`, and `npm pack --dry-run` before publish. |
+| Release commit hygiene | No `Co-authored-by` or AI attribution in release commits; run `npm run release:check` after committing. |
+| Published tag policy | Do not force-push or rewrite published `v*` tags; ship corrective versions instead. |
 | Account security | Require 2FA on GitHub and npm maintainer accounts. |
 | Branch protection | Protect `main`; require review and passing CI before merge. |
 

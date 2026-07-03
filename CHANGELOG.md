@@ -2,6 +2,14 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.4.1 — 2026-07-03
+
+Corrective release. No functional changes from `0.4.0`.
+
+- Release metadata and process hardening.
+- Documented prohibition on `Co-authored-by` / AI attribution in release commits.
+- Added `npm run release:check` to fail when `HEAD` contains attribution trailers.
+
 ## 0.4.0 — 2026-07-03
 
 ### Agent-global default install
