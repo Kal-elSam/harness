@@ -52,4 +52,4 @@ Every agent handing off work must state:
 ```
 
 Run `harness doctor` to verify ecosystem health.
-Run `harness update` to refresh managed content without touching user-owned sections.
+Run `harness sync` to refresh managed content without touching user-owned sections.

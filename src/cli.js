@@ -81,7 +81,11 @@ export async function runCli(argv) {
       await runGlobalSetup(options, packageManifest, packageRoot);
       return;
     case "status":
-      await runGlobalStatus(packageRoot, { workspaceRoot: options.cwd });
+      await runGlobalStatus(packageRoot, {
+        workspaceRoot: options.cwd,
+        json: options.json,
+        cliVersion: packageManifest.version
+      });
       return;
     case "sync":
       await runGlobalSync(options, packageManifest, packageRoot);
@@ -106,7 +110,11 @@ export async function runCli(argv) {
       return;
     case "doctor":
       await dispatchByScope(options, "agent-global", {
-        "agent-global": () => runGlobalDoctor(packageRoot, { workspaceRoot: options.cwd }),
+        "agent-global": () => runGlobalDoctor(packageRoot, {
+          workspaceRoot: options.cwd,
+          json: options.json,
+          cliVersion: packageManifest.version
+        }),
         workspace: () => runWorkspaceDoctor(options)
       });
       return;
@@ -193,6 +201,7 @@ function parseArgs(argv) {
     force: false,
     dryRun: false,
     yes: false,
+    json: false,
     apply: false,
     snapshot: null,
     help: false,
@@ -232,6 +241,7 @@ function parseArgs(argv) {
     } else if (arg === "--no-default-components") options.noDefaultComponents = true;
     else if (arg === "--force") options.force = true;
     else if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--json") options.json = true;
     else if (arg === "--yes" || arg === "-y") options.yes = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--to") options.snapshot = args[++index];
@@ -330,11 +340,11 @@ sections, components, backups, and drift repair under ~/.harness.
 
 Usage:
   harness setup [--dry-run] [--yes] [--agents <list>] [--components <list>]
-  harness status
-  harness sync [--dry-run]
+  harness status [--json]
+  harness sync [--dry-run] [--json]
   harness install [--agents <list>] [--components <list>] [--dry-run]
   harness install --no-default-components
-  harness doctor
+  harness doctor [--json]
   harness update [--dry-run]
   harness install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
   harness init [--mode minimal|standard|enterprise] (workspace alias)
@@ -365,11 +375,17 @@ Commands:
   uninstall  Remove managed sections and global state. Backups are preserved.
   init       Alias for install --scope=workspace (legacy).
 
+JSON output (--json on status, sync, doctor):
+  Machine-readable envelope for CI, tooling, and debugging. Human text remains default.
+  Stable fields: ok, overall, agents, components, checks, backups, nextAction, cliVersion.
+
 Examples:
   npx @kal-elsam/harness setup
   harness status
+  harness status --json
   harness sync
-  harness sync --dry-run
+  harness sync --dry-run --json
+  harness doctor --json
   npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core
   harness install --scope=workspace --mode enterprise
   harness uninstall --dry-run

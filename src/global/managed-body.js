@@ -3,7 +3,7 @@ export function buildManagedBody(context, adapter) {
     "## Harness (managed)",
     "",
     `Managed by \`${context.packageName}\`. Content inside these markers is refreshed by`,
-    "`harness update`. Everything outside the markers is yours and is preserved."
+    "`harness sync`. Everything outside the markers is yours and is preserved."
   ];
 
   if (context.components.length === 0) {

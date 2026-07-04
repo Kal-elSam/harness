@@ -68,19 +68,44 @@ if [ "$CLI_VERSION" != "$INSTALLED_VERSION" ]; then
 fi
 
 echo
-echo "== harness install (agent-global) =="
-npx --no-install harness install
+echo "== harness setup --dry-run =="
+npx --no-install harness setup --dry-run
 
 echo
-echo "== harness doctor (agent-global) =="
-npx --no-install harness doctor
+echo "== harness setup --yes =="
+npx --no-install harness setup --yes
 
 echo
-echo "== harness update --dry-run (agent-global) =="
-npx --no-install harness update --dry-run
+echo "== harness status =="
+npx --no-install harness status
 
 echo
-echo "== harness uninstall (agent-global) =="
+echo "== simulate drift =="
+rm -f "$FAKE_HOME/.harness/components/sdd-core/workflow.md"
+node -e "
+const fs = require('node:fs');
+const path = require('node:path');
+const config = path.join(process.env.HARNESS_HOME, '.cursor', 'AGENTS.md');
+const content = fs.readFileSync(config, 'utf8');
+fs.writeFileSync(config, content.replace('### SDD Core', '### Broken'));
+"
+
+echo
+echo "== harness sync =="
+npx --no-install harness sync
+
+echo
+echo "== harness status --json confirms OK =="
+STATUS_JSON="$(npx --no-install harness status --json)"
+echo "$STATUS_JSON"
+OVERALL="$(node -e "const p=JSON.parse(process.argv[1]); if(!p.ok||p.overall!=='ok'){process.exit(1)} console.log(p.overall)" "$STATUS_JSON")"
+if [ "$OVERALL" != "ok" ]; then
+  echo "Expected status --json overall=ok after sync" >&2
+  exit 1
+fi
+
+echo
+echo "== harness uninstall =="
 npx --no-install harness uninstall
 
 echo

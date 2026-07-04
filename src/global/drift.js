@@ -90,7 +90,7 @@ async function componentAssetDrift({ paths, state, packageRoot, workspaceRoot, c
           status: "stale",
           category: "component_asset",
           componentId: component.id,
-          detail: "State hash drift. Run harness update to refresh metadata."
+          detail: "State hash drift. Run harness sync to refresh metadata."
         });
       } else {
         checks.push({
@@ -239,9 +239,9 @@ function classifyManagedSection(content, expectedBody) {
 function managedSectionDetail(status, configFile) {
   switch (status) {
     case "missing":
-      return `No managed section in ~/${configFile}. Run "harness update".`;
+      return `No managed section in ~/${configFile}. Run "harness sync".`;
     case "stale":
-      return `Stale managed section in ~/${configFile}. Run "harness update".`;
+      return `Stale managed section in ~/${configFile}. Run "harness sync".`;
     default:
       return `Managed section in sync at ~/${configFile}`;
   }

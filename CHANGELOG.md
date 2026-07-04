@@ -2,6 +2,40 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.10.0 — 2026-07-04
+
+Minor release. Machine-readable control-plane output and registry smoke parity
+with the recommended `setup` / `status` / `sync` flow.
+
+### JSON output
+
+- `harness status --json`, `harness sync --dry-run --json`, and `harness doctor --json`
+  emit a stable envelope for CI, tooling, and debugging.
+- Stable fields: `ok`, `overall`, `agents`, `components`, `checks`, `backups`,
+  `nextAction`, `cliVersion`.
+- Human-readable output remains the default.
+- Exit codes are unchanged: non-zero when the ecosystem is not healthy.
+
+### Registry smoke
+
+- `scripts/registry-smoke-test.sh` exercises `setup --dry-run`, `setup --yes`,
+  `status`, drift simulation, `sync`, `status --json` (expects `overall=ok`),
+  and `uninstall`.
+
+### Docs / messaging
+
+- Primary day-to-day repair path is `harness sync`; `update` remains a technical alias.
+- Doctor and managed-section guidance point at `sync` instead of `update`.
+
+### Recommended flow
+
+```bash
+harness setup
+harness status
+harness sync
+harness status --json
+```
+
 ## 0.9.0 — 2026-07-03
 
 Minor release. Adds `harness sync` as the primary convergence command.

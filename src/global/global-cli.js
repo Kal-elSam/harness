@@ -6,6 +6,7 @@ import { installGlobalHarness, uninstallGlobalHarness, updateGlobalHarness } fro
 import { resolveHomeDir, harnessHomePaths } from "./paths.js";
 import { runGlobalDoctorChecks } from "./global-doctor.js";
 import { describeBackupSnapshots, applyRollback, previewRollback } from "./rollback.js";
+import { buildControlPlaneJson, printJson } from "./json-output.js";
 import { runHarnessSetup } from "./setup.js";
 import { buildStatusReport } from "./status.js";
 import { runHarnessSync } from "./sync.js";
@@ -52,10 +53,21 @@ export async function runGlobalSetup(options, packageManifest, packageRoot) {
   return outcome;
 }
 
-export async function runGlobalStatus(packageRoot, { workspaceRoot = process.cwd(), setExitCode = true } = {}) {
+export async function runGlobalStatus(packageRoot, {
+  workspaceRoot = process.cwd(),
+  setExitCode = true,
+  json = false,
+  cliVersion = null
+} = {}) {
   const homeDir = resolveHomeDir();
   const report = await buildStatusReport(homeDir, { packageRoot, workspaceRoot });
-  printStatusReport(report);
+
+  if (json) {
+    printJson(buildControlPlaneJson(report, { cliVersion }));
+  } else {
+    printStatusReport(report);
+  }
+
   if (setExitCode && !report.ok) process.exitCode = 1;
   return report;
 }
@@ -70,6 +82,15 @@ export async function runGlobalSync(options, packageManifest, packageRoot) {
     workspaceRoot: options.cwd,
     dryRun: options.dryRun
   });
+
+  if (options.json) {
+    printJson(buildControlPlaneJson(outcome.report, {
+      cliVersion: packageManifest.version,
+      extras: buildSyncJsonExtras(outcome)
+    }));
+    if (!outcome.report.ok) process.exitCode = 1;
+    return outcome;
+  }
 
   console.log("Harness sync — converge local AI ecosystem");
 
@@ -98,6 +119,24 @@ export async function runGlobalSync(options, packageManifest, packageRoot) {
   printStatusReport(outcome.report);
   if (!outcome.report.ok) process.exitCode = 1;
   return outcome;
+}
+
+function buildSyncJsonExtras(outcome) {
+  const extras = {
+    action: outcome.action,
+    wrote: outcome.wrote
+  };
+
+  if (!outcome.result) return extras;
+
+  return {
+    ...extras,
+    driftDetected: outcome.result.driftDetected,
+    assetsRepaired: outcome.result.assetsRepaired,
+    assetsUnchanged: outcome.result.assetsUnchanged,
+    configsRepaired: outcome.result.configsRepaired,
+    repairs: outcome.result.repairs ?? []
+  };
 }
 
 function printStatusReport(report) {
@@ -205,8 +244,20 @@ export async function runGlobalUninstall(options) {
   console.log("Backups under ~/.harness/backups were preserved.");
 }
 
-export async function runGlobalDoctor(packageRoot, { workspaceRoot = process.cwd() } = {}) {
+export async function runGlobalDoctor(packageRoot, {
+  workspaceRoot = process.cwd(),
+  json = false,
+  cliVersion = null
+} = {}) {
   const homeDir = resolveHomeDir();
+
+  if (json) {
+    const report = await buildStatusReport(homeDir, { packageRoot, workspaceRoot });
+    printJson(buildControlPlaneJson(report, { cliVersion }));
+    if (!report.ok) process.exitCode = 1;
+    return report;
+  }
+
   const { checks, ok, hasDrift } = await runGlobalDoctorChecks(homeDir, { packageRoot, workspaceRoot });
 
   console.log("Agentic Harness doctor (scope: agent-global)");
@@ -223,7 +274,7 @@ export async function runGlobalDoctor(packageRoot, { workspaceRoot = process.cwd
   if (ok) {
     console.log("Status: OK");
   } else if (hasDrift) {
-    console.log('Status: DRIFT DETECTED — run "harness update" to auto-repair managed content');
+    console.log('Status: DRIFT DETECTED — run "harness sync" to auto-repair managed content');
   } else {
     console.log("Status: FAILED (missing managed state or configs)");
   }

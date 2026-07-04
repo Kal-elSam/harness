@@ -5,11 +5,12 @@
 **Harness is a local AI ecosystem configurator** — not a template dumper and not an
 installer for AI apps. It detects agents you already use (Cursor, Codex, OpenCode,
 Claude), writes managed sections into their configs, installs coordination components
-under `~/.harness`, and keeps that ecosystem healthy with status, update, backups,
+under `~/.harness`, and keeps that ecosystem healthy with status, sync, backups,
 and rollback.
 
 The npm package (`@kal-elsam/harness`) is how Harness is distributed. The product
-identity is the local control plane: setup, status, install, doctor, update.
+identity is the local control plane: setup, status, sync, doctor (with `update`
+as a technical alias).
 
 Terminal UX aims for Pi-like clarity (clear modes, non-interactive flags, extensible
 commands) without depending on Pi as a runtime or adding a Pi adapter.
@@ -68,12 +69,15 @@ npm i -g @kal-elsam/harness
 harness setup
 harness setup --dry-run
 harness status
+harness status --json
 harness sync
 harness sync --dry-run
+harness sync --dry-run --json
 harness install
 harness install --agents cursor,codex --components orchestrator,sdd-core
 harness doctor
-harness update
+harness doctor --json
+harness update   # technical alias; prefer sync
 harness detect
 harness components
 harness components validate
@@ -124,7 +128,13 @@ recommended next action.
 
 ```bash
 harness status
+harness status --json
 ```
+
+`--json` prints a stable machine-readable envelope for CI, tooling, and debugging
+(`ok`, `overall`, `agents`, `components`, `checks`, `backups`, `nextAction`,
+`cliVersion`). Human text remains the default. Exit code is non-zero when
+`overall` is not `ok`.
 
 ### `harness sync`
 
@@ -135,11 +145,14 @@ user content preserved), then prints a status summary.
 ```bash
 harness sync
 harness sync --dry-run
+harness sync --dry-run --json
 ```
 
 - No state → recommends `harness setup`, writes nothing.
 - Already OK → writes nothing.
 - Drift/missing/stale → repairs, then shows status.
+- `--json` uses the same stable envelope as `status`, plus sync fields
+  (`action`, `wrote`, planned/applied repairs when present).
 - `harness update` remains as a technical alias.
 
 ### `harness install` (agent-global)
@@ -162,7 +175,7 @@ What it does:
 
 ```md
 <!-- harness:managed:start -->
-...managed content, refreshed by harness update...
+...managed content, refreshed by harness sync...
 <!-- harness:managed:end -->
 ```
 
@@ -175,13 +188,21 @@ What it does:
 
 ### `harness update` (agent-global)
 
-Refreshes managed core files and marker sections without touching user-owned
-content. Requires an existing `~/.harness/state.json`.
+Technical/compatibility alias for the repair engine used by `sync`. Prefer
+`harness sync` for day-to-day use. Requires an existing `~/.harness/state.json`.
 
 ### `harness doctor` (agent-global)
 
 Reports installed agents, managed state, backups, and missing configs.
 Exits non-zero when managed state or a tracked config is missing.
+
+```bash
+harness doctor
+harness doctor --json
+```
+
+`--json` uses the same stable control-plane envelope as `status`, including the
+detailed `checks` array.
 
 ### `harness uninstall` (agent-global)
 
@@ -460,8 +481,8 @@ trailers. Do not rewrite published tags; ship a corrective patch version instead
 throwaway temp project with a fake `HARNESS_HOME`, and exercises both scopes end
 to end:
 
-- **agent-global:** `install --dry-run`, `install`, `doctor`, drift simulation,
-  `doctor` failure, `update` repair, `backups`, rollback preview (no writes),
+- **agent-global:** `setup --dry-run`, `status`, `install`, `doctor`, drift
+  simulation, `sync` repair, `backups`, rollback preview (no writes),
   rollback apply (with safety backup), `uninstall`.
 - **workspace:** `install --scope=workspace`, `doctor`, `update --dry-run`.
 
@@ -488,7 +509,7 @@ npm run smoke:registry -- --version 0.5.0
 
 `release:published` checks npm `version`, npm `gitHead`, local tag `v*`, remote tag on `origin`, and `origin/main`.
 
-`smoke:registry` installs `@kal-elsam/harness` from the npm registry (not the local tarball) into a throwaway workspace with a fake `HARNESS_HOME` and npm cache, then runs `install`, `doctor`, `update --dry-run`, and `uninstall`. Use `latest` by default or pin with `--version x.y.z`. This step is manual post-publish only; it is not part of normal CI because it requires registry network access.
+`smoke:registry` installs `@kal-elsam/harness` from the npm registry (not the local tarball) into a throwaway workspace with a fake `HARNESS_HOME` and npm cache, then runs the recommended flow: `setup --dry-run`, `setup --yes`, `status`, drift simulation, `sync`, `status --json` (expects `overall=ok`), and `uninstall`. Use `latest` by default or pin with `--version x.y.z`. This step is manual post-publish only; it is not part of normal CI because it requires registry network access.
 
 The `publish.yml` workflow runs on `v*` tags and publishes to npm using the `npm-publish` environment.
 It runs `npm run release:check` on `HEAD` immediately before `npm publish`.

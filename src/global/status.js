@@ -45,6 +45,7 @@ export async function buildStatusReport(homeDir, { packageRoot, workspaceRoot = 
     state,
     agents,
     components,
+    checks: doctor.checks,
     backups: backups.length,
     counts,
     overall,
