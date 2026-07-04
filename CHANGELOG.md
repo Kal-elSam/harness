@@ -2,6 +2,35 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.11.0 — 2026-07-04
+
+Minor release. Product-style bootstrap installer UX. npm remains the distribution
+mechanism; users enter through a one-liner that runs `harness`.
+
+### Bootstrap installer
+
+- Public script: `scripts/install.sh`
+- One-liner:
+  `curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh`
+- Detects Node/npm, prints the plan, runs `@kal-elsam/harness` via `npx` or
+  `npm exec`, and finishes with `harness setup --dry-run`.
+- `--dry-run` prints the plan without downloading or executing the package.
+- Safe by design: no `sudo`, no shell profile changes, no agent config or
+  `~/.harness` writes (preview only). Clear errors when Node/npm are missing.
+
+### Version docs
+
+- `harness --version` and README/help document installed vs published version.
+- Update path: `npx @kal-elsam/harness@latest sync`.
+
+### Recommended entry
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh
+npx @kal-elsam/harness setup
+npx @kal-elsam/harness status
+```
+
 ## 0.10.0 — 2026-07-04
 
 Minor release. Machine-readable control-plane output and registry smoke parity

@@ -338,7 +338,11 @@ Local AI ecosystem configurator. Harness does not install AI apps — it powers 
 coordinates agents you already have (Cursor, Codex, OpenCode, Claude) with managed
 sections, components, backups, and drift repair under ~/.harness.
 
+Bootstrap (no global install required):
+  curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh
+
 Usage:
+  harness --version
   harness setup [--dry-run] [--yes] [--agents <list>] [--components <list>]
   harness status [--json]
   harness sync [--dry-run] [--json]
@@ -378,6 +382,11 @@ Commands:
 JSON output (--json on status, sync, doctor):
   Machine-readable envelope for CI, tooling, and debugging. Human text remains default.
   Stable fields: ok, overall, agents, components, checks, backups, nextAction, cliVersion.
+
+Version:
+  harness --version                         Installed CLI version
+  npm view @kal-elsam/harness version       Latest published version
+  npx @kal-elsam/harness@latest sync        Update / converge managed content
 
 Examples:
   npx @kal-elsam/harness setup

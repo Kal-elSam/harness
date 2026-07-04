@@ -20,30 +20,67 @@ commands) without depending on Pi as a runtime or adding a Pi adapter.
 
 ## Quick start
 
-Recommended entry — preview what would be configured (no writes, agent-global only):
+Recommended entry — one-liner bootstrap (checks Node/npm, previews the plan, writes nothing):
 
 ```bash
-npx @kal-elsam/harness setup --dry-run
+curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh
 ```
 
-Apply interactively:
+Preview the installer plan only (no download, no network package run):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh -s -- --dry-run
+```
+
+The bootstrap installer:
+
+- requires Node.js 18.18+ and npm
+- runs `@kal-elsam/harness` via `npx` (or `npm exec`)
+- ends with `harness setup --dry-run` (no agent configs, no `~/.harness` writes)
+- never uses `sudo` and never modifies shell profiles
+
+Apply the plan when you are ready:
 
 ```bash
 npx @kal-elsam/harness setup
-```
-
-Non-interactive install:
-
-```bash
-npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core
 ```
 
 Control plane:
 
 ```bash
-npx @kal-elsam/harness setup
 npx @kal-elsam/harness status
 npx @kal-elsam/harness sync
+```
+
+### Version and updates
+
+```bash
+# Installed CLI version (local package / PATH)
+harness --version
+npx @kal-elsam/harness --version
+
+# Latest published version on npm
+npm view @kal-elsam/harness version
+
+# Converge to the latest published package
+npx @kal-elsam/harness@latest sync
+```
+
+### npm alternative
+
+If you prefer npm directly (no curl):
+
+```bash
+npx @kal-elsam/harness setup --dry-run
+npx @kal-elsam/harness setup
+npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core
+```
+
+Optional global install:
+
+```bash
+npm i -g @kal-elsam/harness
+harness --version
 ```
 
 Legacy opt-in: scaffold governance files into a repository:
@@ -54,18 +91,13 @@ npx @kal-elsam/harness install --scope=workspace
 
 ## CLI commands
 
-Optional global install:
-
-```bash
-npm i -g @kal-elsam/harness
-```
-
 | Command | Description |
 |---|---|
 | `harness` | Primary — short and direct |
 | `agentic-harness` | Descriptive alias |
 
 ```bash
+harness --version
 harness setup
 harness setup --dry-run
 harness status
