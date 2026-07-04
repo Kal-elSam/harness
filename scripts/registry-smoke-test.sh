@@ -85,7 +85,7 @@ ADAPTERS_JSON="$(npx --no-install harness adapters --json)"
 echo "$ADAPTERS_JSON"
 node -e "
 const payload = JSON.parse(process.argv[1]);
-const expected = ['cursor', 'codex', 'opencode', 'claude'];
+const expected = ['cursor', 'codex', 'opencode', 'claude'].sort();
 if (payload.managedCount !== 4 || payload.detectedCount !== 4) process.exit(1);
 const managed = payload.adapters.filter((entry) => entry.managed).map((entry) => entry.id).sort();
 if (JSON.stringify(managed) !== JSON.stringify(expected)) process.exit(1);
