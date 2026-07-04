@@ -6,6 +6,7 @@ import { installGlobalHarness, uninstallGlobalHarness, updateGlobalHarness } fro
 import { resolveHomeDir, harnessHomePaths } from "./paths.js";
 import { runGlobalDoctorChecks } from "./global-doctor.js";
 import { describeBackupSnapshots, applyRollback, previewRollback } from "./rollback.js";
+import { buildAdapterMatrixReport } from "./adapter-matrix.js";
 import { buildControlPlaneJson, printJson } from "./json-output.js";
 import { runHarnessSetup } from "./setup.js";
 import { buildStatusReport } from "./status.js";
@@ -280,6 +281,46 @@ export async function runGlobalDoctor(packageRoot, {
   }
 
   if (!ok) process.exitCode = 1;
+}
+
+export async function runGlobalAdapters({ json = false, cliVersion = null } = {}) {
+  const homeDir = resolveHomeDir();
+  const report = await buildAdapterMatrixReport(homeDir);
+
+  if (json) {
+    printJson({
+      adapters: report.adapters,
+      managedCount: report.managedCount,
+      detectedCount: report.detectedCount,
+      supportedCount: report.supportedCount,
+      cliVersion
+    });
+    return report;
+  }
+
+  printAdapterMatrixReport(report);
+  return report;
+}
+
+function printAdapterMatrixReport(report) {
+  console.log("Harness adapters — supported agent integrations");
+  console.log(`Home: ${report.homeDir}`);
+  console.log("");
+  console.log("Harness does not install Cursor, Codex, OpenCode, or Claude Code.");
+  console.log("It configures managed sections in each agent's config files.");
+  console.log("");
+  console.log(`Supported: ${report.supportedCount}  Detected: ${report.detectedCount}  Managed: ${report.managedCount}`);
+  console.log("");
+
+  for (const adapter of report.adapters) {
+    const detected = adapter.detected ? "detected" : "not detected";
+    const managed = adapter.managed ? "managed" : "unmanaged";
+    console.log(`${adapter.id.padEnd(10)} ${adapter.label.padEnd(12)} ${detected.padEnd(13)} ${managed}`);
+    console.log(`  root:    ~/${adapter.rootDir}`);
+    console.log(`  config:  ~/${adapter.configFile}`);
+    console.log(`  targets: ${adapter.managedTargets.join(", ")}`);
+    console.log("");
+  }
 }
 
 export function printGlobalDetect() {

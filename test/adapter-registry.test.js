@@ -68,3 +68,12 @@ test("resolveTargetAdapters honors explicit adapter selection", async () => {
 
   assert.deepEqual(targets.map((adapter) => adapter.id), ["claude"]);
 });
+
+test("resolveTargetAdapters honors all selection", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "harness-registry-all-"));
+  const context = buildAdapterContext({ homeDir, packageName: "@kal-elsam/harness" });
+
+  const targets = resolveTargetAdapters(context, ["all"]);
+
+  assert.deepEqual(targets.map((adapter) => adapter.id), GLOBAL_AGENT_IDS);
+});

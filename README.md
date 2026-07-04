@@ -100,12 +100,16 @@ npx @kal-elsam/harness install --scope=workspace
 harness --version
 harness setup
 harness setup --dry-run
+harness setup --agents all
 harness status
 harness status --json
+harness adapters
+harness adapters --json
 harness sync
 harness sync --dry-run
 harness sync --dry-run --json
 harness install
+harness install --agents all
 harness install --agents cursor,codex --components orchestrator,sdd-core
 harness doctor
 harness doctor --json
@@ -130,8 +134,41 @@ To try locally from this repo:
 node ./bin/harness.js setup --dry-run
 node ./bin/harness.js status
 node ./bin/harness.js sync --dry-run
+node ./bin/harness.js adapters --json
 node ./bin/harness.js install --dry-run
 ```
+
+## Supported adapters (agent-global)
+
+Harness does **not** install Cursor, Codex, OpenCode, or Claude Code. It detects
+their home-directory roots and writes managed sections into their config files.
+
+| Adapter | Label | Root | Config file |
+|---|---|---|---|
+| `cursor` | Cursor | `~/.cursor` | `~/.cursor/AGENTS.md` |
+| `codex` | Codex | `~/.codex` | `~/.codex/AGENTS.md` |
+| `opencode` | OpenCode | `~/.config/opencode` | `~/.config/opencode/AGENTS.md` |
+| `claude` | Claude Code | `~/.claude` | `~/.claude/CLAUDE.md` |
+
+Inspect detection and managed state:
+
+```bash
+harness adapters
+harness adapters --json
+```
+
+Agent selection defaults:
+
+- If agent roots are detected → configure detected agents only.
+- If none are detected → safe fallback to all four supported adapters.
+- Force all four explicitly:
+
+```bash
+harness setup --agents all
+harness install --agents all
+```
+
+Primary flow remains `setup` → `status` → `sync`.
 
 ## Install scopes
 

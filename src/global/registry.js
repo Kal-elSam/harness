@@ -9,6 +9,23 @@ const ADAPTERS = [cursor, codex, opencode, claude];
 
 export const GLOBAL_AGENT_IDS = ADAPTERS.map((adapter) => adapter.id);
 
+export function isAllAgentsSelection(requestedIds) {
+  return requestedIds?.length === 1 && requestedIds[0] === "all";
+}
+
+export function resolveAgentIds(requestedIds, context) {
+  if (requestedIds == null) {
+    const detected = detectInstalledAdapters(context);
+    return detected.length > 0 ? detected : [...GLOBAL_AGENT_IDS];
+  }
+
+  if (isAllAgentsSelection(requestedIds)) {
+    return [...GLOBAL_AGENT_IDS];
+  }
+
+  return validateAdapterIds(requestedIds);
+}
+
 export function listAdapters() {
   return [...ADAPTERS];
 }
@@ -39,6 +56,10 @@ export function resolveTargetAdapters(context, requestedIds = null) {
     return detected.length > 0
       ? detected.map((id) => resolveAdapter(id))
       : [...ADAPTERS];
+  }
+
+  if (isAllAgentsSelection(requestedIds)) {
+    return [...ADAPTERS];
   }
 
   return validateAdapterIds(requestedIds).map((id) => resolveAdapter(id));

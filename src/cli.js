@@ -11,6 +11,7 @@ import {
   runComponentsInit,
   runComponentsPack,
   runComponentsValidate,
+  runGlobalAdapters,
   runGlobalBackups,
   runGlobalDoctor,
   runGlobalInstall,
@@ -128,6 +129,12 @@ export async function runCli(argv) {
       printGlobalDetect();
       console.log("");
       await runWorkspaceDetect(options, invoke);
+      return;
+    case "adapters":
+      await runGlobalAdapters({
+        json: options.json,
+        cliVersion: packageManifest.version
+      });
       return;
     case "backups":
       await runGlobalBackups();
@@ -311,6 +318,7 @@ function normalizeCommand(command) {
   if (command === "doctor") return "doctor";
   if (command === "uninstall") return "uninstall";
   if (command === "detect" || command === "d") return "detect";
+  if (command === "adapters") return "adapters";
   if (command === "backups") return "backups";
   if (command === "rollback") return "rollback";
   if (command === "components") return "components";
@@ -323,12 +331,22 @@ function normalizeCommand(command) {
 function parseAdapters(value) {
   if (!value) return [];
 
-  return [...new Set(
+  const items = [...new Set(
     value
       .split(",")
       .map((item) => item.trim().toLowerCase())
       .filter(Boolean)
   )];
+
+  if (items.length === 1 && items[0] === "all") {
+    return ["all"];
+  }
+
+  if (items.includes("all")) {
+    throw new Error('Use --agents all alone to target all supported agents, not mixed with other ids.');
+  }
+
+  return items;
 }
 
 function printHelp() {
@@ -343,12 +361,13 @@ Bootstrap (no global install required):
 
 Usage:
   harness --version
-  harness setup [--dry-run] [--yes] [--agents <list>] [--components <list>]
+  harness setup [--dry-run] [--yes] [--agents <list|all>] [--components <list>]
   harness status [--json]
   harness sync [--dry-run] [--json]
-  harness install [--agents <list>] [--components <list>] [--dry-run]
+  harness install [--agents <list|all>] [--components <list>] [--dry-run]
   harness install --no-default-components
   harness doctor [--json]
+  harness adapters [--json]
   harness update [--dry-run]
   harness install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
   harness init [--mode minimal|standard|enterprise] (workspace alias)
@@ -373,6 +392,7 @@ Commands:
   doctor     Detailed health checks for managed state and configs.
   update     Technical repair alias (prefer sync for day-to-day use).
   detect     Inspect global agents and the current project. Read-only.
+  adapters   Official adapter matrix: roots, config files, detected/managed.
   backups    List config snapshots under ~/.harness/backups.
   rollback   Preview or restore a prior config snapshot (--apply to write).
   components List, validate, scaffold, pack, or import workspace components.
@@ -392,6 +412,7 @@ Examples:
   npx @kal-elsam/harness setup
   harness status
   harness status --json
+  harness adapters --json
   harness sync
   harness sync --dry-run --json
   harness doctor --json

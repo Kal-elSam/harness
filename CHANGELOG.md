@@ -2,6 +2,30 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.12.0 — 2026-07-04
+
+Minor release. Adapter matrix confidence for Cursor, Codex, OpenCode, and Claude Code.
+
+### Adapter matrix
+
+- `harness adapters` and `harness adapters --json` show the official supported
+  adapter matrix: `id`, `label`, `rootDir`, `configFile`, `detected`, `managed`,
+  `managedTargets`.
+- Harness does not install Cursor/Codex/OpenCode/Claude; it configures managed
+  sections in their config files only.
+
+### Explicit all-agents selection
+
+- `harness setup --agents all` and `harness install --agents all` force all four
+  supported adapters, even when some roots are not detected.
+- Default unchanged: detected agents when present, safe fallback to all when none
+  are detected.
+
+### Registry smoke
+
+- Creates all four agent roots and validates `adapters --json`, `status --json`,
+  drift repair (including OpenCode), and `uninstall`.
+
 ## 0.11.0 — 2026-07-04
 
 Minor release. Product-style bootstrap installer UX. npm remains the distribution

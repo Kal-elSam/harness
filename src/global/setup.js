@@ -1,12 +1,18 @@
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import { installGlobalHarness } from "./global-installer.js";
 import {
   COMPONENT_IDS,
   DEFAULT_COMPONENT_IDS,
   validateComponentIds
 } from "./component-registry.js";
-import { installGlobalHarness } from "./global-installer.js";
-import { GLOBAL_AGENT_IDS, detectInstalledAdapters, validateAdapterIds } from "./registry.js";
+import {
+  GLOBAL_AGENT_IDS,
+  detectInstalledAdapters,
+  isAllAgentsSelection,
+  resolveAgentIds,
+  validateAdapterIds
+} from "./registry.js";
 
 export async function runHarnessSetup({
   packageRoot,
@@ -48,7 +54,9 @@ export async function runHarnessSetup({
       const agentsAnswer = (await prompt(`Agents to configure [${defaultAgentsLabel}]: `)).trim();
       if (agentsAnswer.length > 0) {
         selectedAgents = parseList(agentsAnswer);
-        validateAdapterIds(selectedAgents);
+        if (!isAllAgentsSelection(selectedAgents)) {
+          validateAdapterIds(selectedAgents);
+        }
       }
 
       const componentsAnswer = (await prompt(
@@ -65,7 +73,7 @@ export async function runHarnessSetup({
 
       console.log("");
       printSetupPlanPreview({
-        agents: selectedAgents ?? (detected.length > 0 ? detected : [...GLOBAL_AGENT_IDS]),
+        agents: resolveAgentIds(selectedAgents, { homeDir }),
         components: selectedNoDefaults
           ? []
           : (selectedComponents ?? [...DEFAULT_COMPONENT_IDS])
@@ -81,7 +89,7 @@ export async function runHarnessSetup({
     }
   } else {
     printSetupPlanPreview({
-      agents: selectedAgents ?? (detected.length > 0 ? detected : [...GLOBAL_AGENT_IDS]),
+      agents: resolveAgentIds(selectedAgents, { homeDir }),
       components: selectedNoDefaults
         ? []
         : (selectedComponents ?? [...DEFAULT_COMPONENT_IDS])
