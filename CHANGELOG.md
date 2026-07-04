@@ -2,6 +2,15 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.12.1 — 2026-07-04
+
+Patch release. Fixes registry smoke validation for the adapter matrix.
+
+### Fix
+
+- `scripts/registry-smoke-test.sh` sorts expected adapter ids before comparing
+  managed agents, so post-publish smoke passes reliably.
+
 ## 0.12.0 — 2026-07-04
 
 Minor release. Adapter matrix confidence for Cursor, Codex, OpenCode, and Claude Code.
