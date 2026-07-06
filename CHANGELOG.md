@@ -2,6 +2,20 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.18.0 — 2026-07-06
+
+Minor release. Explicit apply confirmation in interactive terminals.
+
+### Apply confirmation policy
+
+- Interactive terminals now show managed preflight and prompt before applying
+  `setup --yes`, `sync`, and `upgrade --yes`.
+- Non-interactive mode requires `--yes`, `--confirm`, or `--no-preflight` before writes.
+- `setup --confirm` applies with preflight and no prompt using defaults or explicit flags.
+- Non-interactive `harness setup` without consent flags is rejected before writing state.
+- New `--confirm` applies after preflight without an interactive prompt.
+- `--json` and `--dry-run` behavior unchanged.
+
 ## 0.17.0 — 2026-07-06
 
 Minor release. Managed preflight summary before apply commands.
