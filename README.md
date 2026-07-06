@@ -594,11 +594,14 @@ git fetch --tags origin
 git fetch origin main
 npm run release:published -- --version 0.5.0
 npm run smoke:registry -- --version 0.5.0
+npm run smoke:installer -- --version 0.5.0
 ```
 
 `release:published` checks npm `version`, npm `gitHead`, local tag `v*`, remote tag on `origin`, and `origin/main`.
 
 `smoke:registry` installs `@kal-elsam/harness` from the npm registry (not the local tarball) into a throwaway workspace with a fake `HARNESS_HOME` and npm cache, then runs the recommended flow: `setup --dry-run`, `setup --yes`, `status`, drift simulation, `sync`, `status --json` (expects `overall=ok`), and `uninstall`. Use `latest` by default or pin with `--version x.y.z`. This step is manual post-publish only; it is not part of normal CI because it requires registry network access.
+
+`smoke:installer` validates the public one-liner path: `curl .../install.sh | sh` against GitHub `raw` and the npm registry with isolated `HARNESS_HOME`. Preview must not write `~/.harness`; `--yes --agents all` must reach `status --json` with `overall=ok`, then `uninstall` must remove managed sections. Pin with `--version x.y.z` after publish.
 
 The `publish.yml` workflow runs on `v*` tags and publishes to npm using the `npm-publish` environment.
 It runs `npm run release:check` on `HEAD` immediately before `npm publish`.

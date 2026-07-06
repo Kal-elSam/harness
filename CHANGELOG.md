@@ -2,6 +2,19 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.14.1 — 2026-07-06
+
+Patch release. Post-publish smoke for the one-liner installer path.
+
+### Installer smoke
+
+- New `scripts/installer-smoke-test.sh` validates the real user flow:
+  `curl .../install.sh | sh` with isolated `HARNESS_HOME` and a temporary npm cache.
+- Preview (`--version <x>`) must not write `~/.harness`.
+- Apply (`--yes --agents all`) must reach `status --json` with `overall=ok` and clean
+  uninstall of managed sections.
+- Run manually after publish: `npm run smoke:installer -- --version x.y.z`.
+
 ## 0.14.0 — 2026-07-06
 
 Minor release. Installer post-apply guidance and a safe `harness upgrade` command.

@@ -11,6 +11,10 @@ test("registry smoke script exists in the repository", () => {
   assert.ok(existsSync(join(packageRoot, "scripts/registry-smoke-test.sh")));
 });
 
+test("installer smoke script exists in the repository", () => {
+  assert.ok(existsSync(join(packageRoot, "scripts/installer-smoke-test.sh")));
+});
+
 test("packed tarball includes release scripts", () => {
   const tarballName = execSync("npm pack --silent", {
     cwd: packageRoot,
@@ -24,6 +28,7 @@ test("packed tarball includes release scripts", () => {
     assert.ok(listing.includes("package/scripts/check-release-commit.mjs"));
     assert.ok(listing.includes("package/scripts/smoke-test.sh"));
     assert.ok(listing.includes("package/scripts/registry-smoke-test.sh"));
+    assert.ok(listing.includes("package/scripts/installer-smoke-test.sh"));
     assert.ok(listing.includes("package/scripts/install.sh"));
     assert.ok(listing.includes("package/scripts/check-published-release.mjs"));
     assert.ok(listing.includes("package/scripts/lib/attribution-guard.mjs"));
