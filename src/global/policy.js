@@ -1,7 +1,8 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { DEFAULT_COMPONENT_IDS } from "./component-registry.js";
-import { GLOBAL_AGENT_IDS } from "./registry.js";
+import { GLOBAL_AGENT_IDS, detectInstalledAdapters } from "./registry.js";
+import { shouldPromptApplyConfirmation } from "./apply-confirmation.js";
 import { harnessHomePaths } from "./paths.js";
 
 export const POLICY_PROFILES = {
@@ -69,6 +70,7 @@ export function buildPolicyJson(homeDir, rawPolicy) {
   const policyPath = getPolicyPath(homeDir);
   const hasFile = rawPolicy != null;
   const resolved = resolvePolicy(rawPolicy ?? {});
+  const effective = buildEffectivePolicyFromRaw(homeDir, rawPolicy);
 
   return {
     profile: rawPolicy?.profile ?? null,
@@ -77,8 +79,106 @@ export function buildPolicyJson(homeDir, rawPolicy) {
     agents: resolved.agents,
     components: resolved.components,
     source: hasFile ? "file" : "defaults",
-    path: policyPath
+    path: policyPath,
+    effective
   };
+}
+
+export async function buildEffectivePolicy(homeDir) {
+  const rawPolicy = await loadPolicyFile(homeDir);
+  return buildEffectivePolicyFromRaw(homeDir, rawPolicy);
+}
+
+export function buildEffectivePolicyFromRaw(homeDir, rawPolicy) {
+  const resolved = resolvePolicy(rawPolicy ?? {});
+
+  return {
+    source: rawPolicy ? "file" : "none",
+    profile: resolved.profile ?? null,
+    applyMode: resolved.applyMode,
+    preflight: resolved.preflight,
+    agents: formatPolicyAgentsLabel(resolved.agents, homeDir),
+    components: [...resolved.components],
+    path: getPolicyPath(homeDir)
+  };
+}
+
+export function formatPolicyAgentsLabel(agents, homeDir) {
+  if (agents === "detected") return "detected";
+  if (agents === "all") return "all";
+  return agents.join(", ");
+}
+
+export function formatPolicySourceLabel(policy) {
+  if (policy.source === "file") {
+    return `file (${policy.path})`;
+  }
+
+  return "none (defaults, no policy file)";
+}
+
+export function formatPolicyProfileLabel(profile) {
+  return profile ?? "none";
+}
+
+export function resolveConsentAudit({
+  yes = false,
+  confirm = false,
+  yesExplicit = false,
+  confirmExplicit = false,
+  noPreflight = false,
+  preflightExplicit = false,
+  rawPolicy = null,
+  interactive = false,
+  applying = true,
+  dryRun = false,
+  json = false
+}) {
+  const policyProfile = formatPolicyProfileLabel(rawPolicy?.profile ?? null);
+
+  if (!applying || dryRun || json) {
+    return { consentSource: "none", policyProfile };
+  }
+
+  if (yesExplicit || confirmExplicit || (noPreflight && preflightExplicit)) {
+    return { consentSource: "cli", policyProfile };
+  }
+
+  if (rawPolicy && confirm && !yesExplicit && !confirmExplicit) {
+    const resolved = resolvePolicy(rawPolicy);
+    if (resolved.applyMode === "confirm") {
+      return { consentSource: "policy", policyProfile };
+    }
+  }
+
+  if (shouldPromptApplyConfirmation({ applying, dryRun, json, confirm, interactive })) {
+    return { consentSource: "interactive", policyProfile };
+  }
+
+  if (yes || confirm) {
+    return { consentSource: "cli", policyProfile };
+  }
+
+  return { consentSource: "none", policyProfile };
+}
+
+export async function loadConsentAudit(homeDir, options) {
+  const rawPolicy = await loadPolicyFile(homeDir);
+  const consent = resolveConsentAudit({
+    yes: options.yes,
+    confirm: options.confirm,
+    yesExplicit: options.yesExplicit,
+    confirmExplicit: options.confirmExplicit,
+    noPreflight: !options.preflight,
+    preflightExplicit: options.preflightExplicit,
+    rawPolicy,
+    interactive: options.interactive,
+    applying: options.applying,
+    dryRun: options.dryRun,
+    json: options.json
+  });
+
+  return { rawPolicy, ...consent };
 }
 
 export function applyPolicyToOptions(options, rawPolicy) {

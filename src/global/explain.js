@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildAdapterMatrix } from "./adapter-matrix.js";
+import { buildEffectivePolicy } from "./policy.js";
 import { harnessHomePaths } from "./paths.js";
 import { readGlobalState } from "./state.js";
 import { describeBackupSnapshots } from "./rollback.js";
@@ -17,6 +18,7 @@ export async function buildExplainReport(homeDir) {
   const state = await readGlobalState(paths.statePath);
   const adapters = await buildAdapterMatrix(homeDir);
   const backups = await describeBackupSnapshots(paths.backupsDir);
+  const policy = await buildEffectivePolicy(homeDir);
   const markers = {
     start: SECTION_START,
     end: SECTION_END
@@ -34,7 +36,8 @@ export async function buildExplainReport(homeDir) {
       adapters,
       configFiles: [],
       components: [],
-      backups
+      backups,
+      policy
     };
   }
 
@@ -59,7 +62,8 @@ export async function buildExplainReport(homeDir) {
     configFiles,
     components,
     backups,
-    cliVersion: state.cliVersion ?? null
+    cliVersion: state.cliVersion ?? null,
+    policy
   };
 }
 
@@ -132,6 +136,7 @@ export function buildExplainJson(report, { cliVersion = null } = {}) {
     })),
     configFiles: report.configFiles,
     components: report.components,
-    backups: report.backups
+    backups: report.backups,
+    policy: report.policy
   };
 }

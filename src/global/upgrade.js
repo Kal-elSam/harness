@@ -9,6 +9,7 @@ import { buildDiffReport } from "./diff.js";
 import { fetchPublishedVersion } from "./npm-registry.js";
 import { harnessHomePaths } from "./paths.js";
 import { printManagedPreflight, shouldShowPreflight, summarizeDiffPreflight } from "./preflight.js";
+import { loadConsentAudit } from "./policy.js";
 import { readGlobalState } from "./state.js";
 import { runHarnessSetup } from "./setup.js";
 
@@ -22,6 +23,9 @@ export async function runHarnessUpgrade({
   yes = false,
   confirm = false,
   preflight = true,
+  preflightExplicit = false,
+  yesExplicit = false,
+  confirmExplicit = false,
   json = false,
   interactive = null,
   createPrompt = createReadlinePrompt,
@@ -60,7 +64,24 @@ export async function runHarnessUpgrade({
       cliVersion,
       workspaceRoot
     });
-    printManagedPreflight({ command: "upgrade", ...summarizeDiffPreflight(diffReport) });
+    const consent = await loadConsentAudit(homeDir, {
+      yes,
+      confirm,
+      yesExplicit,
+      confirmExplicit,
+      preflight,
+      preflightExplicit,
+      interactive,
+      applying: true,
+      dryRun: false,
+      json
+    });
+    printManagedPreflight({
+      command: "upgrade",
+      ...summarizeDiffPreflight(diffReport),
+      consentSource: consent.consentSource,
+      policyProfile: consent.policyProfile
+    });
   }
 
   if (yes && shouldPromptApplyConfirmation({ applying, dryRun, json, confirm, interactive })) {

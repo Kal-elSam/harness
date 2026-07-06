@@ -1,5 +1,6 @@
 import { listBackupSnapshots } from "./backups.js";
 import { runGlobalDoctorChecks } from "./global-doctor.js";
+import { buildEffectivePolicy } from "./policy.js";
 import { harnessHomePaths } from "./paths.js";
 import { GLOBAL_AGENT_IDS, detectInstalledAdapters } from "./registry.js";
 import { readGlobalState } from "./state.js";
@@ -38,6 +39,7 @@ export async function buildStatusReport(homeDir, { packageRoot, workspaceRoot = 
 
   const overall = resolveOverallStatus({ state, doctor });
   const nextAction = resolveNextAction(overall, { backups: backups.length });
+  const policy = await buildEffectivePolicy(homeDir);
 
   return {
     homeDir,
@@ -50,6 +52,7 @@ export async function buildStatusReport(homeDir, { packageRoot, workspaceRoot = 
     counts,
     overall,
     nextAction,
+    policy,
     ok: overall === "ok"
   };
 }

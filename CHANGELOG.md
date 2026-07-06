@@ -2,6 +2,21 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.20.0 — 2026-07-06
+
+Minor release. Policy visibility and consent audit in control-plane output.
+
+### Policy visibility and consent audit
+
+- `harness status` prints a `Policy` section and `status --json` adds a stable
+  `policy` field (`source`, `profile`, `applyMode`, `preflight`, agents,
+  components, path).
+- `harness explain` includes effective policy and `~/.harness/policy.json` path.
+- `setup`, `sync`, and `upgrade` preflight output shows `Consent source` and
+  `Policy profile` without changing 0.19.0 write behavior.
+- `harness policy --json` keeps backward compatibility and adds `effective`.
+- Without a policy file, output clearly reports defaults / no policy file.
+
 ## 0.19.0 — 2026-07-06
 
 Minor release. Local policy profiles for setup, sync, and upgrade.

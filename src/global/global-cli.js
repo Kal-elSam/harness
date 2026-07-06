@@ -17,6 +17,8 @@ import { buildDiffJson, buildDiffReport } from "./diff.js";
 import {
   applyPolicyToOptions,
   buildPolicyJson,
+  formatPolicyProfileLabel,
+  formatPolicySourceLabel,
   loadPolicyFile,
   resetPolicyFile,
   resolvePolicy,
@@ -58,6 +60,9 @@ export async function runGlobalSetup(options, packageManifest, packageRoot) {
     yes: options.yes,
     confirm: options.confirm,
     preflight: options.preflight,
+    preflightExplicit: options.preflightExplicit,
+    yesExplicit: options.yesExplicit,
+    confirmExplicit: options.confirmExplicit,
     json: options.json,
     interactive: options.interactive
   });
@@ -99,6 +104,9 @@ export async function runGlobalSync(options, packageManifest, packageRoot) {
     yes: options.yes,
     confirm: options.confirm,
     preflight: options.preflight,
+    preflightExplicit: options.preflightExplicit,
+    yesExplicit: options.yesExplicit,
+    confirmExplicit: options.confirmExplicit,
     json: options.json,
     interactive: options.interactive
   });
@@ -156,6 +164,9 @@ export async function runGlobalUpgrade(options, packageManifest, packageRoot) {
     yes: options.yes,
     confirm: options.confirm,
     preflight: options.preflight,
+    preflightExplicit: options.preflightExplicit,
+    yesExplicit: options.yesExplicit,
+    confirmExplicit: options.confirmExplicit,
     json: options.json,
     interactive: options.interactive
   });
@@ -235,6 +246,14 @@ function printStatusReport(report) {
     }
   }
 
+  console.log("");
+  console.log("Policy:");
+  console.log(`  Source: ${formatPolicySourceLabel(report.policy)}`);
+  console.log(`  Profile: ${formatPolicyProfileLabel(report.policy.profile)}`);
+  console.log(`  Apply mode: ${report.policy.applyMode}`);
+  console.log(`  Preflight: ${report.policy.preflight ? "enabled" : "disabled"}`);
+  console.log(`  Agents: ${report.policy.agents}`);
+  console.log(`  Components: ${report.policy.components.join(", ") || "none"}`);
   console.log("");
   console.log(`Checks: ok=${report.counts.ok} missing=${report.counts.missing} stale=${report.counts.stale} warning=${report.counts.warning}`);
   console.log(`Backups: ${report.backups} snapshot(s)`);
@@ -389,6 +408,16 @@ function printExplainReport(report) {
   console.log("Managed markers:");
   console.log(`  start: ${report.markers.start}`);
   console.log(`  end:   ${report.markers.end}`);
+  console.log("");
+
+  console.log("Policy:");
+  console.log(`  Source: ${formatPolicySourceLabel(report.policy)}`);
+  console.log(`  Profile: ${formatPolicyProfileLabel(report.policy.profile)}`);
+  console.log(`  Apply mode: ${report.policy.applyMode}`);
+  console.log(`  Preflight: ${report.policy.preflight ? "enabled" : "disabled"}`);
+  console.log(`  Agents: ${report.policy.agents}`);
+  console.log(`  Components: ${report.policy.components.join(", ") || "none"}`);
+  console.log(`  File: ${report.policy.path}`);
   console.log("");
 
   console.log("Adapters:");

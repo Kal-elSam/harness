@@ -20,6 +20,7 @@ import {
   validateAdapterIds
 } from "./registry.js";
 import { printManagedPreflight, shouldShowPreflight } from "./preflight.js";
+import { loadConsentAudit } from "./policy.js";
 
 export async function runHarnessSetup({
   packageRoot,
@@ -34,6 +35,9 @@ export async function runHarnessSetup({
   yes = false,
   confirm = false,
   preflight = true,
+  preflightExplicit = false,
+  yesExplicit = false,
+  confirmExplicit = false,
   json = false,
   interactive = Boolean(input.isTTY && output.isTTY),
   createPrompt = createReadlinePrompt
@@ -133,7 +137,24 @@ export async function runHarnessSetup({
   if (shouldShowPreflight({ preflight, dryRun, json, applying })) {
     const preview = await installGlobalHarness({ ...installArgs, dryRun: true });
     const summary = await summarizeInstallPreflight(homeDir, preview);
-    printManagedPreflight({ command: "setup", ...summary });
+    const consent = await loadConsentAudit(homeDir, {
+      yes,
+      confirm,
+      yesExplicit,
+      confirmExplicit,
+      preflight,
+      preflightExplicit,
+      interactive,
+      applying,
+      dryRun,
+      json
+    });
+    printManagedPreflight({
+      command: "setup",
+      ...summary,
+      consentSource: consent.consentSource,
+      policyProfile: consent.policyProfile
+    });
   }
 
   if (shouldPromptApplyConfirmation({ applying, dryRun, json, confirm, interactive })) {

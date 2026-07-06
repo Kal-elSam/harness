@@ -11,6 +11,7 @@ export function buildControlPlaneJson(report, { cliVersion, extras = {} } = {}) 
     checks: report.checks,
     backups: report.backups,
     nextAction: report.nextAction,
+    policy: report.policy,
     cliVersion,
     ...extras
   };

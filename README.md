@@ -279,6 +279,11 @@ does not touch `state.json`, managed adapters, or installed components.
 Keys: `profile`, `applyMode` (`prompt` \| `confirm`), `preflight`, `agents`
 (`detected`, `all`, or a comma-separated list), `components`.
 
+Visibility (0.20.0+): `harness status`, `harness explain`, and apply preflight on
+`setup`/`sync`/`upgrade` show the effective policy and consent source (`cli`,
+`policy`, `interactive`, or `none`). `status --json` includes a stable `policy`
+field.
+
 ### `harness install` (agent-global)
 
 Non-interactive configure. Same engine as `setup`.

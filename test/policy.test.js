@@ -118,6 +118,7 @@ test("buildPolicyJson has a stable shape", async () => {
     "agents",
     "applyMode",
     "components",
+    "effective",
     "path",
     "preflight",
     "profile",

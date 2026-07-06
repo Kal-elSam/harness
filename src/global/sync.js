@@ -8,6 +8,7 @@ import {
 import { buildDiffReport } from "./diff.js";
 import { harnessHomePaths } from "./paths.js";
 import { printManagedPreflight, shouldShowPreflight, summarizeDiffPreflight } from "./preflight.js";
+import { loadConsentAudit } from "./policy.js";
 import { readGlobalState } from "./state.js";
 import { buildStatusReport } from "./status.js";
 
@@ -21,6 +22,9 @@ export async function runHarnessSync({
   yes = false,
   confirm = false,
   preflight = true,
+  preflightExplicit = false,
+  yesExplicit = false,
+  confirmExplicit = false,
   json = false,
   interactive = null,
   createPrompt = createReadlinePrompt
@@ -71,7 +75,24 @@ export async function runHarnessSync({
       cliVersion,
       workspaceRoot
     });
-    printManagedPreflight({ command: "sync", ...summarizeDiffPreflight(diffReport) });
+    const consent = await loadConsentAudit(homeDir, {
+      yes,
+      confirm,
+      yesExplicit,
+      confirmExplicit,
+      preflight,
+      preflightExplicit,
+      interactive,
+      applying,
+      dryRun,
+      json
+    });
+    printManagedPreflight({
+      command: "sync",
+      ...summarizeDiffPreflight(diffReport),
+      consentSource: consent.consentSource,
+      policyProfile: consent.policyProfile
+    });
   }
 
   if (shouldPromptApplyConfirmation({ applying, dryRun, json, confirm, interactive })) {

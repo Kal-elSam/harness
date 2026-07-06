@@ -34,7 +34,8 @@ const EXPLAIN_JSON_KEYS = [
   "adapters",
   "configFiles",
   "components",
-  "backups"
+  "backups",
+  "policy"
 ];
 
 const ALL_AGENT_ROOTS = [

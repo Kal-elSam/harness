@@ -26,6 +26,7 @@ const STABLE_KEYS = [
   "checks",
   "backups",
   "nextAction",
+  "policy",
   "cliVersion"
 ];
 
@@ -66,6 +67,7 @@ function assertStableEnvelope(payload) {
   assert.ok(Array.isArray(payload.checks));
   assert.equal(typeof payload.backups, "number");
   assert.equal(typeof payload.nextAction, "string");
+  assert.equal(typeof payload.policy, "object");
   assert.equal(payload.cliVersion, cliVersion);
 }
 

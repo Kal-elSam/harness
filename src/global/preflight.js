@@ -17,9 +17,13 @@ export function printManagedPreflight({
   markers = {
     start: SECTION_START,
     end: SECTION_END
-  }
+  },
+  consentSource = "none",
+  policyProfile = "none"
 }) {
   console.log(`Harness preflight — ${command}`);
+  console.log(`Consent source: ${consentSource}`);
+  console.log(`Policy profile: ${policyProfile}`);
   console.log(`Summary: ${summary}`);
   console.log("");
   console.log("Managed markers:");
