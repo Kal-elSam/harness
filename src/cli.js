@@ -228,6 +228,7 @@ function parseArgs(argv) {
     force: false,
     dryRun: false,
     yes: false,
+    preflight: true,
     json: false,
     apply: false,
     snapshot: null,
@@ -270,6 +271,7 @@ function parseArgs(argv) {
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--json") options.json = true;
     else if (arg === "--yes" || arg === "-y") options.yes = true;
+    else if (arg === "--no-preflight") options.preflight = false;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--to") options.snapshot = args[++index];
     else if (arg.startsWith("--to=")) options.snapshot = arg.slice("--to=".length);
@@ -385,10 +387,10 @@ Bootstrap (no global install required):
 
 Usage:
   harness --version
-  harness setup [--dry-run] [--yes] [--agents <list|all>] [--components <list>]
+  harness setup [--dry-run] [--yes] [--no-preflight] [--agents <list|all>] [--components <list>]
   harness status [--json]
-  harness sync [--dry-run] [--json]
-  harness upgrade [--dry-run] [--yes]
+  harness sync [--dry-run] [--json] [--no-preflight]
+  harness upgrade [--dry-run] [--yes] [--no-preflight]
   harness install [--agents <list|all>] [--components <list>] [--dry-run]
   harness install --no-default-components
   harness doctor [--json]

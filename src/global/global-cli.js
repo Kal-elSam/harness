@@ -48,6 +48,8 @@ export async function runGlobalSetup(options, packageManifest, packageRoot) {
     noDefaultComponents: options.noDefaultComponents,
     dryRun: options.dryRun,
     yes: options.yes,
+    preflight: options.preflight,
+    json: options.json,
     interactive: options.interactive
   });
 
@@ -84,7 +86,9 @@ export async function runGlobalSync(options, packageManifest, packageRoot) {
     cliVersion: packageManifest.version,
     homeDir,
     workspaceRoot: options.cwd,
-    dryRun: options.dryRun
+    dryRun: options.dryRun,
+    preflight: options.preflight,
+    json: options.json
   });
 
   if (options.json) {
@@ -134,7 +138,9 @@ export async function runGlobalUpgrade(options, packageManifest, packageRoot) {
     homeDir,
     workspaceRoot: options.cwd,
     dryRun: options.dryRun,
-    yes: options.yes
+    yes: options.yes,
+    preflight: options.preflight,
+    json: options.json
   });
 
   console.log("Harness upgrade — preview or apply managed ecosystem updates");

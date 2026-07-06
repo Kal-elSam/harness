@@ -2,6 +2,18 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.17.0 — 2026-07-06
+
+Minor release. Managed preflight summary before apply commands.
+
+### Preflight diff before apply
+
+- `harness setup --yes`, `harness sync`, and `harness upgrade --yes` now print a
+  managed preflight summary (planned creates/updates/repairs, managed markers, and
+  user-owned preserved content) immediately before writing configs or state.
+- New `--no-preflight` skips the extra output for CI and trusted scripts.
+- `harness diff`, `--dry-run`, and `--json` behavior unchanged.
+
 ## 0.16.0 — 2026-07-06
 
 Minor release. Read-only managed diff preview before apply commands.

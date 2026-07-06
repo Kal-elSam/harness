@@ -1,5 +1,7 @@
 import { updateGlobalHarness } from "./global-installer.js";
+import { buildDiffReport } from "./diff.js";
 import { harnessHomePaths } from "./paths.js";
+import { printManagedPreflight, shouldShowPreflight, summarizeDiffPreflight } from "./preflight.js";
 import { readGlobalState } from "./state.js";
 import { buildStatusReport } from "./status.js";
 
@@ -9,7 +11,9 @@ export async function runHarnessSync({
   cliVersion,
   homeDir,
   workspaceRoot = null,
-  dryRun = false
+  dryRun = false,
+  preflight = true,
+  json = false
 }) {
   const paths = harnessHomePaths(homeDir);
   const state = await readGlobalState(paths.statePath);
@@ -35,6 +39,16 @@ export async function runHarnessSync({
       result: null,
       report: preReport
     };
+  }
+
+  if (shouldShowPreflight({ preflight, dryRun, json, applying: true })) {
+    const diffReport = await buildDiffReport(homeDir, {
+      packageRoot,
+      packageName,
+      cliVersion,
+      workspaceRoot
+    });
+    printManagedPreflight({ command: "sync", ...summarizeDiffPreflight(diffReport) });
   }
 
   const result = await updateGlobalHarness({

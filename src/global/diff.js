@@ -71,7 +71,32 @@ export async function buildDiffReport(homeDir, {
   };
 }
 
-function buildChangesFromPlan(plan) {
+export async function summarizeInstallPreflight(homeDir, plan) {
+  const changes = buildChangesFromPlan({ ...plan, repairs: plan.repairs ?? [] });
+
+  for (const coreFile of plan.coreFiles ?? []) {
+    if (changes.some((change) => change.target === coreFile)) continue;
+    changes.push({
+      kind: "component_asset",
+      action: "create",
+      target: coreFile,
+      status: "planned",
+      detail: `Component asset would be written to ~/.harness/${coreFile}.`
+    });
+  }
+
+  const preserved = await collectPreservedForChanges(homeDir, plan);
+
+  return {
+    summary: changes.length > 0
+      ? `${changes.length} managed change(s) planned.`
+      : "No managed changes planned.",
+    changes,
+    preserved
+  };
+}
+
+export function buildChangesFromPlan(plan) {
   const changes = [];
 
   for (const repair of plan.repairs ?? []) {

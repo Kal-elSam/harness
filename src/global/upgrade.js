@@ -1,6 +1,8 @@
 import { updateGlobalHarness } from "./global-installer.js";
+import { buildDiffReport } from "./diff.js";
 import { fetchPublishedVersion } from "./npm-registry.js";
 import { harnessHomePaths } from "./paths.js";
+import { printManagedPreflight, shouldShowPreflight, summarizeDiffPreflight } from "./preflight.js";
 import { readGlobalState } from "./state.js";
 import { runHarnessSetup } from "./setup.js";
 
@@ -12,6 +14,8 @@ export async function runHarnessUpgrade({
   workspaceRoot = null,
   dryRun = false,
   yes = false,
+  preflight = true,
+  json = false,
   fetchVersion = fetchPublishedVersion
 }) {
   if (yes && dryRun) {
@@ -27,6 +31,16 @@ export async function runHarnessUpgrade({
   const previewCommand = `npx ${packageName}@latest setup --dry-run`;
 
   let result = null;
+
+  if (yes && shouldShowPreflight({ preflight, dryRun: false, json, applying: true }) && state) {
+    const diffReport = await buildDiffReport(homeDir, {
+      packageRoot,
+      packageName,
+      cliVersion,
+      workspaceRoot
+    });
+    printManagedPreflight({ command: "upgrade", ...summarizeDiffPreflight(diffReport) });
+  }
 
   if (state) {
     result = await updateGlobalHarness({

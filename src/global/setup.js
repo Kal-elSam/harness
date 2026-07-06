@@ -1,6 +1,7 @@
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { installGlobalHarness } from "./global-installer.js";
+import { summarizeInstallPreflight } from "./diff.js";
 import {
   COMPONENT_IDS,
   DEFAULT_COMPONENT_IDS,
@@ -13,6 +14,7 @@ import {
   resolveAgentIds,
   validateAdapterIds
 } from "./registry.js";
+import { printManagedPreflight, shouldShowPreflight } from "./preflight.js";
 
 export async function runHarnessSetup({
   packageRoot,
@@ -25,6 +27,8 @@ export async function runHarnessSetup({
   noDefaultComponents = false,
   dryRun = false,
   yes = false,
+  preflight = true,
+  json = false,
   interactive = Boolean(input.isTTY && output.isTTY),
   createPrompt = createReadlinePrompt
 }) {
@@ -96,7 +100,7 @@ export async function runHarnessSetup({
     });
   }
 
-  const result = await installGlobalHarness({
+  const installArgs = {
     packageRoot,
     packageName,
     cliVersion,
@@ -104,9 +108,16 @@ export async function runHarnessSetup({
     workspaceRoot,
     agents: selectedAgents,
     components: selectedComponents,
-    noDefaultComponents: selectedNoDefaults,
-    dryRun
-  });
+    noDefaultComponents: selectedNoDefaults
+  };
+
+  if (shouldShowPreflight({ preflight, dryRun, json, applying: yes })) {
+    const preview = await installGlobalHarness({ ...installArgs, dryRun: true });
+    const summary = await summarizeInstallPreflight(homeDir, preview);
+    printManagedPreflight({ command: "setup", ...summary });
+  }
+
+  const result = await installGlobalHarness({ ...installArgs, dryRun });
 
   return { cancelled: false, result };
 }
