@@ -19,7 +19,8 @@ import {
   runGlobalSetup,
   runGlobalStatus,
   runGlobalSync,
-  runGlobalUninstall
+  runGlobalUninstall,
+  runGlobalUpgrade
 } from "./global/global-cli.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 
@@ -90,6 +91,9 @@ export async function runCli(argv) {
       return;
     case "sync":
       await runGlobalSync(options, packageManifest, packageRoot);
+      return;
+    case "upgrade":
+      await runGlobalUpgrade(options, packageManifest, packageRoot);
       return;
     case "install":
       await dispatchByScope(options, "agent-global", {
@@ -313,6 +317,7 @@ function normalizeCommand(command) {
   if (command === "setup") return "setup";
   if (command === "status") return "status";
   if (command === "sync") return "sync";
+  if (command === "upgrade") return "upgrade";
   if (command === "init") return "init";
   if (command === "update" || command === "u") return "update";
   if (command === "doctor") return "doctor";
@@ -365,6 +370,7 @@ Usage:
   harness setup [--dry-run] [--yes] [--agents <list|all>] [--components <list>]
   harness status [--json]
   harness sync [--dry-run] [--json]
+  harness upgrade [--dry-run] [--yes]
   harness install [--agents <list|all>] [--components <list>] [--dry-run]
   harness install --no-default-components
   harness doctor [--json]
@@ -389,6 +395,7 @@ Commands:
   setup      Interactive wizard: detect agents, choose integrations, apply plan.
   status     Control panel: agents, components, drift, backups, next action.
   sync       Converge managed content (repair drift), then show status.
+  upgrade    Preview or apply ecosystem updates (apply requires --yes).
   install    Non-interactive configure (agent-global) or legacy workspace scaffold.
   doctor     Detailed health checks for managed state and configs.
   update     Technical repair alias (prefer sync for day-to-day use).
@@ -408,6 +415,8 @@ Version:
   harness --version                         Installed CLI version
   npm view @kal-elsam/harness version       Latest published version
   npx @kal-elsam/harness@latest sync        Update / converge managed content
+  harness upgrade --dry-run                 Preview upgrade plan (no writes)
+  npx @kal-elsam/harness@latest setup --yes Apply latest package to ecosystem
 
 Examples:
   npx @kal-elsam/harness setup
@@ -416,6 +425,7 @@ Examples:
   harness adapters --json
   harness sync
   harness sync --dry-run --json
+  harness upgrade --dry-run
   harness doctor --json
   npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core
   harness install --scope=workspace --mode enterprise

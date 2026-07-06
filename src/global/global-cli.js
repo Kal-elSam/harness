@@ -11,6 +11,7 @@ import { buildControlPlaneJson, printJson } from "./json-output.js";
 import { runHarnessSetup } from "./setup.js";
 import { buildStatusReport } from "./status.js";
 import { runHarnessSync } from "./sync.js";
+import { runHarnessUpgrade } from "./upgrade.js";
 
 export async function runGlobalInstall(options, packageManifest, packageRoot, { update = false } = {}) {
   const homeDir = resolveHomeDir();
@@ -119,6 +120,39 @@ export async function runGlobalSync(options, packageManifest, packageRoot) {
   console.log("");
   printStatusReport(outcome.report);
   if (!outcome.report.ok) process.exitCode = 1;
+  return outcome;
+}
+
+export async function runGlobalUpgrade(options, packageManifest, packageRoot) {
+  const homeDir = resolveHomeDir();
+  const outcome = await runHarnessUpgrade({
+    packageRoot,
+    packageName: packageManifest.name,
+    cliVersion: packageManifest.version,
+    homeDir,
+    workspaceRoot: options.cwd,
+    dryRun: options.dryRun,
+    yes: options.yes
+  });
+
+  console.log("Harness upgrade — preview or apply managed ecosystem updates");
+  console.log(`Installed CLI: ${outcome.installedVersion}`);
+  console.log(`Published latest: ${outcome.latestVersion}`);
+  console.log("");
+
+  if (outcome.dryRun) {
+    console.log("Preview only. No configs or ~/.harness state were modified.");
+    console.log(`Run latest package preview: ${outcome.previewCommand}`);
+    console.log(`Apply with latest package:  ${outcome.latestCommand}`);
+    console.log("");
+    printInstallResult(outcome.result, { update: true, dryRun: true, command: "upgrade" });
+    return outcome;
+  }
+
+  console.log("Applied upgrade with the current CLI package.");
+  console.log(`To converge with npm latest, run: ${outcome.latestCommand}`);
+  console.log("");
+  printInstallResult(outcome.result, { update: true, dryRun: false, command: "upgrade" });
   return outcome;
 }
 

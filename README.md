@@ -61,9 +61,14 @@ curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/inst
 Control plane:
 
 ```bash
-npx @kal-elsam/harness status
-npx @kal-elsam/harness sync
+harness status
+harness sync
+harness upgrade --dry-run
+npx @kal-elsam/harness@latest setup --yes
 ```
+
+After `install.sh --yes`, verify health with `harness status`, repair drift with `harness sync`,
+and move to the latest package with `npx @kal-elsam/harness@latest setup --yes`.
 
 ### Version and updates
 
@@ -76,6 +81,8 @@ npx @kal-elsam/harness --version
 npm view @kal-elsam/harness version
 
 # Converge to the latest published package
+harness upgrade --dry-run
+npx @kal-elsam/harness@latest setup --yes
 npx @kal-elsam/harness@latest sync
 ```
 

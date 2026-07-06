@@ -199,14 +199,14 @@ if [ "$APPLY" -eq 1 ]; then
     "" \
     "Bootstrap complete (applied)." \
     "Next steps:" \
-    "  1. Check health:    npx ${PACKAGE}@${VERSION} status" \
-    "  2. Repair drift:    npx ${PACKAGE}@${VERSION} sync" \
-    "  3. Adapter matrix:  npx ${PACKAGE}@${VERSION} adapters" \
+    "  1. Check health:    harness status" \
+    "  2. Repair drift:    harness sync" \
+    "  3. Upgrade latest:  npx ${PACKAGE}@latest setup --yes" \
     "" \
     "Version:" \
     "  Installed CLI:      npx ${PACKAGE} --version" \
     "  Published package:  npm view ${PACKAGE} version" \
-    "  Update / converge:  npx ${PACKAGE}@latest sync"
+    "  Preview upgrade:    harness upgrade --dry-run"
 else
   printf '%s\n' \
     "" \

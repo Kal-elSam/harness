@@ -2,6 +2,18 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.14.0 — 2026-07-06
+
+Minor release. Installer post-apply guidance and a safe `harness upgrade` command.
+
+### Installer status + upgrade UX
+
+- After `install.sh --yes`, next steps now highlight `harness status`, `harness sync`,
+  and `npx @kal-elsam/harness@latest setup --yes`.
+- New `harness upgrade --dry-run` previews convergence with the installed CLI and shows
+  the latest npm command without writing configs.
+- `harness upgrade --yes` applies only with an explicit flag (no silent auto-update).
+
 ## 0.13.0 — 2026-07-06
 
 Minor release. Bootstrap installer can apply setup explicitly while keeping the

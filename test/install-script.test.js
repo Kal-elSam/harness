@@ -213,6 +213,9 @@ test("installer --yes runs setup --yes and writes harness home", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.ok(existsSync(join(homeDir, ".harness")));
   assert.match(result.stdout, /Bootstrap complete \(applied\)/);
+  assert.match(result.stdout, /Check health:\s+harness status/);
+  assert.match(result.stdout, /Repair drift:\s+harness sync/);
+  assert.match(result.stdout, /npx @kal-elsam\/harness@latest setup --yes/);
 });
 
 test("installer --yes with --agents all reaches harness setup", () => {

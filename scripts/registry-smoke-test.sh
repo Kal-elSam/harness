@@ -104,6 +104,10 @@ if (JSON.stringify(managed) !== JSON.stringify(expected)) process.exit(1);
 " "$STATUS_JSON"
 
 echo
+echo "== harness upgrade --dry-run =="
+npx --no-install harness upgrade --dry-run
+
+echo
 echo "== simulate drift =="
 rm -f "$FAKE_HOME/.harness/components/sdd-core/workflow.md"
 node -e "
