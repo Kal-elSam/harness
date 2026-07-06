@@ -1,4 +1,10 @@
 import { updateGlobalHarness } from "./global-installer.js";
+import {
+  assertExplicitApplyConsent,
+  createReadlinePrompt,
+  promptApplyConfirmation,
+  shouldPromptApplyConfirmation
+} from "./apply-confirmation.js";
 import { buildDiffReport } from "./diff.js";
 import { harnessHomePaths } from "./paths.js";
 import { printManagedPreflight, shouldShowPreflight, summarizeDiffPreflight } from "./preflight.js";
@@ -12,8 +18,12 @@ export async function runHarnessSync({
   homeDir,
   workspaceRoot = null,
   dryRun = false,
+  yes = false,
+  confirm = false,
   preflight = true,
-  json = false
+  json = false,
+  interactive = null,
+  createPrompt = createReadlinePrompt
 }) {
   const paths = harnessHomePaths(homeDir);
   const state = await readGlobalState(paths.statePath);
@@ -41,7 +51,20 @@ export async function runHarnessSync({
     };
   }
 
-  if (shouldShowPreflight({ preflight, dryRun, json, applying: true })) {
+  const applying = !dryRun;
+
+  assertExplicitApplyConsent({
+    applying,
+    dryRun,
+    json,
+    yes,
+    confirm,
+    noPreflight: !preflight,
+    interactive,
+    command: "sync"
+  });
+
+  if (shouldShowPreflight({ preflight, dryRun, json, applying })) {
     const diffReport = await buildDiffReport(homeDir, {
       packageRoot,
       packageName,
@@ -49,6 +72,18 @@ export async function runHarnessSync({
       workspaceRoot
     });
     printManagedPreflight({ command: "sync", ...summarizeDiffPreflight(diffReport) });
+  }
+
+  if (shouldPromptApplyConfirmation({ applying, dryRun, json, confirm, interactive })) {
+    const approved = await promptApplyConfirmation({ command: "sync", createPrompt });
+    if (!approved) {
+      return {
+        action: "cancelled",
+        wrote: false,
+        result: null,
+        report: preReport
+      };
+    }
   }
 
   const result = await updateGlobalHarness({

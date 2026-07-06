@@ -1,4 +1,10 @@
 import { updateGlobalHarness } from "./global-installer.js";
+import {
+  assertExplicitApplyConsent,
+  createReadlinePrompt,
+  promptApplyConfirmation,
+  shouldPromptApplyConfirmation
+} from "./apply-confirmation.js";
 import { buildDiffReport } from "./diff.js";
 import { fetchPublishedVersion } from "./npm-registry.js";
 import { harnessHomePaths } from "./paths.js";
@@ -14,8 +20,11 @@ export async function runHarnessUpgrade({
   workspaceRoot = null,
   dryRun = false,
   yes = false,
+  confirm = false,
   preflight = true,
   json = false,
+  interactive = null,
+  createPrompt = createReadlinePrompt,
   fetchVersion = fetchPublishedVersion
 }) {
   if (yes && dryRun) {
@@ -31,6 +40,18 @@ export async function runHarnessUpgrade({
   const previewCommand = `npx ${packageName}@latest setup --dry-run`;
 
   let result = null;
+  const applying = yes && !dryRun;
+
+  assertExplicitApplyConsent({
+    applying,
+    dryRun,
+    json,
+    yes,
+    confirm,
+    noPreflight: !preflight,
+    interactive,
+    command: "upgrade"
+  });
 
   if (yes && shouldShowPreflight({ preflight, dryRun: false, json, applying: true }) && state) {
     const diffReport = await buildDiffReport(homeDir, {
@@ -40,6 +61,23 @@ export async function runHarnessUpgrade({
       workspaceRoot
     });
     printManagedPreflight({ command: "upgrade", ...summarizeDiffPreflight(diffReport) });
+  }
+
+  if (yes && shouldPromptApplyConfirmation({ applying, dryRun, json, confirm, interactive })) {
+    const approved = await promptApplyConfirmation({ command: "upgrade", createPrompt });
+    if (!approved) {
+      return {
+        cancelled: true,
+        dryRun: true,
+        wrote: false,
+        installedVersion: cliVersion,
+        latestVersion,
+        latestCommand,
+        previewCommand,
+        result: null,
+        statePresent: Boolean(state)
+      };
+    }
   }
 
   if (state) {

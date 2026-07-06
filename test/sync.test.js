@@ -69,7 +69,8 @@ test("sync with healthy state writes nothing", async () => {
 
   const outcome = await runHarnessSync({
     ...baseOptions,
-    homeDir
+    homeDir,
+    yes: true
   });
 
   assert.equal(outcome.action, "noop");
@@ -94,7 +95,8 @@ test("sync repairs missing asset", async () => {
 
   const outcome = await runHarnessSync({
     ...baseOptions,
-    homeDir
+    homeDir,
+    yes: true
   });
 
   assert.equal(outcome.action, "repaired");
@@ -114,7 +116,8 @@ test("sync repairs stale managed section and preserves user content", async () =
 
   const outcome = await runHarnessSync({
     ...baseOptions,
-    homeDir
+    homeDir,
+    yes: true
   });
 
   assert.equal(outcome.action, "repaired");

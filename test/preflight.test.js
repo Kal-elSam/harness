@@ -97,7 +97,7 @@ test("sync apply shows preflight before repairs", async () => {
   );
   await unlink(assetPath);
 
-  const cli = runHarness(["sync"], homeDir);
+  const cli = runHarness(["sync", "--yes"], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
   assert.match(cli.stdout, /Harness preflight — sync/);
   assert.match(cli.stdout, /Planned managed changes:/);

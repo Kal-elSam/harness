@@ -1,6 +1,11 @@
-import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { installGlobalHarness } from "./global-installer.js";
+import {
+  assertExplicitApplyConsent,
+  createReadlinePrompt,
+  promptApplyConfirmation,
+  shouldPromptApplyConfirmation
+} from "./apply-confirmation.js";
 import { summarizeInstallPreflight } from "./diff.js";
 import {
   COMPONENT_IDS,
@@ -27,6 +32,7 @@ export async function runHarnessSetup({
   noDefaultComponents = false,
   dryRun = false,
   yes = false,
+  confirm = false,
   preflight = true,
   json = false,
   interactive = Boolean(input.isTTY && output.isTTY),
@@ -47,7 +53,7 @@ export async function runHarnessSetup({
   let selectedComponents = components;
   let selectedNoDefaults = noDefaultComponents;
 
-  const shouldPrompt = interactive && !dryRun && !yes
+  const shouldPrompt = interactive && !dryRun && !yes && !confirm
     && agents == null
     && components == null
     && !noDefaultComponents;
@@ -111,10 +117,31 @@ export async function runHarnessSetup({
     noDefaultComponents: selectedNoDefaults
   };
 
-  if (shouldShowPreflight({ preflight, dryRun, json, applying: yes })) {
+  const applying = !dryRun;
+
+  assertExplicitApplyConsent({
+    applying,
+    dryRun,
+    json,
+    yes,
+    confirm,
+    noPreflight: !preflight,
+    interactive,
+    command: "setup"
+  });
+
+  if (shouldShowPreflight({ preflight, dryRun, json, applying })) {
     const preview = await installGlobalHarness({ ...installArgs, dryRun: true });
     const summary = await summarizeInstallPreflight(homeDir, preview);
     printManagedPreflight({ command: "setup", ...summary });
+  }
+
+  if (shouldPromptApplyConfirmation({ applying, dryRun, json, confirm, interactive })) {
+    const approved = await promptApplyConfirmation({ command: "setup", createPrompt });
+    if (!approved) {
+      console.log("Setup cancelled.");
+      return { cancelled: true };
+    }
   }
 
   const result = await installGlobalHarness({ ...installArgs, dryRun });
@@ -139,9 +166,3 @@ function parseList(value) {
   )];
 }
 
-function createReadlinePrompt() {
-  const rl = readline.createInterface({ input, output });
-  const prompt = (question) => rl.question(question);
-  prompt.close = async () => rl.close();
-  return prompt;
-}

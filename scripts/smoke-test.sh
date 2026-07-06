@@ -109,7 +109,7 @@ fi
 
 echo
 echo "== harness sync repairs drift =="
-npx --no-install harness sync
+npx --no-install harness sync --yes
 
 echo
 echo "== harness status after sync =="

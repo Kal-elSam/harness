@@ -48,6 +48,7 @@ export async function runGlobalSetup(options, packageManifest, packageRoot) {
     noDefaultComponents: options.noDefaultComponents,
     dryRun: options.dryRun,
     yes: options.yes,
+    confirm: options.confirm,
     preflight: options.preflight,
     json: options.json,
     interactive: options.interactive
@@ -87,8 +88,11 @@ export async function runGlobalSync(options, packageManifest, packageRoot) {
     homeDir,
     workspaceRoot: options.cwd,
     dryRun: options.dryRun,
+    yes: options.yes,
+    confirm: options.confirm,
     preflight: options.preflight,
-    json: options.json
+    json: options.json,
+    interactive: options.interactive
   });
 
   if (options.json) {
@@ -117,6 +121,9 @@ export async function runGlobalSync(options, packageManifest, packageRoot) {
     case "repaired":
       printSyncRepairSummary(outcome.result, { dryRun: false });
       break;
+    case "cancelled":
+      console.log("Sync cancelled. No changes were written.");
+      break;
     default: {
       const _exhaustive = outcome.action;
       throw new Error(`Unknown sync action: ${_exhaustive}`);
@@ -139,9 +146,17 @@ export async function runGlobalUpgrade(options, packageManifest, packageRoot) {
     workspaceRoot: options.cwd,
     dryRun: options.dryRun,
     yes: options.yes,
+    confirm: options.confirm,
     preflight: options.preflight,
-    json: options.json
+    json: options.json,
+    interactive: options.interactive
   });
+
+  if (outcome.cancelled) {
+    console.log("Harness upgrade — preview or apply managed ecosystem updates");
+    console.log("Upgrade cancelled. No changes were written.");
+    return outcome;
+  }
 
   console.log("Harness upgrade — preview or apply managed ecosystem updates");
   console.log(`Installed CLI: ${outcome.installedVersion}`);

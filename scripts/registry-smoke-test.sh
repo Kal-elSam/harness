@@ -120,7 +120,7 @@ fs.writeFileSync(config, content.replace('### SDD Core', '### Broken'));
 
 echo
 echo "== harness sync =="
-npx --no-install harness sync
+npx --no-install harness sync --yes
 
 echo
 echo "== harness status --json confirms OK =="

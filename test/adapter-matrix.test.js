@@ -186,7 +186,7 @@ test("sync repairs drift in OpenCode managed section", async () => {
   const drifted = await buildStatusReport(homeDir, { packageRoot });
   assert.equal(drifted.overall, "drift");
 
-  const outcome = await runHarnessSync({ ...baseOptions, homeDir });
+  const outcome = await runHarnessSync({ ...baseOptions, homeDir, yes: true });
   assert.equal(outcome.action, "repaired");
   assert.equal(outcome.report.overall, "ok");
 
