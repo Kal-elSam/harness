@@ -13,6 +13,7 @@ import { buildStatusReport } from "./status.js";
 import { runHarnessSync } from "./sync.js";
 import { runHarnessUpgrade } from "./upgrade.js";
 import { buildExplainJson, buildExplainReport } from "./explain.js";
+import { buildDiffJson, buildDiffReport } from "./diff.js";
 
 export async function runGlobalInstall(options, packageManifest, packageRoot, { update = false } = {}) {
   const homeDir = resolveHomeDir();
@@ -415,6 +416,77 @@ function printExplainReport(report) {
   }
 
   console.log("");
+  console.log(`Next: ${report.nextAction}`);
+}
+
+export async function runGlobalDiff({
+  packageManifest,
+  packageRoot,
+  json = false,
+  workspaceRoot = process.cwd()
+} = {}) {
+  const homeDir = resolveHomeDir();
+  const report = await buildDiffReport(homeDir, {
+    packageRoot,
+    packageName: packageManifest.name,
+    cliVersion: packageManifest.version,
+    workspaceRoot
+  });
+
+  if (json) {
+    printJson(buildDiffJson(report, { cliVersion: packageManifest.version }));
+    return report;
+  }
+
+  printDiffReport(report);
+  return report;
+}
+
+function printDiffReport(report) {
+  console.log("Harness diff — managed content preview (read-only)");
+  console.log(`Home: ${report.homeDir}`);
+  console.log(`Summary: ${report.summary}`);
+  console.log("");
+
+  if (!report.installed) {
+    console.log(`Next: ${report.nextAction}`);
+    return;
+  }
+
+  if (!report.hasChanges) {
+    console.log("Managed changes: none");
+    console.log("");
+    if (report.preserved.length > 0) {
+      console.log("User-owned preserved content:");
+      for (const entry of report.preserved) {
+        console.log(`  ${entry.path} — intact`);
+      }
+      console.log("");
+    }
+    console.log(`Next: ${report.nextAction}`);
+    return;
+  }
+
+  console.log("Planned managed changes:");
+  for (const change of report.changes) {
+    console.log(
+      `  [${change.status}] ${change.kind} ${change.action} -> ${change.target}`
+    );
+    console.log(`    ${change.detail}`);
+  }
+
+  console.log("");
+  if (report.preserved.length > 0) {
+    console.log("User-owned preserved content (outside managed markers):");
+    for (const entry of report.preserved) {
+      console.log(`  ${entry.path} — intact`);
+    }
+    console.log("");
+  } else {
+    console.log("User-owned preserved content: none detected in affected configs.");
+    console.log("");
+  }
+
   console.log(`Next: ${report.nextAction}`);
 }
 

@@ -2,6 +2,19 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.16.0 — 2026-07-06
+
+Minor release. Read-only managed diff preview before apply commands.
+
+### Managed diff preview
+
+- New `harness diff` and `harness diff --json` preview missing/stale assets and
+  managed sections that `harness sync` would repair.
+- Without state, recommends `harness setup --dry-run`.
+- Healthy ecosystems report no managed changes; user-owned content outside markers
+  is reported as preserved.
+- Read-only: never writes configs or `~/.harness` state.
+
 ## 0.15.0 — 2026-07-06
 
 Minor release. Read-only audit command for managed ecosystem changes.

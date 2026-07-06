@@ -21,7 +21,8 @@ import {
   runGlobalSync,
   runGlobalUninstall,
   runGlobalUpgrade,
-  runGlobalExplain
+  runGlobalExplain,
+  runGlobalDiff
 } from "./global/global-cli.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 
@@ -145,6 +146,14 @@ export async function runCli(argv) {
       await runGlobalExplain({
         json: options.json,
         cliVersion: packageManifest.version
+      });
+      return;
+    case "diff":
+      await runGlobalDiff({
+        packageManifest,
+        packageRoot,
+        json: options.json,
+        workspaceRoot: options.cwd
       });
       return;
     case "backups":
@@ -332,6 +341,7 @@ function normalizeCommand(command) {
   if (command === "detect" || command === "d") return "detect";
   if (command === "adapters") return "adapters";
   if (command === "explain") return "explain";
+  if (command === "diff") return "diff";
   if (command === "backups") return "backups";
   if (command === "rollback") return "rollback";
   if (command === "components") return "components";
@@ -384,6 +394,7 @@ Usage:
   harness doctor [--json]
   harness adapters [--json]
   harness explain [--json]
+  harness diff [--json]
   harness update [--dry-run]
   harness install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
   harness init [--mode minimal|standard|enterprise] (workspace alias)
@@ -411,6 +422,7 @@ Commands:
   detect     Inspect global agents and the current project. Read-only.
   adapters   Official adapter matrix: roots, config files, detected/managed.
   explain    Read-only audit of managed adapters, configs, markers, and backups.
+  diff       Read-only preview of managed content changes (sync/setup plan).
   backups    List config snapshots under ~/.harness/backups.
   rollback   Preview or restore a prior config snapshot (--apply to write).
   components List, validate, scaffold, pack, or import workspace components.
@@ -435,6 +447,8 @@ Examples:
   harness adapters --json
   harness explain
   harness explain --json
+  harness diff
+  harness diff --json
   harness sync
   harness sync --dry-run --json
   harness upgrade --dry-run
