@@ -2,6 +2,17 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.15.0 — 2026-07-06
+
+Minor release. Read-only audit command for managed ecosystem changes.
+
+### Explain / audit managed changes
+
+- New `harness explain` and `harness explain --json` show managed adapters, config
+  files, installed components, backups, managed markers, and user-owned preserved
+  content outside Harness markers.
+- Read-only: never writes agent configs or `~/.harness` state.
+
 ## 0.14.2 — 2026-07-06
 
 Patch release. Ships the installer smoke fix from `e62b25a` in the npm tarball.

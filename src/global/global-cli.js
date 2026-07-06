@@ -12,6 +12,7 @@ import { runHarnessSetup } from "./setup.js";
 import { buildStatusReport } from "./status.js";
 import { runHarnessSync } from "./sync.js";
 import { runHarnessUpgrade } from "./upgrade.js";
+import { buildExplainJson, buildExplainReport } from "./explain.js";
 
 export async function runGlobalInstall(options, packageManifest, packageRoot, { update = false } = {}) {
   const homeDir = resolveHomeDir();
@@ -334,6 +335,87 @@ export async function runGlobalAdapters({ json = false, cliVersion = null } = {}
 
   printAdapterMatrixReport(report);
   return report;
+}
+
+export async function runGlobalExplain({ json = false, cliVersion = null } = {}) {
+  const homeDir = resolveHomeDir();
+  const report = await buildExplainReport(homeDir);
+
+  if (json) {
+    printJson(buildExplainJson(report, { cliVersion }));
+    return report;
+  }
+
+  printExplainReport(report);
+  return report;
+}
+
+function printExplainReport(report) {
+  console.log("Harness explain — managed ecosystem audit (read-only)");
+  console.log(`Home: ${report.homeDir}`);
+  console.log(`State root: ${report.stateRoot}`);
+  console.log("");
+
+  console.log("Managed markers:");
+  console.log(`  start: ${report.markers.start}`);
+  console.log(`  end:   ${report.markers.end}`);
+  console.log("");
+
+  console.log("Adapters:");
+  for (const adapter of report.adapters) {
+    const detected = adapter.detected ? "detected" : "not detected";
+    const managed = adapter.managed ? "managed" : "unmanaged";
+    console.log(`  ${adapter.id.padEnd(10)} ${detected.padEnd(13)} ${managed}`);
+  }
+
+  console.log("");
+  console.log("Harness writes to:");
+  for (const target of report.writesTo) {
+    console.log(`  - ~/${target.replace(/^\//, "")}`);
+  }
+
+  console.log("");
+  console.log("Config files:");
+  if (report.configFiles.length === 0) {
+    console.log("  none (run setup to configure managed sections)");
+  } else {
+    for (const file of report.configFiles) {
+      const managedLabel = file.managed ? "managed" : "unmanaged";
+      const sectionLabel = file.hasManagedSection ? "has managed section" : "no managed section";
+      console.log(`  ${file.path} — ${managedLabel}, ${sectionLabel}`);
+
+      if (file.hasPreservedUserContent) {
+        console.log("    user-owned preserved: yes");
+      } else if (file.exists && file.hasManagedSection) {
+        console.log("    user-owned preserved: no (managed markers only)");
+      }
+    }
+  }
+
+  console.log("");
+  console.log("Components:");
+  if (report.components.length === 0) {
+    console.log("  none");
+  } else {
+    for (const component of report.components) {
+      console.log(
+        `  ${component.id.padEnd(14)} ${String(component.version).padEnd(8)} ${component.source} -> ~/.harness/${component.assetDir}`
+      );
+    }
+  }
+
+  console.log("");
+  console.log("Backups:");
+  if (report.backups.length === 0) {
+    console.log("  none");
+  } else {
+    for (const snapshot of report.backups) {
+      console.log(`  - ${snapshot.name} (${snapshot.fileCount} file${snapshot.fileCount === 1 ? "" : "s"})`);
+    }
+  }
+
+  console.log("");
+  console.log(`Next: ${report.nextAction}`);
 }
 
 function printAdapterMatrixReport(report) {

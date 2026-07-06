@@ -20,7 +20,8 @@ import {
   runGlobalStatus,
   runGlobalSync,
   runGlobalUninstall,
-  runGlobalUpgrade
+  runGlobalUpgrade,
+  runGlobalExplain
 } from "./global/global-cli.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 
@@ -136,6 +137,12 @@ export async function runCli(argv) {
       return;
     case "adapters":
       await runGlobalAdapters({
+        json: options.json,
+        cliVersion: packageManifest.version
+      });
+      return;
+    case "explain":
+      await runGlobalExplain({
         json: options.json,
         cliVersion: packageManifest.version
       });
@@ -324,6 +331,7 @@ function normalizeCommand(command) {
   if (command === "uninstall") return "uninstall";
   if (command === "detect" || command === "d") return "detect";
   if (command === "adapters") return "adapters";
+  if (command === "explain") return "explain";
   if (command === "backups") return "backups";
   if (command === "rollback") return "rollback";
   if (command === "components") return "components";
@@ -375,6 +383,7 @@ Usage:
   harness install --no-default-components
   harness doctor [--json]
   harness adapters [--json]
+  harness explain [--json]
   harness update [--dry-run]
   harness install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
   harness init [--mode minimal|standard|enterprise] (workspace alias)
@@ -401,6 +410,7 @@ Commands:
   update     Technical repair alias (prefer sync for day-to-day use).
   detect     Inspect global agents and the current project. Read-only.
   adapters   Official adapter matrix: roots, config files, detected/managed.
+  explain    Read-only audit of managed adapters, configs, markers, and backups.
   backups    List config snapshots under ~/.harness/backups.
   rollback   Preview or restore a prior config snapshot (--apply to write).
   components List, validate, scaffold, pack, or import workspace components.
@@ -423,6 +433,8 @@ Examples:
   harness status
   harness status --json
   harness adapters --json
+  harness explain
+  harness explain --json
   harness sync
   harness sync --dry-run --json
   harness upgrade --dry-run
