@@ -148,6 +148,9 @@ harness backups
 harness history
 harness history --command sync --action repaired
 harness history last --json
+harness report
+harness report --json
+harness report --out ./diagnostics.txt
 harness rollback --to <snapshot> [--apply]
 harness uninstall
 harness install --scope=workspace   # opt-in / legacy
@@ -268,6 +271,25 @@ harness history last --command sync
 - Filters: `--command`, `--action`, `--limit` (combine before limiting).
 - `history last` prints the most recent matching event; exit 0 when empty.
 - Queries never write to `~/.harness`.
+
+### `harness report`
+
+Read-only local diagnostics bundle for support and debugging. Combines status,
+policy, adapters, diff/drift preview, and recent history without modifying
+`~/.harness` or agent configs.
+
+```bash
+harness report
+harness report --json
+harness report --out ./diagnostics.txt
+harness report --limit 10
+```
+
+- Default stdout is human-readable; `--json` is stable for CI.
+- `--out <file>` writes only to the path you specify (text or JSON per flags).
+- `--limit <n>` controls history events included (default 20).
+- Corrupt `history.jsonl` lines appear as warnings; valid events still display.
+- No telemetry and no full config contents — paths, states, and summaries only.
 
 ### `harness policy`
 

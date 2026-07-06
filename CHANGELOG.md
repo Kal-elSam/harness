@@ -2,6 +2,23 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.23.0 — 2026-07-06
+
+Minor release. Read-only diagnostics report for local support bundles.
+
+### Diagnostics report
+
+- New `harness report` command combines CLI version, adapters, effective policy,
+  status summary, diff/drift preview, and recent history in one read-only bundle.
+- `harness report --json` emits a stable envelope for CI and tooling.
+- `harness report --out <file>` writes only to the explicit user path (never
+  `~/.harness` by default); human text or JSON depending on flags.
+- `harness report --limit <n>` controls how many history events are included
+  (default 20).
+- Corrupt `history.jsonl` lines surface as warnings without failing the report.
+- No telemetry, no config writes, no full config contents — paths, states, and
+  managed section summaries only.
+
 ## 0.22.0 — 2026-07-06
 
 Minor release. History querying and last-operation UX for the audit log.

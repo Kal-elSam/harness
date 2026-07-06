@@ -24,7 +24,8 @@ import {
   runGlobalExplain,
   runGlobalDiff,
   runGlobalPolicy,
-  runGlobalHistory
+  runGlobalHistory,
+  runGlobalReport
 } from "./global/global-cli.js";
 import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
 import { resolveHomeDir } from "./global/paths.js";
@@ -175,6 +176,16 @@ export async function runCli(argv) {
       return;
     case "policy":
       await runGlobalPolicy(options, packageManifest);
+      return;
+    case "report":
+      await runGlobalReport({
+        packageManifest,
+        packageRoot,
+        json: options.json,
+        workspaceRoot: options.cwd,
+        historyLimit: options.limit,
+        outPath: options.outPath
+      });
       return;
     default:
       throw new Error(`Unknown command "${command}". Run "${invoke} help".`);
@@ -470,6 +481,7 @@ function normalizeCommand(command) {
   if (command === "rollback") return "rollback";
   if (command === "components") return "components";
   if (command === "policy") return "policy";
+  if (command === "report") return "report";
   if (command === "help") return "help";
   if (command === "version") return "version";
 
@@ -531,6 +543,7 @@ Usage:
   harness policy [--json]
   harness policy set <key> <value>
   harness policy reset
+  harness report [--json] [--out <file>] [--limit <n>]
   harness components
   harness components validate|init|pack|import ...
   harness uninstall [--dry-run]
@@ -558,6 +571,7 @@ Commands:
              Use "history last" for the most recent event. Read-only.
   rollback   Preview or restore a prior config snapshot (--apply to write).
   policy     View or edit local operation preferences under ~/.harness/policy.json.
+  report     Read-only diagnostics bundle: status, policy, adapters, diff, history.
   components List, validate, scaffold, pack, or import workspace components.
   uninstall  Remove managed sections and global state. Backups are preserved.
   init       Alias for install --scope=workspace (legacy).
@@ -591,6 +605,9 @@ Examples:
   harness policy
   harness policy --json
   harness policy set profile safe
+  harness report
+  harness report --json
+  harness report --out ./diagnostics.txt
   harness upgrade --dry-run
   harness doctor --json
   npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core

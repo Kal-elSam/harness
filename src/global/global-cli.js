@@ -37,6 +37,7 @@ import {
   recordUninstallHistory,
   recordUpgradeHistory
 } from "./history.js";
+import { buildDiagnosticsReport, buildReportJson, DEFAULT_HISTORY_LIMIT, writeReportFile } from "./report.js";
 
 export async function runGlobalInstall(options, packageManifest, packageRoot, { update = false } = {}) {
   const homeDir = resolveHomeDir();
@@ -530,6 +531,119 @@ function printExplainReport(report) {
 
   console.log("");
   console.log(`Next: ${report.nextAction}`);
+}
+
+export async function runGlobalReport({
+  packageManifest,
+  packageRoot,
+  json = false,
+  workspaceRoot = process.cwd(),
+  historyLimit = null,
+  outPath = null
+} = {}) {
+  const homeDir = resolveHomeDir();
+  const limit = historyLimit ?? DEFAULT_HISTORY_LIMIT;
+  const report = await buildDiagnosticsReport(homeDir, {
+    packageRoot,
+    packageName: packageManifest.name,
+    cliVersion: packageManifest.version,
+    workspaceRoot,
+    historyLimit: limit
+  });
+
+  if (json) {
+    const payload = buildReportJson(report);
+    if (outPath) {
+      await writeReportFile(outPath, `${JSON.stringify(payload)}\n`);
+      console.log(`Diagnostics report written to: ${outPath}`);
+    } else {
+      printJson(payload);
+    }
+    if (!report.ok) process.exitCode = 1;
+    return report;
+  }
+
+  const text = formatDiagnosticsReport(report);
+  if (outPath) {
+    await writeReportFile(outPath, text);
+    console.log(`Diagnostics report written to: ${outPath}`);
+  } else {
+    console.log(text);
+  }
+
+  if (!report.ok) process.exitCode = 1;
+  return report;
+}
+
+function formatDiagnosticsReport(report) {
+  const lines = [];
+
+  lines.push("Harness report — local diagnostics (read-only)");
+  lines.push(`CLI version: ${report.cliVersion}`);
+  lines.push(`Home: ${report.homeDir}`);
+  lines.push("");
+
+  lines.push("Adapters:");
+  lines.push(
+    `  Supported: ${report.adapters.supportedCount}  Detected: ${report.adapters.detectedCount}  Managed: ${report.adapters.managedCount}`
+  );
+  for (const adapter of report.adapters.adapters) {
+    const detected = adapter.detected ? "detected" : "not detected";
+    const managed = adapter.managed ? "managed" : "unmanaged";
+    lines.push(`  ${adapter.id.padEnd(10)} ${detected.padEnd(13)} ${managed}`);
+  }
+  lines.push("");
+
+  lines.push("Policy:");
+  lines.push(`  Source: ${formatPolicySourceLabel(report.policy)}`);
+  lines.push(`  Profile: ${formatPolicyProfileLabel(report.policy.profile)}`);
+  lines.push(`  Apply mode: ${report.policy.applyMode}`);
+  lines.push(`  Preflight: ${report.policy.preflight ? "enabled" : "disabled"}`);
+  lines.push(`  Agents: ${report.policy.agents}`);
+  lines.push(`  Components: ${report.policy.components.join(", ") || "none"}`);
+  lines.push("");
+
+  lines.push("Status:");
+  lines.push(`  Overall: ${report.status.overall.toUpperCase()}`);
+  lines.push(
+    report.status.installed
+      ? `  State: installed (cliVersion=${report.status.stateCliVersion ?? "unknown"})`
+      : "  State: missing"
+  );
+  lines.push(
+    `  Checks: ok=${report.status.counts.ok} missing=${report.status.counts.missing} stale=${report.status.counts.stale} warning=${report.status.counts.warning}`
+  );
+  lines.push(`  Backups: ${report.status.backups} snapshot(s)`);
+  lines.push(`  Next: ${report.status.nextAction}`);
+  lines.push("");
+
+  lines.push("Diff:");
+  lines.push(`  Summary: ${report.diff.summary}`);
+  if (report.diff.hasChanges) {
+    lines.push(`  Planned changes: ${report.diff.changeCount}`);
+    for (const change of report.diff.changes) {
+      lines.push(`    [${change.status}] ${change.kind} ${change.action} -> ${change.target}`);
+    }
+  } else {
+    lines.push("  Drift: none");
+  }
+  lines.push(`  Next: ${report.diff.nextAction}`);
+  lines.push("");
+
+  lines.push(`History (last ${report.history.limit} events):`);
+  lines.push(`  File: ${report.history.path}`);
+  for (const warning of report.history.warnings) {
+    lines.push(`  Warning: skipped invalid history line ${warning.line}: ${warning.message}`);
+  }
+  if (report.history.events.length === 0) {
+    lines.push("  No managed operations recorded yet.");
+  } else {
+    for (const event of report.history.events) {
+      lines.push(`  ${formatHistoryEvent(event)}`);
+    }
+  }
+
+  return `${lines.join("\n")}\n`;
 }
 
 export async function runGlobalDiff({
