@@ -195,6 +195,7 @@ test("installer default runs setup --dry-run without writes", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(join(homeDir, ".harness")), false);
   assert.match(result.stdout, /Bootstrap complete/);
+  assert.match(result.stdout, /setup --dry-run/);
 });
 
 test("installer --yes runs setup --yes and writes harness home", () => {

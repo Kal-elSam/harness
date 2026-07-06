@@ -2,6 +2,26 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.21.0 — 2026-07-06
+
+Minor release. Local operation history / audit log for managed commands.
+
+### Operation history / audit log
+
+- New append-only audit file: `~/.harness/history.jsonl` (one JSON object per line).
+- New `harness history` command with `--json` and `--limit <n>`.
+- Records managed operations: `setup`, `sync`, `upgrade`, `rollback --apply`,
+  `uninstall`, `policy set`, and `policy reset`.
+- Each event captures timestamp, command, action, wrote, dryRun, policy,
+  consentSource, agents, components, checksBefore/checksAfter when applicable,
+  backupsCreated, snapshotsUsed (rollback), and cliVersion.
+- `--dry-run` and upgrade preview do not write `~/.harness` or history entries;
+  persistent audit starts on real apply, interactive cancellation, rollback apply,
+  uninstall, or policy changes.
+- Cancelled interactive operations log `action: cancelled`.
+- Consent failures before writes do not create history entries.
+- Corrupt lines in `history.jsonl` are skipped with warnings; valid events still display.
+
 ## 0.20.0 — 2026-07-06
 
 Minor release. Policy visibility and consent audit in control-plane output.

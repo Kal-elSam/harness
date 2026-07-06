@@ -23,7 +23,8 @@ import {
   runGlobalUpgrade,
   runGlobalExplain,
   runGlobalDiff,
-  runGlobalPolicy
+  runGlobalPolicy,
+  runGlobalHistory
 } from "./global/global-cli.js";
 import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
 import { resolveHomeDir } from "./global/paths.js";
@@ -133,7 +134,7 @@ export async function runCli(argv) {
       if (options.scope === "workspace") {
         throw new Error('Workspace uninstall is not supported yet. Remove workspace files manually or via git.');
       }
-      await runGlobalUninstall(options);
+      await runGlobalUninstall(options, packageManifest);
       return;
     case "detect":
       printGlobalDetect();
@@ -163,14 +164,17 @@ export async function runCli(argv) {
     case "backups":
       await runGlobalBackups();
       return;
+    case "history":
+      await runGlobalHistory(options, packageManifest);
+      return;
     case "rollback":
-      await runGlobalRollback(options);
+      await runGlobalRollback(options, packageManifest);
       return;
     case "components":
       await dispatchComponentsCommand(options, invoke);
       return;
     case "policy":
-      await runGlobalPolicy(options);
+      await runGlobalPolicy(options, packageManifest);
       return;
     default:
       throw new Error(`Unknown command "${command}". Run "${invoke} help".`);
@@ -258,6 +262,7 @@ function parseArgs(argv) {
     policyAction: null,
     policyKey: null,
     policyValue: null,
+    limit: null,
     help: false,
     version: false,
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY)
@@ -321,6 +326,8 @@ function parseArgs(argv) {
     } else if (arg === "--apply") options.apply = true;
     else if (arg === "--to") options.snapshot = args[++index];
     else if (arg.startsWith("--to=")) options.snapshot = arg.slice("--to=".length);
+    else if (arg === "--limit") options.limit = parsePositiveInt(args[++index], "limit");
+    else if (arg.startsWith("--limit=")) options.limit = parsePositiveInt(arg.slice("--limit=".length), "limit");
     else if (arg === "--label") options.label = args[++index];
     else if (arg.startsWith("--label=")) options.label = arg.slice("--label=".length);
     else if (arg === "--out") options.outPath = resolve(args[++index]);
@@ -398,6 +405,14 @@ function parsePolicyAction(args, options) {
   throw new Error(`Unknown policy action "${action}". Use set or reset.`);
 }
 
+function parsePositiveInt(value, label) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error(`Invalid --${label} value "${value}". Use a positive integer.`);
+  }
+  return parsed;
+}
+
 function parseScope(value) {
   if (!SCOPES.has(value)) {
     throw new Error(`Invalid scope "${value}". Use agent-global or workspace.`);
@@ -423,6 +438,7 @@ function normalizeCommand(command) {
   if (command === "explain") return "explain";
   if (command === "diff") return "diff";
   if (command === "backups") return "backups";
+  if (command === "history") return "history";
   if (command === "rollback") return "rollback";
   if (command === "components") return "components";
   if (command === "policy") return "policy";
@@ -481,6 +497,7 @@ Usage:
   harness init [--mode minimal|standard|enterprise] (workspace alias)
   harness detect
   harness backups
+  harness history [--json] [--limit <n>]
   harness rollback --to <snapshot> [--apply]
   harness policy [--json]
   harness policy set <key> <value>
@@ -508,6 +525,7 @@ Commands:
   explain    Read-only audit of managed adapters, configs, markers, and backups.
   diff       Read-only preview of managed content changes (sync/setup plan).
   backups    List config snapshots under ~/.harness/backups.
+  history    Local audit log of managed operations under ~/.harness/history.jsonl.
   rollback   Preview or restore a prior config snapshot (--apply to write).
   policy     View or edit local operation preferences under ~/.harness/policy.json.
   components List, validate, scaffold, pack, or import workspace components.
@@ -536,6 +554,8 @@ Examples:
   harness diff --json
   harness sync
   harness sync --dry-run --json
+  harness history
+  harness history --json --limit 5
   harness policy
   harness policy --json
   harness policy set profile safe

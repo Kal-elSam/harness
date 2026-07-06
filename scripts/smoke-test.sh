@@ -120,6 +120,26 @@ echo "== harness doctor after repair =="
 npx --no-install harness doctor
 
 echo
+echo "== harness history after sync =="
+npx --no-install harness history --json | node -e "
+const fs = require('node:fs');
+let input = '';
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', () => {
+  const parsed = JSON.parse(input.trim());
+  if (!Array.isArray(parsed.events) || parsed.events.length < 1) {
+    console.error('Expected history events after managed operations');
+    process.exit(1);
+  }
+  const commands = new Set(parsed.events.map((event) => event.command));
+  if (!commands.has('sync')) {
+    console.error('Expected sync event in history');
+    process.exit(1);
+  }
+});
+"
+
+echo
 echo "== harness backups =="
 npx --no-install harness backups
 

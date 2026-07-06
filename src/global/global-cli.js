@@ -24,6 +24,18 @@ import {
   resolvePolicy,
   savePolicyField
 } from "./policy.js";
+import {
+  buildCheckSnapshot,
+  formatHistoryEvent,
+  getHistoryPath,
+  readHistoryEvents,
+  recordPolicyHistory,
+  recordRollbackHistory,
+  recordSetupHistory,
+  recordSyncHistory,
+  recordUninstallHistory,
+  recordUpgradeHistory
+} from "./history.js";
 
 export async function runGlobalInstall(options, packageManifest, packageRoot, { update = false } = {}) {
   const homeDir = resolveHomeDir();
@@ -47,6 +59,9 @@ export async function runGlobalInstall(options, packageManifest, packageRoot, { 
 
 export async function runGlobalSetup(options, packageManifest, packageRoot) {
   const homeDir = resolveHomeDir();
+  const preReport = await buildStatusReport(homeDir, { packageRoot, workspaceRoot: options.cwd });
+  const checksBefore = buildCheckSnapshot(preReport.counts);
+
   const outcome = await runHarnessSetup({
     packageRoot,
     packageName: packageManifest.name,
@@ -65,6 +80,15 @@ export async function runGlobalSetup(options, packageManifest, packageRoot) {
     confirmExplicit: options.confirmExplicit,
     json: options.json,
     interactive: options.interactive
+  });
+
+  await recordSetupHistory(homeDir, {
+    cliVersion: packageManifest.version,
+    options,
+    outcome,
+    checksBefore,
+    packageRoot,
+    workspaceRoot: options.cwd
   });
 
   if (outcome.cancelled) return outcome;
@@ -94,6 +118,9 @@ export async function runGlobalStatus(packageRoot, {
 
 export async function runGlobalSync(options, packageManifest, packageRoot) {
   const homeDir = resolveHomeDir();
+  const preReport = await buildStatusReport(homeDir, { packageRoot, workspaceRoot: options.cwd });
+  const checksBefore = buildCheckSnapshot(preReport.counts);
+
   const outcome = await runHarnessSync({
     packageRoot,
     packageName: packageManifest.name,
@@ -109,6 +136,15 @@ export async function runGlobalSync(options, packageManifest, packageRoot) {
     confirmExplicit: options.confirmExplicit,
     json: options.json,
     interactive: options.interactive
+  });
+
+  await recordSyncHistory(homeDir, {
+    cliVersion: packageManifest.version,
+    options,
+    outcome,
+    checksBefore,
+    packageRoot,
+    workspaceRoot: options.cwd
   });
 
   if (options.json) {
@@ -154,6 +190,9 @@ export async function runGlobalSync(options, packageManifest, packageRoot) {
 
 export async function runGlobalUpgrade(options, packageManifest, packageRoot) {
   const homeDir = resolveHomeDir();
+  const preReport = await buildStatusReport(homeDir, { packageRoot, workspaceRoot: options.cwd });
+  const checksBefore = buildCheckSnapshot(preReport.counts);
+
   const outcome = await runHarnessUpgrade({
     packageRoot,
     packageName: packageManifest.name,
@@ -169,6 +208,15 @@ export async function runGlobalUpgrade(options, packageManifest, packageRoot) {
     confirmExplicit: options.confirmExplicit,
     json: options.json,
     interactive: options.interactive
+  });
+
+  await recordUpgradeHistory(homeDir, {
+    cliVersion: packageManifest.version,
+    options,
+    outcome,
+    checksBefore,
+    packageRoot,
+    workspaceRoot: options.cwd
   });
 
   if (outcome.cancelled) {
@@ -315,11 +363,17 @@ function printInstallResult(result, { update = false, dryRun = false, command = 
   console.log('State tracked in ~/.harness/state.json. Run "harness status" or "harness doctor" to verify.');
 }
 
-export async function runGlobalUninstall(options) {
+export async function runGlobalUninstall(options, packageManifest) {
   const homeDir = resolveHomeDir();
   const result = await uninstallGlobalHarness({
     homeDir,
     dryRun: options.dryRun
+  });
+
+  await recordUninstallHistory(homeDir, {
+    cliVersion: packageManifest?.version ?? null,
+    options,
+    result
   });
 
   console.log(`Agentic Harness global ${options.dryRun ? "uninstall plan" : "uninstalled"} (scope: agent-global)`);
@@ -702,7 +756,44 @@ export async function runGlobalBackups() {
   }
 }
 
-export async function runGlobalRollback(options) {
+export async function runGlobalHistory(options, packageManifest) {
+  const homeDir = resolveHomeDir();
+  const { events, warnings } = await readHistoryEvents(homeDir, { limit: options.limit });
+  const historyPath = getHistoryPath(homeDir);
+
+  if (options.json) {
+    printJson({
+      path: historyPath,
+      events,
+      warnings,
+      cliVersion: packageManifest?.version ?? null
+    });
+    return { events, warnings };
+  }
+
+  console.log("Harness history — local operation audit log");
+  console.log(`Home: ${homeDir}`);
+  console.log(`File: ${historyPath}`);
+  console.log(`Events: ${events.length}`);
+
+  for (const warning of warnings) {
+    console.warn(`Warning: skipped invalid history line ${warning.line}: ${warning.message}`);
+  }
+
+  if (events.length === 0) {
+    console.log("No managed operations recorded yet.");
+    return { events, warnings };
+  }
+
+  console.log("");
+  for (const event of events) {
+    console.log(formatHistoryEvent(event));
+  }
+
+  return { events, warnings };
+}
+
+export async function runGlobalRollback(options, packageManifest) {
   if (!options.snapshot) {
     throw new Error('Missing snapshot. Use: harness rollback --to <snapshot>');
   }
@@ -711,6 +802,12 @@ export async function runGlobalRollback(options) {
 
   if (options.apply) {
     const result = await applyRollback({ homeDir, snapshot: options.snapshot });
+
+    await recordRollbackHistory(homeDir, {
+      cliVersion: packageManifest?.version ?? null,
+      snapshot: options.snapshot,
+      result
+    });
 
     console.log("Harness rollback applied");
     console.log(`Snapshot: ${result.snapshot}`);
@@ -747,7 +844,7 @@ export async function runGlobalRollback(options) {
   console.log("Run with --apply to restore.");
 }
 
-export async function runGlobalPolicy(options) {
+export async function runGlobalPolicy(options, packageManifest) {
   const homeDir = resolveHomeDir();
 
   switch (options.policyAction) {
@@ -764,6 +861,11 @@ export async function runGlobalPolicy(options) {
     }
     case "set": {
       const resolved = await savePolicyField(homeDir, options.policyKey, options.policyValue);
+
+      await recordPolicyHistory(homeDir, {
+        cliVersion: packageManifest?.version ?? null,
+        action: "set"
+      });
 
       if (options.json) {
         printJson({
@@ -782,6 +884,13 @@ export async function runGlobalPolicy(options) {
     }
     case "reset": {
       const removed = await resetPolicyFile(homeDir);
+
+      if (removed) {
+        await recordPolicyHistory(homeDir, {
+          cliVersion: packageManifest?.version ?? null,
+          action: "reset"
+        });
+      }
 
       if (options.json) {
         printJson({

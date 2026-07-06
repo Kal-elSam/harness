@@ -15,6 +15,7 @@ export function harnessHomePaths(homeDir) {
     root,
     statePath: join(root, "state.json"),
     policyPath: join(root, "policy.json"),
+    historyPath: join(root, "history.jsonl"),
     coreDir: join(root, "core"),
     backupsDir: join(root, "backups")
   };
