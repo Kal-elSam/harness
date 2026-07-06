@@ -22,8 +22,11 @@ import {
   runGlobalUninstall,
   runGlobalUpgrade,
   runGlobalExplain,
-  runGlobalDiff
+  runGlobalDiff,
+  runGlobalPolicy
 } from "./global/global-cli.js";
+import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
+import { resolveHomeDir } from "./global/paths.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -78,24 +81,25 @@ export async function runCli(argv) {
     return;
   }
 
+  const optionsWithPolicy = await applyCommandPolicy(command, options);
   const invoke = resolveSuggestedInvocation(packageManifest.name);
 
   switch (command) {
     case "setup":
-      await runGlobalSetup(options, packageManifest, packageRoot);
+      await runGlobalSetup(optionsWithPolicy, packageManifest, packageRoot);
       return;
     case "status":
       await runGlobalStatus(packageRoot, {
-        workspaceRoot: options.cwd,
-        json: options.json,
+        workspaceRoot: optionsWithPolicy.cwd,
+        json: optionsWithPolicy.json,
         cliVersion: packageManifest.version
       });
       return;
     case "sync":
-      await runGlobalSync(options, packageManifest, packageRoot);
+      await runGlobalSync(optionsWithPolicy, packageManifest, packageRoot);
       return;
     case "upgrade":
-      await runGlobalUpgrade(options, packageManifest, packageRoot);
+      await runGlobalUpgrade(optionsWithPolicy, packageManifest, packageRoot);
       return;
     case "install":
       await dispatchByScope(options, "agent-global", {
@@ -165,6 +169,9 @@ export async function runCli(argv) {
     case "components":
       await dispatchComponentsCommand(options, invoke);
       return;
+    case "policy":
+      await runGlobalPolicy(options);
+      return;
     default:
       throw new Error(`Unknown command "${command}". Run "${invoke} help".`);
   }
@@ -200,6 +207,16 @@ async function dispatchComponentsCommand(options, invoke) {
   }
 }
 
+async function applyCommandPolicy(command, options) {
+  if (!new Set(["setup", "sync", "upgrade"]).has(command)) {
+    return options;
+  }
+
+  const homeDir = resolveHomeDir();
+  const rawPolicy = await loadPolicyFile(homeDir);
+  return applyPolicyToOptions(options, rawPolicy);
+}
+
 async function readPackageManifest() {
   return JSON.parse(await readFile(resolve(packageRoot, "package.json"), "utf8"));
 }
@@ -230,9 +247,17 @@ function parseArgs(argv) {
     yes: false,
     confirm: false,
     preflight: true,
+    preflightExplicit: false,
+    yesExplicit: false,
+    confirmExplicit: false,
+    adaptersExplicit: false,
+    componentsExplicit: false,
     json: false,
     apply: false,
     snapshot: null,
+    policyAction: null,
+    policyKey: null,
+    policyValue: null,
     help: false,
     version: false,
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY)
@@ -240,6 +265,10 @@ function parseArgs(argv) {
 
   if (command === "components") {
     parseComponentsAction(args, options);
+  }
+
+  if (command === "policy") {
+    parsePolicyAction(args, options);
   }
 
   for (let index = 0; index < args.length; index += 1) {
@@ -258,24 +287,38 @@ function parseArgs(argv) {
     else if (arg === "--all-adapters") {
       options.allAdapters = true;
       options.adapters = null;
+      options.adaptersExplicit = true;
     } else if (arg === "--adapters" || arg === "--agents") {
       options.adapters = parseAdapters(args[++index]);
+      options.adaptersExplicit = true;
     } else if (arg.startsWith("--adapters=")) {
       options.adapters = parseAdapters(arg.slice("--adapters=".length));
+      options.adaptersExplicit = true;
     } else if (arg.startsWith("--agents=")) {
       options.adapters = parseAdapters(arg.slice("--agents=".length));
+      options.adaptersExplicit = true;
     } else if (arg === "--components") {
       options.components = parseAdapters(args[++index]);
+      options.componentsExplicit = true;
     } else if (arg.startsWith("--components=")) {
       options.components = parseAdapters(arg.slice("--components=".length));
-    } else if (arg === "--no-default-components") options.noDefaultComponents = true;
-    else if (arg === "--force") options.force = true;
+      options.componentsExplicit = true;
+    } else if (arg === "--no-default-components") {
+      options.noDefaultComponents = true;
+      options.componentsExplicit = true;
+    } else if (arg === "--force") options.force = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--json") options.json = true;
-    else if (arg === "--yes" || arg === "-y") options.yes = true;
-    else if (arg === "--confirm") options.confirm = true;
-    else if (arg === "--no-preflight") options.preflight = false;
-    else if (arg === "--apply") options.apply = true;
+    else if (arg === "--yes" || arg === "-y") {
+      options.yes = true;
+      options.yesExplicit = true;
+    } else if (arg === "--confirm") {
+      options.confirm = true;
+      options.confirmExplicit = true;
+    } else if (arg === "--no-preflight") {
+      options.preflight = false;
+      options.preflightExplicit = true;
+    } else if (arg === "--apply") options.apply = true;
     else if (arg === "--to") options.snapshot = args[++index];
     else if (arg.startsWith("--to=")) options.snapshot = arg.slice("--to=".length);
     else if (arg === "--label") options.label = args[++index];
@@ -323,6 +366,38 @@ function parseComponentsAction(args, options) {
   throw new Error(`Unknown components action "${action}". Use validate, init, pack, or import.`);
 }
 
+function parsePolicyAction(args, options) {
+  const action = args[0];
+
+  if (!action || action.startsWith("-")) {
+    options.policyAction = "show";
+    return;
+  }
+
+  args.shift();
+
+  if (action === "set") {
+    options.policyAction = "set";
+    const key = args[0];
+    const value = args[1];
+
+    if (!key || key.startsWith("-") || !value || value.startsWith("-")) {
+      throw new Error("Missing policy key or value. Use: harness policy set <key> <value>");
+    }
+
+    options.policyKey = args.shift();
+    options.policyValue = args.shift();
+    return;
+  }
+
+  if (action === "reset") {
+    options.policyAction = "reset";
+    return;
+  }
+
+  throw new Error(`Unknown policy action "${action}". Use set or reset.`);
+}
+
 function parseScope(value) {
   if (!SCOPES.has(value)) {
     throw new Error(`Invalid scope "${value}". Use agent-global or workspace.`);
@@ -350,6 +425,7 @@ function normalizeCommand(command) {
   if (command === "backups") return "backups";
   if (command === "rollback") return "rollback";
   if (command === "components") return "components";
+  if (command === "policy") return "policy";
   if (command === "help") return "help";
   if (command === "version") return "version";
 
@@ -406,6 +482,9 @@ Usage:
   harness detect
   harness backups
   harness rollback --to <snapshot> [--apply]
+  harness policy [--json]
+  harness policy set <key> <value>
+  harness policy reset
   harness components
   harness components validate|init|pack|import ...
   harness uninstall [--dry-run]
@@ -430,6 +509,7 @@ Commands:
   diff       Read-only preview of managed content changes (sync/setup plan).
   backups    List config snapshots under ~/.harness/backups.
   rollback   Preview or restore a prior config snapshot (--apply to write).
+  policy     View or edit local operation preferences under ~/.harness/policy.json.
   components List, validate, scaffold, pack, or import workspace components.
   uninstall  Remove managed sections and global state. Backups are preserved.
   init       Alias for install --scope=workspace (legacy).
@@ -456,6 +536,9 @@ Examples:
   harness diff --json
   harness sync
   harness sync --dry-run --json
+  harness policy
+  harness policy --json
+  harness policy set profile safe
   harness upgrade --dry-run
   harness doctor --json
   npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core

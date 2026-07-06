@@ -14,6 +14,14 @@ import { runHarnessSync } from "./sync.js";
 import { runHarnessUpgrade } from "./upgrade.js";
 import { buildExplainJson, buildExplainReport } from "./explain.js";
 import { buildDiffJson, buildDiffReport } from "./diff.js";
+import {
+  applyPolicyToOptions,
+  buildPolicyJson,
+  loadPolicyFile,
+  resetPolicyFile,
+  resolvePolicy,
+  savePolicyField
+} from "./policy.js";
 
 export async function runGlobalInstall(options, packageManifest, packageRoot, { update = false } = {}) {
   const homeDir = resolveHomeDir();
@@ -708,4 +716,96 @@ export async function runGlobalRollback(options) {
 
   console.log("");
   console.log("Run with --apply to restore.");
+}
+
+export async function runGlobalPolicy(options) {
+  const homeDir = resolveHomeDir();
+
+  switch (options.policyAction) {
+    case "show": {
+      const rawPolicy = await loadPolicyFile(homeDir);
+
+      if (options.json) {
+        printJson(buildPolicyJson(homeDir, rawPolicy));
+        return;
+      }
+
+      printPolicyReport(homeDir, rawPolicy);
+      return;
+    }
+    case "set": {
+      const resolved = await savePolicyField(homeDir, options.policyKey, options.policyValue);
+
+      if (options.json) {
+        printJson({
+          ok: true,
+          action: "set",
+          key: options.policyKey,
+          value: resolved[options.policyKey],
+          policy: buildPolicyJson(homeDir, await loadPolicyFile(homeDir))
+        });
+        return;
+      }
+
+      console.log(`Policy updated: ${options.policyKey}=${formatPolicyValue(resolved[options.policyKey])}`);
+      printPolicyReport(homeDir, await loadPolicyFile(homeDir));
+      return;
+    }
+    case "reset": {
+      const removed = await resetPolicyFile(homeDir);
+
+      if (options.json) {
+        printJson({
+          ok: true,
+          action: "reset",
+          removed,
+          policy: buildPolicyJson(homeDir, null)
+        });
+        return;
+      }
+
+      console.log(removed ? "Policy reset. Using CLI defaults." : "No policy file found.");
+      if (removed) {
+        printPolicyReport(homeDir, null);
+      }
+      return;
+    }
+    default: {
+      const _exhaustive = options.policyAction;
+      throw new Error(`Unknown policy action "${_exhaustive}".`);
+    }
+  }
+}
+
+function printPolicyReport(homeDir, rawPolicy) {
+  const resolved = resolvePolicy(rawPolicy ?? {});
+  const policyPath = harnessHomePaths(homeDir).policyPath;
+
+  console.log("Harness policy — local operation preferences");
+  console.log(`Home: ${homeDir}`);
+  console.log(`File: ${rawPolicy ? policyPath : "(none — using CLI defaults)"}`);
+  console.log("");
+
+  if (resolved.profile) {
+    console.log(`Profile: ${resolved.profile}`);
+  }
+
+  console.log(`Apply mode: ${resolved.applyMode}`);
+  console.log(`Preflight: ${resolved.preflight ? "enabled" : "disabled"}`);
+  console.log(`Agents: ${formatPolicyAgents(resolved.agents)}`);
+  console.log(`Components: ${resolved.components.join(", ") || "none"}`);
+  console.log("");
+  console.log("Precedence: CLI flags > policy file > internal defaults.");
+  console.log("Commands: harness policy set <key> <value> | harness policy reset");
+}
+
+function formatPolicyAgents(agents) {
+  if (agents === "detected") return "detected";
+  if (agents === "all") return "all";
+  return agents.join(", ");
+}
+
+function formatPolicyValue(value) {
+  if (Array.isArray(value)) return value.join(",");
+  return String(value);
 }

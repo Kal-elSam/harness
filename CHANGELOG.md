@@ -2,6 +2,24 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.19.0 — 2026-07-06
+
+Minor release. Local policy profiles for setup, sync, and upgrade.
+
+### Local policy profiles
+
+- New `harness policy` command to view and edit operation preferences stored in
+  `~/.harness/policy.json` (`policy --json`, `policy set <key> <value>`,
+  `policy reset`).
+- Supported profiles: `safe` (interactive prompt), `ci` and `fast` (apply via
+  policy consent with preflight, no prompt).
+- Safe defaults when a policy file exists: `applyMode: prompt`, `preflight: true`,
+  `agents: detected`, `components: [orchestrator, sdd-core]`.
+- Precedence: CLI flags override policy; policy overrides internal defaults.
+- Without a policy file, 0.18.0 behavior is unchanged.
+- `policy reset` removes only `policy.json`; state, adapters, and components are
+  preserved.
+
 ## 0.18.0 — 2026-07-06
 
 Minor release. Explicit apply confirmation in interactive terminals.

@@ -128,6 +128,10 @@ harness adapters --json
 harness sync
 harness sync --dry-run
 harness sync --dry-run --json
+harness policy
+harness policy --json
+harness policy set profile safe
+harness policy reset
 harness install
 harness install --agents all
 harness install --agents cursor,codex --components orchestrator,sdd-core
@@ -243,6 +247,37 @@ harness sync --dry-run --json
 - `--json` uses the same stable envelope as `status`, plus sync fields
   (`action`, `wrote`, planned/applied repairs when present).
 - `harness update` remains as a technical alias.
+
+### `harness policy`
+
+Optional local operation preferences under `~/.harness/policy.json`. Use this
+when your team wants consistent apply/preflight defaults without repeating CLI
+flags on every `setup`, `sync`, or `upgrade`.
+
+```bash
+harness policy
+harness policy --json
+harness policy set profile ci
+harness policy set preflight true
+harness policy set agents detected
+harness policy set components orchestrator,sdd-core
+harness policy reset
+```
+
+Profiles:
+
+| Profile | Behavior |
+|---|---|
+| `safe` | Preflight on; interactive terminal prompts before apply (default). |
+| `ci` | Preflight on; non-interactive apply allowed via policy (`applyMode: confirm`). |
+| `fast` | Same as `ci` — preflight on, confirmation via policy instead of a prompt. |
+
+Precedence: **CLI flags > policy file > internal defaults**. Without a policy
+file, behavior matches 0.18.0. `policy reset` deletes only `policy.json`; it
+does not touch `state.json`, managed adapters, or installed components.
+
+Keys: `profile`, `applyMode` (`prompt` \| `confirm`), `preflight`, `agents`
+(`detected`, `all`, or a comma-separated list), `components`.
 
 ### `harness install` (agent-global)
 
