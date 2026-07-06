@@ -2,6 +2,27 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.13.0 — 2026-07-06
+
+Minor release. Bootstrap installer can apply setup explicitly while keeping the
+safe default preview.
+
+### Bootstrap apply mode
+
+- `scripts/install.sh` default unchanged: ends with `harness setup --dry-run`.
+- Explicit apply: `curl ... | sh -s -- --yes` runs `harness setup --yes`.
+- Passthrough to setup: `--version`, `--agents`, `--components`,
+  `--no-default-components`.
+- Security unchanged: no `sudo`, no shell profiles, no AI app installation — only
+  managed sections.
+
+### Recommended entry
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh -s -- --yes
+```
+
 ## 0.12.1 — 2026-07-04
 
 Patch release. Fixes registry smoke validation for the adapter matrix.

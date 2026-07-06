@@ -36,13 +36,26 @@ The bootstrap installer:
 
 - requires Node.js 18.18+ and npm
 - runs `@kal-elsam/harness` via `npx` (or `npm exec`)
-- ends with `harness setup --dry-run` (no agent configs, no `~/.harness` writes)
-- never uses `sudo` and never modifies shell profiles
+- ends with `harness setup --dry-run` by default (no agent configs, no `~/.harness` writes)
+- never uses `sudo`, never modifies shell profiles, and never installs AI apps
 
 Apply the plan when you are ready:
 
 ```bash
-npx @kal-elsam/harness setup
+curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh -s -- --yes
+```
+
+Or run setup directly:
+
+```bash
+npx @kal-elsam/harness setup --yes
+```
+
+Passthrough examples:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh -s -- --agents all --yes
+curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh -s -- --components orchestrator,sdd-core --yes
 ```
 
 Control plane:

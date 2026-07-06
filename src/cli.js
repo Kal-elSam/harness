@@ -358,6 +358,7 @@ sections, components, backups, and drift repair under ~/.harness.
 
 Bootstrap (no global install required):
   curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh -s -- --yes
 
 Usage:
   harness --version
