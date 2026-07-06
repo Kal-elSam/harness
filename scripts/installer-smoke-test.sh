@@ -104,6 +104,8 @@ export HARNESS_HOME="$FAKE_HOME"
 export npm_config_cache="$NPM_CACHE"
 assert_harness_home_isolated
 
+cd "$WORKDIR"
+
 INSTALL_SCRIPT_URL="$(resolve_install_script_url)"
 echo "Installer smoke for ${PACKAGE}@${VERSION}"
 echo "Install script: ${INSTALL_SCRIPT_URL}"
