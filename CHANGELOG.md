@@ -2,6 +2,15 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.14.2 — 2026-07-06
+
+Patch release. Ships the installer smoke fix from `e62b25a` in the npm tarball.
+
+### Fix
+
+- `scripts/installer-smoke-test.sh` runs from an isolated temp workspace so `npx` does
+  not resolve the monorepo package when validating post-publish from the harness repo.
+
 ## 0.14.1 — 2026-07-06
 
 Patch release. Post-publish smoke for the one-liner installer path.

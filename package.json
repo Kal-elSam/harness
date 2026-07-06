@@ -1,6 +1,6 @@
 {
   "name": "@kal-elsam/harness",
-  "version": "0.14.1",
+  "version": "0.14.2",
   "description": "Installable AI governance harness for Codex, Cursor, Claude, Gemini, Copilot, Engram, and Graphify.",
   "type": "module",
   "homepage": "https://github.com/Kal-elSam/harness#readme",
