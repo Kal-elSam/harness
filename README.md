@@ -145,6 +145,9 @@ harness components init <id> --label "<label>"
 harness components pack <id> --out <file>    # advanced
 harness components import <file>             # advanced
 harness backups
+harness history
+harness history --command sync --action repaired
+harness history last --json
 harness rollback --to <snapshot> [--apply]
 harness uninstall
 harness install --scope=workspace   # opt-in / legacy
@@ -247,6 +250,24 @@ harness sync --dry-run --json
 - `--json` uses the same stable envelope as `status`, plus sync fields
   (`action`, `wrote`, planned/applied repairs when present).
 - `harness update` remains as a technical alias.
+
+### `harness history`
+
+Read-only audit log of managed operations under `~/.harness/history.jsonl`.
+Use it to investigate what Harness applied without parsing JSONL manually.
+
+```bash
+harness history
+harness history --command sync
+harness history --action repaired --limit 10
+harness history last
+harness history last --json
+harness history last --command sync
+```
+
+- Filters: `--command`, `--action`, `--limit` (combine before limiting).
+- `history last` prints the most recent matching event; exit 0 when empty.
+- Queries never write to `~/.harness`.
 
 ### `harness policy`
 

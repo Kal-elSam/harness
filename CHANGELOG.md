@@ -2,6 +2,18 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.22.0 — 2026-07-06
+
+Minor release. History querying and last-operation UX for the audit log.
+
+### History querying
+
+- `harness history` adds read-only filters: `--command`, `--action`, and `--limit`.
+- New `harness history last` shows the most recent matching event (`--json` supported).
+- Filters combine before `--limit` (most recent N of the filtered set).
+- `history last` with no entries exits 0 and reports a clear empty state.
+- All history queries are read-only; `history.jsonl` stays append-only.
+
 ## 0.21.0 — 2026-07-06
 
 Minor release. Local operation history / audit log for managed commands.

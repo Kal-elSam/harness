@@ -345,6 +345,128 @@ test("CLI setup --yes and sync --yes create history events", async () => {
   assert.ok(parsed.events.some((event) => event.command === "sync" && event.wrote === true));
 });
 
+test("history filters by command and action", () => {
+  const homeDir = mkdtempSyncSafe();
+  appendHistoryEventSync(homeDir, {
+    timestamp: "2026-07-06T00:00:00.000Z",
+    command: "setup",
+    action: "applied",
+    wrote: true,
+    cliVersion
+  });
+  appendHistoryEventSync(homeDir, {
+    timestamp: "2026-07-06T00:00:01.000Z",
+    command: "sync",
+    action: "repaired",
+    wrote: true,
+    cliVersion
+  });
+  appendHistoryEventSync(homeDir, {
+    timestamp: "2026-07-06T00:00:02.000Z",
+    command: "sync",
+    action: "cancelled",
+    wrote: false,
+    cliVersion
+  });
+
+  const byCommand = runHarness(["history", "--command", "sync", "--json"], homeDir);
+  assert.equal(byCommand.status, 0);
+  const commandParsed = JSON.parse(byCommand.stdout.trim());
+  assert.equal(commandParsed.events.length, 2);
+  assert.ok(commandParsed.events.every((event) => event.command === "sync"));
+
+  const byAction = runHarness(["history", "--action", "repaired", "--json"], homeDir);
+  assert.equal(byAction.status, 0);
+  const actionParsed = JSON.parse(byAction.stdout.trim());
+  assert.equal(actionParsed.events.length, 1);
+  assert.equal(actionParsed.events[0].command, "sync");
+});
+
+test("history last returns the most recent matching event", () => {
+  const homeDir = mkdtempSyncSafe();
+  appendHistoryEventSync(homeDir, {
+    timestamp: "2026-07-06T00:00:00.000Z",
+    command: "setup",
+    action: "applied",
+    wrote: true,
+    cliVersion
+  });
+  appendHistoryEventSync(homeDir, {
+    timestamp: "2026-07-06T00:00:01.000Z",
+    command: "sync",
+    action: "cancelled",
+    wrote: false,
+    cliVersion
+  });
+  appendHistoryEventSync(homeDir, {
+    timestamp: "2026-07-06T00:00:02.000Z",
+    command: "sync",
+    action: "repaired",
+    wrote: true,
+    cliVersion
+  });
+
+  const cli = runHarness(["history", "last", "--json"], homeDir);
+  assert.equal(cli.status, 0);
+  const parsed = JSON.parse(cli.stdout.trim());
+  assert.equal(parsed.event.command, "sync");
+  assert.equal(parsed.event.action, "repaired");
+
+  const filtered = runHarness(["history", "last", "--command", "sync", "--action", "cancelled", "--json"], homeDir);
+  const filteredParsed = JSON.parse(filtered.stdout.trim());
+  assert.equal(filteredParsed.event.action, "cancelled");
+});
+
+test("history last without history exits cleanly", () => {
+  const homeDir = mkdtempSyncSafe();
+
+  const cli = runHarness(["history", "last"], homeDir);
+  assert.equal(cli.status, 0);
+  assert.match(cli.stdout, /No managed operations recorded yet/);
+
+  const jsonCli = runHarness(["history", "last", "--json"], homeDir);
+  assert.equal(jsonCli.status, 0);
+  const parsed = JSON.parse(jsonCli.stdout.trim());
+  assert.equal(parsed.event, null);
+});
+
+test("history queries are read-only", async () => {
+  const homeDir = mkdtempSyncSafe();
+  appendHistoryEventSync(homeDir, {
+    timestamp: "2026-07-06T00:00:00.000Z",
+    command: "setup",
+    action: "applied",
+    wrote: true,
+    cliVersion
+  });
+
+  const historyPath = getHistoryPath(homeDir);
+  const before = await readFile(historyPath, "utf8");
+
+  runHarness(["history", "--command", "setup", "--limit", "10"], homeDir);
+  runHarness(["history", "last", "--json"], homeDir);
+
+  const after = await readFile(historyPath, "utf8");
+  assert.equal(after, before);
+});
+
+test("history filters keep corrupt line warnings", async () => {
+  const homeDir = await createFakeHome();
+  const historyPath = getHistoryPath(homeDir);
+  await mkdir(dirname(historyPath), { recursive: true });
+  await writeFile(
+    historyPath,
+    `${JSON.stringify({ command: "sync", action: "repaired", wrote: true, cliVersion })}\n{bad json\n${JSON.stringify({ command: "setup", action: "applied", wrote: true, cliVersion })}\n`,
+    "utf8"
+  );
+
+  const cli = runHarness(["history", "--command", "sync", "--json"], homeDir);
+  assert.equal(cli.status, 0);
+  const parsed = JSON.parse(cli.stdout.trim());
+  assert.equal(parsed.events.length, 1);
+  assert.equal(parsed.warnings.length, 1);
+});
+
 test("runGlobalHistory prints warning for corrupt lines", async () => {
   const homeDir = await createFakeHome();
   const historyPath = getHistoryPath(homeDir);
@@ -358,7 +480,13 @@ test("runGlobalHistory prints warning for corrupt lines", async () => {
   process.env.HARNESS_HOME = homeDir;
 
   try {
-    await runGlobalHistory({ json: false, limit: null }, { version: cliVersion });
+    await runGlobalHistory({
+      json: false,
+      limit: null,
+      historyAction: "list",
+      historyCommand: null,
+      historyEventAction: null
+    }, { version: cliVersion });
   } finally {
     console.warn = originalWarn;
     if (previousHome == null) delete process.env.HARNESS_HOME;

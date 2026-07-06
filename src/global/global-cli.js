@@ -29,6 +29,7 @@ import {
   formatHistoryEvent,
   getHistoryPath,
   readHistoryEvents,
+  readLastHistoryEvent,
   recordPolicyHistory,
   recordRollbackHistory,
   recordSetupHistory,
@@ -758,14 +759,52 @@ export async function runGlobalBackups() {
 
 export async function runGlobalHistory(options, packageManifest) {
   const homeDir = resolveHomeDir();
-  const { events, warnings } = await readHistoryEvents(homeDir, { limit: options.limit });
   const historyPath = getHistoryPath(homeDir);
+  const query = {
+    command: options.historyCommand ?? null,
+    action: options.historyEventAction ?? null,
+    limit: options.limit
+  };
+
+  if (options.historyAction === "last") {
+    const { event, warnings } = await readLastHistoryEvent(homeDir, query);
+    printHistoryWarnings(warnings);
+
+    if (options.json) {
+      printJson({
+        path: historyPath,
+        event,
+        warnings,
+        cliVersion: packageManifest?.version ?? null
+      });
+      return { event, warnings };
+    }
+
+    console.log("Harness history last — most recent managed operation");
+    console.log(`Home: ${homeDir}`);
+    console.log(`File: ${historyPath}`);
+    printHistoryFiltersLabel(query);
+
+    if (!event) {
+      console.log("No managed operations recorded yet.");
+      return { event: null, warnings };
+    }
+
+    console.log("");
+    console.log(formatHistoryEvent(event));
+    printHistoryEventDetails(event);
+    return { event, warnings };
+  }
+
+  const { events, warnings } = await readHistoryEvents(homeDir, query);
+  printHistoryWarnings(warnings);
 
   if (options.json) {
     printJson({
       path: historyPath,
       events,
       warnings,
+      filters: buildHistoryFiltersJson(query),
       cliVersion: packageManifest?.version ?? null
     });
     return { events, warnings };
@@ -775,10 +814,7 @@ export async function runGlobalHistory(options, packageManifest) {
   console.log(`Home: ${homeDir}`);
   console.log(`File: ${historyPath}`);
   console.log(`Events: ${events.length}`);
-
-  for (const warning of warnings) {
-    console.warn(`Warning: skipped invalid history line ${warning.line}: ${warning.message}`);
-  }
+  printHistoryFiltersLabel(query);
 
   if (events.length === 0) {
     console.log("No managed operations recorded yet.");
@@ -791,6 +827,47 @@ export async function runGlobalHistory(options, packageManifest) {
   }
 
   return { events, warnings };
+}
+
+function printHistoryWarnings(warnings) {
+  for (const warning of warnings) {
+    console.warn(`Warning: skipped invalid history line ${warning.line}: ${warning.message}`);
+  }
+}
+
+function buildHistoryFiltersJson({ command, action, limit }) {
+  const filters = {};
+  if (command) filters.command = command;
+  if (action) filters.action = action;
+  if (limit != null) filters.limit = limit;
+  return Object.keys(filters).length > 0 ? filters : null;
+}
+
+function printHistoryFiltersLabel({ command, action, limit }) {
+  const parts = [];
+  if (command) parts.push(`command=${command}`);
+  if (action) parts.push(`action=${action}`);
+  if (limit != null) parts.push(`limit=${limit}`);
+  if (parts.length > 0) {
+    console.log(`Filters: ${parts.join(", ")}`);
+  }
+}
+
+function printHistoryEventDetails(event) {
+  console.log(`  wrote: ${event.wrote ? "yes" : "no"}`);
+  console.log(`  cliVersion: ${event.cliVersion ?? "unknown"}`);
+
+  if (event.consentSource) {
+    console.log(`  consent: ${event.consentSource}`);
+  }
+
+  if (Array.isArray(event.backupsCreated) && event.backupsCreated.length > 0) {
+    console.log(`  backups: ${event.backupsCreated.join(", ")}`);
+  }
+
+  if (Array.isArray(event.snapshotsUsed) && event.snapshotsUsed.length > 0) {
+    console.log(`  snapshots: ${event.snapshotsUsed.join(", ")}`);
+  }
 }
 
 export async function runGlobalRollback(options, packageManifest) {

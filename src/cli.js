@@ -262,6 +262,9 @@ function parseArgs(argv) {
     policyAction: null,
     policyKey: null,
     policyValue: null,
+    historyAction: null,
+    historyCommand: null,
+    historyEventAction: null,
     limit: null,
     help: false,
     version: false,
@@ -274,6 +277,10 @@ function parseArgs(argv) {
 
   if (command === "policy") {
     parsePolicyAction(args, options);
+  }
+
+  if (command === "history") {
+    parseHistoryAction(args, options);
   }
 
   for (let index = 0; index < args.length; index += 1) {
@@ -328,6 +335,10 @@ function parseArgs(argv) {
     else if (arg.startsWith("--to=")) options.snapshot = arg.slice("--to=".length);
     else if (arg === "--limit") options.limit = parsePositiveInt(args[++index], "limit");
     else if (arg.startsWith("--limit=")) options.limit = parsePositiveInt(arg.slice("--limit=".length), "limit");
+    else if (arg === "--command") options.historyCommand = args[++index];
+    else if (arg.startsWith("--command=")) options.historyCommand = arg.slice("--command=".length);
+    else if (arg === "--action") options.historyEventAction = args[++index];
+    else if (arg.startsWith("--action=")) options.historyEventAction = arg.slice("--action=".length);
     else if (arg === "--label") options.label = args[++index];
     else if (arg.startsWith("--label=")) options.label = arg.slice("--label=".length);
     else if (arg === "--out") options.outPath = resolve(args[++index]);
@@ -403,6 +414,23 @@ function parsePolicyAction(args, options) {
   }
 
   throw new Error(`Unknown policy action "${action}". Use set or reset.`);
+}
+
+function parseHistoryAction(args, options) {
+  const action = args[0];
+
+  if (!action || action.startsWith("-")) {
+    options.historyAction = "list";
+    return;
+  }
+
+  if (action === "last") {
+    args.shift();
+    options.historyAction = "last";
+    return;
+  }
+
+  throw new Error(`Unknown history action "${action}". Use last or omit for the full log.`);
 }
 
 function parsePositiveInt(value, label) {
@@ -497,7 +525,8 @@ Usage:
   harness init [--mode minimal|standard|enterprise] (workspace alias)
   harness detect
   harness backups
-  harness history [--json] [--limit <n>]
+  harness history [--json] [--limit <n>] [--command <name>] [--action <name>]
+  harness history last [--json] [--command <name>] [--action <name>]
   harness rollback --to <snapshot> [--apply]
   harness policy [--json]
   harness policy set <key> <value>
@@ -526,6 +555,7 @@ Commands:
   diff       Read-only preview of managed content changes (sync/setup plan).
   backups    List config snapshots under ~/.harness/backups.
   history    Local audit log of managed operations under ~/.harness/history.jsonl.
+             Use "history last" for the most recent event. Read-only.
   rollback   Preview or restore a prior config snapshot (--apply to write).
   policy     View or edit local operation preferences under ~/.harness/policy.json.
   components List, validate, scaffold, pack, or import workspace components.
@@ -555,6 +585,8 @@ Examples:
   harness sync
   harness sync --dry-run --json
   harness history
+  harness history --command sync --action repaired
+  harness history last --json
   harness history --json --limit 5
   harness policy
   harness policy --json

@@ -33,7 +33,7 @@ export async function appendHistoryEvent(homeDir, event) {
   await appendFile(historyPath, `${JSON.stringify(event)}\n`, "utf8");
 }
 
-export async function readHistoryEvents(homeDir, { limit = null } = {}) {
+export async function readHistoryEvents(homeDir, { limit = null, command = null, action = null } = {}) {
   const { historyPath } = harnessHomePaths(homeDir);
 
   if (!existsSync(historyPath)) {
@@ -53,11 +53,29 @@ export async function readHistoryEvents(homeDir, { limit = null } = {}) {
     }
   }
 
-  if (limit != null && limit > 0) {
-    return { events: events.slice(-limit), warnings };
+  let filtered = events;
+
+  if (command) {
+    filtered = filtered.filter((event) => event.command === command);
   }
 
-  return { events, warnings };
+  if (action) {
+    filtered = filtered.filter((event) => event.action === action);
+  }
+
+  if (limit != null && limit > 0) {
+    return { events: filtered.slice(-limit), warnings };
+  }
+
+  return { events: filtered, warnings };
+}
+
+export async function readLastHistoryEvent(homeDir, { command = null, action = null } = {}) {
+  const { events, warnings } = await readHistoryEvents(homeDir, { command, action });
+  return {
+    event: events.length > 0 ? events[events.length - 1] : null,
+    warnings
+  };
 }
 
 async function resolveHistoryPolicy(homeDir) {
