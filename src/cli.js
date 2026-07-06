@@ -516,9 +516,7 @@ Local AI ecosystem configurator. Harness does not install AI apps — it powers 
 coordinates agents you already have (Cursor, Codex, OpenCode, Claude) with managed
 sections, components, backups, and drift repair under ~/.harness.
 
-Bootstrap (no global install required):
-  curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh
-  curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh -s -- --yes
+Bootstrap: see README.md (curl install.sh or npx @kal-elsam/harness setup).
 
 Usage:
   harness --version
@@ -576,43 +574,17 @@ Commands:
   uninstall  Remove managed sections and global state. Backups are preserved.
   init       Alias for install --scope=workspace (legacy).
 
-JSON output (--json on status, sync, doctor):
-  Machine-readable envelope for CI, tooling, and debugging. Human text remains default.
-  Stable fields: ok, overall, agents, components, checks, backups, nextAction, cliVersion.
+JSON output (--json on supported commands):
+  status, sync, doctor, adapters, explain, diff, history, history last,
+  policy (show/set/reset), report
+  Human text remains the default. See README.md for examples and field notes.
 
 Version:
-  harness --version                         Installed CLI version
-  npm view @kal-elsam/harness version       Latest published version
-  npx @kal-elsam/harness@latest sync        Update / converge managed content
-  harness upgrade --dry-run                 Preview upgrade plan (no writes)
-  npx @kal-elsam/harness@latest setup --yes Apply latest package to ecosystem
+  harness --version              Installed CLI version
+  npm view @kal-elsam/harness version   Latest published version
+  npx @kal-elsam/harness@latest sync    Converge with latest package
 
-Examples:
-  npx @kal-elsam/harness setup
-  harness status
-  harness status --json
-  harness adapters --json
-  harness explain
-  harness explain --json
-  harness diff
-  harness diff --json
-  harness sync
-  harness sync --dry-run --json
-  harness history
-  harness history --command sync --action repaired
-  harness history last --json
-  harness history --json --limit 5
-  harness policy
-  harness policy --json
-  harness policy set profile safe
-  harness report
-  harness report --json
-  harness report --out ./diagnostics.txt
-  harness upgrade --dry-run
-  harness doctor --json
-  npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core
-  harness install --scope=workspace --mode enterprise
-  harness uninstall --dry-run
+More examples: README.md
 
 Aliases: agentic-harness, sgs-harness, harness-sgs
 Global agents: ${GLOBAL_AGENT_IDS.join(", ")}

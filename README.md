@@ -158,6 +158,8 @@ harness install --scope=workspace   # opt-in / legacy
 
 Legacy aliases (backward compatible): `sgs-harness`, `harness-sgs`
 
+`harness help` lists commands and JSON support; longer examples live in this README.
+
 To try locally from this repo:
 
 ```bash

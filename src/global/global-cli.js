@@ -317,7 +317,7 @@ function printSyncRepairSummary(result, { dryRun = false } = {}) {
   console.log(`  Assets repaired: ${result.assetsRepaired.length}`);
   console.log(`  Assets unchanged: ${result.assetsUnchanged.length}`);
   console.log(`  Sections repaired: ${result.configsRepaired.length}`);
-  console.log(`  Backups: ${result.backups.length}`);
+  console.log(`${dryRun ? "Backups planned" : "Backups"}: ${result.backups.length}`);
 
   if (dryRun && result.repairs?.length) {
     for (const repair of result.repairs) {
@@ -349,7 +349,7 @@ function printInstallResult(result, { update = false, dryRun = false, command = 
   console.log(`Configs created: ${result.configsCreated.length}`);
   console.log(`Configs updated: ${result.configsUpdated.length}`);
   console.log(`Configs unchanged: ${result.configsUnchanged.length}`);
-  console.log(`Backups: ${result.backups.length}`);
+  console.log(`${dryRun ? "Backups planned" : "Backups"}: ${result.backups.length}`);
 
   if (dryRun) {
     if (result.repairs?.length) {

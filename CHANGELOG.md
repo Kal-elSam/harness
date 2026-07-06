@@ -2,6 +2,20 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.23.1 — 2026-07-06
+
+Patch release. Terminal UX polish with no write-behavior changes.
+
+### Terminal UX
+
+- Dry-run output now says `Backups planned` instead of `Backups` in setup/install
+  plans and sync repair previews.
+- `harness help` lists all current `--json` supported commands and points long
+  examples to README.md (less noise in the main help screen).
+- New `npm run ux:smoke` script captures and validates key terminal flows:
+  help, setup dry-run, status (missing/ok/drift), sync dry-run, history, report,
+  and common error messages.
+
 ## 0.23.0 — 2026-07-06
 
 Minor release. Read-only diagnostics report for local support bundles.
