@@ -35,6 +35,7 @@
     "ux:smoke": "bash scripts/ux-smoke-test.sh",
     "smoke:registry": "bash scripts/registry-smoke-test.sh",
     "smoke:installer": "bash scripts/installer-smoke-test.sh",
+    "smoke:bridge": "bash scripts/bridge-smoke-test.sh",
     "release:check": "node scripts/check-release-commit.mjs",
     "release:published": "node scripts/check-published-release.mjs"
   },

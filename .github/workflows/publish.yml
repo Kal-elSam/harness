@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+      - "kairo-runtime-v*"
+      - "harness-bridge-v*"
 
 permissions:
   contents: read
@@ -23,6 +25,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Resolve publish target
+        id: publish
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          case "$TAG" in
+            kairo-runtime-v*)
+              echo "kind=kairo-runtime" >> "$GITHUB_OUTPUT"
+              echo "directory=." >> "$GITHUB_OUTPUT"
+              ;;
+            harness-bridge-v*)
+              echo "kind=bridge" >> "$GITHUB_OUTPUT"
+              echo "directory=packages/harness-bridge" >> "$GITHUB_OUTPUT"
+              ;;
+            v*)
+              echo "kind=legacy-root" >> "$GITHUB_OUTPUT"
+              echo "directory=." >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unknown tag pattern: $TAG" >&2
+              exit 1
+              ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -39,11 +65,22 @@ jobs:
       - name: Run smoke tests
         run: npm run smoke
 
+      - name: Run bridge smoke tests
+        if: steps.publish.outputs.kind == 'bridge'
+        run: npm run smoke:bridge
+
       - name: Verify package contents
+        working-directory: ${{ steps.publish.outputs.directory }}
         run: npm pack --dry-run
 
       - name: Verify release commit hygiene
         run: npm run release:check
 
+      - name: Install bridge dependencies
+        if: steps.publish.outputs.kind == 'bridge'
+        working-directory: packages/harness-bridge
+        run: npm ci --ignore-scripts
+
       - name: Publish with npm Trusted Publishing
+        working-directory: ${{ steps.publish.outputs.directory }}
         run: npm publish --access public

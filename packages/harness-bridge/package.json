@@ -1,0 +1,43 @@
+{
+  "name": "@kal-elsam/harness",
+  "version": "0.30.0",
+  "description": "Compatibility bridge to @kal-elsam/kairo-runtime for legacy harness installs.",
+  "type": "module",
+  "homepage": "https://github.com/Kal-elSam/harness#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kal-elSam/harness.git",
+    "directory": "packages/harness-bridge"
+  },
+  "bugs": {
+    "url": "https://github.com/Kal-elSam/harness/issues"
+  },
+  "bin": {
+    "harness": "./bin/harness.js",
+    "agentic-harness": "./bin/harness.js",
+    "sgs-harness": "./bin/harness.js",
+    "harness-sgs": "./bin/harness.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "keywords": [
+    "ai",
+    "agents",
+    "harness",
+    "kairo",
+    "kairo-runtime",
+    "compatibility"
+  ],
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.12.0"
+  },
+  "dependencies": {
+    "@kal-elsam/kairo-runtime": "^0.1.0"
+  }
+}
