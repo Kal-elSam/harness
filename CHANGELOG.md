@@ -2,6 +2,20 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.26.0 — 2026-07-07
+
+Minor release. Interactive setup now uses `@clack/prompts` instead of the homemade TUI.
+
+### Setup wizard (Clack)
+
+- `harness` / `harness setup` in a TTY opens a polished Clack wizard: intro branding,
+  agent detection, multiselect for agents/components, managed-change preview, and
+  explicit confirmation.
+- `--json`, non-TTY/CI, `--yes`, `--confirm`, `--dry-run`, and explicit
+  `--agents` / `--components` flags keep the existing non-interactive flow.
+- Removed the custom TUI in `src/global/tui/*` (key-reader, ANSI paint, multi-select).
+- **Node.js** minimum is now `>=20.12.0` (`@clack/prompts` requirement).
+
 ## 0.25.0 — 2026-07-07
 
 Minor release. Bare `harness` is now the recommended interactive entrypoint.

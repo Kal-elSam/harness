@@ -230,7 +230,7 @@ Primary flow remains `harness` → `status` → `sync` (or `harness setup` expli
 
 ### `harness` / `harness setup`
 
-Bare `harness` opens the recommended setup flow (interactive TUI in a TTY). `harness setup`
+Bare `harness` opens the recommended setup flow (interactive Clack wizard in a TTY). `harness setup`
 is equivalent. Detects agents, shows a plan, and lets you choose agents/components before
 applying. Use `--dry-run` to preview without writing, or `--yes` / flags to skip prompts.
 Use `harness install` for explicit non-interactive configure in CI and scripts.

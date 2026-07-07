@@ -22,14 +22,15 @@ import {
 import { printManagedPreflight, shouldShowPreflight } from "./preflight.js";
 import { loadConsentAudit } from "./policy.js";
 import {
-  renderSetupTuiResult,
-  runSetupTui as defaultRunSetupTui,
-  SetupTuiCancelledError,
-  shouldUseSetupTui as evaluateSetupTui
-} from "./tui/setup-tui.js";
-import { canUseSetupTui } from "./tui/terminal.js";
+  renderSetupWizardResult,
+  runSetupWizard as defaultRunSetupWizard,
+  SetupWizardCancelledError,
+  shouldUseSetupWizard as evaluateSetupWizard
+} from "./clack/setup-wizard.js";
 
-export { shouldUseSetupTui } from "./tui/setup-tui.js";
+export { shouldUseSetupWizard } from "./clack/setup-wizard.js";
+/** @deprecated Use shouldUseSetupWizard */
+export { shouldUseSetupTui } from "./clack/setup-wizard.js";
 
 export async function runHarnessSetup({
   packageRoot,
@@ -50,10 +51,9 @@ export async function runHarnessSetup({
   json = false,
   interactive = Boolean(input.isTTY && output.isTTY),
   createPrompt = createReadlinePrompt,
-  runSetupTuiImpl = defaultRunSetupTui,
-  tuiSupported = canUseSetupTui({ interactive })
+  runSetupWizardImpl = defaultRunSetupWizard
 }) {
-  const useTui = evaluateSetupTui({
+  const useWizard = evaluateSetupWizard({
     interactive,
     dryRun,
     yes,
@@ -61,28 +61,21 @@ export async function runHarnessSetup({
     json,
     agents,
     components,
-    noDefaultComponents,
-    tuiSupported
+    noDefaultComponents
   });
 
   let selectedAgents = agents;
   let selectedComponents = components;
   let selectedNoDefaults = noDefaultComponents;
-  let usedTui = false;
+  let usedWizard = false;
 
-  if (!useTui) {
+  if (!useWizard) {
     printSetupIntro({ homeDir });
   }
 
-  const shouldPrompt = interactive && !dryRun && !yes && !confirm
-    && agents == null
-    && components == null
-    && !noDefaultComponents
-    && !useTui;
-
-  if (useTui) {
+  if (useWizard) {
     try {
-      const tuiOutcome = await runSetupTuiImpl({
+      const wizardOutcome = await runSetupWizardImpl({
         homeDir,
         workspaceRoot,
         packageRoot,
@@ -98,21 +91,26 @@ export async function runHarnessSetup({
         interactive
       });
 
-      if (tuiOutcome.cancelled) {
-        return { cancelled: true, usedTui: true };
+      if (wizardOutcome.cancelled) {
+        return { cancelled: true, usedWizard: true };
       }
 
-      selectedAgents = tuiOutcome.agents;
-      selectedComponents = tuiOutcome.components;
-      selectedNoDefaults = tuiOutcome.noDefaultComponents;
-      usedTui = true;
+      selectedAgents = wizardOutcome.agents;
+      selectedComponents = wizardOutcome.components;
+      selectedNoDefaults = wizardOutcome.noDefaultComponents;
+      usedWizard = true;
     } catch (error) {
-      if (error instanceof SetupTuiCancelledError) {
-        return { cancelled: true, usedTui: true };
+      if (error instanceof SetupWizardCancelledError) {
+        return { cancelled: true, usedWizard: true };
       }
       throw error;
     }
-  } else if (shouldPrompt) {
+  } else if (
+    interactive && !dryRun && !yes && !confirm
+    && agents == null
+    && components == null
+    && !noDefaultComponents
+  ) {
     const prompt = createPrompt();
     const detected = detectInstalledAdapters({ homeDir });
     const defaultAgentsLabel = detected.length > 0 ? detected.join(",") : GLOBAL_AGENT_IDS.join(",");
@@ -154,7 +152,7 @@ export async function runHarnessSetup({
     } finally {
       await prompt.close?.();
     }
-  } else if (!useTui) {
+  } else if (!useWizard) {
     printSetupPlanPreview({
       agents: resolveAgentIds(selectedAgents, { homeDir }),
       components: selectedNoDefaults
@@ -187,7 +185,7 @@ export async function runHarnessSetup({
     command: "setup"
   });
 
-  if (!usedTui && shouldShowPreflight({ preflight, dryRun, json, applying })) {
+  if (!usedWizard && shouldShowPreflight({ preflight, dryRun, json, applying })) {
     const preview = await installGlobalHarness({ ...installArgs, dryRun: true });
     const summary = await summarizeInstallPreflight(homeDir, preview);
     const consent = await loadConsentAudit(homeDir, {
@@ -210,7 +208,7 @@ export async function runHarnessSetup({
     });
   }
 
-  if (!usedTui && shouldPromptApplyConfirmation({ applying, dryRun, json, confirm, interactive })) {
+  if (!usedWizard && shouldPromptApplyConfirmation({ applying, dryRun, json, confirm, interactive })) {
     const approved = await promptApplyConfirmation({ command: "setup", createPrompt });
     if (!approved) {
       console.log("Setup cancelled.");
@@ -220,11 +218,11 @@ export async function runHarnessSetup({
 
   const result = await installGlobalHarness({ ...installArgs, dryRun });
 
-  if (usedTui) {
-    renderSetupTuiResult(result, { dryRun });
+  if (usedWizard) {
+    renderSetupWizardResult(result, { dryRun });
   }
 
-  return { cancelled: false, result, usedTui };
+  return { cancelled: false, result, usedWizard };
 }
 
 function printSetupIntro({ homeDir }) {
