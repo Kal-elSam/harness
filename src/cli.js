@@ -236,11 +236,27 @@ async function readPackageManifest() {
   return JSON.parse(await readFile(resolve(packageRoot, "package.json"), "utf8"));
 }
 
-function parseArgs(argv) {
+function resolveImplicitCommand(args) {
+  if (argsWantsWorkspaceScope(args)) {
+    return "init";
+  }
+  return "setup";
+}
+
+function argsWantsWorkspaceScope(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--scope=workspace") return true;
+    if (arg === "--scope" && args[index + 1] === "workspace") return true;
+  }
+  return false;
+}
+
+export function parseArgs(argv) {
   const args = [...argv];
   const firstArg = args[0];
   const implicitCommand = !firstArg || firstArg.startsWith("-");
-  const rawCommand = implicitCommand ? "install" : args.shift();
+  const rawCommand = implicitCommand ? resolveImplicitCommand(args) : args.shift();
   const command = normalizeCommand(rawCommand);
   const options = {
     cwd: process.cwd(),
@@ -516,9 +532,10 @@ Local AI ecosystem configurator. Harness does not install AI apps — it powers 
 coordinates agents you already have (Cursor, Codex, OpenCode, Claude) with managed
 sections, components, backups, and drift repair under ~/.harness.
 
-Bootstrap: see README.md (curl install.sh or npx @kal-elsam/harness setup).
+Bootstrap: see README.md (curl install.sh or npx @kal-elsam/harness).
 
 Usage:
+  harness [--dry-run] [--yes] [--confirm] [--agents <list|all>] [--components <list>]
   harness --version
   harness setup [--dry-run] [--yes] [--confirm] [--no-preflight] [--agents <list|all>] [--components <list>]
   harness status [--json]
@@ -553,7 +570,7 @@ Scopes:
                           Explicit --scope=workspace only.
 
 Commands:
-  setup      Interactive wizard: detect agents, choose integrations, apply plan.
+  setup      Interactive wizard (default when you run bare harness in a TTY).
   status     Control panel: agents, components, drift, backups, next action.
   sync       Converge managed content (repair drift), then show status.
   upgrade    Preview or apply ecosystem updates (apply requires --yes).

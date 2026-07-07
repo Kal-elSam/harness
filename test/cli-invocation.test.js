@@ -1,8 +1,29 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveSuggestedInvocation } from "../src/cli.js";
+import { parseArgs, resolveSuggestedInvocation } from "../src/cli.js";
 
 const packageName = "@kal-elsam/harness";
+
+test("bare harness defaults to setup for interactive entry", () => {
+  const { command } = parseArgs([]);
+  assert.equal(command, "setup");
+});
+
+test("bare harness flags route to setup", () => {
+  const { command, options } = parseArgs(["--dry-run"]);
+  assert.equal(command, "setup");
+  assert.equal(options.dryRun, true);
+});
+
+test("bare harness with workspace scope keeps legacy init entry", () => {
+  const { command } = parseArgs(["--scope=workspace"]);
+  assert.equal(command, "init");
+});
+
+test("explicit install is unchanged", () => {
+  const { command } = parseArgs(["install", "--agents", "cursor"]);
+  assert.equal(command, "install");
+});
 
 test("uses bare CLI name when invoked from a known bin", () => {
   assert.equal(

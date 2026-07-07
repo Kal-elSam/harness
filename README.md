@@ -20,7 +20,19 @@ commands) without depending on Pi as a runtime or adding a Pi adapter.
 
 ## Quick start
 
-Recommended entry — one-liner bootstrap (checks Node/npm, previews the plan, writes nothing):
+Recommended entry — run Harness in your terminal (interactive setup wizard in a TTY):
+
+```bash
+npx @kal-elsam/harness
+```
+
+Preview without writing anything:
+
+```bash
+npx @kal-elsam/harness --dry-run
+```
+
+One-liner bootstrap (checks Node/npm, previews the plan, writes nothing by default):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh
@@ -42,13 +54,16 @@ The bootstrap installer:
 Apply the plan when you are ready:
 
 ```bash
+npx @kal-elsam/harness --yes
+# or
 curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh -s -- --yes
 ```
 
-Or run setup directly:
+CI, scripts, and advanced non-interactive configure:
 
 ```bash
-npx @kal-elsam/harness setup --yes
+npx @kal-elsam/harness install --agents cursor,codex --yes
+npx @kal-elsam/harness setup --yes --agents all
 ```
 
 Passthrough examples:
@@ -91,9 +106,9 @@ npx @kal-elsam/harness@latest sync
 If you prefer npm directly (no curl):
 
 ```bash
-npx @kal-elsam/harness setup --dry-run
-npx @kal-elsam/harness setup
-npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core
+npx @kal-elsam/harness
+npx @kal-elsam/harness --dry-run
+npx @kal-elsam/harness install --agents cursor,codex --components orchestrator,sdd-core --yes
 ```
 
 Optional global install:
@@ -118,9 +133,13 @@ npx @kal-elsam/harness install --scope=workspace
 
 ```bash
 harness --version
+harness
+harness --dry-run
 harness setup
 harness setup --dry-run
 harness setup --agents all
+harness install --agents cursor,codex --yes
+```
 harness status
 harness status --json
 harness adapters
@@ -200,25 +219,29 @@ harness setup --agents all
 harness install --agents all
 ```
 
-Primary flow remains `setup` → `status` → `sync`.
+Primary flow remains `harness` → `status` → `sync` (or `harness setup` explicitly).
 
 ## Install scopes
 
 | Scope | Default for | Behavior |
 |---|---|---|
-| `agent-global` | `setup`, `install`, `update`, `doctor`, `status`, `uninstall` | Primary path. Configures local agent roots, managed sections, `~/.harness` state. No project folders. |
+| `agent-global` | bare `harness`, `setup`, `install`, `update`, `doctor`, `status`, `uninstall` | Primary path. Configures local agent roots, managed sections, `~/.harness` state. No project folders. |
 | `workspace` | `init` only (opt-in/legacy) | Explicit `--scope=workspace`. Copies `repo-template/` into the current repo. |
 
-### `harness setup`
+### `harness` / `harness setup`
 
-Interactive wizard for the local ecosystem. Detects agents, shows a plan, and
-lets you choose agents/components before applying. Use `--dry-run` to preview
-without writing, or `--yes` / flags to skip prompts.
+Bare `harness` opens the recommended setup flow (interactive TUI in a TTY). `harness setup`
+is equivalent. Detects agents, shows a plan, and lets you choose agents/components before
+applying. Use `--dry-run` to preview without writing, or `--yes` / flags to skip prompts.
+Use `harness install` for explicit non-interactive configure in CI and scripts.
 
 ```bash
+harness
+harness --dry-run
 harness setup
 harness setup --dry-run
 harness setup --agents cursor,codex --components orchestrator,sdd-core --yes
+harness install --agents cursor,codex --yes
 ```
 
 ### `harness status`

@@ -2,6 +2,31 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.25.0 — 2026-07-07
+
+Minor release. Bare `harness` is now the recommended interactive entrypoint.
+
+### Default entrypoint
+
+- `harness` with no subcommand routes to `harness setup` (interactive TUI in a TTY).
+- `harness --dry-run` previews the setup plan without writing agent configs or
+  `~/.harness` state.
+- `harness install` remains the explicit technical path for CI, scripts, and
+  non-interactive configure.
+- `harness --scope=workspace` still routes to workspace `init` (legacy opt-in).
+
+## 0.24.0 — 2026-07-07
+
+Minor release. Interactive TUI for `harness setup`.
+
+### Setup TUI
+
+- `harness setup` opens a step-by-step terminal UI in interactive terminals.
+- Non-TTY, flags (`--yes`, `--confirm`, `--agents`, `--components`), and dumb
+  terminals keep the existing textual CLI flow.
+- TUI reuses detect/plan/apply logic; preview shows managed markers, paths, and
+  planned changes before writes.
+
 ## 0.23.1 — 2026-07-06
 
 Patch release. Terminal UX polish with no write-behavior changes.
