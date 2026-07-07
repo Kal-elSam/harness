@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   parsePublishedReleaseArgs,
+  resolveReleaseTag,
   verifyPublishedRelease
 } from "../scripts/check-published-release.mjs";
 
@@ -15,15 +16,59 @@ test("parsePublishedReleaseArgs requires --version", () => {
 test("parsePublishedReleaseArgs accepts --version and --version=value", () => {
   assert.deepEqual(
     parsePublishedReleaseArgs(["node", "script", "--version", "0.4.1"]),
-    { version: "0.4.1", packageName: "@kal-elsam/kairo-runtime" }
+    { version: "0.4.1", packageName: "@kal-elsam/kairo-runtime", tag: null }
   );
   assert.deepEqual(
     parsePublishedReleaseArgs(["node", "script", "--version=0.4.1"]),
-    { version: "0.4.1", packageName: "@kal-elsam/kairo-runtime" }
+    { version: "0.4.1", packageName: "@kal-elsam/kairo-runtime", tag: null }
   );
   assert.deepEqual(
     parsePublishedReleaseArgs(["node", "script", "--version", "0.4.1", "--package", "@kal-elsam/harness"]),
-    { version: "0.4.1", packageName: "@kal-elsam/harness" }
+    { version: "0.4.1", packageName: "@kal-elsam/harness", tag: null }
+  );
+  assert.deepEqual(
+    parsePublishedReleaseArgs([
+      "node",
+      "script",
+      "--version",
+      "0.1.1",
+      "--package",
+      "@kal-elsam/kairo-runtime",
+      "--tag",
+      "kairo-runtime-v0.1.1"
+    ]),
+    {
+      version: "0.1.1",
+      packageName: "@kal-elsam/kairo-runtime",
+      tag: "kairo-runtime-v0.1.1"
+    }
+  );
+  assert.deepEqual(
+    parsePublishedReleaseArgs([
+      "node",
+      "script",
+      "--version=0.30.0",
+      "--package=@kal-elsam/harness",
+      "--tag=harness-bridge-v0.30.0"
+    ]),
+    {
+      version: "0.30.0",
+      packageName: "@kal-elsam/harness",
+      tag: "harness-bridge-v0.30.0"
+    }
+  );
+});
+
+test("resolveReleaseTag falls back to v-prefixed version tag", () => {
+  assert.equal(resolveReleaseTag({ version: "0.4.1" }), "v0.4.1");
+  assert.equal(resolveReleaseTag({ version: "0.4.1", tag: null }), "v0.4.1");
+  assert.equal(
+    resolveReleaseTag({ version: "0.1.1", tag: "kairo-runtime-v0.1.1" }),
+    "kairo-runtime-v0.1.1"
+  );
+  assert.equal(
+    resolveReleaseTag({ version: "0.30.0", tag: "harness-bridge-v0.30.0" }),
+    "harness-bridge-v0.30.0"
   );
 });
 
@@ -134,4 +179,59 @@ test("verifyPublishedRelease fails when remote tag is missing", async () => {
     }),
     /Remote tag/
   );
+});
+
+test("verifyPublishedRelease uses explicit package-aware tag", async () => {
+  const commands = [];
+  const result = await verifyPublishedRelease({
+    version: "0.1.1",
+    packageName: "@kal-elsam/kairo-runtime",
+    tag: "kairo-runtime-v0.1.1",
+    runGit: (command) => {
+      commands.push(command);
+
+      if (command === "git rev-parse kairo-runtime-v0.1.1^{commit}") return "abc123\n";
+      if (command === "git rev-parse origin/main") return "abc123\n";
+      if (command === "git ls-remote --tags origin refs/tags/kairo-runtime-v0.1.1") {
+        return "abc123\trefs/tags/kairo-runtime-v0.1.1\n";
+      }
+
+      throw new Error(`unexpected git command: ${command}`);
+    },
+    fetchJson: async (url) => {
+      assert.equal(url, "https://registry.npmjs.org/%40kal-elsam%2Fkairo-runtime/0.1.1");
+      return { version: "0.1.1", gitHead: "abc123" };
+    }
+  });
+
+  assert.equal(result.tag, "kairo-runtime-v0.1.1");
+  assert.deepEqual(commands, [
+    "git rev-parse kairo-runtime-v0.1.1^{commit}",
+    "git rev-parse origin/main",
+    "git ls-remote --tags origin refs/tags/kairo-runtime-v0.1.1"
+  ]);
+});
+
+test("verifyPublishedRelease supports harness bridge tag", async () => {
+  const result = await verifyPublishedRelease({
+    version: "0.30.0",
+    packageName: "@kal-elsam/harness",
+    tag: "harness-bridge-v0.30.0",
+    runGit: (command) => {
+      if (command === "git rev-parse harness-bridge-v0.30.0^{commit}") return "bridge123\n";
+      if (command === "git rev-parse origin/main") return "bridge123\n";
+      if (command === "git ls-remote --tags origin refs/tags/harness-bridge-v0.30.0") {
+        return "bridge123\trefs/tags/harness-bridge-v0.30.0\n";
+      }
+
+      throw new Error(`unexpected git command: ${command}`);
+    },
+    fetchJson: async (url) => {
+      assert.equal(url, "https://registry.npmjs.org/%40kal-elsam%2Fharness/0.30.0");
+      return { version: "0.30.0", gitHead: "bridge123" };
+    }
+  });
+
+  assert.equal(result.tag, "harness-bridge-v0.30.0");
+  assert.equal(result.packageName, "@kal-elsam/harness");
 });

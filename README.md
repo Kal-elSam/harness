@@ -12,6 +12,10 @@ The npm package (`@kal-elsam/kairo-runtime`) is how Kairo Runtime is distributed
 product identity is the local control plane: setup, status, sync, doctor (with `update`
 as a technical alias).
 
+`@kal-elsam/harness` remains available as a **compatibility bridge** that delegates to
+Kairo Runtime and prints a migration warning. Prefer `@kal-elsam/kairo-runtime` and the
+`kairo` CLI for new installs. See [`packages/harness-bridge/README.md`](packages/harness-bridge/README.md).
+
 Terminal UX aims for Pi-like clarity (clear modes, non-interactive flags, extensible
 commands) without depending on Pi as a runtime or adding a Pi adapter.
 
@@ -649,7 +653,23 @@ Install the harness in enterprise mode because this project will have AI, API, D
 
 ## Publishing
 
-Published on npm as `@kal-elsam/kairo-runtime`. Releases use **npm Trusted Publishing/OIDC** from GitHub Actions — no `NPM_TOKEN`.
+Published on npm as `@kal-elsam/kairo-runtime`. Releases use **npm Trusted Publishing/OIDC**
+from GitHub Actions — no `NPM_TOKEN`.
+
+`@kal-elsam/harness` is published separately as a compatibility bridge from
+`packages/harness-bridge/` (see bridge README).
+
+### Git tags (package-aware)
+
+| Tag pattern | Package | Publish root |
+|---|---|---|
+| `kairo-runtime-v*` | `@kal-elsam/kairo-runtime` | repo root |
+| `harness-bridge-v*` | `@kal-elsam/harness` | `packages/harness-bridge/` |
+| `v*` | legacy / historical root releases | repo root |
+
+Kairo Runtime releases should use `kairo-runtime-vX.Y.Z` going forward. The first
+bootstrap used `v0.1.0`; later releases use package-aware tags such as
+`kairo-runtime-v0.1.1`.
 
 Before tagging a new version:
 
@@ -684,37 +704,68 @@ to end:
   rollback apply (with safety backup), `uninstall`.
 - **workspace:** `install --scope=workspace`, `doctor`, `update --dry-run`.
 
-Release flow:
+Release flow (Kairo Runtime):
 
 ```bash
 # bump version in package.json and package-lock.json
 git add .
-git commit -m "chore: release 0.5.0"
+git commit -m "chore: release kairo-runtime 0.1.1"
 npm run release:check
-git tag v0.5.0
+git tag kairo-runtime-v0.1.1
 git push origin main
-git push origin v0.5.0
+git push origin kairo-runtime-v0.1.1
 ```
+
+Bridge release flow:
+
+```bash
+# bump packages/harness-bridge/package.json (+ lockfile)
+git add .
+git commit -m "chore: release harness bridge 0.30.0"
+npm run release:check
+git tag harness-bridge-v0.30.0
+git push origin main
+git push origin harness-bridge-v0.30.0
+```
+
+Legacy `v*` tags still publish from the repo root for historical continuity.
 
 After npm publishes the tag, verify published provenance against git and the registry:
 
 ```bash
 git fetch --tags origin
 git fetch origin main
-npm run release:published -- --version 0.1.0
-npm run smoke:registry -- --version 0.1.0
-npm run smoke:installer -- --version 0.1.0
+npm run release:published -- --version 0.1.1 --tag kairo-runtime-v0.1.1
+npm run smoke:registry -- --version 0.1.1
+npm run smoke:installer -- --version 0.1.1
+npm run smoke:bridge
 ```
 
-`release:published` checks npm `version`, npm `gitHead`, local tag `v*`, remote tag on `origin`, and `origin/main`. Override the package with `--package @kal-elsam/kairo-runtime` when needed.
+`release:published` checks npm `version`, npm `gitHead`, the release git tag on
+`origin`, and `origin/main`. Override the package and tag when needed:
+
+```bash
+npm run release:published -- \
+  --package @kal-elsam/kairo-runtime \
+  --tag kairo-runtime-v0.1.1 \
+  --version 0.1.1
+
+npm run release:published -- \
+  --package @kal-elsam/harness \
+  --tag harness-bridge-v0.30.0 \
+  --version 0.30.0
+```
+
+Without `--tag`, provenance checks fall back to `v${version}` (legacy tags).
 
 `smoke:registry` installs `@kal-elsam/kairo-runtime` from the npm registry (not the local tarball) into a throwaway workspace with a fake `HARNESS_HOME` and npm cache, then runs the recommended flow via `kairo`: `setup --dry-run`, `setup --yes`, `status`, drift simulation, `sync`, `status --json` (expects `overall=ok`), and `uninstall`. Use `latest` by default, pin with `--version x.y.z`, or override with `--package`.
 
 `smoke:installer` validates the public one-liner path: `curl .../install.sh | sh` against GitHub `raw` and the npm registry with isolated `HARNESS_HOME`. Preview must not write `~/.harness`; `--yes --agents all` must reach `kairo status --json` with `overall=ok`, then `kairo uninstall` must remove managed sections. Pin with `--version x.y.z` after publish.
 
-Suggested first publish tag: `kairo-runtime-v0.1.0` (or `v0.30.0` if you prefer repo version continuity).
+Suggested first Kairo Runtime tag after bootstrap: `kairo-runtime-v0.1.1`.
 
-The `publish.yml` workflow runs on `v*` tags and publishes to npm using the `npm-publish` environment.
+The `publish.yml` workflow runs on `v*`, `kairo-runtime-v*`, and `harness-bridge-v*`
+tags and publishes to npm using the `npm-publish` environment.
 It runs `npm run release:check` on `HEAD` immediately before `npm publish`.
 
 See the full policy in `SECURITY.md`.
