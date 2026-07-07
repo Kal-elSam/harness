@@ -95,7 +95,9 @@ export async function runGlobalSetup(options, packageManifest, packageRoot) {
 
   if (outcome.cancelled) return outcome;
 
-  printInstallResult(outcome.result, { update: false, dryRun: options.dryRun, command: "setup" });
+  if (!outcome.usedTui) {
+    printInstallResult(outcome.result, { update: false, dryRun: options.dryRun, command: "setup" });
+  }
   return outcome;
 }
 
