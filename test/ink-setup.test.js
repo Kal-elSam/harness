@@ -13,6 +13,7 @@ import {
   formatInkPreviewLines,
   formatInkSelectList,
   formatInkSplashLines,
+  shouldStartPreviewLoad,
   shouldUseCompactSplashLogo,
   toggleComponentSelection,
   toggleSelection,
@@ -128,6 +129,25 @@ test("transitionFromSplash enter advances to detect", () => {
 test("transitionFromSplash escape cancels", () => {
   const result = transitionFromSplash({ escape: true });
   assert.equal(result.kind, "cancel");
+});
+
+test("shouldStartPreviewLoad only on preview step without result", () => {
+  assert.equal(
+    shouldStartPreviewLoad({ step: SETUP_STEPS.PREVIEW, preview: null, previewError: null }),
+    true
+  );
+  assert.equal(
+    shouldStartPreviewLoad({ step: SETUP_STEPS.PREVIEW, preview: { agents: [] }, previewError: null }),
+    false
+  );
+  assert.equal(
+    shouldStartPreviewLoad({ step: SETUP_STEPS.PREVIEW, preview: null, previewError: "failed" }),
+    false
+  );
+  assert.equal(
+    shouldStartPreviewLoad({ step: SETUP_STEPS.AGENTS, preview: null, previewError: null }),
+    false
+  );
 });
 
 test("splash routing skipped for simple, non-TTY, and yes modes", () => {

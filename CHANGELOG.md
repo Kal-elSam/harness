@@ -2,6 +2,17 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.29.1 — 2026-07-07
+
+Patch release. Fixes Ink setup preview hang and release provenance checks.
+
+### Fixes
+
+- Ink `Plan preview` no longer stalls indefinitely on "Building preview…" when the
+  preview effect re-runs after setting `previewLoading`.
+- `release:published` accepts `origin/main` ahead of the published tag/commit as long
+  as main contains the release `gitHead`.
+
 ## 0.29.0 — 2026-07-07
 
 Minor release. Ink setup opens with a branded splash screen before agent detection.

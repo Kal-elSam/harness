@@ -30,6 +30,12 @@ export function formatInkSplashLines({ compact = false } = {}) {
 
 export const INITIAL_SETUP_STEP = SETUP_STEPS.SPLASH;
 
+export function shouldStartPreviewLoad({ step, preview, previewError }) {
+  if (step !== SETUP_STEPS.PREVIEW) return false;
+  if (preview || previewError) return false;
+  return true;
+}
+
 export function transitionFromSplash({ escape = false, enter = false } = {}) {
   if (escape) {
     return { kind: "cancel" };

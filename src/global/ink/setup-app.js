@@ -15,6 +15,7 @@ import {
   formatInkSelectList,
   formatInkSplashLines,
   INITIAL_SETUP_STEP,
+  shouldStartPreviewLoad,
   shouldUseCompactSplashLogo,
   toggleComponentSelection,
   toggleSelection,
@@ -108,7 +109,7 @@ export function SetupApp({
   const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
-    if (step !== SETUP_STEPS.PREVIEW || preview || previewLoading || previewError) return;
+    if (!shouldStartPreviewLoad({ step, preview, previewError })) return;
 
     let cancelled = false;
     setPreviewLoading(true);
@@ -136,8 +137,9 @@ export function SetupApp({
 
     return () => {
       cancelled = true;
+      setPreviewLoading(false);
     };
-  }, [step, preview, previewLoading, previewError, homeDir, workspaceRoot, packageRoot, packageName, cliVersion, selectedAgents, selectedComponents]);
+  }, [step, preview, previewError, homeDir, workspaceRoot, packageRoot, packageName, cliVersion, selectedAgents, selectedComponents]);
 
   const finish = (outcome) => {
     onComplete(outcome);
