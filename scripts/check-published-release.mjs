@@ -70,7 +70,13 @@ export async function verifyPublishedRelease({
   const mainSha = runGit("git rev-parse origin/main").trim();
 
   if (mainSha !== gitHead) {
-    throw new Error(`origin/main (${mainSha}) does not match npm gitHead (${gitHead})`);
+    try {
+      runGit(`git merge-base --is-ancestor ${gitHead} origin/main`);
+    } catch {
+      throw new Error(
+        `origin/main (${mainSha}) does not contain npm gitHead (${gitHead})`
+      );
+    }
   }
 
   const remoteTagLine = runGit(`git ls-remote --tags origin refs/tags/${tag}`).trim();
@@ -85,7 +91,8 @@ export async function verifyPublishedRelease({
     gitHead,
     tag,
     mainSha,
-    tagSha
+    tagSha,
+    mainAhead: mainSha !== gitHead
   };
 }
 
@@ -103,5 +110,7 @@ if (isMainModule()) {
   console.log(`Package: ${result.packageName}@${result.version}`);
   console.log(`npm gitHead: ${result.gitHead}`);
   console.log(`Tag: ${result.tag}`);
-  console.log(`origin/main: ${result.mainSha}`);
+  console.log(
+    `origin/main: ${result.mainSha}${result.mainAhead ? " (contains release)" : ""}`
+  );
 }
