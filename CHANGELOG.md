@@ -2,6 +2,24 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.28.0 — 2026-07-07
+
+Minor release. Interactive setup uses Ink for a full terminal UI.
+
+### Ink setup experience
+
+- Bare `harness` / `harness setup` in a TTY opens an Ink app: header, agent cards,
+  visual selectors, plan preview, confirmation, and branded success output.
+- `harness setup --simple` keeps the Clack prompt flow; dumb terminals fall back
+  to Clack automatically.
+- Brand tokens from `src/global/brand/` are reused; no duplicated style system.
+- `--json`, non-TTY/CI, `--yes`, `--confirm`, `--dry-run`, and explicit flags
+  keep the existing textual engines unchanged.
+
+### Dependencies
+
+- Added `ink` and `react` for the interactive setup renderer.
+
 ## 0.27.0 — 2026-07-07
 
 Minor release. Premium terminal identity for the interactive setup wizard.

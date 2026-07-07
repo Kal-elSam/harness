@@ -25,9 +25,17 @@ import {
   renderSetupWizardResult,
   runSetupWizard as defaultRunSetupWizard,
   SetupWizardCancelledError,
-  shouldUseSetupWizard as evaluateSetupWizard
+  shouldUseSetupWizard as evaluateClackWizard
 } from "./clack/setup-wizard.js";
+import {
+  renderSetupInkResult,
+  runSetupInk as defaultRunSetupInk,
+  SetupWizardCancelledError as SetupInkCancelledError
+} from "./ink/run-setup-ink.js";
+import { canUseSetupInk } from "./ink/terminal.js";
+import { shouldUseSetupInk as evaluateSetupInk } from "./ink/setup-routing.js";
 
+export { shouldUseSetupInk } from "./ink/setup-routing.js";
 export { shouldUseSetupWizard } from "./clack/setup-wizard.js";
 /** @deprecated Use shouldUseSetupWizard */
 export { shouldUseSetupTui } from "./clack/setup-wizard.js";
@@ -49,47 +57,65 @@ export async function runHarnessSetup({
   yesExplicit = false,
   confirmExplicit = false,
   json = false,
+  simple = false,
   interactive = Boolean(input.isTTY && output.isTTY),
   createPrompt = createReadlinePrompt,
-  runSetupWizardImpl = defaultRunSetupWizard
+  runSetupInkImpl = defaultRunSetupInk,
+  runSetupWizardImpl = defaultRunSetupWizard,
+  inkCapable = canUseSetupInk({ interactive })
 }) {
-  const useWizard = evaluateSetupWizard({
-    interactive,
-    dryRun,
-    yes,
-    confirm,
-    json,
-    agents,
-    components,
-    noDefaultComponents
-  });
+  const routing = { interactive, simple, inkCapable, dryRun, yes, confirm, json, agents, components, noDefaultComponents };
+  const useInk = evaluateSetupInk(routing);
+  const useWizard = !useInk && evaluateClackWizard({ ...routing, inkCapable });
 
   let selectedAgents = agents;
   let selectedComponents = components;
   let selectedNoDefaults = noDefaultComponents;
   let usedWizard = false;
+  let usedInk = false;
 
-  if (!useWizard) {
+  if (!useInk && !useWizard) {
     printSetupIntro({ homeDir });
   }
 
-  if (useWizard) {
+  const setupUiArgs = {
+    homeDir,
+    workspaceRoot,
+    packageRoot,
+    packageName,
+    cliVersion,
+    dryRun,
+    preflight,
+    yes,
+    confirm,
+    preflightExplicit,
+    yesExplicit,
+    confirmExplicit,
+    interactive
+  };
+
+  if (useInk) {
     try {
-      const wizardOutcome = await runSetupWizardImpl({
-        homeDir,
-        workspaceRoot,
-        packageRoot,
-        packageName,
-        cliVersion,
-        dryRun,
-        preflight,
-        yes,
-        confirm,
-        preflightExplicit,
-        yesExplicit,
-        confirmExplicit,
-        interactive
-      });
+      const inkOutcome = await runSetupInkImpl(setupUiArgs);
+
+      if (inkOutcome.cancelled) {
+        return { cancelled: true, usedWizard: true, usedInk: true };
+      }
+
+      selectedAgents = inkOutcome.agents;
+      selectedComponents = inkOutcome.components;
+      selectedNoDefaults = inkOutcome.noDefaultComponents;
+      usedWizard = true;
+      usedInk = true;
+    } catch (error) {
+      if (error instanceof SetupInkCancelledError) {
+        return { cancelled: true, usedWizard: true, usedInk: true };
+      }
+      throw error;
+    }
+  } else if (useWizard) {
+    try {
+      const wizardOutcome = await runSetupWizardImpl(setupUiArgs);
 
       if (wizardOutcome.cancelled) {
         return { cancelled: true, usedWizard: true };
@@ -152,7 +178,7 @@ export async function runHarnessSetup({
     } finally {
       await prompt.close?.();
     }
-  } else if (!useWizard) {
+  } else if (!useInk && !useWizard) {
     printSetupPlanPreview({
       agents: resolveAgentIds(selectedAgents, { homeDir }),
       components: selectedNoDefaults
@@ -218,11 +244,13 @@ export async function runHarnessSetup({
 
   const result = await installGlobalHarness({ ...installArgs, dryRun });
 
-  if (usedWizard) {
+  if (usedInk) {
+    renderSetupInkResult(result, { dryRun });
+  } else if (usedWizard) {
     renderSetupWizardResult(result, { dryRun });
   }
 
-  return { cancelled: false, result, usedWizard };
+  return { cancelled: false, result, usedWizard, usedInk };
 }
 
 function printSetupIntro({ homeDir }) {

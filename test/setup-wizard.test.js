@@ -106,16 +106,18 @@ function runHarness(args, homeDir) {
   });
 }
 
-test("shouldUseSetupWizard routes only bare interactive setup", () => {
-  assert.equal(shouldUseSetupWizard({ interactive: true }), true);
-  assert.equal(shouldUseSetupWizardFromModule({ interactive: true }), true);
-  assert.equal(shouldUseSetupWizard({ interactive: false }), false);
-  assert.equal(shouldUseSetupWizard({ interactive: true, yes: true }), false);
-  assert.equal(shouldUseSetupWizard({ interactive: true, confirm: true }), false);
-  assert.equal(shouldUseSetupWizard({ interactive: true, agents: ["cursor"] }), false);
-  assert.equal(shouldUseSetupWizard({ interactive: true, components: ["orchestrator"] }), false);
-  assert.equal(shouldUseSetupWizard({ interactive: true, noDefaultComponents: true }), false);
-  assert.equal(shouldUseSetupWizard({ interactive: true, json: true }), false);
+test("shouldUseSetupWizard routes simple mode and ink fallback", () => {
+  assert.equal(shouldUseSetupWizard({ interactive: true, inkCapable: true }), false);
+  assert.equal(shouldUseSetupWizard({ interactive: true, simple: true, inkCapable: true }), true);
+  assert.equal(shouldUseSetupWizard({ interactive: true, inkCapable: false }), true);
+  assert.equal(shouldUseSetupWizardFromModule({ interactive: true, inkCapable: false }), true);
+  assert.equal(shouldUseSetupWizard({ interactive: false, inkCapable: true }), false);
+  assert.equal(shouldUseSetupWizard({ interactive: true, yes: true, inkCapable: true }), false);
+  assert.equal(shouldUseSetupWizard({ interactive: true, confirm: true, inkCapable: true }), false);
+  assert.equal(shouldUseSetupWizard({ interactive: true, agents: ["cursor"], inkCapable: true }), false);
+  assert.equal(shouldUseSetupWizard({ interactive: true, components: ["orchestrator"], inkCapable: true }), false);
+  assert.equal(shouldUseSetupWizard({ interactive: true, noDefaultComponents: true, inkCapable: true }), false);
+  assert.equal(shouldUseSetupWizard({ interactive: true, json: true, inkCapable: true }), false);
 });
 
 test("runSetupWizard intro snapshot shows Harness branding and detection", async () => {
@@ -183,6 +185,7 @@ test("runHarnessSetup with mocked wizard applies same result as setup --confirm"
     ...baseOptions,
     homeDir,
     interactive: true,
+    inkCapable: false,
     runSetupWizardImpl: async (args) => runSetupWizard({ ...args, prompts })
   });
 
@@ -216,6 +219,7 @@ test("runHarnessSetup mocked wizard decline cancels without writing", async () =
     ...baseOptions,
     homeDir,
     interactive: true,
+    inkCapable: false,
     runSetupWizardImpl: async (args) => runSetupWizard({ ...args, prompts })
   });
 
@@ -233,6 +237,7 @@ test("runHarnessSetup mocked wizard dry-run writes nothing", async () => {
     homeDir,
     dryRun: true,
     interactive: true,
+    inkCapable: false,
     runSetupWizardImpl: async (args) => runSetupWizard({ ...args, prompts })
   });
 

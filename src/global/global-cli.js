@@ -81,7 +81,8 @@ export async function runGlobalSetup(options, packageManifest, packageRoot) {
     yesExplicit: options.yesExplicit,
     confirmExplicit: options.confirmExplicit,
     json: options.json,
-    interactive: options.interactive
+    interactive: options.interactive,
+    simple: options.simple
   });
 
   await recordSetupHistory(homeDir, {

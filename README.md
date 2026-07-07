@@ -230,7 +230,7 @@ Primary flow remains `harness` → `status` → `sync` (or `harness setup` expli
 
 ### `harness` / `harness setup`
 
-Bare `harness` opens the recommended setup flow (interactive Clack wizard: **Local Agent Operating System**). `harness setup`
+Bare `harness` opens the Ink setup UI (**Local Agent Operating System**) in a TTY. `harness setup --simple` uses the Clack wizard instead. `harness setup`
 is equivalent. Detects agents, shows a plan, and lets you choose agents/components before
 applying. Use `--dry-run` to preview without writing, or `--yes` / flags to skip prompts.
 Use `harness install` for explicit non-interactive configure in CI and scripts.

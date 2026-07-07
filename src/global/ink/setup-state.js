@@ -1,0 +1,143 @@
+import { AGENT_HINTS, BRAND, getAgentLabel, WIZARD_COPY } from "../brand/index.js";
+import { formatAgentMultiselectHint } from "../clack/theme.js";
+
+export const SETUP_STEPS = {
+  DETECT: "detect",
+  AGENTS: "agents",
+  COMPONENTS: "components",
+  PREVIEW: "preview",
+  CONFIRM: "confirm"
+};
+
+export function toggleSelection(selected, id) {
+  if (selected.includes(id)) {
+    return selected.filter((entry) => entry !== id);
+  }
+  return [...selected, id];
+}
+
+export function toggleComponentSelection(selected, id) {
+  if (id === "__none__") {
+    return selected.includes("__none__") ? [] : ["__none__"];
+  }
+
+  const withoutNone = selected.filter((entry) => entry !== "__none__");
+  return toggleSelection(withoutNone, id);
+}
+
+export function buildAgentOptions(adapters, detected) {
+  return adapters.map((adapter) => ({
+    id: adapter.id,
+    label: getAgentLabel(adapter.id),
+    hint: formatAgentMultiselectHint(adapter.id, detected)
+  }));
+}
+
+export function buildComponentOptions(components) {
+  return [
+    ...components.map((component) => ({
+      id: component.id,
+      label: component.label,
+      hint: component.defaultEnabled ? "recommended" : undefined
+    })),
+    {
+      id: "__none__",
+      label: WIZARD_COPY.coreOnlyLabel,
+      hint: undefined
+    }
+  ];
+}
+
+export function formatInkHeaderLines() {
+  return [
+    BRAND.name,
+    BRAND.tagline,
+    BRAND.splashLine
+  ];
+}
+
+export function formatInkDetectPanel({ adapters, detected }) {
+  const readyCount = detected.length;
+  const lines = [
+    `Your agents · ${readyCount}/${adapters.length} roots found`,
+    ""
+  ];
+
+  for (const adapter of adapters) {
+    const isReady = detected.includes(adapter.id);
+    const status = isReady ? AGENT_HINTS.ready : AGENT_HINTS.notDetected;
+    lines.push(`${getAgentLabel(adapter.id)} · ${status}`);
+  }
+
+  return lines.join("\n");
+}
+
+export function formatInkSelectList({ options, selected, activeIndex }) {
+  return options.map((option, index) => {
+    const checked = selected.includes(option.id) ? "[x]" : "[ ]";
+    const pointer = index === activeIndex ? "›" : " ";
+    const hint = option.hint ? ` (${option.hint})` : "";
+    return `${pointer} ${checked} ${option.label}${hint}`;
+  });
+}
+
+export function formatInkPreviewLines({ preview, componentCatalog }) {
+  const labelById = new Map(componentCatalog.map((entry) => [entry.id, entry.label]));
+  const agentLine = preview.agents.map((id) => getAgentLabel(id)).join(", ") || "none";
+  const componentLine = preview.components.length > 0
+    ? preview.components.map((id) => labelById.get(id) ?? id).join(", ")
+    : WIZARD_COPY.coreOnlyLabel;
+
+  const lines = [
+    "Agents",
+    `  ${agentLine}`,
+    "",
+    "Components",
+    `  ${componentLine}`,
+    "",
+    "Managed writes"
+  ];
+
+  if (preview.preflight.changes.length === 0) {
+    lines.push("  none — already in sync");
+  } else {
+    for (const change of preview.preflight.changes) {
+      const verb = change.action === "create" ? "+" : change.action === "repair" ? "~" : "↻";
+      lines.push(`  ${verb} ${change.target}`);
+    }
+  }
+
+  lines.push("", "Preserved content");
+  if (preview.preflight.preserved.length === 0) {
+    lines.push("  none");
+  } else {
+    for (const entry of preview.preflight.preserved) {
+      lines.push(`  ${entry.path}`);
+    }
+  }
+
+  return lines;
+}
+
+export function formatInkSuccessLines(result, { dryRun = false } = {}) {
+  const agentLine = result.agents.map((id) => getAgentLabel(id)).join(", ");
+  const componentLine = result.components.length > 0
+    ? result.components.join(", ")
+    : WIZARD_COPY.coreOnlyLabel;
+
+  return [
+    dryRun ? WIZARD_COPY.resultDryRunTitle : WIZARD_COPY.resultSuccessTitle,
+    "",
+    `State   ${result.stateRoot}`,
+    `Agents  ${agentLine}`,
+    `Comps   ${componentLine}`,
+    "",
+    "Next steps",
+    dryRun
+      ? "  harness setup --confirm"
+      : "  harness status",
+    dryRun
+      ? "  harness setup --dry-run"
+      : "  harness doctor"
+  ];
+}

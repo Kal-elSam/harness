@@ -293,6 +293,7 @@ export function parseArgs(argv) {
     historyCommand: null,
     historyEventAction: null,
     limit: null,
+    simple: false,
     help: false,
     version: false,
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY)
@@ -370,6 +371,7 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--label=")) options.label = arg.slice("--label=".length);
     else if (arg === "--out") options.outPath = resolve(args[++index]);
     else if (arg.startsWith("--out=")) options.outPath = resolve(arg.slice("--out=".length));
+    else if (arg === "--simple") options.simple = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
     else throw new Error(`Unknown option "${arg}".`);
@@ -537,7 +539,7 @@ Bootstrap: see README.md (curl install.sh or npx @kal-elsam/harness).
 Usage:
   harness [--dry-run] [--yes] [--confirm] [--agents <list|all>] [--components <list>]
   harness --version
-  harness setup [--dry-run] [--yes] [--confirm] [--no-preflight] [--agents <list|all>] [--components <list>]
+  harness setup [--dry-run] [--yes] [--confirm] [--simple] [--no-preflight] [--agents <list|all>] [--components <list>]
   harness status [--json]
   harness sync [--dry-run] [--yes] [--confirm] [--json] [--no-preflight]
   harness upgrade [--dry-run] [--yes] [--confirm] [--no-preflight]
@@ -570,7 +572,7 @@ Scopes:
                           Explicit --scope=workspace only.
 
 Commands:
-  setup      Interactive wizard (default when you run bare harness in a TTY).
+  setup      Interactive Ink UI (TTY). Use --simple for Clack prompts.
   status     Control panel: agents, components, drift, backups, next action.
   sync       Converge managed content (repair drift), then show status.
   upgrade    Preview or apply ecosystem updates (apply requires --yes).

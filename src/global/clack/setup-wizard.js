@@ -1,5 +1,7 @@
 import * as defaultPrompts from "@clack/prompts";
 import { BRAND, getAgentLabel, WIZARD_COPY } from "../brand/index.js";
+import { canUseSetupInk } from "../ink/terminal.js";
+import { shouldUseClackWizard } from "../ink/setup-routing.js";
 import { describeComponentCatalog, DEFAULT_COMPONENT_IDS } from "../component-registry.js";
 import { loadConsentAudit } from "../policy.js";
 import {
@@ -27,6 +29,8 @@ export { SetupWizardCancelledError };
 
 export function shouldUseSetupWizard({
   interactive,
+  simple = false,
+  inkCapable = canUseSetupInk({ interactive }),
   dryRun = false,
   yes = false,
   confirm = false,
@@ -35,10 +39,18 @@ export function shouldUseSetupWizard({
   components = null,
   noDefaultComponents = false
 } = {}) {
-  if (!interactive || json) return false;
-  if (yes || confirm) return false;
-  if (agents != null || components != null || noDefaultComponents) return false;
-  return true;
+  return shouldUseClackWizard({
+    interactive,
+    simple,
+    inkCapable,
+    dryRun,
+    yes,
+    confirm,
+    json,
+    agents,
+    components,
+    noDefaultComponents
+  });
 }
 
 /** @deprecated Use shouldUseSetupWizard */
