@@ -9,7 +9,7 @@ import { runGlobalDoctorChecks } from "../src/global/global-doctor.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const baseOptions = { packageRoot, packageName: "@kal-elsam/harness", cliVersion: "0.4.0" };
+const baseOptions = { packageRoot, packageName: "@kal-elsam/kairo-runtime", cliVersion: "0.4.0" };
 const doctorOptions = { packageRoot };
 
 async function createFakeHome() {

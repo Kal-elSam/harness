@@ -16,7 +16,7 @@ const cliVersion = JSON.parse(
 ).version;
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion
 };
 
@@ -118,7 +118,7 @@ test("status snapshots for missing, ok, and drift", async () => {
 
   const drift = runHarness(["status"], homeDir);
   assert.notEqual(drift.status, 0);
-  snapshotLines(drift.stdout, [/Overall: DRIFT/, /harness sync/]);
+  snapshotLines(drift.stdout, [/Overall: DRIFT/, /kairo sync/]);
 });
 
 test("report and history snapshots stay concise", async () => {
@@ -127,15 +127,15 @@ test("report and history snapshots stay concise", async () => {
 
   const history = runHarness(["history"], homeDir);
   assert.equal(history.status, 0, history.stderr);
-  snapshotLines(history.stdout, [/Harness history/, /No managed operations recorded yet/]);
+  snapshotLines(history.stdout, [/Kairo Runtime history/, /No managed operations recorded yet/]);
 
   const historyLast = runHarness(["history", "last"], homeDir);
   assert.equal(historyLast.status, 0, historyLast.stderr);
-  snapshotLines(historyLast.stdout, [/Harness history last/, /No managed operations recorded yet/]);
+  snapshotLines(historyLast.stdout, [/Kairo Runtime history last/, /No managed operations recorded yet/]);
 
   const report = runHarness(["report"], homeDir);
   assert.equal(report.status, 0, report.stderr);
-  snapshotLines(report.stdout, [/Harness report/, /Overall: OK/, /Diff:/]);
+  snapshotLines(report.stdout, [/Kairo Runtime report/, /Overall: OK/, /Diff:/]);
 });
 
 test("common errors stay clear and non-destructive", async () => {

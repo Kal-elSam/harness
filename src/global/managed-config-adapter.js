@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { backupFileBeforeChange } from "./backups.js";
 import { buildManagedBody } from "./managed-body.js";
 import { hasManagedSection, removeManagedSection, upsertManagedSection } from "./managed-section.js";
+import { formatCliCommand } from "./brand/cli.js";
 
 export function createManagedConfigAdapter({ id, label, rootDir, configFile }) {
   const assets = {
@@ -99,7 +100,7 @@ export function createManagedConfigAdapter({ id, label, rootDir, configFile }) {
         status: managed ? "ok" : "warning",
         detail: managed
           ? `Managed section present in ~/${configFile}`
-          : `No managed section in ~/${configFile}. Run "harness install".`
+          : `No managed section in ~/${configFile}. Run "${formatCliCommand("install")}".`
       };
     },
 

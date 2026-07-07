@@ -14,7 +14,7 @@ test("harness components prints bundled catalog", () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Harness components \(scope: agent-global\)/);
+  assert.match(result.stdout, /Kairo Runtime components \(scope: agent-global\)/);
   assert.match(result.stdout, /Bundled: 2/);
   assert.match(result.stdout, /orchestrator \(1\.0\.0\) \[default\]/);
   assert.match(result.stdout, /sdd-core \(1\.0\.0\) \[default\]/);

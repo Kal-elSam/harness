@@ -1,4 +1,4 @@
-import { AGENT_HINTS, BRAND, getAgentLabel, WIZARD_COPY } from "../brand/index.js";
+import { AGENT_HINTS, BRAND, PREFERRED_CLI, formatCliCommand, getAgentLabel, WIZARD_COPY } from "../brand/index.js";
 import { formatAgentMultiselectHint } from "../clack/theme.js";
 
 export const SETUP_STEPS = {
@@ -21,8 +21,8 @@ export function formatInkSplashLines({ compact = false } = {}) {
   return [
     ...logo,
     "",
-    BRAND.splashTagline,
-    BRAND.splashSubtitle,
+    BRAND.name,
+    BRAND.tagline,
     "",
     BRAND.splashHint
   ];
@@ -156,7 +156,7 @@ export function formatInkPreviewLines({ preview, componentCatalog }) {
   return lines;
 }
 
-export function formatInkSuccessLines(result, { dryRun = false } = {}) {
+export function formatInkSuccessLines(result, { dryRun = false, cliName = PREFERRED_CLI } = {}) {
   const agentLine = result.agents.map((id) => getAgentLabel(id)).join(", ");
   const componentLine = result.components.length > 0
     ? result.components.join(", ")
@@ -171,10 +171,10 @@ export function formatInkSuccessLines(result, { dryRun = false } = {}) {
     "",
     "Next steps",
     dryRun
-      ? "  harness setup --confirm"
-      : "  harness status",
+      ? `  ${formatCliCommand("setup --confirm", cliName)}`
+      : `  ${formatCliCommand("status", cliName)}`,
     dryRun
-      ? "  harness setup --dry-run"
-      : "  harness doctor"
+      ? `  ${formatCliCommand("setup --dry-run", cliName)}`
+      : `  ${formatCliCommand("doctor", cliName)}`
   ];
 }

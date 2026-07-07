@@ -30,17 +30,25 @@ import {
 import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
 import { resolveHomeDir } from "./global/paths.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
+import {
+  ALL_CLI_NAMES,
+  LEGACY_PACKAGE_NAME,
+  PACKAGE_NAME,
+  PREFERRED_CLI,
+  formatCliCommand,
+  maybeWarnLegacyCli
+} from "./global/brand/cli.js";
+import { BRAND } from "./global/brand/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(__dirname, "..");
-const KNOWN_CLI_NAMES = new Set(["harness", "agentic-harness", "sgs-harness", "harness-sgs"]);
 const SCOPES = new Set(["agent-global", "workspace"]);
 
 export function resolveSuggestedInvocation(packageName, argv = process.argv) {
-  const invokedPath = argv[1] ?? "harness";
+  const invokedPath = argv[1] ?? PREFERRED_CLI;
   const invokedBase = basename(invokedPath);
 
-  if (!invokedBase.endsWith(".js") && KNOWN_CLI_NAMES.has(invokedBase)) {
+  if (!invokedBase.endsWith(".js") && ALL_CLI_NAMES.has(invokedBase)) {
     return invokedBase;
   }
 
@@ -70,6 +78,7 @@ function detectInvocationPackageManager() {
 
 export async function runCli(argv) {
   const { command, options } = parseArgs(argv);
+  maybeWarnLegacyCli(process.argv, { json: options.json });
 
   if (options.help || command === "help") {
     printHelp();
@@ -391,8 +400,8 @@ function parseComponentsAction(args, options) {
     const componentId = args[0];
     if (!componentId || componentId.startsWith("-")) {
       const usage = action === "init"
-        ? 'harness components init <id> --label "My Label"'
-        : "harness components pack <id> --out <file>";
+        ? `${formatCliCommand("components init <id> --label \"My Label\"")}`
+        : formatCliCommand("components pack <id> --out <file>");
       throw new Error(`Missing component id. Use: ${usage}`);
     }
     options.componentId = args.shift();
@@ -402,7 +411,7 @@ function parseComponentsAction(args, options) {
   if (action === "import") {
     const bundlePath = args[0];
     if (!bundlePath || bundlePath.startsWith("-")) {
-      throw new Error("Missing bundle path. Use: harness components import <file>");
+      throw new Error(`Missing bundle path. Use: ${formatCliCommand("components import <file>")}`);
     }
     options.bundlePath = resolve(args.shift());
     return;
@@ -429,7 +438,7 @@ function parsePolicyAction(args, options) {
     const value = args[1];
 
     if (!key || key.startsWith("-") || !value || value.startsWith("-")) {
-      throw new Error("Missing policy key or value. Use: harness policy set <key> <value>");
+      throw new Error(`Missing policy key or value. Use: ${formatCliCommand("policy set <key> <value>")}`);
     }
 
     options.policyKey = args.shift();
@@ -528,42 +537,43 @@ function parseAdapters(value) {
 }
 
 function printHelp() {
-  console.log(`Agentic Harness (@kal-elsam/harness)
+  const cli = PREFERRED_CLI;
+  console.log(`${BRAND.displayName} (${PACKAGE_NAME})
 
-Local AI ecosystem configurator. Harness does not install AI apps — it powers and
+${BRAND.tagline}. ${BRAND.displayName} does not install AI apps — it powers and
 coordinates agents you already have (Cursor, Codex, OpenCode, Claude) with managed
 sections, components, backups, and drift repair under ~/.harness.
 
-Bootstrap: see README.md (curl install.sh or npx @kal-elsam/harness).
+Bootstrap: see README.md (curl install.sh or npx ${PACKAGE_NAME}).
 
 Usage:
-  harness [--dry-run] [--yes] [--confirm] [--agents <list|all>] [--components <list>]
-  harness --version
-  harness setup [--dry-run] [--yes] [--confirm] [--simple] [--no-preflight] [--agents <list|all>] [--components <list>]
-  harness status [--json]
-  harness sync [--dry-run] [--yes] [--confirm] [--json] [--no-preflight]
-  harness upgrade [--dry-run] [--yes] [--confirm] [--no-preflight]
-  harness install [--agents <list|all>] [--components <list>] [--dry-run]
-  harness install --no-default-components
-  harness doctor [--json]
-  harness adapters [--json]
-  harness explain [--json]
-  harness diff [--json]
-  harness update [--dry-run]
-  harness install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
-  harness init [--mode minimal|standard|enterprise] (workspace alias)
-  harness detect
-  harness backups
-  harness history [--json] [--limit <n>] [--command <name>] [--action <name>]
-  harness history last [--json] [--command <name>] [--action <name>]
-  harness rollback --to <snapshot> [--apply]
-  harness policy [--json]
-  harness policy set <key> <value>
-  harness policy reset
-  harness report [--json] [--out <file>] [--limit <n>]
-  harness components
-  harness components validate|init|pack|import ...
-  harness uninstall [--dry-run]
+  ${cli} [--dry-run] [--yes] [--confirm] [--agents <list|all>] [--components <list>]
+  ${cli} --version
+  ${cli} setup [--dry-run] [--yes] [--confirm] [--simple] [--no-preflight] [--agents <list|all>] [--components <list>]
+  ${cli} status [--json]
+  ${cli} sync [--dry-run] [--yes] [--confirm] [--json] [--no-preflight]
+  ${cli} upgrade [--dry-run] [--yes] [--confirm] [--no-preflight]
+  ${cli} install [--agents <list|all>] [--components <list>] [--dry-run]
+  ${cli} install --no-default-components
+  ${cli} doctor [--json]
+  ${cli} adapters [--json]
+  ${cli} explain [--json]
+  ${cli} diff [--json]
+  ${cli} update [--dry-run]
+  ${cli} install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
+  ${cli} init [--mode minimal|standard|enterprise] (workspace alias)
+  ${cli} detect
+  ${cli} backups
+  ${cli} history [--json] [--limit <n>] [--command <name>] [--action <name>]
+  ${cli} history last [--json] [--command <name>] [--action <name>]
+  ${cli} rollback --to <snapshot> [--apply]
+  ${cli} policy [--json]
+  ${cli} policy set <key> <value>
+  ${cli} policy reset
+  ${cli} report [--json] [--out <file>] [--limit <n>]
+  ${cli} components
+  ${cli} components validate|init|pack|import ...
+  ${cli} uninstall [--dry-run]
 
 Scopes:
   agent-global (default)  Configure local agent roots and managed sections.
@@ -599,13 +609,15 @@ JSON output (--json on supported commands):
   Human text remains the default. See README.md for examples and field notes.
 
 Version:
-  harness --version              Installed CLI version
-  npm view @kal-elsam/harness version   Latest published version
-  npx @kal-elsam/harness@latest sync    Converge with latest package
+  ${cli} --version              Installed CLI version
+  npm view ${PACKAGE_NAME} version   Latest published version
+  npx ${PACKAGE_NAME}@latest sync    Converge with latest package
 
 More examples: README.md
 
-Aliases: agentic-harness, sgs-harness, harness-sgs
+Preferred CLI: kairo, kairo-runtime
+Legacy aliases: harness, agentic-harness, sgs-harness, harness-sgs (prefer kairo)
+Legacy package: ${LEGACY_PACKAGE_NAME}
 Global agents: ${GLOBAL_AGENT_IDS.join(", ")}
 Global components: ${COMPONENT_IDS.join(", ")} (default: ${DEFAULT_COMPONENT_IDS.join(", ")})
 Workspace adapters: ${[...ADAPTERS].join(", ")}

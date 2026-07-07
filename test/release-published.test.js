@@ -15,11 +15,15 @@ test("parsePublishedReleaseArgs requires --version", () => {
 test("parsePublishedReleaseArgs accepts --version and --version=value", () => {
   assert.deepEqual(
     parsePublishedReleaseArgs(["node", "script", "--version", "0.4.1"]),
-    { version: "0.4.1" }
+    { version: "0.4.1", packageName: "@kal-elsam/kairo-runtime" }
   );
   assert.deepEqual(
     parsePublishedReleaseArgs(["node", "script", "--version=0.4.1"]),
-    { version: "0.4.1" }
+    { version: "0.4.1", packageName: "@kal-elsam/kairo-runtime" }
+  );
+  assert.deepEqual(
+    parsePublishedReleaseArgs(["node", "script", "--version", "0.4.1", "--package", "@kal-elsam/harness"]),
+    { version: "0.4.1", packageName: "@kal-elsam/harness" }
   );
 });
 
@@ -39,7 +43,7 @@ test("verifyPublishedRelease matches npm gitHead, tag, and origin/main", async (
       throw new Error(`unexpected git command: ${command}`);
     },
     fetchJson: async (url) => {
-      assert.equal(url, "https://registry.npmjs.org/%40kal-elsam%2Fharness/0.4.1");
+      assert.equal(url, "https://registry.npmjs.org/%40kal-elsam%2Fkairo-runtime/0.4.1");
       return { version: "0.4.1", gitHead: "ffec146d" };
     }
   });

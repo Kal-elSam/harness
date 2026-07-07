@@ -21,7 +21,7 @@ const cliVersion = JSON.parse(
 ).version;
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion
 };
 
@@ -131,7 +131,7 @@ test("runSetupWizard intro snapshot shows Harness branding and detection", async
   });
 
   assert.equal(outcome.cancelled, true);
-  assert.deepEqual(prompts.calls.intro, ["HARNESS — Local Agent Operating System"]);
+  assert.deepEqual(prompts.calls.intro, ["Kairo Runtime — Local Agent Operating System"]);
   assert.equal(prompts.calls.notes.length, 2);
   assert.equal(prompts.calls.notes[0].title, "Welcome");
   assert.match(prompts.calls.notes[0].message, /Coordinates local AI agents/);
@@ -259,7 +259,7 @@ test("renderSetupWizardResult success snapshot includes next actions", () => {
 
   const resultNote = prompts.calls.notes.find((entry) => entry.title === "Setup complete");
   assert.ok(resultNote);
-  assert.match(resultNote.message, /harness status/);
+  assert.match(resultNote.message, /kairo status/);
   assert.match(resultNote.message, /State/);
   assert.deepEqual(prompts.calls.outro, ["Your local agent OS is ready."]);
 });
@@ -277,7 +277,7 @@ test("renderSetupWizardResult dry-run snapshot recommends confirm command", () =
 
   const resultNote = prompts.calls.notes.find((entry) => entry.title === "Dry run complete");
   assert.ok(resultNote);
-  assert.match(resultNote.message, /harness setup --confirm/);
+  assert.match(resultNote.message, /kairo setup --confirm/);
   assert.deepEqual(prompts.calls.outro, ["Nothing was written."]);
 });
 
@@ -298,7 +298,7 @@ test("setup --confirm --agents cursor bypasses wizard and applies", async () => 
 
   const cli = runHarness(["setup", "--confirm", "--agents", "cursor"], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
-  assert.match(cli.stdout, /Harness preflight — setup/);
+  assert.match(cli.stdout, /Kairo Runtime preflight — setup/);
   assert.equal(existsSync(paths.statePath), true);
 });
 

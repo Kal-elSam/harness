@@ -15,7 +15,7 @@ const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const harnessBin = join(packageRoot, "bin/harness.js");
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion: "0.20.0"
 };
 
@@ -92,7 +92,7 @@ test("sync with policy ci shows preflight consent source policy", async () => {
 
   const cli = runHarness(["sync"], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
-  assert.match(cli.stdout, /Harness preflight — sync/);
+  assert.match(cli.stdout, /Kairo Runtime preflight — sync/);
   assert.match(cli.stdout, /Consent source: policy/);
   assert.match(cli.stdout, /Policy profile: ci/);
 });
@@ -121,7 +121,7 @@ test("setup --confirm shows consent source cli", async () => {
   const cli = runHarness(["setup", "--confirm", "--agents", "cursor"], homeDir);
 
   assert.equal(cli.status, 0, cli.stderr);
-  assert.match(cli.stdout, /Harness preflight — setup/);
+  assert.match(cli.stdout, /Kairo Runtime preflight — setup/);
   assert.match(cli.stdout, /Consent source: cli/);
 });
 

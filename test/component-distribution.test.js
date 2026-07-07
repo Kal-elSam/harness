@@ -193,7 +193,7 @@ test("import then validate and install succeed", async () => {
 
   const installResult = await installGlobalHarness({
     packageRoot,
-    packageName: "@kal-elsam/harness",
+    packageName: "@kal-elsam/kairo-runtime",
     cliVersion: "0.8.0",
     homeDir,
     workspaceRoot: targetRoot,

@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { BRAND } from "./brand/index.js";
+import { formatCliCommand } from "./brand/cli.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildAdapterMatrix } from "./adapter-matrix.js";
@@ -29,7 +31,7 @@ export async function buildExplainReport(homeDir) {
       homeDir,
       installed: false,
       ok: false,
-      nextAction: 'Run "harness setup" to see what Harness manages.',
+      nextAction: `Run "${formatCliCommand("setup")}" to see what ${BRAND.displayName} manages.`,
       markers,
       stateRoot: paths.root,
       writesTo: [paths.root],
@@ -54,7 +56,7 @@ export async function buildExplainReport(homeDir) {
     homeDir,
     installed: true,
     ok: true,
-    nextAction: "Read-only audit. Harness did not modify any files.",
+    nextAction: `Read-only audit. ${BRAND.displayName} did not modify any files.`,
     markers,
     stateRoot: paths.root,
     writesTo,

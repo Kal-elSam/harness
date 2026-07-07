@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Bootstrap installer for Agentic Harness (@kal-elsam/harness).
+# Bootstrap installer for Kairo Runtime (@kal-elsam/kairo-runtime).
 #
 # Safe by design:
 #   - no sudo
@@ -17,7 +17,8 @@
 #
 set -eu
 
-PACKAGE="@kal-elsam/harness"
+PACKAGE="@kal-elsam/kairo-runtime"
+PREFERRED_CLI="kairo"
 VERSION="latest"
 INSTALLER_DRY_RUN=0
 APPLY=0
@@ -25,19 +26,19 @@ SETUP_EXTRA=""
 
 usage() {
   printf '%s\n' \
-    "Harness bootstrap installer" \
+    "Kairo Runtime bootstrap installer" \
     "" \
     "Usage:" \
     "  install.sh [--dry-run] [--yes] [--version <semver|latest>]" \
     "             [--agents <list|all>] [--components <list>] [--no-default-components]" \
     "" \
     "Options:" \
-    "  --dry-run              Print the plan only. Does not download or run harness." \
-    "  --yes, -y              Apply setup (runs harness setup --yes)." \
+    "  --dry-run              Print the plan only. Does not download or run kairo." \
+    "  --yes, -y              Apply setup (runs kairo setup --yes)." \
     "  --version <version>    Package version to run (default: latest)." \
-    "  --agents <list|all>    Passed through to harness setup." \
-    "  --components <list>    Passed through to harness setup." \
-    "  --no-default-components  Passed through to harness setup." \
+    "  --agents <list|all>    Passed through to kairo setup." \
+    "  --components <list>    Passed through to kairo setup." \
+    "  --no-default-components  Passed through to kairo setup." \
     "  -h, --help             Show this help." \
     "" \
     "What it does:" \
@@ -126,7 +127,7 @@ require_cmd() {
   command_name="$1"
   if ! command -v "$command_name" >/dev/null 2>&1; then
     die "Missing required command: ${command_name}
-Install Node.js 18.18+ (includes npm), then re-run this installer.
+Install Node.js 20.12+ (includes npm), then re-run this installer.
 https://nodejs.org/"
   fi
 }
@@ -142,12 +143,12 @@ if command -v npx >/dev/null 2>&1; then
   RUN_CMD="npx --yes ${PACKAGE}@${VERSION} setup ${SETUP_MODE}${SETUP_EXTRA:+ ${SETUP_EXTRA}}"
 else
   RUNNER="npm-exec"
-  RUN_CMD="npm exec --yes --package=${PACKAGE}@${VERSION} -- harness setup ${SETUP_MODE}${SETUP_EXTRA:+ ${SETUP_EXTRA}}"
+  RUN_CMD="npm exec --yes --package=${PACKAGE}@${VERSION} -- ${PREFERRED_CLI} setup ${SETUP_MODE}${SETUP_EXTRA:+ ${SETUP_EXTRA}}"
 fi
 
 printf '%s\n' \
-  "Harness bootstrap installer" \
-  "===========================" \
+  "Kairo Runtime bootstrap installer" \
+  "================================" \
   "" \
   "Prerequisites:" \
   "  node  ${NODE_VERSION:-unknown}" \
@@ -191,7 +192,7 @@ if [ "$RUNNER" = "npx" ]; then
   npx --yes "${PACKAGE}@${VERSION}" setup ${SETUP_MODE} ${SETUP_EXTRA}
 else
   # shellcheck disable=SC2086
-  npm exec --yes --package="${PACKAGE}@${VERSION}" -- harness setup ${SETUP_MODE} ${SETUP_EXTRA}
+  npm exec --yes --package="${PACKAGE}@${VERSION}" -- ${PREFERRED_CLI} setup ${SETUP_MODE} ${SETUP_EXTRA}
 fi
 
 if [ "$APPLY" -eq 1 ]; then
@@ -199,14 +200,14 @@ if [ "$APPLY" -eq 1 ]; then
     "" \
     "Bootstrap complete (applied)." \
     "Next steps:" \
-    "  1. Check health:    harness status" \
-    "  2. Repair drift:    harness sync" \
+    "  1. Check health:    ${PREFERRED_CLI} status" \
+    "  2. Repair drift:    ${PREFERRED_CLI} sync" \
     "  3. Upgrade latest:  npx ${PACKAGE}@latest setup --yes" \
     "" \
     "Version:" \
     "  Installed CLI:      npx ${PACKAGE} --version" \
     "  Published package:  npm view ${PACKAGE} version" \
-    "  Preview upgrade:    harness upgrade --dry-run"
+    "  Preview upgrade:    ${PREFERRED_CLI} upgrade --dry-run"
 else
   printf '%s\n' \
     "" \

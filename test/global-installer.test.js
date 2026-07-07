@@ -11,7 +11,7 @@ import { readGlobalState } from "../src/global/state.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const baseOptions = { packageRoot, packageName: "@kal-elsam/harness", cliVersion: "0.4.0" };
+const baseOptions = { packageRoot, packageName: "@kal-elsam/kairo-runtime", cliVersion: "0.4.0" };
 
 async function createFakeHome({ withCursorConfig = false } = {}) {
   const homeDir = await mkdtemp(join(tmpdir(), "harness-home-"));
@@ -104,7 +104,7 @@ test("update requires an existing global state", async () => {
 
   await assert.rejects(
     updateGlobalHarness({ ...baseOptions, homeDir }),
-    /Run "harness install" first/
+    /Run "kairo install" first/
   );
 });
 

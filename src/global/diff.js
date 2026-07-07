@@ -6,6 +6,7 @@ import { harnessHomePaths } from "./paths.js";
 import { readGlobalState } from "./state.js";
 import { buildStatusReport } from "./status.js";
 import { userOwnedContent } from "./managed-section.js";
+import { formatCliCommand } from "./brand/cli.js";
 
 export async function buildDiffReport(homeDir, {
   packageRoot,
@@ -23,7 +24,7 @@ export async function buildDiffReport(homeDir, {
       status: "setup-required",
       hasChanges: false,
       summary: "No managed state found.",
-      nextAction: 'Run "harness setup --dry-run" to preview the initial managed plan.',
+      nextAction: `Run "${formatCliCommand("setup --dry-run")}" to preview the initial managed plan.`,
       changes: [],
       preserved: []
     };
@@ -65,7 +66,7 @@ export async function buildDiffReport(homeDir, {
     status: "drift",
     hasChanges: true,
     summary: `${changes.length} managed change(s) planned.`,
-    nextAction: 'Run "harness sync" to apply these managed repairs.',
+    nextAction: `Run "${formatCliCommand("sync")}" to apply these managed repairs.`,
     changes,
     preserved
   };

@@ -3,12 +3,13 @@ import { dirname, resolve } from "node:path";
 import { COMPATIBILITY_LINKS, MODES, adapterForPath, listTemplateFiles, pathExists, renderFileContent } from "./harness-files.js";
 import { hashBuffer } from "./hash.js";
 import { createManifest, readManifest, writeManifest } from "./manifest.js";
+import { formatCliCommand } from "./global/brand/cli.js";
 
 export async function updateHarness({ project, packageRoot, packageName, cliVersion, mode, adapters, force = false, dryRun = false }) {
   const manifest = await readManifest(project.root);
 
   if (!manifest) {
-    throw new Error('No .harness/manifest.json found. Run "harness init" first.');
+    throw new Error(`No .harness/manifest.json found. Run "${formatCliCommand("init")}" first.`);
   }
 
   const effectiveMode = mode ?? manifest.mode;

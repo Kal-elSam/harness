@@ -15,7 +15,7 @@ const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const harnessBin = join(packageRoot, "bin/harness.js");
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion: "0.8.0"
 };
 
@@ -127,7 +127,7 @@ test("status reports missing before install", async () => {
   const report = await buildStatusReport(homeDir, { packageRoot });
 
   assert.equal(report.overall, "missing");
-  assert.match(report.nextAction, /harness setup/);
+  assert.match(report.nextAction, /kairo setup/);
   assert.equal(report.ok, false);
 });
 
@@ -144,14 +144,14 @@ test("status reports ok after install and drift after tamper", async () => {
   await writeFile(join(homeDir, ".harness", "components", "sdd-core", "workflow.md"), "tampered");
   const drifted = await buildStatusReport(homeDir, { packageRoot });
   assert.equal(drifted.overall, "drift");
-  assert.match(drifted.nextAction, /harness sync/);
+  assert.match(drifted.nextAction, /kairo sync/);
   assert.equal(
     drifted.components.find((component) => component.id === "sdd-core").status,
     "stale"
   );
 });
 
-test("harness setup --dry-run and status CLI work", async () => {
+test("kairo setup --dry-run and status CLI work", async () => {
   const homeDir = await createFakeHome({ withCursorConfig: true });
 
   const setupCli = spawnSync(process.execPath, [harnessBin, "setup", "--dry-run"], {
@@ -161,7 +161,7 @@ test("harness setup --dry-run and status CLI work", async () => {
   });
 
   assert.equal(setupCli.status, 0, setupCli.stderr);
-  assert.match(setupCli.stdout, /Harness setup — local AI ecosystem configurator/);
+  assert.match(setupCli.stdout, /Kairo Runtime setup — local AI ecosystem configurator/);
   assert.match(setupCli.stdout, /Dry run: nothing was written/);
   assert.match(setupCli.stdout, /Agents: cursor, codex/);
 
@@ -192,5 +192,5 @@ test("harness setup --dry-run and status CLI work", async () => {
   });
   assert.notEqual(driftStatus.status, 0);
   assert.match(driftStatus.stdout, /Overall: DRIFT/);
-  assert.match(driftStatus.stdout, /harness sync/);
+  assert.match(driftStatus.stdout, /kairo sync/);
 });

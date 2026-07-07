@@ -21,7 +21,7 @@ import { harnessHomePaths } from "../src/global/paths.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const harnessBin = join(packageRoot, "bin/harness.js");
-const baseOptions = { packageRoot, packageName: "@kal-elsam/harness", cliVersion: "0.6.0" };
+const baseOptions = { packageRoot, packageName: "@kal-elsam/kairo-runtime", cliVersion: "0.6.0" };
 
 async function createFakeHome() {
   const homeDir = await mkdtemp(join(tmpdir(), "harness-home-"));

@@ -12,7 +12,7 @@ import {
 import { listAdapters } from "../src/global/registry.js";
 
 test("brand intro title matches premium identity", () => {
-  assert.equal(brandIntroTitle(), "HARNESS — Local Agent Operating System");
+  assert.equal(brandIntroTitle(), "Kairo Runtime — Local Agent Operating System");
   assert.equal(WIZARD_COPY.introTitle, brandIntroTitle());
   assert.equal(BRAND.tagline, "Local Agent Operating System");
 });
@@ -78,7 +78,7 @@ test("formatResultNote dry-run recommends confirm command", () => {
     backups: []
   }, { dryRun: true });
 
-  assert.match(note, /harness setup --confirm/);
+  assert.match(note, /kairo setup --confirm/);
   assert.match(note, /Cursor/);
   assert.match(note, /Next steps/);
 });

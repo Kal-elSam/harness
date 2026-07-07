@@ -12,7 +12,7 @@ import { readGlobalState } from "../src/global/state.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const baseOptions = { packageRoot, packageName: "@kal-elsam/harness", cliVersion: "0.6.0" };
+const baseOptions = { packageRoot, packageName: "@kal-elsam/kairo-runtime", cliVersion: "0.6.0" };
 
 async function createFakeHome({ withUserContent = false } = {}) {
   const homeDir = await mkdtemp(join(tmpdir(), "harness-drift-home-"));

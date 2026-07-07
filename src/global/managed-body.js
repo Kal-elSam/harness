@@ -1,9 +1,12 @@
+import { formatCliCommand } from "./brand/cli.js";
+import { BRAND } from "./brand/index.js";
+
 export function buildManagedBody(context, adapter) {
   const sections = [
-    "## Harness (managed)",
+    `## ${BRAND.displayName} (managed)`,
     "",
     `Managed by \`${context.packageName}\`. Content inside these markers is refreshed by`,
-    "`harness sync`. Everything outside the markers is yours and is preserved."
+    `\`${formatCliCommand("sync")}\`. Everything outside the markers is yours and is preserved.`
   ];
 
   if (context.components.length === 0) {
@@ -17,8 +20,8 @@ export function buildManagedBody(context, adapter) {
 
   sections.push(
     "",
-    "- Run `harness doctor` to check ecosystem health.",
-    "- Run `harness uninstall` to remove managed sections safely."
+    `- Run \`${formatCliCommand("doctor")}\` to check ecosystem health.`,
+    `- Run \`${formatCliCommand("uninstall")}\` to remove managed sections safely.`
   );
 
   return sections.join("\n");

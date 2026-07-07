@@ -201,7 +201,7 @@ test("install --components uses a component created by init", async () => {
 
   const result = await installGlobalHarness({
     packageRoot,
-    packageName: "@kal-elsam/harness",
+    packageName: "@kal-elsam/kairo-runtime",
     cliVersion: "0.7.0",
     homeDir,
     workspaceRoot,

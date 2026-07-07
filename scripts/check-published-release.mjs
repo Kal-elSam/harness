@@ -18,6 +18,7 @@ async function defaultFetchJson(url) {
 export function parsePublishedReleaseArgs(argv) {
   const args = [...argv];
   let version = null;
+  let packageName = "@kal-elsam/kairo-runtime";
 
   for (let index = 2; index < args.length; index += 1) {
     const arg = args[index];
@@ -32,6 +33,16 @@ export function parsePublishedReleaseArgs(argv) {
       continue;
     }
 
+    if (arg === "--package") {
+      packageName = args[++index];
+      continue;
+    }
+
+    if (arg.startsWith("--package=")) {
+      packageName = arg.slice("--package=".length);
+      continue;
+    }
+
     throw new Error(`Unknown option "${arg}".`);
   }
 
@@ -39,12 +50,12 @@ export function parsePublishedReleaseArgs(argv) {
     throw new Error("Missing required --version <x.y.z>.");
   }
 
-  return { version };
+  return { version, packageName };
 }
 
 export async function verifyPublishedRelease({
   version,
-  packageName = "@kal-elsam/harness",
+  packageName = "@kal-elsam/kairo-runtime",
   runGit = defaultRunGit,
   fetchJson = defaultFetchJson
 }) {
@@ -103,8 +114,8 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
-  const { version } = parsePublishedReleaseArgs(process.argv);
-  const result = await verifyPublishedRelease({ version });
+  const { version, packageName } = parsePublishedReleaseArgs(process.argv);
+  const result = await verifyPublishedRelease({ version, packageName });
 
   console.log("Published release provenance OK");
   console.log(`Package: ${result.packageName}@${result.version}`);

@@ -56,27 +56,27 @@ export HARNESS_HOME="$FAKE_HOME"
 assert_harness_home_isolated
 
 echo
-echo "== harness setup --dry-run =="
-npx --no-install harness setup --dry-run
+echo "== kairo setup --dry-run =="
+npx --no-install kairo setup --dry-run
 
 echo
-echo "== harness status (before install) =="
-if npx --no-install harness status; then
+echo "== kairo status (before install) =="
+if npx --no-install kairo status; then
   echo "Expected status to fail before install" >&2
   exit 1
 fi
 
 echo
-echo "== harness install --dry-run (agent-global) =="
-npx --no-install harness install --dry-run
+echo "== kairo install --dry-run (agent-global) =="
+npx --no-install kairo install --dry-run
 
 echo
-echo "== harness install (agent-global) =="
-npx --no-install harness install
+echo "== kairo install (agent-global) =="
+npx --no-install kairo install
 
 echo
-echo "== harness status (after install) =="
-npx --no-install harness status
+echo "== kairo status (after install) =="
+npx --no-install kairo status
 
 SNAPSHOT="$(ls -A "$FAKE_HOME/.harness/backups" | head -1)"
 BACKUP_FILE="$(ls -A "$FAKE_HOME/.harness/backups/$SNAPSHOT" | head -1)"
@@ -89,8 +89,8 @@ fi
 EXPECTED_BACKUP_CONTENT="$(cat "$FAKE_HOME/.harness/backups/$SNAPSHOT/$BACKUP_FILE")"
 
 echo
-echo "== harness doctor (agent-global) =="
-npx --no-install harness doctor
+echo "== kairo doctor (agent-global) =="
+npx --no-install kairo doctor
 
 echo
 echo "== simulate drift + doctor detects it =="
@@ -102,26 +102,26 @@ const config = path.join(process.env.HARNESS_HOME, '.cursor', 'AGENTS.md');
 const content = fs.readFileSync(config, 'utf8');
 fs.writeFileSync(config, content.replace('### SDD Core', '### Broken'));
 "
-if npx --no-install harness doctor; then
+if npx --no-install kairo doctor; then
   echo "Expected doctor to fail after drift simulation" >&2
   exit 1
 fi
 
 echo
-echo "== harness sync repairs drift =="
-npx --no-install harness sync --yes
+echo "== kairo sync repairs drift =="
+npx --no-install kairo sync --yes
 
 echo
-echo "== harness status after sync =="
-npx --no-install harness status
+echo "== kairo status after sync =="
+npx --no-install kairo status
 
 echo
-echo "== harness doctor after repair =="
-npx --no-install harness doctor
+echo "== kairo doctor after repair =="
+npx --no-install kairo doctor
 
 echo
-echo "== harness history after sync =="
-npx --no-install harness history --json | node -e "
+echo "== kairo history after sync =="
+npx --no-install kairo history --json | node -e "
 const fs = require('node:fs');
 let input = '';
 process.stdin.on('data', (chunk) => { input += chunk; });
@@ -140,15 +140,15 @@ process.stdin.on('end', () => {
 "
 
 echo
-echo "== harness backups =="
-npx --no-install harness backups
+echo "== kairo backups =="
+npx --no-install kairo backups
 
 printf '%s\n' "SMOKE_USER_MARKER=corrupted" >"$FAKE_HOME/.cursor/AGENTS.md"
 BEFORE_PREVIEW="$(cat "$FAKE_HOME/.cursor/AGENTS.md")"
 
 echo
-echo "== harness rollback preview (dry-run) =="
-npx --no-install harness rollback --to "$SNAPSHOT"
+echo "== kairo rollback preview (dry-run) =="
+npx --no-install kairo rollback --to "$SNAPSHOT"
 AFTER_PREVIEW="$(cat "$FAKE_HOME/.cursor/AGENTS.md")"
 
 if [ "$BEFORE_PREVIEW" != "$AFTER_PREVIEW" ]; then
@@ -164,8 +164,8 @@ fi
 SNAPSHOT_COUNT_BEFORE="$(ls -A "$FAKE_HOME/.harness/backups" | wc -l | tr -d ' ')"
 
 echo
-echo "== harness rollback apply =="
-npx --no-install harness rollback --to "$SNAPSHOT" --apply
+echo "== kairo rollback apply =="
+npx --no-install kairo rollback --to "$SNAPSHOT" --apply
 
 assert_file_equals "$FAKE_HOME/.cursor/AGENTS.md" "$EXPECTED_BACKUP_CONTENT" "rollback target"
 
@@ -176,22 +176,22 @@ if [ "$SNAPSHOT_COUNT_AFTER" -le "$SNAPSHOT_COUNT_BEFORE" ]; then
 fi
 
 echo
-echo "== harness uninstall (agent-global) =="
-npx --no-install harness uninstall
+echo "== kairo uninstall (agent-global) =="
+npx --no-install kairo uninstall
 
 unset HARNESS_HOME
 
 echo
-echo "== harness install --scope=workspace --mode enterprise =="
-npx --no-install harness install --scope=workspace --mode enterprise
+echo "== kairo install --scope=workspace --mode enterprise =="
+npx --no-install kairo install --scope=workspace --mode enterprise
 
 echo
-echo "== harness doctor --scope=workspace =="
-npx --no-install harness doctor --scope=workspace
+echo "== kairo doctor --scope=workspace =="
+npx --no-install kairo doctor --scope=workspace
 
 echo
-echo "== harness update --scope=workspace --dry-run =="
-npx --no-install harness update --scope=workspace --dry-run
+echo "== kairo update --scope=workspace --dry-run =="
+npx --no-install kairo update --scope=workspace --dry-run
 
 echo
 echo "Smoke test passed."

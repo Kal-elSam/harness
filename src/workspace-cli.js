@@ -2,6 +2,7 @@ import { detectProject } from "./project-detection.js";
 import { installHarness } from "./template-installer.js";
 import { updateHarness } from "./harness-updater.js";
 import { runDoctorChecks } from "./doctor.js";
+import { BRAND } from "./global/brand/index.js";
 
 export async function runWorkspaceInit(options, packageManifest, packageRoot, suggestedInvocation) {
   const project = await detectProject(options.cwd);
@@ -17,7 +18,7 @@ export async function runWorkspaceInit(options, packageManifest, packageRoot, su
     dryRun: options.dryRun
   });
 
-  console.log(`Agentic Harness ${options.dryRun ? "plan" : "installed"} for ${project.name} (scope: workspace)`);
+  console.log(`${BRAND.displayName} ${options.dryRun ? "plan" : "installed"} for ${project.name} (scope: workspace)`);
   console.log(`Mode: ${result.mode}`);
   console.log(`Adapters: ${formatAdapters(result.adapters)}`);
   console.log(`Created: ${result.created.length}`);
@@ -47,7 +48,7 @@ export async function runWorkspaceUpdate(options, packageManifest, packageRoot) 
     dryRun: options.dryRun
   });
 
-  console.log(`Agentic Harness ${options.dryRun ? "update plan" : "updated"} for ${project.name} (scope: workspace)`);
+  console.log(`${BRAND.displayName} ${options.dryRun ? "update plan" : "updated"} for ${project.name} (scope: workspace)`);
   console.log(`Mode: ${result.mode}`);
   console.log(`Adapters: ${formatAdapters(result.adapters)}`);
   console.log(`Created: ${result.created.length}`);
@@ -68,7 +69,7 @@ export async function runWorkspaceDoctor(options) {
   const project = await detectProject(options.cwd);
   const { checks, ok } = await runDoctorChecks(project);
 
-  console.log(`Agentic Harness doctor for ${project.name} (scope: workspace)`);
+  console.log(`${BRAND.displayName} doctor for ${project.name} (scope: workspace)`);
   console.log(`Root: ${project.root}`);
   console.log(`Package manager: ${project.packageManager}`);
   console.log(`Stack: ${project.stack}`);

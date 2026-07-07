@@ -45,7 +45,7 @@ test("canUseSetupInk rejects dumb terminals", () => {
 
 test("formatInkHeaderLines snapshot", () => {
   const lines = formatInkHeaderLines();
-  assert.deepEqual(lines[0], "HARNESS");
+  assert.deepEqual(lines[0], "KAIRO RUNTIME");
   assert.match(lines[1], /Local Agent Operating System/);
 });
 
@@ -102,22 +102,23 @@ test("SETUP_STEPS starts with splash", () => {
 
 test("formatInkSplashLines full logo snapshot", () => {
   const lines = formatInkSplashLines({ compact: false });
-  assert.match(lines.join("\n"), /███████╗███████╗███████╗/);
-  assert.match(lines.join("\n"), /Agent Engineering Platform/);
+  assert.match(lines.join("\n"), /██╗  ██╗ █████╗ ██╗██████╗/);
+  assert.match(lines.join("\n"), /KAIRO RUNTIME/);
   assert.match(lines.join("\n"), /Local Agent Operating System/);
   assert.match(lines.join("\n"), /Press Enter to continue/);
+  assert.doesNotMatch(lines.join("\n"), /Agent Engineering Platform/);
 });
 
 test("formatInkSplashLines compact logo snapshot", () => {
   const lines = formatInkSplashLines({ compact: true });
-  assert.match(lines.join("\n"), /\|  _  \|/);
-  assert.doesNotMatch(lines.join("\n"), /███████╗███████╗███████╗/);
-  assert.match(lines.join("\n"), /Agent Engineering Platform/);
+  assert.match(lines.join("\n"), / _  __ ___ _ __/);
+  assert.doesNotMatch(lines.join("\n"), /██╗  ██╗ █████╗ ██╗██████╗/);
+  assert.match(lines.join("\n"), /KAIRO RUNTIME/);
 });
 
 test("shouldUseCompactSplashLogo picks compact layout for narrow terminals", () => {
   assert.equal(shouldUseCompactSplashLogo(80), false);
-  assert.equal(shouldUseCompactSplashLogo(61), true);
+  assert.equal(shouldUseCompactSplashLogo(35), true);
 });
 
 test("transitionFromSplash enter advances to detect", () => {

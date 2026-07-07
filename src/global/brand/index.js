@@ -1,28 +1,27 @@
-const ASCII_LOGO = [
-  "██╗  ██╗ █████╗ ██████╗ ███╗   ██╗███████╗███████╗███████╗",
-  "██║  ██║██╔══██╗██╔══██╗████╗  ██║██╔════╝██╔════╝██╔════╝",
-  "███████║███████║██████╔╝██╔██╗ ██║█████╗  ███████╗███████╗",
-  "██╔══██║██╔══██║██╔══██╗██║╚██╗██║██╔══╝  ╚════██║╚════██║",
-  "██║  ██║██║  ██║██║  ██║██║ ╚████║███████╗███████║███████║",
-  "╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝╚══════╝"
+const KAIRO_LOGO = [
+  "██╗  ██╗ █████╗ ██╗██████╗  ██████╗ ",
+  "██║ ██╔╝██╔══██╗██║██╔══██╗██╔═══██╗",
+  "█████╔╝ ███████║██║██████╔╝██║   ██║",
+  "██╔═██╗ ██╔══██║██║██╔══██╗██║   ██║",
+  "██║  ██╗██║  ██║██║██║  ██║╚██████╔╝",
+  "╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝ "
 ];
 
 const COMPACT_LOGO = [
-  " _   _    _    ____  _____ _   _ _____ _____ ",
-  "| | | |  / \\  |  _ \\| ____| \\ | | ____| ____|",
-  "| |_| | / _ \\ | |_) |  _| |  \\| |  _| |  _| ",
-  "|  _  |/ ___ \\|  _ <| |___| |\\  | |___| |___ ",
-  "|_| |_/_/   \\_\\_| \\_\\_____|_| \\_|_____|_____|"
+  " _  __ ___ _ __  ",
+  "| |/ /|_ _| '_ \\ ",
+  "| ' <  | || |_) |",
+  "|_|\\_\\|___| .__/ ",
+  "          |_|    "
 ];
 
 export const BRAND = {
-  name: "HARNESS",
+  name: "KAIRO RUNTIME",
+  displayName: "Kairo Runtime",
   tagline: "Local Agent Operating System",
   splashLine: "Coordinates local AI agents — does not install the apps themselves.",
-  asciiLogo: ASCII_LOGO,
+  asciiLogo: KAIRO_LOGO,
   compactLogo: COMPACT_LOGO,
-  splashTagline: "Agent Engineering Platform",
-  splashSubtitle: "Local Agent Operating System",
   splashHint: "Press Enter to continue",
   wizardCancelMessage: "Setup cancelled."
 };
@@ -56,10 +55,10 @@ export const AGENT_HINTS = {
 };
 
 export const WIZARD_COPY = {
-  introTitle: `${BRAND.name} — ${BRAND.tagline}`,
+  introTitle: `${BRAND.displayName} — ${BRAND.tagline}`,
   splashTitle: "Welcome",
   detectTitle: "Your agents",
-  agentsPrompt: "Which agents should Harness manage?",
+  agentsPrompt: `Which agents should ${BRAND.displayName} manage?`,
   componentsPrompt: "Which components should be installed?",
   previewTitle: "Plan preview",
   confirmDryRun: "Preview only — no files will be written. Continue?",
@@ -78,3 +77,9 @@ export function getAgentLabel(agentId) {
 export function getAgentSymbol(agentId) {
   return AGENT_SYMBOLS[agentId] ?? "•";
 }
+
+export function commandHeader(label) {
+  return `${BRAND.displayName} ${label}`;
+}
+
+export { formatCliCommand, PREFERRED_CLI } from "./cli.js";

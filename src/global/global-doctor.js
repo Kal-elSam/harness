@@ -4,6 +4,7 @@ import { detectGlobalDrift, hasRepairableDrift } from "./drift.js";
 import { harnessHomePaths } from "./paths.js";
 import { resolveComponent } from "./component-registry.js";
 import { readGlobalState } from "./state.js";
+import { formatCliCommand } from "./brand/cli.js";
 
 export async function runGlobalDoctorChecks(homeDir, { packageRoot, workspaceRoot = null } = {}) {
   const paths = harnessHomePaths(homeDir);
@@ -42,7 +43,7 @@ function stateOnlyCheck(state) {
       name: "~/.harness/state.json",
       status: "missing",
       category: "state",
-      detail: 'Not found. Run "harness install" to configure the local ecosystem.'
+      detail: `Not found. Run "${formatCliCommand("install")}" to configure the local ecosystem.`
     };
   }
 

@@ -68,13 +68,13 @@ test("bare harness --scope=workspace --dry-run routes to workspace init", () => 
   }
 });
 
-test("harness install --dry-run keeps technical install flow", async () => {
+test("kairo install --dry-run keeps technical install flow", async () => {
   const homeDir = await createFakeHome({ withCursorConfig: true });
   const statePath = join(homeDir, ".harness", "state.json");
 
   const cli = runHarness(["install", "--dry-run", "--agents", "cursor"], { homeDir });
   assert.equal(cli.status, 0, cli.stderr);
-  assert.match(cli.stdout, /Agentic Harness global install plan/);
+  assert.match(cli.stdout, /Kairo Runtime global install plan/);
   assert.match(cli.stdout, /Dry run: nothing was written/);
   assert.equal(existsSync(statePath), false);
 });

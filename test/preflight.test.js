@@ -17,7 +17,7 @@ const cliVersion = JSON.parse(
 ).version;
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion
 };
 
@@ -55,14 +55,14 @@ test("setup --yes shows managed preflight before applying", async () => {
 
   const cli = runHarness(["setup", "--yes", "--agents", "cursor"], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
-  assert.match(cli.stdout, /Harness preflight — setup/);
+  assert.match(cli.stdout, /Kairo Runtime preflight — setup/);
   assert.match(cli.stdout, /Managed markers:/);
   assert.match(cli.stdout, /harness:managed:start/);
   assert.match(cli.stdout, /Planned managed changes:/);
   assert.match(cli.stdout, /configured/);
   assert.equal(existsSync(paths.statePath), true);
 
-  const preflightIndex = cli.stdout.indexOf("Harness preflight — setup");
+  const preflightIndex = cli.stdout.indexOf("Kairo Runtime preflight — setup");
   const configuredIndex = cli.stdout.indexOf("configured");
   assert.ok(preflightIndex >= 0 && configuredIndex > preflightIndex);
 });
@@ -72,7 +72,7 @@ test("setup --yes --no-preflight omits preflight output", async () => {
 
   const cli = runHarness(["setup", "--yes", "--no-preflight", "--agents", "cursor"], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
-  assert.doesNotMatch(cli.stdout, /Harness preflight — setup/);
+  assert.doesNotMatch(cli.stdout, /Kairo Runtime preflight — setup/);
   assert.match(cli.stdout, /configured/);
 });
 
@@ -81,7 +81,7 @@ test("setup --dry-run does not show preflight", async () => {
 
   const cli = runHarness(["setup", "--yes", "--dry-run", "--agents", "cursor"], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
-  assert.doesNotMatch(cli.stdout, /Harness preflight — setup/);
+  assert.doesNotMatch(cli.stdout, /Kairo Runtime preflight — setup/);
   assert.match(cli.stdout, /Dry run: nothing was written/);
 });
 
@@ -99,10 +99,10 @@ test("sync apply shows preflight before repairs", async () => {
 
   const cli = runHarness(["sync", "--yes"], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
-  assert.match(cli.stdout, /Harness preflight — sync/);
+  assert.match(cli.stdout, /Kairo Runtime preflight — sync/);
   assert.match(cli.stdout, /Planned managed changes:/);
 
-  const preflightIndex = cli.stdout.indexOf("Harness preflight — sync");
+  const preflightIndex = cli.stdout.indexOf("Kairo Runtime preflight — sync");
   const repairedIndex = cli.stdout.indexOf("Applied repairs:");
   assert.ok(preflightIndex >= 0 && repairedIndex > preflightIndex);
   assert.equal(existsSync(assetPath), true);
@@ -122,7 +122,7 @@ test("sync --no-preflight omits preflight output", async () => {
 
   const cli = runHarness(["sync", "--no-preflight"], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
-  assert.doesNotMatch(cli.stdout, /Harness preflight — sync/);
+  assert.doesNotMatch(cli.stdout, /Kairo Runtime preflight — sync/);
   assert.match(cli.stdout, /Applied repairs:/);
 });
 
@@ -139,12 +139,12 @@ test("sync --dry-run and --json do not show preflight", async () => {
   await unlink(assetPath);
 
   const dryRunCli = runHarness(["sync", "--dry-run"], homeDir);
-  assert.doesNotMatch(dryRunCli.stdout, /Harness preflight — sync/);
+  assert.doesNotMatch(dryRunCli.stdout, /Kairo Runtime preflight — sync/);
   assert.match(dryRunCli.stdout, /Planned repairs:/);
   assert.equal(dryRunCli.status, 1);
 
   const jsonCli = runHarness(["sync", "--dry-run", "--json"], homeDir);
-  assert.doesNotMatch(jsonCli.stdout, /Harness preflight — sync/);
+  assert.doesNotMatch(jsonCli.stdout, /Kairo Runtime preflight — sync/);
   assert.match(jsonCli.stdout, /"ok"/);
   assert.equal(jsonCli.status, 1);
 });
@@ -157,10 +157,10 @@ test("upgrade --yes shows preflight before applying", async () => {
     HARNESS_TEST_LATEST_VERSION: "9.9.9"
   });
   assert.equal(cli.status, 0, cli.stderr);
-  assert.match(cli.stdout, /Harness preflight — upgrade/);
+  assert.match(cli.stdout, /Kairo Runtime preflight — upgrade/);
   assert.match(cli.stdout, /Applied upgrade with the current CLI package/);
 
-  const preflightIndex = cli.stdout.indexOf("Harness preflight — upgrade");
+  const preflightIndex = cli.stdout.indexOf("Kairo Runtime preflight — upgrade");
   const appliedIndex = cli.stdout.indexOf("Applied upgrade");
   assert.ok(preflightIndex >= 0 && appliedIndex > preflightIndex);
 });
@@ -173,7 +173,7 @@ test("upgrade --yes --no-preflight omits preflight output", async () => {
     HARNESS_TEST_LATEST_VERSION: "9.9.9"
   });
   assert.equal(cli.status, 0, cli.stderr);
-  assert.doesNotMatch(cli.stdout, /Harness preflight — upgrade/);
+  assert.doesNotMatch(cli.stdout, /Kairo Runtime preflight — upgrade/);
   assert.match(cli.stdout, /Applied upgrade with the current CLI package/);
 });
 
@@ -182,6 +182,6 @@ test("diff remains read-only without preflight header", async () => {
 
   const cli = runHarness(["diff"], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
-  assert.match(cli.stdout, /Harness diff — managed content preview/);
-  assert.doesNotMatch(cli.stdout, /Harness preflight —/);
+  assert.match(cli.stdout, /Kairo Runtime diff — managed content preview/);
+  assert.doesNotMatch(cli.stdout, /Kairo Runtime preflight —/);
 });

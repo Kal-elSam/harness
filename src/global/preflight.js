@@ -1,3 +1,4 @@
+import { commandHeader } from "./brand/index.js";
 import { SECTION_END, SECTION_START } from "./managed-section.js";
 
 export function shouldShowPreflight({
@@ -21,7 +22,7 @@ export function printManagedPreflight({
   consentSource = "none",
   policyProfile = "none"
 }) {
-  console.log(`Harness preflight — ${command}`);
+  console.log(commandHeader(`preflight — ${command}`));
   console.log(`Consent source: ${consentSource}`);
   console.log(`Policy profile: ${policyProfile}`);
   console.log(`Summary: ${summary}`);

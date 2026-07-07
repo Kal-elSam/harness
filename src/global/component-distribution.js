@@ -18,6 +18,7 @@ import {
   readWorkspaceCatalogDocument,
   workspaceCatalogPath
 } from "./load-workspace-component-catalog.js";
+import { formatCliCommand } from "./brand/cli.js";
 
 export async function packWorkspaceComponent({ workspaceRoot, id, outPath }) {
   const root = resolve(workspaceRoot);
@@ -28,7 +29,7 @@ export async function packWorkspaceComponent({ workspaceRoot, id, outPath }) {
   }
 
   if (!outPath || typeof outPath !== "string") {
-    throw new Error("Missing --out. Use: harness components pack <id> --out <file>");
+    throw new Error(`Missing --out. Use: ${formatCliCommand("components pack <id> --out <file>")}`);
   }
 
   const components = loadWorkspaceComponentCatalog(root, { bundledIds: COMPONENT_IDS });

@@ -25,7 +25,7 @@ const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const harnessBin = join(packageRoot, "bin/harness.js");
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion: "0.18.0"
 };
 
@@ -248,7 +248,7 @@ test("policy fast applies like confirm without interactive prompt", async () => 
 
   const cli = runHarness(["setup", "--agents", "cursor"], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
-  assert.match(cli.stdout, /Harness preflight — setup/);
+  assert.match(cli.stdout, /Kairo Runtime preflight — setup/);
   assert.doesNotMatch(cli.stderr, /Non-interactive setup requires/);
 });
 

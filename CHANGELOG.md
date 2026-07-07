@@ -1,6 +1,20 @@
 # Changelog
 
-All notable changes to `@kal-elsam/harness` are documented here.
+All notable changes to `@kal-elsam/kairo-runtime` are documented here.
+Historical entries below may reference the legacy `@kal-elsam/harness` package name.
+
+## 0.1.0 — 2026-07-07
+
+First public release of **Kairo Runtime** under `@kal-elsam/kairo-runtime`.
+
+### Rebrand
+
+- Product identity: Kairo Runtime — Local Agent Operating System.
+- Preferred CLI: `kairo` and `kairo-runtime`.
+- Legacy CLI aliases retained: `harness`, `agentic-harness`, `sgs-harness`, `harness-sgs`.
+- Legacy state paths unchanged: `~/.harness`, `HARNESS_HOME`, `harness:managed:*`.
+- Command headers and setup copy use Kairo Runtime branding.
+- Bridge package `@kal-elsam/harness` remains out of scope for this release.
 
 ## 0.29.1 — 2026-07-07
 

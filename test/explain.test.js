@@ -19,7 +19,7 @@ const cliVersion = JSON.parse(
 ).version;
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion
 };
 
@@ -75,7 +75,7 @@ test("explain without state recommends setup and writes nothing", async () => {
   const report = await buildExplainReport(homeDir);
 
   assert.equal(report.installed, false);
-  assert.match(report.nextAction, /harness setup/i);
+  assert.match(report.nextAction, /kairo setup/i);
   assert.equal(existsSync(paths.root), false);
 
   const cli = runHarness(["explain"], homeDir);

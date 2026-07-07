@@ -121,7 +121,7 @@ test("update fails clearly when no manifest exists yet", async () => {
 
   await assert.rejects(
     () => updateHarness({ project, packageRoot, packageName: "@kal-elsam/harness", cliVersion: "0.2.0" }),
-    /harness init/
+    /kairo init/
   );
 });
 

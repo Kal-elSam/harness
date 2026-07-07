@@ -7,6 +7,7 @@ import {
   TOKENS,
   WIZARD_COPY
 } from "../brand/index.js";
+import { formatCliCommand, PREFERRED_CLI } from "../brand/cli.js";
 
 export function brandIntroTitle() {
   return WIZARD_COPY.introTitle;
@@ -117,7 +118,7 @@ export function formatPreviewNote({ preview, componentCatalog = [] }) {
   return lines.join("\n");
 }
 
-export function formatResultNote(result, { dryRun = false } = {}) {
+export function formatResultNote(result, { dryRun = false, cliName = PREFERRED_CLI } = {}) {
   const agentLabels = result.agents.map((id) => getAgentLabel(id)).join(", ");
   const componentLine = result.components.length > 0
     ? result.components.join(", ")
@@ -132,12 +133,12 @@ export function formatResultNote(result, { dryRun = false } = {}) {
     "",
     paint("Next steps", "accent"),
     dryRun
-      ? "  harness setup --confirm   Apply this plan"
-      : "  harness status            Check ecosystem health",
+      ? `  ${formatCliCommand("setup --confirm", cliName)}   Apply this plan`
+      : `  ${formatCliCommand("status", cliName)}            Check ecosystem health`,
     dryRun
-      ? "  harness setup --dry-run   Re-preview changes"
-      : "  harness doctor            Run health checks",
-    dryRun ? "" : "  harness sync              Repair drift when needed"
+      ? `  ${formatCliCommand("setup --dry-run", cliName)}   Re-preview changes`
+      : `  ${formatCliCommand("doctor", cliName)}            Run health checks`,
+    dryRun ? "" : `  ${formatCliCommand("sync", cliName)}              Repair drift when needed`
   ].filter((line) => line !== "");
 
   return lines.join("\n");

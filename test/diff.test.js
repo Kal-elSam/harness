@@ -17,7 +17,7 @@ const cliVersion = JSON.parse(
 ).version;
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion
 };
 

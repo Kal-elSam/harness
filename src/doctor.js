@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { readManifest } from "./manifest.js";
+import { formatCliCommand } from "./global/brand/cli.js";
 
 const REQUIRED_FILES = ["AGENTS.md", "docs/ai/harness.md", "docs/ai/memory.md"];
 
@@ -38,7 +39,7 @@ async function manifestChecks(root) {
     return [{
       name: ".harness/manifest.json",
       status: "warning",
-      detail: 'Not found. Run "harness init" to enable "harness update".'
+      detail: `Not found. Run "${formatCliCommand("init")}" to enable "${formatCliCommand("update")}".`
     }];
   }
 

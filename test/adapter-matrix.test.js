@@ -23,7 +23,7 @@ const cliVersion = JSON.parse(
 ).version;
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion
 };
 
@@ -236,7 +236,7 @@ test("adapters human output documents non-installer behavior", async () => {
   const cli = runHarness(["adapters"], homeDir);
 
   assert.equal(cli.status, 0, cli.stderr);
-  assert.match(cli.stdout, /Harness adapters — supported agent integrations/);
+  assert.match(cli.stdout, /Kairo Runtime adapters — supported agent integrations/);
   assert.match(cli.stdout, /does not install Cursor, Codex, OpenCode, or Claude Code/i);
   assert.match(cli.stdout, /\.config\/opencode/);
   assert.match(cli.stdout, /\.claude\/CLAUDE\.md/);

@@ -28,7 +28,7 @@ const harnessBin = join(packageRoot, "bin/harness.js");
 const cliVersion = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")).version;
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion
 };
 

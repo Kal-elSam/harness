@@ -18,6 +18,7 @@ import {
   getInstalledComponentIds,
   normalizeGlobalState
 } from "./state-migration.js";
+import { formatCliCommand } from "./brand/cli.js";
 
 export async function installGlobalHarness({
   packageRoot,
@@ -93,7 +94,7 @@ export async function updateGlobalHarness(options) {
   const state = await readGlobalState(paths.statePath);
 
   if (!state) {
-    throw new Error('No global state found at ~/.harness/state.json. Run "harness install" first.');
+    throw new Error(`No global state found at ~/.harness/state.json. Run "${formatCliCommand("install")}" first.`);
   }
 
   return syncGlobalHarness({

@@ -11,6 +11,7 @@ import { harnessHomePaths } from "./paths.js";
 import { printManagedPreflight, shouldShowPreflight, summarizeDiffPreflight } from "./preflight.js";
 import { loadConsentAudit } from "./policy.js";
 import { readGlobalState } from "./state.js";
+import { formatCliCommand } from "./brand/cli.js";
 import { runHarnessSetup } from "./setup.js";
 
 export async function runHarnessUpgrade({
@@ -128,7 +129,7 @@ export async function runHarnessUpgrade({
 
     result = outcome.result;
   } else {
-    throw new Error('No managed state found. Run "harness setup --yes" before upgrading.');
+    throw new Error(`No managed state found. Run "${formatCliCommand("setup --yes")}" before upgrading.`);
   }
 
   return {

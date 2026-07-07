@@ -8,6 +8,7 @@ import {
   readWorkspaceCatalogDocument,
   workspaceCatalogPath
 } from "./load-workspace-component-catalog.js";
+import { formatCliCommand } from "./brand/cli.js";
 
 const COMPONENT_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
 const DEFAULT_VERSION = "0.1.0";
@@ -97,7 +98,7 @@ function normalizeComponentId(id) {
 
 function normalizeLabel(label) {
   if (typeof label !== "string" || label.trim().length === 0) {
-    throw new Error('Missing --label. Use: harness components init <id> --label "My Label"');
+    throw new Error(`Missing --label. Use: ${formatCliCommand('components init <id> --label "My Label"')}`);
   }
 
   return label.trim();
@@ -112,8 +113,8 @@ function buildDefaultReadme(label, id) {
     "Edit this file, then run:",
     "",
     "```bash",
-    "harness components validate",
-    `harness install --components ${id}`,
+    formatCliCommand("components validate"),
+    formatCliCommand(`install --components ${id}`),
     "```",
     ""
   ].join("\n");

@@ -42,7 +42,7 @@ test("doctor reports ok manifest status after install", async () => {
     project,
     packageRoot,
     mode: "minimal",
-    packageName: "@kal-elsam/harness",
+    packageName: "@kal-elsam/kairo-runtime",
     cliVersion: "0.2.0"
   });
 
@@ -60,7 +60,7 @@ test("doctor flags manifest drift when a tracked file is removed", async () => {
     project,
     packageRoot,
     mode: "minimal",
-    packageName: "@kal-elsam/harness",
+    packageName: "@kal-elsam/kairo-runtime",
     cliVersion: "0.2.0"
   });
 

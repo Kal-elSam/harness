@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir } from "node:fs/promises";
 import { basename, join, relative, sep } from "node:path";
+import { formatCliCommand } from "./brand/cli.js";
 
 export function backupTimestamp(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, "-");
@@ -45,7 +46,7 @@ export function resolveSnapshotDir(backupsDir, snapshotName) {
 
   if (!existsSync(snapshotDir)) {
     throw new Error(
-      `Snapshot not found: "${snapshotName}". Run "harness backups" to list available snapshots.`
+      `Snapshot not found: "${snapshotName}". Run "${formatCliCommand("backups")}" to list available snapshots.`
     );
   }
 

@@ -15,7 +15,7 @@ const cliVersion = JSON.parse(
 ).version;
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion
 };
 
@@ -90,5 +90,5 @@ test("formatInkSuccessLines snapshot", () => {
   }, { dryRun: false });
 
   assert.match(lines.join("\n"), /Setup complete/);
-  assert.match(lines.join("\n"), /harness status/);
+  assert.match(lines.join("\n"), /kairo status/);
 });

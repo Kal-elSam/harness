@@ -45,7 +45,7 @@ test("detection returns only present agent roots", async () => {
   await mkdir(join(homeDir, ".cursor"), { recursive: true });
   await mkdir(join(homeDir, ".codex"), { recursive: true });
 
-  const context = buildAdapterContext({ homeDir, packageName: "@kal-elsam/harness" });
+  const context = buildAdapterContext({ homeDir, packageName: "@kal-elsam/kairo-runtime" });
   const detected = detectInstalledAdapters(context);
 
   assert.deepEqual(detected, ["cursor", "codex"]);
@@ -53,7 +53,7 @@ test("detection returns only present agent roots", async () => {
 
 test("resolveTargetAdapters falls back to all adapters when none detected", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "harness-registry-empty-"));
-  const context = buildAdapterContext({ homeDir, packageName: "@kal-elsam/harness" });
+  const context = buildAdapterContext({ homeDir, packageName: "@kal-elsam/kairo-runtime" });
 
   const targets = resolveTargetAdapters(context);
 
@@ -62,7 +62,7 @@ test("resolveTargetAdapters falls back to all adapters when none detected", asyn
 
 test("resolveTargetAdapters honors explicit adapter selection", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "harness-registry-select-"));
-  const context = buildAdapterContext({ homeDir, packageName: "@kal-elsam/harness" });
+  const context = buildAdapterContext({ homeDir, packageName: "@kal-elsam/kairo-runtime" });
 
   const targets = resolveTargetAdapters(context, ["claude"]);
 
@@ -71,7 +71,7 @@ test("resolveTargetAdapters honors explicit adapter selection", async () => {
 
 test("resolveTargetAdapters honors all selection", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "harness-registry-all-"));
-  const context = buildAdapterContext({ homeDir, packageName: "@kal-elsam/harness" });
+  const context = buildAdapterContext({ homeDir, packageName: "@kal-elsam/kairo-runtime" });
 
   const targets = resolveTargetAdapters(context, ["all"]);
 

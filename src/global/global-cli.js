@@ -38,6 +38,8 @@ import {
   recordUpgradeHistory
 } from "./history.js";
 import { buildDiagnosticsReport, buildReportJson, DEFAULT_HISTORY_LIMIT, writeReportFile } from "./report.js";
+import { BRAND, commandHeader } from "./brand/index.js";
+import { formatCliCommand } from "./brand/cli.js";
 
 export async function runGlobalInstall(options, packageManifest, packageRoot, { update = false } = {}) {
   const homeDir = resolveHomeDir();
@@ -161,11 +163,11 @@ export async function runGlobalSync(options, packageManifest, packageRoot) {
     return outcome;
   }
 
-  console.log("Harness sync — converge local AI ecosystem");
+  console.log(commandHeader("sync — converge local AI ecosystem"));
 
   switch (outcome.action) {
     case "setup-required":
-      console.log('No managed state found. Run "harness setup" first.');
+      console.log(`No managed state found. Run "${formatCliCommand("setup")}" first.`);
       if (options.dryRun) console.log("Dry run: nothing was written.");
       break;
     case "noop":
@@ -225,12 +227,12 @@ export async function runGlobalUpgrade(options, packageManifest, packageRoot) {
   });
 
   if (outcome.cancelled) {
-    console.log("Harness upgrade — preview or apply managed ecosystem updates");
+    console.log(commandHeader("upgrade — preview or apply managed ecosystem updates"));
     console.log("Upgrade cancelled. No changes were written.");
     return outcome;
   }
 
-  console.log("Harness upgrade — preview or apply managed ecosystem updates");
+  console.log(commandHeader("upgrade — preview or apply managed ecosystem updates"));
   console.log(`Installed CLI: ${outcome.installedVersion}`);
   console.log(`Published latest: ${outcome.latestVersion}`);
   console.log("");
@@ -270,7 +272,7 @@ function buildSyncJsonExtras(outcome) {
 }
 
 function printStatusReport(report) {
-  console.log("Harness status — local AI ecosystem");
+  console.log(commandHeader("status — local AI ecosystem"));
   console.log(`Home: ${report.homeDir}`);
   console.log(`State root: ${report.stateRoot}`);
   console.log(
@@ -336,7 +338,7 @@ function printSyncRepairSummary(result, { dryRun = false } = {}) {
 function printInstallResult(result, { update = false, dryRun = false, command = null } = {}) {
   const verb = update ? "update" : (command === "setup" ? "setup" : "install");
   const pastLabel = update ? "updated" : (command === "setup" ? "configured" : "installed");
-  console.log(`Agentic Harness global ${dryRun ? `${verb} plan` : pastLabel} (scope: agent-global)`);
+  console.log(`${BRAND.displayName} global ${dryRun ? `${verb} plan` : pastLabel} (scope: agent-global)`);
   console.log(`State root: ${result.stateRoot}`);
   console.log(`Agents: ${result.agents.join(", ")}`);
   console.log(`Components: ${result.components.join(", ") || "none (core plumbing only)"}`);
@@ -365,7 +367,7 @@ function printInstallResult(result, { update = false, dryRun = false, command = 
     return;
   }
 
-  console.log('State tracked in ~/.harness/state.json. Run "harness status" or "harness doctor" to verify.');
+  console.log(`State tracked in ~/.harness/state.json. Run "${formatCliCommand("status")}" or "${formatCliCommand("doctor")}" to verify.`);
 }
 
 export async function runGlobalUninstall(options, packageManifest) {
@@ -381,7 +383,7 @@ export async function runGlobalUninstall(options, packageManifest) {
     result
   });
 
-  console.log(`Agentic Harness global ${options.dryRun ? "uninstall plan" : "uninstalled"} (scope: agent-global)`);
+  console.log(`${BRAND.displayName} global ${options.dryRun ? "uninstall plan" : "uninstalled"} (scope: agent-global)`);
   console.log(`Configs cleaned: ${result.configsCleaned.join(", ") || "none"}`);
   console.log(`Backups: ${result.backups.length}`);
   console.log(`State removed: ${result.stateRemoved ? "yes" : "no state found"}`);
@@ -404,7 +406,7 @@ export async function runGlobalDoctor(packageRoot, {
 
   const { checks, ok, hasDrift } = await runGlobalDoctorChecks(homeDir, { packageRoot, workspaceRoot });
 
-  console.log("Agentic Harness doctor (scope: agent-global)");
+  console.log(`${BRAND.displayName} doctor (scope: agent-global)`);
   console.log(`Home: ${homeDir}`);
   console.log("");
 
@@ -418,7 +420,7 @@ export async function runGlobalDoctor(packageRoot, {
   if (ok) {
     console.log("Status: OK");
   } else if (hasDrift) {
-    console.log('Status: DRIFT DETECTED — run "harness sync" to auto-repair managed content');
+    console.log(`Status: DRIFT DETECTED — run "${formatCliCommand("sync")}" to auto-repair managed content`);
   } else {
     console.log("Status: FAILED (missing managed state or configs)");
   }
@@ -459,7 +461,7 @@ export async function runGlobalExplain({ json = false, cliVersion = null } = {})
 }
 
 function printExplainReport(report) {
-  console.log("Harness explain — managed ecosystem audit (read-only)");
+  console.log(commandHeader("explain — managed ecosystem audit (read-only)"));
   console.log(`Home: ${report.homeDir}`);
   console.log(`State root: ${report.stateRoot}`);
   console.log("");
@@ -487,7 +489,7 @@ function printExplainReport(report) {
   }
 
   console.log("");
-  console.log("Harness writes to:");
+  console.log(`${BRAND.displayName} writes to:`);
   for (const target of report.writesTo) {
     console.log(`  - ~/${target.replace(/^\//, "")}`);
   }
@@ -581,7 +583,7 @@ export async function runGlobalReport({
 function formatDiagnosticsReport(report) {
   const lines = [];
 
-  lines.push("Harness report — local diagnostics (read-only)");
+  lines.push(commandHeader("report — local diagnostics (read-only)"));
   lines.push(`CLI version: ${report.cliVersion}`);
   lines.push(`Home: ${report.homeDir}`);
   lines.push("");
@@ -673,7 +675,7 @@ export async function runGlobalDiff({
 }
 
 function printDiffReport(report) {
-  console.log("Harness diff — managed content preview (read-only)");
+  console.log(commandHeader("diff — managed content preview (read-only)"));
   console.log(`Home: ${report.homeDir}`);
   console.log(`Summary: ${report.summary}`);
   console.log("");
@@ -721,10 +723,10 @@ function printDiffReport(report) {
 }
 
 function printAdapterMatrixReport(report) {
-  console.log("Harness adapters — supported agent integrations");
+  console.log(commandHeader("adapters — supported agent integrations"));
   console.log(`Home: ${report.homeDir}`);
   console.log("");
-  console.log("Harness does not install Cursor, Codex, OpenCode, or Claude Code.");
+  console.log(`${BRAND.displayName} does not install Cursor, Codex, OpenCode, or Claude Code.`);
   console.log("It configures managed sections in each agent's config files.");
   console.log("");
   console.log(`Supported: ${report.supportedCount}  Detected: ${report.detectedCount}  Managed: ${report.managedCount}`);
@@ -755,7 +757,7 @@ export function printGlobalComponents({ workspaceRoot = process.cwd() } = {}) {
   const bundled = describeBundledComponentCatalog();
   const workspace = describeWorkspaceComponentCatalog(workspaceRoot);
 
-  console.log("Harness components (scope: agent-global)");
+  console.log(commandHeader("components (scope: agent-global)"));
   console.log(`Bundled: ${bundled.length}`);
 
   for (const component of bundled) {
@@ -819,8 +821,8 @@ export async function runComponentsInit(options) {
   console.log("");
   console.log("Next:");
   console.log(`  1. Edit .harness/components/${result.entry.id}/README.md`);
-  console.log("  2. harness components validate");
-  console.log(`  3. harness install --components ${result.entry.id}`);
+  console.log(`  2. ${formatCliCommand("components validate")}`);
+  console.log(`  3. ${formatCliCommand(`install --components ${result.entry.id}`)}`);
 }
 
 export async function runComponentsPack(options) {
@@ -851,8 +853,8 @@ export async function runComponentsImport(options) {
   console.log(`Assets: ${result.entry.assetFiles.map((asset) => `.harness/components/${result.entry.id}/${asset}`).join(", ")}`);
   console.log("");
   console.log("Next:");
-  console.log("  1. harness components validate");
-  console.log(`  2. harness install --components ${result.entry.id}`);
+  console.log(`  1. ${formatCliCommand("components validate")}`);
+  console.log(`  2. ${formatCliCommand(`install --components ${result.entry.id}`)}`);
 }
 
 export async function runGlobalBackups() {
@@ -860,7 +862,7 @@ export async function runGlobalBackups() {
   const { backupsDir } = harnessHomePaths(homeDir);
   const snapshots = await describeBackupSnapshots(backupsDir);
 
-  console.log("Harness backups");
+  console.log(commandHeader("backups"));
   console.log("Directory: ~/.harness/backups");
   console.log(`Snapshots: ${snapshots.length}`);
 
@@ -897,7 +899,7 @@ export async function runGlobalHistory(options, packageManifest) {
       return { event, warnings };
     }
 
-    console.log("Harness history last — most recent managed operation");
+    console.log(commandHeader("history last — most recent managed operation"));
     console.log(`Home: ${homeDir}`);
     console.log(`File: ${historyPath}`);
     printHistoryFiltersLabel(query);
@@ -927,7 +929,7 @@ export async function runGlobalHistory(options, packageManifest) {
     return { events, warnings };
   }
 
-  console.log("Harness history — local operation audit log");
+  console.log(commandHeader("history — local operation audit log"));
   console.log(`Home: ${homeDir}`);
   console.log(`File: ${historyPath}`);
   console.log(`Events: ${events.length}`);
@@ -989,7 +991,7 @@ function printHistoryEventDetails(event) {
 
 export async function runGlobalRollback(options, packageManifest) {
   if (!options.snapshot) {
-    throw new Error('Missing snapshot. Use: harness rollback --to <snapshot>');
+    throw new Error(`Missing snapshot. Use: ${formatCliCommand("rollback --to <snapshot>")}`);
   }
 
   const homeDir = resolveHomeDir();
@@ -1003,7 +1005,7 @@ export async function runGlobalRollback(options, packageManifest) {
       result
     });
 
-    console.log("Harness rollback applied");
+    console.log(commandHeader("rollback applied"));
     console.log(`Snapshot: ${result.snapshot}`);
     console.log(`Restored: ${result.restored.length}`);
 
@@ -1020,7 +1022,7 @@ export async function runGlobalRollback(options, packageManifest) {
 
   const result = await previewRollback({ homeDir, snapshot: options.snapshot });
 
-  console.log("Harness rollback preview");
+  console.log(commandHeader("rollback preview"));
   console.log(`Snapshot: ${result.snapshot}`);
   console.log(`Files: ${result.plans.length}`);
 
@@ -1113,7 +1115,7 @@ function printPolicyReport(homeDir, rawPolicy) {
   const resolved = resolvePolicy(rawPolicy ?? {});
   const policyPath = harnessHomePaths(homeDir).policyPath;
 
-  console.log("Harness policy — local operation preferences");
+  console.log(commandHeader("policy — local operation preferences"));
   console.log(`Home: ${homeDir}`);
   console.log(`File: ${rawPolicy ? policyPath : "(none — using CLI defaults)"}`);
   console.log("");
@@ -1128,7 +1130,7 @@ function printPolicyReport(homeDir, rawPolicy) {
   console.log(`Components: ${resolved.components.join(", ") || "none"}`);
   console.log("");
   console.log("Precedence: CLI flags > policy file > internal defaults.");
-  console.log("Commands: harness policy set <key> <value> | harness policy reset");
+  console.log(`Commands: ${formatCliCommand("policy set <key> <value>")} | ${formatCliCommand("policy reset")}`);
 }
 
 function formatPolicyAgents(agents) {

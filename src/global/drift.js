@@ -7,6 +7,7 @@ import { hasManagedSection, upsertManagedSection } from "./managed-section.js";
 import { resolveComponent } from "./component-registry.js";
 import { resolveComponentTemplateDir } from "./component-paths.js";
 import { listAdapters } from "./registry.js";
+import { formatCliCommand } from "./brand/cli.js";
 
 export async function detectGlobalDrift({ homeDir, paths, state, packageRoot, workspaceRoot = null, context }) {
   if (!state) {
@@ -14,7 +15,7 @@ export async function detectGlobalDrift({ homeDir, paths, state, packageRoot, wo
       name: "~/.harness/state.json",
       status: "missing",
       category: "state",
-      detail: 'Not found. Run "harness install" first.'
+      detail: `Not found. Run "${formatCliCommand("install")}" first.`
     }];
   }
 
@@ -90,7 +91,7 @@ async function componentAssetDrift({ paths, state, packageRoot, workspaceRoot, c
           status: "stale",
           category: "component_asset",
           componentId: component.id,
-          detail: "State hash drift. Run harness sync to refresh metadata."
+          detail: `State hash drift. Run ${formatCliCommand("sync")} to refresh metadata.`
         });
       } else {
         checks.push({
@@ -239,9 +240,9 @@ function classifyManagedSection(content, expectedBody) {
 function managedSectionDetail(status, configFile) {
   switch (status) {
     case "missing":
-      return `No managed section in ~/${configFile}. Run "harness sync".`;
+      return `No managed section in ~/${configFile}. Run "${formatCliCommand("sync")}".`;
     case "stale":
-      return `Stale managed section in ~/${configFile}. Run "harness sync".`;
+      return `Stale managed section in ~/${configFile}. Run "${formatCliCommand("sync")}".`;
     default:
       return `Managed section in sync at ~/${configFile}`;
   }

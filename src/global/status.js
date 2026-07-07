@@ -4,6 +4,7 @@ import { buildEffectivePolicy } from "./policy.js";
 import { harnessHomePaths } from "./paths.js";
 import { GLOBAL_AGENT_IDS, detectInstalledAdapters } from "./registry.js";
 import { readGlobalState } from "./state.js";
+import { formatCliCommand } from "./brand/cli.js";
 
 export async function buildStatusReport(homeDir, { packageRoot, workspaceRoot = null } = {}) {
   const paths = harnessHomePaths(homeDir);
@@ -74,16 +75,16 @@ function resolveOverallStatus({ state, doctor }) {
 function resolveNextAction(overall, { backups = 0 } = {}) {
   switch (overall) {
     case "missing":
-      return 'Run "harness setup" (or "harness install") to configure the local ecosystem.';
+      return `Run "${formatCliCommand("setup")}" (or "${formatCliCommand("install")}") to configure the local ecosystem.`;
     case "drift":
       return backups > 0
-        ? 'Run "harness sync" to repair managed content. Use "harness rollback" to restore a prior snapshot.'
-        : 'Run "harness sync" to repair managed content.';
+        ? `Run "${formatCliCommand("sync")}" to repair managed content. Use "${formatCliCommand("rollback")}" to restore a prior snapshot.`
+        : `Run "${formatCliCommand("sync")}" to repair managed content.`;
     case "failed":
-      return 'Run "harness doctor" for details, then "harness sync" or "harness setup".';
+      return `Run "${formatCliCommand("doctor")}" for details, then "${formatCliCommand("sync")}" or "${formatCliCommand("setup")}".`;
     case "ok":
       return backups > 0
-        ? 'Ecosystem healthy. Use "harness rollback" if you need a prior snapshot.'
+        ? `Ecosystem healthy. Use "${formatCliCommand("rollback")}" if you need a prior snapshot.`
         : "Ecosystem healthy. No action required.";
     default: {
       const _exhaustive = overall;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseArgs, resolveSuggestedInvocation } from "../src/cli.js";
 
-const packageName = "@kal-elsam/harness";
+const packageName = "@kal-elsam/kairo-runtime";
 
 test("bare harness defaults to setup for interactive entry", () => {
   const { command } = parseArgs([]);
@@ -39,7 +39,7 @@ test("suggests pnpm dlx when invoked as harness.js via pnpm", () => {
   try {
     assert.equal(
       resolveSuggestedInvocation(packageName, ["node", "/tmp/.pnpm/harness.js"]),
-      "pnpm dlx @kal-elsam/harness"
+      "pnpm dlx @kal-elsam/kairo-runtime"
     );
   } finally {
     if (previousExecPath === undefined) {
@@ -59,7 +59,7 @@ test("suggests npx when invoked as harness.js without pnpm", () => {
   try {
     assert.equal(
       resolveSuggestedInvocation(packageName, ["node", "/tmp/node_modules/.bin/harness.js"]),
-      "npx @kal-elsam/harness"
+      "npx @kal-elsam/kairo-runtime"
     );
   } finally {
     if (previousExecPath === undefined) {

@@ -22,7 +22,7 @@ const cliVersion = JSON.parse(
 ).version;
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion
 };
 
@@ -215,7 +215,7 @@ test("report --out writes only the requested file", async () => {
   const cli = runHarness(["report", "--out", outPath], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
   assert.equal(existsSync(outPath), true);
-  assert.match(await readFile(outPath, "utf8"), /Harness report/);
+  assert.match(await readFile(outPath, "utf8"), /Kairo Runtime report/);
   assert.match(cli.stdout, /Diagnostics report written to:/);
 
   const stateAfter = await readFile(paths.statePath, "utf8");

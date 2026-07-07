@@ -15,7 +15,7 @@ const harnessBin = join(packageRoot, "bin/harness.js");
 
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion: "0.14.0"
 };
 
@@ -126,7 +126,7 @@ test("upgrade rejects --dry-run and --yes together", async () => {
   );
 });
 
-test("harness upgrade --dry-run CLI prints latest command and writes nothing", () => {
+test("kairo upgrade --dry-run CLI prints latest command and writes nothing", () => {
   const homeDir = mkdtempSync(join(tmpdir(), "harness-upgrade-cli-"));
   mkdirSync(join(homeDir, ".cursor"), { recursive: true });
   mkdirSync(join(homeDir, ".codex"), { recursive: true });
@@ -142,7 +142,7 @@ test("harness upgrade --dry-run CLI prints latest command and writes nothing", (
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Published latest: 9\.9\.9/);
-  assert.match(result.stdout, /npx @kal-elsam\/harness@latest setup --dry-run/);
+  assert.match(result.stdout, /npx @kal-elsam\/kairo-runtime@latest setup --dry-run/);
   assert.match(result.stdout, /Dry run: nothing was written/);
   assert.equal(existsSync(join(homeDir, ".harness")), false);
 });

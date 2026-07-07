@@ -1,4 +1,5 @@
 import { stdin as input, stdout as output } from "node:process";
+import { BRAND } from "./brand/index.js";
 import { installGlobalHarness } from "./global-installer.js";
 import {
   assertExplicitApplyConsent,
@@ -256,7 +257,7 @@ export async function runHarnessSetup({
 function printSetupIntro({ homeDir }) {
   const detected = detectInstalledAdapters({ homeDir });
 
-  console.log("Harness setup — local AI ecosystem configurator");
+  console.log(`${BRAND.displayName} setup — local AI ecosystem configurator`);
   console.log("Configures and coordinates local agents. Does not install the AI apps themselves.");
   console.log("");
   console.log(`Detected agents: ${detected.join(", ") || "none"}`);

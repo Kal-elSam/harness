@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PACKAGE="@kal-elsam/harness"
+PACKAGE="@kal-elsam/kairo-runtime"
+PREFERRED_CLI="kairo"
 VERSION="latest"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --package)
+      PACKAGE="$2"
+      shift 2
+      ;;
+    --package=*)
+      PACKAGE="${1#*=}"
+      shift
+      ;;
     --version)
       VERSION="$2"
       shift 2
@@ -65,23 +74,23 @@ if [ "$VERSION" != "latest" ] && [ "$INSTALLED_VERSION" != "$VERSION" ]; then
   exit 1
 fi
 
-CLI_VERSION="$(npx --no-install harness --version)"
+CLI_VERSION="$(npx --no-install ${PREFERRED_CLI} --version)"
 if [ "$CLI_VERSION" != "$INSTALLED_VERSION" ]; then
-  echo "harness --version (${CLI_VERSION}) does not match installed package (${INSTALLED_VERSION})" >&2
+  echo "${PREFERRED_CLI} --version (${CLI_VERSION}) does not match installed package (${INSTALLED_VERSION})" >&2
   exit 1
 fi
 
 echo
-echo "== harness setup --dry-run =="
-npx --no-install harness setup --dry-run
+echo "== ${PREFERRED_CLI} setup --dry-run =="
+npx --no-install ${PREFERRED_CLI} setup --dry-run
 
 echo
-echo "== harness setup --yes =="
-npx --no-install harness setup --yes
+echo "== ${PREFERRED_CLI} setup --yes =="
+npx --no-install ${PREFERRED_CLI} setup --yes
 
 echo
-echo "== harness adapters --json =="
-ADAPTERS_JSON="$(npx --no-install harness adapters --json)"
+echo "== ${PREFERRED_CLI} adapters --json =="
+ADAPTERS_JSON="$(npx --no-install ${PREFERRED_CLI} adapters --json)"
 echo "$ADAPTERS_JSON"
 node -e "
 const payload = JSON.parse(process.argv[1]);
@@ -92,8 +101,8 @@ if (JSON.stringify(managed) !== JSON.stringify(expected)) process.exit(1);
 " "$ADAPTERS_JSON"
 
 echo
-echo "== harness status --json =="
-STATUS_JSON="$(npx --no-install harness status --json)"
+echo "== ${PREFERRED_CLI} status --json =="
+STATUS_JSON="$(npx --no-install ${PREFERRED_CLI} status --json)"
 echo "$STATUS_JSON"
 node -e "
 const payload = JSON.parse(process.argv[1]);
@@ -104,8 +113,8 @@ if (JSON.stringify(managed) !== JSON.stringify(expected)) process.exit(1);
 " "$STATUS_JSON"
 
 echo
-echo "== harness upgrade --dry-run =="
-npx --no-install harness upgrade --dry-run
+echo "== ${PREFERRED_CLI} upgrade --dry-run =="
+npx --no-install ${PREFERRED_CLI} upgrade --dry-run
 
 echo
 echo "== simulate drift =="
@@ -119,12 +128,12 @@ fs.writeFileSync(config, content.replace('### SDD Core', '### Broken'));
 "
 
 echo
-echo "== harness sync =="
-npx --no-install harness sync --yes
+echo "== ${PREFERRED_CLI} sync =="
+npx --no-install ${PREFERRED_CLI} sync --yes
 
 echo
-echo "== harness status --json confirms OK =="
-STATUS_JSON="$(npx --no-install harness status --json)"
+echo "== ${PREFERRED_CLI} status --json confirms OK =="
+STATUS_JSON="$(npx --no-install ${PREFERRED_CLI} status --json)"
 echo "$STATUS_JSON"
 OVERALL="$(node -e "const p=JSON.parse(process.argv[1]); if(!p.ok||p.overall!=='ok'){process.exit(1)} console.log(p.overall)" "$STATUS_JSON")"
 if [ "$OVERALL" != "ok" ]; then
@@ -133,8 +142,8 @@ if [ "$OVERALL" != "ok" ]; then
 fi
 
 echo
-echo "== harness uninstall =="
-npx --no-install harness uninstall
+echo "== ${PREFERRED_CLI} uninstall =="
+npx --no-install ${PREFERRED_CLI} uninstall
 
 echo
 echo "Registry smoke test passed."

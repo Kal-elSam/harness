@@ -21,7 +21,7 @@ const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const harnessBin = join(packageRoot, "bin/harness.js");
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion: "0.18.0"
 };
 
@@ -209,7 +209,7 @@ test("non-interactive setup --confirm applies with preflight", async () => {
   assert.ok(existsSync(join(homeDir, ".cursor", "AGENTS.md")));
 });
 
-test("harness setup --agents cursor in non-TTY rejects without consent", async () => {
+test("kairo setup --agents cursor in non-TTY rejects without consent", async () => {
   const homeDir = await createFakeHome({ withCursorConfig: true });
   const paths = harnessHomePaths(homeDir);
 
@@ -219,18 +219,18 @@ test("harness setup --agents cursor in non-TTY rejects without consent", async (
   assert.equal(existsSync(paths.statePath), false);
 });
 
-test("harness setup --confirm --agents cursor applies with preflight", async () => {
+test("kairo setup --confirm --agents cursor applies with preflight", async () => {
   const homeDir = await createFakeHome({ withCursorConfig: true });
   const paths = harnessHomePaths(homeDir);
 
   const cli = runHarness(["setup", "--confirm", "--agents", "cursor"], homeDir);
   assert.equal(cli.status, 0, cli.stderr);
-  assert.match(cli.stdout, /Harness preflight — setup/);
+  assert.match(cli.stdout, /Kairo Runtime preflight — setup/);
   assert.equal(existsSync(paths.statePath), true);
   assert.ok(existsSync(join(homeDir, ".cursor", "AGENTS.md")));
 });
 
-test("harness setup --dry-run --agents cursor writes nothing", async () => {
+test("kairo setup --dry-run --agents cursor writes nothing", async () => {
   const homeDir = await createFakeHome({ withCursorConfig: true });
   const paths = harnessHomePaths(homeDir);
 

@@ -72,7 +72,7 @@ assert_exit() {
 mkdir -p "$FAKE_HOME/.cursor" "$FAKE_HOME/.codex"
 printf '%s\n' "# user content" >"$FAKE_HOME/.cursor/AGENTS.md"
 
-echo "Harness UX smoke — capturing terminal output to $CAPTURE_DIR"
+echo "Kairo Runtime UX smoke — capturing terminal output to $CAPTURE_DIR"
 echo
 
 run_capture help help
@@ -111,15 +111,15 @@ assert_contains "$CAPTURE_DIR/sync-dry-run.txt" "Backups planned:"
 assert_exit sync-dry-run 1
 
 run_capture history history
-assert_contains "$CAPTURE_DIR/history.txt" "Harness history"
+assert_contains "$CAPTURE_DIR/history.txt" "Kairo Runtime history"
 assert_exit history 0
 
 run_capture history-last history last
-assert_contains "$CAPTURE_DIR/history-last.txt" "Harness history last"
+assert_contains "$CAPTURE_DIR/history-last.txt" "Kairo Runtime history last"
 assert_exit history-last 0
 
 run_capture report report
-assert_contains "$CAPTURE_DIR/report.txt" "Harness report"
+assert_contains "$CAPTURE_DIR/report.txt" "Kairo Runtime report"
 assert_contains "$CAPTURE_DIR/report.txt" "Diff:"
 assert_exit report 1
 

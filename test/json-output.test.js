@@ -14,7 +14,7 @@ const harnessBin = join(packageRoot, "bin/harness.js");
 const cliVersion = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")).version;
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion
 };
 
@@ -80,7 +80,7 @@ test("status --json before setup reports missing and exits non-zero", async () =
   assertStableEnvelope(payload);
   assert.equal(payload.ok, false);
   assert.equal(payload.overall, "missing");
-  assert.match(payload.nextAction, /harness setup/);
+  assert.match(payload.nextAction, /kairo setup/);
 });
 
 test("status --json after setup reports ok and exits zero", async () => {
@@ -137,7 +137,7 @@ test("human status output remains the default", async () => {
   const cli = runHarness(["status"], homeDir);
 
   assert.notEqual(cli.status, 0);
-  assert.match(cli.stdout, /Harness status — local AI ecosystem/);
+  assert.match(cli.stdout, /Kairo Runtime status — local AI ecosystem/);
   assert.match(cli.stdout, /Overall: MISSING/);
   assert.throws(() => JSON.parse(cli.stdout));
 });

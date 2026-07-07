@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PACKAGE="@kal-elsam/harness"
+PACKAGE="@kal-elsam/kairo-runtime"
+PREFERRED_CLI="kairo"
 VERSION="latest"
 REPO="Kal-elSam/harness"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --package)
+      PACKAGE="$2"
+      shift 2
+      ;;
+    --package=*)
+      PACKAGE="${1#*=}"
+      shift
+      ;;
     --version)
       VERSION="$2"
       shift 2
@@ -132,13 +141,13 @@ if [ ! -d "$FAKE_HOME/.harness" ]; then
 fi
 
 echo
-echo "== harness status --json =="
+echo "== ${PREFERRED_CLI} status --json =="
 STATUS_JSON="$(npx --yes "${PACKAGE}@${VERSION}" status --json)"
 echo "$STATUS_JSON"
 assert_status_ok "$STATUS_JSON"
 
 echo
-echo "== harness uninstall =="
+echo "== ${PREFERRED_CLI} uninstall =="
 npx --yes "${PACKAGE}@${VERSION}" uninstall
 assert_managed_configs_removed
 

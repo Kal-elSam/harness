@@ -1,7 +1,7 @@
 {
-  "name": "@kal-elsam/harness",
-  "version": "0.29.1",
-  "description": "Installable AI governance harness for Codex, Cursor, Claude, Gemini, Copilot, Engram, and Graphify.",
+  "name": "@kal-elsam/kairo-runtime",
+  "version": "0.1.0",
+  "description": "Kairo Runtime — local agent operating system for Codex, Cursor, Claude, Gemini, Copilot, Engram, and Graphify.",
   "type": "module",
   "homepage": "https://github.com/Kal-elSam/harness#readme",
   "repository": {
@@ -12,6 +12,8 @@
     "url": "https://github.com/Kal-elSam/harness/issues"
   },
   "bin": {
+    "kairo": "./bin/kairo.js",
+    "kairo-runtime": "./bin/kairo-runtime.js",
     "harness": "./bin/harness.js",
     "agentic-harness": "./bin/harness.js",
     "sgs-harness": "./bin/harness.js",
@@ -28,7 +30,7 @@
   ],
   "scripts": {
     "test": "node --test",
-    "doctor": "node ./bin/harness.js doctor",
+    "doctor": "node ./bin/kairo.js doctor",
     "smoke": "bash scripts/smoke-test.sh",
     "ux:smoke": "bash scripts/ux-smoke-test.sh",
     "smoke:registry": "bash scripts/registry-smoke-test.sh",
@@ -41,6 +43,8 @@
     "agents",
     "codex",
     "cursor",
+    "kairo",
+    "kairo-runtime",
     "harness",
     "sdd",
     "tdd"

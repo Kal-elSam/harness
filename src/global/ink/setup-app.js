@@ -65,11 +65,11 @@ function Splash({ compact }) {
       if (index < logoLineCount) {
         return React.createElement(Text, { key: `logo-${index}`, bold: true, color: INK_COLORS.accent }, line);
       }
-      if (line === BRAND.splashTagline) {
-        return React.createElement(Text, { key: `line-${index}`, color: INK_COLORS.muted }, line);
+      if (line === BRAND.name) {
+        return React.createElement(Text, { key: `line-${index}`, bold: true, color: INK_COLORS.accent }, line);
       }
-      if (line === BRAND.splashSubtitle) {
-        return React.createElement(Text, { key: `line-${index}`, dimColor: true }, line);
+      if (line === BRAND.tagline) {
+        return React.createElement(Text, { key: `line-${index}`, color: INK_COLORS.muted }, line);
       }
       if (line === BRAND.splashHint) {
         return React.createElement(Text, { key: `line-${index}`, dimColor: true }, line);

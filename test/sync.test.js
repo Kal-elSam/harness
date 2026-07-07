@@ -15,7 +15,7 @@ const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const harnessBin = join(packageRoot, "bin/harness.js");
 const baseOptions = {
   packageRoot,
-  packageName: "@kal-elsam/harness",
+  packageName: "@kal-elsam/kairo-runtime",
   cliVersion: "0.9.0"
 };
 
@@ -44,7 +44,7 @@ test("sync --dry-run without state writes nothing and recommends setup", async (
   assert.equal(outcome.action, "setup-required");
   assert.equal(outcome.wrote, false);
   assert.equal(outcome.report.overall, "missing");
-  assert.match(outcome.report.nextAction, /harness setup/);
+  assert.match(outcome.report.nextAction, /kairo setup/);
   assert.equal(existsSync(paths.root), false);
 
   const cli = spawnSync(process.execPath, [harnessBin, "sync", "--dry-run"], {
@@ -53,7 +53,7 @@ test("sync --dry-run without state writes nothing and recommends setup", async (
     env: { ...process.env, HARNESS_HOME: homeDir }
   });
   assert.notEqual(cli.status, 0);
-  assert.match(cli.stdout, /Run "harness setup"/);
+  assert.match(cli.stdout, /Run "kairo setup"/);
   assert.match(cli.stdout, /Dry run: nothing was written/);
   assert.equal(existsSync(paths.root), false);
 });

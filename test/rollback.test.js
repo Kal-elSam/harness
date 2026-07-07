@@ -18,7 +18,7 @@ import {
 import { assertValidSnapshotName } from "../src/global/backups.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const baseOptions = { packageRoot, packageName: "@kal-elsam/harness", cliVersion: "0.4.0" };
+const baseOptions = { packageRoot, packageName: "@kal-elsam/kairo-runtime", cliVersion: "0.4.0" };
 
 async function createFakeHome({ withCursorConfig = false } = {}) {
   const homeDir = await mkdtemp(join(tmpdir(), "harness-rollback-home-"));
