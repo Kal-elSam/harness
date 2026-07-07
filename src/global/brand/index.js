@@ -1,7 +1,29 @@
+const ASCII_LOGO = [
+  "██╗  ██╗ █████╗ ██████╗ ███╗   ██╗███████╗███████╗███████╗",
+  "██║  ██║██╔══██╗██╔══██╗████╗  ██║██╔════╝██╔════╝██╔════╝",
+  "███████║███████║██████╔╝██╔██╗ ██║█████╗  ███████╗███████╗",
+  "██╔══██║██╔══██║██╔══██╗██║╚██╗██║██╔══╝  ╚════██║╚════██║",
+  "██║  ██║██║  ██║██║  ██║██║ ╚████║███████╗███████║███████║",
+  "╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝╚══════╝"
+];
+
+const COMPACT_LOGO = [
+  " _   _    _    ____  _____ _   _ _____ _____ ",
+  "| | | |  / \\  |  _ \\| ____| \\ | | ____| ____|",
+  "| |_| | / _ \\ | |_) |  _| |  \\| |  _| |  _| ",
+  "|  _  |/ ___ \\|  _ <| |___| |\\  | |___| |___ ",
+  "|_| |_/_/   \\_\\_| \\_\\_____|_| \\_|_____|_____|"
+];
+
 export const BRAND = {
   name: "HARNESS",
   tagline: "Local Agent Operating System",
   splashLine: "Coordinates local AI agents — does not install the apps themselves.",
+  asciiLogo: ASCII_LOGO,
+  compactLogo: COMPACT_LOGO,
+  splashTagline: "Agent Engineering Platform",
+  splashSubtitle: "Local Agent Operating System",
+  splashHint: "Press Enter to continue",
   wizardCancelMessage: "Setup cancelled."
 };
 

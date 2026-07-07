@@ -2,6 +2,19 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.29.0 — 2026-07-07
+
+Minor release. Ink setup opens with a branded splash screen before agent detection.
+
+### Splash screen
+
+- New `SPLASH` step precedes agent detection in the Ink setup flow.
+- Full ASCII `HARNESS` logo with tagline `Agent Engineering Platform`, subtitle
+  `Local Agent Operating System`, and `Press Enter to continue` hint.
+- Narrow terminals automatically use a compact logo variant.
+- `Enter` advances to detection; `Esc` cancels as before.
+- `--simple`, non-TTY/CI, and `--yes`/`--confirm` paths are unchanged (no splash).
+
 ## 0.28.0 — 2026-07-07
 
 Minor release. Interactive setup uses Ink for a full terminal UI.

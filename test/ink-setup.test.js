@@ -6,12 +6,17 @@ import {
   shouldUseSetupInk
 } from "../src/global/ink/setup-routing.js";
 import {
+  INITIAL_SETUP_STEP,
+  SETUP_STEPS,
   formatInkDetectPanel,
   formatInkHeaderLines,
   formatInkPreviewLines,
   formatInkSelectList,
+  formatInkSplashLines,
+  shouldUseCompactSplashLogo,
   toggleComponentSelection,
-  toggleSelection
+  toggleSelection,
+  transitionFromSplash
 } from "../src/global/ink/setup-state.js";
 import { listAdapters } from "../src/global/registry.js";
 
@@ -87,4 +92,46 @@ test("formatInkPreviewLines groups plan sections", () => {
   assert.match(note.join("\n"), /Managed writes/);
   assert.match(note.join("\n"), /Orchestrator/);
   assert.doesNotMatch(note.join("\n"), /harness:managed/);
+});
+
+test("SETUP_STEPS starts with splash", () => {
+  assert.equal(SETUP_STEPS.SPLASH, "splash");
+  assert.equal(INITIAL_SETUP_STEP, SETUP_STEPS.SPLASH);
+});
+
+test("formatInkSplashLines full logo snapshot", () => {
+  const lines = formatInkSplashLines({ compact: false });
+  assert.match(lines.join("\n"), /███████╗███████╗███████╗/);
+  assert.match(lines.join("\n"), /Agent Engineering Platform/);
+  assert.match(lines.join("\n"), /Local Agent Operating System/);
+  assert.match(lines.join("\n"), /Press Enter to continue/);
+});
+
+test("formatInkSplashLines compact logo snapshot", () => {
+  const lines = formatInkSplashLines({ compact: true });
+  assert.match(lines.join("\n"), /\|  _  \|/);
+  assert.doesNotMatch(lines.join("\n"), /███████╗███████╗███████╗/);
+  assert.match(lines.join("\n"), /Agent Engineering Platform/);
+});
+
+test("shouldUseCompactSplashLogo picks compact layout for narrow terminals", () => {
+  assert.equal(shouldUseCompactSplashLogo(80), false);
+  assert.equal(shouldUseCompactSplashLogo(61), true);
+});
+
+test("transitionFromSplash enter advances to detect", () => {
+  const result = transitionFromSplash({ enter: true });
+  assert.equal(result.kind, "advance");
+  assert.equal(result.step, SETUP_STEPS.DETECT);
+});
+
+test("transitionFromSplash escape cancels", () => {
+  const result = transitionFromSplash({ escape: true });
+  assert.equal(result.kind, "cancel");
+});
+
+test("splash routing skipped for simple, non-TTY, and yes modes", () => {
+  assert.equal(shouldUseSetupInk({ interactive: true, simple: true, inkCapable: true }), false);
+  assert.equal(shouldUseSetupInk({ interactive: false, inkCapable: true }), false);
+  assert.equal(shouldUseSetupInk({ interactive: true, yes: true, inkCapable: true }), false);
 });

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
-import { WIZARD_COPY } from "../brand/index.js";
+import { stdout as output } from "node:process";
+import { BRAND, WIZARD_COPY } from "../brand/index.js";
 import { DEFAULT_COMPONENT_IDS, describeComponentCatalog } from "../component-registry.js";
 import { GLOBAL_AGENT_IDS, detectInstalledAdapters, listAdapters } from "../registry.js";
 import { buildSetupPreview, resolveComponentSelection } from "../clack/setup-preview.js";
@@ -12,8 +13,12 @@ import {
   formatInkHeaderLines,
   formatInkPreviewLines,
   formatInkSelectList,
+  formatInkSplashLines,
+  INITIAL_SETUP_STEP,
+  shouldUseCompactSplashLogo,
   toggleComponentSelection,
-  toggleSelection
+  toggleSelection,
+  transitionFromSplash
 } from "./setup-state.js";
 
 const INK_COLORS = {
@@ -50,6 +55,32 @@ function Footer({ children }) {
   return React.createElement(Text, { dimColor: true }, children);
 }
 
+function Splash({ compact }) {
+  const lines = formatInkSplashLines({ compact });
+  const logoLineCount = compact ? BRAND.compactLogo.length : BRAND.asciiLogo.length;
+
+  return React.createElement(Box, { flexDirection: "column", marginBottom: 1 },
+    lines.map((line, index) => {
+      if (index < logoLineCount) {
+        return React.createElement(Text, { key: `logo-${index}`, bold: true, color: INK_COLORS.accent }, line);
+      }
+      if (line === BRAND.splashTagline) {
+        return React.createElement(Text, { key: `line-${index}`, color: INK_COLORS.muted }, line);
+      }
+      if (line === BRAND.splashSubtitle) {
+        return React.createElement(Text, { key: `line-${index}`, dimColor: true }, line);
+      }
+      if (line === BRAND.splashHint) {
+        return React.createElement(Text, { key: `line-${index}`, dimColor: true }, line);
+      }
+      if (line === "") {
+        return React.createElement(Text, { key: `line-${index}` }, "");
+      }
+      return React.createElement(Text, { key: `line-${index}` }, line);
+    })
+  );
+}
+
 export function SetupApp({
   homeDir,
   workspaceRoot,
@@ -67,7 +98,8 @@ export function SetupApp({
   const componentOptions = buildComponentOptions(componentCatalog);
   const defaultAgents = detected.length > 0 ? detected : [...GLOBAL_AGENT_IDS];
 
-  const [step, setStep] = useState(SETUP_STEPS.DETECT);
+  const [step, setStep] = useState(INITIAL_SETUP_STEP);
+  const useCompactSplash = shouldUseCompactSplashLogo(output.columns);
   const [activeIndex, setActiveIndex] = useState(0);
   const [selectedAgents, setSelectedAgents] = useState(defaultAgents);
   const [selectedComponents, setSelectedComponents] = useState([...DEFAULT_COMPONENT_IDS]);
@@ -115,6 +147,22 @@ export function SetupApp({
   useInput((inputKey, key) => {
     if (key.escape) {
       finish({ cancelled: true, usedWizard: true });
+      return;
+    }
+
+    if (step === SETUP_STEPS.SPLASH) {
+      const splashTransition = transitionFromSplash({
+        escape: key.escape,
+        enter: key.return
+      });
+
+      if (splashTransition.kind === "cancel") {
+        finish({ cancelled: true, usedWizard: true });
+        return;
+      }
+      if (splashTransition.kind === "advance") {
+        setStep(splashTransition.step);
+      }
       return;
     }
 
@@ -193,7 +241,8 @@ export function SetupApp({
   const detectPanel = formatInkDetectPanel({ adapters, detected });
 
   return React.createElement(Box, { flexDirection: "column" },
-    React.createElement(Header),
+    step === SETUP_STEPS.SPLASH && React.createElement(Splash, { compact: useCompactSplash }),
+    step !== SETUP_STEPS.SPLASH && React.createElement(Header),
     step === SETUP_STEPS.DETECT && React.createElement(Panel, { title: WIZARD_COPY.detectTitle },
       detectPanel.split("\n")
         .map((line) => React.createElement(Text, { key: line }, line))
@@ -216,6 +265,7 @@ export function SetupApp({
       React.createElement(Text, null, dryRun ? WIZARD_COPY.confirmDryRun : WIZARD_COPY.confirmApply)
     ),
     React.createElement(Footer, null,
+      step === SETUP_STEPS.SPLASH && `${BRAND.splashHint} · Esc cancel`,
       step === SETUP_STEPS.DETECT && "Enter continue · Esc cancel",
       step === SETUP_STEPS.AGENTS && "↑↓ move · Space toggle · Enter continue · Esc cancel",
       step === SETUP_STEPS.COMPONENTS && "↑↓ move · Space toggle · Enter continue · Esc cancel",

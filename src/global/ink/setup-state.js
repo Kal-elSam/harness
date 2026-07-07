@@ -2,12 +2,43 @@ import { AGENT_HINTS, BRAND, getAgentLabel, WIZARD_COPY } from "../brand/index.j
 import { formatAgentMultiselectHint } from "../clack/theme.js";
 
 export const SETUP_STEPS = {
+  SPLASH: "splash",
   DETECT: "detect",
   AGENTS: "agents",
   COMPONENTS: "components",
   PREVIEW: "preview",
   CONFIRM: "confirm"
 };
+
+export function shouldUseCompactSplashLogo(columns) {
+  if (!columns || columns <= 0) return false;
+  const fullWidth = Math.max(...BRAND.asciiLogo.map((line) => line.length));
+  return columns < fullWidth + 4;
+}
+
+export function formatInkSplashLines({ compact = false } = {}) {
+  const logo = compact ? BRAND.compactLogo : BRAND.asciiLogo;
+  return [
+    ...logo,
+    "",
+    BRAND.splashTagline,
+    BRAND.splashSubtitle,
+    "",
+    BRAND.splashHint
+  ];
+}
+
+export const INITIAL_SETUP_STEP = SETUP_STEPS.SPLASH;
+
+export function transitionFromSplash({ escape = false, enter = false } = {}) {
+  if (escape) {
+    return { kind: "cancel" };
+  }
+  if (enter) {
+    return { kind: "advance", step: SETUP_STEPS.DETECT };
+  }
+  return { kind: "noop" };
+}
 
 export function toggleSelection(selected, id) {
   if (selected.includes(id)) {
