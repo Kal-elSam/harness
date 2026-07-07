@@ -2,6 +2,26 @@
 
 All notable changes to `@kal-elsam/harness` are documented here.
 
+## 0.27.0 — 2026-07-07
+
+Minor release. Premium terminal identity for the interactive setup wizard.
+
+### Brand layer
+
+- New `src/global/brand/` tokens: name, tagline, agent labels (Cursor, Codex,
+  OpenCode, Claude Code), and semantic colors (success, warning, danger, muted,
+  accent).
+- New `src/global/clack/theme.js` formats splash, agent detection card, plan
+  preview, and result summary for the Clack wizard.
+
+### Setup wizard UX
+
+- Intro: `HARNESS — Local Agent Operating System` with compact welcome splash.
+- Agent detection card with human hints (`ready`, `not detected`, `managed later`).
+- Plan preview grouped into Agents, Components, Managed writes, and Preserved
+  content — less technical noise on the happy path.
+- Non-TTY, `--json`, `--yes`, and explicit flags keep the existing textual CLI.
+
 ## 0.26.0 — 2026-07-07
 
 Minor release. Interactive setup now uses `@clack/prompts` instead of the homemade TUI.

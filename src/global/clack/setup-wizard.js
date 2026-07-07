@@ -1,4 +1,5 @@
 import * as defaultPrompts from "@clack/prompts";
+import { BRAND, getAgentLabel, WIZARD_COPY } from "../brand/index.js";
 import { describeComponentCatalog, DEFAULT_COMPONENT_IDS } from "../component-registry.js";
 import { loadConsentAudit } from "../policy.js";
 import {
@@ -9,11 +10,18 @@ import {
 } from "../registry.js";
 import {
   buildSetupPreview,
-  formatDetectNote,
-  formatPreviewNote,
   resolveComponentSelection
 } from "./setup-preview.js";
 import { SetupWizardCancelledError } from "./setup-wizard-constants.js";
+import {
+  brandIntroTitle,
+  formatAgentDetectCard,
+  formatAgentMultiselectHint,
+  formatComponentMultiselectHint,
+  formatPreviewNote,
+  formatResultNote,
+  formatSplashNote
+} from "./theme.js";
 
 export { SetupWizardCancelledError };
 
@@ -36,7 +44,7 @@ export function shouldUseSetupWizard({
 /** @deprecated Use shouldUseSetupWizard */
 export const shouldUseSetupTui = shouldUseSetupWizard;
 
-function handleCancel(prompts, message = "Setup cancelled.") {
+function handleCancel(prompts, message = BRAND.wizardCancelMessage) {
   prompts.cancel(message);
   return { cancelled: true, usedWizard: true };
 }
@@ -63,20 +71,20 @@ export async function runSetupWizard({
   const defaultAgents = detected.length > 0 ? detected : [...GLOBAL_AGENT_IDS];
 
   try {
-    prompts.intro("Harness");
-    prompts.log.info("Local AI ecosystem configurator — coordinates agents, does not install the apps.");
+    prompts.intro(brandIntroTitle());
+    prompts.note(formatSplashNote(), WIZARD_COPY.splashTitle);
 
     prompts.note(
-      formatDetectNote({ adapters, detected }),
-      "Detected agents"
+      formatAgentDetectCard({ adapters, detected }),
+      WIZARD_COPY.detectTitle
     );
 
     const agentSelection = await prompts.multiselect({
-      message: "Which agents should Harness configure?",
+      message: WIZARD_COPY.agentsPrompt,
       options: adapters.map((adapter) => ({
         value: adapter.id,
-        label: adapter.label,
-        hint: detected.includes(adapter.id) ? "detected" : "not installed"
+        label: getAgentLabel(adapter.id),
+        hint: formatAgentMultiselectHint(adapter.id, detected)
       })),
       initialValues: defaultAgents,
       required: true
@@ -89,16 +97,16 @@ export async function runSetupWizard({
     const agents = validateAdapterIds(agentSelection);
     const defaultComponents = [...DEFAULT_COMPONENT_IDS];
     const componentSelection = await prompts.multiselect({
-      message: "Which components should be installed?",
+      message: WIZARD_COPY.componentsPrompt,
       options: [
         ...components.map((component) => ({
           value: component.id,
           label: component.label,
-          hint: component.defaultEnabled ? "default" : undefined
+          hint: formatComponentMultiselectHint(component)
         })),
         {
           value: "__none__",
-          label: "none (core plumbing only)"
+          label: WIZARD_COPY.coreOnlyLabel
         }
       ],
       initialValues: defaultComponents,
@@ -125,12 +133,13 @@ export async function runSetupWizard({
       noDefaultComponents
     });
 
-    prompts.note(formatPreviewNote({ preview }), "Preview managed changes");
+    prompts.note(
+      formatPreviewNote({ preview, componentCatalog: components }),
+      WIZARD_COPY.previewTitle
+    );
 
     const approved = await prompts.confirm({
-      message: dryRun
-        ? "Preview only — no files will be written. Continue?"
-        : "Apply this plan? Backups are created before config writes when applicable.",
+      message: dryRun ? WIZARD_COPY.confirmDryRun : WIZARD_COPY.confirmApply,
       initialValue: true
     });
 
@@ -175,26 +184,11 @@ export async function runSetupWizard({
 export const runSetupTui = runSetupWizard;
 
 export function renderSetupWizardResult(result, { dryRun = false, prompts = defaultPrompts } = {}) {
-  const lines = [
-    `State root: ${result.stateRoot}`,
-    `Agents: ${result.agents.join(", ")}`,
-    `Components: ${result.components.join(", ") || "none (core plumbing only)"}`,
-    `Configs created: ${result.configsCreated.length}`,
-    `Configs updated: ${result.configsUpdated.length}`,
-    `${dryRun ? "Backups planned" : "Backups"}: ${result.backups.length}`,
-    "",
-    "Next actions:",
-    dryRun
-      ? "  harness setup --confirm   Apply this plan"
-      : "  harness status            Verify ecosystem health",
-    dryRun
-      ? "  harness setup --dry-run   Re-preview changes"
-      : "  harness doctor            Detailed health checks",
-    dryRun ? "" : "  harness sync              Repair drift when needed"
-  ].filter((line) => line !== "");
-
-  prompts.note(lines.join("\n"), dryRun ? "Dry run complete" : "Setup complete");
-  prompts.outro(dryRun ? "Nothing was written." : "Harness is ready.");
+  prompts.note(
+    formatResultNote(result, { dryRun }),
+    dryRun ? WIZARD_COPY.resultDryRunTitle : WIZARD_COPY.resultSuccessTitle
+  );
+  prompts.outro(dryRun ? WIZARD_COPY.outroDryRun : WIZARD_COPY.outroSuccess);
 }
 
 /** @deprecated Use renderSetupWizardResult */

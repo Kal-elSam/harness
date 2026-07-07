@@ -85,6 +85,7 @@ assert_exit help 0
 run_capture setup-dry-run setup --dry-run
 assert_contains "$CAPTURE_DIR/setup-dry-run.txt" "Dry run: nothing was written."
 assert_contains "$CAPTURE_DIR/setup-dry-run.txt" "Backups planned:"
+assert_not_contains "$CAPTURE_DIR/setup-dry-run.txt" "Local Agent Operating System"
 assert_exit setup-dry-run 0
 
 run_capture status-missing status
@@ -132,6 +133,7 @@ assert_exit invalid-limit 1
 
 run_capture consent-missing setup --agents cursor
 assert_contains "$CAPTURE_DIR/consent-missing.stderr.txt" "Non-interactive setup requires"
+assert_not_contains "$CAPTURE_DIR/consent-missing.txt" "Local Agent Operating System"
 assert_exit consent-missing 1
 
 echo

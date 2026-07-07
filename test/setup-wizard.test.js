@@ -83,7 +83,7 @@ function createMockPrompts({
     },
     async multiselect(opts) {
       if (cancelAt === "agents") return CANCEL;
-      if (opts.message.includes("agents")) {
+      if (opts.message.includes("manage")) {
         return agentValues;
       }
       if (cancelAt === "components") return CANCEL;
@@ -129,14 +129,16 @@ test("runSetupWizard intro snapshot shows Harness branding and detection", async
   });
 
   assert.equal(outcome.cancelled, true);
-  assert.deepEqual(prompts.calls.intro, ["Harness"]);
-  assert.match(prompts.calls.info, /ecosystem configurator/);
-  assert.equal(prompts.calls.notes.length, 1);
-  assert.equal(prompts.calls.notes[0].title, "Detected agents");
-  assert.match(prompts.calls.notes[0].message, /detected/);
+  assert.deepEqual(prompts.calls.intro, ["HARNESS — Local Agent Operating System"]);
+  assert.equal(prompts.calls.notes.length, 2);
+  assert.equal(prompts.calls.notes[0].title, "Welcome");
+  assert.match(prompts.calls.notes[0].message, /Coordinates local AI agents/);
+  assert.equal(prompts.calls.notes[1].title, "Your agents");
+  assert.match(prompts.calls.notes[1].message, /Cursor/);
+  assert.match(prompts.calls.notes[1].message, /ready/);
 });
 
-test("runSetupWizard preview step shows managed markers and changes", async () => {
+test("runSetupWizard preview step shows structured plan sections", async () => {
   const homeDir = await createFakeHome({ withCursorConfig: true });
   const prompts = createMockPrompts({ confirmValue: false });
 
@@ -147,11 +149,12 @@ test("runSetupWizard preview step shows managed markers and changes", async () =
   });
 
   assert.equal(outcome.cancelled, true);
-  const previewNote = prompts.calls.notes.find((entry) => entry.title === "Preview managed changes");
+  const previewNote = prompts.calls.notes.find((entry) => entry.title === "Plan preview");
   assert.ok(previewNote);
-  assert.match(previewNote.message, /harness:managed:start/);
-  assert.match(previewNote.message, /harness:managed:end/);
+  assert.match(previewNote.message, /Managed writes/);
+  assert.match(previewNote.message, /Preserved content/);
   assert.match(previewNote.message, /\.cursor\/AGENTS\.md/);
+  assert.doesNotMatch(previewNote.message, /harness:managed:start/);
 });
 
 test("runSetupWizard cancellation snapshot", async () => {
@@ -252,8 +255,8 @@ test("renderSetupWizardResult success snapshot includes next actions", () => {
   const resultNote = prompts.calls.notes.find((entry) => entry.title === "Setup complete");
   assert.ok(resultNote);
   assert.match(resultNote.message, /harness status/);
-  assert.match(resultNote.message, /State root: \/tmp\/\.harness/);
-  assert.deepEqual(prompts.calls.outro, ["Harness is ready."]);
+  assert.match(resultNote.message, /State/);
+  assert.deepEqual(prompts.calls.outro, ["Your local agent OS is ready."]);
 });
 
 test("renderSetupWizardResult dry-run snapshot recommends confirm command", () => {
@@ -273,13 +276,14 @@ test("renderSetupWizardResult dry-run snapshot recommends confirm command", () =
   assert.deepEqual(prompts.calls.outro, ["Nothing was written."]);
 });
 
-test("non-TTY setup keeps current CLI behavior", async () => {
+test("non-TTY setup keeps textual fallback without premium wizard branding", async () => {
   const homeDir = await createFakeHome({ withCursorConfig: true });
   const paths = harnessHomePaths(homeDir);
 
   const cli = runHarness(["setup", "--agents", "cursor"], homeDir);
   assert.notEqual(cli.status, 0, cli.stderr);
   assert.match(cli.stderr, /Non-interactive setup requires/);
+  assert.doesNotMatch(cli.stdout, /Local Agent Operating System/);
   assert.equal(existsSync(paths.statePath), false);
 });
 
