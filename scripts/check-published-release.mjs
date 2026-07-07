@@ -15,10 +15,19 @@ async function defaultFetchJson(url) {
   return response.json();
 }
 
+export function resolveReleaseTag({ version, tag = null }) {
+  if (tag) {
+    return tag;
+  }
+
+  return `v${version}`;
+}
+
 export function parsePublishedReleaseArgs(argv) {
   const args = [...argv];
   let version = null;
   let packageName = "@kal-elsam/kairo-runtime";
+  let tag = null;
 
   for (let index = 2; index < args.length; index += 1) {
     const arg = args[index];
@@ -43,6 +52,16 @@ export function parsePublishedReleaseArgs(argv) {
       continue;
     }
 
+    if (arg === "--tag") {
+      tag = args[++index];
+      continue;
+    }
+
+    if (arg.startsWith("--tag=")) {
+      tag = arg.slice("--tag=".length);
+      continue;
+    }
+
     throw new Error(`Unknown option "${arg}".`);
   }
 
@@ -50,16 +69,17 @@ export function parsePublishedReleaseArgs(argv) {
     throw new Error("Missing required --version <x.y.z>.");
   }
 
-  return { version, packageName };
+  return { version, packageName, tag };
 }
 
 export async function verifyPublishedRelease({
   version,
   packageName = "@kal-elsam/kairo-runtime",
+  tag = null,
   runGit = defaultRunGit,
   fetchJson = defaultFetchJson
 }) {
-  const tag = `v${version}`;
+  const releaseTag = resolveReleaseTag({ version, tag });
   const encodedPackage = encodeURIComponent(packageName);
   const meta = await fetchJson(`https://registry.npmjs.org/${encodedPackage}/${version}`);
 
@@ -72,10 +92,12 @@ export async function verifyPublishedRelease({
   }
 
   const gitHead = meta.gitHead.trim();
-  const tagSha = runGit(`git rev-parse ${tag}^{commit}`).trim();
+  const tagSha = runGit(`git rev-parse ${releaseTag}^{commit}`).trim();
 
   if (tagSha !== gitHead) {
-    throw new Error(`Local tag ${tag} (${tagSha}) does not match npm gitHead (${gitHead})`);
+    throw new Error(
+      `Local tag ${releaseTag} (${tagSha}) does not match npm gitHead (${gitHead})`
+    );
   }
 
   const mainSha = runGit("git rev-parse origin/main").trim();
@@ -90,17 +112,19 @@ export async function verifyPublishedRelease({
     }
   }
 
-  const remoteTagLine = runGit(`git ls-remote --tags origin refs/tags/${tag}`).trim();
+  const remoteTagLine = runGit(`git ls-remote --tags origin refs/tags/${releaseTag}`).trim();
 
   if (!remoteTagLine.startsWith(gitHead)) {
-    throw new Error(`Remote tag ${tag} on origin does not point to npm gitHead (${gitHead})`);
+    throw new Error(
+      `Remote tag ${releaseTag} on origin does not point to npm gitHead (${gitHead})`
+    );
   }
 
   return {
     version,
     packageName,
     gitHead,
-    tag,
+    tag: releaseTag,
     mainSha,
     tagSha,
     mainAhead: mainSha !== gitHead
@@ -114,8 +138,8 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
-  const { version, packageName } = parsePublishedReleaseArgs(process.argv);
-  const result = await verifyPublishedRelease({ version, packageName });
+  const { version, packageName, tag } = parsePublishedReleaseArgs(process.argv);
+  const result = await verifyPublishedRelease({ version, packageName, tag });
 
   console.log("Published release provenance OK");
   console.log(`Package: ${result.packageName}@${result.version}`);
