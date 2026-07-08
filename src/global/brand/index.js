@@ -82,4 +82,10 @@ export function commandHeader(label) {
   return `${BRAND.displayName} ${label}`;
 }
 
-export { formatCliCommand, PREFERRED_CLI } from "./cli.js";
+export {
+  formatCliCommand,
+  formatSuggestedCliCommand,
+  PACKAGE_NAME,
+  PREFERRED_CLI,
+  resolveSuggestedInvocation
+} from "./cli.js";

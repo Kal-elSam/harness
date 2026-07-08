@@ -51,14 +51,14 @@ curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/inst
 The bootstrap installer:
 
 - requires Node.js 20.12+ and npm
-- runs `@kal-elsam/kairo-runtime` via `npx` (or `npm exec`)
-- ends with `kairo setup --dry-run` by default (no agent configs, no `~/.harness` writes)
+- installs `@kal-elsam/kairo-runtime` globally (`kairo` CLI)
+- runs `kairo setup --dry-run` by default (no agent configs, no `~/.harness` writes)
 - never uses `sudo`, never modifies shell profiles, and never installs AI apps
 
 Apply the plan when you are ready:
 
 ```bash
-npx @kal-elsam/kairo-runtime --yes
+kairo setup --yes
 # or
 curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/install.sh | sh -s -- --yes
 ```
@@ -66,8 +66,8 @@ curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/inst
 CI, scripts, and advanced non-interactive configure:
 
 ```bash
-npx @kal-elsam/kairo-runtime install --agents cursor,codex --yes
-npx @kal-elsam/kairo-runtime setup --yes --agents all
+kairo install --agents cursor,codex --yes
+kairo setup --yes --agents all
 ```
 
 Passthrough examples:
@@ -83,11 +83,11 @@ Control plane:
 kairo status
 kairo sync
 kairo upgrade --dry-run
-npx @kal-elsam/kairo-runtime@latest setup --yes
+kairo setup --yes
 ```
 
 After `install.sh --yes`, verify health with `kairo status`, repair drift with `kairo sync`,
-and move to the latest package with `npx @kal-elsam/kairo-runtime@latest setup --yes`.
+and preview upgrades with `kairo upgrade --dry-run`.
 
 ### Version and updates
 

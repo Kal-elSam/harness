@@ -29,25 +29,39 @@ function createEmptyBinDir() {
   return dir;
 }
 
-function createBinWith(commands) {
-  const dir = mkdtempSync(join(tmpdir(), "harness-fake-bin-"));
-  for (const [name, body] of Object.entries(commands)) {
-    const path = join(dir, name);
-    writeFileSync(path, `#!/usr/bin/env sh\n${body}\n`);
-    chmodSync(path, 0o755);
-  }
-  return dir;
-}
+function createInstallerBin({ kairoPath = null } = {}) {
+  const binDir = mkdtempSync(join(tmpdir(), "harness-fake-bin-"));
+  const npmGlobalPrefix = mkdtempSync(join(tmpdir(), "harness-npm-global-"));
+  const npmGlobalBin = join(npmGlobalPrefix, "bin");
+  mkdirSync(npmGlobalBin, { recursive: true });
 
-function createHarnessNpxStub() {
-  return `if [ "$1" = "--yes" ]; then shift; fi
-pkg="$1"
-shift
-case "$pkg" in
-  @kal-elsam/kairo-runtime@*) exec "${process.execPath}" "${harnessBin}" "$@" ;;
-esac
-printf 'unexpected npx call: %s\\n' "$pkg" >&2
-exit 99`;
+  const kairoBin = kairoPath ?? join(binDir, "kairo");
+  const kairoBody = `#!/usr/bin/env sh
+exec "${process.execPath}" "${harnessBin}" "$@"
+`;
+
+  const npmBody = `#!/usr/bin/env sh
+if [ "$1" = "prefix" ] && [ "$2" = "-g" ]; then
+  printf '%s\\n' "${npmGlobalPrefix}"
+  exit 0
+fi
+if [ "$1" = "install" ] && [ "$2" = "-g" ]; then
+  shift 2
+  cat > "${kairoBin}" <<'EOF'
+${kairoBody}
+EOF
+  chmod +x "${kairoBin}"
+  exit 0
+fi
+printf '%s\\n' "10.0.0"
+`;
+
+  writeFileSync(join(binDir, "node"), "#!/usr/bin/env sh\necho \"v18.18.0\"\n");
+  writeFileSync(join(binDir, "npm"), npmBody);
+  chmodSync(join(binDir, "node"), 0o755);
+  chmodSync(join(binDir, "npm"), 0o755);
+
+  return { binDir, npmGlobalBin, kairoBin };
 }
 
 function createFakeHome() {
@@ -63,73 +77,55 @@ test("install.sh exists and is packaged under scripts/", () => {
   assert.match(source, /Never uses sudo/);
   assert.match(source, /setup --dry-run/);
   assert.match(source, /setup --yes/);
+  assert.match(source, /npm install -g/);
   assert.doesNotMatch(source, /(?:^|[;&|(`])\s*sudo\s+/m);
   assert.doesNotMatch(source, /(?:^|[;&|(`])\s*(?:echo|cat|tee).*(?:\.bashrc|\.zshrc|\.profile)/m);
 });
 
 test("installer --dry-run prints plan without executing install", () => {
-  const bin = createBinWith({
-    node: 'echo "v18.18.0"',
-    npm: 'echo "10.0.0"',
-    npx: 'echo "npx should not run" >&2; exit 99'
-  });
+  const { binDir } = createInstallerBin();
 
-  const result = runInstaller(["--dry-run"], { pathPrefix: bin });
+  const result = runInstaller(["--dry-run"], { pathPrefix: `${binDir}:` });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Will run:/);
-  assert.match(result.stdout, /@kal-elsam\/kairo-runtime@latest setup --dry-run/);
+  assert.match(result.stdout, /npm install -g @kal-elsam\/kairo-runtime@latest/);
+  assert.match(result.stdout, /kairo setup --dry-run/);
   assert.match(result.stdout, /Dry run: plan only/);
   assert.match(result.stdout, /Does NOT write agent configs/);
-  assert.doesNotMatch(result.stdout, /npx should not run/);
 });
 
 test("installer --dry-run honors --version pin", () => {
-  const bin = createBinWith({
-    node: 'echo "v18.18.0"',
-    npm: 'echo "10.0.0"',
-    npx: 'echo "npx should not run" >&2; exit 99'
-  });
+  const { binDir } = createInstallerBin();
 
-  const result = runInstaller(["--dry-run", "--version", "0.11.0"], { pathPrefix: bin });
+  const result = runInstaller(["--dry-run", "--version", "0.11.0"], { pathPrefix: `${binDir}:` });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /@kal-elsam\/kairo-runtime@0\.11\.0 setup --dry-run/);
+  assert.match(result.stdout, /npm install -g @kal-elsam\/kairo-runtime@0\.11\.0/);
+  assert.match(result.stdout, /kairo setup --dry-run/);
 });
 
 test("installer --yes prints setup --yes in plan", () => {
-  const bin = createBinWith({
-    node: 'echo "v18.18.0"',
-    npm: 'echo "10.0.0"',
-    npx: 'echo "npx should not run" >&2; exit 99'
-  });
+  const { binDir } = createInstallerBin();
 
-  const result = runInstaller(["--dry-run", "--yes"], { pathPrefix: bin });
+  const result = runInstaller(["--dry-run", "--yes"], { pathPrefix: `${binDir}:` });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /@kal-elsam\/kairo-runtime@latest setup --yes/);
+  assert.match(result.stdout, /kairo setup --yes/);
   assert.match(result.stdout, /Applies the ecosystem plan/);
 });
 
 test("installer passes --agents all through to kairo setup", () => {
-  const bin = createBinWith({
-    node: 'echo "v18.18.0"',
-    npm: 'echo "10.0.0"',
-    npx: 'echo "npx should not run" >&2; exit 99'
-  });
+  const { binDir } = createInstallerBin();
 
-  const result = runInstaller(["--dry-run", "--agents", "all"], { pathPrefix: bin });
+  const result = runInstaller(["--dry-run", "--agents", "all"], { pathPrefix: `${binDir}:` });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /setup --dry-run --agents all/);
+  assert.match(result.stdout, /kairo setup --dry-run --agents all/);
 });
 
 test("installer passes --components and --no-default-components through", () => {
-  const bin = createBinWith({
-    node: 'echo "v18.18.0"',
-    npm: 'echo "10.0.0"',
-    npx: 'echo "npx should not run" >&2; exit 99'
-  });
+  const { binDir } = createInstallerBin();
 
   const result = runInstaller(
     ["--dry-run", "--components", "orchestrator,sdd-core", "--no-default-components"],
-    { pathPrefix: bin }
+    { pathPrefix: `${binDir}:` }
   );
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /--components orchestrator,sdd-core/);
@@ -146,68 +142,46 @@ test("installer fails clearly without Node", () => {
 });
 
 test("installer fails clearly without npm", () => {
-  const bin = createBinWith({
-    node: 'echo "v18.18.0"'
-  });
+  const binDir = mkdtempSync(join(tmpdir(), "harness-node-only-"));
+  writeFileSync(join(binDir, "node"), "#!/usr/bin/env sh\necho \"v18.18.0\"\n");
+  chmodSync(join(binDir, "node"), 0o755);
 
-  const result = runInstaller(["--dry-run"], { pathOnly: bin });
+  const result = runInstaller(["--dry-run"], { pathOnly: binDir });
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Missing required command: npm/);
 });
 
-test("installer prefers npm exec when npx is missing", () => {
-  const bin = createBinWith({
-    node: 'echo "v18.18.0"',
-    npm: 'echo "10.0.0"'
-  });
-
-  const result = runInstaller(["--dry-run"], { pathOnly: bin });
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /runner npm-exec/);
-  assert.match(result.stdout, /npm exec --yes --package=@kal-elsam\/kairo-runtime@latest/);
-});
-
 test("installer rejects unknown options", () => {
-  const bin = createBinWith({
-    node: 'echo "v18.18.0"',
-    npm: 'echo "10.0.0"'
-  });
+  const { binDir } = createInstallerBin();
 
-  const result = runInstaller(["--nope"], { pathPrefix: bin });
+  const result = runInstaller(["--nope"], { pathPrefix: `${binDir}:` });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Unknown option/);
 });
 
 test("installer default runs setup --dry-run without writes", () => {
   const homeDir = createFakeHome();
-  const bin = createBinWith({
-    node: 'echo "v18.18.0"',
-    npm: 'echo "10.0.0"',
-    npx: createHarnessNpxStub()
-  });
+  const { binDir } = createInstallerBin();
 
   const result = runInstaller([], {
-    pathPrefix: bin,
+    pathPrefix: `${binDir}:`,
     env: { ...process.env, HARNESS_HOME: homeDir }
   });
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(join(homeDir, ".harness")), false);
+  assert.match(result.stdout, /Installing global CLI/);
   assert.match(result.stdout, /Bootstrap complete/);
   assert.match(result.stdout, /setup --dry-run/);
 });
 
 test("installer --yes runs setup --yes and writes harness home", () => {
   const homeDir = createFakeHome();
-  const bin = createBinWith({
-    node: 'echo "v18.18.0"',
-    npm: 'echo "10.0.0"',
-    npx: createHarnessNpxStub()
-  });
+  const { binDir } = createInstallerBin();
 
   const result = runInstaller(["--yes"], {
-    pathPrefix: bin,
+    pathPrefix: `${binDir}:`,
     env: { ...process.env, HARNESS_HOME: homeDir }
   });
 
@@ -216,7 +190,7 @@ test("installer --yes runs setup --yes and writes harness home", () => {
   assert.match(result.stdout, /Bootstrap complete \(applied\)/);
   assert.match(result.stdout, /Check health:\s+kairo status/);
   assert.match(result.stdout, /Repair drift:\s+kairo sync/);
-  assert.match(result.stdout, /npx @kal-elsam\/kairo-runtime@latest setup --yes/);
+  assert.match(result.stdout, /kairo upgrade --dry-run/);
 });
 
 test("installer --yes with --agents all reaches kairo setup", () => {
@@ -224,14 +198,10 @@ test("installer --yes with --agents all reaches kairo setup", () => {
   mkdirSync(join(homeDir, ".claude"), { recursive: true });
   mkdirSync(join(homeDir, ".config", "opencode"), { recursive: true });
 
-  const bin = createBinWith({
-    node: 'echo "v18.18.0"',
-    npm: 'echo "10.0.0"',
-    npx: createHarnessNpxStub()
-  });
+  const { binDir } = createInstallerBin();
 
   const result = runInstaller(["--yes", "--agents", "all"], {
-    pathPrefix: bin,
+    pathPrefix: `${binDir}:`,
     env: { ...process.env, HARNESS_HOME: homeDir }
   });
 

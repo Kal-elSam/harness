@@ -1,4 +1,4 @@
-import { AGENT_HINTS, BRAND, PREFERRED_CLI, formatCliCommand, getAgentLabel, WIZARD_COPY } from "../brand/index.js";
+import { AGENT_HINTS, BRAND, formatCliCommand, getAgentLabel, PREFERRED_CLI, WIZARD_COPY } from "../brand/index.js";
 import { formatAgentMultiselectHint } from "../clack/theme.js";
 
 export const SETUP_STEPS = {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseArgs, resolveSuggestedInvocation } from "../src/cli.js";
+import { formatSuggestedCliCommand } from "../src/global/brand/cli.js";
 
 const packageName = "@kal-elsam/kairo-runtime";
 
@@ -23,6 +24,24 @@ test("bare harness with workspace scope keeps legacy init entry", () => {
 test("explicit install is unchanged", () => {
   const { command } = parseArgs(["install", "--agents", "cursor"]);
   assert.equal(command, "install");
+});
+
+test("formatSuggestedCliCommand uses global bin when invoked from PATH", () => {
+  assert.equal(
+    formatSuggestedCliCommand("status", {
+      suggestedInvocation: "kairo"
+    }),
+    "kairo status"
+  );
+});
+
+test("formatSuggestedCliCommand uses npx when invoked via script path", () => {
+  assert.equal(
+    formatSuggestedCliCommand("status", {
+      argv: ["node", "/tmp/node_modules/.bin/kairo.js"]
+    }),
+    "npx @kal-elsam/kairo-runtime status"
+  );
 });
 
 test("uses bare CLI name when invoked from a known bin", () => {

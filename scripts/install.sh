@@ -43,8 +43,9 @@ usage() {
     "" \
     "What it does:" \
     "  1. Checks for Node.js and npm." \
-    "  2. Runs the package via npx (or npm exec) with setup --dry-run (default) or setup --yes (--yes)." \
-    "  3. Prints next steps." \
+    "  2. Installs ${PACKAGE} globally (adds kairo to npm global bin)." \
+    "  3. Runs kairo setup --dry-run (default) or kairo setup --yes (--yes)." \
+    "  4. Prints next steps." \
     "" \
     "Security:" \
     "  - Never uses sudo." \
@@ -60,6 +61,51 @@ die() {
 
 append_setup_arg() {
   SETUP_EXTRA="${SETUP_EXTRA}${SETUP_EXTRA:+ }$1"
+}
+
+resolve_global_spec() {
+  if [ "$VERSION" = "latest" ]; then
+    printf '%s@latest' "$PACKAGE"
+  else
+    printf '%s@%s' "$PACKAGE" "$VERSION"
+  fi
+}
+
+resolve_npm_global_bin() {
+  npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+  [ -n "$npm_prefix" ] || return 1
+  printf '%s/bin' "$(printf '%s' "$npm_prefix" | sed 's#/*$##')"
+}
+
+resolve_kairo_bin() {
+  if command -v "$PREFERRED_CLI" >/dev/null 2>&1; then
+    command -v "$PREFERRED_CLI"
+    return 0
+  fi
+
+  global_bin="$(resolve_npm_global_bin || true)"
+  if [ -n "$global_bin" ] && [ -x "${global_bin}/${PREFERRED_CLI}" ]; then
+    printf '%s\n' "${global_bin}/${PREFERRED_CLI}"
+    return 0
+  fi
+
+  return 1
+}
+
+print_path_hint_if_needed() {
+  if command -v "$PREFERRED_CLI" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  global_bin="$(resolve_npm_global_bin || true)"
+  if [ -n "$global_bin" ]; then
+    printf '%s\n' \
+      "" \
+      "PATH note:" \
+      "  ${PREFERRED_CLI} was installed to ${global_bin}." \
+      "  Add it to PATH if the command is not found:" \
+      "    export PATH=\"${global_bin}:\$PATH\""
+  fi
 }
 
 while [ "$#" -gt 0 ]; do
@@ -137,14 +183,9 @@ require_cmd npm
 
 NODE_VERSION="$(node --version 2>/dev/null || true)"
 NPM_VERSION="$(npm --version 2>/dev/null || true)"
-
-if command -v npx >/dev/null 2>&1; then
-  RUNNER="npx"
-  RUN_CMD="npx --yes ${PACKAGE}@${VERSION} setup ${SETUP_MODE}${SETUP_EXTRA:+ ${SETUP_EXTRA}}"
-else
-  RUNNER="npm-exec"
-  RUN_CMD="npm exec --yes --package=${PACKAGE}@${VERSION} -- ${PREFERRED_CLI} setup ${SETUP_MODE}${SETUP_EXTRA:+ ${SETUP_EXTRA}}"
-fi
+GLOBAL_SPEC="$(resolve_global_spec)"
+GLOBAL_INSTALL_CMD="npm install -g ${GLOBAL_SPEC}"
+SETUP_CMD="${PREFERRED_CLI} setup ${SETUP_MODE}${SETUP_EXTRA:+ ${SETUP_EXTRA}}"
 
 printf '%s\n' \
   "Kairo Runtime bootstrap installer" \
@@ -153,13 +194,13 @@ printf '%s\n' \
   "Prerequisites:" \
   "  node  ${NODE_VERSION:-unknown}" \
   "  npm   ${NPM_VERSION:-unknown}" \
-  "  runner ${RUNNER}" \
   "" \
   "Will run:" \
-  "  ${RUN_CMD}" \
+  "  ${GLOBAL_INSTALL_CMD}" \
+  "  ${SETUP_CMD}" \
   "" \
   "Effects:" \
-  "  - Downloads/runs ${PACKAGE}@${VERSION} via npm (no global install required)." \
+  "  - Installs ${GLOBAL_SPEC} globally (kairo CLI in npm global bin)." \
   "  - Configures managed sections only (never installs AI apps)." \
   "  - Never uses sudo or modifies shell profiles." \
   ""
@@ -181,19 +222,25 @@ if [ "$INSTALLER_DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
+printf '%s\n' "Installing global CLI..." ""
+# shellcheck disable=SC2086
+npm install -g ${GLOBAL_SPEC}
+
+KAIRO_BIN="$(resolve_kairo_bin || true)"
+if [ -z "$KAIRO_BIN" ]; then
+  die "Installed ${GLOBAL_SPEC}, but ${PREFERRED_CLI} is not available.
+Check npm global bin: $(resolve_npm_global_bin || echo unknown)
+Add it to PATH, then re-run: ${SETUP_CMD}"
+fi
+
 if [ "$APPLY" -eq 1 ]; then
   printf '%s\n' "Applying setup..." ""
 else
   printf '%s\n' "Running preview..." ""
 fi
 
-if [ "$RUNNER" = "npx" ]; then
-  # shellcheck disable=SC2086
-  npx --yes "${PACKAGE}@${VERSION}" setup ${SETUP_MODE} ${SETUP_EXTRA}
-else
-  # shellcheck disable=SC2086
-  npm exec --yes --package="${PACKAGE}@${VERSION}" -- ${PREFERRED_CLI} setup ${SETUP_MODE} ${SETUP_EXTRA}
-fi
+# shellcheck disable=SC2086
+"$KAIRO_BIN" setup ${SETUP_MODE} ${SETUP_EXTRA}
 
 if [ "$APPLY" -eq 1 ]; then
   printf '%s\n' \
@@ -202,24 +249,25 @@ if [ "$APPLY" -eq 1 ]; then
     "Next steps:" \
     "  1. Check health:    ${PREFERRED_CLI} status" \
     "  2. Repair drift:    ${PREFERRED_CLI} sync" \
-    "  3. Upgrade latest:  npx ${PACKAGE}@latest setup --yes" \
+    "  3. Upgrade latest:  ${PREFERRED_CLI} upgrade --dry-run" \
     "" \
     "Version:" \
-    "  Installed CLI:      npx ${PACKAGE} --version" \
-    "  Published package:  npm view ${PACKAGE} version" \
-    "  Preview upgrade:    ${PREFERRED_CLI} upgrade --dry-run"
+    "  Installed CLI:      ${PREFERRED_CLI} --version" \
+    "  Published package:  npm view ${PACKAGE} version"
+  print_path_hint_if_needed
 else
   printf '%s\n' \
     "" \
     "Bootstrap complete." \
     "Next steps:" \
-    "  1. Apply the plan:  npx ${PACKAGE}@${VERSION} setup --yes" \
+    "  1. Apply the plan:  ${PREFERRED_CLI} setup --yes" \
     "     (or re-run installer: curl ... | sh -s -- --yes)" \
-    "  2. Check health:    npx ${PACKAGE}@${VERSION} status" \
-    "  3. Repair drift:    npx ${PACKAGE}@${VERSION} sync" \
+    "  2. Check health:    ${PREFERRED_CLI} status" \
+    "  3. Repair drift:    ${PREFERRED_CLI} sync" \
     "" \
     "Version:" \
-    "  Installed CLI:      npx ${PACKAGE} --version" \
+    "  Installed CLI:      ${PREFERRED_CLI} --version" \
     "  Published package:  npm view ${PACKAGE} version" \
-    "  Update / converge:  npx ${PACKAGE}@latest sync"
+    "  Update / converge:  ${PREFERRED_CLI} sync"
+  print_path_hint_if_needed
 fi

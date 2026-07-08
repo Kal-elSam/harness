@@ -31,50 +31,20 @@ import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
 import { resolveHomeDir } from "./global/paths.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 import {
-  ALL_CLI_NAMES,
   LEGACY_PACKAGE_NAME,
   PACKAGE_NAME,
   PREFERRED_CLI,
   formatCliCommand,
-  maybeWarnLegacyCli
+  maybeWarnLegacyCli,
+  resolveSuggestedInvocation
 } from "./global/brand/cli.js";
 import { BRAND } from "./global/brand/index.js";
+
+export { resolveSuggestedInvocation };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(__dirname, "..");
 const SCOPES = new Set(["agent-global", "workspace"]);
-
-export function resolveSuggestedInvocation(packageName, argv = process.argv) {
-  const invokedPath = argv[1] ?? PREFERRED_CLI;
-  const invokedBase = basename(invokedPath);
-
-  if (!invokedBase.endsWith(".js") && ALL_CLI_NAMES.has(invokedBase)) {
-    return invokedBase;
-  }
-
-  const packageManager = detectInvocationPackageManager();
-
-  switch (packageManager) {
-    case "pnpm":
-      return `pnpm dlx ${packageName}`;
-    case "yarn":
-      return `yarn dlx ${packageName}`;
-    case "bun":
-      return `bunx ${packageName}`;
-    default:
-      return `npx ${packageName}`;
-  }
-}
-
-function detectInvocationPackageManager() {
-  const execPath = process.env.npm_execpath ?? "";
-  const userAgent = process.env.npm_config_user_agent ?? "";
-
-  if (execPath.includes("pnpm") || userAgent.startsWith("pnpm/")) return "pnpm";
-  if (execPath.includes("yarn") || userAgent.startsWith("yarn/")) return "yarn";
-  if (execPath.includes("bun") || userAgent.startsWith("bun/")) return "bun";
-  return "npm";
-}
 
 export async function runCli(argv) {
   const { command, options } = parseArgs(argv);

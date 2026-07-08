@@ -154,15 +154,36 @@ if [ ! -d "$FAKE_HOME/.harness" ]; then
   exit 1
 fi
 
+NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null)/bin"
+export PATH="${NPM_GLOBAL_BIN}:${PATH}"
+
+resolve_kairo_bin() {
+  if command -v "$PREFERRED_CLI" >/dev/null 2>&1; then
+    command -v "$PREFERRED_CLI"
+    return 0
+  fi
+  if [ -x "${NPM_GLOBAL_BIN}/${PREFERRED_CLI}" ]; then
+    printf '%s\n' "${NPM_GLOBAL_BIN}/${PREFERRED_CLI}"
+    return 0
+  fi
+  return 1
+}
+
+KAIRO_BIN="$(resolve_kairo_bin || true)"
+if [ -z "$KAIRO_BIN" ]; then
+  echo "Expected ${PREFERRED_CLI} after install.sh global install" >&2
+  exit 1
+fi
+
 echo
 echo "== ${PREFERRED_CLI} status --json =="
-STATUS_JSON="$(npx --yes "${PACKAGE}@${VERSION}" status --json)"
+STATUS_JSON="$("$KAIRO_BIN" status --json)"
 echo "$STATUS_JSON"
 assert_status_ok "$STATUS_JSON"
 
 echo
 echo "== ${PREFERRED_CLI} uninstall =="
-npx --yes "${PACKAGE}@${VERSION}" uninstall
+"$KAIRO_BIN" uninstall
 assert_managed_configs_removed
 
 echo

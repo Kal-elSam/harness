@@ -50,3 +50,44 @@ export function formatCliCommand(subcommand, cliName = PREFERRED_CLI) {
   const trimmed = subcommand.trim();
   return trimmed ? `${cliName} ${trimmed}` : cliName;
 }
+
+function detectInvocationPackageManager() {
+  const execPath = process.env.npm_execpath ?? "";
+  const userAgent = process.env.npm_config_user_agent ?? "";
+
+  if (execPath.includes("pnpm") || userAgent.startsWith("pnpm/")) return "pnpm";
+  if (execPath.includes("yarn") || userAgent.startsWith("yarn/")) return "yarn";
+  if (execPath.includes("bun") || userAgent.startsWith("bun/")) return "bun";
+  return "npm";
+}
+
+export function resolveSuggestedInvocation(packageName = PACKAGE_NAME, argv = process.argv) {
+  const invokedPath = argv[1] ?? PREFERRED_CLI;
+  const invokedBase = basename(invokedPath);
+
+  if (!invokedBase.endsWith(".js") && ALL_CLI_NAMES.has(invokedBase)) {
+    return invokedBase;
+  }
+
+  const packageManager = detectInvocationPackageManager();
+
+  switch (packageManager) {
+    case "pnpm":
+      return `pnpm dlx ${packageName}`;
+    case "yarn":
+      return `yarn dlx ${packageName}`;
+    case "bun":
+      return `bunx ${packageName}`;
+    default:
+      return `npx ${packageName}`;
+  }
+}
+
+export function formatSuggestedCliCommand(
+  subcommand,
+  { packageName = PACKAGE_NAME, argv = process.argv, suggestedInvocation } = {}
+) {
+  const invoke = suggestedInvocation ?? resolveSuggestedInvocation(packageName, argv);
+  const trimmed = subcommand.trim();
+  return trimmed ? `${invoke} ${trimmed}` : invoke;
+}
