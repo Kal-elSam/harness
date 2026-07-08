@@ -3,6 +3,17 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.1.2 — 2026-07-08
+
+Patch release. Bootstrap installer now installs the global `kairo` CLI.
+
+### Fixes
+
+- `install.sh` runs `npm install -g @kal-elsam/kairo-runtime` before setup so
+  `kairo status` works immediately after install.
+- Post-install next steps and README use `kairo` as the primary command.
+- Installer smoke tests verify `kairo` from npm global bin instead of `npx`.
+
 ## 0.1.0 — 2026-07-07
 
 First public release of **Kairo Runtime** under `@kal-elsam/kairo-runtime`.
