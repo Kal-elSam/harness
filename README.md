@@ -737,7 +737,7 @@ git fetch --tags origin
 git fetch origin main
 npm run release:published -- --version 0.1.1 --tag kairo-runtime-v0.1.1
 npm run smoke:registry -- --version 0.1.1
-npm run smoke:installer -- --version 0.1.1
+npm run smoke:installer -- --version 0.1.1 --tag kairo-runtime-v0.1.1
 npm run smoke:bridge
 ```
 
@@ -760,7 +760,13 @@ Without `--tag`, provenance checks fall back to `v${version}` (legacy tags).
 
 `smoke:registry` installs `@kal-elsam/kairo-runtime` from the npm registry (not the local tarball) into a throwaway workspace with a fake `HARNESS_HOME` and npm cache, then runs the recommended flow via `kairo`: `setup --dry-run`, `setup --yes`, `status`, drift simulation, `sync`, `status --json` (expects `overall=ok`), and `uninstall`. Use `latest` by default, pin with `--version x.y.z`, or override with `--package`.
 
-`smoke:installer` validates the public one-liner path: `curl .../install.sh | sh` against GitHub `raw` and the npm registry with isolated `HARNESS_HOME`. Preview must not write `~/.harness`; `--yes --agents all` must reach `kairo status --json` with `overall=ok`, then `kairo uninstall` must remove managed sections. Pin with `--version x.y.z` after publish.
+`smoke:installer` validates the public one-liner path: `curl .../install.sh | sh` against GitHub `raw` and the npm registry with isolated `HARNESS_HOME`. Preview must not write `~/.harness`; `--yes --agents all` must reach `kairo status --json` with `overall=ok`, then `kairo uninstall` must remove managed sections. Pin with `--version x.y.z` after publish. For package-aware Kairo Runtime tags, pass the git tag explicitly:
+
+```bash
+npm run smoke:installer -- --version 0.1.1 --tag kairo-runtime-v0.1.1
+```
+
+Without `--tag`, the install script resolves from legacy `v${version}` tags.
 
 Suggested first Kairo Runtime tag after bootstrap: `kairo-runtime-v0.1.1`.
 

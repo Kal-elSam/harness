@@ -4,7 +4,9 @@ set -euo pipefail
 PACKAGE="@kal-elsam/kairo-runtime"
 PREFERRED_CLI="kairo"
 VERSION="latest"
+GIT_TAG=""
 REPO="Kal-elSam/harness"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -22,6 +24,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --version=*)
       VERSION="${1#*=}"
+      shift
+      ;;
+    --tag)
+      GIT_TAG="$2"
+      shift 2
+      ;;
+    --tag=*)
+      GIT_TAG="${1#*=}"
       shift
       ;;
     *)
@@ -53,12 +63,13 @@ assert_harness_home_isolated() {
 }
 
 resolve_install_script_url() {
-  if [ "$VERSION" = "latest" ]; then
-    printf '%s\n' "https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh"
-    return
+  local args=(--version "$VERSION" --repo "$REPO")
+
+  if [ -n "$GIT_TAG" ]; then
+    args+=(--tag "$GIT_TAG")
   fi
 
-  printf '%s\n' "https://raw.githubusercontent.com/${REPO}/v${VERSION}/scripts/install.sh"
+  node "${SCRIPT_DIR}/lib/install-script-url.mjs" "${args[@]}"
 }
 
 assert_no_harness_state() {
@@ -117,6 +128,9 @@ cd "$WORKDIR"
 
 INSTALL_SCRIPT_URL="$(resolve_install_script_url)"
 echo "Installer smoke for ${PACKAGE}@${VERSION}"
+if [ -n "$GIT_TAG" ]; then
+  echo "Git tag: ${GIT_TAG}"
+fi
 echo "Install script: ${INSTALL_SCRIPT_URL}"
 echo "Harness home: ${HARNESS_HOME}"
 
