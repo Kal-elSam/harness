@@ -3,6 +3,29 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.1.5 — 2026-07-09
+
+Minor release. Interactive orchestrator foundation: shell, diagnostics, capability
+registry, and profile resolution without changing the safe-by-default confirmation model.
+
+### Features
+
+- Bare `kairo` opens an interactive orchestrator shell on capable TTY sessions.
+- `kairo orchestrator [--json]` exposes read-only capability diagnostics.
+- Capability registry probes installed agent CLIs and reports availability states.
+- Global and project profile resolution for coordinator routing preferences.
+- Action planner with human confirmation for sensitive setup operations.
+
+### Fixes
+
+- `resolveSuggestedInvocation()` accepts injectable `env` for package-manager detection;
+  tests no longer mutate global `process.env`.
+
+### Notes
+
+- Does not yet expose model-ID discovery or full Harness Engineering governance (0.2.0).
+- Kairo never stores tokens or credentials.
+
 ## 0.1.4 — 2026-07-09
 
 Patch release. Fixes public installer smoke for Kairo Runtime versions.

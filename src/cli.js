@@ -30,6 +30,7 @@ import {
 import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
 import { resolveHomeDir } from "./global/paths.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
+import { runOrchestratorDiagnostics, runOrchestratorShell } from "./global/orchestrator.js";
 import {
   LEGACY_PACKAGE_NAME,
   PACKAGE_NAME,
@@ -66,6 +67,24 @@ export async function runCli(argv) {
   const invoke = resolveSuggestedInvocation(packageManifest.name);
 
   switch (command) {
+    case "shell":
+      await runOrchestratorShell({
+        packageRoot,
+        packageManifest,
+        workspaceRoot: optionsWithPolicy.cwd,
+        interactive: optionsWithPolicy.interactive
+      });
+      return;
+    case "orchestrator":
+      await runOrchestratorDiagnostics({
+        homeDir: resolveHomeDir(),
+        workspaceRoot: optionsWithPolicy.cwd,
+        packageName: packageManifest.name,
+        packageRoot,
+        cliVersion: packageManifest.version,
+        json: optionsWithPolicy.json
+      });
+      return;
     case "setup":
       await runGlobalSetup(optionsWithPolicy, packageManifest, packageRoot);
       return;
@@ -219,7 +238,37 @@ function resolveImplicitCommand(args) {
   if (argsWantsWorkspaceScope(args)) {
     return "init";
   }
-  return "setup";
+  if (hasImplicitSetupFlags(args)) {
+    return "setup";
+  }
+  return "shell";
+}
+
+function hasImplicitSetupFlags(args) {
+  const setupFlags = new Set([
+    "--dry-run",
+    "--yes",
+    "-y",
+    "--confirm",
+    "--simple",
+    "--no-preflight",
+    "--all-adapters",
+    "--no-default-components",
+    "--detect"
+  ]);
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (setupFlags.has(arg)) return true;
+    if (arg.startsWith("--mode=")) return true;
+    if (arg.startsWith("--adapters=") || arg.startsWith("--agents=")) return true;
+    if (arg.startsWith("--components=")) return true;
+    if (arg === "--mode" || arg === "--adapters" || arg === "--agents" || arg === "--components") {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function argsWantsWorkspaceScope(args) {
@@ -461,6 +510,8 @@ function normalizeCommand(command) {
   if (!command) return "install";
 
   if (command === "install" || command === "i") return "install";
+  if (command === "shell") return "shell";
+  if (command === "orchestrator") return "orchestrator";
   if (command === "setup") return "setup";
   if (command === "status") return "status";
   if (command === "sync") return "sync";
@@ -517,8 +568,11 @@ sections, components, backups, and drift repair under ~/.harness.
 Bootstrap: see README.md (curl install.sh or npx ${PACKAGE_NAME}).
 
 Usage:
-  ${cli} [--dry-run] [--yes] [--confirm] [--agents <list|all>] [--components <list>]
+  ${cli}                              Interactive orchestrator shell (TTY)
+  ${cli} --dry-run                      Setup dry-run (scriptable)
   ${cli} --version
+  ${cli} shell                          Interactive orchestrator shell (TTY)
+  ${cli} orchestrator [--json]          Read-only agent capability diagnostics
   ${cli} setup [--dry-run] [--yes] [--confirm] [--simple] [--no-preflight] [--agents <list|all>] [--components <list>]
   ${cli} status [--json]
   ${cli} sync [--dry-run] [--yes] [--confirm] [--json] [--no-preflight]
@@ -552,7 +606,9 @@ Scopes:
                           Explicit --scope=workspace only.
 
 Commands:
-  setup      Interactive Ink UI (TTY). Use --simple for Clack prompts.
+  shell      Interactive Ink orchestrator (TTY). Bare ${cli} opens this in TTY sessions.
+  orchestrator  Read-only capability registry diagnostics (--json supported).
+  setup      Managed ecosystem setup. Interactive Ink UI (TTY). Use --simple for Clack prompts.
   status     Control panel: agents, components, drift, backups, next action.
   sync       Converge managed content (repair drift), then show status.
   upgrade    Preview or apply ecosystem updates (apply requires --yes).

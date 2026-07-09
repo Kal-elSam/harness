@@ -50,7 +50,7 @@ test("bare harness non-TTY fails without consent and writes nothing", async () =
 
   const cli = runHarness([], { homeDir });
   assert.notEqual(cli.status, 0, cli.stderr);
-  assert.match(cli.stderr, /Non-interactive setup requires/);
+  assert.match(cli.stderr, /Non-interactive shell requires/);
   assert.equal(existsSync(statePath), false);
 });
 
