@@ -3,6 +3,24 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.1.3 — 2026-07-09
+
+Patch release. Adds opt-in Engram and Graphify components for persistent memory and
+context-graph workflows.
+
+### Features
+
+- Bundled opt-in components: `engram-memory` and `graphify-context` (not enabled by default).
+- Install with `kairo setup --components orchestrator,sdd-core,engram-memory,graphify-context`.
+- Managed sections and contract assets under `~/.harness/components/`.
+- Non-invasive doctor/status checks for Engram MCP availability and Graphify CLI/graph freshness.
+- Authority order documented: user > AGENTS.md > repo docs > Engram > Graphify.
+
+### Notes
+
+- Does not auto-install Engram, Graphify, MCP servers, or git hooks.
+- Kairo remains the coordinator; the repository stays the source of truth.
+
 ## 0.1.2 — 2026-07-08
 
 Patch release. Bootstrap installer now installs the global `kairo` CLI.
