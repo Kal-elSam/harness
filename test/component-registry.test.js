@@ -11,11 +11,11 @@ import {
 } from "../src/global/component-registry.js";
 import { loadComponentCatalog } from "../src/global/load-component-catalog.js";
 
-test("registry lists orchestrator and sdd-core", () => {
+test("registry lists bundled components with optional engram and graphify", () => {
   const components = listComponents();
 
-  assert.equal(components.length, 2);
-  assert.deepEqual(COMPONENT_IDS, ["orchestrator", "sdd-core"]);
+  assert.equal(components.length, 4);
+  assert.deepEqual(COMPONENT_IDS, ["orchestrator", "sdd-core", "engram-memory", "graphify-context"]);
   assert.deepEqual(DEFAULT_COMPONENT_IDS, ["orchestrator", "sdd-core"]);
 });
 
@@ -39,6 +39,28 @@ test("explicit --components selection is honored", () => {
   const targets = resolveTargetComponents({ components: ["sdd-core"] });
 
   assert.deepEqual(targets.map((component) => component.id), ["sdd-core"]);
+});
+
+test("components expose managed section builders for optional integrations", () => {
+  const engram = resolveComponent("engram-memory");
+  const engramSection = engram.buildManagedSection(
+    { componentsDir: "/home/user/.harness/components" },
+    { id: "cursor", assets: { configFile: ".cursor/AGENTS.md" } }
+  );
+
+  assert.match(engramSection, /### Engram Memory/);
+  assert.match(engramSection, /memory\.md/);
+  assert.match(engramSection, /Authority: user > AGENTS\.md/);
+
+  const graphify = resolveComponent("graphify-context");
+  const graphifySection = graphify.buildManagedSection(
+    { componentsDir: "/home/user/.harness/components" },
+    { id: "cursor", assets: { configFile: ".cursor/AGENTS.md" } }
+  );
+
+  assert.match(graphifySection, /### Graphify Context/);
+  assert.match(graphifySection, /context-graph\.md/);
+  assert.match(graphifySection, /graphify update/);
 });
 
 test("components expose managed section builders", () => {
@@ -71,8 +93,12 @@ test("describeComponentCatalog exposes defaults and adapter hint keys", () => {
 
   assert.deepEqual(
     entries.map((entry) => entry.id),
-    ["orchestrator", "sdd-core"]
+    ["orchestrator", "sdd-core", "engram-memory", "graphify-context"]
   );
-  assert.ok(entries.every((entry) => entry.defaultEnabled));
+  assert.equal(entries.filter((entry) => entry.defaultEnabled).length, 2);
+  assert.deepEqual(entries.filter((entry) => !entry.defaultEnabled).map((entry) => entry.id), [
+    "engram-memory",
+    "graphify-context"
+  ]);
   assert.deepEqual(entries[1].adapterHints, ["cursor", "codex", "claude", "opencode"]);
 });

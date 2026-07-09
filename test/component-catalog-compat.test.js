@@ -5,7 +5,7 @@ import { readComponentCatalogDocument } from "../src/global/load-component-catal
 test("component-registry imports on the current Node runtime", async () => {
   const { listComponents } = await import("../src/global/component-registry.js");
 
-  assert.equal(listComponents().length, 2);
+  assert.equal(listComponents().length, 4);
 });
 
 test("component catalog loads from packaged JSON without import attributes", () => {
@@ -13,6 +13,10 @@ test("component catalog loads from packaged JSON without import attributes", () 
 
   assert.deepEqual(
     catalog.components.map((component) => component.id),
+    ["orchestrator", "sdd-core", "engram-memory", "graphify-context"]
+  );
+  assert.deepEqual(
+    catalog.components.filter((component) => component.defaultEnabled).map((component) => component.id),
     ["orchestrator", "sdd-core"]
   );
 });

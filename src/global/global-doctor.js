@@ -1,5 +1,6 @@
 import { listBackupSnapshots } from "./backups.js";
 import { buildAdapterContext } from "./adapter-context.js";
+import { runComponentEcosystemChecks } from "./component-ecosystem-checks.js";
 import { detectGlobalDrift, hasRepairableDrift } from "./drift.js";
 import { harnessHomePaths } from "./paths.js";
 import { resolveComponent } from "./component-registry.js";
@@ -23,6 +24,10 @@ export async function runGlobalDoctorChecks(homeDir, { packageRoot, workspaceRoo
 
   if (packageRoot) {
     checks.push(await backupsCheck(paths));
+    checks.push(...await runComponentEcosystemChecks({
+      installedComponents,
+      workspaceRoot
+    }));
   }
 
   const hasMissing = checks.some((check) => check.status === "missing");

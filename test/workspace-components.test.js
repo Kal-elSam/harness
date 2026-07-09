@@ -66,7 +66,7 @@ test("detects a valid workspace component catalog", async () => {
   assert.equal(catalog[0].label, "Team Rules");
 
   const merged = listComponents({ workspaceRoot });
-  assert.equal(merged.length, 3);
+  assert.equal(merged.length, 5);
   assert.deepEqual(describeWorkspaceComponentCatalog(workspaceRoot).map((entry) => entry.id), ["team-rules"]);
 });
 
@@ -256,7 +256,7 @@ test("harness components lists bundled and workspace catalogs", async () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Bundled: 2/);
+  assert.match(result.stdout, /Bundled: 4/);
   assert.match(result.stdout, /Workspace: 1/);
   assert.match(result.stdout, /team-rules \(0\.1\.0\) \[workspace\]/);
 });

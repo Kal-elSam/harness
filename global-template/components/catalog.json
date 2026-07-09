@@ -20,6 +20,32 @@
         "claude": "- In repos with workspace harness: repo `AGENTS.md` wins over `CLAUDE.md` pointers.",
         "opencode": "- In repos with workspace harness: also read `.opencode/` SDD assets when present."
       }
+    },
+    {
+      "id": "engram-memory",
+      "label": "Engram Memory",
+      "version": "1.0.0",
+      "defaultEnabled": false,
+      "assetFiles": ["memory.md"],
+      "adapterHints": {
+        "cursor": "- Engram MCP (`mem_*` tools) is not auto-installed; configure in Cursor MCP settings when ready.",
+        "codex": "- Engram MCP is not auto-installed; add MCP server config when ready.",
+        "claude": "- Engram MCP is not auto-installed; add MCP server config when ready.",
+        "opencode": "- Engram MCP is not auto-installed; add MCP server config when ready."
+      }
+    },
+    {
+      "id": "graphify-context",
+      "label": "Graphify Context",
+      "version": "1.0.0",
+      "defaultEnabled": false,
+      "assetFiles": ["context-graph.md"],
+      "adapterHints": {
+        "cursor": "- Graphify CLI is not auto-installed; run `graphify update .` after code changes when graphify is in PATH.",
+        "codex": "- Graphify CLI is not auto-installed; run `graphify update .` after code changes when graphify is in PATH.",
+        "claude": "- Graphify CLI is not auto-installed; run `graphify update .` after code changes when graphify is in PATH.",
+        "opencode": "- Graphify CLI is not auto-installed; run `graphify update .` after code changes when graphify is in PATH."
+      }
     }
   ]
 }

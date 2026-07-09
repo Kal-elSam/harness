@@ -138,6 +138,25 @@ test("report and history snapshots stay concise", async () => {
   snapshotLines(report.stdout, [/Kairo Runtime report/, /Overall: OK/, /Diff:/]);
 });
 
+test("setup next steps do not promise automatic Engram or Graphify installation", async () => {
+  const homeDir = await createFakeHome({ withCursorConfig: true });
+  await installGlobalHarness({
+    ...baseOptions,
+    homeDir,
+    components: ["orchestrator", "engram-memory", "graphify-context"]
+  });
+
+  const status = runHarness(["status"], homeDir);
+  assert.equal(status.status, 0, status.stderr);
+  assert.doesNotMatch(status.stdout, /install.*engram/i);
+  assert.doesNotMatch(status.stdout, /install.*graphify/i);
+  assert.doesNotMatch(status.stdout, /auto.?install/i);
+
+  const doctor = runHarness(["doctor"], homeDir);
+  assert.equal(doctor.status, 0, doctor.stderr);
+  assert.match(doctor.stdout, /engram:mcp-tools/i);
+});
+
 test("common errors stay clear and non-destructive", async () => {
   const homeDir = await createFakeHome({ withCursorConfig: true });
   const paths = harnessHomePaths(homeDir);
