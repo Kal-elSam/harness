@@ -5,12 +5,12 @@ import { formatSuggestedCliCommand } from "../src/global/brand/cli.js";
 
 const packageName = "@kal-elsam/kairo-runtime";
 
-test("bare harness defaults to setup for interactive entry", () => {
+test("bare harness defaults to shell for interactive entry", () => {
   const { command } = parseArgs([]);
-  assert.equal(command, "setup");
+  assert.equal(command, "shell");
 });
 
-test("bare harness flags route to setup", () => {
+test("bare harness flags route to setup when setup flags are present", () => {
   const { command, options } = parseArgs(["--dry-run"]);
   assert.equal(command, "setup");
   assert.equal(options.dryRun, true);
@@ -52,45 +52,37 @@ test("uses bare CLI name when invoked from a known bin", () => {
 });
 
 test("suggests pnpm dlx when invoked as harness.js via pnpm", () => {
-  const previousExecPath = process.env.npm_execpath;
-  process.env.npm_execpath = "/Users/me/.local/share/pnpm/pnpm";
-
-  try {
-    assert.equal(
-      resolveSuggestedInvocation(packageName, ["node", "/tmp/.pnpm/harness.js"]),
-      "pnpm dlx @kal-elsam/kairo-runtime"
-    );
-  } finally {
-    if (previousExecPath === undefined) {
-      delete process.env.npm_execpath;
-    } else {
-      process.env.npm_execpath = previousExecPath;
-    }
-  }
+  assert.equal(
+    resolveSuggestedInvocation(packageName, ["node", "/tmp/.pnpm/harness.js"], {
+      env: { npm_execpath: "/Users/me/.local/share/pnpm/pnpm" }
+    }),
+    "pnpm dlx @kal-elsam/kairo-runtime"
+  );
 });
 
 test("suggests npx when invoked as harness.js without pnpm", () => {
-  const previousExecPath = process.env.npm_execpath;
-  const previousUserAgent = process.env.npm_config_user_agent;
-  delete process.env.npm_execpath;
-  delete process.env.npm_config_user_agent;
+  assert.equal(
+    resolveSuggestedInvocation(packageName, ["node", "/tmp/node_modules/.bin/harness.js"], {
+      env: {}
+    }),
+    "npx @kal-elsam/kairo-runtime"
+  );
+});
 
-  try {
-    assert.equal(
-      resolveSuggestedInvocation(packageName, ["node", "/tmp/node_modules/.bin/harness.js"]),
-      "npx @kal-elsam/kairo-runtime"
-    );
-  } finally {
-    if (previousExecPath === undefined) {
-      delete process.env.npm_execpath;
-    } else {
-      process.env.npm_execpath = previousExecPath;
-    }
+test("suggests yarn dlx when user agent reports yarn", () => {
+  assert.equal(
+    resolveSuggestedInvocation(packageName, ["node", "/tmp/harness.js"], {
+      env: { npm_config_user_agent: "yarn/4.0.0" }
+    }),
+    "yarn dlx @kal-elsam/kairo-runtime"
+  );
+});
 
-    if (previousUserAgent === undefined) {
-      delete process.env.npm_config_user_agent;
-    } else {
-      process.env.npm_config_user_agent = previousUserAgent;
-    }
-  }
+test("suggests bunx when user agent reports bun", () => {
+  assert.equal(
+    resolveSuggestedInvocation(packageName, ["node", "/tmp/harness.js"], {
+      env: { npm_config_user_agent: "bun/1.0.0" }
+    }),
+    "bunx @kal-elsam/kairo-runtime"
+  );
 });

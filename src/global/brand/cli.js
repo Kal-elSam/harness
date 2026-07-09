@@ -51,9 +51,9 @@ export function formatCliCommand(subcommand, cliName = PREFERRED_CLI) {
   return trimmed ? `${cliName} ${trimmed}` : cliName;
 }
 
-function detectInvocationPackageManager() {
-  const execPath = process.env.npm_execpath ?? "";
-  const userAgent = process.env.npm_config_user_agent ?? "";
+function detectInvocationPackageManager(env = process.env) {
+  const execPath = env.npm_execpath ?? "";
+  const userAgent = env.npm_config_user_agent ?? "";
 
   if (execPath.includes("pnpm") || userAgent.startsWith("pnpm/")) return "pnpm";
   if (execPath.includes("yarn") || userAgent.startsWith("yarn/")) return "yarn";
@@ -61,7 +61,11 @@ function detectInvocationPackageManager() {
   return "npm";
 }
 
-export function resolveSuggestedInvocation(packageName = PACKAGE_NAME, argv = process.argv) {
+export function resolveSuggestedInvocation(
+  packageName = PACKAGE_NAME,
+  argv = process.argv,
+  { env = process.env } = {}
+) {
   const invokedPath = argv[1] ?? PREFERRED_CLI;
   const invokedBase = basename(invokedPath);
 
@@ -69,7 +73,7 @@ export function resolveSuggestedInvocation(packageName = PACKAGE_NAME, argv = pr
     return invokedBase;
   }
 
-  const packageManager = detectInvocationPackageManager();
+  const packageManager = detectInvocationPackageManager(env);
 
   switch (packageManager) {
     case "pnpm":
@@ -85,9 +89,9 @@ export function resolveSuggestedInvocation(packageName = PACKAGE_NAME, argv = pr
 
 export function formatSuggestedCliCommand(
   subcommand,
-  { packageName = PACKAGE_NAME, argv = process.argv, suggestedInvocation } = {}
+  { packageName = PACKAGE_NAME, argv = process.argv, suggestedInvocation, env = process.env } = {}
 ) {
-  const invoke = suggestedInvocation ?? resolveSuggestedInvocation(packageName, argv);
+  const invoke = suggestedInvocation ?? resolveSuggestedInvocation(packageName, argv, { env });
   const trimmed = subcommand.trim();
   return trimmed ? `${invoke} ${trimmed}` : invoke;
 }
