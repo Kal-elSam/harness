@@ -3,6 +3,16 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.1.4 — 2026-07-09
+
+Patch release. Fixes public installer smoke for Kairo Runtime versions.
+
+### Fixes
+
+- `install-script-url` resolves `0.1.x` versions to `kairo-runtime-v*` tags instead of legacy `v*`.
+- Legacy `@kal-elsam/harness` tags (`0.29.x` and above) still use `v*` refs.
+- `install.sh` runs `npm install -g --force` so bootstrap upgrades replace legacy global bins safely.
+
 ## 0.1.3 — 2026-07-09
 
 Patch release. Adds opt-in Engram and Graphify components for persistent memory and
