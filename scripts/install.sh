@@ -184,7 +184,7 @@ require_cmd npm
 NODE_VERSION="$(node --version 2>/dev/null || true)"
 NPM_VERSION="$(npm --version 2>/dev/null || true)"
 GLOBAL_SPEC="$(resolve_global_spec)"
-GLOBAL_INSTALL_CMD="npm install -g ${GLOBAL_SPEC}"
+GLOBAL_INSTALL_CMD="npm install -g --force ${GLOBAL_SPEC}"
 SETUP_CMD="${PREFERRED_CLI} setup ${SETUP_MODE}${SETUP_EXTRA:+ ${SETUP_EXTRA}}"
 
 printf '%s\n' \
@@ -224,7 +224,7 @@ fi
 
 printf '%s\n' "Installing global CLI..." ""
 # shellcheck disable=SC2086
-npm install -g ${GLOBAL_SPEC}
+npm install -g --force ${GLOBAL_SPEC}
 
 KAIRO_BIN="$(resolve_kairo_bin || true)"
 if [ -z "$KAIRO_BIN" ]; then

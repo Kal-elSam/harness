@@ -47,6 +47,13 @@ if [ "$1" = "prefix" ] && [ "$2" = "-g" ]; then
 fi
 if [ "$1" = "install" ] && [ "$2" = "-g" ]; then
   shift 2
+  while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --force) shift ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+  done
   cat > "${kairoBin}" <<'EOF'
 ${kairoBody}
 EOF
@@ -77,7 +84,7 @@ test("install.sh exists and is packaged under scripts/", () => {
   assert.match(source, /Never uses sudo/);
   assert.match(source, /setup --dry-run/);
   assert.match(source, /setup --yes/);
-  assert.match(source, /npm install -g/);
+  assert.match(source, /npm install -g --force/);
   assert.doesNotMatch(source, /(?:^|[;&|(`])\s*sudo\s+/m);
   assert.doesNotMatch(source, /(?:^|[;&|(`])\s*(?:echo|cat|tee).*(?:\.bashrc|\.zshrc|\.profile)/m);
 });
@@ -88,7 +95,7 @@ test("installer --dry-run prints plan without executing install", () => {
   const result = runInstaller(["--dry-run"], { pathPrefix: `${binDir}:` });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Will run:/);
-  assert.match(result.stdout, /npm install -g @kal-elsam\/kairo-runtime@latest/);
+  assert.match(result.stdout, /npm install -g --force @kal-elsam\/kairo-runtime@latest/);
   assert.match(result.stdout, /kairo setup --dry-run/);
   assert.match(result.stdout, /Dry run: plan only/);
   assert.match(result.stdout, /Does NOT write agent configs/);
@@ -99,8 +106,26 @@ test("installer --dry-run honors --version pin", () => {
 
   const result = runInstaller(["--dry-run", "--version", "0.11.0"], { pathPrefix: `${binDir}:` });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /npm install -g @kal-elsam\/kairo-runtime@0\.11\.0/);
+  assert.match(result.stdout, /npm install -g --force @kal-elsam\/kairo-runtime@0\.11\.0/);
   assert.match(result.stdout, /kairo setup --dry-run/);
+});
+
+test("installer global install uses --force for idempotent upgrades", () => {
+  const homeDir = createFakeHome();
+  const { binDir } = createInstallerBin();
+
+  const first = runInstaller([], {
+    pathPrefix: `${binDir}:`,
+    env: { ...process.env, HARNESS_HOME: homeDir }
+  });
+  assert.equal(first.status, 0, first.stderr);
+
+  const second = runInstaller([], {
+    pathPrefix: `${binDir}:`,
+    env: { ...process.env, HARNESS_HOME: homeDir }
+  });
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stdout, /npm install -g --force/);
 });
 
 test("installer --yes prints setup --yes in plan", () => {

@@ -2,6 +2,31 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const DEFAULT_REPO = "Kal-elSam/harness";
+const LEGACY_HARNESS_MINOR_CUTOFF = 29;
+
+function parseSemver(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-.+)?$/.exec(version);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3])
+  };
+}
+
+export function usesLegacyHarnessTag(version) {
+  const semver = parseSemver(version);
+
+  if (!semver) {
+    return false;
+  }
+
+  return semver.major === 0 && semver.minor >= LEGACY_HARNESS_MINOR_CUTOFF;
+}
 
 export function resolveInstallScriptRef({ version, tag = null }) {
   if (version === "latest") {
@@ -12,7 +37,11 @@ export function resolveInstallScriptRef({ version, tag = null }) {
     return tag;
   }
 
-  return `v${version}`;
+  if (usesLegacyHarnessTag(version)) {
+    return `v${version}`;
+  }
+
+  return `kairo-runtime-v${version}`;
 }
 
 export function resolveInstallScriptUrl({

@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import {
   parseInstallScriptUrlArgs,
   resolveInstallScriptRef,
-  resolveInstallScriptUrl
+  resolveInstallScriptUrl,
+  usesLegacyHarnessTag
 } from "../scripts/lib/install-script-url.mjs";
 
 test("resolveInstallScriptRef uses main for latest", () => {
@@ -16,6 +17,18 @@ test("resolveInstallScriptRef uses explicit package-aware tag", () => {
     resolveInstallScriptRef({ version: "0.1.1", tag: "kairo-runtime-v0.1.1" }),
     "kairo-runtime-v0.1.1"
   );
+});
+
+test("resolveInstallScriptRef defaults kairo-runtime versions to package-aware tags", () => {
+  assert.equal(resolveInstallScriptRef({ version: "0.1.3" }), "kairo-runtime-v0.1.3");
+  assert.equal(resolveInstallScriptRef({ version: "0.1.1" }), "kairo-runtime-v0.1.1");
+  assert.equal(resolveInstallScriptRef({ version: "0.2.0" }), "kairo-runtime-v0.2.0");
+});
+
+test("usesLegacyHarnessTag identifies pre-kairo-runtime releases", () => {
+  assert.equal(usesLegacyHarnessTag("0.29.1"), true);
+  assert.equal(usesLegacyHarnessTag("0.30.0"), true);
+  assert.equal(usesLegacyHarnessTag("0.1.3"), false);
 });
 
 test("resolveInstallScriptRef falls back to legacy v-prefixed tag", () => {
@@ -31,6 +44,10 @@ test("resolveInstallScriptUrl builds raw GitHub install.sh URL", () => {
   assert.equal(
     resolveInstallScriptUrl({ version: "0.1.1", tag: "kairo-runtime-v0.1.1" }),
     "https://raw.githubusercontent.com/Kal-elSam/harness/kairo-runtime-v0.1.1/scripts/install.sh"
+  );
+  assert.equal(
+    resolveInstallScriptUrl({ version: "0.1.3" }),
+    "https://raw.githubusercontent.com/Kal-elSam/harness/kairo-runtime-v0.1.3/scripts/install.sh"
   );
   assert.equal(
     resolveInstallScriptUrl({ version: "0.29.1" }),
