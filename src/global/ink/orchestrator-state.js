@@ -12,6 +12,7 @@ export function canUseOrchestratorShell({
 
 export const ORCHESTRATOR_VIEWS = {
   HOME: "home",
+  DIAGNOSTICS: "diagnostics",
   AGENTS: "agents",
   PROFILE: "profile",
   PLAN: "plan",
@@ -21,13 +22,54 @@ export const ORCHESTRATOR_VIEWS = {
 };
 
 export const ORCHESTRATOR_MENU = [
-  { id: "status", label: "Diagnostics", view: ORCHESTRATOR_VIEWS.HOME },
+  { id: "status", label: "Diagnostics", view: ORCHESTRATOR_VIEWS.DIAGNOSTICS },
   { id: "agents", label: "Agents", view: ORCHESTRATOR_VIEWS.AGENTS },
   { id: "intelligence", label: "Intelligence", view: ORCHESTRATOR_VIEWS.INTELLIGENCE },
   { id: "profile", label: "Profile", view: ORCHESTRATOR_VIEWS.PROFILE },
   { id: "plan-setup", label: "Plan setup", view: ORCHESTRATOR_VIEWS.PLAN, action: "setup" },
   { id: "help", label: "Help", view: ORCHESTRATOR_VIEWS.HELP }
 ];
+
+export function resolveMenuItem(menuIndex) {
+  return ORCHESTRATOR_MENU[menuIndex] ?? null;
+}
+
+export function resolveMenuItemView(menuIndex) {
+  return resolveMenuItem(menuIndex)?.view ?? ORCHESTRATOR_VIEWS.HOME;
+}
+
+export function shiftMenuIndex(currentIndex, direction, menuLength = ORCHESTRATOR_MENU.length) {
+  const delta = direction === "up" ? -1 : direction === "down" ? 1 : 0;
+  return Math.min(menuLength - 1, Math.max(0, currentIndex + delta));
+}
+
+export function formatDiagnosticsLines(diagnostics) {
+  const summary = diagnostics?.diagnostics;
+  const lines = [
+    "Summary",
+    `CLI version: ${diagnostics?.cliVersion ?? "unknown"}`,
+    `Agents detected: ${summary?.detected ?? 0}/${diagnostics?.capabilities?.length ?? 0}`,
+    `Available: ${summary?.available ?? 0}`,
+    `Unknown: ${summary?.unknown ?? 0}`,
+    `Errors: ${summary?.errors ?? 0}`,
+    "",
+    "Intelligence availability",
+    ...formatIntelligenceLines(diagnostics),
+    "",
+    "Agent capabilities",
+    ...formatAgentStatusLines(diagnostics?.capabilities ?? [])
+  ];
+
+  const recommendations = diagnostics?.recommendations ?? [];
+  if (recommendations.length > 0) {
+    lines.push("", "Recommendations");
+    for (const recommendation of recommendations) {
+      lines.push(`  • ${recommendation}`);
+    }
+  }
+
+  return lines;
+}
 
 export function formatAgentStatusLines(capabilities) {
   return capabilities.map((entry) => {

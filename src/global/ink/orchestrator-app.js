@@ -7,9 +7,13 @@ import {
   ORCHESTRATOR_MENU,
   ORCHESTRATOR_VIEWS,
   formatAgentStatusLines,
+  formatDiagnosticsLines,
   formatIntelligenceLines,
   formatPlanLines,
-  formatProfileLines
+  formatProfileLines,
+  resolveMenuItem,
+  resolveMenuItemView,
+  shiftMenuIndex
 } from "./orchestrator-state.js";
 
 const COLORS = {
@@ -96,19 +100,19 @@ export function OrchestratorApp({
     if (view !== ORCHESTRATOR_VIEWS.HOME) return;
 
     if (key.upArrow) {
-      setMenuIndex((index) => Math.max(0, index - 1));
+      setMenuIndex((index) => shiftMenuIndex(index, "up"));
       return;
     }
 
     if (key.downArrow) {
-      setMenuIndex((index) => Math.min(ORCHESTRATOR_MENU.length - 1, index + 1));
+      setMenuIndex((index) => shiftMenuIndex(index, "down"));
       return;
     }
 
     if (!key.return) return;
 
-    const item = ORCHESTRATOR_MENU[menuIndex];
-    if (item.action === "setup") {
+    const item = resolveMenuItem(menuIndex);
+    if (item?.action === "setup") {
       buildActionPlan({
         action: PLAN_ACTIONS.SETUP,
         homeDir,
@@ -124,7 +128,7 @@ export function OrchestratorApp({
       return;
     }
 
-    setView(item.view);
+    setView(resolveMenuItemView(menuIndex));
   });
 
   if (loading) {
@@ -173,6 +177,12 @@ function renderView({ view, diagnostics, profileJson, plan, menuIndex }) {
           null,
           `Intelligence: local=${diagnostics.intelligence.summary.localAvailable ? "yes" : "no"} cloud=${diagnostics.intelligence.summary.cloudAuthenticated ? "yes" : "no"}`
         )
+      );
+    case ORCHESTRATOR_VIEWS.DIAGNOSTICS:
+      return React.createElement(Box, { flexDirection: "column" },
+        React.createElement(Text, { bold: true }, "Diagnostics"),
+        formatDiagnosticsLines(diagnostics)
+          .map((line) => React.createElement(Text, { key: line }, line))
       );
     case ORCHESTRATOR_VIEWS.AGENTS:
       return React.createElement(Box, { flexDirection: "column" },
