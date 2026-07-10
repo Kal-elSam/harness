@@ -3,6 +3,18 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.2.1 — 2026-07-10
+
+Patch release. Fixes the orchestrator Diagnostics menu entry so it opens a
+dedicated read-only view instead of silently staying on Home.
+
+### Fixes
+
+- Orchestrator **Diagnostics** maps to a `DIAGNOSTICS` view with summary, intelligence
+  availability, agent capabilities, and recommendations.
+- Home keeps the compact snapshot; `Esc` still returns to the menu from subviews.
+- Menu navigation uses shared pure helpers covered by `test/orchestrator-state.test.js`.
+
 ## 0.2.0 — 2026-07-09
 
 Minor release. Harness Engineering intelligence layer: governed project context,
