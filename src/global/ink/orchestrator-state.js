@@ -16,12 +16,14 @@ export const ORCHESTRATOR_VIEWS = {
   PROFILE: "profile",
   PLAN: "plan",
   CONFIRM: "confirm",
-  HELP: "help"
+  HELP: "help",
+  INTELLIGENCE: "intelligence"
 };
 
 export const ORCHESTRATOR_MENU = [
   { id: "status", label: "Diagnostics", view: ORCHESTRATOR_VIEWS.HOME },
   { id: "agents", label: "Agents", view: ORCHESTRATOR_VIEWS.AGENTS },
+  { id: "intelligence", label: "Intelligence", view: ORCHESTRATOR_VIEWS.INTELLIGENCE },
   { id: "profile", label: "Profile", view: ORCHESTRATOR_VIEWS.PROFILE },
   { id: "plan-setup", label: "Plan setup", view: ORCHESTRATOR_VIEWS.PLAN, action: "setup" },
   { id: "help", label: "Help", view: ORCHESTRATOR_VIEWS.HELP }
@@ -39,7 +41,11 @@ export function formatProfileLines(profileJson) {
   const lines = [
     `Coordinator: ${profileJson.coordinator ?? "none"}`,
     `Default agents: ${formatAgentsLabel(profileJson.defaultAgents)}`,
-    `Apply mode: ${profileJson.applyMode}`
+    `Apply mode: ${profileJson.applyMode}`,
+    `Preferred backend: ${profileJson.preferredBackend ?? "auto"}`,
+    `Preferred model: ${profileJson.preferredModel ?? "auto"}`,
+    `Cloud consent preference: ${profileJson.cloudConsent ? "recorded (session --cloud-consent still required)" : "no"}`,
+    `Token budget: ${profileJson.tokenBudget ?? "none"}`
   ];
 
   if (profileJson.sources.global) {
@@ -51,6 +57,29 @@ export function formatProfileLines(profileJson) {
   }
 
   lines.push(`Precedence: ${profileJson.sources.precedence}`);
+  return lines;
+}
+
+export function formatIntelligenceLines(diagnostics) {
+  const intelligence = diagnostics?.intelligence;
+  if (!intelligence) {
+    return ["Intelligence layer unavailable."];
+  }
+
+  const lines = [
+    `Local available: ${intelligence.summary.localAvailable ? "yes" : "no"}`,
+    `Cloud authenticated: ${intelligence.summary.cloudAuthenticated ? "yes" : "no"}`,
+    `Routing: ${intelligence.routingPreview?.reason ?? "n/a"}`,
+    `Can invoke: ${intelligence.routingPreview?.canInvoke ? "yes" : "no"}`,
+    ""
+  ];
+
+  for (const backend of intelligence.backends ?? []) {
+    lines.push(
+      `${backend.label.padEnd(14)} ${backend.state.padEnd(14)} models=${backend.models?.length ?? 0}`
+    );
+  }
+
   return lines;
 }
 

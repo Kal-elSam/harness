@@ -119,6 +119,17 @@ export async function runOrchestratorDiagnostics({
     );
   }
 
+  if (diagnostics.intelligence) {
+    console.log("");
+    console.log("Intelligence backends:");
+    for (const backend of diagnostics.intelligence.backends) {
+      console.log(
+        `  ${backend.label.padEnd(14)} ${backend.state.padEnd(14)} models=${backend.models?.length ?? 0}`
+      );
+    }
+    console.log(`  Routing: ${diagnostics.intelligence.routingPreview?.reason ?? "n/a"}`);
+  }
+
   console.log("");
   console.log("Recommendations:");
   for (const recommendation of diagnostics.recommendations) {

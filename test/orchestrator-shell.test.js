@@ -56,7 +56,7 @@ test("shouldOpenOrchestratorShell is true only for interactive TTY without flags
 });
 
 test("non-interactive shell fails fast without hanging", async () => {
-  const packageManifest = { name: "@kal-elsam/kairo-runtime", version: "0.1.5" };
+  const packageManifest = { name: "@kal-elsam/kairo-runtime", version: "0.2.0" };
 
   await assert.rejects(
     () => runOrchestratorShell({

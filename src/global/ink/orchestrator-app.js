@@ -7,6 +7,7 @@ import {
   ORCHESTRATOR_MENU,
   ORCHESTRATOR_VIEWS,
   formatAgentStatusLines,
+  formatIntelligenceLines,
   formatPlanLines,
   formatProfileLines
 } from "./orchestrator-state.js";
@@ -143,7 +144,7 @@ export function OrchestratorApp({
 
   return React.createElement(Box, { flexDirection: "column" },
     React.createElement(Text, { bold: true, color: COLORS.accent }, `${BRAND.displayName} orchestrator`),
-    React.createElement(Text, { color: COLORS.muted }, "Provider-neutral agent coordinator · no model imposed"),
+    React.createElement(Text, { color: COLORS.muted }, "Harness Engineering · local-first · cloud opt-in"),
     React.createElement(Text, null, ""),
     renderView({ view, diagnostics, profileJson, plan, menuIndex }),
     React.createElement(Text, null, ""),
@@ -166,13 +167,26 @@ function renderView({ view, diagnostics, profileJson, plan, menuIndex }) {
         React.createElement(Text, null, ""),
         React.createElement(Text, { bold: true }, "Snapshot"),
         React.createElement(Text, null, `Agents detected: ${diagnostics.diagnostics.detected}/${diagnostics.capabilities.length}`),
-        React.createElement(Text, null, `Available: ${diagnostics.diagnostics.available}`)
+        React.createElement(Text, null, `Available: ${diagnostics.diagnostics.available}`),
+        diagnostics.intelligence && React.createElement(
+          Text,
+          null,
+          `Intelligence: local=${diagnostics.intelligence.summary.localAvailable ? "yes" : "no"} cloud=${diagnostics.intelligence.summary.cloudAuthenticated ? "yes" : "no"}`
+        )
       );
     case ORCHESTRATOR_VIEWS.AGENTS:
       return React.createElement(Box, { flexDirection: "column" },
         React.createElement(Text, { bold: true }, "Agent capabilities"),
         formatAgentStatusLines(diagnostics.capabilities)
           .map((line) => React.createElement(Text, { key: line }, line))
+      );
+    case ORCHESTRATOR_VIEWS.INTELLIGENCE:
+      return React.createElement(Box, { flexDirection: "column" },
+        React.createElement(Text, { bold: true }, "Intelligence backends"),
+        formatIntelligenceLines(diagnostics)
+          .map((line) => React.createElement(Text, { key: line }, line)),
+        React.createElement(Text, null, ""),
+        React.createElement(Text, { dimColor: true }, "CLI: kairo intelligence status|models|context|route|ask")
       );
     case ORCHESTRATOR_VIEWS.PROFILE:
       return React.createElement(Box, { flexDirection: "column" },
@@ -190,10 +204,11 @@ function renderView({ view, diagnostics, profileJson, plan, menuIndex }) {
     case ORCHESTRATOR_VIEWS.HELP:
       return React.createElement(Box, { flexDirection: "column" },
         React.createElement(Text, { bold: true }, "Help"),
-        React.createElement(Text, null, "Kairo coordinates installed agent CLIs — it is not a coding model."),
-        React.createElement(Text, null, "Use explicit commands for scripts: setup, install, status, doctor, sync."),
+        React.createElement(Text, null, "Kairo coordinates installed agent CLIs and governs project intelligence."),
+        React.createElement(Text, null, "Local-first: Ollama when available. Cloud (OpenRouter/free) needs consent."),
+        React.createElement(Text, null, "Use: intelligence status|models|context|route|ask"),
         React.createElement(Text, null, "Profiles: ~/.harness/profile.json and .harness/kairo.json (project wins)."),
-        React.createElement(Text, null, "Credentials are never stored by Kairo.")
+        React.createElement(Text, null, "Credentials are never stored by Kairo — use environment variables.")
       );
     default: {
       const _exhaustive = view;

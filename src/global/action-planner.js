@@ -2,6 +2,11 @@ import { CAPABILITY_STATES } from "./capability-states.js";
 import { inspectAllCapabilities } from "./capability-registry.js";
 import { resolveProfile, resolveProfileAgents } from "./profile.js";
 import { formatCliCommand } from "./brand/cli.js";
+import {
+  inspectIntelligenceBackends,
+  summarizeIntelligenceBackends,
+  resolveRoutingDecision
+} from "./intelligence/index.js";
 
 export const PLAN_ACTIONS = {
   DIAGNOSE: "diagnose",
@@ -16,16 +21,32 @@ export async function buildReadOnlyDiagnostics({
   workspaceRoot,
   packageName,
   packageRoot,
-  cliVersion
+  cliVersion,
+  env = process.env,
+  fetchImpl = globalThis.fetch
 }) {
   const [{ profile, sources }, capabilities] = await Promise.all([
     resolveProfile({ homeDir, workspaceRoot }),
     inspectAllCapabilities({ homeDir, workspaceRoot, packageName })
   ]);
 
+  const intelligence = await inspectIntelligenceBackends({
+    env,
+    fetchImpl,
+    customProviders: profile.customProviders ?? []
+  });
+
   const detectedIds = capabilities.filter((entry) => entry.detected).map((entry) => entry.id);
   const profileAgents = resolveProfileAgents(profile, detectedIds);
   const diagnostics = summarizeDiagnostics(capabilities);
+  const intelligenceSummary = summarizeIntelligenceBackends(intelligence);
+  const routingPreview = resolveRoutingDecision({
+    backends: intelligence,
+    profile,
+    // Session consent only — profile.cloudConsent is a preference, never live authorization.
+    cloudConsent: false,
+    tokenBudget: profile.tokenBudget
+  });
 
   return {
     readOnly: true,
@@ -34,7 +55,18 @@ export async function buildReadOnlyDiagnostics({
     capabilities,
     profileAgents,
     diagnostics,
-    recommendations: buildDiagnosticRecommendations({ capabilities, profile, diagnostics })
+    intelligence: {
+      backends: intelligence,
+      summary: intelligenceSummary,
+      routingPreview
+    },
+    recommendations: buildDiagnosticRecommendations({
+      capabilities,
+      profile,
+      diagnostics,
+      intelligenceSummary,
+      routingPreview
+    })
   };
 }
 
@@ -148,7 +180,13 @@ function summarizeDiagnostics(capabilities) {
   };
 }
 
-function buildDiagnosticRecommendations({ capabilities, profile, diagnostics }) {
+function buildDiagnosticRecommendations({
+  capabilities,
+  profile,
+  diagnostics,
+  intelligenceSummary,
+  routingPreview
+}) {
   const recommendations = [];
 
   if (diagnostics.detected === 0) {
@@ -166,6 +204,20 @@ function buildDiagnosticRecommendations({ capabilities, profile, diagnostics }) 
     if (capability.recommendation) {
       recommendations.push(`${capability.label}: ${capability.recommendation}`);
     }
+  }
+
+  if (!intelligenceSummary?.localAvailable && !intelligenceSummary?.cloudAuthenticated) {
+    recommendations.push(
+      "No intelligence backend available. Start Ollama or set OPENROUTER_API_KEY (env only). Diagnostics mode remains available."
+    );
+  } else if (!intelligenceSummary?.localAvailable && intelligenceSummary?.cloudAuthenticated) {
+    recommendations.push(
+      `OpenRouter is authenticated. Cloud invoke still requires session flags: ${formatCliCommand("intelligence ask --cloud-consent --yes")}.`
+    );
+  }
+
+  if (routingPreview && !routingPreview.canInvoke) {
+    recommendations.push(`Routing: ${routingPreview.reason}`);
   }
 
   return [...new Set(recommendations)];
