@@ -3,6 +3,25 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.2.2 — 2026-07-10
+
+Minor release. Kairo Runtime MVP: launch, supervise, and audit agent CLI runs with
+privacy-first persistence and cross-process supervision.
+
+### Features
+
+- CLI: `kairo run`, `kairo runs list|show|stop` with `--no-wait`, `--model`, and opt-in transcript capture.
+- Execution adapters for Cursor, Codex, and Claude Code; OpenCode inspect-only in v1.
+- Persisted audit trail under `~/.harness/runs/<runId>/` (`state.json`, `events.jsonl`).
+- Detached supervisor via `spawn` (no fork IPC); `starting` grace for cross-process recover.
+- TUI operations dashboard with multi-step launch wizard (agent, task, model, permissions).
+- Smoke script: `scripts/runtime-mvp-smoke.sh` with `SMOKE_MODEL` override.
+
+### Security
+
+- Task content is not stored in audit artifacts; only `taskDigest` + `taskLength`.
+- Ephemeral `handoff.json` is consumed or cleaned on cancel, fail, or recover.
+
 ## 0.2.1 — 2026-07-10
 
 Patch release. Fixes the orchestrator Diagnostics menu entry so it opens a
