@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { harnessHomePaths } from "./paths.js";
 import { AGENT_CAPABILITY_IDS } from "./agent-capabilities/index.js";
 import { classifyCustomBaseUrl, isValidEnvironmentName } from "./intelligence/custom-url.js";
+import { validateRuntimeProfile, RUNTIME_PROFILE_KEYS } from "./runtime/run-profile.js";
 
 export const PROFILE_KEYS = new Set([
   "coordinator",
@@ -16,7 +17,8 @@ export const PROFILE_KEYS = new Set([
   "tokenBudget",
   "stableContextBudget",
   "requestContextBudget",
-  "customProviders"
+  "customProviders",
+  ...RUNTIME_PROFILE_KEYS
 ]);
 
 export const DEFAULT_PROFILE = {
@@ -30,7 +32,13 @@ export const DEFAULT_PROFILE = {
   tokenBudget: null,
   stableContextBudget: null,
   requestContextBudget: null,
-  customProviders: []
+  customProviders: [],
+  agentAliases: {},
+  modelAliases: {},
+  defaultPermissions: [],
+  defaultRuntimeAgent: null,
+  defaultRuntimeModel: null,
+  captureTranscript: false
 };
 
 const APPLY_MODES = new Set(["prompt", "confirm"]);
@@ -105,6 +113,12 @@ export function buildProfileJson(resolved) {
     stableContextBudget: profile.stableContextBudget,
     requestContextBudget: profile.requestContextBudget,
     customProviders: sanitizeCustomProviders(profile.customProviders),
+    agentAliases: profile.agentAliases ?? {},
+    modelAliases: profile.modelAliases ?? {},
+    defaultPermissions: profile.defaultPermissions ?? [],
+    defaultRuntimeAgent: profile.defaultRuntimeAgent ?? null,
+    defaultRuntimeModel: profile.defaultRuntimeModel ?? null,
+    captureTranscript: profile.captureTranscript ?? false,
     sources: {
       global: sources.global,
       project: sources.project,
@@ -187,6 +201,7 @@ function validateProfile(profile) {
 
   validateNoSecrets(profile);
   validateCustomProviders(profile.customProviders);
+  validateRuntimeProfile(profile);
 }
 
 /**

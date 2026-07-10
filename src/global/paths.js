@@ -17,7 +17,20 @@ export function harnessHomePaths(homeDir) {
     policyPath: join(root, "policy.json"),
     profilePath: join(root, "profile.json"),
     historyPath: join(root, "history.jsonl"),
+    runsDir: join(root, "runs"),
     coreDir: join(root, "core"),
     backupsDir: join(root, "backups")
+  };
+}
+
+export function runPaths(homeDir, runId) {
+  const { runsDir } = harnessHomePaths(homeDir);
+  const runDir = join(runsDir, runId);
+
+  return {
+    runDir,
+    statePath: join(runDir, "state.json"),
+    eventsPath: join(runDir, "events.jsonl"),
+    transcriptPath: join(runDir, "transcript.jsonl")
   };
 }

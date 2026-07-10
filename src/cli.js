@@ -32,6 +32,7 @@ import { resolveHomeDir } from "./global/paths.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 import { runOrchestratorDiagnostics, runOrchestratorShell } from "./global/orchestrator.js";
 import { runIntelligenceCli } from "./global/intelligence-cli.js";
+import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import {
   LEGACY_PACKAGE_NAME,
   PACKAGE_NAME,
@@ -85,6 +86,12 @@ export async function runCli(argv) {
         cliVersion: packageManifest.version,
         json: optionsWithPolicy.json
       });
+      return;
+    case "run":
+      await runGlobalRun(optionsWithPolicy, packageManifest);
+      return;
+    case "runs":
+      await runGlobalRuns(optionsWithPolicy, packageManifest);
       return;
     case "intelligence":
       await runIntelligenceCli(optionsWithPolicy, packageManifest);
@@ -333,6 +340,17 @@ export function parseArgs(argv) {
     intelligenceTask: null,
     intelligencePrompt: null,
     intelligencePaths: [],
+    runsAction: null,
+    runId: null,
+    agent: null,
+    task: null,
+    model: null,
+    permissions: null,
+    captureTranscript: false,
+    follow: false,
+    wait: true,
+    activeOnly: false,
+    timeoutMs: null,
     includePrivate: false,
     cloudConsent: false
   };
@@ -347,6 +365,10 @@ export function parseArgs(argv) {
 
   if (command === "history") {
     parseHistoryAction(args, options);
+  }
+
+  if (command === "runs") {
+    parseRunsAction(args, options);
   }
 
   if (command === "intelligence") {
@@ -414,17 +436,36 @@ export function parseArgs(argv) {
     else if (arg === "--out") options.outPath = resolve(args[++index]);
     else if (arg.startsWith("--out=")) options.outPath = resolve(arg.slice("--out=".length));
     else if (arg === "--simple") options.simple = true;
-    else if (arg === "--task") options.intelligenceTask = args[++index];
-    else if (arg.startsWith("--task=")) options.intelligenceTask = arg.slice("--task=".length);
+    else if (arg === "--task" || arg.startsWith("--task=")) {
+      const taskValue = arg.startsWith("--task=") ? arg.slice("--task=".length) : args[++index];
+      if (command === "run") options.task = taskValue;
+      else options.intelligenceTask = taskValue;
+    }
     else if (arg === "--prompt") options.intelligencePrompt = args[++index];
     else if (arg.startsWith("--prompt=")) options.intelligencePrompt = arg.slice("--prompt=".length);
     else if (arg === "--paths") options.intelligencePaths = parsePathList(args[++index]);
     else if (arg.startsWith("--paths=")) options.intelligencePaths = parsePathList(arg.slice("--paths=".length));
+    else if (arg === "--agent") options.agent = args[++index];
+    else if (arg.startsWith("--agent=")) options.agent = arg.slice("--agent=".length);
+    else if (arg === "--model") options.model = args[++index];
+    else if (arg.startsWith("--model=")) options.model = arg.slice("--model=".length);
+    else if (arg === "--permissions") options.permissions = parsePathList(args[++index]);
+    else if (arg.startsWith("--permissions=")) options.permissions = parsePathList(arg.slice("--permissions=".length));
+    else if (arg === "--capture-transcript") options.captureTranscript = true;
+    else if (arg === "--follow") options.follow = true;
+    else if (arg === "--no-wait") options.wait = false;
+    else if (arg === "--active-only") options.activeOnly = true;
+    else if (arg === "--timeout") options.timeoutMs = parsePositiveInt(args[++index], "timeout") * 1000;
+    else if (arg.startsWith("--timeout=")) options.timeoutMs = parsePositiveInt(arg.slice("--timeout=".length), "timeout") * 1000;
     else if (arg === "--include-private") options.includePrivate = true;
     else if (arg === "--cloud-consent") options.cloudConsent = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
     else throw new Error(`Unknown option "${arg}".`);
+  }
+
+  if (command === "run" && !options.task && args.length > 0) {
+    options.task = args.join(" ").trim();
   }
 
   return { command, options };
@@ -512,6 +553,30 @@ function parseHistoryAction(args, options) {
   throw new Error(`Unknown history action "${action}". Use last or omit for the full log.`);
 }
 
+function parseRunsAction(args, options) {
+  const action = args[0];
+
+  if (!action || action.startsWith("-")) {
+    options.runsAction = "list";
+    return;
+  }
+
+  if (!new Set(["list", "show", "stop"]).has(action)) {
+    throw new Error(`Unknown runs action "${action}". Use list, show, or stop.`);
+  }
+
+  args.shift();
+  options.runsAction = action;
+
+  if (action === "show" || action === "stop") {
+    const runId = args[0];
+    if (!runId || runId.startsWith("-")) {
+      throw new Error(`Missing run id. Use: ${formatCliCommand(`runs ${action} <runId>`)}`);
+    }
+    options.runId = args.shift();
+  }
+}
+
 function parseIntelligenceAction(args, options) {
   const action = args[0];
   if (!action || action.startsWith("-")) {
@@ -559,6 +624,8 @@ function normalizeCommand(command) {
   if (command === "install" || command === "i") return "install";
   if (command === "shell") return "shell";
   if (command === "orchestrator") return "orchestrator";
+  if (command === "run") return "run";
+  if (command === "runs") return "runs";
   if (command === "intelligence" || command === "intel") return "intelligence";
   if (command === "setup") return "setup";
   if (command === "status") return "status";
@@ -619,7 +686,11 @@ Usage:
   ${cli}                              Interactive orchestrator shell (TTY)
   ${cli} --dry-run                      Setup dry-run (scriptable)
   ${cli} --version
-  ${cli} shell                          Interactive orchestrator shell (TTY)
+  ${cli} shell                          Operations dashboard (TTY)
+  ${cli} run --agent <id> --task "..." [--model <name>] [--cwd <dir>] [--permissions force] [--capture-transcript] [--follow] [--no-wait] [--json]
+  ${cli} runs list [--json] [--limit <n>] [--active-only]
+  ${cli} runs show <runId> [--json] [--limit <n>] [--follow]
+  ${cli} runs stop <runId> [--json]
   ${cli} orchestrator [--json]          Read-only agent capability diagnostics
   ${cli} intelligence [status|models|context|route|ask] [--json]
   ${cli} intelligence ask --prompt "..." [--cloud-consent] [--yes] [--paths a,b]
@@ -656,7 +727,9 @@ Scopes:
                           Explicit --scope=workspace only.
 
 Commands:
-  shell      Interactive Ink orchestrator (TTY). Bare ${cli} opens this in TTY sessions.
+  shell      Operations dashboard (TTY). Bare ${cli} opens this in TTY sessions.
+  run        Launch a managed agent run with local audit trail.
+  runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
   orchestrator  Read-only capability registry diagnostics (--json supported).
   intelligence  Harness Engineering layer: backends, context packs, routing, budgets.
              Local-first (Ollama). Cloud (OpenRouter/free) only with --cloud-consent.
