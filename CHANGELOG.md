@@ -3,6 +3,39 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.2.0 — 2026-07-09
+
+Minor release. Harness Engineering intelligence layer: governed project context,
+local-first backends, cloud opt-in, token budgets, and provider-neutral routing.
+
+### Features
+
+- Pluggable intelligence backends: Ollama (local) and OpenRouter (`openrouter/free` candidate).
+- Custom OpenAI-compatible HTTP providers via profile `customProviders` (`baseUrl` + `apiKeyEnv` only).
+- Context compiler builds evidence-based `ContextPack` (stable + per-request) without dumping the repo.
+- Routing prefers user overrides, then Ollama, then OpenRouter free after explicit cloud consent.
+- Privacy gates: private paths excluded by default; cloud invoke requires consent + confirmation.
+- Token budgets and usage telemetry (input/output/cached/model/fallback).
+- CLI: `kairo intelligence status|models|context|route|ask`.
+- Orchestrator shell menu includes Intelligence diagnostics.
+- Profile fields: `preferredBackend`, `preferredModel`, `cloudConsent`, token budgets, `customProviders`.
+
+### Security
+
+- Credentials are read only from environment variables (`OPENROUTER_API_KEY`, `OLLAMA_HOST`, named `apiKeyEnv`).
+- Profiles and disk state never store API keys, tokens, or secrets.
+- Without a backend or consent, Kairo remains in diagnostics/configuration mode.
+- Remote custom providers cannot use `apiKeyEnv` in 0.2.0, preventing a project profile from redirecting a bearer credential to an arbitrary host.
+
+### Notes
+
+- `openrouter/free` is a dynamic router candidate, not a permanently hardcoded model lock.
+- Kairo owns reasoning governance; providers only supply inference.
+- Agent CLI capability registry from 0.1.5 remains unchanged for setup/install/status/doctor.
+- Deferred to 0.2.1 (MEDIUM): broader secret-key coverage (`accessKey`, `awsAccessKeyId`,
+  `passwd`); tighten link-local / metadata host classification in `customProviders` baseUrl
+  validation (`169.254.0.0/16`).
+
 ## 0.1.5 — 2026-07-09
 
 Minor release. Interactive orchestrator foundation: shell, diagnostics, capability

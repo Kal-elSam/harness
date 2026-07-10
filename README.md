@@ -161,6 +161,14 @@ kairo install --agents all
 kairo install --agents cursor,codex --components orchestrator,sdd-core
 kairo doctor
 kairo doctor --json
+kairo orchestrator --json
+kairo intelligence status
+kairo intelligence models
+kairo intelligence context --json
+kairo intelligence route --task "explain architecture"
+kairo intelligence ask --prompt "Summarize project risks" --json
+# Cloud (OpenRouter/free) only after explicit consent + confirm:
+# OPENROUTER_API_KEY=... kairo intelligence ask --prompt "..." --cloud-consent --yes
 kairo update   # technical alias; prefer sync
 kairo detect
 kairo components
@@ -179,6 +187,21 @@ kairo rollback --to <snapshot> [--apply]
 kairo uninstall
 kairo install --scope=workspace   # opt-in / legacy
 ```
+
+### Intelligence layer (0.2.0)
+
+Kairo owns **Harness Engineering** governance: compile relevant project context, route to a backend, and require human confirmation for cloud transmission. It does not store credentials.
+
+| Backend | Detection | Invoke |
+|---|---|---|
+| Ollama | `GET $OLLAMA_HOST/api/tags` (default `http://127.0.0.1:11434`) | Local chat |
+| OpenRouter | `OPENROUTER_API_KEY` in env | `openrouter/free` after `--cloud-consent` + `--yes` |
+| Custom HTTP | Profile `customProviders` (`baseUrl`, `modelId`, optional local-only `apiKeyEnv`) | OpenAI-compatible `/chat/completions` |
+
+Routing order: user override → Ollama → OpenRouter free (consent) → diagnostics mode.
+
+Private paths (`.env`, secrets, keys) are excluded from context packs unless `--include-private`.
+Remote custom providers require explicit cloud consent and cannot receive an `apiKeyEnv` credential in 0.2.0; use a built-in provider or a local custom endpoint for env-backed authentication.
 
 Legacy CLI aliases (backward compatible): `harness`, `agentic-harness`, `sgs-harness`, `harness-sgs`
 
