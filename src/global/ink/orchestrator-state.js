@@ -1,5 +1,6 @@
 import { stdin as input, stdout as output } from "node:process";
 import { canUseSetupInk } from "./terminal.js";
+import { isActiveRunState, formatTaskLabel } from "../runtime/run-types.js";
 
 export function canUseOrchestratorShell({
   interactive = Boolean(input.isTTY && output.isTTY),
@@ -12,23 +13,136 @@ export function canUseOrchestratorShell({
 
 export const ORCHESTRATOR_VIEWS = {
   HOME: "home",
+  ACTIVE_RUNS: "active-runs",
+  RECENT_RUNS: "recent-runs",
+  RUN_DETAIL: "run-detail",
+  PROVIDERS: "providers",
+  LAUNCH: "launch",
   DIAGNOSTICS: "diagnostics",
-  AGENTS: "agents",
-  PROFILE: "profile",
-  PLAN: "plan",
-  CONFIRM: "confirm",
-  HELP: "help",
-  INTELLIGENCE: "intelligence"
+  HELP: "help"
 };
 
 export const ORCHESTRATOR_MENU = [
-  { id: "status", label: "Diagnostics", view: ORCHESTRATOR_VIEWS.DIAGNOSTICS },
-  { id: "agents", label: "Agents", view: ORCHESTRATOR_VIEWS.AGENTS },
-  { id: "intelligence", label: "Intelligence", view: ORCHESTRATOR_VIEWS.INTELLIGENCE },
-  { id: "profile", label: "Profile", view: ORCHESTRATOR_VIEWS.PROFILE },
-  { id: "plan-setup", label: "Plan setup", view: ORCHESTRATOR_VIEWS.PLAN, action: "setup" },
+  { id: "active", label: "Active runs", view: ORCHESTRATOR_VIEWS.ACTIVE_RUNS },
+  { id: "recent", label: "Recent runs", view: ORCHESTRATOR_VIEWS.RECENT_RUNS },
+  { id: "providers", label: "Providers", view: ORCHESTRATOR_VIEWS.PROVIDERS },
+  { id: "launch", label: "Launch run", view: ORCHESTRATOR_VIEWS.LAUNCH, action: "launch" },
+  { id: "diagnostics", label: "Diagnostics", view: ORCHESTRATOR_VIEWS.DIAGNOSTICS },
   { id: "help", label: "Help", view: ORCHESTRATOR_VIEWS.HELP }
 ];
+
+export const LAUNCH_WIZARD_STEPS = {
+  AGENT: "agent",
+  TASK: "task",
+  MODEL: "model",
+  PERMISSIONS: "permissions",
+  CONFIRM: "confirm"
+};
+
+export const LAUNCH_PERMISSION_OPTIONS = [
+  { id: "default", label: "Default (agent prompts)", permissions: [] },
+  { id: "force", label: "Force / auto-approve", permissions: ["force"] },
+  { id: "yolo", label: "YOLO / skip permissions", permissions: ["yolo"] }
+];
+
+export function resolveLaunchableAgents(providers = []) {
+  return providers
+    .filter((provider) => provider.launchable)
+    .map((provider) => provider.id);
+}
+
+export function createLaunchDraft() {
+  return {
+    agentId: null,
+    task: "",
+    model: "",
+    permissionIndex: 0
+  };
+}
+
+export function resolveLaunchPermissions(draft) {
+  return LAUNCH_PERMISSION_OPTIONS[draft.permissionIndex]?.permissions ?? [];
+}
+
+export function advanceLaunchWizardStep(currentStep) {
+  switch (currentStep) {
+    case LAUNCH_WIZARD_STEPS.AGENT:
+      return LAUNCH_WIZARD_STEPS.TASK;
+    case LAUNCH_WIZARD_STEPS.TASK:
+      return LAUNCH_WIZARD_STEPS.MODEL;
+    case LAUNCH_WIZARD_STEPS.MODEL:
+      return LAUNCH_WIZARD_STEPS.PERMISSIONS;
+    case LAUNCH_WIZARD_STEPS.PERMISSIONS:
+      return LAUNCH_WIZARD_STEPS.CONFIRM;
+    default:
+      return LAUNCH_WIZARD_STEPS.CONFIRM;
+  }
+}
+
+export function retreatLaunchWizardStep(currentStep) {
+  switch (currentStep) {
+    case LAUNCH_WIZARD_STEPS.CONFIRM:
+      return LAUNCH_WIZARD_STEPS.PERMISSIONS;
+    case LAUNCH_WIZARD_STEPS.PERMISSIONS:
+      return LAUNCH_WIZARD_STEPS.MODEL;
+    case LAUNCH_WIZARD_STEPS.MODEL:
+      return LAUNCH_WIZARD_STEPS.TASK;
+    case LAUNCH_WIZARD_STEPS.TASK:
+      return LAUNCH_WIZARD_STEPS.AGENT;
+    default:
+      return LAUNCH_WIZARD_STEPS.AGENT;
+  }
+}
+
+export function formatLaunchWizardLines({
+  step,
+  draft,
+  launchableAgents,
+  agentIndex,
+  permissionIndex
+}) {
+  const lines = [`Step: ${step}`];
+
+  if (step === LAUNCH_WIZARD_STEPS.AGENT) {
+    lines.push("Select agent:");
+    for (const [index, agentId] of launchableAgents.entries()) {
+      const marker = index === agentIndex ? "›" : " ";
+      lines.push(`${marker} ${agentId}`);
+    }
+    return lines;
+  }
+
+  if (step === LAUNCH_WIZARD_STEPS.TASK) {
+    lines.push(`Agent: ${draft.agentId ?? "—"}`);
+    lines.push(`Task: ${draft.task || "(type your task)"}`);
+    lines.push("Enter to continue · Backspace to edit");
+    return lines;
+  }
+
+  if (step === LAUNCH_WIZARD_STEPS.MODEL) {
+    lines.push(`Agent: ${draft.agentId ?? "—"}`);
+    lines.push(`Task length: ${draft.task.length} chars`);
+    lines.push(`Model: ${draft.model || "(default — press Enter)"}`);
+    lines.push("Type model alias or Enter for default");
+    return lines;
+  }
+
+  if (step === LAUNCH_WIZARD_STEPS.PERMISSIONS) {
+    lines.push("Permissions:");
+    for (const [index, option] of LAUNCH_PERMISSION_OPTIONS.entries()) {
+      const marker = index === permissionIndex ? "›" : " ";
+      lines.push(`${marker} ${option.label}`);
+    }
+    return lines;
+  }
+
+  lines.push(`Agent: ${draft.agentId ?? "—"}`);
+  lines.push(`Task length: ${draft.task.length} chars (content not stored)`);
+  lines.push(`Model: ${draft.model || "default"}`);
+  lines.push(`Permissions: ${LAUNCH_PERMISSION_OPTIONS[permissionIndex]?.label ?? "default"}`);
+  lines.push("Enter to launch · Esc to go back");
+  return lines;
+}
 
 export function resolveMenuItem(menuIndex) {
   return ORCHESTRATOR_MENU[menuIndex] ?? null;
@@ -43,6 +157,29 @@ export function shiftMenuIndex(currentIndex, direction, menuLength = ORCHESTRATO
   return Math.min(menuLength - 1, Math.max(0, currentIndex + delta));
 }
 
+export function formatRunLines(runs, { emptyMessage = "No runs." } = {}) {
+  if (!runs || runs.length === 0) return [emptyMessage];
+
+  return runs.map((run) => {
+    const state = run.state.padEnd(12);
+    const agent = run.agentId.padEnd(10);
+    return `${run.runId}  ${state}  ${agent}  ${formatTaskLabel(run)}`;
+  });
+}
+
+export function formatProviderLines(providers) {
+  return providers.map((provider) => {
+    const status = provider.launchable
+      ? "launchable"
+      : provider.compatible
+        ? "auditable"
+        : provider.available
+          ? "limited"
+          : "missing";
+    return `${provider.label.padEnd(14)} ${status.padEnd(12)} ${provider.reason ?? ""}`.trimEnd();
+  });
+}
+
 export function formatDiagnosticsLines(diagnostics) {
   const summary = diagnostics?.diagnostics;
   const lines = [
@@ -52,9 +189,6 @@ export function formatDiagnosticsLines(diagnostics) {
     `Available: ${summary?.available ?? 0}`,
     `Unknown: ${summary?.unknown ?? 0}`,
     `Errors: ${summary?.errors ?? 0}`,
-    "",
-    "Intelligence availability",
-    ...formatIntelligenceLines(diagnostics),
     "",
     "Agent capabilities",
     ...formatAgentStatusLines(diagnostics?.capabilities ?? [])
@@ -79,71 +213,68 @@ export function formatAgentStatusLines(capabilities) {
   });
 }
 
-export function formatProfileLines(profileJson) {
-  const lines = [
-    `Coordinator: ${profileJson.coordinator ?? "none"}`,
-    `Default agents: ${formatAgentsLabel(profileJson.defaultAgents)}`,
-    `Apply mode: ${profileJson.applyMode}`,
-    `Preferred backend: ${profileJson.preferredBackend ?? "auto"}`,
-    `Preferred model: ${profileJson.preferredModel ?? "auto"}`,
-    `Cloud consent preference: ${profileJson.cloudConsent ? "recorded (session --cloud-consent still required)" : "no"}`,
-    `Token budget: ${profileJson.tokenBudget ?? "none"}`
-  ];
-
-  if (profileJson.sources.global) {
-    lines.push(`Global: ${profileJson.sources.global}`);
-  }
-
-  if (profileJson.sources.project) {
-    lines.push(`Project: ${profileJson.sources.project}`);
-  }
-
-  lines.push(`Precedence: ${profileJson.sources.precedence}`);
-  return lines;
-}
-
-export function formatIntelligenceLines(diagnostics) {
-  const intelligence = diagnostics?.intelligence;
-  if (!intelligence) {
-    return ["Intelligence layer unavailable."];
-  }
+export function formatRunDetailLines(run, events = []) {
+  if (!run) return ["Run not found."];
 
   const lines = [
-    `Local available: ${intelligence.summary.localAvailable ? "yes" : "no"}`,
-    `Cloud authenticated: ${intelligence.summary.cloudAuthenticated ? "yes" : "no"}`,
-    `Routing: ${intelligence.routingPreview?.reason ?? "n/a"}`,
-    `Can invoke: ${intelligence.routingPreview?.canInvoke ? "yes" : "no"}`,
-    ""
+    `Run: ${run.runId}`,
+    `Agent: ${run.agentId} (${run.provider})`,
+    `State: ${run.state}`,
+    `Model: ${run.model ?? "default"}`,
+    `Cwd: ${run.cwd}`,
+    `Started: ${run.startedAt}`,
+    `Updated: ${run.updatedAt}`
   ];
 
-  for (const backend of intelligence.backends ?? []) {
-    lines.push(
-      `${backend.label.padEnd(14)} ${backend.state.padEnd(14)} models=${backend.models?.length ?? 0}`
-    );
-  }
+  if (run.completedAt) lines.push(`Completed: ${run.completedAt}`);
+  if (run.tokenUsage) lines.push(`Tokens: ${JSON.stringify(run.tokenUsage)}`);
+  if (run.error) lines.push(`Error: ${run.error}`);
+  if (run.tools?.length) lines.push(`Tools: ${run.tools.join(", ")}`);
 
-  return lines;
-}
-
-export function formatPlanLines(plan) {
-  const lines = [`Action: ${plan.action}`, ""];
-  for (const step of plan.steps) {
-    lines.push(`  • ${step}`);
-  }
-
-  if (plan.warnings.length > 0) {
-    lines.push("", "Warnings:");
-    for (const warning of plan.warnings) {
-      lines.push(`  ! ${warning}`);
+  if (events.length > 0) {
+    lines.push("", "Recent events");
+    for (const event of events.slice(-8)) {
+      if (event.parseError) continue;
+      lines.push(`  ${event.type}  ${summarizeEvent(event)}`);
     }
   }
 
   return lines;
 }
 
-function formatAgentsLabel(agents) {
-  if (agents === "detected") return "detected";
-  if (agents === "all") return "all";
-  if (Array.isArray(agents)) return agents.join(", ");
-  return String(agents);
+export function formatDashboardSnapshot(dashboard) {
+  const active = dashboard?.activeRuns?.length ?? 0;
+  const recent = dashboard?.recentRuns?.length ?? 0;
+  const auditable = (dashboard?.providers ?? []).filter((entry) => entry.compatible).length;
+  return [
+    `Active runs: ${active}`,
+    `Recent runs: ${recent}`,
+    `Auditable providers: ${auditable}/${dashboard?.providers?.length ?? 0}`
+  ];
+}
+
+export function selectRunFromList(runs, index) {
+  return runs[index] ?? null;
+}
+
+export function filterInspectableRuns(runs) {
+  return runs ?? [];
+}
+
+export function isRunCancellable(run) {
+  return run && isActiveRunState(run.state);
+}
+
+function summarizeEvent(event) {
+  if (event.type === "agent.tool_call") {
+    return event.data?.tool_name ?? event.data?.name ?? "tool";
+  }
+  if (event.type === "process.stdout" || event.type === "process.stderr") {
+    const line = event.data?.line ?? "";
+    return line.length > 60 ? `${line.slice(0, 59)}…` : line;
+  }
+  if (event.type === "run.completed" || event.type === "run.failed") {
+    return `exit=${event.data?.exitCode ?? "n/a"}`;
+  }
+  return "";
 }

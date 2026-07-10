@@ -1,11 +1,10 @@
 import { stdin as input, stdout as output } from "node:process";
 import { resolveHomeDir } from "./paths.js";
-import { runGlobalSetup } from "./global-cli.js";
-import { PLAN_ACTIONS, buildReadOnlyDiagnostics, shouldExecutePlan } from "./action-planner.js";
 import { canUseOrchestratorShell } from "./ink/orchestrator-state.js";
 import { runOrchestratorInk as defaultRunOrchestratorInk } from "./ink/run-orchestrator-ink.js";
 import { formatCliCommand } from "./brand/cli.js";
 import { BRAND } from "./brand/index.js";
+import { buildReadOnlyDiagnostics, shouldExecutePlan } from "./action-planner.js";
 
 export { canUseOrchestratorShell };
 
@@ -28,13 +27,13 @@ export async function runOrchestratorShell({
 }) {
   if (!interactive) {
     throw new Error(
-      `Non-interactive shell requires an explicit command. Try ${formatCliCommand("help")} or ${formatCliCommand("setup --yes")}.`
+      `Non-interactive shell requires an explicit command. Try ${formatCliCommand("help")} or ${formatCliCommand("runs list")}.`
     );
   }
 
   if (!canUseOrchestratorShell({ interactive })) {
     throw new Error(
-      `Interactive shell requires a capable TTY. Use ${formatCliCommand("setup --simple")} or explicit commands.`
+      `Interactive shell requires a capable TTY. Use ${formatCliCommand("runs list")} or explicit commands.`
     );
   }
 
@@ -51,41 +50,11 @@ export async function runOrchestratorShell({
     throw outcome.error;
   }
 
-  if (outcome.cancelled) {
-    return { cancelled: true, wrote: false };
-  }
-
-  if (outcome.confirmed && outcome.action === PLAN_ACTIONS.SETUP) {
-    const setupOutcome = await runGlobalSetup(
-      {
-        cwd: workspaceRoot,
-        adapters: null,
-        components: null,
-        noDefaultComponents: false,
-        dryRun: false,
-        yes: false,
-        confirm: false,
-        preflight: true,
-        preflightExplicit: false,
-        yesExplicit: false,
-        confirmExplicit: false,
-        json: false,
-        interactive: true,
-        simple: false
-      },
-      packageManifest,
-      packageRoot
-    );
-
-    return {
-      cancelled: Boolean(setupOutcome.cancelled),
-      wrote: !setupOutcome.cancelled && !setupOutcome.result?.dryRun,
-      action: PLAN_ACTIONS.SETUP,
-      setupOutcome
-    };
-  }
-
-  return { cancelled: false, wrote: false, action: outcome.action ?? null };
+  return {
+    cancelled: Boolean(outcome.cancelled),
+    wrote: false,
+    action: outcome.action ?? null
+  };
 }
 
 export async function runOrchestratorDiagnostics({

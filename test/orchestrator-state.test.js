@@ -3,11 +3,16 @@ import assert from "node:assert/strict";
 import {
   ORCHESTRATOR_MENU,
   ORCHESTRATOR_VIEWS,
+  formatDashboardSnapshot,
   formatDiagnosticsLines,
+  formatProviderLines,
+  formatRunLines,
+  isRunCancellable,
   resolveMenuItem,
   resolveMenuItemView,
   shiftMenuIndex
 } from "../src/global/ink/orchestrator-state.js";
+import { RUN_STATES } from "../src/global/runtime/run-types.js";
 
 const sampleDiagnostics = {
   cliVersion: "0.2.0",
@@ -33,49 +38,67 @@ const sampleDiagnostics = {
       authenticated: null
     }
   ],
-  intelligence: {
-    summary: {
-      localAvailable: true,
-      cloudAuthenticated: false
-    },
-    routingPreview: {
-      reason: "local backend ready",
-      canInvoke: true
-    },
-    backends: [
-      {
-        label: "Ollama",
-        state: "available",
-        models: ["llama3"]
-      }
-    ]
-  },
-  recommendations: ["Start Ollama for local inference."]
+  recommendations: ["Install Codex CLI."]
 };
 
-test("Diagnostics menu item opens diagnostics view instead of home", () => {
-  const diagnosticsItem = ORCHESTRATOR_MENU.find((item) => item.id === "status");
+test("runtime menu exposes operations views", () => {
+  const activeItem = ORCHESTRATOR_MENU.find((item) => item.id === "active");
+  const diagnosticsItem = ORCHESTRATOR_MENU.find((item) => item.id === "diagnostics");
 
-  assert.ok(diagnosticsItem);
+  assert.equal(activeItem.view, ORCHESTRATOR_VIEWS.ACTIVE_RUNS);
   assert.equal(diagnosticsItem.view, ORCHESTRATOR_VIEWS.DIAGNOSTICS);
-  assert.notEqual(diagnosticsItem.view, ORCHESTRATOR_VIEWS.HOME);
-  assert.equal(resolveMenuItemView(0), ORCHESTRATOR_VIEWS.DIAGNOSTICS);
+  assert.equal(resolveMenuItemView(0), ORCHESTRATOR_VIEWS.ACTIVE_RUNS);
 });
 
-test("formatDiagnosticsLines includes summary, intelligence, and agent capabilities", () => {
+test("formatDiagnosticsLines includes summary and agent capabilities", () => {
   const lines = formatDiagnosticsLines(sampleDiagnostics);
   const text = lines.join("\n");
 
   assert.match(text, /Summary/);
   assert.match(text, /CLI version: 0\.2\.0/);
   assert.match(text, /Agents detected: 2\/2/);
-  assert.match(text, /Intelligence availability/);
-  assert.match(text, /Local available: yes/);
   assert.match(text, /Agent capabilities/);
   assert.match(text, /Cursor/);
   assert.match(text, /Codex/);
   assert.match(text, /Recommendations/);
-  assert.match(text, /Start Ollama/);
+});
+
+test("formatRunLines and provider helpers render dashboard data", () => {
+  const runs = formatRunLines([
+    {
+      runId: "run_1",
+      state: RUN_STATES.RUNNING,
+      agentId: "cursor",
+      taskDigest: "abc123def456",
+      taskLength: 11
+    }
+  ]);
+
+  assert.match(runs[0], /run_1/);
+  assert.match(runs[0], /content not stored/);
+  assert.doesNotMatch(runs[0], /Review code/);
+
+  const providers = formatProviderLines([
+    { label: "Cursor", compatible: true, available: true, launchable: true, reason: null },
+    { label: "OpenCode", compatible: false, available: true, launchable: false, reason: "limited" }
+  ]);
+
+  assert.match(providers[0], /launchable/);
+  assert.match(providers[1], /limited/);
+
+  const snapshot = formatDashboardSnapshot({
+    activeRuns: [{ runId: "run_1" }],
+    recentRuns: [],
+    providers: [{ compatible: true }, { compatible: false }]
+  });
+
+  assert.match(snapshot.join("\n"), /Active runs: 1/);
+  assert.match(snapshot.join("\n"), /Auditable providers: 1\/2/);
+});
+
+test("isRunCancellable only allows active states", () => {
+  assert.equal(isRunCancellable({ state: RUN_STATES.RUNNING }), true);
+  assert.equal(isRunCancellable({ state: RUN_STATES.COMPLETED }), false);
 });
 
 test("shiftMenuIndex clamps selection within menu bounds", () => {
@@ -87,12 +110,12 @@ test("shiftMenuIndex clamps selection within menu bounds", () => {
   assert.equal(shiftMenuIndex(2, "up", menuLength), 1);
 });
 
-test("resolveMenuItem returns setup action for plan entry", () => {
-  const planIndex = ORCHESTRATOR_MENU.findIndex((item) => item.id === "plan-setup");
+test("resolveMenuItem returns launch action", () => {
+  const launchIndex = ORCHESTRATOR_MENU.findIndex((item) => item.id === "launch");
 
-  assert.ok(planIndex >= 0);
-  assert.equal(resolveMenuItem(planIndex)?.action, "setup");
-  assert.equal(resolveMenuItem(planIndex)?.view, ORCHESTRATOR_VIEWS.PLAN);
+  assert.ok(launchIndex >= 0);
+  assert.equal(resolveMenuItem(launchIndex)?.action, "launch");
+  assert.equal(resolveMenuItem(launchIndex)?.view, ORCHESTRATOR_VIEWS.LAUNCH);
   assert.equal(resolveMenuItem(999), null);
 });
 
