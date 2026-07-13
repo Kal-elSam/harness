@@ -25,7 +25,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const pkg = require(join(root, "package.json"));
 
-assert.equal(pkg.version, "0.4.1");
+assert.equal(pkg.version, "0.4.2");
 assert.ok(pkg.dependencies["ansi-escapes"]);
 
 assert.equal(resolveLayoutMode({ columns: 120, rows: 40 }), LAYOUT_MODES.WIDE);

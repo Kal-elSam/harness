@@ -28,6 +28,23 @@ test("recommendation: configure environment when harness is not set up", () => {
   assert.match(next.message, new RegExp(formatCliCommand("setup").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
+test("recommendation: New run wins even without global state when agents are launchable", () => {
+  const next = resolveDashboardRecommendation({
+    hasGlobalState: false,
+    diagnostics: emptyDiagnostics(),
+    dashboard: emptyDashboard({ launchable: 2 })
+  });
+  assert.equal(next.kind, NEXT_STEP_KINDS.LAUNCH);
+  assert.equal(next.targetAction, "launch");
+
+  const readiness = resolveProjectReadiness({
+    hasGlobalState: false,
+    diagnostics: emptyDiagnostics(),
+    dashboard: emptyDashboard({ launchable: 2 })
+  });
+  assert.equal(readiness.kind, READINESS_KINDS.LIMITED);
+});
+
 test("recommendation: New run wins when agents are launchable without intelligence", () => {
   const next = resolveDashboardRecommendation({
     hasGlobalState: true,

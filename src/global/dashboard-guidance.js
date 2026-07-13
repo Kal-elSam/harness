@@ -71,7 +71,8 @@ export function resolveProjectReadiness({
   const intelConfigured = hasIntelligenceConfigured(diagnostics);
   const summaryLine = `${agentsReady} agents ready · ${detected} detected · ${activeRuns} active runs`;
 
-  if (!hasGlobalState || (launchableCount === 0 && detected === 0)) {
+  // Launchable agents win over missing global state or empty detected inventory.
+  if (launchableCount === 0 && (!hasGlobalState || detected === 0)) {
     return {
       kind: READINESS_KINDS.NEEDS_SETUP,
       label: READINESS_LABELS[READINESS_KINDS.NEEDS_SETUP],
@@ -140,17 +141,6 @@ export function resolveDashboardRecommendation({
   const launchableCount = countLaunchableAgents(dashboard);
   const blocked = hasBlockingDiagnostics(diagnostics);
 
-  if (!hasGlobalState) {
-    return {
-      kind: NEXT_STEP_KINDS.CONFIGURE,
-      title: "Finish local setup",
-      message: `Configure the local environment with ${formatCliCommand("setup")}.`,
-      detail: "Open System health to review what Kairo detected.",
-      targetView: RECOMMENDATION_TARGETS.DIAGNOSTICS,
-      targetAction: null
-    };
-  }
-
   if (launchableCount > 0) {
     return {
       kind: NEXT_STEP_KINDS.LAUNCH,
@@ -162,7 +152,7 @@ export function resolveDashboardRecommendation({
     };
   }
 
-  if ((summary.detected ?? 0) === 0) {
+  if (!hasGlobalState || (summary.detected ?? 0) === 0) {
     return {
       kind: NEXT_STEP_KINDS.CONFIGURE,
       title: "Finish local setup",
@@ -173,7 +163,7 @@ export function resolveDashboardRecommendation({
     };
   }
 
-  if (blocked && launchableCount === 0) {
+  if (blocked) {
     return {
       kind: NEXT_STEP_KINDS.REVIEW,
       title: "Review system health",
