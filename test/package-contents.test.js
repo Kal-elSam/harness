@@ -7,6 +7,11 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+test("cockpit smoke script exists in the repository", () => {
+  assert.ok(existsSync(join(packageRoot, "scripts/cockpit-smoke-test.sh")));
+  assert.ok(existsSync(join(packageRoot, "scripts/cockpit-smoke.mjs")));
+});
+
 test("registry smoke script exists in the repository", () => {
   assert.ok(existsSync(join(packageRoot, "scripts/registry-smoke-test.sh")));
 });

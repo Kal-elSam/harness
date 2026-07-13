@@ -21,35 +21,32 @@ import {
   toggleSelection,
   transitionFromSplash
 } from "./setup-state.js";
+import { COCKPIT_COLORS } from "./theme.js";
+import { CockpitPanel } from "./cockpit/primitives.js";
 
 const INK_COLORS = {
-  accent: "cyan",
-  success: "green",
-  warning: "yellow",
-  danger: "red",
-  muted: "gray"
+  accent: COCKPIT_COLORS.primary,
+  success: COCKPIT_COLORS.success,
+  warning: COCKPIT_COLORS.warning,
+  danger: COCKPIT_COLORS.danger,
+  muted: COCKPIT_COLORS.muted
 };
 
 function Header() {
   const lines = formatInkHeaderLines();
   return React.createElement(Box, { flexDirection: "column", marginBottom: 1 },
-    React.createElement(Text, { bold: true, color: INK_COLORS.accent }, lines[0]),
-    React.createElement(Text, { color: INK_COLORS.muted }, lines[1]),
+    React.createElement(Text, { bold: true, color: INK_COLORS.accent }, `╭─ ${lines[0]}`),
+    React.createElement(Text, { color: COCKPIT_COLORS.secondary }, lines[1]),
     React.createElement(Text, { dimColor: true }, lines[2])
   );
 }
 
 function Panel({ title, children }) {
-  return React.createElement(Box, {
-    flexDirection: "column",
-    borderStyle: "round",
-    borderColor: INK_COLORS.accent,
-    paddingX: 1,
-    marginBottom: 1
-  },
-  React.createElement(Text, { bold: true, color: INK_COLORS.accent }, title),
-  children
-  );
+  return React.createElement(CockpitPanel, {
+    title,
+    focused: true,
+    width: "100%"
+  }, children);
 }
 
 function Footer({ children }) {

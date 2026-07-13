@@ -696,11 +696,11 @@ sections, components, backups, and drift repair under ~/.harness.
 Bootstrap: see README.md (curl install.sh or npx ${PACKAGE_NAME}).
 
 Usage:
-  ${cli}                              First run: onboarding → setup → dashboard (TTY).
-                                      Later: operations dashboard with next-step guidance.
+  ${cli}                              First run: onboarding → setup → cockpit (TTY).
+                                      Later: full-screen cockpit (wide/compact/minimal).
   ${cli} --dry-run                      Setup dry-run (scriptable)
   ${cli} --version
-  ${cli} shell                          Operations dashboard (TTY)
+  ${cli} shell                          Operations cockpit (TTY)
   ${cli} run --agent <id> --task "..." [--model <name>] [--cwd <dir>] [--permissions force] [--capture-transcript] [--follow] [--no-wait] [--json]
   ${cli} runs list [--json] [--limit <n>] [--active-only]
   ${cli} runs show <runId> [--json] [--limit <n>] [--follow]
@@ -741,8 +741,9 @@ Scopes:
                           Explicit --scope=workspace only.
 
 Commands:
-  shell      Operations dashboard (TTY). Bare ${cli} opens onboarding when ~/.harness/state.json
-             is missing, otherwise the dashboard. Explicit ${cli} shell always opens the dashboard.
+  shell      Operations cockpit (TTY). Bare ${cli} opens onboarding when ~/.harness/state.json
+             is missing, otherwise the cockpit. Explicit ${cli} shell always opens the cockpit.
+             Keys: ↑↓ · Tab region · Enter · R refresh · C cancel · ? help · Esc back/exit.
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
   orchestrator  Read-only capability registry diagnostics (--json supported).
