@@ -42,6 +42,11 @@ import {
   resolveSuggestedInvocation
 } from "./global/brand/cli.js";
 import { BRAND } from "./global/brand/index.js";
+import {
+  INITIAL_EXPERIENCE,
+  hasConfiguredGlobalState,
+  resolveInitialExperience
+} from "./global/initial-experience.js";
 
 export { resolveSuggestedInvocation };
 
@@ -50,7 +55,7 @@ const packageRoot = resolve(__dirname, "..");
 const SCOPES = new Set(["agent-global", "workspace"]);
 
 export async function runCli(argv) {
-  const { command, options } = parseArgs(argv);
+  const { command, options, isImplicitCommand } = parseArgs(argv);
   maybeWarnLegacyCli(process.argv, { json: options.json });
 
   if (options.help || command === "help") {
@@ -69,14 +74,22 @@ export async function runCli(argv) {
   const invoke = resolveSuggestedInvocation(packageManifest.name);
 
   switch (command) {
-    case "shell":
+    case "shell": {
+      const homeDir = resolveHomeDir();
+      const resolvedMode = resolveInitialExperience({
+        interactive: optionsWithPolicy.interactive,
+        isImplicitCommand,
+        hasGlobalState: hasConfiguredGlobalState(homeDir)
+      });
       await runOrchestratorShell({
         packageRoot,
         packageManifest,
         workspaceRoot: optionsWithPolicy.cwd,
-        interactive: optionsWithPolicy.interactive
+        interactive: optionsWithPolicy.interactive,
+        initialMode: resolvedMode ?? INITIAL_EXPERIENCE.DASHBOARD
       });
       return;
+    }
     case "orchestrator":
       await runOrchestratorDiagnostics({
         homeDir: resolveHomeDir(),
@@ -468,7 +481,7 @@ export function parseArgs(argv) {
     options.task = args.join(" ").trim();
   }
 
-  return { command, options };
+  return { command, options, isImplicitCommand: implicitCommand };
 }
 
 function parseComponentsAction(args, options) {
@@ -683,7 +696,8 @@ sections, components, backups, and drift repair under ~/.harness.
 Bootstrap: see README.md (curl install.sh or npx ${PACKAGE_NAME}).
 
 Usage:
-  ${cli}                              Interactive orchestrator shell (TTY)
+  ${cli}                              First run: onboarding → setup → dashboard (TTY).
+                                      Later: operations dashboard with next-step guidance.
   ${cli} --dry-run                      Setup dry-run (scriptable)
   ${cli} --version
   ${cli} shell                          Operations dashboard (TTY)
@@ -727,7 +741,8 @@ Scopes:
                           Explicit --scope=workspace only.
 
 Commands:
-  shell      Operations dashboard (TTY). Bare ${cli} opens this in TTY sessions.
+  shell      Operations dashboard (TTY). Bare ${cli} opens onboarding when ~/.harness/state.json
+             is missing, otherwise the dashboard. Explicit ${cli} shell always opens the dashboard.
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
   orchestrator  Read-only capability registry diagnostics (--json supported).
