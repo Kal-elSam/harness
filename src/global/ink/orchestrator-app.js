@@ -27,6 +27,10 @@ import {
   selectRunFromList,
   shiftMenuIndex
 } from "./orchestrator-state.js";
+import {
+  formatDashboardPurpose,
+  resolveDashboardRecommendation
+} from "../dashboard-guidance.js";
 
 const COLORS = {
   accent: "cyan",
@@ -42,6 +46,7 @@ export function OrchestratorApp({
   packageName,
   packageRoot,
   cliVersion,
+  hasGlobalState = false,
   onComplete
 }) {
   const { exit } = useApp();
@@ -361,13 +366,14 @@ export function OrchestratorApp({
 
   return React.createElement(Box, { flexDirection: "column" },
     React.createElement(Text, { bold: true, color: COLORS.accent }, `${BRAND.displayName} runtime`),
-    React.createElement(Text, { color: COLORS.muted }, "Launch · supervise · audit agent runs"),
+    React.createElement(Text, { color: COLORS.muted }, formatDashboardPurpose()),
     statusMessage && React.createElement(Text, { color: COLORS.success }, statusMessage),
     React.createElement(Text, null, ""),
     renderView({
       view,
       dashboard,
       diagnostics,
+      hasGlobalState,
       menuIndex,
       listIndex,
       launchStep,
@@ -387,6 +393,7 @@ function renderView({
   view,
   dashboard,
   diagnostics,
+  hasGlobalState,
   menuIndex,
   listIndex,
   launchStep,
@@ -398,8 +405,16 @@ function renderView({
   selectedEvents
 }) {
   switch (view) {
-    case ORCHESTRATOR_VIEWS.HOME:
+    case ORCHESTRATOR_VIEWS.HOME: {
+      const nextStep = resolveDashboardRecommendation({
+        hasGlobalState,
+        diagnostics,
+        dashboard
+      });
       return React.createElement(Box, { flexDirection: "column" },
+        React.createElement(Text, { bold: true }, "Next"),
+        React.createElement(Text, { color: COLORS.accent }, nextStep.message),
+        React.createElement(Text, null, ""),
         React.createElement(Text, { bold: true }, "Operations"),
         ORCHESTRATOR_MENU.map((item, index) =>
           React.createElement(Text, {
@@ -413,6 +428,7 @@ function renderView({
         formatDashboardSnapshot(dashboard)
           .map((line) => React.createElement(Text, { key: line }, line))
       );
+    }
     case ORCHESTRATOR_VIEWS.ACTIVE_RUNS:
       return React.createElement(Box, { flexDirection: "column" },
         React.createElement(Text, { bold: true }, "Active runs"),

@@ -8,6 +8,7 @@ export async function runOrchestratorInk({
   packageRoot,
   packageName,
   cliVersion,
+  hasGlobalState = false,
   renderImpl = render
 }) {
   return new Promise((resolve) => {
@@ -18,6 +19,7 @@ export async function runOrchestratorInk({
         packageRoot,
         packageName,
         cliVersion,
+        hasGlobalState,
         onComplete: resolve
       })
     );
