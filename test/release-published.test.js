@@ -84,6 +84,9 @@ test("verifyPublishedRelease matches npm gitHead, tag, and origin/main", async (
       if (command === "git ls-remote --tags origin refs/tags/v0.4.1") {
         return "ffec146d\trefs/tags/v0.4.1\n";
       }
+      if (command === "git ls-remote origin refs/tags/v0.4.1^{}") {
+        return "ffec146d\trefs/tags/v0.4.1^{}\n";
+      }
 
       throw new Error(`unexpected git command: ${command}`);
     },
@@ -99,7 +102,8 @@ test("verifyPublishedRelease matches npm gitHead, tag, and origin/main", async (
   assert.deepEqual(commands, [
     "git rev-parse v0.4.1^{commit}",
     "git rev-parse origin/main",
-    "git ls-remote --tags origin refs/tags/v0.4.1"
+    "git ls-remote --tags origin refs/tags/v0.4.1",
+    "git ls-remote origin refs/tags/v0.4.1^{}"
   ]);
 });
 
@@ -116,6 +120,9 @@ test("verifyPublishedRelease allows origin/main ahead of npm gitHead", async () 
       if (command === "git ls-remote --tags origin refs/tags/v0.29.0") {
         return "79ef482\trefs/tags/v0.29.0\n";
       }
+      if (command === "git ls-remote origin refs/tags/v0.29.0^{}") {
+        return "79ef482\trefs/tags/v0.29.0^{}\n";
+      }
 
       throw new Error(`unexpected git command: ${command}`);
     },
@@ -129,7 +136,41 @@ test("verifyPublishedRelease allows origin/main ahead of npm gitHead", async () 
     "git rev-parse v0.29.0^{commit}",
     "git rev-parse origin/main",
     "git merge-base --is-ancestor 79ef482 origin/main",
-    "git ls-remote --tags origin refs/tags/v0.29.0"
+    "git ls-remote --tags origin refs/tags/v0.29.0",
+    "git ls-remote origin refs/tags/v0.29.0^{}"
+  ]);
+});
+
+test("verifyPublishedRelease matches annotated tags via peeled remote ref", async () => {
+  const commands = [];
+  const result = await verifyPublishedRelease({
+    version: "0.3.0",
+    tag: "kairo-runtime-v0.3.0",
+    runGit: (command) => {
+      commands.push(command);
+
+      if (command === "git rev-parse kairo-runtime-v0.3.0^{commit}") return "ceabba7\n";
+      if (command === "git rev-parse origin/main") return "ceabba7\n";
+      if (command === "git ls-remote --tags origin refs/tags/kairo-runtime-v0.3.0") {
+        // Annotated tag object SHA differs from the peeled commit.
+        return "f0cb993\trefs/tags/kairo-runtime-v0.3.0\n";
+      }
+      if (command === "git ls-remote origin refs/tags/kairo-runtime-v0.3.0^{}") {
+        return "ceabba7\trefs/tags/kairo-runtime-v0.3.0^{}\n";
+      }
+
+      throw new Error(`unexpected git command: ${command}`);
+    },
+    fetchJson: async () => ({ version: "0.3.0", gitHead: "ceabba7" })
+  });
+
+  assert.equal(result.gitHead, "ceabba7");
+  assert.equal(result.tag, "kairo-runtime-v0.3.0");
+  assert.deepEqual(commands, [
+    "git rev-parse kairo-runtime-v0.3.0^{commit}",
+    "git rev-parse origin/main",
+    "git ls-remote --tags origin refs/tags/kairo-runtime-v0.3.0",
+    "git ls-remote origin refs/tags/kairo-runtime-v0.3.0^{}"
   ]);
 });
 
@@ -173,6 +214,7 @@ test("verifyPublishedRelease fails when remote tag is missing", async () => {
         if (command === "git rev-parse v0.4.1^{commit}") return "ffec146d\n";
         if (command === "git rev-parse origin/main") return "ffec146d\n";
         if (command === "git ls-remote --tags origin refs/tags/v0.4.1") return "";
+        if (command === "git ls-remote origin refs/tags/v0.4.1^{}") return "";
         throw new Error(command);
       },
       fetchJson: async () => ({ version: "0.4.1", gitHead: "ffec146d" })
@@ -195,6 +237,9 @@ test("verifyPublishedRelease uses explicit package-aware tag", async () => {
       if (command === "git ls-remote --tags origin refs/tags/kairo-runtime-v0.1.1") {
         return "abc123\trefs/tags/kairo-runtime-v0.1.1\n";
       }
+      if (command === "git ls-remote origin refs/tags/kairo-runtime-v0.1.1^{}") {
+        return "abc123\trefs/tags/kairo-runtime-v0.1.1^{}\n";
+      }
 
       throw new Error(`unexpected git command: ${command}`);
     },
@@ -208,7 +253,8 @@ test("verifyPublishedRelease uses explicit package-aware tag", async () => {
   assert.deepEqual(commands, [
     "git rev-parse kairo-runtime-v0.1.1^{commit}",
     "git rev-parse origin/main",
-    "git ls-remote --tags origin refs/tags/kairo-runtime-v0.1.1"
+    "git ls-remote --tags origin refs/tags/kairo-runtime-v0.1.1",
+    "git ls-remote origin refs/tags/kairo-runtime-v0.1.1^{}"
   ]);
 });
 
@@ -222,6 +268,9 @@ test("verifyPublishedRelease supports harness bridge tag", async () => {
       if (command === "git rev-parse origin/main") return "bridge123\n";
       if (command === "git ls-remote --tags origin refs/tags/harness-bridge-v0.30.0") {
         return "bridge123\trefs/tags/harness-bridge-v0.30.0\n";
+      }
+      if (command === "git ls-remote origin refs/tags/harness-bridge-v0.30.0^{}") {
+        return "bridge123\trefs/tags/harness-bridge-v0.30.0^{}\n";
       }
 
       throw new Error(`unexpected git command: ${command}`);
