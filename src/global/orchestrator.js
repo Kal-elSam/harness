@@ -2,6 +2,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { resolveHomeDir } from "./paths.js";
 import { canUseOrchestratorShell } from "./ink/orchestrator-state.js";
 import { runOrchestratorInk as defaultRunOrchestratorInk } from "./ink/run-orchestrator-ink.js";
+import { createFullscreenSession } from "./ink/fullscreen-session.js";
 import { formatCliCommand } from "./brand/cli.js";
 import { BRAND } from "./brand/index.js";
 import { buildReadOnlyDiagnostics, shouldExecutePlan } from "./action-planner.js";
@@ -31,7 +32,9 @@ export async function runOrchestratorShell({
   initialMode = INITIAL_EXPERIENCE.DASHBOARD,
   shellCapable = canUseOrchestratorShell({ interactive }),
   runOrchestratorInkImpl = defaultRunOrchestratorInk,
-  runHarnessSetupImpl = defaultRunHarnessSetup
+  runHarnessSetupImpl = defaultRunHarnessSetup,
+  fullscreenSession = null,
+  stdout = output
 }) {
   if (!interactive) {
     throw new Error(
@@ -46,50 +49,68 @@ export async function runOrchestratorShell({
   }
 
   const homeDir = resolveHomeDir();
+  const ownsSession = !fullscreenSession;
+  const session = fullscreenSession ?? createFullscreenSession({
+    stdout,
+    enabled: Boolean(stdout?.isTTY)
+  });
+
+  if (ownsSession) {
+    session.enter();
+  }
+
   let setupOutcome = null;
 
-  if (initialMode === INITIAL_EXPERIENCE.ONBOARDING) {
-    setupOutcome = await runHarnessSetupImpl({
+  try {
+    if (initialMode === INITIAL_EXPERIENCE.ONBOARDING) {
+      setupOutcome = await runHarnessSetupImpl({
+        packageRoot,
+        packageName: packageManifest.name,
+        cliVersion: packageManifest.version,
+        homeDir,
+        workspaceRoot,
+        onboarding: true,
+        interactive: true,
+        fullscreenSession: session
+      });
+
+      if (setupOutcome?.cancelled) {
+        return {
+          cancelled: true,
+          wrote: false,
+          action: null,
+          initialMode,
+          setup: setupOutcome
+        };
+      }
+    }
+
+    const outcome = await runOrchestratorInkImpl({
+      homeDir,
+      workspaceRoot,
       packageRoot,
       packageName: packageManifest.name,
       cliVersion: packageManifest.version,
-      homeDir,
-      workspaceRoot,
-      onboarding: true,
-      interactive: true
+      hasGlobalState: hasConfiguredGlobalState(homeDir),
+      fullscreenSession: session
     });
 
-    if (setupOutcome?.cancelled) {
-      return {
-        cancelled: true,
-        wrote: false,
-        action: null,
-        initialMode,
-        setup: setupOutcome
-      };
+    if (outcome.error) {
+      throw outcome.error;
+    }
+
+    return {
+      cancelled: Boolean(outcome.cancelled),
+      wrote: Boolean(setupOutcome && !setupOutcome.cancelled),
+      action: outcome.action ?? null,
+      initialMode,
+      setup: setupOutcome
+    };
+  } finally {
+    if (ownsSession) {
+      session.leave();
     }
   }
-
-  const outcome = await runOrchestratorInkImpl({
-    homeDir,
-    workspaceRoot,
-    packageRoot,
-    packageName: packageManifest.name,
-    cliVersion: packageManifest.version,
-    hasGlobalState: hasConfiguredGlobalState(homeDir)
-  });
-
-  if (outcome.error) {
-    throw outcome.error;
-  }
-
-  return {
-    cancelled: Boolean(outcome.cancelled),
-    wrote: Boolean(setupOutcome && !setupOutcome.cancelled),
-    action: outcome.action ?? null,
-    initialMode,
-    setup: setupOutcome
-  };
 }
 
 export async function runOrchestratorDiagnostics({

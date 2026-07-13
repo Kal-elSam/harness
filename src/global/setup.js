@@ -64,7 +64,8 @@ export async function runHarnessSetup({
   createPrompt = createReadlinePrompt,
   runSetupInkImpl = defaultRunSetupInk,
   runSetupWizardImpl = defaultRunSetupWizard,
-  inkCapable = canUseSetupInk({ interactive })
+  inkCapable = canUseSetupInk({ interactive }),
+  fullscreenSession = null
 }) {
   const routing = { interactive, simple, inkCapable, dryRun, yes, confirm, json, agents, components, noDefaultComponents };
   const useInk = evaluateSetupInk(routing);
@@ -94,7 +95,8 @@ export async function runHarnessSetup({
     preflightExplicit,
     yesExplicit,
     confirmExplicit,
-    interactive
+    interactive,
+    fullscreenSession
   };
 
   if (useInk) {
