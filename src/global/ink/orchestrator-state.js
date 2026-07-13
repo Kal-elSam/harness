@@ -193,6 +193,21 @@ export function formatDiagnosticsLines(diagnostics) {
   return formatSystemHealthLines(diagnostics);
 }
 
+/**
+ * Format active profile source labels from the real `{ global, project }` contract.
+ * Paths are omitted; only source kind labels are shown.
+ */
+export function formatProfileSourcesLabel(sources) {
+  if (!sources || typeof sources !== "object" || Array.isArray(sources)) {
+    return "none";
+  }
+
+  const labels = [];
+  if (sources.global) labels.push("global");
+  if (sources.project) labels.push("project");
+  return labels.length > 0 ? labels.join(", ") : "none";
+}
+
 export function formatSystemHealthLines(diagnostics) {
   const summary = diagnostics?.diagnostics;
   const intelligence = diagnostics?.intelligence?.summary;
@@ -225,7 +240,7 @@ export function formatSystemHealthLines(diagnostics) {
     "",
     "Configuration",
     `CLI version: ${diagnostics?.cliVersion ?? "unknown"}`,
-    `Profile sources: ${(profile?.sources ?? []).join(", ") || "none"}`
+    `Profile sources: ${formatProfileSourcesLabel(profile?.sources)}`
   ];
 
   const recommendations = diagnostics?.recommendations ?? [];
