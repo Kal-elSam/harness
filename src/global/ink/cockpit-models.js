@@ -130,20 +130,47 @@ export function buildFooterModel({
   unicode = true
 } = {}) {
   const glyphs = resolveGlyphs(unicode);
-  if (helpOpen) {
-    return {
-      text: `Esc close help ${glyphs.bullet} R refresh ${glyphs.bullet} C cancel run`
-    };
+  const parts = [];
+
+  if (helpOpen || view === ORCHESTRATOR_VIEWS.HELP) {
+    parts.push("Esc close help");
+    parts.push("? Help");
+    return { text: parts.join(` ${glyphs.bullet} `) };
   }
-  if (view === ORCHESTRATOR_VIEWS.HOME) {
-    return {
-      text: `↑↓ Navigate ${glyphs.bullet} Tab Region ${glyphs.bullet} Enter Open ${glyphs.bullet} ? Help ${glyphs.bullet} Esc Exit`
-    };
+
+  if (view === ORCHESTRATOR_VIEWS.RUN_DETAIL) {
+    parts.push("R refresh");
+    if (canCancel) parts.push("C cancel");
+    parts.push("Esc Back");
+    return { text: parts.join(` ${glyphs.bullet} `) };
   }
-  const cancel = canCancel ? ` ${glyphs.bullet} C cancel` : "";
-  return {
-    text: `↑↓ Navigate ${glyphs.bullet} Enter Open ${glyphs.bullet} R refresh${cancel} ${glyphs.bullet} Esc Back · focus:${region}`
-  };
+
+  parts.push("↑↓ Navigate");
+
+  const showTab = view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
+    || view === ORCHESTRATOR_VIEWS.RECENT_RUNS
+    || view === ORCHESTRATOR_VIEWS.LAUNCH;
+  if (showTab) {
+    parts.push("Tab Region");
+  }
+
+  if (view === ORCHESTRATOR_VIEWS.HOME
+    || view === ORCHESTRATOR_VIEWS.PROVIDERS
+    || view === ORCHESTRATOR_VIEWS.DIAGNOSTICS
+    || region === COCKPIT_REGIONS.NAV
+    || view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
+    || view === ORCHESTRATOR_VIEWS.RECENT_RUNS) {
+    parts.push("Enter Open");
+  }
+
+  if (view !== ORCHESTRATOR_VIEWS.LAUNCH) {
+    parts.push("R refresh");
+  }
+
+  parts.push("? Help");
+  parts.push(view === ORCHESTRATOR_VIEWS.HOME ? "Esc Exit" : "Esc Back");
+
+  return { text: parts.join(` ${glyphs.bullet} `) };
 }
 
 export function resolveProjectName(workspaceRoot = "") {

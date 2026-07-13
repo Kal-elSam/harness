@@ -8,7 +8,9 @@ import {
 import {
   createCockpitUiState,
   reduceCockpitUi,
-  resolveNavAction
+  resolveNavAction,
+  routeCockpitKey,
+  isContentInteractiveView
 } from "./cockpit-controller.js";
 import {
   COCKPIT_REGIONS,
@@ -65,7 +67,31 @@ export function OrchestratorApp({
   };
 
   useInput((inputKey, key) => {
+    if (data.loading || data.error || data.busy) return;
+
     if (key.escape) {
+      // Launch wizard may retreat a step before leaving the view.
+      if (ui.view === ORCHESTRATOR_VIEWS.LAUNCH && data.launchableAgents.length > 0) {
+        const retreated = handleLaunchInput({
+          key,
+          inputKey,
+          launchStep: data.launchStep,
+          launchDraft: data.launchDraft,
+          launchableAgents: data.launchableAgents,
+          launchAgentIndex: data.launchAgentIndex,
+          launchPermissionIndex: data.launchPermissionIndex,
+          setLaunchAgentIndex: data.setLaunchAgentIndex,
+          setLaunchDraft: data.setLaunchDraft,
+          setLaunchStep: data.setLaunchStep,
+          setLaunchPermissionIndex: data.setLaunchPermissionIndex,
+          setError: data.setError,
+          handleLaunch: (draft) => data.handleLaunch(draft, data.dashboard?.profile, dispatch),
+          reload: data.reload,
+          allowEscapeRetreat: true
+        });
+        if (retreated === "retreated") return;
+      }
+
       const next = reduceCockpitUi(ui, { type: "escape" });
       if (next.shouldExit) {
         finish({ cancelled: true });
@@ -77,17 +103,44 @@ export function OrchestratorApp({
       return;
     }
 
-    if (data.loading || data.error || data.busy) return;
-
     if (inputKey === "?") {
       dispatch({ type: "toggle-help" });
       return;
     }
+
+    const listLength = ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
+      ? (data.dashboard?.activeRuns ?? []).length
+      : ui.view === ORCHESTRATOR_VIEWS.RECENT_RUNS
+        ? (data.dashboard?.recentRuns ?? []).length
+        : 0;
+
+    let routed = null;
     if (key.tab) {
-      dispatch({ type: "tab" });
+      routed = routeCockpitKey(ui, { type: "tab" });
+    } else if (key.upArrow || key.downArrow) {
+      routed = routeCockpitKey(ui, {
+        type: "arrow",
+        direction: key.upArrow ? "up" : "down",
+        listLength
+      });
+    } else if (key.return) {
+      routed = routeCockpitKey(ui, { type: "enter" });
+    }
+
+    if (routed) {
+      if (routed.type === "enter-nav") {
+        const item = resolveNavAction(ui.navIndex);
+        if (item?.action === "launch") {
+          data.resetLaunchWizard();
+          dispatch({ type: "set-view", view: ORCHESTRATOR_VIEWS.LAUNCH });
+          return;
+        }
+      }
+      dispatch(routed);
       return;
     }
 
+    // View-specific handlers after centralized region routing.
     if (ui.view === ORCHESTRATOR_VIEWS.LAUNCH && data.launchableAgents.length > 0) {
       if (handleLaunchInput({
         key,
@@ -109,22 +162,14 @@ export function OrchestratorApp({
       }
     }
 
-    if (ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS || ui.view === ORCHESTRATOR_VIEWS.RECENT_RUNS) {
+    if (ui.region === COCKPIT_REGIONS.CONTENT
+      && (ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS || ui.view === ORCHESTRATOR_VIEWS.RECENT_RUNS)
+      && key.return) {
       const runs = ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
         ? data.dashboard?.activeRuns ?? []
         : data.dashboard?.recentRuns ?? [];
-      if (key.upArrow || key.downArrow) {
-        dispatch({
-          type: "arrow",
-          direction: key.upArrow ? "up" : "down",
-          listLength: runs.length
-        });
-        return;
-      }
-      if (key.return) {
-        data.openRunDetail(selectRunFromList(runs, ui.listIndex), dispatch);
-        return;
-      }
+      data.openRunDetail(selectRunFromList(runs, ui.listIndex), dispatch, ui.view);
+      return;
     }
 
     if (ui.view === ORCHESTRATOR_VIEWS.RUN_DETAIL) {
@@ -133,7 +178,7 @@ export function OrchestratorApp({
         return;
       }
       if (inputKey.toLowerCase() === "r") {
-        data.openRunDetail(data.selectedRun, dispatch);
+        data.openRunDetail(data.selectedRun, dispatch, ui.returnView);
         return;
       }
     }
@@ -142,23 +187,6 @@ export function OrchestratorApp({
       data.reload().catch((reloadError) => {
         data.setError(reloadError instanceof Error ? reloadError.message : String(reloadError));
       });
-      return;
-    }
-
-    if (ui.view === ORCHESTRATOR_VIEWS.HOME || ui.region === COCKPIT_REGIONS.NAV) {
-      if (key.upArrow || key.downArrow) {
-        dispatch({ type: "arrow", direction: key.upArrow ? "up" : "down" });
-        return;
-      }
-      if (key.return) {
-        const item = resolveNavAction(ui.navIndex);
-        if (item?.action === "launch") {
-          data.resetLaunchWizard();
-          dispatch({ type: "set-view", view: ORCHESTRATOR_VIEWS.LAUNCH });
-          return;
-        }
-        dispatch({ type: "enter-nav" });
-      }
     }
   });
 
@@ -201,7 +229,7 @@ export function OrchestratorApp({
       layoutMode: mode,
       nav: buildNavModel({
         navIndex: ui.navIndex,
-        focused: ui.region === COCKPIT_REGIONS.NAV,
+        focused: ui.region === COCKPIT_REGIONS.NAV || !isContentInteractiveView(ui.view),
         unicode
       }),
       system: buildSystemStripModel({

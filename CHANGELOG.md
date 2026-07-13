@@ -3,6 +3,22 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.3.1 — 2026-07-13
+
+Patch release. Predictable cockpit navigation focus and contextual footer hints.
+
+### Fixes
+
+- Informational views (Overview, Diagnostics, Providers, Help) keep navigation focus
+  so ↑↓/Enter switch sections without requiring Tab.
+- Esc returns deterministically: nested run detail → list → Overview → exit.
+- Tab only switches regions when content is interactive (runs lists, launch).
+- Footer lists only keys that work in the current context.
+
+### Compatibility
+
+- Runtime, persisted formats, and explicit commands are unchanged.
+
 ## 0.3.0 — 2026-07-13
 
 Minor release. Full-screen responsive cockpit TUI for interactive shell and setup.

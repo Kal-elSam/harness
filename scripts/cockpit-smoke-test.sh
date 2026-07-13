@@ -14,6 +14,8 @@ node --test \
   test/terminal-capabilities.test.js \
   test/cockpit-models.test.js \
   test/cockpit-controller.test.js \
-  test/cockpit-frame.test.js
+  test/cockpit-frame.test.js \
+  test/cockpit-navigation.test.js \
+  test/cockpit-input-integration.test.js
 
 echo "Kairo cockpit smoke passed"

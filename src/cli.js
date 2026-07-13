@@ -743,7 +743,8 @@ Scopes:
 Commands:
   shell      Operations cockpit (TTY). Bare ${cli} opens onboarding when ~/.harness/state.json
              is missing, otherwise the cockpit. Explicit ${cli} shell always opens the cockpit.
-             Keys: ↑↓ · Tab region · Enter · R refresh · C cancel · ? help · Esc back/exit.
+             Keys: ↑↓ · Enter · Esc back/exit · R refresh · C cancel · ? help.
+             Tab switches region only when content is interactive (runs/launch).
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
   orchestrator  Read-only capability registry diagnostics (--json supported).

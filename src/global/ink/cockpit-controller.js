@@ -1,21 +1,43 @@
-import { COCKPIT_NAV, COCKPIT_REGIONS, regionsForLayout } from "./cockpit-models.js";
-import { ORCHESTRATOR_VIEWS } from "./orchestrator-state.js";
-import { LAYOUT_MODES } from "./layout.js";
+import {
+  COCKPIT_NAV,
+  COCKPIT_REGIONS,
+  LAYOUT_MODES,
+  ORCHESTRATOR_VIEWS,
+  canTabBetweenRegions,
+  clamp,
+  defaultRegionForView,
+  interactiveRegionsFor,
+  isContentInteractiveView,
+  isNavFocusedView,
+  regionsForLayout,
+  routeCockpitKey
+} from "./cockpit-focus.js";
+
+export {
+  canTabBetweenRegions,
+  defaultRegionForView,
+  isContentInteractiveView,
+  isNavFocusedView,
+  routeCockpitKey
+};
 
 /**
  * Pure cockpit focus / navigation reducer — no I/O, no React.
  */
-
 export function createCockpitUiState({
   layoutMode = LAYOUT_MODES.COMPACT,
   view = ORCHESTRATOR_VIEWS.HOME,
   region = COCKPIT_REGIONS.NAV,
   navIndex = 0,
   listIndex = 0,
-  helpOpen = false
+  helpOpen = false,
+  returnView = null
 } = {}) {
   const regions = regionsForLayout(layoutMode);
-  const safeRegion = regions.includes(region) ? region : regions[0];
+  const preferred = region ?? defaultRegionForView(view, layoutMode);
+  const safeRegion = regions.includes(preferred)
+    ? preferred
+    : defaultRegionForView(view, layoutMode);
   return {
     layoutMode,
     view,
@@ -23,6 +45,7 @@ export function createCockpitUiState({
     navIndex: clamp(navIndex, 0, COCKPIT_NAV.length - 1),
     listIndex: Math.max(0, listIndex),
     helpOpen,
+    returnView,
     shouldExit: false
   };
 }
@@ -31,21 +54,23 @@ export function reduceCockpitUi(state, action) {
   switch (action.type) {
     case "resize": {
       const regions = regionsForLayout(action.layoutMode);
-      const region = regions.includes(state.region) ? state.region : regions[0];
-      return { ...state, layoutMode: action.layoutMode, region };
+      const preferred = regions.includes(state.region)
+        ? state.region
+        : defaultRegionForView(state.view, action.layoutMode);
+      return { ...state, layoutMode: action.layoutMode, region: preferred };
     }
     case "tab": {
-      const regions = regionsForLayout(state.layoutMode);
-      if (regions.length < 2) return state;
+      if (!canTabBetweenRegions(state)) return state;
+      const regions = interactiveRegionsFor(state);
       const index = regions.indexOf(state.region);
-      const next = regions[(index + 1) % regions.length];
+      const next = regions[(Math.max(index, 0) + 1) % regions.length];
       return { ...state, region: next };
     }
     case "arrow": {
-      if (state.helpOpen) return state;
       if (state.region === COCKPIT_REGIONS.SYSTEM) return state;
 
       const navigatesNav = state.region === COCKPIT_REGIONS.NAV
+        || isNavFocusedView(state.view)
         || (state.view === ORCHESTRATOR_VIEWS.HOME
           && state.layoutMode === LAYOUT_MODES.MINIMAL);
 
@@ -57,6 +82,10 @@ export function reduceCockpitUi(state, action) {
         };
       }
 
+      if (!isContentInteractiveView(state.view) || state.view === ORCHESTRATOR_VIEWS.LAUNCH) {
+        return state;
+      }
+
       const delta = action.direction === "up" ? -1 : 1;
       const max = Math.max(0, (action.listLength ?? 1) - 1);
       return { ...state, listIndex: clamp(state.listIndex + delta, 0, max) };
@@ -64,54 +93,54 @@ export function reduceCockpitUi(state, action) {
     case "enter-nav": {
       const item = COCKPIT_NAV[state.navIndex];
       if (!item) return state;
-      if (item.view === ORCHESTRATOR_VIEWS.HOME) {
-        return {
-          ...state,
-          view: ORCHESTRATOR_VIEWS.HOME,
-          listIndex: 0,
-          region: COCKPIT_REGIONS.CONTENT
-        };
-      }
       return {
         ...state,
         view: item.view,
         listIndex: 0,
-        region: COCKPIT_REGIONS.CONTENT,
-        helpOpen: false
+        region: defaultRegionForView(item.view, state.layoutMode),
+        helpOpen: false,
+        returnView: null
       };
     }
-    case "set-view":
+    case "set-view": {
+      const nextView = action.view;
       return {
         ...state,
-        view: action.view,
+        view: nextView,
         listIndex: 0,
-        region: action.region ?? COCKPIT_REGIONS.CONTENT
+        region: action.region ?? defaultRegionForView(nextView, state.layoutMode),
+        returnView: action.returnView ?? state.returnView,
+        helpOpen: nextView === ORCHESTRATOR_VIEWS.HELP
       };
+    }
     case "toggle-help":
-      if (state.helpOpen) {
+      if (state.helpOpen || state.view === ORCHESTRATOR_VIEWS.HELP) {
+        return goOverview(state);
+      }
+      return {
+        ...state,
+        helpOpen: true,
+        view: ORCHESTRATOR_VIEWS.HELP,
+        region: defaultRegionForView(ORCHESTRATOR_VIEWS.HELP, state.layoutMode)
+      };
+    case "escape": {
+      if (state.helpOpen || state.view === ORCHESTRATOR_VIEWS.HELP) {
+        return goOverview(state);
+      }
+      if (state.view === ORCHESTRATOR_VIEWS.RUN_DETAIL) {
+        const back = state.returnView && isContentInteractiveView(state.returnView)
+          ? state.returnView
+          : ORCHESTRATOR_VIEWS.ACTIVE_RUNS;
         return {
           ...state,
-          helpOpen: false,
-          view: state.view === ORCHESTRATOR_VIEWS.HELP
-            ? ORCHESTRATOR_VIEWS.HOME
-            : state.view
+          view: back,
+          listIndex: 0,
+          region: defaultRegionForView(back, state.layoutMode),
+          returnView: null
         };
-      }
-      return { ...state, helpOpen: true, view: ORCHESTRATOR_VIEWS.HELP };
-    case "escape": {
-      if (state.helpOpen) {
-        return { ...state, helpOpen: false, view: ORCHESTRATOR_VIEWS.HOME };
       }
       if (state.view !== ORCHESTRATOR_VIEWS.HOME) {
-        const regions = regionsForLayout(state.layoutMode);
-        return {
-          ...state,
-          view: ORCHESTRATOR_VIEWS.HOME,
-          listIndex: 0,
-          region: regions.includes(COCKPIT_REGIONS.NAV)
-            ? COCKPIT_REGIONS.NAV
-            : COCKPIT_REGIONS.CONTENT
-        };
+        return goOverview(state);
       }
       return { ...state, shouldExit: true };
     }
@@ -126,6 +155,14 @@ export function resolveNavAction(navIndex) {
   return COCKPIT_NAV[navIndex] ?? null;
 }
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
+function goOverview(state) {
+  return {
+    ...state,
+    helpOpen: false,
+    view: ORCHESTRATOR_VIEWS.HOME,
+    navIndex: 0,
+    listIndex: 0,
+    region: defaultRegionForView(ORCHESTRATOR_VIEWS.HOME, state.layoutMode),
+    returnView: null
+  };
 }
