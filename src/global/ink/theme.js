@@ -19,7 +19,10 @@ export const STATUS_LABELS = {
   offline: "Offline",
   local: "Local",
   online: "ONLINE",
-  loading: "Loading"
+  loading: "Loading",
+  needs_setup: "Needs setup",
+  needs_attention: "Needs attention",
+  limited: "Limited"
 };
 
 export const COCKPIT_GLYPHS = {
@@ -55,9 +58,12 @@ export function statusColor(kind, { colorEnabled = true } = {}) {
       return COCKPIT_COLORS.success;
     case "warn":
     case "warning":
+    case "needs_setup":
+    case "limited":
       return COCKPIT_COLORS.warning;
     case "error":
     case "danger":
+    case "needs_attention":
       return COCKPIT_COLORS.danger;
     case "offline":
     case "muted":
