@@ -152,6 +152,30 @@ test("readiness: needs setup / attention / limited / ready", () => {
   assert.match(ready.summaryLine, /agents ready/);
 });
 
+test("readiness and CTA: launchable agents win even when diagnostics detected is 0", () => {
+  const dashboard = emptyDashboard({ launchable: 3 });
+  const diagnostics = {
+    ...emptyDiagnostics(),
+    diagnostics: { detected: 0, available: 0, unknown: 0, errors: 0 },
+    recommendations: []
+  };
+
+  const readiness = resolveProjectReadiness({
+    hasGlobalState: true,
+    diagnostics,
+    dashboard
+  });
+  assert.equal(readiness.kind, READINESS_KINDS.LIMITED);
+
+  const next = resolveDashboardRecommendation({
+    hasGlobalState: true,
+    diagnostics,
+    dashboard
+  });
+  assert.equal(next.kind, NEXT_STEP_KINDS.LAUNCH);
+  assert.equal(next.targetAction, "launch");
+});
+
 function emptyDiagnostics() {
   return {
     diagnostics: { detected: 0, available: 0, unknown: 0, errors: 0 },

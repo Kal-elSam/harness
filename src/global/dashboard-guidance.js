@@ -71,7 +71,7 @@ export function resolveProjectReadiness({
   const intelConfigured = hasIntelligenceConfigured(diagnostics);
   const summaryLine = `${agentsReady} agents ready · ${detected} detected · ${activeRuns} active runs`;
 
-  if (!hasGlobalState || detected === 0) {
+  if (!hasGlobalState || (launchableCount === 0 && detected === 0)) {
     return {
       kind: READINESS_KINDS.NEEDS_SETUP,
       label: READINESS_LABELS[READINESS_KINDS.NEEDS_SETUP],
@@ -126,9 +126,9 @@ export function resolveProjectReadiness({
 
 /**
  * Contextual next step from existing diagnostics + dashboard snapshot.
- * Priority: configure → review when blocked → launch when launchable →
- * enable intelligence → review.
- * Launchable agents win over missing optional intelligence.
+ * Priority: configure without state → launch when launchable → configure when
+ * nothing detected → review when blocked → enable intelligence → review.
+ * Launchable agents win over missing optional intelligence and empty detected counts.
  */
 export function resolveDashboardRecommendation({
   hasGlobalState = false,
@@ -140,7 +140,29 @@ export function resolveDashboardRecommendation({
   const launchableCount = countLaunchableAgents(dashboard);
   const blocked = hasBlockingDiagnostics(diagnostics);
 
-  if (!hasGlobalState || (summary.detected ?? 0) === 0) {
+  if (!hasGlobalState) {
+    return {
+      kind: NEXT_STEP_KINDS.CONFIGURE,
+      title: "Finish local setup",
+      message: `Configure the local environment with ${formatCliCommand("setup")}.`,
+      detail: "Open System health to review what Kairo detected.",
+      targetView: RECOMMENDATION_TARGETS.DIAGNOSTICS,
+      targetAction: null
+    };
+  }
+
+  if (launchableCount > 0) {
+    return {
+      kind: NEXT_STEP_KINDS.LAUNCH,
+      title: "Create a new run",
+      message: "Create a new run",
+      detail: "Delegate a task to Cursor, Codex or Claude.",
+      targetView: RECOMMENDATION_TARGETS.LAUNCH,
+      targetAction: "launch"
+    };
+  }
+
+  if ((summary.detected ?? 0) === 0) {
     return {
       kind: NEXT_STEP_KINDS.CONFIGURE,
       title: "Finish local setup",
@@ -159,17 +181,6 @@ export function resolveDashboardRecommendation({
       detail: "Fix agent or configuration issues, then try again.",
       targetView: RECOMMENDATION_TARGETS.DIAGNOSTICS,
       targetAction: null
-    };
-  }
-
-  if (launchableCount > 0) {
-    return {
-      kind: NEXT_STEP_KINDS.LAUNCH,
-      title: "Create a new run",
-      message: "Create a new run",
-      detail: "Delegate a task to Cursor, Codex or Claude.",
-      targetView: RECOMMENDATION_TARGETS.LAUNCH,
-      targetAction: "launch"
     };
   }
 
