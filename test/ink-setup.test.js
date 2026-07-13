@@ -109,6 +109,13 @@ test("formatInkSplashLines full logo snapshot", () => {
   assert.doesNotMatch(lines.join("\n"), /Agent Engineering Platform/);
 });
 
+test("formatInkSplashLines onboarding includes purpose and safety", () => {
+  const text = formatInkSplashLines({ compact: true, onboarding: true }).join("\n");
+  assert.match(text, /detects, configures, and coordinates/i);
+  assert.match(text, /Diagnosis is read-only/i);
+  assert.match(text, /Esc to exit/);
+});
+
 test("formatInkSplashLines compact logo snapshot", () => {
   const lines = formatInkSplashLines({ compact: true });
   assert.match(lines.join("\n"), / _  __ ___ _ __/);

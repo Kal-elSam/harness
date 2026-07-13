@@ -15,6 +15,7 @@ export async function runSetupInk({
   packageName,
   cliVersion,
   dryRun = false,
+  onboarding = false,
   preflight = true,
   yes = false,
   confirm = false,
@@ -33,6 +34,7 @@ export async function runSetupInk({
         packageName,
         cliVersion,
         dryRun,
+        onboarding,
         onComplete: resolve
       })
     );

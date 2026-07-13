@@ -5,6 +5,11 @@ import { runOrchestratorInk as defaultRunOrchestratorInk } from "./ink/run-orche
 import { formatCliCommand } from "./brand/cli.js";
 import { BRAND } from "./brand/index.js";
 import { buildReadOnlyDiagnostics, shouldExecutePlan } from "./action-planner.js";
+import { runHarnessSetup as defaultRunHarnessSetup } from "./setup.js";
+import {
+  INITIAL_EXPERIENCE,
+  hasConfiguredGlobalState
+} from "./initial-experience.js";
 
 export { canUseOrchestratorShell };
 
@@ -23,7 +28,10 @@ export async function runOrchestratorShell({
   packageManifest,
   workspaceRoot,
   interactive = Boolean(input.isTTY && output.isTTY),
-  runOrchestratorInkImpl = defaultRunOrchestratorInk
+  initialMode = INITIAL_EXPERIENCE.DASHBOARD,
+  shellCapable = canUseOrchestratorShell({ interactive }),
+  runOrchestratorInkImpl = defaultRunOrchestratorInk,
+  runHarnessSetupImpl = defaultRunHarnessSetup
 }) {
   if (!interactive) {
     throw new Error(
@@ -31,19 +39,44 @@ export async function runOrchestratorShell({
     );
   }
 
-  if (!canUseOrchestratorShell({ interactive })) {
+  if (!shellCapable) {
     throw new Error(
       `Interactive shell requires a capable TTY. Use ${formatCliCommand("runs list")} or explicit commands.`
     );
   }
 
   const homeDir = resolveHomeDir();
+  let setupOutcome = null;
+
+  if (initialMode === INITIAL_EXPERIENCE.ONBOARDING) {
+    setupOutcome = await runHarnessSetupImpl({
+      packageRoot,
+      packageName: packageManifest.name,
+      cliVersion: packageManifest.version,
+      homeDir,
+      workspaceRoot,
+      onboarding: true,
+      interactive: true
+    });
+
+    if (setupOutcome?.cancelled) {
+      return {
+        cancelled: true,
+        wrote: false,
+        action: null,
+        initialMode,
+        setup: setupOutcome
+      };
+    }
+  }
+
   const outcome = await runOrchestratorInkImpl({
     homeDir,
     workspaceRoot,
     packageRoot,
     packageName: packageManifest.name,
-    cliVersion: packageManifest.version
+    cliVersion: packageManifest.version,
+    hasGlobalState: hasConfiguredGlobalState(homeDir)
   });
 
   if (outcome.error) {
@@ -52,8 +85,10 @@ export async function runOrchestratorShell({
 
   return {
     cancelled: Boolean(outcome.cancelled),
-    wrote: false,
-    action: outcome.action ?? null
+    wrote: Boolean(setupOutcome && !setupOutcome.cancelled),
+    action: outcome.action ?? null,
+    initialMode,
+    setup: setupOutcome
   };
 }
 

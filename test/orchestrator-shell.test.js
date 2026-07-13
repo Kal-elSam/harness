@@ -123,3 +123,82 @@ test("explicit install command remains compatible", async () => {
   assert.match(cli.stdout, /install plan/);
   assert.equal(existsSync(statePath), false);
 });
+
+test("parseArgs exposes isImplicitCommand for bare entry", () => {
+  assert.equal(parseArgs([]).isImplicitCommand, true);
+  assert.equal(parseArgs(["shell"]).isImplicitCommand, false);
+  assert.equal(parseArgs(["--dry-run"]).isImplicitCommand, true);
+});
+
+test("onboarding mode runs setup then opens dashboard", async () => {
+  const packageManifest = { name: "@kal-elsam/kairo-runtime", version: "0.2.3" };
+  const calls = [];
+
+  const outcome = await runOrchestratorShell({
+    packageRoot,
+    packageManifest,
+    workspaceRoot: packageRoot,
+    interactive: true,
+    shellCapable: true,
+    initialMode: "onboarding",
+    runHarnessSetupImpl: async (args) => {
+      calls.push(["setup", args.onboarding]);
+      return { cancelled: false, result: { dryRun: false } };
+    },
+    runOrchestratorInkImpl: async () => {
+      calls.push(["dashboard"]);
+      return { cancelled: false };
+    }
+  });
+
+  assert.deepEqual(calls, [["setup", true], ["dashboard"]]);
+  assert.equal(outcome.cancelled, false);
+  assert.equal(outcome.initialMode, "onboarding");
+  assert.equal(outcome.wrote, true);
+});
+
+test("onboarding cancel skips dashboard and writes nothing", async () => {
+  const packageManifest = { name: "@kal-elsam/kairo-runtime", version: "0.2.3" };
+  let dashboardOpened = false;
+
+  const outcome = await runOrchestratorShell({
+    packageRoot,
+    packageManifest,
+    workspaceRoot: packageRoot,
+    interactive: true,
+    shellCapable: true,
+    initialMode: "onboarding",
+    runHarnessSetupImpl: async () => ({ cancelled: true }),
+    runOrchestratorInkImpl: async () => {
+      dashboardOpened = true;
+      return { cancelled: false };
+    }
+  });
+
+  assert.equal(dashboardOpened, false);
+  assert.equal(outcome.cancelled, true);
+  assert.equal(outcome.wrote, false);
+});
+
+test("dashboard mode skips setup and opens runtime shell", async () => {
+  const packageManifest = { name: "@kal-elsam/kairo-runtime", version: "0.2.3" };
+  let setupCalled = false;
+
+  const outcome = await runOrchestratorShell({
+    packageRoot,
+    packageManifest,
+    workspaceRoot: packageRoot,
+    interactive: true,
+    shellCapable: true,
+    initialMode: "dashboard",
+    runHarnessSetupImpl: async () => {
+      setupCalled = true;
+      return { cancelled: false };
+    },
+    runOrchestratorInkImpl: async () => ({ cancelled: false, action: null })
+  });
+
+  assert.equal(setupCalled, false);
+  assert.equal(outcome.initialMode, "dashboard");
+  assert.equal(outcome.wrote, false);
+});

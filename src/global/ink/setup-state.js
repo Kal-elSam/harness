@@ -1,4 +1,12 @@
-import { AGENT_HINTS, BRAND, formatCliCommand, getAgentLabel, PREFERRED_CLI, WIZARD_COPY } from "../brand/index.js";
+import {
+  AGENT_HINTS,
+  BRAND,
+  ONBOARDING_COPY,
+  formatCliCommand,
+  getAgentLabel,
+  PREFERRED_CLI,
+  WIZARD_COPY
+} from "../brand/index.js";
 import { formatAgentMultiselectHint } from "../clack/theme.js";
 
 export const SETUP_STEPS = {
@@ -16,8 +24,22 @@ export function shouldUseCompactSplashLogo(columns) {
   return columns < fullWidth + 4;
 }
 
-export function formatInkSplashLines({ compact = false } = {}) {
+export function formatInkSplashLines({ compact = false, onboarding = false } = {}) {
   const logo = compact ? BRAND.compactLogo : BRAND.asciiLogo;
+  if (onboarding) {
+    return [
+      ...logo,
+      "",
+      BRAND.name,
+      BRAND.tagline,
+      "",
+      ONBOARDING_COPY.purpose,
+      ONBOARDING_COPY.safety,
+      "",
+      ONBOARDING_COPY.continueHint
+    ];
+  }
+
   return [
     ...logo,
     "",

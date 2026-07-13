@@ -1,5 +1,5 @@
 import { stdin as input, stdout as output } from "node:process";
-import { BRAND } from "./brand/index.js";
+import { BRAND, ONBOARDING_COPY } from "./brand/index.js";
 import { installGlobalHarness } from "./global-installer.js";
 import {
   assertExplicitApplyConsent,
@@ -59,6 +59,7 @@ export async function runHarnessSetup({
   confirmExplicit = false,
   json = false,
   simple = false,
+  onboarding = false,
   interactive = Boolean(input.isTTY && output.isTTY),
   createPrompt = createReadlinePrompt,
   runSetupInkImpl = defaultRunSetupInk,
@@ -76,7 +77,7 @@ export async function runHarnessSetup({
   let usedInk = false;
 
   if (!useInk && !useWizard) {
-    printSetupIntro({ homeDir });
+    printSetupIntro({ homeDir, onboarding });
   }
 
   const setupUiArgs = {
@@ -86,6 +87,7 @@ export async function runHarnessSetup({
     packageName,
     cliVersion,
     dryRun,
+    onboarding,
     preflight,
     yes,
     confirm,
@@ -254,11 +256,17 @@ export async function runHarnessSetup({
   return { cancelled: false, result, usedWizard, usedInk };
 }
 
-function printSetupIntro({ homeDir }) {
+function printSetupIntro({ homeDir, onboarding = false }) {
   const detected = detectInstalledAdapters({ homeDir });
 
-  console.log(`${BRAND.displayName} setup — local AI ecosystem configurator`);
-  console.log("Configures and coordinates local agents. Does not install the AI apps themselves.");
+  if (onboarding) {
+    console.log(ONBOARDING_COPY.welcomeTitle);
+    console.log(ONBOARDING_COPY.purpose);
+    console.log(ONBOARDING_COPY.safety);
+  } else {
+    console.log(`${BRAND.displayName} setup — local AI ecosystem configurator`);
+    console.log("Configures and coordinates local agents. Does not install the AI apps themselves.");
+  }
   console.log("");
   console.log(`Detected agents: ${detected.join(", ") || "none"}`);
   console.log(`Supported agents: ${GLOBAL_AGENT_IDS.join(", ")}`);

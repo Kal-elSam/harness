@@ -70,6 +70,16 @@ export const WIZARD_COPY = {
   coreOnlyLabel: "Core only (no components)"
 };
 
+/** First-run framing reused by onboarding → setup. */
+export const ONBOARDING_COPY = {
+  welcomeTitle: `Welcome to ${BRAND.displayName}`,
+  purpose:
+    `${BRAND.displayName} detects, configures, and coordinates the local agents you already use.`,
+  safety:
+    "Diagnosis is read-only. Nothing is modified until you confirm a plan.",
+  continueHint: "Press Enter to diagnose and configure · Esc to exit"
+};
+
 export function getAgentLabel(agentId) {
   return AGENT_LABELS[agentId] ?? agentId;
 }

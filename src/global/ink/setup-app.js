@@ -56,8 +56,8 @@ function Footer({ children }) {
   return React.createElement(Text, { dimColor: true }, children);
 }
 
-function Splash({ compact }) {
-  const lines = formatInkSplashLines({ compact });
+function Splash({ compact, onboarding = false }) {
+  const lines = formatInkSplashLines({ compact, onboarding });
   const logoLineCount = compact ? BRAND.compactLogo.length : BRAND.asciiLogo.length;
 
   return React.createElement(Box, { flexDirection: "column", marginBottom: 1 },
@@ -71,7 +71,7 @@ function Splash({ compact }) {
       if (line === BRAND.tagline) {
         return React.createElement(Text, { key: `line-${index}`, color: INK_COLORS.muted }, line);
       }
-      if (line === BRAND.splashHint) {
+      if (line === BRAND.splashHint || line.includes("Esc to exit") || line.includes("Press Enter")) {
         return React.createElement(Text, { key: `line-${index}`, dimColor: true }, line);
       }
       if (line === "") {
@@ -89,6 +89,7 @@ export function SetupApp({
   packageName,
   cliVersion,
   dryRun = false,
+  onboarding = false,
   onComplete
 }) {
   const { exit } = useApp();
@@ -243,7 +244,10 @@ export function SetupApp({
   const detectPanel = formatInkDetectPanel({ adapters, detected });
 
   return React.createElement(Box, { flexDirection: "column" },
-    step === SETUP_STEPS.SPLASH && React.createElement(Splash, { compact: useCompactSplash }),
+    step === SETUP_STEPS.SPLASH && React.createElement(Splash, {
+      compact: useCompactSplash,
+      onboarding
+    }),
     step !== SETUP_STEPS.SPLASH && React.createElement(Header),
     step === SETUP_STEPS.DETECT && React.createElement(Panel, { title: WIZARD_COPY.detectTitle },
       detectPanel.split("\n")
