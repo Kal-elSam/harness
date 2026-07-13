@@ -1,17 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ORCHESTRATOR_MENU,
   ORCHESTRATOR_VIEWS,
   formatDashboardSnapshot,
   formatDiagnosticsLines,
+  formatProfileSourcesLabel,
   formatProviderLines,
   formatRunLines,
+  formatSystemHealthLines,
   isRunCancellable,
   resolveMenuItem,
   resolveMenuItemView,
   shiftMenuIndex
 } from "../src/global/ink/orchestrator-state.js";
+import { buildReadOnlyDiagnostics } from "../src/global/action-planner.js";
+import { getProjectProfilePath, saveGlobalProfile } from "../src/global/profile.js";
 import { RUN_STATES } from "../src/global/runtime/run-types.js";
 
 const sampleDiagnostics = {
@@ -59,7 +67,12 @@ test("formatDiagnosticsLines separates agents, intelligence, auth, and configura
       summary: { localAvailable: false, cloudAuthenticated: false },
       routingPreview: { reason: "No backend" }
     },
-    profile: { sources: ["global"] }
+    profile: {
+      sources: {
+        global: "/tmp/home/.harness/profile.json",
+        project: "/tmp/project/.harness/kairo.json"
+      }
+    }
   });
   const text = lines.join("\n");
 
@@ -69,9 +82,64 @@ test("formatDiagnosticsLines separates agents, intelligence, auth, and configura
   assert.match(text, /^Authentication$/m);
   assert.match(text, /^Configuration$/m);
   assert.match(text, /CLI version: 0\.2\.0/);
+  assert.match(text, /Profile sources: global, project/);
   assert.match(text, /Cursor/);
   assert.match(text, /Codex/);
   assert.match(text, /Recommendations/);
+});
+
+test("formatProfileSourcesLabel formats only active sources from real contract", () => {
+  assert.equal(formatProfileSourcesLabel({
+    global: "/tmp/.harness/profile.json",
+    project: "/tmp/project/.harness/kairo.json"
+  }), "global, project");
+  assert.equal(formatProfileSourcesLabel({
+    global: "/tmp/.harness/profile.json",
+    project: null
+  }), "global");
+  assert.equal(formatProfileSourcesLabel({
+    global: null,
+    project: "/tmp/project/.harness/kairo.json"
+  }), "project");
+  assert.equal(formatProfileSourcesLabel({ global: null, project: null }), "none");
+  assert.equal(formatProfileSourcesLabel(undefined), "none");
+});
+
+test("formatSystemHealthLines accepts real buildReadOnlyDiagnostics profile.sources object", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-health-home-"));
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "kairo-health-ws-"));
+  const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+  await saveGlobalProfile(homeDir, {
+    coordinator: "codex",
+    defaultAgents: "all",
+    defaultComponents: ["orchestrator"],
+    applyMode: "prompt"
+  });
+  await mkdir(join(workspaceRoot, ".harness"), { recursive: true });
+  await writeFile(
+    getProjectProfilePath(workspaceRoot),
+    `${JSON.stringify({ coordinator: "cursor" })}\n`,
+    "utf8"
+  );
+
+  const diagnostics = await buildReadOnlyDiagnostics({
+    homeDir,
+    workspaceRoot,
+    packageName: "@kal-elsam/kairo-runtime",
+    packageRoot,
+    cliVersion: "0.4.3"
+  });
+
+  assert.equal(typeof diagnostics.profile.sources, "object");
+  assert.equal(Array.isArray(diagnostics.profile.sources), false);
+  assert.ok(diagnostics.profile.sources.global);
+  assert.ok(diagnostics.profile.sources.project);
+
+  const lines = formatSystemHealthLines(diagnostics);
+  const text = lines.join("\n");
+  assert.match(text, /Profile sources: global, project/);
+  assert.doesNotMatch(text, /\[object Object\]/);
 });
 
 test("formatRunLines and provider helpers render dashboard data", () => {

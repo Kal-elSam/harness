@@ -3,6 +3,19 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.4.3 — 2026-07-13
+
+Patch release. Fix System health crash on real profile.sources.
+
+### Fixes
+
+- Format `profile.sources` from the real `{ global, project }` contract as
+  `global`, `project`, or `none` instead of calling `.join()` on the object.
+
+### Compatibility
+
+- Runtime, commands, and persisted formats unchanged.
+
 ## 0.4.2 — 2026-07-13
 
 Patch release. Prefer launchable agents over missing global-state markers in Home CTA.
