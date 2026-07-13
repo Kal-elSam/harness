@@ -3,6 +3,22 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.2.3 — 2026-07-13
+
+Patch release. First-run onboarding and guided returning dashboard.
+
+### Features
+
+- Bare interactive `kairo` routes by `~/.harness/state.json`: missing → onboarding
+  (welcome → diagnosis → confirmed setup) then dashboard; present → operations dashboard.
+- Dashboard shows a stable purpose line and a contextual next step (configure,
+  enable intelligence, launch a run, or review problems).
+- Explicit commands, setup flags, and non-TTY flows keep prior behavior.
+
+### Docs
+
+- Quick Start and `--help` describe first-run vs returning routing.
+
 ## 0.2.2 — 2026-07-10
 
 Minor release. Kairo Runtime MVP: launch, supervise, and audit agent CLI runs with

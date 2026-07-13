@@ -24,13 +24,24 @@ commands) without depending on Pi as a runtime or adding a Pi adapter.
 
 ## Quick start
 
-Recommended entry — run Kairo Runtime in your terminal (interactive setup wizard in a TTY):
+Recommended entry — run Kairo Runtime in your terminal:
 
 ```bash
 npx @kal-elsam/kairo-runtime
+# or, after a global install:
+kairo
 ```
 
-Preview without writing anything:
+**First run** (no `~/.harness/state.json`): interactive onboarding → safe diagnosis →
+setup with confirmation → operations dashboard.
+
+**Later runs** (state present): operations dashboard with a stable purpose line and a
+contextual next step (configure, enable intelligence, launch a run, or review problems).
+
+Explicit commands and setup flags keep their current behavior (`kairo setup`,
+`kairo --dry-run`, `kairo shell`, non-TTY scripts, etc.).
+
+Preview setup without writing anything:
 
 ```bash
 npx @kal-elsam/kairo-runtime --dry-run
