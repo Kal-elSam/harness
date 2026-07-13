@@ -3,6 +3,18 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.4.1 — 2026-07-13
+
+Patch release. Prefer launchable agents over empty diagnostics.detected in Home readiness/CTA.
+
+### Fixes
+
+- Home readiness and NEXT treat launchable agents as ready-to-work even when `diagnostics.detected` is still 0.
+
+### Compatibility
+
+- Runtime, commands, and persisted formats unchanged.
+
 ## 0.4.0 — 2026-07-13
 
 Minor release. Informative Home and clearer cockpit navigation.
