@@ -35,19 +35,22 @@ kairo
 **First run** (no `~/.harness/state.json`): interactive onboarding → safe diagnosis →
 setup with confirmation → full-screen operations cockpit.
 
-**Later runs** (state present): full-screen cockpit with mission control (recommended
-action), navigation, and a system strip. Layout adapts to terminal size:
+**Later runs** (state present): full-screen cockpit Home that explains what Kairo
+does, shows real readiness, and recommends a useful next action. Layout adapts to
+terminal size:
 
 | Mode | Size | Layout |
 |------|------|--------|
-| Wide | ≥100 cols × ≥28 rows | Nav + content + system |
-| Compact | ≥72×20 | Nav + content |
-| Minimal | 60–71 cols or short height | Single panel + nav header |
+| Wide | ≥100 cols × ≥28 rows | Nav + Home/content + system |
+| Compact | ≥72×20 | Nav + Home/content (readiness embedded) |
+| Minimal | 60–71 cols or short height | Selected section + essential readiness/next/recent |
 | Below gate | &lt;60 cols | Explicit TTY fallback (Ink disabled) |
 
-Keys: `↑↓` navigate · `Enter` open · `Esc` back (exit only from Overview) ·
-`R` refresh · `C` cancel run · `?` help. `Tab` switches region only when content
-is interactive (run lists / launch).
+Keys: `↑↓` navigate (selection explanation updates) · `Enter` open ·
+`Esc` back (exit only from Home) · `R` refresh/retry · `C` cancel run · `?` help.
+`Tab` switches region only when content is interactive (run lists / New run).
+
+Navigation labels: Home · Running now · History · Agents · New run · System health.
 
 Respects `NO_COLOR`, `HARNESS_ASCII=1`, and `HARNESS_INK=0`. Status is always labeled
 in text, never color alone.

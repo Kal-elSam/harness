@@ -3,13 +3,15 @@ import assert from "node:assert/strict";
 import {
   DASHBOARD_PURPOSE,
   NEXT_STEP_KINDS,
+  READINESS_KINDS,
   formatDashboardPurpose,
-  resolveDashboardRecommendation
+  resolveDashboardRecommendation,
+  resolveProjectReadiness
 } from "../src/global/dashboard-guidance.js";
 import { formatCliCommand } from "../src/global/brand/cli.js";
 
 test("dashboard purpose is a stable product sentence", () => {
-  assert.match(DASHBOARD_PURPOSE, /detect|configur|coordina/i);
+  assert.match(DASHBOARD_PURPOSE, /coordina/i);
   assert.equal(formatDashboardPurpose(), DASHBOARD_PURPOSE);
 });
 
@@ -22,10 +24,11 @@ test("recommendation: configure environment when harness is not set up", () => {
 
   assert.equal(next.kind, NEXT_STEP_KINDS.CONFIGURE);
   assert.match(next.message, /setup|configur/i);
+  assert.equal(next.targetView, "diagnostics");
   assert.match(next.message, new RegExp(formatCliCommand("setup").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
-test("recommendation: enable intelligence when backends are missing", () => {
+test("recommendation: New run wins when agents are launchable without intelligence", () => {
   const next = resolveDashboardRecommendation({
     hasGlobalState: true,
     diagnostics: {
@@ -40,6 +43,27 @@ test("recommendation: enable intelligence when backends are missing", () => {
       ]
     },
     dashboard: emptyDashboard({ launchable: 1 })
+  });
+
+  assert.equal(next.kind, NEXT_STEP_KINDS.LAUNCH);
+  assert.equal(next.targetView, "launch");
+  assert.equal(next.targetAction, "launch");
+  assert.match(next.title, /new run/i);
+});
+
+test("recommendation: enable intelligence only when no launchable agents", () => {
+  const next = resolveDashboardRecommendation({
+    hasGlobalState: true,
+    diagnostics: {
+      ...emptyDiagnostics(),
+      diagnostics: { detected: 2, available: 2, unknown: 0, errors: 0 },
+      intelligence: {
+        summary: { localAvailable: false, cloudAuthenticated: false },
+        routingPreview: { canInvoke: false, reason: "No backend" }
+      },
+      recommendations: []
+    },
+    dashboard: emptyDashboard({ launchable: 0 })
   });
 
   assert.equal(next.kind, NEXT_STEP_KINDS.ENABLE_INTELLIGENCE);
@@ -65,7 +89,7 @@ test("recommendation: launch a run when environment is ready", () => {
   assert.match(next.message, /launch|run/i);
 });
 
-test("recommendation: review problems when diagnostics report errors", () => {
+test("recommendation: review problems when diagnostics report errors and nothing is launchable", () => {
   const next = resolveDashboardRecommendation({
     hasGlobalState: true,
     diagnostics: {
@@ -82,7 +106,50 @@ test("recommendation: review problems when diagnostics report errors", () => {
   });
 
   assert.equal(next.kind, NEXT_STEP_KINDS.REVIEW);
-  assert.match(next.message, /review|problem|diagnostic/i);
+  assert.match(next.message, /review|problem|health/i);
+});
+
+test("readiness: needs setup / attention / limited / ready", () => {
+  assert.equal(resolveProjectReadiness({
+    hasGlobalState: false,
+    diagnostics: emptyDiagnostics(),
+    dashboard: emptyDashboard()
+  }).kind, READINESS_KINDS.NEEDS_SETUP);
+
+  assert.equal(resolveProjectReadiness({
+    hasGlobalState: true,
+    diagnostics: {
+      ...emptyDiagnostics(),
+      diagnostics: { detected: 2, available: 0, unknown: 0, errors: 1 },
+      recommendations: ["Cursor: Fix path"]
+    },
+    dashboard: emptyDashboard({ launchable: 0 })
+  }).kind, READINESS_KINDS.NEEDS_ATTENTION);
+
+  assert.equal(resolveProjectReadiness({
+    hasGlobalState: true,
+    diagnostics: {
+      ...emptyDiagnostics(),
+      diagnostics: { detected: 3, available: 3, unknown: 0, errors: 0 },
+      intelligence: { summary: { localAvailable: false, cloudAuthenticated: false } },
+      recommendations: []
+    },
+    dashboard: emptyDashboard({ launchable: 2 })
+  }).kind, READINESS_KINDS.LIMITED);
+
+  const ready = resolveProjectReadiness({
+    hasGlobalState: true,
+    diagnostics: {
+      ...emptyDiagnostics(),
+      diagnostics: { detected: 3, available: 3, unknown: 0, errors: 0 },
+      intelligence: { summary: { localAvailable: true, cloudAuthenticated: false } },
+      recommendations: []
+    },
+    dashboard: emptyDashboard({ launchable: 2 })
+  });
+  assert.equal(ready.kind, READINESS_KINDS.READY);
+  assert.match(ready.headline, /READY TO WORK/i);
+  assert.match(ready.summaryLine, /agents ready/);
 });
 
 function emptyDiagnostics() {

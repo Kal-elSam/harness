@@ -108,6 +108,9 @@ export function reduceCockpitUi(state, action) {
         ...state,
         view: nextView,
         listIndex: 0,
+        navIndex: action.navIndex == null
+          ? state.navIndex
+          : clamp(action.navIndex, 0, COCKPIT_NAV.length - 1),
         region: action.region ?? defaultRegionForView(nextView, state.layoutMode),
         returnView: action.returnView ?? state.returnView,
         helpOpen: nextView === ORCHESTRATOR_VIEWS.HELP

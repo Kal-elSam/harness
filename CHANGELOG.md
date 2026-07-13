@@ -3,6 +3,33 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.4.0 — 2026-07-13
+
+Minor release. Informative Home and clearer cockpit navigation.
+
+### Features
+
+- Replace Overview/Mission Control with Home that explains Kairo, derives readiness
+  (`Needs setup` / `Needs attention` / `Limited` / `Ready to work`), and recommends a
+  real next action with an Enter destination.
+- Prefer **New run** when any agent is launchable; missing intelligence is an optional
+  limitation, not a blocker.
+- Rename navigation: Home, Running now, History, Agents, New run, System health — with
+  contextual descriptions, status summaries, and selected ≠ currently open section.
+- System health separates agents, intelligence, authentication, and configuration.
+- Readable recent/active run lines; empty states explain absence and suggest next steps.
+- Wide/compact/minimal preserve critical Home information; list windowing covers agents
+  and diagnostics; load errors offer `R Retry` while Esc remains available.
+
+### Compatibility
+
+- Internal view ids, explicit commands, runtime, profiles, and run formats are unchanged.
+- UI copy remains English. `NO_COLOR`, `HARNESS_ASCII=1`, and `HARNESS_INK=0` stay supported.
+
+### Docs
+
+- Quick Start describes Home, renamed navigation, and layout parity.
+
 ## 0.3.1 — 2026-07-13
 
 Patch release. Predictable cockpit navigation focus and contextual footer hints.
