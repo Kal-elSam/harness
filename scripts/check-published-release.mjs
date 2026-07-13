@@ -113,8 +113,11 @@ export async function verifyPublishedRelease({
   }
 
   const remoteTagLine = runGit(`git ls-remote --tags origin refs/tags/${releaseTag}`).trim();
+  const remotePeeledLine = runGit(`git ls-remote origin refs/tags/${releaseTag}^{}`).trim();
+  const remotePointsAtGitHead = remoteTagLine.startsWith(gitHead)
+    || remotePeeledLine.startsWith(gitHead);
 
-  if (!remoteTagLine.startsWith(gitHead)) {
+  if (!remotePointsAtGitHead) {
     throw new Error(
       `Remote tag ${releaseTag} on origin does not point to npm gitHead (${gitHead})`
     );
