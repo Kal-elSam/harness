@@ -202,3 +202,32 @@ test("dashboard mode skips setup and opens runtime shell", async () => {
   assert.equal(outcome.initialMode, "dashboard");
   assert.equal(outcome.wrote, false);
 });
+
+test("shell shares one fullscreen session across setup and dashboard", async () => {
+  const packageManifest = { name: "@kal-elsam/kairo-runtime", version: "0.2.3" };
+  const sessions = [];
+
+  await runOrchestratorShell({
+    packageRoot,
+    packageManifest,
+    workspaceRoot: packageRoot,
+    interactive: true,
+    shellCapable: true,
+    initialMode: "onboarding",
+    stdout: { isTTY: true, write() { return true; } },
+    runHarnessSetupImpl: async (args) => {
+      sessions.push(args.fullscreenSession);
+      assert.equal(args.fullscreenSession?.isActive(), true);
+      return { cancelled: false, result: { dryRun: false } };
+    },
+    runOrchestratorInkImpl: async (args) => {
+      sessions.push(args.fullscreenSession);
+      assert.equal(args.fullscreenSession?.isActive(), true);
+      return { cancelled: false };
+    }
+  });
+
+  assert.equal(sessions.length, 2);
+  assert.equal(sessions[0], sessions[1]);
+  assert.equal(sessions[0].isActive(), false);
+});

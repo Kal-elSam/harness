@@ -1,6 +1,7 @@
 import React from "react";
 import { render } from "ink";
 import { OrchestratorApp } from "./orchestrator-app.js";
+import { createFullscreenSession } from "./fullscreen-session.js";
 
 export async function runOrchestratorInk({
   homeDir,
@@ -9,23 +10,42 @@ export async function runOrchestratorInk({
   packageName,
   cliVersion,
   hasGlobalState = false,
-  renderImpl = render
+  renderImpl = render,
+  fullscreenSession = null,
+  stdout = process.stdout
 }) {
-  return new Promise((resolve) => {
-    const { waitUntilExit } = renderImpl(
-      React.createElement(OrchestratorApp, {
-        homeDir,
-        workspaceRoot,
-        packageRoot,
-        packageName,
-        cliVersion,
-        hasGlobalState,
-        onComplete: resolve
-      })
-    );
-
-    waitUntilExit().catch((error) => {
-      resolve({ cancelled: true, error });
-    });
+  const ownsSession = !fullscreenSession;
+  const session = fullscreenSession ?? createFullscreenSession({
+    stdout,
+    enabled: Boolean(stdout?.isTTY)
   });
+
+  if (ownsSession) {
+    session.enter();
+  }
+
+  try {
+    return await new Promise((resolve) => {
+      const { waitUntilExit } = renderImpl(
+        React.createElement(OrchestratorApp, {
+          homeDir,
+          workspaceRoot,
+          packageRoot,
+          packageName,
+          cliVersion,
+          hasGlobalState,
+          onComplete: resolve
+        }),
+        stdout ? { stdout } : undefined
+      );
+
+      waitUntilExit().catch((error) => {
+        resolve({ cancelled: true, error });
+      });
+    });
+  } finally {
+    if (ownsSession) {
+      session.leave();
+    }
+  }
 }

@@ -33,10 +33,23 @@ kairo
 ```
 
 **First run** (no `~/.harness/state.json`): interactive onboarding → safe diagnosis →
-setup with confirmation → operations dashboard.
+setup with confirmation → full-screen operations cockpit.
 
-**Later runs** (state present): operations dashboard with a stable purpose line and a
-contextual next step (configure, enable intelligence, launch a run, or review problems).
+**Later runs** (state present): full-screen cockpit with mission control (recommended
+action), navigation, and a system strip. Layout adapts to terminal size:
+
+| Mode | Size | Layout |
+|------|------|--------|
+| Wide | ≥100 cols × ≥28 rows | Nav + content + system |
+| Compact | ≥72×20 | Nav + content |
+| Minimal | 60–71 cols or short height | Single panel + nav header |
+| Below gate | &lt;60 cols | Explicit TTY fallback (Ink disabled) |
+
+Keys: `↑↓` navigate · `Tab` region · `Enter` open · `R` refresh · `C` cancel run ·
+`?` help · `Esc` back (exit only from Home).
+
+Respects `NO_COLOR`, `HARNESS_ASCII=1`, and `HARNESS_INK=0`. Status is always labeled
+in text, never color alone.
 
 Explicit commands and setup flags keep their current behavior (`kairo setup`,
 `kairo --dry-run`, `kairo shell`, non-TTY scripts, etc.).

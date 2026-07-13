@@ -3,6 +3,33 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.3.0 — 2026-07-13
+
+Minor release. Full-screen responsive cockpit TUI for interactive shell and setup.
+
+### Features
+
+- Idempotent alternate-screen session across onboarding → setup → cockpit, with
+  restore on normal exit, Ctrl+C, SIGTERM, SIGHUP, and errors.
+- Deep-space cockpit shell: navigation, mission control, and system strip with
+  textual status labels (never color-only).
+- Responsive layouts: wide (≥100×28), compact (≥72×20), minimal (60–71 or short),
+  live resize, truncated lists with `… more`; `<60` columns keep the explicit TTY gate.
+- Region navigation: arrows within a region, Tab between regions, Enter to open,
+  Esc to return (exit only from Home), `R` refresh, `C` cancel, `?` help.
+- Setup Ink UI shares the cockpit theme/panel language without changing setup logic.
+
+### Compatibility
+
+- Bare `kairo` routing, `kairo shell`, setup flags, explicit commands, JSON, and
+  non-TTY flows are unchanged. `state.json`, profiles, and run formats are unchanged.
+- `NO_COLOR`, limited Unicode (`HARNESS_ASCII=1`), and `HARNESS_INK=0` remain supported.
+- Direct dependency: `ansi-escapes`.
+
+### Docs
+
+- Quick Start and help describe the cockpit, breakpoints, and keybindings.
+
 ## 0.2.3 — 2026-07-13
 
 Patch release. First-run onboarding and guided returning dashboard.

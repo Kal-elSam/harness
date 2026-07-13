@@ -124,5 +124,5 @@ test("help documents runtime commands", () => {
   assert.equal(cli.status, 0);
   assert.match(cli.stdout, /kairo run --agent/);
   assert.match(cli.stdout, /runs list/);
-  assert.match(cli.stdout, /Operations dashboard/);
+  assert.match(cli.stdout, /Operations cockpit/);
 });

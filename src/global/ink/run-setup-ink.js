@@ -5,6 +5,7 @@ import { loadConsentAudit } from "../policy.js";
 import { formatResultNote } from "../clack/theme.js";
 import { SetupWizardCancelledError } from "../clack/setup-wizard-constants.js";
 import { SetupApp } from "./setup-app.js";
+import { createFullscreenSession } from "./fullscreen-session.js";
 
 export { SetupWizardCancelledError };
 
@@ -23,26 +24,46 @@ export async function runSetupInk({
   yesExplicit = false,
   confirmExplicit = false,
   interactive = true,
-  renderImpl = render
+  renderImpl = render,
+  fullscreenSession = null,
+  stdout = process.stdout
 }) {
-  const outcome = await new Promise((resolve) => {
-    const { waitUntilExit } = renderImpl(
-      React.createElement(SetupApp, {
-        homeDir,
-        workspaceRoot,
-        packageRoot,
-        packageName,
-        cliVersion,
-        dryRun,
-        onboarding,
-        onComplete: resolve
-      })
-    );
-
-    waitUntilExit().catch((error) => {
-      resolve({ cancelled: true, usedWizard: true, error });
-    });
+  const ownsSession = !fullscreenSession;
+  const session = fullscreenSession ?? createFullscreenSession({
+    stdout,
+    enabled: Boolean(stdout?.isTTY)
   });
+
+  if (ownsSession) {
+    session.enter();
+  }
+
+  let outcome;
+  try {
+    outcome = await new Promise((resolve) => {
+      const { waitUntilExit } = renderImpl(
+        React.createElement(SetupApp, {
+          homeDir,
+          workspaceRoot,
+          packageRoot,
+          packageName,
+          cliVersion,
+          dryRun,
+          onboarding,
+          onComplete: resolve
+        }),
+        stdout ? { stdout } : undefined
+      );
+
+      waitUntilExit().catch((error) => {
+        resolve({ cancelled: true, usedWizard: true, error });
+      });
+    });
+  } finally {
+    if (ownsSession) {
+      session.leave();
+    }
+  }
 
   if (outcome.error) {
     throw outcome.error;
