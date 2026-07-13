@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "../src/cli.js";
 import { runGlobalRun, runGlobalRuns } from "../src/global/runtime/run-cli.js";
 import { startRun } from "../src/global/runtime/run-manager.js";
+import { withStubExecutables } from "./helpers/stub-executables.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const kairoBin = join(packageRoot, "bin/kairo.js");
@@ -87,28 +88,30 @@ test("runGlobalRun --json --wait emits a single JSON document", async () => {
 });
 
 test("runGlobalRuns list returns persisted runs", async () => {
-  const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-cli-"));
-  const packageManifest = { version: "0.2.1" };
+  await withStubExecutables(["codex"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-cli-"));
+    const packageManifest = { version: "0.2.1" };
 
-  const { completion } = await startRun({
-    homeDir,
-    agentId: "codex",
-    task: "cli test",
-    cwd: homeDir,
-    cliVersion: packageManifest.version,
-    spawnImpl: createFakeSpawn([JSON.stringify({ type: "result" })])
+    const { completion } = await startRun({
+      homeDir,
+      agentId: "codex",
+      task: "cli test",
+      cwd: homeDir,
+      cliVersion: packageManifest.version,
+      spawnImpl: createFakeSpawn([JSON.stringify({ type: "result" })])
+    });
+    await completion;
+
+    const previousHome = process.env.HARNESS_HOME;
+    process.env.HARNESS_HOME = homeDir;
+    try {
+      const result = await runGlobalRuns({ cwd: homeDir, json: true }, packageManifest);
+      assert.ok(result.runs.length >= 1);
+    } finally {
+      if (previousHome === undefined) delete process.env.HARNESS_HOME;
+      else process.env.HARNESS_HOME = previousHome;
+    }
   });
-  await completion;
-
-  const previousHome = process.env.HARNESS_HOME;
-  process.env.HARNESS_HOME = homeDir;
-  try {
-    const result = await runGlobalRuns({ cwd: homeDir, json: true }, packageManifest);
-    assert.ok(result.runs.length >= 1);
-  } finally {
-    if (previousHome === undefined) delete process.env.HARNESS_HOME;
-    else process.env.HARNESS_HOME = previousHome;
-  }
 });
 
 test("help documents runtime commands", () => {

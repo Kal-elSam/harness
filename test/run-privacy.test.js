@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { startRun } from "../src/global/runtime/run-manager.js";
 import { readRunEvents, readRunState } from "../src/global/runtime/run-store.js";
 import { runPaths } from "../src/global/paths.js";
+import { withStubExecutables } from "./helpers/stub-executables.js";
 
 function createFakeSpawn(lines, { exitCode = 0 } = {}) {
   return (_command, _args, _options) => {
@@ -29,33 +30,35 @@ function createFakeSpawn(lines, { exitCode = 0 } = {}) {
 }
 
 test("persisted run artifacts exclude raw task content", async () => {
-  const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-privacy-"));
-  const secretTask = "super secret prompt that must never be persisted";
+  await withStubExecutables(["codex"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-privacy-"));
+    const secretTask = "super secret prompt that must never be persisted";
 
-  const { runId, completion } = await startRun({
-    homeDir,
-    agentId: "codex",
-    task: secretTask,
-    cwd: homeDir,
-    cliVersion: "0.2.1",
-    spawnImpl: createFakeSpawn([JSON.stringify({ type: "result" })])
+    const { runId, completion } = await startRun({
+      homeDir,
+      agentId: "codex",
+      task: secretTask,
+      cwd: homeDir,
+      cliVersion: "0.2.1",
+      spawnImpl: createFakeSpawn([JSON.stringify({ type: "result" })])
+    });
+
+    await completion;
+
+    const { statePath, eventsPath } = runPaths(homeDir, runId);
+    const stateRaw = await readFile(statePath, "utf8");
+    const eventsRaw = await readFile(eventsPath, "utf8");
+
+    assert.doesNotMatch(stateRaw, /super secret/);
+    assert.doesNotMatch(eventsRaw, /super secret/);
+    assert.match(stateRaw, /taskDigest/);
+
+    const metadata = await readRunState(homeDir, runId);
+    const events = await readRunEvents(homeDir, runId);
+    const started = events.find((event) => event.type === "run.started");
+
+    assert.equal(metadata.taskSummary, undefined);
+    assert.equal(started?.data?.taskSummary, undefined);
+    assert.ok(started?.data?.taskDigest);
   });
-
-  await completion;
-
-  const { statePath, eventsPath } = runPaths(homeDir, runId);
-  const stateRaw = await readFile(statePath, "utf8");
-  const eventsRaw = await readFile(eventsPath, "utf8");
-
-  assert.doesNotMatch(stateRaw, /super secret/);
-  assert.doesNotMatch(eventsRaw, /super secret/);
-  assert.match(stateRaw, /taskDigest/);
-
-  const metadata = await readRunState(homeDir, runId);
-  const events = await readRunEvents(homeDir, runId);
-  const started = events.find((event) => event.type === "run.started");
-
-  assert.equal(metadata.taskSummary, undefined);
-  assert.equal(started?.data?.taskSummary, undefined);
-  assert.ok(started?.data?.taskDigest);
 });
