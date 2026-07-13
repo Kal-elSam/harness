@@ -31,15 +31,16 @@ test("regionsForLayout matches breakpoints", () => {
   assert.deepEqual(regionsForLayout(LAYOUT_MODES.MINIMAL), [COCKPIT_REGIONS.CONTENT]);
 });
 
-test("nav labels rename to Home / Running now / History / Agents / New run / System health", () => {
+test("nav labels expose governance-first Control center order with Runs last", () => {
   const labels = COCKPIT_NAV.map((item) => item.label);
   assert.deepEqual(labels, [
-    "Home",
-    "Running now",
-    "History",
-    "Agents",
-    "New run",
-    "System health"
+    "Control center",
+    "IDEs & models",
+    "Harness modules",
+    "Changes",
+    "Activity & recovery",
+    "Profile & policy",
+    "Runs"
   ]);
   assert.ok(COCKPIT_NAV.every((item) => item.description));
 });
@@ -51,20 +52,20 @@ test("top bar and nav models expose selected vs current plus explanation", () =>
   assert.match(top.projectLabel, /agentic-harness/);
 
   const nav = buildNavModel({
-    navIndex: 4,
-    currentView: ORCHESTRATOR_VIEWS.DIAGNOSTICS,
+    navIndex: 3,
+    currentView: ORCHESTRATOR_VIEWS.HOME,
     focused: true,
     dashboard: { activeRuns: [], recentRuns: [], providers: [{ launchable: true }] },
     diagnostics: { diagnostics: { detected: 1, errors: 0 }, capabilities: [{}] }
   });
   assert.equal(nav.title, "NAVIGATION");
-  assert.equal(nav.items[4].selected, true);
-  assert.equal(nav.items[4].label, "New run");
-  assert.equal(nav.items[5].current, true);
-  assert.equal(nav.items[5].selected, false);
-  assert.match(nav.explanation, /Delegate|agent/i);
+  assert.equal(nav.items[3].selected, true);
+  assert.equal(nav.items[3].label, "Changes");
+  assert.equal(nav.items[0].current, true);
+  assert.equal(nav.items[0].selected, false);
+  assert.match(nav.explanation, /Findings|drift|preview/i);
   assert.ok(nav.items[0].statusSummary);
-  assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.LAUNCH), 4);
+  assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.ACTIVE_RUNS), 6);
 });
 
 test("home model derives readiness, last run CTA destination, and explore guidance", () => {

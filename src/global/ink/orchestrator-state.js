@@ -13,6 +13,11 @@ export function canUseOrchestratorShell({
 
 export const ORCHESTRATOR_VIEWS = {
   HOME: "home",
+  IDES: "ides",
+  MODULES: "modules",
+  CHANGES: "changes",
+  ACTIVITY: "activity",
+  PROFILE: "profile",
   ACTIVE_RUNS: "active-runs",
   RECENT_RUNS: "recent-runs",
   RUN_DETAIL: "run-detail",

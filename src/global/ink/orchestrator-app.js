@@ -16,14 +16,15 @@ import {
   COCKPIT_NAV,
   COCKPIT_REGIONS,
   buildFooterModel,
-  buildHomeMissionModel,
   buildNavModel,
   buildSystemStripModel,
   buildTopBarModel,
+  navIndexForView,
   resolveProjectName
 } from "./cockpit-models.js";
-import { openRecommendedDestination } from "./cockpit-home.js";
+import { buildControlCenterModel } from "./cockpit-control-center.js";
 import { resolveProjectReadiness } from "../dashboard-guidance.js";
+import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
 import { CockpitShell } from "./cockpit/primitives.js";
 import { renderCockpitView } from "./cockpit-views.js";
 import { handleLaunchInput } from "./launch-input.js";
@@ -69,16 +70,13 @@ export function OrchestratorApp({
     exit();
   };
 
-  const openDestination = (recommendation) => {
-    const destination = openRecommendedDestination(recommendation, { navItems: COCKPIT_NAV });
-    if (!destination) return false;
-    if (destination.action === "launch") {
-      data.resetLaunchWizard();
-    }
+  const openDestination = (destinationKey) => {
+    const view = resolveCtaDestinationView(destinationKey);
+    if (!view) return false;
     dispatch({
       type: "set-view",
-      view: destination.view,
-      navIndex: destination.navIndex ?? undefined
+      view,
+      navIndex: navIndexForView(view)
     });
     return true;
   };
@@ -163,14 +161,7 @@ export function OrchestratorApp({
       if (routed.type === "enter-nav") {
         const item = resolveNavAction(ui.navIndex);
         if (item?.id === "overview" || item?.view === ORCHESTRATOR_VIEWS.HOME) {
-          const mission = buildHomeMissionModel({
-            projectName: resolveProjectName(workspaceRoot),
-            hasGlobalState,
-            diagnostics: data.diagnostics,
-            dashboard: data.dashboard,
-            layoutMode: ui.layoutMode ?? LAYOUT_MODES.COMPACT
-          });
-          if (openDestination(mission.next)) return;
+          if (openDestination(data.snapshot?.cta?.destination)) return;
         }
         if (item?.action === "launch") {
           data.resetLaunchWizard();
@@ -259,13 +250,15 @@ export function OrchestratorApp({
     diagnostics: data.diagnostics,
     dashboard: data.dashboard
   });
-  const homeMission = buildHomeMissionModel({
+  const controlCenter = buildControlCenterModel({
     projectName,
-    hasGlobalState,
-    diagnostics: data.diagnostics,
-    dashboard: data.dashboard,
+    snapshot: data.snapshot,
     layoutMode: mode
   });
+  const systemOnline = data.snapshot
+    ? data.snapshot.health !== CONTROL_PLANE_HEALTH.NOT_CONFIGURED
+      && data.snapshot.health !== CONTROL_PLANE_HEALTH.CHECK_FAILED
+    : readiness.kind !== "needs_setup";
 
   return React.createElement(Box, { flexDirection: "column" },
     data.statusMessage && React.createElement(Text, {
@@ -274,7 +267,7 @@ export function OrchestratorApp({
     React.createElement(CockpitShell, {
       topBar: buildTopBarModel({
         projectName,
-        systemOnline: readiness.kind !== "needs_setup",
+        systemOnline,
         unicode
       }),
       footer: buildFooterModel({
@@ -291,12 +284,23 @@ export function OrchestratorApp({
         focused: ui.region === COCKPIT_REGIONS.NAV || !isContentInteractiveView(ui.view),
         unicode,
         dashboard: data.dashboard,
-        diagnostics: data.diagnostics
+        diagnostics: data.diagnostics,
+        snapshot: data.snapshot
       }),
       system: buildSystemStripModel({
         dashboard: data.dashboard,
         diagnostics: data.diagnostics,
-        readiness
+        readiness: data.snapshot
+          ? {
+            kind: data.snapshot.health.toLowerCase(),
+            label: controlCenter.health.label,
+            healthKind: data.snapshot.health === CONTROL_PLANE_HEALTH.HEALTHY
+              ? "ready"
+              : data.snapshot.health === CONTROL_PLANE_HEALTH.CHECK_FAILED
+                ? "error"
+                : "warn"
+          }
+          : readiness
       }),
       navFocused: ui.region === COCKPIT_REGIONS.NAV,
       contentFocused: ui.region === COCKPIT_REGIONS.CONTENT,
@@ -307,6 +311,7 @@ export function OrchestratorApp({
         view: ui.view,
         dashboard: data.dashboard,
         diagnostics: data.diagnostics,
+        snapshot: data.snapshot,
         listIndex: ui.listIndex,
         launchStep: data.launchStep,
         launchDraft: data.launchDraft,
@@ -315,10 +320,25 @@ export function OrchestratorApp({
         launchableAgents: data.launchableAgents,
         selectedRun: data.selectedRun,
         selectedEvents: data.selectedEvents,
-        homeMission,
+        controlCenter,
         layoutMode: mode,
         colorEnabled
       })
     )
   );
+}
+
+function resolveCtaDestinationView(destinationKey) {
+  switch (destinationKey) {
+    case "changes":
+      return ORCHESTRATOR_VIEWS.CHANGES;
+    case "control-center":
+      return ORCHESTRATOR_VIEWS.HOME;
+    case "ides":
+      return ORCHESTRATOR_VIEWS.IDES;
+    case "runs":
+      return ORCHESTRATOR_VIEWS.ACTIVE_RUNS;
+    default:
+      return null;
+  }
 }

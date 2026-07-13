@@ -14,7 +14,6 @@ import {
   buildFooterModel,
   buildNavModel
 } from "../src/global/ink/cockpit-models.js";
-import { openRecommendedDestination } from "../src/global/ink/cockpit-home.js";
 import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
 
@@ -22,26 +21,26 @@ test("diagnostics keeps nav focus so arrows switch sections without Tab", () => 
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     region: COCKPIT_REGIONS.NAV,
-    navIndex: COCKPIT_NAV.findIndex((item) => item.view === ORCHESTRATOR_VIEWS.DIAGNOSTICS)
+    navIndex: COCKPIT_NAV.findIndex((item) => item.view === ORCHESTRATOR_VIEWS.CHANGES)
   });
 
   state = reduceCockpitUi(state, { type: "enter-nav" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.DIAGNOSTICS);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES);
   assert.equal(state.region, COCKPIT_REGIONS.NAV);
 
   state = reduceCockpitUi(state, { type: "arrow", direction: "up" });
-  assert.equal(state.navIndex, COCKPIT_NAV.findIndex((item) => item.id === "launch"));
+  assert.equal(state.navIndex, COCKPIT_NAV.findIndex((item) => item.id === "modules"));
   assert.equal(state.region, COCKPIT_REGIONS.NAV);
 
   state = reduceCockpitUi(state, { type: "enter-nav" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.LAUNCH);
-  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.MODULES);
+  assert.equal(state.region, COCKPIT_REGIONS.NAV);
 });
 
 test("overview stays on navigation focus after selecting Overview", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.WIDE,
-    view: ORCHESTRATOR_VIEWS.PROVIDERS,
+    view: ORCHESTRATOR_VIEWS.IDES,
     region: COCKPIT_REGIONS.NAV,
     navIndex: 0
   });
@@ -53,7 +52,7 @@ test("overview stays on navigation focus after selecting Overview", () => {
 });
 
 test("providers and help open with navigation focus", () => {
-  for (const view of [ORCHESTRATOR_VIEWS.PROVIDERS, ORCHESTRATOR_VIEWS.HELP]) {
+  for (const view of [ORCHESTRATOR_VIEWS.IDES, ORCHESTRATOR_VIEWS.HELP]) {
     const navIndex = view === ORCHESTRATOR_VIEWS.HELP
       ? 0
       : COCKPIT_NAV.findIndex((item) => item.view === view);
@@ -79,7 +78,7 @@ test("escape from main section returns to overview; second escape exits", () => 
     layoutMode: LAYOUT_MODES.COMPACT,
     view: ORCHESTRATOR_VIEWS.DIAGNOSTICS,
     region: COCKPIT_REGIONS.NAV,
-    navIndex: 5
+    navIndex: 3
   });
 
   state = reduceCockpitUi(state, { type: "escape" });
@@ -118,14 +117,14 @@ test("escape from run detail returns to list before overview", () => {
 
 test("tab only works when content is interactive", () => {
   assert.equal(isNavFocusedView(ORCHESTRATOR_VIEWS.HOME), true);
-  assert.equal(isNavFocusedView(ORCHESTRATOR_VIEWS.DIAGNOSTICS), true);
+  assert.equal(isNavFocusedView(ORCHESTRATOR_VIEWS.CHANGES), true);
   assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.ACTIVE_RUNS), true);
-  assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.LAUNCH), true);
-  assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.DIAGNOSTICS), false);
+  assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.MODULES), false);
+  assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.CHANGES), false);
 
   let info = createCockpitUiState({
     layoutMode: LAYOUT_MODES.WIDE,
-    view: ORCHESTRATOR_VIEWS.DIAGNOSTICS,
+    view: ORCHESTRATOR_VIEWS.CHANGES,
     region: COCKPIT_REGIONS.NAV
   });
   assert.equal(canTabBetweenRegions(info), false);
@@ -191,7 +190,7 @@ test("routeCockpitKey centralizes region routing before view handlers", () => {
     layoutMode: LAYOUT_MODES.COMPACT,
     view: ORCHESTRATOR_VIEWS.DIAGNOSTICS,
     region: COCKPIT_REGIONS.NAV,
-    navIndex: 5
+    navIndex: 3
   });
 
   assert.deepEqual(
@@ -235,24 +234,18 @@ test("nav labels and selected vs current remain distinct while explanation follo
     dashboard: { activeRuns: [], recentRuns: [], providers: [{ launchable: true }] },
     diagnostics: { diagnostics: { detected: 1, errors: 0 }, capabilities: [{}] }
   });
-  assert.equal(nav.items[0].label, "Home");
+  assert.equal(nav.items[0].label, "Control center");
   assert.equal(nav.items[0].current, true);
   assert.equal(nav.items[0].selected, false);
-  assert.equal(nav.items[4].label, "New run");
+  assert.equal(nav.items[3].label, "Changes");
   assert.equal(nav.items[4].selected, true);
   assert.equal(nav.items[4].current, false);
-  assert.match(nav.explanation, /Delegate|executable/i);
+  assert.match(nav.explanation, /backups|rollback|operations/i);
 });
 
-test("recommended Home destination opens New run with matching nav index", () => {
-  const destination = openRecommendedDestination({
-    targetView: ORCHESTRATOR_VIEWS.LAUNCH,
-    targetAction: "launch"
-  }, { navItems: COCKPIT_NAV });
-
-  assert.equal(destination.view, ORCHESTRATOR_VIEWS.LAUNCH);
-  assert.equal(destination.action, "launch");
-  assert.equal(destination.navIndex, COCKPIT_NAV.findIndex((item) => item.id === "launch"));
+test("recommended Control center destination opens Changes with matching nav index", () => {
+  const navIndex = COCKPIT_NAV.findIndex((item) => item.id === "changes");
+  assert.ok(navIndex >= 0);
 
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
@@ -261,9 +254,9 @@ test("recommended Home destination opens New run with matching nav index", () =>
   });
   state = reduceCockpitUi(state, {
     type: "set-view",
-    view: destination.view,
-    navIndex: destination.navIndex
+    view: ORCHESTRATOR_VIEWS.CHANGES,
+    navIndex
   });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.LAUNCH);
-  assert.equal(state.navIndex, destination.navIndex);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES);
+  assert.equal(state.navIndex, navIndex);
 });

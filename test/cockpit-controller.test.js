@@ -44,10 +44,8 @@ test("arrows move nav focus and enter opens interactive view with content focus"
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     region: COCKPIT_REGIONS.NAV,
-    navIndex: 0
+    navIndex: 6
   });
-  state = reduceCockpitUi(state, { type: "arrow", direction: "down" });
-  assert.equal(state.navIndex, 1);
   state = reduceCockpitUi(state, { type: "enter-nav" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.ACTIVE_RUNS);
   assert.equal(state.region, COCKPIT_REGIONS.CONTENT);

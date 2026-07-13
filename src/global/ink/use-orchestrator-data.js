@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { buildReadOnlyDiagnostics } from "../action-planner.js";
+import { buildControlPlaneSnapshot } from "../control-plane-snapshot.js";
 import { buildRuntimeDashboardData } from "../runtime/run-cli.js";
 import { readRunEvents } from "../runtime/run-store.js";
 import { startRun, stopRun } from "../runtime/run-manager.js";
@@ -23,6 +24,7 @@ export function useOrchestratorData({
   const [error, setError] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [diagnostics, setDiagnostics] = useState(null);
+  const [snapshot, setSnapshot] = useState(null);
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedEvents, setSelectedEvents] = useState([]);
   const [statusMessage, setStatusMessage] = useState(null);
@@ -32,12 +34,23 @@ export function useOrchestratorData({
   const [launchPermissionIndex, setLaunchPermissionIndex] = useState(0);
 
   const reload = async () => {
-    const [dash, diag] = await Promise.all([
+    const [dash, diag, snap] = await Promise.all([
       buildRuntimeDashboardData({ homeDir, workspaceRoot, cliVersion }),
-      buildReadOnlyDiagnostics({ homeDir, workspaceRoot, packageName, packageRoot, cliVersion })
+      buildReadOnlyDiagnostics({ homeDir, workspaceRoot, packageName, packageRoot, cliVersion }),
+      buildControlPlaneSnapshot({
+        homeDir,
+        workspaceRoot,
+        packageName,
+        packageRoot,
+        cliVersion,
+        includeDiff: true,
+        includeExplain: false,
+        includeRuntime: false
+      })
     ]);
     setDashboard(dash);
     setDiagnostics(diag);
+    setSnapshot(snap);
   };
 
   useEffect(() => {
@@ -140,6 +153,7 @@ export function useOrchestratorData({
     setError,
     dashboard,
     diagnostics,
+    snapshot,
     selectedRun,
     setSelectedRun,
     selectedEvents,
