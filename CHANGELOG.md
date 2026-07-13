@@ -3,6 +3,19 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.4.2 — 2026-07-13
+
+Patch release. Prefer launchable agents over missing global-state markers in Home CTA.
+
+### Fixes
+
+- Home readiness/NEXT prefer New run whenever any agent is launchable, even if
+  `~/.harness/state.json` is absent or `diagnostics.detected` is still 0.
+
+### Compatibility
+
+- Runtime, commands, and persisted formats unchanged.
+
 ## 0.4.1 — 2026-07-13
 
 Patch release. Prefer launchable agents over empty diagnostics.detected in Home readiness/CTA.
