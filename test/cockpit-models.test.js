@@ -83,5 +83,6 @@ test("footer and project name helpers", () => {
   const footer = buildFooterModel({ view: "home", unicode: false });
   assert.match(footer.text, /Navigate/);
   assert.match(footer.text, /Help/);
+  assert.doesNotMatch(footer.text, /Tab/);
   assert.equal(resolveProjectName("/tmp/agentic-harness"), "agentic-harness");
 });

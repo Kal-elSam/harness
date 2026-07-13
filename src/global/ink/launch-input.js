@@ -5,7 +5,8 @@ import {
 } from "./orchestrator-state.js";
 
 /**
- * Launch-wizard key handler. Returns true when the key was consumed.
+ * Launch-wizard key handler.
+ * Returns true when consumed, "retreated" when Esc stepped back, false otherwise.
  */
 export function handleLaunchInput(ctx) {
   const {
@@ -22,8 +23,17 @@ export function handleLaunchInput(ctx) {
     setLaunchPermissionIndex,
     setError,
     handleLaunch,
-    reload
+    reload,
+    allowEscapeRetreat = false
   } = ctx;
+
+  if (allowEscapeRetreat && key.escape) {
+    if (launchStep === LAUNCH_WIZARD_STEPS.AGENT) {
+      return false;
+    }
+    setLaunchStep(retreatLaunchWizardStep(launchStep));
+    return "retreated";
+  }
 
   if (launchStep === LAUNCH_WIZARD_STEPS.AGENT) {
     if (key.upArrow) {
@@ -87,7 +97,7 @@ export function handleLaunchInput(ctx) {
     }
     if (key.escape) {
       setLaunchStep(retreatLaunchWizardStep(launchStep));
-      return true;
+      return allowEscapeRetreat ? "retreated" : true;
     }
   }
 

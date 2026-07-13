@@ -45,8 +45,9 @@ action), navigation, and a system strip. Layout adapts to terminal size:
 | Minimal | 60–71 cols or short height | Single panel + nav header |
 | Below gate | &lt;60 cols | Explicit TTY fallback (Ink disabled) |
 
-Keys: `↑↓` navigate · `Tab` region · `Enter` open · `R` refresh · `C` cancel run ·
-`?` help · `Esc` back (exit only from Home).
+Keys: `↑↓` navigate · `Enter` open · `Esc` back (exit only from Overview) ·
+`R` refresh · `C` cancel run · `?` help. `Tab` switches region only when content
+is interactive (run lists / launch).
 
 Respects `NO_COLOR`, `HARNESS_ASCII=1`, and `HARNESS_INK=0`. Status is always labeled
 in text, never color alone.

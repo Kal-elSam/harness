@@ -64,12 +64,16 @@ export function useOrchestratorData({
     setLaunchPermissionIndex(0);
   };
 
-  const openRunDetail = async (run, dispatch) => {
+  const openRunDetail = async (run, dispatch, returnView = null) => {
     if (!run) return;
     const events = await readRunEvents(homeDir, run.runId, { limit: 20 });
     setSelectedRun(run);
     setSelectedEvents(events);
-    dispatch({ type: "set-view", view: ORCHESTRATOR_VIEWS.RUN_DETAIL });
+    dispatch({
+      type: "set-view",
+      view: ORCHESTRATOR_VIEWS.RUN_DETAIL,
+      returnView: returnView ?? null
+    });
   };
 
   const handleLaunch = async (draft, profile, dispatch) => {
