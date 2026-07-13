@@ -23,11 +23,11 @@ export const ORCHESTRATOR_VIEWS = {
 };
 
 export const ORCHESTRATOR_MENU = [
-  { id: "active", label: "Active runs", view: ORCHESTRATOR_VIEWS.ACTIVE_RUNS },
-  { id: "recent", label: "Recent runs", view: ORCHESTRATOR_VIEWS.RECENT_RUNS },
-  { id: "providers", label: "Providers", view: ORCHESTRATOR_VIEWS.PROVIDERS },
-  { id: "launch", label: "Launch run", view: ORCHESTRATOR_VIEWS.LAUNCH, action: "launch" },
-  { id: "diagnostics", label: "Diagnostics", view: ORCHESTRATOR_VIEWS.DIAGNOSTICS },
+  { id: "active", label: "Running now", view: ORCHESTRATOR_VIEWS.ACTIVE_RUNS },
+  { id: "recent", label: "History", view: ORCHESTRATOR_VIEWS.RECENT_RUNS },
+  { id: "providers", label: "Agents", view: ORCHESTRATOR_VIEWS.PROVIDERS },
+  { id: "launch", label: "New run", view: ORCHESTRATOR_VIEWS.LAUNCH, action: "launch" },
+  { id: "diagnostics", label: "System health", view: ORCHESTRATOR_VIEWS.DIAGNOSTICS },
   { id: "help", label: "Help", view: ORCHESTRATOR_VIEWS.HELP }
 ];
 
@@ -157,13 +157,22 @@ export function shiftMenuIndex(currentIndex, direction, menuLength = ORCHESTRATO
   return Math.min(menuLength - 1, Math.max(0, currentIndex + delta));
 }
 
-export function formatRunLines(runs, { emptyMessage = "No runs." } = {}) {
+export function formatRunLines(runs, {
+  emptyMessage = "No runs.",
+  readable = false
+} = {}) {
   if (!runs || runs.length === 0) return [emptyMessage];
 
   return runs.map((run) => {
-    const state = run.state.padEnd(12);
-    const agent = run.agentId.padEnd(10);
-    return `${run.runId}  ${state}  ${agent}  ${formatTaskLabel(run)}`;
+    const agent = humanizeToken(run.agentId);
+    const state = humanizeRunState(run.state);
+    const task = formatTaskLabel(run);
+    if (readable) {
+      return `${agent} · ${state} · ${task}`;
+    }
+    const statePad = run.state.padEnd(12);
+    const agentPad = run.agentId.padEnd(10);
+    return `${run.runId}  ${statePad}  ${agentPad}  ${task}`;
   });
 }
 
@@ -181,17 +190,42 @@ export function formatProviderLines(providers) {
 }
 
 export function formatDiagnosticsLines(diagnostics) {
+  return formatSystemHealthLines(diagnostics);
+}
+
+export function formatSystemHealthLines(diagnostics) {
   const summary = diagnostics?.diagnostics;
+  const intelligence = diagnostics?.intelligence?.summary;
+  const profile = diagnostics?.profile;
+  const capabilities = diagnostics?.capabilities ?? [];
+  const authKnown = capabilities.filter((entry) => entry.authenticated != null);
+  const authReady = authKnown.filter((entry) => entry.authenticated).length;
+
   const lines = [
-    "Summary",
-    `CLI version: ${diagnostics?.cliVersion ?? "unknown"}`,
-    `Agents detected: ${summary?.detected ?? 0}/${diagnostics?.capabilities?.length ?? 0}`,
+    "Agents",
+    `Detected: ${summary?.detected ?? 0}/${capabilities.length}`,
     `Available: ${summary?.available ?? 0}`,
     `Unknown: ${summary?.unknown ?? 0}`,
     `Errors: ${summary?.errors ?? 0}`,
+    ...formatAgentStatusLines(capabilities),
     "",
-    "Agent capabilities",
-    ...formatAgentStatusLines(diagnostics?.capabilities ?? [])
+    "Intelligence",
+    intelligence?.localAvailable
+      ? "Local backend available"
+      : "Local backend unavailable",
+    intelligence?.cloudAuthenticated
+      ? "Cloud backend authenticated"
+      : "Cloud backend not configured",
+    `Routing: ${diagnostics?.intelligence?.routingPreview?.reason ?? "n/a"}`,
+    "",
+    "Authentication",
+    authKnown.length === 0
+      ? "No agent authentication signals yet"
+      : `${authReady}/${authKnown.length} agents report ready auth`,
+    "",
+    "Configuration",
+    `CLI version: ${diagnostics?.cliVersion ?? "unknown"}`,
+    `Profile sources: ${(profile?.sources ?? []).join(", ") || "none"}`
   ];
 
   const recommendations = diagnostics?.recommendations ?? [];
@@ -263,6 +297,29 @@ export function filterInspectableRuns(runs) {
 
 export function isRunCancellable(run) {
   return run && isActiveRunState(run.state);
+}
+
+function humanizeToken(value) {
+  const raw = String(value ?? "agent");
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function humanizeRunState(state) {
+  switch (state) {
+    case "succeeded":
+    case "completed":
+      return "Succeeded";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+    case "canceled":
+      return "Cancelled";
+    case "running":
+    case "starting":
+      return "Running";
+    default:
+      return humanizeToken(state);
+  }
 }
 
 function summarizeEvent(event) {

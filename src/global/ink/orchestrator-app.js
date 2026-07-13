@@ -13,6 +13,7 @@ import {
   isContentInteractiveView
 } from "./cockpit-controller.js";
 import {
+  COCKPIT_NAV,
   COCKPIT_REGIONS,
   buildFooterModel,
   buildHomeMissionModel,
@@ -21,6 +22,8 @@ import {
   buildTopBarModel,
   resolveProjectName
 } from "./cockpit-models.js";
+import { openRecommendedDestination } from "./cockpit-home.js";
+import { resolveProjectReadiness } from "../dashboard-guidance.js";
 import { CockpitShell } from "./cockpit/primitives.js";
 import { renderCockpitView } from "./cockpit-views.js";
 import { handleLaunchInput } from "./launch-input.js";
@@ -66,11 +69,40 @@ export function OrchestratorApp({
     exit();
   };
 
+  const openDestination = (recommendation) => {
+    const destination = openRecommendedDestination(recommendation, { navItems: COCKPIT_NAV });
+    if (!destination) return false;
+    if (destination.action === "launch") {
+      data.resetLaunchWizard();
+    }
+    dispatch({
+      type: "set-view",
+      view: destination.view,
+      navIndex: destination.navIndex ?? undefined
+    });
+    return true;
+  };
+
   useInput((inputKey, key) => {
-    if (data.loading || data.error || data.busy) return;
+    if (data.loading) return;
+
+    if (data.error) {
+      if (key.escape) {
+        finish({ cancelled: true });
+        return;
+      }
+      if (inputKey.toLowerCase() === "r") {
+        data.setError(null);
+        data.reload().catch((reloadError) => {
+          data.setError(reloadError instanceof Error ? reloadError.message : String(reloadError));
+        });
+      }
+      return;
+    }
+
+    if (data.busy) return;
 
     if (key.escape) {
-      // Launch wizard may retreat a step before leaving the view.
       if (ui.view === ORCHESTRATOR_VIEWS.LAUNCH && data.launchableAgents.length > 0) {
         const retreated = handleLaunchInput({
           key,
@@ -130,9 +162,23 @@ export function OrchestratorApp({
     if (routed) {
       if (routed.type === "enter-nav") {
         const item = resolveNavAction(ui.navIndex);
+        if (item?.id === "overview" || item?.view === ORCHESTRATOR_VIEWS.HOME) {
+          const mission = buildHomeMissionModel({
+            projectName: resolveProjectName(workspaceRoot),
+            hasGlobalState,
+            diagnostics: data.diagnostics,
+            dashboard: data.dashboard,
+            layoutMode: ui.layoutMode ?? LAYOUT_MODES.COMPACT
+          });
+          if (openDestination(mission.next)) return;
+        }
         if (item?.action === "launch") {
           data.resetLaunchWizard();
-          dispatch({ type: "set-view", view: ORCHESTRATOR_VIEWS.LAUNCH });
+          dispatch({
+            type: "set-view",
+            view: ORCHESTRATOR_VIEWS.LAUNCH,
+            navIndex: ui.navIndex
+          });
           return;
         }
       }
@@ -140,7 +186,6 @@ export function OrchestratorApp({
       return;
     }
 
-    // View-specific handlers after centralized region routing.
     if (ui.view === ORCHESTRATOR_VIEWS.LAUNCH && data.launchableAgents.length > 0) {
       if (handleLaunchInput({
         key,
@@ -201,13 +246,26 @@ export function OrchestratorApp({
     return React.createElement(Box, { flexDirection: "column" },
       React.createElement(Text, { bold: true, color: COCKPIT_COLORS.danger }, "Runtime error"),
       React.createElement(Text, null, data.error),
-      React.createElement(Text, { dimColor: true }, "Esc to exit")
+      React.createElement(Text, { dimColor: true }, "R Retry · Esc to exit")
     );
   }
 
   const mode = ui.layoutMode ?? LAYOUT_MODES.COMPACT;
   const colorEnabled = caps.color;
   const unicode = caps.unicode;
+  const projectName = resolveProjectName(workspaceRoot);
+  const readiness = resolveProjectReadiness({
+    hasGlobalState,
+    diagnostics: data.diagnostics,
+    dashboard: data.dashboard
+  });
+  const homeMission = buildHomeMissionModel({
+    projectName,
+    hasGlobalState,
+    diagnostics: data.diagnostics,
+    dashboard: data.dashboard,
+    layoutMode: mode
+  });
 
   return React.createElement(Box, { flexDirection: "column" },
     data.statusMessage && React.createElement(Text, {
@@ -215,8 +273,8 @@ export function OrchestratorApp({
     }, data.statusMessage),
     React.createElement(CockpitShell, {
       topBar: buildTopBarModel({
-        projectName: resolveProjectName(workspaceRoot),
-        systemOnline: true,
+        projectName,
+        systemOnline: readiness.kind !== "needs_setup",
         unicode
       }),
       footer: buildFooterModel({
@@ -229,13 +287,16 @@ export function OrchestratorApp({
       layoutMode: mode,
       nav: buildNavModel({
         navIndex: ui.navIndex,
+        currentView: ui.view,
         focused: ui.region === COCKPIT_REGIONS.NAV || !isContentInteractiveView(ui.view),
-        unicode
+        unicode,
+        dashboard: data.dashboard,
+        diagnostics: data.diagnostics
       }),
       system: buildSystemStripModel({
         dashboard: data.dashboard,
         diagnostics: data.diagnostics,
-        healthKind: "ready"
+        readiness
       }),
       navFocused: ui.region === COCKPIT_REGIONS.NAV,
       contentFocused: ui.region === COCKPIT_REGIONS.CONTENT,
@@ -254,15 +315,8 @@ export function OrchestratorApp({
         launchableAgents: data.launchableAgents,
         selectedRun: data.selectedRun,
         selectedEvents: data.selectedEvents,
-        homeMission: buildHomeMissionModel({
-          hasGlobalState,
-          diagnostics: data.diagnostics,
-          dashboard: data.dashboard,
-          layoutMode: mode,
-          activityLines: (data.dashboard?.recentRuns ?? []).map((run) =>
-            `${run.runId} ${run.state} ${run.agentId}`
-          )
-        }),
+        homeMission,
+        layoutMode: mode,
         colorEnabled
       })
     )

@@ -47,17 +47,24 @@ export function CockpitTopBar({ model, colorEnabled = true }) {
 
 export function CockpitNav({ model, colorEnabled = true }) {
   return React.createElement(Box, { flexDirection: "column" },
-    model.items.map((item) =>
-      React.createElement(Text, {
+    model.items.map((item) => {
+      const suffix = item.current && !item.selected ? " (open)" : "";
+      const color = item.focused
+        ? (colorEnabled ? COCKPIT_COLORS.primary : undefined)
+        : item.selected
+          ? (colorEnabled ? COCKPIT_COLORS.secondary : undefined)
+          : item.current
+            ? (colorEnabled ? COCKPIT_COLORS.muted : undefined)
+            : undefined;
+      return React.createElement(Text, {
         key: item.id,
         bold: item.focused || item.selected,
-        color: item.focused
-          ? (colorEnabled ? COCKPIT_COLORS.primary : undefined)
-          : item.selected
-            ? (colorEnabled ? COCKPIT_COLORS.secondary : undefined)
-            : undefined
-      }, `${item.marker} ${item.label}`)
-    )
+        color
+      }, `${item.marker} ${item.label}${suffix}`);
+    }),
+    model.explanation && React.createElement(Text, {
+      color: COCKPIT_COLORS.muted
+    }, model.explanation)
   );
 }
 

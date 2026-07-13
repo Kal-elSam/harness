@@ -11,8 +11,10 @@ import {
 import {
   COCKPIT_NAV,
   COCKPIT_REGIONS,
-  buildFooterModel
+  buildFooterModel,
+  buildNavModel
 } from "../src/global/ink/cockpit-models.js";
+import { openRecommendedDestination } from "../src/global/ink/cockpit-home.js";
 import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
 
@@ -223,4 +225,45 @@ test("routeCockpitKey centralizes region routing before view handlers", () => {
     routeCockpitKey(runs, { type: "enter" }),
     null
   );
+});
+
+test("nav labels and selected vs current remain distinct while explanation follows selection", () => {
+  const nav = buildNavModel({
+    navIndex: 4,
+    currentView: ORCHESTRATOR_VIEWS.HOME,
+    focused: true,
+    dashboard: { activeRuns: [], recentRuns: [], providers: [{ launchable: true }] },
+    diagnostics: { diagnostics: { detected: 1, errors: 0 }, capabilities: [{}] }
+  });
+  assert.equal(nav.items[0].label, "Home");
+  assert.equal(nav.items[0].current, true);
+  assert.equal(nav.items[0].selected, false);
+  assert.equal(nav.items[4].label, "New run");
+  assert.equal(nav.items[4].selected, true);
+  assert.equal(nav.items[4].current, false);
+  assert.match(nav.explanation, /Delegate|executable/i);
+});
+
+test("recommended Home destination opens New run with matching nav index", () => {
+  const destination = openRecommendedDestination({
+    targetView: ORCHESTRATOR_VIEWS.LAUNCH,
+    targetAction: "launch"
+  }, { navItems: COCKPIT_NAV });
+
+  assert.equal(destination.view, ORCHESTRATOR_VIEWS.LAUNCH);
+  assert.equal(destination.action, "launch");
+  assert.equal(destination.navIndex, COCKPIT_NAV.findIndex((item) => item.id === "launch"));
+
+  let state = createCockpitUiState({
+    layoutMode: LAYOUT_MODES.COMPACT,
+    region: COCKPIT_REGIONS.NAV,
+    navIndex: 0
+  });
+  state = reduceCockpitUi(state, {
+    type: "set-view",
+    view: destination.view,
+    navIndex: destination.navIndex
+  });
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.LAUNCH);
+  assert.equal(state.navIndex, destination.navIndex);
 });
