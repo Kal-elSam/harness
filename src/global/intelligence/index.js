@@ -3,12 +3,29 @@ export {
   COST_CLASSES,
   PRIVACY_CLASSES,
   ROUTING_MODES,
+  TRANSPORT_KINDS,
   OPENROUTER_FREE_MODEL,
+  OPENCODE_API_KEY_ENV,
+  OPENCODE_GO_BASE_URL,
+  OPENCODE_ZEN_BASE_URL,
+  OPENCODE_GO_DEFAULT_MODEL,
+  OPENCODE_ZEN_DEFAULT_FREE_MODEL,
   DEFAULT_OLLAMA_HOST,
   createModelDescriptor,
   createRoutingDecision,
   createUsageTelemetry
 } from "./types.js";
+
+export {
+  resolveOpencodeTransport,
+  isDirectTransport,
+  listRegisteredModelIds,
+  normalizeModelId,
+  toRuntimeModelRef,
+  resolveRuntimeProduct,
+  OPENCODE_GO_TRANSPORTS,
+  OPENCODE_ZEN_TRANSPORTS
+} from "./transport-registry.js";
 
 export { createOllamaBackend } from "./backends/ollama.js";
 export { createOpenRouterBackend } from "./backends/openrouter.js";
