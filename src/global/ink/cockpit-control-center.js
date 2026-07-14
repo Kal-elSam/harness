@@ -59,7 +59,7 @@ export function buildControlCenterModel({
       title: "NEXT",
       actionTitle: snapshot.cta?.title ?? "Review control plane",
       actionDetail: snapshot.cta?.detail ?? "",
-      enterHint: "Enter →",
+      enterHint: "Enter again →",
       kind: snapshot.cta?.kind ?? null,
       destination: snapshot.cta?.destination ?? null
     },

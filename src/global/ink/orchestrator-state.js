@@ -18,6 +18,7 @@ export const ORCHESTRATOR_VIEWS = {
   CHANGES: "changes",
   ACTIVITY: "activity",
   PROFILE: "profile",
+  RUNS: "runs",
   ACTIVE_RUNS: "active-runs",
   RECENT_RUNS: "recent-runs",
   RUN_DETAIL: "run-detail",

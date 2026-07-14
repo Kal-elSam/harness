@@ -66,6 +66,8 @@ test("top bar and nav models expose selected vs current plus explanation", () =>
   assert.match(nav.explanation, /Findings|drift|preview/i);
   assert.ok(nav.items[0].statusSummary);
   assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.ACTIVE_RUNS), 6);
+  assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.RUNS), 6);
+  assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.LAUNCH), 6);
 });
 
 test("home model derives readiness, last run CTA destination, and explore guidance", () => {

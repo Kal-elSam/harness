@@ -23,6 +23,8 @@ import {
   resolveProjectName
 } from "./cockpit-models.js";
 import { buildControlCenterModel } from "./cockpit-control-center.js";
+import { resolveEnterNavIntent } from "./cockpit-enter.js";
+import { resolveRunsHubItem, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 import { resolveProjectReadiness } from "../dashboard-guidance.js";
 import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
 import { CockpitShell } from "./cockpit/primitives.js";
@@ -90,10 +92,9 @@ export function OrchestratorApp({
         return;
       }
       if (inputKey.toLowerCase() === "r") {
-        data.setError(null);
-        data.reload().catch((reloadError) => {
-          data.setError(reloadError instanceof Error ? reloadError.message : String(reloadError));
-        });
+        if (data.retrying) return;
+        // Keep the error screen until success so Esc stays available during retry.
+        data.reload({ asRetry: true }).catch(() => {});
       }
       return;
     }
@@ -138,11 +139,13 @@ export function OrchestratorApp({
       return;
     }
 
-    const listLength = ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
-      ? (data.dashboard?.activeRuns ?? []).length
-      : ui.view === ORCHESTRATOR_VIEWS.RECENT_RUNS
-        ? (data.dashboard?.recentRuns ?? []).length
-        : 0;
+    const listLength = ui.view === ORCHESTRATOR_VIEWS.RUNS
+      ? RUNS_HUB_ITEMS.length
+      : ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
+        ? (data.dashboard?.activeRuns ?? []).length
+        : ui.view === ORCHESTRATOR_VIEWS.RECENT_RUNS
+          ? (data.dashboard?.recentRuns ?? []).length
+          : 0;
 
     let routed = null;
     if (key.tab) {
@@ -160,10 +163,15 @@ export function OrchestratorApp({
     if (routed) {
       if (routed.type === "enter-nav") {
         const item = resolveNavAction(ui.navIndex);
-        if (item?.id === "overview" || item?.view === ORCHESTRATOR_VIEWS.HOME) {
-          if (openDestination(data.snapshot?.cta?.destination)) return;
+        const intent = resolveEnterNavIntent({
+          currentView: ui.view,
+          navItem: item,
+          ctaDestination: data.snapshot?.cta?.destination ?? null
+        });
+        if (intent.kind === "activate-cta") {
+          if (openDestination(intent.destination)) return;
         }
-        if (item?.action === "launch") {
+        if (intent.kind === "launch") {
           data.resetLaunchWizard();
           dispatch({
             type: "set-view",
@@ -199,6 +207,22 @@ export function OrchestratorApp({
     }
 
     if (ui.region === COCKPIT_REGIONS.CONTENT
+      && ui.view === ORCHESTRATOR_VIEWS.RUNS
+      && key.return) {
+      const hubItem = resolveRunsHubItem(ui.listIndex);
+      if (!hubItem) return;
+      if (hubItem.action === "launch") {
+        data.resetLaunchWizard();
+      }
+      dispatch({
+        type: "set-view",
+        view: hubItem.view,
+        navIndex: navIndexForView(ORCHESTRATOR_VIEWS.RUNS)
+      });
+      return;
+    }
+
+    if (ui.region === COCKPIT_REGIONS.CONTENT
       && (ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS || ui.view === ORCHESTRATOR_VIEWS.RECENT_RUNS)
       && key.return) {
       const runs = ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
@@ -220,9 +244,7 @@ export function OrchestratorApp({
     }
 
     if (inputKey.toLowerCase() === "r" && ui.view !== ORCHESTRATOR_VIEWS.LAUNCH) {
-      data.reload().catch((reloadError) => {
-        data.setError(reloadError instanceof Error ? reloadError.message : String(reloadError));
-      });
+      data.reload().catch(() => {});
     }
   });
 
@@ -237,7 +259,8 @@ export function OrchestratorApp({
     return React.createElement(Box, { flexDirection: "column" },
       React.createElement(Text, { bold: true, color: COCKPIT_COLORS.danger }, "Runtime error"),
       React.createElement(Text, null, data.error),
-      React.createElement(Text, { dimColor: true }, "R Retry · Esc to exit")
+      React.createElement(Text, { dimColor: true },
+        data.retrying ? "Retrying read-only scan…" : "R Retry · Esc to exit")
     );
   }
 
@@ -273,6 +296,7 @@ export function OrchestratorApp({
       footer: buildFooterModel({
         view: ui.view,
         region: ui.region,
+        navIndex: ui.navIndex,
         helpOpen: ui.helpOpen,
         canCancel: isRunCancellable(data.selectedRun),
         unicode
@@ -337,7 +361,7 @@ function resolveCtaDestinationView(destinationKey) {
     case "ides":
       return ORCHESTRATOR_VIEWS.IDES;
     case "runs":
-      return ORCHESTRATOR_VIEWS.ACTIVE_RUNS;
+      return ORCHESTRATOR_VIEWS.RUNS;
     default:
       return null;
   }

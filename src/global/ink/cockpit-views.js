@@ -13,6 +13,7 @@ import {
 } from "./orchestrator-state.js";
 import { windowLinesForLayout } from "./cockpit-models.js";
 import { LAYOUT_MODES } from "./layout.js";
+import { formatRunsHubLines, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 
 export function ControlCenterPanel({ model, colorEnabled = true }) {
   const health = model.health;
@@ -85,9 +86,17 @@ export function renderCockpitView({
       return governanceList("Activity & recovery", formatActivityLines(snapshot), layoutMode, colorEnabled);
     case ORCHESTRATOR_VIEWS.PROFILE:
       return governanceList("Profile & policy", formatProfileLines(snapshot, diagnostics), layoutMode, colorEnabled);
-    case ORCHESTRATOR_VIEWS.ACTIVE_RUNS:
+    case ORCHESTRATOR_VIEWS.RUNS:
       return listBlock(
         "Runs",
+        formatRunsHubLines(RUNS_HUB_ITEMS),
+        listIndex,
+        colorEnabled,
+        "Choose Active runs, History, or New run."
+      );
+    case ORCHESTRATOR_VIEWS.ACTIVE_RUNS:
+      return listBlock(
+        "Active runs",
         formatRunLines(dashboard?.activeRuns ?? [], {
           emptyMessage: "No runs executing. Governance first — launch only after setup/repairs.",
           readable: true

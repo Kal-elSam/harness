@@ -40,14 +40,14 @@ test("escape returns to home then signals exit", () => {
   assert.equal(state.shouldExit, true);
 });
 
-test("arrows move nav focus and enter opens interactive view with content focus", () => {
+test("arrows move nav focus and enter opens Runs hub with content focus", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     region: COCKPIT_REGIONS.NAV,
     navIndex: 6
   });
   state = reduceCockpitUi(state, { type: "enter-nav" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.ACTIVE_RUNS);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.RUNS);
   assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
 });
 

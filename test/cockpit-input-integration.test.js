@@ -67,14 +67,14 @@ test("integrated compact session: Esc overview then exit", () => {
   simulateSession(LAYOUT_MODES.COMPACT);
 });
 
-test("integrated interactive runs allow Tab between nav and content", () => {
+test("integrated interactive runs hub allows Tab between nav and content", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.WIDE,
     region: COCKPIT_REGIONS.NAV,
     navIndex: 6
   });
   state = applyKey(state, { type: "enter" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.ACTIVE_RUNS);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.RUNS);
   assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
 
   state = applyKey(state, { type: "tab" });

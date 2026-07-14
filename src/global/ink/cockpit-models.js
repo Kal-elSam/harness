@@ -4,6 +4,7 @@ import { resolveProjectReadiness } from "../dashboard-guidance.js";
 import { STATUS_LABELS, resolveGlyphs } from "./theme.js";
 import { windowList } from "./list-window.js";
 import { buildHomeMissionModel, formatHomeRecentRun } from "./cockpit-home.js";
+import { isRunsBranchView } from "./cockpit-runs.js";
 
 export const COCKPIT_REGIONS = {
   NAV: "nav",
@@ -51,8 +52,8 @@ export const COCKPIT_NAV = [
   {
     id: "runs",
     label: "Runs",
-    view: ORCHESTRATOR_VIEWS.ACTIVE_RUNS,
-    description: "Optional supervised execution — secondary to governance."
+    view: ORCHESTRATOR_VIEWS.RUNS,
+    description: "Optional supervised execution — Active, History, and New run."
   }
 ];
 
@@ -67,6 +68,10 @@ export function regionsForLayout(layoutMode) {
 }
 
 export function navIndexForView(view, items = COCKPIT_NAV) {
+  if (isRunsBranchView(view)) {
+    const runsIndex = items.findIndex((item) => item.id === "runs");
+    return runsIndex >= 0 ? runsIndex : 0;
+  }
   const index = items.findIndex((item) => item.view === view);
   return index >= 0 ? index : 0;
 }
@@ -151,7 +156,8 @@ export function buildNavModel({
   const selected = items[navIndex] ?? items[0];
   const mapped = items.map((item, index) => {
     const isSelected = index === navIndex;
-    const isCurrent = item.view === currentView;
+    const isCurrent = item.view === currentView
+      || (item.id === "runs" && isRunsBranchView(currentView));
     return {
       ...item,
       marker: isSelected ? glyphs.focus : (isCurrent ? glyphs.bullet : " "),
@@ -212,6 +218,7 @@ export function buildSystemStripModel({
 export function buildFooterModel({
   view = ORCHESTRATOR_VIEWS.HOME,
   region = COCKPIT_REGIONS.NAV,
+  navIndex = 0,
   helpOpen = false,
   canCancel = false,
   unicode = true,
@@ -241,15 +248,18 @@ export function buildFooterModel({
 
   parts.push("↑↓ Navigate");
 
-  const showTab = view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
+  const showTab = view === ORCHESTRATOR_VIEWS.RUNS
+    || view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
     || view === ORCHESTRATOR_VIEWS.RECENT_RUNS
     || view === ORCHESTRATOR_VIEWS.LAUNCH;
   if (showTab) {
     parts.push("Tab Region");
   }
 
-  if (view === ORCHESTRATOR_VIEWS.HOME
-    || view === ORCHESTRATOR_VIEWS.IDES
+  const activatesControlCenterCta = view === ORCHESTRATOR_VIEWS.HOME && navIndex === 0;
+  if (activatesControlCenterCta) {
+    parts.push("Enter Activate");
+  } else if (view === ORCHESTRATOR_VIEWS.IDES
     || view === ORCHESTRATOR_VIEWS.MODULES
     || view === ORCHESTRATOR_VIEWS.CHANGES
     || view === ORCHESTRATOR_VIEWS.ACTIVITY
@@ -257,11 +267,11 @@ export function buildFooterModel({
     || view === ORCHESTRATOR_VIEWS.PROVIDERS
     || view === ORCHESTRATOR_VIEWS.DIAGNOSTICS
     || region === COCKPIT_REGIONS.NAV
+    || view === ORCHESTRATOR_VIEWS.RUNS
     || view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
     || view === ORCHESTRATOR_VIEWS.RECENT_RUNS) {
     parts.push("Enter Open");
   }
-
   if (view !== ORCHESTRATOR_VIEWS.LAUNCH) {
     parts.push("R refresh");
   }
