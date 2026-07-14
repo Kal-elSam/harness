@@ -2,15 +2,36 @@ import { BACKEND_IDS } from "./types.js";
 import { createOllamaBackend } from "./backends/ollama.js";
 import { createOpenRouterBackend } from "./backends/openrouter.js";
 import { createCustomHttpBackend } from "./backends/custom-http.js";
+import {
+  createOpencodeGoBackend,
+  createOpencodeZenBackend
+} from "./backends/opencode-providers.js";
+import { collectOpencodeCliEvidence } from "./backends/opencode-evidence.js";
 import { CAPABILITY_STATES } from "../capability-states.js";
+
+const CLOUD_KEY_BACKENDS = new Set([
+  BACKEND_IDS.OPENROUTER,
+  BACKEND_IDS.OPENCODE_GO,
+  BACKEND_IDS.OPENCODE_ZEN
+]);
 
 export function createDefaultBackends({
   env = process.env,
   fetchImpl = globalThis.fetch,
-  customProviders = []
+  customProviders = [],
+  whichImpl,
+  collectCliEvidence
 } = {}) {
+  const sharedCliEvidence = createSharedCliEvidenceCollector({
+    env,
+    whichImpl,
+    collectCliEvidence
+  });
+
   const backends = [
     createOllamaBackend({ env, fetchImpl }),
+    createOpencodeGoBackend({ env, fetchImpl, collectCliEvidence: sharedCliEvidence }),
+    createOpencodeZenBackend({ env, fetchImpl, collectCliEvidence: sharedCliEvidence }),
     createOpenRouterBackend({ env, fetchImpl })
   ];
 
@@ -29,9 +50,17 @@ export async function inspectIntelligenceBackends({
   env = process.env,
   fetchImpl = globalThis.fetch,
   customProviders = [],
-  backends = null
+  backends = null,
+  whichImpl,
+  collectCliEvidence
 } = {}) {
-  const resolved = backends ?? createDefaultBackends({ env, fetchImpl, customProviders });
+  const resolved = backends ?? createDefaultBackends({
+    env,
+    fetchImpl,
+    customProviders,
+    whichImpl,
+    collectCliEvidence
+  });
   return Promise.all(resolved.map(async (backend) => {
     const detection = await backend.detect();
     const models = detection.detected || detection.available
@@ -66,7 +95,13 @@ export function summarizeIntelligenceBackends(inspections) {
       (entry) => entry.id === BACKEND_IDS.OLLAMA && entry.available
     ),
     cloudAuthenticated: inspections.some(
-      (entry) => entry.id === BACKEND_IDS.OPENROUTER && entry.hasApiKey
+      (entry) => CLOUD_KEY_BACKENDS.has(entry.id) && entry.hasApiKey
+    ),
+    opencodeGoAuthenticated: inspections.some(
+      (entry) => entry.id === BACKEND_IDS.OPENCODE_GO && entry.hasApiKey
+    ),
+    opencodeZenAuthenticated: inspections.some(
+      (entry) => entry.id === BACKEND_IDS.OPENCODE_ZEN && entry.hasApiKey
     ),
     byState
   };
@@ -74,4 +109,17 @@ export function summarizeIntelligenceBackends(inspections) {
 
 export function resolveBackendById(backends, backendId) {
   return backends.find((backend) => backend.id === backendId) ?? null;
+}
+
+function createSharedCliEvidenceCollector({
+  env,
+  whichImpl,
+  collectCliEvidence
+}) {
+  let cached = null;
+  const collector = collectCliEvidence ?? collectOpencodeCliEvidence;
+  return () => {
+    if (!cached) cached = collector({ env, whichImpl });
+    return cached;
+  };
 }

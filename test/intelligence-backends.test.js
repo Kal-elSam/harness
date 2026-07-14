@@ -394,7 +394,7 @@ test("include-private requires a second confirmation before local invoke", async
   assert.equal(outcome.contextPack.relevantFiles.includes(".env"), false);
 });
 
-test("inspectIntelligenceBackends returns both default backends", async () => {
+test("inspectIntelligenceBackends returns default backends including OpenCode Go/Zen", async () => {
   const fetchImpl = async (url) => {
     if (String(url).includes("11434")) throw new Error("down");
     return jsonResponse(401, { error: "unauthorized" });
@@ -402,10 +402,19 @@ test("inspectIntelligenceBackends returns both default backends", async () => {
 
   const inspections = await inspectIntelligenceBackends({
     env: {},
-    fetchImpl
+    fetchImpl,
+    whichImpl: () => false,
+    collectCliEvidence: () => ({
+      cliInstalled: false,
+      authListOk: false,
+      authProviders: [],
+      error: null
+    })
   });
 
-  assert.equal(inspections.length, 2);
+  assert.equal(inspections.length, 4);
   assert.ok(inspections.some((entry) => entry.id === BACKEND_IDS.OLLAMA));
+  assert.ok(inspections.some((entry) => entry.id === BACKEND_IDS.OPENCODE_GO));
+  assert.ok(inspections.some((entry) => entry.id === BACKEND_IDS.OPENCODE_ZEN));
   assert.ok(inspections.some((entry) => entry.id === BACKEND_IDS.OPENROUTER));
 });

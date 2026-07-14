@@ -19,7 +19,8 @@ export async function runIntelligenceRequest({
   env = process.env,
   fetchImpl = globalThis.fetch,
   backends = null,
-  tokenBudget = null
+  tokenBudget = null,
+  sessionOverride = null
 } = {}) {
   const customProviders = Array.isArray(profile.customProviders) ? profile.customProviders : [];
   const backendInstances = backends ?? createDefaultBackends({ env, fetchImpl, customProviders });
@@ -46,7 +47,8 @@ export async function runIntelligenceRequest({
     contextPack,
     task: task ?? prompt,
     cloudConsent: Boolean(cloudConsent),
-    tokenBudget: tokenBudget ?? profile.tokenBudget ?? null
+    tokenBudget: tokenBudget ?? profile.tokenBudget ?? null,
+    sessionOverride
   });
 
   const explanation = explainRouting(routing, contextPack, inspections);
