@@ -37,6 +37,10 @@ export {
 export { createOllamaBackend } from "./backends/ollama.js";
 export { createOpenRouterBackend } from "./backends/openrouter.js";
 export { createCustomHttpBackend } from "./backends/custom-http.js";
+export {
+  createOpencodeGoBackend,
+  createOpencodeZenBackend
+} from "./backends/opencode-providers.js";
 
 export {
   createDefaultBackends,
