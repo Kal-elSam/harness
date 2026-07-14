@@ -10,6 +10,7 @@ import {
   goCostClassForModel,
   zenCostClassForModel
 } from "./opencode-catalog.js";
+import { withOpencodeDirectInvoke } from "./opencode-invoke.js";
 
 export function createOpencodeGoBackend({
   env = process.env,
@@ -18,7 +19,7 @@ export function createOpencodeGoBackend({
   baseUrl = OPENCODE_GO_BASE_URL,
   collectCliEvidence
 } = {}) {
-  return createOpencodeCatalogBackend({
+  const catalog = createOpencodeCatalogBackend({
     id: BACKEND_IDS.OPENCODE_GO,
     label: "OpenCode Go",
     product: "go",
@@ -30,6 +31,12 @@ export function createOpencodeGoBackend({
     apiKey,
     collectCliEvidence
   });
+  return withOpencodeDirectInvoke(catalog, {
+    env,
+    apiKey,
+    fetchImpl,
+    defaultModelId: OPENCODE_GO_DEFAULT_MODEL
+  });
 }
 
 export function createOpencodeZenBackend({
@@ -39,7 +46,7 @@ export function createOpencodeZenBackend({
   baseUrl = OPENCODE_ZEN_BASE_URL,
   collectCliEvidence
 } = {}) {
-  return createOpencodeCatalogBackend({
+  const catalog = createOpencodeCatalogBackend({
     id: BACKEND_IDS.OPENCODE_ZEN,
     label: "OpenCode Zen",
     product: "zen",
@@ -50,5 +57,11 @@ export function createOpencodeZenBackend({
     fetchImpl,
     apiKey,
     collectCliEvidence
+  });
+  return withOpencodeDirectInvoke(catalog, {
+    env,
+    apiKey,
+    fetchImpl,
+    defaultModelId: OPENCODE_ZEN_DEFAULT_FREE_MODEL
   });
 }
