@@ -12,6 +12,8 @@ import {
   regionsForLayout,
   routeCockpitKey
 } from "./cockpit-focus.js";
+import { isRunsChildView } from "./cockpit-runs.js";
+import { navIndexForView } from "./cockpit-models.js";
 
 export {
   canTabBetweenRegions,
@@ -142,6 +144,9 @@ export function reduceCockpitUi(state, action) {
           returnView: null
         };
       }
+      if (isRunsChildView(state.view)) {
+        return goRunsHub(state);
+      }
       if (state.view !== ORCHESTRATOR_VIEWS.HOME) {
         return goOverview(state);
       }
@@ -166,6 +171,18 @@ function goOverview(state) {
     navIndex: 0,
     listIndex: 0,
     region: defaultRegionForView(ORCHESTRATOR_VIEWS.HOME, state.layoutMode),
+    returnView: null
+  };
+}
+
+function goRunsHub(state) {
+  return {
+    ...state,
+    helpOpen: false,
+    view: ORCHESTRATOR_VIEWS.RUNS,
+    navIndex: navIndexForView(ORCHESTRATOR_VIEWS.RUNS),
+    listIndex: 0,
+    region: defaultRegionForView(ORCHESTRATOR_VIEWS.RUNS, state.layoutMode),
     returnView: null
   };
 }

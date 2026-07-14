@@ -102,8 +102,8 @@ test("cockpit shell wide frame exposes Home, readiness, and system labels", () =
   assertCriticalHomeParity(frame);
   assert.match(frame, /ONLINE|Offline/);
   assert.match(frame, /NAVIGATION/);
-  assert.match(frame, /Home/);
-  assert.match(frame, /New run/);
+  assert.match(frame, /Control center|HOME/);
+  assert.match(frame, /Runs|Changes/);
   assert.match(frame, /SYSTEM/);
   assert.match(frame, /Health Limited|Health Ready|Health Needs/i);
   assert.doesNotMatch(frame, /MISSION CONTROL/);

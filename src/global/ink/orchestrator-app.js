@@ -16,14 +16,17 @@ import {
   COCKPIT_NAV,
   COCKPIT_REGIONS,
   buildFooterModel,
-  buildHomeMissionModel,
   buildNavModel,
   buildSystemStripModel,
   buildTopBarModel,
+  navIndexForView,
   resolveProjectName
 } from "./cockpit-models.js";
-import { openRecommendedDestination } from "./cockpit-home.js";
+import { buildControlCenterModel } from "./cockpit-control-center.js";
+import { resolveEnterNavIntent } from "./cockpit-enter.js";
+import { resolveRunsHubItem, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 import { resolveProjectReadiness } from "../dashboard-guidance.js";
+import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
 import { CockpitShell } from "./cockpit/primitives.js";
 import { renderCockpitView } from "./cockpit-views.js";
 import { handleLaunchInput } from "./launch-input.js";
@@ -69,16 +72,13 @@ export function OrchestratorApp({
     exit();
   };
 
-  const openDestination = (recommendation) => {
-    const destination = openRecommendedDestination(recommendation, { navItems: COCKPIT_NAV });
-    if (!destination) return false;
-    if (destination.action === "launch") {
-      data.resetLaunchWizard();
-    }
+  const openDestination = (destinationKey) => {
+    const view = resolveCtaDestinationView(destinationKey);
+    if (!view) return false;
     dispatch({
       type: "set-view",
-      view: destination.view,
-      navIndex: destination.navIndex ?? undefined
+      view,
+      navIndex: navIndexForView(view)
     });
     return true;
   };
@@ -92,10 +92,9 @@ export function OrchestratorApp({
         return;
       }
       if (inputKey.toLowerCase() === "r") {
-        data.setError(null);
-        data.reload().catch((reloadError) => {
-          data.setError(reloadError instanceof Error ? reloadError.message : String(reloadError));
-        });
+        if (data.retrying) return;
+        // Keep the error screen until success so Esc stays available during retry.
+        data.reload({ asRetry: true }).catch(() => {});
       }
       return;
     }
@@ -140,11 +139,13 @@ export function OrchestratorApp({
       return;
     }
 
-    const listLength = ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
-      ? (data.dashboard?.activeRuns ?? []).length
-      : ui.view === ORCHESTRATOR_VIEWS.RECENT_RUNS
-        ? (data.dashboard?.recentRuns ?? []).length
-        : 0;
+    const listLength = ui.view === ORCHESTRATOR_VIEWS.RUNS
+      ? RUNS_HUB_ITEMS.length
+      : ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
+        ? (data.dashboard?.activeRuns ?? []).length
+        : ui.view === ORCHESTRATOR_VIEWS.RECENT_RUNS
+          ? (data.dashboard?.recentRuns ?? []).length
+          : 0;
 
     let routed = null;
     if (key.tab) {
@@ -162,17 +163,15 @@ export function OrchestratorApp({
     if (routed) {
       if (routed.type === "enter-nav") {
         const item = resolveNavAction(ui.navIndex);
-        if (item?.id === "overview" || item?.view === ORCHESTRATOR_VIEWS.HOME) {
-          const mission = buildHomeMissionModel({
-            projectName: resolveProjectName(workspaceRoot),
-            hasGlobalState,
-            diagnostics: data.diagnostics,
-            dashboard: data.dashboard,
-            layoutMode: ui.layoutMode ?? LAYOUT_MODES.COMPACT
-          });
-          if (openDestination(mission.next)) return;
+        const intent = resolveEnterNavIntent({
+          currentView: ui.view,
+          navItem: item,
+          ctaDestination: data.snapshot?.cta?.destination ?? null
+        });
+        if (intent.kind === "activate-cta") {
+          if (openDestination(intent.destination)) return;
         }
-        if (item?.action === "launch") {
+        if (intent.kind === "launch") {
           data.resetLaunchWizard();
           dispatch({
             type: "set-view",
@@ -208,6 +207,22 @@ export function OrchestratorApp({
     }
 
     if (ui.region === COCKPIT_REGIONS.CONTENT
+      && ui.view === ORCHESTRATOR_VIEWS.RUNS
+      && key.return) {
+      const hubItem = resolveRunsHubItem(ui.listIndex);
+      if (!hubItem) return;
+      if (hubItem.action === "launch") {
+        data.resetLaunchWizard();
+      }
+      dispatch({
+        type: "set-view",
+        view: hubItem.view,
+        navIndex: navIndexForView(ORCHESTRATOR_VIEWS.RUNS)
+      });
+      return;
+    }
+
+    if (ui.region === COCKPIT_REGIONS.CONTENT
       && (ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS || ui.view === ORCHESTRATOR_VIEWS.RECENT_RUNS)
       && key.return) {
       const runs = ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
@@ -229,9 +244,7 @@ export function OrchestratorApp({
     }
 
     if (inputKey.toLowerCase() === "r" && ui.view !== ORCHESTRATOR_VIEWS.LAUNCH) {
-      data.reload().catch((reloadError) => {
-        data.setError(reloadError instanceof Error ? reloadError.message : String(reloadError));
-      });
+      data.reload().catch(() => {});
     }
   });
 
@@ -246,7 +259,8 @@ export function OrchestratorApp({
     return React.createElement(Box, { flexDirection: "column" },
       React.createElement(Text, { bold: true, color: COCKPIT_COLORS.danger }, "Runtime error"),
       React.createElement(Text, null, data.error),
-      React.createElement(Text, { dimColor: true }, "R Retry · Esc to exit")
+      React.createElement(Text, { dimColor: true },
+        data.retrying ? "Retrying read-only scan…" : "R Retry · Esc to exit")
     );
   }
 
@@ -259,13 +273,15 @@ export function OrchestratorApp({
     diagnostics: data.diagnostics,
     dashboard: data.dashboard
   });
-  const homeMission = buildHomeMissionModel({
+  const controlCenter = buildControlCenterModel({
     projectName,
-    hasGlobalState,
-    diagnostics: data.diagnostics,
-    dashboard: data.dashboard,
+    snapshot: data.snapshot,
     layoutMode: mode
   });
+  const systemOnline = data.snapshot
+    ? data.snapshot.health !== CONTROL_PLANE_HEALTH.NOT_CONFIGURED
+      && data.snapshot.health !== CONTROL_PLANE_HEALTH.CHECK_FAILED
+    : readiness.kind !== "needs_setup";
 
   return React.createElement(Box, { flexDirection: "column" },
     data.statusMessage && React.createElement(Text, {
@@ -274,12 +290,13 @@ export function OrchestratorApp({
     React.createElement(CockpitShell, {
       topBar: buildTopBarModel({
         projectName,
-        systemOnline: readiness.kind !== "needs_setup",
+        systemOnline,
         unicode
       }),
       footer: buildFooterModel({
         view: ui.view,
         region: ui.region,
+        navIndex: ui.navIndex,
         helpOpen: ui.helpOpen,
         canCancel: isRunCancellable(data.selectedRun),
         unicode
@@ -291,12 +308,23 @@ export function OrchestratorApp({
         focused: ui.region === COCKPIT_REGIONS.NAV || !isContentInteractiveView(ui.view),
         unicode,
         dashboard: data.dashboard,
-        diagnostics: data.diagnostics
+        diagnostics: data.diagnostics,
+        snapshot: data.snapshot
       }),
       system: buildSystemStripModel({
         dashboard: data.dashboard,
         diagnostics: data.diagnostics,
-        readiness
+        readiness: data.snapshot
+          ? {
+            kind: data.snapshot.health.toLowerCase(),
+            label: controlCenter.health.label,
+            healthKind: data.snapshot.health === CONTROL_PLANE_HEALTH.HEALTHY
+              ? "ready"
+              : data.snapshot.health === CONTROL_PLANE_HEALTH.CHECK_FAILED
+                ? "error"
+                : "warn"
+          }
+          : readiness
       }),
       navFocused: ui.region === COCKPIT_REGIONS.NAV,
       contentFocused: ui.region === COCKPIT_REGIONS.CONTENT,
@@ -307,6 +335,7 @@ export function OrchestratorApp({
         view: ui.view,
         dashboard: data.dashboard,
         diagnostics: data.diagnostics,
+        snapshot: data.snapshot,
         listIndex: ui.listIndex,
         launchStep: data.launchStep,
         launchDraft: data.launchDraft,
@@ -315,10 +344,25 @@ export function OrchestratorApp({
         launchableAgents: data.launchableAgents,
         selectedRun: data.selectedRun,
         selectedEvents: data.selectedEvents,
-        homeMission,
+        controlCenter,
         layoutMode: mode,
         colorEnabled
       })
     )
   );
+}
+
+function resolveCtaDestinationView(destinationKey) {
+  switch (destinationKey) {
+    case "changes":
+      return ORCHESTRATOR_VIEWS.CHANGES;
+    case "control-center":
+      return ORCHESTRATOR_VIEWS.HOME;
+    case "ides":
+      return ORCHESTRATOR_VIEWS.IDES;
+    case "runs":
+      return ORCHESTRATOR_VIEWS.RUNS;
+    default:
+      return null;
+  }
 }

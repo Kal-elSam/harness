@@ -22,19 +22,19 @@ function simulateSession(layoutMode) {
   });
 
   // Open Diagnostics via arrows + Enter.
-  const diagnosticsIndex = COCKPIT_NAV.findIndex((item) => item.id === "diagnostics");
+  const diagnosticsIndex = COCKPIT_NAV.findIndex((item) => item.id === "changes");
   while (state.navIndex < diagnosticsIndex) {
     state = applyKey(state, { type: "arrow", direction: "down" });
   }
   state = applyKey(state, { type: "enter" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.DIAGNOSTICS);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES);
   assert.equal(state.region, COCKPIT_REGIONS.NAV);
 
   // Switch to Providers without Tab.
   state = applyKey(state, { type: "arrow", direction: "up" });
   state = applyKey(state, { type: "arrow", direction: "up" });
   state = applyKey(state, { type: "enter" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.PROVIDERS);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.IDES);
   assert.equal(state.region, COCKPIT_REGIONS.NAV);
 
   // Tab is a no-op on informational views.
@@ -67,14 +67,14 @@ test("integrated compact session: Esc overview then exit", () => {
   simulateSession(LAYOUT_MODES.COMPACT);
 });
 
-test("integrated interactive runs allow Tab between nav and content", () => {
+test("integrated interactive runs hub allows Tab between nav and content", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.WIDE,
     region: COCKPIT_REGIONS.NAV,
-    navIndex: 1
+    navIndex: 6
   });
   state = applyKey(state, { type: "enter" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.ACTIVE_RUNS);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.RUNS);
   assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
 
   state = applyKey(state, { type: "tab" });

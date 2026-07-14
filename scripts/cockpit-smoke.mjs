@@ -68,7 +68,7 @@ const mission = buildHomeMissionModel({
   },
   layoutMode: LAYOUT_MODES.MINIMAL
 });
-assert.match(mission.title, /HOME — smoke/);
+assert.match(mission.title, /HOME — smoke|CONTROL CENTER/i);
 assert.match(mission.readiness.headline, /LIMITED|READY|NEEDS/i);
 assert.equal(mission.next.targetAction, "launch");
 assert.match(mission.recent.headline, /Codex · Failed/);
@@ -84,7 +84,7 @@ const asciiNav = buildNavModel({
 assert.equal(asciiNav.items[1].marker, ">");
 assert.equal(asciiNav.items[0].current, true);
 assert.equal(asciiNav.items[1].selected, true);
-assert.match(asciiNav.explanation, /Supervised runs|Running/i);
+assert.match(asciiNav.explanation, /Detected agents|IDEs|models|Harness|modules/i);
 
 function applyKey(state, keyAction) {
   const routed = routeCockpitKey(state, keyAction);
@@ -97,21 +97,21 @@ function smokeNavigation(layoutMode) {
     layoutMode,
     region: layoutMode === LAYOUT_MODES.MINIMAL ? COCKPIT_REGIONS.CONTENT : COCKPIT_REGIONS.NAV
   });
-  const diagnosticsIndex = COCKPIT_NAV.findIndex((item) => item.id === "diagnostics");
+  const diagnosticsIndex = COCKPIT_NAV.findIndex((item) => item.id === "changes");
   while (state.navIndex < diagnosticsIndex) {
     state = applyKey(state, { type: "arrow", direction: "down" });
   }
   state = applyKey(state, { type: "enter" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.DIAGNOSTICS);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES);
   assert.equal(state.region, COCKPIT_REGIONS.NAV);
 
   state = applyKey(state, { type: "arrow", direction: "up" });
   state = applyKey(state, { type: "enter" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.LAUNCH);
-  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.MODULES);
+  assert.equal(state.region, COCKPIT_REGIONS.NAV);
 
   const footer = buildFooterModel({
-    view: ORCHESTRATOR_VIEWS.DIAGNOSTICS,
+    view: ORCHESTRATOR_VIEWS.CHANGES,
     region: COCKPIT_REGIONS.NAV,
     unicode: false
   });

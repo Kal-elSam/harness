@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { buildReadOnlyDiagnostics } from "../action-planner.js";
+import { buildControlPlaneSnapshot } from "../control-plane-snapshot.js";
 import { buildRuntimeDashboardData } from "../runtime/run-cli.js";
 import { readRunEvents } from "../runtime/run-store.js";
 import { startRun, stopRun } from "../runtime/run-manager.js";
@@ -10,6 +11,11 @@ import {
   resolveLaunchableAgents
 } from "./orchestrator-state.js";
 import { LAUNCH_WIZARD_STEPS, ORCHESTRATOR_VIEWS } from "./orchestrator-state.js";
+import {
+  CONTROL_PLANE_AUTO_SCAN,
+  createSerializedReloader,
+  loadCockpitScanBundle
+} from "./cockpit-scan.js";
 
 export function useOrchestratorData({
   homeDir,
@@ -20,9 +26,11 @@ export function useOrchestratorData({
 }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [diagnostics, setDiagnostics] = useState(null);
+  const [snapshot, setSnapshot] = useState(null);
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedEvents, setSelectedEvents] = useState([]);
   const [statusMessage, setStatusMessage] = useState(null);
@@ -31,26 +39,47 @@ export function useOrchestratorData({
   const [launchDraft, setLaunchDraft] = useState(createLaunchDraft);
   const [launchPermissionIndex, setLaunchPermissionIndex] = useState(0);
 
-  const reload = async () => {
-    const [dash, diag] = await Promise.all([
-      buildRuntimeDashboardData({ homeDir, workspaceRoot, cliVersion }),
-      buildReadOnlyDiagnostics({ homeDir, workspaceRoot, packageName, packageRoot, cliVersion })
-    ]);
-    setDashboard(dash);
-    setDiagnostics(diag);
+  const serializedReload = useMemo(() => createSerializedReloader(() => loadCockpitScanBundle({
+    homeDir,
+    workspaceRoot,
+    packageName,
+    packageRoot,
+    cliVersion,
+    buildDashboard: buildRuntimeDashboardData,
+    buildDiagnostics: buildReadOnlyDiagnostics,
+    buildSnapshot: buildControlPlaneSnapshot
+  })), [homeDir, workspaceRoot, packageName, packageRoot, cliVersion]);
+
+  const reload = async ({ showLoading = false, asRetry = false } = {}) => {
+    if (showLoading) setLoading(true);
+    if (asRetry) setRetrying(true);
+    const outcome = await serializedReload();
+    // Keep retrying=true across stale completions so overlapping retries don't clear too early.
+    if (outcome.stale) return outcome;
+
+    if (outcome.error) {
+      setError(outcome.error instanceof Error ? outcome.error.message : String(outcome.error));
+      setLoading(false);
+      setRetrying(false);
+      throw outcome.error;
+    }
+
+    setDashboard(outcome.result.dashboard);
+    setDiagnostics(outcome.result.diagnostics);
+    setSnapshot(outcome.result.snapshot);
+    setError(null);
+    setLoading(false);
+    setRetrying(false);
+    return outcome;
   };
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        await reload();
+        await reload({ showLoading: true });
+      } catch {
         if (!cancelled) setLoading(false);
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : String(loadError));
-          setLoading(false);
-        }
       }
     }
     load();
@@ -105,8 +134,8 @@ export function useOrchestratorData({
         .runs.find((entry) => entry.runId === runId);
       setStatusMessage(`Run started: ${runId}`);
       resetLaunchWizard();
-      dispatch({ type: "set-view", view: ORCHESTRATOR_VIEWS.HOME });
-      if (run) await openRunDetail(run, dispatch);
+      dispatch({ type: "set-view", view: ORCHESTRATOR_VIEWS.RUNS });
+      if (run) await openRunDetail(run, dispatch, ORCHESTRATOR_VIEWS.ACTIVE_RUNS);
     } catch (launchError) {
       setError(launchError instanceof Error ? launchError.message : String(launchError));
     } finally {
@@ -136,10 +165,12 @@ export function useOrchestratorData({
   return {
     loading,
     busy,
+    retrying,
     error,
     setError,
     dashboard,
     diagnostics,
+    snapshot,
     selectedRun,
     setSelectedRun,
     selectedEvents,
@@ -153,6 +184,7 @@ export function useOrchestratorData({
     launchPermissionIndex,
     setLaunchPermissionIndex,
     launchableAgents: resolveLaunchableAgents(dashboard?.providers ?? []),
+    scanOptions: CONTROL_PLANE_AUTO_SCAN,
     reload,
     resetLaunchWizard,
     openRunDetail,

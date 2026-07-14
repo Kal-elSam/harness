@@ -4,6 +4,7 @@ import { resolveProjectReadiness } from "../dashboard-guidance.js";
 import { STATUS_LABELS, resolveGlyphs } from "./theme.js";
 import { windowList } from "./list-window.js";
 import { buildHomeMissionModel, formatHomeRecentRun } from "./cockpit-home.js";
+import { isRunsBranchView } from "./cockpit-runs.js";
 
 export const COCKPIT_REGIONS = {
   NAV: "nav",
@@ -14,40 +15,45 @@ export const COCKPIT_REGIONS = {
 export const COCKPIT_NAV = [
   {
     id: "overview",
-    label: "Home",
+    label: "Control center",
     view: ORCHESTRATOR_VIEWS.HOME,
-    description: "What Kairo does here, readiness, and the next useful action."
+    description: "Coverage, integrity, and the next governance action."
   },
   {
-    id: "active",
-    label: "Running now",
-    view: ORCHESTRATOR_VIEWS.ACTIVE_RUNS,
-    description: "Supervised runs executing right now."
+    id: "ides",
+    label: "IDEs & models",
+    view: ORCHESTRATOR_VIEWS.IDES,
+    description: "Detected agents, auth signals, capabilities, and recommended policy."
   },
   {
-    id: "recent",
-    label: "History",
-    view: ORCHESTRATOR_VIEWS.RECENT_RUNS,
-    description: "Past runs with agent, state, and readable result."
+    id: "modules",
+    label: "Harness modules",
+    view: ORCHESTRATOR_VIEWS.MODULES,
+    description: "Orchestrator, SDD/TDD, and external Engram/Graphify integrations."
   },
   {
-    id: "providers",
-    label: "Agents",
-    view: ORCHESTRATOR_VIEWS.PROVIDERS,
-    description: "Installed tools Kairo can launch and audit."
+    id: "changes",
+    label: "Changes",
+    view: ORCHESTRATOR_VIEWS.CHANGES,
+    description: "Findings, drift, and exact preview before any write."
   },
   {
-    id: "launch",
-    label: "New run",
-    view: ORCHESTRATOR_VIEWS.LAUNCH,
-    action: "launch",
-    description: "Delegate a task to an executable agent."
+    id: "activity",
+    label: "Activity & recovery",
+    view: ORCHESTRATOR_VIEWS.ACTIVITY,
+    description: "Kairo operations, backups, and rollback readiness."
   },
   {
-    id: "diagnostics",
-    label: "System health",
-    view: ORCHESTRATOR_VIEWS.DIAGNOSTICS,
-    description: "Agents, intelligence, authentication, and configuration."
+    id: "profile",
+    label: "Profile & policy",
+    view: ORCHESTRATOR_VIEWS.PROFILE,
+    description: "Defaults, scopes, consent, and precedence."
+  },
+  {
+    id: "runs",
+    label: "Runs",
+    view: ORCHESTRATOR_VIEWS.RUNS,
+    description: "Optional supervised execution — Active, History, and New run."
   }
 ];
 
@@ -62,6 +68,10 @@ export function regionsForLayout(layoutMode) {
 }
 
 export function navIndexForView(view, items = COCKPIT_NAV) {
+  if (isRunsBranchView(view)) {
+    const runsIndex = items.findIndex((item) => item.id === "runs");
+    return runsIndex >= 0 ? runsIndex : 0;
+  }
   const index = items.findIndex((item) => item.view === view);
   return index >= 0 ? index : 0;
 }
@@ -82,31 +92,51 @@ export function buildTopBarModel({
   };
 }
 
-export function resolveNavStatusSummary(item, { dashboard = null, diagnostics = null } = {}) {
-  const active = dashboard?.activeRuns?.length ?? 0;
-  const recent = dashboard?.recentRuns?.length ?? 0;
-  const providers = dashboard?.providers ?? [];
+export function resolveNavStatusSummary(item, {
+  dashboard = null,
+  diagnostics = null,
+  snapshot = null
+} = {}) {
+  const active = dashboard?.activeRuns?.length ?? snapshot?.runtime?.activeRuns ?? 0;
+  const providers = dashboard?.providers ?? snapshot?.runtime?.providers ?? [];
   const launchable = providers.filter((entry) => entry.launchable).length;
-  const detected = diagnostics?.diagnostics?.detected ?? providers.filter((p) => p.available).length;
-  const errors = diagnostics?.diagnostics?.errors ?? 0;
+  const detected = snapshot?.coverage?.detectedAgents
+    ?? diagnostics?.diagnostics?.detected
+    ?? providers.filter((p) => p.available).length;
+  const governed = snapshot?.coverage?.governedAgents ?? 0;
+  const changes = snapshot?.diff?.hasChanges
+    ? (snapshot.diff.changeCount ?? snapshot.diff.changes?.length ?? 0)
+    : 0;
+  const backups = snapshot?.backups?.count ?? 0;
 
   switch (item.id) {
     case "overview":
-      return resolveProjectReadiness({
-        hasGlobalState: true,
-        diagnostics,
-        dashboard
-      }).label;
+      return snapshot?.health?.replaceAll("_", " ")
+        ?? resolveProjectReadiness({
+          hasGlobalState: true,
+          diagnostics,
+          dashboard
+        }).label;
+    case "ides":
+      return `${governed}/${detected} governed`;
+    case "modules":
+      return `${snapshot?.coverage?.components ?? 0} modules`;
+    case "changes":
+      return changes > 0 ? `${changes} pending` : "Clean";
+    case "activity":
+      return backups > 0 ? `${backups} backups` : "No backups";
+    case "profile":
+      return snapshot?.policy?.profile ?? "defaults";
+    case "runs":
+      return active === 0 ? "Idle" : `${active} active`;
     case "active":
       return active === 0 ? "Idle" : `${active} active`;
-    case "recent":
-      return recent === 0 ? "No history" : `${recent} recent`;
     case "providers":
       return `${launchable}/${providers.length || detected} ready`;
     case "launch":
       return launchable > 0 ? "Ready" : "Unavailable";
     case "diagnostics":
-      return errors > 0 ? `${errors} issues` : "Checked";
+      return changes > 0 ? `${changes} pending` : "Checked";
     default:
       return "";
   }
@@ -119,27 +149,29 @@ export function buildNavModel({
   unicode = true,
   items = COCKPIT_NAV,
   dashboard = null,
-  diagnostics = null
+  diagnostics = null,
+  snapshot = null
 } = {}) {
   const glyphs = resolveGlyphs(unicode);
   const selected = items[navIndex] ?? items[0];
   const mapped = items.map((item, index) => {
     const isSelected = index === navIndex;
-    const isCurrent = item.view === currentView;
+    const isCurrent = item.view === currentView
+      || (item.id === "runs" && isRunsBranchView(currentView));
     return {
       ...item,
       marker: isSelected ? glyphs.focus : (isCurrent ? glyphs.bullet : " "),
       selected: isSelected,
       current: isCurrent,
       focused: focused && isSelected,
-      statusSummary: resolveNavStatusSummary(item, { dashboard, diagnostics })
+      statusSummary: resolveNavStatusSummary(item, { dashboard, diagnostics, snapshot })
     };
   });
 
   return {
     title: "NAVIGATION",
     explanation: selected
-      ? `${selected.description} (${resolveNavStatusSummary(selected, { dashboard, diagnostics })})`
+      ? `${selected.description} (${resolveNavStatusSummary(selected, { dashboard, diagnostics, snapshot })})`
       : "",
     items: mapped
   };
@@ -186,6 +218,7 @@ export function buildSystemStripModel({
 export function buildFooterModel({
   view = ORCHESTRATOR_VIEWS.HOME,
   region = COCKPIT_REGIONS.NAV,
+  navIndex = 0,
   helpOpen = false,
   canCancel = false,
   unicode = true,
@@ -215,22 +248,30 @@ export function buildFooterModel({
 
   parts.push("↑↓ Navigate");
 
-  const showTab = view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
+  const showTab = view === ORCHESTRATOR_VIEWS.RUNS
+    || view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
     || view === ORCHESTRATOR_VIEWS.RECENT_RUNS
     || view === ORCHESTRATOR_VIEWS.LAUNCH;
   if (showTab) {
     parts.push("Tab Region");
   }
 
-  if (view === ORCHESTRATOR_VIEWS.HOME
+  const activatesControlCenterCta = view === ORCHESTRATOR_VIEWS.HOME && navIndex === 0;
+  if (activatesControlCenterCta) {
+    parts.push("Enter Activate");
+  } else if (view === ORCHESTRATOR_VIEWS.IDES
+    || view === ORCHESTRATOR_VIEWS.MODULES
+    || view === ORCHESTRATOR_VIEWS.CHANGES
+    || view === ORCHESTRATOR_VIEWS.ACTIVITY
+    || view === ORCHESTRATOR_VIEWS.PROFILE
     || view === ORCHESTRATOR_VIEWS.PROVIDERS
     || view === ORCHESTRATOR_VIEWS.DIAGNOSTICS
     || region === COCKPIT_REGIONS.NAV
+    || view === ORCHESTRATOR_VIEWS.RUNS
     || view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
     || view === ORCHESTRATOR_VIEWS.RECENT_RUNS) {
     parts.push("Enter Open");
   }
-
   if (view !== ORCHESTRATOR_VIEWS.LAUNCH) {
     parts.push("R refresh");
   }
