@@ -27,6 +27,13 @@ export {
   OPENCODE_ZEN_TRANSPORTS
 } from "./transport-registry.js";
 
+export {
+  ENTITLEMENT_STATES,
+  BILLING_MODELS,
+  parseAuthListProviders,
+  collectOpencodeCliEvidence
+} from "./backends/opencode-evidence.js";
+
 export { createOllamaBackend } from "./backends/ollama.js";
 export { createOpenRouterBackend } from "./backends/openrouter.js";
 export { createCustomHttpBackend } from "./backends/custom-http.js";
