@@ -56,7 +56,7 @@ test("recommendation: New run wins when agents are launchable without intelligen
         routingPreview: { canInvoke: false, reason: "No backend" }
       },
       recommendations: [
-        "No intelligence backend available. Start Ollama or set OPENROUTER_API_KEY (env only)."
+        "No intelligence backend available. Start Ollama, install the OpenCode CLI, or set OPENCODE_API_KEY / OPENROUTER_API_KEY (env only)."
       ]
     },
     dashboard: emptyDashboard({ launchable: 1 })
@@ -84,7 +84,8 @@ test("recommendation: enable intelligence only when no launchable agents", () =>
   });
 
   assert.equal(next.kind, NEXT_STEP_KINDS.ENABLE_INTELLIGENCE);
-  assert.match(next.message, /intelligence|Ollama|OpenRouter/i);
+  assert.match(next.message, /intelligence|Ollama|OpenCode|OPENCODE_API_KEY|OPENROUTER/i);
+  assert.match(next.message, /OpenCode CLI|OPENCODE_API_KEY/);
 });
 
 test("recommendation: launch a run when environment is ready", () => {

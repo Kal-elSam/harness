@@ -208,11 +208,16 @@ function buildDiagnosticRecommendations({
 
   if (!intelligenceSummary?.localAvailable && !intelligenceSummary?.cloudAuthenticated) {
     recommendations.push(
-      "No intelligence backend available. Start Ollama or set OPENROUTER_API_KEY (env only). Diagnostics mode remains available."
+      "No intelligence backend available. Start Ollama, install the OpenCode CLI, or set OPENCODE_API_KEY / OPENROUTER_API_KEY (env only). Diagnostics mode remains available."
     );
   } else if (!intelligenceSummary?.localAvailable && intelligenceSummary?.cloudAuthenticated) {
+    const provider = intelligenceSummary.opencodeGoAuthenticated
+      ? "OpenCode Go"
+      : intelligenceSummary.opencodeZenAuthenticated
+        ? "OpenCode Zen"
+        : "OpenRouter";
     recommendations.push(
-      `OpenRouter is authenticated. Cloud invoke still requires session flags: ${formatCliCommand("intelligence ask --cloud-consent --yes")}.`
+      `${provider} credentials are configured in env (not proven authentication). Cloud invoke requires: ${formatCliCommand("intelligence ask --cloud-consent --yes")}.`
     );
   }
 

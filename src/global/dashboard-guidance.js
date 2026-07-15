@@ -178,7 +178,7 @@ export function resolveDashboardRecommendation({
     return {
       kind: NEXT_STEP_KINDS.ENABLE_INTELLIGENCE,
       title: "Enable optional intelligence",
-      message: "Enable intelligence: start Ollama or set OPENROUTER_API_KEY, then retry.",
+      message: "Enable intelligence: start Ollama, install OpenCode CLI, or set OPENCODE_API_KEY / OPENROUTER_API_KEY, then retry.",
       detail: "Agents can still run without this optional capability.",
       targetView: RECOMMENDATION_TARGETS.DIAGNOSTICS,
       targetAction: null
