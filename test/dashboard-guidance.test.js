@@ -127,6 +127,29 @@ test("recommendation: review problems when diagnostics report errors and nothing
   assert.match(next.message, /review|problem|health/i);
 });
 
+test("recommendation: inspect auth when cloud is configured but not authenticated", () => {
+  const next = resolveDashboardRecommendation({
+    hasGlobalState: true,
+    diagnostics: {
+      ...emptyDiagnostics(),
+      diagnostics: { detected: 2, available: 2, unknown: 0, errors: 0 },
+      intelligence: {
+        summary: {
+          localAvailable: false,
+          cloudConfigured: true,
+          cloudAuthenticated: false
+        },
+        routingPreview: { canInvoke: false, reason: "OpenCode Go HTTP 401" }
+      },
+      recommendations: []
+    },
+    dashboard: emptyDashboard({ launchable: 0 })
+  });
+
+  assert.equal(next.kind, NEXT_STEP_KINDS.REVIEW);
+  assert.match(next.message, /intelligence status|not authenticated/i);
+});
+
 test("readiness: needs setup / attention / limited / ready", () => {
   assert.equal(resolveProjectReadiness({
     hasGlobalState: false,

@@ -80,6 +80,8 @@ test("CLI override beats profile and automatic selection", () => {
         id: BACKEND_IDS.OPENCODE_GO,
         available: true,
         hasApiKey: true,
+        authenticated: true,
+        configured: true,
         models: [{
           provider: BACKEND_IDS.OPENCODE_GO,
           modelId: "kimi-k2.7-code",

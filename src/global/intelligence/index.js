@@ -64,7 +64,8 @@ export {
 
 export {
   resolveRoutingDecision,
-  classifyTaskWeight
+  classifyTaskWeight,
+  isDirectProviderEligible
 } from "./router.js";
 
 export {

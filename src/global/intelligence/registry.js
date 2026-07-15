@@ -10,12 +10,6 @@ import { createOpencodeRuntimeBackend } from "./backends/opencode-runtime.js";
 import { collectOpencodeCliEvidence } from "./backends/opencode-evidence.js";
 import { CAPABILITY_STATES } from "../capability-states.js";
 
-const CLOUD_KEY_BACKENDS = new Set([
-  BACKEND_IDS.OPENROUTER,
-  BACKEND_IDS.OPENCODE_GO,
-  BACKEND_IDS.OPENCODE_ZEN
-]);
-
 export function createDefaultBackends({
   env = process.env,
   fetchImpl = globalThis.fetch,
@@ -98,21 +92,25 @@ export function summarizeIntelligenceBackends(inspections) {
     }
   }
 
+  const go = inspections.find((entry) => entry.id === BACKEND_IDS.OPENCODE_GO);
+  const zen = inspections.find((entry) => entry.id === BACKEND_IDS.OPENCODE_ZEN);
+  const openrouter = inspections.find((entry) => entry.id === BACKEND_IDS.OPENROUTER);
+
   return {
     total: inspections.length,
     available: inspections.filter((entry) => entry.available).length,
     localAvailable: inspections.some(
       (entry) => entry.id === BACKEND_IDS.OLLAMA && entry.available
     ),
-    cloudAuthenticated: inspections.some(
-      (entry) => CLOUD_KEY_BACKENDS.has(entry.id) && entry.hasApiKey
+    cloudConfigured: Boolean(go?.configured || zen?.configured || openrouter?.hasApiKey),
+    /** OpenRouter stays key-based; Go/Zen use proven authenticated evidence. */
+    cloudAuthenticated: Boolean(
+      go?.authenticated || zen?.authenticated || openrouter?.hasApiKey
     ),
-    opencodeGoAuthenticated: inspections.some(
-      (entry) => entry.id === BACKEND_IDS.OPENCODE_GO && entry.hasApiKey
-    ),
-    opencodeZenAuthenticated: inspections.some(
-      (entry) => entry.id === BACKEND_IDS.OPENCODE_ZEN && entry.hasApiKey
-    ),
+    opencodeGoConfigured: Boolean(go?.configured),
+    opencodeZenConfigured: Boolean(zen?.configured),
+    opencodeGoAuthenticated: Boolean(go?.authenticated),
+    opencodeZenAuthenticated: Boolean(zen?.authenticated),
     byState
   };
 }

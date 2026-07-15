@@ -6,10 +6,12 @@ import { join } from "node:path";
 import {
   PLAN_ACTIONS,
   buildActionPlan,
+  buildDiagnosticRecommendations,
   formatActionPlan,
   shouldExecutePlan
 } from "../src/global/action-planner.js";
 import { assertPlanExecution } from "../src/global/orchestrator.js";
+import { formatCliCommand } from "../src/global/brand/cli.js";
 
 test("diagnostics plan is read-only", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-plan-home-"));
@@ -69,4 +71,39 @@ test("dry-run setup plan stays read-only", async () => {
 
   assert.equal(plan.readOnly, true);
   assert.equal(plan.requiresConfirmation, false);
+});
+
+test("guidance: configured-not-authenticated recommends intelligence status", () => {
+  const lines = buildDiagnosticRecommendations({
+    diagnostics: { detected: 1 },
+    capabilities: [],
+    profile: {},
+    intelligenceSummary: {
+      localAvailable: false,
+      cloudConfigured: true,
+      cloudAuthenticated: false,
+      opencodeGoConfigured: true,
+      opencodeGoAuthenticated: false
+    }
+  });
+  assert.ok(lines.some((line) => /configured but not authenticated/i.test(line)));
+  assert.ok(lines.some((line) => line.includes(formatCliCommand("intelligence status"))));
+  assert.ok(!lines.some((line) => /cloud-consent/.test(line)));
+});
+
+test("guidance: authenticated recommends invoke with consent", () => {
+  const lines = buildDiagnosticRecommendations({
+    diagnostics: { detected: 1 },
+    capabilities: [],
+    profile: {},
+    intelligenceSummary: {
+      localAvailable: false,
+      cloudConfigured: true,
+      cloudAuthenticated: true,
+      opencodeGoAuthenticated: true,
+      opencodeZenAuthenticated: false
+    }
+  });
+  assert.ok(lines.some((line) => /OpenCode Go is authenticated/i.test(line)));
+  assert.ok(lines.some((line) => line.includes(formatCliCommand("intelligence ask --cloud-consent --yes"))));
 });

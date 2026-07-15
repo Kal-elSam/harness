@@ -42,7 +42,11 @@ export function countLaunchableAgents(dashboard = null) {
 
 export function hasIntelligenceConfigured(diagnostics = null) {
   const summary = diagnostics?.intelligence?.summary;
-  return Boolean(summary?.localAvailable || summary?.cloudAuthenticated);
+  return Boolean(
+    summary?.localAvailable
+    || summary?.cloudConfigured
+    || summary?.cloudAuthenticated
+  );
 }
 
 function hasBlockingDiagnostics(diagnostics = null) {
@@ -174,12 +178,32 @@ export function resolveDashboardRecommendation({
     };
   }
 
-  if (!intelligence?.localAvailable && !intelligence?.cloudAuthenticated) {
+  const intelConfigured = Boolean(
+    intelligence?.localAvailable
+    || intelligence?.cloudConfigured
+    || intelligence?.cloudAuthenticated
+  );
+  if (!intelConfigured) {
     return {
       kind: NEXT_STEP_KINDS.ENABLE_INTELLIGENCE,
       title: "Enable optional intelligence",
       message: "Enable intelligence: start Ollama, install OpenCode CLI, or set OPENCODE_API_KEY / OPENROUTER_API_KEY, then retry.",
       detail: "Agents can still run without this optional capability.",
+      targetView: RECOMMENDATION_TARGETS.DIAGNOSTICS,
+      targetAction: null
+    };
+  }
+
+  if (
+    !intelligence?.localAvailable
+    && intelligence?.cloudConfigured
+    && !intelligence?.cloudAuthenticated
+  ) {
+    return {
+      kind: NEXT_STEP_KINDS.REVIEW,
+      title: "Inspect intelligence authentication",
+      message: `Cloud intelligence is configured but not authenticated. Run ${formatCliCommand("intelligence status")}.`,
+      detail: "Confirm API key or OpenCode auth evidence before cloud invoke.",
       targetView: RECOMMENDATION_TARGETS.DIAGNOSTICS,
       targetAction: null
     };

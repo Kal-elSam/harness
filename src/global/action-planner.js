@@ -180,7 +180,7 @@ function summarizeDiagnostics(capabilities) {
   };
 }
 
-function buildDiagnosticRecommendations({
+export function buildDiagnosticRecommendations({
   capabilities,
   profile,
   diagnostics,
@@ -206,9 +206,17 @@ function buildDiagnosticRecommendations({
     }
   }
 
-  if (!intelligenceSummary?.localAvailable && !intelligenceSummary?.cloudAuthenticated) {
+  if (!intelligenceSummary?.localAvailable && !intelligenceSummary?.cloudConfigured) {
     recommendations.push(
       "No intelligence backend available. Start Ollama, install the OpenCode CLI, or set OPENCODE_API_KEY / OPENROUTER_API_KEY (env only). Diagnostics mode remains available."
+    );
+  } else if (
+    !intelligenceSummary?.localAvailable
+    && intelligenceSummary?.cloudConfigured
+    && !intelligenceSummary?.cloudAuthenticated
+  ) {
+    recommendations.push(
+      `Cloud intelligence is configured but not authenticated. Run ${formatCliCommand("intelligence status")} to inspect evidence before invoke.`
     );
   } else if (!intelligenceSummary?.localAvailable && intelligenceSummary?.cloudAuthenticated) {
     const provider = intelligenceSummary.opencodeGoAuthenticated
@@ -217,7 +225,7 @@ function buildDiagnosticRecommendations({
         ? "OpenCode Zen"
         : "OpenRouter";
     recommendations.push(
-      `${provider} credentials are configured in env (not proven authentication). Cloud invoke requires: ${formatCliCommand("intelligence ask --cloud-consent --yes")}.`
+      `${provider} is authenticated. Cloud invoke requires: ${formatCliCommand("intelligence ask --cloud-consent --yes")}.`
     );
   }
 
