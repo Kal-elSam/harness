@@ -25,7 +25,7 @@ function cloudModel(id, modelId, costClass = "paid") {
   };
 }
 
-test("registry order is Ollama → Go → Zen → OpenRouter", () => {
+test("registry order is Ollama → Go → Zen → OpenRouter → runtime", () => {
   const ids = createDefaultBackends({
     env: {},
     collectCliEvidence: emptyCli,
@@ -35,7 +35,8 @@ test("registry order is Ollama → Go → Zen → OpenRouter", () => {
     BACKEND_IDS.OLLAMA,
     BACKEND_IDS.OPENCODE_GO,
     BACKEND_IDS.OPENCODE_ZEN,
-    BACKEND_IDS.OPENROUTER
+    BACKEND_IDS.OPENROUTER,
+    BACKEND_IDS.OPENCODE
   ]);
 });
 
@@ -152,7 +153,7 @@ test("Go invoke failure does not auto-invoke Zen", async () => {
   assert.equal(zenCalls, 0);
 });
 
-test("no eligible backend ends in diagnostics; inspect excludes runtime", async () => {
+test("no eligible backend ends in diagnostics; inspect includes runtime after OpenRouter", async () => {
   const decision = resolveRoutingDecision({ backends: [] });
   assert.equal(decision.mode, ROUTING_MODES.DIAGNOSTICS);
   assert.equal(decision.canInvoke, false);
@@ -166,6 +167,7 @@ test("no eligible backend ends in diagnostics; inspect excludes runtime", async 
     whichImpl: () => false,
     collectCliEvidence: emptyCli
   });
-  assert.equal(inspections.length, 4);
-  assert.ok(!inspections.some((entry) => entry.id === BACKEND_IDS.OPENCODE));
+  assert.equal(inspections.length, 5);
+  assert.ok(inspections.some((entry) => entry.id === BACKEND_IDS.OPENCODE));
+  assert.equal(inspections.at(-1).id, BACKEND_IDS.OPENCODE);
 });

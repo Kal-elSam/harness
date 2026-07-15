@@ -42,6 +42,13 @@ export {
   createOpencodeZenBackend
 } from "./backends/opencode-providers.js";
 
+export { createOpencodeRuntimeBackend } from "./backends/opencode-runtime.js";
+
+export {
+  runOpencodeJson,
+  parseOpencodeJsonEvents
+} from "./backends/opencode-cli.js";
+
 export {
   createDefaultBackends,
   inspectIntelligenceBackends,

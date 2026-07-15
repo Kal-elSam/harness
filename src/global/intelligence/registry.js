@@ -6,6 +6,7 @@ import {
   createOpencodeGoBackend,
   createOpencodeZenBackend
 } from "./backends/opencode-providers.js";
+import { createOpencodeRuntimeBackend } from "./backends/opencode-runtime.js";
 import { collectOpencodeCliEvidence } from "./backends/opencode-evidence.js";
 import { CAPABILITY_STATES } from "../capability-states.js";
 
@@ -20,7 +21,8 @@ export function createDefaultBackends({
   fetchImpl = globalThis.fetch,
   customProviders = [],
   whichImpl,
-  collectCliEvidence
+  collectCliEvidence,
+  spawnImpl
 } = {}) {
   const sharedCliEvidence = createSharedCliEvidenceCollector({
     env,
@@ -32,7 +34,13 @@ export function createDefaultBackends({
     createOllamaBackend({ env, fetchImpl }),
     createOpencodeGoBackend({ env, fetchImpl, collectCliEvidence: sharedCliEvidence }),
     createOpencodeZenBackend({ env, fetchImpl, collectCliEvidence: sharedCliEvidence }),
-    createOpenRouterBackend({ env, fetchImpl })
+    createOpenRouterBackend({ env, fetchImpl }),
+    createOpencodeRuntimeBackend({
+      env,
+      whichImpl,
+      spawnImpl,
+      collectCliEvidence: sharedCliEvidence
+    })
   ];
 
   for (const provider of customProviders) {
@@ -52,14 +60,16 @@ export async function inspectIntelligenceBackends({
   customProviders = [],
   backends = null,
   whichImpl,
-  collectCliEvidence
+  collectCliEvidence,
+  spawnImpl
 } = {}) {
   const resolved = backends ?? createDefaultBackends({
     env,
     fetchImpl,
     customProviders,
     whichImpl,
-    collectCliEvidence
+    collectCliEvidence,
+    spawnImpl
   });
   return Promise.all(resolved.map(async (backend) => {
     const detection = await backend.detect();

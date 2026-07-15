@@ -412,9 +412,10 @@ test("inspectIntelligenceBackends returns default backends including OpenCode Go
     })
   });
 
-  assert.equal(inspections.length, 4);
+  assert.equal(inspections.length, 5);
   assert.ok(inspections.some((entry) => entry.id === BACKEND_IDS.OLLAMA));
   assert.ok(inspections.some((entry) => entry.id === BACKEND_IDS.OPENCODE_GO));
   assert.ok(inspections.some((entry) => entry.id === BACKEND_IDS.OPENCODE_ZEN));
   assert.ok(inspections.some((entry) => entry.id === BACKEND_IDS.OPENROUTER));
+  assert.ok(inspections.some((entry) => entry.id === BACKEND_IDS.OPENCODE));
 });
