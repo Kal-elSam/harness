@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import {
   parseOpencodeJsonEvents,
-  runOpencodeJson
+  runOpencodeJson,
+  sanitizeCliStderr
 } from "../src/global/intelligence/backends/opencode-cli.js";
 
 function createFakeSpawn(lines, { exitCode = 0, stderrLines = [], onSpawn } = {}) {
@@ -121,28 +122,92 @@ test("parseOpencodeJsonEvents rejects malformed JSON stdout", () => {
   assert.equal(parsed.events.length, 0);
 });
 
-test("runOpencodeJson times out with SIGTERM", async () => {
-  let killSignal = null;
-  const spawnImpl = () => {
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
-    child.kill = (signal) => {
-      killSignal = signal;
-    };
-    return child;
-  };
+function hangChild({ onKill, unref } = {}) {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  if (unref) child.unref = unref;
+  child.kill = (signal) => onKill?.(signal, child) ?? true;
+  return child;
+}
 
-  const result = await runOpencodeJson({
-    modelRef: "opencode/claude-haiku-4-5",
-    prompt: "hang",
-    spawnImpl,
-    timeoutMs: 20
+test("runOpencodeJson supervises SIGTERM → SIGKILL, races, and kill faults", async () => {
+  const opts = { timeoutMs: 10, terminationGraceMs: 15, killGraceMs: 15 };
+  const modelRef = "opencode/claude-haiku-4-5";
+
+  const termSignals = [];
+  const term = await runOpencodeJson({
+    modelRef, prompt: "hang", ...opts, terminationGraceMs: 40, killGraceMs: 40,
+    spawnImpl: () => hangChild({
+      onKill: (signal, child) => {
+        termSignals.push(signal);
+        if (signal === "SIGTERM") setImmediate(() => child.emit("close", null, "SIGTERM"));
+        return true;
+      }
+    })
   });
+  assert.equal(term.timedOut, true);
+  assert.equal(term.terminationFailed, false);
+  assert.equal(term.signal, "SIGTERM");
+  assert.deepEqual(termSignals, ["SIGTERM"]);
 
-  assert.equal(result.timedOut, true);
-  assert.equal(result.status, null);
-  assert.equal(killSignal, "SIGTERM");
+  const ignoreSignals = [];
+  let unrefed = false;
+  const ignored = await runOpencodeJson({
+    modelRef, prompt: "hang", ...opts,
+    spawnImpl: () => hangChild({
+      unref: () => { unrefed = true; },
+      onKill: (signal) => { ignoreSignals.push(signal); return true; }
+    })
+  });
+  assert.equal(ignored.terminationFailed, true);
+  assert.deepEqual(ignoreSignals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(unrefed, true);
+
+  const killSignals = [];
+  const killed = await runOpencodeJson({
+    modelRef, prompt: "hang", ...opts, killGraceMs: 40,
+    spawnImpl: () => hangChild({
+      onKill: (signal, child) => {
+        killSignals.push(signal);
+        if (signal === "SIGKILL") setImmediate(() => child.emit("close", null, "SIGKILL"));
+        return true;
+      }
+    })
+  });
+  assert.equal(killed.terminationFailed, false);
+  assert.equal(killed.signal, "SIGKILL");
+  assert.deepEqual(killSignals, ["SIGTERM", "SIGKILL"]);
+
+  const raced = await runOpencodeJson({
+    modelRef, prompt: "race", ...opts, terminationGraceMs: 30, killGraceMs: 30,
+    spawnImpl: () => hangChild({
+      onKill: (signal, child) => {
+        if (signal === "SIGTERM") {
+          setImmediate(() => child.emit("close", null, "SIGTERM"));
+          setImmediate(() => child.emit("close", null, "SIGTERM"));
+        }
+        throw new Error("kill blew up");
+      }
+    })
+  });
+  assert.equal(raced.timedOut, true);
+  assert.equal(raced.signal, "SIGTERM");
+
+  const falseKill = await runOpencodeJson({
+    modelRef, prompt: "x", ...opts, terminationGraceMs: 10, killGraceMs: 10,
+    spawnImpl: () => hangChild({ onKill: () => false })
+  });
+  assert.equal(falseKill.terminationFailed, true);
+});
+
+test("sanitizeCliStderr redacts secrets and limits length", () => {
+  const redacted = sanitizeCliStderr(
+    "OPENCODE_API_KEY=sk-secret TOKEN: abc123 PASSWORD=p@ss CREDENTIAL=xyz"
+  );
+  assert.match(redacted, /OPENCODE_API_KEY=\[REDACTED].*TOKEN=\[REDACTED]/);
+  assert.ok(!redacted.includes("sk-secret"));
+  assert.ok(sanitizeCliStderr("x".repeat(600), { limit: 40 }).endsWith("…"));
 });
 
 test("runOpencodeJson rejects spawn process errors", async () => {

@@ -46,7 +46,8 @@ export { createOpencodeRuntimeBackend } from "./backends/opencode-runtime.js";
 
 export {
   runOpencodeJson,
-  parseOpencodeJsonEvents
+  parseOpencodeJsonEvents,
+  sanitizeCliStderr
 } from "./backends/opencode-cli.js";
 
 export {

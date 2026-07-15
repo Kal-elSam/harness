@@ -2,10 +2,18 @@ import { spawn } from "node:child_process";
 
 const EXECUTABLE = "opencode";
 const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TERMINATION_GRACE_MS = 1000;
+const DEFAULT_KILL_GRACE_MS = 1000;
+const STDERR_LIMIT = 480;
+
+function isSensitiveEnvName(name) {
+  return /(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i.test(String(name ?? ""));
+}
 
 /**
  * Supervised, non-mutating OpenCode CLI invocation.
  * Always uses `opencode run --format json --model` — never `--auto`.
+ * Timeout: SIGTERM → grace → SIGKILL → grace → unref + terminationFailed.
  */
 export function runOpencodeJson({
   modelRef,
@@ -13,7 +21,9 @@ export function runOpencodeJson({
   cwd,
   env,
   spawnImpl = spawn,
-  timeoutMs = DEFAULT_TIMEOUT_MS
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  terminationGraceMs = DEFAULT_TERMINATION_GRACE_MS,
+  killGraceMs = DEFAULT_KILL_GRACE_MS
 } = {}) {
   if (!modelRef || typeof modelRef !== "string") {
     return Promise.reject(new Error("runOpencodeJson requires modelRef."));
@@ -34,18 +44,62 @@ export function runOpencodeJson({
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
+    let timers = [];
+
+    const clearTimers = () => {
+      for (const timer of timers) clearTimeout(timer);
+      timers = [];
+    };
 
     const settle = (result) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimers();
       resolve(result);
     };
 
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      settle({ stdout, stderr, status: null, timedOut: true });
-    }, timeoutMs);
+    const schedule = (fn, ms) => {
+      const timer = setTimeout(fn, ms);
+      timers.push(timer);
+      return timer;
+    };
+
+    const finish = ({ status = null, signal = null, terminationFailed = false } = {}) => {
+      settle({
+        stdout,
+        stderr,
+        status,
+        signal,
+        timedOut,
+        terminationFailed
+      });
+    };
+
+    const forceUnref = () => {
+      try {
+        child.unref?.();
+      } catch {
+        /* ignore unref failures */
+      }
+    };
+
+    const onTimeout = () => {
+      if (settled) return;
+      timedOut = true;
+      safeKill(child, "SIGTERM");
+      schedule(() => {
+        if (settled) return;
+        safeKill(child, "SIGKILL");
+        schedule(() => {
+          if (settled) return;
+          forceUnref();
+          finish({ terminationFailed: true });
+        }, killGraceMs);
+      }, terminationGraceMs);
+    };
+
+    schedule(onTimeout, timeoutMs);
 
     child.stdout?.on("data", (chunk) => {
       stdout += String(chunk);
@@ -56,13 +110,35 @@ export function runOpencodeJson({
     child.on("error", (error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimers();
       reject(error);
     });
-    child.on("close", (status) => {
-      settle({ stdout, stderr, status, timedOut: false });
+    child.on("close", (status, signal) => {
+      finish({
+        status: status ?? null,
+        signal: signal ?? null,
+        terminationFailed: false
+      });
     });
   });
+}
+
+export function sanitizeCliStderr(text, { limit = STDERR_LIMIT } = {}) {
+  let out = String(text ?? "").replace(/\s+/g, " ").trim();
+  out = out.replace(/\b([A-Z][A-Z0-9_]*)\s*[:=]\s*\S+/g, (match, name) => (
+    isSensitiveEnvName(name) ? `${name}=[REDACTED]` : match
+  ));
+  if (out.length > limit) out = `${out.slice(0, limit)}…`;
+  return out;
+}
+
+function safeKill(child, signal) {
+  try {
+    if (typeof child.kill !== "function") return false;
+    return child.kill(signal) !== false;
+  } catch {
+    return false;
+  }
 }
 
 /**

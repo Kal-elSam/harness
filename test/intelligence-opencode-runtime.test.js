@@ -24,14 +24,15 @@ function child() {
   return c;
 }
 
-function fakeSpawn(lines, { onSpawn } = {}) {
+function fakeSpawn(lines, { onSpawn, exitCode = 0, stderrLines = [] } = {}) {
   return (command, args, options) => {
     onSpawn?.({ command, args, options });
     const c = child();
     c.kill = () => c.emit("close", null);
     setImmediate(() => {
       for (const line of lines) c.stdout.emit("data", `${line}\n`);
-      c.emit("close", 0);
+      for (const line of stderrLines) c.stderr.emit("data", `${line}\n`);
+      c.emit("close", exitCode);
     });
     return c;
   };
@@ -86,8 +87,21 @@ test("runtime invoke keeps non-mutating preamble and never --auto", async () => 
 test("runtime invoke: invalid model, timeout, empty, ENOENT", async () => {
   const base = { whichImpl: () => true, collectCliEvidence: configuredCli };
   assert.match((await createOpencodeRuntimeBackend(base).invoke({}, { modelId: "unknown", prompt: "x" })).error, /requires --model/);
-  assert.match((await createOpencodeRuntimeBackend({ ...base, spawnImpl: child }).invoke(
-    {}, { modelId: "opencode/claude-haiku-4-5", prompt: "hang", timeoutMs: 20 }
+  assert.match((await createOpencodeRuntimeBackend({
+    ...base,
+    spawnImpl: () => {
+      const c = child();
+      c.kill = (signal) => {
+        if (signal === "SIGTERM") setImmediate(() => c.emit("close", null, "SIGTERM"));
+        return true;
+      };
+      return c;
+    }
+  }).invoke(
+    {}, {
+      modelId: "opencode/claude-haiku-4-5", prompt: "hang", timeoutMs: 15,
+      terminationGraceMs: 30, killGraceMs: 30
+    }
   )).error, /timed out/i);
   assert.match((await createOpencodeRuntimeBackend({ ...base, spawnImpl: fakeSpawn([]) }).invoke(
     {}, { modelId: "opencode/claude-haiku-4-5", prompt: "x" }
@@ -100,6 +114,54 @@ test("runtime invoke: invalid model, timeout, empty, ENOENT", async () => {
       return c;
     }
   }).invoke({}, { modelId: "opencode/claude-haiku-4-5", prompt: "x" })).error, /not installed/i);
+});
+
+test("runtime exit status dominates partial output; stderr sanitized", async () => {
+  const base = { whichImpl: () => true, collectCliEvidence: configuredCli };
+  const text = JSON.stringify({ type: "text", part: { text: "partial" } });
+
+  const exit1 = await createOpencodeRuntimeBackend({
+    ...base,
+    spawnImpl: fakeSpawn([text], {
+      exitCode: 1,
+      stderrLines: ["OPENCODE_API_KEY=sk-leak boom"]
+    })
+  }).invoke({}, { modelId: "opencode/claude-haiku-4-5", prompt: "x" });
+  assert.equal(exit1.ok, false);
+  assert.equal(exit1.content, null);
+  assert.match(exit1.error, /exit 1/);
+  assert.match(exit1.error, /OPENCODE_API_KEY=\[REDACTED\]/);
+  assert.ok(!exit1.error.includes("sk-leak"));
+
+  const signaled = await createOpencodeRuntimeBackend({
+    ...base,
+    spawnImpl: () => {
+      const c = child();
+      setImmediate(() => {
+        c.stdout.emit("data", `${text}\n`);
+        c.emit("close", null, "SIGKILL");
+      });
+      return c;
+    }
+  }).invoke({}, { modelId: "opencode/claude-haiku-4-5", prompt: "x" });
+  assert.equal(signaled.ok, false);
+  assert.match(signaled.error, /signal SIGKILL|exit null/);
+
+  const okWarn = await createOpencodeRuntimeBackend({
+    ...base,
+    spawnImpl: fakeSpawn([text], { stderrLines: ["warn: slow"], exitCode: 0 })
+  }).invoke({}, { modelId: "opencode/claude-haiku-4-5", prompt: "x" });
+  assert.equal(okWarn.ok, true);
+  assert.equal(okWarn.content, "partial");
+
+  const structured = await createOpencodeRuntimeBackend({
+    ...base,
+    spawnImpl: fakeSpawn([
+      JSON.stringify({ type: "error", error: { message: "provider rejected" } })
+    ])
+  }).invoke({}, { modelId: "opencode/claude-haiku-4-5", prompt: "x" });
+  assert.equal(structured.ok, false);
+  assert.match(structured.error, /provider rejected/);
 });
 
 test("registry: OpenRouter then runtime, evidence once, no auto-route", async () => {

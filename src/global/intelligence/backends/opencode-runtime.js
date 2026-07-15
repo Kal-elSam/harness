@@ -13,7 +13,7 @@ import {
 } from "../transport-registry.js";
 import { CAPABILITY_STATES } from "../../capability-states.js";
 import { isExecutableAvailable } from "../../cli-probe.js";
-import { parseOpencodeJsonEvents, runOpencodeJson } from "./opencode-cli.js";
+import { parseOpencodeJsonEvents, runOpencodeJson, sanitizeCliStderr } from "./opencode-cli.js";
 import {
   BILLING_MODELS,
   ENTITLEMENT_STATES,
@@ -109,19 +109,23 @@ export function createOpencodeRuntimeBackend({
       }
       const timeoutMs = request.timeoutMs ?? 120_000;
       try {
-        const { stdout, stderr, status, timedOut } = await runOpencodeJson({
+        const result = await runOpencodeJson({
           modelRef,
           prompt: buildPrompt(contextPack, request),
           cwd: request.cwd ?? contextPack?.workspaceRoot ?? process.cwd(),
           env,
           spawnImpl,
-          timeoutMs
+          timeoutMs,
+          terminationGraceMs: request.terminationGraceMs,
+          killGraceMs: request.killGraceMs
         });
-        if (timedOut) return fail(`OpenCode CLI timed out after ${timeoutMs}ms.`);
-        const parsed = parseOpencodeJsonEvents(stdout);
+        const failure = describeRuntimeFailure(result, timeoutMs);
+        if (failure) return fail(failure);
+
+        const parsed = parseOpencodeJsonEvents(result.stdout);
         if (parsed.error) return fail(parsed.error);
         if (!parsed.content) {
-          const detail = stderr?.trim() || (status == null ? "no content" : `exit ${status}`);
+          const detail = sanitizeCliStderr(result.stderr) || "no content";
           return fail(`OpenCode CLI produced no text output (${detail}).`);
         }
         return {
@@ -135,7 +139,11 @@ export function createOpencodeRuntimeBackend({
             backendId: BACKEND_IDS.OPENCODE,
             fallbackUsed: false
           },
-          raw: { events: parsed.events, status }
+          raw: {
+            events: parsed.events,
+            status: result.status,
+            signal: result.signal
+          }
         };
       } catch (error) {
         if (error?.code === "ENOENT") {
@@ -149,6 +157,24 @@ export function createOpencodeRuntimeBackend({
   };
 }
 
+function describeRuntimeFailure(result, timeoutMs) {
+  if (result.terminationFailed) {
+    return `OpenCode CLI process did not terminate after timeout (${timeoutMs}ms SIGTERM/SIGKILL).`;
+  }
+  if (result.timedOut) {
+    return `OpenCode CLI timed out after ${timeoutMs}ms.`;
+  }
+  if (result.status !== 0) {
+    const exitPart = result.status == null
+      ? (result.signal ? `signal ${result.signal}` : "exit null")
+      : `exit ${result.status}`;
+    const detail = sanitizeCliStderr(result.stderr);
+    return detail
+      ? `OpenCode CLI failed (${exitPart}): ${detail}`
+      : `OpenCode CLI failed (${exitPart}).`;
+  }
+  return null;
+}
 function evidence(cliInstalled, cli = null) {
   return {
     hasApiKey: false,
