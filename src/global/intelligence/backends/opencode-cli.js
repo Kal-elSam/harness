@@ -5,9 +5,17 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_TERMINATION_GRACE_MS = 1000;
 const DEFAULT_KILL_GRACE_MS = 1000;
 const STDERR_LIMIT = 480;
+const STDOUT_BUFFER_LIMIT = 1_048_576;
+const STDERR_BUFFER_LIMIT = STDERR_LIMIT;
 
 function isSensitiveEnvName(name) {
   return /(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i.test(String(name ?? ""));
+}
+
+function appendLimited(current, chunk, limit) {
+  if (current.length >= limit) return current;
+  const next = current + String(chunk);
+  return next.length > limit ? next.slice(0, limit) : next;
 }
 
 /**
@@ -56,6 +64,7 @@ export function runOpencodeJson({
       if (settled) return;
       settled = true;
       clearTimers();
+      detach();
       resolve(result);
     };
 
@@ -84,6 +93,34 @@ export function runOpencodeJson({
       }
     };
 
+    const onStdout = (chunk) => {
+      stdout = appendLimited(stdout, chunk, STDOUT_BUFFER_LIMIT);
+    };
+    const onStderr = (chunk) => {
+      stderr = appendLimited(stderr, chunk, STDERR_BUFFER_LIMIT);
+    };
+    const onError = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      detach();
+      reject(error);
+    };
+    const onClose = (status, signal) => {
+      finish({
+        status: status ?? null,
+        signal: signal ?? null,
+        terminationFailed: false
+      });
+    };
+
+    const detach = () => {
+      child.stdout?.off?.("data", onStdout);
+      child.stderr?.off?.("data", onStderr);
+      child.off?.("error", onError);
+      child.off?.("close", onClose);
+    };
+
     const onTimeout = () => {
       if (settled) return;
       timedOut = true;
@@ -101,30 +138,20 @@ export function runOpencodeJson({
 
     schedule(onTimeout, timeoutMs);
 
-    child.stdout?.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-    child.stderr?.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimers();
-      reject(error);
-    });
-    child.on("close", (status, signal) => {
-      finish({
-        status: status ?? null,
-        signal: signal ?? null,
-        terminationFailed: false
-      });
-    });
+    child.stdout?.on("data", onStdout);
+    child.stderr?.on("data", onStderr);
+    child.on("error", onError);
+    child.on("close", onClose);
   });
 }
 
 export function sanitizeCliStderr(text, { limit = STDERR_LIMIT } = {}) {
   let out = String(text ?? "").replace(/\s+/g, " ").trim();
+  out = out.replace(/\bBearer\s+\S+/gi, "Bearer [REDACTED]");
+  out = out.replace(
+    /\b([A-Z][A-Z0-9_]*)\s*[:=]\s*(["'])(?:\\.|(?!\2).)*\2/g,
+    (match, name) => (isSensitiveEnvName(name) ? `${name}=[REDACTED]` : match)
+  );
   out = out.replace(/\b([A-Z][A-Z0-9_]*)\s*[:=]\s*\S+/g, (match, name) => (
     isSensitiveEnvName(name) ? `${name}=[REDACTED]` : match
   ));

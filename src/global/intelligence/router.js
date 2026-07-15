@@ -96,13 +96,7 @@ export function resolveRoutingDecision({
   }
 
   const go = backends.find((entry) => entry.id === BACKEND_IDS.OPENCODE_GO);
-  if (go?.hasApiKey) {
-    if (!isDirectProviderEligible(go)) {
-      return diagnosticsDecision(
-        describeIneligibleCloudStop(go, "OpenCode Go", "Zen/OpenRouter"),
-        estimatedTokens
-      );
-    }
+  if (isDirectProviderEligible(go)) {
     const model = selectOpencodeModel(go.models, OPENCODE_GO_DEFAULT_MODEL, BACKEND_IDS.OPENCODE_GO);
     return createRoutingDecision({
       backendId: BACKEND_IDS.OPENCODE_GO,
@@ -117,6 +111,13 @@ export function resolveRoutingDecision({
       canInvoke: cloudConsent,
       fallback: null
     });
+  }
+  // CLI-configured or broken-key Go must not silently spend Zen/OpenRouter.
+  if (go?.configured || go?.hasApiKey) {
+    return diagnosticsDecision(
+      describeIneligibleCloudStop(go, "OpenCode Go", "Zen/OpenRouter"),
+      estimatedTokens
+    );
   }
 
   const zen = backends.find((entry) => entry.id === BACKEND_IDS.OPENCODE_ZEN);
@@ -136,7 +137,7 @@ export function resolveRoutingDecision({
       fallback: buildOpenRouterFallback(backends, cloudConsent)
     });
   }
-  if (zen?.configured) {
+  if (zen?.configured || zen?.hasApiKey) {
     return diagnosticsDecision(
       describeIneligibleCloudStop(zen, "OpenCode Zen", "OpenRouter"),
       estimatedTokens
@@ -198,11 +199,16 @@ function resolveUserOverride(profile, backends, sessionOverride) {
     if (!isOverrideEligible(backend)) {
       return reject(`${label} override ${preferredBackend} is not eligible for invoke.`);
     }
-    const model = (backend.models ?? []).find((entry) => entry.modelId === preferredModel)
-      ?? backend.models?.[0]
-      ?? (preferredModel
-        ? opaqueOverrideModel(preferredBackend, preferredModel, backend)
-        : null);
+    if (preferredModel) {
+      const exact = (backend.models ?? []).find((entry) => entry.modelId === preferredModel);
+      if (!exact) {
+        return reject(
+          `${label} override model ${preferredModel} was not found on ${preferredBackend}.`
+        );
+      }
+      return { backend, model: exact, source };
+    }
+    const model = backend.models?.[0] ?? null;
     if (!model) return reject(`${label} override ${preferredBackend} has no usable model.`);
     return { backend, model, source };
   }
@@ -237,18 +243,6 @@ function describeIneligibleCloudStop(backend, label, blockedFallback) {
     ?? backend?.recommendation
     ?? "configured but not authenticated/available";
   return `${label} ${detail}. Invoke blocked (canInvoke=false); ${blockedFallback} fallback suppressed.`;
-}
-
-function opaqueOverrideModel(preferredBackend, preferredModel, backend) {
-  const isLocal = backend.id === BACKEND_IDS.OLLAMA;
-  return {
-    provider: preferredBackend,
-    modelId: preferredModel,
-    local: isLocal,
-    privacyClass: isLocal ? PRIVACY_CLASSES.LOCAL : PRIVACY_CLASSES.CLOUD,
-    costClass: "unknown",
-    opaque: true
-  };
 }
 
 function opaqueCloudModel(provider, modelId, costClass) {
@@ -296,9 +290,11 @@ function buildCloudFallback(backends, cloudConsent) {
       requiresConsent: !cloudConsent
     };
   }
-  if (go?.hasApiKey) return null;
+  if (go?.configured || go?.hasApiKey) return null;
   const zen = backends.find((entry) => entry.id === BACKEND_IDS.OPENCODE_ZEN);
-  if (zen?.configured && !isDirectProviderEligible(zen)) return null;
+  if (zen?.configured || zen?.hasApiKey) {
+    if (!isDirectProviderEligible(zen)) return null;
+  }
   return buildOpenRouterFallback(backends, cloudConsent);
 }
 

@@ -103,6 +103,34 @@ test("authenticated routing safety: Go auth fail, Zen block, overrides, runtime,
   });
   assert.equal(zenOk.backendId, BACKEND_IDS.OPENCODE_ZEN);
 
+  const goCliConfiguredBlocks = resolveRoutingDecision({
+    backends: [
+      {
+        id: BACKEND_IDS.OPENCODE_GO, hasApiKey: false, authenticated: false,
+        available: false, configured: true, models: []
+      },
+      cloudModel(BACKEND_IDS.OPENCODE_ZEN, "big-pickle", "free"),
+      cloudModel(BACKEND_IDS.OPENROUTER, "openrouter/free", "free")
+    ],
+    cloudConsent: true
+  });
+  assert.equal(goCliConfiguredBlocks.mode, ROUTING_MODES.DIAGNOSTICS);
+  assert.equal(goCliConfiguredBlocks.backendId, null);
+  assert.equal(goCliConfiguredBlocks.fallback, null);
+  assert.match(goCliConfiguredBlocks.reason, /OpenCode Go|fallback suppressed/i);
+
+  const missingExplicitModel = resolveRoutingDecision({
+    backends: [cloudModel(BACKEND_IDS.OPENCODE_GO, OPENCODE_GO_DEFAULT_MODEL)],
+    cloudConsent: true,
+    sessionOverride: {
+      preferredBackend: BACKEND_IDS.OPENCODE_GO,
+      preferredModel: "does-not-exist"
+    }
+  });
+  assert.equal(missingExplicitModel.mode, ROUTING_MODES.DIAGNOSTICS);
+  assert.equal(missingExplicitModel.backendId, null);
+  assert.match(missingExplicitModel.reason, /does-not-exist|not found/i);
+
   const zenBlocks = resolveRoutingDecision({
     backends: [
       {

@@ -203,11 +203,36 @@ test("runOpencodeJson supervises SIGTERM → SIGKILL, races, and kill faults", a
 
 test("sanitizeCliStderr redacts secrets and limits length", () => {
   const redacted = sanitizeCliStderr(
-    "OPENCODE_API_KEY=sk-secret TOKEN: abc123 PASSWORD=p@ss CREDENTIAL=xyz"
+    "OPENCODE_API_KEY=sk-secret TOKEN: abc123 PASSWORD=p@ss CREDENTIAL=xyz Authorization: Bearer sk-live-token OPENCODE_API_KEY=\"quoted-secret\" TOKEN='tok'"
   );
-  assert.match(redacted, /OPENCODE_API_KEY=\[REDACTED].*TOKEN=\[REDACTED]/);
+  assert.match(redacted, /OPENCODE_API_KEY=\[REDACTED]/);
+  assert.match(redacted, /TOKEN=\[REDACTED]/);
+  assert.match(redacted, /Bearer \[REDACTED]/);
   assert.ok(!redacted.includes("sk-secret"));
+  assert.ok(!redacted.includes("sk-live-token"));
+  assert.ok(!redacted.includes("quoted-secret"));
   assert.ok(sanitizeCliStderr("x".repeat(600), { limit: 40 }).endsWith("…"));
+});
+
+test("runOpencodeJson caps stderr buffer and detaches listeners", async () => {
+  let childRef = null;
+  const result = await runOpencodeJson({
+    modelRef: "opencode/claude-haiku-4-5",
+    prompt: "x",
+    spawnImpl: () => {
+      childRef = hangChild({ onKill: () => true });
+      setImmediate(() => {
+        childRef.stderr.emit("data", "a".repeat(2000));
+        childRef.stdout.emit("data", `${JSON.stringify({ type: "text", part: { text: "ok" }})}\n`);
+        childRef.emit("close", 0);
+      });
+      return childRef;
+    }
+  });
+  assert.equal(result.status, 0);
+  assert.ok(result.stderr.length <= 480);
+  assert.equal(childRef.listenerCount("close"), 0);
+  assert.equal(childRef.stderr.listenerCount("data"), 0);
 });
 
 test("runOpencodeJson rejects spawn process errors", async () => {
