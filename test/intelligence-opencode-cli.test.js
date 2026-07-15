@@ -211,10 +211,12 @@ test("sanitizeCliStderr redacts secrets and limits length", () => {
   assert.ok(!redacted.includes("sk-secret"));
   assert.ok(!redacted.includes("sk-live-token"));
   assert.ok(!redacted.includes("quoted-secret"));
-  assert.ok(sanitizeCliStderr("x".repeat(600), { limit: 40 }).endsWith("…"));
+  const limited = sanitizeCliStderr("x".repeat(600), { limit: 40 });
+  assert.equal(limited.length, 40);
+  assert.ok(limited.endsWith("…"));
 });
 
-test("runOpencodeJson caps stderr buffer and detaches listeners", async () => {
+test("runOpencodeJson caps stderr, detaches IO, absorbs late errors", async () => {
   let childRef = null;
   const result = await runOpencodeJson({
     modelRef: "opencode/claude-haiku-4-5",
@@ -233,6 +235,8 @@ test("runOpencodeJson caps stderr buffer and detaches listeners", async () => {
   assert.ok(result.stderr.length <= 480);
   assert.equal(childRef.listenerCount("close"), 0);
   assert.equal(childRef.stderr.listenerCount("data"), 0);
+  assert.ok(childRef.listenerCount("error") >= 1);
+  assert.doesNotThrow(() => childRef.emit("error", new Error("late post-settle error")));
 });
 
 test("runOpencodeJson rejects spawn process errors", async () => {

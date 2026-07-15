@@ -64,7 +64,7 @@ export function runOpencodeJson({
       if (settled) return;
       settled = true;
       clearTimers();
-      detach();
+      detachIo();
       resolve(result);
     };
 
@@ -99,11 +99,12 @@ export function runOpencodeJson({
     const onStderr = (chunk) => {
       stderr = appendLimited(stderr, chunk, STDERR_BUFFER_LIMIT);
     };
+    // Keep listening after settle so late errors never crash Node.
     const onError = (error) => {
       if (settled) return;
       settled = true;
       clearTimers();
-      detach();
+      detachIo();
       reject(error);
     };
     const onClose = (status, signal) => {
@@ -114,10 +115,9 @@ export function runOpencodeJson({
       });
     };
 
-    const detach = () => {
+    const detachIo = () => {
       child.stdout?.off?.("data", onStdout);
       child.stderr?.off?.("data", onStderr);
-      child.off?.("error", onError);
       child.off?.("close", onClose);
     };
 
@@ -155,7 +155,11 @@ export function sanitizeCliStderr(text, { limit = STDERR_LIMIT } = {}) {
   out = out.replace(/\b([A-Z][A-Z0-9_]*)\s*[:=]\s*\S+/g, (match, name) => (
     isSensitiveEnvName(name) ? `${name}=[REDACTED]` : match
   ));
-  if (out.length > limit) out = `${out.slice(0, limit)}…`;
+  if (out.length > limit) {
+    if (limit <= 0) return "";
+    if (limit === 1) return "…";
+    out = `${out.slice(0, limit - 1)}…`;
+  }
   return out;
 }
 
