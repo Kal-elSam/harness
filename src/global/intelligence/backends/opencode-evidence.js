@@ -36,7 +36,7 @@ export function collectOpencodeCliEvidence({
     timeoutMs: 8000
   });
 
-  if (!result.ok && !result.stdout) {
+  if (!result.ok) {
     return {
       cliInstalled: true,
       authListOk: false,
@@ -48,7 +48,7 @@ export function collectOpencodeCliEvidence({
   return {
     cliInstalled: true,
     authListOk: true,
-    authProviders: parseAuthListProviders(`${result.stdout}\n${result.stderr}`),
+    authProviders: parseAuthListProviders(result.stdout),
     error: null
   };
 }

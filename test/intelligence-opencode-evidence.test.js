@@ -98,3 +98,19 @@ test("collectOpencodeCliEvidence never invents providers without CLI", () => {
   assert.ok(listed.authProviders.includes("OpenCode Go"));
   assert.ok(listed.authProviders.includes("OpenCode Zen"));
 });
+
+test("failed auth list with partial stdout stays negative evidence", () => {
+  const failed = collectOpencodeCliEvidence({
+    whichImpl: () => true,
+    probeImpl: () => ({
+      ok: false,
+      stdout: "●  OpenCode Go api\n●  Anthropic api\n",
+      stderr: "error: auth list failed\n●  OpenCode Zen api\n",
+      error: "exit 1"
+    })
+  });
+  assert.equal(failed.cliInstalled, true);
+  assert.equal(failed.authListOk, false);
+  assert.deepEqual(failed.authProviders, []);
+  assert.match(String(failed.error), /exit 1|auth list failed/i);
+});
