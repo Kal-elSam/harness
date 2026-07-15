@@ -16,36 +16,32 @@ const configuredCli = () => ({
   cliInstalled: true, authListOk: true, authProviders: ["Anthropic", "Google"], error: null
 });
 
+function child() {
+  const c = new EventEmitter();
+  c.stdout = new EventEmitter();
+  c.stderr = new EventEmitter();
+  c.kill = () => {};
+  return c;
+}
+
 function fakeSpawn(lines, { onSpawn } = {}) {
   return (command, args, options) => {
     onSpawn?.({ command, args, options });
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
-    child.kill = () => child.emit("close", null);
+    const c = child();
+    c.kill = () => c.emit("close", null);
     setImmediate(() => {
-      for (const line of lines) child.stdout.emit("data", `${line}\n`);
-      child.emit("close", 0);
+      for (const line of lines) c.stdout.emit("data", `${line}\n`);
+      c.emit("close", 0);
     });
-    return child;
+    return c;
   };
-}
-
-function hangSpawn() {
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.kill = () => {};
-  return child;
 }
 
 test("runtime missing vs configured CLI", async () => {
   const missing = createOpencodeRuntimeBackend({ whichImpl: () => false, collectCliEvidence: emptyCli });
-  const missed = await missing.detect();
-  assert.equal(missed.available, false);
-  assert.match(missed.recommendation, /Install and authenticate/);
+  assert.equal((await missing.detect()).available, false);
+  assert.match((await missing.detect()).recommendation, /Install and authenticate/);
   assert.equal((await missing.invoke({}, { modelId: "opencode/claude-haiku-4-5", prompt: "x" })).ok, false);
-
   const found = await createOpencodeRuntimeBackend({
     whichImpl: () => true, collectCliEvidence: configuredCli
   }).detect();
@@ -89,37 +85,21 @@ test("runtime invoke keeps non-mutating preamble and never --auto", async () => 
 
 test("runtime invoke: invalid model, timeout, empty, ENOENT", async () => {
   const base = { whichImpl: () => true, collectCliEvidence: configuredCli };
-  assert.match(
-    (await createOpencodeRuntimeBackend(base).invoke({}, { modelId: "unknown", prompt: "x" })).error,
-    /requires --model/
-  );
-  assert.match(
-    (await createOpencodeRuntimeBackend({ ...base, spawnImpl: hangSpawn }).invoke(
-      {}, { modelId: "opencode/claude-haiku-4-5", prompt: "hang", timeoutMs: 20 }
-    )).error,
-    /timed out/i
-  );
-  assert.match(
-    (await createOpencodeRuntimeBackend({ ...base, spawnImpl: fakeSpawn([]) }).invoke(
-      {}, { modelId: "opencode/claude-haiku-4-5", prompt: "x" }
-    )).error,
-    /no text output/i
-  );
-  assert.match(
-    (await createOpencodeRuntimeBackend({
-      ...base,
-      spawnImpl: () => {
-        const child = hangSpawn();
-        setImmediate(() => {
-          const error = new Error("ENOENT");
-          error.code = "ENOENT";
-          child.emit("error", error);
-        });
-        return child;
-      }
-    }).invoke({}, { modelId: "opencode/claude-haiku-4-5", prompt: "x" })).error,
-    /not installed/i
-  );
+  assert.match((await createOpencodeRuntimeBackend(base).invoke({}, { modelId: "unknown", prompt: "x" })).error, /requires --model/);
+  assert.match((await createOpencodeRuntimeBackend({ ...base, spawnImpl: child }).invoke(
+    {}, { modelId: "opencode/claude-haiku-4-5", prompt: "hang", timeoutMs: 20 }
+  )).error, /timed out/i);
+  assert.match((await createOpencodeRuntimeBackend({ ...base, spawnImpl: fakeSpawn([]) }).invoke(
+    {}, { modelId: "opencode/claude-haiku-4-5", prompt: "x" }
+  )).error, /no text output/i);
+  assert.match((await createOpencodeRuntimeBackend({
+    ...base,
+    spawnImpl: () => {
+      const c = child();
+      setImmediate(() => { const e = new Error("ENOENT"); e.code = "ENOENT"; c.emit("error", e); });
+      return c;
+    }
+  }).invoke({}, { modelId: "opencode/claude-haiku-4-5", prompt: "x" })).error, /not installed/i);
 });
 
 test("registry: OpenRouter then runtime, evidence once, no auto-route", async () => {

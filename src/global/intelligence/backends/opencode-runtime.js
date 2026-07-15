@@ -44,18 +44,11 @@ export function createOpencodeRuntimeBackend({
           available: false,
           configured: false,
           entitlement: ENTITLEMENT_STATES.UNKNOWN,
-          evidence: {
-            hasApiKey: false,
-            cliInstalled: false,
-            authListOk: false,
-            authProviders: [],
-            modelsHttpStatus: null
-          },
+          evidence: evidence(false),
           recommendation:
             "Install and authenticate the OpenCode CLI to use Anthropic/Google models via runtime transport (Kairo does not read OpenCode auth files)."
         });
       }
-
       const configured = cli.authProviders.length > 0;
       return baseDetect({
         state: CAPABILITY_STATES.DETECTED,
@@ -65,13 +58,7 @@ export function createOpencodeRuntimeBackend({
         entitlement: configured
           ? ENTITLEMENT_STATES.UNVERIFIED
           : ENTITLEMENT_STATES.UNKNOWN,
-        evidence: {
-          hasApiKey: false,
-          cliInstalled: true,
-          authListOk: cli.authListOk,
-          authProviders: cli.authProviders,
-          modelsHttpStatus: null
-        },
+        evidence: evidence(true, cli),
         error: cli.error,
         recommendation: configured
           ? `OpenCode CLI configured providers: ${cli.authProviders.join(", ")}. Entitlement remains ${ENTITLEMENT_STATES.UNVERIFIED}. Runtime invoke needs --cloud-consent --yes.`
@@ -114,14 +101,12 @@ export function createOpencodeRuntimeBackend({
     async invoke(contextPack, request = {}) {
       const detection = await this.detect();
       if (!detection.available) return fail(detection.recommendation);
-
       const modelRef = resolveModelRef(request.modelId);
       if (!modelRef) {
         return fail(
           "Runtime invoke requires --model <provider/model> (e.g. opencode/claude-haiku-4-5)."
         );
       }
-
       const timeoutMs = request.timeoutMs ?? 120_000;
       try {
         const { stdout, stderr, status, timedOut } = await runOpencodeJson({
@@ -133,14 +118,12 @@ export function createOpencodeRuntimeBackend({
           timeoutMs
         });
         if (timedOut) return fail(`OpenCode CLI timed out after ${timeoutMs}ms.`);
-
         const parsed = parseOpencodeJsonEvents(stdout);
         if (parsed.error) return fail(parsed.error);
         if (!parsed.content) {
           const detail = stderr?.trim() || (status == null ? "no content" : `exit ${status}`);
           return fail(`OpenCode CLI produced no text output (${detail}).`);
         }
-
         return {
           ok: true,
           backendId: BACKEND_IDS.OPENCODE,
@@ -163,6 +146,16 @@ export function createOpencodeRuntimeBackend({
         return fail(error?.message ?? String(error));
       }
     }
+  };
+}
+
+function evidence(cliInstalled, cli = null) {
+  return {
+    hasApiKey: false,
+    cliInstalled,
+    authListOk: cli?.authListOk ?? false,
+    authProviders: cli?.authProviders ?? [],
+    modelsHttpStatus: null
   };
 }
 
