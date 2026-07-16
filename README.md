@@ -513,6 +513,19 @@ Kairo-managed Engram agents (`cursor`, `codex`, `opencode`, `claude` → setup s
 load MCP; configuration evidence is not runtime-active. Receipts live under
 `~/.harness/integrations/engram/`.
 
+Configure SDD skills (requires `sdd-core`; default with setup):
+
+```bash
+kairo components configure sdd-core --agents codex,opencode,cursor,claude --persona off --dry-run
+kairo components configure sdd-core --agents codex,opencode --persona teaching --yes
+kairo components verify sdd-core --json
+kairo components rollback sdd-core --receipt <id> --dry-run
+```
+
+Skills go to `~/.agents/skills/<id>/SKILL.md` (shared) and `~/.claude/skills/<id>/SKILL.md`.
+Persona defaults to `off` (explanations only). Apply reports `session_refresh_required`.
+Receipts: `~/.harness/integrations/sdd-core/`. Conflicts are never overwritten.
+
 Create, validate, and install:
 
 ```bash

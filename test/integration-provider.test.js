@@ -76,7 +76,7 @@ test("normalizes integration.provider and rejects executable fields", () => {
 
 test("provider registry validates contract and resolves component providers", async () => {
   resetIntegrationProvidersForTests();
-  assert.deepEqual(INTEGRATION_PROVIDER_IDS, ["engram"]);
+  assert.deepEqual(INTEGRATION_PROVIDER_IDS, ["engram", "sdd-core"]);
   assert.throws(() => assertProviderContract({ id: "engram" }), /missing inspect/);
 
   const registered = registerIntegrationProvider(stubProvider());
@@ -127,4 +127,9 @@ test("bundled engram-memory declares integration.provider engram", () => {
   assert.deepEqual(engram.integration, { provider: "engram" });
   const publicEntry = describeComponentCatalog().find((entry) => entry.id === "engram-memory");
   assert.deepEqual(publicEntry.integration, { provider: "engram" });
+});
+
+test("bundled sdd-core declares integration.provider sdd-core", () => {
+  const sdd = loadComponentCatalog().find((component) => component.id === "sdd-core");
+  assert.deepEqual(sdd.integration, { provider: "sdd-core" });
 });

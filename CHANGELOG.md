@@ -7,6 +7,9 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ### Added
 
+- Operational SDD Core lifecycle: `kairo components configure|verify|rollback sdd-core`
+  materializes nine canonical skills, optional `--persona teaching` (off by default),
+  verify health (`configured|missing|drifted|conflict`), receipts, and bounded rollback.
 - Engram Operational Lifecycle: `kairo components configure|rollback engram-memory`
   delegates to official `engram setup <agent>` with dry-run, consent, receipts under
   `~/.harness/integrations/engram/`, and bounded rollback. Supported Engram range

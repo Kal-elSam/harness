@@ -26,8 +26,10 @@
       "dependencies": [],
       "healthChecks": [
         { "id": "assets", "type": "assets" },
-        { "id": "drift", "type": "drift" }
+        { "id": "drift", "type": "drift" },
+        { "id": "integration", "type": "integration", "optional": true }
       ],
+      "integration": { "provider": "sdd-core" },
       "assetFiles": [
         "workflow.md",
         "spec-sizing.md",
