@@ -37,7 +37,8 @@ export async function runGlobalDoctorChecks(homeDir, {
     checks.push(await backupsCheck(paths));
     checks.push(...await runComponentEcosystemChecks({
       installedComponents,
-      workspaceRoot
+      workspaceRoot,
+      homeDir
     }));
   }
 

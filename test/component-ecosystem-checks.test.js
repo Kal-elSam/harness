@@ -56,7 +56,7 @@ test("install copies engram-memory and graphify-context assets and managed secti
   assert.match(cursorConfig, /Authority: user > AGENTS\.md > repo docs > Engram > Graphify/);
 });
 
-test("engram ecosystem check warns about MCP without failing doctor", async () => {
+test("engram ecosystem check warns about binary/config without failing doctor", async () => {
   const homeDir = await createFakeHome();
   await installGlobalHarness({
     ...baseOptions,
@@ -65,11 +65,11 @@ test("engram ecosystem check warns about MCP without failing doctor", async () =
   });
 
   const { checks, ok } = await runGlobalDoctorChecks(homeDir, { packageRoot });
-  const engramCheck = checks.find((check) => check.name === "engram:mcp-tools");
+  const engramCheck = checks.find((check) => check.name === "engram:binary");
 
-  assert.equal(engramCheck.status, "warning");
+  assert.ok(engramCheck);
   assert.equal(engramCheck.componentId, "engram-memory");
-  assert.match(engramCheck.detail, /not bundled/i);
+  assert.ok(engramCheck.status === "ok" || engramCheck.status === "warning");
   assert.equal(ok, true);
 });
 

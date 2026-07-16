@@ -1,6 +1,9 @@
 import { loadComponentCatalog } from "./load-component-catalog.js";
 import { loadWorkspaceComponentCatalog } from "./load-workspace-component-catalog.js";
 import { indexComponentsById, resolveDependencyOrder } from "./component-resolve.js";
+import { ensureIntegrationProvidersRegistered } from "./integrations/index.js";
+
+ensureIntegrationProvidersRegistered();
 
 const BUNDLED_COMPONENTS = loadComponentCatalog();
 
@@ -34,6 +37,7 @@ function formatCatalogEntry(component) {
     healthChecks: (component.healthChecks ?? []).map((check) => ({ ...check })),
     assetFiles: [...component.assetFiles],
     adapterHints: Object.keys(component.adapterHints),
+    integration: component.integration ? { ...component.integration } : null,
     instructions: component.instructions ?? null
   };
 }

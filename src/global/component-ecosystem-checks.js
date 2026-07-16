@@ -3,15 +3,23 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { formatCliCommand } from "./brand/cli.js";
+import { ensureIntegrationProvidersRegistered } from "./integrations/index.js";
+import { requireIntegrationProvider } from "./integrations/provider-registry.js";
+import { buildEngramIntegrationChecks } from "./component-integration-cli.js";
+import { KAIRO_ENGRAM_AGENT_IDS } from "./integrations/engram-evidence.js";
 
 const GRAPH_REPORT_COMMIT_PATTERN = /Built from commit:\s*`([0-9a-f]+)`/i;
 
-export async function runComponentEcosystemChecks({ installedComponents, workspaceRoot = null } = {}) {
+export async function runComponentEcosystemChecks({
+  installedComponents,
+  workspaceRoot = null,
+  homeDir = null
+} = {}) {
   const installedIds = new Set(installedComponents.map((component) => component.id));
   const checks = [];
 
   if (installedIds.has("engram-memory")) {
-    checks.push(buildEngramMcpCheck());
+    checks.push(...await buildEngramChecks({ homeDir }));
   }
 
   if (installedIds.has("graphify-context")) {
@@ -21,14 +29,24 @@ export async function runComponentEcosystemChecks({ installedComponents, workspa
   return checks;
 }
 
-function buildEngramMcpCheck() {
-  return {
-    name: "engram:mcp-tools",
-    status: "warning",
-    category: "integration",
-    componentId: "engram-memory",
-    detail: "Engram MCP is not bundled. Configure mem_* tools in your agent (user-engram or plugin-engram-engram) when ready."
-  };
+async function buildEngramChecks({ homeDir }) {
+  ensureIntegrationProvidersRegistered();
+  try {
+    const provider = requireIntegrationProvider("engram");
+    const inspection = await provider.inspect({
+      homeDir: homeDir ?? undefined,
+      agentIds: KAIRO_ENGRAM_AGENT_IDS
+    });
+    return buildEngramIntegrationChecks(inspection);
+  } catch (error) {
+    return [{
+      name: "engram:binary",
+      status: "warning",
+      category: "integration",
+      componentId: "engram-memory",
+      detail: error instanceof Error ? error.message : "Engram inspection failed."
+    }];
+  }
 }
 
 async function buildGraphifyChecks(workspaceRoot) {
@@ -115,7 +133,6 @@ async function readGraphFreshness(workspaceRoot, reportPath) {
   }
 
   const isFresh = headCommit.startsWith(graphCommit) || graphCommit.startsWith(headCommit);
-
   if (isFresh) {
     return {
       status: "ok",
@@ -134,9 +151,7 @@ function resolveGitHead(workspaceRoot) {
     cwd: workspaceRoot,
     encoding: "utf8"
   });
-
   if (result.status !== 0) return null;
-
   const head = result.stdout.trim();
   return head.length > 0 ? head : null;
 }

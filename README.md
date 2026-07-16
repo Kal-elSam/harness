@@ -495,6 +495,23 @@ catalogs (no `schemaVersion`) still load — fields normalize in memory; persist
 - Engram/Graphify integration warnings degrade that component; they do not fail
   global `doctor` by themselves.
 - Workspace entries stay declarative JSON (no arbitrary code execution).
+- `engram-memory` may declare `integration.provider: "engram"`. Kairo detects the
+  Engram binary, plans official `engram setup <agent>`, and never installs Engram
+  silently or runs `engram doctor` (SQLite side effects).
+
+Configure Engram (requires `engram-memory` installed and Engram `>=1.19.0 <2.0.0`):
+
+```bash
+kairo components configure engram-memory --agents codex,opencode --dry-run
+kairo components configure engram-memory --agents codex,opencode --yes
+kairo components rollback engram-memory --receipt <id> --dry-run
+```
+
+Without `--agents`, Kairo uses the intersection of detected agents and
+Kairo-managed Engram agents (`cursor`, `codex`, `opencode`, `claude` → setup slug
+`claude-code`). After setup, status is `restart_required` — restart the agent to
+load MCP; configuration evidence is not runtime-active. Receipts live under
+`~/.harness/integrations/engram/`.
 
 Create, validate, and install:
 

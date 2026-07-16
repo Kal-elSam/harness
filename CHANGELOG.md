@@ -7,6 +7,12 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ### Added
 
+- Engram Operational Lifecycle: `kairo components configure|rollback engram-memory`
+  delegates to official `engram setup <agent>` with dry-run, consent, receipts under
+  `~/.harness/integrations/engram/`, and bounded rollback. Supported Engram range
+  `>=1.19.0 <2.0.0`; older binaries get upgrade guidance only (no silent update).
+  Doctor/status show binary/version and per-agent config evidence; Engram issues
+  degrade only `engram-memory`.
 - Component Manifest v2: `schemaVersion`, `kind`, `capabilities`, `dependencies`,
   `healthChecks`, with validation (IDs, versions, safe paths, duplicates, cycles)
   and deterministic topological resolution.
