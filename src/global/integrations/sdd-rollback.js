@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   assertExplicitApplyConsent,
@@ -7,6 +7,15 @@ import {
   shouldPromptApplyConfirmation
 } from "../apply-confirmation.js";
 import { hashBuffer } from "../../hash.js";
+import {
+  assertBackupPathContained,
+  deleteRegularFileIfHash,
+  hashRegularFile,
+  readRegularFile,
+  refuseSymlink,
+  replaceRegularFile,
+  resolveExpectedSddDestination
+} from "./sdd-fs-guard.js";
 import { assertSafeSddReceiptId, loadSddReceipt, sddIntegrationsDir } from "./sdd-receipts.js";
 
 export function sddReceiptBackupDir(homeDir, receiptId) {
@@ -20,13 +29,16 @@ export function sddBackupPathFor(homeDir, receiptId, destinationPath) {
 
 export async function backupSddDestination(destinationPath, { homeDir, receiptId } = {}) {
   if (!existsSync(destinationPath)) return null;
+  const symlink = await refuseSymlink(destinationPath, "Destination");
+  if (symlink) throw new Error(symlink);
+  const bytes = await readRegularFile(destinationPath);
   const backupPath = sddBackupPathFor(homeDir, receiptId, destinationPath);
   await mkdir(dirname(backupPath), { recursive: true });
-  await copyFile(destinationPath, backupPath);
-  return { path: destinationPath, backupPath, beforeHash: hashBuffer(await readFile(destinationPath)) };
+  await writeFile(backupPath, bytes);
+  return { path: destinationPath, backupPath, beforeHash: hashBuffer(bytes) };
 }
 
-/** Bounded rollback: delete/restore only when current hash still matches afterHash. */
+/** Bounded rollback: require complete evidence, then delete/restore only when afterHash matches. */
 export async function rollbackSddReceipt({
   receiptId,
   homeDir,
@@ -49,17 +61,27 @@ export async function rollbackSddReceipt({
     if (!accepted) return { dryRun, cancelled: true, receiptId, actions: [] };
   }
 
-  const backups = new Map((receipt.backups ?? []).map((entry) => [entry.path, entry]));
-  const actions = [];
+  const evidence = await assessRollbackEvidence(receipt, { homeDir, receiptId });
+  if (!evidence.complete) {
+    return {
+      dryRun,
+      cancelled: false,
+      receiptId,
+      ok: false,
+      blocked: true,
+      reason: "Incomplete or unsafe rollback evidence; refusing all mutations.",
+      actions: evidence.actions
+    };
+  }
 
-  for (const file of receipt.files ?? []) {
-    if (!file.applied) continue;
-    if (file.action === "create") {
-      actions.push(await deleteCreated(file, { dryRun }));
+  const actions = [];
+  for (const step of evidence.steps) {
+    if (step.action === "delete") {
+      actions.push(await executeDelete(step, { dryRun }));
       continue;
     }
-    if (file.action === "update") {
-      actions.push(await restoreUpdated(file, backups.get(file.destinationPath), { dryRun }));
+    if (step.action === "restore") {
+      actions.push(await executeRestore(step, { dryRun }));
     }
   }
 
@@ -67,37 +89,116 @@ export async function rollbackSddReceipt({
     dryRun,
     cancelled: false,
     receiptId,
+    blocked: false,
     ok: actions.every((entry) => entry.ok !== false),
     actions
   };
 }
 
-async function deleteCreated(file, { dryRun }) {
-  if (!existsSync(file.destinationPath)) {
-    return { path: file.destinationPath, action: "skip", ok: true, reason: "Already absent." };
+async function assessRollbackEvidence(receipt, { homeDir, receiptId }) {
+  const backups = new Map((receipt.backups ?? []).map((entry) => [entry.path, entry]));
+  const actions = [];
+  const steps = [];
+
+  for (const file of receipt.files ?? []) {
+    if (!file.applied) continue;
+    const expected = resolveExpectedSddDestination(file, homeDir);
+    if (!expected.ok) {
+      actions.push({ path: file.destinationPath, action: "block", ok: false, reason: expected.reason });
+      continue;
+    }
+    if (!file.afterHash) {
+      actions.push({ path: expected.path, action: "block", ok: false, reason: "Missing afterHash evidence." });
+      continue;
+    }
+
+    if (file.action === "create") {
+      steps.push({ action: "delete", path: expected.path, afterHash: file.afterHash });
+      continue;
+    }
+
+    if (file.action === "update") {
+      const backup = backups.get(file.destinationPath) ?? backups.get(expected.path);
+      const backupCheck = await validateUpdateBackup(file, backup, {
+        homeDir, receiptId, expectedPath: expected.path
+      });
+      if (!backupCheck.ok) {
+        actions.push({ path: expected.path, action: "block", ok: false, reason: backupCheck.reason });
+        continue;
+      }
+      steps.push({
+        action: "restore",
+        path: expected.path,
+        afterHash: file.afterHash,
+        beforeHash: backupCheck.beforeHash,
+        backupPath: backupCheck.backupPath
+      });
+    }
   }
-  const currentHash = hashBuffer(await readFile(file.destinationPath));
-  if (currentHash !== file.afterHash) {
-    return { path: file.destinationPath, action: "skip", ok: true, reason: "Created file edited after apply; refusing delete." };
-  }
-  if (!dryRun) await rm(file.destinationPath, { force: true });
-  return { path: file.destinationPath, action: "delete", ok: true };
+
+  return { complete: actions.length === 0, actions, steps };
 }
 
-async function restoreUpdated(file, backup, { dryRun }) {
-  if (!existsSync(file.destinationPath)) {
-    return { path: file.destinationPath, action: "skip", ok: false, reason: "Updated destination missing." };
+async function validateUpdateBackup(file, backup, { homeDir, receiptId, expectedPath }) {
+  if (!backup?.backupPath) return { ok: false, reason: "Backup missing." };
+  const contained = assertBackupPathContained(backup.backupPath, sddReceiptBackupDir(homeDir, receiptId));
+  if (!contained.ok) return contained;
+  const expectedBackup = sddBackupPathFor(homeDir, receiptId, expectedPath);
+  if (contained.path !== expectedBackup) {
+    return { ok: false, reason: "Backup path does not match receipt destination encoding." };
   }
-  const currentHash = hashBuffer(await readFile(file.destinationPath));
-  if (currentHash !== file.afterHash) {
-    return { path: file.destinationPath, action: "skip", ok: true, reason: "File changed after apply; refusing restore." };
+  const beforeHash = backup.beforeHash ?? file.beforeHash;
+  if (!beforeHash) return { ok: false, reason: "Missing beforeHash evidence for backup." };
+  if (!existsSync(contained.path)) return { ok: false, reason: "Backup missing." };
+  try {
+    const backupHash = await hashRegularFile(contained.path);
+    if (backupHash !== beforeHash) {
+      return { ok: false, reason: "Backup hash does not match beforeHash." };
+    }
+  } catch (error) {
+    return { ok: false, reason: error.message };
   }
-  if (!backup?.backupPath || !existsSync(backup.backupPath)) {
-    return { path: file.destinationPath, action: "skip", ok: false, reason: "Backup missing." };
+  return { ok: true, backupPath: contained.path, beforeHash };
+}
+
+async function executeDelete(step, { dryRun }) {
+  if (!existsSync(step.path)) {
+    return { path: step.path, action: "skip", ok: true, reason: "Already absent." };
   }
-  if (!dryRun) {
-    await mkdir(dirname(file.destinationPath), { recursive: true });
-    await copyFile(backup.backupPath, file.destinationPath);
+  if (dryRun) return { path: step.path, action: "delete", ok: true, dryRun: true };
+  try {
+    const result = await deleteRegularFileIfHash(step.path, step.afterHash);
+    if (result.skipped) return { path: step.path, action: "skip", ok: true, reason: result.reason };
+    if (!result.ok) return { path: step.path, action: "skip", ok: false, reason: result.reason };
+    return { path: step.path, action: "delete", ok: true };
+  } catch (error) {
+    return { path: step.path, action: "skip", ok: false, reason: error.message };
   }
-  return { path: file.destinationPath, action: "restore", ok: true, backupPath: backup.backupPath };
+}
+
+async function executeRestore(step, { dryRun }) {
+  if (!existsSync(step.path)) {
+    return { path: step.path, action: "skip", ok: false, reason: "Updated destination missing." };
+  }
+  try {
+    const currentHash = await hashRegularFile(step.path);
+    if (currentHash !== step.afterHash) {
+      return { path: step.path, action: "skip", ok: true, reason: "File changed after apply; refusing restore." };
+    }
+    if (!existsSync(step.backupPath)) {
+      return { path: step.path, action: "skip", ok: false, reason: "Backup missing." };
+    }
+    const backupHash = await hashRegularFile(step.backupPath);
+    if (backupHash !== step.beforeHash) {
+      return { path: step.path, action: "skip", ok: false, reason: "Backup hash does not match beforeHash." };
+    }
+    if (dryRun) {
+      return { path: step.path, action: "restore", ok: true, dryRun: true, backupPath: step.backupPath };
+    }
+    const bytes = await readRegularFile(step.backupPath);
+    await replaceRegularFile(step.path, bytes);
+    return { path: step.path, action: "restore", ok: true, backupPath: step.backupPath };
+  } catch (error) {
+    return { path: step.path, action: "skip", ok: false, reason: error.message };
+  }
 }

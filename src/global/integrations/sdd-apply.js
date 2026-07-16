@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { assertExplicitApplyConsent, promptApplyConfirmation, shouldPromptApplyConfirmation } from "../apply-confirmation.js";
 import { hashBuffer } from "../../hash.js";
 import { SDD_PLAN_ACTIONS } from "./sdd-evidence.js";
 import { planSddConfigure } from "./sdd-plan.js";
 import { resolveCanonicalSddSkillPath } from "./sdd-destinations.js";
+import { hashRegularFile, refuseSymlink, replaceRegularFile } from "./sdd-fs-guard.js";
 import { saveSddReceipt } from "./sdd-receipts.js";
 import { backupSddDestination } from "./sdd-rollback.js";
 
@@ -60,7 +61,7 @@ export async function applySddConfigure({
       }
       const bytes = await readFile(resolveCanonicalSddSkillPath(action.skillId, packageRoot));
       await mkdir(dirname(action.destinationPath), { recursive: true });
-      await writeFile(action.destinationPath, bytes);
+      await replaceRegularFile(action.destinationPath, bytes);
       files.push({ ...record, applied: true, skipped: false, afterHash: hashBuffer(bytes) });
     } catch (error) {
       failed = { skillId: action.skillId, destinationPath: action.destinationPath, error: error.message };
@@ -101,6 +102,8 @@ function buildFileRecord(action) {
 
 /** Re-read disk before write; plan-time hashes alone cannot catch TOCTOU. */
 async function guardBeforeWrite(action) {
+  const symlink = await refuseSymlink(action.destinationPath, "Destination");
+  if (symlink) return symlink;
   if (action.action === SDD_PLAN_ACTIONS.CREATE && existsSync(action.destinationPath)) {
     return "Destination appeared after planning; preserving byte-for-byte.";
   }
@@ -108,7 +111,7 @@ async function guardBeforeWrite(action) {
   if (!existsSync(action.destinationPath)) {
     return "Managed destination disappeared after planning; preserving byte-for-byte.";
   }
-  if (hashBuffer(await readFile(action.destinationPath)) !== action.trackedHash) {
+  if ((await hashRegularFile(action.destinationPath)) !== action.trackedHash) {
     return "Managed file changed after planning; preserving byte-for-byte.";
   }
   return null;
