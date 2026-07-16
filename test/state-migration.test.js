@@ -29,6 +29,23 @@ test("normalizeGlobalState migrates legacy agents array", () => {
   assert.deepEqual(normalized.adapters[0].managedTargets, [".cursor/AGENTS.md"]);
   assert.deepEqual(normalized.agents, legacy.agents);
   assert.deepEqual(normalized.components[0].id, "orchestrator");
+  assert.deepEqual(normalized.sdd, { persona: "off", agentIds: [], files: [], lastReceiptId: null, updatedAt: null });
+});
+
+test("normalizeGlobalState preserves an existing v4 SDD block", () => {
+  const sdd = {
+    persona: "teaching",
+    agentIds: ["codex", "cursor"],
+    files: [{ destinationPath: "/h/.agents/skills/sdd-init/SKILL.md", skillId: "sdd-init", agentIds: ["codex"], hash: "abc", action: "create" }],
+    lastReceiptId: "sdd-2026-01-01",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  };
+  const normalized = normalizeGlobalState({ agents: [], components: [], sdd });
+
+  assert.equal(normalized.sdd.persona, "teaching");
+  assert.deepEqual(normalized.sdd.agentIds, ["codex", "cursor"]);
+  assert.equal(normalized.sdd.files.length, 1);
+  assert.equal(normalized.sdd.lastReceiptId, "sdd-2026-01-01");
 });
 
 test("normalizeGlobalState preserves explicit empty components array", () => {
@@ -85,7 +102,7 @@ test("createGlobalState writes adapter-aware state with legacy agents mirror", a
     backups: []
   });
 
-  assert.equal(state.stateVersion, 3);
+  assert.equal(state.stateVersion, 4);
   assert.equal(state.adapters[0].label, "Cursor");
   assert.equal(state.components[0].id, "sdd-core");
   assert.deepEqual(state.agents, [{ id: "cursor", configFile: ".cursor/AGENTS.md", present: false }]);

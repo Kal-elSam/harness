@@ -1,5 +1,6 @@
 import { resolveAdapter } from "./registry.js";
 import { resolveComponent } from "./component-registry.js";
+import { normalizeSddState } from "./integrations/sdd-state.js";
 
 const LEGACY_ORCHESTRATOR_COMPONENT = {
   id: "orchestrator",
@@ -17,7 +18,8 @@ export function normalizeGlobalState(state) {
     ...state,
     adapters,
     agents: toLegacyAgents(adapters),
-    components
+    components,
+    sdd: normalizeSddState(state.sdd)
   };
 }
 

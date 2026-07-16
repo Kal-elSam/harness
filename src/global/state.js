@@ -2,8 +2,9 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { normalizeGlobalState } from "./state-migration.js";
+import { normalizeSddState } from "./integrations/sdd-state.js";
 
-export const STATE_VERSION = 3;
+export const STATE_VERSION = 4;
 
 export async function readGlobalState(statePath) {
   if (!existsSync(statePath)) return null;
@@ -28,7 +29,8 @@ export function createGlobalState({
   components = [],
   coreFiles,
   backups,
-  installedAt
+  installedAt,
+  sdd
 }) {
   const now = new Date().toISOString();
   const normalizedAdapters = adapters.map((entry) => ({ ...entry }));
@@ -45,6 +47,7 @@ export function createGlobalState({
     agents: normalizedAdapters.map(({ id, configFile, present }) => ({ id, configFile, present })),
     components: normalizedComponents,
     coreFiles,
-    backups
+    backups,
+    sdd: normalizeSddState(sdd)
   };
 }
