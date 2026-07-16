@@ -1,5 +1,7 @@
 /** Component Manifest v2 — contract + validation. V1 catalogs normalize in-memory. */
 
+import { normalizeIntegrationMetadata } from "./integrations/provider-contract.js";
+
 export const COMPONENT_MANIFEST_SCHEMA_VERSION = 2;
 export const COMPONENT_KINDS = Object.freeze(["component"]);
 export const COMPONENT_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -59,7 +61,8 @@ export function normalizeManifestEntry(entry, {
     dependencies: idList(entry.dependencies, id, "dependencies", COMPONENT_ID_PATTERN),
     healthChecks: healthChecks(entry.healthChecks, id),
     assetFiles: assets(entry.assetFiles, id),
-    adapterHints: hints(entry.adapterHints, id)
+    adapterHints: hints(entry.adapterHints, id),
+    integration: normalizeIntegrationMetadata(entry.integration, { componentId: id, source })
   };
 
   if (source === "workspace" && entry.instructions != null) {

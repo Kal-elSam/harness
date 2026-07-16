@@ -49,6 +49,7 @@
         { "id": "drift", "type": "drift" },
         { "id": "integration", "type": "integration", "optional": true }
       ],
+      "integration": { "provider": "engram" },
       "assetFiles": ["memory.md"],
       "adapterHints": {
         "cursor": "- Engram MCP (`mem_*` tools) is not auto-installed; configure in Cursor MCP settings when ready.",
