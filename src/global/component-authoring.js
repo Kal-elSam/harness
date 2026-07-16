@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { COMPONENT_ID_PATTERN } from "./component-manifest.js";
 import { COMPONENT_IDS } from "./component-registry.js";
 import {
   hasWorkspaceCatalog,
@@ -9,8 +10,6 @@ import {
   workspaceCatalogPath
 } from "./load-workspace-component-catalog.js";
 import { formatCliCommand } from "./brand/cli.js";
-
-const COMPONENT_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
 const DEFAULT_VERSION = "0.1.0";
 const DEFAULT_ASSET = "README.md";
 
