@@ -1,18 +1,33 @@
 {
+  "schemaVersion": 2,
   "components": [
     {
       "id": "orchestrator",
+      "kind": "component",
       "label": "Orchestrator",
       "version": "1.0.0",
       "defaultEnabled": true,
+      "capabilities": ["orchestration"],
+      "dependencies": [],
+      "healthChecks": [
+        { "id": "assets", "type": "assets" },
+        { "id": "drift", "type": "drift" }
+      ],
       "assetFiles": ["orchestrator.md"],
       "adapterHints": {}
     },
     {
       "id": "sdd-core",
+      "kind": "component",
       "label": "SDD Core",
       "version": "1.0.0",
       "defaultEnabled": true,
+      "capabilities": ["sdd.workflow"],
+      "dependencies": [],
+      "healthChecks": [
+        { "id": "assets", "type": "assets" },
+        { "id": "drift", "type": "drift" }
+      ],
       "assetFiles": ["workflow.md", "spec-sizing.md", "handoff.md"],
       "adapterHints": {
         "cursor": "- In repos with workspace harness: also read `.cursor/rules/` and `docs/specs/`.",
@@ -23,9 +38,17 @@
     },
     {
       "id": "engram-memory",
+      "kind": "component",
       "label": "Engram Memory",
       "version": "1.0.0",
       "defaultEnabled": false,
+      "capabilities": ["memory"],
+      "dependencies": [],
+      "healthChecks": [
+        { "id": "assets", "type": "assets" },
+        { "id": "drift", "type": "drift" },
+        { "id": "integration", "type": "integration", "optional": true }
+      ],
       "assetFiles": ["memory.md"],
       "adapterHints": {
         "cursor": "- Engram MCP (`mem_*` tools) is not auto-installed; configure in Cursor MCP settings when ready.",
@@ -36,9 +59,17 @@
     },
     {
       "id": "graphify-context",
+      "kind": "component",
       "label": "Graphify Context",
       "version": "1.0.0",
       "defaultEnabled": false,
+      "capabilities": ["context.graph"],
+      "dependencies": [],
+      "healthChecks": [
+        { "id": "assets", "type": "assets" },
+        { "id": "drift", "type": "drift" },
+        { "id": "integration", "type": "integration", "optional": true }
+      ],
       "assetFiles": ["context-graph.md"],
       "adapterHints": {
         "cursor": "- Graphify CLI is not auto-installed; run `graphify update .` after code changes when graphify is in PATH.",

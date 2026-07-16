@@ -7,6 +7,13 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ### Added
 
+- Component Manifest v2: `schemaVersion`, `kind`, `capabilities`, `dependencies`,
+  `healthChecks`, with validation (IDs, versions, safe paths, duplicates, cycles)
+  and deterministic topological resolution.
+- Public component health states (`healthy` / `degraded` / `drifted` / `missing`)
+  on `status`, `doctor`, components listing, and JSON (`componentHealth`).
+  Engram/Graphify integration warnings degrade the component without failing
+  global doctor.
 - OpenCode Go / Zen as first-class Intelligence backends via `OPENCODE_API_KEY`
   (`opencode-go`, `opencode-zen`) with an explicit transport registry
   (`chat_completions`, `responses`, `runtime`).
@@ -23,6 +30,8 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ### Changed
 
+- Bundled component catalog migrated to Manifest v2; workspace v1 catalogs
+  continue to normalize in-memory.
 - Default cloud routing precedence: Ollama → OpenCode Go → OpenCode Zen →
   OpenRouter. Go limit failures never auto-spend Zen credits.
 - Health guidance treats API-key presence as configured credentials, not proven

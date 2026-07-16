@@ -11,6 +11,7 @@ test("component-registry imports on the current Node runtime", async () => {
 test("component catalog loads from packaged JSON without import attributes", () => {
   const catalog = readComponentCatalogDocument();
 
+  assert.equal(catalog.schemaVersion, 2);
   assert.deepEqual(
     catalog.components.map((component) => component.id),
     ["orchestrator", "sdd-core", "engram-memory", "graphify-context"]
@@ -19,4 +20,6 @@ test("component catalog loads from packaged JSON without import attributes", () 
     catalog.components.filter((component) => component.defaultEnabled).map((component) => component.id),
     ["orchestrator", "sdd-core"]
   );
+  assert.ok(catalog.components.every((component) => Array.isArray(component.dependencies)));
+  assert.ok(catalog.components.every((component) => Array.isArray(component.healthChecks)));
 });

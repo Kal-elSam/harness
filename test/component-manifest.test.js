@@ -49,10 +49,12 @@ test("rejects invalid ids, versions, unsafe paths, duplicates, unknown deps, cyc
 test("bundled catalog and public JSON expose v2 metadata", () => {
   for (const component of loadComponentCatalog()) {
     assert.equal(component.schemaVersion, 2);
-    assert.deepEqual(component.dependencies, []);
+    assert.equal(component.kind, "component");
+    assert.ok(Array.isArray(component.dependencies));
+    assert.ok(component.healthChecks.length >= 2);
   }
   const entry = describeComponentCatalog()[0];
   assert.equal(entry.schemaVersion, 2);
   assert.equal(entry.kind, "component");
-  assert.deepEqual(entry.healthChecks, []);
+  assert.ok(entry.healthChecks.some((check) => check.id === "assets"));
 });
