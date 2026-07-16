@@ -147,7 +147,7 @@ test("status reports ok after install and drift after tamper", async () => {
   assert.match(drifted.nextAction, /kairo sync/);
   assert.equal(
     drifted.components.find((component) => component.id === "sdd-core").status,
-    "stale"
+    "drifted"
   );
 });
 

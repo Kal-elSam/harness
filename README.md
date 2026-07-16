@@ -316,8 +316,9 @@ kairo install --agents cursor,codex --yes
 ### `kairo status`
 
 Control panel for the local ecosystem: detected vs managed agents, installed
-components, check counts (ok/missing/stale), backups, overall status, and the
-recommended next action.
+components, check counts (ok/missing/stale/warning), backups, overall status, and the
+recommended next action. Installed components expose public health
+(`healthy` / `degraded` / `drifted` / `missing`).
 
 ```bash
 kairo status
@@ -325,8 +326,8 @@ kairo status --json
 ```
 
 `--json` prints a stable machine-readable envelope for CI, tooling, and debugging
-(`ok`, `overall`, `agents`, `components`, `checks`, `backups`, `nextAction`,
-`cliVersion`). Human text remains the default. Exit code is non-zero when
+(`ok`, `overall`, `agents`, `components`, `componentHealth`, `checks`, `backups`,
+`nextAction`, `cliVersion`). Human text remains the default. Exit code is non-zero when
 `overall` is not `ok`.
 
 ### `kairo sync`
@@ -478,8 +479,22 @@ deletes `~/.harness/state.json` and `~/.harness/core/`. Backups are preserved.
 ### Workspace components
 
 Opt-in custom components live in the current repo under `.harness/components/`.
-They never override bundled IDs (`orchestrator`, `sdd-core`) and install copies
-assets into `~/.harness/components/<id>/` only when you pass `--components`.
+They never override bundled IDs (`orchestrator`, `sdd-core`, `engram-memory`,
+`graphify-context`) and install copies assets into `~/.harness/components/<id>/`
+only when you pass `--components`.
+
+#### Component Manifest v2
+
+Catalogs are a validated contract. Bundled `catalog.json` uses `schemaVersion: 2`
+with `kind`, `capabilities`, `dependencies`, and `healthChecks`. Workspace v1
+catalogs (no `schemaVersion`) still load — fields normalize in memory; persisted
+`~/.harness/state.json` stays compatible and derives new metadata from the catalog.
+
+- Dependencies resolve topologically (deps first, no duplicates).
+- Public component health: `healthy` | `degraded` | `drifted` | `missing`.
+- Engram/Graphify integration warnings degrade that component; they do not fail
+  global `doctor` by themselves.
+- Workspace entries stay declarative JSON (no arbitrary code execution).
 
 Create, validate, and install:
 

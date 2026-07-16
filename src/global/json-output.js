@@ -8,6 +8,7 @@ export function buildControlPlaneJson(report, { cliVersion, extras = {} } = {}) 
     overall: report.overall,
     agents: report.agents,
     components: report.components,
+    componentHealth: report.componentHealth ?? report.components,
     checks: report.checks,
     backups: report.backups,
     nextAction: report.nextAction,

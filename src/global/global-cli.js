@@ -404,7 +404,7 @@ export async function runGlobalDoctor(packageRoot, {
     return report;
   }
 
-  const { checks, ok, hasDrift } = await runGlobalDoctorChecks(homeDir, { packageRoot, workspaceRoot });
+  const { checks, ok, hasDrift, componentHealth } = await runGlobalDoctorChecks(homeDir, { packageRoot, workspaceRoot });
 
   console.log(`${BRAND.displayName} doctor (scope: agent-global)`);
   console.log(`Home: ${homeDir}`);
@@ -414,6 +414,14 @@ export async function runGlobalDoctor(packageRoot, {
     const label = check.status.toUpperCase().padEnd(8);
     const detail = check.detail ? ` — ${check.detail}` : "";
     console.log(`[${label}] ${check.name}${detail}`);
+  }
+
+  if (componentHealth.length > 0) {
+    console.log("");
+    console.log("Components:");
+    for (const entry of componentHealth) {
+      console.log(`  ${entry.id.padEnd(16)} ${entry.status}`);
+    }
   }
 
   console.log("");
@@ -782,7 +790,14 @@ function printComponentEntry(component, { workspace = false } = {}) {
   console.log("");
   console.log(`${component.id} (${component.version}) [${defaultLabel}]`);
   console.log(`  Label: ${component.label}`);
+  console.log(`  Kind: ${component.kind ?? "component"}`);
   console.log(`  Assets: ${component.assetFiles.join(", ")}`);
+  if ((component.dependencies ?? []).length > 0) {
+    console.log(`  Dependencies: ${component.dependencies.join(", ")}`);
+  }
+  if ((component.healthChecks ?? []).length > 0) {
+    console.log(`  Health checks: ${component.healthChecks.map((check) => check.id).join(", ")}`);
+  }
 
   if (component.instructions) {
     console.log(`  Instructions: ${component.instructions}`);

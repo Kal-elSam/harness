@@ -1,5 +1,6 @@
 import { loadComponentCatalog } from "./load-component-catalog.js";
 import { loadWorkspaceComponentCatalog } from "./load-workspace-component-catalog.js";
+import { indexComponentsById, resolveDependencyOrder } from "./component-resolve.js";
 
 const BUNDLED_COMPONENTS = loadComponentCatalog();
 
@@ -24,8 +25,13 @@ function formatCatalogEntry(component) {
     id: component.id,
     label: component.label,
     version: component.version,
+    schemaVersion: component.schemaVersion ?? 2,
+    kind: component.kind ?? "component",
     source: component.source ?? "bundled",
     defaultEnabled: component.defaultEnabled,
+    capabilities: [...(component.capabilities ?? [])],
+    dependencies: [...(component.dependencies ?? [])],
+    healthChecks: (component.healthChecks ?? []).map((check) => ({ ...check })),
     assetFiles: [...component.assetFiles],
     adapterHints: Object.keys(component.adapterHints),
     instructions: component.instructions ?? null
@@ -69,12 +75,19 @@ export function resolveTargetComponents({
   workspaceRoot = null
 } = {}) {
   if (components != null) {
-    return validateComponentIds(components, { workspaceRoot }).map((id) => resolveComponent(id, { workspaceRoot }));
+    return resolveComponentClosure(components, { workspaceRoot });
   }
 
   if (noDefaultComponents) return [];
 
-  return DEFAULT_COMPONENT_IDS.map((id) => resolveComponent(id, { workspaceRoot }));
+  return resolveComponentClosure(DEFAULT_COMPONENT_IDS, { workspaceRoot });
+}
+
+export function resolveComponentClosure(seedIds, { workspaceRoot = null } = {}) {
+  const catalog = mergeComponents(workspaceRoot);
+  const byId = indexComponentsById(catalog);
+  const validatedSeeds = validateComponentIds(seedIds, { workspaceRoot });
+  return resolveDependencyOrder(validatedSeeds, byId);
 }
 
 export function buildComponentStateEntries(components, adapters) {

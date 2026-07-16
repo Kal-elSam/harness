@@ -1,4 +1,5 @@
 import { listBackupSnapshots } from "./backups.js";
+import { buildComponentHealthEntries } from "./component-health.js";
 import { runGlobalDoctorChecks } from "./global-doctor.js";
 import { buildEffectivePolicy } from "./policy.js";
 import { harnessHomePaths } from "./paths.js";
@@ -20,16 +21,8 @@ export async function buildStatusReport(homeDir, { packageRoot, workspaceRoot = 
     managed: installedAgentIds.has(id)
   }));
 
-  const components = (state?.components ?? []).map((entry) => {
-    const related = doctor.checks.filter((check) => check.componentId === entry.id);
-    const status = summarizeCheckStatuses(related);
-    return {
-      id: entry.id,
-      version: entry.version,
-      source: entry.source ?? "bundled",
-      status
-    };
-  });
+  const components = buildComponentHealthEntries(state?.components ?? [], doctor.checks)
+    .map(({ checks, ...entry }) => entry);
 
   const counts = {
     ok: doctor.checks.filter((check) => check.status === "ok").length,
@@ -48,6 +41,7 @@ export async function buildStatusReport(homeDir, { packageRoot, workspaceRoot = 
     state,
     agents,
     components,
+    componentHealth: doctor.componentHealth,
     checks: doctor.checks,
     backups: backups.length,
     counts,
@@ -56,13 +50,6 @@ export async function buildStatusReport(homeDir, { packageRoot, workspaceRoot = 
     policy,
     ok: overall === "ok"
   };
-}
-
-function summarizeCheckStatuses(checks) {
-  if (checks.length === 0) return "ok";
-  if (checks.some((check) => check.status === "missing")) return "missing";
-  if (checks.some((check) => check.status === "stale")) return "stale";
-  return "ok";
 }
 
 function resolveOverallStatus({ state, doctor }) {

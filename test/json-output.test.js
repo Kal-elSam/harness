@@ -23,6 +23,7 @@ const STABLE_KEYS = [
   "overall",
   "agents",
   "components",
+  "componentHealth",
   "checks",
   "backups",
   "nextAction",
@@ -64,6 +65,7 @@ function assertStableEnvelope(payload) {
   assert.equal(typeof payload.overall, "string");
   assert.ok(Array.isArray(payload.agents));
   assert.ok(Array.isArray(payload.components));
+  assert.ok(Array.isArray(payload.componentHealth));
   assert.ok(Array.isArray(payload.checks));
   assert.equal(typeof payload.backups, "number");
   assert.equal(typeof payload.nextAction, "string");
