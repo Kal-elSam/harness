@@ -1,5 +1,6 @@
 import { listBackupSnapshots } from "./backups.js";
 import { buildAdapterContext } from "./adapter-context.js";
+import { buildComponentHealthEntries } from "./component-health.js";
 import { runComponentEcosystemChecks } from "./component-ecosystem-checks.js";
 import { detectGlobalDrift, hasRepairableDrift } from "./drift.js";
 import { harnessHomePaths } from "./paths.js";
@@ -44,11 +45,13 @@ export async function runGlobalDoctorChecks(homeDir, {
 
   const hasMissing = checks.some((check) => check.status === "missing");
   const hasStale = checks.some((check) => check.status === "stale");
+  const componentHealth = buildComponentHealthEntries(state?.components ?? [], checks);
 
   return {
     checks,
     ok: !hasMissing && !hasStale,
     hasDrift: hasRepairableDrift(checks),
+    componentHealth,
     state,
     paths
   };
