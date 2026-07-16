@@ -20,15 +20,24 @@
       "id": "sdd-core",
       "kind": "component",
       "label": "SDD Core",
-      "version": "1.0.0",
+      "version": "2.0.0",
       "defaultEnabled": true,
-      "capabilities": ["sdd.workflow"],
+      "capabilities": ["sdd.workflow", "sdd.skills"],
       "dependencies": [],
       "healthChecks": [
         { "id": "assets", "type": "assets" },
         { "id": "drift", "type": "drift" }
       ],
-      "assetFiles": ["workflow.md", "spec-sizing.md", "handoff.md"],
+      "assetFiles": [
+        "workflow.md",
+        "spec-sizing.md",
+        "handoff.md",
+        "skills/sdd-init/SKILL.md",
+        "skills/sdd-explore/SKILL.md",
+        "skills/sdd-propose/SKILL.md",
+        "skills/sdd-spec/SKILL.md",
+        "skills/sdd-design/SKILL.md"
+      ],
       "adapterHints": {
         "cursor": "- In repos with workspace harness: also read `.cursor/rules/` and `docs/specs/`.",
         "codex": "- In repos with workspace harness: also read `.codex/skills/sdd/` when present.",

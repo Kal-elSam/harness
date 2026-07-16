@@ -10,6 +10,8 @@ export function buildSddCoreManagedSection(context, adapter, catalogEntry) {
     `- Workflow: ${join(baseDir, "workflow.md")}`,
     `- Spec sizing: ${join(baseDir, "spec-sizing.md")}`,
     `- Handoff rules: ${join(baseDir, "handoff.md")}`,
+    `- Canonical skills: ${join(baseDir, "skills")}`,
+    "- Phase skills: sdd-init, sdd-explore, sdd-propose, sdd-spec, sdd-design.",
     "- Classify work as basic, standard, or complex before implementing.",
     "- No significant feature without a spec; no bug fix without a failing test first.",
     adapterNote

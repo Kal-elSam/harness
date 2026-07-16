@@ -72,6 +72,8 @@ test("components expose managed section builders", () => {
 
   assert.match(section, /### SDD Core/);
   assert.match(section, /workflow\.md/);
+  assert.match(section, /Canonical skills/);
+  assert.match(section, /sdd-init/);
   assert.match(section, /basic, standard, or complex/);
   assert.match(section, /\.cursor\/rules\//);
 });
@@ -84,8 +86,19 @@ test("catalog metadata is loaded from the packaged component catalog", () => {
   assert.equal(orchestrator.label, "Orchestrator");
   assert.deepEqual(orchestrator.assetFiles, ["orchestrator.md"]);
   assert.equal(sddCore.label, "SDD Core");
-  assert.deepEqual(sddCore.assetFiles, ["workflow.md", "spec-sizing.md", "handoff.md"]);
+  assert.deepEqual(sddCore.assetFiles, [
+    "workflow.md",
+    "spec-sizing.md",
+    "handoff.md",
+    "skills/sdd-init/SKILL.md",
+    "skills/sdd-explore/SKILL.md",
+    "skills/sdd-propose/SKILL.md",
+    "skills/sdd-spec/SKILL.md",
+    "skills/sdd-design/SKILL.md"
+  ]);
   assert.match(sddCore.adapterHints.cursor, /\.cursor\/rules\//);
+  assert.deepEqual(sddCore.capabilities, ["sdd.workflow", "sdd.skills"]);
+  assert.equal(sddCore.version, "2.0.0");
 });
 
 test("describeComponentCatalog exposes defaults and adapter hint keys", () => {

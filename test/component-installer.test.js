@@ -36,11 +36,13 @@ test("default install includes sdd-core assets and state", async () => {
   assert.ok(result.coreFiles.includes("components/orchestrator/orchestrator.md"));
   assert.ok(result.coreFiles.includes("components/sdd-core/workflow.md"));
   assert.ok(existsSync(join(paths.root, "components", "sdd-core", "spec-sizing.md")));
+  assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-init", "SKILL.md")));
+  assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-design", "SKILL.md")));
 
   const state = await readGlobalState(paths.statePath);
   assert.equal(state.stateVersion, 3);
   assert.deepEqual(state.components.map((entry) => entry.id), ["orchestrator", "sdd-core"]);
-  assert.equal(state.components[1].version, "1.0.0");
+  assert.equal(state.components[1].version, "2.0.0");
   assert.ok(state.components[1].managedTargets.includes(".cursor/AGENTS.md"));
 });
 
