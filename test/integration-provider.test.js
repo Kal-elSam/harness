@@ -104,7 +104,11 @@ test("provider registry validates contract and resolves component providers", as
   });
   assert.equal(inspection.provider, "engram");
   assert.equal(inspection.doctorInvoked, false);
-  await assert.rejects(() => engram.verify(), /not implemented yet/);
+  const verified = await engram.verify({
+    whichCommand: () => null,
+    agentIds: []
+  });
+  assert.equal(verified.provider, "engram");
   const dry = await engram.plan({
     requestedAgentIds: ["codex"],
     inspect: () => ({

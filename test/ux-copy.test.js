@@ -154,7 +154,8 @@ test("setup next steps do not promise automatic Engram or Graphify installation"
 
   const doctor = runHarness(["doctor"], homeDir);
   assert.equal(doctor.status, 0, doctor.stderr);
-  assert.match(doctor.stdout, /engram:mcp-tools/i);
+  assert.match(doctor.stdout, /engram:binary/i);
+  assert.match(doctor.stdout, /engram:agent:cursor/i);
 });
 
 test("common errors stay clear and non-destructive", async () => {

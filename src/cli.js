@@ -5,6 +5,10 @@ import { ADAPTERS } from "./harness-files.js";
 import { GLOBAL_AGENT_IDS } from "./global/registry.js";
 import { COMPONENT_IDS, DEFAULT_COMPONENT_IDS } from "./global/component-registry.js";
 import {
+  runComponentsConfigure,
+  runComponentsRollback
+} from "./global/component-integration-cli.js";
+import {
   printGlobalComponents,
   printGlobalDetect,
   runComponentsImport,
@@ -237,6 +241,12 @@ async function dispatchComponentsCommand(options, invoke) {
     case "import":
       await runComponentsImport(options);
       return;
+    case "configure":
+      await runComponentsConfigure(options);
+      return;
+    case "rollback":
+      await runComponentsRollback(options);
+      return;
     default:
       throw new Error(
         `Unknown components action "${options.componentsAction}". Run "${invoke} help".`
@@ -321,6 +331,7 @@ export function parseArgs(argv) {
     components: null,
     componentsAction: null,
     componentId: null,
+    receiptId: null,
     label: null,
     outPath: null,
     bundlePath: null,
@@ -439,6 +450,8 @@ export function parseArgs(argv) {
     } else if (arg === "--apply") options.apply = true;
     else if (arg === "--to") options.snapshot = args[++index];
     else if (arg.startsWith("--to=")) options.snapshot = arg.slice("--to=".length);
+    else if (arg === "--receipt") options.receiptId = args[++index];
+    else if (arg.startsWith("--receipt=")) options.receiptId = arg.slice("--receipt=".length);
     else if (arg === "--limit") options.limit = parsePositiveInt(args[++index], "limit");
     else if (arg.startsWith("--limit=")) options.limit = parsePositiveInt(arg.slice("--limit=".length), "limit");
     else if (arg === "--command") options.historyCommand = args[++index];
@@ -517,7 +530,18 @@ function parseComponentsAction(args, options) {
 
   if (action === "validate") return;
 
-  throw new Error(`Unknown components action "${action}". Use validate, init, pack, or import.`);
+  if (action === "configure" || action === "rollback") {
+    const componentId = args[0];
+    if (!componentId || componentId.startsWith("-")) {
+      throw new Error(
+        `Missing component id. Use: ${formatCliCommand(`components ${action} engram-memory`)}`
+      );
+    }
+    options.componentId = args.shift();
+    return;
+  }
+
+  throw new Error(`Unknown components action "${action}". Use validate, init, pack, import, configure, or rollback.`);
 }
 
 function parsePolicyAction(args, options) {
@@ -737,6 +761,8 @@ Usage:
   ${cli} report [--json] [--out <file>] [--limit <n>]
   ${cli} components
   ${cli} components validate|init|pack|import ...
+  ${cli} components configure engram-memory [--agents <list>] [--dry-run|--yes] [--json]
+  ${cli} components rollback engram-memory --receipt <id> [--dry-run|--yes] [--json]
   ${cli} uninstall [--dry-run]
 
 Scopes:
@@ -774,7 +800,7 @@ Commands:
   rollback   Preview or restore a prior config snapshot (--apply to write).
   policy     View or edit local operation preferences under ~/.harness/policy.json.
   report     Read-only diagnostics bundle: status, policy, adapters, diff, history.
-  components List, validate, scaffold, pack, or import workspace components.
+  components List, validate, scaffold, pack, import, or configure integrations (Engram).
   uninstall  Remove managed sections and global state. Backups are preserved.
   init       Alias for install --scope=workspace (legacy).
 

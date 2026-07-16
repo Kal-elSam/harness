@@ -52,10 +52,10 @@
       "integration": { "provider": "engram" },
       "assetFiles": ["memory.md"],
       "adapterHints": {
-        "cursor": "- Engram MCP (`mem_*` tools) is not auto-installed; configure in Cursor MCP settings when ready.",
-        "codex": "- Engram MCP is not auto-installed; add MCP server config when ready.",
-        "claude": "- Engram MCP is not auto-installed; add MCP server config when ready.",
-        "opencode": "- Engram MCP is not auto-installed; add MCP server config when ready."
+        "cursor": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup cursor`).",
+        "codex": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup codex`).",
+        "claude": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup claude-code`).",
+        "opencode": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup opencode`)."
       }
     },
     {
