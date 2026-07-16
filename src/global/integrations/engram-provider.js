@@ -1,15 +1,19 @@
-/** Engram provider shell — methods filled by later Milestone 3 PRs. */
+import { inspectEngramIntegration } from "./engram-evidence.js";
+import { planEngramConfigure } from "./engram-plan.js";
 
 const NOT_READY = "Engram provider method is not implemented yet.";
 
-export function createEngramProvider() {
+export function createEngramProvider({
+  inspect = inspectEngramIntegration,
+  plan = planEngramConfigure
+} = {}) {
   return {
     id: "engram",
-    async inspect() {
-      throw new Error(NOT_READY);
+    async inspect(context = {}) {
+      return inspect(context);
     },
-    async plan() {
-      throw new Error(NOT_READY);
+    async plan(context = {}) {
+      return plan(context);
     },
     async apply() {
       throw new Error(NOT_READY);

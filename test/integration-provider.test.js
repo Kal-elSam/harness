@@ -98,7 +98,13 @@ test("provider registry validates contract and resolves component providers", as
   const engram = getIntegrationProvider("engram");
   assert.equal(engram.id, "engram");
   assert.equal(createEngramProvider().id, "engram");
-  await assert.rejects(() => engram.inspect(), /not implemented yet/);
+  const inspection = await engram.inspect({
+    whichCommand: () => null,
+    agentIds: []
+  });
+  assert.equal(inspection.provider, "engram");
+  assert.equal(inspection.doctorInvoked, false);
+  await assert.rejects(() => engram.apply(), /not implemented yet/);
 });
 
 test("bundled engram-memory declares integration.provider engram", () => {
