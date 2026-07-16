@@ -7,6 +7,7 @@ import { SDD_PLAN_ACTIONS } from "./sdd-evidence.js";
 import { planSddConfigure } from "./sdd-plan.js";
 import { resolveCanonicalSddSkillPath } from "./sdd-destinations.js";
 import { saveSddReceipt } from "./sdd-receipts.js";
+import { backupSddDestination } from "./sdd-rollback.js";
 
 const APPLYING_ACTIONS = new Set([SDD_PLAN_ACTIONS.CREATE, SDD_PLAN_ACTIONS.UPDATE]);
 
@@ -34,7 +35,9 @@ export async function applySddConfigure({
   }
 
   const startedAt = now();
+  const resolvedReceiptId = receiptId ?? `sdd-${startedAt.replace(/[:.]/g, "-")}`;
   const files = [];
+  const backups = [];
   let failed = null;
 
   for (const action of planned.actions) {
@@ -49,6 +52,12 @@ export async function applySddConfigure({
         files.push({ ...record, action: SDD_PLAN_ACTIONS.CONFLICT, reason: guard, applied: false, skipped: true });
         continue;
       }
+      if (action.action === SDD_PLAN_ACTIONS.UPDATE) {
+        const backup = await backupSddDestination(action.destinationPath, {
+          homeDir, receiptId: resolvedReceiptId
+        });
+        if (backup) backups.push(backup);
+      }
       const bytes = await readFile(resolveCanonicalSddSkillPath(action.skillId, packageRoot));
       await mkdir(dirname(action.destinationPath), { recursive: true });
       await writeFile(action.destinationPath, bytes);
@@ -62,9 +71,9 @@ export async function applySddConfigure({
 
   const appliedCount = files.filter((entry) => entry.applied).length;
   const receipt = {
-    id: receiptId ?? `sdd-${startedAt.replace(/[:.]/g, "-")}`,
+    id: resolvedReceiptId,
     provider: "sdd-core", componentId: "sdd-core", startedAt, finishedAt: now(),
-    persona, personaActive: persona === "teaching", agentIds: planned.agentIds, files,
+    persona, personaActive: persona === "teaching", agentIds: planned.agentIds, files, backups,
     summary: planned.summary,
     conflicts: files
       .filter((entry) => entry.action === SDD_PLAN_ACTIONS.CONFLICT)

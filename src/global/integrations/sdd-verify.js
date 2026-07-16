@@ -1,0 +1,94 @@
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { hashBuffer } from "../../hash.js";
+import { applySddConfigure } from "./sdd-apply.js";
+import { classifySddVerifyHealth, SDD_HEALTH } from "./sdd-evidence.js";
+import {
+  SDD_SKILL_IDS,
+  groupSddSkillDestinations,
+  resolveCanonicalSddSkillPath,
+  resolveSddAgentSelection
+} from "./sdd-destinations.js";
+
+/** Read-only verify: configured | missing | drifted | conflict (canonical vs disk). */
+export async function verifySddConfigure({
+  requestedAgentIds = null,
+  detectedAgentIds = [],
+  homeDir,
+  packageRoot,
+  trackedFiles = {},
+  exists = existsSync,
+  readFileImpl = readFile
+} = {}) {
+  if (!homeDir) throw new Error("verifySddConfigure requires homeDir.");
+  if (!packageRoot) throw new Error("verifySddConfigure requires packageRoot.");
+
+  const agentIds = resolveSddAgentSelection({
+    requestedIds: requestedAgentIds,
+    detectedIds: detectedAgentIds
+  });
+  const groups = groupSddSkillDestinations(agentIds, homeDir);
+  const findings = [];
+
+  for (const skillId of SDD_SKILL_IDS) {
+    const canonicalHash = hashBuffer(await readFileImpl(resolveCanonicalSddSkillPath(skillId, packageRoot)));
+    for (const group of groups) {
+      const destinationPath = join(group.root, skillId, "SKILL.md");
+      const fileExists = exists(destinationPath);
+      const diskHash = fileExists ? hashBuffer(await readFileImpl(destinationPath)) : null;
+      const trackedHash = trackedFiles[destinationPath] ?? null;
+      const health = classifySddVerifyHealth({
+        exists: fileExists, canonicalHash, diskHash, trackedHash
+      });
+      findings.push({
+        skillId, destinationPath, agentIds: [...group.agentIds], kind: group.kind,
+        status: health.status, drift: health.drift, reason: health.reason,
+        canonicalHash, diskHash, trackedHash
+      });
+    }
+  }
+
+  findings.sort((left, right) => {
+    const bySkill = left.skillId.localeCompare(right.skillId);
+    return bySkill !== 0 ? bySkill : left.destinationPath.localeCompare(right.destinationPath);
+  });
+
+  const summary = { configured: 0, missing: 0, drifted: 0, conflict: 0 };
+  for (const entry of findings) summary[entry.status] += 1;
+
+  return {
+    provider: "sdd-core",
+    componentId: "sdd-core",
+    agentIds,
+    findings,
+    summary,
+    status: summarizeSddHealth(summary),
+    ok: summary.missing === 0 && summary.drifted === 0 && summary.conflict === 0
+  };
+}
+
+export function summarizeSddHealth(summary) {
+  if (summary.conflict > 0) return SDD_HEALTH.CONFLICT;
+  if (summary.missing > 0) return SDD_HEALTH.MISSING;
+  if (summary.drifted > 0) return SDD_HEALTH.DRIFTED;
+  return SDD_HEALTH.CONFIGURED;
+}
+
+/** Sync = verify then apply; conflicts block writes. */
+export async function syncSddConfigure(options = {}) {
+  const verification = await verifySddConfigure(options);
+  if (verification.summary.conflict > 0) {
+    return {
+      ...verification,
+      synced: false,
+      blocked: true,
+      applied: false,
+      cancelled: false,
+      receipt: null,
+      reason: "Conflicts present; refusing sync overwrite."
+    };
+  }
+  const result = await applySddConfigure(options);
+  return { ...result, verification, synced: Boolean(result.applied), blocked: false };
+}
