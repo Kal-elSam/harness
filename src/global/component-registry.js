@@ -24,13 +24,8 @@ function formatCatalogEntry(component) {
     id: component.id,
     label: component.label,
     version: component.version,
-    schemaVersion: component.schemaVersion ?? 2,
-    kind: component.kind ?? "component",
     source: component.source ?? "bundled",
     defaultEnabled: component.defaultEnabled,
-    capabilities: [...(component.capabilities ?? [])],
-    dependencies: [...(component.dependencies ?? [])],
-    healthChecks: (component.healthChecks ?? []).map((check) => ({ ...check })),
     assetFiles: [...component.assetFiles],
     adapterHints: Object.keys(component.adapterHints),
     instructions: component.instructions ?? null
