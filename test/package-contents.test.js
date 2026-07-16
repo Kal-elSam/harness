@@ -40,6 +40,8 @@ test("packed tarball includes release scripts", () => {
     assert.ok(listing.includes("package/global-template/components/catalog.json"));
     assert.ok(listing.includes("package/global-template/components/sdd-core/skills/sdd-init/SKILL.md"));
     assert.ok(listing.includes("package/global-template/components/sdd-core/skills/sdd-design/SKILL.md"));
+    assert.ok(listing.includes("package/global-template/components/sdd-core/skills/sdd-archive/SKILL.md"));
+    assert.ok(listing.includes("package/global-template/components/sdd-core/personas/teaching.md"));
   } finally {
     if (existsSync(tarballPath)) unlinkSync(tarballPath);
   }

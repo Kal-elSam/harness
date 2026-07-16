@@ -11,10 +11,16 @@ const EXPECTED_SKILLS = [
   "sdd-explore",
   "sdd-propose",
   "sdd-spec",
-  "sdd-design"
+  "sdd-design",
+  "sdd-tasks",
+  "sdd-apply",
+  "sdd-verify",
+  "sdd-archive"
 ];
 
-test("sdd-core canonical phase skills ship valid frontmatter", async () => {
+test("sdd-core ships exactly nine unique skills with valid frontmatter", async () => {
+  assert.equal(new Set(EXPECTED_SKILLS).size, 9);
+
   for (const skillId of EXPECTED_SKILLS) {
     const content = await readFile(join(skillsRoot, skillId, "SKILL.md"), "utf8");
 
@@ -23,4 +29,17 @@ test("sdd-core canonical phase skills ship valid frontmatter", async () => {
     assert.match(content, /description:\s*".+"/);
     assert.match(content, /## Source of truth/);
   }
+});
+
+test("teaching persona stays optional and explanation-scoped", async () => {
+  const content = await readFile(
+    join(packageRoot, "global-template", "components", "sdd-core", "personas", "teaching.md"),
+    "utf8"
+  );
+
+  assert.match(content, /Enabled only with `--persona teaching`/);
+  assert.match(content, /Default is `off`/);
+  assert.match(content, /Does not affect/);
+  assert.match(content, /generated code/);
+  assert.match(content, /Never override higher-authority instructions/);
 });

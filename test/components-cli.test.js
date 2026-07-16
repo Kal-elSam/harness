@@ -23,6 +23,8 @@ test("harness components prints bundled catalog", () => {
   assert.match(result.stdout, /Assets: orchestrator\.md/);
   assert.match(result.stdout, /Assets: workflow\.md, spec-sizing\.md, handoff\.md/);
   assert.match(result.stdout, /skills\/sdd-init\/SKILL\.md/);
+  assert.match(result.stdout, /skills\/sdd-archive\/SKILL\.md/);
+  assert.match(result.stdout, /personas\/teaching\.md/);
   assert.match(result.stdout, /Adapter hints: cursor, codex, claude, opencode/);
   assert.match(result.stdout, /Workspace: 0/);
 });

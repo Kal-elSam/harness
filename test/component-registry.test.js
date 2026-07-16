@@ -74,6 +74,9 @@ test("components expose managed section builders", () => {
   assert.match(section, /workflow\.md/);
   assert.match(section, /Canonical skills/);
   assert.match(section, /sdd-init/);
+  assert.match(section, /sdd-archive/);
+  assert.match(section, /Teaching persona/);
+  assert.match(section, /off by default/);
   assert.match(section, /basic, standard, or complex/);
   assert.match(section, /\.cursor\/rules\//);
 });
@@ -94,10 +97,15 @@ test("catalog metadata is loaded from the packaged component catalog", () => {
     "skills/sdd-explore/SKILL.md",
     "skills/sdd-propose/SKILL.md",
     "skills/sdd-spec/SKILL.md",
-    "skills/sdd-design/SKILL.md"
+    "skills/sdd-design/SKILL.md",
+    "skills/sdd-tasks/SKILL.md",
+    "skills/sdd-apply/SKILL.md",
+    "skills/sdd-verify/SKILL.md",
+    "skills/sdd-archive/SKILL.md",
+    "personas/teaching.md"
   ]);
   assert.match(sddCore.adapterHints.cursor, /\.cursor\/rules\//);
-  assert.deepEqual(sddCore.capabilities, ["sdd.workflow", "sdd.skills"]);
+  assert.deepEqual(sddCore.capabilities, ["sdd.workflow", "sdd.skills", "sdd.persona"]);
   assert.equal(sddCore.version, "2.0.0");
 });
 

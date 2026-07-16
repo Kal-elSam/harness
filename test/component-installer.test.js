@@ -38,6 +38,8 @@ test("default install includes sdd-core assets and state", async () => {
   assert.ok(existsSync(join(paths.root, "components", "sdd-core", "spec-sizing.md")));
   assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-init", "SKILL.md")));
   assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-design", "SKILL.md")));
+  assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-archive", "SKILL.md")));
+  assert.ok(existsSync(join(paths.root, "components", "sdd-core", "personas", "teaching.md")));
 
   const state = await readGlobalState(paths.statePath);
   assert.equal(state.stateVersion, 3);
