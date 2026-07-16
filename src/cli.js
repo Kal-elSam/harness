@@ -358,6 +358,7 @@ export function parseArgs(argv) {
     agent: null,
     task: null,
     model: null,
+    intelligenceBackend: null,
     permissions: null,
     captureTranscript: false,
     follow: false,
@@ -462,6 +463,8 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--agent=")) options.agent = arg.slice("--agent=".length);
     else if (arg === "--model") options.model = args[++index];
     else if (arg.startsWith("--model=")) options.model = arg.slice("--model=".length);
+    else if (arg === "--backend") options.intelligenceBackend = args[++index] ?? "";
+    else if (arg.startsWith("--backend=")) options.intelligenceBackend = arg.slice("--backend=".length);
     else if (arg === "--permissions") options.permissions = parsePathList(args[++index]);
     else if (arg.startsWith("--permissions=")) options.permissions = parsePathList(arg.slice("--permissions=".length));
     else if (arg === "--capture-transcript") options.captureTranscript = true;
@@ -707,7 +710,9 @@ Usage:
   ${cli} runs stop <runId> [--json]
   ${cli} orchestrator [--json]          Read-only agent capability diagnostics
   ${cli} intelligence [status|models|context|route|ask] [--json]
-  ${cli} intelligence ask --prompt "..." [--cloud-consent] [--yes] [--paths a,b]
+  ${cli} intelligence models --backend opencode-go|opencode-zen|opencode
+  ${cli} intelligence route --backend opencode-go --model <id> [--cloud-consent]
+  ${cli} intelligence ask --prompt "..." [--backend <id>] [--model <id>] [--cloud-consent] [--yes] [--paths a,b]
   ${cli} setup [--dry-run] [--yes] [--confirm] [--simple] [--no-preflight] [--agents <list|all>] [--components <list>]
   ${cli} status [--json]
   ${cli} sync [--dry-run] [--yes] [--confirm] [--json] [--no-preflight]
@@ -749,8 +754,9 @@ Commands:
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
   orchestrator  Read-only capability registry diagnostics (--json supported).
   intelligence  Harness Engineering layer: backends, context packs, routing, budgets.
-             Local-first (Ollama). Cloud (OpenRouter/free) only with --cloud-consent.
-             Credentials via env only (OPENROUTER_API_KEY, OLLAMA_HOST). Never stored.
+             Local-first (Ollama). Cloud only with --cloud-consent.
+             Ephemeral --backend/--model override preferredBackend/preferredModel.
+             Credentials via env only (OPENROUTER_API_KEY, OPENCODE_API_KEY, OLLAMA_HOST). Never stored.
   setup      Managed ecosystem setup. Interactive Ink UI (TTY). Use --simple for Clack prompts.
   status     Control panel: agents, components, drift, backups, next action.
   sync       Converge managed content (repair drift), then show status.

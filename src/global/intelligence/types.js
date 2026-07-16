@@ -1,8 +1,25 @@
 export const BACKEND_IDS = {
   OLLAMA: "ollama",
   OPENROUTER: "openrouter",
+  OPENCODE_GO: "opencode-go",
+  OPENCODE_ZEN: "opencode-zen",
+  OPENCODE: "opencode",
   CUSTOM: "custom"
 };
+
+export const TRANSPORT_KINDS = {
+  CHAT_COMPLETIONS: "chat_completions",
+  RESPONSES: "responses",
+  RUNTIME: "runtime"
+};
+
+export const OPENCODE_API_KEY_ENV = "OPENCODE_API_KEY";
+
+export const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
+export const OPENCODE_ZEN_BASE_URL = "https://opencode.ai/zen/v1";
+
+export const OPENCODE_GO_DEFAULT_MODEL = "kimi-k2.7-code";
+export const OPENCODE_ZEN_DEFAULT_FREE_MODEL = "big-pickle";
 
 export const COST_CLASSES = {
   FREE: "free",
@@ -38,7 +55,8 @@ export function createModelDescriptor({
   tools = false,
   reasoning = false,
   rateLimits = null,
-  opaque = false
+  opaque = false,
+  transport = null
 }) {
   return {
     provider,
@@ -50,7 +68,8 @@ export function createModelDescriptor({
     tools,
     reasoning,
     rateLimits,
-    opaque
+    opaque,
+    transport
   };
 }
 

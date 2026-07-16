@@ -56,7 +56,7 @@ test("recommendation: New run wins when agents are launchable without intelligen
         routingPreview: { canInvoke: false, reason: "No backend" }
       },
       recommendations: [
-        "No intelligence backend available. Start Ollama or set OPENROUTER_API_KEY (env only)."
+        "No intelligence backend available. Start Ollama, install the OpenCode CLI, or set OPENCODE_API_KEY / OPENROUTER_API_KEY (env only)."
       ]
     },
     dashboard: emptyDashboard({ launchable: 1 })
@@ -84,7 +84,8 @@ test("recommendation: enable intelligence only when no launchable agents", () =>
   });
 
   assert.equal(next.kind, NEXT_STEP_KINDS.ENABLE_INTELLIGENCE);
-  assert.match(next.message, /intelligence|Ollama|OpenRouter/i);
+  assert.match(next.message, /intelligence|Ollama|OpenCode|OPENCODE_API_KEY|OPENROUTER/i);
+  assert.match(next.message, /OpenCode CLI|OPENCODE_API_KEY/);
 });
 
 test("recommendation: launch a run when environment is ready", () => {
@@ -124,6 +125,29 @@ test("recommendation: review problems when diagnostics report errors and nothing
 
   assert.equal(next.kind, NEXT_STEP_KINDS.REVIEW);
   assert.match(next.message, /review|problem|health/i);
+});
+
+test("recommendation: inspect auth when cloud is configured but not authenticated", () => {
+  const next = resolveDashboardRecommendation({
+    hasGlobalState: true,
+    diagnostics: {
+      ...emptyDiagnostics(),
+      diagnostics: { detected: 2, available: 2, unknown: 0, errors: 0 },
+      intelligence: {
+        summary: {
+          localAvailable: false,
+          cloudConfigured: true,
+          cloudAuthenticated: false
+        },
+        routingPreview: { canInvoke: false, reason: "OpenCode Go HTTP 401" }
+      },
+      recommendations: []
+    },
+    dashboard: emptyDashboard({ launchable: 0 })
+  });
+
+  assert.equal(next.kind, NEXT_STEP_KINDS.REVIEW);
+  assert.match(next.message, /intelligence status|not authenticated/i);
 });
 
 test("readiness: needs setup / attention / limited / ready", () => {

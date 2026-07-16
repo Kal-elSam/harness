@@ -9,12 +9,14 @@ import {
 } from "./intelligence/index.js";
 import { BRAND } from "./brand/index.js";
 import { formatCliCommand } from "./brand/cli.js";
+import { resolveSessionOverride } from "./intelligence-session.js";
 
 export async function runIntelligenceCli(options, packageManifest) {
   const action = options.intelligenceAction ?? "status";
   const homeDir = resolveHomeDir();
   const workspaceRoot = options.cwd;
   const { profile, sources } = await resolveProfile({ homeDir, workspaceRoot });
+  const sessionOverride = resolveSessionOverride(options);
 
   switch (action) {
     case "status":
@@ -24,13 +26,15 @@ export async function runIntelligenceCli(options, packageManifest) {
         profile,
         sources,
         json: options.json,
-        env: process.env
+        env: process.env,
+        sessionOverride
       });
     case "models":
       return printIntelligenceModels({
         profile,
         json: options.json,
-        env: process.env
+        env: process.env,
+        sessionOverride
       });
     case "context":
       return printIntelligenceContext({
@@ -49,7 +53,8 @@ export async function runIntelligenceCli(options, packageManifest) {
         task: options.intelligenceTask,
         cloudConsent: options.cloudConsent,
         json: options.json,
-        env: process.env
+        env: process.env,
+        sessionOverride
       });
     case "ask":
       return runIntelligenceAsk({
@@ -63,7 +68,8 @@ export async function runIntelligenceCli(options, packageManifest) {
         confirmed: options.yes || options.confirm,
         json: options.json,
         env: process.env,
-        packageManifest
+        packageManifest,
+        sessionOverride
       });
     default:
       throw new Error(
@@ -72,7 +78,15 @@ export async function runIntelligenceCli(options, packageManifest) {
   }
 }
 
-async function printIntelligenceStatus({ homeDir, workspaceRoot, profile, sources, json, env }) {
+async function printIntelligenceStatus({
+  homeDir,
+  workspaceRoot,
+  profile,
+  sources,
+  json,
+  env,
+  sessionOverride
+}) {
   const backends = await inspectIntelligenceBackends({
     env,
     customProviders: profile.customProviders
@@ -81,7 +95,8 @@ async function printIntelligenceStatus({ homeDir, workspaceRoot, profile, source
   const routing = resolveRoutingDecision({
     backends,
     profile,
-    cloudConsent: false
+    cloudConsent: false,
+    sessionOverride
   });
 
   const payload = {
@@ -89,6 +104,7 @@ async function printIntelligenceStatus({ homeDir, workspaceRoot, profile, source
     homeDir,
     workspaceRoot,
     profile: buildProfileJson({ profile, sources }),
+    sessionOverride,
     backends,
     summary,
     routing
@@ -119,13 +135,17 @@ async function printIntelligenceStatus({ homeDir, workspaceRoot, profile, source
   return payload;
 }
 
-async function printIntelligenceModels({ profile, json, env }) {
+async function printIntelligenceModels({ profile, json, env, sessionOverride }) {
   const backends = await inspectIntelligenceBackends({
     env,
     customProviders: profile.customProviders
   });
+  const filterId = sessionOverride?.preferredBackend ?? null;
+  const filtered = filterId
+    ? backends.filter((backend) => backend.id === filterId)
+    : backends;
 
-  const models = backends.flatMap((backend) =>
+  const models = filtered.flatMap((backend) =>
     (backend.models ?? []).map((model) => ({
       ...model,
       backendState: backend.state,
@@ -133,11 +153,16 @@ async function printIntelligenceModels({ profile, json, env }) {
     }))
   );
 
-  const payload = { readOnly: true, models, backends: backends.map((entry) => ({
-    id: entry.id,
-    state: entry.state,
-    available: entry.available
-  })) };
+  const payload = {
+    readOnly: true,
+    sessionOverride,
+    models,
+    backends: filtered.map((entry) => ({
+      id: entry.id,
+      state: entry.state,
+      available: entry.available
+    }))
+  };
 
   if (json) {
     console.log(JSON.stringify(payload, null, 2));
@@ -219,7 +244,8 @@ async function printIntelligenceRoute({
   task,
   cloudConsent,
   json,
-  env
+  env,
+  sessionOverride
 }) {
   const backends = await inspectIntelligenceBackends({
     env,
@@ -231,11 +257,13 @@ async function printIntelligenceRoute({
     profile,
     contextPack: pack,
     task,
-    cloudConsent: Boolean(cloudConsent)
+    cloudConsent: Boolean(cloudConsent),
+    sessionOverride
   });
 
   const payload = {
     readOnly: true,
+    sessionOverride,
     routing,
     estimatedTokens: pack.estimatedTokens,
     evidenceUsed: pack.evidence.filter((entry) => entry.kind === "file").map((entry) => entry.path)
@@ -266,7 +294,8 @@ async function runIntelligenceAsk({
   cloudConsent,
   confirmed,
   json,
-  env
+  env,
+  sessionOverride
 }) {
   if (!prompt && !task) {
     throw new Error(`Missing prompt. Use: ${formatCliCommand("intelligence ask --prompt \"...\"")}`);
@@ -281,7 +310,8 @@ async function runIntelligenceAsk({
     includePrivate,
     cloudConsent,
     confirmed,
-    env
+    env,
+    sessionOverride
   });
 
   if (json) {
@@ -289,6 +319,7 @@ async function runIntelligenceAsk({
       ok: outcome.ok,
       mode: outcome.mode,
       diagnosticsOnly: outcome.diagnosticsOnly,
+      sessionOverride,
       routing: outcome.routing,
       explanation: outcome.explanation,
       telemetry: outcome.telemetry,

@@ -3,6 +3,32 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## Unreleased
+
+### Added
+
+- OpenCode Go / Zen as first-class Intelligence backends via `OPENCODE_API_KEY`
+  (`opencode-go`, `opencode-zen`) with an explicit transport registry
+  (`chat_completions`, `responses`, `runtime`).
+- OpenCode CLI runtime backend (`opencode`) for Anthropic/Google models without
+  direct HTTP transport, using `opencode run --format json` plus an analysis-only
+  preamble (intent signal, not a universal non-mutation guarantee).
+- Safe OpenCode evidence: CLI install + `opencode auth list` providers + `/models`
+  probe. States distinguish `configured`, `authenticated`,
+  `entitlement_unverified`, and `limit_reached` without reading `auth.json` or
+  claiming subscription/balance from a key alone.
+- Ephemeral `--backend` / `--model` overrides for `intelligence models|route|ask`
+  (does not persist `preferredBackend` / `preferredModel`).
+- Doctor advisory check for intelligence providers (optional; never fails health).
+
+### Changed
+
+- Default cloud routing precedence: Ollama → OpenCode Go → OpenCode Zen →
+  OpenRouter. Go limit failures never auto-spend Zen credits.
+- Health guidance treats API-key presence as configured credentials, not proven
+  authentication, and recommends Ollama, OpenCode CLI, `OPENCODE_API_KEY`, and
+  `OPENROUTER_API_KEY`.
+
 ## 0.4.3 — 2026-07-13
 
 Patch release. Fix System health crash on real profile.sources.
