@@ -17,6 +17,7 @@ export async function applyEngramConfigure({
   yes = false,
   json = false,
   interactive = null,
+  receiptId = null,
   plan = planEngramConfigure,
   runSetup = runEngramSetup,
   confirm = promptApplyConfirmation,
@@ -74,7 +75,7 @@ export async function applyEngramConfigure({
   const remaining = planned.actions.map((a) => a.agentId).filter((id) => !completed.includes(id));
 
   const receipt = {
-    id: `engram-${startedAt.replace(/[:.]/g, "-")}`,
+    id: receiptId ?? `engram-${startedAt.replace(/[:.]/g, "-")}`,
     provider: "engram",
     componentId: "engram-memory",
     startedAt,
