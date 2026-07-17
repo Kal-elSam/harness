@@ -5,8 +5,10 @@ import { assertExplicitApplyConsent, promptApplyConfirmation, shouldPromptApplyC
 import { hashBuffer } from "../../hash.js";
 import { SDD_PLAN_ACTIONS } from "./sdd-evidence.js";
 import { planSddConfigure } from "./sdd-plan.js";
-import { resolveCanonicalSddSkillPath } from "./sdd-destinations.js";
-import { hashRegularFile, refuseSymlink, replaceRegularFile } from "./sdd-fs-guard.js";
+import { resolveCanonicalSddSkillPath, resolveSddSkillRoot } from "./sdd-destinations.js";
+import {
+  assertSafePathChain, parentRealpath, replaceRegularFile, snapshotRegularFile
+} from "./sdd-fs-guard.js";
 import { saveSddReceipt } from "./sdd-receipts.js";
 import { backupSddDestination } from "./sdd-rollback.js";
 
@@ -48,21 +50,22 @@ export async function applySddConfigure({
       continue;
     }
     try {
-      const guard = await guardBeforeWrite(action);
-      if (guard) {
-        files.push({ ...record, action: SDD_PLAN_ACTIONS.CONFLICT, reason: guard, applied: false, skipped: true });
+      const managedRoot = resolveSddSkillRoot(action.agentIds[0], homeDir);
+      const outcome = await materializeOne(action, {
+        homeDir, packageRoot, managedRoot, receiptId: resolvedReceiptId
+      });
+      if (outcome.conflict) {
+        files.push({
+          ...record, action: SDD_PLAN_ACTIONS.CONFLICT, reason: outcome.conflict,
+          applied: false, skipped: true
+        });
         continue;
       }
-      if (action.action === SDD_PLAN_ACTIONS.UPDATE) {
-        const backup = await backupSddDestination(action.destinationPath, {
-          homeDir, receiptId: resolvedReceiptId
-        });
-        if (backup) backups.push(backup);
-      }
-      const bytes = await readFile(resolveCanonicalSddSkillPath(action.skillId, packageRoot));
-      await mkdir(dirname(action.destinationPath), { recursive: true });
-      await replaceRegularFile(action.destinationPath, bytes);
-      files.push({ ...record, applied: true, skipped: false, afterHash: hashBuffer(bytes) });
+      if (outcome.backup) backups.push(outcome.backup);
+      files.push({
+        ...record, applied: true, skipped: false,
+        afterHash: outcome.afterHash, parentRealpath: outcome.parentRealpath
+      });
     } catch (error) {
       failed = { skillId: action.skillId, destinationPath: action.destinationPath, error: error.message };
       files.push({ ...record, applied: false, skipped: false, error: error.message });
@@ -100,19 +103,46 @@ function buildFileRecord(action) {
   };
 }
 
-/** Re-read disk before write; plan-time hashes alone cannot catch TOCTOU. */
-async function guardBeforeWrite(action) {
-  const symlink = await refuseSymlink(action.destinationPath, "Destination");
-  if (symlink) return symlink;
-  if (action.action === SDD_PLAN_ACTIONS.CREATE && existsSync(action.destinationPath)) {
-    return "Destination appeared after planning; preserving byte-for-byte.";
+async function materializeOne(action, { homeDir, packageRoot, managedRoot, receiptId }) {
+  const chain = await assertSafePathChain(action.destinationPath, managedRoot, homeDir);
+  if (!chain.ok) return { conflict: chain.reason };
+
+  if (action.action === SDD_PLAN_ACTIONS.CREATE) {
+    if (existsSync(action.destinationPath)) {
+      return { conflict: "Destination appeared after planning; preserving byte-for-byte." };
+    }
+    const bytes = await readFile(resolveCanonicalSddSkillPath(action.skillId, packageRoot));
+    await mkdir(dirname(action.destinationPath), { recursive: true });
+    const after = await assertSafePathChain(action.destinationPath, managedRoot, homeDir);
+    if (!after.ok) throw new Error(after.reason);
+    const parent = await parentRealpath(action.destinationPath);
+    try {
+      await replaceRegularFile(action.destinationPath, bytes, { createExclusive: true, managedRoot, expectedParentRealpath: parent, trustedAnchor: homeDir });
+    } catch (error) {
+      if (/appeared before create|EEXIST/i.test(error.message)) return { conflict: error.message };
+      throw error;
+    }
+    return { afterHash: hashBuffer(bytes), parentRealpath: parent, backup: null };
   }
-  if (action.action !== SDD_PLAN_ACTIONS.UPDATE) return null;
+
   if (!existsSync(action.destinationPath)) {
-    return "Managed destination disappeared after planning; preserving byte-for-byte.";
+    return { conflict: "Managed destination disappeared after planning; preserving byte-for-byte." };
   }
-  if ((await hashRegularFile(action.destinationPath)) !== action.trackedHash) {
-    return "Managed file changed after planning; preserving byte-for-byte.";
+  const snap = await snapshotRegularFile(action.destinationPath);
+  if (snap.hash !== action.trackedHash) {
+    return { conflict: "Managed file changed after planning; preserving byte-for-byte." };
   }
-  return null;
+  const parent = await parentRealpath(action.destinationPath);
+  let backup;
+  try {
+    backup = await backupSddDestination(action.destinationPath, {
+      homeDir, receiptId, managedRoot, snapshot: snap, parentRealpath: parent
+    });
+  } catch (error) {
+    if (/Backup already exists/i.test(error.message)) return { conflict: error.message };
+    throw error;
+  }
+  const bytes = await readFile(resolveCanonicalSddSkillPath(action.skillId, packageRoot));
+  await replaceRegularFile(action.destinationPath, bytes, { expectedIno: snap.ino, expectedHash: snap.hash, managedRoot, expectedParentRealpath: parent, trustedAnchor: homeDir });
+  return { afterHash: hashBuffer(bytes), parentRealpath: parent, backup };
 }
