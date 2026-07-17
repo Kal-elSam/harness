@@ -30,6 +30,7 @@ test("normalizeGlobalState migrates legacy agents array", () => {
   assert.deepEqual(normalized.agents, legacy.agents);
   assert.deepEqual(normalized.components[0].id, "orchestrator");
   assert.deepEqual(normalized.sdd, { persona: "off", agentIds: [], files: [], lastReceiptId: null, updatedAt: null });
+  assert.equal(normalized.stateVersion, 4);
 });
 
 test("normalizeGlobalState preserves an existing v4 SDD block", () => {
