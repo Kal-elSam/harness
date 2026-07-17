@@ -3,7 +3,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { assertExplicitApplyConsent, promptApplyConfirmation, shouldPromptApplyConfirmation } from "../apply-confirmation.js";
 import { hashBuffer } from "../../hash.js";
-import { SDD_PLAN_ACTIONS } from "./sdd-evidence.js";
+import { SDD_FILE_OUTCOMES, SDD_PLAN_ACTIONS } from "./sdd-evidence.js";
 import { planSddConfigure } from "./sdd-plan.js";
 import { resolveCanonicalSddSkillPath, resolveSddSkillRoot } from "./sdd-destinations.js";
 import {
@@ -42,11 +42,22 @@ export async function applySddConfigure({
   const files = [];
   const backups = [];
   let failed = null;
+  let abortRemaining = false;
 
   for (const action of planned.actions) {
     const record = buildFileRecord(action);
     if (!APPLYING_ACTIONS.has(action.action)) {
-      files.push({ ...record, applied: false, skipped: true, afterHash: action.diskHash });
+      const outcome = action.action === SDD_PLAN_ACTIONS.CONFLICT
+        ? SDD_FILE_OUTCOMES.CONFLICT
+        : SDD_FILE_OUTCOMES.NOOP;
+      files.push({ ...record, applied: false, skipped: true, outcome, afterHash: action.diskHash });
+      continue;
+    }
+    if (abortRemaining) {
+      files.push({
+        ...record, applied: false, skipped: true, outcome: SDD_FILE_OUTCOMES.SKIPPED,
+        error: "Skipped after prior file failure; partial evidence retained."
+      });
       continue;
     }
     try {
@@ -57,19 +68,21 @@ export async function applySddConfigure({
       if (outcome.conflict) {
         files.push({
           ...record, action: SDD_PLAN_ACTIONS.CONFLICT, reason: outcome.conflict,
-          applied: false, skipped: true
+          applied: false, skipped: true, outcome: SDD_FILE_OUTCOMES.CONFLICT
         });
         continue;
       }
       if (outcome.backup) backups.push(outcome.backup);
       files.push({
-        ...record, applied: true, skipped: false,
+        ...record, applied: true, skipped: false, outcome: SDD_FILE_OUTCOMES.APPLIED,
         afterHash: outcome.afterHash, parentRealpath: outcome.parentRealpath
       });
     } catch (error) {
       failed = { skillId: action.skillId, destinationPath: action.destinationPath, error: error.message };
-      files.push({ ...record, applied: false, skipped: false, error: error.message });
-      break;
+      files.push({
+        ...record, applied: false, skipped: false, outcome: SDD_FILE_OUTCOMES.FAILED, error: error.message
+      });
+      abortRemaining = true;
     }
   }
 
@@ -117,7 +130,9 @@ async function materializeOne(action, { homeDir, packageRoot, managedRoot, recei
     if (!after.ok) throw new Error(after.reason);
     const parent = await parentRealpath(action.destinationPath);
     try {
-      await replaceRegularFile(action.destinationPath, bytes, { createExclusive: true, managedRoot, expectedParentRealpath: parent, trustedAnchor: homeDir });
+      await replaceRegularFile(action.destinationPath, bytes, {
+        createExclusive: true, managedRoot, expectedParentRealpath: parent, trustedAnchor: homeDir
+      });
     } catch (error) {
       if (/appeared before create|EEXIST/i.test(error.message)) return { conflict: error.message };
       throw error;
@@ -143,6 +158,8 @@ async function materializeOne(action, { homeDir, packageRoot, managedRoot, recei
     throw error;
   }
   const bytes = await readFile(resolveCanonicalSddSkillPath(action.skillId, packageRoot));
-  await replaceRegularFile(action.destinationPath, bytes, { expectedIno: snap.ino, expectedHash: snap.hash, managedRoot, expectedParentRealpath: parent, trustedAnchor: homeDir });
+  await replaceRegularFile(action.destinationPath, bytes, {
+    expectedIno: snap.ino, expectedHash: snap.hash, managedRoot, expectedParentRealpath: parent, trustedAnchor: homeDir
+  });
   return { afterHash: hashBuffer(bytes), parentRealpath: parent, backup };
 }

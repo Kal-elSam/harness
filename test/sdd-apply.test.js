@@ -99,14 +99,14 @@ test("recordSddMaterialization writes deterministic v4 SDD block and drops confl
   const receipt = {
     id: "sdd-record", persona: "teaching", agentIds: ["codex", "claude"],
     files: [
-      { destinationPath: "/h/.claude/skills/sdd-init/SKILL.md", skillId: "sdd-init", agentIds: ["claude"], action: "create", afterHash: "hash-b" },
-      { destinationPath: "/h/.agents/skills/sdd-init/SKILL.md", skillId: "sdd-init", agentIds: ["codex"], action: "create", afterHash: "hash-a" },
-      { destinationPath: "/h/.agents/skills/sdd-spec/SKILL.md", skillId: "sdd-spec", agentIds: ["codex"], action: "conflict", afterHash: null }
+      { destinationPath: "/h/.claude/skills/sdd-init/SKILL.md", skillId: "sdd-init", agentIds: ["claude"], action: "create", afterHash: "hash-b", outcome: "applied" },
+      { destinationPath: "/h/.agents/skills/sdd-init/SKILL.md", skillId: "sdd-init", agentIds: ["codex"], action: "create", afterHash: "hash-a", outcome: "applied" },
+      { destinationPath: "/h/.agents/skills/sdd-spec/SKILL.md", skillId: "sdd-spec", agentIds: ["codex"], action: "conflict", afterHash: null, outcome: "conflict" }
     ]
   };
   const next = recordSddMaterialization({ sdd: undefined }, { receipt, now: () => "2026-07-16T00:00:00.000Z" });
   assert.equal(next.sdd.persona, "teaching");
-  assert.deepEqual(next.sdd.agentIds, ["codex", "claude"]);
+  assert.deepEqual(next.sdd.agentIds, ["claude", "codex"]);
   assert.deepEqual(next.sdd.files.map((e) => e.destinationPath), [
     "/h/.agents/skills/sdd-init/SKILL.md", "/h/.claude/skills/sdd-init/SKILL.md"
   ]);

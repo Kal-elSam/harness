@@ -10,7 +10,10 @@ import { requireIntegrationProvider } from "./integrations/provider-registry.js"
 import { ensureIntegrationProvidersRegistered } from "./integrations/index.js";
 import { ENGRAM_INTEGRATION_STATUS } from "./integrations/engram-evidence.js";
 import { SDD_HEALTH } from "./integrations/sdd-evidence.js";
-import { recordSddMaterialization } from "./integrations/sdd-state.js";
+import {
+  hasSuccessfulSddRollbackMutations, recordSddMaterialization, reconcileSddStateAfterRollback
+} from "./integrations/sdd-state.js";
+import { loadSddReceipt } from "./integrations/sdd-receipts.js";
 
 const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -46,12 +49,14 @@ export async function runComponentsConfigure(options) {
   ensureIntegrationProvidersRegistered();
   const homeDir = resolveHomeDir();
   await assertComponentInstalled(componentId, { homeDir });
-  const provider = requireIntegrationProvider(providerId);
+  const provider = options.provider ?? requireIntegrationProvider(providerId);
   const context = await buildProviderContext(options, { homeDir, componentId });
   const result = await provider.apply(context);
 
-  if (componentId === "sdd-core" && result.receipt?.ok && !result.dryRun && !result.cancelled) {
-    await persistSddReceiptState(homeDir, result.receipt);
+  if (componentId === "sdd-core" && result.receipt && !result.dryRun && !result.cancelled) {
+    if (result.receipt.ok || result.receipt.partial) {
+      await persistSddReceiptState(homeDir, result.receipt);
+    }
   }
 
   if (options.json) {
@@ -100,7 +105,7 @@ export async function runComponentsRollback(options) {
   ensureIntegrationProvidersRegistered();
   const homeDir = resolveHomeDir();
   await assertComponentInstalled(componentId, { homeDir });
-  const provider = requireIntegrationProvider(providerId);
+  const provider = options.provider ?? requireIntegrationProvider(providerId);
   const result = await provider.rollback({
     receiptId: options.receiptId,
     homeDir,
@@ -109,6 +114,14 @@ export async function runComponentsRollback(options) {
     json: Boolean(options.json),
     interactive: null
   });
+
+  if (
+    componentId === "sdd-core"
+    && !result.dryRun && !result.cancelled && !result.blocked
+    && hasSuccessfulSddRollbackMutations(result.actions)
+  ) {
+    await reconcileSddRollbackState(homeDir, result);
+  }
 
   if (options.json) {
     printJson(result);
@@ -159,6 +172,15 @@ async function persistSddReceiptState(homeDir, receipt) {
   const paths = harnessHomePaths(homeDir);
   const state = (await readGlobalState(paths.statePath)) ?? {};
   await writeGlobalState(paths.statePath, recordSddMaterialization(state, { receipt }));
+}
+
+async function reconcileSddRollbackState(homeDir, result) {
+  const paths = harnessHomePaths(homeDir);
+  const state = (await readGlobalState(paths.statePath)) ?? {};
+  const receipt = await loadSddReceipt(result.receiptId, { homeDir });
+  await writeGlobalState(paths.statePath, reconcileSddStateAfterRollback(state, {
+    receipt, actions: result.actions ?? []
+  }));
 }
 
 function isConfigureFailure(result) {

@@ -5,6 +5,15 @@ export const SDD_PLAN_ACTIONS = Object.freeze({
   CONFLICT: "conflict"
 });
 
+/** Per-file receipt outcomes after apply (Slice 2 evidence). */
+export const SDD_FILE_OUTCOMES = Object.freeze({
+  APPLIED: "applied",
+  NOOP: "noop",
+  CONFLICT: "conflict",
+  FAILED: "failed",
+  SKIPPED: "skipped"
+});
+
 export const SDD_HEALTH = Object.freeze({
   CONFIGURED: "configured",
   MISSING: "missing",
