@@ -2,13 +2,21 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { hashBuffer } from "../../hash.js";
+import { resolveAdapter } from "../registry.js";
 import { applySddConfigure } from "./sdd-apply.js";
 import { classifySddVerifyHealth, SDD_HEALTH } from "./sdd-evidence.js";
 import {
   SDD_SKILL_IDS,
   groupSddSkillDestinations,
+  resolveCanonicalTeachingPersonaPath,
   resolveSddAgentSelection
 } from "./sdd-destinations.js";
+import {
+  classifyPersonaHealth,
+  derivePersona,
+  normalizePersonaAgentIds,
+  SDD_PERSONA_GATE
+} from "./sdd-persona.js";
 import { compareSkillPaths, loadCanonicalSddSkill } from "./sdd-skill-files.js";
 
 /** Read-only verify: configured | missing | drifted | conflict (canonical vs disk). */
@@ -18,6 +26,7 @@ export async function verifySddConfigure({
   homeDir,
   packageRoot,
   trackedFiles = {},
+  personaAgentIds = [],
   exists = existsSync,
   readFileImpl = readFile
 } = {}) {
@@ -60,14 +69,33 @@ export async function verifySddConfigure({
   const summary = { configured: 0, missing: 0, drifted: 0, conflict: 0 };
   for (const entry of findings) summary[entry.status] += 1;
 
+  const consumers = normalizePersonaAgentIds(personaAgentIds);
+  const incompleteAgentIds = consumers.filter((id) => {
+    const mine = findings.filter((entry) => entry.agentIds.includes(id));
+    return !mine.length || mine.some((entry) => entry.status !== SDD_HEALTH.CONFIGURED);
+  });
+  let gatePresent = true;
+  for (const id of consumers) {
+    const path = join(homeDir, resolveAdapter(id).assets.configFile);
+    if (!exists(path) || !String(await readFileImpl(path, "utf8")).includes(SDD_PERSONA_GATE)) {
+      gatePresent = false;
+      break;
+    }
+  }
+  const personaHealth = classifyPersonaHealth({
+    personaAgentIds: consumers,
+    assetPresent: exists(resolveCanonicalTeachingPersonaPath(packageRoot)),
+    gatePresent,
+    incompleteAgentIds
+  });
+
   return {
-    provider: "sdd-core",
-    componentId: "sdd-core",
-    agentIds,
-    findings,
-    summary,
+    provider: "sdd-core", componentId: "sdd-core", agentIds, findings, summary,
     status: summarizeSddHealth(summary),
-    ok: summary.missing === 0 && summary.drifted === 0 && summary.conflict === 0
+    ok: summary.missing === 0 && summary.drifted === 0 && summary.conflict === 0,
+    persona: {
+      ...personaHealth, persona: derivePersona(consumers), personaAgentIds: consumers, incompleteAgentIds
+    }
   };
 }
 

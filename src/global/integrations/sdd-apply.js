@@ -8,6 +8,7 @@ import { resolveCanonicalSddSkillFile, resolveSddSkillRoot } from "./sdd-destina
 import {
   assertSafePathChain, parentRealpath, replaceRegularFile, snapshotRegularFile
 } from "./sdd-fs-guard.js";
+import { finalizePersonaTransition } from "./sdd-persona.js";
 import { planSddConfigure } from "./sdd-plan.js";
 import { saveSddReceipt } from "./sdd-receipts.js";
 import { backupSddDestination } from "./sdd-rollback.js";
@@ -16,16 +17,18 @@ const APPLYING_ACTIONS = new Set([SDD_PLAN_ACTIONS.CREATE, SDD_PLAN_ACTIONS.UPDA
 
 export async function applySddConfigure({
   requestedAgentIds = null, detectedAgentIds = [], homeDir, packageRoot, persona = "off",
-  trackedFiles = {}, dryRun = false, yes = false, json = false, interactive = null,
-  receiptId = null, plan = planSddConfigure, confirm = promptApplyConfirmation,
-  saveReceipt = saveSddReceipt, now = () => new Date().toISOString()
+  personaAgentIds = [], trackedFiles = {}, dryRun = false, yes = false, json = false,
+  interactive = null, receiptId = null, plan = planSddConfigure,
+  confirm = promptApplyConfirmation, saveReceipt = saveSddReceipt,
+  now = () => new Date().toISOString()
 } = {}) {
   assertExplicitApplyConsent({
     applying: !dryRun, dryRun, json, yes, interactive, command: "components configure sdd-core"
   });
 
   const planned = await plan({
-    requestedAgentIds, detectedAgentIds, homeDir, packageRoot, persona, trackedFiles, dryRun: true
+    requestedAgentIds, detectedAgentIds, homeDir, packageRoot, persona, personaAgentIds,
+    trackedFiles, dryRun: true
   });
   if (dryRun) return { ...planned, applied: false, cancelled: false, receipt: null };
 
@@ -87,21 +90,30 @@ export async function applySddConfigure({
   }
 
   const appliedCount = files.filter((entry) => entry.applied).length;
+  const personaTransition = finalizePersonaTransition(
+    planned.personaTransition ?? {
+      before: [], after: [], admitted: [], rejected: [], persona: "off", personaChanged: false
+    },
+    files, planned.requestedPersona ?? persona
+  );
+  const { before, after, admitted, rejected, personaChanged } = personaTransition;
   const receipt = {
     id: resolvedReceiptId,
     provider: "sdd-core", componentId: "sdd-core", startedAt, finishedAt: now(),
-    persona, personaActive: persona === "teaching", agentIds: planned.agentIds, files, backups,
-    summary: planned.summary,
+    persona: personaTransition.persona, personaActive: after.length > 0,
+    personaTransition: { before, after, admitted, rejected, personaChanged },
+    agentIds: planned.agentIds, files, backups, summary: planned.summary,
     conflicts: files
       .filter((entry) => entry.action === SDD_PLAN_ACTIONS.CONFLICT)
       .map((entry) => ({ destinationPath: entry.destinationPath, reason: entry.reason })),
     ok: failed == null, partial: failed != null && appliedCount > 0, failed,
-    sessionRefreshRequired: appliedCount > 0, persisted: false
+    sessionRefreshRequired: appliedCount > 0 || personaChanged, persisted: false
   };
 
   const saved = await saveReceipt(receipt, { homeDir });
   return {
-    ...planned, dryRun: false, executes: true, writes: appliedCount > 0,
+    ...planned, persona: personaTransition.persona, personaActive: receipt.personaActive,
+    personaTransition, dryRun: false, executes: true, writes: appliedCount > 0,
     applied: failed == null, cancelled: false,
     sessionRefreshRequired: receipt.sessionRefreshRequired,
     receipt: saved.receipt, receiptPath: saved.path

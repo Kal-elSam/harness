@@ -10,6 +10,7 @@ import {
   resolveCanonicalTeachingPersonaPath,
   resolveSddAgentSelection
 } from "./sdd-destinations.js";
+import { planPersonaTransition } from "./sdd-persona.js";
 import { compareSkillPaths, loadCanonicalSddSkill } from "./sdd-skill-files.js";
 
 /**
@@ -22,6 +23,7 @@ export async function planSddConfigure({
   homeDir,
   packageRoot,
   persona = "off",
+  personaAgentIds = [],
   trackedFiles = {},
   dryRun = true,
   exists = existsSync,
@@ -66,29 +68,19 @@ export async function planSddConfigure({
     || compareSkillPaths(a.relativePath, b.relativePath)
     || compareSkillPaths(a.destinationPath, b.destinationPath));
 
-  const summary = {
-    create: 0,
-    noop: 0,
-    update: 0,
-    conflict: 0
-  };
-  for (const action of actions) {
-    summary[action.action] += 1;
-  }
-
+  const summary = { create: 0, noop: 0, update: 0, conflict: 0 };
+  for (const action of actions) summary[action.action] += 1;
+  const personaTransition = planPersonaTransition({
+    requestedPersona: persona, selectedAgentIds: agentIds,
+    currentPersonaAgentIds: personaAgentIds, actions
+  });
   return {
-    provider: "sdd-core",
-    componentId: "sdd-core",
-    dryRun: Boolean(dryRun),
-    executes: false,
-    writes: false,
-    persona,
+    provider: "sdd-core", componentId: "sdd-core", dryRun: Boolean(dryRun),
+    executes: false, writes: false, requestedPersona: persona,
+    persona: personaTransition.persona,
     personaPath: resolveCanonicalTeachingPersonaPath(packageRoot),
-    personaActive: persona === "teaching",
-    agentIds,
-    actions,
+    personaActive: personaTransition.after.length > 0, personaTransition, agentIds, actions,
     conflicts: actions.filter((entry) => entry.action === SDD_PLAN_ACTIONS.CONFLICT),
-    summary,
-    sessionRefreshRequired: false
+    summary, sessionRefreshRequired: personaTransition.personaChanged
   };
 }

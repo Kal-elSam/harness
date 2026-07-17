@@ -40,7 +40,7 @@ test("normalizeGlobalState upgrades compatible v3 to explicit stateVersion 4", (
   assert.deepEqual(once.adapters, v3.adapters);
   assert.deepEqual(once.components, v3.components);
   assert.deepEqual(once.sdd, {
-    persona: "off", agentIds: [], files: [], lastReceiptId: null, updatedAt: null
+    persona: "off", personaAgentIds: [], agentIds: [], files: [], lastReceiptId: null, updatedAt: null
   });
 
   const twice = normalizeGlobalState(once);

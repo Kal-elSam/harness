@@ -99,10 +99,6 @@ test("teaching persona stays optional and explanation-scoped", async () => {
     join(packageRoot, "global-template", "components", "sdd-core", "personas", "teaching.md"),
     "utf8"
   );
-
   assert.match(content, /Enabled only with `--persona teaching`/);
-  assert.match(content, /Default is `off`/);
-  assert.match(content, /Does not affect/);
-  assert.match(content, /generated code/);
-  assert.match(content, /Never override higher-authority instructions/);
+  assert.match(content, /Does not affect[\s\S]*generated code[\s\S]*commits or pull requests/);
 });

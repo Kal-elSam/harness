@@ -76,7 +76,7 @@ test("components expose managed section builders", () => {
   assert.match(section, /sdd-init/);
   assert.match(section, /sdd-archive/);
   assert.match(section, /Teaching persona/);
-  assert.match(section, /off by default/);
+  assert.match(section, /sdd\.personaAgentIds/);
   assert.match(section, /basic, standard, or complex/);
   assert.match(section, /\.cursor\/rules\//);
 });

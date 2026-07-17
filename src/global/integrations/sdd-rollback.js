@@ -18,6 +18,7 @@ import {
   snapshotRegularFile
 } from "./sdd-fs-guard.js";
 import { assertSafeSddReceiptId, loadSddReceipt, sddIntegrationsDir } from "./sdd-receipts.js";
+import { samePersonaAgentIds } from "./sdd-persona.js";
 
 export function sddReceiptBackupDir(homeDir, receiptId) {
   assertSafeSddReceiptId(receiptId);
@@ -60,7 +61,8 @@ export async function rollbackSddReceipt({
   yes = false,
   json = false,
   interactive = null,
-  confirm = promptApplyConfirmation
+  confirm = promptApplyConfirmation,
+  personaAgentIds = []
 } = {}) {
   assertExplicitApplyConsent({
     applying: !dryRun, dryRun, json, yes, interactive, command: "components rollback sdd-core"
@@ -75,7 +77,7 @@ export async function rollbackSddReceipt({
     if (!accepted) return { dryRun, cancelled: true, receiptId, actions: [] };
   }
 
-  const evidence = await assessRollbackEvidence(receipt, { homeDir, receiptId });
+  const evidence = await assessRollbackEvidence(receipt, { homeDir, receiptId, personaAgentIds });
   if (!evidence.complete) {
     return {
       dryRun,
@@ -96,6 +98,13 @@ export async function rollbackSddReceipt({
     }
     if (step.action === "restore") {
       actions.push(await executeRestore(step, { dryRun, homeDir }));
+      continue;
+    }
+    if (step.action === "persona") {
+      actions.push({
+        action: "persona", ok: true, dryRun: Boolean(dryRun),
+        before: step.before, after: step.after
+      });
     }
   }
 
@@ -109,7 +118,7 @@ export async function rollbackSddReceipt({
   };
 }
 
-async function assessRollbackEvidence(receipt, { homeDir, receiptId }) {
+async function assessRollbackEvidence(receipt, { homeDir, receiptId, personaAgentIds }) {
   const backups = new Map((receipt.backups ?? []).map((entry) => [entry.path, entry]));
   const actions = [];
   const steps = [];
@@ -172,6 +181,18 @@ async function assessRollbackEvidence(receipt, { homeDir, receiptId }) {
         managedRoot: expected.managedRoot,
         expectedParentRealpath: expectedParent
       });
+    }
+  }
+
+  const transition = receipt.personaTransition;
+  if (transition && (transition.personaChanged || transition.before || transition.after)) {
+    if (!samePersonaAgentIds(transition.after, personaAgentIds)) {
+      actions.push({
+        action: "persona", ok: false,
+        reason: "Persona state changed since apply; refusing persona rollback."
+      });
+    } else if (transition.personaChanged) {
+      steps.push({ action: "persona", before: transition.before, after: transition.after });
     }
   }
 

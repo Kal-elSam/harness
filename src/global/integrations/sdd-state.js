@@ -1,10 +1,11 @@
 import { SDD_FILE_OUTCOMES } from "./sdd-evidence.js";
-import { SDD_PERSONA_IDS } from "./sdd-destinations.js";
+import { derivePersona, normalizePersonaAgentIds } from "./sdd-persona.js";
 
 /** Empty v4 SDD block: persona off, no managed files, no receipt. */
 export function defaultSddState() {
   return {
     persona: "off",
+    personaAgentIds: [],
     agentIds: [],
     files: [],
     lastReceiptId: null,
@@ -15,8 +16,15 @@ export function defaultSddState() {
 /** Coerce any prior/absent shape into a valid v4 SDD block. */
 export function normalizeSddState(raw) {
   if (!raw || typeof raw !== "object") return defaultSddState();
+  let personaAgentIds = normalizePersonaAgentIds(
+    Array.isArray(raw.personaAgentIds) ? raw.personaAgentIds : []
+  );
+  if (!personaAgentIds.length && raw.persona === "teaching" && Array.isArray(raw.agentIds)) {
+    personaAgentIds = normalizePersonaAgentIds(raw.agentIds);
+  }
   return {
-    persona: SDD_PERSONA_IDS.includes(raw.persona) ? raw.persona : "off",
+    persona: derivePersona(personaAgentIds),
+    personaAgentIds,
     agentIds: Array.isArray(raw.agentIds) ? [...raw.agentIds] : [],
     files: Array.isArray(raw.files) ? raw.files.map(normalizeSddFile) : [],
     lastReceiptId: typeof raw.lastReceiptId === "string" ? raw.lastReceiptId : null,
@@ -64,10 +72,18 @@ function collectAgentIds(files) {
   return [...ids].sort();
 }
 
+/** Legacy receipts without personaTransition derive consumers from teaching + files. */
+function resolvePersonaAgentIds(receipt, current, files) {
+  if (receipt?.personaTransition) return normalizePersonaAgentIds(receipt.personaTransition.after);
+  if (!files.length) return [];
+  if ((receipt.persona ?? current.persona) !== "teaching") return [];
+  return current.personaAgentIds.length ? current.personaAgentIds : collectAgentIds(files);
+}
+
 /** True when rollback mutated disk via successful delete/restore (even if global ok=false). */
 export function hasSuccessfulSddRollbackMutations(actions) {
   return (actions ?? []).some((entry) =>
-    entry?.ok && (entry.action === "delete" || entry.action === "restore")
+    entry?.ok && (entry.action === "delete" || entry.action === "restore" || entry.action === "persona")
   );
 }
 
@@ -94,13 +110,14 @@ export function recordSddMaterialization(state, { receipt, now = () => new Date(
   const files = [...managed.values()].sort((left, right) =>
     left.destinationPath.localeCompare(right.destinationPath)
   );
-  const agentIds = collectAgentIds(files);
+  const personaAgentIds = resolvePersonaAgentIds(receipt, current, files);
 
   return {
     ...(state ?? {}),
     sdd: {
-      persona: files.length === 0 ? "off" : (receipt.persona ?? current.persona),
-      agentIds,
+      persona: derivePersona(personaAgentIds),
+      personaAgentIds,
+      agentIds: collectAgentIds(files),
       files,
       lastReceiptId: receipt.id ?? current.lastReceiptId,
       updatedAt: now()
@@ -108,7 +125,7 @@ export function recordSddMaterialization(state, { receipt, now = () => new Date(
   };
 }
 
-/** Reconcile each successful delete/restore; refresh agentIds/persona from remaining files. */
+/** Reconcile each successful delete/restore/persona; refresh agentIds/persona from remaining files. */
 export function reconcileSddStateAfterRollback(state, {
   receipt, actions, now = () => new Date().toISOString()
 } = {}) {
@@ -118,7 +135,7 @@ export function reconcileSddStateAfterRollback(state, {
   const backups = new Map((receipt?.backups ?? []).map((entry) => [entry.path, entry]));
 
   for (const action of actions ?? []) {
-    if (!action?.ok || action.dryRun || action.action === "skip") continue;
+    if (!action?.ok || action.dryRun || action.action === "skip" || action.action === "persona") continue;
     if (action.action === "delete") {
       managed.delete(action.path);
       continue;
@@ -141,6 +158,10 @@ export function reconcileSddStateAfterRollback(state, {
   const files = [...managed.values()].sort((left, right) =>
     left.destinationPath.localeCompare(right.destinationPath)
   );
+  const personaAction = (actions ?? []).find((entry) => entry.action === "persona" && entry.ok);
+  let personaAgentIds = current.personaAgentIds;
+  if (files.length === 0 && !personaAction) personaAgentIds = [];
+  else if (personaAction) personaAgentIds = normalizePersonaAgentIds(personaAction.before ?? []);
 
   return {
     ...(state ?? {}),
@@ -148,7 +169,8 @@ export function reconcileSddStateAfterRollback(state, {
       ...current,
       files,
       agentIds: collectAgentIds(files),
-      persona: files.length === 0 ? "off" : current.persona,
+      personaAgentIds,
+      persona: derivePersona(personaAgentIds),
       lastReceiptId: receipt?.id ?? current.lastReceiptId,
       updatedAt: now()
     }

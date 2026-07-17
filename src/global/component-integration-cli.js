@@ -106,13 +106,17 @@ export async function runComponentsRollback(options) {
   const homeDir = resolveHomeDir();
   await assertComponentInstalled(componentId, { homeDir });
   const provider = options.provider ?? requireIntegrationProvider(providerId);
+  const state = componentId === "sdd-core"
+    ? await readGlobalState(harnessHomePaths(homeDir).statePath)
+    : null;
   const result = await provider.rollback({
     receiptId: options.receiptId,
     homeDir,
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     json: Boolean(options.json),
-    interactive: null
+    interactive: null,
+    personaAgentIds: state?.sdd?.personaAgentIds ?? []
   });
 
   if (
@@ -136,7 +140,7 @@ export async function runComponentsRollback(options) {
     return result;
   }
   for (const action of result.actions ?? []) {
-    console.log(`  ${action.action.padEnd(8)} ${action.path}${action.reason ? ` — ${action.reason}` : ""}`);
+    console.log(`  ${action.action.padEnd(8)} ${action.path ?? "persona"}${action.reason ? ` — ${action.reason}` : ""}`);
   }
   console.log(result.ok ? "Rollback complete." : "Rollback finished with skips/errors.");
   if (!result.ok) process.exitCode = 1;
@@ -164,6 +168,7 @@ async function buildProviderContext(options, { homeDir, componentId }) {
     ...base,
     packageRoot: options.packageRoot ?? DEFAULT_PACKAGE_ROOT,
     persona: options.persona ?? state?.sdd?.persona ?? "off",
+    personaAgentIds: state?.sdd?.personaAgentIds ?? [],
     trackedFiles
   };
 }
@@ -223,19 +228,22 @@ export function buildEngramIntegrationChecks(inspection) {
 }
 
 export function buildSddIntegrationChecks(verification) {
-  const status = verification.status === SDD_HEALTH.CONFIGURED
-    ? "ok"
-    : verification.status === SDD_HEALTH.CONFLICT
-      ? "warning"
-      : "warning";
   const summary = verification.summary ?? {};
-  return [{
-    name: "sdd-core:skills",
-    status,
-    category: "integration",
-    componentId: "sdd-core",
-    detail: `SDD skills ${verification.status}: configured=${summary.configured ?? 0}, missing=${summary.missing ?? 0}, drifted=${summary.drifted ?? 0}, conflict=${summary.conflict ?? 0} (disk presence ≠ runtime active).`
-  }];
+  const persona = verification.persona ?? {};
+  const skillOk = verification.status === SDD_HEALTH.CONFIGURED;
+  const personaOk = persona.status === "configured" || persona.status === "off";
+  return [
+    {
+      name: "sdd-core:skills", status: skillOk ? "ok" : "warning", category: "integration",
+      componentId: "sdd-core",
+      detail: `SDD skills ${verification.status}: configured=${summary.configured ?? 0}, missing=${summary.missing ?? 0}, drifted=${summary.drifted ?? 0}, conflict=${summary.conflict ?? 0} (disk presence ≠ runtime active).`
+    },
+    {
+      name: "sdd-core:persona", status: personaOk ? "ok" : "warning", category: "integration",
+      componentId: "sdd-core",
+      detail: `SDD persona ${persona.status ?? "off"}: active=${Boolean(persona.personaActive)} consumers=${(persona.personaAgentIds ?? []).join(",") || "none"} (state alone ≠ runtime active).`
+    }
+  ];
 }
 
 function printEngramConfigureHuman(result) {
@@ -266,7 +274,8 @@ function printEngramConfigureHuman(result) {
 
 function printSddConfigureHuman(result) {
   console.log(formatCliCommand("components configure sdd-core"));
-  console.log(`Persona: ${result.persona ?? "off"}${result.personaActive ? " (active)" : " (off)"}`);
+  const t = result.personaTransition;
+  console.log(`Persona: ${result.persona ?? "off"}${result.personaActive ? " (active)" : " (off)"} consumers=${t?.after?.join(",") || "none"}`);
   const s = result.summary ?? {};
   console.log(`Plan: create=${s.create ?? 0} noop=${s.noop ?? 0} update=${s.update ?? 0} conflict=${s.conflict ?? 0}`);
   for (const action of result.actions ?? []) {
@@ -288,6 +297,9 @@ function printSddVerifyHuman(result) {
   const s = result.summary ?? {};
   console.log(`Status: ${result.status}`);
   console.log(`Summary: configured=${s.configured ?? 0} missing=${s.missing ?? 0} drifted=${s.drifted ?? 0} conflict=${s.conflict ?? 0}`);
+  if (result.persona) {
+    console.log(`Persona: ${result.persona.status} active=${Boolean(result.persona.personaActive)}`);
+  }
   for (const finding of result.findings ?? []) {
     console.log(`  ${finding.status.padEnd(10)} ${finding.skillId}${finding.drift ? ` (${finding.drift})` : ""} → ${finding.destinationPath}`);
   }
