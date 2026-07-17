@@ -7,6 +7,8 @@ description: "Validate applied work against acceptance and pipeline gates."
 
 Use this skill after implementation to prove the task is done with evidence, not claims.
 
+## References
+- [Phase contract](references/contract.md)
 ## Source of truth
 
 - `AGENTS.md`

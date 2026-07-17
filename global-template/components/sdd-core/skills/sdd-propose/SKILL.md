@@ -7,6 +7,8 @@ description: "Turn explored context into a bounded implementation proposal."
 
 Use this skill after exploration to outline the smallest safe delivery slice.
 
+## References
+- [Phase contract](references/contract.md)
 ## Source of truth
 
 - `AGENTS.md`

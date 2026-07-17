@@ -49,6 +49,14 @@ export function resolveSddSkillPath(skillId, agentId, homeDir) {
   return join(resolveSddSkillRoot(agentId, homeDir), skillId, "SKILL.md");
 }
 
+export function resolveSddSkillFilePath(skillId, relativePath, agentId, homeDir) {
+  const parts = String(relativePath ?? "SKILL.md").split(/[/\\]/).filter(Boolean);
+  if (parts.length === 0 || parts.includes("..")) {
+    throw new Error(`Invalid skill relativePath "${relativePath}".`);
+  }
+  return join(resolveSddSkillRoot(agentId, homeDir), skillId, ...parts);
+}
+
 /** One physical destination per root, with stable consumer agentIds. */
 export function groupSddSkillDestinations(agentIds, homeDir) {
   const selected = new Set(agentIds);
@@ -74,8 +82,20 @@ export function groupSddSkillDestinations(agentIds, homeDir) {
   return groups;
 }
 
+export function resolveCanonicalSddSkillDir(skillId, packageRoot) {
+  return join(packageRoot, "global-template", "components", "sdd-core", "skills", skillId);
+}
+
 export function resolveCanonicalSddSkillPath(skillId, packageRoot) {
-  return join(packageRoot, "global-template", "components", "sdd-core", "skills", skillId, "SKILL.md");
+  return join(resolveCanonicalSddSkillDir(skillId, packageRoot), "SKILL.md");
+}
+
+export function resolveCanonicalSddSkillFile(skillId, relativePath, packageRoot) {
+  const parts = String(relativePath ?? "SKILL.md").split(/[/\\]/).filter(Boolean);
+  if (parts.length === 0 || parts.includes("..")) {
+    throw new Error(`Invalid skill relativePath "${relativePath}".`);
+  }
+  return join(resolveCanonicalSddSkillDir(skillId, packageRoot), ...parts);
 }
 
 export function resolveCanonicalTeachingPersonaPath(packageRoot) {

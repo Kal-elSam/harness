@@ -1,16 +1,20 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { assertExplicitApplyConsent, promptApplyConfirmation, shouldPromptApplyConfirmation } from "../apply-confirmation.js";
+import { dirname, resolve } from "node:path";
 import { hashBuffer } from "../../hash.js";
+import { assertExplicitApplyConsent, promptApplyConfirmation, shouldPromptApplyConfirmation } from "../apply-confirmation.js";
+import { isPathInside } from "../component-paths.js";
 import { SDD_FILE_OUTCOMES, SDD_PLAN_ACTIONS } from "./sdd-evidence.js";
-import { planSddConfigure } from "./sdd-plan.js";
-import { resolveCanonicalSddSkillPath, resolveSddSkillRoot } from "./sdd-destinations.js";
+import {
+  resolveCanonicalSddSkillDir, resolveCanonicalSddSkillFile, resolveSddSkillRoot
+} from "./sdd-destinations.js";
 import {
   assertSafePathChain, parentRealpath, replaceRegularFile, snapshotRegularFile
 } from "./sdd-fs-guard.js";
+import { planSddConfigure } from "./sdd-plan.js";
 import { saveSddReceipt } from "./sdd-receipts.js";
 import { backupSddDestination } from "./sdd-rollback.js";
+import { normalizeSkillRelativePath } from "./sdd-skill-files.js";
 
 const APPLYING_ACTIONS = new Set([SDD_PLAN_ACTIONS.CREATE, SDD_PLAN_ACTIONS.UPDATE]);
 
@@ -110,10 +114,27 @@ export async function applySddConfigure({
 
 function buildFileRecord(action) {
   return {
-    skillId: action.skillId, destinationPath: action.destinationPath, agentIds: [...action.agentIds],
-    action: action.action, reason: action.reason, canonicalHash: action.canonicalHash,
-    beforeHash: action.diskHash, trackedHash: action.trackedHash
+    skillId: action.skillId,
+    relativePath: action.relativePath ?? "SKILL.md",
+    destinationPath: action.destinationPath,
+    agentIds: [...action.agentIds],
+    action: action.action,
+    reason: action.reason,
+    canonicalHash: action.canonicalHash,
+    skillHash: action.skillHash ?? null,
+    beforeHash: action.diskHash,
+    trackedHash: action.trackedHash
   };
+}
+
+async function readCanonicalBytes(action, packageRoot) {
+  const relativePath = normalizeSkillRelativePath(action.relativePath ?? "SKILL.md");
+  const skillDir = resolve(resolveCanonicalSddSkillDir(action.skillId, packageRoot));
+  const canonicalPath = resolve(resolveCanonicalSddSkillFile(action.skillId, relativePath, packageRoot));
+  if (!isPathInside(skillDir, canonicalPath) && canonicalPath !== skillDir) {
+    throw new Error(`Canonical skill path escapes skill root: ${relativePath}`);
+  }
+  return readFile(canonicalPath);
 }
 
 async function materializeOne(action, { homeDir, packageRoot, managedRoot, receiptId }) {
@@ -124,7 +145,7 @@ async function materializeOne(action, { homeDir, packageRoot, managedRoot, recei
     if (existsSync(action.destinationPath)) {
       return { conflict: "Destination appeared after planning; preserving byte-for-byte." };
     }
-    const bytes = await readFile(resolveCanonicalSddSkillPath(action.skillId, packageRoot));
+    const bytes = await readCanonicalBytes(action, packageRoot);
     await mkdir(dirname(action.destinationPath), { recursive: true });
     const after = await assertSafePathChain(action.destinationPath, managedRoot, homeDir);
     if (!after.ok) throw new Error(after.reason);
@@ -157,7 +178,7 @@ async function materializeOne(action, { homeDir, packageRoot, managedRoot, recei
     if (/Backup already exists/i.test(error.message)) return { conflict: error.message };
     throw error;
   }
-  const bytes = await readFile(resolveCanonicalSddSkillPath(action.skillId, packageRoot));
+  const bytes = await readCanonicalBytes(action, packageRoot);
   await replaceRegularFile(action.destinationPath, bytes, {
     expectedIno: snap.ino, expectedHash: snap.hash, managedRoot, expectedParentRealpath: parent, trustedAnchor: homeDir
   });

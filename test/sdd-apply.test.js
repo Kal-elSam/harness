@@ -33,7 +33,7 @@ test("apply materializes once per shared root, keeps receipt, and second pass is
       homeDir, packageRoot, yes: true, receiptId: "sdd-first"
     });
     assert.equal(first.applied && first.writes && first.sessionRefreshRequired, true);
-    assert.equal(first.receipt.files.filter((entry) => entry.applied).length, 18);
+    assert.equal(first.receipt.files.filter((entry) => entry.applied).length, 36);
     const canonical = readFileSync(resolveCanonicalSddSkillPath("sdd-init", packageRoot));
     assert.equal(hashBuffer(readFileSync(resolveSddSkillPath("sdd-init", "codex", homeDir))), hashBuffer(canonical));
     assert.equal(hashBuffer(readFileSync(resolveSddSkillPath("sdd-init", "claude", homeDir))), hashBuffer(canonical));
@@ -47,7 +47,7 @@ test("apply materializes once per shared root, keeps receipt, and second pass is
       homeDir, packageRoot, yes: true, receiptId: "sdd-second", trackedFiles: tracked
     });
     assert.equal(second.writes, false);
-    assert.equal(second.summary.noop, 18);
+    assert.equal(second.summary.noop, 36);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
   }

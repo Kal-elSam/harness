@@ -4,7 +4,7 @@ import { link, lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { hashBuffer } from "../../hash.js";
 import { isPathInside } from "../component-paths.js";
-import { SDD_SKILL_IDS, resolveSddSkillPath, resolveSddSkillRoot } from "./sdd-destinations.js";
+import { SDD_SKILL_IDS, resolveSddSkillRoot } from "./sdd-destinations.js";
 
 /** Threat model: local CLI accidental TOCTOU/symlinks — not a malicious same-uid peer. */
 const PLATFORM_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
@@ -22,8 +22,13 @@ export function resolveExpectedSddDestination(file, homeDir) {
   }
   const agentId = file?.agentIds?.[0];
   if (!agentId) return { ok: false, reason: "Receipt file missing agentIds." };
+  const relativePath = String(file?.relativePath ?? "SKILL.md");
+  const parts = relativePath.split(/[/\\]/).filter(Boolean);
+  if (parts.length === 0 || parts.includes("..")) {
+    return { ok: false, reason: "Receipt relativePath is invalid." };
+  }
   const managedRoot = resolve(resolveSddSkillRoot(agentId, homeDir));
-  const expectedPath = resolve(resolveSddSkillPath(file.skillId, agentId, homeDir));
+  const expectedPath = resolve(join(managedRoot, file.skillId, ...parts));
   const claimedPath = resolve(String(file.destinationPath ?? ""));
   if (claimedPath !== expectedPath) {
     return { ok: false, reason: "Receipt destinationPath does not match managed skill path." };

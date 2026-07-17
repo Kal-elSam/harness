@@ -7,6 +7,8 @@ description: "Close the SDD cycle with durable notes and handoff evidence."
 
 Use this skill at the end of a completed SDD cycle to leave a recoverable trail for the next agent or reviewer.
 
+## References
+- [Phase contract](references/contract.md)
 ## Source of truth
 
 - `AGENTS.md`

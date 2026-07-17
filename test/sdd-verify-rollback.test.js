@@ -38,7 +38,7 @@ test("verify separates missing, configured, canonical drift, and disk conflict",
     );
     const ok = await verifySddConfigure({ requestedAgentIds: ["codex"], homeDir, packageRoot, trackedFiles: tracked });
     assert.equal(ok.status, SDD_HEALTH.CONFIGURED);
-    assert.equal(ok.summary.configured, 9);
+    assert.equal(ok.summary.configured, 18);
 
     const path = resolveSddSkillPath("sdd-init", "codex", homeDir);
     writeFileSync(path, "# stale managed\n");

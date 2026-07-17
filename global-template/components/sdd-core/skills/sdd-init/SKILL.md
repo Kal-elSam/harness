@@ -7,6 +7,8 @@ description: "Classify the request and open the right SDD path."
 
 Use this skill at the start of non-trivial work to classify the request before planning or implementation.
 
+## References
+- [Phase contract](references/contract.md)
 ## Source of truth
 
 - `AGENTS.md`

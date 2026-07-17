@@ -7,6 +7,8 @@ description: "Write or update the implementation spec for significant work."
 
 Use this skill when the request needs a written spec before implementation.
 
+## References
+- [Phase contract](references/contract.md)
 ## Source of truth
 
 - `AGENTS.md`

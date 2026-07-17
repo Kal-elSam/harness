@@ -27,9 +27,11 @@ export function normalizeSddState(raw) {
 function normalizeSddFile(entry) {
   return {
     destinationPath: entry.destinationPath,
+    relativePath: entry.relativePath ?? "SKILL.md",
     skillId: entry.skillId,
     agentIds: Array.isArray(entry.agentIds) ? [...entry.agentIds] : [],
     hash: entry.hash ?? null,
+    skillHash: entry.skillHash ?? null,
     action: entry.action ?? null
   };
 }
@@ -80,9 +82,11 @@ export function recordSddMaterialization(state, { receipt, now = () => new Date(
     if (hash == null) continue;
     managed.set(file.destinationPath, {
       destinationPath: file.destinationPath,
+      relativePath: file.relativePath ?? "SKILL.md",
       skillId: file.skillId,
       agentIds: [...(file.agentIds ?? [])],
       hash,
+      skillHash: file.skillHash ?? null,
       action: file.action
     });
   }
@@ -125,9 +129,11 @@ export function reconcileSddStateAfterRollback(state, {
     if (beforeHash == null || !file) continue;
     managed.set(action.path, {
       destinationPath: action.path,
+      relativePath: file.relativePath ?? "SKILL.md",
       skillId: file.skillId,
       agentIds: [...(file.agentIds ?? [])],
       hash: beforeHash,
+      skillHash: file.skillHash ?? null,
       action: file.action
     });
   }

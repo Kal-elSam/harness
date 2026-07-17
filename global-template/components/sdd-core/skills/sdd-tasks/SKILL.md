@@ -7,6 +7,8 @@ description: "Break an accepted design into ordered, reviewable tasks."
 
 Use this skill after design to produce a task list that one reviewer can follow without reopening scope.
 
+## References
+- [Phase contract](references/contract.md)
 ## Source of truth
 
 - `AGENTS.md`

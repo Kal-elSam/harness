@@ -7,6 +7,8 @@ description: "Implement the current SDD task with failing tests first."
 
 Use this skill to implement one approved task without expanding scope.
 
+## References
+- [Phase contract](references/contract.md)
 ## Source of truth
 
 - `AGENTS.md`

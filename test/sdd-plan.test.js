@@ -73,19 +73,26 @@ test("planSddConfigure is dry-run only and deduplicates shared writes", async ()
     assert.equal(plan.executes, false);
     assert.equal(plan.writes, false);
     assert.equal(plan.personaActive, false);
-    assert.equal(plan.actions.length, 18);
-    assert.equal(plan.summary.create, 18);
+    assert.equal(plan.actions.length, 36);
+    assert.equal(plan.summary.create, 36);
     assert.equal(plan.summary.conflict, 0);
 
     const initActions = plan.actions.filter((entry) => entry.skillId === "sdd-init");
-    assert.equal(initActions.length, 2);
+    assert.equal(initActions.length, 4);
     assert.deepEqual(initActions[0].agentIds, ["cursor", "codex", "opencode"]);
-    assert.deepEqual(initActions[1].agentIds, ["claude"]);
+    assert.equal(initActions[0].relativePath, "SKILL.md");
+    assert.ok(initActions[0].skillHash);
+    assert.ok(initActions.some((entry) => entry.relativePath === "references/contract.md"));
     assert.ok(initActions[0].destinationPath.endsWith(join(".agents", "skills", "sdd-init", "SKILL.md")));
     assert.ok(initActions.every((entry) => entry.writes === false));
 
-    const ordered = plan.actions.map((entry) => `${entry.skillId}|${entry.destinationPath}`);
-    assert.deepEqual(ordered, [...ordered].sort((left, right) => left.localeCompare(right)));
+    const ordered = plan.actions.map((entry) =>
+      `${entry.skillId}|${entry.relativePath}|${entry.destinationPath}`
+    );
+    assert.deepEqual(
+      ordered,
+      [...ordered].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+    );
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
   }
@@ -143,7 +150,9 @@ test("identical tracked bytes become noop and managed drift becomes update", asy
       packageRoot,
       trackedFiles: { [destinationPath]: canonicalHash }
     });
-    assert.equal(noopPlan.actions.find((entry) => entry.skillId === skillId).action, SDD_PLAN_ACTIONS.NOOP);
+    assert.equal(noopPlan.actions.find((entry) =>
+      entry.skillId === skillId && entry.relativePath === "SKILL.md"
+    ).action, SDD_PLAN_ACTIONS.NOOP);
 
     writeFileSync(destinationPath, "# stale managed copy\n");
     const updatePlan = await planSddConfigure({
@@ -152,7 +161,9 @@ test("identical tracked bytes become noop and managed drift becomes update", asy
       packageRoot,
       trackedFiles: { [destinationPath]: hashBuffer(Buffer.from("# stale managed copy\n")) }
     });
-    assert.equal(updatePlan.actions.find((entry) => entry.skillId === skillId).action, SDD_PLAN_ACTIONS.UPDATE);
+    assert.equal(updatePlan.actions.find((entry) =>
+      entry.skillId === skillId && entry.relativePath === "SKILL.md"
+    ).action, SDD_PLAN_ACTIONS.UPDATE);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
   }

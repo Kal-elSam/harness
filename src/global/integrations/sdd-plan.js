@@ -7,10 +7,10 @@ import {
   SDD_PERSONA_IDS,
   SDD_SKILL_IDS,
   groupSddSkillDestinations,
-  resolveCanonicalSddSkillPath,
   resolveCanonicalTeachingPersonaPath,
   resolveSddAgentSelection
 } from "./sdd-destinations.js";
+import { compareSkillPaths, loadCanonicalSddSkill } from "./sdd-skill-files.js";
 
 /**
  * Deterministic dry-run planner for SDD skill materialization.
@@ -41,43 +41,30 @@ export async function planSddConfigure({
   const actions = [];
 
   for (const skillId of SDD_SKILL_IDS) {
-    const canonicalPath = resolveCanonicalSddSkillPath(skillId, packageRoot);
-    const canonicalBytes = await readFileImpl(canonicalPath);
-    const canonicalHash = hashBuffer(canonicalBytes);
-
-    for (const group of destinationGroups) {
-      const destinationPath = join(group.root, skillId, "SKILL.md");
-      const trackedHash = trackedFiles[destinationPath] ?? null;
-      const fileExists = exists(destinationPath);
-      const diskHash = fileExists ? hashBuffer(await readFileImpl(destinationPath)) : null;
-      const classification = classifySddSkillFile({
-        exists: fileExists,
-        canonicalHash,
-        diskHash,
-        trackedHash
-      });
-
-      actions.push({
-        skillId,
-        destinationPath,
-        agentIds: [...group.agentIds],
-        kind: group.kind,
-        action: classification.action,
-        reason: classification.reason,
-        canonicalHash,
-        diskHash,
-        trackedHash,
-        writes: false,
-        executes: false
-      });
+    const { files, skillHash } = await loadCanonicalSddSkill(skillId, packageRoot);
+    for (const file of files) {
+      const canonicalHash = hashBuffer(file.bytes);
+      for (const group of destinationGroups) {
+        const destinationPath = join(group.root, skillId, ...file.relativePath.split("/"));
+        const trackedHash = trackedFiles[destinationPath] ?? null;
+        const fileExists = exists(destinationPath);
+        const diskHash = fileExists ? hashBuffer(await readFileImpl(destinationPath)) : null;
+        const classification = classifySddSkillFile({
+          exists: fileExists, canonicalHash, diskHash, trackedHash
+        });
+        actions.push({
+          skillId, relativePath: file.relativePath, destinationPath,
+          agentIds: [...group.agentIds], kind: group.kind,
+          action: classification.action, reason: classification.reason,
+          canonicalHash, skillHash, diskHash, trackedHash, writes: false, executes: false
+        });
+      }
     }
   }
 
-  actions.sort((left, right) => {
-    const bySkill = left.skillId.localeCompare(right.skillId);
-    if (bySkill !== 0) return bySkill;
-    return left.destinationPath.localeCompare(right.destinationPath);
-  });
+  actions.sort((a, b) => compareSkillPaths(a.skillId, b.skillId)
+    || compareSkillPaths(a.relativePath, b.relativePath)
+    || compareSkillPaths(a.destinationPath, b.destinationPath));
 
   const summary = {
     create: 0,

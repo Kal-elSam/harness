@@ -7,6 +7,8 @@ description: "Translate an accepted spec into technical design boundaries."
 
 Use this skill to convert the approved spec into technical structure before task breakdown.
 
+## References
+- [Phase contract](references/contract.md)
 ## Source of truth
 
 - `AGENTS.md`

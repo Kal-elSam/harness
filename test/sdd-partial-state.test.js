@@ -88,8 +88,14 @@ test("partial rollback reconciles successful actions and refreshes metadata", ()
 
   const next = reconcileSddStateAfterRollback(prior, { receipt, actions, now: () => "t1" });
   assert.deepEqual(next.sdd.files, [
-    { destinationPath: "/h/b/SKILL.md", skillId: "sdd-spec", agentIds: ["claude"], hash: "old-b", action: "update" },
-    { destinationPath: "/h/c/SKILL.md", skillId: "sdd-tasks", agentIds: ["codex"], hash: "new-c", action: "create" }
+    {
+      destinationPath: "/h/b/SKILL.md", relativePath: "SKILL.md", skillId: "sdd-spec",
+      agentIds: ["claude"], hash: "old-b", skillHash: null, action: "update"
+    },
+    {
+      destinationPath: "/h/c/SKILL.md", relativePath: "SKILL.md", skillId: "sdd-tasks",
+      agentIds: ["codex"], hash: "new-c", skillHash: null, action: "create"
+    }
   ]);
   assert.deepEqual(next.sdd.agentIds, ["claude", "codex"]);
   assert.equal(next.sdd.persona, "teaching");

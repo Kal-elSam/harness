@@ -7,6 +7,8 @@ description: "Gather focused repository context before proposing a spec."
 
 Use this skill to collect only the context needed to define scope, constraints, and affected files.
 
+## References
+- [Phase contract](references/contract.md)
 ## Source of truth
 
 - `AGENTS.md`

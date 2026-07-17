@@ -7,9 +7,9 @@ import { classifySddVerifyHealth, SDD_HEALTH } from "./sdd-evidence.js";
 import {
   SDD_SKILL_IDS,
   groupSddSkillDestinations,
-  resolveCanonicalSddSkillPath,
   resolveSddAgentSelection
 } from "./sdd-destinations.js";
+import { compareSkillPaths, loadCanonicalSddSkill } from "./sdd-skill-files.js";
 
 /** Read-only verify: configured | missing | drifted | conflict (canonical vs disk). */
 export async function verifySddConfigure({
@@ -32,27 +32,30 @@ export async function verifySddConfigure({
   const findings = [];
 
   for (const skillId of SDD_SKILL_IDS) {
-    const canonicalHash = hashBuffer(await readFileImpl(resolveCanonicalSddSkillPath(skillId, packageRoot)));
-    for (const group of groups) {
-      const destinationPath = join(group.root, skillId, "SKILL.md");
-      const fileExists = exists(destinationPath);
-      const diskHash = fileExists ? hashBuffer(await readFileImpl(destinationPath)) : null;
-      const trackedHash = trackedFiles[destinationPath] ?? null;
-      const health = classifySddVerifyHealth({
-        exists: fileExists, canonicalHash, diskHash, trackedHash
-      });
-      findings.push({
-        skillId, destinationPath, agentIds: [...group.agentIds], kind: group.kind,
-        status: health.status, drift: health.drift, reason: health.reason,
-        canonicalHash, diskHash, trackedHash
-      });
+    const { files, skillHash } = await loadCanonicalSddSkill(skillId, packageRoot);
+    for (const file of files) {
+      const canonicalHash = hashBuffer(file.bytes);
+      for (const group of groups) {
+        const destinationPath = join(group.root, skillId, ...file.relativePath.split("/"));
+        const fileExists = exists(destinationPath);
+        const diskHash = fileExists ? hashBuffer(await readFileImpl(destinationPath)) : null;
+        const trackedHash = trackedFiles[destinationPath] ?? null;
+        const health = classifySddVerifyHealth({
+          exists: fileExists, canonicalHash, diskHash, trackedHash
+        });
+        findings.push({
+          skillId, relativePath: file.relativePath, destinationPath,
+          agentIds: [...group.agentIds], kind: group.kind,
+          status: health.status, drift: health.drift, reason: health.reason,
+          canonicalHash, skillHash, diskHash, trackedHash
+        });
+      }
     }
   }
 
-  findings.sort((left, right) => {
-    const bySkill = left.skillId.localeCompare(right.skillId);
-    return bySkill !== 0 ? bySkill : left.destinationPath.localeCompare(right.destinationPath);
-  });
+  findings.sort((a, b) => compareSkillPaths(a.skillId, b.skillId)
+    || compareSkillPaths(a.relativePath, b.relativePath)
+    || compareSkillPaths(a.destinationPath, b.destinationPath));
 
   const summary = { configured: 0, missing: 0, drifted: 0, conflict: 0 };
   for (const entry of findings) summary[entry.status] += 1;
