@@ -1,20 +1,16 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import { hashBuffer } from "../../hash.js";
 import { assertExplicitApplyConsent, promptApplyConfirmation, shouldPromptApplyConfirmation } from "../apply-confirmation.js";
-import { isPathInside } from "../component-paths.js";
 import { SDD_FILE_OUTCOMES, SDD_PLAN_ACTIONS } from "./sdd-evidence.js";
-import {
-  resolveCanonicalSddSkillDir, resolveCanonicalSddSkillFile, resolveSddSkillRoot
-} from "./sdd-destinations.js";
+import { resolveCanonicalSddSkillFile, resolveSddSkillRoot } from "./sdd-destinations.js";
 import {
   assertSafePathChain, parentRealpath, replaceRegularFile, snapshotRegularFile
 } from "./sdd-fs-guard.js";
 import { planSddConfigure } from "./sdd-plan.js";
 import { saveSddReceipt } from "./sdd-receipts.js";
 import { backupSddDestination } from "./sdd-rollback.js";
-import { normalizeSkillRelativePath } from "./sdd-skill-files.js";
 
 const APPLYING_ACTIONS = new Set([SDD_PLAN_ACTIONS.CREATE, SDD_PLAN_ACTIONS.UPDATE]);
 
@@ -128,13 +124,9 @@ function buildFileRecord(action) {
 }
 
 async function readCanonicalBytes(action, packageRoot) {
-  const relativePath = normalizeSkillRelativePath(action.relativePath ?? "SKILL.md");
-  const skillDir = resolve(resolveCanonicalSddSkillDir(action.skillId, packageRoot));
-  const canonicalPath = resolve(resolveCanonicalSddSkillFile(action.skillId, relativePath, packageRoot));
-  if (!isPathInside(skillDir, canonicalPath) && canonicalPath !== skillDir) {
-    throw new Error(`Canonical skill path escapes skill root: ${relativePath}`);
-  }
-  return readFile(canonicalPath);
+  return readFile(resolveCanonicalSddSkillFile(
+    action.skillId, action.relativePath ?? "SKILL.md", packageRoot
+  ));
 }
 
 async function materializeOne(action, { homeDir, packageRoot, managedRoot, receiptId }) {

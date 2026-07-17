@@ -49,14 +49,6 @@ export function resolveSddSkillPath(skillId, agentId, homeDir) {
   return join(resolveSddSkillRoot(agentId, homeDir), skillId, "SKILL.md");
 }
 
-export function resolveSddSkillFilePath(skillId, relativePath, agentId, homeDir) {
-  const parts = String(relativePath ?? "SKILL.md").split(/[/\\]/).filter(Boolean);
-  if (parts.length === 0 || parts.includes("..")) {
-    throw new Error(`Invalid skill relativePath "${relativePath}".`);
-  }
-  return join(resolveSddSkillRoot(agentId, homeDir), skillId, ...parts);
-}
-
 /** One physical destination per root, with stable consumer agentIds. */
 export function groupSddSkillDestinations(agentIds, homeDir) {
   const selected = new Set(agentIds);
