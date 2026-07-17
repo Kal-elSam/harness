@@ -37,7 +37,7 @@ test("default install includes sdd-core assets and state", async () => {
   assert.ok(result.coreFiles.includes("components/sdd-core/workflow.md"));
   assert.ok(existsSync(join(paths.root, "components", "sdd-core", "spec-sizing.md")));
   assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-init", "SKILL.md")));
-  assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-design", "SKILL.md")));
+  assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-init", "references", "contract.md")));
   assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-archive", "SKILL.md")));
   assert.ok(existsSync(join(paths.root, "components", "sdd-core", "personas", "teaching.md")));
 

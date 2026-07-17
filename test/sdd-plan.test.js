@@ -85,14 +85,8 @@ test("planSddConfigure is dry-run only and deduplicates shared writes", async ()
     assert.ok(initActions.some((entry) => entry.relativePath === "references/contract.md"));
     assert.ok(initActions[0].destinationPath.endsWith(join(".agents", "skills", "sdd-init", "SKILL.md")));
     assert.ok(initActions.every((entry) => entry.writes === false));
-
-    const ordered = plan.actions.map((entry) =>
-      `${entry.skillId}|${entry.relativePath}|${entry.destinationPath}`
-    );
-    assert.deepEqual(
-      ordered,
-      [...ordered].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
-    );
+    const ordered = plan.actions.map((e) => `${e.skillId}|${e.relativePath}|${e.destinationPath}`);
+    assert.deepEqual(ordered, [...ordered].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
   }
@@ -150,9 +144,10 @@ test("identical tracked bytes become noop and managed drift becomes update", asy
       packageRoot,
       trackedFiles: { [destinationPath]: canonicalHash }
     });
-    assert.equal(noopPlan.actions.find((entry) =>
-      entry.skillId === skillId && entry.relativePath === "SKILL.md"
-    ).action, SDD_PLAN_ACTIONS.NOOP);
+    assert.equal(
+      noopPlan.actions.find((e) => e.skillId === skillId && e.relativePath === "SKILL.md").action,
+      SDD_PLAN_ACTIONS.NOOP
+    );
 
     writeFileSync(destinationPath, "# stale managed copy\n");
     const updatePlan = await planSddConfigure({
@@ -161,9 +156,10 @@ test("identical tracked bytes become noop and managed drift becomes update", asy
       packageRoot,
       trackedFiles: { [destinationPath]: hashBuffer(Buffer.from("# stale managed copy\n")) }
     });
-    assert.equal(updatePlan.actions.find((entry) =>
-      entry.skillId === skillId && entry.relativePath === "SKILL.md"
-    ).action, SDD_PLAN_ACTIONS.UPDATE);
+    assert.equal(
+      updatePlan.actions.find((e) => e.skillId === skillId && e.relativePath === "SKILL.md").action,
+      SDD_PLAN_ACTIONS.UPDATE
+    );
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
   }
