@@ -424,6 +424,12 @@ function resolveCtaDestinationView(destinationKey) {
       return ORCHESTRATOR_VIEWS.HOME;
     case "ides":
       return ORCHESTRATOR_VIEWS.IDES;
+    case "modules":
+      return ORCHESTRATOR_VIEWS.MODULES;
+    case "activity":
+      return ORCHESTRATOR_VIEWS.ACTIVITY;
+    case "profile":
+      return ORCHESTRATOR_VIEWS.PROFILE;
     case "runs":
       return ORCHESTRATOR_VIEWS.RUNS;
     default:
