@@ -7,9 +7,21 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ### Added
 
-- Operational SDD Core lifecycle: `kairo components configure|verify|rollback sdd-core`
-  materializes nine canonical skills, optional `--persona teaching` (off by default),
-  verify health (`configured|missing|drifted|conflict`), receipts, and bounded rollback.
+- Operational SDD Core: `kairo components configure|verify|rollback sdd-core`
+  materializes nine canonical skill directories (`SKILL.md` + `references/contract.md`),
+  optional `--persona teaching` per managed agent (`personaAgentIds`, off by default),
+  real verify health (`configured|missing|drifted|conflict`), receipts under
+  `~/.harness/integrations/sdd-core/`, and bounded rollback that refuses incomplete
+  evidence and never clobbers mismatched `afterHash` destinations.
+- Lifecycle auto-materialization: when `sdd-core` is selected/installed,
+  `install` / `setup` / `sync` / `upgrade` reuse `sdd-core.apply` with
+  `preservePersona` (no second consent prompt; teaching never auto-activates).
+  Results expose `integrations.sdd` (partial/conflicts/receipt) and aggregated
+  `sessionRefreshRequired`.
+- SDD state v4: durable `state.sdd` with explicit `personaAgentIds`, tracked files
+  (relativePath + skillHash), fail-closed future `stateVersion`, and partial
+  receipt reconciliation (track only applied/verified-noop; rollback mutates
+  then reconciles even when global `ok=false`).
 - Engram Operational Lifecycle: `kairo components configure|rollback engram-memory`
   delegates to official `engram setup <agent>` with dry-run, consent, receipts under
   `~/.harness/integrations/engram/`, and bounded rollback. Supported Engram range
@@ -21,8 +33,8 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
   and deterministic topological resolution.
 - Public component health states (`healthy` / `degraded` / `drifted` / `missing`)
   on `status`, `doctor`, components listing, and JSON (`componentHealth`).
-  Engram/Graphify integration warnings degrade the component without failing
-  global doctor.
+  Engram/Graphify/SDD integration warnings degrade the component without failing
+  global doctor when only that component is affected.
 - OpenCode Go / Zen as first-class Intelligence backends via `OPENCODE_API_KEY`
   (`opencode-go`, `opencode-zen`) with an explicit transport registry
   (`chat_completions`, `responses`, `runtime`).
@@ -40,7 +52,10 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 ### Changed
 
 - Bundled component catalog migrated to Manifest v2; workspace v1 catalogs
-  continue to normalize in-memory.
+  continue to normalize in-memory. SDD catalog assets ship full skill directories
+  (including `references/`) plus `personas/teaching.md`.
+- `--json` is output format only for SDD configure/rollback; mutating apply still
+  requires `--yes`. Conflicts are never overwritten.
 - Default cloud routing precedence: Ollama → OpenCode Go → OpenCode Zen →
   OpenRouter. Go limit failures never auto-spend Zen credits.
 - Health guidance treats API-key presence as configured credentials, not proven
