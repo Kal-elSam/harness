@@ -16,12 +16,11 @@ export function defaultSddState() {
 /** Coerce any prior/absent shape into a valid v4 SDD block. */
 export function normalizeSddState(raw) {
   if (!raw || typeof raw !== "object") return defaultSddState();
-  let personaAgentIds = normalizePersonaAgentIds(
-    Array.isArray(raw.personaAgentIds) ? raw.personaAgentIds : []
-  );
-  if (!personaAgentIds.length && raw.persona === "teaching" && Array.isArray(raw.agentIds)) {
-    personaAgentIds = normalizePersonaAgentIds(raw.agentIds);
-  }
+  // Explicit personaAgentIds (incl. []) wins; legacy teaching+agentIds only if field absent.
+  const personaAgentIds = Array.isArray(raw.personaAgentIds)
+    ? normalizePersonaAgentIds(raw.personaAgentIds)
+    : (raw.persona === "teaching" && Array.isArray(raw.agentIds)
+      ? normalizePersonaAgentIds(raw.agentIds) : []);
   return {
     persona: derivePersona(personaAgentIds),
     personaAgentIds,
@@ -134,7 +133,7 @@ export function reconcileSddStateAfterRollback(state, {
   const backups = new Map((receipt?.backups ?? []).map((entry) => [entry.path, entry]));
 
   for (const action of actions ?? []) {
-    if (!action?.ok || action.dryRun || action.action === "skip" || action.action === "persona") continue;
+    if (!action?.ok || action.dryRun || action.action === "persona" || action.action === "skip") continue;
     if (action.action === "delete") {
       managed.delete(action.path);
       continue;

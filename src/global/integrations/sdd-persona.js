@@ -12,20 +12,16 @@ export function normalizePersonaAgentIds(ids = []) {
 }
 
 export function derivePersona(ids) {
-  return normalizePersonaAgentIds(ids).length > 0 ? "teaching" : "off";
+  return normalizePersonaAgentIds(ids).length ? "teaching" : "off";
 }
 
 export function samePersonaAgentIds(a, b) {
-  const left = normalizePersonaAgentIds(a);
-  const right = normalizePersonaAgentIds(b);
+  const left = normalizePersonaAgentIds(a), right = normalizePersonaAgentIds(b);
   return left.length === right.length && left.every((id, i) => id === right[i]);
 }
 
 function result(before, after, admitted, rejected) {
-  return {
-    before, after, admitted, rejected,
-    persona: derivePersona(after), personaChanged: !samePersonaAgentIds(before, after)
-  };
+  return { before, after, admitted, rejected, persona: derivePersona(after), personaChanged: !samePersonaAgentIds(before, after) };
 }
 
 export function planPersonaTransition({
@@ -37,16 +33,14 @@ export function planPersonaTransition({
   const before = normalizePersonaAgentIds(currentPersonaAgentIds);
   const selected = normalizePersonaAgentIds(selectedAgentIds);
   if (requestedPersona === "off") {
-    return result(before, before.filter((id) => !selected.includes(id)),
-      selected.filter((id) => before.includes(id)), []);
+    return result(before, before.filter((id) => !selected.includes(id)), selected.filter((id) => before.includes(id)), []);
   }
   const admitted = selected.filter((id) => {
     const mine = actions.filter((e) => e.agentIds?.includes(id));
     return mine.length && mine.every((e) => e.action !== SDD_PLAN_ACTIONS.CONFLICT);
   });
-  const rejected = selected.filter((id) => !admitted.includes(id));
   const kept = before.filter((id) => !selected.includes(id) || admitted.includes(id));
-  return result(before, normalizePersonaAgentIds([...kept, ...admitted]), admitted, rejected);
+  return result(before, normalizePersonaAgentIds([...kept, ...admitted]), admitted, selected.filter((id) => !admitted.includes(id)));
 }
 
 export function finalizePersonaTransition(planned, files, requestedPersona) {
@@ -54,24 +48,22 @@ export function finalizePersonaTransition(planned, files, requestedPersona) {
   const selected = normalizePersonaAgentIds([...planned.admitted, ...planned.rejected]);
   const admitted = selected.filter((id) => {
     const mine = files.filter((e) => e.agentIds?.includes(id));
-    return mine.length && mine.every((e) =>
-      e.outcome === SDD_FILE_OUTCOMES.APPLIED || e.outcome === SDD_FILE_OUTCOMES.NOOP);
+    return mine.length && mine.every((e) => e.outcome === SDD_FILE_OUTCOMES.APPLIED || e.outcome === SDD_FILE_OUTCOMES.NOOP);
   });
-  const rejected = selected.filter((id) => !admitted.includes(id));
   const kept = planned.before.filter((id) => !selected.includes(id) || admitted.includes(id));
-  return result(planned.before, normalizePersonaAgentIds([...kept, ...admitted]), admitted, rejected);
+  return result(planned.before, normalizePersonaAgentIds([...kept, ...admitted]), admitted, selected.filter((id) => !admitted.includes(id)));
 }
 
 export function classifyPersonaHealth({
   personaAgentIds = [], assetPresent = false, gatePresent = false, incompleteAgentIds = []
 } = {}) {
   if (!normalizePersonaAgentIds(personaAgentIds).length) {
-    return { status: SDD_PERSONA_HEALTH.OFF, personaActive: false, reason: "No persona consumers." };
+    return { status: SDD_PERSONA_HEALTH.OFF, personaActive: false, reason: "No consumers." };
   }
-  if (!assetPresent) return { status: SDD_PERSONA_HEALTH.CONFLICT, personaActive: false, reason: "Teaching asset missing." };
-  if (!gatePresent) return { status: SDD_PERSONA_HEALTH.SYNC_REQUIRED, personaActive: false, reason: "Gate missing; sync required." };
+  if (!assetPresent) return { status: SDD_PERSONA_HEALTH.CONFLICT, personaActive: false, reason: "Asset missing." };
+  if (!gatePresent) return { status: SDD_PERSONA_HEALTH.SYNC_REQUIRED, personaActive: false, reason: "Gate missing." };
   if (incompleteAgentIds.length) {
-    return { status: SDD_PERSONA_HEALTH.CONFLICT, personaActive: false, reason: `Incomplete skill pack for: ${incompleteAgentIds.join(", ")}.` };
+    return { status: SDD_PERSONA_HEALTH.CONFLICT, personaActive: false, reason: `Incomplete: ${incompleteAgentIds.join(", ")}.` };
   }
   return { status: SDD_PERSONA_HEALTH.CONFIGURED, personaActive: true, reason: "Aligned." };
 }

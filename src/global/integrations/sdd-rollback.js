@@ -100,7 +100,6 @@ export async function rollbackSddReceipt({
   if (personaStep) {
     const filesOk = actions.every((entry) => entry.ok !== false && (
       entry.action === "delete" || entry.action === "restore"
-      || (entry.action === "skip" && /Already absent/i.test(entry.reason ?? ""))
     ));
     const ok = personaStep.noop || filesOk;
     actions.push({
@@ -223,7 +222,7 @@ async function validateUpdateBackup(file, backup, { homeDir, receiptId, expected
 
 async function executeDelete(step, { dryRun, homeDir }) {
   if (!existsSync(step.path)) {
-    return { path: step.path, action: "skip", ok: true, reason: "Already absent." };
+    return { path: step.path, action: "delete", ok: true, reason: "Already absent." };
   }
   if (dryRun) return { path: step.path, action: "delete", ok: true, dryRun: true };
   try {

@@ -46,12 +46,14 @@ test("sdd configure dry-run then apply persists state for configured verify", as
       componentId: "sdd-core", adapters: ["codex"], yes: true, json: true, packageRoot, persona: "off"
     });
     assert.equal(applied.applied && applied.sessionRefreshRequired, true);
-
+    await runComponentsConfigure({
+      componentId: "sdd-core", adapters: ["codex"], yes: true, json: true, packageRoot, persona: "teaching"
+    });
     const verified = await runComponentsVerify({
       componentId: "sdd-core", adapters: ["codex"], json: true, packageRoot
     });
-    assert.equal(verified.status, SDD_HEALTH.CONFIGURED);
-    assert.equal(verified.ok, true);
+    assert.equal(verified.status === SDD_HEALTH.CONFIGURED && verified.ok, true);
+    assert.deepEqual(verified.persona?.personaAgentIds, ["codex"]);
     assert.match(buildSddIntegrationChecks(verified)[0].detail, /disk presence/i);
   } finally {
     if (previousHome === undefined) delete process.env.HARNESS_HOME;
