@@ -54,8 +54,9 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 - Bundled component catalog migrated to Manifest v2; workspace v1 catalogs
   continue to normalize in-memory. SDD catalog assets ship full skill directories
   (including `references/`) plus `personas/teaching.md`.
-- `--json` is output format only for SDD configure/rollback; mutating apply still
-  requires `--yes`. Conflicts are never overwritten.
+- SDD configure/rollback use the shared apply-confirmation policy: non-interactive
+  apply without `--json` requires `--yes`/`--confirm`/`--no-preflight`; `--json`
+  skips the prompt/consent gate. Conflicts are never overwritten.
 - Default cloud routing precedence: Ollama → OpenCode Go → OpenCode Zen →
   OpenRouter. Go limit failures never auto-spend Zen credits.
 - Health guidance treats API-key presence as configured credentials, not proven

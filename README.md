@@ -537,11 +537,13 @@ agent via `state.sdd.personaAgentIds` (managed-section gate only — explanation
 never code/docs/commits/PRs). `--persona off` removes teaching only for the
 targeted agents.
 
-**Consent and conflicts.** Mutating configure/rollback requires `--yes`
-(`--json` is format only). Dry-run writes nothing. Conflicts and user-owned
-files are never overwritten, even with `--yes`. Receipts live under
-`~/.harness/integrations/sdd-core/` and may be `partial` when some actions
-succeed and others fail.
+**Consent and conflicts.** Dry-run writes nothing. Non-interactive mutating
+configure/rollback without `--json` requires `--yes`, `--confirm`, or
+`--no-preflight`. `--json` selects machine-readable output and skips the
+prompt/consent gate (same apply-confirmation policy as setup/sync/upgrade).
+Conflicts and user-owned files are never overwritten, even with `--yes`.
+Receipts live under `~/.harness/integrations/sdd-core/` and may be `partial`
+when some actions succeed and others fail.
 
 **Session refresh.** After skill or managed-section changes, results report
 `session_refresh_required` — restart agents to load skills; Kairo does not claim
