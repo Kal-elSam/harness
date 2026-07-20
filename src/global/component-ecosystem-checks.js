@@ -66,13 +66,19 @@ async function buildSddChecks({ homeDir }) {
     const state = resolvedHome
       ? await readGlobalState(harnessHomePaths(resolvedHome).statePath)
       : null;
+    const managed = new Set(SDD_MANAGED_AGENT_IDS);
+    const installedAgents = (state?.adapters ?? [])
+      .map((entry) => entry.id)
+      .filter((id) => managed.has(id));
     const trackedFiles = Object.fromEntries(
       (state?.sdd?.files ?? []).map((file) => [file.destinationPath, file.hash])
     );
     const verification = await provider.verify({
       homeDir: resolvedHome,
-      requestedAgentIds: [...SDD_MANAGED_AGENT_IDS],
+      requestedAgentIds: installedAgents.length ? installedAgents : [],
+      detectedAgentIds: installedAgents,
       trackedFiles,
+      personaAgentIds: state?.sdd?.personaAgentIds ?? [],
       packageRoot: PACKAGE_ROOT
     });
     return buildSddIntegrationChecks(verification);

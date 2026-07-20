@@ -148,7 +148,9 @@ test("doctor reports disk state without claiming runtime; refresh only on effect
     assert.equal(first.sessionRefreshRequired, true);
     const doctor = await runGlobalDoctorChecks(homeDir, { packageRoot });
     const skill = doctor.checks.find((check) => check.name === "sdd-core:skills");
+    assert.equal(skill.status, "ok");
     assert.match(skill.detail, /disk presence ≠ runtime active/i);
+    assert.equal(doctor.checks.find((check) => check.name === "sdd-core:persona").status, "ok");
 
     const second = await syncGlobalHarness({
       ...base, homeDir, agents: ["cursor", "codex"], components: ["orchestrator", "sdd-core"]
@@ -159,6 +161,25 @@ test("doctor reports disk state without claiming runtime; refresh only on effect
       (second.configsCreated.length + second.configsUpdated.length + second.configsRepaired.length) > 0
     );
     assert.ok((await listSddReceipts({ homeDir })).length >= 1);
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("sync repairs missing SDD skills via integration warning", async () => {
+  const homeDir = home();
+  try {
+    await installGlobalHarness({ ...base, homeDir });
+    const skillPath = resolveSddSkillPath("sdd-init", "codex", homeDir);
+    rmSync(skillPath, { force: true });
+    const doctor = await runGlobalDoctorChecks(homeDir, { packageRoot });
+    assert.equal(doctor.checks.find((check) => check.name === "sdd-core:skills").status, "warning");
+
+    const outcome = await runHarnessSync({ ...base, homeDir, yes: true });
+    assert.equal(outcome.action, "repaired");
+    assert.equal(outcome.wrote, true);
+    assert.ok(existsSync(skillPath));
+    assert.equal(outcome.result.integrations.sdd.status, "applied");
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
   }

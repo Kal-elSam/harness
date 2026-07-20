@@ -83,7 +83,7 @@ echo "== kairo components configure/verify sdd-core =="
 npx --no-install kairo components configure sdd-core --agents codex,cursor --persona off --dry-run --json \
   | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const p=JSON.parse(s);if(p.writes!==false||p.applied!==false)process.exit(1)})'
 npx --no-install kairo components configure sdd-core --agents codex,cursor --persona off --yes --json \
-  | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const p=JSON.parse(s);const fs=require("fs");const path=require("path");if(!p.applied||!p.sessionRefreshRequired||!p.receipt?.id)process.exit(1);if(!fs.existsSync(path.join(process.env.HARNESS_HOME,".agents","skills","sdd-init","SKILL.md")))process.exit(1)})'
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const p=JSON.parse(s);const fs=require("fs");const path=require("path");if(p.writes!==false||(p.summary?.create??0)!==0||!p.receipt?.id)process.exit(1);if(!fs.existsSync(path.join(process.env.HARNESS_HOME,".agents","skills","sdd-init","SKILL.md")))process.exit(1)})'
 npx --no-install kairo components verify sdd-core --agents codex,cursor --json \
   | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const p=JSON.parse(s);if(p.status!=="configured"||p.ok!==true)process.exit(1)})'
 
