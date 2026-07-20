@@ -35,9 +35,10 @@ kairo
 **First run** (no `~/.harness/state.json`): interactive onboarding → safe diagnosis →
 setup with confirmation → full-screen operations cockpit.
 
-**Later runs** (state present): full-screen cockpit Home that explains what Kairo
-does, shows real readiness, and recommends a useful next action. Layout adapts to
-terminal size:
+**Later runs** (state present): full-screen Control Center that explains what Kairo
+does, shows coverage/integrity, evidence-backed proposals, and the next governance
+action (scan → evidence → preview → confirm → apply → re-scan → recovery). Runs stay
+secondary. Layout adapts to terminal size:
 
 | Mode | Size | Layout |
 |------|------|--------|
@@ -288,7 +289,15 @@ kairo setup --agents all
 kairo install --agents all
 ```
 
-Primary flow remains `kairo` → `status` → `sync` (or `kairo setup` explicitly).
+Primary governance flow:
+
+```txt
+scan (read-only) → evidence proposals → preview → confirm → apply → re-scan → recovery
+```
+
+Bare `kairo` opens the Control Center cockpit when the ecosystem is configured.
+Runs stay secondary until setup/repairs/verification are healthy. CLI equivalents
+remain `kairo status` / `kairo diff` / `kairo sync` (or `kairo setup` explicitly).
 
 ## Install scopes
 
@@ -947,19 +956,28 @@ gentle-ai doctor
 
 ## Engram/Graphify integration
 
-This pack does not assume a specific implementation. It defines integration points in:
+Engram and Graphify are **external** integrations. Kairo verifies configuration,
+version, and freshness evidence when present; it does not install them, read the
+Engram database, or traverse the Graphify graph at runtime, and never claims they
+are actively running.
+
+Integration points (repo docs / optional components):
 
 ```txt
 docs/ai/context-graph.md
 docs/ai/memory.md
 docs/skills/context-graph.md
+global-template/components/engram-memory/
+global-template/components/graphify-context/
 ```
 
 The rule:
 
-- The repo keeps the source of truth in Markdown.
-- Engram can index decisions, specs, memory, and conventions.
-- Graphify can build the architecture graph: modules, dependencies, features, and risks.
+- The repo keeps the source of truth in Markdown (`AGENTS.md`, `docs/ai/`, code).
+- Engram may index decisions, specs, memory, and conventions when configured separately.
+- Graphify may build an architecture graph when you run `graphify` yourself.
+- Control-plane proposals for Engram/Graphify appear only with verifiable
+  config/version/freshness checks — never from optional intelligence absence alone.
 - No external memory replaces `AGENTS.md`, `docs/ai/`, or the code.
 
 ## v2 — Universal-first, adapter-based

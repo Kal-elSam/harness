@@ -19,13 +19,14 @@ import {
   reduceCockpitUi,
   routeCockpitKey
 } from "../src/global/ink/cockpit-controller.js";
+import { formatProposalLines } from "../src/global/ink/cockpit-proposals.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const pkg = require(join(root, "package.json"));
 
-assert.equal(pkg.version, "0.4.3");
+assert.equal(pkg.version, "0.5.0");
 assert.ok(pkg.dependencies["ansi-escapes"]);
 
 assert.equal(resolveLayoutMode({ columns: 120, rows: 40 }), LAYOUT_MODES.WIDE);
@@ -125,5 +126,25 @@ function smokeNavigation(layoutMode) {
 
 smokeNavigation(LAYOUT_MODES.WIDE);
 smokeNavigation(LAYOUT_MODES.COMPACT);
+
+const proposalLines = formatProposalLines([
+  {
+    id: "setup-local",
+    severity: "high",
+    title: "Finish local setup",
+    destination: "changes",
+    evidence: [{ type: "status", source: "status.overall", ref: "missing" }]
+  }
+], {
+  budgets: {
+    stableUsedTokens: 1,
+    stableBudgetTokens: 10,
+    requestUsedTokens: 0,
+    requestBudgetTokens: 10
+  }
+});
+assert.match(proposalLines.join("\n"), /\[HIGH\] Finish local setup → changes/);
+assert.match(proposalLines.join("\n"), /Budget · stable 1\/10/);
+assert.match(proposalLines.join("\n"), /evidence: status\.overall/);
 
 console.log("cockpit smoke OK");
