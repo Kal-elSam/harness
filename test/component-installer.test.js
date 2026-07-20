@@ -43,10 +43,15 @@ test("default install includes sdd-core assets and state", async () => {
 
   const state = await readGlobalState(paths.statePath);
   assert.equal(state.stateVersion, 4);
-  assert.deepEqual(state.sdd, { persona: "off", personaAgentIds: [], agentIds: [], files: [], lastReceiptId: null, updatedAt: null });
+  assert.equal(state.sdd.persona, "off");
+  assert.deepEqual(state.sdd.personaAgentIds, []);
+  assert.ok(state.sdd.files.length >= 9);
+  assert.ok(state.sdd.lastReceiptId);
   assert.deepEqual(state.components.map((entry) => entry.id), ["orchestrator", "sdd-core"]);
   assert.equal(state.components[1].version, "2.0.0");
   assert.ok(state.components[1].managedTargets.includes(".cursor/AGENTS.md"));
+  assert.equal(result.integrations.sdd.status, "applied");
+  assert.equal(result.sessionRefreshRequired, true);
 });
 
 test("--no-default-components installs only core plumbing", async () => {

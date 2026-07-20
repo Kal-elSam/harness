@@ -41,14 +41,12 @@ test("sdd configure dry-run then apply persists state for configured verify", as
     });
     assert.equal(dry.applied, false);
     assert.equal(dry.writes, false);
+    assert.ok((dry.summary?.noop ?? 0) > 0);
 
-    const applied = await runComponentsConfigure({
-      componentId: "sdd-core", adapters: ["codex"], yes: true, json: true, packageRoot, persona: "off"
-    });
-    assert.equal(applied.applied && applied.sessionRefreshRequired, true);
-    await runComponentsConfigure({
+    const taught = await runComponentsConfigure({
       componentId: "sdd-core", adapters: ["codex"], yes: true, json: true, packageRoot, persona: "teaching"
     });
+    assert.equal(taught.applied && taught.sessionRefreshRequired, true);
     const verified = await runComponentsVerify({
       componentId: "sdd-core", adapters: ["codex"], json: true, packageRoot
     });

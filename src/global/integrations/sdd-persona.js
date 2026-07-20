@@ -25,12 +25,14 @@ function result(before, after, admitted, rejected) {
 }
 
 export function planPersonaTransition({
-  requestedPersona = "off", selectedAgentIds = [], currentPersonaAgentIds = [], actions = []
+  requestedPersona = "off", selectedAgentIds = [], currentPersonaAgentIds = [], actions = [],
+  preservePersona = false
 } = {}) {
   if (!SDD_PERSONA_IDS.includes(requestedPersona)) {
     throw new Error(`Persona "${requestedPersona}" is invalid. Use: ${SDD_PERSONA_IDS.join(", ")}.`);
   }
   const before = normalizePersonaAgentIds(currentPersonaAgentIds);
+  if (preservePersona) return result(before, before, [], []);
   const selected = normalizePersonaAgentIds(selectedAgentIds);
   if (requestedPersona === "off") {
     return result(before, before.filter((id) => !selected.includes(id)), selected.filter((id) => before.includes(id)), []);
@@ -43,8 +45,8 @@ export function planPersonaTransition({
   return result(before, normalizePersonaAgentIds([...kept, ...admitted]), admitted, selected.filter((id) => !admitted.includes(id)));
 }
 
-export function finalizePersonaTransition(planned, files, requestedPersona) {
-  if (requestedPersona === "off" || !planned) return planned ?? result([], [], [], []);
+export function finalizePersonaTransition(planned, files, requestedPersona, { preservePersona = false } = {}) {
+  if (preservePersona || requestedPersona === "off" || !planned) return planned ?? result([], [], [], []);
   const selected = normalizePersonaAgentIds([...planned.admitted, ...planned.rejected]);
   const admitted = selected.filter((id) => {
     const mine = files.filter((e) => e.agentIds?.includes(id));

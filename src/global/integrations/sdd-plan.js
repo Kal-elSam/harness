@@ -25,6 +25,7 @@ export async function planSddConfigure({
   persona = "off",
   personaAgentIds = [],
   trackedFiles = {},
+  preservePersona = false,
   dryRun = true,
   exists = existsSync,
   readFileImpl = readFile
@@ -72,11 +73,11 @@ export async function planSddConfigure({
   for (const action of actions) summary[action.action] += 1;
   const personaTransition = planPersonaTransition({
     requestedPersona: persona, selectedAgentIds: agentIds,
-    currentPersonaAgentIds: personaAgentIds, actions
+    currentPersonaAgentIds: personaAgentIds, actions, preservePersona
   });
   return {
     provider: "sdd-core", componentId: "sdd-core", dryRun: Boolean(dryRun),
-    executes: false, writes: false, requestedPersona: persona,
+    executes: false, writes: false, requestedPersona: persona, preservePersona,
     persona: personaTransition.persona,
     personaPath: resolveCanonicalTeachingPersonaPath(packageRoot),
     personaActive: personaTransition.after.length > 0, personaTransition, agentIds, actions,

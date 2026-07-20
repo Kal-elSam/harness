@@ -17,8 +17,8 @@ const APPLYING_ACTIONS = new Set([SDD_PLAN_ACTIONS.CREATE, SDD_PLAN_ACTIONS.UPDA
 
 export async function applySddConfigure({
   requestedAgentIds = null, detectedAgentIds = [], homeDir, packageRoot, persona = "off",
-  personaAgentIds = [], trackedFiles = {}, dryRun = false, yes = false, json = false,
-  interactive = null, receiptId = null, plan = planSddConfigure,
+  personaAgentIds = [], trackedFiles = {}, preservePersona = false, dryRun = false, yes = false,
+  json = false, interactive = null, receiptId = null, plan = planSddConfigure,
   confirm = promptApplyConfirmation, saveReceipt = saveSddReceipt,
   now = () => new Date().toISOString()
 } = {}) {
@@ -28,7 +28,7 @@ export async function applySddConfigure({
 
   const planned = await plan({
     requestedAgentIds, detectedAgentIds, homeDir, packageRoot, persona, personaAgentIds,
-    trackedFiles, dryRun: true
+    trackedFiles, preservePersona, dryRun: true
   });
   if (dryRun) return { ...planned, applied: false, cancelled: false, receipt: null };
 
@@ -94,7 +94,7 @@ export async function applySddConfigure({
     planned.personaTransition ?? {
       before: [], after: [], admitted: [], rejected: [], persona: "off", personaChanged: false
     },
-    files, planned.requestedPersona ?? persona
+    files, planned.requestedPersona ?? persona, { preservePersona }
   );
   const { before, after, admitted, rejected, personaChanged } = personaTransition;
   const receipt = {
