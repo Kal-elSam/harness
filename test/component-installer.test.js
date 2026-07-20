@@ -36,12 +36,22 @@ test("default install includes sdd-core assets and state", async () => {
   assert.ok(result.coreFiles.includes("components/orchestrator/orchestrator.md"));
   assert.ok(result.coreFiles.includes("components/sdd-core/workflow.md"));
   assert.ok(existsSync(join(paths.root, "components", "sdd-core", "spec-sizing.md")));
+  assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-init", "SKILL.md")));
+  assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-init", "references", "contract.md")));
+  assert.ok(existsSync(join(paths.root, "components", "sdd-core", "skills", "sdd-archive", "SKILL.md")));
+  assert.ok(existsSync(join(paths.root, "components", "sdd-core", "personas", "teaching.md")));
 
   const state = await readGlobalState(paths.statePath);
-  assert.equal(state.stateVersion, 3);
+  assert.equal(state.stateVersion, 4);
+  assert.equal(state.sdd.persona, "off");
+  assert.deepEqual(state.sdd.personaAgentIds, []);
+  assert.ok(state.sdd.files.length >= 9);
+  assert.ok(state.sdd.lastReceiptId);
   assert.deepEqual(state.components.map((entry) => entry.id), ["orchestrator", "sdd-core"]);
-  assert.equal(state.components[1].version, "1.0.0");
+  assert.equal(state.components[1].version, "2.0.0");
   assert.ok(state.components[1].managedTargets.includes(".cursor/AGENTS.md"));
+  assert.equal(result.integrations.sdd.status, "applied");
+  assert.equal(result.sessionRefreshRequired, true);
 });
 
 test("--no-default-components installs only core plumbing", async () => {

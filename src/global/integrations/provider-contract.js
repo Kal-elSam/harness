@@ -1,6 +1,6 @@
 /** Integration provider contract — metadata only; no executable commands in manifests. */
 
-export const INTEGRATION_PROVIDER_IDS = Object.freeze(["engram"]);
+export const INTEGRATION_PROVIDER_IDS = Object.freeze(["engram", "sdd-core"]);
 export const PROVIDER_METHODS = Object.freeze(["inspect", "plan", "apply", "verify", "rollback"]);
 
 const EXECUTABLE_FIELDS = Object.freeze([

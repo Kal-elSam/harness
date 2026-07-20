@@ -19,6 +19,11 @@ import {
   normalizeGlobalState
 } from "./state-migration.js";
 import { formatCliCommand } from "./brand/cli.js";
+import {
+  aggregateSessionRefreshRequired,
+  applySddLifecycle,
+  nextSddState
+} from "./integrations/sdd-lifecycle.js";
 
 export async function installGlobalHarness({
   packageRoot,
@@ -32,6 +37,7 @@ export async function installGlobalHarness({
   dryRun = false
 }) {
   const paths = harnessHomePaths(homeDir);
+  const priorState = await readGlobalState(paths.statePath);
   const timestamp = backupTimestamp();
   const targetComponents = resolveTargetComponents({ components, noDefaultComponents, workspaceRoot });
   const context = buildAdapterContext({
@@ -58,7 +64,9 @@ export async function installGlobalHarness({
     configsRepaired: [],
     configsUnchanged: [],
     backups: [],
-    driftDetected: false
+    driftDetected: false,
+    integrations: {},
+    sessionRefreshRequired: false
   };
 
   const componentFiles = await installComponentAssets({
@@ -72,6 +80,9 @@ export async function installGlobalHarness({
   result.assetsRepaired.push(...Object.keys(componentFiles));
 
   await applyAdapterPlans({ context, targetAdapters, result });
+  await attachSddLifecycle({
+    result, homeDir, packageRoot, targetAdapters, targetComponents, dryRun, priorState
+  });
 
   if (!dryRun) {
     await persistGlobalState({
@@ -82,7 +93,8 @@ export async function installGlobalHarness({
       targetComponents,
       homeDir,
       componentFiles,
-      backups: result.backups
+      backups: result.backups,
+      sdd: nextSddState(priorState?.sdd, result.integrations.sdd)
     });
   }
 
@@ -144,7 +156,9 @@ export async function syncGlobalHarness({
     configsUnchanged: [],
     backups: [],
     driftDetected: hasRepairableDrift(driftChecks),
-    repairs: driftChecks.filter((check) => check.status === "missing" || check.status === "stale")
+    repairs: driftChecks.filter((check) => check.status === "missing" || check.status === "stale"),
+    integrations: {},
+    sessionRefreshRequired: false
   };
 
   const { coreFiles, repaired, unchanged } = await repairComponentAssets({
@@ -184,6 +198,10 @@ export async function syncGlobalHarness({
     if (applied.action !== "unchanged") result.configsRepaired.push(applied.configFile);
   }
 
+  await attachSddLifecycle({
+    result, homeDir, packageRoot, targetAdapters, targetComponents, dryRun, priorState: state
+  });
+
   if (!dryRun) {
     await persistGlobalState({
       paths,
@@ -194,7 +212,8 @@ export async function syncGlobalHarness({
       homeDir,
       componentFiles: coreFiles,
       backups: [...(state.backups ?? []), ...result.backups],
-      installedAt: state.installedAt
+      installedAt: state.installedAt,
+      sdd: nextSddState(state?.sdd, result.integrations.sdd)
     });
   }
 
@@ -244,6 +263,22 @@ export async function uninstallGlobalHarness({ homeDir, dryRun = false }) {
   return result;
 }
 
+async function attachSddLifecycle({
+  result, homeDir, packageRoot, targetAdapters, targetComponents, dryRun, priorState
+}) {
+  const sdd = await applySddLifecycle({
+    homeDir,
+    packageRoot,
+    agentIds: targetAdapters.map((adapter) => adapter.id),
+    componentIds: targetComponents.map((component) => component.id),
+    dryRun,
+    priorSdd: priorState?.sdd ?? null,
+    yes: true
+  });
+  result.integrations.sdd = sdd;
+  result.sessionRefreshRequired = aggregateSessionRefreshRequired(result, sdd);
+}
+
 async function applyAdapterPlans({ context, targetAdapters, result }) {
   for (const adapter of targetAdapters) {
     const plan = adapter.plan(context);
@@ -266,7 +301,8 @@ async function persistGlobalState({
   homeDir,
   componentFiles,
   backups,
-  installedAt
+  installedAt,
+  sdd
 }) {
   const existingState = installedAt ? { installedAt } : await readGlobalState(paths.statePath);
   const adapterEntries = targetAdapters.map((adapter) => buildAdapterStateEntry(adapter, homeDir));
@@ -279,6 +315,7 @@ async function persistGlobalState({
     components: componentEntries,
     coreFiles: componentFiles,
     backups,
-    installedAt: existingState?.installedAt
+    installedAt: existingState?.installedAt,
+    sdd
   }));
 }

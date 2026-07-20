@@ -513,6 +513,50 @@ Kairo-managed Engram agents (`cursor`, `codex`, `opencode`, `claude` → setup s
 load MCP; configuration evidence is not runtime-active. Receipts live under
 `~/.harness/integrations/engram/`.
 
+### SDD Core skills
+
+`sdd-core` (default with setup/install) materializes nine phase skills:
+
+`sdd-init`, `sdd-explore`, `sdd-propose`, `sdd-spec`, `sdd-design`,
+`sdd-tasks`, `sdd-apply`, `sdd-verify`, `sdd-archive`.
+
+Each skill ships as a directory (`SKILL.md` + `references/contract.md`).
+
+**Auto-materialization.** When `sdd-core` is selected/installed,
+`install` / `setup` / `sync` / `upgrade` materialize (or repair) skills via the
+same `sdd-core` apply path. Lifecycle keeps persona frozen (`preservePersona`):
+it never auto-activates teaching. Explicit persona changes stay on
+`kairo components configure sdd-core`.
+
+**Destinations.** Cursor, Codex, and OpenCode share `~/.agents/skills/<id>/`.
+Claude uses `~/.claude/skills/<id>/`. One physical tree per root; consumers are
+recorded per destination.
+
+**Persona.** Defaults to `off`. `--persona teaching` activates per managed
+agent via `state.sdd.personaAgentIds` (managed-section gate only — explanations,
+never code/docs/commits/PRs). `--persona off` removes teaching only for the
+targeted agents.
+
+**Consent and conflicts.** Dry-run writes nothing. Non-interactive mutating
+configure/rollback without `--json` requires `--yes`, `--confirm`, or
+`--no-preflight`. `--json` selects machine-readable output and skips the
+prompt/consent gate (same apply-confirmation policy as setup/sync/upgrade).
+Conflicts and user-owned files are never overwritten, even with `--yes`.
+Receipts live under `~/.harness/integrations/sdd-core/` and may be `partial`
+when some actions succeed and others fail.
+
+**Session refresh.** After skill or managed-section changes, results report
+`session_refresh_required` — restart agents to load skills; Kairo does not claim
+existing sessions already loaded them. Verify health is
+`configured` | `missing` | `drifted` | `conflict`.
+
+```bash
+kairo components configure sdd-core --agents codex,opencode,cursor,claude --persona off --dry-run
+kairo components configure sdd-core --agents codex,opencode --persona teaching --yes
+kairo components verify sdd-core --json
+kairo components rollback sdd-core --receipt <id> --dry-run
+```
+
 Create, validate, and install:
 
 ```bash

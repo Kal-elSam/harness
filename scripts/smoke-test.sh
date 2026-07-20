@@ -78,6 +78,15 @@ echo
 echo "== kairo status (after install) =="
 npx --no-install kairo status
 
+echo
+echo "== kairo components configure/verify sdd-core =="
+npx --no-install kairo components configure sdd-core --agents codex,cursor --persona off --dry-run --json \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const p=JSON.parse(s);if(p.writes!==false||p.applied!==false)process.exit(1)})'
+npx --no-install kairo components configure sdd-core --agents codex,cursor --persona off --yes --json \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const p=JSON.parse(s);const fs=require("fs");const path=require("path");if(p.writes!==false||(p.summary?.create??0)!==0||!p.receipt?.id)process.exit(1);if(!fs.existsSync(path.join(process.env.HARNESS_HOME,".agents","skills","sdd-init","SKILL.md")))process.exit(1)})'
+npx --no-install kairo components verify sdd-core --agents codex,cursor --json \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const p=JSON.parse(s);if(p.status!=="configured"||p.ok!==true)process.exit(1)})'
+
 SNAPSHOT="$(ls -A "$FAKE_HOME/.harness/backups" | head -1)"
 BACKUP_FILE="$(ls -A "$FAKE_HOME/.harness/backups/$SNAPSHOT" | head -1)"
 

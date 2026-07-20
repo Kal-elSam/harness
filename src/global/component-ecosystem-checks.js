@@ -1,13 +1,18 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { formatCliCommand } from "./brand/cli.js";
 import { ensureIntegrationProvidersRegistered } from "./integrations/index.js";
 import { requireIntegrationProvider } from "./integrations/provider-registry.js";
-import { buildEngramIntegrationChecks } from "./component-integration-cli.js";
+import { buildEngramIntegrationChecks, buildSddIntegrationChecks } from "./component-integration-cli.js";
 import { KAIRO_ENGRAM_AGENT_IDS } from "./integrations/engram-evidence.js";
+import { SDD_MANAGED_AGENT_IDS } from "./integrations/sdd-destinations.js";
+import { harnessHomePaths } from "./paths.js";
+import { readGlobalState } from "./state.js";
 
+const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const GRAPH_REPORT_COMMIT_PATTERN = /Built from commit:\s*`([0-9a-f]+)`/i;
 
 export async function runComponentEcosystemChecks({
@@ -20,6 +25,10 @@ export async function runComponentEcosystemChecks({
 
   if (installedIds.has("engram-memory")) {
     checks.push(...await buildEngramChecks({ homeDir }));
+  }
+
+  if (installedIds.has("sdd-core")) {
+    checks.push(...await buildSddChecks({ homeDir }));
   }
 
   if (installedIds.has("graphify-context")) {
@@ -45,6 +54,41 @@ async function buildEngramChecks({ homeDir }) {
       category: "integration",
       componentId: "engram-memory",
       detail: error instanceof Error ? error.message : "Engram inspection failed."
+    }];
+  }
+}
+
+async function buildSddChecks({ homeDir }) {
+  ensureIntegrationProvidersRegistered();
+  try {
+    const provider = requireIntegrationProvider("sdd-core");
+    const resolvedHome = homeDir ?? undefined;
+    const state = resolvedHome
+      ? await readGlobalState(harnessHomePaths(resolvedHome).statePath)
+      : null;
+    const managed = new Set(SDD_MANAGED_AGENT_IDS);
+    const installedAgents = (state?.adapters ?? [])
+      .map((entry) => entry.id)
+      .filter((id) => managed.has(id));
+    const trackedFiles = Object.fromEntries(
+      (state?.sdd?.files ?? []).map((file) => [file.destinationPath, file.hash])
+    );
+    const verification = await provider.verify({
+      homeDir: resolvedHome,
+      requestedAgentIds: installedAgents.length ? installedAgents : [],
+      detectedAgentIds: installedAgents,
+      trackedFiles,
+      personaAgentIds: state?.sdd?.personaAgentIds ?? [],
+      packageRoot: PACKAGE_ROOT
+    });
+    return buildSddIntegrationChecks(verification);
+  } catch (error) {
+    return [{
+      name: "sdd-core:skills",
+      status: "warning",
+      category: "integration",
+      componentId: "sdd-core",
+      detail: error instanceof Error ? error.message : "SDD verification failed."
     }];
   }
 }

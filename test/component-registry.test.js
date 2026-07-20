@@ -66,12 +66,21 @@ test("components expose managed section builders for optional integrations", () 
 test("components expose managed section builders", () => {
   const sddCore = resolveComponent("sdd-core");
   const section = sddCore.buildManagedSection(
-    { componentsDir: "/home/user/.harness/components" },
+    {
+      componentsDir: "/custom/home/.harness/components",
+      paths: { statePath: "/custom/home/.harness/state.json" }
+    },
     { id: "cursor", assets: { configFile: ".cursor/AGENTS.md" } }
   );
 
   assert.match(section, /### SDD Core/);
   assert.match(section, /workflow\.md/);
+  assert.match(section, /Canonical skills/);
+  assert.match(section, /sdd-init/);
+  assert.match(section, /sdd-archive/);
+  assert.match(section, /Teaching persona/);
+  assert.match(section, /\/custom\/home\/\.harness\/state\.json → sdd\.personaAgentIds/);
+  assert.doesNotMatch(section, /~\/\.harness\/state\.json/);
   assert.match(section, /basic, standard, or complex/);
   assert.match(section, /\.cursor\/rules\//);
 });
@@ -84,8 +93,33 @@ test("catalog metadata is loaded from the packaged component catalog", () => {
   assert.equal(orchestrator.label, "Orchestrator");
   assert.deepEqual(orchestrator.assetFiles, ["orchestrator.md"]);
   assert.equal(sddCore.label, "SDD Core");
-  assert.deepEqual(sddCore.assetFiles, ["workflow.md", "spec-sizing.md", "handoff.md"]);
+  assert.deepEqual(sddCore.assetFiles, [
+    "workflow.md",
+    "spec-sizing.md",
+    "handoff.md",
+    "skills/sdd-init/SKILL.md",
+    "skills/sdd-init/references/contract.md",
+    "skills/sdd-explore/SKILL.md",
+    "skills/sdd-explore/references/contract.md",
+    "skills/sdd-propose/SKILL.md",
+    "skills/sdd-propose/references/contract.md",
+    "skills/sdd-spec/SKILL.md",
+    "skills/sdd-spec/references/contract.md",
+    "skills/sdd-design/SKILL.md",
+    "skills/sdd-design/references/contract.md",
+    "skills/sdd-tasks/SKILL.md",
+    "skills/sdd-tasks/references/contract.md",
+    "skills/sdd-apply/SKILL.md",
+    "skills/sdd-apply/references/contract.md",
+    "skills/sdd-verify/SKILL.md",
+    "skills/sdd-verify/references/contract.md",
+    "skills/sdd-archive/SKILL.md",
+    "skills/sdd-archive/references/contract.md",
+    "personas/teaching.md"
+  ]);
   assert.match(sddCore.adapterHints.cursor, /\.cursor\/rules\//);
+  assert.deepEqual(sddCore.capabilities, ["sdd.workflow", "sdd.skills", "sdd.persona"]);
+  assert.equal(sddCore.version, "2.0.0");
 });
 
 test("describeComponentCatalog exposes defaults and adapter hint keys", () => {

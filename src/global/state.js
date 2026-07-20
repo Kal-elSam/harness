@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { normalizeGlobalState } from "./state-migration.js";
+import { normalizeGlobalState, STATE_VERSION, UNSUPPORTED_STATE_VERSION } from "./state-migration.js";
+import { normalizeSddState } from "./integrations/sdd-state.js";
 
-export const STATE_VERSION = 3;
+export { STATE_VERSION, UNSUPPORTED_STATE_VERSION };
 
 export async function readGlobalState(statePath) {
   if (!existsSync(statePath)) return null;
@@ -11,14 +12,16 @@ export async function readGlobalState(statePath) {
   try {
     const raw = JSON.parse(await readFile(statePath, "utf8"));
     return normalizeGlobalState(raw);
-  } catch {
+  } catch (error) {
+    if (error?.code === UNSUPPORTED_STATE_VERSION) throw error;
     return null;
   }
 }
 
 export async function writeGlobalState(statePath, state) {
+  const normalized = normalizeGlobalState(state) ?? state;
   await mkdir(dirname(statePath), { recursive: true });
-  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await writeFile(statePath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
 }
 
 export function createGlobalState({
@@ -28,13 +31,14 @@ export function createGlobalState({
   components = [],
   coreFiles,
   backups,
-  installedAt
+  installedAt,
+  sdd
 }) {
   const now = new Date().toISOString();
   const normalizedAdapters = adapters.map((entry) => ({ ...entry }));
   const normalizedComponents = components.map((entry) => ({ ...entry }));
 
-  return {
+  return normalizeGlobalState({
     stateVersion: STATE_VERSION,
     packageName,
     cliVersion,
@@ -45,6 +49,7 @@ export function createGlobalState({
     agents: normalizedAdapters.map(({ id, configFile, present }) => ({ id, configFile, present })),
     components: normalizedComponents,
     coreFiles,
-    backups
-  };
+    backups,
+    sdd: normalizeSddState(sdd)
+  });
 }

@@ -1,5 +1,7 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveHomeDir, harnessHomePaths } from "./paths.js";
-import { readGlobalState } from "./state.js";
+import { readGlobalState, writeGlobalState } from "./state.js";
 import { detectInstalledAdapters } from "./registry.js";
 import { resolveComponent } from "./component-registry.js";
 import { printJson } from "./json-output.js";
@@ -7,6 +9,18 @@ import { formatCliCommand } from "./brand/cli.js";
 import { requireIntegrationProvider } from "./integrations/provider-registry.js";
 import { ensureIntegrationProvidersRegistered } from "./integrations/index.js";
 import { ENGRAM_INTEGRATION_STATUS } from "./integrations/engram-evidence.js";
+import { SDD_HEALTH } from "./integrations/sdd-evidence.js";
+import {
+  hasSuccessfulSddRollbackMutations, recordSddMaterialization, reconcileSddStateAfterRollback
+} from "./integrations/sdd-state.js";
+import { loadSddReceipt } from "./integrations/sdd-receipts.js";
+
+const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+const COMPONENT_PROVIDERS = Object.freeze({
+  "engram-memory": "engram",
+  "sdd-core": "sdd-core"
+});
 
 export async function assertComponentInstalled(componentId, { homeDir = resolveHomeDir() } = {}) {
   const state = await readGlobalState(harnessHomePaths(homeDir).statePath);
@@ -19,60 +33,99 @@ export async function assertComponentInstalled(componentId, { homeDir = resolveH
   return resolveComponent(componentId);
 }
 
+function requireConfiguredComponent(componentId) {
+  const providerId = COMPONENT_PROVIDERS[componentId];
+  if (!providerId) {
+    throw new Error(
+      `components configure/verify/rollback supports: ${Object.keys(COMPONENT_PROVIDERS).join(", ")} (got "${componentId}").`
+    );
+  }
+  return providerId;
+}
+
 export async function runComponentsConfigure(options) {
   const componentId = options.componentId;
-  if (componentId !== "engram-memory") {
-    throw new Error(`components configure currently supports engram-memory only (got "${componentId}").`);
-  }
-
+  const providerId = requireConfiguredComponent(componentId);
   ensureIntegrationProvidersRegistered();
   const homeDir = resolveHomeDir();
   await assertComponentInstalled(componentId, { homeDir });
-  const provider = requireIntegrationProvider("engram");
-  const detectedAgentIds = detectInstalledAdapters({ homeDir });
+  const provider = options.provider ?? requireIntegrationProvider(providerId);
+  const context = await buildProviderContext(options, { homeDir, componentId });
+  const result = await provider.apply(context);
 
-  const result = await provider.apply({
-    requestedAgentIds: options.adapters,
-    detectedAgentIds,
-    homeDir,
-    dryRun: Boolean(options.dryRun),
-    yes: Boolean(options.yes),
-    json: Boolean(options.json),
-    interactive: null
-  });
+  if (componentId === "sdd-core" && result.receipt && !result.dryRun && !result.cancelled) {
+    if (result.receipt.ok || result.receipt.partial) {
+      await persistSddReceiptState(homeDir, result.receipt);
+    }
+  }
 
   if (options.json) {
     printJson(result);
-    if (result.blocked || (result.receipt && !result.receipt.ok)) process.exitCode = 1;
+    if (isConfigureFailure(result)) process.exitCode = 1;
     return result;
   }
 
-  printConfigureHuman(result);
-  if (result.blocked || (result.receipt && !result.receipt.ok)) process.exitCode = 1;
+  if (componentId === "sdd-core") printSddConfigureHuman(result);
+  else printEngramConfigureHuman(result);
+  if (isConfigureFailure(result)) process.exitCode = 1;
+  return result;
+}
+
+export async function runComponentsVerify(options) {
+  const componentId = options.componentId;
+  const providerId = requireConfiguredComponent(componentId);
+  ensureIntegrationProvidersRegistered();
+  const homeDir = resolveHomeDir();
+  await assertComponentInstalled(componentId, { homeDir });
+  const provider = requireIntegrationProvider(providerId);
+  const context = await buildProviderContext(options, { homeDir, componentId });
+  const result = await provider.verify(context);
+
+  if (options.json) {
+    printJson(result);
+    if (result.ok === false) process.exitCode = 1;
+    return result;
+  }
+
+  if (componentId === "sdd-core") printSddVerifyHuman(result);
+  else printEngramConfigureHuman(result);
+  if (result.ok === false) process.exitCode = 1;
   return result;
 }
 
 export async function runComponentsRollback(options) {
   const componentId = options.componentId;
-  if (componentId !== "engram-memory") {
-    throw new Error(`components rollback currently supports engram-memory only (got "${componentId}").`);
-  }
+  const providerId = requireConfiguredComponent(componentId);
   if (!options.receiptId) {
-    throw new Error(`Missing receipt id. Use: ${formatCliCommand("components rollback engram-memory --receipt <id>")}`);
+    throw new Error(
+      `Missing receipt id. Use: ${formatCliCommand(`components rollback ${componentId} --receipt <id>`)}`
+    );
   }
 
   ensureIntegrationProvidersRegistered();
   const homeDir = resolveHomeDir();
   await assertComponentInstalled(componentId, { homeDir });
-  const provider = requireIntegrationProvider("engram");
+  const provider = options.provider ?? requireIntegrationProvider(providerId);
+  const state = componentId === "sdd-core"
+    ? await readGlobalState(harnessHomePaths(homeDir).statePath)
+    : null;
   const result = await provider.rollback({
     receiptId: options.receiptId,
     homeDir,
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     json: Boolean(options.json),
-    interactive: null
+    interactive: null,
+    personaAgentIds: state?.sdd?.personaAgentIds ?? []
   });
+
+  if (
+    componentId === "sdd-core"
+    && !result.dryRun && !result.cancelled && !result.blocked
+    && hasSuccessfulSddRollbackMutations(result.actions)
+  ) {
+    await reconcileSddRollbackState(homeDir, result);
+  }
 
   if (options.json) {
     printJson(result);
@@ -80,18 +133,63 @@ export async function runComponentsRollback(options) {
     return result;
   }
 
-  console.log(formatCliCommand("components rollback engram-memory"));
+  console.log(formatCliCommand(`components rollback ${componentId}`));
   console.log(`Receipt: ${result.receiptId}`);
   if (result.cancelled) {
     console.log("Cancelled.");
     return result;
   }
   for (const action of result.actions ?? []) {
-    console.log(`  ${action.action.padEnd(8)} ${action.path}${action.reason ? ` — ${action.reason}` : ""}`);
+    console.log(`  ${action.action.padEnd(8)} ${action.path ?? "persona"}${action.reason ? ` — ${action.reason}` : ""}`);
   }
   console.log(result.ok ? "Rollback complete." : "Rollback finished with skips/errors.");
   if (!result.ok) process.exitCode = 1;
   return result;
+}
+
+async function buildProviderContext(options, { homeDir, componentId }) {
+  const detectedAgentIds = detectInstalledAdapters({ homeDir });
+  const base = {
+    requestedAgentIds: options.adapters,
+    detectedAgentIds,
+    homeDir,
+    dryRun: Boolean(options.dryRun),
+    yes: Boolean(options.yes),
+    json: Boolean(options.json),
+    interactive: null
+  };
+  if (componentId !== "sdd-core") return base;
+
+  const state = await readGlobalState(harnessHomePaths(homeDir).statePath);
+  const trackedFiles = Object.fromEntries(
+    (state?.sdd?.files ?? []).map((file) => [file.destinationPath, file.hash])
+  );
+  return {
+    ...base,
+    packageRoot: options.packageRoot ?? DEFAULT_PACKAGE_ROOT,
+    persona: options.persona ?? state?.sdd?.persona ?? "off",
+    personaAgentIds: state?.sdd?.personaAgentIds ?? [],
+    trackedFiles
+  };
+}
+
+async function persistSddReceiptState(homeDir, receipt) {
+  const paths = harnessHomePaths(homeDir);
+  const state = (await readGlobalState(paths.statePath)) ?? {};
+  await writeGlobalState(paths.statePath, recordSddMaterialization(state, { receipt }));
+}
+
+async function reconcileSddRollbackState(homeDir, result) {
+  const paths = harnessHomePaths(homeDir);
+  const state = (await readGlobalState(paths.statePath)) ?? {};
+  const receipt = await loadSddReceipt(result.receiptId, { homeDir });
+  await writeGlobalState(paths.statePath, reconcileSddStateAfterRollback(state, {
+    receipt, actions: result.actions ?? []
+  }));
+}
+
+function isConfigureFailure(result) {
+  return Boolean(result.blocked || (result.receipt && !result.receipt.ok));
 }
 
 export function buildEngramIntegrationChecks(inspection) {
@@ -116,9 +214,7 @@ export function buildEngramIntegrationChecks(inspection) {
   for (const agent of inspection.agents ?? []) {
     const status = agent.status === ENGRAM_INTEGRATION_STATUS.CONFIGURED
       ? "ok"
-      : agent.status === ENGRAM_INTEGRATION_STATUS.CONFLICT
-        ? "warning"
-        : "warning";
+      : "warning";
     checks.push({
       name: `engram:agent:${agent.id}`,
       status,
@@ -131,7 +227,26 @@ export function buildEngramIntegrationChecks(inspection) {
   return checks;
 }
 
-function printConfigureHuman(result) {
+export function buildSddIntegrationChecks(verification) {
+  const summary = verification.summary ?? {};
+  const persona = verification.persona ?? {};
+  return [
+    {
+      name: "sdd-core:skills",
+      status: verification.status === SDD_HEALTH.CONFIGURED ? "ok" : "warning",
+      category: "integration", componentId: "sdd-core",
+      detail: `SDD skills ${verification.status}: configured=${summary.configured ?? 0}, missing=${summary.missing ?? 0}, drifted=${summary.drifted ?? 0}, conflict=${summary.conflict ?? 0} (disk presence ≠ runtime active).`
+    },
+    {
+      name: "sdd-core:persona",
+      status: persona.status === "configured" || persona.status === "off" ? "ok" : "warning",
+      category: "integration", componentId: "sdd-core",
+      detail: `SDD persona ${persona.status ?? "off"}: active=${Boolean(persona.personaActive)} (state alone ≠ runtime active).`
+    }
+  ];
+}
+
+function printEngramConfigureHuman(result) {
   console.log(formatCliCommand("components configure engram-memory"));
   if (result.binary) {
     console.log(`Binary: ${result.binary.path ?? "missing"} (${result.binary.version ?? "n/a"}, ${result.binary.status})`);
@@ -154,5 +269,34 @@ function printConfigureHuman(result) {
     if (result.receipt.status === ENGRAM_INTEGRATION_STATUS.RESTART_REQUIRED) {
       console.log("Restart the configured agents to load MCP. Kairo does not claim runtime reload.");
     }
+  }
+}
+
+function printSddConfigureHuman(result) {
+  console.log(formatCliCommand("components configure sdd-core"));
+  console.log(`Persona: ${result.persona ?? "off"}${result.personaActive ? " (active)" : " (off)"}`);
+  const s = result.summary ?? {};
+  console.log(`Plan: create=${s.create ?? 0} noop=${s.noop ?? 0} update=${s.update ?? 0} conflict=${s.conflict ?? 0}`);
+  for (const action of result.actions ?? []) {
+    console.log(`  ${action.action.padEnd(8)} ${action.skillId} → ${action.destinationPath}`);
+  }
+  if (result.dryRun) return void console.log("Dry-run only — no skills materialized.");
+  if (result.cancelled) return void console.log("Cancelled.");
+  if (result.blocked) return void console.log(`Blocked: ${result.reason ?? "conflicts present"}`);
+  if (result.receipt) {
+    console.log(`Receipt: ${result.receipt.id}${result.receipt.partial ? " (partial)" : ""}`);
+    if (result.sessionRefreshRequired) {
+      console.log("session_refresh_required — restart agents to load skills; Kairo does not claim current sessions already loaded them.");
+    }
+  }
+}
+
+function printSddVerifyHuman(result) {
+  console.log(formatCliCommand("components verify sdd-core"));
+  const s = result.summary ?? {};
+  console.log(`Status: ${result.status}`);
+  console.log(`Summary: configured=${s.configured ?? 0} missing=${s.missing ?? 0} drifted=${s.drifted ?? 0} conflict=${s.conflict ?? 0}`);
+  for (const finding of result.findings ?? []) {
+    console.log(`  ${finding.status.padEnd(10)} ${finding.skillId}${finding.drift ? ` (${finding.drift})` : ""} → ${finding.destinationPath}`);
   }
 }

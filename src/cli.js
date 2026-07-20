@@ -6,7 +6,8 @@ import { GLOBAL_AGENT_IDS } from "./global/registry.js";
 import { COMPONENT_IDS, DEFAULT_COMPONENT_IDS } from "./global/component-registry.js";
 import {
   runComponentsConfigure,
-  runComponentsRollback
+  runComponentsRollback,
+  runComponentsVerify
 } from "./global/component-integration-cli.js";
 import {
   printGlobalComponents,
@@ -242,7 +243,10 @@ async function dispatchComponentsCommand(options, invoke) {
       await runComponentsImport(options);
       return;
     case "configure":
-      await runComponentsConfigure(options);
+      await runComponentsConfigure({ ...options, packageRoot });
+      return;
+    case "verify":
+      await runComponentsVerify({ ...options, packageRoot });
       return;
     case "rollback":
       await runComponentsRollback(options);
@@ -332,6 +336,7 @@ export function parseArgs(argv) {
     componentsAction: null,
     componentId: null,
     receiptId: null,
+    persona: null,
     label: null,
     outPath: null,
     bundlePath: null,
@@ -452,6 +457,8 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--to=")) options.snapshot = arg.slice("--to=".length);
     else if (arg === "--receipt") options.receiptId = args[++index];
     else if (arg.startsWith("--receipt=")) options.receiptId = arg.slice("--receipt=".length);
+    else if (arg === "--persona") options.persona = parsePersona(args[++index]);
+    else if (arg.startsWith("--persona=")) options.persona = parsePersona(arg.slice("--persona=".length));
     else if (arg === "--limit") options.limit = parsePositiveInt(args[++index], "limit");
     else if (arg.startsWith("--limit=")) options.limit = parsePositiveInt(arg.slice("--limit=".length), "limit");
     else if (arg === "--command") options.historyCommand = args[++index];
@@ -530,18 +537,18 @@ function parseComponentsAction(args, options) {
 
   if (action === "validate") return;
 
-  if (action === "configure" || action === "rollback") {
+  if (action === "configure" || action === "verify" || action === "rollback") {
     const componentId = args[0];
     if (!componentId || componentId.startsWith("-")) {
       throw new Error(
-        `Missing component id. Use: ${formatCliCommand(`components ${action} engram-memory`)}`
+        `Missing component id. Use: ${formatCliCommand(`components ${action} <component-id>`)}`
       );
     }
     options.componentId = args.shift();
     return;
   }
 
-  throw new Error(`Unknown components action "${action}". Use validate, init, pack, import, configure, or rollback.`);
+  throw new Error(`Unknown components action "${action}". Use validate, init, pack, import, configure, verify, or rollback.`);
 }
 
 function parsePolicyAction(args, options) {
@@ -712,6 +719,14 @@ function parseAdapters(value) {
   return items;
 }
 
+function parsePersona(value) {
+  const persona = String(value ?? "").trim().toLowerCase();
+  if (persona !== "off" && persona !== "teaching") {
+    throw new Error('Invalid --persona. Use "off" or "teaching".');
+  }
+  return persona;
+}
+
 function printHelp() {
   const cli = PREFERRED_CLI;
   console.log(`${BRAND.displayName} (${PACKAGE_NAME})
@@ -762,7 +777,9 @@ Usage:
   ${cli} components
   ${cli} components validate|init|pack|import ...
   ${cli} components configure engram-memory [--agents <list>] [--dry-run|--yes] [--json]
-  ${cli} components rollback engram-memory --receipt <id> [--dry-run|--yes] [--json]
+  ${cli} components configure sdd-core [--agents <list>] [--persona off|teaching] [--dry-run|--yes] [--json]
+  ${cli} components verify sdd-core [--agents <list>] [--json]
+  ${cli} components rollback engram-memory|sdd-core --receipt <id> [--dry-run|--yes] [--json]
   ${cli} uninstall [--dry-run]
 
 Scopes:
@@ -800,7 +817,7 @@ Commands:
   rollback   Preview or restore a prior config snapshot (--apply to write).
   policy     View or edit local operation preferences under ~/.harness/policy.json.
   report     Read-only diagnostics bundle: status, policy, adapters, diff, history.
-  components List, validate, scaffold, pack, import, or configure integrations (Engram).
+  components List, validate, scaffold, pack, import, or configure integrations (Engram, SDD).
   uninstall  Remove managed sections and global state. Backups are preserved.
   init       Alias for install --scope=workspace (legacy).
 

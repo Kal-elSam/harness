@@ -42,9 +42,15 @@ export async function runHarnessSync({
   }
 
   const preReport = await buildStatusReport(homeDir, { packageRoot, workspaceRoot });
+  const needsSddRepair = (preReport.checks ?? []).some((check) =>
+    check.componentId === "sdd-core"
+    && check.category === "integration"
+    && check.status === "warning"
+  );
   const needsRepair = preReport.overall === "drift"
     || preReport.counts.missing > 0
-    || preReport.counts.stale > 0;
+    || preReport.counts.stale > 0
+    || needsSddRepair;
 
   if (!needsRepair) {
     return {
