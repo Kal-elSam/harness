@@ -48,6 +48,12 @@ export function ControlCenterPanel({ model, colorEnabled = true }) {
         React.createElement(Text, { key: line, color: COCKPIT_COLORS.muted }, line)
       )
     ),
+    model.proposalLines?.length > 0 && React.createElement(Box, { flexDirection: "column", marginTop: 1 },
+      React.createElement(Text, { bold: true }, "PROPOSALS"),
+      model.proposalLines.map((line) =>
+        React.createElement(Text, { key: line, color: COCKPIT_COLORS.muted }, line)
+      )
+    ),
     React.createElement(Text, null, ""),
     React.createElement(Text, { color: COCKPIT_COLORS.muted }, model.runsSecondaryHint)
   );
@@ -85,7 +91,12 @@ export function renderCockpitView({
     case ORCHESTRATOR_VIEWS.MODULES:
       return governanceList("Harness modules", formatModuleLines(snapshot), layoutMode, colorEnabled);
     case ORCHESTRATOR_VIEWS.CHANGES:
-      return governanceList("Changes", formatChangeLines(snapshot, changesAction), layoutMode, colorEnabled);
+      return governanceList(
+        "Changes",
+        formatChangeLines(snapshot, changesAction, layoutMode),
+        layoutMode,
+        colorEnabled
+      );
     case ORCHESTRATOR_VIEWS.ACTIVITY:
       return governanceList(
         "Activity & recovery",
@@ -211,8 +222,8 @@ function formatModuleLines(snapshot) {
   ];
 }
 
-function formatChangeLines(snapshot, changesAction) {
-  return formatChangesActionLines({ snapshot, changesAction });
+function formatChangeLines(snapshot, changesAction, layoutMode = LAYOUT_MODES.COMPACT) {
+  return formatChangesActionLines({ snapshot, changesAction, layoutMode });
 }
 
 function formatProfileLines(snapshot, diagnostics) {

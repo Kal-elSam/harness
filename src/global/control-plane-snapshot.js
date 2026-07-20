@@ -9,6 +9,7 @@ import { buildControlPlaneJson } from "./json-output.js";
 import { formatCliCommand } from "./brand/cli.js";
 import { buildRuntimeDashboardData } from "./runtime/run-cli.js";
 import { describeBackupSnapshots } from "./rollback.js";
+import { buildControlPlaneProposals } from "./control-plane-proposals.js";
 
 /**
  * Global control-plane health. Optional intelligence absence must never
@@ -155,6 +156,13 @@ export async function buildControlPlaneSnapshot({
 
   const health = resolveControlPlaneHealth(status);
   const cta = resolveControlPlaneCta({ health, status, diff });
+  const proposals = buildControlPlaneProposals({
+    health,
+    status,
+    adapters,
+    policy: status.policy,
+    diff
+  });
 
   const governedAgents = (adapters.adapters ?? []).filter((entry) => entry.managed).length;
   const detectedAgents = (adapters.adapters ?? []).filter((entry) => entry.detected).length;
@@ -168,6 +176,7 @@ export async function buildControlPlaneSnapshot({
     workspaceRoot,
     health,
     cta,
+    proposals,
     coverage: {
       detectedAgents,
       governedAgents,

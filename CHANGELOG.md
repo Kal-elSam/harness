@@ -3,10 +3,19 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
-## Unreleased
+## 0.5.0 — 2026-07-20 (Kairo Runtime)
+
+Minor release. Governance-first control plane: read-only scan, evidence-backed
+proposals, strict context budgets, Control Center presentation, and confirmed
+preview/apply/recovery. Publish tag: `kairo-runtime-v0.5.0`.
 
 ### Added
 
+- Control-plane snapshot + Control Center cockpit (health, coverage, CTA, notes).
+- Evidence-backed `proposals[]` derived only from status, checks, diff, adapters,
+  and policy (no proposal without evidence; optional intelligence absence is neutral).
+- Changes preview → confirm → apply → re-scan → receipt/rollback (managed assets only).
+- Activity & recovery snapshot restore with safety backups.
 - Operational SDD Core: `kairo components configure|verify|rollback sdd-core`
   materializes nine canonical skill directories (`SKILL.md` + `references/contract.md`),
   optional `--persona teaching` per managed agent (`personaAgentIds`, off by default),
@@ -51,6 +60,11 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ### Changed
 
+- Context compiler: `stableBudgetTokens` covers AGENTS.md + stable docs as one
+  budget; `requestBudgetTokens` is shared across requested files; truncation
+  markers stay inside the limit; evidence records `excluded_budget` and usage.
+- Control Center / Changes show proposals with severity, destination links, and
+  evidence sources (no sensitive dumps; Runs remain secondary).
 - Bundled component catalog migrated to Manifest v2; workspace v1 catalogs
   continue to normalize in-memory. SDD catalog assets ship full skill directories
   (including `references/`) plus `personas/teaching.md`.
@@ -62,6 +76,14 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 - Health guidance treats API-key presence as configured credentials, not proven
   authentication, and recommends Ollama, OpenCode CLI, `OPENCODE_API_KEY`, and
   `OPENROUTER_API_KEY`.
+- Engram and Graphify remain external integrations: proposals only when config,
+  version, or freshness evidence exists; never claim active runtime.
+
+### Compatibility
+
+- Additive snapshot/context fields only (`proposals`, budget usage,
+  `excluded_budget`). Existing CLI commands and state formats remain compatible.
+- No autonomous writes; preview/apply still require confirmation.
 
 ## 0.4.3 — 2026-07-13
 
@@ -821,9 +843,10 @@ Minor release. Adds opt-in workspace component sources for local custom componen
 - `doctor` detects drift for installed workspace assets; `uninstall` removes copied assets and
   managed sections.
 
-## 0.5.0 — 2026-07-03
+## 0.5.0 — 2026-07-03 (legacy `@kal-elsam/harness` package)
 
-Minor release. Adds a public component catalog and inspection command.
+Historical minor release under the legacy package name (not Kairo Runtime 0.5.0).
+Adds a public component catalog and inspection command.
 
 ### Component catalog
 

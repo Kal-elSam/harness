@@ -1,3 +1,5 @@
+import { formatProposalLines, proposalLimitForLayout } from "./cockpit-proposals.js";
+
 export const CHANGES_PHASE = Object.freeze({
   IDLE: "idle",
   PREVIEWING: "previewing",
@@ -60,10 +62,20 @@ export function reduceChangesAction(state, action) {
   }
 }
 
-export function formatChangesActionLines({ snapshot, changesAction }) {
+export function formatChangesActionLines({ snapshot, changesAction, layoutMode = "compact" }) {
   const diff = snapshot?.diff;
   const phase = changesAction?.phase ?? CHANGES_PHASE.IDLE;
   const lines = [`Changes · ${phase}`];
+
+  const proposalLines = formatProposalLines(snapshot?.proposals ?? [], {
+    limit: proposalLimitForLayout(layoutMode),
+    destinationFilter: "changes",
+    budgets: snapshot?.budgets ?? null
+  });
+  if (proposalLines[0] !== "No proposals targeting this view.") {
+    lines.push(...proposalLines, "");
+  }
+
   if (changesAction?.message) lines.push(changesAction.message);
   if (changesAction?.error && changesAction.error !== "setup-required") lines.push(`Error: ${changesAction.error}`);
 

@@ -1,4 +1,5 @@
 import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
+import { formatProposalLines, proposalLimitForLayout } from "./cockpit-proposals.js";
 
 export function buildControlCenterModel({
   projectName = "project",
@@ -24,6 +25,7 @@ export function buildControlCenterModel({
         destination: null
       },
       notes: [],
+      proposalLines: ["No evidence-backed proposals."],
       includeEmbeddedStatus: layoutMode !== "wide"
     };
   }
@@ -64,6 +66,10 @@ export function buildControlCenterModel({
       destination: snapshot.cta?.destination ?? null
     },
     notes: buildNotes(snapshot),
+    proposalLines: formatProposalLines(snapshot.proposals ?? [], {
+      limit: proposalLimitForLayout(layoutMode),
+      budgets: snapshot.budgets ?? null
+    }),
     includeEmbeddedStatus: layoutMode !== "wide",
     runsSecondaryHint: "Runs remain available as a secondary capability after setup and repairs."
   };

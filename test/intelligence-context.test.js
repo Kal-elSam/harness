@@ -115,3 +115,88 @@ test("stable docs and symlinked files use the same privacy checks", async () => 
   assert.ok(pack.privacy.excludedPrivate.includes("notes.md"));
   assert.ok(pack.evidence.some((entry) => entry.kind === "excluded_private" && entry.path.endsWith("model-policy.md")));
 });
+
+test("requestBudgetTokens is shared across requested files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "kairo-ctx-shared-"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "shared" }), "utf8");
+  await writeFile(join(root, "a.md"), "A".repeat(400), "utf8");
+  await writeFile(join(root, "b.md"), "B".repeat(400), "utf8");
+  await writeFile(join(root, "c.md"), "C".repeat(400), "utf8");
+
+  const pack = await compileContextPack({
+    workspaceRoot: root,
+    relevantPaths: ["a.md", "b.md", "c.md", "a.md"],
+    requestBudgetTokens: 50
+  });
+
+  const includedTokens = pack.perRequest.files.reduce(
+    (sum, file) => sum + estimateTokens(file.content),
+    0
+  );
+  assert.ok(includedTokens <= 50);
+  assert.equal(pack.budgets.requestUsedTokens, includedTokens);
+  assert.ok(pack.budgets.requestUsedTokens <= pack.budgets.requestBudgetTokens);
+  assert.ok(pack.evidence.some((entry) => entry.kind === "excluded_budget"));
+  assert.ok(pack.evidence.some((entry) => entry.kind === "deduped_path" && entry.path === "a.md"));
+  assert.ok(pack.perRequest.files.length < 3 || pack.perRequest.files.some((file) => file.truncated));
+});
+
+test("stableBudgetTokens covers AGENTS.md and stable docs together", async () => {
+  const root = await mkdtemp(join(tmpdir(), "kairo-ctx-stable-"));
+  await mkdir(join(root, "docs", "ai"), { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "stable" }), "utf8");
+  await writeFile(join(root, "AGENTS.md"), "G".repeat(200), "utf8");
+  await writeFile(join(root, "docs", "ai", "harness.md"), "H".repeat(200), "utf8");
+  await writeFile(join(root, "docs", "ai", "architecture.md"), "R".repeat(200), "utf8");
+
+  const pack = await compileContextPack({
+    workspaceRoot: root,
+    stableBudgetTokens: 40
+  });
+
+  const agentsTokens = estimateTokens(pack.stable.agentsMd ?? "");
+  const docsTokens = pack.stable.docs.reduce((sum, doc) => sum + estimateTokens(doc.content), 0);
+  assert.ok(agentsTokens + docsTokens <= 40);
+  assert.equal(pack.budgets.stableUsedTokens, agentsTokens + docsTokens);
+  assert.ok(
+    pack.evidence.some((entry) => entry.kind === "excluded_budget")
+    || pack.stable.docs.some((doc) => doc.truncated)
+    || (pack.stable.agentsMd ?? "").includes("…[truncated]")
+  );
+});
+
+test("truncation marker stays inside the token limit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "kairo-ctx-trunc-"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "trunc" }), "utf8");
+  await writeFile(join(root, "big.md"), "Z".repeat(5000), "utf8");
+
+  const pack = await compileContextPack({
+    workspaceRoot: root,
+    relevantPaths: ["big.md"],
+    requestBudgetTokens: 20
+  });
+
+  assert.equal(pack.perRequest.files.length, 1);
+  const file = pack.perRequest.files[0];
+  assert.equal(file.truncated, true);
+  assert.ok(file.content.endsWith("…[truncated]") || file.content.includes("…[truncated]"));
+  assert.ok(estimateTokens(file.content) <= 20);
+  assert.equal(pack.budgets.requestUsedTokens, estimateTokens(file.content));
+});
+
+test("zero request budget excludes files with excluded_budget evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "kairo-ctx-zero-"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "zero" }), "utf8");
+  await writeFile(join(root, "notes.md"), "hello\n", "utf8");
+
+  const pack = await compileContextPack({
+    workspaceRoot: root,
+    relevantPaths: ["notes.md"],
+    requestBudgetTokens: 0
+  });
+
+  assert.equal(pack.perRequest.files.length, 0);
+  assert.equal(pack.budgets.requestUsedTokens, 0);
+  assert.ok(pack.evidence.some((entry) =>
+    entry.kind === "excluded_budget" && entry.path === "notes.md"));
+});

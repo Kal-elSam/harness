@@ -30,6 +30,7 @@ const STABLE_DOC_CANDIDATES = [
 
 const DEFAULT_STABLE_BUDGET = 6000;
 const DEFAULT_REQUEST_BUDGET = 4000;
+const TRUNCATION_MARKER = "\n…[truncated]";
 
 export async function compileContextPack({
   workspaceRoot,
@@ -44,29 +45,54 @@ export async function compileContextPack({
   const project = await detectProject(root);
   const evidence = [];
 
-  const agentsMd = await readEvidenceFile(
-    root,
-    workspaceRealRoot,
-    "AGENTS.md",
-    evidence,
-    2000,
-    { includePrivate }
-  );
-  const stableDocs = await collectStableDocs(root, workspaceRealRoot, evidence, stableBudgetTokens, includePrivate);
+  const stableBudget = createBudget(stableBudgetTokens);
+  let agentsMd = null;
+  const stableDocs = [];
+
+  for (const candidate of STABLE_DOC_CANDIDATES) {
+    const content = await readEvidenceFile(
+      root,
+      workspaceRealRoot,
+      candidate,
+      evidence,
+      stableBudget,
+      { includePrivate, category: "stable" }
+    );
+    if (!content) continue;
+    if (candidate === "AGENTS.md") {
+      agentsMd = content;
+    } else {
+      stableDocs.push({ path: candidate, content: content.text, truncated: content.truncated });
+    }
+  }
+
   const skills = await listSkillIds(root, evidence);
   const graphify = await detectGraphify(root, evidence);
   const engram = await detectEngramHints(root, evidence);
 
+  const requestBudget = createBudget(requestBudgetTokens);
   const requestFiles = [];
+  const seenPaths = new Set();
+
   for (const filePath of relevantPaths) {
-    const rel = relative(root, resolve(root, filePath));
+    const rel = relative(root, resolve(root, filePath)).replace(/\\/g, "/") || ".";
+    if (seenPaths.has(rel)) {
+      evidence.push({
+        kind: "deduped_path",
+        path: rel,
+        reason: "Duplicate path skipped"
+      });
+      continue;
+    }
+    seenPaths.add(rel);
+
     const content = await readEvidenceFile(
       root,
       workspaceRealRoot,
       rel,
       evidence,
-      requestBudgetTokens,
-      { includePrivate }
+      requestBudget,
+      { includePrivate, category: "request" }
     );
     if (content) {
       requestFiles.push({ path: rel, content: content.text, truncated: content.truncated });
@@ -92,11 +118,7 @@ export async function compileContextPack({
     engram
   };
 
-  const perRequest = {
-    task,
-    files: requestFiles
-  };
-
+  const perRequest = { task, files: requestFiles };
   const systemPrompt = buildSystemPrompt(stable, perRequest);
   const estimatedTokens = estimateTokens(systemPrompt);
 
@@ -110,7 +132,9 @@ export async function compileContextPack({
     estimatedTokens,
     budgets: {
       stableBudgetTokens,
-      requestBudgetTokens
+      requestBudgetTokens,
+      stableUsedTokens: stableBudget.used,
+      requestUsedTokens: requestBudget.used
     },
     privacy: {
       includePrivate,
@@ -131,28 +155,17 @@ export function estimateTokens(text) {
   return Math.ceil(text.length / 4);
 }
 
-async function collectStableDocs(root, workspaceRealRoot, evidence, budgetTokens, includePrivate) {
-  const docs = [];
-  let used = 0;
-
-  for (const candidate of STABLE_DOC_CANDIDATES) {
-    if (candidate === "AGENTS.md") continue;
-    const remaining = Math.max(500, budgetTokens - used);
-    const content = await readEvidenceFile(
-      root,
-      workspaceRealRoot,
-      candidate,
-      evidence,
-      remaining,
-      { includePrivate }
-    );
-    if (!content) continue;
-    docs.push({ path: candidate, content: content.text, truncated: content.truncated });
-    used += estimateTokens(content.text);
-    if (used >= budgetTokens) break;
-  }
-
-  return docs;
+function createBudget(limitTokens) {
+  return {
+    limit: Math.max(0, Number(limitTokens) || 0),
+    used: 0,
+    remaining() {
+      return Math.max(0, this.limit - this.used);
+    },
+    consume(tokens) {
+      this.used += tokens;
+    }
+  };
 }
 
 async function listSkillIds(root, evidence) {
@@ -204,11 +217,11 @@ async function readEvidenceFile(
   workspaceRealRoot,
   relativePath,
   evidence,
-  maxTokens = 2000,
-  { includePrivate = false } = {}
+  budget,
+  { includePrivate = false, category = "request" } = {}
 ) {
   const requested = resolve(root, relativePath);
-  const requestedRelative = relative(root, requested) || ".";
+  const requestedRelative = relative(root, requested).replace(/\\/g, "/") || ".";
   if (!isPathInside(root, requested)) {
     evidence.push({
       kind: "rejected_outside_workspace",
@@ -219,6 +232,17 @@ async function readEvidenceFile(
   }
 
   if (!existsSync(requested)) return null;
+
+  const remaining = budget.remaining();
+  if (remaining <= 0) {
+    evidence.push({
+      kind: "excluded_budget",
+      path: requestedRelative,
+      reason: `${category} budget exhausted`,
+      tokens: 0
+    });
+    return null;
+  }
 
   let target;
   try {
@@ -237,7 +261,7 @@ async function readEvidenceFile(
     return null;
   }
 
-  const targetRelative = relative(workspaceRealRoot, target) || ".";
+  const targetRelative = relative(workspaceRealRoot, target).replace(/\\/g, "/") || ".";
   if ((isPrivatePath(requestedRelative) || isPrivatePath(targetRelative)) && !includePrivate) {
     evidence.push({
       kind: "excluded_private",
@@ -249,20 +273,41 @@ async function readEvidenceFile(
 
   try {
     const raw = await readFile(target, "utf8");
-    const maxChars = maxTokens * 4;
-    const truncated = raw.length > maxChars;
-    const text = truncated ? `${raw.slice(0, maxChars)}\n…[truncated]` : raw;
+    const clipped = clipToTokenBudget(raw, remaining);
+    budget.consume(clipped.tokens);
     evidence.push({
       kind: "file",
       path: requestedRelative,
-      truncated,
-      chars: text.length
+      truncated: clipped.truncated,
+      chars: clipped.text.length,
+      tokens: clipped.tokens
     });
-    return { text, truncated };
+    return { text: clipped.text, truncated: clipped.truncated, tokens: clipped.tokens };
   } catch {
     evidence.push({ kind: "unreadable", path: requestedRelative });
     return null;
   }
+}
+
+function clipToTokenBudget(raw, maxTokens) {
+  const maxChars = Math.max(0, maxTokens) * 4;
+  if (raw.length <= maxChars) {
+    return { text: raw, truncated: false, tokens: estimateTokens(raw) };
+  }
+
+  const marker = TRUNCATION_MARKER;
+  if (marker.length >= maxChars) {
+    const text = marker.slice(0, maxChars);
+    return { text, truncated: true, tokens: estimateTokens(text) };
+  }
+
+  const bodyChars = maxChars - marker.length;
+  const text = `${raw.slice(0, bodyChars)}${marker}`;
+  return {
+    text,
+    truncated: true,
+    tokens: estimateTokens(text)
+  };
 }
 
 async function resolveWorkspaceRoot(root) {

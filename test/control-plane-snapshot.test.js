@@ -74,6 +74,9 @@ test("buildControlPlaneSnapshot is read-only and reports NOT_CONFIGURED without 
   assert.equal(snapshot.health, CONTROL_PLANE_HEALTH.NOT_CONFIGURED);
   assert.equal(snapshot.cta.kind, CONTROL_PLANE_CTA.SETUP);
   assert.equal(snapshot.envelope.overall, "missing");
+  assert.ok(Array.isArray(snapshot.proposals));
+  assert.ok(snapshot.proposals.some((entry) => entry.id === "setup-local"));
+  assert.ok(snapshot.proposals.every((entry) => entry.evidence?.length > 0));
 });
 
 test("buildControlPlaneSnapshot is healthy after install and still write-free on rescan", async () => {
@@ -146,6 +149,7 @@ test("buildControlPlaneSnapshot marks ACTION_REQUIRED when managed content drift
   assert.equal(snapshot.health, CONTROL_PLANE_HEALTH.ACTION_REQUIRED);
   assert.equal(snapshot.cta.kind, CONTROL_PLANE_CTA.REPAIR);
   assert.equal(snapshot.status.overall, "drift");
+  assert.ok(snapshot.proposals.some((entry) => entry.id === "repair-drift"));
 });
 
 async function snapshotFilesystem(root) {
