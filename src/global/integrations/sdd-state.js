@@ -16,9 +16,8 @@ export function defaultSddState() {
 /** Coerce any prior/absent shape into a valid v4 SDD block. */
 export function normalizeSddState(raw) {
   if (!raw || typeof raw !== "object") return defaultSddState();
-  // Explicit personaAgentIds (incl. []) wins; legacy teaching+agentIds only if field absent.
-  const personaAgentIds = Array.isArray(raw.personaAgentIds)
-    ? normalizePersonaAgentIds(raw.personaAgentIds)
+  const personaAgentIds = Object.hasOwn(raw, "personaAgentIds")
+    ? (Array.isArray(raw.personaAgentIds) ? normalizePersonaAgentIds(raw.personaAgentIds) : [])
     : (raw.persona === "teaching" && Array.isArray(raw.agentIds)
       ? normalizePersonaAgentIds(raw.agentIds) : []);
   return {

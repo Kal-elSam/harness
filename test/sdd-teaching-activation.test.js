@@ -17,7 +17,8 @@ const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const trackedOf = (r) => Object.fromEntries(r.files.filter((f) => f.afterHash).map((f) => [f.destinationPath, f.afterHash]));
 const pt = { before: [], after: ["codex"], admitted: ["codex"], rejected: [], personaChanged: true };
 test("persona: empty ids, admit/off/refresh, health, absent delete, rollback", async () => {
-  assert.equal(normalizeSddState({ persona: "teaching", personaAgentIds: [], agentIds: ["codex"], files: [] }).persona, "off");
+  assert.ok([[], null].every((personaAgentIds) => normalizeSddState({
+    persona: "teaching", personaAgentIds, agentIds: ["codex"], files: [] }).persona === "off"));
   const homeDir = mkdtempSync(join(process.cwd(), ".tmp-sdd-persona-"));
   const paths = harnessHomePaths(homeDir);
   try {
