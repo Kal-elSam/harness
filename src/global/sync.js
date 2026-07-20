@@ -6,6 +6,7 @@ import {
   shouldPromptApplyConfirmation
 } from "./apply-confirmation.js";
 import { buildDiffReport } from "./diff.js";
+import { needsManagedRepair } from "./governance-repair.js";
 import { harnessHomePaths } from "./paths.js";
 import { printManagedPreflight, shouldShowPreflight, summarizeDiffPreflight } from "./preflight.js";
 import { loadConsentAudit } from "./policy.js";
@@ -42,17 +43,7 @@ export async function runHarnessSync({
   }
 
   const preReport = await buildStatusReport(homeDir, { packageRoot, workspaceRoot });
-  const needsSddRepair = (preReport.checks ?? []).some((check) =>
-    check.componentId === "sdd-core"
-    && check.category === "integration"
-    && check.status === "warning"
-  );
-  const needsRepair = preReport.overall === "drift"
-    || preReport.counts.missing > 0
-    || preReport.counts.stale > 0
-    || needsSddRepair;
-
-  if (!needsRepair) {
+  if (!needsManagedRepair(preReport)) {
     return {
       action: "noop",
       wrote: false,
