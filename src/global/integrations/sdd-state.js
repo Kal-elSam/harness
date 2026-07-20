@@ -75,15 +75,14 @@ function collectAgentIds(files) {
 /** Legacy receipts without personaTransition derive consumers from teaching + files. */
 function resolvePersonaAgentIds(receipt, current, files) {
   if (receipt?.personaTransition) return normalizePersonaAgentIds(receipt.personaTransition.after);
-  if (!files.length) return [];
-  if ((receipt.persona ?? current.persona) !== "teaching") return [];
+  if (!files.length || (receipt.persona ?? current.persona) !== "teaching") return [];
   return current.personaAgentIds.length ? current.personaAgentIds : collectAgentIds(files);
 }
 
 /** True when rollback mutated disk via successful delete/restore (even if global ok=false). */
 export function hasSuccessfulSddRollbackMutations(actions) {
   return (actions ?? []).some((entry) =>
-    entry?.ok && (entry.action === "delete" || entry.action === "restore" || entry.action === "persona")
+    entry?.ok && !entry.noop && (entry.action === "delete" || entry.action === "restore" || entry.action === "persona")
   );
 }
 

@@ -66,7 +66,10 @@ test("components expose managed section builders for optional integrations", () 
 test("components expose managed section builders", () => {
   const sddCore = resolveComponent("sdd-core");
   const section = sddCore.buildManagedSection(
-    { componentsDir: "/home/user/.harness/components" },
+    {
+      componentsDir: "/custom/home/.harness/components",
+      paths: { statePath: "/custom/home/.harness/state.json" }
+    },
     { id: "cursor", assets: { configFile: ".cursor/AGENTS.md" } }
   );
 
@@ -76,7 +79,8 @@ test("components expose managed section builders", () => {
   assert.match(section, /sdd-init/);
   assert.match(section, /sdd-archive/);
   assert.match(section, /Teaching persona/);
-  assert.match(section, /sdd\.personaAgentIds/);
+  assert.match(section, /\/custom\/home\/\.harness\/state\.json → sdd\.personaAgentIds/);
+  assert.doesNotMatch(section, /~\/\.harness\/state\.json/);
   assert.match(section, /basic, standard, or complex/);
   assert.match(section, /\.cursor\/rules\//);
 });

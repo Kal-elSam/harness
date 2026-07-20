@@ -5,10 +5,10 @@ import { hashBuffer } from "../../hash.js";
 import { resolveAdapter } from "../registry.js";
 import { applySddConfigure } from "./sdd-apply.js";
 import { classifySddVerifyHealth, SDD_HEALTH } from "./sdd-evidence.js";
+import { harnessHomePaths } from "../paths.js";
 import {
   SDD_SKILL_IDS,
   groupSddSkillDestinations,
-  resolveCanonicalTeachingPersonaPath,
   resolveSddAgentSelection
 } from "./sdd-destinations.js";
 import {
@@ -71,24 +71,21 @@ export async function verifySddConfigure({
 
   const consumers = normalizePersonaAgentIds(personaAgentIds);
   const incompleteAgentIds = consumers.filter((id) => {
-    const mine = findings.filter((entry) => entry.agentIds.includes(id));
-    return !mine.length || mine.some((entry) => entry.status !== SDD_HEALTH.CONFIGURED);
+    const mine = findings.filter((e) => e.agentIds.includes(id));
+    return !mine.length || mine.some((e) => e.status !== SDD_HEALTH.CONFIGURED);
   });
   let gatePresent = true;
   for (const id of consumers) {
-    const path = join(homeDir, resolveAdapter(id).assets.configFile);
-    if (!exists(path) || !String(await readFileImpl(path, "utf8")).includes(SDD_PERSONA_GATE)) {
+    const p = join(homeDir, resolveAdapter(id).assets.configFile);
+    if (!exists(p) || !String(await readFileImpl(p, "utf8")).includes(SDD_PERSONA_GATE)) {
       gatePresent = false;
       break;
     }
   }
   const personaHealth = classifyPersonaHealth({
-    personaAgentIds: consumers,
-    assetPresent: exists(resolveCanonicalTeachingPersonaPath(packageRoot)),
-    gatePresent,
-    incompleteAgentIds
+    personaAgentIds: consumers, gatePresent, incompleteAgentIds,
+    assetPresent: exists(join(harnessHomePaths(homeDir).root, "components/sdd-core/personas/teaching.md"))
   });
-
   return {
     provider: "sdd-core", componentId: "sdd-core", agentIds, findings, summary,
     status: summarizeSddHealth(summary),

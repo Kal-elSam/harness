@@ -40,13 +40,11 @@ export function planPersonaTransition({
     return result(before, before.filter((id) => !selected.includes(id)),
       selected.filter((id) => before.includes(id)), []);
   }
-  const admitted = [];
-  const rejected = [];
-  for (const id of selected) {
+  const admitted = selected.filter((id) => {
     const mine = actions.filter((e) => e.agentIds?.includes(id));
-    if (mine.length && mine.every((e) => e.action !== SDD_PLAN_ACTIONS.CONFLICT)) admitted.push(id);
-    else rejected.push(id);
-  }
+    return mine.length && mine.every((e) => e.action !== SDD_PLAN_ACTIONS.CONFLICT);
+  });
+  const rejected = selected.filter((id) => !admitted.includes(id));
   const kept = before.filter((id) => !selected.includes(id) || admitted.includes(id));
   return result(before, normalizePersonaAgentIds([...kept, ...admitted]), admitted, rejected);
 }
@@ -54,15 +52,12 @@ export function planPersonaTransition({
 export function finalizePersonaTransition(planned, files, requestedPersona) {
   if (requestedPersona === "off" || !planned) return planned ?? result([], [], [], []);
   const selected = normalizePersonaAgentIds([...planned.admitted, ...planned.rejected]);
-  const admitted = [];
-  const rejected = [];
-  for (const id of selected) {
+  const admitted = selected.filter((id) => {
     const mine = files.filter((e) => e.agentIds?.includes(id));
-    if (mine.length && mine.every((e) =>
-      e.outcome === SDD_FILE_OUTCOMES.APPLIED || e.outcome === SDD_FILE_OUTCOMES.NOOP
-    )) admitted.push(id);
-    else rejected.push(id);
-  }
+    return mine.length && mine.every((e) =>
+      e.outcome === SDD_FILE_OUTCOMES.APPLIED || e.outcome === SDD_FILE_OUTCOMES.NOOP);
+  });
+  const rejected = selected.filter((id) => !admitted.includes(id));
   const kept = planned.before.filter((id) => !selected.includes(id) || admitted.includes(id));
   return result(planned.before, normalizePersonaAgentIds([...kept, ...admitted]), admitted, rejected);
 }
@@ -73,14 +68,10 @@ export function classifyPersonaHealth({
   if (!normalizePersonaAgentIds(personaAgentIds).length) {
     return { status: SDD_PERSONA_HEALTH.OFF, personaActive: false, reason: "No persona consumers." };
   }
-  if (!assetPresent) {
-    return { status: SDD_PERSONA_HEALTH.CONFLICT, personaActive: false, reason: "Teaching asset missing." };
-  }
-  if (!gatePresent) {
-    return { status: SDD_PERSONA_HEALTH.SYNC_REQUIRED, personaActive: false, reason: "Managed teaching gate missing; sync required." };
-  }
+  if (!assetPresent) return { status: SDD_PERSONA_HEALTH.CONFLICT, personaActive: false, reason: "Teaching asset missing." };
+  if (!gatePresent) return { status: SDD_PERSONA_HEALTH.SYNC_REQUIRED, personaActive: false, reason: "Gate missing; sync required." };
   if (incompleteAgentIds.length) {
     return { status: SDD_PERSONA_HEALTH.CONFLICT, personaActive: false, reason: `Incomplete skill pack for: ${incompleteAgentIds.join(", ")}.` };
   }
-  return { status: SDD_PERSONA_HEALTH.CONFIGURED, personaActive: true, reason: "Consumers, asset, gate, and skill packs aligned." };
+  return { status: SDD_PERSONA_HEALTH.CONFIGURED, personaActive: true, reason: "Aligned." };
 }

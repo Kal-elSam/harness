@@ -230,18 +230,18 @@ export function buildEngramIntegrationChecks(inspection) {
 export function buildSddIntegrationChecks(verification) {
   const summary = verification.summary ?? {};
   const persona = verification.persona ?? {};
-  const skillOk = verification.status === SDD_HEALTH.CONFIGURED;
-  const personaOk = persona.status === "configured" || persona.status === "off";
   return [
     {
-      name: "sdd-core:skills", status: skillOk ? "ok" : "warning", category: "integration",
-      componentId: "sdd-core",
+      name: "sdd-core:skills",
+      status: verification.status === SDD_HEALTH.CONFIGURED ? "ok" : "warning",
+      category: "integration", componentId: "sdd-core",
       detail: `SDD skills ${verification.status}: configured=${summary.configured ?? 0}, missing=${summary.missing ?? 0}, drifted=${summary.drifted ?? 0}, conflict=${summary.conflict ?? 0} (disk presence ≠ runtime active).`
     },
     {
-      name: "sdd-core:persona", status: personaOk ? "ok" : "warning", category: "integration",
-      componentId: "sdd-core",
-      detail: `SDD persona ${persona.status ?? "off"}: active=${Boolean(persona.personaActive)} consumers=${(persona.personaAgentIds ?? []).join(",") || "none"} (state alone ≠ runtime active).`
+      name: "sdd-core:persona",
+      status: persona.status === "configured" || persona.status === "off" ? "ok" : "warning",
+      category: "integration", componentId: "sdd-core",
+      detail: `SDD persona ${persona.status ?? "off"}: active=${Boolean(persona.personaActive)} (state alone ≠ runtime active).`
     }
   ];
 }
@@ -274,8 +274,7 @@ function printEngramConfigureHuman(result) {
 
 function printSddConfigureHuman(result) {
   console.log(formatCliCommand("components configure sdd-core"));
-  const t = result.personaTransition;
-  console.log(`Persona: ${result.persona ?? "off"}${result.personaActive ? " (active)" : " (off)"} consumers=${t?.after?.join(",") || "none"}`);
+  console.log(`Persona: ${result.persona ?? "off"}${result.personaActive ? " (active)" : " (off)"}`);
   const s = result.summary ?? {};
   console.log(`Plan: create=${s.create ?? 0} noop=${s.noop ?? 0} update=${s.update ?? 0} conflict=${s.conflict ?? 0}`);
   for (const action of result.actions ?? []) {
@@ -297,9 +296,6 @@ function printSddVerifyHuman(result) {
   const s = result.summary ?? {};
   console.log(`Status: ${result.status}`);
   console.log(`Summary: configured=${s.configured ?? 0} missing=${s.missing ?? 0} drifted=${s.drifted ?? 0} conflict=${s.conflict ?? 0}`);
-  if (result.persona) {
-    console.log(`Persona: ${result.persona.status} active=${Boolean(result.persona.personaActive)}`);
-  }
   for (const finding of result.findings ?? []) {
     console.log(`  ${finding.status.padEnd(10)} ${finding.skillId}${finding.drift ? ` (${finding.drift})` : ""} → ${finding.destinationPath}`);
   }

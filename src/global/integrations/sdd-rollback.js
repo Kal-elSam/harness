@@ -91,30 +91,29 @@ export async function rollbackSddReceipt({
   }
 
   const actions = [];
-  for (const step of evidence.steps) {
-    if (step.action === "delete") {
-      actions.push(await executeDelete(step, { dryRun, homeDir }));
-      continue;
-    }
-    if (step.action === "restore") {
-      actions.push(await executeRestore(step, { dryRun, homeDir }));
-      continue;
-    }
-    if (step.action === "persona") {
-      actions.push({
-        action: "persona", ok: true, dryRun: Boolean(dryRun),
-        before: step.before, after: step.after
-      });
-    }
+  const fileSteps = evidence.steps.filter((step) => step.action !== "persona");
+  const personaStep = evidence.steps.find((step) => step.action === "persona");
+  for (const step of fileSteps) {
+    if (step.action === "delete") actions.push(await executeDelete(step, { dryRun, homeDir }));
+    else if (step.action === "restore") actions.push(await executeRestore(step, { dryRun, homeDir }));
+  }
+  if (personaStep) {
+    const filesOk = actions.every((entry) => entry.ok !== false && (
+      entry.action === "delete" || entry.action === "restore"
+      || (entry.action === "skip" && /Already absent/i.test(entry.reason ?? ""))
+    ));
+    const ok = personaStep.noop || filesOk;
+    actions.push({
+      action: "persona", ok, noop: Boolean(personaStep.noop), dryRun: Boolean(dryRun),
+      before: personaStep.before, after: personaStep.after,
+      ...(ok ? {} : { reason: "Refusing persona rollback after incomplete file rollback." }),
+      ...(personaStep.noop ? { reason: "Already at before persona state." } : {})
+    });
   }
 
   return {
-    dryRun,
-    cancelled: false,
-    receiptId,
-    blocked: false,
-    ok: actions.every((entry) => entry.ok !== false),
-    actions
+    dryRun, cancelled: false, receiptId, blocked: false,
+    ok: actions.every((entry) => entry.ok !== false), actions
   };
 }
 
@@ -185,17 +184,18 @@ async function assessRollbackEvidence(receipt, { homeDir, receiptId, personaAgen
   }
 
   const transition = receipt.personaTransition;
-  if (transition && (transition.personaChanged || transition.before || transition.after)) {
-    if (!samePersonaAgentIds(transition.after, personaAgentIds)) {
+  if (transition?.personaChanged) {
+    if (samePersonaAgentIds(transition.before, personaAgentIds)) {
+      steps.push({ action: "persona", noop: true, before: transition.before, after: transition.after });
+    } else if (!samePersonaAgentIds(transition.after, personaAgentIds)) {
       actions.push({
         action: "persona", ok: false,
         reason: "Persona state changed since apply; refusing persona rollback."
       });
-    } else if (transition.personaChanged) {
+    } else {
       steps.push({ action: "persona", before: transition.before, after: transition.after });
     }
   }
-
   return { complete: actions.length === 0, actions, steps };
 }
 
