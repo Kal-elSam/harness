@@ -23,8 +23,16 @@ import {
 } from "./cockpit-changes.js";
 import {
   applyGovernanceSync,
-  previewGovernanceSync
+  previewGovernanceSync,
+  applyGovernanceRollback,
+  previewGovernanceRollback
 } from "../governance-actions.js";
+import {
+  RECOVERY_PHASE,
+  createRecoveryActionState,
+  listRecoverySnapshots,
+  reduceRecoveryAction
+} from "./cockpit-recovery.js";
 
 export function useOrchestratorData({
   homeDir,
@@ -48,6 +56,7 @@ export function useOrchestratorData({
   const [launchDraft, setLaunchDraft] = useState(createLaunchDraft);
   const [launchPermissionIndex, setLaunchPermissionIndex] = useState(0);
   const [changesAction, setChangesAction] = useState(createChangesActionState);
+  const [recoveryAction, setRecoveryAction] = useState(createRecoveryActionState);
 
   const serializedReload = useMemo(() => createSerializedReloader(() => loadCockpitScanBundle({
     homeDir,
@@ -256,6 +265,82 @@ export function useOrchestratorData({
     await reload();
   };
 
+  const previewRecovery = async (snapshotName) => {
+    if (!snapshotName) return null;
+    setRecoveryAction((prev) => reduceRecoveryAction(prev, {
+      type: "preview-start", snapshot: snapshotName
+    }));
+    setBusy(true);
+    try {
+      const preview = await previewGovernanceRollback({ homeDir, snapshot: snapshotName });
+      setRecoveryAction((prev) => reduceRecoveryAction(prev, { type: "preview-ready", preview }));
+      return preview;
+    } catch (previewError) {
+      const message = previewError instanceof Error ? previewError.message : String(previewError);
+      setRecoveryAction((prev) => reduceRecoveryAction(prev, {
+        type: "preview-failed", error: "preview-failed", message
+      }));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelRecovery = () => {
+    setRecoveryAction((prev) => reduceRecoveryAction(prev, { type: "cancel" }));
+    setStatusMessage("Cancelled — previous snapshot kept.");
+  };
+
+  const confirmApplyRecovery = async () => {
+    let preview = null;
+    setRecoveryAction((prev) => {
+      if (prev.phase !== RECOVERY_PHASE.CONFIRMING || !prev.preview) return prev;
+      preview = prev.preview;
+      return reduceRecoveryAction(prev, { type: "apply-start" });
+    });
+    if (!preview) return null;
+    setBusy(true);
+    try {
+      const result = await applyGovernanceRollback({
+        preview, homeDir, cliVersion
+      });
+      if (result.reason === "stale-preview") {
+        setRecoveryAction((prev) => reduceRecoveryAction(prev, {
+          type: "apply-done",
+          ok: false,
+          reason: "stale-preview",
+          preview: result.preview,
+          message: "Preview stale — press Enter for a fresh preview."
+        }));
+        return result;
+      }
+      await reload();
+      setRecoveryAction((prev) => reduceRecoveryAction(prev, {
+        type: "apply-done",
+        ok: result.ok,
+        reason: result.reason,
+        receipt: result.receipt,
+        message: result.ok ? "Rollback applied — re-scan complete." : `Rollback ${result.reason}.`
+      }));
+      setStatusMessage(result.ok ? "Rollback recorded." : null);
+      return result;
+    } catch (applyError) {
+      const message = applyError instanceof Error ? applyError.message : String(applyError);
+      // Keep prior preview so the selected snapshot remains visible after failure.
+      setRecoveryAction((prev) => reduceRecoveryAction(prev, {
+        type: "apply-done", ok: false, reason: "apply-failed", message, preview: prev.preview
+      }));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rescanRecovery = async () => {
+    setRecoveryAction(() => createRecoveryActionState());
+    await reload();
+  };
+
   return {
     loading,
     busy,
@@ -280,6 +365,7 @@ export function useOrchestratorData({
     launchableAgents: resolveLaunchableAgents(dashboard?.providers ?? []),
     scanOptions: CONTROL_PLANE_AUTO_SCAN,
     changesAction,
+    recoveryAction,
     reload,
     resetLaunchWizard,
     openRunDetail,
@@ -288,6 +374,11 @@ export function useOrchestratorData({
     previewChanges,
     cancelChanges,
     confirmApplyChanges,
-    rescanChanges
+    rescanChanges,
+    previewRecovery,
+    cancelRecovery,
+    confirmApplyRecovery,
+    rescanRecovery,
+    recoverySnapshots: listRecoverySnapshots(snapshot)
   };
 }

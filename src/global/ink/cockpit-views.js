@@ -15,6 +15,7 @@ import { windowLinesForLayout } from "./cockpit-models.js";
 import { LAYOUT_MODES } from "./layout.js";
 import { formatRunsHubLines, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 import { formatChangesActionLines } from "./cockpit-changes.js";
+import { formatRecoveryLines } from "./cockpit-recovery.js";
 
 export function ControlCenterPanel({ model, colorEnabled = true }) {
   const health = model.health;
@@ -68,6 +69,7 @@ export function renderCockpitView({
   selectedRun,
   selectedEvents,
   changesAction = null,
+  recoveryAction = null,
   colorEnabled = true
 }) {
   switch (view) {
@@ -85,7 +87,12 @@ export function renderCockpitView({
     case ORCHESTRATOR_VIEWS.CHANGES:
       return governanceList("Changes", formatChangeLines(snapshot, changesAction), layoutMode, colorEnabled);
     case ORCHESTRATOR_VIEWS.ACTIVITY:
-      return governanceList("Activity & recovery", formatActivityLines(snapshot), layoutMode, colorEnabled);
+      return governanceList(
+        "Activity & recovery",
+        formatRecoveryLines({ snapshot, recoveryAction, listIndex }),
+        layoutMode,
+        colorEnabled
+      );
     case ORCHESTRATOR_VIEWS.PROFILE:
       return governanceList("Profile & policy", formatProfileLines(snapshot, diagnostics), layoutMode, colorEnabled);
     case ORCHESTRATOR_VIEWS.RUNS:
@@ -206,20 +213,6 @@ function formatModuleLines(snapshot) {
 
 function formatChangeLines(snapshot, changesAction) {
   return formatChangesActionLines({ snapshot, changesAction });
-}
-
-function formatActivityLines(snapshot) {
-  const events = snapshot?.history?.events ?? [];
-  const backups = snapshot?.backups?.snapshots ?? [];
-  return [
-    `History: ${events.length} recent event(s)`,
-    ...events.slice(0, 5).map((event) => `${event.type ?? "event"} · ${event.at ?? event.timestamp ?? ""}`),
-    "",
-    `Backups: ${snapshot?.backups?.count ?? 0}`,
-    ...backups.slice(0, 5).map((entry) => `${entry.name} · ${entry.fileCount ?? "?"} files`),
-    "",
-    "Rollback remains available through existing CLI recovery paths."
-  ];
 }
 
 function formatProfileLines(snapshot, diagnostics) {

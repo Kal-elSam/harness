@@ -36,6 +36,7 @@ import { resolveTerminalCapabilities } from "./terminal-capabilities.js";
 import { COCKPIT_COLORS } from "./theme.js";
 import { LAYOUT_MODES } from "./layout.js";
 import { CHANGES_PHASE } from "./cockpit-changes.js";
+import { RECOVERY_PHASE, listRecoverySnapshots } from "./cockpit-recovery.js";
 
 export function OrchestratorApp({
   homeDir,
@@ -108,6 +109,11 @@ export function OrchestratorApp({
         data.cancelChanges();
         return;
       }
+      if (ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
+        && data.recoveryAction?.phase === RECOVERY_PHASE.CONFIRMING) {
+        data.cancelRecovery();
+        return;
+      }
 
       if (ui.view === ORCHESTRATOR_VIEWS.LAUNCH && data.launchableAgents.length > 0) {
         const retreated = handleLaunchInput({
@@ -152,7 +158,9 @@ export function OrchestratorApp({
         ? (data.dashboard?.activeRuns ?? []).length
         : ui.view === ORCHESTRATOR_VIEWS.RECENT_RUNS
           ? (data.dashboard?.recentRuns ?? []).length
-          : 0;
+          : ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
+            ? listRecoverySnapshots(data.snapshot).length
+            : 0;
 
     let routed = null;
     if (key.tab) {
@@ -274,6 +282,27 @@ export function OrchestratorApp({
       }
     }
 
+    if (ui.view === ORCHESTRATOR_VIEWS.ACTIVITY) {
+      const keyName = inputKey.toLowerCase();
+      if (key.return && ui.region === COCKPIT_REGIONS.CONTENT) {
+        const entry = listRecoverySnapshots(data.snapshot)[ui.listIndex];
+        if (entry?.name) data.previewRecovery(entry.name).catch(() => {});
+        return;
+      }
+      if (keyName === "y" && data.recoveryAction?.phase === RECOVERY_PHASE.CONFIRMING) {
+        data.confirmApplyRecovery().catch(() => {});
+        return;
+      }
+      if (keyName === "n") {
+        if (data.recoveryAction?.phase === RECOVERY_PHASE.CONFIRMING) data.cancelRecovery();
+        return;
+      }
+      if (keyName === "r") {
+        data.rescanRecovery().catch(() => {});
+        return;
+      }
+    }
+
     if (inputKey.toLowerCase() === "r" && ui.view !== ORCHESTRATOR_VIEWS.LAUNCH) {
       data.reload().catch(() => {});
     }
@@ -331,7 +360,8 @@ export function OrchestratorApp({
         helpOpen: ui.helpOpen,
         canCancel: isRunCancellable(data.selectedRun),
         unicode,
-        changesPhase: data.changesAction?.phase ?? null
+        changesPhase: data.changesAction?.phase ?? null,
+        recoveryPhase: data.recoveryAction?.phase ?? null
       }),
       layoutMode: mode,
       nav: buildNavModel({
@@ -377,6 +407,7 @@ export function OrchestratorApp({
         selectedRun: data.selectedRun,
         selectedEvents: data.selectedEvents,
         changesAction: data.changesAction,
+        recoveryAction: data.recoveryAction,
         controlCenter,
         layoutMode: mode,
         colorEnabled
