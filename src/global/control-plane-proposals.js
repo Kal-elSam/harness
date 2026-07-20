@@ -58,7 +58,9 @@ export function buildControlPlaneProposals({
 
   const hasDiff = Boolean(diff?.hasChanges);
   const isDrift = status?.overall === "drift" || health === "ACTION_REQUIRED";
-  if (hasDiff || isDrift) {
+  // Gate on health/overall drift only. diff.hasChanges can be true from
+  // needsManagedRepair SDD integration warnings while overall stays "ok".
+  if (isDrift) {
     const evidence = [
       ...(diff?.changes ?? []).slice(0, 8).map((change) =>
         ev("diff", "diff.change", change.target ?? change.path ?? change.action ?? "managed-change")),

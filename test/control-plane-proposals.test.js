@@ -157,3 +157,33 @@ test("duplicate candidate ids collapse", () => {
   }));
   assert.equal(proposals.filter((entry) => entry.id === "repair-drift").length, 1);
 });
+
+test("SDD integration warning with hasChanges does not emit repair-drift", () => {
+  const proposals = buildControlPlaneProposals(base({
+    health: "HEALTHY_WITH_NOTES",
+    status: {
+      overall: "ok",
+      nextAction: "Ecosystem healthy.",
+      checks: [{
+        name: "sdd-core:skills",
+        status: "warning",
+        category: "integration",
+        componentId: "sdd-core",
+        detail: "SDD skills missing (disk presence ≠ runtime active)."
+      }],
+      counts: { warning: 1, missing: 0, stale: 0 },
+      agents: [],
+      policy: { applyMode: "confirm" }
+    },
+    adapters: { adapters: [] },
+    diff: { hasChanges: true, changes: [], changeCount: 0 }
+  }));
+
+  const ids = proposals.map((entry) => entry.id);
+  assert.equal(ids.includes("repair-drift"), false);
+  assert.ok(ids.includes("warning-sdd-core-skills"));
+  assert.equal(
+    proposals.find((entry) => entry.id === "warning-sdd-core-skills")?.severity,
+    PROPOSAL_SEVERITY.LOW
+  );
+});
