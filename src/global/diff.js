@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { updateGlobalHarness } from "./global-installer.js";
+import { needsManagedRepair } from "./governance-repair.js";
 import { harnessHomePaths } from "./paths.js";
 import { readGlobalState } from "./state.js";
 import { buildStatusReport } from "./status.js";
@@ -31,11 +32,7 @@ export async function buildDiffReport(homeDir, {
   }
 
   const statusReport = await buildStatusReport(homeDir, { packageRoot, workspaceRoot });
-  const needsRepair = statusReport.overall === "drift"
-    || statusReport.counts.missing > 0
-    || statusReport.counts.stale > 0;
-
-  if (!needsRepair) {
+  if (!needsManagedRepair(statusReport)) {
     return {
       homeDir,
       installed: true,

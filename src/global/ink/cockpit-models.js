@@ -5,6 +5,8 @@ import { STATUS_LABELS, resolveGlyphs } from "./theme.js";
 import { windowList } from "./list-window.js";
 import { buildHomeMissionModel, formatHomeRecentRun } from "./cockpit-home.js";
 import { isRunsBranchView } from "./cockpit-runs.js";
+import { buildChangesFooterParts } from "./cockpit-changes.js";
+import { buildRecoveryFooterParts } from "./cockpit-recovery.js";
 
 export const COCKPIT_REGIONS = {
   NAV: "nav",
@@ -222,7 +224,9 @@ export function buildFooterModel({
   helpOpen = false,
   canCancel = false,
   unicode = true,
-  hasError = false
+  hasError = false,
+  changesPhase = null,
+  recoveryPhase = null
 } = {}) {
   const glyphs = resolveGlyphs(unicode);
   const parts = [];
@@ -246,12 +250,21 @@ export function buildFooterModel({
     return { text: parts.join(` ${glyphs.bullet} `) };
   }
 
+  if (view === ORCHESTRATOR_VIEWS.CHANGES) {
+    return { text: buildChangesFooterParts(changesPhase).join(` ${glyphs.bullet} `) };
+  }
+
+  if (view === ORCHESTRATOR_VIEWS.ACTIVITY) {
+    return { text: buildRecoveryFooterParts(recoveryPhase).join(` ${glyphs.bullet} `) };
+  }
+
   parts.push("↑↓ Navigate");
 
   const showTab = view === ORCHESTRATOR_VIEWS.RUNS
     || view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
     || view === ORCHESTRATOR_VIEWS.RECENT_RUNS
-    || view === ORCHESTRATOR_VIEWS.LAUNCH;
+    || view === ORCHESTRATOR_VIEWS.LAUNCH
+    || view === ORCHESTRATOR_VIEWS.ACTIVITY;
   if (showTab) {
     parts.push("Tab Region");
   }
@@ -261,8 +274,6 @@ export function buildFooterModel({
     parts.push("Enter Activate");
   } else if (view === ORCHESTRATOR_VIEWS.IDES
     || view === ORCHESTRATOR_VIEWS.MODULES
-    || view === ORCHESTRATOR_VIEWS.CHANGES
-    || view === ORCHESTRATOR_VIEWS.ACTIVITY
     || view === ORCHESTRATOR_VIEWS.PROFILE
     || view === ORCHESTRATOR_VIEWS.PROVIDERS
     || view === ORCHESTRATOR_VIEWS.DIAGNOSTICS

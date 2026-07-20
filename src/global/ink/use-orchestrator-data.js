@@ -16,6 +16,23 @@ import {
   createSerializedReloader,
   loadCockpitScanBundle
 } from "./cockpit-scan.js";
+import {
+  CHANGES_PHASE,
+  createChangesActionState,
+  reduceChangesAction
+} from "./cockpit-changes.js";
+import {
+  applyGovernanceSync,
+  previewGovernanceSync,
+  applyGovernanceRollback,
+  previewGovernanceRollback
+} from "../governance-actions.js";
+import {
+  RECOVERY_PHASE,
+  createRecoveryActionState,
+  listRecoverySnapshots,
+  reduceRecoveryAction
+} from "./cockpit-recovery.js";
 
 export function useOrchestratorData({
   homeDir,
@@ -38,6 +55,8 @@ export function useOrchestratorData({
   const [launchStep, setLaunchStep] = useState(LAUNCH_WIZARD_STEPS.AGENT);
   const [launchDraft, setLaunchDraft] = useState(createLaunchDraft);
   const [launchPermissionIndex, setLaunchPermissionIndex] = useState(0);
+  const [changesAction, setChangesAction] = useState(createChangesActionState);
+  const [recoveryAction, setRecoveryAction] = useState(createRecoveryActionState);
 
   const serializedReload = useMemo(() => createSerializedReloader(() => loadCockpitScanBundle({
     homeDir,
@@ -162,6 +181,166 @@ export function useOrchestratorData({
     }
   };
 
+  const previewChanges = async () => {
+    setChangesAction((prev) => reduceChangesAction(prev, { type: "preview-start" }));
+    setBusy(true);
+    try {
+      const preview = await previewGovernanceSync({
+        homeDir, workspaceRoot, packageName, packageRoot, cliVersion
+      });
+      setChangesAction((prev) => reduceChangesAction(prev, { type: "preview-ready", preview }));
+      return preview;
+    } catch (previewError) {
+      const message = previewError instanceof Error ? previewError.message : String(previewError);
+      setChangesAction((prev) => reduceChangesAction(prev, {
+        type: "preview-failed", error: "preview-failed", message
+      }));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelChanges = () => {
+    setChangesAction((prev) => reduceChangesAction(prev, { type: "cancel" }));
+    setStatusMessage("Cancelled — no files written.");
+  };
+
+  const confirmApplyChanges = async () => {
+    let preview = null;
+    setChangesAction((prev) => {
+      if (prev.phase !== CHANGES_PHASE.CONFIRMING || !prev.preview) return prev;
+      preview = prev.preview;
+      return reduceChangesAction(prev, { type: "apply-start" });
+    });
+    if (!preview) return null;
+    setBusy(true);
+    try {
+      const result = await applyGovernanceSync({
+        preview,
+        homeDir, workspaceRoot, packageName, packageRoot, cliVersion
+      });
+      if (result.reason === "stale-preview") {
+        setChangesAction((prev) => reduceChangesAction(prev, {
+          type: "apply-done",
+          ok: false,
+          reason: "stale-preview",
+          preview: result.preview,
+          message: "Preview stale — press A for a fresh preview."
+        }));
+        return result;
+      }
+      if (result.reason === "setup-required") {
+        setChangesAction((prev) => reduceChangesAction(prev, {
+          type: "preview-ready",
+          preview: { setupRequired: true }
+        }));
+        return result;
+      }
+      await reload();
+      setChangesAction((prev) => reduceChangesAction(prev, {
+        type: "apply-done",
+        ok: result.ok,
+        reason: result.reason,
+        receipt: result.receipt,
+        message: result.ok
+          ? (result.partial ? "Applied with partial evidence — re-scan complete." : "Applied — re-scan complete.")
+          : `Apply ${result.reason}.`
+      }));
+      setStatusMessage(result.ok ? "Governance apply recorded." : null);
+      return result;
+    } catch (applyError) {
+      const message = applyError instanceof Error ? applyError.message : String(applyError);
+      setChangesAction((prev) => reduceChangesAction(prev, {
+        type: "apply-done", ok: false, reason: "apply-failed", message
+      }));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rescanChanges = async () => {
+    setChangesAction(() => createChangesActionState());
+    await reload();
+  };
+
+  const previewRecovery = async (snapshotName) => {
+    if (!snapshotName) return null;
+    setRecoveryAction((prev) => reduceRecoveryAction(prev, {
+      type: "preview-start", snapshot: snapshotName
+    }));
+    setBusy(true);
+    try {
+      const preview = await previewGovernanceRollback({ homeDir, snapshot: snapshotName });
+      setRecoveryAction((prev) => reduceRecoveryAction(prev, { type: "preview-ready", preview }));
+      return preview;
+    } catch (previewError) {
+      const message = previewError instanceof Error ? previewError.message : String(previewError);
+      setRecoveryAction((prev) => reduceRecoveryAction(prev, {
+        type: "preview-failed", error: "preview-failed", message
+      }));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelRecovery = () => {
+    setRecoveryAction((prev) => reduceRecoveryAction(prev, { type: "cancel" }));
+    setStatusMessage("Cancelled — previous snapshot kept.");
+  };
+
+  const confirmApplyRecovery = async () => {
+    let preview = null;
+    setRecoveryAction((prev) => {
+      if (prev.phase !== RECOVERY_PHASE.CONFIRMING || !prev.preview) return prev;
+      preview = prev.preview;
+      return reduceRecoveryAction(prev, { type: "apply-start" });
+    });
+    if (!preview) return null;
+    setBusy(true);
+    try {
+      const result = await applyGovernanceRollback({
+        preview, homeDir, cliVersion
+      });
+      if (result.reason === "stale-preview") {
+        setRecoveryAction((prev) => reduceRecoveryAction(prev, {
+          type: "apply-done",
+          ok: false,
+          reason: "stale-preview",
+          preview: result.preview,
+          message: "Preview stale — press Enter for a fresh preview."
+        }));
+        return result;
+      }
+      await reload();
+      setRecoveryAction((prev) => reduceRecoveryAction(prev, {
+        type: "apply-done",
+        ok: result.ok,
+        reason: result.reason,
+        receipt: result.receipt,
+        message: result.ok ? "Rollback applied — re-scan complete." : `Rollback ${result.reason}.`
+      }));
+      setStatusMessage(result.ok ? "Rollback recorded." : null);
+      return result;
+    } catch (applyError) {
+      const message = applyError instanceof Error ? applyError.message : String(applyError);
+      // Keep prior preview so the selected snapshot remains visible after failure.
+      setRecoveryAction((prev) => reduceRecoveryAction(prev, {
+        type: "apply-done", ok: false, reason: "apply-failed", message, preview: prev.preview
+      }));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rescanRecovery = async () => {
+    setRecoveryAction(() => createRecoveryActionState());
+    await reload();
+  };
+
   return {
     loading,
     busy,
@@ -185,10 +364,21 @@ export function useOrchestratorData({
     setLaunchPermissionIndex,
     launchableAgents: resolveLaunchableAgents(dashboard?.providers ?? []),
     scanOptions: CONTROL_PLANE_AUTO_SCAN,
+    changesAction,
+    recoveryAction,
     reload,
     resetLaunchWizard,
     openRunDetail,
     handleLaunch,
-    handleCancelRun
+    handleCancelRun,
+    previewChanges,
+    cancelChanges,
+    confirmApplyChanges,
+    rescanChanges,
+    previewRecovery,
+    cancelRecovery,
+    confirmApplyRecovery,
+    rescanRecovery,
+    recoverySnapshots: listRecoverySnapshots(snapshot)
   };
 }
