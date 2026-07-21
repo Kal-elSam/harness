@@ -261,7 +261,7 @@ node ./bin/kairo.js install --dry-run
 
 ## Supported adapters (agent-global)
 
-Kairo Runtime does **not** install Cursor, Codex, OpenCode, or Claude Code. It detects
+Kairo Runtime does **not** install Cursor, Codex, OpenCode, Claude Code, or Pi. It detects
 their home-directory roots and writes managed sections into their config files.
 
 | Adapter | Label | Root | Config file |
@@ -270,6 +270,7 @@ their home-directory roots and writes managed sections into their config files.
 | `codex` | Codex | `~/.codex` | `~/.codex/AGENTS.md` |
 | `opencode` | OpenCode | `~/.config/opencode` | `~/.config/opencode/AGENTS.md` |
 | `claude` | Claude Code | `~/.claude` | `~/.claude/CLAUDE.md` |
+| `pi` | Pi | `~/.pi/agent` | `~/.pi/agent/AGENTS.md` |
 
 Inspect detection and managed state:
 
@@ -281,13 +282,24 @@ kairo adapters --json
 Agent selection defaults:
 
 - If agent roots are detected → configure detected agents only.
-- If none are detected → safe fallback to all four supported adapters.
-- Force all four explicitly:
+- If none are detected → safe fallback to all five supported adapters.
+- Force all five explicitly:
 
 ```bash
 kairo setup --agents all
 kairo install --agents all
 ```
+
+### Pi runtime (auditable)
+
+```bash
+kairo run --agent pi --task "Review this repository" --permissions read-only --follow
+```
+
+Launches `pi --mode json --no-session` (optional `--model`). `read-only` maps to
+`--tools read,grep,find,ls`; other permission aliases are rejected (never translated
+to `--approve`). Custom `PI_CODING_AGENT_DIR` blocks config writes in 0.6.0 but does
+not block runtime. Kairo does not install Pi or assert subscription/entitlement.
 
 Primary governance flow:
 
@@ -518,9 +530,11 @@ kairo components rollback engram-memory --receipt <id> --dry-run
 
 Without `--agents`, Kairo uses the intersection of detected agents and
 Kairo-managed Engram agents (`cursor`, `codex`, `opencode`, `claude` → setup slug
-`claude-code`). After setup, status is `restart_required` — restart the agent to
+`claude-code`, `pi` → `pi`). After setup, status is `restart_required` — restart the agent to
 load MCP; configuration evidence is not runtime-active. Receipts live under
-`~/.harness/integrations/engram/`.
+`~/.harness/integrations/engram/`. For Pi, positive evidence requires
+`~/.pi/agent/settings.json` packages (`npm:gentle-engram`, `npm:pi-mcp-adapter`) and
+`~/.pi/agent/mcp.json` with `mcpServers.engram`.
 
 ### SDD Core skills
 
@@ -537,7 +551,7 @@ same `sdd-core` apply path. Lifecycle keeps persona frozen (`preservePersona`):
 it never auto-activates teaching. Explicit persona changes stay on
 `kairo components configure sdd-core`.
 
-**Destinations.** Cursor, Codex, and OpenCode share `~/.agents/skills/<id>/`.
+**Destinations.** Cursor, Codex, OpenCode, and Pi share `~/.agents/skills/<id>/`.
 Claude uses `~/.claude/skills/<id>/`. One physical tree per root; consumers are
 recorded per destination.
 

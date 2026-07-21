@@ -88,9 +88,9 @@ if (!payload.ok || payload.overall !== 'ok') {
   process.exit(1);
 }
 const managed = payload.agents.filter((agent) => agent.managed).map((agent) => agent.id).sort();
-const expected = ['claude', 'codex', 'cursor', 'opencode'];
+const expected = ['claude', 'codex', 'cursor', 'opencode', 'pi'];
 if (JSON.stringify(managed) !== JSON.stringify(expected)) {
-  console.error('Expected all four agents managed');
+  console.error('Expected all five agents managed');
   process.exit(1);
 }
 " "$status_json"
@@ -105,7 +105,8 @@ const targets = [
   '.cursor/AGENTS.md',
   '.codex/AGENTS.md',
   '.config/opencode/AGENTS.md',
-  '.claude/CLAUDE.md'
+  '.claude/CLAUDE.md',
+  '.pi/agent/AGENTS.md'
 ];
 
 for (const relativePath of targets) {
@@ -143,7 +144,8 @@ mkdir -p \
   "$FAKE_HOME/.cursor" \
   "$FAKE_HOME/.codex" \
   "$FAKE_HOME/.config/opencode" \
-  "$FAKE_HOME/.claude"
+  "$FAKE_HOME/.claude" \
+  "$FAKE_HOME/.pi/agent"
 
 echo
 echo "== curl install.sh | sh --version ${VERSION} --yes --agents all =="

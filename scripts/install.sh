@@ -4,7 +4,7 @@
 # Safe by design:
 #   - no sudo
 #   - no shell profile changes
-#   - does not install Cursor/Codex/OpenCode/Claude
+#   - does not install Cursor/Codex/OpenCode/Claude/Pi
 #   - default ends with setup --dry-run (no writes)
 #   - explicit apply: pass --yes to run setup --yes
 #

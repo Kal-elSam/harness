@@ -17,8 +17,12 @@ import { createEngramProvider } from "../src/global/integrations/engram-provider
 
 test("agent mapping, version classes, and dry-run plan", () => {
   assert.equal(engramSetupSlugForAgent("claude"), "claude-code");
-  assert.deepEqual(resolveEngramAgentSelection({ detectedIds: ["codex", "pi", "cursor"] }), ["cursor", "codex"]);
-  assert.throws(() => resolveEngramAgentSelection({ requestedIds: ["pi"] }), /not managed/);
+  assert.equal(engramSetupSlugForAgent("pi"), "pi");
+  assert.deepEqual(
+    resolveEngramAgentSelection({ detectedIds: ["codex", "pi", "cursor"] }),
+    ["cursor", "codex", "pi"]
+  );
+  assert.throws(() => resolveEngramAgentSelection({ requestedIds: ["gemini"] }), /not managed/);
 
   assert.equal(parseEngramVersion("Update available: 1.16.1 -> 1.19.0\nengram 1.16.1"), "1.16.1");
   assert.equal(classifyEngramVersion("1.16.1").status, ENGRAM_INTEGRATION_STATUS.UNSUPPORTED);

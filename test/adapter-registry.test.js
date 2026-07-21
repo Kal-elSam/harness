@@ -13,12 +13,12 @@ import {
 } from "../src/global/registry.js";
 import { buildAdapterContext } from "../src/global/adapter-context.js";
 
-test("registry lists all four supported adapters", () => {
+test("registry lists all five supported adapters", () => {
   const adapters = listAdapters();
 
-  assert.equal(adapters.length, 4);
+  assert.equal(adapters.length, 5);
   assert.deepEqual(adapters.map((adapter) => adapter.id), GLOBAL_AGENT_IDS);
-  assert.deepEqual(GLOBAL_AGENT_IDS, ["cursor", "codex", "opencode", "claude"]);
+  assert.deepEqual(GLOBAL_AGENT_IDS, ["cursor", "codex", "opencode", "claude", "pi"]);
 });
 
 test("registry resolves adapters by id", () => {
@@ -57,7 +57,7 @@ test("resolveTargetAdapters falls back to all adapters when none detected", asyn
 
   const targets = resolveTargetAdapters(context);
 
-  assert.equal(targets.length, 4);
+  assert.equal(targets.length, 5);
 });
 
 test("resolveTargetAdapters honors explicit adapter selection", async () => {

@@ -1,7 +1,7 @@
 {
   "name": "@kal-elsam/kairo-runtime",
-  "version": "0.5.1",
-  "description": "Kairo Runtime — local agent operating system for Codex, Cursor, Claude, Gemini, Copilot, Engram, and Graphify.",
+  "version": "0.6.0",
+  "description": "Kairo Runtime — local agent operating system for Codex, Cursor, Claude, Pi, Engram, and Graphify.",
   "type": "module",
   "homepage": "https://github.com/Kal-elSam/harness#readme",
   "repository": {
@@ -45,6 +45,7 @@
     "agents",
     "codex",
     "cursor",
+    "pi",
     "kairo",
     "kairo-runtime",
     "harness",

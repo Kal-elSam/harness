@@ -58,7 +58,8 @@
         "cursor": "- In repos with workspace harness: also read `.cursor/rules/` and `docs/specs/`.",
         "codex": "- In repos with workspace harness: also read `.codex/skills/sdd/` when present.",
         "claude": "- In repos with workspace harness: repo `AGENTS.md` wins over `CLAUDE.md` pointers.",
-        "opencode": "- In repos with workspace harness: also read `.opencode/` SDD assets when present."
+        "opencode": "- In repos with workspace harness: also read `.opencode/` SDD assets when present.",
+        "pi": "- Skills load from `~/.agents/skills` (shared Agent Skills root). Teaching persona activates only via the managed section of `~/.pi/agent/AGENTS.md`."
       }
     },
     {
@@ -80,7 +81,8 @@
         "cursor": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup cursor`).",
         "codex": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup codex`).",
         "claude": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup claude-code`).",
-        "opencode": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup opencode`)."
+        "opencode": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup opencode`).",
+        "pi": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup pi`). Evidence: `~/.pi/agent/settings.json` packages + `mcp.json` engram server. Restart Pi after setup; Kairo never runs `engram doctor`/`serve` or touches `engram.db`."
       }
     },
     {

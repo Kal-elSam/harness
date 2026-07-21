@@ -2,8 +2,9 @@ import cursor from "./cursor.js";
 import codex from "./codex.js";
 import claude from "./claude.js";
 import opencode from "./opencode.js";
+import pi from "./pi.js";
 
-const EXECUTION_ADAPTERS = [cursor, codex, claude, opencode];
+const EXECUTION_ADAPTERS = [cursor, codex, claude, opencode, pi];
 
 export const EXECUTION_ADAPTER_IDS = EXECUTION_ADAPTERS.map((adapter) => adapter.id);
 

@@ -150,7 +150,7 @@ export function resolveDashboardRecommendation({
       kind: NEXT_STEP_KINDS.LAUNCH,
       title: "Create a new run",
       message: "Create a new run",
-      detail: "Delegate a task to Cursor, Codex or Claude.",
+      detail: "Delegate a task to Cursor, Codex, Claude, or Pi.",
       targetView: RECOMMENDATION_TARGETS.LAUNCH,
       targetAction: "launch"
     };
