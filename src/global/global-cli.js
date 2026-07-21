@@ -734,7 +734,7 @@ function printAdapterMatrixReport(report) {
   console.log(commandHeader("adapters — supported agent integrations"));
   console.log(`Home: ${report.homeDir}`);
   console.log("");
-  console.log(`${BRAND.displayName} does not install Cursor, Codex, OpenCode, or Claude Code.`);
+  console.log(`${BRAND.displayName} does not install Cursor, Codex, OpenCode, Claude Code, or Pi.`);
   console.log("It configures managed sections in each agent's config files.");
   console.log("");
   console.log(`Supported: ${report.supportedCount}  Detected: ${report.detectedCount}  Managed: ${report.managedCount}`);

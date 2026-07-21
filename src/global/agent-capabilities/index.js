@@ -2,6 +2,7 @@ import cursorManaged from "../adapters/cursor.js";
 import codexManaged from "../adapters/codex.js";
 import opencodeManaged from "../adapters/opencode.js";
 import claudeManaged from "../adapters/claude.js";
+import piManaged from "../adapters/pi.js";
 import { createAgentCapabilityAdapter } from "./create-capability-adapter.js";
 
 const cursor = createAgentCapabilityAdapter({
@@ -37,7 +38,16 @@ const claude = createAgentCapabilityAdapter({
   runExecutable: "claude"
 });
 
-const CAPABILITY_ADAPTERS = [cursor, codex, opencode, claude];
+const pi = createAgentCapabilityAdapter({
+  id: "pi",
+  label: "Pi",
+  managedAdapter: piManaged,
+  executable: "pi",
+  opaqueAuth: true,
+  runExecutable: "pi"
+});
+
+const CAPABILITY_ADAPTERS = [cursor, codex, opencode, claude, pi];
 
 export const AGENT_CAPABILITY_IDS = CAPABILITY_ADAPTERS.map((adapter) => adapter.id);
 

@@ -30,14 +30,16 @@ export const AGENT_LABELS = {
   cursor: "Cursor",
   codex: "Codex",
   opencode: "OpenCode",
-  claude: "Claude Code"
+  claude: "Claude Code",
+  pi: "Pi"
 };
 
 export const AGENT_SYMBOLS = {
   cursor: "◆",
   codex: "◆",
   opencode: "◆",
-  claude: "◆"
+  claude: "◆",
+  pi: "◆"
 };
 
 export const TOKENS = {

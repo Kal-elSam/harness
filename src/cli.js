@@ -732,7 +732,7 @@ function printHelp() {
   console.log(`${BRAND.displayName} (${PACKAGE_NAME})
 
 ${BRAND.tagline}. ${BRAND.displayName} does not install AI apps — it powers and
-coordinates agents you already have (Cursor, Codex, OpenCode, Claude) with managed
+coordinates agents you already have (Cursor, Codex, OpenCode, Claude, Pi) with managed
 sections, components, backups, and drift repair under ~/.harness.
 
 Bootstrap: see README.md (curl install.sh or npx ${PACKAGE_NAME}).
