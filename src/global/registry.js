@@ -4,8 +4,9 @@ import claude from "./adapters/claude.js";
 import codex from "./adapters/codex.js";
 import cursor from "./adapters/cursor.js";
 import opencode from "./adapters/opencode.js";
+import pi from "./adapters/pi.js";
 
-const ADAPTERS = [cursor, codex, opencode, claude];
+const ADAPTERS = [cursor, codex, opencode, claude, pi];
 
 export const GLOBAL_AGENT_IDS = ADAPTERS.map((adapter) => adapter.id);
 

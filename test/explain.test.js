@@ -42,7 +42,8 @@ const ALL_AGENT_ROOTS = [
   [".cursor"],
   [".codex"],
   [".config", "opencode"],
-  [".claude"]
+  [".claude"],
+  [".pi", "agent"]
 ];
 
 async function createFakeHomeWithAllAgents({ withUserCursorConfig = false } = {}) {
@@ -86,7 +87,7 @@ test("explain without state recommends setup and writes nothing", async () => {
   assert.equal(existsSync(paths.root), false);
 });
 
-test("explain after setup lists all four adapters", async () => {
+test("explain after setup lists all five adapters", async () => {
   const homeDir = await createFakeHomeWithAllAgents();
   await installGlobalHarness({ ...baseOptions, homeDir, agents: ["all"] });
 
@@ -117,8 +118,8 @@ test("explain --json exposes stable shape", async () => {
   assert.equal(payload.cliVersion, cliVersion);
   assert.equal(payload.markers.start, SECTION_START);
   assert.equal(payload.markers.end, SECTION_END);
-  assert.equal(payload.adapters.length, 4);
-  assert.equal(payload.configFiles.length, 4);
+  assert.equal(payload.adapters.length, 5);
+  assert.equal(payload.configFiles.length, 5);
   assert.ok(payload.components.length >= 1);
   assert.ok(Array.isArray(payload.writesTo));
   assert.ok(Array.isArray(payload.backups));

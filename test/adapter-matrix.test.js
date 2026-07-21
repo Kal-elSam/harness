@@ -31,7 +31,8 @@ const ALL_AGENT_ROOTS = [
   [".cursor"],
   [".codex"],
   [".config", "opencode"],
-  [".claude"]
+  [".claude"],
+  [".pi", "agent"]
 ];
 
 async function createFakeHomeWithAllAgents() {
@@ -62,7 +63,7 @@ test("resolveTargetAdapters honors --agents all", async () => {
   assert.deepEqual(allAgents.map((adapter) => adapter.id), GLOBAL_AGENT_IDS);
 });
 
-test("setup --agents all configures all four adapters even when only two are detected", async () => {
+test("setup --agents all configures all five adapters even when only two are detected", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "harness-two-detected-"));
   await mkdir(join(homeDir, ".cursor"), { recursive: true });
   await mkdir(join(homeDir, ".codex"), { recursive: true });
@@ -79,9 +80,10 @@ test("setup --agents all configures all four adapters even when only two are det
   assert.deepEqual(outcome.result.agents, GLOBAL_AGENT_IDS);
   assert.ok(existsSync(join(homeDir, ".config", "opencode", "AGENTS.md")));
   assert.ok(existsSync(join(homeDir, ".claude", "CLAUDE.md")));
+  assert.ok(existsSync(join(homeDir, ".pi", "agent", "AGENTS.md")));
 });
 
-test("setup --yes with four roots configures all adapters", async () => {
+test("setup --yes with five roots configures all adapters", async () => {
   const homeDir = await createFakeHomeWithAllAgents();
 
   const outcome = await runHarnessSetup({
@@ -102,7 +104,7 @@ test("setup --yes with four roots configures all adapters", async () => {
   }
 });
 
-test("status --json reports all four adapters as managed", async () => {
+test("status --json reports all five adapters as managed", async () => {
   const homeDir = await createFakeHomeWithAllAgents();
   await installGlobalHarness({ ...baseOptions, homeDir, agents: ["all"] });
 
@@ -123,7 +125,7 @@ test("status --json reports all four adapters as managed", async () => {
   );
 });
 
-test("doctor --json includes managed-section checks for all four config files", async () => {
+test("doctor --json includes managed-section checks for all five config files", async () => {
   const homeDir = await createFakeHomeWithAllAgents();
   await installGlobalHarness({ ...baseOptions, homeDir, agents: ["all"] });
 
@@ -138,7 +140,8 @@ test("doctor --json includes managed-section checks for all four config files", 
       ".claude/CLAUDE.md",
       ".codex/AGENTS.md",
       ".config/opencode/AGENTS.md",
-      ".cursor/AGENTS.md"
+      ".cursor/AGENTS.md",
+      ".pi/agent/AGENTS.md"
     ].sort()
   );
   assert.ok(managedSections.every((check) => check.status === "ok"));
@@ -152,11 +155,11 @@ test("adapters --json exposes official adapter matrix fields", async () => {
   assert.equal(cli.status, 0, cli.stderr);
   const payload = JSON.parse(cli.stdout);
 
-  assert.equal(payload.supportedCount, 4);
-  assert.equal(payload.managedCount, 4);
-  assert.equal(payload.detectedCount, 4);
+  assert.equal(payload.supportedCount, 5);
+  assert.equal(payload.managedCount, 5);
+  assert.equal(payload.detectedCount, 5);
   assert.equal(payload.cliVersion, cliVersion);
-  assert.equal(payload.adapters.length, 4);
+  assert.equal(payload.adapters.length, 5);
 
   const cursor = payload.adapters.find((entry) => entry.id === "cursor");
   assert.equal(cursor.label, "Cursor");
@@ -173,6 +176,10 @@ test("adapters --json exposes official adapter matrix fields", async () => {
   const claude = payload.adapters.find((entry) => entry.id === "claude");
   assert.equal(claude.rootDir, ".claude");
   assert.equal(claude.configFile, ".claude/CLAUDE.md");
+
+  const pi = payload.adapters.find((entry) => entry.id === "pi");
+  assert.equal(pi.rootDir, ".pi/agent");
+  assert.equal(pi.configFile, ".pi/agent/AGENTS.md");
 });
 
 test("sync repairs drift in OpenCode managed section", async () => {
@@ -196,7 +203,7 @@ test("sync repairs drift in OpenCode managed section", async () => {
   assert.ok(!repaired.includes("### Broken"));
 });
 
-test("uninstall removes managed sections from all four adapters", async () => {
+test("uninstall removes managed sections from all five adapters", async () => {
   const homeDir = await createFakeHomeWithAllAgents();
   await installGlobalHarness({ ...baseOptions, homeDir, agents: ["all"] });
 
@@ -204,7 +211,8 @@ test("uninstall removes managed sections from all four adapters", async () => {
     join(homeDir, ".cursor", "AGENTS.md"),
     join(homeDir, ".codex", "AGENTS.md"),
     join(homeDir, ".config", "opencode", "AGENTS.md"),
-    join(homeDir, ".claude", "CLAUDE.md")
+    join(homeDir, ".claude", "CLAUDE.md"),
+    join(homeDir, ".pi", "agent", "AGENTS.md")
   ];
 
   for (const configPath of configPaths) {
@@ -218,7 +226,8 @@ test("uninstall removes managed sections from all four adapters", async () => {
       ".claude/CLAUDE.md",
       ".codex/AGENTS.md",
       ".config/opencode/AGENTS.md",
-      ".cursor/AGENTS.md"
+      ".cursor/AGENTS.md",
+      ".pi/agent/AGENTS.md"
     ].sort()
   );
 
@@ -237,7 +246,8 @@ test("adapters human output documents non-installer behavior", async () => {
 
   assert.equal(cli.status, 0, cli.stderr);
   assert.match(cli.stdout, /Kairo Runtime adapters — supported agent integrations/);
-  assert.match(cli.stdout, /does not install Cursor, Codex, OpenCode, or Claude Code/i);
+  assert.match(cli.stdout, /does not install Cursor, Codex, OpenCode, Claude Code, or Pi/i);
   assert.match(cli.stdout, /\.config\/opencode/);
   assert.match(cli.stdout, /\.claude\/CLAUDE\.md/);
+  assert.match(cli.stdout, /\.pi\/agent/);
 });

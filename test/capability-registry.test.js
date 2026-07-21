@@ -17,10 +17,12 @@ test("capability registry inspects all supported agents", async () => {
 
   const capabilities = await inspectAllCapabilities({ homeDir });
 
-  assert.equal(capabilities.length, 4);
+  assert.equal(capabilities.length, 5);
   const cursor = capabilities.find((entry) => entry.id === "cursor");
   assert.equal(cursor.detected, true);
   assert.ok([CAPABILITY_STATES.DETECTED, CAPABILITY_STATES.UNKNOWN, CAPABILITY_STATES.AVAILABLE].includes(cursor.state));
+  const pi = capabilities.find((entry) => entry.id === "pi");
+  assert.equal(pi.authenticated, null);
 });
 
 test("opaque providers report unknown rather than failing", async () => {
@@ -66,6 +68,6 @@ test("registry summary counts states", async () => {
   const capabilities = await inspectAllCapabilities({ homeDir });
   const summary = summarizeCapabilityRegistry(capabilities);
 
-  assert.equal(summary.total, 4);
-  assert.equal(summary.supported, 4);
+  assert.equal(summary.total, 5);
+  assert.equal(summary.supported, 5);
 });

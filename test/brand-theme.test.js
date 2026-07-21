@@ -35,9 +35,10 @@ test("formatAgentDetectCard uses human labels and status hints", () => {
   assert.match(card, /Codex/);
   assert.match(card, /OpenCode/);
   assert.match(card, /Claude Code/);
+  assert.match(card, /Pi/);
   assert.match(card, /ready/);
   assert.match(card, /not detected/);
-  assert.match(card, /2 of 4 agent roots found/);
+  assert.match(card, /2 of 5 agent roots found/);
 });
 
 test("formatAgentMultiselectHint distinguishes ready vs managed later", () => {
