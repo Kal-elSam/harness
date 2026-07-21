@@ -3,12 +3,13 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { probeCommand } from "../cli-probe.js";
 
-export const KAIRO_ENGRAM_AGENT_IDS = Object.freeze(["cursor", "codex", "opencode", "claude"]);
+export const KAIRO_ENGRAM_AGENT_IDS = Object.freeze(["cursor", "codex", "opencode", "claude", "pi"]);
 export const ENGRAM_SETUP_SLUG_BY_AGENT = Object.freeze({
   cursor: "cursor",
   codex: "codex",
   opencode: "opencode",
-  claude: "claude-code"
+  claude: "claude-code",
+  pi: "pi"
 });
 export const ENGRAM_MIN_VERSION = "1.19.0";
 export const ENGRAM_MAX_MAJOR = 2;
@@ -110,7 +111,7 @@ export function inspectEngramAgentConfig(agentId, { homeDir = homedir() } = {}) 
   const conflicts = evidence.filter((item) => item.conflict);
   let status = ENGRAM_INTEGRATION_STATUS.UNCONFIGURED;
   if (conflicts.length > 0) status = ENGRAM_INTEGRATION_STATUS.CONFLICT;
-  else if (evidence.some((item) => item.present && item.kind === "mcp")) {
+  else if (isEngramAgentConfigured(agentId, evidence)) {
     status = ENGRAM_INTEGRATION_STATUS.CONFIGURED;
   }
   return { id: agentId, slug, status, evidence };
@@ -165,7 +166,44 @@ function collectAgentEvidence(agentId, homeDir) {
       fileEvidence(join(homeDir, ".cursor", "rules", "engram.mdc"), "protocol")
     ];
   }
+  if (agentId === "pi") {
+    return [
+      piSettingsPackagesEvidence(join(homeDir, ".pi", "agent", "settings.json")),
+      jsonKeyEvidence(join(homeDir, ".pi", "agent", "mcp.json"), ["mcpServers", "engram"], "mcp")
+    ];
+  }
   throw new Error(`Unsupported Engram agent "${agentId}".`);
+}
+
+function isEngramAgentConfigured(agentId, evidence) {
+  if (agentId === "pi") {
+    return evidence.length > 0 && evidence.every((item) => item.present && !item.conflict);
+  }
+  return evidence.some((item) => item.present && item.kind === "mcp");
+}
+
+function piSettingsPackagesEvidence(path) {
+  const required = ["npm:gentle-engram", "npm:pi-mcp-adapter"];
+  if (!existsSync(path)) {
+    return { path, kind: "settings", present: false, conflict: false, required };
+  }
+  try {
+    const data = JSON.parse(readFileSync(path, "utf8"));
+    if (data == null || typeof data !== "object" || Array.isArray(data)) {
+      return { path, kind: "settings", present: false, conflict: true, required, detail: "invalid structure" };
+    }
+    const packages = Array.isArray(data.packages) ? data.packages : null;
+    if (packages == null) {
+      return { path, kind: "settings", present: false, conflict: true, required, detail: "invalid structure" };
+    }
+    const normalized = packages.map((entry) => String(entry));
+    const present = required.every((req) =>
+      normalized.some((entry) => entry === req || entry.startsWith(`${req}@`))
+    );
+    return { path, kind: "settings", present, conflict: false, required };
+  } catch {
+    return { path, kind: "settings", present: false, conflict: true, required, detail: "unreadable json" };
+  }
 }
 
 function fileEvidence(path, kind) {

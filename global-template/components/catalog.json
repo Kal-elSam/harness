@@ -81,7 +81,8 @@
         "cursor": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup cursor`).",
         "codex": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup codex`).",
         "claude": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup claude-code`).",
-        "opencode": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup opencode`)."
+        "opencode": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup opencode`).",
+        "pi": "- Configure Engram via `kairo components configure engram-memory` (official `engram setup pi`). Evidence: `~/.pi/agent/settings.json` packages + `mcp.json` engram server. Restart Pi after setup; Kairo never runs `engram doctor`/`serve` or touches `engram.db`."
       }
     },
     {
