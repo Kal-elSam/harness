@@ -271,6 +271,41 @@ test("supervisor preserves cancelled state written by another process", async ()
   });
 });
 
+test("stopRun against concurrent supervisor stress ends CANCELLED", async () => {
+  await withStubExecutables(["codex"], async () => {
+    for (let i = 0; i < 12; i++) {
+      const homeDir = await mkdtemp(join(tmpdir(), `kairo-run-stop-stress-${i}-`));
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.pid = 5_000 + i;
+      child.kill = () => child.emit("close", 130);
+
+      const { runId, completion } = await startRun({
+        homeDir,
+        agentId: "codex",
+        task: `stop stress ${i}`,
+        cwd: homeDir,
+        cliVersion: "0.5.1",
+        spawnImpl: () => child
+      });
+
+      while (true) {
+        const snapshot = await readRunState(homeDir, runId);
+        if (snapshot?.state === RUN_STATES.RUNNING) break;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      const cancelled = await stopRun(homeDir, runId);
+      assert.equal(cancelled.state, RUN_STATES.CANCELLED);
+
+      child.emit("close", 0);
+      const final = await completion;
+      assert.equal(final.state, RUN_STATES.CANCELLED);
+    }
+  });
+});
+
 test("recoverRuns preserves starting run within grace and keeps handoff", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-starting-grace-"));
   const metadata = createRunMetadata({

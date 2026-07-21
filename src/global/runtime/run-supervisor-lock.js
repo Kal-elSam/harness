@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { runPaths } from "../paths.js";
+import { writeAtomicJson } from "./write-atomic-json.js";
 
 function lockPath(homeDir, runId) {
   return `${runPaths(homeDir, runId).runDir}/supervisor.lock.json`;
@@ -9,7 +10,7 @@ function lockPath(homeDir, runId) {
 export async function writeSupervisorLock(homeDir, runId, lock) {
   const { runDir } = runPaths(homeDir, runId);
   await mkdir(runDir, { recursive: true });
-  await writeFile(lockPath(homeDir, runId), `${JSON.stringify(lock, null, 2)}\n`, "utf8");
+  await writeAtomicJson(lockPath(homeDir, runId), lock);
 }
 
 export async function readSupervisorLock(homeDir, runId) {
