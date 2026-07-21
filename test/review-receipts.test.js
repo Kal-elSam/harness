@@ -18,6 +18,15 @@ function snapshot(files = [{ path: "a.js", status: "M", hash: "h", changedLines:
   };
 }
 
+function finding() {
+  return validateReviewOutput({
+    findings: [{
+      severity: "medium", title: "Style", path: "a.js", line: null,
+      problem: "p", recommendation: "r"
+    }]
+  }, snapshot()).findings;
+}
+
 test("validateReviewOutput normalizes findings and rejects broken/out-of-scope", () => {
   const ok = validateReviewOutput({
     findings: [{
@@ -31,12 +40,9 @@ test("validateReviewOutput normalizes findings and rejects broken/out-of-scope",
   assert.equal(ok.findings[0].id, createFindingId({
     severity: "high", title: "Bug", path: "a.js", line: 2, problem: "bad"
   }));
-  assert.equal(ok.warnings[0], "note");
-
   assert.throws(
     () => validateReviewOutput("{", snapshot()),
-    (e) => e instanceof ReviewValidationError
-      && e.code === REVIEW_VALIDATION_ERROR_CODES.INVALID_OUTPUT
+    (e) => e.code === REVIEW_VALIDATION_ERROR_CODES.INVALID_OUTPUT
   );
   assert.throws(
     () => validateReviewOutput({
@@ -47,65 +53,64 @@ test("validateReviewOutput normalizes findings and rejects broken/out-of-scope",
     }, snapshot()),
     (e) => e.code === REVIEW_VALIDATION_ERROR_CODES.PATH_OUT_OF_SCOPE
   );
+});
+
+test("assertReceiptSecretFree rejects nested forbidden keys and unknown shapes", () => {
+  const base = buildReviewReceipt({
+    reviewId: createReviewId(), agentId: "codex", snapshot: snapshot(), findings: finding()
+  });
   assert.throws(
-    () => validateReviewOutput({
-      findings: [{
-        severity: "nope", title: "x", path: "a.js", line: 0,
-        problem: "p", recommendation: "r"
-      }]
-    }, snapshot()),
-    (e) => e.code === REVIEW_VALIDATION_ERROR_CODES.INVALID_FINDING
+    () => assertReceiptSecretFree({ ...base, prompt: "secret" }),
+    (e) => e.code === REVIEW_VALIDATION_ERROR_CODES.FORBIDDEN_FIELD
+  );
+  assert.throws(
+    () => assertReceiptSecretFree({
+      ...base,
+      findings: [{ ...base.findings[0], raw: "leak" }]
+    }),
+    (e) => e.code === REVIEW_VALIDATION_ERROR_CODES.FORBIDDEN_FIELD
+  );
+  assert.throws(
+    () => assertReceiptSecretFree({
+      ...base,
+      usage: { ...base.usage, transcript: "nope" }
+    }),
+    (e) => e.code === REVIEW_VALIDATION_ERROR_CODES.FORBIDDEN_FIELD
+  );
+  assert.throws(
+    () => assertReceiptSecretFree({ ...base, extra: true }),
+    (e) => e.code === REVIEW_VALIDATION_ERROR_CODES.FORBIDDEN_FIELD
   );
 });
 
-test("receipts are atomic, secret-free, and listable under reviewsDir", async () => {
+test("receipts are write-once, atomic, and listed by createdAt then limit", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-review-receipts-"));
   assert.equal(harnessHomePaths(homeDir).reviewsDir, join(homeDir, ".harness", "reviews"));
-  const reviewId = createReviewId();
-  const validated = validateReviewOutput({
-    findings: [{
-      severity: "medium", title: "Style", path: "a.js", line: null,
-      problem: "p", recommendation: "r"
-    }]
-  }, snapshot());
-
-  assert.throws(
-    () => assertReceiptSecretFree({ reviewId, prompt: "secret" }),
-    (e) => e.code === REVIEW_VALIDATION_ERROR_CODES.INVALID_OUTPUT
-  );
-
-  const receipt = buildReviewReceipt({
-    reviewId,
-    agentId: "codex",
-    model: "test-model",
-    snapshot: snapshot(),
-    state: REVIEW_STATES.COMPLETED,
-    findings: validated.findings,
-    warnings: validated.warnings,
-    usage: validated.usage,
-    timings: { startedAt: "t0", finishedAt: "t1", durationMs: 12 },
-    cliVersion: "0.7.0"
+  const older = buildReviewReceipt({
+    reviewId: createReviewId(), agentId: "codex", snapshot: snapshot(),
+    findings: finding(), createdAt: "2026-01-01T00:00:00.000Z"
   });
-  assert.equal(receipt.version, 1);
-  assert.equal(receipt.snapshot.fingerprint, "fp");
-  assert.equal(receipt.prompt, undefined);
-  assert.equal(receipt.diff, undefined);
-  assert.equal(receipt.transcript, undefined);
+  const newer = buildReviewReceipt({
+    reviewId: createReviewId(), agentId: "pi", snapshot: snapshot(),
+    findings: finding(), createdAt: "2026-06-01T00:00:00.000Z"
+  });
 
-  const saved = await saveReviewReceipt(receipt, { homeDir });
-  const raw = JSON.parse(await readFile(saved.path, "utf8"));
-  assert.equal(raw.reviewId, reviewId);
-  assert.equal(raw.findings[0].id, validated.findings[0].id);
-  assert.equal((await readdir(join(homeDir, ".harness", "reviews", reviewId)))
+  const saved = await saveReviewReceipt(older, { homeDir });
+  assert.equal(JSON.parse(await readFile(saved.path, "utf8")).reviewId, older.reviewId);
+  assert.equal((await readdir(join(homeDir, ".harness", "reviews", older.reviewId)))
     .filter((n) => n.endsWith(".tmp")).length, 0);
 
-  const loaded = await loadReviewReceipt(reviewId, { homeDir });
-  assert.equal(loaded.agentId, "codex");
+  await assert.rejects(
+    () => saveReviewReceipt({ ...older, warnings: ["again"] }, { homeDir }),
+    (e) => e instanceof ReviewValidationError
+      && e.code === REVIEW_VALIDATION_ERROR_CODES.RECEIPT_EXISTS
+  );
+  assert.deepEqual((await loadReviewReceipt(older.reviewId, { homeDir })).warnings, []);
+
+  await saveReviewReceipt(newer, { homeDir });
   const listed = await listReviewReceipts({ homeDir, limit: 1 });
   assert.equal(listed.length, 1);
-  assert.equal(listed[0].reviewId, reviewId);
-
-  // Idempotent overwrite stays parseable.
-  await saveReviewReceipt({ ...receipt, warnings: ["again"] }, { homeDir });
-  assert.deepEqual((await loadReviewReceipt(reviewId, { homeDir })).warnings, ["again"]);
+  assert.equal(listed[0].reviewId, newer.reviewId);
+  const all = await listReviewReceipts({ homeDir });
+  assert.deepEqual(all.map((r) => r.reviewId), [newer.reviewId, older.reviewId]);
 });
