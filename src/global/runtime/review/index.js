@@ -7,3 +7,11 @@ export {
 export {
   resolveReviewSnapshot, fingerprintReviewSnapshot, detectReviewSnapshotDrift
 } from "./review-git.js";
+export {
+  REVIEW_VALIDATION_ERROR_CODES, ReviewValidationError,
+  validateReviewOutput, assertReceiptSecretFree
+} from "./review-validate.js";
+export {
+  assertSafeReviewId, createReviewId, reviewPaths,
+  buildReviewReceipt, saveReviewReceipt, loadReviewReceipt, listReviewReceipts
+} from "./review-receipts.js";
