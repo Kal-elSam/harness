@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { harnessHomePaths, runPaths } from "../paths.js";
 import { RUN_STATES, isActiveRunState } from "./run-types.js";
 import { createRunEvent } from "./run-events.js";
+import { writeAtomicJson } from "./write-atomic-json.js";
 
 const writeLocks = new Map();
 
@@ -13,7 +14,7 @@ export function getRunsDir(homeDir) {
 export async function createRunRecord(homeDir, metadata) {
   const { runDir, statePath } = runPaths(homeDir, metadata.runId);
   await mkdir(runDir, { recursive: true });
-  await writeFile(statePath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+  await writeAtomicJson(statePath, metadata);
   return metadata;
 }
 
@@ -34,7 +35,7 @@ export async function writeRunState(homeDir, metadata) {
   const next = previous.then(async () => {
     const { statePath, runDir } = runPaths(homeDir, metadata.runId);
     await mkdir(runDir, { recursive: true });
-    await writeFile(statePath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+    await writeAtomicJson(statePath, metadata);
     return metadata;
   });
   writeLocks.set(key, next.catch(() => {}));

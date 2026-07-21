@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { runPaths } from "../paths.js";
+import { writeAtomicJson } from "./write-atomic-json.js";
 
 function cancelSignalPath(homeDir, runId) {
   return `${runPaths(homeDir, runId).runDir}/cancel.signal.json`;
@@ -9,7 +10,7 @@ function cancelSignalPath(homeDir, runId) {
 export async function writeCancelSignal(homeDir, runId, payload) {
   const { runDir } = runPaths(homeDir, runId);
   await mkdir(runDir, { recursive: true });
-  await writeFile(cancelSignalPath(homeDir, runId), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  await writeAtomicJson(cancelSignalPath(homeDir, runId), payload);
 }
 
 export async function readCancelSignal(homeDir, runId) {

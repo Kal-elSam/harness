@@ -3,6 +3,26 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.5.1 — 2026-07-21 (Kairo Runtime)
+
+Patch release. Atomic JSON replacement for run coordination files so the main
+process and detached supervisor never observe truncated state. Publish tag:
+`kairo-runtime-v0.5.1`.
+
+### Fixes
+
+- Write `state.json`, `cancel.signal.json`, and `supervisor.lock.json` via
+  temp + `O_EXCL` + fsync + atomic rename (cleanup temp on any failure).
+- Readers only ever see the previous or next complete JSON; concurrent writers
+  leave parseable JSON with no residual temps.
+- Preserve in-process write ordering and cancel-signal + fresh read before
+  terminal state so `stopRun` against a concurrent supervisor ends `CANCELLED`.
+
+### Compatibility
+
+- No schema, path, event JSONL, handoff, or public API changes.
+- Atomic replace only — not distributed locking or compare-and-swap.
+
 ## 0.5.0 — 2026-07-20 (Kairo Runtime)
 
 Minor release. Governance-first control plane: read-only scan, evidence-backed

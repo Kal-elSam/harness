@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +10,8 @@ import {
   listRunRecords,
   markInterruptedRuns,
   readRunEvents,
-  readRunState
+  readRunState,
+  writeRunState
 } from "../src/global/runtime/run-store.js";
 import { createRunMetadata, RUN_STATES } from "../src/global/runtime/run-types.js";
 import { createRunEvent } from "../src/global/runtime/run-events.js";
@@ -150,4 +151,32 @@ test("transcript file is created with opt-in", async () => {
   assert.equal(existsSync(transcriptPath), true);
   const content = await readFile(transcriptPath, "utf8");
   assert.match(content, /visible/);
+});
+
+test("writeRunState stress keeps state parseable without residual temps", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-store-stress-"));
+  const metadata = createRunMetadata({
+    runId: "run_store_stress",
+    agentId: "cursor",
+    provider: "Cursor",
+    task: "stress",
+    cwd: homeDir,
+    cliVersion: "0.5.1"
+  });
+  await createRunRecord(homeDir, metadata);
+  const runDir = join(homeDir, ".harness", "runs", metadata.runId);
+
+  for (let round = 0; round < 25; round++) {
+    await Promise.all([
+      writeRunState(homeDir, { ...metadata, state: RUN_STATES.RUNNING, round, lane: "a" }),
+      writeRunState(homeDir, { ...metadata, state: RUN_STATES.RUNNING, round, lane: "b" })
+    ]);
+    const loaded = await readRunState(homeDir, metadata.runId);
+    assert.equal(loaded.runId, metadata.runId);
+    assert.ok(loaded.lane === "a" || loaded.lane === "b");
+    assert.equal(loaded.round, round);
+  }
+
+  const temps = (await readdir(runDir)).filter((name) => name.endsWith(".tmp"));
+  assert.equal(temps.length, 0);
 });
