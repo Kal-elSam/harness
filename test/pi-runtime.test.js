@@ -41,7 +41,12 @@ const OFFICIAL_EVENTS = [
     type: "turn_end",
     message: {
       role: "assistant",
-      usage: { input: 11, output: 7, total: 18, cost: 0.02 }
+      usage: {
+        input: 11,
+        output: 7,
+        totalTokens: 18,
+        cost: { input: 0.01, output: 0.01, total: 0.02 }
+      }
     },
     toolResults: []
   },
@@ -118,11 +123,17 @@ test("pi NDJSON maps tools, usage, transcript opt-in, and redacts payloads", () 
 
   const assistant = parsePiEventLine(JSON.stringify(OFFICIAL_EVENTS[5]));
   assert.equal(assistant.type, "assistant");
+  assert.equal(assistant.content, "hello");
 
   const usage = parsePiEventLine(JSON.stringify(OFFICIAL_EVENTS[6]));
   assert.equal(usage.type, "usage");
   assert.equal(usage.inputTokens, 11);
+  assert.equal(usage.totalTokens, 18);
   assert.equal(usage.cost, 0.02);
+  assert.equal(parsePiEventLine(JSON.stringify({
+    type: "turn_end",
+    message: { usage: { cost: {} } }
+  })).cost, null);
 
   const compaction = parsePiEventLine(JSON.stringify(OFFICIAL_EVENTS[7]));
   assert.equal(compaction.type, "system");
@@ -132,8 +143,12 @@ test("pi NDJSON maps tools, usage, transcript opt-in, and redacts payloads", () 
   assert.equal(normalizedTool.type, "agent.tool_call");
   assert.ok(!JSON.stringify(normalizedTool).includes("SECRET"));
 
+  const withoutTranscript = normalizeAdapterEvent("pi", assistant, { captureTranscript: false });
+  assert.equal(withoutTranscript.data.content, "[REDACTED]");
+
   const withTranscript = normalizeAdapterEvent("pi", assistant, { captureTranscript: true });
   assert.equal(withTranscript.type, "agent.assistant");
+  assert.equal(withTranscript.data.content, "hello");
   assert.equal(adapter.capabilities.transcript, true);
 });
 
@@ -179,6 +194,8 @@ test("pi run supervises official events, cancel path, and non-zero exit", async 
     const final = await completion;
     const events = await readRunEvents(homeDir, runId);
     assert.equal(final.state, RUN_STATES.COMPLETED);
+    assert.equal(final.tokenUsage.total, 18);
+    assert.equal(final.cost, 0.02);
     assert.ok(events.some((event) => event.type === "agent.tool_call"));
     assert.ok(events.some((event) => event.type === "agent.tool_result"));
     assert.ok(events.some((event) => event.type === "agent.token_usage"));

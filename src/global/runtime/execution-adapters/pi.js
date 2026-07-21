@@ -121,21 +121,31 @@ export function parsePiEventLine(line) {
 
   if (parsed.type === "message_end") {
     if (parsed.message?.role !== "assistant") return null;
+    const content = Array.isArray(parsed.message.content)
+      ? parsed.message.content
+        .filter((block) => block?.type === "text")
+        .map((block) => block.text ?? "")
+        .join("")
+      : "";
     return {
       type: "assistant",
-      role: "assistant"
+      role: "assistant",
+      content
     };
   }
 
   if (parsed.type === "turn_end") {
     const usage = parsed.message?.usage;
     if (usage && typeof usage === "object") {
+      const cost = typeof usage.cost === "number"
+        ? usage.cost
+        : typeof usage.cost?.total === "number" ? usage.cost.total : null;
       return {
         type: "usage",
         inputTokens: usage.input ?? usage.inputTokens ?? usage.input_tokens ?? null,
         outputTokens: usage.output ?? usage.outputTokens ?? usage.output_tokens ?? null,
-        totalTokens: usage.total ?? usage.totalTokens ?? usage.total_tokens ?? null,
-        cost: usage.cost ?? null
+        totalTokens: usage.totalTokens ?? usage.total ?? usage.total_tokens ?? null,
+        cost
       };
     }
     return { type: "system", kind: "turn_end" };
