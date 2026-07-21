@@ -20,18 +20,18 @@ test("shared destinations coalesce consumers and stay deterministic", () => {
   assert.equal(SDD_SKILL_IDS.length, 9);
   assert.deepEqual(
     resolveSddAgentSelection({ detectedIds: ["codex", "pi", "cursor", "claude"] }),
-    ["cursor", "codex", "claude"]
+    ["cursor", "codex", "claude", "pi"]
   );
-  assert.throws(() => resolveSddAgentSelection({ requestedIds: ["pi"] }), /not managed/);
+  assert.throws(() => resolveSddAgentSelection({ requestedIds: ["gemini"] }), /not managed/);
 
   const homeDir = "/tmp/sdd-home";
-  const groups = groupSddSkillDestinations(["claude", "opencode", "codex", "cursor"], homeDir);
+  const groups = groupSddSkillDestinations(["claude", "opencode", "codex", "cursor", "pi"], homeDir);
   assert.deepEqual(groups.map((group) => ({ kind: group.kind, agentIds: group.agentIds })), [
-    { kind: "shared", agentIds: ["cursor", "codex", "opencode"] },
+    { kind: "shared", agentIds: ["cursor", "codex", "opencode", "pi"] },
     { kind: "claude", agentIds: ["claude"] }
   ]);
   assert.equal(
-    resolveSddSkillPath("sdd-init", "codex", homeDir),
+    resolveSddSkillPath("sdd-init", "pi", homeDir),
     join(homeDir, ".agents", "skills", "sdd-init", "SKILL.md")
   );
   assert.equal(
@@ -87,6 +87,16 @@ test("planSddConfigure is dry-run only and deduplicates shared writes", async ()
     assert.ok(initActions.every((entry) => entry.writes === false));
     const ordered = plan.actions.map((e) => `${e.skillId}|${e.relativePath}|${e.destinationPath}`);
     assert.deepEqual(ordered, [...ordered].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+
+    const withPi = await planSddConfigure({
+      requestedAgentIds: ["codex", "pi", "cursor"],
+      homeDir,
+      packageRoot,
+      persona: "off"
+    });
+    const piInit = withPi.actions.filter((entry) => entry.skillId === "sdd-init" && entry.relativePath === "SKILL.md");
+    assert.equal(piInit.length, 1);
+    assert.deepEqual(piInit[0].agentIds, ["cursor", "codex", "pi"]);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
   }

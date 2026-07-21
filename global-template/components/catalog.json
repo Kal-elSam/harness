@@ -58,7 +58,8 @@
         "cursor": "- In repos with workspace harness: also read `.cursor/rules/` and `docs/specs/`.",
         "codex": "- In repos with workspace harness: also read `.codex/skills/sdd/` when present.",
         "claude": "- In repos with workspace harness: repo `AGENTS.md` wins over `CLAUDE.md` pointers.",
-        "opencode": "- In repos with workspace harness: also read `.opencode/` SDD assets when present."
+        "opencode": "- In repos with workspace harness: also read `.opencode/` SDD assets when present.",
+        "pi": "- Skills load from `~/.agents/skills` (shared Agent Skills root). Teaching persona activates only via the managed section of `~/.pi/agent/AGENTS.md`."
       }
     },
     {

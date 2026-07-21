@@ -12,8 +12,8 @@ export const SDD_SKILL_IDS = Object.freeze([
   "sdd-archive"
 ]);
 
-export const SDD_MANAGED_AGENT_IDS = Object.freeze(["cursor", "codex", "opencode", "claude"]);
-export const SDD_SHARED_AGENT_IDS = Object.freeze(["cursor", "codex", "opencode"]);
+export const SDD_MANAGED_AGENT_IDS = Object.freeze(["cursor", "codex", "opencode", "claude", "pi"]);
+export const SDD_SHARED_AGENT_IDS = Object.freeze(["cursor", "codex", "opencode", "pi"]);
 export const SDD_PERSONA_IDS = Object.freeze(["off", "teaching"]);
 
 export function resolveSddAgentSelection({

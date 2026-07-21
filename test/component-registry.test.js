@@ -134,5 +134,5 @@ test("describeComponentCatalog exposes defaults and adapter hint keys", () => {
     "engram-memory",
     "graphify-context"
   ]);
-  assert.deepEqual(entries[1].adapterHints, ["cursor", "codex", "claude", "opencode"]);
+  assert.deepEqual(entries[1].adapterHints, ["cursor", "codex", "claude", "opencode", "pi"]);
 });
