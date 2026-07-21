@@ -5,7 +5,7 @@
 ## Role
 
 The Harness Orchestrator (conductor) coordinates work across local coding agents
-(Cursor, Codex, OpenCode, Claude). It does not replace any agent. It defines how
+(Cursor, Codex, OpenCode, Claude, Pi). It does not replace any agent. It defines how
 agents hand off work and which source of truth governs.
 
 ## Authority order

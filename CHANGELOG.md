@@ -3,6 +3,38 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.6.0 — 2026-07-21 (Kairo Runtime)
+
+Minor release. First-class Pi managed adapter and auditable runtime while Kairo
+remains the control plane. Publish tag: `kairo-runtime-v0.6.0` (leave any legacy
+`v0.6.0` tag untouched).
+
+### Added
+
+- Pi managed adapter at `~/.pi/agent/AGENTS.md` with opaque auth and separate
+  config-dir vs CLI detection. Setup/status/doctor/sync/uninstall/JSON/Control
+  Center now surface five agents.
+- Pi in SDD managed/shared destinations: nine skills materialize once under
+  `~/.agents/skills` (shared with Cursor/Codex/OpenCode); teaching persona gates
+  through the Pi managed AGENTS.md section.
+- Engram slug `pi` via official `engram setup pi`. Positive evidence requires
+  `settings.json` packages (`npm:gentle-engram`, `npm:pi-mcp-adapter`) and
+  `mcp.json` `mcpServers.engram`. Success reports `restart_required`; Pi-installed
+  packages remain provider-owned residue on rollback.
+- Runtime: `kairo run --agent pi --task "…" [--permissions read-only] [--follow]`
+  launches `pi --mode json --no-session`, maps official NDJSON tool/usage/lifecycle
+  events without persisting full args/results/secrets, and probes `pi --help` for
+  `--mode` / `--no-session` compatibility.
+
+### Compatibility
+
+- Custom `PI_CODING_AGENT_DIR` is out of scope: config plan/apply/uninstall fail
+  before writes; runtime launches remain available.
+- Auth stays unknown/opaque — Kairo never reads credentials or asserts
+  subscription/entitlement/balance.
+- Pi is not an Intelligence backend and is never auto-installed.
+- Adding `pi` to existing state v4 agent arrays needs no migration.
+
 ## 0.5.1 — 2026-07-21 (Kairo Runtime)
 
 Patch release. Atomic JSON replacement for run coordination files so the main
