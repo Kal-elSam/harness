@@ -15,3 +15,11 @@ export {
   assertSafeReviewId, createReviewId, reviewPaths,
   buildReviewReceipt, saveReviewReceipt, loadReviewReceipt, listReviewReceipts
 } from "./review-receipts.js";
+export {
+  REVIEW_EXEC_ERROR_CODES, REVIEW_EXEC_LIMITS, ReviewExecError,
+  runBoundedProcess, assertBoundedProcessOk
+} from "./review-exec.js";
+export {
+  REVIEW_CODEX_ERROR_CODES, buildCodexReviewArgs, buildCodexCliEnv,
+  buildCodexReviewPrompt, parseCodexReviewJsonl, runCodexReview
+} from "./review-codex.js";
