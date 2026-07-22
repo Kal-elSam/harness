@@ -108,9 +108,41 @@ test("receipts are write-once, atomic, and listed by createdAt then limit", asyn
   assert.deepEqual((await loadReviewReceipt(older.reviewId, { homeDir })).warnings, []);
 
   await saveReviewReceipt(newer, { homeDir });
-  const listed = await listReviewReceipts({ homeDir, limit: 1 });
-  assert.equal(listed.length, 1);
-  assert.equal(listed[0].reviewId, newer.reviewId);
-  const all = await listReviewReceipts({ homeDir });
-  assert.deepEqual(all.map((r) => r.reviewId), [newer.reviewId, older.reviewId]);
+  assert.equal((await listReviewReceipts({ homeDir, limit: 1 }))[0].reviewId, newer.reviewId);
+  assert.deepEqual(
+    (await listReviewReceipts({ homeDir })).map((r) => r.reviewId),
+    [newer.reviewId, older.reviewId]
+  );
+});
+
+test("concurrent same reviewId yields one success and one RECEIPT_EXISTS", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-review-race-"));
+  const reviewId = createReviewId();
+  const mk = (w) => buildReviewReceipt({
+    reviewId, agentId: "codex", snapshot: snapshot(), findings: finding(), warnings: [w]
+  });
+  const settled = await Promise.allSettled([
+    saveReviewReceipt(mk("first"), { homeDir }), saveReviewReceipt(mk("second"), { homeDir })
+  ]);
+  assert.equal(settled.filter((r) => r.status === "fulfilled").length, 1);
+  const rejected = settled.find((r) => r.status === "rejected");
+  assert.ok(rejected.reason instanceof ReviewValidationError);
+  assert.equal(rejected.reason.code, REVIEW_VALIDATION_ERROR_CODES.RECEIPT_EXISTS);
+  const w = (await loadReviewReceipt(reviewId, { homeDir })).warnings[0];
+  assert.ok(w === "first" || w === "second");
+});
+
+test("listReviewReceipts ties on createdAt break by reviewId ascending", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-review-tie-"));
+  const createdAt = "2026-03-01T00:00:00.000Z";
+  const highId = "rev-ffffffffffffffffffffffff";
+  const lowId = "rev-000000000000000000000001";
+  await saveReviewReceipt(buildReviewReceipt({
+    reviewId: highId, agentId: "codex", snapshot: snapshot(), findings: finding(), createdAt
+  }), { homeDir });
+  await saveReviewReceipt(buildReviewReceipt({
+    reviewId: lowId, agentId: "pi", snapshot: snapshot(), findings: finding(), createdAt
+  }), { homeDir });
+  assert.deepEqual((await listReviewReceipts({ homeDir })).map((r) => r.reviewId), [lowId, highId]);
+  assert.deepEqual((await listReviewReceipts({ homeDir, limit: 1 })).map((r) => r.reviewId), [lowId]);
 });

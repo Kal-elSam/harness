@@ -80,19 +80,23 @@ export function buildReviewReceipt({
   return assertReceiptSecretFree(receipt);
 }
 
-/** Write-once atomic persist. Refuses to replace an existing receipt. */
+/** Write-once create-if-absent via exclusive link; EEXIST → RECEIPT_EXISTS. */
 export async function saveReviewReceipt(receipt, { homeDir } = {}) {
   const sanitized = assertReceiptSecretFree(receipt);
   assertSafeReviewId(sanitized.reviewId);
   const { reviewDir, receiptPath } = reviewPaths(homeDir, sanitized.reviewId);
-  if (existsSync(receiptPath)) {
-    throw new ReviewValidationError(`Review receipt already exists: ${sanitized.reviewId}`, {
-      code: REVIEW_VALIDATION_ERROR_CODES.RECEIPT_EXISTS,
-      details: { reviewId: sanitized.reviewId, path: receiptPath }
-    });
-  }
   await mkdir(reviewDir, { recursive: true });
-  await writeAtomicJson(receiptPath, sanitized);
+  try {
+    await writeAtomicJson(receiptPath, sanitized, { createExclusive: true });
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      throw new ReviewValidationError(`Review receipt already exists: ${sanitized.reviewId}`, {
+        code: REVIEW_VALIDATION_ERROR_CODES.RECEIPT_EXISTS,
+        details: { reviewId: sanitized.reviewId, path: receiptPath }
+      });
+    }
+    throw error;
+  }
   return { path: receiptPath, receipt: sanitized };
 }
 
@@ -102,7 +106,7 @@ export async function loadReviewReceipt(reviewId, { homeDir } = {}) {
   return assertReceiptSecretFree(JSON.parse(await readFile(receiptPath, "utf8")));
 }
 
-/** Load → sort by createdAt desc → apply limit (not by random id order). */
+/** Load → sort by createdAt desc, reviewId asc → apply limit. */
 export async function listReviewReceipts({ homeDir, limit = null } = {}) {
   const dir = harnessHomePaths(homeDir).reviewsDir;
   if (!existsSync(dir)) return [];
@@ -115,7 +119,8 @@ export async function listReviewReceipts({ homeDir, limit = null } = {}) {
       // Skip corrupt/partial directories fail-closed for list readers.
     }
   }
-  receipts.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  receipts.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))
+    || String(a.reviewId).localeCompare(String(b.reviewId)));
   if (limit == null) return receipts;
   return receipts.slice(0, Math.max(0, Number(limit) || 0));
 }
