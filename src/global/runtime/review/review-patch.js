@@ -1,9 +1,9 @@
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { REVIEW_SCOPE_MODES } from "./review-types.js";
+import { REVIEW_SCOPE_MODES, isReviewPrivatePath } from "./review-types.js";
 import { ReviewExecError } from "./review-exec.js";
+import { readReviewRegularFile } from "./review-git.js";
 
 export const REVIEW_PATCH_ERROR_CODES = Object.freeze({
   INVALID_CWD: "invalid_cwd", GIT_FAILED: "git_failed"
@@ -40,7 +40,7 @@ function pathsFromGitDiffHeader(line) {
   return [unquoteGitPath(match[1]), unquoteGitPath(match[2])];
 }
 
-/** Keep only unified-diff file sections whose a/b paths are admitted. */
+/** Keep only unified-diff sections for admitted paths; drop any private endpoint. */
 export function filterDiffToAdmittedPaths(diffText, admittedPaths) {
   const admitted = new Set(admittedPaths);
   if (admitted.size === 0) return "";
@@ -48,7 +48,8 @@ export function filterDiffToAdmittedPaths(diffText, admittedPaths) {
   let keep = false;
   for (const line of String(diffText ?? "").split(/\r?\n/)) {
     if (line.startsWith("diff --git ")) {
-      keep = pathsFromGitDiffHeader(line).some((path) => admitted.has(path));
+      const paths = pathsFromGitDiffHeader(line);
+      keep = paths.some((path) => admitted.has(path)) && !paths.some((path) => isReviewPrivatePath(path));
     }
     if (keep) out.push(line);
   }
@@ -68,6 +69,15 @@ function synthesizeNewFileDiff(path, content) {
   ].join("\n");
 }
 
+function admittedPaths(files) {
+  const paths = [];
+  for (const file of files) {
+    if (file.path) paths.push(file.path);
+    if (file.sourcePath) paths.push(file.sourcePath);
+  }
+  return paths;
+}
+
 /**
  * Host-generated unified diff limited to snapshot.files paths.
  * Covers WT (unstaged/staged/untracked/deleted), base, and commit scopes.
@@ -81,7 +91,7 @@ export async function buildScopedReviewPatch(snapshot, { execFileImpl = defaultE
     });
   }
   const files = Array.isArray(snapshot.files) ? snapshot.files : [];
-  const admitted = files.map((file) => file.path).filter(Boolean);
+  const admitted = admittedPaths(files);
   if (admitted.length === 0) return "";
 
   let raw = "";
@@ -98,7 +108,13 @@ export async function buildScopedReviewPatch(snapshot, { execFileImpl = defaultE
     ].join("");
     for (const file of files) {
       if (file.status !== "??") continue;
-      raw += synthesizeNewFileDiff(file.path, await readFile(join(cwd, file.path), "utf8"));
+      try {
+        const buffer = await readReviewRegularFile(join(cwd, file.path));
+        raw += synthesizeNewFileDiff(file.path, buffer.toString("utf8"));
+      } catch (error) {
+        if (error?.code === "REVIEW_SYMLINK" || error?.code === "REVIEW_NON_REGULAR") continue;
+        throw error;
+      }
     }
   }
   return filterDiffToAdmittedPaths(raw, admitted);

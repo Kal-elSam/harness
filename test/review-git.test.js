@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -8,7 +8,8 @@ import {
   createFindingId, detectReviewSnapshotDrift, fingerprintReviewSnapshot,
   resolveReviewScopeMode, resolveReviewSnapshot, REVIEW_SCOPE_MODES,
   REVIEW_SNAPSHOT_ERROR_CODES, ReviewSnapshotError, assertReviewPathSafe,
-  assertWithinReviewLimits, isBinaryContent, isReviewPrivatePath, requirePrivateConsent
+  assertWithinReviewLimits, buildScopedReviewPatch, isBinaryContent,
+  isReviewPrivatePath, requirePrivateConsent
 } from "../src/global/runtime/review/index.js";
 async function tempRepo() {
   const root = await mkdtemp(join(tmpdir(), "kairo-review-git-"));
@@ -97,4 +98,29 @@ test("snapshots: WT/base/commit, exclusions, consent, drift, file limit", async 
     () => resolveReviewSnapshot({ cwd: root }),
     (e) => e.code === REVIEW_SNAPSHOT_ERROR_CODES.LIMIT_EXCEEDED
   );
+});
+
+test("adversarial: symlink leaf and private→public rename do not leak", async () => {
+  const symlinkRoot = await tempRepo();
+  await writeFile(join(symlinkRoot, "tracked.js"), "ok\n");
+  await commitAll(symlinkRoot, "seed");
+  const outside = join(await mkdtemp(join(tmpdir(), "kairo-secret-")), "secret.env");
+  await writeFile(outside, "SECRET=exfil\n");
+  await symlink(outside, join(symlinkRoot, "public.js"));
+  const symlinkSnap = await resolveReviewSnapshot({ cwd: symlinkRoot });
+  assert.equal(symlinkSnap.files.some((f) => f.path === "public.js"), false);
+  assert.ok(symlinkSnap.excluded.some((e) => e.path === "public.js" && e.reason === "symlink"));
+  assert.doesNotMatch(await buildScopedReviewPatch(symlinkSnap), /SECRET=exfil/);
+
+  const renameRoot = await tempRepo();
+  await writeFile(join(renameRoot, ".env"), "SECRET=rename\n");
+  await commitAll(renameRoot, "private");
+  git(renameRoot, ["mv", ".env", "public-renamed.js"]);
+  const renameSnap = await resolveReviewSnapshot({ cwd: renameRoot });
+  assert.equal(renameSnap.files.some((f) => f.path === "public-renamed.js"), false);
+  assert.ok(renameSnap.excluded.some((e) => e.path === "public-renamed.js" && e.reason === "private"));
+  const renamed = renameSnap.excluded.find((e) => e.path === "public-renamed.js");
+  assert.equal(renamed?.reason, "private");
+  // Provenance must be known to the snapshot pipeline (source was private).
+  assert.doesNotMatch(await buildScopedReviewPatch(renameSnap), /SECRET=rename/);
 });
