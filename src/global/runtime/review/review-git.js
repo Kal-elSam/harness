@@ -1,7 +1,5 @@
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import { open, lstat } from "node:fs/promises";
-import { constants } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import {
@@ -16,41 +14,11 @@ import {
   requirePrivateConsent,
   resolveReviewScopeMode
 } from "./review-types.js";
+import { readReviewRegularFile } from "./review-fs.js";
+
+export { readReviewRegularFile } from "./review-fs.js";
 
 const defaultExecFile = promisify(execFileCb);
-
-/** lstat + open(O_NOFOLLOW); never follows symlinks or non-regular leaves. */
-export async function readReviewRegularFile(absPath) {
-  let st;
-  try { st = await lstat(absPath); }
-  catch (error) {
-    error.code = error.code ?? "ENOENT";
-    throw error;
-  }
-  if (st.isSymbolicLink()) {
-    const error = new Error(`Refusing symlink "${absPath}".`);
-    error.code = "REVIEW_SYMLINK";
-    throw error;
-  }
-  if (!st.isFile()) {
-    const error = new Error(`Refusing non-regular file "${absPath}".`);
-    error.code = "REVIEW_NON_REGULAR";
-    throw error;
-  }
-  let handle;
-  try {
-    handle = await open(absPath, constants.O_RDONLY | constants.O_NOFOLLOW);
-  } catch (error) {
-    if (error?.code === "ELOOP" || error?.code === "EMLINK") {
-      const wrapped = new Error(`Refusing symlink "${absPath}".`);
-      wrapped.code = "REVIEW_SYMLINK";
-      throw wrapped;
-    }
-    throw error;
-  }
-  try { return await handle.readFile(); }
-  finally { await handle.close(); }
-}
 
 async function git(cwd, args, execFileImpl) {
   try {
@@ -190,7 +158,9 @@ export async function resolveReviewSnapshot({
       try { buffer = await readReviewRegularFile(join(cwd, path)); }
       catch (error) {
         if (error?.code === "REVIEW_SYMLINK") { excluded.push({ path, reason: "symlink" }); continue; }
-        if (error?.code === "REVIEW_NON_REGULAR") { excluded.push({ path, reason: "non-regular" }); continue; }
+        if (error?.code === "REVIEW_NON_REGULAR" || error?.code === "REVIEW_IDENTITY_CHANGED") {
+          excluded.push({ path, reason: "non-regular" }); continue;
+        }
         throw error;
       }
       if (isBinaryContent(buffer)) { excluded.push({ path, reason: "binary" }); continue; }

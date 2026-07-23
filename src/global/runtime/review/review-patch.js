@@ -1,9 +1,9 @@
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
-import { REVIEW_SCOPE_MODES, isReviewPrivatePath } from "./review-types.js";
+import { REVIEW_SCOPE_MODES } from "./review-types.js";
 import { ReviewExecError } from "./review-exec.js";
-import { readReviewRegularFile } from "./review-git.js";
+import { readReviewRegularFile } from "./review-fs.js";
 
 export const REVIEW_PATCH_ERROR_CODES = Object.freeze({
   INVALID_CWD: "invalid_cwd", GIT_FAILED: "git_failed"
@@ -40,7 +40,7 @@ function pathsFromGitDiffHeader(line) {
   return [unquoteGitPath(match[1]), unquoteGitPath(match[2])];
 }
 
-/** Keep only unified-diff sections for admitted paths; drop any private endpoint. */
+/** Keep only unified-diff sections whose every a/b endpoint is admitted. */
 export function filterDiffToAdmittedPaths(diffText, admittedPaths) {
   const admitted = new Set(admittedPaths);
   if (admitted.size === 0) return "";
@@ -49,7 +49,7 @@ export function filterDiffToAdmittedPaths(diffText, admittedPaths) {
   for (const line of String(diffText ?? "").split(/\r?\n/)) {
     if (line.startsWith("diff --git ")) {
       const paths = pathsFromGitDiffHeader(line);
-      keep = paths.some((path) => admitted.has(path)) && !paths.some((path) => isReviewPrivatePath(path));
+      keep = paths.length > 0 && paths.every((path) => admitted.has(path));
     }
     if (keep) out.push(line);
   }
@@ -112,7 +112,8 @@ export async function buildScopedReviewPatch(snapshot, { execFileImpl = defaultE
         const buffer = await readReviewRegularFile(join(cwd, file.path));
         raw += synthesizeNewFileDiff(file.path, buffer.toString("utf8"));
       } catch (error) {
-        if (error?.code === "REVIEW_SYMLINK" || error?.code === "REVIEW_NON_REGULAR") continue;
+        if (error?.code === "REVIEW_SYMLINK" || error?.code === "REVIEW_NON_REGULAR"
+          || error?.code === "REVIEW_IDENTITY_CHANGED") continue;
         throw error;
       }
     }

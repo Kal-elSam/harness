@@ -31,12 +31,13 @@ test("filterDiffToAdmittedPaths drops non-admitted and empty sets", () => {
   const raw = [
     "diff --git a/keep.js b/keep.js", "--- a/keep.js", "+++ b/keep.js", "@@ -1 +1 @@", "-a", "+b",
     "diff --git a/.env b/.env", "--- a/.env", "+++ b/.env", "@@ -1 +1 @@", "-x", "+SECRET=1",
-    "diff --git a/skip.js b/skip.js", "--- a/skip.js", "+++ b/skip.js", "@@ -1 +1 @@", "-1", "+2", ""
+    "diff --git a/old.js b/new.js", "--- a/old.js", "+++ b/new.js", "@@ -1 +1 @@", "-1", "+2", ""
   ].join("\n");
-  const filtered = filterDiffToAdmittedPaths(raw, ["keep.js"]);
+  const filtered = filterDiffToAdmittedPaths(raw, ["keep.js", "new.js"]);
   assert.match(filtered, /keep\.js/);
-  assert.doesNotMatch(filtered, /\.env|SECRET|skip\.js/);
+  assert.doesNotMatch(filtered, /\.env|SECRET|old\.js|new\.js/);
   assert.equal(filterDiffToAdmittedPaths(raw, []), "");
+  assert.match(filterDiffToAdmittedPaths(raw, [".env"]), /\.env|SECRET=1/);
 });
 
 test("scoped patch: WT/base/commit cover changes; private/excluded never appear", async () => {
@@ -85,4 +86,25 @@ test("scoped patch: WT/base/commit cover changes; private/excluded never appear"
     ),
     /SECRET|\.env/
   );
+});
+
+test("private consent: excluded without consent, present in patch with consent", async () => {
+  const root = await tempRepo();
+  await writeFile(join(root, "ok.js"), "1\n");
+  await commitAll(root, "seed");
+  await writeFile(join(root, ".env"), "SECRET=consent\n");
+
+  const denied = await resolveReviewSnapshot({ cwd: root });
+  assert.ok(denied.excluded.some((e) => e.path === ".env" && e.reason === "private"));
+  assert.equal(denied.files.some((f) => f.path === ".env"), false);
+  assert.doesNotMatch(await buildScopedReviewPatch(denied), /SECRET=consent|\.env/);
+
+  const allowed = await resolveReviewSnapshot({
+    cwd: root, includePrivate: true, privateConfirmed: true
+  });
+  assert.ok(allowed.files.some((f) => f.path === ".env"));
+  const allowedPatch = await buildScopedReviewPatch(allowed);
+  assert.match(allowedPatch, /\.env/);
+  assert.match(allowedPatch, /SECRET=consent/);
+  assert.ok(allowedPatch.length > 0);
 });
