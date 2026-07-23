@@ -5,8 +5,12 @@ export {
   assertReviewPathSafe, assertWithinReviewLimits, requirePrivateConsent
 } from "./review-types.js";
 export {
-  resolveReviewSnapshot, fingerprintReviewSnapshot, detectReviewSnapshotDrift
+  resolveReviewSnapshot, fingerprintReviewSnapshot, detectReviewSnapshotDrift,
+  readReviewRegularFile
 } from "./review-git.js";
+export {
+  REVIEW_PATCH_ERROR_CODES, filterDiffToAdmittedPaths, buildScopedReviewPatch
+} from "./review-patch.js";
 export {
   REVIEW_VALIDATION_ERROR_CODES, ReviewValidationError,
   validateReviewOutput, assertReceiptSecretFree
@@ -25,5 +29,9 @@ export {
 } from "./review-codex.js";
 export {
   REVIEW_PI_ERROR_CODES, buildPiReviewArgs, buildPiCliEnv,
-  buildPiReviewPrompt, parsePiReviewJsonl, runPiReview
+  buildPiReviewPrompt, buildPiReviewStdin, parsePiReviewJsonl, runPiReview
 } from "./review-pi.js";
+export {
+  REVIEW_RUNNER_ERROR_CODES, ReviewRunnerError,
+  resolveReviewAgent, resolveReviewExitCode, runReview
+} from "./review-runner.js";

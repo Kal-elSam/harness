@@ -36,7 +36,9 @@ function snapshotProvenance(snapshot) {
     fingerprint: snapshot.fingerprint,
     totals: snapshot.totals,
     files: (snapshot.files ?? []).map((f) => ({
-      path: f.path, status: f.status, hash: f.hash, changedLines: f.changedLines
+      path: f.path,
+      sourcePath: f.sourcePath ?? null,
+      status: f.status, hash: f.hash, changedLines: f.changedLines
     })),
     excluded: (snapshot.excluded ?? []).map((e) => ({ path: e.path, reason: e.reason }))
   };

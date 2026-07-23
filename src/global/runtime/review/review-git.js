@@ -1,6 +1,5 @@
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import {
@@ -15,6 +14,9 @@ import {
   requirePrivateConsent,
   resolveReviewScopeMode
 } from "./review-types.js";
+import { readReviewRegularFile } from "./review-fs.js";
+
+export { readReviewRegularFile } from "./review-fs.js";
 
 const defaultExecFile = promisify(execFileCb);
 
@@ -44,12 +46,20 @@ async function assertGitRepo(cwd, execFileImpl) {
   }
 }
 
+function unquotePath(path) {
+  if (path.startsWith("\"") && path.endsWith("\"")) {
+    try { return JSON.parse(path); } catch { return path.slice(1, -1); }
+  }
+  return path;
+}
+
 function parseNumstat(text) {
   const byPath = new Map();
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
-    const [addedRaw, deletedRaw, path] = line.split("\t");
-    if (!path) continue;
+    const [addedRaw, deletedRaw, pathRaw] = line.split("\t");
+    if (!pathRaw) continue;
+    const path = pathRaw.includes(" => ") ? pathRaw.split(" => ").at(-1) : pathRaw;
     const n = (addedRaw === "-" ? 0 : Number(addedRaw)) + (deletedRaw === "-" ? 0 : Number(deletedRaw));
     byPath.set(path, (byPath.get(path) ?? 0) + n);
   }
@@ -58,24 +68,32 @@ function parseNumstat(text) {
 
 function parsePorcelain(text) {
   return text.split("\n").filter(Boolean).map((line) => {
-    let path = line.slice(3);
-    if (path.includes(" -> ")) path = path.split(" -> ").at(-1);
-    if (path.startsWith("\"") && path.endsWith("\"")) path = JSON.parse(path);
-    return { status: line.slice(0, 2), path };
+    const status = line.slice(0, 2);
+    const rest = line.slice(3);
+    if (rest.includes(" -> ")) {
+      const [from, to] = rest.split(" -> ");
+      return { status, sourcePath: unquotePath(from), path: unquotePath(to) };
+    }
+    return { status, sourcePath: null, path: unquotePath(rest) };
   });
 }
 
 function parseNameStatus(text) {
   return text.split("\n").filter((l) => l.trim()).map((line) => {
     const parts = line.split("\t");
-    return { status: parts[0], path: parts.length >= 3 ? parts[2] : parts[1] };
+    if (parts.length >= 3) {
+      return { status: parts[0], sourcePath: unquotePath(parts[1]), path: unquotePath(parts[2]) };
+    }
+    return { status: parts[0], sourcePath: null, path: unquotePath(parts[1]) };
   });
 }
 
 function fingerprintPayload(s) {
   return {
     mode: s.mode, headSha: s.headSha, base: s.base ?? null, commit: s.commit ?? null,
-    files: s.files.map((f) => ({ path: f.path, status: f.status, hash: f.hash, changedLines: f.changedLines })),
+    files: s.files.map((f) => ({
+      path: f.path, sourcePath: f.sourcePath ?? null, status: f.status, hash: f.hash, changedLines: f.changedLines
+    })),
     excluded: s.excluded.map((e) => ({ path: e.path, reason: e.reason }))
   };
 }
@@ -123,8 +141,10 @@ export async function resolveReviewSnapshot({
 
   for (const entry of rawEntries) {
     const path = assertReviewPathSafe(entry.path);
-    if (isReviewPrivatePath(path)) {
-      if (includePrivate) privateCandidates.push(path);
+    const sourcePath = entry.sourcePath != null ? assertReviewPathSafe(entry.sourcePath) : null;
+    const privateEnds = [path, sourcePath].filter(Boolean).filter((p) => isReviewPrivatePath(p));
+    if (privateEnds.length > 0) {
+      if (includePrivate) privateCandidates.push(...privateEnds);
       else { excluded.push({ path, reason: "private" }); continue; }
     }
 
@@ -134,7 +154,15 @@ export async function resolveReviewSnapshot({
     const deleted = /D/.test(entry.status);
 
     if (mode === REVIEW_SCOPE_MODES.WORKING_TREE && !deleted) {
-      const buffer = await readFile(join(cwd, path));
+      let buffer;
+      try { buffer = await readReviewRegularFile(join(cwd, path)); }
+      catch (error) {
+        if (error?.code === "REVIEW_SYMLINK") { excluded.push({ path, reason: "symlink" }); continue; }
+        if (error?.code === "REVIEW_NON_REGULAR" || error?.code === "REVIEW_IDENTITY_CHANGED") {
+          excluded.push({ path, reason: "non-regular" }); continue;
+        }
+        throw error;
+      }
       if (isBinaryContent(buffer)) { excluded.push({ path, reason: "binary" }); continue; }
       hash = createHash("sha256").update(buffer).digest("hex");
       bytes = buffer.length;
@@ -145,7 +173,9 @@ export async function resolveReviewSnapshot({
       catch { hash = createHash("sha256").update(`${entry.status}:${path}`).digest("hex"); }
     }
 
-    files.push({ path, status: entry.status.trim(), hash, changedLines, bytes });
+    files.push({
+      path, sourcePath, status: entry.status.trim(), hash, changedLines, bytes
+    });
   }
 
   requirePrivateConsent({ includePrivate, privateConfirmed, privatePaths: privateCandidates });

@@ -1,5 +1,6 @@
 import { REVIEW_AGENTS, REVIEW_SCOPE_MODES } from "./review-types.js";
 import { ReviewExecError, assertBoundedProcessOk, runBoundedProcess } from "./review-exec.js";
+import { buildScopedReviewPatch } from "./review-patch.js";
 import { validateReviewOutput } from "./review-validate.js";
 
 export const REVIEW_PI_ERROR_CODES = Object.freeze({
@@ -25,7 +26,7 @@ function requireSnapshotCwd(snapshot) {
   return cwd;
 }
 
-/** JSON mode, ephemeral, read-only tools, ambient resources + project trust off. */
+/** JSON mode, ephemeral, read-only tools, ambient resources + project trust off. Prompt via stdin. */
 export function buildPiReviewArgs(snapshot, { model = null } = {}) {
   requireSnapshotCwd(snapshot);
   const args = [
@@ -35,7 +36,6 @@ export function buildPiReviewArgs(snapshot, { model = null } = {}) {
     "--no-approve"
   ];
   if (model) args.push("--model", String(model));
-  args.push(buildPiReviewPrompt(snapshot));
   return args;
 }
 
@@ -54,7 +54,7 @@ function scopeRefLine(snapshot) {
   return "ref=working-tree";
 }
 
-/** Prompt is mode + exact scope ref + snapshot paths — no diffs/transcripts. */
+/** Prompt header: mode + scope ref + admitted paths (patch follows on stdin). */
 export function buildPiReviewPrompt(snapshot) {
   const files = Array.isArray(snapshot?.files) ? snapshot.files : [];
   return [
@@ -63,6 +63,12 @@ export function buildPiReviewPrompt(snapshot) {
     "Cite only snapshot paths:",
     ...(files.length ? files.map((f) => `- ${f.path} (${f.status})`) : ["(none)"])
   ].join("\n");
+}
+
+/** Stdin payload for Pi JSON mode: prompt + host-scoped patch. Never persisted. */
+export function buildPiReviewStdin(snapshot, patch) {
+  const body = typeof patch === "string" && patch.trim() !== "" ? patch.trimEnd() : "(empty patch)";
+  return `${buildPiReviewPrompt(snapshot)}\n\nScoped patch (host-generated; review this diff only; do not run git):\n${body}\n`;
 }
 
 function assistantText(message) {
@@ -138,16 +144,19 @@ export function parsePiReviewJsonl(stdout) {
   return { agentText, usage };
 }
 
-/** Run Pi read-only review bound to snapshot.cwd. No receipts/drift/raw streams. */
+/** Run Pi read-only review bound to snapshot.cwd. No receipts/drift/raw streams/patch. */
 export async function runPiReview({
   snapshot, model = null, env = process.env, spawnImpl,
-  timeoutMs, terminationGraceMs, killGraceMs, runProcess = runBoundedProcess
+  timeoutMs, terminationGraceMs, killGraceMs,
+  buildPatch = buildScopedReviewPatch, runProcess = runBoundedProcess
 } = {}) {
   const cwd = requireSnapshotCwd(snapshot);
   const requestedModel = model == null || model === "" ? null : String(model);
+  const patch = await buildPatch(snapshot);
   const result = await runProcess({
     command: EXECUTABLE, args: buildPiReviewArgs(snapshot, { model: requestedModel }), cwd,
-    env: buildPiCliEnv(env), spawnImpl, timeoutMs, terminationGraceMs, killGraceMs
+    env: buildPiCliEnv(env), stdin: buildPiReviewStdin(snapshot, patch),
+    spawnImpl, timeoutMs, terminationGraceMs, killGraceMs
   });
   assertBoundedProcessOk(result);
   const parsed = parsePiReviewJsonl(result.stdout);
