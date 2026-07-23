@@ -4,8 +4,8 @@ import { EventEmitter } from "node:events";
 import { spawnSync } from "node:child_process";
 import {
   REVIEW_PI_ERROR_CODES, REVIEW_EXEC_ERROR_CODES, REVIEW_VALIDATION_ERROR_CODES,
-  ReviewExecError, buildPiReviewArgs, buildPiReviewPrompt, parsePiReviewJsonl,
-  runBoundedProcess, runPiReview
+  ReviewExecError, buildPiReviewArgs, buildPiReviewPrompt, buildPiReviewStdin,
+  parsePiReviewJsonl, runBoundedProcess, runPiReview
 } from "../src/global/runtime/review/index.js";
 
 const snap = (over = {}) => ({
@@ -55,9 +55,14 @@ test("pi argv, snapshot binding, JSONL, and process faults", async () => {
     "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve"
   ]) assert.ok(args.includes(flag), flag);
   assert.equal(args[args.indexOf("--model") + 1], "m");
-  assert.equal(args.at(-1), buildPiReviewPrompt(snap()));
+  assert.ok(!args.includes(buildPiReviewPrompt(snap())));
+  assert.equal(args.at(-1), "m");
   const tools = args[args.indexOf("--tools") + 1];
   assert.ok(!/\b(bash|write|edit)\b/.test(tools));
+  const stdinSample = buildPiReviewStdin(snap(), "diff --git a/a.js b/a.js\n+ok\n");
+  assert.match(stdinSample, /Bounded review mode=working-tree/);
+  assert.match(stdinSample, /diff --git a\/a\.js/);
+  assert.ok(!JSON.stringify(buildPiReviewArgs(snap())).includes("a.js"));
   if (spawnSync("which", ["pi"], { encoding: "utf8" }).status === 0) {
     const help = spawnSync("pi", ["--help"], { encoding: "utf8" });
     assert.equal(help.status, 0);
@@ -105,8 +110,10 @@ test("pi argv, snapshot binding, JSONL, and process faults", async () => {
   })).stdoutOverflow, true);
 
   let captured;
+  const marker = "diff --git a/a.js b/a.js\n@@ -1 +1 @@\n-old\n+new\n";
   const good = await runPiReview({
     snapshot: snap(), model: "requested-model",
+    buildPatch: async () => marker,
     runProcess: async (opts) => {
       captured = opts;
       return ok(jsonl([
@@ -117,19 +124,25 @@ test("pi argv, snapshot binding, JSONL, and process faults", async () => {
   });
   assert.equal(captured.cwd, "/repo");
   assert.equal(captured.command, "pi");
+  assert.match(captured.stdin, /Scoped patch/);
+  assert.match(captured.stdin, /diff --git a\/a\.js/);
+  assert.ok(!captured.args.some((a) => String(a).includes("Bounded review") || String(a).includes("a.js")));
   assert.equal(good.agentId, "pi");
   assert.equal(good.model, "requested-model");
   assert.equal(good.usage.inputTokens, 4);
   assert.equal(good.usage.cost, 0.02);
+  assert.equal("patch" in good, false);
+  assert.equal("stdin" in good, false);
+  assert.doesNotMatch(JSON.stringify(good), /diff --git|Scoped patch|-old/);
   await assert.rejects(() => runPiReview({
-    snapshot: snap({ cwd: null }), runProcess: async () => ok("{}")
+    snapshot: snap({ cwd: null }), buildPatch: async () => "", runProcess: async () => ok("{}")
   }), (e) => e.code === REVIEW_PI_ERROR_CODES.INVALID_CWD);
   await assert.rejects(() => runPiReview({
-    snapshot: snap(),
+    snapshot: snap(), buildPatch: async () => marker,
     runProcess: async () => ok(jsonl([assistantEnd(finding("other.js"))]))
   }), (e) => e.code === REVIEW_VALIDATION_ERROR_CODES.PATH_OUT_OF_SCOPE);
   await assert.rejects(() => runPiReview({
-    snapshot: snap(),
+    snapshot: snap(), buildPatch: async () => marker,
     runProcess: async () => ok(jsonl([assistantEnd(finding())]), 1)
   }), (e) => e instanceof ReviewExecError && e.code === REVIEW_EXEC_ERROR_CODES.NONZERO_EXIT);
 });

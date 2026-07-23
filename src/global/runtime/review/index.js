@@ -8,6 +8,9 @@ export {
   resolveReviewSnapshot, fingerprintReviewSnapshot, detectReviewSnapshotDrift
 } from "./review-git.js";
 export {
+  REVIEW_PATCH_ERROR_CODES, filterDiffToAdmittedPaths, buildScopedReviewPatch
+} from "./review-patch.js";
+export {
   REVIEW_VALIDATION_ERROR_CODES, ReviewValidationError,
   validateReviewOutput, assertReceiptSecretFree
 } from "./review-validate.js";
@@ -25,5 +28,5 @@ export {
 } from "./review-codex.js";
 export {
   REVIEW_PI_ERROR_CODES, buildPiReviewArgs, buildPiCliEnv,
-  buildPiReviewPrompt, parsePiReviewJsonl, runPiReview
+  buildPiReviewPrompt, buildPiReviewStdin, parsePiReviewJsonl, runPiReview
 } from "./review-pi.js";
