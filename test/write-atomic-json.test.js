@@ -133,3 +133,16 @@ test("rename failure preserves previous file and cleans temp", async () => {
   assert.deepEqual(JSON.parse(await readFile(target, "utf8")), before);
   assert.equal(listTemps(await readdir(dir)).length, 0);
 });
+
+test("createExclusive rejects EEXIST and survives post-commit unlink failure", async () => {
+  const dir = await tempDir();
+  const once = join(dir, "once.json");
+  await writeAtomicJson(once, { n: 1 }, { createExclusive: true });
+  await assert.rejects(() => writeAtomicJson(once, { n: 2 }, { createExclusive: true }),
+    (e) => e?.code === "EEXIST");
+  assert.deepEqual(JSON.parse(await readFile(once, "utf8")), { n: 1 });
+  await writeAtomicJson(join(dir, "ok.json"), { ok: true }, {
+    createExclusive: true, unlink: async () => { throw new Error("unlink boom"); }
+  });
+  assert.deepEqual(JSON.parse(await readFile(join(dir, "ok.json"), "utf8")), { ok: true });
+});

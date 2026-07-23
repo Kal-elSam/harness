@@ -38,6 +38,7 @@ import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceU
 import { runOrchestratorDiagnostics, runOrchestratorShell } from "./global/orchestrator.js";
 import { runIntelligenceCli } from "./global/intelligence-cli.js";
 import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
+import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import {
   LEGACY_PACKAGE_NAME,
   PACKAGE_NAME,
@@ -110,6 +111,12 @@ export async function runCli(argv) {
       return;
     case "runs":
       await runGlobalRuns(optionsWithPolicy, packageManifest);
+      return;
+    case "review":
+      await runGlobalReview(optionsWithPolicy, packageManifest);
+      return;
+    case "reviews":
+      await runGlobalReviews(optionsWithPolicy, packageManifest);
       return;
     case "intelligence":
       await runIntelligenceCli(optionsWithPolicy, packageManifest);
@@ -371,6 +378,11 @@ export function parseArgs(argv) {
     intelligencePaths: [],
     runsAction: null,
     runId: null,
+    reviewId: null,
+    reviewsAction: null,
+    base: null,
+    commit: null,
+    failOn: null,
     agent: null,
     task: null,
     model: null,
@@ -399,6 +411,10 @@ export function parseArgs(argv) {
 
   if (command === "runs") {
     parseRunsAction(args, options);
+  }
+
+  if (command === "reviews") {
+    parseReviewsAction(args, options);
   }
 
   if (command === "intelligence") {
@@ -495,6 +511,15 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--timeout=")) options.timeoutMs = parsePositiveInt(arg.slice("--timeout=".length), "timeout") * 1000;
     else if (arg === "--include-private") options.includePrivate = true;
     else if (arg === "--cloud-consent") options.cloudConsent = true;
+    else if (arg === "--base") options.base = requireFlagValue("--base", args[++index]);
+    else if (arg.startsWith("--base=")) options.base = requireFlagValue("--base", arg.slice("--base=".length));
+    else if (arg === "--commit") options.commit = requireFlagValue("--commit", args[++index]);
+    else if (arg.startsWith("--commit=")) {
+      options.commit = requireFlagValue("--commit", arg.slice("--commit=".length));
+    } else if (arg === "--fail-on") options.failOn = requireFlagValue("--fail-on", args[++index]);
+    else if (arg.startsWith("--fail-on=")) {
+      options.failOn = requireFlagValue("--fail-on", arg.slice("--fail-on=".length));
+    }
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
     else throw new Error(`Unknown option "${arg}".`);
@@ -624,6 +649,26 @@ function parseRunsAction(args, options) {
   }
 }
 
+function parseReviewsAction(args, options) {
+  const action = args[0];
+  if (!action || action.startsWith("-")) {
+    options.reviewsAction = "list";
+    return;
+  }
+  if (!new Set(["list", "show"]).has(action)) {
+    throw new Error(`Unknown reviews action "${action}". Use list or show.`);
+  }
+  args.shift();
+  options.reviewsAction = action;
+  if (action === "show") {
+    const reviewId = args[0];
+    if (!reviewId || reviewId.startsWith("-")) {
+      throw new Error(`Missing review id. Use: ${formatCliCommand("reviews show <reviewId>")}`);
+    }
+    options.reviewId = args.shift();
+  }
+}
+
 function parseIntelligenceAction(args, options) {
   const action = args[0];
   if (!action || action.startsWith("-")) {
@@ -657,6 +702,13 @@ function parsePositiveInt(value, label) {
   return parsed;
 }
 
+function requireFlagValue(flag, value) {
+  if (value == null || value === "" || String(value).startsWith("-")) {
+    throw new Error(`Missing value for ${flag}.`);
+  }
+  return value;
+}
+
 function parseScope(value) {
   if (!SCOPES.has(value)) {
     throw new Error(`Invalid scope "${value}". Use agent-global or workspace.`);
@@ -673,6 +725,8 @@ function normalizeCommand(command) {
   if (command === "orchestrator") return "orchestrator";
   if (command === "run") return "run";
   if (command === "runs") return "runs";
+  if (command === "review") return "review";
+  if (command === "reviews") return "reviews";
   if (command === "intelligence" || command === "intel") return "intelligence";
   if (command === "setup") return "setup";
   if (command === "status") return "status";
@@ -747,6 +801,9 @@ Usage:
   ${cli} runs list [--json] [--limit <n>] [--active-only]
   ${cli} runs show <runId> [--json] [--limit <n>] [--follow]
   ${cli} runs stop <runId> [--json]
+  ${cli} review --agent codex|pi [--base <ref>|--commit <sha>] [--model <name>] [--include-private] [--yes|--confirm] [--fail-on high|medium|low] [--json]
+  ${cli} reviews list [--limit <n>] [--json]
+  ${cli} reviews show <reviewId> [--json]
   ${cli} orchestrator [--json]          Read-only agent capability diagnostics
   ${cli} intelligence [status|models|context|route|ask] [--json]
   ${cli} intelligence models --backend opencode-go|opencode-zen|opencode
@@ -795,6 +852,8 @@ Commands:
              Tab switches region only when content is interactive (runs/launch).
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
+  review     Bounded read-only review via Codex or Pi; receipts under ~/.harness/reviews/.
+  reviews    List or show prior review receipts (secret-free).
   orchestrator  Read-only capability registry diagnostics (--json supported).
   intelligence  Harness Engineering layer: backends, context packs, routing, budgets.
              Local-first (Ollama). Cloud only with --cloud-consent.
