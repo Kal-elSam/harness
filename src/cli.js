@@ -511,12 +511,15 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--timeout=")) options.timeoutMs = parsePositiveInt(arg.slice("--timeout=".length), "timeout") * 1000;
     else if (arg === "--include-private") options.includePrivate = true;
     else if (arg === "--cloud-consent") options.cloudConsent = true;
-    else if (arg === "--base") options.base = args[++index];
-    else if (arg.startsWith("--base=")) options.base = arg.slice("--base=".length);
-    else if (arg === "--commit") options.commit = args[++index];
-    else if (arg.startsWith("--commit=")) options.commit = arg.slice("--commit=".length);
-    else if (arg === "--fail-on") options.failOn = args[++index];
-    else if (arg.startsWith("--fail-on=")) options.failOn = arg.slice("--fail-on=".length);
+    else if (arg === "--base") options.base = requireFlagValue("--base", args[++index]);
+    else if (arg.startsWith("--base=")) options.base = requireFlagValue("--base", arg.slice("--base=".length));
+    else if (arg === "--commit") options.commit = requireFlagValue("--commit", args[++index]);
+    else if (arg.startsWith("--commit=")) {
+      options.commit = requireFlagValue("--commit", arg.slice("--commit=".length));
+    } else if (arg === "--fail-on") options.failOn = requireFlagValue("--fail-on", args[++index]);
+    else if (arg.startsWith("--fail-on=")) {
+      options.failOn = requireFlagValue("--fail-on", arg.slice("--fail-on=".length));
+    }
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
     else throw new Error(`Unknown option "${arg}".`);
@@ -697,6 +700,13 @@ function parsePositiveInt(value, label) {
     throw new Error(`Invalid --${label} value "${value}". Use a positive integer.`);
   }
   return parsed;
+}
+
+function requireFlagValue(flag, value) {
+  if (value == null || value === "" || String(value).startsWith("-")) {
+    throw new Error(`Missing value for ${flag}.`);
+  }
+  return value;
 }
 
 function parseScope(value) {

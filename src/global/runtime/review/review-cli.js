@@ -105,41 +105,46 @@ export async function runGlobalReview(options, packageManifest, deps = {}) {
 
 export async function runGlobalReviews(options, _packageManifest, deps = {}) {
   const homeDir = deps.homeDir ?? resolveHomeDir();
-  const action = options.reviewsAction ?? "list";
-  if (action === "list") {
-    const receipts = (await listReviewReceipts({ homeDir, limit: options.limit }))
-      .map((r) => publicReceipt(r));
-    if (options.json) printJson({ receipts });
-    else {
-      console.log(commandHeader("reviews"));
-      if (receipts.length === 0) console.log("  (no reviews yet)");
-      for (const r of receipts) {
-        console.log(
-          `  ${r.reviewId}  ${String(r.state).padEnd(10)}  ${String(r.agentId).padEnd(6)}  ${r.createdAt}`
-        );
+  try {
+    const action = options.reviewsAction ?? "list";
+    if (action === "list") {
+      const receipts = (await listReviewReceipts({ homeDir, limit: options.limit }))
+        .map((r) => publicReceipt(r));
+      if (options.json) printJson({ receipts });
+      else {
+        console.log(commandHeader("reviews"));
+        if (receipts.length === 0) console.log("  (no reviews yet)");
+        for (const r of receipts) {
+          console.log(
+            `  ${r.reviewId}  ${String(r.state).padEnd(10)}  ${String(r.agentId).padEnd(6)}  ${r.createdAt}`
+          );
+        }
       }
+      return { receipts };
     }
-    return { receipts };
+    if (action === "show") {
+      if (!options.reviewId) {
+        throw new Error(`Missing review id. Use: ${formatCliCommand("reviews show <reviewId>")}`);
+      }
+      try { assertSafeReviewId(options.reviewId); }
+      catch { throw new Error(`Invalid review id "${options.reviewId}".`); }
+      let receipt;
+      try {
+        receipt = publicReceipt(await loadReviewReceipt(options.reviewId, { homeDir }));
+      } catch {
+        throw new Error(`Review receipt not found: ${options.reviewId}`);
+      }
+      if (options.json) printJson({ receipt });
+      else printReviewHuman(receipt, REVIEW_EXIT_CODES.OK);
+      return { receipt };
+    }
+    throw new Error(`Unknown reviews action "${action}". Use list or show.`);
+  } catch (error) {
+    const exitCode = REVIEW_EXIT_CODES.ERROR;
+    const message = String(error?.message ?? error);
+    if (options.json) printJson({ ok: false, exitCode, error: message, code: error?.code ?? null });
+    else console.error(message);
+    process.exitCode = exitCode;
+    return { exitCode, error };
   }
-  if (action === "show") {
-    if (!options.reviewId) {
-      throw new Error(`Missing review id. Use: ${formatCliCommand("reviews show <reviewId>")}`);
-    }
-    try { assertSafeReviewId(options.reviewId); }
-    catch {
-      process.exitCode = REVIEW_EXIT_CODES.ERROR;
-      throw new Error(`Invalid review id "${options.reviewId}".`);
-    }
-    let receipt;
-    try {
-      receipt = publicReceipt(await loadReviewReceipt(options.reviewId, { homeDir }));
-    } catch {
-      process.exitCode = REVIEW_EXIT_CODES.ERROR;
-      throw new Error(`Review receipt not found: ${options.reviewId}`);
-    }
-    if (options.json) printJson({ receipt });
-    else printReviewHuman(receipt, REVIEW_EXIT_CODES.OK);
-    return { receipt };
-  }
-  throw new Error(`Unknown reviews action "${action}". Use list or show.`);
 }
