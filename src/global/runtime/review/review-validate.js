@@ -32,7 +32,7 @@ const RECEIPT_SHAPE = Object.freeze({
     commit: "string?",
     fingerprint: "string",
     totals: { fileCount: "number", changedLines: "number", diffBytes: "number" },
-    files: [{ path: "string", status: "string", hash: "string", changedLines: "number" }],
+    files: [{ path: "string", sourcePath: "string?", status: "string", hash: "string", changedLines: "number" }],
     excluded: [{ path: "string", reason: "string" }]
   },
   findings: [{
