@@ -31,3 +31,7 @@ export {
   REVIEW_PI_ERROR_CODES, buildPiReviewArgs, buildPiCliEnv,
   buildPiReviewPrompt, buildPiReviewStdin, parsePiReviewJsonl, runPiReview
 } from "./review-pi.js";
+export {
+  REVIEW_RUNNER_ERROR_CODES, ReviewRunnerError,
+  resolveReviewAgent, resolveReviewExitCode, runReview
+} from "./review-runner.js";
