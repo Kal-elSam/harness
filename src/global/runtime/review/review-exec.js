@@ -96,6 +96,7 @@ export function runBoundedProcess({
     child.stderr?.on("data", onStderr);
     child.on("error", onError);
     child.on("close", onClose);
+    child.stdin?.on?.("error", () => {}); // absorb async EPIPE
     try { child.stdin?.end(stdin == null ? undefined : String(stdin)); }
     catch { try { child.stdin?.end(); } catch { /* ignore */ } }
   });
@@ -103,26 +104,19 @@ export function runBoundedProcess({
 
 /** Nonzero/overflow/timeout fail even when output exists. */
 export function assertBoundedProcessOk(result) {
-  if (result.terminationFailed) {
-    throw new ReviewExecError("Process did not terminate after SIGTERM/SIGKILL.", {
-      code: REVIEW_EXEC_ERROR_CODES.TERMINATION_FAILED
-    });
-  }
-  if (result.timedOut) {
-    throw new ReviewExecError("Process timed out.", {
-      code: REVIEW_EXEC_ERROR_CODES.TIMEOUT, details: { signal: result.signal }
-    });
-  }
+  const fail = (code, message, details = null) => {
+    throw new ReviewExecError(message, { code, details });
+  };
+  if (result.terminationFailed) fail(REVIEW_EXEC_ERROR_CODES.TERMINATION_FAILED, "Process did not terminate after SIGTERM/SIGKILL.");
+  if (result.timedOut) fail(REVIEW_EXEC_ERROR_CODES.TIMEOUT, "Process timed out.", { signal: result.signal });
   if (result.stdoutOverflow || result.stderrOverflow) {
-    throw new ReviewExecError("Process output exceeded capture limits.", {
-      code: REVIEW_EXEC_ERROR_CODES.OUTPUT_OVERFLOW,
-      details: { stdoutOverflow: result.stdoutOverflow, stderrOverflow: result.stderrOverflow }
+    fail(REVIEW_EXEC_ERROR_CODES.OUTPUT_OVERFLOW, "Process output exceeded capture limits.", {
+      stdoutOverflow: result.stdoutOverflow, stderrOverflow: result.stderrOverflow
     });
   }
   if (result.status !== 0) {
-    throw new ReviewExecError(`Process exited with status ${result.status}.`, {
-      code: REVIEW_EXEC_ERROR_CODES.NONZERO_EXIT,
-      details: { status: result.status, signal: result.signal }
+    fail(REVIEW_EXEC_ERROR_CODES.NONZERO_EXIT, `Process exited with status ${result.status}.`, {
+      status: result.status, signal: result.signal
     });
   }
   return result;
