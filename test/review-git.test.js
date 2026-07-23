@@ -9,7 +9,7 @@ import {
   resolveReviewScopeMode, resolveReviewSnapshot, REVIEW_SCOPE_MODES,
   REVIEW_SNAPSHOT_ERROR_CODES, ReviewSnapshotError, assertReviewPathSafe,
   assertWithinReviewLimits, buildScopedReviewPatch, isBinaryContent,
-  isReviewPrivatePath, requirePrivateConsent
+  isReviewPrivatePath, readReviewRegularFile, requirePrivateConsent
 } from "../src/global/runtime/review/index.js";
 async function tempRepo() {
   const root = await mkdtemp(join(tmpdir(), "kairo-review-git-"));
@@ -123,4 +123,28 @@ test("adversarial: symlink leaf and private→public rename do not leak", async 
   assert.equal(renamed?.reason, "private");
   // Provenance must be known to the snapshot pipeline (source was private).
   assert.doesNotMatch(await buildScopedReviewPatch(renameSnap), /SECRET=rename/);
+});
+
+test("readReviewRegularFile rejects inode swap between lstat and open", async () => {
+  await assert.rejects(
+    () => readReviewRegularFile("/tmp/review-swap", {
+      lstatImpl: async () => ({
+        isSymbolicLink: () => false,
+        isFile: () => true,
+        dev: 1,
+        ino: 100
+      }),
+      openImpl: async () => ({
+        stat: async () => ({
+          isFile: () => true,
+          isSymbolicLink: () => false,
+          dev: 1,
+          ino: 999
+        }),
+        readFile: async () => Buffer.from("leaked\n"),
+        close: async () => {}
+      })
+    }),
+    (e) => e.code === "REVIEW_IDENTITY_CHANGED"
+  );
 });
