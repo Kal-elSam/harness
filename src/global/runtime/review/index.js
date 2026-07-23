@@ -23,3 +23,7 @@ export {
   REVIEW_CODEX_ERROR_CODES, buildCodexReviewArgs, buildCodexCliEnv,
   buildCodexReviewPrompt, parseCodexReviewJsonl, runCodexReview
 } from "./review-codex.js";
+export {
+  REVIEW_PI_ERROR_CODES, buildPiReviewArgs, buildPiCliEnv,
+  buildPiReviewPrompt, parsePiReviewJsonl, runPiReview
+} from "./review-pi.js";
