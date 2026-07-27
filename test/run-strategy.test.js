@@ -7,7 +7,10 @@ import { delimiter, join } from "node:path";
 import { parseArgs } from "../src/cli.js";
 import { buildPiLaunch } from "../src/global/runtime/execution-adapters/pi.js";
 import { resolveKairoMinionExtensionPath } from "../src/global/runtime/orchestration/index.js";
+import { ORCH_RUNTIME_ENV } from "../src/global/runtime/run-strategy.js";
 import { startRun } from "../src/global/runtime/run-manager.js";
+import { loadOrchReceipt, orchPaths } from "../src/global/runtime/orchestration/index.js";
+import { existsSync } from "node:fs";
 import { readRunState } from "../src/global/runtime/run-store.js";
 import { RUN_STATES } from "../src/global/runtime/run-types.js";
 
@@ -33,8 +36,8 @@ async function installMinionAsset(homeDir) {
 }
 
 function fakeSpawn(capture) {
-  return (command, args) => {
-    capture.push({ command, args });
+  return (command, args, opts = {}) => {
+    capture.push({ command, args, env: opts.env });
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
@@ -117,6 +120,12 @@ test("orchestrated fail-closed for non-Pi and missing extension; launch uses hom
       const extIdx = captured[0].args.indexOf("--extension");
       assert.equal(captured[0].args[extIdx + 1], ext);
       assert.ok(!captured[0].args.includes(".pi/agent"));
+      assert.equal(captured[0].env[ORCH_RUNTIME_ENV.HOME], homeDir);
+      assert.equal(captured[0].env[ORCH_RUNTIME_ENV.ROOT_RUN_ID], runId);
+      assert.equal(captured[0].env[ORCH_RUNTIME_ENV.ROOT_TASK_ID], metadata.lineage.taskId);
+      assert.equal(captured[0].env[ORCH_RUNTIME_ENV.CLI_VERSION], "0.8.0");
+      assert.equal((await loadOrchReceipt(runId, { homeDir })).recovered, false);
+      assert.ok(existsSync(orchPaths(homeDir, runId).receiptPath));
 
       const noWait = await startRun({
         homeDir, agentId: "pi", task: "detached", cwd: homeDir, cliVersion: "0.8.0",
@@ -127,6 +136,8 @@ test("orchestrated fail-closed for non-Pi and missing extension; launch uses hom
       assert.equal(noWait.metadata.strategy, "orchestrated");
       assert.equal(noWait.metadata.lineage.rootRunId, noWait.runId);
       assert.equal((await readRunState(homeDir, noWait.runId)).strategy, "orchestrated");
+      assert.ok(existsSync(orchPaths(homeDir, noWait.runId).statePath));
+      assert.equal(existsSync(orchPaths(homeDir, noWait.runId).receiptPath), false);
     } finally {
       await rm(homeDir, { recursive: true, force: true });
     }

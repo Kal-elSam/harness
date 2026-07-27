@@ -8,6 +8,13 @@ import {
 
 export { RUN_STRATEGIES, normalizeRunStrategy };
 
+export const ORCH_RUNTIME_ENV = Object.freeze({
+  HOME: "KAIRO_ORCH_HOME",
+  ROOT_RUN_ID: "KAIRO_ORCH_ROOT_RUN_ID",
+  ROOT_TASK_ID: "KAIRO_ORCH_ROOT_TASK_ID",
+  CLI_VERSION: "KAIRO_ORCH_CLI_VERSION"
+});
+
 /** Reject orchestrated for non-Pi before any run I/O. */
 export function assertOrchestratedAgent(agentId, strategy) {
   const normalized = normalizeRunStrategy(strategy);
@@ -42,4 +49,17 @@ export function createRootRunLineage(runId) {
 export function resolveOrchestratedExtensionPath(homeDir, strategy) {
   if (normalizeRunStrategy(strategy) !== RUN_STRATEGIES.ORCHESTRATED) return null;
   return resolveKairoMinionExtensionPath(homeDir);
+}
+
+export function buildOrchestratedRuntimeEnv({
+  homeDir, rootRunId, rootTaskId, cliVersion = null,
+  strategy = RUN_STRATEGIES.DIRECT, baseEnv = process.env
+} = {}) {
+  const env = { ...baseEnv };
+  if (normalizeRunStrategy(strategy) !== RUN_STRATEGIES.ORCHESTRATED) return env;
+  env[ORCH_RUNTIME_ENV.HOME] = homeDir;
+  env[ORCH_RUNTIME_ENV.ROOT_RUN_ID] = rootRunId;
+  env[ORCH_RUNTIME_ENV.ROOT_TASK_ID] = rootTaskId;
+  env[ORCH_RUNTIME_ENV.CLI_VERSION] = cliVersion == null ? "" : String(cliVersion);
+  return env;
 }
