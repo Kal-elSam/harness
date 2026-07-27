@@ -3,6 +3,32 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.7.0 — 2026-07-27 (Kairo Runtime)
+
+Minor release. Bounded native review via explicit Codex or Pi agent, Git-scoped
+snapshots, fail-closed limits, secret-free receipts, CLI, and a read-only Reviews
+subview inside Cockpit Runs. Publish tag: `kairo-runtime-v0.7.0`.
+
+### Added
+
+- Git snapshot contracts for working-tree / `--base` / `--commit` with fingerprints,
+  fail-closed limits, private-path consent, and binary exclusion.
+- Atomic write-once receipts under `~/.harness/reviews/<id>/receipt.json` (no prompt,
+  diff, or transcript persistence).
+- Bounded Codex (`exec review`) and Pi (JSON mode, ephemeral session, tools
+  `read,grep,find,ls`) drivers.
+- CLI: `kairo review --agent codex|pi` and `kairo reviews list|show` with `--json`
+  and `--fail-on high|medium|low`.
+- Cockpit Runs hub item **Reviews** with read-only list and receipt detail.
+- Public adapter field `reviewCompatible` (true for Codex and Pi; false for Cursor,
+  Claude, and OpenCode until audited).
+
+### Compatibility
+
+- One reviewer per run; Codex + Pi only in v1; Git required; `--agent` always explicit.
+- No Intelligence routing, auto-fix, background reviews, or dual review.
+- Receipts remain secret-free; Cockpit never launches reviews in this release.
+
 ## 0.6.0 — 2026-07-21 (Kairo Runtime)
 
 Minor release. First-class Pi managed adapter and auditable runtime while Kairo

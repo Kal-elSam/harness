@@ -301,6 +301,30 @@ Launches `pi --mode json --no-session` (optional `--model`). `read-only` maps to
 to `--approve`). Custom `PI_CODING_AGENT_DIR` blocks config writes in 0.6.0 but does
 not block runtime. Kairo does not install Pi or assert subscription/entitlement.
 
+### Bounded review (Codex / Pi)
+
+Read-only native review against a Git snapshot. Never mutates the repo, never
+auto-fixes, and never persists prompts, diffs, or transcripts. Receipts land under
+`~/.harness/reviews/<reviewId>/receipt.json` (secret-free). Only Codex and Pi are
+`reviewCompatible` in 0.7.0; Cursor / Claude / OpenCode report `false` until audited.
+
+```bash
+kairo review --agent codex
+kairo review --agent pi --base main
+kairo review --agent codex --commit <sha>
+kairo review --agent codex --fail-on high --json
+kairo reviews list [--limit N] [--json]
+kairo reviews show <reviewId> [--json]
+```
+
+`--agent` is always required. Scope is working-tree by default; use `--base` or
+`--commit` (mutually exclusive). Private paths need `--include-private` plus TTY
+confirm or `--yes`/`--confirm`. Exit codes: `0` ok, `1` severity threshold,
+`2` operational/stale/invalid/cancel.
+
+Cockpit: **Runs → Reviews** lists receipts and opens a read-only detail view
+(no launch from Cockpit in v1).
+
 Primary governance flow:
 
 ```txt
