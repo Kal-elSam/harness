@@ -22,6 +22,8 @@ export const ORCHESTRATOR_VIEWS = {
   ACTIVE_RUNS: "active-runs",
   RECENT_RUNS: "recent-runs",
   RUN_DETAIL: "run-detail",
+  REVIEWS: "reviews",
+  REVIEW_DETAIL: "review-detail",
   PROVIDERS: "providers",
   LAUNCH: "launch",
   DIAGNOSTICS: "diagnostics",

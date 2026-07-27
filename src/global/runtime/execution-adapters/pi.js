@@ -175,7 +175,8 @@ export default createExecutionAdapter({
     tokens: true,
     diff: false,
     cancel: true,
-    transcript: true
+    transcript: true,
+    reviewCompatible: true
   },
   checkAvailability: checkPiAvailability,
   buildLaunch: buildPiLaunch,

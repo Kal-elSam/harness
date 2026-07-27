@@ -14,6 +14,7 @@ import {
 import { windowLinesForLayout } from "./cockpit-models.js";
 import { LAYOUT_MODES } from "./layout.js";
 import { formatRunsHubLines, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
+import { formatReviewDetailLines, formatReviewListLines } from "./cockpit-reviews.js";
 import { formatChangesActionLines } from "./cockpit-changes.js";
 import { formatRecoveryLines } from "./cockpit-recovery.js";
 
@@ -74,6 +75,8 @@ export function renderCockpitView({
   layoutMode = LAYOUT_MODES.COMPACT,
   selectedRun,
   selectedEvents,
+  reviews = [],
+  selectedReview = null,
   changesAction = null,
   recoveryAction = null,
   colorEnabled = true
@@ -112,7 +115,7 @@ export function renderCockpitView({
         formatRunsHubLines(RUNS_HUB_ITEMS),
         listIndex,
         colorEnabled,
-        "Choose Active runs, History, or New run."
+        "Choose Active runs, History, Reviews, or New run."
       );
     case ORCHESTRATOR_VIEWS.ACTIVE_RUNS:
       return listBlock(
@@ -135,6 +138,14 @@ export function renderCockpitView({
         listIndex,
         colorEnabled,
         "Open Runs after governance is healthy."
+      );
+    case ORCHESTRATOR_VIEWS.REVIEWS:
+      return listBlock(
+        "Reviews",
+        formatReviewListLines(reviews),
+        listIndex,
+        colorEnabled,
+        "Receipts are read-only. Launch reviews via kairo review --agent codex|pi."
       );
     case ORCHESTRATOR_VIEWS.LAUNCH:
       if (launchableAgents.length === 0) {
@@ -165,6 +176,12 @@ export function renderCockpitView({
         formatRunDetailLines(selectedRun, selectedEvents)
           .map((line) => React.createElement(Text, { key: line }, line))
       );
+    case ORCHESTRATOR_VIEWS.REVIEW_DETAIL:
+      return React.createElement(Box, { flexDirection: "column" },
+        React.createElement(Text, { bold: true }, "Review detail"),
+        formatReviewDetailLines(selectedReview)
+          .map((line) => React.createElement(Text, { key: line }, line))
+      );
     case ORCHESTRATOR_VIEWS.DIAGNOSTICS:
       return governanceList(
         "System health",
@@ -178,7 +195,7 @@ export function renderCockpitView({
         React.createElement(Text, null, "Kairo keeps IDEs and agents aligned with project architecture and workflows."),
         React.createElement(Text, null, "Primary flow: scan → findings → preview → confirm → apply → re-scan."),
         React.createElement(Text, null, "↑↓ navigate · Enter open · Esc back/exit · R refresh/retry · ? help"),
-        React.createElement(Text, null, "Runs are secondary after setup and repairs.")
+        React.createElement(Text, null, "Runs are secondary after setup and repairs. Reviews are read-only receipts.")
       );
     default: {
       const _exhaustive = view;

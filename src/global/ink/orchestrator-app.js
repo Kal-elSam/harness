@@ -25,6 +25,7 @@ import {
 import { buildControlCenterModel } from "./cockpit-control-center.js";
 import { resolveEnterNavIntent } from "./cockpit-enter.js";
 import { resolveRunsHubItem, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
+import { selectReviewFromList } from "./cockpit-reviews.js";
 import { resolveProjectReadiness } from "../dashboard-guidance.js";
 import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
 import { CockpitShell } from "./cockpit/primitives.js";
@@ -142,6 +143,7 @@ export function OrchestratorApp({
         return;
       }
       data.setSelectedRun(null);
+      data.setSelectedReview(null);
       data.resetLaunchWizard();
       dispatch({ type: "escape" });
       return;
@@ -158,9 +160,11 @@ export function OrchestratorApp({
         ? (data.dashboard?.activeRuns ?? []).length
         : ui.view === ORCHESTRATOR_VIEWS.RECENT_RUNS
           ? (data.dashboard?.recentRuns ?? []).length
-          : ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
-            ? listRecoverySnapshots(data.snapshot).length
-            : 0;
+          : ui.view === ORCHESTRATOR_VIEWS.REVIEWS
+            ? (data.reviews ?? []).length
+            : ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
+              ? listRecoverySnapshots(data.snapshot).length
+              : 0;
 
     let routed = null;
     if (key.tab) {
@@ -229,6 +233,9 @@ export function OrchestratorApp({
       if (hubItem.action === "launch") {
         data.resetLaunchWizard();
       }
+      if (hubItem.view === ORCHESTRATOR_VIEWS.REVIEWS) {
+        data.loadReviews().catch(() => {});
+      }
       dispatch({
         type: "set-view",
         view: hubItem.view,
@@ -244,6 +251,13 @@ export function OrchestratorApp({
         ? data.dashboard?.activeRuns ?? []
         : data.dashboard?.recentRuns ?? [];
       data.openRunDetail(selectRunFromList(runs, ui.listIndex), dispatch, ui.view);
+      return;
+    }
+
+    if (ui.region === COCKPIT_REGIONS.CONTENT
+      && ui.view === ORCHESTRATOR_VIEWS.REVIEWS
+      && key.return) {
+      data.openReviewDetail(selectReviewFromList(data.reviews ?? [], ui.listIndex), dispatch);
       return;
     }
 
@@ -304,6 +318,10 @@ export function OrchestratorApp({
     }
 
     if (inputKey.toLowerCase() === "r" && ui.view !== ORCHESTRATOR_VIEWS.LAUNCH) {
+      if (ui.view === ORCHESTRATOR_VIEWS.REVIEWS || ui.view === ORCHESTRATOR_VIEWS.REVIEW_DETAIL) {
+        data.loadReviews().catch(() => {});
+        return;
+      }
       data.reload().catch(() => {});
     }
   });
@@ -406,6 +424,8 @@ export function OrchestratorApp({
         launchableAgents: data.launchableAgents,
         selectedRun: data.selectedRun,
         selectedEvents: data.selectedEvents,
+        reviews: data.reviews,
+        selectedReview: data.selectedReview,
         changesAction: data.changesAction,
         recoveryAction: data.recoveryAction,
         controlCenter,

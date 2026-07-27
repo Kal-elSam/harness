@@ -144,6 +144,16 @@ export function reduceCockpitUi(state, action) {
           returnView: null
         };
       }
+      if (state.view === ORCHESTRATOR_VIEWS.REVIEW_DETAIL) {
+        const back = ORCHESTRATOR_VIEWS.REVIEWS;
+        return {
+          ...state,
+          view: back,
+          listIndex: 0,
+          region: defaultRegionForView(back, state.layoutMode),
+          returnView: null
+        };
+      }
       if (isRunsChildView(state.view)) {
         return goRunsHub(state);
       }

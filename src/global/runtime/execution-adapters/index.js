@@ -26,6 +26,7 @@ export function inspectExecutionAdapters(context = {}) {
     label: adapter.label,
     executable: adapter.executable,
     capabilities: adapter.capabilities,
+    reviewCompatible: Boolean(adapter.capabilities?.reviewCompatible),
     ...adapter.availability(context)
   }));
 }

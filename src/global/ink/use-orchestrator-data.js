@@ -33,6 +33,8 @@ import {
   listRecoverySnapshots,
   reduceRecoveryAction
 } from "./cockpit-recovery.js";
+import { listReviewReceipts } from "../runtime/review/review-receipts.js";
+import { assertReceiptSecretFree } from "../runtime/review/review-validate.js";
 
 export function useOrchestratorData({
   homeDir,
@@ -50,6 +52,8 @@ export function useOrchestratorData({
   const [snapshot, setSnapshot] = useState(null);
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedEvents, setSelectedEvents] = useState([]);
+  const [reviews, setReviews] = useState([]);
+  const [selectedReview, setSelectedReview] = useState(null);
   const [statusMessage, setStatusMessage] = useState(null);
   const [launchAgentIndex, setLaunchAgentIndex] = useState(0);
   const [launchStep, setLaunchStep] = useState(LAUNCH_WIZARD_STEPS.AGENT);
@@ -121,6 +125,27 @@ export function useOrchestratorData({
       type: "set-view",
       view: ORCHESTRATOR_VIEWS.RUN_DETAIL,
       returnView: returnView ?? null
+    });
+  };
+
+  const loadReviews = async () => {
+    const receipts = (await listReviewReceipts({ homeDir, limit: 50 }))
+      .map((receipt) => assertReceiptSecretFree(receipt));
+    setReviews(receipts);
+    if (selectedReview) {
+      const refreshed = receipts.find((entry) => entry.reviewId === selectedReview.reviewId) ?? null;
+      setSelectedReview(refreshed);
+    }
+    return receipts;
+  };
+
+  const openReviewDetail = (receipt, dispatch) => {
+    if (!receipt) return;
+    setSelectedReview(assertReceiptSecretFree(receipt));
+    dispatch({
+      type: "set-view",
+      view: ORCHESTRATOR_VIEWS.REVIEW_DETAIL,
+      returnView: ORCHESTRATOR_VIEWS.REVIEWS
     });
   };
 
@@ -353,6 +378,9 @@ export function useOrchestratorData({
     selectedRun,
     setSelectedRun,
     selectedEvents,
+    reviews,
+    selectedReview,
+    setSelectedReview,
     statusMessage,
     launchAgentIndex,
     setLaunchAgentIndex,
@@ -369,6 +397,8 @@ export function useOrchestratorData({
     reload,
     resetLaunchWizard,
     openRunDetail,
+    loadReviews,
+    openReviewDetail,
     handleLaunch,
     handleCancelRun,
     previewChanges,

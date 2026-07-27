@@ -18,6 +18,8 @@ const CONTENT_INTERACTIVE_VIEWS = new Set([
   ORCHESTRATOR_VIEWS.ACTIVE_RUNS,
   ORCHESTRATOR_VIEWS.RECENT_RUNS,
   ORCHESTRATOR_VIEWS.RUN_DETAIL,
+  ORCHESTRATOR_VIEWS.REVIEWS,
+  ORCHESTRATOR_VIEWS.REVIEW_DETAIL,
   ORCHESTRATOR_VIEWS.LAUNCH,
   ORCHESTRATOR_VIEWS.ACTIVITY
 ]);
@@ -41,7 +43,11 @@ export function defaultRegionForView(view, layoutMode = LAYOUT_MODES.COMPACT) {
 
 export function interactiveRegionsFor(state) {
   const regions = regionsForLayout(state.layoutMode);
-  if (!isContentInteractiveView(state.view) || state.view === ORCHESTRATOR_VIEWS.RUN_DETAIL) {
+  if (
+    !isContentInteractiveView(state.view)
+    || state.view === ORCHESTRATOR_VIEWS.RUN_DETAIL
+    || state.view === ORCHESTRATOR_VIEWS.REVIEW_DETAIL
+  ) {
     return regions.filter((region) => region === COCKPIT_REGIONS.NAV);
   }
   return regions.filter(
@@ -51,7 +57,12 @@ export function interactiveRegionsFor(state) {
 
 export function canTabBetweenRegions(state) {
   if (!isContentInteractiveView(state.view)) return false;
-  if (state.view === ORCHESTRATOR_VIEWS.RUN_DETAIL) return false;
+  if (
+    state.view === ORCHESTRATOR_VIEWS.RUN_DETAIL
+    || state.view === ORCHESTRATOR_VIEWS.REVIEW_DETAIL
+  ) {
+    return false;
+  }
   return interactiveRegionsFor(state).length >= 2;
 }
 
@@ -70,7 +81,11 @@ export function routeCockpitKey(state, keyAction) {
         return { type: "arrow", direction: keyAction.direction };
       }
       if (state.region === COCKPIT_REGIONS.CONTENT && isContentInteractiveView(state.view)) {
-        if (state.view === ORCHESTRATOR_VIEWS.RUN_DETAIL || state.view === ORCHESTRATOR_VIEWS.LAUNCH) {
+        if (
+          state.view === ORCHESTRATOR_VIEWS.RUN_DETAIL
+          || state.view === ORCHESTRATOR_VIEWS.REVIEW_DETAIL
+          || state.view === ORCHESTRATOR_VIEWS.LAUNCH
+        ) {
           return null;
         }
         return {
