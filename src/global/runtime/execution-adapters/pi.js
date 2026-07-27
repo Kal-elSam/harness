@@ -30,7 +30,7 @@ export function buildPiPermissionsArgs(permissions = []) {
   }
 
   throw new Error(
-    `Pi permissions only support "read-only" in Kairo 0.6.0 (got: ${permissions.join(", ")}). `
+    `Pi permissions only support "read-only" (got: ${permissions.join(", ")}). `
     + "Other aliases are rejected and are never translated to --approve."
   );
 }
