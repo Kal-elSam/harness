@@ -39,6 +39,7 @@ import { runOrchestratorDiagnostics, runOrchestratorShell } from "./global/orche
 import { runIntelligenceCli } from "./global/intelligence-cli.js";
 import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
+import { normalizeRunStrategy } from "./global/runtime/run-strategy.js";
 import {
   LEGACY_PACKAGE_NAME,
   PACKAGE_NAME,
@@ -386,6 +387,7 @@ export function parseArgs(argv) {
     agent: null,
     task: null,
     model: null,
+    strategy: "direct",
     intelligenceBackend: null,
     permissions: null,
     captureTranscript: false,
@@ -499,6 +501,13 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--agent=")) options.agent = arg.slice("--agent=".length);
     else if (arg === "--model") options.model = args[++index];
     else if (arg.startsWith("--model=")) options.model = arg.slice("--model=".length);
+    else if (arg === "--strategy") {
+      options.strategy = normalizeRunStrategy(requireFlagValue("--strategy", args[++index]));
+    } else if (arg.startsWith("--strategy=")) {
+      options.strategy = normalizeRunStrategy(
+        requireFlagValue("--strategy", arg.slice("--strategy=".length))
+      );
+    }
     else if (arg === "--backend") options.intelligenceBackend = args[++index] ?? "";
     else if (arg.startsWith("--backend=")) options.intelligenceBackend = arg.slice("--backend=".length);
     else if (arg === "--permissions") options.permissions = parsePathList(args[++index]);
@@ -797,7 +806,7 @@ Usage:
   ${cli} --dry-run                      Setup dry-run (scriptable)
   ${cli} --version
   ${cli} shell                          Operations cockpit (TTY)
-  ${cli} run --agent <id> --task "..." [--model <name>] [--cwd <dir>] [--permissions force] [--capture-transcript] [--follow] [--no-wait] [--json]
+  ${cli} run --agent <id> --task "..." [--strategy direct|orchestrated] [--model <name>] [--cwd <dir>] [--permissions force] [--capture-transcript] [--follow] [--no-wait] [--json]
   ${cli} runs list [--json] [--limit <n>] [--active-only]
   ${cli} runs show <runId> [--json] [--limit <n>] [--follow]
   ${cli} runs stop <runId> [--json]

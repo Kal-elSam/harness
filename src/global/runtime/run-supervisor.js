@@ -18,6 +18,10 @@ import { consumeRunHandoff } from "./run-handoff.js";
 import { isRunCancelRequested } from "./run-cancel-signal.js";
 import { readSupervisorLock, touchSupervisorLock, writeSupervisorLock } from "./run-supervisor-lock.js";
 import { shouldPersistTranscript } from "./run-redact.js";
+import {
+  normalizeRunStrategy,
+  resolveOrchestratedExtensionPath
+} from "./run-strategy.js";
 
 async function shouldPreserveCancelledState(homeDir, runId) {
   const fresh = await readRunState(homeDir, runId);
@@ -66,12 +70,16 @@ export async function supervisePreparedRun({
   }
 
   const captureTranscript = handoff.captureTranscript === true;
+  const strategy = normalizeRunStrategy(handoff.strategy ?? metadata.strategy ?? "direct");
+  const extensionPath = resolveOrchestratedExtensionPath(homeDir, strategy);
   const launch = adapter.buildLaunch({
     task: handoff.task,
     cwd: handoff.cwd,
     model: handoff.model,
     permissions: handoff.permissions ?? [],
-    profile: handoff.profile ?? null
+    profile: handoff.profile ?? null,
+    strategy,
+    extensionPath
   });
 
   metadata = {

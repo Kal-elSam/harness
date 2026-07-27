@@ -22,6 +22,13 @@ import {
   readSupervisorLockForRun,
   supervisePreparedRun
 } from "./run-supervisor.js";
+import {
+  assertManagedMinionExtension,
+  assertOrchestratedAgent,
+  createRootRunLineage,
+  normalizeRunStrategy,
+  RUN_STRATEGIES
+} from "./run-strategy.js";
 
 const activeProcesses = new Map();
 const cancelledRuns = new Set();
@@ -67,8 +74,10 @@ async function prepareRun({
   permissions = [],
   captureTranscript = false,
   cliVersion,
-  profile = null
+  profile = null,
+  strategy = "direct"
 }) {
+  const normalizedStrategy = assertOrchestratedAgent(agentId, strategy);
   const adapter = resolveExecutionAdapter(agentId);
   const availability = adapter.availability({ cwd });
 
@@ -83,7 +92,12 @@ async function prepareRun({
     );
   }
 
+  if (normalizedStrategy === RUN_STRATEGIES.ORCHESTRATED) {
+    await assertManagedMinionExtension(homeDir);
+  }
+
   const runId = createRunId();
+  const lineage = createRootRunLineage(runId);
   const metadata = createRunMetadata({
     runId,
     agentId,
@@ -94,7 +108,9 @@ async function prepareRun({
     permissions,
     captureTranscript,
     cliVersion,
-    profileSources: profile?.sources ?? null
+    profileSources: profile?.sources ?? null,
+    strategy: normalizedStrategy,
+    lineage
   });
 
   await createRunRecord(homeDir, metadata);
@@ -107,7 +123,8 @@ async function prepareRun({
     permissions,
     captureTranscript,
     cliVersion,
-    profile: profile?.profile ?? null
+    profile: profile?.profile ?? null,
+    strategy: normalizedStrategy
   });
 
   return { runId, metadata };
@@ -123,6 +140,7 @@ export async function startRun({
   captureTranscript = false,
   cliVersion,
   profile = null,
+  strategy = "direct",
   follow = false,
   timeoutMs = null,
   wait = true,
@@ -138,7 +156,8 @@ export async function startRun({
     permissions,
     captureTranscript,
     cliVersion,
-    profile
+    profile,
+    strategy: normalizeRunStrategy(strategy)
   });
 
   if (!wait) {

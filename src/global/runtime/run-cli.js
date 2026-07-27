@@ -45,6 +45,7 @@ export async function runGlobalRun(options, packageManifest, { startRunImpl = st
     captureTranscript,
     cliVersion: packageManifest.version,
     profile: profileResolved,
+    strategy: options.strategy ?? "direct",
     follow: options.follow,
     timeoutMs: options.timeoutMs,
     wait: options.wait !== false
