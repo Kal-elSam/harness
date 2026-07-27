@@ -14,6 +14,12 @@ export const RUNS_HUB_ITEMS = [
     description: "Review completed and failed run outcomes."
   },
   {
+    id: "reviews",
+    label: "Reviews",
+    view: ORCHESTRATOR_VIEWS.REVIEWS,
+    description: "Browse secret-free bounded-review receipts (read-only)."
+  },
+  {
     id: "launch",
     label: "New run",
     view: ORCHESTRATOR_VIEWS.LAUNCH,
@@ -27,13 +33,16 @@ export function isRunsBranchView(view) {
     || view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
     || view === ORCHESTRATOR_VIEWS.RECENT_RUNS
     || view === ORCHESTRATOR_VIEWS.LAUNCH
-    || view === ORCHESTRATOR_VIEWS.RUN_DETAIL;
+    || view === ORCHESTRATOR_VIEWS.RUN_DETAIL
+    || view === ORCHESTRATOR_VIEWS.REVIEWS
+    || view === ORCHESTRATOR_VIEWS.REVIEW_DETAIL;
 }
 
 export function isRunsChildView(view) {
   return view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
     || view === ORCHESTRATOR_VIEWS.RECENT_RUNS
-    || view === ORCHESTRATOR_VIEWS.LAUNCH;
+    || view === ORCHESTRATOR_VIEWS.LAUNCH
+    || view === ORCHESTRATOR_VIEWS.REVIEWS;
 }
 
 export function resolveRunsHubItem(listIndex = 0, items = RUNS_HUB_ITEMS) {

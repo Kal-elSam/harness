@@ -250,6 +250,11 @@ export function buildFooterModel({
     return { text: parts.join(` ${glyphs.bullet} `) };
   }
 
+  if (view === ORCHESTRATOR_VIEWS.REVIEW_DETAIL) {
+    parts.push("Esc Back");
+    return { text: parts.join(` ${glyphs.bullet} `) };
+  }
+
   if (view === ORCHESTRATOR_VIEWS.CHANGES) {
     return { text: buildChangesFooterParts(changesPhase).join(` ${glyphs.bullet} `) };
   }
@@ -263,6 +268,7 @@ export function buildFooterModel({
   const showTab = view === ORCHESTRATOR_VIEWS.RUNS
     || view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
     || view === ORCHESTRATOR_VIEWS.RECENT_RUNS
+    || view === ORCHESTRATOR_VIEWS.REVIEWS
     || view === ORCHESTRATOR_VIEWS.LAUNCH
     || view === ORCHESTRATOR_VIEWS.ACTIVITY;
   if (showTab) {
@@ -280,7 +286,8 @@ export function buildFooterModel({
     || region === COCKPIT_REGIONS.NAV
     || view === ORCHESTRATOR_VIEWS.RUNS
     || view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
-    || view === ORCHESTRATOR_VIEWS.RECENT_RUNS) {
+    || view === ORCHESTRATOR_VIEWS.RECENT_RUNS
+    || view === ORCHESTRATOR_VIEWS.REVIEWS) {
     parts.push("Enter Open");
   }
   if (view !== ORCHESTRATOR_VIEWS.LAUNCH) {

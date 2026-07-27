@@ -336,7 +336,7 @@ test("Enter opens Control center without activating CTA; Enter again activates C
     "second Enter on Control center activates CTA destination");
 });
 
-test("Runs hub exposes Active, History, and New run", () => {
+test("Runs hub exposes Active, History, Reviews, and New run", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     region: COCKPIT_REGIONS.NAV,
@@ -357,5 +357,9 @@ test("Runs hub exposes Active, History, and New run", () => {
 
   state = reduceCockpitUi(state, { type: "escape" });
   state = openRunsHubSelection(state, 2);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.REVIEWS);
+
+  state = reduceCockpitUi(state, { type: "escape" });
+  state = openRunsHubSelection(state, 3);
   assert.equal(state.view, ORCHESTRATOR_VIEWS.LAUNCH);
 });

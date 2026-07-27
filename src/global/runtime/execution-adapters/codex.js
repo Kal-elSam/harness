@@ -71,7 +71,8 @@ export default createExecutionAdapter({
     tokens: true,
     diff: false,
     cancel: true,
-    transcript: true
+    transcript: true,
+    reviewCompatible: true
   },
   buildLaunch: buildCodexLaunch,
   parseEventLine: parseCodexEventLine

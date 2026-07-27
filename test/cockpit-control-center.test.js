@@ -61,6 +61,7 @@ test("governance navigation lists Control center first and Runs last", () => {
   assert.deepEqual(RUNS_HUB_ITEMS.map((item) => item.label), [
     "Active runs",
     "History",
+    "Reviews",
     "New run"
   ]);
 });

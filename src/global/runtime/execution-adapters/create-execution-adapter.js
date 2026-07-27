@@ -20,6 +20,7 @@ export function createExecutionAdapter({
       diff: false,
       cancel: true,
       transcript: false,
+      reviewCompatible: false,
       ...capabilities
     },
 
