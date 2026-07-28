@@ -45,10 +45,10 @@ export function ControlCenterPanel({ model, colorEnabled = true }) {
     React.createElement(Text, null, model.activity?.headline ?? "Idle"),
     React.createElement(Text, null, ""),
     React.createElement(Text, { bold: true }, "ALERTS"),
-    React.createElement(Text, null, model.alerts?.headline ?? "No pending alerts"),
+    React.createElement(Text, null, model.alerts?.headline ?? "Alert data unavailable"),
     React.createElement(Text, null, ""),
     React.createElement(Text, { bold: true }, "TOKENS"),
-    React.createElement(Text, null, model.tokens?.headline ?? "datos no disponibles")
+    React.createElement(Text, null, model.tokens?.headline ?? "Data unavailable")
   );
 }
 
@@ -78,7 +78,7 @@ export function renderCockpitView({
       return React.createElement(ControlCenterPanel, { model: controlCenter, colorEnabled });
     case ORCHESTRATOR_VIEWS.USAGE:
       return governanceList("Usage", [
-        controlCenter?.tokens?.headline ?? "datos no disponibles",
+        controlCenter?.tokens?.headline ?? "Data unavailable",
         "",
         "Auditable budgets only — no invented token savings."
       ], layoutMode, colorEnabled);

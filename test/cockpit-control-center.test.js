@@ -41,8 +41,10 @@ test("control center model surfaces health, coverage, and CTA from snapshot", ()
   assert.match(model.health.summaryLine, /1\/3 agents governed/);
   assert.equal(model.cta.destination, "changes");
   assert.match(model.cta.enterHint, /Enter|again/i);
-  assert.ok(model.alerts.count >= 1);
-  assert.match(model.tokens.headline, /datos no disponibles|stable|request/);
+  assert.equal(model.alerts.count, null);
+  assert.equal(model.alerts.headline, "Alert data unavailable");
+  assert.doesNotMatch(model.alerts.headline, /\d+\s+pending/i);
+  assert.match(model.tokens.headline, /Data unavailable|stable|request/);
 });
 
 test("primary nav lists six user destinations", () => {

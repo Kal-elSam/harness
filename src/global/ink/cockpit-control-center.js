@@ -40,8 +40,8 @@ export function buildControlCenterModel({
       notes: [],
       proposalLines: [],
       activity: { headline: "No activity yet" },
-      alerts: { count: 0, headline: "No pending alerts" },
-      tokens: { headline: "datos no disponibles" },
+      alerts: { count: null, headline: "Alert data unavailable" },
+      tokens: { headline: "Data unavailable" },
       includeEmbeddedStatus: layoutMode !== "wide",
       runsSecondaryHint: "Detail via Enter · / actions"
     };
@@ -49,10 +49,8 @@ export function buildControlCenterModel({
 
   const healthLabel = formatHealthLabel(snapshot.health);
   const coverage = snapshot.coverage ?? {};
-  const warnings = snapshot.status?.counts?.warning ?? 0;
   const active = dashboard?.activeRuns?.length ?? snapshot.runtime?.activeRuns ?? 0;
   const recent = dashboard?.recentRuns?.[0] ?? null;
-  const alertCount = warnings + (snapshot.diff?.hasChanges ? 1 : 0);
   const health = {
     kind: snapshot.health,
     label: healthLabel,
@@ -87,12 +85,7 @@ export function buildControlCenterModel({
           ? `Last · ${recent.agentId} · ${recent.state ?? "done"}`
           : "Idle"
     },
-    alerts: {
-      count: alertCount,
-      headline: alertCount === 0
-        ? "No pending alerts"
-        : `${alertCount} pending · open Governance or Activity`
-    },
+    alerts: { count: null, headline: "Alert data unavailable" },
     tokens: { headline: formatTokenHeadline(snapshot.budgets) },
     includeEmbeddedStatus: layoutMode !== "wide",
     runsSecondaryHint: "Detail via Enter · / actions"
@@ -117,7 +110,7 @@ function formatHealthLabel(kind) {
 }
 
 function formatTokenHeadline(budgets) {
-  if (!budgets || typeof budgets !== "object") return "datos no disponibles";
+  if (!budgets || typeof budgets !== "object") return "Data unavailable";
   const parts = [];
   if (Number.isFinite(budgets.stableUsedTokens) && Number.isFinite(budgets.stableBudgetTokens)) {
     parts.push(`stable ${budgets.stableUsedTokens}/${budgets.stableBudgetTokens}`);
@@ -125,5 +118,5 @@ function formatTokenHeadline(budgets) {
   if (Number.isFinite(budgets.requestUsedTokens) && Number.isFinite(budgets.requestBudgetTokens)) {
     parts.push(`request ${budgets.requestUsedTokens}/${budgets.requestBudgetTokens}`);
   }
-  return parts.length > 0 ? parts.join(" · ") : "datos no disponibles";
+  return parts.length > 0 ? parts.join(" · ") : "Data unavailable";
 }
