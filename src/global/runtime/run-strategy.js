@@ -1,4 +1,6 @@
 import { stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   RUN_STRATEGIES,
   normalizeRunStrategy,
@@ -8,11 +10,14 @@ import {
 
 export { RUN_STRATEGIES, normalizeRunStrategy };
 
+const ORCH_MODULE_PATH = join(dirname(fileURLToPath(import.meta.url)), "orchestration", "index.js");
+
 export const ORCH_RUNTIME_ENV = Object.freeze({
   HOME: "KAIRO_ORCH_HOME",
   ROOT_RUN_ID: "KAIRO_ORCH_ROOT_RUN_ID",
   ROOT_TASK_ID: "KAIRO_ORCH_ROOT_TASK_ID",
-  CLI_VERSION: "KAIRO_ORCH_CLI_VERSION"
+  CLI_VERSION: "KAIRO_ORCH_CLI_VERSION",
+  MODULE: "KAIRO_ORCH_MODULE"
 });
 
 /** Reject orchestrated for non-Pi before any run I/O. */
@@ -61,5 +66,6 @@ export function buildOrchestratedRuntimeEnv({
   env[ORCH_RUNTIME_ENV.ROOT_RUN_ID] = rootRunId;
   env[ORCH_RUNTIME_ENV.ROOT_TASK_ID] = rootTaskId;
   env[ORCH_RUNTIME_ENV.CLI_VERSION] = cliVersion == null ? "" : String(cliVersion);
+  env[ORCH_RUNTIME_ENV.MODULE] = ORCH_MODULE_PATH;
   return env;
 }

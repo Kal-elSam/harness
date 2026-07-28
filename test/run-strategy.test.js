@@ -124,6 +124,7 @@ test("orchestrated fail-closed for non-Pi and missing extension; launch uses hom
       assert.equal(captured[0].env[ORCH_RUNTIME_ENV.ROOT_RUN_ID], runId);
       assert.equal(captured[0].env[ORCH_RUNTIME_ENV.ROOT_TASK_ID], metadata.lineage.taskId);
       assert.equal(captured[0].env[ORCH_RUNTIME_ENV.CLI_VERSION], "0.8.0");
+      assert.match(captured[0].env[ORCH_RUNTIME_ENV.MODULE], /orchestration\/index\.js$/);
       assert.equal((await loadOrchReceipt(runId, { homeDir })).recovered, false);
       assert.ok(existsSync(orchPaths(homeDir, runId).receiptPath));
 

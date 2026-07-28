@@ -11,7 +11,7 @@ export { assertOrchReceiptSecretFree, FORBIDDEN_KEYS, walkForbiddenKeys } from "
 export {
   orchPaths, buildOrchReceipt, saveOrchReceipt, loadOrchReceipt,
   createOrchState, saveOrchState, loadOrchState, terminalizeOrchNodes,
-  finalizeOrchState, reconcileOrchState
+  updateOrchState, applyMinionDagUpdate, finalizeOrchState, reconcileOrchState
 } from "./orch-receipts.js";
 
 export const KAIRO_MINION_RELATIVE_ASSET =

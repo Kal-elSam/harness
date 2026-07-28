@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, realpath, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 export const MINION_CONCURRENCY = 2;
 export const MINION_ABORT_GRACE_MS = 5_000;
@@ -454,11 +454,12 @@ export function spawnMinionProcess({
 
 /** Retry transient failures only; never cancel or budget_exceeded. */
 export async function runMinionWithRetries(opts, {
-  maxAttempts = MAX_TASK_ATTEMPTS
+  maxAttempts = MAX_TASK_ATTEMPTS, onAttempt = null
 } = {}) {
   let lastError = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      if (onAttempt) await onAttempt(attempt);
       return await spawnMinionProcess(opts);
     } catch (error) {
       lastError = error;
@@ -470,9 +471,31 @@ export async function runMinionWithRetries(opts, {
   throw lastError;
 }
 
+const ORCH_ENV = Object.freeze({
+  HOME: "KAIRO_ORCH_HOME",
+  ROOT_RUN_ID: "KAIRO_ORCH_ROOT_RUN_ID",
+  ROOT_TASK_ID: "KAIRO_ORCH_ROOT_TASK_ID",
+  MODULE: "KAIRO_ORCH_MODULE"
+});
+
+export async function resolveOrchPersist(env = process.env) {
+  const homeDir = env[ORCH_ENV.HOME];
+  const rootRunId = env[ORCH_ENV.ROOT_RUN_ID];
+  const rootTaskId = env[ORCH_ENV.ROOT_TASK_ID];
+  const modulePath = env[ORCH_ENV.MODULE];
+  if (![homeDir, rootRunId, rootTaskId, modulePath].every((v) => typeof v === "string" && v.trim())) {
+    return null;
+  }
+  const api = await import(pathToFileURL(modulePath).href);
+  return { homeDir, rootRunId, rootTaskId, api };
+}
+
 function registerDelegate(pi, {
   gate = createConcurrencyGate(),
-  registry = createProcessRegistry()
+  registry = createProcessRegistry(),
+  env = process.env,
+  spawnImpl = spawn,
+  readStatus = null
 } = {}) {
   const cascade = async () => {
     gate.cancel();
@@ -502,30 +525,77 @@ function registerDelegate(pi, {
         if (signal.aborted) onAbort();
         else signal.addEventListener("abort", onAbort, { once: true });
       }
-      return runMinionWithRetries({
-        brief: {
-          taskId: params.taskId,
-          parentTaskId: params.parentTaskId,
-          objective: params.objective,
-          constraints: params.constraints ?? [],
-          admittedPaths: params.admittedPaths ?? [],
-          exitCriteria: params.exitCriteria ?? []
-        },
-        cwd: process.cwd(),
-        signal, gate, registry
-      });
+      const orch = await resolveOrchPersist(env);
+      const parentTaskId = params.parentTaskId;
+      const taskId = params.taskId;
+      let lastAttempt = 0;
+      const patch = orch
+        ? (fields) => orch.api.applyMinionDagUpdate(orch.rootRunId, {
+          homeDir: orch.homeDir, taskId, parentTaskId, ...fields
+        })
+        : null;
+      const objectiveDigest = orch
+        ? orch.api.digestAllowlisted({ objective: params.objective })
+        : null;
+      try {
+        if (patch) {
+          await patch({
+            state: orch.api.DAG_NODE_STATES.PENDING, attempt: 0, objectiveDigest
+          });
+        }
+        const handoff = await runMinionWithRetries({
+          brief: {
+            taskId, parentTaskId, objective: params.objective,
+            constraints: params.constraints ?? [],
+            admittedPaths: params.admittedPaths ?? [],
+            exitCriteria: params.exitCriteria ?? []
+          },
+          cwd: process.cwd(),
+          signal, gate, registry, env, spawnImpl,
+          ...(readStatus ? { readStatus } : {})
+        }, {
+          onAttempt: patch
+            ? async (attempt) => {
+              lastAttempt = attempt;
+              await patch({
+                state: orch.api.DAG_NODE_STATES.RUNNING, attempt, objectiveDigest
+              });
+            }
+            : null
+        });
+        if (patch) {
+          await patch({
+            state: orch.api.DAG_NODE_STATES.COMPLETED, attempt: lastAttempt || 1,
+            objectiveDigest, result: handoff
+          });
+        }
+        return handoff;
+      } catch (error) {
+        if (patch) {
+          const code = error?.code === BUDGET_EXCEEDED
+            ? BUDGET_EXCEEDED
+            : error?.code === "aborted" ? "aborted" : (error?.code ?? "invalid_handoff");
+          const state = code === "aborted"
+            ? orch.api.DAG_NODE_STATES.CANCELLED
+            : orch.api.DAG_NODE_STATES.FAILED;
+          await patch({
+            state, attempt: lastAttempt || 1, objectiveDigest, error: { code }
+          });
+        }
+        throw error;
+      }
     }
   });
   return { gate, registry, cascade };
 }
 
-export default function registerKairoMinion(pi, env = process.env) {
+export default function registerKairoMinion(pi, env = process.env, opts = {}) {
   if (isChildMinionMode(env)) {
     const briefPath = env.KAIRO_MINION_BRIEF;
     registerPathGuard(pi, { briefPath });
     registerBudgetGuard(pi, { statusPath: minionStatusPath(briefPath) });
     return { mode: "child" };
   }
-  registerDelegate(pi);
+  registerDelegate(pi, { env, ...opts });
   return { mode: "parent" };
 }

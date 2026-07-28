@@ -148,26 +148,74 @@ export function terminalizeOrchNodes(nodes, { recovered = false } = {}) {
   });
 }
 
+const orchWriteLocks = new Map();
+
+function withOrchWriteLock(rootRunId, work) {
+  const previous = orchWriteLocks.get(rootRunId) ?? Promise.resolve();
+  const next = previous.then(work);
+  orchWriteLocks.set(rootRunId, next.catch(() => {}));
+  return next;
+}
+
+/** Serialized load → mutate → save for concurrent minion DAG updates. */
+export async function updateOrchState(rootRunId, mutator, { homeDir } = {}) {
+  return withOrchWriteLock(rootRunId, async () => {
+    const current = await loadOrchState(rootRunId, { homeDir });
+    return saveOrchState(await mutator(current), { homeDir });
+  });
+}
+
+/** Upsert one depth-1 node by taskId; append/replace MinionResult on completed. */
+export async function applyMinionDagUpdate(rootRunId, {
+  homeDir, taskId, parentTaskId, attempt = 0, state,
+  objectiveDigest = null, result = null, error = null
+} = {}) {
+  return updateOrchState(rootRunId, (current) => {
+    const node = createDagNode({
+      taskId, parentTaskId, depth: 1, state, attempt,
+      objectiveDigest: objectiveDigest ?? null, error: error ?? null
+    });
+    const nodes = [...current.nodes];
+    const idx = nodes.findIndex((entry) => entry.taskId === taskId);
+    if (idx >= 0) {
+      nodes[idx] = createDagNode({
+        ...nodes[idx], ...node,
+        objectiveDigest: node.objectiveDigest ?? nodes[idx].objectiveDigest
+      });
+    } else {
+      nodes.push(node);
+    }
+    let results = current.results;
+    if (state === DAG_NODE_STATES.COMPLETED && result) {
+      const sealed = createMinionResult(result);
+      results = [...results.filter((entry) => entry.taskId !== taskId), sealed];
+    }
+    return { ...current, nodes, results, updatedAt: new Date().toISOString() };
+  }, { homeDir });
+}
+
 export async function finalizeOrchState(rootRunId, { homeDir, recovered = false } = {}) {
-  const { receiptPath } = orchPaths(homeDir, rootRunId);
-  if (existsSync(receiptPath)) {
-    return { path: receiptPath, receipt: await loadOrchReceipt(rootRunId, { homeDir }), idempotent: true };
-  }
-  const state = await loadOrchState(rootRunId, { homeDir });
-  const nodes = terminalizeOrchNodes(state.nodes, { recovered });
-  await saveOrchState({ ...state, nodes, updatedAt: new Date().toISOString() }, { homeDir });
-  try {
-    const saved = await saveOrchReceipt(buildOrchReceipt({
-      rootRunId: state.rootRunId, strategy: state.strategy, lineage: state.lineage,
-      nodes, results: state.results, cliVersion: state.cliVersion, recovered
-    }), { homeDir });
-    return { ...saved, idempotent: false };
-  } catch (error) {
-    if (error?.code === ORCH_ERROR_CODES.RECEIPT_EXISTS) {
+  return withOrchWriteLock(rootRunId, async () => {
+    const { receiptPath } = orchPaths(homeDir, rootRunId);
+    if (existsSync(receiptPath)) {
       return { path: receiptPath, receipt: await loadOrchReceipt(rootRunId, { homeDir }), idempotent: true };
     }
-    throw error;
-  }
+    const state = await loadOrchState(rootRunId, { homeDir });
+    const nodes = terminalizeOrchNodes(state.nodes, { recovered });
+    await saveOrchState({ ...state, nodes, updatedAt: new Date().toISOString() }, { homeDir });
+    try {
+      const saved = await saveOrchReceipt(buildOrchReceipt({
+        rootRunId: state.rootRunId, strategy: state.strategy, lineage: state.lineage,
+        nodes, results: state.results, cliVersion: state.cliVersion, recovered
+      }), { homeDir });
+      return { ...saved, idempotent: false };
+    } catch (error) {
+      if (error?.code === ORCH_ERROR_CODES.RECEIPT_EXISTS) {
+        return { path: receiptPath, receipt: await loadOrchReceipt(rootRunId, { homeDir }), idempotent: true };
+      }
+      throw error;
+    }
+  });
 }
 
 export async function reconcileOrchState(rootRunId, { homeDir } = {}) {
