@@ -528,10 +528,13 @@ function registerDelegate(pi, {
       const orch = await resolveOrchPersist(env);
       const parentTaskId = params.parentTaskId;
       const taskId = params.taskId;
+      if (orch && (taskId === orch.rootTaskId || parentTaskId !== orch.rootTaskId)) {
+        throw Object.assign(new Error("Delegate lineage must honor KAIRO_ORCH_ROOT_TASK_ID."), { code: "invalid_lineage" });
+      }
       let lastAttempt = 0;
       const patch = orch
         ? (fields) => orch.api.applyMinionDagUpdate(orch.rootRunId, {
-          homeDir: orch.homeDir, taskId, parentTaskId, ...fields
+          homeDir: orch.homeDir, taskId, parentTaskId, rootTaskId: orch.rootTaskId, ...fields
         })
         : null;
       const objectiveDigest = orch

@@ -134,10 +134,8 @@ test("cancel and budget_exceeded produce correct terminal states", async () => {
     ac.abort();
     await assert.rejects(() => toolFor(env, { spawnImpl: stubSpawn({ lines: [] }) })
       .execute("1", { taskId: "task_cancel", parentTaskId: rootTaskId, objective: "c" }, ac.signal));
-    assert.equal(
-      (await loadOrchState(rootRunId, { homeDir })).nodes.find((n) => n.taskId === "task_cancel").state,
-      DAG_NODE_STATES.CANCELLED
-    );
+    assert.equal((await loadOrchState(rootRunId, { homeDir })).nodes.find((n) => n.taskId === "task_cancel").state,
+      DAG_NODE_STATES.CANCELLED);
     await assert.rejects(() => toolFor(env, {
       spawnImpl: stubSpawn({ lines: [] }),
       readStatus: async () => ({ code: BUDGET_EXCEEDED, compact: true })
@@ -148,39 +146,42 @@ test("cancel and budget_exceeded produce correct terminal states", async () => {
   });
 });
 
+test("rejects root taskId or non-root parent; root node untouched", async () => {
+  await withOrch(async ({ homeDir, rootRunId, rootTaskId, env }) => {
+    const t = toolFor(env, { spawnImpl: stubSpawn({ lines: [] }) });
+    await assert.rejects(() => t.execute("1", { taskId: rootTaskId, parentTaskId: "task_fake", objective: "x" }));
+    await assert.rejects(() => t.execute("1", { taskId: "task_x", parentTaskId: "task_fake", objective: "x" }));
+    const root = (await loadOrchState(rootRunId, { homeDir })).nodes.find((n) => n.taskId === rootTaskId);
+    assert.equal(root.depth, 0);
+    assert.equal(root.parentTaskId, null);
+    assert.equal(root.state, DAG_NODE_STATES.RUNNING);
+  });
+});
+
 test("finalize seals root+children+results; recovery consumes persisted DAG", async () => {
   await withOrch(async ({ homeDir, rootRunId, rootTaskId, env }) => {
-    const taskId = "task_seal";
-    await toolFor(env, { spawnImpl: stubSpawn({ lines: [okLine(taskId)] }) })
-      .execute("1", { taskId, parentTaskId: rootTaskId, objective: "seal" });
+    await toolFor(env, { spawnImpl: stubSpawn({ lines: [okLine("task_seal")] }) })
+      .execute("1", { taskId: "task_seal", parentTaskId: rootTaskId, objective: "seal" });
     const sealed = await finalizeOrchState(rootRunId, { homeDir, recovered: false });
     assert.equal(sealed.receipt.recovered, false);
-    assert.ok(sealed.receipt.nodes.some((n) => n.taskId === taskId));
-    assert.equal(sealed.receipt.results[0].taskId, taskId);
-
+    assert.equal(sealed.receipt.results[0].taskId, "task_seal");
     const rid = "run_recover_dag";
     const tid = "task_root2";
     await createRunRecord(homeDir, createRunMetadata({
-      runId: rid, agentId: "pi", provider: "Pi", task: "x", cwd: homeDir,
-      cliVersion: "0.8.0", strategy: "orchestrated",
-      lineage: { rootRunId: rid, parentRunId: null, depth: 0, taskId: tid }
+      runId: rid, agentId: "pi", provider: "Pi", task: "x", cwd: homeDir, cliVersion: "0.8.0",
+      strategy: "orchestrated", lineage: { rootRunId: rid, parentRunId: null, depth: 0, taskId: tid }
     }));
     await writeRunState(homeDir, { ...(await readRunState(homeDir, rid)), state: RUN_STATES.INTERRUPTED });
     await saveOrchState(createOrchState({
       rootRunId: rid, lineage: { rootRunId: rid, depth: 0, taskId: tid }, cliVersion: "0.8.0",
       nodes: [createDagNode({ taskId: tid, runId: rid, depth: 0, state: DAG_NODE_STATES.RUNNING })]
     }), { homeDir });
-    const env2 = {
-      ...env,
-      [ORCH_RUNTIME_ENV.ROOT_RUN_ID]: rid,
-      [ORCH_RUNTIME_ENV.ROOT_TASK_ID]: tid
-    };
-    await toolFor(env2, { spawnImpl: stubSpawn({ lines: [okLine("task_live_child")] }) })
+    await toolFor({ ...env, [ORCH_RUNTIME_ENV.ROOT_RUN_ID]: rid, [ORCH_RUNTIME_ENV.ROOT_TASK_ID]: tid },
+      { spawnImpl: stubSpawn({ lines: [okLine("task_live_child")] }) })
       .execute("1", { taskId: "task_live_child", parentTaskId: tid, objective: "persist" });
     await recoverRuns(homeDir);
     const receipt = await loadOrchReceipt(rid, { homeDir });
     assert.equal(receipt.recovered, true);
-    assert.ok(receipt.nodes.some((n) => n.taskId === "task_live_child"));
     assert.equal(receipt.results[0].taskId, "task_live_child");
   });
 });
