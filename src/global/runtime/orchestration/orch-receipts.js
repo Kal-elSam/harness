@@ -167,15 +167,16 @@ export async function updateOrchState(rootRunId, mutator, { homeDir } = {}) {
 
 /** Upsert one depth-1 node by taskId; append/replace MinionResult on completed. */
 export async function applyMinionDagUpdate(rootRunId, {
-  homeDir, taskId, parentTaskId, rootTaskId, attempt = 0, state,
+  homeDir, taskId, parentTaskId, attempt = 0, state,
   objectiveDigest = null, result = null, error = null
 } = {}) {
-  if (!rootTaskId || taskId === rootTaskId || parentTaskId !== rootTaskId) {
-    throw new OrchContractError("Minion taskId/parentTaskId must honor supervisor rootTaskId.", {
-      code: ORCH_ERROR_CODES.INVALID_NODE, details: { taskId, parentTaskId, rootTaskId }
-    });
-  }
   return updateOrchState(rootRunId, (current) => {
+    const rootTaskId = current.lineage?.taskId;
+    if (!rootTaskId || taskId === rootTaskId || parentTaskId !== rootTaskId) {
+      throw new OrchContractError("Minion taskId/parentTaskId must honor supervisor rootTaskId.", {
+        code: ORCH_ERROR_CODES.INVALID_NODE, details: { taskId, parentTaskId, rootTaskId }
+      });
+    }
     const node = createDagNode({
       taskId, parentTaskId, depth: 1, state, attempt,
       objectiveDigest: objectiveDigest ?? null, error: error ?? null

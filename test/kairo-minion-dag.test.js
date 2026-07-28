@@ -9,7 +9,7 @@ import registerKairoMinion, {
   BUDGET_EXCEEDED, createConcurrencyGate, createProcessRegistry
 } from "../global-template/components/orchestrator/extensions/pi/kairo-minion.js";
 import {
-  DAG_NODE_STATES, createDagNode, createOrchState, finalizeOrchState,
+  DAG_NODE_STATES, applyMinionDagUpdate, createDagNode, createOrchState, finalizeOrchState,
   loadOrchReceipt, loadOrchState, orchPaths, saveOrchState
 } from "../src/global/runtime/orchestration/index.js";
 import { ORCH_RUNTIME_ENV } from "../src/global/runtime/run-strategy.js";
@@ -151,6 +151,9 @@ test("rejects root taskId or non-root parent; root node untouched", async () => 
     const t = toolFor(env, { spawnImpl: stubSpawn({ lines: [] }) });
     await assert.rejects(() => t.execute("1", { taskId: rootTaskId, parentTaskId: "task_fake", objective: "x" }));
     await assert.rejects(() => t.execute("1", { taskId: "task_x", parentTaskId: "task_fake", objective: "x" }));
+    await assert.rejects(() => applyMinionDagUpdate(rootRunId, {
+      homeDir, taskId: rootTaskId, parentTaskId: "task_fake", attempt: 0, state: DAG_NODE_STATES.PENDING
+    }));
     const root = (await loadOrchState(rootRunId, { homeDir })).nodes.find((n) => n.taskId === rootTaskId);
     assert.equal(root.depth, 0);
     assert.equal(root.parentTaskId, null);

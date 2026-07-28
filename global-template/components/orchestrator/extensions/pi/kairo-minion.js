@@ -534,7 +534,7 @@ function registerDelegate(pi, {
       let lastAttempt = 0;
       const patch = orch
         ? (fields) => orch.api.applyMinionDagUpdate(orch.rootRunId, {
-          homeDir: orch.homeDir, taskId, parentTaskId, rootTaskId: orch.rootTaskId, ...fields
+          homeDir: orch.homeDir, taskId, parentTaskId, ...fields
         })
         : null;
       const objectiveDigest = orch
