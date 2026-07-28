@@ -1,17 +1,21 @@
 /**
  * Kairo Pi extension under ~/.harness (explicit --extension load only).
- * Parent: kairo_delegate. Child (KAIRO_MINION_BRIEF): path guard only.
+ * Parent: kairo_delegate + cascade cancel. Child: path + budget guards.
  */
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, realpath, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 export const MINION_CONCURRENCY = 2;
 export const MINION_ABORT_GRACE_MS = 5_000;
 export const MINION_TOOLS = "read,grep,find,ls";
+export const MAX_TASK_ATTEMPTS = 2;
+export const BUDGET_COMPACT_RATIO = 0.7;
+export const BUDGET_STOP_RATIO = 0.9;
 export const PATH_DENIED = "KAIRO_PATH_DENIED";
+export const BUDGET_EXCEEDED = "budget_exceeded";
 export const GUARDED_TOOLS = new Set(["read", "grep", "find", "ls"]);
 export const GENERIC_MINION_TASK =
   "Read brief JSON at KAIRO_MINION_BRIEF. Return JSON only: "
@@ -25,26 +29,67 @@ export function isChildMinionMode(env = process.env) {
   return typeof env.KAIRO_MINION_BRIEF === "string" && env.KAIRO_MINION_BRIEF.trim() !== "";
 }
 
+export function minionStatusPath(briefPath) {
+  return `${briefPath}.status.json`;
+}
+
+/** Cancelable concurrency: cancel rejects queued work and blocks new runs. */
 export function createConcurrencyGate(limit = MINION_CONCURRENCY) {
   let inFlight = 0;
   const queue = [];
+  let cancelled = false;
+  const abortErr = () => Object.assign(new Error("Minion cancelled."), { code: "aborted" });
   return {
+    get cancelled() { return cancelled; },
+    get active() { return inFlight; },
+    get queued() { return queue.length; },
+    cancel() {
+      cancelled = true;
+      while (queue.length) queue.shift().reject(abortErr());
+    },
     async run(fn) {
-      if (inFlight >= limit) await new Promise((r) => queue.push(r));
+      if (cancelled) throw abortErr();
+      if (inFlight >= limit) {
+        await new Promise((resolve, reject) => queue.push({ resolve, reject }));
+        if (cancelled) throw abortErr();
+      }
       inFlight += 1;
       try { return await fn(); }
       finally {
         inFlight -= 1;
-        queue.shift()?.();
+        queue.shift()?.resolve();
       }
+    }
+  };
+}
+
+export function createProcessRegistry({ abortGraceMs = MINION_ABORT_GRACE_MS } = {}) {
+  const active = new Set();
+  let cancelled = false;
+  return {
+    get cancelled() { return cancelled; },
+    get size() { return active.size; },
+    track(child) {
+      if (cancelled) {
+        safeKill(child, "SIGTERM");
+        return false;
+      }
+      active.add(child);
+      child.on?.("close", () => active.delete(child));
+      return true;
     },
-    get active() { return inFlight; }
+    async cancelAll() {
+      cancelled = true;
+      for (const child of [...active]) safeKill(child, "SIGTERM");
+      if (abortGraceMs > 0) await new Promise((r) => setTimeout(r, abortGraceMs));
+      for (const child of [...active]) safeKill(child, "SIGKILL");
+    }
   };
 }
 
 const defaultGate = createConcurrencyGate();
+const defaultRegistry = createProcessRegistry();
 
-/** Child argv: no ambient discovery; load this extension for the path guard. */
 export function buildMinionArgs({ extensionPath = resolveSelfExtensionPath() } = {}) {
   return [
     "--mode", "json", "-p", "--no-session",
@@ -117,6 +162,79 @@ export async function evaluateToolPathAccess({
   return { allow: true };
 }
 
+/** Ratio from percent (0–100) or tokens/contextWindow. */
+export function contextUsageRatio(usage) {
+  if (!usage || typeof usage !== "object") return 0;
+  if (Number.isFinite(usage.percent)) return Math.max(0, usage.percent) / 100;
+  const tokens = Number(usage.tokens ?? usage.contextTokens ?? 0);
+  const limit = Number(usage.contextWindow ?? usage.contextLimit ?? 0);
+  return limit > 0 ? Math.max(0, tokens) / limit : 0;
+}
+
+export function evaluateContextBudget(usage, {
+  compactRatio = BUDGET_COMPACT_RATIO, stopRatio = BUDGET_STOP_RATIO
+} = {}) {
+  const ratio = contextUsageRatio(usage);
+  if (ratio >= stopRatio) return { ratio, action: "stop" };
+  if (ratio >= compactRatio) return { ratio, action: "compact" };
+  return { ratio, action: "continue" };
+}
+
+export function createBudgetAttemptState() {
+  return { compactedThisAttempt: false, compactObserved: false, stopReason: null };
+}
+
+async function writeMinionStatus(statusPath, payload) {
+  if (!statusPath) return;
+  await writeFile(statusPath, JSON.stringify(payload), { mode: 0o600 });
+}
+
+/** Child: after each turn, compact once in [70,90) or abort at ≥90%. */
+export function registerBudgetGuard(pi, {
+  statusPath = null,
+  state = createBudgetAttemptState(),
+  compactRatio = BUDGET_COMPACT_RATIO,
+  stopRatio = BUDGET_STOP_RATIO
+} = {}) {
+  const persist = async () => {
+    if (!state.stopReason && !state.compactObserved) return;
+    await writeMinionStatus(statusPath, {
+      code: state.stopReason, compact: state.compactObserved
+    });
+  };
+
+  pi.on("compaction_end", async () => {
+    state.compactObserved = true;
+    await persist();
+  });
+
+  pi.on("turn_end", async (_event, ctx) => {
+    if (state.stopReason) return;
+    const usage = typeof ctx?.getContextUsage === "function" ? ctx.getContextUsage() : null;
+    const { action } = evaluateContextBudget(usage, { compactRatio, stopRatio });
+    if (action === "continue") return;
+    if (action === "compact") {
+      if (state.compactedThisAttempt) return;
+      state.compactedThisAttempt = true;
+      if (typeof ctx?.compact === "function") {
+        ctx.compact({
+          onComplete: async () => {
+            state.compactObserved = true;
+            await persist();
+          },
+          onError: () => {}
+        });
+      }
+      return;
+    }
+    state.stopReason = BUDGET_EXCEEDED;
+    await persist();
+    if (typeof ctx?.abort === "function") ctx.abort();
+  });
+
+  return state;
+}
+
 export function registerPathGuard(pi, {
   briefPath = process.env.KAIRO_MINION_BRIEF,
   cwd = process.cwd(),
@@ -174,13 +292,12 @@ function normalizeUsage(usage, acc = {}) {
   return acc;
 }
 
-function failHandoff(message) {
+function failHandoff(message, code = "invalid_handoff") {
   const err = new Error(message);
-  err.code = "invalid_handoff";
+  err.code = code;
   throw err;
 }
 
-/** Last assistant message_end + usage. Fail-closed on stream/stop errors (no raw payload). */
 export function parseMinionNdjson(stdout) {
   let lastText = null;
   let usage = {};
@@ -247,17 +364,30 @@ export function parseMinionResultJson(text, { taskId }) {
 }
 
 function safeKill(child, signal) {
-  try { if (!child.killed) child.kill(signal); } catch { /* ignore */ }
+  try { if (child.exitCode == null && child.signalCode == null) child.kill(signal); } catch { /* ignore */ }
+}
+
+async function readMinionStatus(statusPath) {
+  try {
+    return JSON.parse(await readFile(statusPath, "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 export function spawnMinionProcess({
   brief, cwd, env = process.env, signal = null, spawnImpl = spawn,
   abortGraceMs = MINION_ABORT_GRACE_MS, gate = defaultGate,
-  extensionPath = resolveSelfExtensionPath()
+  registry = defaultRegistry, extensionPath = resolveSelfExtensionPath(),
+  readStatus = readMinionStatus
 } = {}) {
   return gate.run(async () => {
+    if (registry.cancelled || gate.cancelled || signal?.aborted) {
+      failHandoff("Minion cancelled.", "aborted");
+    }
     const dir = await mkdtemp(join(tmpdir(), "kairo-minion-"));
     const briefPath = join(dir, "brief.json");
+    const statusPath = minionStatusPath(briefPath);
     let child = null;
     let abortListener = null;
     let killTimer = null;
@@ -267,6 +397,7 @@ export function spawnMinionProcess({
         cwd, env: { ...env, KAIRO_MINION_BRIEF: briefPath },
         shell: false, stdio: ["ignore", "pipe", "pipe"]
       });
+      if (!registry.track(child)) failHandoff("Minion cancelled.", "aborted");
       let stdout = "";
       child.stdout?.on("data", (c) => { stdout += c; });
       child.stderr?.on("data", () => {});
@@ -290,10 +421,20 @@ export function spawnMinionProcess({
         }
       }
       const result = await closed;
-      if (signal?.aborted || result.signal) failHandoff("Minion aborted.");
+      const status = await readStatus(statusPath);
+      if (status?.code === BUDGET_EXCEEDED) {
+        const err = new Error("Context budget exceeded.");
+        err.code = BUDGET_EXCEEDED;
+        err.compact = Boolean(status.compact);
+        throw err;
+      }
+      if (signal?.aborted || result.signal || registry.cancelled) {
+        failHandoff("Minion aborted.", "aborted");
+      }
       if (result.status !== 0) failHandoff(`Minion exited with status ${result.status}.`);
       const parsed = parseMinionNdjson(result.stdout);
       const handoff = parseMinionResultJson(parsed.text, { taskId: brief.taskId });
+      if (status?.compact) handoff.compact = true;
       if (parsed.usage) {
         handoff.usage = {
           inputTokens: handoff.usage.inputTokens ?? parsed.usage.inputTokens ?? null,
@@ -311,7 +452,57 @@ export function spawnMinionProcess({
   });
 }
 
-function registerDelegate(pi) {
+/** Retry transient failures only; never cancel or budget_exceeded. */
+export async function runMinionWithRetries(opts, {
+  maxAttempts = MAX_TASK_ATTEMPTS, onAttempt = null
+} = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      if (onAttempt) await onAttempt(attempt);
+      return await spawnMinionProcess(opts);
+    } catch (error) {
+      lastError = error;
+      if (error?.code === BUDGET_EXCEEDED || error?.code === "aborted") throw error;
+      if (opts.signal?.aborted) failHandoff("Minion aborted.", "aborted");
+      if (attempt >= maxAttempts) throw error;
+    }
+  }
+  throw lastError;
+}
+
+const ORCH_ENV = Object.freeze({
+  HOME: "KAIRO_ORCH_HOME",
+  ROOT_RUN_ID: "KAIRO_ORCH_ROOT_RUN_ID",
+  ROOT_TASK_ID: "KAIRO_ORCH_ROOT_TASK_ID",
+  MODULE: "KAIRO_ORCH_MODULE"
+});
+
+export async function resolveOrchPersist(env = process.env) {
+  const homeDir = env[ORCH_ENV.HOME];
+  const rootRunId = env[ORCH_ENV.ROOT_RUN_ID];
+  const rootTaskId = env[ORCH_ENV.ROOT_TASK_ID];
+  const modulePath = env[ORCH_ENV.MODULE];
+  if (![homeDir, rootRunId, rootTaskId, modulePath].every((v) => typeof v === "string" && v.trim())) {
+    return null;
+  }
+  const api = await import(pathToFileURL(modulePath).href);
+  return { homeDir, rootRunId, rootTaskId, api };
+}
+
+function registerDelegate(pi, {
+  gate = createConcurrencyGate(),
+  registry = createProcessRegistry(),
+  env = process.env,
+  spawnImpl = spawn,
+  readStatus = null
+} = {}) {
+  const cascade = async () => {
+    gate.cancel();
+    await registry.cancelAll();
+  };
+  pi.on("session_shutdown", cascade);
+
   pi.registerTool({
     name: "kairo_delegate",
     label: "Kairo Delegate",
@@ -329,28 +520,85 @@ function registerDelegate(pi) {
       required: ["taskId", "parentTaskId", "objective"]
     },
     async execute(_id, params, signal) {
-      return spawnMinionProcess({
-        brief: {
-          taskId: params.taskId,
-          parentTaskId: params.parentTaskId,
-          objective: params.objective,
-          constraints: params.constraints ?? [],
-          admittedPaths: params.admittedPaths ?? [],
-          exitCriteria: params.exitCriteria ?? []
-        },
-        cwd: process.cwd(),
-        signal
-      });
+      if (signal) {
+        const onAbort = () => { void cascade(); };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort, { once: true });
+      }
+      const orch = await resolveOrchPersist(env);
+      const parentTaskId = params.parentTaskId;
+      const taskId = params.taskId;
+      if (orch && (taskId === orch.rootTaskId || parentTaskId !== orch.rootTaskId)) {
+        throw Object.assign(new Error("Delegate lineage must honor KAIRO_ORCH_ROOT_TASK_ID."), { code: "invalid_lineage" });
+      }
+      let lastAttempt = 0;
+      const patch = orch
+        ? (fields) => orch.api.applyMinionDagUpdate(orch.rootRunId, {
+          homeDir: orch.homeDir, taskId, parentTaskId, ...fields
+        })
+        : null;
+      const objectiveDigest = orch
+        ? orch.api.digestAllowlisted({ objective: params.objective })
+        : null;
+      try {
+        if (patch) {
+          await patch({
+            state: orch.api.DAG_NODE_STATES.PENDING, attempt: 0, objectiveDigest
+          });
+        }
+        const handoff = await runMinionWithRetries({
+          brief: {
+            taskId, parentTaskId, objective: params.objective,
+            constraints: params.constraints ?? [],
+            admittedPaths: params.admittedPaths ?? [],
+            exitCriteria: params.exitCriteria ?? []
+          },
+          cwd: process.cwd(),
+          signal, gate, registry, env, spawnImpl,
+          ...(readStatus ? { readStatus } : {})
+        }, {
+          onAttempt: patch
+            ? async (attempt) => {
+              lastAttempt = attempt;
+              await patch({
+                state: orch.api.DAG_NODE_STATES.RUNNING, attempt, objectiveDigest
+              });
+            }
+            : null
+        });
+        if (patch) {
+          await patch({
+            state: orch.api.DAG_NODE_STATES.COMPLETED, attempt: lastAttempt || 1,
+            objectiveDigest, result: handoff
+          });
+        }
+        return handoff;
+      } catch (error) {
+        if (patch) {
+          const code = error?.code === BUDGET_EXCEEDED
+            ? BUDGET_EXCEEDED
+            : error?.code === "aborted" ? "aborted" : (error?.code ?? "invalid_handoff");
+          const state = code === "aborted"
+            ? orch.api.DAG_NODE_STATES.CANCELLED
+            : orch.api.DAG_NODE_STATES.FAILED;
+          await patch({
+            state, attempt: lastAttempt || 1, objectiveDigest, error: { code }
+          });
+        }
+        throw error;
+      }
     }
   });
+  return { gate, registry, cascade };
 }
 
-/** Parent registers delegate; child (brief env) registers path guard only. */
-export default function registerKairoMinion(pi, env = process.env) {
+export default function registerKairoMinion(pi, env = process.env, opts = {}) {
   if (isChildMinionMode(env)) {
-    registerPathGuard(pi);
+    const briefPath = env.KAIRO_MINION_BRIEF;
+    registerPathGuard(pi, { briefPath });
+    registerBudgetGuard(pi, { statusPath: minionStatusPath(briefPath) });
     return { mode: "child" };
   }
-  registerDelegate(pi);
+  registerDelegate(pi, { env, ...opts });
   return { mode: "parent" };
 }

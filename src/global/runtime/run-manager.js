@@ -5,6 +5,7 @@ import {
   appendRunEvent,
   appendRunStartedEvent,
   createRunRecord,
+  listRunRecords,
   readRunState,
   reconcileActiveRuns,
   writeRunState
@@ -29,6 +30,13 @@ import {
   normalizeRunStrategy,
   RUN_STRATEGIES
 } from "./run-strategy.js";
+import {
+  DAG_NODE_STATES,
+  createDagNode,
+  createOrchState,
+  reconcileOrchState,
+  saveOrchState
+} from "./orchestration/index.js";
 
 const activeProcesses = new Map();
 const cancelledRuns = new Set();
@@ -62,6 +70,19 @@ export async function recoverRuns(homeDir) {
     exceptRunIds: listActiveRunIds(),
     isRunAliveImpl: isRunSupervisedAlive
   });
+  for (const run of await listRunRecords(homeDir)) {
+    if (normalizeRunStrategy(run.strategy ?? RUN_STRATEGIES.DIRECT) !== RUN_STRATEGIES.ORCHESTRATED) {
+      continue;
+    }
+    if (await isRunSupervisedAlive(homeDir, run)) {
+      continue;
+    }
+    try {
+      await reconcileOrchState(run.runId, { homeDir });
+    } catch {
+      // Fail closed per root: never invent receipt evidence from corrupt state.
+    }
+  }
   return interrupted;
 }
 
@@ -126,6 +147,21 @@ async function prepareRun({
     profile: profile?.profile ?? null,
     strategy: normalizedStrategy
   });
+
+  if (normalizedStrategy === RUN_STRATEGIES.ORCHESTRATED) {
+    await saveOrchState(createOrchState({
+      rootRunId: runId,
+      strategy: normalizedStrategy,
+      lineage,
+      nodes: [createDagNode({
+        taskId: lineage.taskId,
+        runId,
+        depth: 0,
+        state: DAG_NODE_STATES.RUNNING
+      })],
+      cliVersion
+    }), { homeDir });
+  }
 
   return { runId, metadata };
 }

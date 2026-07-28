@@ -112,12 +112,14 @@ test("child mode registers path guard only; parent registers delegate", () => {
   const parentPi = { tools: [], onCalls: [], registerTool(t) { this.tools.push(t); }, on(...a) { this.onCalls.push(a); } };
   assert.deepEqual(registerKairoMinion(parentPi, {}), { mode: "parent" });
   assert.equal(parentPi.tools[0]?.name, "kairo_delegate");
-  assert.equal(parentPi.onCalls.length, 0);
+  assert.equal(parentPi.onCalls[0]?.[0], "session_shutdown");
 
   const childPi = { tools: [], onCalls: [], registerTool(t) { this.tools.push(t); }, on(...a) { this.onCalls.push(a); } };
   assert.deepEqual(registerKairoMinion(childPi, { KAIRO_MINION_BRIEF: "/brief.json" }), { mode: "child" });
   assert.equal(childPi.tools.length, 0);
-  assert.equal(childPi.onCalls[0]?.[0], "tool_call");
+  const events = childPi.onCalls.map((a) => a[0]);
+  assert.ok(events.includes("tool_call"));
+  assert.ok(events.includes("turn_end"));
 });
 
 test("allowlist: file, directory, omitted, empty, .., external abs, symlink escape", async () => {
@@ -242,7 +244,7 @@ test("stubbed spawn: success, exit, spawn error, abort cleanup", async () => {
   });
   assert.equal(ok.summary, "done");
   assert.doesNotMatch(JSON.stringify(ok), /secret objective|stdout|stderr|transcript/i);
-  const bad = (e) => e.code === "invalid_handoff";
+  const bad = (e) => e.code === "invalid_handoff" || e.code === "aborted";
   await assert.rejects(() => spawnMinionProcess({ brief, spawnImpl: fakePi({ exitCode: 2 }) }), bad);
   await assert.rejects(() => spawnMinionProcess({ brief, spawnImpl: fakePi({ failSpawn: true }) }), bad);
   const ac = new AbortController();

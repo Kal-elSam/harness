@@ -7,10 +7,10 @@ export const FORBIDDEN_KEYS = new Set([
   "message", "messages", "content", "secret", "secrets", "token", "apiKey",
   "conversation", "history", "toolArgs", "arguments", "objective"
 ]);
-function walkForbidden(value, path = "") {
+export function walkForbiddenKeys(value, path = "") {
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value)) {
-    value.forEach((item, i) => walkForbidden(item, `${path}[${i}]`));
+    value.forEach((item, i) => walkForbiddenKeys(item, `${path}[${i}]`));
     return;
   }
   for (const [key, child] of Object.entries(value)) {
@@ -19,7 +19,7 @@ function walkForbidden(value, path = "") {
         code: ORCH_ERROR_CODES.FORBIDDEN_FIELD, details: { key, path }
       });
     }
-    walkForbidden(child, `${path}${key}.`);
+    walkForbiddenKeys(child, `${path}${key}.`);
   }
 }
 export function assertOrchReceiptSecretFree(receipt) {
@@ -28,7 +28,7 @@ export function assertOrchReceiptSecretFree(receipt) {
       code: ORCH_ERROR_CODES.FORBIDDEN_FIELD
     });
   }
-  walkForbidden(receipt);
+  walkForbiddenKeys(receipt);
   if (receipt.version !== 1) {
     throw new OrchContractError("Orchestration receipt version must be 1.", {
       code: ORCH_ERROR_CODES.FORBIDDEN_FIELD
