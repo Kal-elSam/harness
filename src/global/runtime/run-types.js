@@ -83,7 +83,9 @@ export function createRunMetadata({
   permissions = [],
   captureTranscript = false,
   cliVersion,
-  profileSources = null
+  profileSources = null,
+  strategy = "direct",
+  lineage = null
 }) {
   const { taskDigest, taskLength } = createTaskFingerprint(task);
   const now = new Date().toISOString();
@@ -100,6 +102,8 @@ export function createRunMetadata({
     captureTranscript,
     cliVersion,
     profileSources,
+    strategy,
+    lineage,
     state: RUN_STATES.PENDING,
     pid: null,
     supervisorPid: null,
