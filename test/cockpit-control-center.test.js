@@ -36,28 +36,25 @@ test("control center model surfaces health, coverage, and CTA from snapshot", ()
     }
   });
 
-  assert.match(model.title, /CONTROL CENTER/);
+  assert.match(model.title, /OVERVIEW/);
   assert.equal(model.health.label, "ACTION REQUIRED");
   assert.match(model.health.summaryLine, /1\/3 agents governed/);
   assert.equal(model.cta.destination, "changes");
-  assert.match(model.cta.enterHint, /again/i);
-  assert.ok(model.notes.length >= 1);
-  assert.match(model.runsSecondaryHint, /secondary/i);
+  assert.match(model.cta.enterHint, /Enter|again/i);
+  assert.ok(model.alerts.count >= 1);
+  assert.match(model.tokens.headline, /datos no disponibles|stable|request/);
 });
 
-test("governance navigation lists Control center first and Runs last", () => {
-  assert.equal(COCKPIT_NAV[0].label, "Control center");
-  assert.equal(COCKPIT_NAV[COCKPIT_NAV.length - 1].label, "Runs");
-  assert.equal(COCKPIT_NAV[COCKPIT_NAV.length - 1].view, ORCHESTRATOR_VIEWS.RUNS);
+test("primary nav lists six user destinations", () => {
   assert.deepEqual(COCKPIT_NAV.map((item) => item.label), [
-    "Control center",
-    "IDEs & models",
-    "Harness modules",
-    "Changes",
-    "Activity & recovery",
-    "Profile & policy",
-    "Runs"
+    "Overview",
+    "Governance",
+    "Activity",
+    "Orchestration",
+    "Usage",
+    "Settings"
   ]);
+  assert.equal(COCKPIT_NAV[3].view, ORCHESTRATOR_VIEWS.RUNS);
   assert.deepEqual(RUNS_HUB_ITEMS.map((item) => item.label), [
     "Active runs",
     "History",

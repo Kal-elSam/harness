@@ -1,16 +1,21 @@
 import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
-import { formatProposalLines, proposalLimitForLayout } from "./cockpit-proposals.js";
 
 export function buildControlCenterModel({
   projectName = "project",
   snapshot = null,
+  dashboard = null,
   layoutMode = "compact"
 } = {}) {
   if (!snapshot) {
     return {
-      title: `CONTROL CENTER — ${projectName}`,
-      purpose: "Kairo aligns installed IDEs and agents with this project's architecture, rules, tools, and workflows.",
+      title: `OVERVIEW — ${projectName}`,
+      purpose: "",
       health: {
+        kind: CONTROL_PLANE_HEALTH.CHECK_FAILED,
+        label: "CHECK FAILED",
+        summaryLine: "Control-plane scan not available yet."
+      },
+      status: {
         kind: CONTROL_PLANE_HEALTH.CHECK_FAILED,
         label: "CHECK FAILED",
         summaryLine: "Control-plane scan not available yet."
@@ -24,54 +29,73 @@ export function buildControlCenterModel({
         kind: "verify",
         destination: null
       },
+      nextAction: {
+        title: "NEXT",
+        actionTitle: "Retry scan",
+        actionDetail: "Press R to reload the read-only governance scan.",
+        enterHint: "R Retry",
+        kind: "verify",
+        destination: null
+      },
       notes: [],
-      proposalLines: ["No evidence-backed proposals."],
-      includeEmbeddedStatus: layoutMode !== "wide"
+      proposalLines: [],
+      activity: { headline: "No activity yet" },
+      alerts: { count: 0, headline: "No pending alerts" },
+      tokens: { headline: "datos no disponibles" },
+      includeEmbeddedStatus: layoutMode !== "wide",
+      runsSecondaryHint: "Detail via Enter · / actions"
     };
   }
 
   const healthLabel = formatHealthLabel(snapshot.health);
   const coverage = snapshot.coverage ?? {};
-  const policy = snapshot.policy;
   const warnings = snapshot.status?.counts?.warning ?? 0;
+  const active = dashboard?.activeRuns?.length ?? snapshot.runtime?.activeRuns ?? 0;
+  const recent = dashboard?.recentRuns?.[0] ?? null;
+  const alertCount = warnings + (snapshot.diff?.hasChanges ? 1 : 0);
+  const health = {
+    kind: snapshot.health,
+    label: healthLabel,
+    summaryLine: [
+      `${coverage.governedAgents ?? 0}/${coverage.detectedAgents ?? 0} agents governed`,
+      snapshot.diff?.hasChanges ? "drift pending" : "drift clean"
+    ].join(" · ")
+  };
+  const cta = {
+    title: "NEXT",
+    actionTitle: snapshot.cta?.title ?? "Review control plane",
+    actionDetail: snapshot.cta?.detail ?? "",
+    enterHint: "Enter again →",
+    kind: snapshot.cta?.kind ?? null,
+    destination: snapshot.cta?.destination ?? null
+  };
 
   return {
-    title: `CONTROL CENTER — ${projectName}`,
-    purpose: "Kairo aligns installed IDEs and agents with this project's architecture, rules, tools, and workflows.",
-    health: {
-      kind: snapshot.health,
-      label: healthLabel,
-      summaryLine: [
-        `${coverage.governedAgents ?? 0}/${coverage.detectedAgents ?? 0} agents governed`,
-        `${coverage.components ?? 0} modules`,
-        `${snapshot.backups?.count ?? 0} backups`
-      ].join(" · ")
+    title: `OVERVIEW — ${projectName}`,
+    purpose: "",
+    health,
+    status: health,
+    coverageLines: [],
+    cta,
+    nextAction: cta,
+    notes: [],
+    proposalLines: [],
+    activity: {
+      headline: active > 0
+        ? `${active} active run${active === 1 ? "" : "s"}`
+        : recent?.agentId
+          ? `Last · ${recent.agentId} · ${recent.state ?? "done"}`
+          : "Idle"
     },
-    coverageLines: [
-      `Active modules: ${(coverage.activeModules ?? []).join(", ") || "none"}`,
-      `Policy: ${policy?.profile ?? "none"} · applyMode ${policy?.applyMode ?? "n/a"}`,
-      warnings > 0
-        ? `Notes: ${warnings} non-blocking check warning(s)`
-        : "Notes: none",
-      snapshot.diff?.hasChanges
-        ? `Drift: ${snapshot.diff.changeCount ?? snapshot.diff.changes?.length ?? 0} change(s) pending review`
-        : "Drift: clean"
-    ],
-    cta: {
-      title: "NEXT",
-      actionTitle: snapshot.cta?.title ?? "Review control plane",
-      actionDetail: snapshot.cta?.detail ?? "",
-      enterHint: "Enter again →",
-      kind: snapshot.cta?.kind ?? null,
-      destination: snapshot.cta?.destination ?? null
+    alerts: {
+      count: alertCount,
+      headline: alertCount === 0
+        ? "No pending alerts"
+        : `${alertCount} pending · open Governance or Activity`
     },
-    notes: buildNotes(snapshot),
-    proposalLines: formatProposalLines(snapshot.proposals ?? [], {
-      limit: proposalLimitForLayout(layoutMode),
-      budgets: snapshot.budgets ?? null
-    }),
+    tokens: { headline: formatTokenHeadline(snapshot.budgets) },
     includeEmbeddedStatus: layoutMode !== "wide",
-    runsSecondaryHint: "Runs remain available as a secondary capability after setup and repairs."
+    runsSecondaryHint: "Detail via Enter · / actions"
   };
 }
 
@@ -92,15 +116,14 @@ function formatHealthLabel(kind) {
   }
 }
 
-function buildNotes(snapshot) {
-  const notes = [];
-  for (const check of snapshot.status?.checks ?? []) {
-    if (check.status === "warning") {
-      notes.push(`${check.name}: ${check.detail ?? check.status}`);
-    }
+function formatTokenHeadline(budgets) {
+  if (!budgets || typeof budgets !== "object") return "datos no disponibles";
+  const parts = [];
+  if (Number.isFinite(budgets.stableUsedTokens) && Number.isFinite(budgets.stableBudgetTokens)) {
+    parts.push(`stable ${budgets.stableUsedTokens}/${budgets.stableBudgetTokens}`);
   }
-  if (notes.length === 0 && snapshot.health === CONTROL_PLANE_HEALTH.HEALTHY_WITH_NOTES) {
-    notes.push("Non-blocking notes are present. Open IDEs & models or Harness modules for detail.");
+  if (Number.isFinite(budgets.requestUsedTokens) && Number.isFinite(budgets.requestBudgetTokens)) {
+    parts.push(`request ${budgets.requestUsedTokens}/${budgets.requestBudgetTokens}`);
   }
-  return notes.slice(0, 6);
+  return parts.length > 0 ? parts.join(" · ") : "datos no disponibles";
 }

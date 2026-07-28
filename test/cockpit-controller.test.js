@@ -44,7 +44,7 @@ test("arrows move nav focus and enter opens Runs hub with content focus", () => 
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     region: COCKPIT_REGIONS.NAV,
-    navIndex: 6
+    navIndex: 3
   });
   state = reduceCockpitUi(state, { type: "enter-nav" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.RUNS);

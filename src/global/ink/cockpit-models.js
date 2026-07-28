@@ -17,45 +17,39 @@ export const COCKPIT_REGIONS = {
 export const COCKPIT_NAV = [
   {
     id: "overview",
-    label: "Control center",
+    label: "Overview",
     view: ORCHESTRATOR_VIEWS.HOME,
-    description: "Coverage, integrity, and the next governance action."
+    description: "Status, next action, activity, alerts, and tokens."
   },
   {
-    id: "ides",
-    label: "IDEs & models",
-    view: ORCHESTRATOR_VIEWS.IDES,
-    description: "Detected agents, auth signals, capabilities, and recommended policy."
-  },
-  {
-    id: "modules",
-    label: "Harness modules",
-    view: ORCHESTRATOR_VIEWS.MODULES,
-    description: "Orchestrator, SDD/TDD, and external Engram/Graphify integrations."
-  },
-  {
-    id: "changes",
-    label: "Changes",
+    id: "governance",
+    label: "Governance",
     view: ORCHESTRATOR_VIEWS.CHANGES,
-    description: "Findings, drift, and exact preview before any write."
+    description: "Repair drift and apply governed changes."
   },
   {
     id: "activity",
-    label: "Activity & recovery",
+    label: "Activity",
     view: ORCHESTRATOR_VIEWS.ACTIVITY,
-    description: "Kairo operations, backups, and rollback readiness."
+    description: "Operations, backups, and recovery."
   },
   {
-    id: "profile",
-    label: "Profile & policy",
-    view: ORCHESTRATOR_VIEWS.PROFILE,
-    description: "Defaults, scopes, consent, and precedence."
-  },
-  {
-    id: "runs",
-    label: "Runs",
+    id: "orchestration",
+    label: "Orchestration",
     view: ORCHESTRATOR_VIEWS.RUNS,
-    description: "Optional supervised execution — Active, History, and New run."
+    description: "Runs, reviews, and supervised execution."
+  },
+  {
+    id: "usage",
+    label: "Usage",
+    view: ORCHESTRATOR_VIEWS.USAGE,
+    description: "Token and context pressure when auditable."
+  },
+  {
+    id: "settings",
+    label: "Settings",
+    view: ORCHESTRATOR_VIEWS.PROFILE,
+    description: "Profile, policy, and guided configuration."
   }
 ];
 
@@ -69,8 +63,8 @@ export function regionsForLayout(layoutMode) {
 
 export function navIndexForView(view, items = COCKPIT_NAV) {
   if (isRunsBranchView(view)) {
-    const runsIndex = items.findIndex((item) => item.id === "runs");
-    return runsIndex >= 0 ? runsIndex : 0;
+    const orchIndex = items.findIndex((item) => item.id === "orchestration");
+    return orchIndex >= 0 ? orchIndex : 0;
   }
   const index = items.findIndex((item) => item.view === view);
   return index >= 0 ? index : 0;
@@ -117,18 +111,27 @@ export function resolveNavStatusSummary(item, {
           diagnostics,
           dashboard
         }).label;
+    case "governance":
+      return changes > 0 ? `${changes} pending` : "Clean";
+    case "activity":
+      return backups > 0 ? `${backups} backups` : "No backups";
+    case "orchestration":
+      return active === 0 ? "Idle" : `${active} active`;
+    case "usage":
+      return Number.isFinite(snapshot?.budgets?.stableUsedTokens)
+        ? "Auditable"
+        : "n/a";
+    case "settings":
+      return snapshot?.policy?.profile ?? "defaults";
     case "ides":
       return `${governed}/${detected} governed`;
     case "modules":
       return `${snapshot?.coverage?.components ?? 0} modules`;
     case "changes":
       return changes > 0 ? `${changes} pending` : "Clean";
-    case "activity":
-      return backups > 0 ? `${backups} backups` : "No backups";
     case "profile":
       return snapshot?.policy?.profile ?? "defaults";
     case "runs":
-      return active === 0 ? "Idle" : `${active} active`;
     case "active":
       return active === 0 ? "Idle" : `${active} active`;
     case "providers":
@@ -157,7 +160,7 @@ export function buildNavModel({
   const mapped = items.map((item, index) => {
     const isSelected = index === navIndex;
     const isCurrent = item.view === currentView
-      || (item.id === "runs" && isRunsBranchView(currentView));
+      || (item.id === "orchestration" && isRunsBranchView(currentView));
     return {
       ...item,
       marker: isSelected ? glyphs.focus : (isCurrent ? glyphs.bullet : " "),
@@ -281,14 +284,15 @@ export function buildFooterModel({
     parts.push("Tab Region");
   }
 
-  const activatesControlCenterCta = view === ORCHESTRATOR_VIEWS.HOME && navIndex === 0;
-  if (activatesControlCenterCta) {
+  const activatesOverviewCta = view === ORCHESTRATOR_VIEWS.HOME && navIndex === 0;
+  if (activatesOverviewCta) {
     parts.push("Enter Activate");
   } else if (view === ORCHESTRATOR_VIEWS.IDES
     || view === ORCHESTRATOR_VIEWS.MODULES
     || view === ORCHESTRATOR_VIEWS.PROFILE
     || view === ORCHESTRATOR_VIEWS.PROVIDERS
     || view === ORCHESTRATOR_VIEWS.DIAGNOSTICS
+    || view === ORCHESTRATOR_VIEWS.USAGE
     || region === COCKPIT_REGIONS.NAV
     || view === ORCHESTRATOR_VIEWS.RUNS
     || view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS

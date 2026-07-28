@@ -85,7 +85,7 @@ const asciiNav = buildNavModel({
 assert.equal(asciiNav.items[1].marker, ">");
 assert.equal(asciiNav.items[0].current, true);
 assert.equal(asciiNav.items[1].selected, true);
-assert.match(asciiNav.explanation, /Detected agents|IDEs|models|Harness|modules/i);
+assert.match(asciiNav.explanation, /Repair|Govern|Activity|Usage|Settings|Overview/i);
 
 function applyKey(state, keyAction) {
   const routed = routeCockpitKey(state, keyAction);
@@ -98,7 +98,7 @@ function smokeNavigation(layoutMode) {
     layoutMode,
     region: layoutMode === LAYOUT_MODES.MINIMAL ? COCKPIT_REGIONS.CONTENT : COCKPIT_REGIONS.NAV
   });
-  const diagnosticsIndex = COCKPIT_NAV.findIndex((item) => item.id === "changes");
+  const diagnosticsIndex = COCKPIT_NAV.findIndex((item) => item.id === "governance");
   while (state.navIndex < diagnosticsIndex) {
     state = applyKey(state, { type: "arrow", direction: "down" });
   }
@@ -108,7 +108,7 @@ function smokeNavigation(layoutMode) {
 
   state = applyKey(state, { type: "arrow", direction: "up" });
   state = applyKey(state, { type: "enter" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.MODULES);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);
   assert.equal(state.region, COCKPIT_REGIONS.NAV);
 
   const footer = buildFooterModel({

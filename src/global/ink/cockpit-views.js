@@ -19,44 +19,36 @@ import { formatChangesActionLines } from "./cockpit-changes.js";
 import { formatRecoveryLines } from "./cockpit-recovery.js";
 
 export function ControlCenterPanel({ model, colorEnabled = true }) {
-  const health = model.health;
+  const status = model.status ?? model.health;
+  const next = model.nextAction ?? model.cta;
   return React.createElement(Box, { flexDirection: "column" },
     React.createElement(Text, {
       bold: true,
       color: colorEnabled ? COCKPIT_COLORS.secondary : undefined
     }, model.title),
-    React.createElement(Text, null, model.purpose),
     React.createElement(Text, null, ""),
     React.createElement(Text, {
       bold: true,
       color: colorEnabled ? COCKPIT_COLORS.primary : undefined
-    }, health.label),
-    React.createElement(Text, null, health.summaryLine),
-    ...(model.coverageLines ?? []).map((line) =>
-      React.createElement(Text, { key: line, color: COCKPIT_COLORS.muted }, line)
-    ),
+    }, status?.label),
+    React.createElement(Text, null, status?.summaryLine),
     React.createElement(Text, null, ""),
-    React.createElement(Text, { bold: true }, model.cta.title),
+    React.createElement(Text, { bold: true }, next?.title ?? "NEXT"),
     React.createElement(Text, {
       bold: true,
       color: colorEnabled ? COCKPIT_COLORS.primary : undefined
-    }, model.cta.actionTitle),
-    React.createElement(Text, null, model.cta.actionDetail),
-    React.createElement(Text, { color: COCKPIT_COLORS.muted }, model.cta.enterHint),
-    model.notes?.length > 0 && React.createElement(Box, { flexDirection: "column", marginTop: 1 },
-      React.createElement(Text, { bold: true }, "NOTES"),
-      model.notes.map((line) =>
-        React.createElement(Text, { key: line, color: COCKPIT_COLORS.muted }, line)
-      )
-    ),
-    model.proposalLines?.length > 0 && React.createElement(Box, { flexDirection: "column", marginTop: 1 },
-      React.createElement(Text, { bold: true }, "PROPOSALS"),
-      model.proposalLines.map((line) =>
-        React.createElement(Text, { key: line, color: COCKPIT_COLORS.muted }, line)
-      )
-    ),
+    }, next?.actionTitle),
+    next?.actionDetail ? React.createElement(Text, null, next.actionDetail) : null,
+    React.createElement(Text, { color: COCKPIT_COLORS.muted }, next?.enterHint),
     React.createElement(Text, null, ""),
-    React.createElement(Text, { color: COCKPIT_COLORS.muted }, model.runsSecondaryHint)
+    React.createElement(Text, { bold: true }, "ACTIVITY"),
+    React.createElement(Text, null, model.activity?.headline ?? "Idle"),
+    React.createElement(Text, null, ""),
+    React.createElement(Text, { bold: true }, "ALERTS"),
+    React.createElement(Text, null, model.alerts?.headline ?? "No pending alerts"),
+    React.createElement(Text, null, ""),
+    React.createElement(Text, { bold: true }, "TOKENS"),
+    React.createElement(Text, null, model.tokens?.headline ?? "datos no disponibles")
   );
 }
 
@@ -84,6 +76,12 @@ export function renderCockpitView({
   switch (view) {
     case ORCHESTRATOR_VIEWS.HOME:
       return React.createElement(ControlCenterPanel, { model: controlCenter, colorEnabled });
+    case ORCHESTRATOR_VIEWS.USAGE:
+      return governanceList("Usage", [
+        controlCenter?.tokens?.headline ?? "datos no disponibles",
+        "",
+        "Auditable budgets only — no invented token savings."
+      ], layoutMode, colorEnabled);
     case ORCHESTRATOR_VIEWS.IDES:
     case ORCHESTRATOR_VIEWS.PROVIDERS:
       return governanceList("IDEs & models", [
@@ -194,8 +192,8 @@ export function renderCockpitView({
         React.createElement(Text, { bold: true }, "Help"),
         React.createElement(Text, null, "Kairo keeps IDEs and agents aligned with project architecture and workflows."),
         React.createElement(Text, null, "Primary flow: scan → findings → preview → confirm → apply → re-scan."),
-        React.createElement(Text, null, "↑↓ navigate · Enter open · Esc back/exit · R refresh/retry · ? help"),
-        React.createElement(Text, null, "Runs are secondary after setup and repairs. Reviews are read-only receipts.")
+        React.createElement(Text, null, "↑↓ navigate · Enter open/activate · Esc back · R refresh · ? help"),
+        React.createElement(Text, null, "Overview hides raw diagnostics — Enter opens detail destinations.")
       );
     default: {
       const _exhaustive = view;

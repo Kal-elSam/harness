@@ -27,7 +27,8 @@ export const ORCHESTRATOR_VIEWS = {
   PROVIDERS: "providers",
   LAUNCH: "launch",
   DIAGNOSTICS: "diagnostics",
-  HELP: "help"
+  HELP: "help",
+  USAGE: "usage"
 };
 
 export const ORCHESTRATOR_MENU = [

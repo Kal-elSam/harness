@@ -88,9 +88,11 @@ test("control center model includes proposal lines without dumping sensitive ref
     }
   });
 
-  assert.ok(model.proposalLines.some((line) => /\[HIGH\] Finish local setup → changes/.test(line)));
-  assert.ok(model.proposalLines.some((line) => /Budget ·/.test(line)));
-  assert.ok(model.runsSecondaryHint.includes("secondary"));
+  assert.match(model.title, /OVERVIEW/);
+  assert.match(model.nextAction.actionTitle, /Finish local setup/);
+  assert.match(model.tokens.headline, /stable 1\/10/);
+  assert.equal(model.proposalLines.length, 0);
+  assert.match(model.runsSecondaryHint, /Enter|actions/i);
 });
 
 test("changes lines prepend proposals targeting changes", () => {

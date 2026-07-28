@@ -353,6 +353,7 @@ export function OrchestratorApp({
   const controlCenter = buildControlCenterModel({
     projectName,
     snapshot: data.snapshot,
+    dashboard: data.dashboard,
     layoutMode: mode
   });
   const systemOnline = data.snapshot
@@ -436,7 +437,12 @@ function resolveCtaDestinationView(destinationKey) {
     case "profile":
       return ORCHESTRATOR_VIEWS.PROFILE;
     case "runs":
+    case "orchestration":
       return ORCHESTRATOR_VIEWS.RUNS;
+    case "usage":
+      return ORCHESTRATOR_VIEWS.USAGE;
+    case "governance":
+      return ORCHESTRATOR_VIEWS.CHANGES;
     default:
       return null;
   }

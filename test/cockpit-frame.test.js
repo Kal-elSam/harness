@@ -93,8 +93,8 @@ test("cockpit shell wide frame uses nav strip and single panel without SYSTEM", 
   assertCriticalHomeParity(frame);
   assert.match(frame, /ONLINE|Offline/);
   assert.match(frame, /NAVSTRIP/);
-  assert.match(frame, /Control center/);
-  assert.match(frame, /Runs|Changes/);
+  assert.match(frame, /Overview/);
+  assert.match(frame, /Orchestration|Governance|Activity|Runs/);
   assert.doesNotMatch(frame, /\bSYSTEM\b/);
   assert.doesNotMatch(frame, /MISSION CONTROL/);
   assert.deepEqual(regionsForLayout(LAYOUT_MODES.WIDE), [
@@ -108,7 +108,7 @@ test("cockpit compact 80x24 frame keeps nav strip without system column", () => 
   const frame = composeCockpitFrame({ layoutMode: LAYOUT_MODES.COMPACT, columns: 80 });
   assertCriticalHomeParity(frame);
   assert.match(frame, /NAVSTRIP/);
-  assert.match(frame, /Control · /);
+  assert.match(frame, /Overview · /);
   assert.doesNotMatch(frame, /\bSYSTEM\b/);
   assert.match(frame, /FOOTER_COLS 80/);
 });
