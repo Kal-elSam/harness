@@ -74,6 +74,9 @@ export async function recoverRuns(homeDir) {
     if (normalizeRunStrategy(run.strategy ?? RUN_STRATEGIES.DIRECT) !== RUN_STRATEGIES.ORCHESTRATED) {
       continue;
     }
+    if (await isRunSupervisedAlive(homeDir, run)) {
+      continue;
+    }
     try {
       await reconcileOrchState(run.runId, { homeDir });
     } catch {

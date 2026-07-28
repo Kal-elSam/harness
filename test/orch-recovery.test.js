@@ -113,6 +113,33 @@ test("recovery cancels non-terminal nodes, seals recovered receipt, is idempoten
   }
 });
 
+test("recoverRuns preserves live orchestrated run without sealing recovered receipt", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-orch-alive-"));
+  try {
+    const rootRunId = "run_orch_alive";
+    const lineage = { rootRunId, parentRunId: null, depth: 0, taskId: "task_root" };
+    await createRunRecord(homeDir, createRunMetadata({
+      runId: rootRunId, agentId: "pi", provider: "Pi", task: "x", cwd: homeDir,
+      cliVersion: "0.8.0", strategy: "orchestrated", lineage
+    }));
+    const run = await readRunState(homeDir, rootRunId);
+    await writeRunState(homeDir, { ...run, state: RUN_STATES.RUNNING, pid: process.pid });
+    await saveOrchState(createOrchState({
+      rootRunId, lineage, cliVersion: "0.8.0",
+      nodes: [
+        createDagNode({ taskId: "task_root", runId: rootRunId, depth: 0, state: DAG_NODE_STATES.RUNNING }),
+        createDagNode({ taskId: "task_child", runId: "run_child", parentTaskId: "task_root", depth: 1, state: DAG_NODE_STATES.PENDING })
+      ]
+    }), { homeDir });
+    await recoverRuns(homeDir);
+    assert.equal((await readRunState(homeDir, rootRunId)).state, RUN_STATES.RUNNING);
+    await assert.rejects(() => loadOrchReceipt(rootRunId, { homeDir }));
+    assert.equal((await loadOrchState(rootRunId, { homeDir })).nodes[1].state, DAG_NODE_STATES.PENDING);
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
 test("corrupt state fails closed without fabricating a receipt", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-orch-corrupt-"));
   try {
