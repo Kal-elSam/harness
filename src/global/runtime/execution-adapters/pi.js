@@ -30,12 +30,15 @@ export function buildPiPermissionsArgs(permissions = []) {
   }
 
   throw new Error(
-    `Pi permissions only support "read-only" in Kairo 0.6.0 (got: ${permissions.join(", ")}). `
+    `Pi permissions only support "read-only" (got: ${permissions.join(", ")}). `
     + "Other aliases are rejected and are never translated to --approve."
   );
 }
 
-export function buildPiLaunch({ task, cwd, model, permissions = [], env = process.env } = {}) {
+export function buildPiLaunch({
+  task, cwd, model, permissions = [], env = process.env,
+  strategy = "direct", extensionPath = null
+} = {}) {
   const args = [
     "--mode",
     "json",
@@ -45,6 +48,13 @@ export function buildPiLaunch({ task, cwd, model, permissions = [], env = proces
 
   if (model) {
     args.push("--model", model);
+  }
+
+  if (strategy === "orchestrated") {
+    if (typeof extensionPath !== "string" || !extensionPath) {
+      throw new Error("Orchestrated Pi requires a managed extension path.");
+    }
+    args.push("--no-extensions", "--extension", extensionPath);
   }
 
   args.push(task);

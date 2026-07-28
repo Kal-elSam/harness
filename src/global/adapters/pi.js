@@ -7,7 +7,7 @@ export const PI_CODING_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 
 const CUSTOM_DIR_MESSAGE =
   `Pi config writes are unsupported when ${PI_CODING_AGENT_DIR_ENV} points away from `
-  + `~/${PI_DEFAULT_ROOT_DIR} (out of scope for Kairo 0.6.0). `
+  + `~/${PI_DEFAULT_ROOT_DIR} (out of scope for Kairo managed config). `
   + `Unset ${PI_CODING_AGENT_DIR_ENV} to manage the default directory; runtime launches remain available.`;
 
 /** True when PI_CODING_AGENT_DIR is set to a non-default absolute/relative path. */

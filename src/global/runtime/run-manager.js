@@ -5,6 +5,7 @@ import {
   appendRunEvent,
   appendRunStartedEvent,
   createRunRecord,
+  listRunRecords,
   readRunState,
   reconcileActiveRuns,
   writeRunState
@@ -22,6 +23,20 @@ import {
   readSupervisorLockForRun,
   supervisePreparedRun
 } from "./run-supervisor.js";
+import {
+  assertManagedMinionExtension,
+  assertOrchestratedAgent,
+  createRootRunLineage,
+  normalizeRunStrategy,
+  RUN_STRATEGIES
+} from "./run-strategy.js";
+import {
+  DAG_NODE_STATES,
+  createDagNode,
+  createOrchState,
+  reconcileOrchState,
+  saveOrchState
+} from "./orchestration/index.js";
 
 const activeProcesses = new Map();
 const cancelledRuns = new Set();
@@ -55,6 +70,19 @@ export async function recoverRuns(homeDir) {
     exceptRunIds: listActiveRunIds(),
     isRunAliveImpl: isRunSupervisedAlive
   });
+  for (const run of await listRunRecords(homeDir)) {
+    if (normalizeRunStrategy(run.strategy ?? RUN_STRATEGIES.DIRECT) !== RUN_STRATEGIES.ORCHESTRATED) {
+      continue;
+    }
+    if (await isRunSupervisedAlive(homeDir, run)) {
+      continue;
+    }
+    try {
+      await reconcileOrchState(run.runId, { homeDir });
+    } catch {
+      // Fail closed per root: never invent receipt evidence from corrupt state.
+    }
+  }
   return interrupted;
 }
 
@@ -67,8 +95,10 @@ async function prepareRun({
   permissions = [],
   captureTranscript = false,
   cliVersion,
-  profile = null
+  profile = null,
+  strategy = "direct"
 }) {
+  const normalizedStrategy = assertOrchestratedAgent(agentId, strategy);
   const adapter = resolveExecutionAdapter(agentId);
   const availability = adapter.availability({ cwd });
 
@@ -83,7 +113,12 @@ async function prepareRun({
     );
   }
 
+  if (normalizedStrategy === RUN_STRATEGIES.ORCHESTRATED) {
+    await assertManagedMinionExtension(homeDir);
+  }
+
   const runId = createRunId();
+  const lineage = createRootRunLineage(runId);
   const metadata = createRunMetadata({
     runId,
     agentId,
@@ -94,7 +129,9 @@ async function prepareRun({
     permissions,
     captureTranscript,
     cliVersion,
-    profileSources: profile?.sources ?? null
+    profileSources: profile?.sources ?? null,
+    strategy: normalizedStrategy,
+    lineage
   });
 
   await createRunRecord(homeDir, metadata);
@@ -107,8 +144,24 @@ async function prepareRun({
     permissions,
     captureTranscript,
     cliVersion,
-    profile: profile?.profile ?? null
+    profile: profile?.profile ?? null,
+    strategy: normalizedStrategy
   });
+
+  if (normalizedStrategy === RUN_STRATEGIES.ORCHESTRATED) {
+    await saveOrchState(createOrchState({
+      rootRunId: runId,
+      strategy: normalizedStrategy,
+      lineage,
+      nodes: [createDagNode({
+        taskId: lineage.taskId,
+        runId,
+        depth: 0,
+        state: DAG_NODE_STATES.RUNNING
+      })],
+      cliVersion
+    }), { homeDir });
+  }
 
   return { runId, metadata };
 }
@@ -123,6 +176,7 @@ export async function startRun({
   captureTranscript = false,
   cliVersion,
   profile = null,
+  strategy = "direct",
   follow = false,
   timeoutMs = null,
   wait = true,
@@ -138,7 +192,8 @@ export async function startRun({
     permissions,
     captureTranscript,
     cliVersion,
-    profile
+    profile,
+    strategy: normalizeRunStrategy(strategy)
   });
 
   if (!wait) {
