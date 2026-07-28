@@ -13,7 +13,10 @@
         { "id": "assets", "type": "assets" },
         { "id": "drift", "type": "drift" }
       ],
-      "assetFiles": ["orchestrator.md"],
+      "assetFiles": [
+        "orchestrator.md",
+        "extensions/pi/kairo-minion.js"
+      ],
       "adapterHints": {}
     },
     {
