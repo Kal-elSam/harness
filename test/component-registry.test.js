@@ -91,7 +91,10 @@ test("catalog metadata is loaded from the packaged component catalog", () => {
   const sddCore = catalog.find((component) => component.id === "sdd-core");
 
   assert.equal(orchestrator.label, "Orchestrator");
-  assert.deepEqual(orchestrator.assetFiles, ["orchestrator.md"]);
+  assert.deepEqual(orchestrator.assetFiles, [
+    "orchestrator.md",
+    "extensions/pi/kairo-minion.js"
+  ]);
   assert.equal(sddCore.label, "SDD Core");
   assert.deepEqual(sddCore.assetFiles, [
     "workflow.md",

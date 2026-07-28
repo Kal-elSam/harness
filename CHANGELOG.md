@@ -3,6 +3,25 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.8.0 — 2026-07-28 (Kairo Runtime)
+
+Minor release. Context Orchestration for Pi: durable DAG, isolated minions,
+budgets, cancel cascade, recovery receipts. Publish tag: `kairo-runtime-v0.8.0`.
+
+### Added
+
+- `kairo run --agent pi --strategy orchestrated` with managed minion extension.
+- Ephemeral Pi minions (read-only tools, path allowlist, no nested depth > 1).
+- Context budgets at 70% compact / 90% stop; task retries (max 2); cascade cancel.
+- Durable orchestration state under `~/.harness/runs/<root>/orchestration/state.json`
+  and write-once `receipt.json` (secret-free; `recovered` on interrupt).
+- Supervisor-injected `KAIRO_ORCH_*` identity; root lineage from persisted state.
+
+### Compatibility
+
+- Orchestrated requires Pi + managed extension; direct strategy unchanged.
+- No same-root resume; Cockpit does not drive orchestration in this release.
+
 ## 0.7.0 — 2026-07-27 (Kairo Runtime)
 
 Minor release. Bounded native review via explicit Codex or Pi agent, Git-scoped

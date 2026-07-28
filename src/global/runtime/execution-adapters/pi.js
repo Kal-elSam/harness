@@ -35,7 +35,10 @@ export function buildPiPermissionsArgs(permissions = []) {
   );
 }
 
-export function buildPiLaunch({ task, cwd, model, permissions = [], env = process.env } = {}) {
+export function buildPiLaunch({
+  task, cwd, model, permissions = [], env = process.env,
+  strategy = "direct", extensionPath = null
+} = {}) {
   const args = [
     "--mode",
     "json",
@@ -45,6 +48,13 @@ export function buildPiLaunch({ task, cwd, model, permissions = [], env = proces
 
   if (model) {
     args.push("--model", model);
+  }
+
+  if (strategy === "orchestrated") {
+    if (typeof extensionPath !== "string" || !extensionPath) {
+      throw new Error("Orchestrated Pi requires a managed extension path.");
+    }
+    args.push("--no-extensions", "--extension", extensionPath);
   }
 
   args.push(task);

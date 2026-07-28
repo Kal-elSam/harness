@@ -301,6 +301,18 @@ Launches `pi --mode json --no-session` (optional `--model`). `read-only` maps to
 to `--approve`). Custom `PI_CODING_AGENT_DIR` blocks config writes in 0.6.0 but does
 not block runtime. Kairo does not install Pi or assert subscription/entitlement.
 
+### Orchestrated Pi (Context Orchestration)
+
+```bash
+kairo run --agent pi --strategy orchestrated --task "..."
+```
+
+Loads the managed minion extension, injects `KAIRO_ORCH_*`, and persists a depth≤1
+DAG under `~/.harness/runs/<rootRunId>/orchestration/state.json`. Normal completion
+seals write-once `receipt.json`; interrupt recovery seals `recovered:true`. Limits:
+concurrency 2, max attempts 2, context compact at 70% / stop at 90%, cascade cancel
+on parent abort. No same-root resume. Direct `--strategy direct` (default) is unchanged.
+
 ### Bounded review (Codex / Pi)
 
 Read-only native review against a Git snapshot. Never mutates the repo, never
