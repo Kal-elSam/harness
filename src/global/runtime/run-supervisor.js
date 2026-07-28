@@ -19,9 +19,11 @@ import { isRunCancelRequested } from "./run-cancel-signal.js";
 import { readSupervisorLock, touchSupervisorLock, writeSupervisorLock } from "./run-supervisor-lock.js";
 import { shouldPersistTranscript } from "./run-redact.js";
 import {
+  buildOrchestratedRuntimeEnv,
   normalizeRunStrategy,
   resolveOrchestratedExtensionPath
 } from "./run-strategy.js";
+import { finalizeOrchState, RUN_STRATEGIES } from "./orchestration/index.js";
 
 async function shouldPreserveCancelledState(homeDir, runId) {
   const fresh = await readRunState(homeDir, runId);
@@ -98,7 +100,14 @@ export async function supervisePreparedRun({
 
   const child = spawnImpl(launch.command, launch.args, {
     cwd: launch.cwd,
-    env: launch.env,
+    env: buildOrchestratedRuntimeEnv({
+      homeDir,
+      rootRunId: runId,
+      rootTaskId: metadata.lineage?.taskId,
+      cliVersion: metadata.cliVersion,
+      strategy,
+      baseEnv: launch.env ?? process.env
+    }),
     stdio: ["ignore", "pipe", "pipe"]
   });
   activeProcesses?.set(runId, child);
@@ -252,6 +261,9 @@ export async function supervisePreparedRun({
             type: failed ? "run.failed" : "run.completed",
             data: { exitCode }
           }), { captureTranscript: shouldPersistTranscript(captureTranscript) });
+          if (!failed && strategy === RUN_STRATEGIES.ORCHESTRATED) {
+            await finalizeOrchState(runId, { homeDir, recovered: false });
+          }
           resolve(metadata);
         });
       } catch (error) {

@@ -7,8 +7,12 @@ export {
   createOrchLineage, createBudgetUsage, createDagNode, createMinionBrief,
   createMinionResult, digestAllowlisted
 } from "./orch-types.js";
-export { assertOrchReceiptSecretFree, FORBIDDEN_KEYS } from "./orch-validate.js";
-export { orchPaths, buildOrchReceipt, saveOrchReceipt, loadOrchReceipt } from "./orch-receipts.js";
+export { assertOrchReceiptSecretFree, FORBIDDEN_KEYS, walkForbiddenKeys } from "./orch-validate.js";
+export {
+  orchPaths, buildOrchReceipt, saveOrchReceipt, loadOrchReceipt,
+  createOrchState, saveOrchState, loadOrchState, terminalizeOrchNodes,
+  updateOrchState, applyMinionDagUpdate, finalizeOrchState, reconcileOrchState
+} from "./orch-receipts.js";
 
 export const KAIRO_MINION_RELATIVE_ASSET =
   "components/orchestrator/extensions/pi/kairo-minion.js";
