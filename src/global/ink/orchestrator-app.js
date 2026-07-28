@@ -17,7 +17,6 @@ import {
   COCKPIT_REGIONS,
   buildFooterModel,
   buildNavModel,
-  buildSystemStripModel,
   buildTopBarModel,
   navIndexForView,
   resolveProjectName
@@ -379,9 +378,11 @@ export function OrchestratorApp({
         canCancel: isRunCancellable(data.selectedRun),
         unicode,
         changesPhase: data.changesAction?.phase ?? null,
-        recoveryPhase: data.recoveryAction?.phase ?? null
+        recoveryPhase: data.recoveryAction?.phase ?? null,
+        columns
       }),
       layoutMode: mode,
+      columns,
       nav: buildNavModel({
         navIndex: ui.navIndex,
         currentView: ui.view,
@@ -391,24 +392,8 @@ export function OrchestratorApp({
         diagnostics: data.diagnostics,
         snapshot: data.snapshot
       }),
-      system: buildSystemStripModel({
-        dashboard: data.dashboard,
-        diagnostics: data.diagnostics,
-        readiness: data.snapshot
-          ? {
-            kind: data.snapshot.health.toLowerCase(),
-            label: controlCenter.health.label,
-            healthKind: data.snapshot.health === CONTROL_PLANE_HEALTH.HEALTHY
-              ? "ready"
-              : data.snapshot.health === CONTROL_PLANE_HEALTH.CHECK_FAILED
-                ? "error"
-                : "warn"
-          }
-          : readiness
-      }),
       navFocused: ui.region === COCKPIT_REGIONS.NAV,
       contentFocused: ui.region === COCKPIT_REGIONS.CONTENT,
-      systemFocused: ui.region === COCKPIT_REGIONS.SYSTEM,
       colorEnabled
     },
       renderCockpitView({

@@ -51,13 +51,14 @@ test("arrows move nav focus and enter opens Runs hub with content focus", () => 
   assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
 });
 
-test("resize remaps invalid region", () => {
+test("resize remaps invalid SYSTEM region away from retired column", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.WIDE,
     view: ORCHESTRATOR_VIEWS.ACTIVE_RUNS,
     region: COCKPIT_REGIONS.SYSTEM,
     navIndex: 1
   });
+  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
   state = reduceCockpitUi(state, { type: "resize", layoutMode: LAYOUT_MODES.COMPACT });
   assert.equal(state.layoutMode, LAYOUT_MODES.COMPACT);
   assert.equal(state.region, COCKPIT_REGIONS.CONTENT);

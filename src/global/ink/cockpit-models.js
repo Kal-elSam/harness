@@ -60,10 +60,8 @@ export const COCKPIT_NAV = [
 ];
 
 export function regionsForLayout(layoutMode) {
-  if (layoutMode === LAYOUT_MODES.WIDE) {
-    return [COCKPIT_REGIONS.NAV, COCKPIT_REGIONS.CONTENT, COCKPIT_REGIONS.SYSTEM];
-  }
-  if (layoutMode === LAYOUT_MODES.COMPACT) {
+  // Single main panel: nav strip + content. SYSTEM column retired from the shell.
+  if (layoutMode === LAYOUT_MODES.WIDE || layoutMode === LAYOUT_MODES.COMPACT) {
     return [COCKPIT_REGIONS.NAV, COCKPIT_REGIONS.CONTENT];
   }
   return [COCKPIT_REGIONS.CONTENT];
@@ -226,41 +224,49 @@ export function buildFooterModel({
   unicode = true,
   hasError = false,
   changesPhase = null,
-  recoveryPhase = null
+  recoveryPhase = null,
+  columns = 80
 } = {}) {
   const glyphs = resolveGlyphs(unicode);
   const parts = [];
+  const footerColumns = Math.max(24, Math.min(Number(columns) || 80, 120));
 
   if (hasError) {
     parts.push("R Retry");
     parts.push("Esc Exit");
-    return { text: parts.join(` ${glyphs.bullet} `) };
+    return { text: parts.join(` ${glyphs.bullet} `), columns: footerColumns };
   }
 
   if (helpOpen || view === ORCHESTRATOR_VIEWS.HELP) {
     parts.push("Esc close help");
     parts.push("? Help");
-    return { text: parts.join(` ${glyphs.bullet} `) };
+    return { text: parts.join(` ${glyphs.bullet} `), columns: footerColumns };
   }
 
   if (view === ORCHESTRATOR_VIEWS.RUN_DETAIL) {
     parts.push("R refresh");
     if (canCancel) parts.push("C cancel");
     parts.push("Esc Back");
-    return { text: parts.join(` ${glyphs.bullet} `) };
+    return { text: parts.join(` ${glyphs.bullet} `), columns: footerColumns };
   }
 
   if (view === ORCHESTRATOR_VIEWS.REVIEW_DETAIL) {
     parts.push("Esc Back");
-    return { text: parts.join(` ${glyphs.bullet} `) };
+    return { text: parts.join(` ${glyphs.bullet} `), columns: footerColumns };
   }
 
   if (view === ORCHESTRATOR_VIEWS.CHANGES) {
-    return { text: buildChangesFooterParts(changesPhase).join(` ${glyphs.bullet} `) };
+    return {
+      text: buildChangesFooterParts(changesPhase).join(` ${glyphs.bullet} `),
+      columns: footerColumns
+    };
   }
 
   if (view === ORCHESTRATOR_VIEWS.ACTIVITY) {
-    return { text: buildRecoveryFooterParts(recoveryPhase).join(` ${glyphs.bullet} `) };
+    return {
+      text: buildRecoveryFooterParts(recoveryPhase).join(` ${glyphs.bullet} `),
+      columns: footerColumns
+    };
   }
 
   parts.push("↑↓ Navigate");
@@ -297,7 +303,7 @@ export function buildFooterModel({
   parts.push("? Help");
   parts.push(view === ORCHESTRATOR_VIEWS.HOME ? "Esc Exit" : "Esc Back");
 
-  return { text: parts.join(` ${glyphs.bullet} `) };
+  return { text: parts.join(` ${glyphs.bullet} `), columns: footerColumns };
 }
 
 export function windowLinesForLayout(lines = [], layoutMode = LAYOUT_MODES.COMPACT, contentRows = 12) {

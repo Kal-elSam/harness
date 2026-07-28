@@ -4,17 +4,17 @@ import {
   buildFooterModel,
   buildHomeMissionModel,
   buildNavModel,
-  buildSystemStripModel,
   buildTopBarModel
 } from "../src/global/ink/cockpit-models.js";
 import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
+import { regionsForLayout, COCKPIT_REGIONS } from "../src/global/ink/cockpit-models.js";
 
 /**
  * Semantic frame capture without Ink paint timing.
- * Joins presentational models the shell renders so CI stays deterministic.
+ * Joins presentational models the single-panel shell renders so CI stays deterministic.
  */
-function composeCockpitFrame({ layoutMode = LAYOUT_MODES.WIDE } = {}) {
+function composeCockpitFrame({ layoutMode = LAYOUT_MODES.WIDE, columns = 80 } = {}) {
   const topBar = buildTopBarModel({ projectName: "agentic-harness" });
   const nav = buildNavModel({
     navIndex: 0,
@@ -42,24 +42,18 @@ function composeCockpitFrame({ layoutMode = LAYOUT_MODES.WIDE } = {}) {
     },
     layoutMode
   });
-  const system = buildSystemStripModel({
-    dashboard: {
-      activeRuns: [],
-      providers: [{ launchable: true }]
-    },
-    diagnostics: {
-      diagnostics: { detected: 4 },
-      capabilities: [{}, {}, {}, {}],
-      intelligence: { summary: { localAvailable: false } }
-    },
-    readiness: mission.readiness
+  const footer = buildFooterModel({ view: "home", columns });
+  const stripLabels = nav.items.map((item) => {
+    const compact = layoutMode !== LAYOUT_MODES.WIDE;
+    const label = compact
+      ? item.label.split(/[&·]/)[0].trim().split(/\s+/)[0]
+      : item.label;
+    return `${item.marker}${label}`;
   });
-  const footer = buildFooterModel({ view: "home" });
 
   const lines = [
     `${topBar.brand} ${topBar.status} ${topBar.projectLabel}`,
-    nav.title,
-    ...nav.items.map((item) => `${item.marker} ${item.label}`),
+    `NAVSTRIP ${stripLabels.join(" · ")}`,
     nav.explanation,
     mission.title,
     mission.purpose,
@@ -74,11 +68,8 @@ function composeCockpitFrame({ layoutMode = LAYOUT_MODES.WIDE } = {}) {
     mission.recent.headline ?? mission.recent.emptyHint,
     mission.explore.title,
     ...mission.explore.lines,
-    layoutMode === LAYOUT_MODES.WIDE ? system.title : null,
-    ...(layoutMode === LAYOUT_MODES.WIDE
-      ? system.rows.map((row) => `${row.key} ${row.value}`)
-      : []),
-    footer.text
+    footer.text,
+    `FOOTER_COLS ${footer.columns}`
   ].filter(Boolean);
 
   return lines.join("\n");
@@ -97,29 +88,36 @@ function assertCriticalHomeParity(frame) {
   assert.match(frame, /Last run · Codex · Failed|No runs yet/);
 }
 
-test("cockpit shell wide frame exposes Home, readiness, and system labels", () => {
-  const frame = composeCockpitFrame({ layoutMode: LAYOUT_MODES.WIDE });
+test("cockpit shell wide frame uses nav strip and single panel without SYSTEM", () => {
+  const frame = composeCockpitFrame({ layoutMode: LAYOUT_MODES.WIDE, columns: 120 });
   assertCriticalHomeParity(frame);
   assert.match(frame, /ONLINE|Offline/);
-  assert.match(frame, /NAVIGATION/);
-  assert.match(frame, /Control center|HOME/);
+  assert.match(frame, /NAVSTRIP/);
+  assert.match(frame, /Control center/);
   assert.match(frame, /Runs|Changes/);
-  assert.match(frame, /SYSTEM/);
-  assert.match(frame, /Health Limited|Health Ready|Health Needs/i);
+  assert.doesNotMatch(frame, /\bSYSTEM\b/);
   assert.doesNotMatch(frame, /MISSION CONTROL/);
+  assert.deepEqual(regionsForLayout(LAYOUT_MODES.WIDE), [
+    COCKPIT_REGIONS.NAV,
+    COCKPIT_REGIONS.CONTENT
+  ]);
+  assert.match(frame, /FOOTER_COLS 120/);
 });
 
-test("cockpit compact frame keeps nav and embeds readiness without system strip", () => {
-  const frame = composeCockpitFrame({ layoutMode: LAYOUT_MODES.COMPACT });
+test("cockpit compact 80x24 frame keeps nav strip without system column", () => {
+  const frame = composeCockpitFrame({ layoutMode: LAYOUT_MODES.COMPACT, columns: 80 });
   assertCriticalHomeParity(frame);
-  assert.match(frame, /NAVIGATION/);
-  assert.doesNotMatch(frame, /^SYSTEM$/m);
+  assert.match(frame, /NAVSTRIP/);
+  assert.match(frame, /Control · /);
+  assert.doesNotMatch(frame, /\bSYSTEM\b/);
+  assert.match(frame, /FOOTER_COLS 80/);
 });
 
 test("cockpit minimal frame keeps critical Home information", () => {
-  const frame = composeCockpitFrame({ layoutMode: LAYOUT_MODES.MINIMAL });
+  const frame = composeCockpitFrame({ layoutMode: LAYOUT_MODES.MINIMAL, columns: 64 });
   assertCriticalHomeParity(frame);
   assert.match(frame, /Intelligence: Optional capability not configured/);
+  assert.doesNotMatch(frame, /\bSYSTEM\b/);
 });
 
 test("cockpit home mission model stays textual under NO_COLOR assumptions", () => {

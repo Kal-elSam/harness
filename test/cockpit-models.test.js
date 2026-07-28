@@ -18,11 +18,10 @@ import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 import { READINESS_KINDS } from "../src/global/dashboard-guidance.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
 
-test("regionsForLayout matches breakpoints", () => {
+test("regionsForLayout matches single-panel shell breakpoints", () => {
   assert.deepEqual(regionsForLayout(LAYOUT_MODES.WIDE), [
     COCKPIT_REGIONS.NAV,
-    COCKPIT_REGIONS.CONTENT,
-    COCKPIT_REGIONS.SYSTEM
+    COCKPIT_REGIONS.CONTENT
   ]);
   assert.deepEqual(regionsForLayout(LAYOUT_MODES.COMPACT), [
     COCKPIT_REGIONS.NAV,
@@ -147,11 +146,13 @@ test("windowLinesForLayout truncates long agent and diagnostic lists", () => {
 });
 
 test("footer and project name helpers", () => {
-  const footer = buildFooterModel({ view: "home", unicode: false });
+  const footer = buildFooterModel({ view: "home", unicode: false, columns: 80 });
   assert.match(footer.text, /Navigate/);
   assert.match(footer.text, /Help/);
   assert.doesNotMatch(footer.text, /Tab/);
-  const retry = buildFooterModel({ hasError: true, unicode: false });
+  assert.equal(footer.columns, 80);
+  const retry = buildFooterModel({ hasError: true, unicode: false, columns: 64 });
   assert.match(retry.text, /Retry/);
+  assert.equal(retry.columns, 64);
   assert.equal(resolveProjectName("/tmp/agentic-harness"), "agentic-harness");
 });
