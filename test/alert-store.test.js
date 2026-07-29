@@ -99,7 +99,7 @@ test("orphan claim without alert.json is completed on next save", async () => {
   assert.equal(stored[0].alertId, claim.alertId);
 });
 
-test("stale claim over terminal alert is reclaimed for a new open alert", async () => {
+test("stale claim reclaim is serial across concurrent saves", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
   const { alert } = await saveAlert({ kind: "stale", title: "Done once", source: "test" }, { homeDir });
   await resolveAlert(alert.alertId, { homeDir });
@@ -107,8 +107,11 @@ test("stale claim over terminal alert is reclaimed for a new open alert", async 
   await mkdir(openDir, { recursive: true });
   await writeFile(join(openDir, alert.fingerprint), `${JSON.stringify(alert, null, 2)}\n`);
 
-  const again = await saveAlert({ kind: "stale", title: "Done once", source: "test" }, { homeDir });
-  assert.equal(again.deduped, false);
-  assert.notEqual(again.alert.alertId, alert.alertId);
+  const results = await Promise.all(Array.from({ length: 20 }, () => saveAlert({
+    kind: "stale", title: "Done once", source: "test"
+  }, { homeDir })));
+  assert.equal(results.length, 20);
+  assert.equal(new Set(results.map((r) => r.alert.alertId)).size, 1);
   assert.equal((await listAlerts({ homeDir, state: ALERT_STATES.OPEN })).length, 1);
+  assert.notEqual(results[0].alert.alertId, alert.alertId);
 });
