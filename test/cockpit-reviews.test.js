@@ -47,13 +47,16 @@ test("review list and detail formatters stay secret-free and readable", () => {
   assert.match(empty[0], /No review receipts/);
 
   const lines = formatReviewListLines([sampleReceipt]);
-  assert.match(lines[0], /rev-aaaaaaaaaaaaaaaaaaaaaaaa/);
-  assert.match(lines[0], /codex/);
-  assert.match(lines[0], /2f \(h1\/m0\/l1\)/);
+  assert.match(lines[0], /codex · completed/);
+  assert.match(lines[0], /2 findings \(h1\/m0\/l1\)/);
+  assert.doesNotMatch(lines[0], /rev-aaaaaaaaaaaaaaaaaaaaaaaa/);
   assert.doesNotMatch(lines.join("\n"), /prompt|diff|transcript|api[_-]?key/i);
 
   const detail = formatReviewDetailLines(sampleReceipt);
-  assert.match(detail.join("\n"), /Findings: 2/);
+  assert.match(detail.join("\n"), /SUMMARY/);
+  assert.match(detail.join("\n"), /DETAILS/);
+  assert.match(detail.join("\n"), /Id · rev-aaaaaaaaaaaaaaaaaaaaaaaa/);
+  assert.match(detail.join("\n"), /Findings · 2/);
   assert.match(detail.join("\n"), /\[HIGH\] src\/a\.js:10 — Leak/);
   assert.equal(selectReviewFromList([sampleReceipt], 0), sampleReceipt);
   assert.equal(selectReviewFromList([], 0), null);

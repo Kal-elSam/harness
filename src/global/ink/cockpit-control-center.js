@@ -120,3 +120,51 @@ function formatTokenHeadline(budgets) {
   }
   return parts.length > 0 ? parts.join(" · ") : "Data unavailable";
 }
+
+/**
+ * Usage surface: measured budgets when present, configured profile limits,
+ * and auditable run tokenUsage — never invent totals.
+ */
+export function formatUsageLines({ snapshot = null, dashboard = null } = {}) {
+  const lines = ["MEASURED"];
+  const measured = formatTokenHeadline(snapshot?.budgets);
+  lines.push(measured === "Data unavailable" ? "Data unavailable" : measured);
+
+  const profile = dashboard?.profile ?? {};
+  const configured = [];
+  if (Number.isFinite(profile.tokenBudget)) configured.push(`token ${profile.tokenBudget}`);
+  if (Number.isFinite(profile.stableContextBudget)) configured.push(`stable ${profile.stableContextBudget}`);
+  if (Number.isFinite(profile.requestContextBudget)) configured.push(`request ${profile.requestContextBudget}`);
+  lines.push("", "CONFIGURED LIMITS");
+  lines.push(configured.length > 0 ? configured.join(" · ") : "No profile token budgets configured.");
+
+  const runs = [...(dashboard?.activeRuns ?? []), ...(dashboard?.recentRuns ?? [])]
+    .filter((run) => run?.tokenUsage && typeof run.tokenUsage === "object");
+  lines.push("", "RUN USAGE");
+  if (runs.length === 0) {
+    lines.push("No auditable run tokenUsage yet.");
+  } else {
+    for (const run of runs.slice(0, 3)) {
+      const usage = run.tokenUsage;
+      const total = Number.isFinite(usage.total)
+        ? usage.total
+        : (Number(usage.input) || 0) + (Number(usage.output) || 0);
+      lines.push(`${run.agentId ?? "agent"} · ${total} tokens`);
+    }
+  }
+
+  lines.push("", "Auditable budgets only — no invented token savings.");
+  return lines;
+}
+
+export function hasAuditableUsage({ snapshot = null, dashboard = null } = {}) {
+  if (formatTokenHeadline(snapshot?.budgets) !== "Data unavailable") return true;
+  const profile = dashboard?.profile ?? {};
+  if (Number.isFinite(profile.tokenBudget)
+    || Number.isFinite(profile.stableContextBudget)
+    || Number.isFinite(profile.requestContextBudget)) {
+    return true;
+  }
+  return [...(dashboard?.activeRuns ?? []), ...(dashboard?.recentRuns ?? [])]
+    .some((run) => run?.tokenUsage && typeof run.tokenUsage === "object");
+}

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildControlCenterModel } from "../src/global/ink/cockpit-control-center.js";
+import { buildControlCenterModel, formatUsageLines } from "../src/global/ink/cockpit-control-center.js";
 import { CONTROL_PLANE_HEALTH } from "../src/global/control-plane-snapshot.js";
 import { COCKPIT_NAV } from "../src/global/ink/cockpit-models.js";
 import {
@@ -10,7 +10,8 @@ import {
 } from "../src/global/ink/cockpit-scan.js";
 import { resolveEnterNavIntent } from "../src/global/ink/cockpit-enter.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
-import { RUNS_HUB_ITEMS } from "../src/global/ink/cockpit-runs.js";
+import { formatOrchestrationStatus, formatRunsHubLines, RUNS_HUB_ITEMS } from "../src/global/ink/cockpit-runs.js";
+import { formatRunDetailLines } from "../src/global/ink/orchestrator-state.js";
 
 test("control center model surfaces health, coverage, and CTA from snapshot", () => {
   const model = buildControlCenterModel({
@@ -45,6 +46,52 @@ test("control center model surfaces health, coverage, and CTA from snapshot", ()
   assert.equal(model.alerts.headline, "Alert data unavailable");
   assert.doesNotMatch(model.alerts.headline, /\d+\s+pending/i);
   assert.match(model.tokens.headline, /Data unavailable|stable|request/);
+});
+
+test("usage lines show configured limits and run tokenUsage without inventing totals", () => {
+  const empty = formatUsageLines({});
+  assert.match(empty.join("\n"), /MEASURED/);
+  assert.match(empty.join("\n"), /Data unavailable/);
+  assert.match(empty.join("\n"), /No profile token budgets configured/);
+  assert.match(empty.join("\n"), /no invented token savings/i);
+
+  const lines = formatUsageLines({
+    dashboard: {
+      profile: { tokenBudget: 8000, stableContextBudget: 4000 },
+      recentRuns: [{ agentId: "codex", tokenUsage: { input: 10, output: 5, total: 15 } }]
+    }
+  });
+  const text = lines.join("\n");
+  assert.match(text, /CONFIGURED LIMITS/);
+  assert.match(text, /token 8000 · stable 4000/);
+  assert.match(text, /codex · 15 tokens/);
+  assert.doesNotMatch(text, /invented savings amount/i);
+});
+
+test("orchestration hub labels stay selectable; detail keeps ids under DETAILS", () => {
+  assert.deepEqual(formatRunsHubLines(), [
+    "Active runs",
+    "History",
+    "Reviews",
+    "New run"
+  ]);
+  assert.match(formatOrchestrationStatus({ active: 2, recent: 5, reviews: 1 }), /2 active · 5 recent · 1 reviews/);
+  const detail = formatRunDetailLines({
+    runId: "run_secretish",
+    agentId: "codex",
+    state: "succeeded",
+    model: "gpt",
+    cwd: "/Users/me/proj",
+    startedAt: "2026-07-29T12:00:00.000Z",
+    tokenUsage: { input: 1, output: 2, total: 3 }
+  }, [], { homeDir: "/Users/me" });
+  const text = detail.join("\n");
+  assert.match(text, /SUMMARY/);
+  assert.match(text, /Tokens · in 1 · out 2 · total 3/);
+  assert.match(text, /DETAILS/);
+  assert.match(text, /Run id · run_secretish/);
+  assert.match(text, /Cwd · ~\/proj/);
+  assert.doesNotMatch(text, /JSON|\{"input"/);
 });
 
 test("primary nav lists six user destinations", () => {

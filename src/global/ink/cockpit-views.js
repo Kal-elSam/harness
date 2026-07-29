@@ -17,6 +17,8 @@ import { formatRunsHubLines, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 import { formatReviewDetailLines, formatReviewListLines } from "./cockpit-reviews.js";
 import { formatChangesActionLines } from "./cockpit-changes.js";
 import { formatRecoveryLines } from "./cockpit-recovery.js";
+import { formatUsageLines } from "./cockpit-control-center.js";
+import { formatOrchestrationStatus } from "./cockpit-runs.js";
 
 export function PalettePanel({ model, colorEnabled = true }) {
   return React.createElement(Box, { flexDirection: "column" },
@@ -98,11 +100,12 @@ export function renderCockpitView({
     case ORCHESTRATOR_VIEWS.HOME:
       return React.createElement(ControlCenterPanel, { model: controlCenter, colorEnabled });
     case ORCHESTRATOR_VIEWS.USAGE:
-      return governanceList("Usage", [
-        controlCenter?.tokens?.headline ?? "Data unavailable",
-        "",
-        "Auditable budgets only — no invented token savings."
-      ], layoutMode, colorEnabled);
+      return governanceList(
+        "Usage",
+        formatUsageLines({ snapshot, dashboard }),
+        layoutMode,
+        colorEnabled
+      );
     case ORCHESTRATOR_VIEWS.IDES:
     case ORCHESTRATOR_VIEWS.PROVIDERS:
       return governanceList("IDEs & models", [
@@ -130,7 +133,11 @@ export function renderCockpitView({
       return governanceList("Profile & policy", formatProfileLines(snapshot, diagnostics), layoutMode, colorEnabled);
     case ORCHESTRATOR_VIEWS.RUNS:
       return listBlock(
-        "Runs",
+        `Orchestration · ${formatOrchestrationStatus({
+          active: (dashboard?.activeRuns ?? []).length,
+          recent: (dashboard?.recentRuns ?? []).length,
+          reviews: (reviews ?? []).length
+        })}`,
         formatRunsHubLines(RUNS_HUB_ITEMS),
         listIndex,
         colorEnabled,
@@ -145,7 +152,7 @@ export function renderCockpitView({
         }),
         listIndex,
         colorEnabled,
-        "Runs are secondary. Prefer Control center Actions when drift or setup remains."
+        "Enter opens detail · Esc back to Orchestration"
       );
     case ORCHESTRATOR_VIEWS.RECENT_RUNS:
       return listBlock(
@@ -156,7 +163,7 @@ export function renderCockpitView({
         }),
         listIndex,
         colorEnabled,
-        "Open Runs after governance is healthy."
+        "Enter opens detail · Esc back to Orchestration"
       );
     case ORCHESTRATOR_VIEWS.REVIEWS:
       return listBlock(
@@ -192,7 +199,7 @@ export function renderCockpitView({
     case ORCHESTRATOR_VIEWS.RUN_DETAIL:
       return React.createElement(Box, { flexDirection: "column" },
         React.createElement(Text, { bold: true }, "Run detail"),
-        formatRunDetailLines(selectedRun, selectedEvents)
+        formatRunDetailLines(selectedRun, selectedEvents, { homeDir })
           .map((line) => React.createElement(Text, { key: line }, line))
       );
     case ORCHESTRATOR_VIEWS.REVIEW_DETAIL:

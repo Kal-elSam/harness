@@ -117,10 +117,19 @@ export function resolveNavStatusSummary(item, {
       return backups > 0 ? `${backups} backups` : "No backups";
     case "orchestration":
       return active === 0 ? "Idle" : `${active} active`;
-    case "usage":
-      return Number.isFinite(snapshot?.budgets?.stableUsedTokens)
+    case "usage": {
+      if (Number.isFinite(snapshot?.budgets?.stableUsedTokens)) return "Auditable";
+      const profile = dashboard?.profile ?? {};
+      if (Number.isFinite(profile.tokenBudget)
+        || Number.isFinite(profile.stableContextBudget)
+        || Number.isFinite(profile.requestContextBudget)) {
+        return "Auditable";
+      }
+      const runs = [...(dashboard?.activeRuns ?? []), ...(dashboard?.recentRuns ?? [])];
+      return runs.some((run) => run?.tokenUsage && typeof run.tokenUsage === "object")
         ? "Auditable"
         : "n/a";
+    }
     case "settings":
       return snapshot?.policy?.profile ?? "defaults";
     case "ides":
