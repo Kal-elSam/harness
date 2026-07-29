@@ -42,22 +42,34 @@ function assertMonitorState(raw) {
   if (!raw || typeof raw !== "object" || raw.version !== 1 || typeof raw.enabled !== "boolean") {
     throw new MonitorStateError("Monitor state schema invalid.");
   }
-  const next = { ...defaultMonitorState(), ...raw, version: 1, enabled: raw.enabled };
-  if (!Number.isFinite(next.intervalSec) || next.intervalSec < 1) {
+  if (!Number.isFinite(raw.intervalSec) || raw.intervalSec < 1) {
     throw new MonitorStateError("Monitor state.intervalSec invalid.");
   }
   const a = raw.autostart;
-  if (a !== undefined) {
-    if (!a || typeof a !== "object"
-      || typeof a.supported !== "boolean"
-      || typeof a.configured !== "boolean"
-      || typeof a.loaded !== "boolean"
-      || typeof a.installed !== "boolean") {
-      throw new MonitorStateError("Monitor state.autostart invalid.");
-    }
-    next.autostart = { ...defaultMonitorState().autostart, ...a };
+  if (!a || typeof a !== "object"
+    || typeof a.supported !== "boolean"
+    || typeof a.configured !== "boolean"
+    || typeof a.loaded !== "boolean"
+    || typeof a.installed !== "boolean") {
+    throw new MonitorStateError("Monitor state.autostart invalid.");
   }
-  return next;
+  if (a.loaded && !a.configured) {
+    throw new MonitorStateError("Monitor state.autostart loaded requires configured.");
+  }
+  if (a.installed !== a.loaded) {
+    throw new MonitorStateError("Monitor state.autostart installed must equal loaded.");
+  }
+  if (!a.supported && (a.configured || a.loaded || a.installed)) {
+    throw new MonitorStateError("Monitor state.autostart unsupported with lifecycle flags.");
+  }
+  return {
+    ...defaultMonitorState(),
+    ...raw,
+    version: 1,
+    enabled: raw.enabled,
+    intervalSec: raw.intervalSec,
+    autostart: { ...defaultMonitorState().autostart, ...a }
+  };
 }
 
 export async function readMonitorState(homeDir, { repair = false } = {}) {

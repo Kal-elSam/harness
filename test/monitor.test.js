@@ -89,13 +89,21 @@ test("nested invalid fails closed; tick does not repair; unloaded is stale", asy
   const { monitorDir, monitorStatePath } = harnessHomePaths(homeDir);
   await mkdir(monitorDir, { recursive: true });
   const writeState = (body) => writeFile(monitorStatePath, `${JSON.stringify(body)}\n`);
-  await writeState({
-    version: 1, enabled: true, intervalSec: "bad",
-    autostart: { supported: true, configured: true, loaded: false, installed: false }
-  });
+  const baseAuto = {
+    platform: "darwin", supported: true, configured: true, loaded: false, installed: false
+  };
+  await writeState({ version: 1, enabled: true, intervalSec: "bad", autostart: baseAuto });
   assert.equal((await getMonitorStatus(homeDir)).corrupt, true);
   await writeState({ version: 1, enabled: true, intervalSec: 300, autostart: "corrupt" });
   assert.equal((await getMonitorStatus(homeDir)).corrupt, true);
+  await writeState({ version: 1, enabled: true, intervalSec: 300 });
+  assert.equal((await getMonitorStatus(homeDir)).corrupt, true);
+  await writeState({
+    version: 1, enabled: true, intervalSec: 300,
+    autostart: { ...baseAuto, loaded: true, configured: false, installed: false }
+  });
+  assert.equal((await getMonitorStatus(homeDir)).corrupt, true);
+  await writeState({ version: 1, enabled: true, intervalSec: 300, autostart: "corrupt" });
   await assert.rejects(
     () => runMonitorTick(homeDir, {
       detectDriftImpl: async () => ([]), listRunsImpl: async () => [],
@@ -104,11 +112,6 @@ test("nested invalid fails closed; tick does not repair; unloaded is stale", asy
     (e) => e?.code === "corrupt_monitor_state" || /invalid|unreadable/i.test(String(e?.message))
   );
   assert.equal((await getMonitorStatus(homeDir)).corrupt, true);
-  await writeState({
-    version: 1, enabled: true, intervalSec: 300,
-    autostart: {
-      platform: "darwin", supported: true, configured: true, loaded: false, installed: false
-    }
-  });
+  await writeState({ version: 1, enabled: true, intervalSec: 300, autostart: baseAuto });
   assert.equal((await monitorDoctorCheck(homeDir)).status, "stale");
 });
