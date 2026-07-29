@@ -48,24 +48,44 @@ test("control center model surfaces health, coverage, and CTA from snapshot", ()
   assert.match(model.tokens.headline, /Data unavailable|stable|request/);
 });
 
-test("usage lines show configured limits and run tokenUsage without inventing totals", () => {
+test("usage lines with real profile shape show configured limits", () => {
   const empty = formatUsageLines({});
   assert.match(empty.join("\n"), /MEASURED/);
   assert.match(empty.join("\n"), /Data unavailable/);
   assert.match(empty.join("\n"), /No profile token budgets configured/);
-  assert.match(empty.join("\n"), /no invented token savings/i);
 
   const lines = formatUsageLines({
     dashboard: {
-      profile: { tokenBudget: 8000, stableContextBudget: 4000 },
+      profile: {
+        profile: { tokenBudget: 8000, stableContextBudget: 4000 },
+        sources: { global: "/home/.harness/profile.json", project: null }
+      },
       recentRuns: [{ agentId: "codex", tokenUsage: { input: 10, output: 5, total: 15 } }]
     }
   });
   const text = lines.join("\n");
-  assert.match(text, /CONFIGURED LIMITS/);
   assert.match(text, /token 8000 · stable 4000/);
-  assert.match(text, /codex · 15 tokens/);
-  assert.doesNotMatch(text, /invented savings amount/i);
+  assert.match(text, /codex · in 10 · out 5 · total 15/);
+});
+
+test("empty or partial tokenUsage never invents zero values", () => {
+  const emptyUsage = formatUsageLines({
+    dashboard: { recentRuns: [{ agentId: "cursor", tokenUsage: {} }] }
+  });
+  assert.match(emptyUsage.join("\n"), /No auditable run tokenUsage/);
+  assert.doesNotMatch(emptyUsage.join("\n"), /0 tokens/);
+
+  const inputOnly = formatUsageLines({
+    dashboard: { recentRuns: [{ agentId: "codex", tokenUsage: { input: 10 } }] }
+  });
+  assert.match(inputOnly.join("\n"), /codex · in 10/);
+  assert.doesNotMatch(inputOnly.join("\n"), /total/);
+
+  const inputOutput = formatUsageLines({
+    dashboard: { recentRuns: [{ agentId: "pi", tokenUsage: { input: 10, output: 5 } }] }
+  });
+  assert.match(inputOutput.join("\n"), /pi · in 10 · out 5/);
+  assert.doesNotMatch(inputOutput.join("\n"), /total/);
 });
 
 test("orchestration hub labels stay selectable; detail keeps ids under DETAILS", () => {
@@ -85,13 +105,13 @@ test("orchestration hub labels stay selectable; detail keeps ids under DETAILS",
     startedAt: "2026-07-29T12:00:00.000Z",
     tokenUsage: { input: 1, output: 2, total: 3 }
   }, [], { homeDir: "/Users/me" });
-  const text = detail.join("\n");
-  assert.match(text, /SUMMARY/);
-  assert.match(text, /Tokens · in 1 · out 2 · total 3/);
-  assert.match(text, /DETAILS/);
-  assert.match(text, /Run id · run_secretish/);
-  assert.match(text, /Cwd · ~\/proj/);
-  assert.doesNotMatch(text, /JSON|\{"input"/);
+  const dtext = detail.join("\n");
+  assert.match(dtext, /SUMMARY/);
+  assert.match(dtext, /Tokens · in 1 · out 2 · total 3/);
+  assert.match(dtext, /DETAILS/);
+  assert.match(dtext, /Run id · run_secretish/);
+  assert.match(dtext, /Cwd · ~\/proj/);
+  assert.doesNotMatch(dtext, /JSON|\{"input"/);
 });
 
 test("primary nav lists six user destinations", () => {

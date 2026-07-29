@@ -125,31 +125,48 @@ function formatTokenHeadline(budgets) {
  * Usage surface: measured budgets when present, configured profile limits,
  * and auditable run tokenUsage — never invent totals.
  */
+function resolveProfileLimits(dashboard) {
+  const resolved = dashboard?.profile?.profile ?? {};
+  const configured = [];
+  if (Number.isFinite(resolved.tokenBudget)) configured.push(`token ${resolved.tokenBudget}`);
+  if (Number.isFinite(resolved.stableContextBudget)) configured.push(`stable ${resolved.stableContextBudget}`);
+  if (Number.isFinite(resolved.requestContextBudget)) configured.push(`request ${resolved.requestContextBudget}`);
+  return configured;
+}
+
+function hasFiniteUsage(usage) {
+  if (!usage || typeof usage !== "object") return false;
+  return Number.isFinite(usage.total)
+    || Number.isFinite(usage.input)
+    || Number.isFinite(usage.output);
+}
+
+function formatRunUsageLine(run) {
+  const usage = run.tokenUsage;
+  const parts = [];
+  if (Number.isFinite(usage.input)) parts.push(`in ${usage.input}`);
+  if (Number.isFinite(usage.output)) parts.push(`out ${usage.output}`);
+  if (Number.isFinite(usage.total)) parts.push(`total ${usage.total}`);
+  return `${run.agentId ?? "agent"} · ${parts.join(" · ")}`;
+}
+
 export function formatUsageLines({ snapshot = null, dashboard = null } = {}) {
   const lines = ["MEASURED"];
   const measured = formatTokenHeadline(snapshot?.budgets);
   lines.push(measured === "Data unavailable" ? "Data unavailable" : measured);
 
-  const profile = dashboard?.profile ?? {};
-  const configured = [];
-  if (Number.isFinite(profile.tokenBudget)) configured.push(`token ${profile.tokenBudget}`);
-  if (Number.isFinite(profile.stableContextBudget)) configured.push(`stable ${profile.stableContextBudget}`);
-  if (Number.isFinite(profile.requestContextBudget)) configured.push(`request ${profile.requestContextBudget}`);
+  const configured = resolveProfileLimits(dashboard);
   lines.push("", "CONFIGURED LIMITS");
   lines.push(configured.length > 0 ? configured.join(" · ") : "No profile token budgets configured.");
 
   const runs = [...(dashboard?.activeRuns ?? []), ...(dashboard?.recentRuns ?? [])]
-    .filter((run) => run?.tokenUsage && typeof run.tokenUsage === "object");
+    .filter((run) => hasFiniteUsage(run?.tokenUsage));
   lines.push("", "RUN USAGE");
   if (runs.length === 0) {
     lines.push("No auditable run tokenUsage yet.");
   } else {
     for (const run of runs.slice(0, 3)) {
-      const usage = run.tokenUsage;
-      const total = Number.isFinite(usage.total)
-        ? usage.total
-        : (Number(usage.input) || 0) + (Number(usage.output) || 0);
-      lines.push(`${run.agentId ?? "agent"} · ${total} tokens`);
+      lines.push(formatRunUsageLine(run));
     }
   }
 
@@ -159,12 +176,7 @@ export function formatUsageLines({ snapshot = null, dashboard = null } = {}) {
 
 export function hasAuditableUsage({ snapshot = null, dashboard = null } = {}) {
   if (formatTokenHeadline(snapshot?.budgets) !== "Data unavailable") return true;
-  const profile = dashboard?.profile ?? {};
-  if (Number.isFinite(profile.tokenBudget)
-    || Number.isFinite(profile.stableContextBudget)
-    || Number.isFinite(profile.requestContextBudget)) {
-    return true;
-  }
+  if (resolveProfileLimits(dashboard).length > 0) return true;
   return [...(dashboard?.activeRuns ?? []), ...(dashboard?.recentRuns ?? [])]
-    .some((run) => run?.tokenUsage && typeof run.tokenUsage === "object");
+    .some((run) => hasFiniteUsage(run?.tokenUsage));
 }

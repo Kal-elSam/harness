@@ -119,14 +119,18 @@ export function resolveNavStatusSummary(item, {
       return active === 0 ? "Idle" : `${active} active`;
     case "usage": {
       if (Number.isFinite(snapshot?.budgets?.stableUsedTokens)) return "Auditable";
-      const profile = dashboard?.profile ?? {};
-      if (Number.isFinite(profile.tokenBudget)
-        || Number.isFinite(profile.stableContextBudget)
-        || Number.isFinite(profile.requestContextBudget)) {
+      const resolved = dashboard?.profile?.profile ?? {};
+      if (Number.isFinite(resolved.tokenBudget)
+        || Number.isFinite(resolved.stableContextBudget)
+        || Number.isFinite(resolved.requestContextBudget)) {
         return "Auditable";
       }
       const runs = [...(dashboard?.activeRuns ?? []), ...(dashboard?.recentRuns ?? [])];
-      return runs.some((run) => run?.tokenUsage && typeof run.tokenUsage === "object")
+      return runs.some((run) => {
+        const u = run?.tokenUsage;
+        return u && typeof u === "object"
+          && (Number.isFinite(u.total) || Number.isFinite(u.input) || Number.isFinite(u.output));
+      })
         ? "Auditable"
         : "n/a";
     }
