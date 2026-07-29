@@ -13,7 +13,6 @@ import {
   isContentInteractiveView
 } from "./cockpit-controller.js";
 import {
-  COCKPIT_NAV,
   COCKPIT_REGIONS,
   buildFooterModel,
   buildNavModel,
@@ -22,6 +21,13 @@ import {
   resolveProjectName
 } from "./cockpit-models.js";
 import { buildControlCenterModel } from "./cockpit-control-center.js";
+import {
+  buildPaletteActions,
+  buildPaletteModel,
+  canOpenPalette,
+  PALETTE_KINDS,
+  resolvePaletteDestination
+} from "./cockpit-palette.js";
 import { resolveEnterNavIntent } from "./cockpit-enter.js";
 import { resolveRunsHubItem, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 import { selectReviewFromList } from "./cockpit-reviews.js";
@@ -75,7 +81,7 @@ export function OrchestratorApp({
   };
 
   const openDestination = (destinationKey) => {
-    const view = resolveCtaDestinationView(destinationKey);
+    const view = resolvePaletteDestination(destinationKey);
     if (!view) return false;
     dispatch({
       type: "set-view",
@@ -84,6 +90,14 @@ export function OrchestratorApp({
     });
     return true;
   };
+
+  const confirming = data.changesAction?.phase === CHANGES_PHASE.CONFIRMING
+    || data.recoveryAction?.phase === RECOVERY_PHASE.CONFIRMING;
+  const paletteActions = buildPaletteActions({
+    ctaDestination: data.snapshot?.cta?.destination ?? null,
+    ctaTitle: data.snapshot?.cta?.title ?? null,
+    ctaDetail: data.snapshot?.cta?.detail ?? null
+  });
 
   useInput((inputKey, key) => {
     if (data.loading) return;
@@ -102,6 +116,46 @@ export function OrchestratorApp({
     }
 
     if (data.busy) return;
+
+    if (ui.paletteOpen) {
+      if (key.escape) {
+        dispatch({ type: "close-palette" });
+        return;
+      }
+      if (inputKey === "/") {
+        dispatch({ type: "toggle-palette" });
+        return;
+      }
+      if (key.upArrow || key.downArrow) {
+        dispatch({
+          type: "palette-arrow",
+          direction: key.upArrow ? "up" : "down",
+          listLength: paletteActions.length
+        });
+        return;
+      }
+      if (key.return) {
+        const selected = paletteActions[ui.paletteIndex] ?? null;
+        if (!selected) return;
+        if (selected.kind === PALETTE_KINDS.REFRESH) {
+          dispatch({ type: "run-palette", kind: selected.kind });
+          data.reload().catch(() => {});
+          return;
+        }
+        dispatch({
+          type: "run-palette",
+          kind: selected.kind,
+          view: selected.view
+        });
+      }
+      return;
+    }
+
+    if (inputKey === "/"
+      && canOpenPalette({ loading: data.loading, busy: data.busy, confirming })) {
+      dispatch({ type: "toggle-palette" });
+      return;
+    }
 
     if (key.escape) {
       if (ui.view === ORCHESTRATOR_VIEWS.CHANGES
@@ -376,6 +430,7 @@ export function OrchestratorApp({
         region: ui.region,
         navIndex: ui.navIndex,
         helpOpen: ui.helpOpen,
+        paletteOpen: ui.paletteOpen,
         canCancel: isRunCancellable(data.selectedRun),
         unicode,
         changesPhase: data.changesAction?.phase ?? null,
@@ -415,35 +470,16 @@ export function OrchestratorApp({
         changesAction: data.changesAction,
         recoveryAction: data.recoveryAction,
         controlCenter,
+        palette: ui.paletteOpen
+          ? buildPaletteModel({
+            actions: paletteActions,
+            index: ui.paletteIndex,
+            unicode
+          })
+          : null,
         layoutMode: mode,
         colorEnabled
       })
     )
   );
-}
-
-function resolveCtaDestinationView(destinationKey) {
-  switch (destinationKey) {
-    case "changes":
-      return ORCHESTRATOR_VIEWS.CHANGES;
-    case "control-center":
-      return ORCHESTRATOR_VIEWS.HOME;
-    case "ides":
-      return ORCHESTRATOR_VIEWS.IDES;
-    case "modules":
-      return ORCHESTRATOR_VIEWS.MODULES;
-    case "activity":
-      return ORCHESTRATOR_VIEWS.ACTIVITY;
-    case "profile":
-      return ORCHESTRATOR_VIEWS.PROFILE;
-    case "runs":
-    case "orchestration":
-      return ORCHESTRATOR_VIEWS.RUNS;
-    case "usage":
-      return ORCHESTRATOR_VIEWS.USAGE;
-    case "governance":
-      return ORCHESTRATOR_VIEWS.CHANGES;
-    default:
-      return null;
-  }
 }

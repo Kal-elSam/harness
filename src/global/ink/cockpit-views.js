@@ -18,6 +18,22 @@ import { formatReviewDetailLines, formatReviewListLines } from "./cockpit-review
 import { formatChangesActionLines } from "./cockpit-changes.js";
 import { formatRecoveryLines } from "./cockpit-recovery.js";
 
+export function PalettePanel({ model, colorEnabled = true }) {
+  return React.createElement(Box, { flexDirection: "column" },
+    React.createElement(Text, {
+      bold: true,
+      color: colorEnabled ? COCKPIT_COLORS.secondary : undefined
+    }, model.title),
+    React.createElement(Text, { color: COCKPIT_COLORS.muted }, model.hint),
+    React.createElement(Text, null, ""),
+    ...(model.items ?? []).map((item) => React.createElement(Text, {
+      key: item.id,
+      bold: item.selected,
+      color: item.selected && colorEnabled ? COCKPIT_COLORS.primary : undefined
+    }, `${item.marker} ${item.label}`))
+  );
+}
+
 export function ControlCenterPanel({ model, colorEnabled = true }) {
   const status = model.status ?? model.health;
   const next = model.nextAction ?? model.cta;
@@ -64,6 +80,7 @@ export function renderCockpitView({
   launchPermissionIndex,
   launchableAgents,
   controlCenter,
+  palette = null,
   layoutMode = LAYOUT_MODES.COMPACT,
   selectedRun,
   selectedEvents,
@@ -73,6 +90,9 @@ export function renderCockpitView({
   recoveryAction = null,
   colorEnabled = true
 }) {
+  if (palette) {
+    return React.createElement(PalettePanel, { model: palette, colorEnabled });
+  }
   switch (view) {
     case ORCHESTRATOR_VIEWS.HOME:
       return React.createElement(ControlCenterPanel, { model: controlCenter, colorEnabled });
@@ -192,7 +212,7 @@ export function renderCockpitView({
         React.createElement(Text, { bold: true }, "Help"),
         React.createElement(Text, null, "Kairo keeps IDEs and agents aligned with project architecture and workflows."),
         React.createElement(Text, null, "Primary flow: scan → findings → preview → confirm → apply → re-scan."),
-        React.createElement(Text, null, "↑↓ navigate · Enter open/activate · Esc back · R refresh · ? help"),
+        React.createElement(Text, null, "↑↓ navigate · Enter open/activate · / actions · Esc back · R refresh · ? help"),
         React.createElement(Text, null, "Overview hides raw diagnostics — Enter opens detail destinations.")
       );
     default: {

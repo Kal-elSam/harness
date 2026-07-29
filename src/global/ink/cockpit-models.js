@@ -223,6 +223,7 @@ export function buildFooterModel({
   region = COCKPIT_REGIONS.NAV,
   navIndex = 0,
   helpOpen = false,
+  paletteOpen = false,
   canCancel = false,
   unicode = true,
   hasError = false,
@@ -238,6 +239,13 @@ export function buildFooterModel({
     parts.push("R Retry");
     parts.push("Esc Exit");
     return { text: parts.join(` ${glyphs.bullet} `), columns: footerColumns };
+  }
+
+  if (paletteOpen) {
+    return {
+      text: ["↑↓ Select", "Enter Run", "Esc Close"].join(` ${glyphs.bullet} `),
+      columns: footerColumns
+    };
   }
 
   if (helpOpen || view === ORCHESTRATOR_VIEWS.HELP) {
@@ -305,6 +313,7 @@ export function buildFooterModel({
   }
 
   parts.push("? Help");
+  parts.push("/ Actions");
   parts.push(view === ORCHESTRATOR_VIEWS.HOME ? "Esc Exit" : "Esc Back");
 
   return { text: parts.join(` ${glyphs.bullet} `), columns: footerColumns };
