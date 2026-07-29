@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -192,4 +193,20 @@ test("history alertId or open-state mismatch fails closed", async () => {
     () => listAlerts({ homeDir: homeOpenHist }),
     (e) => e instanceof AlertStoreError && e.code === "corrupt_alert"
   );
+});
+
+test("saveAlert rejects terminal state without writing open claim", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
+  for (const state of [ALERT_STATES.RESOLVED, ALERT_STATES.DISMISSED]) {
+    const terminal = createAlert({
+      kind: "term", title: "Already done", source: "test", state
+    });
+    await assert.rejects(
+      () => saveAlert(terminal, { homeDir }),
+      (e) => e instanceof AlertStoreError && e.code === "invalid_alert_state"
+    );
+  }
+  const openDir = join(harnessHomePaths(homeDir).alertsDir, "open");
+  assert.equal(existsSync(openDir), false);
+  assert.equal((await listAlerts({ homeDir })).length, 0);
 });

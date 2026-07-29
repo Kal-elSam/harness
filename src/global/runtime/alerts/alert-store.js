@@ -132,6 +132,12 @@ export async function saveAlert(input, { homeDir } = {}) {
   const draft = input?.version === 1 ? { ...input } : createAlert(input);
   draft.fingerprint = createAlertFingerprint(draft);
   const candidate = assertAlertSecretFree(draft);
+  if (candidate.state !== ALERT_STATES.OPEN) {
+    throw new AlertStoreError("Only open alerts can be saved to the open index.", {
+      code: "invalid_alert_state",
+      details: { state: candidate.state, fingerprint: candidate.fingerprint }
+    });
+  }
   const indexPath = openIndexPath(homeDir, candidate.fingerprint);
   await mkdir(openDirPath(homeDir), { recursive: true });
 
