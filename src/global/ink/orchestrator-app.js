@@ -31,6 +31,8 @@ import {
 import { resolveEnterNavIntent } from "./cockpit-enter.js";
 import { resolveRunsHubItem, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 import { selectReviewFromList } from "./cockpit-reviews.js";
+import { selectAlertFromList } from "./cockpit-alerts.js";
+import { ALERT_STATES } from "../runtime/alerts/alert-types.js";
 import { resolveProjectReadiness } from "../dashboard-guidance.js";
 import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
 import { CockpitShell } from "./cockpit/primitives.js";
@@ -215,9 +217,11 @@ export function OrchestratorApp({
           ? (data.dashboard?.recentRuns ?? []).length
           : ui.view === ORCHESTRATOR_VIEWS.REVIEWS
             ? (data.reviews ?? []).length
-            : ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
-              ? listRecoverySnapshots(data.snapshot).length
-              : 0;
+            : ui.view === ORCHESTRATOR_VIEWS.ALERTS
+              ? (data.alerts ?? []).filter((alert) => alert.state === ALERT_STATES.OPEN).length
+              : ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
+                ? listRecoverySnapshots(data.snapshot).length
+                : 0;
 
     let routed = null;
     if (key.tab) {
@@ -314,6 +318,19 @@ export function OrchestratorApp({
       return;
     }
 
+    if (ui.region === COCKPIT_REGIONS.CONTENT
+      && ui.view === ORCHESTRATOR_VIEWS.ALERTS) {
+      const selected = selectAlertFromList(data.alerts ?? [], ui.listIndex);
+      if (key.return) {
+        data.handleAlertTransition(selected, "resolve").catch(() => {});
+        return;
+      }
+      if (inputKey.toLowerCase() === "d") {
+        data.handleAlertTransition(selected, "dismiss").catch(() => {});
+        return;
+      }
+    }
+
     if (ui.view === ORCHESTRATOR_VIEWS.RUN_DETAIL) {
       if (inputKey.toLowerCase() === "c" && isRunCancellable(data.selectedRun)) {
         data.handleCancelRun();
@@ -408,7 +425,8 @@ export function OrchestratorApp({
     projectName,
     snapshot: data.snapshot,
     dashboard: data.dashboard,
-    layoutMode: mode
+    layoutMode: mode,
+    alerts: data.alerts
   });
   const systemOnline = data.snapshot
     ? data.snapshot.health !== CONTROL_PLANE_HEALTH.NOT_CONFIGURED
@@ -467,6 +485,7 @@ export function OrchestratorApp({
         selectedEvents: data.selectedEvents,
         reviews: data.reviews,
         selectedReview: data.selectedReview,
+        alerts: data.alerts ?? [],
         changesAction: data.changesAction,
         recoveryAction: data.recoveryAction,
         controlCenter,

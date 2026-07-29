@@ -29,7 +29,8 @@ export const ORCHESTRATOR_VIEWS = {
   LAUNCH: "launch",
   DIAGNOSTICS: "diagnostics",
   HELP: "help",
-  USAGE: "usage"
+  USAGE: "usage",
+  ALERTS: "alerts"
 };
 
 export const ORCHESTRATOR_MENU = [

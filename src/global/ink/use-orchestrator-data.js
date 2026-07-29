@@ -35,6 +35,7 @@ import {
 } from "./cockpit-recovery.js";
 import { listReviewReceipts } from "../runtime/review/review-receipts.js";
 import { assertReceiptSecretFree } from "../runtime/review/review-validate.js";
+import { listAlerts, resolveAlert, dismissAlert } from "../runtime/alerts/alert-store.js";
 
 export function useOrchestratorData({
   homeDir,
@@ -54,6 +55,7 @@ export function useOrchestratorData({
   const [selectedEvents, setSelectedEvents] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [selectedReview, setSelectedReview] = useState(null);
+  const [alerts, setAlerts] = useState(null);
   const [statusMessage, setStatusMessage] = useState(null);
   const [launchAgentIndex, setLaunchAgentIndex] = useState(0);
   const [launchStep, setLaunchStep] = useState(LAUNCH_WIZARD_STEPS.AGENT);
@@ -90,6 +92,11 @@ export function useOrchestratorData({
     setDashboard(outcome.result.dashboard);
     setDiagnostics(outcome.result.diagnostics);
     setSnapshot(outcome.result.snapshot);
+    try {
+      setAlerts(await listAlerts({ homeDir, limit: 50 }));
+    } catch {
+      setAlerts(null);
+    }
     setError(null);
     setLoading(false);
     setRetrying(false);
@@ -147,6 +154,22 @@ export function useOrchestratorData({
       view: ORCHESTRATOR_VIEWS.REVIEW_DETAIL,
       returnView: ORCHESTRATOR_VIEWS.REVIEWS
     });
+  };
+
+  const handleAlertTransition = async (alert, action) => {
+    if (!alert) return;
+    setBusy(true);
+    try {
+      const updated = action === "dismiss"
+        ? await dismissAlert(alert.alertId, { homeDir })
+        : await resolveAlert(alert.alertId, { homeDir });
+      setAlerts(await listAlerts({ homeDir, limit: 50 }));
+      setStatusMessage(`${updated.state} ${updated.alertId}`);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleLaunch = async (draft, profile, dispatch) => {
@@ -381,6 +404,7 @@ export function useOrchestratorData({
     reviews,
     selectedReview,
     setSelectedReview,
+    alerts,
     statusMessage,
     launchAgentIndex,
     setLaunchAgentIndex,
@@ -399,6 +423,7 @@ export function useOrchestratorData({
     openRunDetail,
     loadReviews,
     openReviewDetail,
+    handleAlertTransition,
     handleLaunch,
     handleCancelRun,
     previewChanges,

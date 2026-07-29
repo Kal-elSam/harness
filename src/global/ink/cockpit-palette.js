@@ -17,7 +17,8 @@ const DESTINATION_VIEWS = Object.freeze({
   profile: ORCHESTRATOR_VIEWS.PROFILE,
   runs: ORCHESTRATOR_VIEWS.RUNS,
   orchestration: ORCHESTRATOR_VIEWS.RUNS,
-  usage: ORCHESTRATOR_VIEWS.USAGE
+  usage: ORCHESTRATOR_VIEWS.USAGE,
+  alerts: ORCHESTRATOR_VIEWS.ALERTS
 });
 
 export function resolvePaletteDestination(key) {
@@ -55,6 +56,13 @@ export function buildPaletteActions({
       description: item.description
     });
   }
+  actions.push({
+    id: "alerts",
+    kind: PALETTE_KINDS.NAVIGATE,
+    label: "Alerts",
+    view: ORCHESTRATOR_VIEWS.ALERTS,
+    description: "Pending alert inbox."
+  });
   actions.push({
     id: "refresh",
     kind: PALETTE_KINDS.REFRESH,

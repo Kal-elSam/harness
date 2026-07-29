@@ -19,6 +19,7 @@ import { formatChangesActionLines } from "./cockpit-changes.js";
 import { formatRecoveryLines } from "./cockpit-recovery.js";
 import { formatUsageLines } from "./cockpit-control-center.js";
 import { formatOrchestrationStatus } from "./cockpit-runs.js";
+import { formatAlertListLines } from "./cockpit-alerts.js";
 
 export function PalettePanel({ model, colorEnabled = true }) {
   return React.createElement(Box, { flexDirection: "column" },
@@ -88,6 +89,7 @@ export function renderCockpitView({
   selectedEvents,
   reviews = [],
   selectedReview = null,
+  alerts = [],
   changesAction = null,
   recoveryAction = null,
   colorEnabled = true,
@@ -207,6 +209,14 @@ export function renderCockpitView({
         React.createElement(Text, { bold: true }, "Review detail"),
         formatReviewDetailLines(selectedReview)
           .map((line) => React.createElement(Text, { key: line }, line))
+      );
+    case ORCHESTRATOR_VIEWS.ALERTS:
+      return listBlock(
+        "Alerts",
+        formatAlertListLines(alerts),
+        listIndex,
+        colorEnabled,
+        "Enter resolves · D dismisses · Esc back · / Alerts"
       );
     case ORCHESTRATOR_VIEWS.DIAGNOSTICS:
       return governanceList(
