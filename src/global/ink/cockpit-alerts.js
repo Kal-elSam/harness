@@ -6,7 +6,8 @@ export function formatAlertsHeadline(alerts = null) {
   return { count, headline: count === 0 ? "None pending" : `${count} pending` };
 }
 
-export function formatAlertListLines(alerts = []) {
+export function formatAlertListLines(alerts = null) {
+  if (alerts == null) return ["Alert data unavailable"];
   const open = alerts.filter((alert) => alert.state === ALERT_STATES.OPEN);
   if (open.length === 0) return ["No pending alerts."];
   return open.map((alert) => {
@@ -29,6 +30,7 @@ export function formatAlertDetailLines(alert) {
   ];
 }
 
-export function selectAlertFromList(alerts = [], index = 0) {
+export function selectAlertFromList(alerts = null, index = 0) {
+  if (!Array.isArray(alerts)) return null;
   return alerts.filter((alert) => alert.state === ALERT_STATES.OPEN)[index] ?? null;
 }

@@ -160,13 +160,13 @@ export function useOrchestratorData({
     if (!alert) return;
     setBusy(true);
     try {
-      const updated = action === "dismiss"
-        ? await dismissAlert(alert.alertId, { homeDir })
-        : await resolveAlert(alert.alertId, { homeDir });
+      if (action === "dismiss") await dismissAlert(alert.alertId, { homeDir });
+      else await resolveAlert(alert.alertId, { homeDir });
       setAlerts(await listAlerts({ homeDir, limit: 50 }));
-      setStatusMessage(`${updated.state} ${updated.alertId}`);
+      setStatusMessage(action === "dismiss" ? "Alert dismissed" : "Alert resolved");
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
+      setAlerts(null);
     } finally {
       setBusy(false);
     }

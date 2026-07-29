@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { harnessHomePaths } from "../../paths.js";
 import { writeAtomicJson } from "../write-atomic-json.js";
@@ -11,10 +11,28 @@ import {
 } from "./alert-types.js";
 import { assertAlertSecretFree } from "./alert-validate.js";
 
+export class AlertStoreError extends Error {
+  constructor(message, { code = "alert_store_error", details = null } = {}) {
+    super(message);
+    this.name = "AlertStoreError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
 export function alertPaths(homeDir, alertId) {
   assertSafeAlertId(alertId);
   const alertDir = join(harnessHomePaths(homeDir).alertsDir, alertId);
   return { alertDir, alertPath: join(alertDir, "alert.json") };
+}
+
+function openIndexPath(homeDir, fingerprint) {
+  if (typeof fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(fingerprint)) {
+    throw new AlertStoreError(`Invalid alert fingerprint "${fingerprint}".`, {
+      code: "invalid_fingerprint"
+    });
+  }
+  return join(harnessHomePaths(homeDir).alertsDir, "open", fingerprint);
 }
 
 export async function loadAlert(alertId, { homeDir } = {}) {
@@ -31,28 +49,47 @@ async function writeAlert(alert, { homeDir, createExclusive = false } = {}) {
   return sanitized;
 }
 
-/** Persist alert; open same fingerprint returns existing (dedupe). */
+/** Persist alert; exclusive open/<fingerprint> claim makes dedupe atomic. */
 export async function saveAlert(input, { homeDir } = {}) {
-  const candidate = assertAlertSecretFree(
-    input?.version === 1 ? input : createAlert(input)
-  );
-  const fingerprint = candidate.fingerprint || createAlertFingerprint(candidate);
-  const existing = (await listAlerts({ homeDir, state: ALERT_STATES.OPEN }))
-    .find((alert) => alert.fingerprint === fingerprint);
-  if (existing) return { alert: existing, deduped: true };
-  const alert = await writeAlert({ ...candidate, fingerprint }, {
-    homeDir,
-    createExclusive: true
-  });
-  return { alert, deduped: false };
+  const draft = input?.version === 1 ? { ...input } : createAlert(input);
+  draft.fingerprint = createAlertFingerprint(draft);
+  const candidate = assertAlertSecretFree(draft);
+  const indexPath = openIndexPath(homeDir, candidate.fingerprint);
+  await mkdir(join(harnessHomePaths(homeDir).alertsDir, "open"), { recursive: true });
+  try {
+    await writeAtomicJson(indexPath, candidate, { createExclusive: true });
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    const existing = assertAlertSecretFree(JSON.parse(await readFile(indexPath, "utf8")));
+    return { alert: existing, deduped: true };
+  }
+  try {
+    const alert = await writeAlert(candidate, { homeDir, createExclusive: true });
+    return { alert, deduped: false };
+  } catch (error) {
+    await unlink(indexPath).catch(() => {});
+    throw error;
+  }
 }
 
+/**
+ * List alerts. Fail-closed: any unreadable/corrupt record throws
+ * instead of pretending the inbox is empty.
+ */
 export async function listAlerts({ homeDir, state = null, limit = null } = {}) {
   const dir = harnessHomePaths(homeDir).alertsDir;
   if (!existsSync(dir)) return [];
+  const ids = (await readdir(dir)).filter((n) => /^alt-[a-f0-9]{16,32}$/.test(n));
   const alerts = [];
-  for (const alertId of (await readdir(dir)).filter((n) => /^alt-[a-f0-9]{16,32}$/.test(n))) {
-    try { alerts.push(await loadAlert(alertId, { homeDir })); } catch { /* skip corrupt */ }
+  for (const alertId of ids) {
+    try {
+      alerts.push(await loadAlert(alertId, { homeDir }));
+    } catch (error) {
+      throw new AlertStoreError(`Corrupt or unreadable alert "${alertId}".`, {
+        code: "corrupt_alert",
+        details: { alertId, cause: error instanceof Error ? error.message : String(error) }
+      });
+    }
   }
   alerts.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))
     || String(a.alertId).localeCompare(String(b.alertId)));
@@ -64,9 +101,12 @@ async function transitionAlert(alertId, nextState, { homeDir } = {}) {
   const current = await loadAlert(alertId, { homeDir });
   if (current.state !== ALERT_STATES.OPEN) return current;
   const now = new Date().toISOString();
-  return writeAlert({
+  const updated = await writeAlert({
     ...current, state: nextState, updatedAt: now, resolvedAt: now
   }, { homeDir });
+  const indexPath = openIndexPath(homeDir, current.fingerprint);
+  if (existsSync(indexPath)) await unlink(indexPath);
+  return updated;
 }
 
 export async function resolveAlert(alertId, { homeDir } = {}) {

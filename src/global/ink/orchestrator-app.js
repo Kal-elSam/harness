@@ -218,7 +218,8 @@ export function OrchestratorApp({
           : ui.view === ORCHESTRATOR_VIEWS.REVIEWS
             ? (data.reviews ?? []).length
             : ui.view === ORCHESTRATOR_VIEWS.ALERTS
-              ? (data.alerts ?? []).filter((alert) => alert.state === ALERT_STATES.OPEN).length
+              ? (Array.isArray(data.alerts) ? data.alerts : [])
+                .filter((alert) => alert.state === ALERT_STATES.OPEN).length
               : ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
                 ? listRecoverySnapshots(data.snapshot).length
                 : 0;
@@ -320,7 +321,7 @@ export function OrchestratorApp({
 
     if (ui.region === COCKPIT_REGIONS.CONTENT
       && ui.view === ORCHESTRATOR_VIEWS.ALERTS) {
-      const selected = selectAlertFromList(data.alerts ?? [], ui.listIndex);
+      const selected = selectAlertFromList(data.alerts, ui.listIndex);
       if (key.return) {
         data.handleAlertTransition(selected, "resolve").catch(() => {});
         return;
@@ -485,7 +486,7 @@ export function OrchestratorApp({
         selectedEvents: data.selectedEvents,
         reviews: data.reviews,
         selectedReview: data.selectedReview,
-        alerts: data.alerts ?? [],
+        alerts: data.alerts,
         changesAction: data.changesAction,
         recoveryAction: data.recoveryAction,
         controlCenter,
