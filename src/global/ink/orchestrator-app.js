@@ -478,7 +478,8 @@ export function OrchestratorApp({
           })
           : null,
         layoutMode: mode,
-        colorEnabled
+        colorEnabled,
+        homeDir
       })
     )
   );

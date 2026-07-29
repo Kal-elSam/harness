@@ -1,3 +1,5 @@
+import { formatConfirmPath } from "./cockpit-path-label.js";
+
 export const RECOVERY_PHASE = Object.freeze({
   IDLE: "idle",
   PREVIEWING: "previewing",
@@ -107,7 +109,8 @@ export function formatRecoveryLines({
   recoveryAction,
   listIndex = 0,
   dashboard = null,
-  detail = false
+  detail = false,
+  homeDir = null
 } = {}) {
   const backups = listRecoverySnapshots(snapshot);
   const events = snapshot?.history?.events ?? [];
@@ -146,11 +149,12 @@ export function formatRecoveryLines({
     lines.push(`Restore preview · ${fileCount} file(s)`);
     if (detail || phase === RECOVERY_PHASE.CONFIRMING) {
       lines.push("DETAILS");
-      for (const file of (preview.files ?? []).slice(0, detail ? 12 : 3)) {
-        lines.push(shortName(file.displayPath ?? file.path));
+      const limit = detail ? 12 : 3;
+      for (const file of (preview.files ?? []).slice(0, limit)) {
+        lines.push(formatConfirmPath(file.displayPath ?? file.path, homeDir));
       }
-      if ((preview.files?.length ?? 0) > (detail ? 12 : 3)) {
-        lines.push(`… ${(preview.files.length) - (detail ? 12 : 3)} more`);
+      if ((preview.files?.length ?? 0) > limit) {
+        lines.push(`… ${preview.files.length - limit} more`);
       }
     }
   }

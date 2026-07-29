@@ -1,3 +1,5 @@
+import { formatConfirmPath } from "./cockpit-path-label.js";
+
 export const CHANGES_PHASE = Object.freeze({
   IDLE: "idle",
   PREVIEWING: "previewing",
@@ -64,21 +66,15 @@ function healthLabel(kind) {
   return String(kind ?? "unknown").replaceAll("_", " ");
 }
 
-function shortTarget(target) {
-  const raw = String(target ?? "").trim();
-  if (!raw) return "target";
-  const parts = raw.split(/[/\\]/).filter(Boolean);
-  return parts[parts.length - 1] || raw;
-}
-
 /**
  * Governance surface: status, coverage, recommended action first.
- * Paths / fingerprints only when detail=true or during confirm (basenames).
+ * Paths only when detail=true or during confirm (home-relative / distinct).
  */
 export function formatChangesActionLines({
   snapshot,
   changesAction,
-  detail = false
+  detail = false,
+  homeDir = null
 } = {}) {
   const phase = changesAction?.phase ?? CHANGES_PHASE.IDLE;
   const coverage = snapshot?.coverage ?? {};
@@ -115,7 +111,9 @@ export function formatChangesActionLines({
       lines.push("DETAILS");
       const limit = detail ? 12 : 3;
       for (const change of planned.slice(0, limit)) {
-        lines.push(`${change.action ?? change.kind} · ${shortTarget(change.target)}`);
+        lines.push(
+          `${change.action ?? change.kind} · ${formatConfirmPath(change.target, homeDir)}`
+        );
       }
       if (planned.length > limit) lines.push(`… ${planned.length - limit} more`);
     }

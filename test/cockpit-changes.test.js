@@ -89,3 +89,30 @@ test("governance idle summarizes status coverage and CTA without raw paths", () 
   assert.doesNotMatch(text, /\/Users\/me/);
   assert.doesNotMatch(text, /Fingerprint/);
 });
+
+test("confirm DETAILS keeps duplicate basenames distinguishable via ~/ paths", () => {
+  const lines = formatChangesActionLines({
+    homeDir: "/Users/me",
+    snapshot: {
+      health: "ACTION_REQUIRED",
+      coverage: { governedAgents: 1, detectedAgents: 2, components: 1 },
+      cta: { title: "Repair drift" },
+      diff: { installed: true, hasChanges: true }
+    },
+    changesAction: {
+      phase: CHANGES_PHASE.CONFIRMING,
+      message: "Confirm apply? Y apply · N/Esc cancel",
+      preview: {
+        hasChanges: true,
+        changes: [
+          { action: "repair", target: "/Users/me/.cursor/AGENTS.md" },
+          { action: "repair", target: "/Users/me/.codex/AGENTS.md" }
+        ]
+      }
+    }
+  });
+  const text = lines.join("\n");
+  assert.match(text, /~\/\.cursor\/AGENTS\.md/);
+  assert.match(text, /~\/\.codex\/AGENTS\.md/);
+  assert.doesNotMatch(text, /repair · AGENTS\.md$/m);
+});

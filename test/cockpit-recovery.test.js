@@ -96,3 +96,26 @@ test("activity lists when · what · result without dumping restore paths by def
   assert.match(text, /codex · succeeded/);
   assert.doesNotMatch(text, /Fingerprint|displayPath|\/Users\//);
 });
+
+test("restore confirm DETAILS distinguishes duplicate basenames with ~/ paths", () => {
+  const lines = formatRecoveryLines({
+    homeDir: "/Users/me",
+    snapshot: { history: { events: [] }, backups: { count: 0, snapshots: [] } },
+    recoveryAction: {
+      phase: RECOVERY_PHASE.CONFIRMING,
+      message: "Confirm restore? Y restore · N/Esc cancel",
+      preview: {
+        snapshot: "s1",
+        files: [
+          { displayPath: "/Users/me/.cursor/AGENTS.md" },
+          { displayPath: "/Users/me/.codex/AGENTS.md" }
+        ]
+      }
+    }
+  });
+  const text = lines.join("\n");
+  assert.match(text, /DETAILS/);
+  assert.match(text, /~\/\.cursor\/AGENTS\.md/);
+  assert.match(text, /~\/\.codex\/AGENTS\.md/);
+  assert.doesNotMatch(text, /^AGENTS\.md$/m);
+});

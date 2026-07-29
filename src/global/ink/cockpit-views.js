@@ -88,7 +88,8 @@ export function renderCockpitView({
   selectedReview = null,
   changesAction = null,
   recoveryAction = null,
-  colorEnabled = true
+  colorEnabled = true,
+  homeDir = null
 }) {
   if (palette) {
     return React.createElement(PalettePanel, { model: palette, colorEnabled });
@@ -114,14 +115,14 @@ export function renderCockpitView({
     case ORCHESTRATOR_VIEWS.CHANGES:
       return governanceList(
         "Governance",
-        formatChangeLines(snapshot, changesAction, layoutMode),
+        formatChangeLines(snapshot, changesAction, layoutMode, homeDir),
         layoutMode,
         colorEnabled
       );
     case ORCHESTRATOR_VIEWS.ACTIVITY:
       return governanceList(
         "Activity",
-        formatRecoveryLines({ snapshot, recoveryAction, listIndex, dashboard }),
+        formatRecoveryLines({ snapshot, recoveryAction, listIndex, dashboard, homeDir }),
         layoutMode,
         colorEnabled
       );
@@ -257,8 +258,8 @@ function formatModuleLines(snapshot) {
   ];
 }
 
-function formatChangeLines(snapshot, changesAction, layoutMode = LAYOUT_MODES.COMPACT) {
-  return formatChangesActionLines({ snapshot, changesAction, layoutMode });
+function formatChangeLines(snapshot, changesAction, layoutMode = LAYOUT_MODES.COMPACT, homeDir = null) {
+  return formatChangesActionLines({ snapshot, changesAction, layoutMode, homeDir });
 }
 
 function formatProfileLines(snapshot, diagnostics) {
