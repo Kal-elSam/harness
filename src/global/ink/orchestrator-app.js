@@ -45,6 +45,7 @@ import { COCKPIT_COLORS } from "./theme.js";
 import { LAYOUT_MODES } from "./layout.js";
 import { CHANGES_PHASE } from "./cockpit-changes.js";
 import { RECOVERY_PHASE, listRecoverySnapshots } from "./cockpit-recovery.js";
+import { SETTINGS_PHASE } from "./cockpit-settings.js";
 
 export function OrchestratorApp({
   homeDir,
@@ -94,7 +95,8 @@ export function OrchestratorApp({
   };
 
   const confirming = data.changesAction?.phase === CHANGES_PHASE.CONFIRMING
-    || data.recoveryAction?.phase === RECOVERY_PHASE.CONFIRMING;
+    || data.recoveryAction?.phase === RECOVERY_PHASE.CONFIRMING
+    || data.settingsAction?.phase === SETTINGS_PHASE.CONFIRMING;
   const paletteActions = buildPaletteActions({
     ctaDestination: data.snapshot?.cta?.destination ?? null,
     ctaTitle: data.snapshot?.cta?.title ?? null,
@@ -170,6 +172,18 @@ export function OrchestratorApp({
         data.cancelRecovery();
         return;
       }
+      if (ui.view === ORCHESTRATOR_VIEWS.PROFILE) {
+        const settingsPhase = data.settingsAction?.phase;
+        if (settingsPhase === SETTINGS_PHASE.CONFIRMING) {
+          data.cancelSettings();
+          return;
+        }
+        if (settingsPhase === SETTINGS_PHASE.PREVIEW
+          || settingsPhase === SETTINGS_PHASE.COMPLETED) {
+          data.resetSettings();
+          return;
+        }
+      }
 
       if (ui.view === ORCHESTRATOR_VIEWS.LAUNCH && data.launchableAgents.length > 0) {
         const retreated = handleLaunchInput({
@@ -222,7 +236,10 @@ export function OrchestratorApp({
                 .filter((alert) => alert.state === ALERT_STATES.OPEN).length
               : ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
                 ? listRecoverySnapshots(data.snapshot).length
-                : 0;
+                : ui.view === ORCHESTRATOR_VIEWS.PROFILE
+                    && data.settingsAction?.phase === SETTINGS_PHASE.BROWSE
+                  ? data.curatedIntegrations.length
+                  : 0;
 
     let routed = null;
     if (key.tab) {
@@ -388,6 +405,30 @@ export function OrchestratorApp({
       }
     }
 
+    if (ui.view === ORCHESTRATOR_VIEWS.PROFILE) {
+      const keyName = inputKey.toLowerCase();
+      const phase = data.settingsAction?.phase ?? SETTINGS_PHASE.BROWSE;
+      if (key.return && ui.region === COCKPIT_REGIONS.CONTENT) {
+        if (phase === SETTINGS_PHASE.BROWSE) {
+          const entry = data.curatedIntegrations[ui.listIndex];
+          if (entry?.id) data.previewSettings(entry.id);
+          return;
+        }
+        if (phase === SETTINGS_PHASE.PREVIEW) {
+          data.promptConfirmSettings();
+          return;
+        }
+      }
+      if (keyName === "y" && phase === SETTINGS_PHASE.CONFIRMING) {
+        data.confirmSettings();
+        return;
+      }
+      if (keyName === "n" && phase === SETTINGS_PHASE.CONFIRMING) {
+        data.cancelSettings();
+        return;
+      }
+    }
+
     if (inputKey.toLowerCase() === "r" && ui.view !== ORCHESTRATOR_VIEWS.LAUNCH) {
       if (ui.view === ORCHESTRATOR_VIEWS.REVIEWS || ui.view === ORCHESTRATOR_VIEWS.REVIEW_DETAIL) {
         data.loadReviews().catch(() => {});
@@ -454,6 +495,7 @@ export function OrchestratorApp({
         unicode,
         changesPhase: data.changesAction?.phase ?? null,
         recoveryPhase: data.recoveryAction?.phase ?? null,
+        settingsPhase: data.settingsAction?.phase ?? null,
         columns
       }),
       layoutMode: mode,
@@ -489,6 +531,7 @@ export function OrchestratorApp({
         alerts: data.alerts,
         changesAction: data.changesAction,
         recoveryAction: data.recoveryAction,
+        settingsAction: data.settingsAction,
         controlCenter,
         palette: ui.paletteOpen
           ? buildPaletteModel({
