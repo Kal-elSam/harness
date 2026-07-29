@@ -47,10 +47,16 @@ function done(options, payload) {
     console.log(`Raised ${payload.raised} alert(s) this tick.`);
     return payload;
   }
-  console.log(`Enabled: ${payload.enabled ? "yes" : "no"} · platform ${payload.platform}`);
-  console.log(`Autostart: ${payload.autostart?.installed ? "on" : "off"}`
-    + `${payload.autostart?.supported === false ? " (unsupported)" : ""}`);
+  console.log(`Enabled: ${payload.corrupt ? "unavailable" : payload.enabled ? "yes" : "no"} · ${payload.platform}`);
+  if (payload.corrupt) console.log("State: corrupt — run monitor disable to repair");
+  else {
+    const a = payload.autostart;
+    console.log(`Autostart: ${a?.loaded ? "loaded" : a?.configured ? "configured (not loaded)" : "off"}`
+      + `${a?.supported === false ? " (unsupported)" : ""}`);
+  }
   console.log(`Open alerts: ${payload.openAlerts ?? "unavailable"}`);
-  if (payload.lastTickAt) console.log(`Last tick: ${payload.lastTickAt}`);
+  if (payload.lastTickAt) {
+    console.log(`Last tick: ${payload.lastTickAt}${payload.lastTick?.complete === false ? " (incomplete)" : ""}`);
+  }
   return payload;
 }
