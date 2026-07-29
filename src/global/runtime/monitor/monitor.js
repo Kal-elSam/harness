@@ -42,7 +42,22 @@ function assertMonitorState(raw) {
   if (!raw || typeof raw !== "object" || raw.version !== 1 || typeof raw.enabled !== "boolean") {
     throw new MonitorStateError("Monitor state schema invalid.");
   }
-  return { ...defaultMonitorState(), ...raw, version: 1, enabled: raw.enabled };
+  const next = { ...defaultMonitorState(), ...raw, version: 1, enabled: raw.enabled };
+  if (!Number.isFinite(next.intervalSec) || next.intervalSec < 1) {
+    throw new MonitorStateError("Monitor state.intervalSec invalid.");
+  }
+  const a = raw.autostart;
+  if (a !== undefined) {
+    if (!a || typeof a !== "object"
+      || typeof a.supported !== "boolean"
+      || typeof a.configured !== "boolean"
+      || typeof a.loaded !== "boolean"
+      || typeof a.installed !== "boolean") {
+      throw new MonitorStateError("Monitor state.autostart invalid.");
+    }
+    next.autostart = { ...defaultMonitorState().autostart, ...a };
+  }
+  return next;
 }
 
 export async function readMonitorState(homeDir, { repair = false } = {}) {
@@ -147,7 +162,7 @@ export async function runMonitorTick(homeDir, deps = {}) {
   return {
     state: await writeMonitorState(homeDir, {
       lastTickAt: new Date().toISOString(), lastTick
-    }, { repair: true }),
+    }),
     raised
   };
 }
@@ -202,6 +217,12 @@ export async function monitorDoctorCheck(homeDir) {
     return {
       name: "monitor", status: "stale", category: "monitor",
       detail: "corrupt state — run kairo monitor disable to repair"
+    };
+  }
+  if (s.enabled && s.autostart?.supported && !s.autostart?.loaded) {
+    return {
+      name: "monitor", status: "stale", category: "monitor",
+      detail: "enabled but autostart not loaded"
     };
   }
   return {

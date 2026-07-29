@@ -83,3 +83,32 @@ test("bootstrap not loaded; win32 notify unsupported; shell:false", async () => 
   assert.equal(result.installed, false);
   assert.match(await readFile(platform.plistPath, "utf8"), /tick<\/string>/);
 });
+
+test("nested invalid fails closed; tick does not repair; unloaded is stale", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-mon-"));
+  const { monitorDir, monitorStatePath } = harnessHomePaths(homeDir);
+  await mkdir(monitorDir, { recursive: true });
+  const writeState = (body) => writeFile(monitorStatePath, `${JSON.stringify(body)}\n`);
+  await writeState({
+    version: 1, enabled: true, intervalSec: "bad",
+    autostart: { supported: true, configured: true, loaded: false, installed: false }
+  });
+  assert.equal((await getMonitorStatus(homeDir)).corrupt, true);
+  await writeState({ version: 1, enabled: true, intervalSec: 300, autostart: "corrupt" });
+  assert.equal((await getMonitorStatus(homeDir)).corrupt, true);
+  await assert.rejects(
+    () => runMonitorTick(homeDir, {
+      detectDriftImpl: async () => ([]), listRunsImpl: async () => [],
+      notifyImpl: async () => ({ sent: false })
+    }),
+    (e) => e?.code === "corrupt_monitor_state" || /invalid|unreadable/i.test(String(e?.message))
+  );
+  assert.equal((await getMonitorStatus(homeDir)).corrupt, true);
+  await writeState({
+    version: 1, enabled: true, intervalSec: 300,
+    autostart: {
+      platform: "darwin", supported: true, configured: true, loaded: false, installed: false
+    }
+  });
+  assert.equal((await monitorDoctorCheck(homeDir)).status, "stale");
+});
