@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { harnessHomePaths } from "../src/global/paths.js";
@@ -114,4 +114,24 @@ test("stale claim reclaim is serial across concurrent saves", async () => {
   assert.equal(new Set(results.map((r) => r.alert.alertId)).size, 1);
   assert.equal((await listAlerts({ homeDir, state: ALERT_STATES.OPEN })).length, 1);
   assert.notEqual(results[0].alert.alertId, alert.alertId);
+});
+
+test("orphan fingerprint lock is reclaimed without claim_lock_timeout", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
+  const fingerprint = createAlertFingerprint({
+    kind: "lock", title: "Orphan lock", source: "test"
+  });
+  const lockDir = join(harnessHomePaths(homeDir).alertsDir, "open", `.${fingerprint}.lock`);
+  await mkdir(lockDir, { recursive: true });
+  // Empty lock dir (crash before owner.json) with aged mtime.
+  const aged = (Date.now() - 60_000) / 1000;
+  await utimes(lockDir, aged, aged);
+
+  const started = Date.now();
+  const result = await saveAlert({
+    kind: "lock", title: "Orphan lock", source: "test"
+  }, { homeDir });
+  assert.ok(Date.now() - started < 2000);
+  assert.equal(result.deduped, false);
+  assert.equal((await listAlerts({ homeDir, state: ALERT_STATES.OPEN })).length, 1);
 });

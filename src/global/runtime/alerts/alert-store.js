@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rmdir, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { harnessHomePaths } from "../../paths.js";
 import { writeAtomicJson } from "../write-atomic-json.js";
@@ -10,6 +10,9 @@ import {
   createAlertFingerprint
 } from "./alert-types.js";
 import { assertAlertSecretFree } from "./alert-validate.js";
+
+const LOCK_STALE_MS = 2000;
+const LOCK_WAIT_MS = 5000;
 
 export class AlertStoreError extends Error {
   constructor(message, { code = "alert_store_error", details = null } = {}) {
@@ -39,23 +42,76 @@ function openLockPath(homeDir, fingerprint) {
   return join(harnessHomePaths(homeDir).alertsDir, "open", `.${fingerprint}.lock`);
 }
 
-/** Cross-process mutex via exclusive mkdir — serializes claim heal/reclaim. */
+function lockOwnerPath(lockDir) {
+  return join(lockDir, "owner.json");
+}
+
+function isPidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isLockStale(lockDir) {
+  try {
+    const owner = JSON.parse(await readFile(lockOwnerPath(lockDir), "utf8"));
+    if (!owner || !Number.isFinite(owner.startedAt)) return true;
+    if (Date.now() - owner.startedAt > LOCK_STALE_MS) return true;
+    return !isPidAlive(owner.pid);
+  } catch {
+    try {
+      const info = await stat(lockDir);
+      return Date.now() - info.mtimeMs > LOCK_STALE_MS;
+    } catch {
+      return true;
+    }
+  }
+}
+
+async function removeLockDir(lockDir) {
+  await unlink(lockOwnerPath(lockDir)).catch(() => {});
+  await rmdir(lockDir).catch(() => {});
+}
+
+/** Cross-process mutex with owner lease — crashed owners are reclaimable. */
 async function withOpenFingerprintLock(homeDir, fingerprint, fn) {
   const lockDir = openLockPath(homeDir, fingerprint);
   await mkdir(join(harnessHomePaths(homeDir).alertsDir, "open"), { recursive: true });
   const started = Date.now();
   for (;;) {
-    try { await mkdir(lockDir); break; } catch (error) {
+    try {
+      await mkdir(lockDir);
+    } catch (error) {
       if (error?.code !== "EEXIST") throw error;
-      if (Date.now() - started > 5000) {
+      if (await isLockStale(lockDir)) {
+        await removeLockDir(lockDir);
+        continue;
+      }
+      if (Date.now() - started > LOCK_WAIT_MS) {
         throw new AlertStoreError("Timed out waiting for alert fingerprint lock.", {
           code: "claim_lock_timeout", details: { fingerprint }
         });
       }
       await new Promise((r) => setTimeout(r, 5 + Math.floor(Math.random() * 10)));
+      continue;
+    }
+    try {
+      await writeFile(lockOwnerPath(lockDir), `${JSON.stringify({
+        pid: process.pid,
+        startedAt: Date.now()
+      })}\n`);
+      break;
+    } catch (error) {
+      await removeLockDir(lockDir);
+      if (error?.code === "ENOENT") continue;
+      throw error;
     }
   }
-  try { return await fn(); } finally { await rmdir(lockDir).catch(() => {}); }
+  try { return await fn(); } finally { await removeLockDir(lockDir); }
 }
 
 export async function loadAlert(alertId, { homeDir } = {}) {
