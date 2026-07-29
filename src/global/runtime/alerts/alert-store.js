@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { harnessHomePaths } from "../../paths.js";
 import { writeAtomicJson } from "../write-atomic-json.js";
 import {
@@ -10,6 +10,8 @@ import {
   createAlertFingerprint
 } from "./alert-types.js";
 import { assertAlertSecretFree } from "./alert-validate.js";
+
+const TERMINAL_ALERT_STATES = new Set([ALERT_STATES.RESOLVED, ALERT_STATES.DISMISSED]);
 
 export class AlertStoreError extends Error {
   constructor(message, { code = "alert_store_error", details = null } = {}) {
@@ -40,7 +42,47 @@ function openDirPath(homeDir) {
 }
 
 async function readOpenAlert(indexPath) {
-  return assertAlertSecretFree(JSON.parse(await readFile(indexPath, "utf8")));
+  const expectedFingerprint = basename(indexPath);
+  const alert = assertAlertSecretFree(JSON.parse(await readFile(indexPath, "utf8")));
+  if (alert.fingerprint !== expectedFingerprint || alert.state !== ALERT_STATES.OPEN) {
+    throw new AlertStoreError(`Corrupt open alert claim "${expectedFingerprint}".`, {
+      code: "corrupt_alert",
+      details: {
+        fingerprint: expectedFingerprint,
+        payloadFingerprint: alert.fingerprint,
+        state: alert.state
+      }
+    });
+  }
+  return alert;
+}
+
+async function readHistoryAlert(homeDir, alertId) {
+  const alert = assertAlertSecretFree(
+    JSON.parse(await readFile(alertPaths(homeDir, alertId).alertPath, "utf8"))
+  );
+  if (alert.alertId !== alertId || !TERMINAL_ALERT_STATES.has(alert.state)) {
+    throw new AlertStoreError(`Corrupt history alert "${alertId}".`, {
+      code: "corrupt_alert",
+      details: {
+        alertId,
+        payloadAlertId: alert.alertId,
+        state: alert.state
+      }
+    });
+  }
+  return alert;
+}
+
+function wrapCorruptAlert(label, details, error) {
+  if (error instanceof AlertStoreError) throw error;
+  throw new AlertStoreError(`Corrupt or unreadable ${label}.`, {
+    code: "corrupt_alert",
+    details: {
+      ...details,
+      cause: error instanceof Error ? error.message : String(error)
+    }
+  });
 }
 
 async function listOpenAlerts(homeDir) {
@@ -52,10 +94,7 @@ async function listOpenAlerts(homeDir) {
     try {
       alerts.push(await readOpenAlert(join(dir, name)));
     } catch (error) {
-      throw new AlertStoreError(`Corrupt or unreadable open alert "${name}".`, {
-        code: "corrupt_alert",
-        details: { fingerprint: name, cause: error instanceof Error ? error.message : String(error) }
-      });
+      wrapCorruptAlert(`open alert "${name}"`, { fingerprint: name }, error);
     }
   }
   return alerts;
@@ -74,7 +113,7 @@ export async function loadAlert(alertId, { homeDir } = {}) {
   if (open) return open;
   const { alertPath } = alertPaths(homeDir, alertId);
   if (!existsSync(alertPath)) throw new Error(`Alert not found: ${alertId}`);
-  return assertAlertSecretFree(JSON.parse(await readFile(alertPath, "utf8")));
+  return readHistoryAlert(homeDir, alertId);
 }
 
 async function writeHistoryAlert(alert, { homeDir } = {}) {
@@ -133,16 +172,9 @@ export async function listAlerts({ homeDir, state = null, limit = null } = {}) {
   for (const alertId of (await readdir(dir)).filter((n) => /^alt-[a-f0-9]{16,32}$/.test(n))) {
     if (openIds.has(alertId)) continue;
     try {
-      const alert = assertAlertSecretFree(
-        JSON.parse(await readFile(alertPaths(homeDir, alertId).alertPath, "utf8"))
-      );
-      if (alert.state === ALERT_STATES.OPEN) continue;
-      alerts.push(alert);
+      alerts.push(await readHistoryAlert(homeDir, alertId));
     } catch (error) {
-      throw new AlertStoreError(`Corrupt or unreadable alert "${alertId}".`, {
-        code: "corrupt_alert",
-        details: { alertId, cause: error instanceof Error ? error.message : String(error) }
-      });
+      wrapCorruptAlert(`alert "${alertId}"`, { alertId }, error);
     }
   }
 

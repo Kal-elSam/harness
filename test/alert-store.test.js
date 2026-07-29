@@ -134,3 +134,62 @@ test("concurrent resolve + saves never lose the EEXIST-read race", async () => {
     assert.ok(open.length <= 1);
   }
 });
+
+test("open claim fingerprint mismatch fails closed instead of deduping wrong alert", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
+  const alertA = createAlert({ kind: "a", title: "Alpha", source: "test" });
+  const fingerprintB = createAlertFingerprint({ kind: "b", title: "Beta", source: "test" });
+  const openDir = join(harnessHomePaths(homeDir).alertsDir, "open");
+  await mkdir(openDir, { recursive: true });
+  await writeFile(join(openDir, fingerprintB), `${JSON.stringify(alertA, null, 2)}\n`);
+
+  await assert.rejects(
+    () => saveAlert({ kind: "b", title: "Beta", source: "test" }, { homeDir }),
+    (e) => e instanceof AlertStoreError && e.code === "corrupt_alert"
+  );
+  await assert.rejects(
+    () => listAlerts({ homeDir }),
+    (e) => e instanceof AlertStoreError && e.code === "corrupt_alert"
+  );
+});
+
+test("history alertId or open-state mismatch fails closed", async () => {
+  const homeWrongId = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
+  const wrongId = "alt-bbbbbbbbbbbbbbbbbbbbbbbb";
+  const planted = createAlert({
+    alertId: "alt-aaaaaaaaaaaaaaaaaaaaaaaa",
+    kind: "hist",
+    title: "Wrong dir",
+    source: "test",
+    state: ALERT_STATES.RESOLVED
+  });
+  await mkdir(join(harnessHomePaths(homeWrongId).alertsDir, wrongId), { recursive: true });
+  await writeFile(
+    join(harnessHomePaths(homeWrongId).alertsDir, wrongId, "alert.json"),
+    `${JSON.stringify(planted, null, 2)}\n`
+  );
+  await assert.rejects(
+    () => listAlerts({ homeDir: homeWrongId }),
+    (e) => e instanceof AlertStoreError && e.code === "corrupt_alert"
+  );
+
+  const homeOpenHist = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
+  const openInHistory = createAlert({
+    alertId: "alt-cccccccccccccccccccccccc",
+    kind: "hist",
+    title: "Still open",
+    source: "test",
+    state: ALERT_STATES.OPEN
+  });
+  await mkdir(join(harnessHomePaths(homeOpenHist).alertsDir, openInHistory.alertId), {
+    recursive: true
+  });
+  await writeFile(
+    join(harnessHomePaths(homeOpenHist).alertsDir, openInHistory.alertId, "alert.json"),
+    `${JSON.stringify(openInHistory, null, 2)}\n`
+  );
+  await assert.rejects(
+    () => listAlerts({ homeDir: homeOpenHist }),
+    (e) => e instanceof AlertStoreError && e.code === "corrupt_alert"
+  );
+});
