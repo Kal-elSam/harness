@@ -113,15 +113,15 @@ export function renderCockpitView({
       return governanceList("Harness modules", formatModuleLines(snapshot), layoutMode, colorEnabled);
     case ORCHESTRATOR_VIEWS.CHANGES:
       return governanceList(
-        "Changes",
+        "Governance",
         formatChangeLines(snapshot, changesAction, layoutMode),
         layoutMode,
         colorEnabled
       );
     case ORCHESTRATOR_VIEWS.ACTIVITY:
       return governanceList(
-        "Activity & recovery",
-        formatRecoveryLines({ snapshot, recoveryAction, listIndex }),
+        "Activity",
+        formatRecoveryLines({ snapshot, recoveryAction, listIndex, dashboard }),
         layoutMode,
         colorEnabled
       );

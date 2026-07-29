@@ -69,6 +69,30 @@ test("failed apply retains preview; Activity is content-interactive; footer phas
     },
     listIndex: 0
   });
-  assert.ok(lines.some((line) => line.includes("Safety backup · safe")));
+  assert.ok(lines.some((line) => line.includes("Safety backup retained")));
   assert.ok(lines.some((line) => line.includes("› s1")));
+  assert.ok(lines.some((line) => line.includes("RECENT")));
+});
+
+test("activity lists when · what · result without dumping restore paths by default", () => {
+  const lines = formatRecoveryLines({
+    snapshot: {
+      history: {
+        events: [{
+          timestamp: "2026-07-29T12:00:00.000Z",
+          command: "sync",
+          action: "applied"
+        }]
+      },
+      backups: { count: 0, snapshots: [] }
+    },
+    dashboard: {
+      recentRuns: [{ agentId: "codex", state: "succeeded", endedAt: "2026-07-29T12:05:00.000Z" }]
+    },
+    recoveryAction: { phase: RECOVERY_PHASE.IDLE }
+  });
+  const text = lines.join("\n");
+  assert.match(text, /sync · ok/);
+  assert.match(text, /codex · succeeded/);
+  assert.doesNotMatch(text, /Fingerprint|displayPath|\/Users\//);
 });
