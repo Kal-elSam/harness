@@ -81,3 +81,34 @@ test("resolve releases open claim; inbox hides ids outside DETAILS", async () =>
   assert.equal(again.deduped, false);
   await dismissAlert(again.alert.alertId, { homeDir });
 });
+
+test("orphan claim without alert.json is completed on next save", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
+  const claim = createAlert({ kind: "orphan", title: "Crash window", source: "test" });
+  const openDir = join(harnessHomePaths(homeDir).alertsDir, "open");
+  await mkdir(openDir, { recursive: true });
+  await writeFile(join(openDir, claim.fingerprint), `${JSON.stringify(claim, null, 2)}\n`);
+
+  const result = await saveAlert({
+    kind: "orphan", title: "Crash window", source: "test"
+  }, { homeDir });
+  assert.equal(result.deduped, true);
+  assert.equal(result.alert.alertId, claim.alertId);
+  const stored = await listAlerts({ homeDir, state: ALERT_STATES.OPEN });
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].alertId, claim.alertId);
+});
+
+test("stale claim over terminal alert is reclaimed for a new open alert", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
+  const { alert } = await saveAlert({ kind: "stale", title: "Done once", source: "test" }, { homeDir });
+  await resolveAlert(alert.alertId, { homeDir });
+  const openDir = join(harnessHomePaths(homeDir).alertsDir, "open");
+  await mkdir(openDir, { recursive: true });
+  await writeFile(join(openDir, alert.fingerprint), `${JSON.stringify(alert, null, 2)}\n`);
+
+  const again = await saveAlert({ kind: "stale", title: "Done once", source: "test" }, { homeDir });
+  assert.equal(again.deduped, false);
+  assert.notEqual(again.alert.alertId, alert.alertId);
+  assert.equal((await listAlerts({ homeDir, state: ALERT_STATES.OPEN })).length, 1);
+});

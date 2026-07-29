@@ -49,6 +49,36 @@ async function writeAlert(alert, { homeDir, createExclusive = false } = {}) {
   return sanitized;
 }
 
+/**
+ * Heal or accept an existing claim. Returns a result, or null when the claim
+ * was reclaimed and the caller should retry exclusive create.
+ */
+async function resolveExistingClaim(homeDir, indexPath, fingerprint) {
+  const claim = assertAlertSecretFree(JSON.parse(await readFile(indexPath, "utf8")));
+  const { alertPath } = alertPaths(homeDir, claim.alertId);
+
+  if (!existsSync(alertPath)) {
+    try {
+      const alert = await writeAlert(claim, { homeDir, createExclusive: true });
+      return { alert, deduped: true };
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+    }
+  }
+
+  try {
+    const existing = await loadAlert(claim.alertId, { homeDir });
+    if (existing.state === ALERT_STATES.OPEN && existing.fingerprint === fingerprint) {
+      return { alert: existing, deduped: true };
+    }
+  } catch {
+    // unreadable canonical — fall through to reclaim
+  }
+
+  await unlink(indexPath);
+  return null;
+}
+
 /** Persist alert; exclusive open/<fingerprint> claim makes dedupe atomic. */
 export async function saveAlert(input, { homeDir } = {}) {
   const draft = input?.version === 1 ? { ...input } : createAlert(input);
@@ -56,20 +86,29 @@ export async function saveAlert(input, { homeDir } = {}) {
   const candidate = assertAlertSecretFree(draft);
   const indexPath = openIndexPath(homeDir, candidate.fingerprint);
   await mkdir(join(harnessHomePaths(homeDir).alertsDir, "open"), { recursive: true });
-  try {
-    await writeAtomicJson(indexPath, candidate, { createExclusive: true });
-  } catch (error) {
-    if (error?.code !== "EEXIST") throw error;
-    const existing = assertAlertSecretFree(JSON.parse(await readFile(indexPath, "utf8")));
-    return { alert: existing, deduped: true };
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await writeAtomicJson(indexPath, candidate, { createExclusive: true });
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const resolved = await resolveExistingClaim(homeDir, indexPath, candidate.fingerprint);
+      if (resolved) return resolved;
+      continue;
+    }
+    try {
+      const alert = await writeAlert(candidate, { homeDir, createExclusive: true });
+      return { alert, deduped: false };
+    } catch (error) {
+      await unlink(indexPath).catch(() => {});
+      throw error;
+    }
   }
-  try {
-    const alert = await writeAlert(candidate, { homeDir, createExclusive: true });
-    return { alert, deduped: false };
-  } catch (error) {
-    await unlink(indexPath).catch(() => {});
-    throw error;
-  }
+
+  throw new AlertStoreError("Unable to claim open alert fingerprint.", {
+    code: "claim_failed",
+    details: { fingerprint: candidate.fingerprint }
+  });
 }
 
 /**
