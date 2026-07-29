@@ -62,6 +62,9 @@ function assertMonitorState(raw) {
   if (!a.supported && (a.configured || a.loaded || a.installed)) {
     throw new MonitorStateError("Monitor state.autostart unsupported with lifecycle flags.");
   }
+  if (!raw.enabled && (a.configured || a.loaded || a.installed)) {
+    throw new MonitorStateError("Monitor disabled with active autostart lifecycle.");
+  }
   return {
     ...defaultMonitorState(),
     ...raw,

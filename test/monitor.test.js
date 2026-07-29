@@ -103,6 +103,12 @@ test("nested invalid fails closed; tick does not repair; unloaded is stale", asy
     autostart: { ...baseAuto, loaded: true, configured: false, installed: false }
   });
   assert.equal((await getMonitorStatus(homeDir)).corrupt, true);
+  await writeState({
+    version: 1, enabled: false, intervalSec: 300,
+    autostart: { ...baseAuto, supported: true, configured: true, loaded: true, installed: true }
+  });
+  assert.equal((await getMonitorStatus(homeDir)).corrupt, true);
+  assert.equal((await monitorDoctorCheck(homeDir)).status, "stale");
   await writeState({ version: 1, enabled: true, intervalSec: 300, autostart: "corrupt" });
   await assert.rejects(
     () => runMonitorTick(homeDir, {
