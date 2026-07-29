@@ -95,13 +95,26 @@ export async function saveAlert(input, { homeDir } = {}) {
   const candidate = assertAlertSecretFree(draft);
   const indexPath = openIndexPath(homeDir, candidate.fingerprint);
   await mkdir(openDirPath(homeDir), { recursive: true });
-  try {
-    await writeAtomicJson(indexPath, candidate, { createExclusive: true });
-    return { alert: candidate, deduped: false };
-  } catch (error) {
-    if (error?.code !== "EEXIST") throw error;
-    return { alert: await readOpenAlert(indexPath), deduped: true };
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await writeAtomicJson(indexPath, candidate, { createExclusive: true });
+      return { alert: candidate, deduped: false };
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      try {
+        return { alert: await readOpenAlert(indexPath), deduped: true };
+      } catch (readError) {
+        if (readError?.code !== "ENOENT") throw readError;
+        // Claim removed between EEXIST and read (resolve/dismiss race) — retry create.
+      }
+    }
   }
+
+  throw new AlertStoreError("Unable to claim open alert fingerprint.", {
+    code: "claim_failed",
+    details: { fingerprint: candidate.fingerprint }
+  });
 }
 
 /**

@@ -114,3 +114,23 @@ test("dead-owner style planted claim + 20 concurrent saves keep one open", async
   assert.equal(results[0].alert.alertId, alert.alertId);
   assert.equal((await listAlerts({ homeDir, state: ALERT_STATES.OPEN })).length, 1);
 });
+
+test("concurrent resolve + saves never lose the EEXIST-read race", async () => {
+  for (let round = 0; round < 40; round += 1) {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
+    const { alert } = await saveAlert({
+      kind: "race", title: "Resolve vs save", source: "test"
+    }, { homeDir });
+    const settled = await Promise.allSettled([
+      resolveAlert(alert.alertId, { homeDir }),
+      ...Array.from({ length: 20 }, () => saveAlert({
+        kind: "race", title: "Resolve vs save", source: "test"
+      }, { homeDir }))
+    ]);
+    for (const result of settled) {
+      assert.equal(result.status, "fulfilled", result.reason?.message ?? result.reason);
+    }
+    const open = await listAlerts({ homeDir, state: ALERT_STATES.OPEN });
+    assert.ok(open.length <= 1);
+  }
+});
