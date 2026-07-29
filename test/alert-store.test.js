@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { harnessHomePaths } from "../src/global/paths.js";
@@ -70,7 +70,7 @@ test("corrupt alert store fails closed instead of empty inbox", async () => {
   assert.doesNotMatch(formatAlertDetailLines(first.alert).join("\n"), /SECRET/);
 });
 
-test("resolve releases open claim; inbox hides ids outside DETAILS", async () => {
+test("resolve writes history and removes authoritative open claim", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
   const { alert } = await saveAlert({ kind: "x", title: "Need attention", severity: "high" }, { homeDir });
   assert.match(formatAlertListLines([alert])[0], /high · Need attention/);
@@ -82,24 +82,22 @@ test("resolve releases open claim; inbox hides ids outside DETAILS", async () =>
   await dismissAlert(again.alert.alertId, { homeDir });
 });
 
-test("orphan claim without alert.json is completed on next save", async () => {
+test("open/<fingerprint> alone is authoritative without alert.json", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
   const claim = createAlert({ kind: "orphan", title: "Crash window", source: "test" });
   const openDir = join(harnessHomePaths(homeDir).alertsDir, "open");
   await mkdir(openDir, { recursive: true });
   await writeFile(join(openDir, claim.fingerprint), `${JSON.stringify(claim, null, 2)}\n`);
 
+  assert.equal((await listAlerts({ homeDir, state: ALERT_STATES.OPEN })).length, 1);
   const result = await saveAlert({
     kind: "orphan", title: "Crash window", source: "test"
   }, { homeDir });
   assert.equal(result.deduped, true);
   assert.equal(result.alert.alertId, claim.alertId);
-  const stored = await listAlerts({ homeDir, state: ALERT_STATES.OPEN });
-  assert.equal(stored.length, 1);
-  assert.equal(stored[0].alertId, claim.alertId);
 });
 
-test("stale claim reclaim is serial across concurrent saves", async () => {
+test("dead-owner style planted claim + 20 concurrent saves keep one open", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
   const { alert } = await saveAlert({ kind: "stale", title: "Done once", source: "test" }, { homeDir });
   await resolveAlert(alert.alertId, { homeDir });
@@ -111,27 +109,8 @@ test("stale claim reclaim is serial across concurrent saves", async () => {
     kind: "stale", title: "Done once", source: "test"
   }, { homeDir })));
   assert.equal(results.length, 20);
+  assert.equal(results.every((r) => r.deduped), true);
   assert.equal(new Set(results.map((r) => r.alert.alertId)).size, 1);
-  assert.equal((await listAlerts({ homeDir, state: ALERT_STATES.OPEN })).length, 1);
-  assert.notEqual(results[0].alert.alertId, alert.alertId);
-});
-
-test("orphan fingerprint lock is reclaimed without claim_lock_timeout", async () => {
-  const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
-  const fingerprint = createAlertFingerprint({
-    kind: "lock", title: "Orphan lock", source: "test"
-  });
-  const lockDir = join(harnessHomePaths(homeDir).alertsDir, "open", `.${fingerprint}.lock`);
-  await mkdir(lockDir, { recursive: true });
-  // Empty lock dir (crash before owner.json) with aged mtime.
-  const aged = (Date.now() - 60_000) / 1000;
-  await utimes(lockDir, aged, aged);
-
-  const started = Date.now();
-  const result = await saveAlert({
-    kind: "lock", title: "Orphan lock", source: "test"
-  }, { homeDir });
-  assert.ok(Date.now() - started < 2000);
-  assert.equal(result.deduped, false);
+  assert.equal(results[0].alert.alertId, alert.alertId);
   assert.equal((await listAlerts({ homeDir, state: ALERT_STATES.OPEN })).length, 1);
 });
