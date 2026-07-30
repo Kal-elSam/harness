@@ -19,7 +19,7 @@ test("catalog pins pi-usage-widget@0.2.1; install never implied", () => {
   assert.equal(catalog.length, 1);
   const entry = getCuratedIntegration("pi-usage-widget");
   assert.equal(entry?.version, "0.2.1");
-  assert.equal(entry?.license, "Apache-2.0");
+  assert.equal(entry?.license, "MIT");
   assert.match(entry?.notes ?? "", /Explicit install only/i);
   assert.ok(entry?.permissions.includes("full-local-access-on-install"));
 });

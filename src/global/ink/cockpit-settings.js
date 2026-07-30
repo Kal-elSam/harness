@@ -14,7 +14,7 @@ export const CURATED_INTEGRATIONS = Object.freeze([
     id: "pi-usage-widget",
     name: "Pi usage widget",
     version: "0.2.1",
-    license: "Apache-2.0",
+    license: "MIT",
     status: "available",
     capabilities: Object.freeze(["usage-display", "local-only"]),
     permissions: Object.freeze(["full-local-access-on-install"]),
