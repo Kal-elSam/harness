@@ -1,9 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
+import { mkdir, readFile } from "node:fs/promises";
 import { harnessHomePaths } from "../../paths.js";
 import { detectGlobalDrift, hasRepairableDrift } from "../../drift.js";
 import { writeAtomicJson } from "../write-atomic-json.js";
@@ -12,48 +8,92 @@ import { ALERT_SEVERITIES, ALERT_STATES } from "../alerts/alert-types.js";
 import { listRunRecords } from "../run-store.js";
 import { isRunAlive } from "../run-liveness.js";
 import { RUN_STATES, isActiveRunState } from "../run-types.js";
+import {
+  installAutostart, notifyNewAlert, removeAutostart, resolveMonitorPlatform
+} from "./monitor-platform.js";
 
-const execFile = promisify(execFileCb);
+export {
+  installAutostart, notifyNewAlert, removeAutostart, resolveMonitorPlatform
+} from "./monitor-platform.js";
+
 const SOURCE = "monitor";
-const LABEL = "local.kairo.monitor";
 const INTERVAL = 300;
 
-export function resolveMonitorPlatform(platform = process.platform) {
-  if (platform === "darwin") {
-    const agentsDir = join(homedir(), "Library", "LaunchAgents");
-    return {
-      id: "darwin", supportsAutostart: true, supportsNotify: true,
-      agentsDir, plistPath: join(agentsDir, `${LABEL}.plist`)
-    };
+export class MonitorStateError extends Error {
+  constructor(message, { code = "corrupt_monitor_state" } = {}) {
+    super(message);
+    this.name = "MonitorStateError";
+    this.code = code;
   }
-  return {
-    id: platform, supportsAutostart: false,
-    supportsNotify: platform === "linux" || platform === "win32"
-  };
 }
 
 export function defaultMonitorState() {
   return {
     version: 1, enabled: false, intervalSec: INTERVAL,
     lastTickAt: null, lastTick: null,
-    autostart: { platform: null, installed: false, supported: false }, updatedAt: null
+    autostart: {
+      platform: null, installed: false, supported: false, configured: false, loaded: false
+    },
+    updatedAt: null
   };
 }
 
-export async function readMonitorState(homeDir) {
+function assertMonitorState(raw) {
+  if (!raw || typeof raw !== "object" || raw.version !== 1 || typeof raw.enabled !== "boolean") {
+    throw new MonitorStateError("Monitor state schema invalid.");
+  }
+  if (!Number.isFinite(raw.intervalSec) || raw.intervalSec < 1) {
+    throw new MonitorStateError("Monitor state.intervalSec invalid.");
+  }
+  const a = raw.autostart;
+  if (!a || typeof a !== "object"
+    || typeof a.supported !== "boolean"
+    || typeof a.configured !== "boolean"
+    || typeof a.loaded !== "boolean"
+    || typeof a.installed !== "boolean") {
+    throw new MonitorStateError("Monitor state.autostart invalid.");
+  }
+  if (a.loaded && !a.configured) {
+    throw new MonitorStateError("Monitor state.autostart loaded requires configured.");
+  }
+  if (a.installed !== a.loaded) {
+    throw new MonitorStateError("Monitor state.autostart installed must equal loaded.");
+  }
+  if (!a.supported && (a.configured || a.loaded || a.installed)) {
+    throw new MonitorStateError("Monitor state.autostart unsupported with lifecycle flags.");
+  }
+  if (!raw.enabled && (a.configured || a.loaded || a.installed)) {
+    throw new MonitorStateError("Monitor disabled with active autostart lifecycle.");
+  }
+  return {
+    ...defaultMonitorState(),
+    ...raw,
+    version: 1,
+    enabled: raw.enabled,
+    intervalSec: raw.intervalSec,
+    autostart: { ...defaultMonitorState().autostart, ...a }
+  };
+}
+
+export async function readMonitorState(homeDir, { repair = false } = {}) {
   const path = harnessHomePaths(homeDir).monitorStatePath;
   if (!existsSync(path)) return defaultMonitorState();
   try {
-    return { ...defaultMonitorState(), ...JSON.parse(await readFile(path, "utf8")) };
-  } catch {
-    return defaultMonitorState();
+    return assertMonitorState(JSON.parse(await readFile(path, "utf8")));
+  } catch (error) {
+    if (repair) return defaultMonitorState();
+    if (error instanceof MonitorStateError) throw error;
+    throw new MonitorStateError("Monitor state unreadable.");
   }
 }
 
-export async function writeMonitorState(homeDir, patch) {
+export async function writeMonitorState(homeDir, patch, { repair = false } = {}) {
   const { monitorDir, monitorStatePath } = harnessHomePaths(homeDir);
   await mkdir(monitorDir, { recursive: true });
-  const next = { ...await readMonitorState(homeDir), ...patch, updatedAt: new Date().toISOString() };
+  const next = {
+    ...await readMonitorState(homeDir, { repair }), ...patch,
+    updatedAt: new Date().toISOString()
+  };
   await writeAtomicJson(monitorStatePath, next);
   return next;
 }
@@ -66,81 +106,19 @@ async function raise(homeDir, input, notifyImpl) {
   return result;
 }
 
-export async function notifyNewAlert({
-  title, body, platform = resolveMonitorPlatform(), execFileImpl = execFile
-} = {}) {
-  const t = String(title ?? "Kairo").slice(0, 80);
-  const b = String(body ?? "").slice(0, 180).replace(/[\r\n]+/g, " ");
-  try {
-    if (platform.id === "darwin") {
-      await execFileImpl("osascript", [
-        "-e", `display notification ${JSON.stringify(b)} with title ${JSON.stringify(t)}`
-      ], { shell: false, timeout: 5000 });
-      return { sent: true };
-    }
-    if (platform.id === "linux") {
-      await execFileImpl("notify-send", [t, b], { shell: false, timeout: 5000 });
-      return { sent: true };
-    }
-  } catch { /* degrade */ }
-  return { sent: false };
-}
-
-function plistXml({ nodePath, cliEntry, homeDir, intervalSec }) {
-  const e = (v) => String(v).replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;").replaceAll("\"", "&quot;");
-  const log = join(homeDir, ".harness", "monitor");
-  const n = Math.max(60, Number(intervalSec) || 300);
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>Label</key><string>${LABEL}</string>
-<key>ProgramArguments</key><array><string>${e(nodePath)}</string><string>${e(cliEntry)}</string><string>monitor</string><string>tick</string></array>
-<key>StartInterval</key><integer>${n}</integer><key>RunAtLoad</key><true/>
-<key>EnvironmentVariables</key><dict><key>HARNESS_HOME</key><string>${e(homeDir)}</string></dict>
-<key>StandardOutPath</key><string>${e(join(log, "out.log"))}</string>
-<key>StandardErrorPath</key><string>${e(join(log, "err.log"))}</string>
-</dict></plist>`;
-}
-
-export async function installAutostart({
-  homeDir, platform = resolveMonitorPlatform(), nodePath, cliEntry,
-  intervalSec = INTERVAL, execFileImpl = execFile
-} = {}) {
-  if (!platform.supportsAutostart) {
-    return { supported: false, installed: false, detail: `unsupported on ${platform.id}` };
-  }
-  await mkdir(platform.agentsDir, { recursive: true });
-  await mkdir(join(homeDir, ".harness", "monitor"), { recursive: true });
-  await writeFile(platform.plistPath, plistXml({ nodePath, cliEntry, homeDir, intervalSec }));
-  const domain = `gui/${process.getuid?.() ?? 501}`;
-  try {
-    await execFileImpl("launchctl", ["bootout", `${domain}/${LABEL}`], { shell: false }).catch(() => {});
-    await execFileImpl("launchctl", ["bootstrap", domain, platform.plistPath], { shell: false });
-  } catch (error) {
-    return { supported: true, installed: true, detail: `plist ok; launchctl deferred (${error?.message ?? error})` };
-  }
-  return { supported: true, installed: true, detail: "LaunchAgent installed" };
-}
-
-export async function removeAutostart({
-  platform = resolveMonitorPlatform(), execFileImpl = execFile
-} = {}) {
-  if (!platform.supportsAutostart) return { supported: false, installed: false };
-  const domain = `gui/${process.getuid?.() ?? 501}`;
-  await execFileImpl("launchctl", ["bootout", `${domain}/${LABEL}`], { shell: false }).catch(() => {});
-  if (platform.plistPath && existsSync(platform.plistPath)) await unlink(platform.plistPath).catch(() => {});
-  return { supported: true, installed: false };
+function autostartRecord(platform, a) {
+  return {
+    platform: platform.id, supported: a.supported,
+    configured: Boolean(a.configured), loaded: Boolean(a.loaded),
+    installed: Boolean(a.loaded), detail: a.detail ?? null
+  };
 }
 
 export async function runMonitorTick(homeDir, deps = {}) {
   const {
-    notifyImpl = notifyNewAlert,
-    detectDriftImpl = detectGlobalDrift,
-    listRunsImpl = listRunRecords,
-    isRunAliveImpl = isRunAlive,
-    packageRoot = null,
-    workspaceRoot = null
+    notifyImpl = notifyNewAlert, detectDriftImpl = detectGlobalDrift,
+    listRunsImpl = listRunRecords, isRunAliveImpl = isRunAlive,
+    packageRoot = null, workspaceRoot = null
   } = deps;
   const raised = [];
   await mkdir(harnessHomePaths(homeDir).monitorDir, { recursive: true });
@@ -148,10 +126,9 @@ export async function runMonitorTick(homeDir, deps = {}) {
     const paths = harnessHomePaths(homeDir);
     const state = existsSync(paths.statePath)
       ? JSON.parse(await readFile(paths.statePath, "utf8")) : null;
-    const checks = await detectDriftImpl({
+    if (hasRepairableDrift(await detectDriftImpl({
       homeDir, paths, state, packageRoot, workspaceRoot, context: { homeDir }
-    });
-    if (hasRepairableDrift(checks)) {
+    }))) {
       raised.push(await raise(homeDir, {
         kind: "monitor.drift", title: "Managed configuration drift",
         summary: "Managed configs drifted. Run kairo sync.", severity: ALERT_SEVERITIES.HIGH
@@ -163,32 +140,44 @@ export async function runMonitorTick(homeDir, deps = {}) {
       summary: "Monitor could not complete the drift scan.", severity: ALERT_SEVERITIES.MEDIUM
     }, notifyImpl));
   }
-  let dead = 0; let failed = 0;
+
+  let runsOk = true; let dead = 0; let failed = 0;
   try {
     for (const run of await listRunsImpl(homeDir, { limit: 40 })) {
       if (isActiveRunState(run.state) && !(await isRunAliveImpl(homeDir, run))) dead += 1;
       if (run.state === RUN_STATES.FAILED) failed += 1;
     }
-  } catch { /* ignore */ }
-  if (dead > 0) {
+  } catch {
+    runsOk = false;
+    raised.push(await raise(homeDir, {
+      kind: "monitor.runs-unavailable", title: "Run monitoring unavailable",
+      summary: "Monitor could not inspect agent run health this tick.",
+      severity: ALERT_SEVERITIES.MEDIUM
+    }, notifyImpl));
+  }
+  if (runsOk && dead > 0) {
     raised.push(await raise(homeDir, {
       kind: "run.orphaned", title: "Orphaned agent run",
       summary: `${dead} active run(s) have no live process.`, severity: ALERT_SEVERITIES.HIGH
     }, notifyImpl));
   }
-  if (failed > 0) {
+  if (runsOk && failed > 0) {
     raised.push(await raise(homeDir, {
       kind: "run.failed", title: "Agent run failed",
       summary: `${failed} failed run(s) need attention.`, severity: ALERT_SEVERITIES.MEDIUM
     }, notifyImpl));
   }
+
   const lastTick = {
     raised: raised.length,
     created: raised.filter((r) => !r.deduped).length,
-    deduped: raised.filter((r) => r.deduped).length
+    deduped: raised.filter((r) => r.deduped).length,
+    complete: runsOk, runs: runsOk ? "ok" : "unavailable"
   };
   return {
-    state: await writeMonitorState(homeDir, { lastTickAt: new Date().toISOString(), lastTick }),
+    state: await writeMonitorState(homeDir, {
+      lastTickAt: new Date().toISOString(), lastTick
+    }),
     raised
   };
 }
@@ -197,47 +186,64 @@ export async function enableMonitor(homeDir, {
   cliEntry, nodePath = process.execPath, platform = resolveMonitorPlatform(), intervalSec = INTERVAL
 } = {}) {
   const autostart = await installAutostart({ homeDir, platform, nodePath, cliEntry, intervalSec });
-  return writeMonitorState(homeDir, {
-    enabled: true, intervalSec,
-    autostart: {
-      platform: platform.id, supported: autostart.supported,
-      installed: autostart.installed, detail: autostart.detail ?? null
-    }
-  });
+  try {
+    return await writeMonitorState(homeDir, {
+      enabled: true, intervalSec, autostart: autostartRecord(platform, autostart)
+    }, { repair: true });
+  } catch (error) {
+    if (autostart.loaded) await removeAutostart({ platform });
+    throw error;
+  }
 }
 
 export async function disableMonitor(homeDir, { platform = resolveMonitorPlatform() } = {}) {
-  const autostart = await removeAutostart({ platform });
   return writeMonitorState(homeDir, {
-    enabled: false,
-    autostart: {
-      platform: platform.id, supported: autostart.supported,
-      installed: false, detail: autostart.detail ?? null
-    }
-  });
+    enabled: false, autostart: autostartRecord(platform, await removeAutostart({ platform }))
+  }, { repair: true });
 }
 
 export async function getMonitorStatus(homeDir, { platform = resolveMonitorPlatform() } = {}) {
-  const state = await readMonitorState(homeDir);
-  let openAlerts = 0;
   try {
-    openAlerts = (await listAlerts({ homeDir, state: ALERT_STATES.OPEN })).length;
-  } catch { openAlerts = null; }
-  return {
-    enabled: state.enabled, intervalSec: state.intervalSec,
-    lastTickAt: state.lastTickAt, lastTick: state.lastTick, autostart: state.autostart,
-    platform: platform.id,
-    notify: { supported: platform.supportsNotify, backend: platform.id },
-    openAlerts
-  };
+    const state = await readMonitorState(homeDir);
+    let openAlerts = 0;
+    try {
+      openAlerts = (await listAlerts({ homeDir, state: ALERT_STATES.OPEN })).length;
+    } catch { openAlerts = null; }
+    return {
+      available: true, corrupt: false, enabled: state.enabled, intervalSec: state.intervalSec,
+      lastTickAt: state.lastTickAt, lastTick: state.lastTick, autostart: state.autostart,
+      platform: platform.id,
+      notify: { supported: platform.supportsNotify, backend: platform.id }, openAlerts
+    };
+  } catch (error) {
+    if (error?.code !== "corrupt_monitor_state") throw error;
+    return {
+      available: false, corrupt: true, enabled: null, intervalSec: null,
+      lastTickAt: null, lastTick: null, autostart: null, platform: platform.id,
+      notify: { supported: platform.supportsNotify, backend: platform.id },
+      openAlerts: null, error: error.message
+    };
+  }
 }
 
 export async function monitorDoctorCheck(homeDir) {
   const s = await getMonitorStatus(homeDir);
+  if (s.corrupt || s.available === false) {
+    return {
+      name: "monitor", status: "stale", category: "monitor",
+      detail: "corrupt state — run kairo monitor disable to repair"
+    };
+  }
+  if (s.enabled && s.autostart?.supported && !s.autostart?.loaded) {
+    return {
+      name: "monitor", status: "stale", category: "monitor",
+      detail: "enabled but autostart not loaded"
+    };
+  }
   return {
     name: "monitor", status: "ok", category: "monitor",
     detail: s.enabled
-      ? `enabled · last ${s.lastTickAt ?? "none"} · autostart ${s.autostart?.installed ? "on" : "off"}`
+      ? `enabled · last ${s.lastTickAt ?? "none"} · autostart ${s.autostart?.loaded ? "loaded" : "off"}`
       : "disabled (opt-in · kairo monitor enable)"
   };
 }
