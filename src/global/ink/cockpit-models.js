@@ -7,6 +7,7 @@ import { buildHomeMissionModel, formatHomeRecentRun } from "./cockpit-home.js";
 import { isRunsBranchView } from "./cockpit-runs.js";
 import { buildChangesFooterParts } from "./cockpit-changes.js";
 import { buildRecoveryFooterParts } from "./cockpit-recovery.js";
+import { buildSettingsFooterParts, SETTINGS_PHASE } from "./cockpit-settings.js";
 
 export const COCKPIT_REGIONS = {
   NAV: "nav",
@@ -242,6 +243,7 @@ export function buildFooterModel({
   hasError = false,
   changesPhase = null,
   recoveryPhase = null,
+  settingsPhase = null,
   columns = 80
 } = {}) {
   const glyphs = resolveGlyphs(unicode);
@@ -289,6 +291,14 @@ export function buildFooterModel({
   if (view === ORCHESTRATOR_VIEWS.ACTIVITY) {
     return {
       text: buildRecoveryFooterParts(recoveryPhase).join(` ${glyphs.bullet} `),
+      columns: footerColumns
+    };
+  }
+
+  if (view === ORCHESTRATOR_VIEWS.PROFILE) {
+    return {
+      text: buildSettingsFooterParts(settingsPhase ?? SETTINGS_PHASE.BROWSE)
+        .join(` ${glyphs.bullet} `),
       columns: footerColumns
     };
   }

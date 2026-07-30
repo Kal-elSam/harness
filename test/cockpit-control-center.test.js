@@ -48,6 +48,23 @@ test("control center model surfaces health, coverage, and CTA from snapshot", ()
   assert.match(model.tokens.headline, /Data unavailable|stable|request/);
 });
 
+test("overview alerts use store counts — never synthetic warning/drift totals", () => {
+  const empty = buildControlCenterModel({
+    projectName: "p",
+    snapshot: { health: CONTROL_PLANE_HEALTH.HEALTHY, coverage: {} },
+    alerts: []
+  });
+  assert.equal(empty.alerts.count, 0);
+  assert.equal(empty.alerts.headline, "None pending");
+  const pending = buildControlCenterModel({
+    projectName: "p",
+    snapshot: { health: CONTROL_PLANE_HEALTH.HEALTHY, coverage: {} },
+    alerts: [{ state: "open" }, { state: "resolved" }, { state: "open" }]
+  });
+  assert.equal(pending.alerts.count, 2);
+  assert.equal(pending.alerts.headline, "2 pending");
+});
+
 test("usage lines with real profile shape show configured limits", () => {
   const empty = formatUsageLines({});
   assert.match(empty.join("\n"), /MEASURED/);

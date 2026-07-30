@@ -12,9 +12,11 @@ import { buildFooterModel, COCKPIT_NAV } from "../src/global/ink/cockpit-models.
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
 import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 
-test("palette model: CTA optional, six destinations, Refresh, Help; no writes", () => {
+test("palette model: CTA optional, six destinations, Alerts, Refresh, Help; no writes", () => {
   const base = buildPaletteActions();
   assert.deepEqual(base.slice(0, 6).map((a) => a.label), COCKPIT_NAV.map((n) => n.label));
+  assert.equal(base.at(-3).id, "alerts");
+  assert.equal(base.at(-3).view, ORCHESTRATOR_VIEWS.ALERTS);
   assert.equal(base.at(-2).kind, PALETTE_KINDS.REFRESH);
   assert.equal(base.at(-1).kind, PALETTE_KINDS.HELP);
   const withCta = buildPaletteActions({

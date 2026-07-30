@@ -1,10 +1,12 @@
 import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
+import { formatAlertsHeadline } from "./cockpit-alerts.js";
 
 export function buildControlCenterModel({
   projectName = "project",
   snapshot = null,
   dashboard = null,
-  layoutMode = "compact"
+  layoutMode = "compact",
+  alerts = null
 } = {}) {
   if (!snapshot) {
     return {
@@ -40,7 +42,7 @@ export function buildControlCenterModel({
       notes: [],
       proposalLines: [],
       activity: { headline: "No activity yet" },
-      alerts: { count: null, headline: "Alert data unavailable" },
+      alerts: formatAlertsHeadline(alerts),
       tokens: { headline: "Data unavailable" },
       includeEmbeddedStatus: layoutMode !== "wide",
       runsSecondaryHint: "Detail via Enter · / actions"
@@ -85,7 +87,7 @@ export function buildControlCenterModel({
           ? `Last · ${recent.agentId} · ${recent.state ?? "done"}`
           : "Idle"
     },
-    alerts: { count: null, headline: "Alert data unavailable" },
+    alerts: formatAlertsHeadline(alerts),
     tokens: { headline: formatTokenHeadline(snapshot.budgets) },
     includeEmbeddedStatus: layoutMode !== "wide",
     runsSecondaryHint: "Detail via Enter · / actions"
