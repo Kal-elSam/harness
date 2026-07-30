@@ -39,6 +39,7 @@ import { runOrchestratorDiagnostics, runOrchestratorShell } from "./global/orche
 import { runIntelligenceCli } from "./global/intelligence-cli.js";
 import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
+import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
 import { normalizeRunStrategy } from "./global/runtime/run-strategy.js";
 import {
   LEGACY_PACKAGE_NAME,
@@ -118,6 +119,9 @@ export async function runCli(argv) {
       return;
     case "reviews":
       await runGlobalReviews(optionsWithPolicy, packageManifest);
+      return;
+    case "monitor":
+      await runGlobalMonitor(optionsWithPolicy, packageManifest, { packageRoot });
       return;
     case "intelligence":
       await runIntelligenceCli(optionsWithPolicy, packageManifest);
@@ -423,6 +427,10 @@ export function parseArgs(argv) {
     parseIntelligenceAction(args, options);
   }
 
+  if (command === "monitor") {
+    parseMonitorAction(args, options);
+  }
+
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
 
@@ -678,6 +686,19 @@ function parseReviewsAction(args, options) {
   }
 }
 
+function parseMonitorAction(args, options) {
+  const action = args[0];
+  if (!action || action.startsWith("-")) {
+    options.monitorAction = "status";
+    return;
+  }
+  if (!new Set(["enable", "disable", "status", "tick"]).has(action)) {
+    throw new Error(`Unknown monitor action "${action}". Use enable, disable, status, or tick.`);
+  }
+  args.shift();
+  options.monitorAction = action;
+}
+
 function parseIntelligenceAction(args, options) {
   const action = args[0];
   if (!action || action.startsWith("-")) {
@@ -736,6 +757,7 @@ function normalizeCommand(command) {
   if (command === "runs") return "runs";
   if (command === "review") return "review";
   if (command === "reviews") return "reviews";
+  if (command === "monitor") return "monitor";
   if (command === "intelligence" || command === "intel") return "intelligence";
   if (command === "setup") return "setup";
   if (command === "status") return "status";
@@ -863,6 +885,7 @@ Commands:
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
   review     Bounded read-only review via Codex or Pi; receipts under ~/.harness/reviews/.
   reviews    List or show prior review receipts (secret-free).
+  monitor    Opt-in anomaly monitor (enable|disable|status|tick). macOS LaunchAgent; notify shell:false.
   orchestrator  Read-only capability registry diagnostics (--json supported).
   intelligence  Harness Engineering layer: backends, context packs, routing, budgets.
              Local-first (Ollama). Cloud only with --cloud-consent.
@@ -891,7 +914,7 @@ Commands:
 
 JSON output (--json on supported commands):
   status, sync, doctor, adapters, explain, diff, history, history last,
-  policy (show/set/reset), report
+  policy (show/set/reset), report, monitor
   Human text remains the default. See README.md for examples and field notes.
 
 Version:

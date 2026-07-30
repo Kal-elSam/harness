@@ -33,7 +33,9 @@ export function createCockpitUiState({
   navIndex = 0,
   listIndex = 0,
   helpOpen = false,
-  returnView = null
+  returnView = null,
+  paletteOpen = false,
+  paletteIndex = 0
 } = {}) {
   const regions = regionsForLayout(layoutMode);
   const preferred = region ?? defaultRegionForView(view, layoutMode);
@@ -48,12 +50,54 @@ export function createCockpitUiState({
     listIndex: Math.max(0, listIndex),
     helpOpen,
     returnView,
+    paletteOpen,
+    paletteIndex: Math.max(0, paletteIndex),
     shouldExit: false
   };
 }
 
+function closePalette(state) {
+  return { ...state, paletteOpen: false, paletteIndex: 0 };
+}
+
 export function reduceCockpitUi(state, action) {
   switch (action.type) {
+    case "toggle-palette":
+      if (state.paletteOpen) return closePalette(state);
+      return { ...state, paletteOpen: true, paletteIndex: 0, helpOpen: false };
+    case "close-palette":
+      return closePalette(state);
+    case "palette-arrow": {
+      const max = Math.max(0, (action.listLength ?? 1) - 1);
+      const delta = action.direction === "up" ? -1 : 1;
+      return {
+        ...state,
+        paletteIndex: clamp(state.paletteIndex + delta, 0, max)
+      };
+    }
+    case "run-palette": {
+      const next = closePalette(state);
+      if (action.kind === "help") {
+        return {
+          ...next,
+          helpOpen: true,
+          view: ORCHESTRATOR_VIEWS.HELP,
+          region: defaultRegionForView(ORCHESTRATOR_VIEWS.HELP, state.layoutMode)
+        };
+      }
+      if (action.kind === "navigate" && action.view) {
+        return {
+          ...next,
+          view: action.view,
+          navIndex: navIndexForView(action.view),
+          listIndex: 0,
+          region: defaultRegionForView(action.view, state.layoutMode),
+          helpOpen: false,
+          returnView: null
+        };
+      }
+      return next;
+    }
     case "resize": {
       const regions = regionsForLayout(action.layoutMode);
       const preferred = regions.includes(state.region)
@@ -95,18 +139,18 @@ export function reduceCockpitUi(state, action) {
     case "enter-nav": {
       const item = COCKPIT_NAV[state.navIndex];
       if (!item) return state;
-      return {
+      return closePalette({
         ...state,
         view: item.view,
         listIndex: 0,
         region: defaultRegionForView(item.view, state.layoutMode),
         helpOpen: false,
         returnView: null
-      };
+      });
     }
     case "set-view": {
       const nextView = action.view;
-      return {
+      return closePalette({
         ...state,
         view: nextView,
         listIndex: 0,
@@ -116,19 +160,22 @@ export function reduceCockpitUi(state, action) {
         region: action.region ?? defaultRegionForView(nextView, state.layoutMode),
         returnView: action.returnView ?? state.returnView,
         helpOpen: nextView === ORCHESTRATOR_VIEWS.HELP
-      };
+      });
     }
     case "toggle-help":
       if (state.helpOpen || state.view === ORCHESTRATOR_VIEWS.HELP) {
         return goOverview(state);
       }
-      return {
+      return closePalette({
         ...state,
         helpOpen: true,
         view: ORCHESTRATOR_VIEWS.HELP,
         region: defaultRegionForView(ORCHESTRATOR_VIEWS.HELP, state.layoutMode)
-      };
+      });
     case "escape": {
+      if (state.paletteOpen) {
+        return closePalette(state);
+      }
       if (state.helpOpen || state.view === ORCHESTRATOR_VIEWS.HELP) {
         return goOverview(state);
       }
@@ -174,7 +221,7 @@ export function resolveNavAction(navIndex) {
 }
 
 function goOverview(state) {
-  return {
+  return closePalette({
     ...state,
     helpOpen: false,
     view: ORCHESTRATOR_VIEWS.HOME,
@@ -182,11 +229,11 @@ function goOverview(state) {
     listIndex: 0,
     region: defaultRegionForView(ORCHESTRATOR_VIEWS.HOME, state.layoutMode),
     returnView: null
-  };
+  });
 }
 
 function goRunsHub(state) {
-  return {
+  return closePalette({
     ...state,
     helpOpen: false,
     view: ORCHESTRATOR_VIEWS.RUNS,
@@ -194,5 +241,5 @@ function goRunsHub(state) {
     listIndex: 0,
     region: defaultRegionForView(ORCHESTRATOR_VIEWS.RUNS, state.layoutMode),
     returnView: null
-  };
+  });
 }

@@ -13,19 +13,26 @@ import {
   isContentInteractiveView
 } from "./cockpit-controller.js";
 import {
-  COCKPIT_NAV,
   COCKPIT_REGIONS,
   buildFooterModel,
   buildNavModel,
-  buildSystemStripModel,
   buildTopBarModel,
   navIndexForView,
   resolveProjectName
 } from "./cockpit-models.js";
 import { buildControlCenterModel } from "./cockpit-control-center.js";
+import {
+  buildPaletteActions,
+  buildPaletteModel,
+  canOpenPalette,
+  PALETTE_KINDS,
+  resolvePaletteDestination
+} from "./cockpit-palette.js";
 import { resolveEnterNavIntent } from "./cockpit-enter.js";
 import { resolveRunsHubItem, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 import { selectReviewFromList } from "./cockpit-reviews.js";
+import { selectAlertFromList } from "./cockpit-alerts.js";
+import { ALERT_STATES } from "../runtime/alerts/alert-types.js";
 import { resolveProjectReadiness } from "../dashboard-guidance.js";
 import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
 import { CockpitShell } from "./cockpit/primitives.js";
@@ -38,6 +45,7 @@ import { COCKPIT_COLORS } from "./theme.js";
 import { LAYOUT_MODES } from "./layout.js";
 import { CHANGES_PHASE } from "./cockpit-changes.js";
 import { RECOVERY_PHASE, listRecoverySnapshots } from "./cockpit-recovery.js";
+import { SETTINGS_PHASE } from "./cockpit-settings.js";
 
 export function OrchestratorApp({
   homeDir,
@@ -76,7 +84,7 @@ export function OrchestratorApp({
   };
 
   const openDestination = (destinationKey) => {
-    const view = resolveCtaDestinationView(destinationKey);
+    const view = resolvePaletteDestination(destinationKey);
     if (!view) return false;
     dispatch({
       type: "set-view",
@@ -85,6 +93,15 @@ export function OrchestratorApp({
     });
     return true;
   };
+
+  const confirming = data.changesAction?.phase === CHANGES_PHASE.CONFIRMING
+    || data.recoveryAction?.phase === RECOVERY_PHASE.CONFIRMING
+    || data.settingsAction?.phase === SETTINGS_PHASE.CONFIRMING;
+  const paletteActions = buildPaletteActions({
+    ctaDestination: data.snapshot?.cta?.destination ?? null,
+    ctaTitle: data.snapshot?.cta?.title ?? null,
+    ctaDetail: data.snapshot?.cta?.detail ?? null
+  });
 
   useInput((inputKey, key) => {
     if (data.loading) return;
@@ -104,6 +121,46 @@ export function OrchestratorApp({
 
     if (data.busy) return;
 
+    if (ui.paletteOpen) {
+      if (key.escape) {
+        dispatch({ type: "close-palette" });
+        return;
+      }
+      if (inputKey === "/") {
+        dispatch({ type: "toggle-palette" });
+        return;
+      }
+      if (key.upArrow || key.downArrow) {
+        dispatch({
+          type: "palette-arrow",
+          direction: key.upArrow ? "up" : "down",
+          listLength: paletteActions.length
+        });
+        return;
+      }
+      if (key.return) {
+        const selected = paletteActions[ui.paletteIndex] ?? null;
+        if (!selected) return;
+        if (selected.kind === PALETTE_KINDS.REFRESH) {
+          dispatch({ type: "run-palette", kind: selected.kind });
+          data.reload().catch(() => {});
+          return;
+        }
+        dispatch({
+          type: "run-palette",
+          kind: selected.kind,
+          view: selected.view
+        });
+      }
+      return;
+    }
+
+    if (inputKey === "/"
+      && canOpenPalette({ loading: data.loading, busy: data.busy, confirming })) {
+      dispatch({ type: "toggle-palette" });
+      return;
+    }
+
     if (key.escape) {
       if (ui.view === ORCHESTRATOR_VIEWS.CHANGES
         && data.changesAction?.phase === CHANGES_PHASE.CONFIRMING) {
@@ -114,6 +171,18 @@ export function OrchestratorApp({
         && data.recoveryAction?.phase === RECOVERY_PHASE.CONFIRMING) {
         data.cancelRecovery();
         return;
+      }
+      if (ui.view === ORCHESTRATOR_VIEWS.PROFILE) {
+        const settingsPhase = data.settingsAction?.phase;
+        if (settingsPhase === SETTINGS_PHASE.CONFIRMING) {
+          data.cancelSettings();
+          return;
+        }
+        if (settingsPhase === SETTINGS_PHASE.PREVIEW
+          || settingsPhase === SETTINGS_PHASE.COMPLETED) {
+          data.resetSettings();
+          return;
+        }
       }
 
       if (ui.view === ORCHESTRATOR_VIEWS.LAUNCH && data.launchableAgents.length > 0) {
@@ -162,9 +231,15 @@ export function OrchestratorApp({
           ? (data.dashboard?.recentRuns ?? []).length
           : ui.view === ORCHESTRATOR_VIEWS.REVIEWS
             ? (data.reviews ?? []).length
-            : ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
-              ? listRecoverySnapshots(data.snapshot).length
-              : 0;
+            : ui.view === ORCHESTRATOR_VIEWS.ALERTS
+              ? (Array.isArray(data.alerts) ? data.alerts : [])
+                .filter((alert) => alert.state === ALERT_STATES.OPEN).length
+              : ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
+                ? listRecoverySnapshots(data.snapshot).length
+                : ui.view === ORCHESTRATOR_VIEWS.PROFILE
+                    && data.settingsAction?.phase === SETTINGS_PHASE.BROWSE
+                  ? data.curatedIntegrations.length
+                  : 0;
 
     let routed = null;
     if (key.tab) {
@@ -261,6 +336,19 @@ export function OrchestratorApp({
       return;
     }
 
+    if (ui.region === COCKPIT_REGIONS.CONTENT
+      && ui.view === ORCHESTRATOR_VIEWS.ALERTS) {
+      const selected = selectAlertFromList(data.alerts, ui.listIndex);
+      if (key.return) {
+        data.handleAlertTransition(selected, "resolve").catch(() => {});
+        return;
+      }
+      if (inputKey.toLowerCase() === "d") {
+        data.handleAlertTransition(selected, "dismiss").catch(() => {});
+        return;
+      }
+    }
+
     if (ui.view === ORCHESTRATOR_VIEWS.RUN_DETAIL) {
       if (inputKey.toLowerCase() === "c" && isRunCancellable(data.selectedRun)) {
         data.handleCancelRun();
@@ -317,6 +405,30 @@ export function OrchestratorApp({
       }
     }
 
+    if (ui.view === ORCHESTRATOR_VIEWS.PROFILE) {
+      const keyName = inputKey.toLowerCase();
+      const phase = data.settingsAction?.phase ?? SETTINGS_PHASE.BROWSE;
+      if (key.return && ui.region === COCKPIT_REGIONS.CONTENT) {
+        if (phase === SETTINGS_PHASE.BROWSE) {
+          const entry = data.curatedIntegrations[ui.listIndex];
+          if (entry?.id) data.previewSettings(entry.id);
+          return;
+        }
+        if (phase === SETTINGS_PHASE.PREVIEW) {
+          data.promptConfirmSettings();
+          return;
+        }
+      }
+      if (keyName === "y" && phase === SETTINGS_PHASE.CONFIRMING) {
+        data.confirmSettings();
+        return;
+      }
+      if (keyName === "n" && phase === SETTINGS_PHASE.CONFIRMING) {
+        data.cancelSettings();
+        return;
+      }
+    }
+
     if (inputKey.toLowerCase() === "r" && ui.view !== ORCHESTRATOR_VIEWS.LAUNCH) {
       if (ui.view === ORCHESTRATOR_VIEWS.REVIEWS || ui.view === ORCHESTRATOR_VIEWS.REVIEW_DETAIL) {
         data.loadReviews().catch(() => {});
@@ -354,7 +466,9 @@ export function OrchestratorApp({
   const controlCenter = buildControlCenterModel({
     projectName,
     snapshot: data.snapshot,
-    layoutMode: mode
+    dashboard: data.dashboard,
+    layoutMode: mode,
+    alerts: data.alerts
   });
   const systemOnline = data.snapshot
     ? data.snapshot.health !== CONTROL_PLANE_HEALTH.NOT_CONFIGURED
@@ -376,12 +490,16 @@ export function OrchestratorApp({
         region: ui.region,
         navIndex: ui.navIndex,
         helpOpen: ui.helpOpen,
+        paletteOpen: ui.paletteOpen,
         canCancel: isRunCancellable(data.selectedRun),
         unicode,
         changesPhase: data.changesAction?.phase ?? null,
-        recoveryPhase: data.recoveryAction?.phase ?? null
+        recoveryPhase: data.recoveryAction?.phase ?? null,
+        settingsPhase: data.settingsAction?.phase ?? null,
+        columns
       }),
       layoutMode: mode,
+      columns,
       nav: buildNavModel({
         navIndex: ui.navIndex,
         currentView: ui.view,
@@ -391,24 +509,8 @@ export function OrchestratorApp({
         diagnostics: data.diagnostics,
         snapshot: data.snapshot
       }),
-      system: buildSystemStripModel({
-        dashboard: data.dashboard,
-        diagnostics: data.diagnostics,
-        readiness: data.snapshot
-          ? {
-            kind: data.snapshot.health.toLowerCase(),
-            label: controlCenter.health.label,
-            healthKind: data.snapshot.health === CONTROL_PLANE_HEALTH.HEALTHY
-              ? "ready"
-              : data.snapshot.health === CONTROL_PLANE_HEALTH.CHECK_FAILED
-                ? "error"
-                : "warn"
-          }
-          : readiness
-      }),
       navFocused: ui.region === COCKPIT_REGIONS.NAV,
       contentFocused: ui.region === COCKPIT_REGIONS.CONTENT,
-      systemFocused: ui.region === COCKPIT_REGIONS.SYSTEM,
       colorEnabled
     },
       renderCockpitView({
@@ -426,33 +528,22 @@ export function OrchestratorApp({
         selectedEvents: data.selectedEvents,
         reviews: data.reviews,
         selectedReview: data.selectedReview,
+        alerts: data.alerts,
         changesAction: data.changesAction,
         recoveryAction: data.recoveryAction,
+        settingsAction: data.settingsAction,
         controlCenter,
+        palette: ui.paletteOpen
+          ? buildPaletteModel({
+            actions: paletteActions,
+            index: ui.paletteIndex,
+            unicode
+          })
+          : null,
         layoutMode: mode,
-        colorEnabled
+        colorEnabled,
+        homeDir
       })
     )
   );
-}
-
-function resolveCtaDestinationView(destinationKey) {
-  switch (destinationKey) {
-    case "changes":
-      return ORCHESTRATOR_VIEWS.CHANGES;
-    case "control-center":
-      return ORCHESTRATOR_VIEWS.HOME;
-    case "ides":
-      return ORCHESTRATOR_VIEWS.IDES;
-    case "modules":
-      return ORCHESTRATOR_VIEWS.MODULES;
-    case "activity":
-      return ORCHESTRATOR_VIEWS.ACTIVITY;
-    case "profile":
-      return ORCHESTRATOR_VIEWS.PROFILE;
-    case "runs":
-      return ORCHESTRATOR_VIEWS.RUNS;
-    default:
-      return null;
-  }
 }

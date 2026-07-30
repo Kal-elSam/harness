@@ -1,6 +1,7 @@
 import { stdin as input, stdout as output } from "node:process";
 import { canUseSetupInk } from "./terminal.js";
 import { isActiveRunState, formatTaskLabel } from "../runtime/run-types.js";
+import { formatConfirmPath } from "./cockpit-path-label.js";
 
 export function canUseOrchestratorShell({
   interactive = Boolean(input.isTTY && output.isTTY),
@@ -27,7 +28,9 @@ export const ORCHESTRATOR_VIEWS = {
   PROVIDERS: "providers",
   LAUNCH: "launch",
   DIAGNOSTICS: "diagnostics",
-  HELP: "help"
+  HELP: "help",
+  USAGE: "usage",
+  ALERTS: "alerts"
 };
 
 export const ORCHESTRATOR_MENU = [
@@ -175,8 +178,9 @@ export function formatRunLines(runs, {
     const agent = humanizeToken(run.agentId);
     const state = humanizeRunState(run.state);
     const task = formatTaskLabel(run);
+    const strategy = run.strategy ? ` · ${run.strategy}` : "";
     if (readable) {
-      return `${agent} · ${state} · ${task}`;
+      return `${agent} · ${state}${strategy} · ${task}`;
     }
     const statePad = run.state.padEnd(12);
     const agentPad = run.agentId.padEnd(10);
@@ -270,23 +274,29 @@ export function formatAgentStatusLines(capabilities) {
   });
 }
 
-export function formatRunDetailLines(run, events = []) {
+export function formatRunDetailLines(run, events = [], { homeDir = null } = {}) {
   if (!run) return ["Run not found."];
 
   const lines = [
-    `Run: ${run.runId}`,
-    `Agent: ${run.agentId} (${run.provider})`,
-    `State: ${run.state}`,
-    `Model: ${run.model ?? "default"}`,
-    `Cwd: ${run.cwd}`,
-    `Started: ${run.startedAt}`,
-    `Updated: ${run.updatedAt}`
+    "SUMMARY",
+    `${humanizeToken(run.agentId)} · ${humanizeRunState(run.state)}${run.strategy ? ` · ${run.strategy}` : ""}`,
+    `Model · ${run.model ?? "default"}`,
+    `Started · ${run.startedAt ?? "n/a"}`
   ];
+  if (run.completedAt) lines.push(`Completed · ${run.completedAt}`);
+  if (run.tokenUsage && typeof run.tokenUsage === "object") {
+    const parts = [];
+    if (Number.isFinite(run.tokenUsage.input)) parts.push(`in ${run.tokenUsage.input}`);
+    if (Number.isFinite(run.tokenUsage.output)) parts.push(`out ${run.tokenUsage.output}`);
+    if (Number.isFinite(run.tokenUsage.total)) parts.push(`total ${run.tokenUsage.total}`);
+    if (parts.length > 0) lines.push(`Tokens · ${parts.join(" · ")}`);
+  }
+  if (run.error) lines.push(`Error · ${run.error}`);
 
-  if (run.completedAt) lines.push(`Completed: ${run.completedAt}`);
-  if (run.tokenUsage) lines.push(`Tokens: ${JSON.stringify(run.tokenUsage)}`);
-  if (run.error) lines.push(`Error: ${run.error}`);
-  if (run.tools?.length) lines.push(`Tools: ${run.tools.join(", ")}`);
+  lines.push("", "DETAILS");
+  lines.push(`Run id · ${run.runId}`);
+  if (run.cwd) lines.push(`Cwd · ${formatConfirmPath(run.cwd, homeDir)}`);
+  if (run.tools?.length) lines.push(`Tools · ${run.tools.join(", ")}`);
 
   if (events.length > 0) {
     lines.push("", "Recent events");
