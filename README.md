@@ -35,23 +35,43 @@ kairo
 **First run** (no `~/.harness/state.json`): interactive onboarding → safe diagnosis →
 setup with confirmation → full-screen operations cockpit.
 
-**Later runs** (state present): full-screen Control Center that explains what Kairo
-does, shows coverage/integrity, evidence-backed proposals, and the next governance
-action (scan → evidence → preview → confirm → apply → re-scan → recovery). Runs stay
-secondary. Layout adapts to terminal size:
+**Later runs** (state present): full-screen Control Center oriented around user
+tasks — overall health, one next action, activity, pending alerts, and guided
+governance (scan → evidence → preview → confirm → apply → re-scan → recovery).
+Runs stay secondary. Layout adapts to terminal size:
 
 | Mode | Size | Layout |
 |------|------|--------|
-| Wide | ≥100 cols × ≥28 rows | Nav + Home/content + system |
-| Compact | ≥72×20 | Nav + Home/content (readiness embedded) |
-| Minimal | 60–71 cols or short height | Selected section + essential readiness/next/recent |
+| Wide | ≥100 cols × ≥28 rows | TopBar + nav strip + main panel + footer |
+| Compact | ≥72×20 | Same single-panel shell (tighter lists) |
+| Minimal | 60–71 cols or short height | Selected section + essential readiness/next |
 | Below gate | &lt;60 cols | Explicit TTY fallback (Ink disabled) |
 
-Keys: `↑↓` navigate (selection explanation updates) · `Enter` open ·
-`Esc` back (exit only from Home) · `R` refresh/retry · `C` cancel run · `?` help.
-`Tab` switches region only when content is interactive (run lists / New run).
+Keys: `↑↓` navigate · `Enter` open/activate · `/` actions palette ·
+`Esc` back (exit only from Overview) · `R` refresh/retry · `C` cancel run ·
+`?` help. `Tab` switches region when content is interactive (runs, alerts,
+Activity, Settings, launch).
 
-Navigation labels: Home · Running now · History · Agents · New run · System health.
+Navigation: Overview · Governance · Activity · Orchestration · Usage · Settings.
+
+### Monitor (opt-in)
+
+```bash
+kairo monitor enable
+kairo monitor status
+kairo monitor tick
+kairo monitor disable
+```
+
+Scans governance drift and orphan/failed runs into the alert store. On macOS,
+`enable` can install a LaunchAgent; other OS degrade honestly. Notifications fire
+only when a new alert claim succeeds.
+
+### Settings (curated integrations)
+
+Settings browses a curated catalog (pinned `pi-usage-widget@0.2.1`, MIT).
+Preview → confirm records explicit install intent with `wroteFiles: false` —
+Kairo never auto-installs Pi packages from Cockpit in 0.9.0.
 
 Respects `NO_COLOR`, `HARNESS_ASCII=1`, and `HARNESS_INK=0`. Status is always labeled
 in text, never color alone.
