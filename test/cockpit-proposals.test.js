@@ -88,23 +88,29 @@ test("control center model includes proposal lines without dumping sensitive ref
     }
   });
 
-  assert.ok(model.proposalLines.some((line) => /\[HIGH\] Finish local setup → changes/.test(line)));
-  assert.ok(model.proposalLines.some((line) => /Budget ·/.test(line)));
-  assert.ok(model.runsSecondaryHint.includes("secondary"));
+  assert.match(model.title, /OVERVIEW/);
+  assert.match(model.nextAction.actionTitle, /Finish local setup/);
+  assert.match(model.tokens.headline, /stable 1\/10/);
+  assert.equal(model.proposalLines.length, 0);
+  assert.match(model.runsSecondaryHint, /Enter|actions/i);
 });
 
-test("changes lines prepend proposals targeting changes", () => {
+test("governance lines prioritize status coverage and CTA over proposal dumps", () => {
   const lines = formatChangesActionLines({
     layoutMode: "compact",
     snapshot: {
+      health: "ACTION_REQUIRED",
+      coverage: { governedAgents: 0, detectedAgents: 2, components: 1 },
+      cta: { title: "Finish local setup", detail: "Run setup", destination: "changes" },
       proposals: SAMPLE,
       diff: { installed: true, hasChanges: false, summary: "No pending governance changes." }
     },
     changesAction: { phase: "idle", message: null, error: null, preview: null, receipt: null }
   });
 
-  assert.match(lines.join("\n"), /Proposals ·/);
-  assert.match(lines.join("\n"), /Finish local setup → changes/);
+  assert.match(lines.join("\n"), /STATUS/);
+  assert.match(lines.join("\n"), /Finish local setup/);
+  assert.doesNotMatch(lines.join("\n"), /Proposals ·/);
+  assert.doesNotMatch(lines.join("\n"), /evidence:/);
   assert.equal(lines.join("\n").includes("graphify"), false);
-  assert.match(lines.join("\n"), /No pending governance changes/);
 });

@@ -40,7 +40,7 @@ function applyIntegratedEnter(state, { ctaDestination = null } = {}) {
       return reduceCockpitUi(state, {
         type: "set-view",
         view,
-        navIndex: COCKPIT_NAV.findIndex((item) => item.view === view || (view === ORCHESTRATOR_VIEWS.RUNS && item.id === "runs"))
+        navIndex: COCKPIT_NAV.findIndex((item) => item.view === view || (view === ORCHESTRATOR_VIEWS.RUNS && item.id === "orchestration"))
       });
     }
   }
@@ -52,15 +52,15 @@ function openRunsHubSelection(state, listIndex) {
   return reduceCockpitUi(state, {
     type: "set-view",
     view: item.view,
-    navIndex: COCKPIT_NAV.findIndex((entry) => entry.id === "runs")
+    navIndex: COCKPIT_NAV.findIndex((entry) => entry.id === "orchestration")
   });
 }
 
-test("diagnostics keeps nav focus so arrows switch sections without Tab", () => {
+test("governance keeps nav focus so arrows switch sections without Tab", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     region: COCKPIT_REGIONS.NAV,
-    navIndex: COCKPIT_NAV.findIndex((item) => item.view === ORCHESTRATOR_VIEWS.CHANGES)
+    navIndex: COCKPIT_NAV.findIndex((item) => item.id === "governance")
   });
 
   state = reduceCockpitUi(state, { type: "enter-nav" });
@@ -68,11 +68,11 @@ test("diagnostics keeps nav focus so arrows switch sections without Tab", () => 
   assert.equal(state.region, COCKPIT_REGIONS.NAV);
 
   state = reduceCockpitUi(state, { type: "arrow", direction: "up" });
-  assert.equal(state.navIndex, COCKPIT_NAV.findIndex((item) => item.id === "modules"));
+  assert.equal(state.navIndex, COCKPIT_NAV.findIndex((item) => item.id === "overview"));
   assert.equal(state.region, COCKPIT_REGIONS.NAV);
 
   state = reduceCockpitUi(state, { type: "enter-nav" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.MODULES);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);
   assert.equal(state.region, COCKPIT_REGIONS.NAV);
 });
 
@@ -90,26 +90,27 @@ test("overview stays on navigation focus after selecting Overview", () => {
   assert.equal(state.navIndex, 0);
 });
 
-test("providers and help open with navigation focus", () => {
-  for (const view of [ORCHESTRATOR_VIEWS.IDES, ORCHESTRATOR_VIEWS.HELP]) {
-    const navIndex = view === ORCHESTRATOR_VIEWS.HELP
-      ? 0
-      : COCKPIT_NAV.findIndex((item) => item.view === view);
-    let state = createCockpitUiState({
-      layoutMode: LAYOUT_MODES.COMPACT,
-      region: COCKPIT_REGIONS.NAV,
-      navIndex: Math.max(0, navIndex)
-    });
+test("help opens with navigation focus; Settings opens content-interactive", () => {
+  let help = createCockpitUiState({
+    layoutMode: LAYOUT_MODES.COMPACT,
+    region: COCKPIT_REGIONS.NAV,
+    navIndex: 0
+  });
+  help = reduceCockpitUi(help, { type: "toggle-help" });
+  assert.equal(help.view, ORCHESTRATOR_VIEWS.HELP);
+  assert.equal(help.region, COCKPIT_REGIONS.NAV);
 
-    if (view === ORCHESTRATOR_VIEWS.HELP) {
-      state = reduceCockpitUi(state, { type: "toggle-help" });
-    } else {
-      state = reduceCockpitUi(state, { type: "enter-nav" });
-    }
-
-    assert.equal(state.view, view);
-    assert.equal(state.region, COCKPIT_REGIONS.NAV, `${view} should keep nav focus`);
-  }
+  const settingsNav = COCKPIT_NAV.findIndex((item) => item.view === ORCHESTRATOR_VIEWS.PROFILE);
+  let settings = createCockpitUiState({
+    layoutMode: LAYOUT_MODES.COMPACT,
+    region: COCKPIT_REGIONS.NAV,
+    navIndex: Math.max(0, settingsNav)
+  });
+  settings = reduceCockpitUi(settings, { type: "enter-nav" });
+  assert.equal(settings.view, ORCHESTRATOR_VIEWS.PROFILE);
+  assert.equal(settings.region, COCKPIT_REGIONS.CONTENT);
+  assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.PROFILE), true);
+  assert.equal(isNavFocusedView(ORCHESTRATOR_VIEWS.PROFILE), false);
 });
 
 test("escape from main section returns to overview; second escape exits", () => {
@@ -280,23 +281,23 @@ test("routeCockpitKey centralizes region routing before view handlers", () => {
 
 test("nav labels and selected vs current remain distinct while explanation follows selection", () => {
   const nav = buildNavModel({
-    navIndex: 4,
+    navIndex: 2,
     currentView: ORCHESTRATOR_VIEWS.HOME,
     focused: true,
     dashboard: { activeRuns: [], recentRuns: [], providers: [{ launchable: true }] },
     diagnostics: { diagnostics: { detected: 1, errors: 0 }, capabilities: [{}] }
   });
-  assert.equal(nav.items[0].label, "Control center");
+  assert.equal(nav.items[0].label, "Overview");
   assert.equal(nav.items[0].current, true);
   assert.equal(nav.items[0].selected, false);
-  assert.equal(nav.items[3].label, "Changes");
-  assert.equal(nav.items[4].selected, true);
-  assert.equal(nav.items[4].current, false);
-  assert.match(nav.explanation, /backups|rollback|operations/i);
+  assert.equal(nav.items[1].label, "Governance");
+  assert.equal(nav.items[2].selected, true);
+  assert.equal(nav.items[2].current, false);
+  assert.match(nav.explanation, /backups|recovery|Operations/i);
 });
 
-test("recommended Control center destination opens Changes with matching nav index", () => {
-  const navIndex = COCKPIT_NAV.findIndex((item) => item.id === "changes");
+test("recommended Overview destination opens Governance with matching nav index", () => {
+  const navIndex = COCKPIT_NAV.findIndex((item) => item.id === "governance");
   assert.ok(navIndex >= 0);
 
   let state = createCockpitUiState({
@@ -313,8 +314,8 @@ test("recommended Control center destination opens Changes with matching nav ind
   assert.equal(state.navIndex, navIndex);
 });
 
-test("Enter opens Control center without activating CTA; Enter again activates CTA", () => {
-  const changesIndex = COCKPIT_NAV.findIndex((item) => item.id === "changes");
+test("Enter opens Overview without activating CTA; Enter again activates CTA", () => {
+  const changesIndex = COCKPIT_NAV.findIndex((item) => item.id === "governance");
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     region: COCKPIT_REGIONS.NAV,
@@ -329,18 +330,18 @@ test("Enter opens Control center without activating CTA; Enter again activates C
   }
   state = applyIntegratedEnter(state, { ctaDestination: "changes" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME,
-    "first Enter on Control center only opens Home");
+    "first Enter on Overview only opens Home");
 
   state = applyIntegratedEnter(state, { ctaDestination: "changes" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES,
-    "second Enter on Control center activates CTA destination");
+    "second Enter on Overview activates CTA destination");
 });
 
 test("Runs hub exposes Active, History, Reviews, and New run", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     region: COCKPIT_REGIONS.NAV,
-    navIndex: COCKPIT_NAV.findIndex((item) => item.id === "runs")
+    navIndex: COCKPIT_NAV.findIndex((item) => item.id === "orchestration")
   });
   state = applyIntegratedEnter(state, {});
   assert.equal(state.view, ORCHESTRATOR_VIEWS.RUNS);

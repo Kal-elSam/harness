@@ -22,8 +22,10 @@ export function formatReviewListLines(receipts = []) {
   return receipts.map((receipt) => {
     const counts = countFindingsBySeverity(receipt.findings);
     const findingTotal = (receipt.findings ?? []).length;
-    const created = String(receipt.createdAt ?? "").slice(0, 19).replace("T", " ");
-    return `${receipt.reviewId}  ${String(receipt.state).padEnd(10)}  ${String(receipt.agentId).padEnd(6)}  ${findingTotal}f (h${counts.high}/m${counts.medium}/l${counts.low})  ${created}`;
+    const created = String(receipt.createdAt ?? "").slice(0, 16).replace("T", " ");
+    const agent = String(receipt.agentId ?? "agent");
+    const state = String(receipt.state ?? "unknown");
+    return `${agent} · ${state} · ${findingTotal} findings (h${counts.high}/m${counts.medium}/l${counts.low}) · ${created || "unknown time"}`;
   });
 }
 
@@ -33,15 +35,17 @@ export function formatReviewDetailLines(receipt) {
   const snapshot = receipt.snapshot ?? {};
   const totals = snapshot.totals ?? {};
   const lines = [
-    `Id: ${receipt.reviewId}`,
-    `Agent: ${receipt.agentId}${receipt.model ? ` · model ${receipt.model}` : ""}`,
-    `State: ${receipt.state}`,
-    `Created: ${receipt.createdAt ?? "n/a"}`,
-    `Findings: ${(receipt.findings ?? []).length} (high ${counts.high}, medium ${counts.medium}, low ${counts.low})`,
-    `Snapshot: ${snapshot.mode ?? "n/a"} · files ${totals.fileCount ?? 0} · fingerprint ${String(snapshot.fingerprint ?? "").slice(0, 12) || "n/a"}`
+    "SUMMARY",
+    `${receipt.agentId}${receipt.model ? ` · ${receipt.model}` : ""} · ${receipt.state}`,
+    `Findings · ${(receipt.findings ?? []).length} (high ${counts.high}, medium ${counts.medium}, low ${counts.low})`,
+    `Created · ${receipt.createdAt ?? "n/a"}`,
+    "",
+    "DETAILS",
+    `Id · ${receipt.reviewId}`,
+    `Snapshot · ${snapshot.mode ?? "n/a"} · ${totals.fileCount ?? 0} files`
   ];
   if ((receipt.warnings ?? []).length > 0) {
-    lines.push(`Warnings: ${receipt.warnings.length}`);
+    lines.push(`Warnings · ${receipt.warnings.length}`);
   }
   const findings = receipt.findings ?? [];
   if (findings.length === 0) {
@@ -56,7 +60,7 @@ export function formatReviewDetailLines(receipt) {
     );
   }
   if (findings.length > 20) {
-    lines.push(`  … ${findings.length - 20} more (use kairo reviews show ${receipt.reviewId})`);
+    lines.push(`  … ${findings.length - 20} more`);
   }
   return lines;
 }

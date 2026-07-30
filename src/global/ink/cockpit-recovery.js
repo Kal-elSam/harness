@@ -1,3 +1,5 @@
+import { formatConfirmPath } from "./cockpit-path-label.js";
+
 export const RECOVERY_PHASE = Object.freeze({
   IDLE: "idle",
   PREVIEWING: "previewing",
@@ -73,40 +75,101 @@ export function listRecoverySnapshots(snapshot) {
   return snapshot?.backups?.snapshots ?? [];
 }
 
-export function formatRecoveryLines({ snapshot, recoveryAction, listIndex = 0 }) {
+function formatWhen(timestamp) {
+  if (!timestamp) return "unknown time";
+  const raw = String(timestamp);
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 16).replace("T", " ");
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw.slice(0, 16);
+  return date.toISOString().slice(0, 16).replace("T", " ");
+}
+
+function formatResult(action) {
+  const value = String(action ?? "").toLowerCase();
+  if (!value) return "done";
+  if (value === "applied" || value === "ok" || value === "success") return "ok";
+  if (value === "cancelled" || value === "canceled") return "cancelled";
+  if (value.includes("fail")) return "failed";
+  return value;
+}
+
+function shortName(name) {
+  const raw = String(name ?? "").trim();
+  if (!raw) return "snapshot";
+  const parts = raw.split(/[/\\]/).filter(Boolean);
+  return parts[parts.length - 1] || raw;
+}
+
+/**
+ * Activity surface: what agents did, when, and result.
+ * Snapshot restore stays secondary; paths only under DETAILS.
+ */
+export function formatRecoveryLines({
+  snapshot,
+  recoveryAction,
+  listIndex = 0,
+  dashboard = null,
+  detail = false,
+  homeDir = null
+} = {}) {
   const backups = listRecoverySnapshots(snapshot);
   const events = snapshot?.history?.events ?? [];
   const phase = recoveryAction?.phase ?? RECOVERY_PHASE.IDLE;
-  const lines = [
-    `Activity & recovery · ${phase}`,
-    `History: ${events.length} recent event(s)`,
-    ...events.slice(0, 3).map((event) => `${event.command ?? event.type ?? "event"} · ${event.action ?? ""} · ${event.timestamp ?? ""}`),
-    "",
-    `Snapshots: ${snapshot?.backups?.count ?? backups.length}`
-  ];
+  const lines = ["RECENT"];
 
+  const recent = [];
+  for (const event of events.slice(0, 3)) {
+    recent.push(
+      `${formatWhen(event.timestamp)} · ${event.command ?? event.type ?? "event"} · ${formatResult(event.action)}`
+    );
+  }
+  for (const run of (dashboard?.recentRuns ?? []).slice(0, 2)) {
+    recent.push(
+      `${formatWhen(run.updatedAt ?? run.endedAt ?? run.startedAt)} · ${run.agentId ?? "agent"} · ${formatResult(run.state)}`
+    );
+  }
+  if (recent.length === 0) lines.push("No recent agent activity.");
+  else lines.push(...recent.slice(0, 4));
+
+  lines.push("", "SNAPSHOTS");
   if (backups.length === 0) {
     lines.push("No global snapshots yet.");
   } else {
     backups.forEach((entry, index) => {
       const mark = index === listIndex ? "›" : " ";
-      lines.push(`${mark} ${entry.name} · ${entry.fileCount ?? "?"} files`);
+      lines.push(`${mark} ${shortName(entry.name)} · ${entry.fileCount ?? "?"} files`);
     });
   }
 
   if (recoveryAction?.message) lines.push("", recoveryAction.message);
+
   const preview = recoveryAction?.preview;
   if (preview) {
-    lines.push(`Snapshot · ${preview.snapshot}`);
-    for (const file of preview.files ?? []) lines.push(`  restore · ${file.displayPath}`);
-    if (preview.fingerprint) lines.push(`Fingerprint · ${preview.fingerprint.slice(0, 12)}…`);
+    const fileCount = preview.files?.length ?? 0;
+    lines.push(`Restore preview · ${fileCount} file(s)`);
+    if (detail || phase === RECOVERY_PHASE.CONFIRMING) {
+      lines.push("DETAILS");
+      const limit = detail ? 12 : 3;
+      for (const file of (preview.files ?? []).slice(0, limit)) {
+        lines.push(formatConfirmPath(file.displayPath ?? file.path, homeDir));
+      }
+      if ((preview.files?.length ?? 0) > limit) {
+        lines.push(`… ${preview.files.length - limit} more`);
+      }
+    }
   }
+
   const receipt = recoveryAction?.receipt;
   if (receipt) {
-    lines.push("", `Receipt · ${receipt.action}`);
-    if (receipt.safetyBackup) lines.push(`Safety backup · ${receipt.safetyBackup}`);
-    for (const path of receipt.restored ?? []) lines.push(`  restored · ${path}`);
+    const restored = receipt.restored?.length ?? 0;
+    lines.push("", `Result · ${receipt.action ?? "rollback"} · ${restored} restored`);
+    if (detail && receipt.safetyBackup) {
+      lines.push("DETAILS", `Safety backup retained`);
+    } else if (receipt.safetyBackup) {
+      lines.push("Safety backup retained");
+    }
   }
+
   if (phase === RECOVERY_PHASE.IDLE || phase === RECOVERY_PHASE.COMPLETED || phase === RECOVERY_PHASE.FAILED) {
     lines.push("", "Enter preview · Y restore · N/Esc cancel · R re-scan");
   }
