@@ -261,8 +261,8 @@ function governanceList(title, lines, layoutMode, colorEnabled) {
         message: "No data yet from the read-only scan.",
         hint: "Press R to rescan."
       })
-      : windowed.items.map((line) => React.createElement(Text, {
-        key: line,
+      : windowed.items.map((line, index) => React.createElement(Text, {
+        key: `${index}-${line}`,
         color: colorEnabled ? undefined : undefined
       }, line)),
     windowed.moreLine && React.createElement(Text, {
