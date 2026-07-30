@@ -15,9 +15,9 @@ import { windowLinesForLayout } from "./cockpit-models.js";
 import { LAYOUT_MODES } from "./layout.js";
 import { SemanticOverviewPanel } from "./ux/live-overview.js";
 import { SemanticGovernancePanel } from "./ux/live-governance.js";
+import { SemanticActivityPanel } from "./ux/live-activity.js";
 import { formatRunsHubLines, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 import { formatReviewDetailLines, formatReviewListLines } from "./cockpit-reviews.js";
-import { formatRecoveryLines } from "./cockpit-recovery.js";
 import { formatUsageLines } from "./cockpit-control-center.js";
 import { formatOrchestrationStatus } from "./cockpit-runs.js";
 import { formatAlertListLines } from "./cockpit-alerts.js";
@@ -99,6 +99,8 @@ export function renderCockpitView({
   unicode = true,
   overviewDetailsOpen = false,
   governanceDetailsOpen = false,
+  activityDetailsOpen = false,
+  contentFocused = false,
   homeDir = null
 }) {
   if (palette) {
@@ -139,12 +141,18 @@ export function renderCockpitView({
         unicode
       });
     case ORCHESTRATOR_VIEWS.ACTIVITY:
-      return governanceList(
-        "Activity",
-        formatRecoveryLines({ snapshot, recoveryAction, listIndex, dashboard, homeDir }),
+      return React.createElement(SemanticActivityPanel, {
+        snapshot,
+        recoveryAction,
+        dashboard,
+        listIndex,
+        homeDir,
+        detailsOpen: activityDetailsOpen,
         layoutMode,
-        colorEnabled
-      );
+        contentFocused,
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.PROFILE:
       return governanceList(
         "Settings",

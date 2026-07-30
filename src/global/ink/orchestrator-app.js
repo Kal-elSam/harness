@@ -171,6 +171,14 @@ export function OrchestratorApp({
       return;
     }
 
+    if (inputKey === " "
+      && ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
+      && !ui.paletteOpen
+      && data.recoveryAction?.preview) {
+      dispatch({ type: "toggle-activity-details" });
+      return;
+    }
+
     if (key.escape) {
       if (ui.view === ORCHESTRATOR_VIEWS.CHANGES
         && data.changesAction?.phase === CHANGES_PHASE.CONFIRMING) {
@@ -505,6 +513,7 @@ export function OrchestratorApp({
         unicode,
         changesPhase: data.changesAction?.phase ?? null,
         recoveryPhase: data.recoveryAction?.phase ?? null,
+        recoveryHasPreview: Boolean(data.recoveryAction?.preview),
         settingsPhase: data.settingsAction?.phase ?? null,
         columns
       }),
@@ -555,6 +564,8 @@ export function OrchestratorApp({
         unicode,
         overviewDetailsOpen: ui.overviewDetailsOpen,
         governanceDetailsOpen: ui.governanceDetailsOpen,
+        activityDetailsOpen: ui.activityDetailsOpen,
+        contentFocused: ui.region === COCKPIT_REGIONS.CONTENT,
         homeDir
       })
     )
