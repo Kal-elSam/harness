@@ -20,6 +20,7 @@ import { formatRecoveryLines } from "./cockpit-recovery.js";
 import { formatUsageLines } from "./cockpit-control-center.js";
 import { formatOrchestrationStatus } from "./cockpit-runs.js";
 import { formatAlertListLines } from "./cockpit-alerts.js";
+import { formatSettingsLines } from "./cockpit-settings.js";
 
 export function PalettePanel({ model, colorEnabled = true }) {
   return React.createElement(Box, { flexDirection: "column" },
@@ -92,6 +93,7 @@ export function renderCockpitView({
   alerts = [],
   changesAction = null,
   recoveryAction = null,
+  settingsAction = null,
   colorEnabled = true,
   homeDir = null
 }) {
@@ -132,7 +134,17 @@ export function renderCockpitView({
         colorEnabled
       );
     case ORCHESTRATOR_VIEWS.PROFILE:
-      return governanceList("Profile & policy", formatProfileLines(snapshot, diagnostics), layoutMode, colorEnabled);
+      return governanceList(
+        "Settings",
+        formatSettingsLines({
+          listIndex,
+          settingsAction,
+          snapshot,
+          diagnostics
+        }),
+        layoutMode,
+        colorEnabled
+      );
     case ORCHESTRATOR_VIEWS.RUNS:
       return listBlock(
         `Orchestration · ${formatOrchestrationStatus({
@@ -249,8 +261,8 @@ function governanceList(title, lines, layoutMode, colorEnabled) {
         message: "No data yet from the read-only scan.",
         hint: "Press R to rescan."
       })
-      : windowed.items.map((line) => React.createElement(Text, {
-        key: line,
+      : windowed.items.map((line, index) => React.createElement(Text, {
+        key: `${index}-${line}`,
         color: colorEnabled ? undefined : undefined
       }, line)),
     windowed.moreLine && React.createElement(Text, {
@@ -277,23 +289,6 @@ function formatModuleLines(snapshot) {
 
 function formatChangeLines(snapshot, changesAction, layoutMode = LAYOUT_MODES.COMPACT, homeDir = null) {
   return formatChangesActionLines({ snapshot, changesAction, layoutMode, homeDir });
-}
-
-function formatProfileLines(snapshot, diagnostics) {
-  const policy = snapshot?.policy;
-  const sources = diagnostics?.profile?.sources;
-  const sourceLabel = sources?.global || sources?.project
-    ? [sources.global ? "global" : null, sources.project ? "project" : null].filter(Boolean).join(", ")
-    : "none";
-  return [
-    `Policy profile: ${policy?.profile ?? "none"}`,
-    `Apply mode: ${policy?.applyMode ?? "n/a"}`,
-    `Preflight: ${policy?.preflight ?? "n/a"}`,
-    `Policy source: ${policy?.source ?? "none"}`,
-    `Kairo profile sources: ${sourceLabel}`,
-    "",
-    "Project overrides global overrides defaults. Consent remains explicit for writes."
-  ];
 }
 
 function listBlock(title, lines, listIndex, colorEnabled, emptyHint) {

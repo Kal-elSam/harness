@@ -20,6 +20,8 @@ export function harnessHomePaths(homeDir) {
     runsDir: join(root, "runs"),
     reviewsDir: join(root, "reviews"),
     alertsDir: join(root, "alerts"),
+    monitorDir: join(root, "monitor"),
+    monitorStatePath: join(root, "monitor", "state.json"),
     coreDir: join(root, "core"),
     backupsDir: join(root, "backups")
   };
