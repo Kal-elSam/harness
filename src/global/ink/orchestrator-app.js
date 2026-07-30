@@ -45,6 +45,7 @@ import { COCKPIT_COLORS } from "./theme.js";
 import { LAYOUT_MODES } from "./layout.js";
 import { CHANGES_PHASE } from "./cockpit-changes.js";
 import { RECOVERY_PHASE, listRecoverySnapshots } from "./cockpit-recovery.js";
+import { SETTINGS_PHASE } from "./cockpit-settings.js";
 
 export function OrchestratorApp({
   homeDir,
@@ -94,7 +95,8 @@ export function OrchestratorApp({
   };
 
   const confirming = data.changesAction?.phase === CHANGES_PHASE.CONFIRMING
-    || data.recoveryAction?.phase === RECOVERY_PHASE.CONFIRMING;
+    || data.recoveryAction?.phase === RECOVERY_PHASE.CONFIRMING
+    || data.settingsAction?.phase === SETTINGS_PHASE.CONFIRMING;
   const paletteActions = buildPaletteActions({
     ctaDestination: data.snapshot?.cta?.destination ?? null,
     ctaTitle: data.snapshot?.cta?.title ?? null,
@@ -170,6 +172,18 @@ export function OrchestratorApp({
         data.cancelRecovery();
         return;
       }
+      if (ui.view === ORCHESTRATOR_VIEWS.PROFILE) {
+        const settingsPhase = data.settingsAction?.phase;
+        if (settingsPhase === SETTINGS_PHASE.CONFIRMING) {
+          data.cancelSettings();
+          return;
+        }
+        if (settingsPhase === SETTINGS_PHASE.PREVIEW
+          || settingsPhase === SETTINGS_PHASE.COMPLETED) {
+          data.resetSettings();
+          return;
+        }
+      }
 
       if (ui.view === ORCHESTRATOR_VIEWS.LAUNCH && data.launchableAgents.length > 0) {
         const retreated = handleLaunchInput({
@@ -218,10 +232,14 @@ export function OrchestratorApp({
           : ui.view === ORCHESTRATOR_VIEWS.REVIEWS
             ? (data.reviews ?? []).length
             : ui.view === ORCHESTRATOR_VIEWS.ALERTS
-              ? (data.alerts ?? []).filter((alert) => alert.state === ALERT_STATES.OPEN).length
+              ? (Array.isArray(data.alerts) ? data.alerts : [])
+                .filter((alert) => alert.state === ALERT_STATES.OPEN).length
               : ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
                 ? listRecoverySnapshots(data.snapshot).length
-                : 0;
+                : ui.view === ORCHESTRATOR_VIEWS.PROFILE
+                    && data.settingsAction?.phase === SETTINGS_PHASE.BROWSE
+                  ? data.curatedIntegrations.length
+                  : 0;
 
     let routed = null;
     if (key.tab) {
@@ -320,7 +338,7 @@ export function OrchestratorApp({
 
     if (ui.region === COCKPIT_REGIONS.CONTENT
       && ui.view === ORCHESTRATOR_VIEWS.ALERTS) {
-      const selected = selectAlertFromList(data.alerts ?? [], ui.listIndex);
+      const selected = selectAlertFromList(data.alerts, ui.listIndex);
       if (key.return) {
         data.handleAlertTransition(selected, "resolve").catch(() => {});
         return;
@@ -383,6 +401,30 @@ export function OrchestratorApp({
       }
       if (keyName === "r") {
         data.rescanRecovery().catch(() => {});
+        return;
+      }
+    }
+
+    if (ui.view === ORCHESTRATOR_VIEWS.PROFILE) {
+      const keyName = inputKey.toLowerCase();
+      const phase = data.settingsAction?.phase ?? SETTINGS_PHASE.BROWSE;
+      if (key.return && ui.region === COCKPIT_REGIONS.CONTENT) {
+        if (phase === SETTINGS_PHASE.BROWSE) {
+          const entry = data.curatedIntegrations[ui.listIndex];
+          if (entry?.id) data.previewSettings(entry.id);
+          return;
+        }
+        if (phase === SETTINGS_PHASE.PREVIEW) {
+          data.promptConfirmSettings();
+          return;
+        }
+      }
+      if (keyName === "y" && phase === SETTINGS_PHASE.CONFIRMING) {
+        data.confirmSettings();
+        return;
+      }
+      if (keyName === "n" && phase === SETTINGS_PHASE.CONFIRMING) {
+        data.cancelSettings();
         return;
       }
     }
@@ -453,6 +495,7 @@ export function OrchestratorApp({
         unicode,
         changesPhase: data.changesAction?.phase ?? null,
         recoveryPhase: data.recoveryAction?.phase ?? null,
+        settingsPhase: data.settingsAction?.phase ?? null,
         columns
       }),
       layoutMode: mode,
@@ -485,9 +528,10 @@ export function OrchestratorApp({
         selectedEvents: data.selectedEvents,
         reviews: data.reviews,
         selectedReview: data.selectedReview,
-        alerts: data.alerts ?? [],
+        alerts: data.alerts,
         changesAction: data.changesAction,
         recoveryAction: data.recoveryAction,
+        settingsAction: data.settingsAction,
         controlCenter,
         palette: ui.paletteOpen
           ? buildPaletteModel({

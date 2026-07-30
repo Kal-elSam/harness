@@ -3,6 +3,31 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.9.0 — 2026-07-30 (Kairo Runtime)
+
+Minor release. Local AI Control Plane: task-oriented Cockpit, alerts inbox,
+opt-in monitor, curated Settings. Publish tag: `kairo-runtime-v0.9.0`.
+
+### Added
+
+- Responsive single-panel Cockpit (TopBar + nav strip + main panel + full-width
+  footer); wide / compact / minimal; SYSTEM side column retired.
+- Six destinations: Overview, Governance, Activity, Orchestration, Usage, Settings.
+- Action palette (`/`) for destinations and refresh.
+- Alert contracts + store + Cockpit inbox (resolve / dismiss).
+- `kairo monitor enable|disable|status|tick` with macOS LaunchAgent autostart;
+  drift / orphan / failed runs → alerts; notify only on new claims.
+- Settings curated catalog (`pi-usage-widget@0.2.1`, MIT): browse → preview →
+  confirm shows an in-session confirmation receipt; does not persist or install
+  anything.
+
+### Compatibility
+
+- Keyboard-first, local, single-user; Ink + React retained.
+- Monitor autostart is opt-in; unsupported OS degrade without false “installed”.
+- Settings confirm shows an in-session receipt only; neither persists nor installs.
+- Orchestration / Usage stay summaries; Cockpit does not drive Pi orchestration.
+
 ## 0.8.0 — 2026-07-28 (Kairo Runtime)
 
 Minor release. Context Orchestration for Pi: durable DAG, isolated minions,
