@@ -10,9 +10,10 @@ import {
   listCuratedIntegrations,
   reduceSettingsAction
 } from "../src/global/ink/cockpit-settings.js";
-import { buildFooterModel } from "../src/global/ink/cockpit-models.js";
+import { buildFooterModel, windowLinesForLayout } from "../src/global/ink/cockpit-models.js";
 import { isContentInteractiveView } from "../src/global/ink/cockpit-focus.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
+import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 
 test("catalog pins pi-usage-widget@0.2.1; install never implied", () => {
   const catalog = listCuratedIntegrations();
@@ -60,11 +61,36 @@ test("browse → preview → confirm → receipt; wroteFiles stays false", () =>
   const detail = formatSettingsDetailLines(
     getCuratedIntegration("pi-usage-widget"),
     state
-  ).join("\n");
-  assert.match(detail, /wroteFiles · false/);
-  assert.match(detail, /pending-security-review/);
-  assert.match(detail, /no auto-install/i);
-  assert.doesNotMatch(detail, /wroteFiles · true/);
+  );
+  const detailText = detail.join("\n");
+  assert.match(detailText, /wroteFiles · false/);
+  assert.match(detailText, /no auto-install/i);
+  assert.doesNotMatch(detailText, /wroteFiles · true/);
+  assert.equal(detail[0], "RESULT");
+  assert.match(detail[3] ?? "", /wroteFiles · false/);
+});
+
+test("completed receipt stays above compact TTY fold", () => {
+  const completed = reduceSettingsAction(
+    reduceSettingsAction(
+      reduceSettingsAction(createSettingsActionState(), {
+        type: "preview",
+        id: "pi-usage-widget"
+      }),
+      { type: "confirm-prompt" }
+    ),
+    { type: "confirm" }
+  );
+  const lines = formatSettingsDetailLines(
+    getCuratedIntegration("pi-usage-widget"),
+    completed
+  );
+  const windowed = windowLinesForLayout(lines, LAYOUT_MODES.COMPACT);
+  const visible = windowed.items.join("\n");
+  assert.match(visible, /wroteFiles · false/);
+  assert.match(visible, /^RESULT/m);
+  assert.ok(lines.length <= 8, `completed view should fit fold (${lines.length})`);
+  assert.equal(windowed.moreLine, null);
 });
 
 test("footer phase-scoped; PROFILE content-interactive; browse marks selection", () => {

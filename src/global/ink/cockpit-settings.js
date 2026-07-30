@@ -110,6 +110,21 @@ export function formatSettingsBrowseLines(
 export function formatSettingsDetailLines(entry, settingsAction = null) {
   if (!entry) return ["Integration not found."];
   const phase = settingsAction?.phase ?? SETTINGS_PHASE.BROWSE;
+
+  // Completed: receipt first so compact TTY (80×24) shows wroteFiles above the fold.
+  if (phase === SETTINGS_PHASE.COMPLETED && settingsAction?.receipt) {
+    const receipt = settingsAction.receipt;
+    return [
+      "RESULT",
+      settingsAction.message ?? "Confirmed — no auto-install.",
+      "RECEIPT",
+      `Id · ${receipt.id} · wroteFiles · ${receipt.wroteFiles}`,
+      `Confirmed · ${receipt.confirmedAt}`,
+      `${entry.name} · ${entry.version} · ${entry.license}`,
+      "Esc back · install stays explicit"
+    ];
+  }
+
   const lines = [
     "INTEGRATION",
     `${entry.name} · ${entry.version}`,
@@ -130,14 +145,6 @@ export function formatSettingsDetailLines(entry, settingsAction = null) {
     lines.push("", "PREVIEW", "No filesystem changes. Confirm only records explicit intent.");
   }
   if (settingsAction?.message) lines.push("", settingsAction.message);
-  if (settingsAction?.receipt) {
-    lines.push(
-      "",
-      "RECEIPT",
-      `Id · ${settingsAction.receipt.id} · wroteFiles · ${settingsAction.receipt.wroteFiles}`,
-      `Confirmed · ${settingsAction.receipt.confirmedAt}`
-    );
-  }
   return lines;
 }
 
