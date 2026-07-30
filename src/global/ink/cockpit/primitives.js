@@ -33,6 +33,22 @@ export function CockpitPanel({ title, focused = false, width, children }) {
   );
 }
 
+export function CockpitSection({ title, children }) {
+  return React.createElement(Box, { flexDirection: "column", marginBottom: 1 },
+    title && React.createElement(Text, {
+      bold: true,
+      color: COCKPIT_COLORS.secondary
+    }, title),
+    children
+  );
+}
+
+export function CockpitKeyHint({ keys, label, colorEnabled = true }) {
+  return React.createElement(Text, {
+    color: colorEnabled ? COCKPIT_COLORS.muted : undefined
+  }, `${keys} ${label}`);
+}
+
 export function CockpitTopBar({ model, colorEnabled = true }) {
   return React.createElement(Box, { justifyContent: "space-between", width: "100%" },
     React.createElement(Text, {
@@ -45,6 +61,7 @@ export function CockpitTopBar({ model, colorEnabled = true }) {
   );
 }
 
+/** Vertical nav list (legacy / tests). Prefer CockpitNavStrip in the shell. */
 export function CockpitNav({ model, colorEnabled = true }) {
   return React.createElement(Box, { flexDirection: "column" },
     model.items.map((item) => {
@@ -68,6 +85,62 @@ export function CockpitNav({ model, colorEnabled = true }) {
   );
 }
 
+function stripLabel(item, { compact }) {
+  if (!compact) return item.label;
+  return item.label.split(/[&·]/)[0].trim().split(/\s+/)[0];
+}
+
+/** Horizontal navigation strip under the top bar. */
+export function CockpitNavStrip({
+  model,
+  colorEnabled = true,
+  layoutMode = "compact",
+  focused = false
+}) {
+  const compact = layoutMode !== "wide";
+  const parts = model.items.map((item) => {
+    const label = stripLabel(item, { compact });
+    const suffix = item.current && !item.selected ? "*" : "";
+    const color = item.focused
+      ? (colorEnabled ? COCKPIT_COLORS.primary : undefined)
+      : item.selected
+        ? (colorEnabled ? COCKPIT_COLORS.secondary : undefined)
+        : item.current
+          ? (colorEnabled ? COCKPIT_COLORS.muted : undefined)
+          : (colorEnabled ? COCKPIT_COLORS.muted : undefined);
+    return React.createElement(Text, {
+      key: item.id,
+      bold: item.focused || item.selected,
+      color
+    }, `${item.marker}${label}${suffix}`);
+  });
+
+  const joined = [];
+  parts.forEach((node, index) => {
+    if (index > 0) {
+      joined.push(React.createElement(Text, {
+        key: `sep-${index}`,
+        color: colorEnabled ? COCKPIT_COLORS.muted : undefined
+      }, " · "));
+    }
+    joined.push(node);
+  });
+
+  return React.createElement(Box, {
+    flexDirection: "column",
+    width: "100%",
+    borderStyle: "single",
+    borderColor: focused ? COCKPIT_COLORS.primary : COCKPIT_COLORS.muted,
+    paddingX: 1
+  },
+    React.createElement(Box, { flexDirection: "row", flexWrap: "wrap" }, ...joined),
+    model.explanation && React.createElement(Text, {
+      color: COCKPIT_COLORS.muted
+    }, model.explanation)
+  );
+}
+
+/** Kept for model tests; no longer rendered in the shell. */
 export function CockpitSystemStrip({ model, colorEnabled = true }) {
   return React.createElement(Box, { flexDirection: "column" },
     model.rows.map((row) =>
@@ -83,56 +156,48 @@ export function CockpitSystemStrip({ model, colorEnabled = true }) {
   );
 }
 
-export function CockpitFooter({ model }) {
-  return React.createElement(Box, { flexDirection: "column" },
+export function CockpitFooter({ model, columns = 80 }) {
+  const width = Math.max(24, Math.min(Number(columns) || 80, 120));
+  const bar = Math.max(20, width - 2);
+  return React.createElement(Box, { flexDirection: "column", width: "100%" },
     React.createElement(Text, { color: COCKPIT_COLORS.muted },
-      `├${"─".repeat(62)}┤`
+      `├${"─".repeat(bar)}┤`
     ),
     React.createElement(Text, { color: COCKPIT_COLORS.muted }, `│ ${model.text}`),
     React.createElement(Text, { color: COCKPIT_COLORS.muted },
-      `╰${"─".repeat(62)}╯`
+      `╰${"─".repeat(bar)}╯`
     )
   );
 }
 
+/**
+ * Responsive single-panel shell: TopBar → NavStrip → Main → Footer.
+ * SYSTEM side column removed (diagnostics via Enter/detail in later slices).
+ */
 export function CockpitShell({
   topBar,
   footer,
   layoutMode,
   nav,
-  system,
   navFocused,
   contentFocused,
-  systemFocused,
   colorEnabled = true,
+  columns = 80,
   children
 }) {
-  const showNav = layoutMode === "wide" || layoutMode === "compact";
-  const showSystem = layoutMode === "wide";
-
   return React.createElement(Box, { flexDirection: "column", width: "100%" },
     React.createElement(CockpitTopBar, { model: topBar, colorEnabled }),
-    layoutMode === "minimal" && nav && React.createElement(Box, { marginY: 0 },
-      React.createElement(Text, { color: COCKPIT_COLORS.muted }, "Nav: "),
-      React.createElement(CockpitNav, { model: nav, colorEnabled })
-    ),
-    React.createElement(Box, { flexDirection: "row", width: "100%" },
-      showNav && React.createElement(CockpitPanel, {
-        title: nav?.title ?? "NAVIGATION",
-        focused: navFocused,
-        width: 22
-      }, React.createElement(CockpitNav, { model: nav, colorEnabled })),
-      React.createElement(CockpitPanel, {
-        title: undefined,
-        focused: contentFocused,
-        width: showSystem ? 48 : showNav ? 56 : "100%"
-      }, children),
-      showSystem && React.createElement(CockpitPanel, {
-        title: system?.title ?? "SYSTEM",
-        focused: systemFocused,
-        width: 20
-      }, React.createElement(CockpitSystemStrip, { model: system, colorEnabled }))
-    ),
-    React.createElement(CockpitFooter, { model: footer })
+    nav && React.createElement(CockpitNavStrip, {
+      model: nav,
+      colorEnabled,
+      layoutMode,
+      focused: navFocused
+    }),
+    React.createElement(CockpitPanel, {
+      title: undefined,
+      focused: contentFocused,
+      width: "100%"
+    }, children),
+    React.createElement(CockpitFooter, { model: footer, columns })
   );
 }

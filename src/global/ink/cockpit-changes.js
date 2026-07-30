@@ -1,4 +1,4 @@
-import { formatProposalLines, proposalLimitForLayout } from "./cockpit-proposals.js";
+import { formatConfirmPath } from "./cockpit-path-label.js";
 
 export const CHANGES_PHASE = Object.freeze({
   IDLE: "idle",
@@ -62,53 +62,77 @@ export function reduceChangesAction(state, action) {
   }
 }
 
-export function formatChangesActionLines({ snapshot, changesAction, layoutMode = "compact" }) {
-  const diff = snapshot?.diff;
-  const phase = changesAction?.phase ?? CHANGES_PHASE.IDLE;
-  const lines = [`Changes · ${phase}`];
+function healthLabel(kind) {
+  return String(kind ?? "unknown").replaceAll("_", " ");
+}
 
-  const proposalLines = formatProposalLines(snapshot?.proposals ?? [], {
-    limit: proposalLimitForLayout(layoutMode),
-    destinationFilter: "changes",
-    budgets: snapshot?.budgets ?? null
-  });
-  if (proposalLines[0] !== "No proposals targeting this view.") {
-    lines.push(...proposalLines, "");
+/**
+ * Governance surface: status, coverage, recommended action first.
+ * Paths only when detail=true or during confirm (home-relative / distinct).
+ */
+export function formatChangesActionLines({
+  snapshot,
+  changesAction,
+  detail = false,
+  homeDir = null
+} = {}) {
+  const phase = changesAction?.phase ?? CHANGES_PHASE.IDLE;
+  const coverage = snapshot?.coverage ?? {};
+  const diff = snapshot?.diff;
+  const cta = snapshot?.cta;
+  const pending = diff?.hasChanges
+    ? (diff.changeCount ?? diff.changes?.length ?? 0)
+    : 0;
+  const lines = [
+    "STATUS",
+    `${healthLabel(snapshot?.health)}${pending > 0 ? ` · ${pending} pending` : " · drift clean"}`,
+    "",
+    "COVERAGE",
+    `${coverage.governedAgents ?? 0}/${coverage.detectedAgents ?? 0} agents governed · ${coverage.components ?? 0} components`,
+    "",
+    "NEXT",
+    cta?.title ?? "Review governance when ready"
+  ];
+  if (cta?.detail) lines.push(cta.detail);
+
+  if (changesAction?.message) lines.push("", changesAction.message);
+  if (changesAction?.error && changesAction.error !== "setup-required") {
+    lines.push(`Error: ${changesAction.error}`);
   }
 
-  if (changesAction?.message) lines.push(changesAction.message);
-  if (changesAction?.error && changesAction.error !== "setup-required") lines.push(`Error: ${changesAction.error}`);
-
   const preview = changesAction?.preview;
-  if (preview?.hasChanges) {
-    lines.push(`${preview.changes?.length ?? 0} planned change(s)`);
-    for (const change of preview.changes ?? []) {
-      lines.push(`${change.action ?? change.kind} · ${change.target} · ${change.status ?? "planned"}`);
-    }
-    if (preview.integrations?.status && preview.integrations.status !== "skipped") {
-      lines.push(`SDD lifecycle · ${preview.integrations.status}${preview.integrations.partial ? " (partial)" : ""}`);
-    }
-    if (preview.fingerprint) lines.push(`Fingerprint · ${preview.fingerprint.slice(0, 12)}…`);
-  } else if (diff && !preview) {
-    if (!diff.installed) lines.push(diff.summary ?? "Setup required before changes can be previewed.");
-    else if (!diff.hasChanges) lines.push(diff.summary ?? "No pending governance changes.");
-    else {
-      lines.push(diff.summary ?? "Pending changes");
-      for (const change of diff.changes ?? []) lines.push(`${change.action ?? change.kind} · ${change.target} · ${change.status}`);
+  const planned = preview?.hasChanges
+    ? (preview.changes ?? [])
+    : (diff?.hasChanges && !preview ? (diff.changes ?? []) : []);
+  if (planned.length > 0) {
+    lines.push("", `${planned.length} planned change(s)`);
+    const showDetail = detail || phase === CHANGES_PHASE.CONFIRMING;
+    if (showDetail) {
+      lines.push("DETAILS");
+      const limit = detail ? 12 : 3;
+      for (const change of planned.slice(0, limit)) {
+        lines.push(
+          `${change.action ?? change.kind} · ${formatConfirmPath(change.target, homeDir)}`
+        );
+      }
+      if (planned.length > limit) lines.push(`… ${planned.length - limit} more`);
     }
   } else if (!diff) {
-    lines.push("Scan did not include diff yet. Press R to re-scan.");
+    lines.push("", "Scan did not include diff yet. Press R to re-scan.");
+  } else if (!diff.installed) {
+    lines.push("", diff.summary ?? "Setup required before changes can be previewed.");
+  } else if (!diff.hasChanges && !changesAction?.message) {
+    lines.push("", diff.summary ?? "No pending governance changes.");
   }
 
   const receipt = changesAction?.receipt;
   if (receipt) {
-    lines.push("", `Receipt · ${receipt.action}`);
-    if (receipt.backups?.length) lines.push(`Backups · ${receipt.backups.length}`);
-    if (receipt.checksBefore && receipt.checksAfter) {
+    lines.push("", `Result · ${receipt.action}${receipt.partial ? " (partial)" : ""}`);
+    if (receipt.backups?.length) lines.push(`${receipt.backups.length} backup(s) retained`);
+    if (detail && receipt.checksBefore && receipt.checksAfter) {
+      lines.push("DETAILS");
       lines.push(`Checks · before ok=${receipt.checksBefore.ok} → after ok=${receipt.checksAfter.ok}`);
     }
-    if (receipt.integrations) lines.push(`Integrations · ${receipt.integrations.status ?? "n/a"}`);
-    if (receipt.partial) lines.push("Partial evidence retained — success not claimed.");
   }
 
   if (phase === CHANGES_PHASE.IDLE || phase === CHANGES_PHASE.COMPLETED || phase === CHANGES_PHASE.FAILED) {
