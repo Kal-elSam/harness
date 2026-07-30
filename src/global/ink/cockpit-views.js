@@ -14,9 +14,9 @@ import {
 import { windowLinesForLayout } from "./cockpit-models.js";
 import { LAYOUT_MODES } from "./layout.js";
 import { SemanticOverviewPanel } from "./ux/live-overview.js";
+import { SemanticGovernancePanel } from "./ux/live-governance.js";
 import { formatRunsHubLines, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 import { formatReviewDetailLines, formatReviewListLines } from "./cockpit-reviews.js";
-import { formatChangesActionLines } from "./cockpit-changes.js";
 import { formatRecoveryLines } from "./cockpit-recovery.js";
 import { formatUsageLines } from "./cockpit-control-center.js";
 import { formatOrchestrationStatus } from "./cockpit-runs.js";
@@ -98,6 +98,7 @@ export function renderCockpitView({
   colorEnabled = true,
   unicode = true,
   overviewDetailsOpen = false,
+  governanceDetailsOpen = false,
   homeDir = null
 }) {
   if (palette) {
@@ -128,12 +129,15 @@ export function renderCockpitView({
     case ORCHESTRATOR_VIEWS.MODULES:
       return governanceList("Harness modules", formatModuleLines(snapshot), layoutMode, colorEnabled);
     case ORCHESTRATOR_VIEWS.CHANGES:
-      return governanceList(
-        "Governance",
-        formatChangeLines(snapshot, changesAction, layoutMode, homeDir),
+      return React.createElement(SemanticGovernancePanel, {
+        snapshot,
+        changesAction,
+        homeDir,
+        detailsOpen: governanceDetailsOpen,
         layoutMode,
-        colorEnabled
-      );
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.ACTIVITY:
       return governanceList(
         "Activity",
@@ -293,10 +297,6 @@ function formatModuleLines(snapshot) {
     "",
     "External integrations are reported only when detectable on this machine."
   ];
-}
-
-function formatChangeLines(snapshot, changesAction, layoutMode = LAYOUT_MODES.COMPACT, homeDir = null) {
-  return formatChangesActionLines({ snapshot, changesAction, layoutMode, homeDir });
 }
 
 function listBlock(title, lines, listIndex, colorEnabled, emptyHint) {

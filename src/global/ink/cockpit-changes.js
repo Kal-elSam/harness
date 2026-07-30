@@ -143,6 +143,6 @@ export function formatChangesActionLines({
 
 export function buildChangesFooterParts(phase) {
   if (phase === CHANGES_PHASE.PREVIEWING || phase === CHANGES_PHASE.APPLYING) return ["Working…", "Esc Back"];
-  if (phase === CHANGES_PHASE.CONFIRMING) return ["Y Apply", "N/Esc Cancel"];
-  return ["A Preview", "R Re-scan", "Esc Back"];
+  if (phase === CHANGES_PHASE.CONFIRMING) return ["Y Apply", "N/Esc Cancel", "Space"];
+  return ["A Preview", "R Re-scan", "Space", "Esc Back"];
 }

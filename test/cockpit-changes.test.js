@@ -43,11 +43,12 @@ test("stale apply fails; footer keys phase-scoped; receipt lines render", () => 
   assert.equal(failed.phase, CHANGES_PHASE.FAILED);
   assert.equal(failed.error, "stale-preview");
 
-  assert.deepEqual(buildChangesFooterParts(CHANGES_PHASE.CONFIRMING), ["Y Apply", "N/Esc Cancel"]);
+  assert.deepEqual(buildChangesFooterParts(CHANGES_PHASE.CONFIRMING), ["Y Apply", "N/Esc Cancel", "Space"]);
   const footer = buildFooterModel({
     view: ORCHESTRATOR_VIEWS.CHANGES, changesPhase: CHANGES_PHASE.CONFIRMING, unicode: false
   });
   assert.match(footer.text, /Y Apply/);
+  assert.match(footer.text, /Space/);
   assert.doesNotMatch(footer.text, /Enter Open/);
 
   const lines = formatChangesActionLines({

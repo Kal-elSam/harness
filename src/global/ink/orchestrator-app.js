@@ -166,6 +166,11 @@ export function OrchestratorApp({
       return;
     }
 
+    if (inputKey === " " && ui.view === ORCHESTRATOR_VIEWS.CHANGES && !ui.paletteOpen) {
+      dispatch({ type: "toggle-governance-details" });
+      return;
+    }
+
     if (key.escape) {
       if (ui.view === ORCHESTRATOR_VIEWS.CHANGES
         && data.changesAction?.phase === CHANGES_PHASE.CONFIRMING) {
@@ -549,6 +554,7 @@ export function OrchestratorApp({
         colorEnabled,
         unicode,
         overviewDetailsOpen: ui.overviewDetailsOpen,
+        governanceDetailsOpen: ui.governanceDetailsOpen,
         homeDir
       })
     )
