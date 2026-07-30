@@ -33,6 +33,11 @@ import {
   listRecoverySnapshots,
   reduceRecoveryAction
 } from "./cockpit-recovery.js";
+import {
+  createSettingsActionState,
+  listCuratedIntegrations,
+  reduceSettingsAction
+} from "./cockpit-settings.js";
 import { listReviewReceipts } from "../runtime/review/review-receipts.js";
 import { assertReceiptSecretFree } from "../runtime/review/review-validate.js";
 import { listAlerts, resolveAlert, dismissAlert } from "../runtime/alerts/alert-store.js";
@@ -63,6 +68,7 @@ export function useOrchestratorData({
   const [launchPermissionIndex, setLaunchPermissionIndex] = useState(0);
   const [changesAction, setChangesAction] = useState(createChangesActionState);
   const [recoveryAction, setRecoveryAction] = useState(createRecoveryActionState);
+  const [settingsAction, setSettingsAction] = useState(createSettingsActionState);
 
   const serializedReload = useMemo(() => createSerializedReloader(() => loadCockpitScanBundle({
     homeDir,
@@ -389,6 +395,26 @@ export function useOrchestratorData({
     await reload();
   };
 
+  const previewSettings = (id) => {
+    setSettingsAction((prev) => reduceSettingsAction(prev, { type: "preview", id }));
+  };
+
+  const promptConfirmSettings = () => {
+    setSettingsAction((prev) => reduceSettingsAction(prev, { type: "confirm-prompt" }));
+  };
+
+  const confirmSettings = () => {
+    setSettingsAction((prev) => reduceSettingsAction(prev, { type: "confirm" }));
+  };
+
+  const cancelSettings = () => {
+    setSettingsAction((prev) => reduceSettingsAction(prev, { type: "cancel" }));
+  };
+
+  const resetSettings = () => {
+    setSettingsAction(() => createSettingsActionState());
+  };
+
   return {
     loading,
     busy,
@@ -418,6 +444,8 @@ export function useOrchestratorData({
     scanOptions: CONTROL_PLANE_AUTO_SCAN,
     changesAction,
     recoveryAction,
+    settingsAction,
+    curatedIntegrations: listCuratedIntegrations(),
     reload,
     resetLaunchWizard,
     openRunDetail,
@@ -434,6 +462,11 @@ export function useOrchestratorData({
     cancelRecovery,
     confirmApplyRecovery,
     rescanRecovery,
+    previewSettings,
+    promptConfirmSettings,
+    confirmSettings,
+    cancelSettings,
+    resetSettings,
     recoverySnapshots: listRecoverySnapshots(snapshot)
   };
 }
