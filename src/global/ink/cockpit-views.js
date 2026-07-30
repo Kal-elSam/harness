@@ -17,6 +17,10 @@ import { formatRunsHubLines, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 import { formatReviewDetailLines, formatReviewListLines } from "./cockpit-reviews.js";
 import { formatChangesActionLines } from "./cockpit-changes.js";
 import { formatRecoveryLines } from "./cockpit-recovery.js";
+import { formatUsageLines } from "./cockpit-control-center.js";
+import { formatOrchestrationStatus } from "./cockpit-runs.js";
+import { formatAlertListLines } from "./cockpit-alerts.js";
+import { formatSettingsLines } from "./cockpit-settings.js";
 
 export function PalettePanel({ model, colorEnabled = true }) {
   return React.createElement(Box, { flexDirection: "column" },
@@ -86,9 +90,12 @@ export function renderCockpitView({
   selectedEvents,
   reviews = [],
   selectedReview = null,
+  alerts = [],
   changesAction = null,
   recoveryAction = null,
-  colorEnabled = true
+  settingsAction = null,
+  colorEnabled = true,
+  homeDir = null
 }) {
   if (palette) {
     return React.createElement(PalettePanel, { model: palette, colorEnabled });
@@ -97,11 +104,12 @@ export function renderCockpitView({
     case ORCHESTRATOR_VIEWS.HOME:
       return React.createElement(ControlCenterPanel, { model: controlCenter, colorEnabled });
     case ORCHESTRATOR_VIEWS.USAGE:
-      return governanceList("Usage", [
-        controlCenter?.tokens?.headline ?? "Data unavailable",
-        "",
-        "Auditable budgets only — no invented token savings."
-      ], layoutMode, colorEnabled);
+      return governanceList(
+        "Usage",
+        formatUsageLines({ snapshot, dashboard }),
+        layoutMode,
+        colorEnabled
+      );
     case ORCHESTRATOR_VIEWS.IDES:
     case ORCHESTRATOR_VIEWS.PROVIDERS:
       return governanceList("IDEs & models", [
@@ -113,23 +121,37 @@ export function renderCockpitView({
       return governanceList("Harness modules", formatModuleLines(snapshot), layoutMode, colorEnabled);
     case ORCHESTRATOR_VIEWS.CHANGES:
       return governanceList(
-        "Changes",
-        formatChangeLines(snapshot, changesAction, layoutMode),
+        "Governance",
+        formatChangeLines(snapshot, changesAction, layoutMode, homeDir),
         layoutMode,
         colorEnabled
       );
     case ORCHESTRATOR_VIEWS.ACTIVITY:
       return governanceList(
-        "Activity & recovery",
-        formatRecoveryLines({ snapshot, recoveryAction, listIndex }),
+        "Activity",
+        formatRecoveryLines({ snapshot, recoveryAction, listIndex, dashboard, homeDir }),
         layoutMode,
         colorEnabled
       );
     case ORCHESTRATOR_VIEWS.PROFILE:
-      return governanceList("Profile & policy", formatProfileLines(snapshot, diagnostics), layoutMode, colorEnabled);
+      return governanceList(
+        "Settings",
+        formatSettingsLines({
+          listIndex,
+          settingsAction,
+          snapshot,
+          diagnostics
+        }),
+        layoutMode,
+        colorEnabled
+      );
     case ORCHESTRATOR_VIEWS.RUNS:
       return listBlock(
-        "Runs",
+        `Orchestration · ${formatOrchestrationStatus({
+          active: (dashboard?.activeRuns ?? []).length,
+          recent: (dashboard?.recentRuns ?? []).length,
+          reviews: (reviews ?? []).length
+        })}`,
         formatRunsHubLines(RUNS_HUB_ITEMS),
         listIndex,
         colorEnabled,
@@ -144,7 +166,7 @@ export function renderCockpitView({
         }),
         listIndex,
         colorEnabled,
-        "Runs are secondary. Prefer Control center Actions when drift or setup remains."
+        "Enter opens detail · Esc back to Orchestration"
       );
     case ORCHESTRATOR_VIEWS.RECENT_RUNS:
       return listBlock(
@@ -155,7 +177,7 @@ export function renderCockpitView({
         }),
         listIndex,
         colorEnabled,
-        "Open Runs after governance is healthy."
+        "Enter opens detail · Esc back to Orchestration"
       );
     case ORCHESTRATOR_VIEWS.REVIEWS:
       return listBlock(
@@ -191,7 +213,7 @@ export function renderCockpitView({
     case ORCHESTRATOR_VIEWS.RUN_DETAIL:
       return React.createElement(Box, { flexDirection: "column" },
         React.createElement(Text, { bold: true }, "Run detail"),
-        formatRunDetailLines(selectedRun, selectedEvents)
+        formatRunDetailLines(selectedRun, selectedEvents, { homeDir })
           .map((line) => React.createElement(Text, { key: line }, line))
       );
     case ORCHESTRATOR_VIEWS.REVIEW_DETAIL:
@@ -199,6 +221,14 @@ export function renderCockpitView({
         React.createElement(Text, { bold: true }, "Review detail"),
         formatReviewDetailLines(selectedReview)
           .map((line) => React.createElement(Text, { key: line }, line))
+      );
+    case ORCHESTRATOR_VIEWS.ALERTS:
+      return listBlock(
+        "Alerts",
+        formatAlertListLines(alerts),
+        listIndex,
+        colorEnabled,
+        "Enter resolves · D dismisses · Esc back · / Alerts"
       );
     case ORCHESTRATOR_VIEWS.DIAGNOSTICS:
       return governanceList(
@@ -231,8 +261,8 @@ function governanceList(title, lines, layoutMode, colorEnabled) {
         message: "No data yet from the read-only scan.",
         hint: "Press R to rescan."
       })
-      : windowed.items.map((line) => React.createElement(Text, {
-        key: line,
+      : windowed.items.map((line, index) => React.createElement(Text, {
+        key: `${index}-${line}`,
         color: colorEnabled ? undefined : undefined
       }, line)),
     windowed.moreLine && React.createElement(Text, {
@@ -257,25 +287,8 @@ function formatModuleLines(snapshot) {
   ];
 }
 
-function formatChangeLines(snapshot, changesAction, layoutMode = LAYOUT_MODES.COMPACT) {
-  return formatChangesActionLines({ snapshot, changesAction, layoutMode });
-}
-
-function formatProfileLines(snapshot, diagnostics) {
-  const policy = snapshot?.policy;
-  const sources = diagnostics?.profile?.sources;
-  const sourceLabel = sources?.global || sources?.project
-    ? [sources.global ? "global" : null, sources.project ? "project" : null].filter(Boolean).join(", ")
-    : "none";
-  return [
-    `Policy profile: ${policy?.profile ?? "none"}`,
-    `Apply mode: ${policy?.applyMode ?? "n/a"}`,
-    `Preflight: ${policy?.preflight ?? "n/a"}`,
-    `Policy source: ${policy?.source ?? "none"}`,
-    `Kairo profile sources: ${sourceLabel}`,
-    "",
-    "Project overrides global overrides defaults. Consent remains explicit for writes."
-  ];
+function formatChangeLines(snapshot, changesAction, layoutMode = LAYOUT_MODES.COMPACT, homeDir = null) {
+  return formatChangesActionLines({ snapshot, changesAction, layoutMode, homeDir });
 }
 
 function listBlock(title, lines, listIndex, colorEnabled, emptyHint) {

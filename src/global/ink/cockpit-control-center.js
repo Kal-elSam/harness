@@ -1,10 +1,12 @@
 import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
+import { formatAlertsHeadline } from "./cockpit-alerts.js";
 
 export function buildControlCenterModel({
   projectName = "project",
   snapshot = null,
   dashboard = null,
-  layoutMode = "compact"
+  layoutMode = "compact",
+  alerts = null
 } = {}) {
   if (!snapshot) {
     return {
@@ -40,7 +42,7 @@ export function buildControlCenterModel({
       notes: [],
       proposalLines: [],
       activity: { headline: "No activity yet" },
-      alerts: { count: null, headline: "Alert data unavailable" },
+      alerts: formatAlertsHeadline(alerts),
       tokens: { headline: "Data unavailable" },
       includeEmbeddedStatus: layoutMode !== "wide",
       runsSecondaryHint: "Detail via Enter · / actions"
@@ -85,7 +87,7 @@ export function buildControlCenterModel({
           ? `Last · ${recent.agentId} · ${recent.state ?? "done"}`
           : "Idle"
     },
-    alerts: { count: null, headline: "Alert data unavailable" },
+    alerts: formatAlertsHeadline(alerts),
     tokens: { headline: formatTokenHeadline(snapshot.budgets) },
     includeEmbeddedStatus: layoutMode !== "wide",
     runsSecondaryHint: "Detail via Enter · / actions"
@@ -119,4 +121,64 @@ function formatTokenHeadline(budgets) {
     parts.push(`request ${budgets.requestUsedTokens}/${budgets.requestBudgetTokens}`);
   }
   return parts.length > 0 ? parts.join(" · ") : "Data unavailable";
+}
+
+/**
+ * Usage surface: measured budgets when present, configured profile limits,
+ * and auditable run tokenUsage — never invent totals.
+ */
+function resolveProfileLimits(dashboard) {
+  const resolved = dashboard?.profile?.profile ?? {};
+  const configured = [];
+  if (Number.isFinite(resolved.tokenBudget)) configured.push(`token ${resolved.tokenBudget}`);
+  if (Number.isFinite(resolved.stableContextBudget)) configured.push(`stable ${resolved.stableContextBudget}`);
+  if (Number.isFinite(resolved.requestContextBudget)) configured.push(`request ${resolved.requestContextBudget}`);
+  return configured;
+}
+
+function hasFiniteUsage(usage) {
+  if (!usage || typeof usage !== "object") return false;
+  return Number.isFinite(usage.total)
+    || Number.isFinite(usage.input)
+    || Number.isFinite(usage.output);
+}
+
+function formatRunUsageLine(run) {
+  const usage = run.tokenUsage;
+  const parts = [];
+  if (Number.isFinite(usage.input)) parts.push(`in ${usage.input}`);
+  if (Number.isFinite(usage.output)) parts.push(`out ${usage.output}`);
+  if (Number.isFinite(usage.total)) parts.push(`total ${usage.total}`);
+  return `${run.agentId ?? "agent"} · ${parts.join(" · ")}`;
+}
+
+export function formatUsageLines({ snapshot = null, dashboard = null } = {}) {
+  const lines = ["MEASURED"];
+  const measured = formatTokenHeadline(snapshot?.budgets);
+  lines.push(measured === "Data unavailable" ? "Data unavailable" : measured);
+
+  const configured = resolveProfileLimits(dashboard);
+  lines.push("", "CONFIGURED LIMITS");
+  lines.push(configured.length > 0 ? configured.join(" · ") : "No profile token budgets configured.");
+
+  const runs = [...(dashboard?.activeRuns ?? []), ...(dashboard?.recentRuns ?? [])]
+    .filter((run) => hasFiniteUsage(run?.tokenUsage));
+  lines.push("", "RUN USAGE");
+  if (runs.length === 0) {
+    lines.push("No auditable run tokenUsage yet.");
+  } else {
+    for (const run of runs.slice(0, 3)) {
+      lines.push(formatRunUsageLine(run));
+    }
+  }
+
+  lines.push("", "Auditable budgets only — no invented token savings.");
+  return lines;
+}
+
+export function hasAuditableUsage({ snapshot = null, dashboard = null } = {}) {
+  if (formatTokenHeadline(snapshot?.budgets) !== "Data unavailable") return true;
+  if (resolveProfileLimits(dashboard).length > 0) return true;
+  return [...(dashboard?.activeRuns ?? []), ...(dashboard?.recentRuns ?? [])]
+    .some((run) => hasFiniteUsage(run?.tokenUsage));
 }

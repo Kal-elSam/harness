@@ -11,6 +11,7 @@ import {
   BACKEND_IDS,
   inspectIntelligenceBackends
 } from "./intelligence/index.js";
+import { monitorDoctorCheck } from "./runtime/monitor/monitor.js";
 
 export async function runGlobalDoctorChecks(homeDir, {
   packageRoot,
@@ -43,6 +44,7 @@ export async function runGlobalDoctorChecks(homeDir, {
   }
 
   checks.push(await intelligenceProvidersCheck({ env, fetchImpl, inspectBackends }));
+  checks.push(await monitorDoctorCheck(homeDir));
 
   const hasMissing = checks.some((check) => check.status === "missing");
   const hasStale = checks.some((check) => check.status === "stale");

@@ -5,19 +5,19 @@ export const RUNS_HUB_ITEMS = [
     id: "active",
     label: "Active runs",
     view: ORCHESTRATOR_VIEWS.ACTIVE_RUNS,
-    description: "Inspect and cancel supervised runs that are currently executing."
+    description: "Inspect and cancel supervised runs in flight."
   },
   {
     id: "history",
     label: "History",
     view: ORCHESTRATOR_VIEWS.RECENT_RUNS,
-    description: "Review completed and failed run outcomes."
+    description: "Completed and failed outcomes."
   },
   {
     id: "reviews",
     label: "Reviews",
     view: ORCHESTRATOR_VIEWS.REVIEWS,
-    description: "Browse secret-free bounded-review receipts (read-only)."
+    description: "Secret-free review receipts (read-only)."
   },
   {
     id: "launch",
@@ -51,6 +51,15 @@ export function resolveRunsHubItem(listIndex = 0, items = RUNS_HUB_ITEMS) {
   return items[index] ?? null;
 }
 
+/** Selectable hub labels only — counts belong in the panel title/hint. */
 export function formatRunsHubLines(items = RUNS_HUB_ITEMS) {
-  return items.map((item) => `${item.label} — ${item.description}`);
+  return items.map((item) => item.label);
+}
+
+export function formatOrchestrationStatus({
+  active = 0,
+  recent = 0,
+  reviews = 0
+} = {}) {
+  return `${active} active · ${recent} recent · ${reviews} reviews`;
 }

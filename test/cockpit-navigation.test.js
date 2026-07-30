@@ -90,26 +90,27 @@ test("overview stays on navigation focus after selecting Overview", () => {
   assert.equal(state.navIndex, 0);
 });
 
-test("settings and help open with navigation focus", () => {
-  for (const view of [ORCHESTRATOR_VIEWS.PROFILE, ORCHESTRATOR_VIEWS.HELP]) {
-    const navIndex = view === ORCHESTRATOR_VIEWS.HELP
-      ? 0
-      : COCKPIT_NAV.findIndex((item) => item.view === view);
-    let state = createCockpitUiState({
-      layoutMode: LAYOUT_MODES.COMPACT,
-      region: COCKPIT_REGIONS.NAV,
-      navIndex: Math.max(0, navIndex)
-    });
+test("help opens with navigation focus; Settings opens content-interactive", () => {
+  let help = createCockpitUiState({
+    layoutMode: LAYOUT_MODES.COMPACT,
+    region: COCKPIT_REGIONS.NAV,
+    navIndex: 0
+  });
+  help = reduceCockpitUi(help, { type: "toggle-help" });
+  assert.equal(help.view, ORCHESTRATOR_VIEWS.HELP);
+  assert.equal(help.region, COCKPIT_REGIONS.NAV);
 
-    if (view === ORCHESTRATOR_VIEWS.HELP) {
-      state = reduceCockpitUi(state, { type: "toggle-help" });
-    } else {
-      state = reduceCockpitUi(state, { type: "enter-nav" });
-    }
-
-    assert.equal(state.view, view);
-    assert.equal(state.region, COCKPIT_REGIONS.NAV, `${view} should keep nav focus`);
-  }
+  const settingsNav = COCKPIT_NAV.findIndex((item) => item.view === ORCHESTRATOR_VIEWS.PROFILE);
+  let settings = createCockpitUiState({
+    layoutMode: LAYOUT_MODES.COMPACT,
+    region: COCKPIT_REGIONS.NAV,
+    navIndex: Math.max(0, settingsNav)
+  });
+  settings = reduceCockpitUi(settings, { type: "enter-nav" });
+  assert.equal(settings.view, ORCHESTRATOR_VIEWS.PROFILE);
+  assert.equal(settings.region, COCKPIT_REGIONS.CONTENT);
+  assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.PROFILE), true);
+  assert.equal(isNavFocusedView(ORCHESTRATOR_VIEWS.PROFILE), false);
 });
 
 test("escape from main section returns to overview; second escape exits", () => {

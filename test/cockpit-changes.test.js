@@ -62,5 +62,57 @@ test("stale apply fails; footer keys phase-scoped; receipt lines render", () => 
       }
     }
   });
-  assert.ok(lines.some((line) => line.includes("Receipt · repaired")));
+  assert.ok(lines.some((line) => line.includes("Result · repaired")));
+  assert.ok(lines.some((line) => line.includes("STATUS")));
+  assert.ok(lines.some((line) => line.includes("NEXT")));
+});
+
+test("governance idle summarizes status coverage and CTA without raw paths", () => {
+  const lines = formatChangesActionLines({
+    snapshot: {
+      health: "ACTION_REQUIRED",
+      coverage: { governedAgents: 1, detectedAgents: 3, components: 2 },
+      cta: { title: "Review and repair drift", detail: "Preview repairs first." },
+      diff: {
+        installed: true,
+        hasChanges: true,
+        changeCount: 2,
+        changes: [{ action: "repair", target: "/Users/me/.cursor/AGENTS.md" }]
+      }
+    },
+    changesAction: { phase: CHANGES_PHASE.IDLE }
+  });
+  const text = lines.join("\n");
+  assert.match(text, /STATUS/);
+  assert.match(text, /1\/3 agents governed/);
+  assert.match(text, /Review and repair drift/);
+  assert.doesNotMatch(text, /\/Users\/me/);
+  assert.doesNotMatch(text, /Fingerprint/);
+});
+
+test("confirm DETAILS keeps duplicate basenames distinguishable via ~/ paths", () => {
+  const lines = formatChangesActionLines({
+    homeDir: "/Users/me",
+    snapshot: {
+      health: "ACTION_REQUIRED",
+      coverage: { governedAgents: 1, detectedAgents: 2, components: 1 },
+      cta: { title: "Repair drift" },
+      diff: { installed: true, hasChanges: true }
+    },
+    changesAction: {
+      phase: CHANGES_PHASE.CONFIRMING,
+      message: "Confirm apply? Y apply · N/Esc cancel",
+      preview: {
+        hasChanges: true,
+        changes: [
+          { action: "repair", target: "/Users/me/.cursor/AGENTS.md" },
+          { action: "repair", target: "/Users/me/.codex/AGENTS.md" }
+        ]
+      }
+    }
+  });
+  const text = lines.join("\n");
+  assert.match(text, /~\/\.cursor\/AGENTS\.md/);
+  assert.match(text, /~\/\.codex\/AGENTS\.md/);
+  assert.doesNotMatch(text, /repair · AGENTS\.md$/m);
 });
