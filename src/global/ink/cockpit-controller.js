@@ -35,7 +35,8 @@ export function createCockpitUiState({
   helpOpen = false,
   returnView = null,
   paletteOpen = false,
-  paletteIndex = 0
+  paletteIndex = 0,
+  overviewDetailsOpen = false
 } = {}) {
   const regions = regionsForLayout(layoutMode);
   const preferred = region ?? defaultRegionForView(view, layoutMode);
@@ -52,6 +53,7 @@ export function createCockpitUiState({
     returnView,
     paletteOpen,
     paletteIndex: Math.max(0, paletteIndex),
+    overviewDetailsOpen: Boolean(overviewDetailsOpen),
     shouldExit: false
   };
 }
@@ -145,7 +147,8 @@ export function reduceCockpitUi(state, action) {
         listIndex: 0,
         region: defaultRegionForView(item.view, state.layoutMode),
         helpOpen: false,
-        returnView: null
+        returnView: null,
+        overviewDetailsOpen: false
       });
     }
     case "set-view": {
@@ -159,9 +162,13 @@ export function reduceCockpitUi(state, action) {
           : clamp(action.navIndex, 0, COCKPIT_NAV.length - 1),
         region: action.region ?? defaultRegionForView(nextView, state.layoutMode),
         returnView: action.returnView ?? state.returnView,
-        helpOpen: nextView === ORCHESTRATOR_VIEWS.HELP
+        helpOpen: nextView === ORCHESTRATOR_VIEWS.HELP,
+        overviewDetailsOpen: false
       });
     }
+    case "toggle-overview-details":
+      if (state.view !== ORCHESTRATOR_VIEWS.HOME) return state;
+      return { ...state, overviewDetailsOpen: !state.overviewDetailsOpen };
     case "toggle-help":
       if (state.helpOpen || state.view === ORCHESTRATOR_VIEWS.HELP) {
         return goOverview(state);
@@ -170,11 +177,15 @@ export function reduceCockpitUi(state, action) {
         ...state,
         helpOpen: true,
         view: ORCHESTRATOR_VIEWS.HELP,
-        region: defaultRegionForView(ORCHESTRATOR_VIEWS.HELP, state.layoutMode)
+        region: defaultRegionForView(ORCHESTRATOR_VIEWS.HELP, state.layoutMode),
+        overviewDetailsOpen: false
       });
     case "escape": {
       if (state.paletteOpen) {
         return closePalette(state);
+      }
+      if (state.view === ORCHESTRATOR_VIEWS.HOME && state.overviewDetailsOpen) {
+        return { ...state, overviewDetailsOpen: false };
       }
       if (state.helpOpen || state.view === ORCHESTRATOR_VIEWS.HELP) {
         return goOverview(state);
@@ -228,7 +239,8 @@ function goOverview(state) {
     navIndex: 0,
     listIndex: 0,
     region: defaultRegionForView(ORCHESTRATOR_VIEWS.HOME, state.layoutMode),
-    returnView: null
+    returnView: null,
+    overviewDetailsOpen: false
   });
 }
 

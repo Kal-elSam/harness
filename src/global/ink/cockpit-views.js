@@ -13,6 +13,7 @@ import {
 } from "./orchestrator-state.js";
 import { windowLinesForLayout } from "./cockpit-models.js";
 import { LAYOUT_MODES } from "./layout.js";
+import { SemanticOverviewPanel } from "./ux/live-overview.js";
 import { formatRunsHubLines, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
 import { formatReviewDetailLines, formatReviewListLines } from "./cockpit-reviews.js";
 import { formatChangesActionLines } from "./cockpit-changes.js";
@@ -95,6 +96,8 @@ export function renderCockpitView({
   recoveryAction = null,
   settingsAction = null,
   colorEnabled = true,
+  unicode = true,
+  overviewDetailsOpen = false,
   homeDir = null
 }) {
   if (palette) {
@@ -102,7 +105,12 @@ export function renderCockpitView({
   }
   switch (view) {
     case ORCHESTRATOR_VIEWS.HOME:
-      return React.createElement(ControlCenterPanel, { model: controlCenter, colorEnabled });
+      return React.createElement(SemanticOverviewPanel, {
+        model: controlCenter,
+        detailsOpen: overviewDetailsOpen,
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.USAGE:
       return governanceList(
         "Usage",

@@ -194,9 +194,11 @@ test("footer matches available actions for current context", () => {
     region: COCKPIT_REGIONS.NAV,
     unicode: false
   });
-  assert.match(overview.text, /Navigate/);
-  assert.match(overview.text, /Enter Activate/);
-  assert.match(overview.text, /Esc Exit/);
+  assert.match(overview.text, /↑↓/);
+  assert.match(overview.text, /Enter/);
+  assert.match(overview.text, /Space/);
+  assert.match(overview.text, /Esc/);
+  assert.ok(overview.text.length <= 40);
   assert.doesNotMatch(overview.text, /Tab/);
 
   const overviewBrowse = buildFooterModel({
@@ -205,8 +207,8 @@ test("footer matches available actions for current context", () => {
     navIndex: 3,
     unicode: false
   });
-  assert.match(overviewBrowse.text, /Enter Open/);
-  assert.doesNotMatch(overviewBrowse.text, /Activate/);
+  assert.match(overviewBrowse.text, /Enter/);
+  assert.match(overviewBrowse.text, /Space/);
 
   const diagnostics = buildFooterModel({
     view: ORCHESTRATOR_VIEWS.DIAGNOSTICS,

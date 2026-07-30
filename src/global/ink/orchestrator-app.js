@@ -161,6 +161,11 @@ export function OrchestratorApp({
       return;
     }
 
+    if (inputKey === " " && ui.view === ORCHESTRATOR_VIEWS.HOME && !ui.paletteOpen) {
+      dispatch({ type: "toggle-overview-details" });
+      return;
+    }
+
     if (key.escape) {
       if (ui.view === ORCHESTRATOR_VIEWS.CHANGES
         && data.changesAction?.phase === CHANGES_PHASE.CONFIRMING) {
@@ -542,6 +547,8 @@ export function OrchestratorApp({
           : null,
         layoutMode: mode,
         colorEnabled,
+        unicode,
+        overviewDetailsOpen: ui.overviewDetailsOpen,
         homeDir
       })
     )
