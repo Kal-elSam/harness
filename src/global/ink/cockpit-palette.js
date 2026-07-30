@@ -4,7 +4,8 @@ import { ORCHESTRATOR_VIEWS } from "./orchestrator-state.js";
 export const PALETTE_KINDS = Object.freeze({
   NAVIGATE: "navigate",
   REFRESH: "refresh",
-  HELP: "help"
+  HELP: "help",
+  SETUP: "setup"
 });
 
 const DESTINATION_VIEWS = Object.freeze({
@@ -37,15 +38,25 @@ export function buildPaletteActions({
   navItems = COCKPIT_NAV
 } = {}) {
   const actions = [];
-  const recommendedView = resolvePaletteDestination(ctaDestination);
-  if (recommendedView) {
+  if (ctaDestination === "setup") {
     actions.push({
       id: "recommended",
-      kind: PALETTE_KINDS.NAVIGATE,
-      label: ctaTitle?.trim() || "Recommended next action",
-      view: recommendedView,
-      description: ctaDetail?.trim() || "Overview recommended destination."
+      kind: PALETTE_KINDS.SETUP,
+      label: ctaTitle?.trim() || "Finish local setup",
+      view: null,
+      description: ctaDetail?.trim() || "Open the local setup wizard."
     });
+  } else {
+    const recommendedView = resolvePaletteDestination(ctaDestination);
+    if (recommendedView) {
+      actions.push({
+        id: "recommended",
+        kind: PALETTE_KINDS.NAVIGATE,
+        label: ctaTitle?.trim() || "Recommended next action",
+        view: recommendedView,
+        description: ctaDetail?.trim() || "Overview recommended destination."
+      });
+    }
   }
   for (const item of navItems) {
     actions.push({

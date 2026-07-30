@@ -23,7 +23,7 @@ function modelFor(health, extras = {}) {
       health,
       coverage: { governedAgents: 1, detectedAgents: 2 },
       diff: { hasChanges: false },
-      cta: { title: "Finish local setup", detail: "Configure agents.", destination: "changes" },
+      cta: { title: "Finish local setup", detail: "Configure agents.", destination: "setup" },
       ...extras
     },
     alerts: extras.alerts
@@ -52,7 +52,7 @@ test("adapter maps health tones and unavailable headlines", () => {
     alerts: [{ state: "open" }, { state: "open" }]
   }));
   assert.ok(withEvidence.details.some((line) => /Open alerts · 2/.test(line)));
-  assert.ok(withEvidence.details.some((line) => /Next destination · Governance/.test(line)));
+  assert.ok(withEvidence.details.some((line) => /Next destination · Setup/.test(line)));
   assert.deepEqual(buildOverviewDetails({}), ["No extra evidence beyond the metrics above."]);
 });
 

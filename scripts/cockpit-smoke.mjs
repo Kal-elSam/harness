@@ -132,7 +132,7 @@ const proposalLines = formatProposalLines([
     id: "setup-local",
     severity: "high",
     title: "Finish local setup",
-    destination: "changes",
+    destination: "setup",
     evidence: [{ type: "status", source: "status.overall", ref: "missing" }]
   }
 ], {
@@ -143,7 +143,7 @@ const proposalLines = formatProposalLines([
     requestBudgetTokens: 10
   }
 });
-assert.match(proposalLines.join("\n"), /\[HIGH\] Finish local setup → changes/);
+assert.match(proposalLines.join("\n"), /\[HIGH\] Finish local setup → setup/);
 assert.match(proposalLines.join("\n"), /Budget · stable 1\/10/);
 assert.match(proposalLines.join("\n"), /evidence: status\.overall/);
 
