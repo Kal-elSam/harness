@@ -33,8 +33,14 @@ import {
   listRecoverySnapshots,
   reduceRecoveryAction
 } from "./cockpit-recovery.js";
+import {
+  createSettingsActionState,
+  listCuratedIntegrations,
+  reduceSettingsAction
+} from "./cockpit-settings.js";
 import { listReviewReceipts } from "../runtime/review/review-receipts.js";
 import { assertReceiptSecretFree } from "../runtime/review/review-validate.js";
+import { listAlerts, resolveAlert, dismissAlert } from "../runtime/alerts/alert-store.js";
 
 export function useOrchestratorData({
   homeDir,
@@ -54,6 +60,7 @@ export function useOrchestratorData({
   const [selectedEvents, setSelectedEvents] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [selectedReview, setSelectedReview] = useState(null);
+  const [alerts, setAlerts] = useState(null);
   const [statusMessage, setStatusMessage] = useState(null);
   const [launchAgentIndex, setLaunchAgentIndex] = useState(0);
   const [launchStep, setLaunchStep] = useState(LAUNCH_WIZARD_STEPS.AGENT);
@@ -61,6 +68,7 @@ export function useOrchestratorData({
   const [launchPermissionIndex, setLaunchPermissionIndex] = useState(0);
   const [changesAction, setChangesAction] = useState(createChangesActionState);
   const [recoveryAction, setRecoveryAction] = useState(createRecoveryActionState);
+  const [settingsAction, setSettingsAction] = useState(createSettingsActionState);
 
   const serializedReload = useMemo(() => createSerializedReloader(() => loadCockpitScanBundle({
     homeDir,
@@ -90,6 +98,11 @@ export function useOrchestratorData({
     setDashboard(outcome.result.dashboard);
     setDiagnostics(outcome.result.diagnostics);
     setSnapshot(outcome.result.snapshot);
+    try {
+      setAlerts(await listAlerts({ homeDir, limit: 50 }));
+    } catch {
+      setAlerts(null);
+    }
     setError(null);
     setLoading(false);
     setRetrying(false);
@@ -147,6 +160,22 @@ export function useOrchestratorData({
       view: ORCHESTRATOR_VIEWS.REVIEW_DETAIL,
       returnView: ORCHESTRATOR_VIEWS.REVIEWS
     });
+  };
+
+  const handleAlertTransition = async (alert, action) => {
+    if (!alert) return;
+    setBusy(true);
+    try {
+      if (action === "dismiss") await dismissAlert(alert.alertId, { homeDir });
+      else await resolveAlert(alert.alertId, { homeDir });
+      setAlerts(await listAlerts({ homeDir, limit: 50 }));
+      setStatusMessage(action === "dismiss" ? "Alert dismissed" : "Alert resolved");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+      setAlerts(null);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleLaunch = async (draft, profile, dispatch) => {
@@ -366,6 +395,26 @@ export function useOrchestratorData({
     await reload();
   };
 
+  const previewSettings = (id) => {
+    setSettingsAction((prev) => reduceSettingsAction(prev, { type: "preview", id }));
+  };
+
+  const promptConfirmSettings = () => {
+    setSettingsAction((prev) => reduceSettingsAction(prev, { type: "confirm-prompt" }));
+  };
+
+  const confirmSettings = () => {
+    setSettingsAction((prev) => reduceSettingsAction(prev, { type: "confirm" }));
+  };
+
+  const cancelSettings = () => {
+    setSettingsAction((prev) => reduceSettingsAction(prev, { type: "cancel" }));
+  };
+
+  const resetSettings = () => {
+    setSettingsAction(() => createSettingsActionState());
+  };
+
   return {
     loading,
     busy,
@@ -381,6 +430,7 @@ export function useOrchestratorData({
     reviews,
     selectedReview,
     setSelectedReview,
+    alerts,
     statusMessage,
     launchAgentIndex,
     setLaunchAgentIndex,
@@ -394,11 +444,14 @@ export function useOrchestratorData({
     scanOptions: CONTROL_PLANE_AUTO_SCAN,
     changesAction,
     recoveryAction,
+    settingsAction,
+    curatedIntegrations: listCuratedIntegrations(),
     reload,
     resetLaunchWizard,
     openRunDetail,
     loadReviews,
     openReviewDetail,
+    handleAlertTransition,
     handleLaunch,
     handleCancelRun,
     previewChanges,
@@ -409,6 +462,11 @@ export function useOrchestratorData({
     cancelRecovery,
     confirmApplyRecovery,
     rescanRecovery,
+    previewSettings,
+    promptConfirmSettings,
+    confirmSettings,
+    cancelSettings,
+    resetSettings,
     recoverySnapshots: listRecoverySnapshots(snapshot)
   };
 }

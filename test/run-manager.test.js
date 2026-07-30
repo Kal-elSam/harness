@@ -290,11 +290,16 @@ test("stopRun against concurrent supervisor stress ends CANCELLED", async () => 
         spawnImpl: () => child
       });
 
-      while (true) {
+      let ready = false;
+      for (let attempt = 0; attempt < 500; attempt += 1) {
         const snapshot = await readRunState(homeDir, runId);
-        if (snapshot?.state === RUN_STATES.RUNNING) break;
+        if (snapshot?.state === RUN_STATES.RUNNING) {
+          ready = true;
+          break;
+        }
         await new Promise((resolve) => setImmediate(resolve));
       }
+      assert.equal(ready, true, `run did not reach RUNNING (iteration ${i})`);
 
       const cancelled = await stopRun(homeDir, runId);
       assert.equal(cancelled.state, RUN_STATES.CANCELLED);

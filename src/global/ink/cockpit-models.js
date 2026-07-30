@@ -7,6 +7,7 @@ import { buildHomeMissionModel, formatHomeRecentRun } from "./cockpit-home.js";
 import { isRunsBranchView } from "./cockpit-runs.js";
 import { buildChangesFooterParts } from "./cockpit-changes.js";
 import { buildRecoveryFooterParts } from "./cockpit-recovery.js";
+import { buildSettingsFooterParts, SETTINGS_PHASE } from "./cockpit-settings.js";
 
 export const COCKPIT_REGIONS = {
   NAV: "nav",
@@ -117,10 +118,23 @@ export function resolveNavStatusSummary(item, {
       return backups > 0 ? `${backups} backups` : "No backups";
     case "orchestration":
       return active === 0 ? "Idle" : `${active} active`;
-    case "usage":
-      return Number.isFinite(snapshot?.budgets?.stableUsedTokens)
+    case "usage": {
+      if (Number.isFinite(snapshot?.budgets?.stableUsedTokens)) return "Auditable";
+      const resolved = dashboard?.profile?.profile ?? {};
+      if (Number.isFinite(resolved.tokenBudget)
+        || Number.isFinite(resolved.stableContextBudget)
+        || Number.isFinite(resolved.requestContextBudget)) {
+        return "Auditable";
+      }
+      const runs = [...(dashboard?.activeRuns ?? []), ...(dashboard?.recentRuns ?? [])];
+      return runs.some((run) => {
+        const u = run?.tokenUsage;
+        return u && typeof u === "object"
+          && (Number.isFinite(u.total) || Number.isFinite(u.input) || Number.isFinite(u.output));
+      })
         ? "Auditable"
         : "n/a";
+    }
     case "settings":
       return snapshot?.policy?.profile ?? "defaults";
     case "ides":
@@ -223,11 +237,13 @@ export function buildFooterModel({
   region = COCKPIT_REGIONS.NAV,
   navIndex = 0,
   helpOpen = false,
+  paletteOpen = false,
   canCancel = false,
   unicode = true,
   hasError = false,
   changesPhase = null,
   recoveryPhase = null,
+  settingsPhase = null,
   columns = 80
 } = {}) {
   const glyphs = resolveGlyphs(unicode);
@@ -238,6 +254,13 @@ export function buildFooterModel({
     parts.push("R Retry");
     parts.push("Esc Exit");
     return { text: parts.join(` ${glyphs.bullet} `), columns: footerColumns };
+  }
+
+  if (paletteOpen) {
+    return {
+      text: ["↑↓ Select", "Enter Run", "Esc Close"].join(` ${glyphs.bullet} `),
+      columns: footerColumns
+    };
   }
 
   if (helpOpen || view === ORCHESTRATOR_VIEWS.HELP) {
@@ -268,6 +291,14 @@ export function buildFooterModel({
   if (view === ORCHESTRATOR_VIEWS.ACTIVITY) {
     return {
       text: buildRecoveryFooterParts(recoveryPhase).join(` ${glyphs.bullet} `),
+      columns: footerColumns
+    };
+  }
+
+  if (view === ORCHESTRATOR_VIEWS.PROFILE) {
+    return {
+      text: buildSettingsFooterParts(settingsPhase ?? SETTINGS_PHASE.BROWSE)
+        .join(` ${glyphs.bullet} `),
       columns: footerColumns
     };
   }
@@ -305,6 +336,7 @@ export function buildFooterModel({
   }
 
   parts.push("? Help");
+  parts.push("/ Actions");
   parts.push(view === ORCHESTRATOR_VIEWS.HOME ? "Esc Exit" : "Esc Back");
 
   return { text: parts.join(` ${glyphs.bullet} `), columns: footerColumns };
