@@ -42,7 +42,37 @@ function assertMonitorState(raw) {
   if (!raw || typeof raw !== "object" || raw.version !== 1 || typeof raw.enabled !== "boolean") {
     throw new MonitorStateError("Monitor state schema invalid.");
   }
-  return { ...defaultMonitorState(), ...raw, version: 1, enabled: raw.enabled };
+  if (!Number.isFinite(raw.intervalSec) || raw.intervalSec < 1) {
+    throw new MonitorStateError("Monitor state.intervalSec invalid.");
+  }
+  const a = raw.autostart;
+  if (!a || typeof a !== "object"
+    || typeof a.supported !== "boolean"
+    || typeof a.configured !== "boolean"
+    || typeof a.loaded !== "boolean"
+    || typeof a.installed !== "boolean") {
+    throw new MonitorStateError("Monitor state.autostart invalid.");
+  }
+  if (a.loaded && !a.configured) {
+    throw new MonitorStateError("Monitor state.autostart loaded requires configured.");
+  }
+  if (a.installed !== a.loaded) {
+    throw new MonitorStateError("Monitor state.autostart installed must equal loaded.");
+  }
+  if (!a.supported && (a.configured || a.loaded || a.installed)) {
+    throw new MonitorStateError("Monitor state.autostart unsupported with lifecycle flags.");
+  }
+  if (!raw.enabled && (a.configured || a.loaded || a.installed)) {
+    throw new MonitorStateError("Monitor disabled with active autostart lifecycle.");
+  }
+  return {
+    ...defaultMonitorState(),
+    ...raw,
+    version: 1,
+    enabled: raw.enabled,
+    intervalSec: raw.intervalSec,
+    autostart: { ...defaultMonitorState().autostart, ...a }
+  };
 }
 
 export async function readMonitorState(homeDir, { repair = false } = {}) {
@@ -147,7 +177,7 @@ export async function runMonitorTick(homeDir, deps = {}) {
   return {
     state: await writeMonitorState(homeDir, {
       lastTickAt: new Date().toISOString(), lastTick
-    }, { repair: true }),
+    }),
     raised
   };
 }
@@ -202,6 +232,12 @@ export async function monitorDoctorCheck(homeDir) {
     return {
       name: "monitor", status: "stale", category: "monitor",
       detail: "corrupt state — run kairo monitor disable to repair"
+    };
+  }
+  if (s.enabled && s.autostart?.supported && !s.autostart?.loaded) {
+    return {
+      name: "monitor", status: "stale", category: "monitor",
+      detail: "enabled but autostart not loaded"
     };
   }
   return {
