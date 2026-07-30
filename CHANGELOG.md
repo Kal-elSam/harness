@@ -18,13 +18,14 @@ opt-in monitor, curated Settings. Publish tag: `kairo-runtime-v0.9.0`.
 - `kairo monitor enable|disable|status|tick` with macOS LaunchAgent autostart;
   drift / orphan / failed runs → alerts; notify only on new claims.
 - Settings curated catalog (`pi-usage-widget@0.2.1`, MIT): browse → preview →
-  confirm records install intent with `wroteFiles: false` (no auto-install).
+  confirm shows an in-session confirmation receipt; does not persist or install
+  anything.
 
 ### Compatibility
 
 - Keyboard-first, local, single-user; Ink + React retained.
 - Monitor autostart is opt-in; unsupported OS degrade without false “installed”.
-- Settings confirm never writes the filesystem in this release.
+- Settings confirm shows an in-session receipt only; neither persists nor installs.
 - Orchestration / Usage stay summaries; Cockpit does not drive Pi orchestration.
 
 ## 0.8.0 — 2026-07-28 (Kairo Runtime)

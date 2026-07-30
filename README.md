@@ -70,8 +70,8 @@ only when a new alert claim succeeds.
 ### Settings (curated integrations)
 
 Settings browses a curated catalog (pinned `pi-usage-widget@0.2.1`, MIT).
-Preview → confirm records explicit install intent with `wroteFiles: false` —
-Kairo never auto-installs Pi packages from Cockpit in 0.9.0.
+Preview → confirm shows an in-session confirmation receipt (`wroteFiles: false`);
+it does not persist or install anything.
 
 Respects `NO_COLOR`, `HARNESS_ASCII=1`, and `HARNESS_INK=0`. Status is always labeled
 in text, never color alone.
