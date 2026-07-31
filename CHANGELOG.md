@@ -3,6 +3,31 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.11.0 — 2026-07-31 (Kairo Runtime)
+
+Minor release. Cockpit visual identity: amber/ice brand palette, borderless
+shell composition, responsive ASCII wordmark on Overview, and operational
+panel titles with ice focus. Publish tag: `kairo-runtime-v0.11.0`.
+
+### Changed
+
+- Brand theme: amber for brand chrome, ice for interactive focus — replaces
+  cyan/magenta nested frames.
+- Borderless Cockpit shell: compact header, segmented nav, single-line footer
+  without nested panel borders.
+- Overview product cover: static Kairo ASCII wordmark beside status on
+  wide/compact layouts; textual brand line on minimal.
+- Shared `ViewTitle` / section labels on Governance, Activity, Orchestration,
+  Usage, Settings, and Alerts with ice focus affordances.
+- Loading/error splash colors respect `NO_COLOR` via terminal capabilities.
+
+### Compatibility
+
+- No models, keys, CLI, or public API contract changes.
+- Keyboard-first, local, single-user; Ink + React retained.
+- `NO_COLOR`, ASCII glyph fallbacks, and existing shell chrome contracts preserved.
+- README unchanged for this slice.
+
 ## 0.10.0 — 2026-07-31 (Kairo Runtime)
 
 Minor release. Terminal-first Ink UX Control Plane: semantic primitives across
