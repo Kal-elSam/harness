@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 import { ActionList } from "../src/global/ink/ux/semantic.js";
 import {
-  adaptUsageModel, formatRunUsageLabel, usageRunLimit, SemanticUsagePanel
-} from "../src/global/ink/ux/live-usage.js";
+  adaptUsageModel, formatRunUsageLabel, usageRunLimit
+} from "../src/global/ink/cockpit-usage.js";
+import { SemanticUsagePanel } from "../src/global/ink/ux/live-usage.js";
 import { formatUsageLines } from "../src/global/ink/cockpit-control-center.js";
 
 function manyRuns(n, usage = { input: 1 }) {
@@ -56,7 +57,22 @@ test("partial tokenUsage shows only present finite fields; zero kept", () => {
   assert.equal(inputOnly.runs[0].label, "codex · in 10");
   assert.doesNotMatch(inputOnly.runs[0].label, /total|out /);
   assert.equal(inputOnly.hasEvidence, true);
-  assert.equal(inputOnly.callout.title, "Auditable usage");
+  assert.equal(inputOnly.callout.title, "Usage evidence available");
+});
+
+test("Callout is status only; Measured owns the value", () => {
+  const model = adaptUsageModel({
+    snapshot: {
+      budgets: {
+        stableUsedTokens: 100, stableBudgetTokens: 1000,
+        requestUsedTokens: 20, requestBudgetTokens: 500
+      }
+    }
+  });
+  assert.match(model.measured, /stable 100\/1000 · request 20\/500/);
+  assert.equal(model.callout.title, "Usage evidence available");
+  assert.notEqual(model.callout.title, model.measured);
+  assert.doesNotMatch(model.callout.title, /stable |request /);
 });
 
 test("real profile shape and measured budgets; never invent totals", () => {
@@ -80,7 +96,7 @@ test("real profile shape and measured budgets; never invent totals", () => {
   assert.match(model.runs[0].label, /codex · in 10 · out 5 · total 15/);
   assert.doesNotMatch([model.measured, model.configured, model.footnote].join("\n"), /saved|cost|\$/i);
   assert.deepEqual(formatUsageLines({
-    snapshot: model.measured && { budgets: {
+    snapshot: { budgets: {
       stableUsedTokens: 100, stableBudgetTokens: 1000,
       requestUsedTokens: 20, requestBudgetTokens: 500
     } },

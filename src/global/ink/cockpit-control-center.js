@@ -4,7 +4,7 @@ import {
   adaptUsageModel,
   formatMeasuredBudgets,
   formatUsageLinesFromModel
-} from "./ux/live-usage.js";
+} from "./cockpit-usage.js";
 
 export function buildControlCenterModel({
   projectName = "project",
