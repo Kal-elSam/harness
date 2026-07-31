@@ -146,6 +146,10 @@ export function OrchestratorApp({
           data.reload().catch(() => {});
           return;
         }
+        if (selected.kind === PALETTE_KINDS.SETUP) {
+          finish({ cancelled: false, action: "setup" });
+          return;
+        }
         dispatch({
           type: "run-palette",
           kind: selected.kind,
@@ -163,6 +167,19 @@ export function OrchestratorApp({
 
     if (inputKey === " " && ui.view === ORCHESTRATOR_VIEWS.HOME && !ui.paletteOpen) {
       dispatch({ type: "toggle-overview-details" });
+      return;
+    }
+
+    if (inputKey === " " && ui.view === ORCHESTRATOR_VIEWS.CHANGES && !ui.paletteOpen) {
+      dispatch({ type: "toggle-governance-details" });
+      return;
+    }
+
+    if (inputKey === " "
+      && ui.view === ORCHESTRATOR_VIEWS.ACTIVITY
+      && !ui.paletteOpen
+      && data.recoveryAction?.preview) {
+      dispatch({ type: "toggle-activity-details" });
       return;
     }
 
@@ -267,6 +284,10 @@ export function OrchestratorApp({
           navItem: item,
           ctaDestination: data.snapshot?.cta?.destination ?? null
         });
+        if (intent.kind === "activate-setup") {
+          finish({ cancelled: false, action: "setup" });
+          return;
+        }
         if (intent.kind === "activate-cta") {
           if (openDestination(intent.destination)) return;
         }
@@ -500,6 +521,7 @@ export function OrchestratorApp({
         unicode,
         changesPhase: data.changesAction?.phase ?? null,
         recoveryPhase: data.recoveryAction?.phase ?? null,
+        recoveryHasPreview: Boolean(data.recoveryAction?.preview),
         settingsPhase: data.settingsAction?.phase ?? null,
         columns
       }),
@@ -549,6 +571,9 @@ export function OrchestratorApp({
         colorEnabled,
         unicode,
         overviewDetailsOpen: ui.overviewDetailsOpen,
+        governanceDetailsOpen: ui.governanceDetailsOpen,
+        activityDetailsOpen: ui.activityDetailsOpen,
+        contentFocused: ui.region === COCKPIT_REGIONS.CONTENT,
         homeDir
       })
     )

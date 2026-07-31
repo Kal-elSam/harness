@@ -14,6 +14,7 @@ export function resolveEnterNavIntent({
   const isOverview = navItem.id === "overview" || navItem.view === ORCHESTRATOR_VIEWS.HOME;
   if (isOverview) {
     if (currentView === ORCHESTRATOR_VIEWS.HOME && ctaDestination) {
+      if (ctaDestination === "setup") return { kind: "activate-setup" };
       return { kind: "activate-cta", destination: ctaDestination };
     }
     return { kind: "open-nav", view: ORCHESTRATOR_VIEWS.HOME };
