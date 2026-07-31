@@ -38,9 +38,12 @@ export function Stepper({ steps = [], currentIndex = 0, colorEnabled = true, uni
   );
 }
 
-export function Callout({ tone = "info", title, body, colorEnabled = true }) {
+export function Callout({ tone = "info", title, body, colorEnabled = true, compact = false }) {
   const kind = tone === "danger" ? "danger" : tone === "warn" ? "warn" : "ready";
-  return React.createElement(Box, { flexDirection: "column", marginY: 1 },
+  return React.createElement(Box, {
+    flexDirection: "column",
+    marginY: compact ? 0 : 1
+  },
     React.createElement(Text, { bold: true, color: statusColor(kind, { colorEnabled }) }, title),
     body ? React.createElement(Text, null, body) : null
   );

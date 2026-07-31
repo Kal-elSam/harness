@@ -52,7 +52,7 @@ test("setup proposal carries verifiable evidence", () => {
   }));
   assert.equal(proposal.id, "setup-local");
   assert.equal(proposal.severity, PROPOSAL_SEVERITY.HIGH);
-  assert.equal(proposal.destination, PROPOSAL_DESTINATION.CHANGES);
+  assert.equal(proposal.destination, PROPOSAL_DESTINATION.SETUP);
   assert.ok(proposal.evidence.every((item) => item.type && item.source && item.ref));
 });
 

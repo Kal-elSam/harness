@@ -58,7 +58,7 @@ test("failed apply retains preview; Activity is content-interactive; footer phas
     recoveryPhase: RECOVERY_PHASE.CONFIRMING,
     unicode: false
   });
-  assert.deepEqual(buildRecoveryFooterParts(RECOVERY_PHASE.CONFIRMING), ["Y Restore", "N/Esc Cancel"]);
+  assert.deepEqual(buildRecoveryFooterParts(RECOVERY_PHASE.CONFIRMING), ["Y Restore", "N/Esc Cancel", "Space"]);
   assert.match(footer.text, /Y Restore/);
 
   const lines = formatRecoveryLines({

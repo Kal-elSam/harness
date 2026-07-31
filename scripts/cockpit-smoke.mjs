@@ -26,7 +26,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const pkg = require(join(root, "package.json"));
 
-assert.equal(pkg.version, "0.9.0");
+assert.equal(pkg.version, "0.10.0");
 assert.ok(pkg.dependencies["ansi-escapes"]);
 
 assert.equal(resolveLayoutMode({ columns: 120, rows: 40 }), LAYOUT_MODES.WIDE);
@@ -132,7 +132,7 @@ const proposalLines = formatProposalLines([
     id: "setup-local",
     severity: "high",
     title: "Finish local setup",
-    destination: "changes",
+    destination: "setup",
     evidence: [{ type: "status", source: "status.overall", ref: "missing" }]
   }
 ], {
@@ -143,7 +143,7 @@ const proposalLines = formatProposalLines([
     requestBudgetTokens: 10
   }
 });
-assert.match(proposalLines.join("\n"), /\[HIGH\] Finish local setup → changes/);
+assert.match(proposalLines.join("\n"), /\[HIGH\] Finish local setup → setup/);
 assert.match(proposalLines.join("\n"), /Budget · stable 1\/10/);
 assert.match(proposalLines.join("\n"), /evidence: status\.overall/);
 

@@ -5,7 +5,6 @@ import { CockpitEmptyState } from "./cockpit/primitives.js";
 import {
   formatProviderLines,
   formatRunDetailLines,
-  formatRunLines,
   formatSystemHealthLines,
   formatLaunchWizardLines,
   ORCHESTRATOR_VIEWS,
@@ -13,14 +12,15 @@ import {
 } from "./orchestrator-state.js";
 import { windowLinesForLayout } from "./cockpit-models.js";
 import { LAYOUT_MODES } from "./layout.js";
-import { formatRunsHubLines, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
-import { formatReviewDetailLines, formatReviewListLines } from "./cockpit-reviews.js";
-import { formatChangesActionLines } from "./cockpit-changes.js";
-import { formatRecoveryLines } from "./cockpit-recovery.js";
-import { formatUsageLines } from "./cockpit-control-center.js";
-import { formatOrchestrationStatus } from "./cockpit-runs.js";
-import { formatAlertListLines } from "./cockpit-alerts.js";
-import { formatSettingsLines } from "./cockpit-settings.js";
+import { SemanticOverviewPanel } from "./ux/live-overview.js";
+import { SemanticGovernancePanel } from "./ux/live-governance.js";
+import { SemanticActivityPanel } from "./ux/live-activity.js";
+import { SemanticOrchestrationPanel } from "./ux/live-orchestration.js";
+import { SemanticAlertsPanel } from "./ux/live-alerts.js";
+import { SemanticSettingsPanel } from "./ux/live-settings.js";
+import { SemanticUsagePanel } from "./ux/live-usage.js";
+import { formatReviewDetailLines } from "./cockpit-reviews.js";
+import { listCuratedIntegrations } from "./cockpit-settings.js";
 
 export function PalettePanel({ model, colorEnabled = true }) {
   return React.createElement(Box, { flexDirection: "column" },
@@ -95,6 +95,11 @@ export function renderCockpitView({
   recoveryAction = null,
   settingsAction = null,
   colorEnabled = true,
+  unicode = true,
+  overviewDetailsOpen = false,
+  governanceDetailsOpen = false,
+  activityDetailsOpen = false,
+  contentFocused = false,
   homeDir = null
 }) {
   if (palette) {
@@ -102,14 +107,20 @@ export function renderCockpitView({
   }
   switch (view) {
     case ORCHESTRATOR_VIEWS.HOME:
-      return React.createElement(ControlCenterPanel, { model: controlCenter, colorEnabled });
+      return React.createElement(SemanticOverviewPanel, {
+        model: controlCenter,
+        detailsOpen: overviewDetailsOpen,
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.USAGE:
-      return governanceList(
-        "Usage",
-        formatUsageLines({ snapshot, dashboard }),
+      return React.createElement(SemanticUsagePanel, {
+        snapshot,
+        dashboard,
         layoutMode,
-        colorEnabled
-      );
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.IDES:
     case ORCHESTRATOR_VIEWS.PROVIDERS:
       return governanceList("IDEs & models", [
@@ -120,73 +131,54 @@ export function renderCockpitView({
     case ORCHESTRATOR_VIEWS.MODULES:
       return governanceList("Harness modules", formatModuleLines(snapshot), layoutMode, colorEnabled);
     case ORCHESTRATOR_VIEWS.CHANGES:
-      return governanceList(
-        "Governance",
-        formatChangeLines(snapshot, changesAction, layoutMode, homeDir),
+      return React.createElement(SemanticGovernancePanel, {
+        snapshot,
+        changesAction,
+        homeDir,
+        detailsOpen: governanceDetailsOpen,
         layoutMode,
-        colorEnabled
-      );
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.ACTIVITY:
-      return governanceList(
-        "Activity",
-        formatRecoveryLines({ snapshot, recoveryAction, listIndex, dashboard, homeDir }),
+      return React.createElement(SemanticActivityPanel, {
+        snapshot,
+        recoveryAction,
+        dashboard,
+        listIndex,
+        homeDir,
+        detailsOpen: activityDetailsOpen,
         layoutMode,
-        colorEnabled
-      );
+        contentFocused,
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.PROFILE:
-      return governanceList(
-        "Settings",
-        formatSettingsLines({
-          listIndex,
-          settingsAction,
-          snapshot,
-          diagnostics
-        }),
+      return React.createElement(SemanticSettingsPanel, {
+        integrations: listCuratedIntegrations(),
+        listIndex,
+        settingsAction,
+        snapshot,
+        diagnostics,
         layoutMode,
-        colorEnabled
-      );
+        contentFocused,
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.RUNS:
-      return listBlock(
-        `Orchestration · ${formatOrchestrationStatus({
-          active: (dashboard?.activeRuns ?? []).length,
-          recent: (dashboard?.recentRuns ?? []).length,
-          reviews: (reviews ?? []).length
-        })}`,
-        formatRunsHubLines(RUNS_HUB_ITEMS),
-        listIndex,
-        colorEnabled,
-        "Choose Active runs, History, Reviews, or New run."
-      );
     case ORCHESTRATOR_VIEWS.ACTIVE_RUNS:
-      return listBlock(
-        "Active runs",
-        formatRunLines(dashboard?.activeRuns ?? [], {
-          emptyMessage: "No runs executing. Governance first — launch only after setup/repairs.",
-          readable: true
-        }),
-        listIndex,
-        colorEnabled,
-        "Enter opens detail · Esc back to Orchestration"
-      );
     case ORCHESTRATOR_VIEWS.RECENT_RUNS:
-      return listBlock(
-        "Run history",
-        formatRunLines(dashboard?.recentRuns ?? [], {
-          emptyMessage: "No completed runs yet.",
-          readable: true
-        }),
-        listIndex,
-        colorEnabled,
-        "Enter opens detail · Esc back to Orchestration"
-      );
     case ORCHESTRATOR_VIEWS.REVIEWS:
-      return listBlock(
-        "Reviews",
-        formatReviewListLines(reviews),
+      return React.createElement(SemanticOrchestrationPanel, {
+        view,
+        dashboard,
+        reviews,
         listIndex,
+        layoutMode,
+        contentFocused,
         colorEnabled,
-        "Receipts are read-only. Launch reviews via kairo review --agent codex|pi."
-      );
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.LAUNCH:
       if (launchableAgents.length === 0) {
         return React.createElement(CockpitEmptyState, {
@@ -223,13 +215,14 @@ export function renderCockpitView({
           .map((line) => React.createElement(Text, { key: line }, line))
       );
     case ORCHESTRATOR_VIEWS.ALERTS:
-      return listBlock(
-        "Alerts",
-        formatAlertListLines(alerts),
+      return React.createElement(SemanticAlertsPanel, {
+        alerts,
         listIndex,
+        layoutMode,
+        contentFocused,
         colorEnabled,
-        "Enter resolves · D dismisses · Esc back · / Alerts"
-      );
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.DIAGNOSTICS:
       return governanceList(
         "System health",
@@ -285,27 +278,6 @@ function formatModuleLines(snapshot) {
     "",
     "External integrations are reported only when detectable on this machine."
   ];
-}
-
-function formatChangeLines(snapshot, changesAction, layoutMode = LAYOUT_MODES.COMPACT, homeDir = null) {
-  return formatChangesActionLines({ snapshot, changesAction, layoutMode, homeDir });
-}
-
-function listBlock(title, lines, listIndex, colorEnabled, emptyHint) {
-  const isEmpty = lines.length === 1 && /no |nothing |empty/i.test(lines[0]);
-  return React.createElement(Box, { flexDirection: "column" },
-    React.createElement(Text, { bold: true }, title),
-    isEmpty
-      ? React.createElement(CockpitEmptyState, {
-        message: lines[0],
-        hint: emptyHint
-      })
-      : lines.map((line, index) => React.createElement(Text, {
-        key: `${index}-${line}`,
-        bold: index === listIndex,
-        color: index === listIndex && colorEnabled ? COCKPIT_COLORS.primary : undefined
-      }, `${index === listIndex ? "› " : "  "}${line}`))
-  );
 }
 
 export { LAUNCH_WIZARD_STEPS };

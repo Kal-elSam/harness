@@ -38,6 +38,10 @@ test("resolveControlPlaneHealth maps overall states without using intelligence",
 test("resolveControlPlaneCta prioritizes setup and repair before idle/runs", () => {
   assert.equal(resolveControlPlaneCta({
     health: CONTROL_PLANE_HEALTH.NOT_CONFIGURED
+  }).destination, "setup");
+
+  assert.equal(resolveControlPlaneCta({
+    health: CONTROL_PLANE_HEALTH.NOT_CONFIGURED
   }).kind, CONTROL_PLANE_CTA.SETUP);
 
   assert.equal(resolveControlPlaneCta({

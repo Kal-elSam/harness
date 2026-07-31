@@ -163,3 +163,49 @@ test("splash routing skipped for simple, non-TTY, and yes modes", () => {
   assert.equal(shouldUseSetupInk({ interactive: false, inkCapable: true }), false);
   assert.equal(shouldUseSetupInk({ interactive: true, yes: true, inkCapable: true }), false);
 });
+
+test("preview window caps by layout with remainder; keys stay unique for blanks", async () => {
+  const {
+    setupPreviewLineLimit,
+    windowSetupLines,
+    setupLineKey
+  } = await import("../src/global/ink/setup-state.js");
+  assert.equal(setupPreviewLineLimit("compact"), 8);
+  assert.equal(setupPreviewLineLimit("wide"), 12);
+  assert.equal(setupPreviewLineLimit("minimal"), 5);
+
+  const many = Array.from({ length: 20 }, (_, i) => (i % 3 === 0 ? "" : `line-${i}`));
+  const capped = windowSetupLines(many, 8);
+  assert.equal(capped.length, 9);
+  assert.equal(capped.at(-1), "… 12 more");
+  const keys = many.map((line, i) => setupLineKey(i, line));
+  assert.equal(new Set(keys).size, keys.length);
+});
+
+test("Setup chrome omits color props under colorEnabled=false", async () => {
+  const { SetupHeader, SetupSplash } = await import("../src/global/ink/setup-app.js");
+  const { CockpitPanel } = await import("../src/global/ink/cockpit/primitives.js");
+
+  function collectColorProps(node, into = []) {
+    if (!node || typeof node !== "object") return into;
+    if (node.props) {
+      if ("color" in node.props) into.push(["color", node.props.color]);
+      if ("borderColor" in node.props) into.push(["borderColor", node.props.borderColor]);
+      const { children } = node.props;
+      if (Array.isArray(children)) children.forEach((child) => collectColorProps(child, into));
+      else if (children) collectColorProps(children, into);
+    }
+    return into;
+  }
+
+  const header = SetupHeader({ colorEnabled: false });
+  const splash = SetupSplash({ compact: true, colorEnabled: false });
+  const panel = CockpitPanel({
+    title: "Preview", focused: true, width: "100%", colorEnabled: false, children: null
+  });
+  for (const node of [header, splash, panel]) {
+    for (const [key, value] of collectColorProps(node)) {
+      assert.equal(value, undefined, `${key} must be undefined under NO_COLOR`);
+    }
+  }
+});

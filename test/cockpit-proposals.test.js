@@ -16,7 +16,7 @@ const SAMPLE = [
     severity: "high",
     title: "Finish local setup",
     detail: "Configure ecosystem",
-    destination: "changes",
+    destination: "setup",
     evidence: [
       { type: "status", source: "status.overall", ref: "missing" },
       { type: "health", source: "control-plane.health", ref: "NOT_CONFIGURED" }
@@ -44,7 +44,7 @@ test("proposal lines expose severity destination and evidence sources only", () 
 
   assert.match(lines[0], /Proposals · 2\/2/);
   assert.match(lines.join("\n"), /Budget · stable 12\/40 · request 5\/20/);
-  assert.match(lines.join("\n"), /\[HIGH\] Finish local setup → changes/);
+  assert.match(lines.join("\n"), /\[HIGH\] Finish local setup → setup/);
   assert.match(lines.join("\n"), /evidence: status\.overall · control-plane\.health/);
   assert.equal(lines.join("\n").includes("Configure ecosystem"), false);
   assert.equal(lines.join("\n").includes("missing"), false);
@@ -55,12 +55,12 @@ test("layout limits and destination filter keep essential info across modes", ()
   assert.equal(proposalLimitForLayout("compact"), 4);
   assert.equal(proposalLimitForLayout("minimal"), 3);
 
-  const changesOnly = formatProposalLines(SAMPLE, {
-    destinationFilter: "changes",
+  const setupOnly = formatProposalLines(SAMPLE, {
+    destinationFilter: "setup",
     limit: proposalLimitForLayout("minimal")
   });
-  assert.match(changesOnly.join("\n"), /Finish local setup → changes/);
-  assert.equal(changesOnly.join("\n").includes("graphify"), false);
+  assert.match(setupOnly.join("\n"), /Finish local setup → setup/);
+  assert.equal(setupOnly.join("\n").includes("graphify"), false);
 
   assert.equal(formatProposalEvidenceSource([]), null);
   assert.equal(formatProposalBudgetLine(null), null);
@@ -77,7 +77,7 @@ test("control center model includes proposal lines without dumping sensitive ref
       policy: { profile: "safe", applyMode: "confirm" },
       status: { counts: { warning: 0 }, checks: [] },
       diff: { hasChanges: false },
-      cta: { kind: "setup", title: "Finish local setup", detail: "Run setup", destination: "changes" },
+      cta: { kind: "setup", title: "Finish local setup", detail: "Run setup", destination: "setup" },
       proposals: SAMPLE,
       budgets: {
         stableUsedTokens: 1,

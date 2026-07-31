@@ -27,6 +27,12 @@ test("palette model: CTA optional, six destinations, Alerts, Refresh, Help; no w
   assert.equal(withCta[0].view, ORCHESTRATOR_VIEWS.CHANGES);
   assert.equal(withCta.length, base.length + 1);
   assert.equal(resolvePaletteDestination("bogus"), null);
+  const withSetup = buildPaletteActions({
+    ctaDestination: "setup",
+    ctaTitle: "Finish local setup"
+  });
+  assert.equal(withSetup[0].kind, PALETTE_KINDS.SETUP);
+  assert.equal(withSetup[0].view, null);
   assert.deepEqual(
     [...new Set(withCta.map((a) => a.kind))].sort(),
     ["help", "navigate", "refresh"]
