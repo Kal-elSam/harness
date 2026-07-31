@@ -5,7 +5,6 @@ import { CockpitEmptyState } from "./cockpit/primitives.js";
 import {
   formatProviderLines,
   formatRunDetailLines,
-  formatRunLines,
   formatSystemHealthLines,
   formatLaunchWizardLines,
   ORCHESTRATOR_VIEWS,
@@ -16,10 +15,9 @@ import { LAYOUT_MODES } from "./layout.js";
 import { SemanticOverviewPanel } from "./ux/live-overview.js";
 import { SemanticGovernancePanel } from "./ux/live-governance.js";
 import { SemanticActivityPanel } from "./ux/live-activity.js";
-import { formatRunsHubLines, RUNS_HUB_ITEMS } from "./cockpit-runs.js";
-import { formatReviewDetailLines, formatReviewListLines } from "./cockpit-reviews.js";
+import { SemanticOrchestrationPanel } from "./ux/live-orchestration.js";
+import { formatReviewDetailLines } from "./cockpit-reviews.js";
 import { formatUsageLines } from "./cockpit-control-center.js";
-import { formatOrchestrationStatus } from "./cockpit-runs.js";
 import { formatAlertListLines } from "./cockpit-alerts.js";
 import { formatSettingsLines } from "./cockpit-settings.js";
 
@@ -166,47 +164,19 @@ export function renderCockpitView({
         colorEnabled
       );
     case ORCHESTRATOR_VIEWS.RUNS:
-      return listBlock(
-        `Orchestration · ${formatOrchestrationStatus({
-          active: (dashboard?.activeRuns ?? []).length,
-          recent: (dashboard?.recentRuns ?? []).length,
-          reviews: (reviews ?? []).length
-        })}`,
-        formatRunsHubLines(RUNS_HUB_ITEMS),
-        listIndex,
-        colorEnabled,
-        "Choose Active runs, History, Reviews, or New run."
-      );
     case ORCHESTRATOR_VIEWS.ACTIVE_RUNS:
-      return listBlock(
-        "Active runs",
-        formatRunLines(dashboard?.activeRuns ?? [], {
-          emptyMessage: "No runs executing. Governance first — launch only after setup/repairs.",
-          readable: true
-        }),
-        listIndex,
-        colorEnabled,
-        "Enter opens detail · Esc back to Orchestration"
-      );
     case ORCHESTRATOR_VIEWS.RECENT_RUNS:
-      return listBlock(
-        "Run history",
-        formatRunLines(dashboard?.recentRuns ?? [], {
-          emptyMessage: "No completed runs yet.",
-          readable: true
-        }),
-        listIndex,
-        colorEnabled,
-        "Enter opens detail · Esc back to Orchestration"
-      );
     case ORCHESTRATOR_VIEWS.REVIEWS:
-      return listBlock(
-        "Reviews",
-        formatReviewListLines(reviews),
+      return React.createElement(SemanticOrchestrationPanel, {
+        view,
+        dashboard,
+        reviews,
         listIndex,
+        layoutMode,
+        contentFocused,
         colorEnabled,
-        "Receipts are read-only. Launch reviews via kairo review --agent codex|pi."
-      );
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.LAUNCH:
       if (launchableAgents.length === 0) {
         return React.createElement(CockpitEmptyState, {
