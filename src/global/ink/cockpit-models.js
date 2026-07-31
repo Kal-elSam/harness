@@ -243,6 +243,7 @@ export function buildFooterModel({
   hasError = false,
   changesPhase = null,
   recoveryPhase = null,
+  recoveryHasPreview = false,
   settingsPhase = null,
   columns = 80
 } = {}) {
@@ -290,7 +291,8 @@ export function buildFooterModel({
 
   if (view === ORCHESTRATOR_VIEWS.ACTIVITY) {
     return {
-      text: buildRecoveryFooterParts(recoveryPhase).join(` ${glyphs.bullet} `),
+      text: buildRecoveryFooterParts(recoveryPhase, { hasPreview: recoveryHasPreview })
+        .join(` ${glyphs.bullet} `),
       columns: footerColumns
     };
   }

@@ -37,7 +37,8 @@ export function createCockpitUiState({
   paletteOpen = false,
   paletteIndex = 0,
   overviewDetailsOpen = false,
-  governanceDetailsOpen = false
+  governanceDetailsOpen = false,
+  activityDetailsOpen = false
 } = {}) {
   const regions = regionsForLayout(layoutMode);
   const preferred = region ?? defaultRegionForView(view, layoutMode);
@@ -56,6 +57,7 @@ export function createCockpitUiState({
     paletteIndex: Math.max(0, paletteIndex),
     overviewDetailsOpen: Boolean(overviewDetailsOpen),
     governanceDetailsOpen: Boolean(governanceDetailsOpen),
+    activityDetailsOpen: Boolean(activityDetailsOpen),
     shouldExit: false
   };
 }
@@ -151,7 +153,8 @@ export function reduceCockpitUi(state, action) {
         helpOpen: false,
         returnView: null,
         overviewDetailsOpen: false,
-        governanceDetailsOpen: false
+        governanceDetailsOpen: false,
+        activityDetailsOpen: false
       });
     }
     case "set-view": {
@@ -167,7 +170,8 @@ export function reduceCockpitUi(state, action) {
         returnView: action.returnView ?? state.returnView,
         helpOpen: nextView === ORCHESTRATOR_VIEWS.HELP,
         overviewDetailsOpen: false,
-        governanceDetailsOpen: false
+        governanceDetailsOpen: false,
+        activityDetailsOpen: false
       });
     }
     case "toggle-overview-details":
@@ -176,6 +180,9 @@ export function reduceCockpitUi(state, action) {
     case "toggle-governance-details":
       if (state.view !== ORCHESTRATOR_VIEWS.CHANGES) return state;
       return { ...state, governanceDetailsOpen: !state.governanceDetailsOpen };
+    case "toggle-activity-details":
+      if (state.view !== ORCHESTRATOR_VIEWS.ACTIVITY) return state;
+      return { ...state, activityDetailsOpen: !state.activityDetailsOpen };
     case "toggle-help":
       if (state.helpOpen || state.view === ORCHESTRATOR_VIEWS.HELP) {
         return goOverview(state);
@@ -186,7 +193,8 @@ export function reduceCockpitUi(state, action) {
         view: ORCHESTRATOR_VIEWS.HELP,
         region: defaultRegionForView(ORCHESTRATOR_VIEWS.HELP, state.layoutMode),
         overviewDetailsOpen: false,
-        governanceDetailsOpen: false
+        governanceDetailsOpen: false,
+        activityDetailsOpen: false
       });
     case "escape": {
       if (state.paletteOpen) {
@@ -197,6 +205,9 @@ export function reduceCockpitUi(state, action) {
       }
       if (state.view === ORCHESTRATOR_VIEWS.CHANGES && state.governanceDetailsOpen) {
         return { ...state, governanceDetailsOpen: false };
+      }
+      if (state.view === ORCHESTRATOR_VIEWS.ACTIVITY && state.activityDetailsOpen) {
+        return { ...state, activityDetailsOpen: false };
       }
       if (state.helpOpen || state.view === ORCHESTRATOR_VIEWS.HELP) {
         return goOverview(state);
@@ -252,7 +263,8 @@ function goOverview(state) {
     region: defaultRegionForView(ORCHESTRATOR_VIEWS.HOME, state.layoutMode),
     returnView: null,
     overviewDetailsOpen: false,
-    governanceDetailsOpen: false
+    governanceDetailsOpen: false,
+    activityDetailsOpen: false
   });
 }
 
