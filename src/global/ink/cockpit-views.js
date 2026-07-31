@@ -16,10 +16,11 @@ import { SemanticOverviewPanel } from "./ux/live-overview.js";
 import { SemanticGovernancePanel } from "./ux/live-governance.js";
 import { SemanticActivityPanel } from "./ux/live-activity.js";
 import { SemanticOrchestrationPanel } from "./ux/live-orchestration.js";
+import { SemanticAlertsPanel } from "./ux/live-alerts.js";
+import { SemanticSettingsPanel } from "./ux/live-settings.js";
+import { SemanticUsagePanel } from "./ux/live-usage.js";
 import { formatReviewDetailLines } from "./cockpit-reviews.js";
-import { formatUsageLines } from "./cockpit-control-center.js";
-import { formatAlertListLines } from "./cockpit-alerts.js";
-import { formatSettingsLines } from "./cockpit-settings.js";
+import { listCuratedIntegrations } from "./cockpit-settings.js";
 
 export function PalettePanel({ model, colorEnabled = true }) {
   return React.createElement(Box, { flexDirection: "column" },
@@ -113,12 +114,13 @@ export function renderCockpitView({
         unicode
       });
     case ORCHESTRATOR_VIEWS.USAGE:
-      return governanceList(
-        "Usage",
-        formatUsageLines({ snapshot, dashboard }),
+      return React.createElement(SemanticUsagePanel, {
+        snapshot,
+        dashboard,
         layoutMode,
-        colorEnabled
-      );
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.IDES:
     case ORCHESTRATOR_VIEWS.PROVIDERS:
       return governanceList("IDEs & models", [
@@ -152,17 +154,17 @@ export function renderCockpitView({
         unicode
       });
     case ORCHESTRATOR_VIEWS.PROFILE:
-      return governanceList(
-        "Settings",
-        formatSettingsLines({
-          listIndex,
-          settingsAction,
-          snapshot,
-          diagnostics
-        }),
+      return React.createElement(SemanticSettingsPanel, {
+        integrations: listCuratedIntegrations(),
+        listIndex,
+        settingsAction,
+        snapshot,
+        diagnostics,
         layoutMode,
-        colorEnabled
-      );
+        contentFocused,
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.RUNS:
     case ORCHESTRATOR_VIEWS.ACTIVE_RUNS:
     case ORCHESTRATOR_VIEWS.RECENT_RUNS:
@@ -213,13 +215,14 @@ export function renderCockpitView({
           .map((line) => React.createElement(Text, { key: line }, line))
       );
     case ORCHESTRATOR_VIEWS.ALERTS:
-      return listBlock(
-        "Alerts",
-        formatAlertListLines(alerts),
+      return React.createElement(SemanticAlertsPanel, {
+        alerts,
         listIndex,
+        layoutMode,
+        contentFocused,
         colorEnabled,
-        "Enter resolves · D dismisses · Esc back · / Alerts"
-      );
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.DIAGNOSTICS:
       return governanceList(
         "System health",
@@ -275,23 +278,6 @@ function formatModuleLines(snapshot) {
     "",
     "External integrations are reported only when detectable on this machine."
   ];
-}
-
-function listBlock(title, lines, listIndex, colorEnabled, emptyHint) {
-  const isEmpty = lines.length === 1 && /no |nothing |empty/i.test(lines[0]);
-  return React.createElement(Box, { flexDirection: "column" },
-    React.createElement(Text, { bold: true }, title),
-    isEmpty
-      ? React.createElement(CockpitEmptyState, {
-        message: lines[0],
-        hint: emptyHint
-      })
-      : lines.map((line, index) => React.createElement(Text, {
-        key: `${index}-${line}`,
-        bold: index === listIndex,
-        color: index === listIndex && colorEnabled ? COCKPIT_COLORS.primary : undefined
-      }, `${index === listIndex ? "› " : "  "}${line}`))
-  );
 }
 
 export { LAUNCH_WIZARD_STEPS };
