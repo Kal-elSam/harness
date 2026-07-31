@@ -17,9 +17,10 @@ import { SemanticGovernancePanel } from "./ux/live-governance.js";
 import { SemanticActivityPanel } from "./ux/live-activity.js";
 import { SemanticOrchestrationPanel } from "./ux/live-orchestration.js";
 import { SemanticAlertsPanel } from "./ux/live-alerts.js";
+import { SemanticSettingsPanel } from "./ux/live-settings.js";
+import { SemanticUsagePanel } from "./ux/live-usage.js";
 import { formatReviewDetailLines } from "./cockpit-reviews.js";
-import { formatUsageLines } from "./cockpit-control-center.js";
-import { formatSettingsLines } from "./cockpit-settings.js";
+import { listCuratedIntegrations } from "./cockpit-settings.js";
 
 export function PalettePanel({ model, colorEnabled = true }) {
   return React.createElement(Box, { flexDirection: "column" },
@@ -113,12 +114,13 @@ export function renderCockpitView({
         unicode
       });
     case ORCHESTRATOR_VIEWS.USAGE:
-      return governanceList(
-        "Usage",
-        formatUsageLines({ snapshot, dashboard }),
+      return React.createElement(SemanticUsagePanel, {
+        snapshot,
+        dashboard,
         layoutMode,
-        colorEnabled
-      );
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.IDES:
     case ORCHESTRATOR_VIEWS.PROVIDERS:
       return governanceList("IDEs & models", [
@@ -152,17 +154,17 @@ export function renderCockpitView({
         unicode
       });
     case ORCHESTRATOR_VIEWS.PROFILE:
-      return governanceList(
-        "Settings",
-        formatSettingsLines({
-          listIndex,
-          settingsAction,
-          snapshot,
-          diagnostics
-        }),
+      return React.createElement(SemanticSettingsPanel, {
+        integrations: listCuratedIntegrations(),
+        listIndex,
+        settingsAction,
+        snapshot,
+        diagnostics,
         layoutMode,
-        colorEnabled
-      );
+        contentFocused,
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.RUNS:
     case ORCHESTRATOR_VIEWS.ACTIVE_RUNS:
     case ORCHESTRATOR_VIEWS.RECENT_RUNS:
