@@ -5,11 +5,10 @@
  */
 import React from "react";
 import { Box, Text } from "ink";
-import { COCKPIT_COLORS } from "../theme.js";
 import { LAYOUT_MODES } from "../layout.js";
 import { ALERT_STATES } from "../../runtime/alerts/alert-types.js";
 import { formatAlertsHeadline, selectAlertFromList } from "../cockpit-alerts.js";
-import { ActionList, Callout } from "./semantic.js";
+import { ActionList, Callout, ViewTitle } from "./semantic.js";
 import { windowSlice } from "./live-activity.js";
 
 export function alertsListLimit(layoutMode = LAYOUT_MODES.COMPACT) {
@@ -138,9 +137,7 @@ export function SemanticAlertsPanel({
   const model = adaptAlertsModel({ alerts, listIndex, layoutMode });
   const listFocused = contentFocused && !model.isEmpty && !model.isUnavailable;
   return React.createElement(Box, { flexDirection: "column" },
-    React.createElement(Text, {
-      bold: true, color: colorEnabled ? COCKPIT_COLORS.secondary : undefined
-    }, model.title),
+    React.createElement(ViewTitle, { colorEnabled }, model.title),
     React.createElement(Callout, {
       tone: model.callout.tone,
       title: model.callout.title,

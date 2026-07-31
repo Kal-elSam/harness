@@ -7,7 +7,7 @@ import { Box, Text } from "ink";
 import { COCKPIT_COLORS } from "../theme.js";
 import { LAYOUT_MODES } from "../layout.js";
 import { adaptUsageModel } from "../cockpit-usage.js";
-import { ActionList, Callout } from "./semantic.js";
+import { ActionList, Callout, SectionLabel, ViewTitle } from "./semantic.js";
 
 export function SemanticUsagePanel({
   snapshot = null,
@@ -19,9 +19,7 @@ export function SemanticUsagePanel({
   const model = adaptUsageModel({ snapshot, dashboard, layoutMode });
   const muted = colorEnabled ? COCKPIT_COLORS.muted : undefined;
   return React.createElement(Box, { flexDirection: "column" },
-    React.createElement(Text, {
-      bold: true, color: colorEnabled ? COCKPIT_COLORS.secondary : undefined
-    }, model.title),
+    React.createElement(ViewTitle, { colorEnabled }, model.title),
     React.createElement(Callout, {
       tone: model.callout.tone,
       title: model.callout.title,
@@ -29,11 +27,11 @@ export function SemanticUsagePanel({
       colorEnabled,
       compact: true
     }),
-    React.createElement(Text, { bold: true }, "Measured"),
+    React.createElement(SectionLabel, { colorEnabled }, "Measured"),
     React.createElement(Text, null, `  ${model.measured}`),
-    React.createElement(Text, { bold: true }, "Configured limits"),
+    React.createElement(SectionLabel, { colorEnabled }, "Configured limits"),
     React.createElement(Text, null, `  ${model.configured}`),
-    React.createElement(Text, { bold: true }, "Run usage"),
+    React.createElement(SectionLabel, { colorEnabled }, "Run usage"),
     model.runs.length === 0
       ? React.createElement(Text, null, "  No auditable run tokenUsage yet.")
       : React.createElement(ActionList, {
