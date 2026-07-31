@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { stdout as output } from "node:process";
-import { BRAND, WIZARD_COPY } from "../brand/index.js";
+import { BRAND } from "../brand/index.js";
 import { DEFAULT_COMPONENT_IDS, describeComponentCatalog } from "../component-registry.js";
 import { GLOBAL_AGENT_IDS, detectInstalledAdapters, listAdapters } from "../registry.js";
 import { buildSetupPreview, resolveComponentSelection } from "../clack/setup-preview.js";
@@ -9,72 +9,57 @@ import {
   SETUP_STEPS,
   buildAgentOptions,
   buildComponentOptions,
-  formatInkDetectPanel,
   formatInkHeaderLines,
-  formatInkPreviewLines,
-  formatInkSelectList,
   formatInkSplashLines,
   INITIAL_SETUP_STEP,
   shouldStartPreviewLoad,
   shouldUseCompactSplashLogo,
+  setupLineKey,
   toggleComponentSelection,
   toggleSelection,
   transitionFromSplash
 } from "./setup-state.js";
-import { COCKPIT_COLORS } from "./theme.js";
-import { CockpitPanel } from "./cockpit/primitives.js";
+import { COCKPIT_COLORS, resolveInkColor } from "./theme.js";
+import { useTerminalSize } from "./use-terminal-size.js";
+import { resolveTerminalCapabilities } from "./terminal-capabilities.js";
+import { SemanticSetupPanel } from "./ux/live-setup.js";
 
-const INK_COLORS = {
-  accent: COCKPIT_COLORS.primary,
-  success: COCKPIT_COLORS.success,
-  warning: COCKPIT_COLORS.warning,
-  danger: COCKPIT_COLORS.danger,
-  muted: COCKPIT_COLORS.muted
-};
-
-function Header() {
+export function SetupHeader({ colorEnabled = true }) {
   const lines = formatInkHeaderLines();
   return React.createElement(Box, { flexDirection: "column", marginBottom: 1 },
-    React.createElement(Text, { bold: true, color: INK_COLORS.accent }, `╭─ ${lines[0]}`),
-    React.createElement(Text, { color: COCKPIT_COLORS.secondary }, lines[1]),
+    React.createElement(Text, {
+      bold: true,
+      color: resolveInkColor(colorEnabled, COCKPIT_COLORS.primary)
+    }, `╭─ ${lines[0]}`),
+    React.createElement(Text, {
+      color: resolveInkColor(colorEnabled, COCKPIT_COLORS.secondary)
+    }, lines[1]),
     React.createElement(Text, { dimColor: true }, lines[2])
   );
 }
 
-function Panel({ title, children }) {
-  return React.createElement(CockpitPanel, {
-    title,
-    focused: true,
-    width: "100%"
-  }, children);
-}
-
-function Footer({ children }) {
-  return React.createElement(Text, { dimColor: true }, children);
-}
-
-function Splash({ compact, onboarding = false }) {
+export function SetupSplash({ compact, onboarding = false, colorEnabled = true }) {
   const lines = formatInkSplashLines({ compact, onboarding });
   const logoLineCount = compact ? BRAND.compactLogo.length : BRAND.asciiLogo.length;
+  const accent = resolveInkColor(colorEnabled, COCKPIT_COLORS.primary);
+  const muted = resolveInkColor(colorEnabled, COCKPIT_COLORS.muted);
 
   return React.createElement(Box, { flexDirection: "column", marginBottom: 1 },
     lines.map((line, index) => {
+      const key = setupLineKey(index, line);
       if (index < logoLineCount) {
-        return React.createElement(Text, { key: `logo-${index}`, bold: true, color: INK_COLORS.accent }, line);
+        return React.createElement(Text, { key, bold: true, color: accent }, line);
       }
       if (line === BRAND.name) {
-        return React.createElement(Text, { key: `line-${index}`, bold: true, color: INK_COLORS.accent }, line);
+        return React.createElement(Text, { key, bold: true, color: accent }, line);
       }
       if (line === BRAND.tagline) {
-        return React.createElement(Text, { key: `line-${index}`, color: INK_COLORS.muted }, line);
+        return React.createElement(Text, { key, color: muted }, line);
       }
       if (line === BRAND.splashHint || line.includes("Esc to exit") || line.includes("Press Enter")) {
-        return React.createElement(Text, { key: `line-${index}`, dimColor: true }, line);
+        return React.createElement(Text, { key, dimColor: true }, line);
       }
-      if (line === "") {
-        return React.createElement(Text, { key: `line-${index}` }, "");
-      }
-      return React.createElement(Text, { key: `line-${index}` }, line);
+      return React.createElement(Text, { key }, line);
     })
   );
 }
@@ -90,6 +75,12 @@ export function SetupApp({
   onComplete
 }) {
   const { exit } = useApp();
+  const { columns, rows, layoutMode } = useTerminalSize({
+    initialColumns: output.columns ?? 80,
+    initialRows: output.rows ?? 24
+  });
+  const caps = resolveTerminalCapabilities({ columns, rows, isTTY: true });
+  const colorEnabled = caps.color;
   const adapters = listAdapters();
   const detected = detectInstalledAdapters({ homeDir });
   const componentCatalog = describeComponentCatalog({ workspaceRoot });
@@ -98,7 +89,7 @@ export function SetupApp({
   const defaultAgents = detected.length > 0 ? detected : [...GLOBAL_AGENT_IDS];
 
   const [step, setStep] = useState(INITIAL_SETUP_STEP);
-  const useCompactSplash = shouldUseCompactSplashLogo(output.columns);
+  const useCompactSplash = shouldUseCompactSplashLogo(columns);
   const [activeIndex, setActiveIndex] = useState(0);
   const [selectedAgents, setSelectedAgents] = useState(defaultAgents);
   const [selectedComponents, setSelectedComponents] = useState([...DEFAULT_COMPONENT_IDS]);
@@ -238,42 +229,34 @@ export function SetupApp({
     }
   });
 
-  const detectPanel = formatInkDetectPanel({ adapters, detected });
-
   return React.createElement(Box, { flexDirection: "column" },
-    step === SETUP_STEPS.SPLASH && React.createElement(Splash, {
+    step === SETUP_STEPS.SPLASH && React.createElement(SetupSplash, {
       compact: useCompactSplash,
-      onboarding
+      onboarding,
+      colorEnabled
     }),
-    step !== SETUP_STEPS.SPLASH && React.createElement(Header),
-    step === SETUP_STEPS.DETECT && React.createElement(Panel, { title: WIZARD_COPY.detectTitle },
-      detectPanel.split("\n")
-        .map((line) => React.createElement(Text, { key: line }, line))
+    step === SETUP_STEPS.SPLASH && React.createElement(Text, { dimColor: true },
+      `${BRAND.splashHint} · Esc cancel`
     ),
-    step === SETUP_STEPS.AGENTS && React.createElement(Panel, { title: WIZARD_COPY.agentsPrompt },
-      formatInkSelectList({ options: agentOptions, selected: selectedAgents, activeIndex })
-        .map((line) => React.createElement(Text, { key: line }, line))
-    ),
-    step === SETUP_STEPS.COMPONENTS && React.createElement(Panel, { title: WIZARD_COPY.componentsPrompt },
-      formatInkSelectList({ options: componentOptions, selected: selectedComponents, activeIndex })
-        .map((line) => React.createElement(Text, { key: line }, line))
-    ),
-    step === SETUP_STEPS.PREVIEW && React.createElement(Panel, { title: WIZARD_COPY.previewTitle },
-      previewLoading && React.createElement(Text, { color: INK_COLORS.warning }, "Building preview…"),
-      previewError && React.createElement(Text, { color: INK_COLORS.danger }, previewError),
-      preview && formatInkPreviewLines({ preview, componentCatalog })
-        .map((line) => React.createElement(Text, { key: line }, line))
-    ),
-    step === SETUP_STEPS.CONFIRM && React.createElement(Panel, { title: "Confirm" },
-      React.createElement(Text, null, dryRun ? WIZARD_COPY.confirmDryRun : WIZARD_COPY.confirmApply)
-    ),
-    React.createElement(Footer, null,
-      step === SETUP_STEPS.SPLASH && `${BRAND.splashHint} · Esc cancel`,
-      step === SETUP_STEPS.DETECT && "Enter continue · Esc cancel",
-      step === SETUP_STEPS.AGENTS && "↑↓ move · Space toggle · Enter continue · Esc cancel",
-      step === SETUP_STEPS.COMPONENTS && "↑↓ move · Space toggle · Enter continue · Esc cancel",
-      step === SETUP_STEPS.PREVIEW && preview && !previewLoading && "Enter continue · Esc cancel",
-      step === SETUP_STEPS.CONFIRM && "Y apply · N cancel · Esc cancel"
-    )
+    step !== SETUP_STEPS.SPLASH && React.createElement(SetupHeader, { colorEnabled }),
+    step !== SETUP_STEPS.SPLASH && React.createElement(SemanticSetupPanel, {
+      step,
+      activeIndex,
+      agentOptions,
+      componentOptions,
+      componentCatalog,
+      selectedAgents,
+      selectedComponents,
+      adapters,
+      detected,
+      preview,
+      previewLoading,
+      previewError,
+      dryRun,
+      layoutMode,
+      colorEnabled,
+      unicode: caps.unicode,
+      columns
+    })
   );
 }

@@ -12,6 +12,7 @@ export const PROPOSAL_SEVERITY = Object.freeze({
 });
 
 export const PROPOSAL_DESTINATION = Object.freeze({
+  SETUP: "setup",
   CHANGES: "changes",
   CONTROL_CENTER: "control-center",
   IDES: "ides",
@@ -48,7 +49,7 @@ export function buildControlPlaneProposals({
       PROPOSAL_SEVERITY.HIGH,
       "Finish local setup",
       status?.nextAction ?? "Configure the local ecosystem before applying repairs.",
-      PROPOSAL_DESTINATION.CHANGES,
+      PROPOSAL_DESTINATION.SETUP,
       [
         ev("status", "status.overall", status?.overall ?? "missing"),
         ev("health", "control-plane.health", health ?? "NOT_CONFIGURED")

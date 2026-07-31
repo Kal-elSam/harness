@@ -231,3 +231,67 @@ test("shell shares one fullscreen session across setup and dashboard", async () 
   assert.equal(sessions[0], sessions[1]);
   assert.equal(sessions[0].isActive(), false);
 });
+
+test("shell handoff: dashboard action setup reuses session; cancel writes nothing", async () => {
+  const packageManifest = { name: "@kal-elsam/kairo-runtime", version: "0.2.3" };
+  const sessions = [];
+  let dashboards = 0;
+
+  const outcome = await runOrchestratorShell({
+    packageRoot,
+    packageManifest,
+    workspaceRoot: packageRoot,
+    interactive: true,
+    shellCapable: true,
+    initialMode: "dashboard",
+    stdout: { isTTY: true, write() { return true; } },
+    runHarnessSetupImpl: async (args) => {
+      sessions.push(args.fullscreenSession);
+      assert.equal(args.onboarding, false);
+      assert.equal(args.fullscreenSession?.isActive(), true);
+      return { cancelled: true };
+    },
+    runOrchestratorInkImpl: async (args) => {
+      sessions.push(args.fullscreenSession);
+      dashboards += 1;
+      if (dashboards === 1) return { cancelled: false, action: "setup" };
+      return { cancelled: false, action: null };
+    }
+  });
+
+  assert.equal(dashboards, 2);
+  assert.equal(outcome.wrote, false);
+  assert.equal(outcome.cancelled, false);
+  assert.equal(sessions[0], sessions[1]);
+  assert.equal(sessions[0], sessions[2]);
+  assert.equal(sessions[0].isActive(), false);
+});
+
+test("shell handoff: completed mid-setup marks wrote and reopens dashboard", async () => {
+  const packageManifest = { name: "@kal-elsam/kairo-runtime", version: "0.2.3" };
+  let dashboards = 0;
+  let setups = 0;
+
+  const outcome = await runOrchestratorShell({
+    packageRoot,
+    packageManifest,
+    workspaceRoot: packageRoot,
+    interactive: true,
+    shellCapable: true,
+    initialMode: "dashboard",
+    runHarnessSetupImpl: async (args) => {
+      setups += 1;
+      assert.equal(args.onboarding, false);
+      return { cancelled: false, result: { dryRun: false } };
+    },
+    runOrchestratorInkImpl: async () => {
+      dashboards += 1;
+      if (dashboards === 1) return { cancelled: false, action: "setup" };
+      return { cancelled: false };
+    }
+  });
+
+  assert.equal(setups, 1);
+  assert.equal(dashboards, 2);
+  assert.equal(outcome.wrote, true);
+});

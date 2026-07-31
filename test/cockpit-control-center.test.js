@@ -235,6 +235,14 @@ test("Enter intent separates Control center open from CTA activation", () => {
     resolveEnterNavIntent({
       currentView: ORCHESTRATOR_VIEWS.HOME,
       navItem: overview,
+      ctaDestination: "setup"
+    }).kind,
+    "activate-setup"
+  );
+  assert.equal(
+    resolveEnterNavIntent({
+      currentView: ORCHESTRATOR_VIEWS.HOME,
+      navItem: overview,
       ctaDestination: "changes"
     }).kind,
     "activate-cta"

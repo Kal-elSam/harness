@@ -146,6 +146,10 @@ export function OrchestratorApp({
           data.reload().catch(() => {});
           return;
         }
+        if (selected.kind === PALETTE_KINDS.SETUP) {
+          finish({ cancelled: false, action: "setup" });
+          return;
+        }
         dispatch({
           type: "run-palette",
           kind: selected.kind,
@@ -280,6 +284,10 @@ export function OrchestratorApp({
           navItem: item,
           ctaDestination: data.snapshot?.cta?.destination ?? null
         });
+        if (intent.kind === "activate-setup") {
+          finish({ cancelled: false, action: "setup" });
+          return;
+        }
         if (intent.kind === "activate-cta") {
           if (openDestination(intent.destination)) return;
         }
