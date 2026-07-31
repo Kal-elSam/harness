@@ -9,6 +9,7 @@ import { COCKPIT_COLORS } from "../theme.js";
 import { ActionList, Callout, Details } from "./semantic.js";
 
 const DESTINATION_LABELS = {
+  setup: "Setup",
   changes: "Governance",
   ides: "Agents",
   runs: "Orchestration",

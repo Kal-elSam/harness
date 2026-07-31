@@ -75,7 +75,7 @@ export function listRecoverySnapshots(snapshot) {
   return snapshot?.backups?.snapshots ?? [];
 }
 
-function formatWhen(timestamp) {
+export function formatWhen(timestamp) {
   if (!timestamp) return "unknown time";
   const raw = String(timestamp);
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 16).replace("T", " ");
@@ -84,7 +84,7 @@ function formatWhen(timestamp) {
   return date.toISOString().slice(0, 16).replace("T", " ");
 }
 
-function formatResult(action) {
+export function formatResult(action) {
   const value = String(action ?? "").toLowerCase();
   if (!value) return "done";
   if (value === "applied" || value === "ok" || value === "success") return "ok";
@@ -93,7 +93,7 @@ function formatResult(action) {
   return value;
 }
 
-function shortName(name) {
+export function shortName(name) {
   const raw = String(name ?? "").trim();
   if (!raw) return "snapshot";
   const parts = raw.split(/[/\\]/).filter(Boolean);
@@ -176,8 +176,11 @@ export function formatRecoveryLines({
   return lines;
 }
 
-export function buildRecoveryFooterParts(phase) {
+export function buildRecoveryFooterParts(phase, { hasPreview = false } = {}) {
   if (phase === RECOVERY_PHASE.PREVIEWING || phase === RECOVERY_PHASE.APPLYING) return ["Working…", "Esc Back"];
-  if (phase === RECOVERY_PHASE.CONFIRMING) return ["Y Restore", "N/Esc Cancel"];
-  return ["↑↓ Select", "Enter Preview", "R Re-scan", "Esc Back"];
+  if (phase === RECOVERY_PHASE.CONFIRMING) return ["Y Restore", "N/Esc Cancel", "Space"];
+  const parts = ["↑↓ Select", "Enter Preview", "R Re-scan"];
+  if (hasPreview) parts.push("Space");
+  parts.push("Esc Back");
+  return parts;
 }

@@ -178,6 +178,22 @@ export function formatInkPreviewLines({ preview, componentCatalog }) {
   return lines;
 }
 
+/** Cap preview lines for the active layout; keep remaining-count when truncated. */
+export function setupPreviewLineLimit(layoutMode = "compact") {
+  if (layoutMode === "wide") return 12;
+  if (layoutMode === "minimal") return 5;
+  return 8;
+}
+
+export function windowSetupLines(lines = [], limit = 8) {
+  if (lines.length <= limit) return lines;
+  return [...lines.slice(0, limit), `… ${lines.length - limit} more`];
+}
+
+export function setupLineKey(index, line) {
+  return `${index}-${line}`;
+}
+
 export function formatInkSuccessLines(result, { dryRun = false, cliName = PREFERRED_CLI } = {}) {
   const agentLine = result.agents.map((id) => getAgentLabel(id)).join(", ");
   const componentLine = result.components.length > 0

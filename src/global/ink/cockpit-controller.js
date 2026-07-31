@@ -36,7 +36,9 @@ export function createCockpitUiState({
   returnView = null,
   paletteOpen = false,
   paletteIndex = 0,
-  overviewDetailsOpen = false
+  overviewDetailsOpen = false,
+  governanceDetailsOpen = false,
+  activityDetailsOpen = false
 } = {}) {
   const regions = regionsForLayout(layoutMode);
   const preferred = region ?? defaultRegionForView(view, layoutMode);
@@ -54,6 +56,8 @@ export function createCockpitUiState({
     paletteOpen,
     paletteIndex: Math.max(0, paletteIndex),
     overviewDetailsOpen: Boolean(overviewDetailsOpen),
+    governanceDetailsOpen: Boolean(governanceDetailsOpen),
+    activityDetailsOpen: Boolean(activityDetailsOpen),
     shouldExit: false
   };
 }
@@ -148,7 +152,9 @@ export function reduceCockpitUi(state, action) {
         region: defaultRegionForView(item.view, state.layoutMode),
         helpOpen: false,
         returnView: null,
-        overviewDetailsOpen: false
+        overviewDetailsOpen: false,
+        governanceDetailsOpen: false,
+        activityDetailsOpen: false
       });
     }
     case "set-view": {
@@ -163,12 +169,20 @@ export function reduceCockpitUi(state, action) {
         region: action.region ?? defaultRegionForView(nextView, state.layoutMode),
         returnView: action.returnView ?? state.returnView,
         helpOpen: nextView === ORCHESTRATOR_VIEWS.HELP,
-        overviewDetailsOpen: false
+        overviewDetailsOpen: false,
+        governanceDetailsOpen: false,
+        activityDetailsOpen: false
       });
     }
     case "toggle-overview-details":
       if (state.view !== ORCHESTRATOR_VIEWS.HOME) return state;
       return { ...state, overviewDetailsOpen: !state.overviewDetailsOpen };
+    case "toggle-governance-details":
+      if (state.view !== ORCHESTRATOR_VIEWS.CHANGES) return state;
+      return { ...state, governanceDetailsOpen: !state.governanceDetailsOpen };
+    case "toggle-activity-details":
+      if (state.view !== ORCHESTRATOR_VIEWS.ACTIVITY) return state;
+      return { ...state, activityDetailsOpen: !state.activityDetailsOpen };
     case "toggle-help":
       if (state.helpOpen || state.view === ORCHESTRATOR_VIEWS.HELP) {
         return goOverview(state);
@@ -178,7 +192,9 @@ export function reduceCockpitUi(state, action) {
         helpOpen: true,
         view: ORCHESTRATOR_VIEWS.HELP,
         region: defaultRegionForView(ORCHESTRATOR_VIEWS.HELP, state.layoutMode),
-        overviewDetailsOpen: false
+        overviewDetailsOpen: false,
+        governanceDetailsOpen: false,
+        activityDetailsOpen: false
       });
     case "escape": {
       if (state.paletteOpen) {
@@ -186,6 +202,12 @@ export function reduceCockpitUi(state, action) {
       }
       if (state.view === ORCHESTRATOR_VIEWS.HOME && state.overviewDetailsOpen) {
         return { ...state, overviewDetailsOpen: false };
+      }
+      if (state.view === ORCHESTRATOR_VIEWS.CHANGES && state.governanceDetailsOpen) {
+        return { ...state, governanceDetailsOpen: false };
+      }
+      if (state.view === ORCHESTRATOR_VIEWS.ACTIVITY && state.activityDetailsOpen) {
+        return { ...state, activityDetailsOpen: false };
       }
       if (state.helpOpen || state.view === ORCHESTRATOR_VIEWS.HELP) {
         return goOverview(state);
@@ -240,7 +262,9 @@ function goOverview(state) {
     listIndex: 0,
     region: defaultRegionForView(ORCHESTRATOR_VIEWS.HOME, state.layoutMode),
     returnView: null,
-    overviewDetailsOpen: false
+    overviewDetailsOpen: false,
+    governanceDetailsOpen: false,
+    activityDetailsOpen: false
   });
 }
 

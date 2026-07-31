@@ -66,7 +66,7 @@ export function resolveControlPlaneCta({ health, status, diff } = {}) {
         title: "Finish local setup",
         detail: status?.nextAction
           ?? `Run ${formatCliCommand("setup")} to configure the local ecosystem.`,
-        destination: "changes"
+        destination: "setup"
       };
     case CONTROL_PLANE_HEALTH.ACTION_REQUIRED:
       return {
