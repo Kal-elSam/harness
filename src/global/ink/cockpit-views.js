@@ -111,7 +111,8 @@ export function renderCockpitView({
         model: controlCenter,
         detailsOpen: overviewDetailsOpen,
         colorEnabled,
-        unicode
+        unicode,
+        layoutMode
       });
     case ORCHESTRATOR_VIEWS.USAGE:
       return React.createElement(SemanticUsagePanel, {

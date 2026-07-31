@@ -1,11 +1,18 @@
 /**
- * Live semantic Overview for Cockpit HOME.
+ * Live semantic Overview for Cockpit HOME — product cover.
  * Nav owns the sole focus mark — this panel never renders `>`.
+ * ASCII wordmark only here (wide/compact); minimal is textual.
  */
 import React from "react";
 import { Box, Text } from "ink";
 import { CONTROL_PLANE_HEALTH } from "../../control-plane-snapshot.js";
+import { LAYOUT_MODES } from "../layout.js";
 import { COCKPIT_COLORS } from "../theme.js";
+import {
+  overviewBrandTitle,
+  shouldShowWordmark,
+  wordmarkLines
+} from "../brand/wordmark.js";
 import { ActionList, Callout, Details } from "./semantic.js";
 
 const DESTINATION_LABELS = {
@@ -80,39 +87,82 @@ export function adaptControlCenterToOverview(model = {}) {
   };
 }
 
+function renderWordmark({ layoutMode, colorEnabled = true, unicode = true }) {
+  const lines = wordmarkLines(layoutMode, { unicode });
+  if (lines.length === 0) return null;
+  return React.createElement(Box, { flexDirection: "column", marginBottom: 1 },
+    ...lines.map((line, i) => React.createElement(Text, {
+      key: `wm-${i}`,
+      bold: i === 0,
+      color: colorEnabled ? COCKPIT_COLORS.brand : undefined
+    }, line))
+  );
+}
+
+function renderCallout(view, colorEnabled) {
+  return React.createElement(Callout, {
+    tone: view.callout.tone,
+    title: view.callout.title,
+    body: view.callout.body,
+    colorEnabled,
+    compact: true
+  });
+}
+
 export function SemanticOverviewPanel({
   model,
   detailsOpen = false,
   colorEnabled = true,
-  unicode = true
+  unicode = true,
+  layoutMode = LAYOUT_MODES.COMPACT
 }) {
   const view = adaptControlCenterToOverview(model);
+  const showArt = shouldShowWordmark(layoutMode);
+  const brandTitle = overviewBrandTitle(layoutMode);
+  const isWide = layoutMode === LAYOUT_MODES.WIDE;
+  const mark = renderWordmark({ layoutMode, colorEnabled, unicode });
+  const status = renderCallout(view, colorEnabled);
+
+  const hero = showArt
+    ? (isWide
+      ? React.createElement(Box, { flexDirection: "row", marginBottom: 1 },
+        React.createElement(Box, { marginRight: 2 }, mark),
+        React.createElement(Box, { flexDirection: "column", flexGrow: 1 }, status)
+      )
+      : React.createElement(Box, { flexDirection: "column" }, mark, status))
+    : React.createElement(Box, { flexDirection: "column" },
+      React.createElement(Text, {
+        bold: true,
+        color: colorEnabled ? COCKPIT_COLORS.brand : undefined
+      }, brandTitle),
+      status
+    );
+
   return React.createElement(Box, { flexDirection: "column" },
-    React.createElement(Text, {
-      bold: true,
-      color: colorEnabled ? COCKPIT_COLORS.secondary : undefined
-    }, view.title),
-    React.createElement(Callout, {
-      tone: view.callout.tone,
-      title: view.callout.title,
-      body: view.callout.body,
-      colorEnabled,
-      compact: true
-    }),
-    React.createElement(Text, { bold: true }, `  ${view.primary.label}`),
-    view.primary.detail
-      ? React.createElement(Text, null, view.primary.detail)
-      : null,
-    view.primary.hint
-      ? React.createElement(Text, { color: colorEnabled ? COCKPIT_COLORS.muted : undefined }, view.primary.hint)
-      : null,
-    React.createElement(ActionList, {
-      items: view.metrics,
-      selectedIndex: -1,
-      focused: false,
-      colorEnabled,
-      unicode
-    }),
+    hero,
+    React.createElement(Box, { marginTop: 1, flexDirection: "column" },
+      React.createElement(Text, {
+        bold: true,
+        color: colorEnabled ? COCKPIT_COLORS.interactive : undefined
+      }, view.primary.label),
+      view.primary.detail
+        ? React.createElement(Text, null, view.primary.detail)
+        : null,
+      view.primary.hint
+        ? React.createElement(Text, {
+          color: colorEnabled ? COCKPIT_COLORS.muted : undefined
+        }, view.primary.hint)
+        : null
+    ),
+    React.createElement(Box, { marginTop: 1, flexDirection: "column" },
+      React.createElement(ActionList, {
+        items: view.metrics,
+        selectedIndex: -1,
+        focused: false,
+        colorEnabled,
+        unicode
+      })
+    ),
     React.createElement(Details, {
       open: detailsOpen,
       summary: "Details",
