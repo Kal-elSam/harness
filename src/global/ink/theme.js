@@ -73,6 +73,33 @@ export function statusColor(kind, { colorEnabled = true } = {}) {
   }
 }
 
+/** Ink `color` / `borderColor` prop — undefined when color is disabled. */
+export function resolveInkColor(colorEnabled, color) {
+  return colorEnabled ? color : undefined;
+}
+
+/**
+ * Detect ANSI color SGR in a string.
+ * Bold (1), dim (2), and reset (0) alone are not color.
+ */
+export function hasColorSgr(text) {
+  const re = /\u001b\[([0-9;]*)m/g;
+  let match;
+  while ((match = re.exec(String(text ?? ""))) !== null) {
+    const params = match[1].length === 0
+      ? []
+      : match[1].split(";").map((part) => Number(part));
+    for (let i = 0; i < params.length; i += 1) {
+      const code = params[i];
+      if (!Number.isFinite(code)) continue;
+      if (code === 38 || code === 48) return true;
+      if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) return true;
+      if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) return true;
+    }
+  }
+  return false;
+}
+
 export function formatStatusBadge(kind, label = STATUS_LABELS[kind] ?? String(kind)) {
   return label;
 }

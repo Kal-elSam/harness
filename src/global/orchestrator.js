@@ -85,27 +85,44 @@ export async function runOrchestratorShell({
       }
     }
 
-    const outcome = await runOrchestratorInkImpl({
-      homeDir,
-      workspaceRoot,
-      packageRoot,
-      packageName: packageManifest.name,
-      cliVersion: packageManifest.version,
-      hasGlobalState: hasConfiguredGlobalState(homeDir),
-      fullscreenSession: session
-    });
+    for (;;) {
+      const outcome = await runOrchestratorInkImpl({
+        homeDir,
+        workspaceRoot,
+        packageRoot,
+        packageName: packageManifest.name,
+        cliVersion: packageManifest.version,
+        hasGlobalState: hasConfiguredGlobalState(homeDir),
+        fullscreenSession: session
+      });
 
-    if (outcome.error) {
-      throw outcome.error;
+      if (outcome.error) {
+        throw outcome.error;
+      }
+
+      if (outcome?.action === "setup") {
+        const mid = await runHarnessSetupImpl({
+          packageRoot,
+          packageName: packageManifest.name,
+          cliVersion: packageManifest.version,
+          homeDir,
+          workspaceRoot,
+          onboarding: false,
+          interactive: true,
+          fullscreenSession: session
+        });
+        if (!mid?.cancelled) setupOutcome = mid;
+        continue;
+      }
+
+      return {
+        cancelled: Boolean(outcome.cancelled),
+        wrote: Boolean(setupOutcome && !setupOutcome.cancelled),
+        action: outcome.action ?? null,
+        initialMode,
+        setup: setupOutcome
+      };
     }
-
-    return {
-      cancelled: Boolean(outcome.cancelled),
-      wrote: Boolean(setupOutcome && !setupOutcome.cancelled),
-      action: outcome.action ?? null,
-      initialMode,
-      setup: setupOutcome
-    };
   } finally {
     if (ownsSession) {
       session.leave();

@@ -243,6 +243,7 @@ export function buildFooterModel({
   hasError = false,
   changesPhase = null,
   recoveryPhase = null,
+  recoveryHasPreview = false,
   settingsPhase = null,
   columns = 80
 } = {}) {
@@ -290,7 +291,8 @@ export function buildFooterModel({
 
   if (view === ORCHESTRATOR_VIEWS.ACTIVITY) {
     return {
-      text: buildRecoveryFooterParts(recoveryPhase).join(` ${glyphs.bullet} `),
+      text: buildRecoveryFooterParts(recoveryPhase, { hasPreview: recoveryHasPreview })
+        .join(` ${glyphs.bullet} `),
       columns: footerColumns
     };
   }
@@ -315,16 +317,21 @@ export function buildFooterModel({
     parts.push("Tab Region");
   }
 
-  const activatesOverviewCta = view === ORCHESTRATOR_VIEWS.HOME && navIndex === 0;
-  if (activatesOverviewCta) {
-    parts.push("Enter Activate");
-  } else if (view === ORCHESTRATOR_VIEWS.IDES
+  // HOME footer must stay on one line at 80 cols (frame already near 24 rows).
+  if (view === ORCHESTRATOR_VIEWS.HOME) {
+    return {
+      text: ["↑↓", "Enter", "Space", "R", "?", "/", "Esc"].join(` ${glyphs.bullet} `),
+      columns: footerColumns
+    };
+  }
+
+  if (region === COCKPIT_REGIONS.NAV
+    || view === ORCHESTRATOR_VIEWS.IDES
     || view === ORCHESTRATOR_VIEWS.MODULES
     || view === ORCHESTRATOR_VIEWS.PROFILE
     || view === ORCHESTRATOR_VIEWS.PROVIDERS
     || view === ORCHESTRATOR_VIEWS.DIAGNOSTICS
     || view === ORCHESTRATOR_VIEWS.USAGE
-    || region === COCKPIT_REGIONS.NAV
     || view === ORCHESTRATOR_VIEWS.RUNS
     || view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
     || view === ORCHESTRATOR_VIEWS.RECENT_RUNS
@@ -337,7 +344,7 @@ export function buildFooterModel({
 
   parts.push("? Help");
   parts.push("/ Actions");
-  parts.push(view === ORCHESTRATOR_VIEWS.HOME ? "Esc Exit" : "Esc Back");
+  parts.push("Esc Back");
 
   return { text: parts.join(` ${glyphs.bullet} `), columns: footerColumns };
 }
