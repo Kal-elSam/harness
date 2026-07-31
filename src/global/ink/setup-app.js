@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { stdout as output } from "node:process";
-import { BRAND, WIZARD_COPY } from "../brand/index.js";
+import { BRAND } from "../brand/index.js";
 import { DEFAULT_COMPONENT_IDS, describeComponentCatalog } from "../component-registry.js";
 import { GLOBAL_AGENT_IDS, detectInstalledAdapters, listAdapters } from "../registry.js";
 import { buildSetupPreview, resolveComponentSelection } from "../clack/setup-preview.js";
@@ -9,26 +9,20 @@ import {
   SETUP_STEPS,
   buildAgentOptions,
   buildComponentOptions,
-  formatInkDetectPanel,
   formatInkHeaderLines,
-  formatInkPreviewLines,
-  formatInkSelectList,
   formatInkSplashLines,
   INITIAL_SETUP_STEP,
-  setupPreviewLineLimit,
   shouldStartPreviewLoad,
   shouldUseCompactSplashLogo,
   setupLineKey,
   toggleComponentSelection,
   toggleSelection,
-  transitionFromSplash,
-  windowSetupLines
+  transitionFromSplash
 } from "./setup-state.js";
 import { COCKPIT_COLORS, resolveInkColor } from "./theme.js";
-import { CockpitPanel } from "./cockpit/primitives.js";
 import { useTerminalSize } from "./use-terminal-size.js";
 import { resolveTerminalCapabilities } from "./terminal-capabilities.js";
-import { LAYOUT_MODES } from "./layout.js";
+import { SemanticSetupPanel } from "./ux/live-setup.js";
 
 export function SetupHeader({ colorEnabled = true }) {
   const lines = formatInkHeaderLines();
@@ -42,19 +36,6 @@ export function SetupHeader({ colorEnabled = true }) {
     }, lines[1]),
     React.createElement(Text, { dimColor: true }, lines[2])
   );
-}
-
-function Panel({ title, children, colorEnabled = true }) {
-  return React.createElement(CockpitPanel, {
-    title,
-    focused: true,
-    width: "100%",
-    colorEnabled
-  }, children);
-}
-
-function Footer({ children }) {
-  return React.createElement(Text, { dimColor: true }, children);
 }
 
 export function SetupSplash({ compact, onboarding = false, colorEnabled = true }) {
@@ -83,12 +64,6 @@ export function SetupSplash({ compact, onboarding = false, colorEnabled = true }
   );
 }
 
-function renderLines(lines) {
-  return lines.map((line, index) =>
-    React.createElement(Text, { key: setupLineKey(index, line) }, line)
-  );
-}
-
 export function SetupApp({
   homeDir,
   workspaceRoot,
@@ -106,7 +81,6 @@ export function SetupApp({
   });
   const caps = resolveTerminalCapabilities({ columns, rows, isTTY: true });
   const colorEnabled = caps.color;
-  const mode = layoutMode ?? LAYOUT_MODES.COMPACT;
   const adapters = listAdapters();
   const detected = detectInstalledAdapters({ homeDir });
   const componentCatalog = describeComponentCatalog({ workspaceRoot });
@@ -255,57 +229,34 @@ export function SetupApp({
     }
   });
 
-  const detectPanel = formatInkDetectPanel({ adapters, detected });
-  const previewLines = preview
-    ? windowSetupLines(
-      formatInkPreviewLines({ preview, componentCatalog }),
-      setupPreviewLineLimit(mode)
-    )
-    : [];
-
   return React.createElement(Box, { flexDirection: "column" },
     step === SETUP_STEPS.SPLASH && React.createElement(SetupSplash, {
       compact: useCompactSplash,
       onboarding,
       colorEnabled
     }),
+    step === SETUP_STEPS.SPLASH && React.createElement(Text, { dimColor: true },
+      `${BRAND.splashHint} · Esc cancel`
+    ),
     step !== SETUP_STEPS.SPLASH && React.createElement(SetupHeader, { colorEnabled }),
-    step === SETUP_STEPS.DETECT && React.createElement(Panel, {
-      title: WIZARD_COPY.detectTitle, colorEnabled
-    }, renderLines(detectPanel.split("\n"))),
-    step === SETUP_STEPS.AGENTS && React.createElement(Panel, {
-      title: WIZARD_COPY.agentsPrompt, colorEnabled
-    }, renderLines(formatInkSelectList({
-      options: agentOptions, selected: selectedAgents, activeIndex
-    }))),
-    step === SETUP_STEPS.COMPONENTS && React.createElement(Panel, {
-      title: WIZARD_COPY.componentsPrompt, colorEnabled
-    }, renderLines(formatInkSelectList({
-      options: componentOptions, selected: selectedComponents, activeIndex
-    }))),
-    step === SETUP_STEPS.PREVIEW && React.createElement(Panel, {
-      title: WIZARD_COPY.previewTitle, colorEnabled
-    },
-      previewLoading && React.createElement(Text, {
-        color: resolveInkColor(colorEnabled, COCKPIT_COLORS.warning)
-      }, "Building preview…"),
-      previewError && React.createElement(Text, {
-        color: resolveInkColor(colorEnabled, COCKPIT_COLORS.danger)
-      }, previewError),
-      preview && renderLines(previewLines)
-    ),
-    step === SETUP_STEPS.CONFIRM && React.createElement(Panel, {
-      title: "Confirm", colorEnabled
-    },
-      React.createElement(Text, null, dryRun ? WIZARD_COPY.confirmDryRun : WIZARD_COPY.confirmApply)
-    ),
-    React.createElement(Footer, null,
-      step === SETUP_STEPS.SPLASH && `${BRAND.splashHint} · Esc cancel`,
-      step === SETUP_STEPS.DETECT && "Enter continue · Esc cancel",
-      step === SETUP_STEPS.AGENTS && "↑↓ move · Space toggle · Enter continue · Esc cancel",
-      step === SETUP_STEPS.COMPONENTS && "↑↓ move · Space toggle · Enter continue · Esc cancel",
-      step === SETUP_STEPS.PREVIEW && preview && !previewLoading && "Enter continue · Esc cancel",
-      step === SETUP_STEPS.CONFIRM && "Y apply · N cancel · Esc cancel"
-    )
+    step !== SETUP_STEPS.SPLASH && React.createElement(SemanticSetupPanel, {
+      step,
+      activeIndex,
+      agentOptions,
+      componentOptions,
+      componentCatalog,
+      selectedAgents,
+      selectedComponents,
+      adapters,
+      detected,
+      preview,
+      previewLoading,
+      previewError,
+      dryRun,
+      layoutMode,
+      colorEnabled,
+      unicode: caps.unicode,
+      columns
+    })
   );
 }
