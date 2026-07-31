@@ -1,15 +1,20 @@
 /**
- * Deep-space cockpit theme. Status always has a text label — never color alone.
+ * Kairo Cockpit theme — amber brand, ice interactive, semantic status.
+ * Status always has a text label — never color alone.
  */
 
 export const COCKPIT_COLORS = {
-  primary: "cyan",
-  secondary: "magenta",
-  success: "green",
-  warning: "yellow",
-  danger: "red",
+  brand: "#E8A017",
+  interactive: "#7EC8E8",
+  success: "#3DDC97",
+  warning: "#F0C674",
+  danger: "#FF6B6B",
   muted: "gray",
-  border: "cyan"
+  /** @deprecated alias — prefer interactive */
+  primary: "#7EC8E8",
+  /** @deprecated alias — prefer brand */
+  secondary: "#E8A017",
+  border: "#7EC8E8"
 };
 
 export const STATUS_LABELS = {
@@ -69,7 +74,7 @@ export function statusColor(kind, { colorEnabled = true } = {}) {
     case "muted":
       return COCKPIT_COLORS.muted;
     default:
-      return COCKPIT_COLORS.primary;
+      return COCKPIT_COLORS.interactive;
   }
 }
 

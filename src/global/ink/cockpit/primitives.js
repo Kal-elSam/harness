@@ -12,7 +12,7 @@ export function CockpitEmptyState({ title, message, hint, colorEnabled = true })
   return React.createElement(Box, { flexDirection: "column", marginY: 1 },
     title && React.createElement(Text, {
       bold: true,
-      color: resolveInkColor(colorEnabled, COCKPIT_COLORS.secondary)
+      color: resolveInkColor(colorEnabled, COCKPIT_COLORS.brand)
     }, title),
     message && React.createElement(Text, null, message),
     hint && React.createElement(Text, {
@@ -21,23 +21,20 @@ export function CockpitEmptyState({ title, message, hint, colorEnabled = true })
   );
 }
 
+/** Content region — no border; focus is conveyed by interactive children. */
 export function CockpitPanel({ title, focused = false, width, children, colorEnabled = true }) {
   return React.createElement(Box, {
     flexDirection: "column",
     width,
-    borderStyle: "single",
-    borderColor: resolveInkColor(
-      colorEnabled,
-      focused ? COCKPIT_COLORS.primary : COCKPIT_COLORS.muted
-    ),
-    paddingX: 1,
+    paddingX: 0,
+    marginY: 1,
     flexGrow: 1
   },
     title && React.createElement(Text, {
       bold: true,
       color: resolveInkColor(
         colorEnabled,
-        focused ? COCKPIT_COLORS.primary : COCKPIT_COLORS.secondary
+        focused ? COCKPIT_COLORS.interactive : COCKPIT_COLORS.brand
       )
     }, title),
     children
@@ -48,7 +45,7 @@ export function CockpitSection({ title, children, colorEnabled = true }) {
   return React.createElement(Box, { flexDirection: "column", marginBottom: 1 },
     title && React.createElement(Text, {
       bold: true,
-      color: resolveInkColor(colorEnabled, COCKPIT_COLORS.secondary)
+      color: resolveInkColor(colorEnabled, COCKPIT_COLORS.brand)
     }, title),
     children
   );
@@ -60,15 +57,29 @@ export function CockpitKeyHint({ keys, label, colorEnabled = true }) {
   }, `${keys} ${label}`);
 }
 
+/** Compact header: brand · status · project — no box-drawing. */
 export function CockpitTopBar({ model, colorEnabled = true }) {
+  const statusKind = String(model.status ?? "").toUpperCase() === "ONLINE"
+    ? "online"
+    : "muted";
   return React.createElement(Box, { justifyContent: "space-between", width: "100%" },
-    React.createElement(Text, {
-      bold: true,
-      color: resolveInkColor(colorEnabled, COCKPIT_COLORS.primary)
-    }, `╭─ ${model.brand} ─ ${model.status}`),
+    React.createElement(Box, null,
+      React.createElement(Text, {
+        bold: true,
+        color: resolveInkColor(colorEnabled, COCKPIT_COLORS.brand)
+      }, model.brand),
+      React.createElement(Text, {
+        color: resolveInkColor(colorEnabled, COCKPIT_COLORS.muted)
+      }, " · "),
+      React.createElement(CockpitBadge, {
+        label: model.status,
+        kind: statusKind,
+        colorEnabled
+      })
+    ),
     React.createElement(Text, {
       color: resolveInkColor(colorEnabled, COCKPIT_COLORS.muted)
-    }, `${model.projectLabel} ─╮`)
+    }, model.projectLabel)
   );
 }
 
@@ -78,9 +89,9 @@ export function CockpitNav({ model, colorEnabled = true }) {
     model.items.map((item) => {
       const suffix = item.current && !item.selected ? " (open)" : "";
       const color = item.focused
-        ? resolveInkColor(colorEnabled, COCKPIT_COLORS.primary)
+        ? resolveInkColor(colorEnabled, COCKPIT_COLORS.interactive)
         : item.selected
-          ? resolveInkColor(colorEnabled, COCKPIT_COLORS.secondary)
+          ? resolveInkColor(colorEnabled, COCKPIT_COLORS.brand)
           : item.current
             ? resolveInkColor(colorEnabled, COCKPIT_COLORS.muted)
             : undefined;
@@ -101,7 +112,7 @@ function stripLabel(item, { compact }) {
   return item.label.split(/[&·]/)[0].trim().split(/\s+/)[0];
 }
 
-/** Horizontal navigation strip under the top bar. */
+/** Segmented horizontal nav — no border; active segment uses interactive. */
 export function CockpitNavStrip({
   model,
   colorEnabled = true,
@@ -112,16 +123,20 @@ export function CockpitNavStrip({
   const parts = model.items.map((item) => {
     const label = stripLabel(item, { compact });
     const suffix = item.current && !item.selected ? "*" : "";
-    const color = item.focused
-      ? resolveInkColor(colorEnabled, COCKPIT_COLORS.primary)
+    const active = item.focused || item.selected;
+    const color = item.focused || (focused && item.selected)
+      ? resolveInkColor(colorEnabled, COCKPIT_COLORS.interactive)
       : item.selected
-        ? resolveInkColor(colorEnabled, COCKPIT_COLORS.secondary)
+        ? resolveInkColor(colorEnabled, COCKPIT_COLORS.interactive)
         : resolveInkColor(colorEnabled, COCKPIT_COLORS.muted);
+    const text = focused && item.selected
+      ? `[${label}]${suffix}`
+      : `${item.marker}${label}${suffix}`;
     return React.createElement(Text, {
       key: item.id,
-      bold: item.focused || item.selected,
+      bold: active,
       color
-    }, `${item.marker}${label}${suffix}`);
+    }, text);
   });
 
   const joined = [];
@@ -138,12 +153,8 @@ export function CockpitNavStrip({
   return React.createElement(Box, {
     flexDirection: "column",
     width: "100%",
-    borderStyle: "single",
-    borderColor: resolveInkColor(
-      colorEnabled,
-      focused ? COCKPIT_COLORS.primary : COCKPIT_COLORS.muted
-    ),
-    paddingX: 1
+    marginTop: 0,
+    marginBottom: 0
   },
     React.createElement(Box, { flexDirection: "row", flexWrap: "wrap" }, ...joined),
     model.explanation && React.createElement(Text, {
@@ -170,20 +181,19 @@ export function CockpitSystemStrip({ model, colorEnabled = true }) {
   );
 }
 
+/** Single-line shortcut bar — no framed box. */
 export function CockpitFooter({ model, columns = 80, colorEnabled = true }) {
   const width = Math.max(24, Math.min(Number(columns) || 80, 120));
-  const bar = Math.max(20, width - 2);
-  const muted = resolveInkColor(colorEnabled, COCKPIT_COLORS.muted);
-  return React.createElement(Box, { flexDirection: "column", width: "100%" },
-    React.createElement(Text, { color: muted }, `├${"─".repeat(bar)}┤`),
-    React.createElement(Text, { color: muted }, `│ ${model.text}`),
-    React.createElement(Text, { color: muted }, `╰${"─".repeat(bar)}╯`)
+  return React.createElement(Box, { width: "100%", marginTop: 1 },
+    React.createElement(Text, {
+      color: resolveInkColor(colorEnabled, COCKPIT_COLORS.muted)
+    }, String(model.text ?? "").slice(0, width))
   );
 }
 
 /**
  * Responsive single-panel shell: TopBar → NavStrip → Main → Footer.
- * SYSTEM side column removed (diagnostics via Enter/detail in later slices).
+ * No nested borders — hierarchy via type and spacing.
  */
 export function CockpitShell({
   topBar,
