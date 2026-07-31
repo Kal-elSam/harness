@@ -1,11 +1,10 @@
 /** Live semantic Governance. Ownership: Callout=status · Confirm/primary=action · footer=keys. */
 import React from "react";
 import { Box, Text } from "ink";
-import { COCKPIT_COLORS } from "../theme.js";
 import { formatConfirmPath } from "../cockpit-path-label.js";
 import { CHANGES_PHASE } from "../cockpit-changes.js";
 import { LAYOUT_MODES } from "../layout.js";
-import { ActionList, Callout, Confirm, Details } from "./semantic.js";
+import { ActionList, Callout, Confirm, Details, ViewTitle } from "./semantic.js";
 import { mapHealthTone } from "./live-overview.js";
 
 function healthLabel(kind) {
@@ -151,10 +150,7 @@ export function SemanticGovernancePanel({
     snapshot, changesAction, homeDir, detailsOpen, layoutMode
   });
   return React.createElement(Box, { flexDirection: "column" },
-    React.createElement(Text, {
-      bold: true,
-      color: colorEnabled ? COCKPIT_COLORS.secondary : undefined
-    }, view.title),
+    React.createElement(ViewTitle, { colorEnabled }, view.title),
     React.createElement(Callout, {
       tone: view.callout.tone,
       title: view.callout.title,

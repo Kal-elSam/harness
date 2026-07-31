@@ -1,13 +1,12 @@
 /** Live semantic Activity/Recovery. Callout=status · Confirm=action · footer=keys · snapshots=focus. */
 import React from "react";
 import { Box, Text } from "ink";
-import { COCKPIT_COLORS } from "../theme.js";
 import { formatConfirmPath } from "../cockpit-path-label.js";
 import {
   RECOVERY_PHASE, listRecoverySnapshots, formatWhen, formatResult, shortName
 } from "../cockpit-recovery.js";
 import { LAYOUT_MODES } from "../layout.js";
-import { ActionList, Callout, Confirm, Details } from "./semantic.js";
+import { ActionList, Callout, Confirm, Details, SectionLabel, ViewTitle } from "./semantic.js";
 import { detailsPathLimit } from "./live-governance.js";
 
 export function activityContentLimits(layoutMode = LAYOUT_MODES.COMPACT) {
@@ -157,9 +156,7 @@ export function SemanticActivityPanel({
     snapshot, recoveryAction, dashboard, listIndex, homeDir, detailsOpen, layoutMode
   });
   return React.createElement(Box, { flexDirection: "column" },
-    React.createElement(Text, {
-      bold: true, color: colorEnabled ? COCKPIT_COLORS.secondary : undefined
-    }, view.title),
+    React.createElement(ViewTitle, { colorEnabled }, view.title),
     React.createElement(Callout, {
       tone: view.callout.tone, title: view.callout.title,
       body: view.callout.body || undefined, colorEnabled, compact: true
@@ -174,11 +171,11 @@ export function SemanticActivityPanel({
         : null,
     view.primary?.detail && !view.confirm
       ? React.createElement(Text, null, view.primary.detail) : null,
-    React.createElement(Text, { bold: true }, "Recent"),
+    React.createElement(SectionLabel, { colorEnabled }, "Recent"),
     React.createElement(ActionList, {
       items: view.recent, selectedIndex: -1, focused: false, colorEnabled, unicode
     }),
-    React.createElement(Text, { bold: true }, "Snapshots"),
+    React.createElement(SectionLabel, { colorEnabled }, "Snapshots"),
     React.createElement(ActionList, {
       items: view.snapshots, selectedIndex: view.selectedIndex,
       focused: contentFocused, colorEnabled, unicode

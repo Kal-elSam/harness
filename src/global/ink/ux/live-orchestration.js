@@ -5,14 +5,13 @@
  */
 import React from "react";
 import { Box, Text } from "ink";
-import { COCKPIT_COLORS } from "../theme.js";
 import { LAYOUT_MODES } from "../layout.js";
 import { ORCHESTRATOR_VIEWS, formatRunLines } from "../orchestrator-state.js";
 import {
   RUNS_HUB_ITEMS, formatOrchestrationStatus, formatRunsHubLines
 } from "../cockpit-runs.js";
 import { formatReviewListLines } from "../cockpit-reviews.js";
-import { ActionList, Callout } from "./semantic.js";
+import { ActionList, Callout, ViewTitle } from "./semantic.js";
 import { windowSlice } from "./live-activity.js";
 
 export function orchestrationListLimit(layoutMode = LAYOUT_MODES.COMPACT) {
@@ -167,9 +166,7 @@ export function SemanticOrchestrationPanel({
   });
   const listFocused = contentFocused && !model.isEmpty;
   return React.createElement(Box, { flexDirection: "column" },
-    React.createElement(Text, {
-      bold: true, color: colorEnabled ? COCKPIT_COLORS.secondary : undefined
-    }, model.title),
+    React.createElement(ViewTitle, { colorEnabled }, model.title),
     React.createElement(Callout, {
       tone: model.callout.tone,
       title: model.callout.title,

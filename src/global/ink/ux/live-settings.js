@@ -4,12 +4,11 @@
  */
 import React from "react";
 import { Box, Text } from "ink";
-import { COCKPIT_COLORS } from "../theme.js";
 import { LAYOUT_MODES } from "../layout.js";
 import {
   SETTINGS_PHASE, getCuratedIntegration, listCuratedIntegrations
 } from "../cockpit-settings.js";
-import { ActionList, Callout, Confirm, Details, Receipt } from "./semantic.js";
+import { ActionList, Callout, Confirm, Details, Receipt, SectionLabel, ViewTitle } from "./semantic.js";
 import { windowSlice } from "./live-activity.js";
 
 export function settingsListLimit(layoutMode = LAYOUT_MODES.COMPACT) {
@@ -160,9 +159,7 @@ export function SemanticSettingsPanel({
     model.receipt && React.createElement(Receipt, {
       title: model.receipt.title, lines: model.receipt.lines, colorEnabled
     }),
-    React.createElement(Text, {
-      bold: true, color: colorEnabled ? COCKPIT_COLORS.secondary : undefined
-    }, model.title),
+    React.createElement(ViewTitle, { colorEnabled }, model.title),
     React.createElement(Callout, {
       tone: model.callout.tone, title: model.callout.title,
       body: model.callout.body || undefined, colorEnabled, compact: true
@@ -176,7 +173,7 @@ export function SemanticSettingsPanel({
       focused: listFocused, colorEnabled, unicode
     }),
     model.profilePolicy.length > 0 && React.createElement(Box, { flexDirection: "column" },
-      React.createElement(Text, { bold: true }, "Profile & Policy"),
+      React.createElement(SectionLabel, { colorEnabled }, "Profile & Policy"),
       React.createElement(ActionList, {
         items: model.profilePolicy, selectedIndex: -1, focused: false, colorEnabled, unicode
       })
