@@ -18,8 +18,8 @@ import { SemanticActivityPanel } from "./ux/live-activity.js";
 import { SemanticOrchestrationPanel } from "./ux/live-orchestration.js";
 import { SemanticAlertsPanel } from "./ux/live-alerts.js";
 import { SemanticSettingsPanel } from "./ux/live-settings.js";
+import { SemanticUsagePanel } from "./ux/live-usage.js";
 import { formatReviewDetailLines } from "./cockpit-reviews.js";
-import { formatUsageLines } from "./cockpit-control-center.js";
 import { listCuratedIntegrations } from "./cockpit-settings.js";
 
 export function PalettePanel({ model, colorEnabled = true }) {
@@ -114,12 +114,13 @@ export function renderCockpitView({
         unicode
       });
     case ORCHESTRATOR_VIEWS.USAGE:
-      return governanceList(
-        "Usage",
-        formatUsageLines({ snapshot, dashboard }),
+      return React.createElement(SemanticUsagePanel, {
+        snapshot,
+        dashboard,
         layoutMode,
-        colorEnabled
-      );
+        colorEnabled,
+        unicode
+      });
     case ORCHESTRATOR_VIEWS.IDES:
     case ORCHESTRATOR_VIEWS.PROVIDERS:
       return governanceList("IDEs & models", [

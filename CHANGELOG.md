@@ -3,6 +3,41 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.10.0 — 2026-07-31 (Kairo Runtime)
+
+Minor release. Terminal-first Ink UX Control Plane: semantic primitives across
+the six primary Cockpit surfaces, Setup, Alerts, and NO_COLOR-safe shell chrome.
+Publish tag: `kairo-runtime-v0.10.0`.
+
+### Added
+
+- Semantic Ink primitives (ActionList, Callout, Confirm, Details, Receipt, KeyBar,
+  Stepper) with clear ownership: Callout=status · section owns data · footer/KeyBar=keys.
+- Six primary surfaces on the shared model: Overview, Governance, Activity,
+  Orchestration, Usage, Settings.
+- Semantic SetupApp (Detect → Agents → Components → Preview → Confirm) with real
+  handoff from Overview setup CTA.
+- Semantic Alerts inbox with windowed focus (compact 3 / wide 8); Enter resolve /
+  D dismiss unchanged.
+- Semantic Settings browse → preview → confirm → receipt (`wroteFiles: false`);
+  confirm records intent only — does not install packages.
+- Semantic Usage / Tokens: measured budget pairs, profile limits, finite run
+  tokenUsage fields only; never invents totals, costs, or savings.
+
+### Changed
+
+- Cockpit shell chrome respects `NO_COLOR` and ASCII glyph fallbacks.
+- Progressive disclosure: paths/IDs stay in Details; lists keep domain navigation
+  beyond visual caps with honest remainders (`… N more`).
+
+### Compatibility
+
+- Keyboard-first, local, single-user; Ink + React retained.
+- Bare `kairo` and explicit CLI commands unchanged.
+- Web loopback / `kairo ui` deferred out of this milestone.
+- IDEs / Modules / Diagnostics lists and Launch/detail remain legacy string panels
+  for a follow-up 0.10.x or next milestone.
+
 ## 0.9.0 — 2026-07-30 (Kairo Runtime)
 
 Minor release. Local AI Control Plane: task-oriented Cockpit, alerts inbox,
