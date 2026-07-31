@@ -16,8 +16,11 @@ as a technical alias).
 Kairo Runtime and prints a migration warning. Prefer `@kal-elsam/kairo-runtime` and the
 `kairo` CLI for new installs. See [`packages/harness-bridge/README.md`](packages/harness-bridge/README.md).
 
-Terminal UX aims for Pi-like clarity (clear modes, non-interactive flags, extensible
-commands) without depending on Pi as a runtime or adding a Pi adapter.
+Terminal UX is **terminal-first**: bare `kairo` opens the Ink Control Center (or Setup
+when unconfigured). Explicit commands (`setup`, `status`, `sync`, `doctor`, `monitor`,
+`shell`, …) keep their current behavior. Progressive disclosure keeps paths and IDs in
+Details, list caps honest (`… N more`), and Callout reserved for status — never for
+primary values. No web loopback / `kairo ui` in this release.
 
 - **npm:** https://www.npmjs.com/package/@kal-elsam/kairo-runtime
 - **repo:** https://github.com/Kal-elSam/harness
@@ -32,13 +35,11 @@ npx @kal-elsam/kairo-runtime
 kairo
 ```
 
-**First run** (no `~/.harness/state.json`): interactive onboarding → safe diagnosis →
-setup with confirmation → full-screen operations cockpit.
+**First run** (no `~/.harness/state.json`): semantic Setup (Detect → Agents →
+Components → Preview → Confirm) → full-screen Control Center.
 
-**Later runs** (state present): full-screen Control Center oriented around user
-tasks — overall health, one next action, activity, pending alerts, and guided
-governance (scan → evidence → preview → confirm → apply → re-scan → recovery).
-Runs stay secondary. Layout adapts to terminal size:
+**Later runs** (state present): semantic Cockpit — Overview, Governance, Activity,
+Orchestration, Usage, Settings — plus Alerts inbox. Layout adapts to terminal size:
 
 | Mode | Size | Layout |
 |------|------|--------|
@@ -72,6 +73,11 @@ only when a new alert claim succeeds.
 Settings browses a curated catalog (pinned `pi-usage-widget@0.2.1`, MIT).
 Preview → confirm shows an in-session confirmation receipt (`wroteFiles: false`);
 it does not persist or install anything.
+
+### Usage evidence
+
+Usage shows measured budget pairs, profile limits, and finite run `tokenUsage`
+fields only. It never invents totals, costs, or savings.
 
 Respects `NO_COLOR`, `HARNESS_ASCII=1`, and `HARNESS_INK=0`. Status is always labeled
 in text, never color alone.
