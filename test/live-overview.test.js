@@ -9,6 +9,12 @@ import {
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
 import { ActionList } from "../src/global/ink/ux/semantic.js";
 import { buildFooterModel, COCKPIT_REGIONS } from "../src/global/ink/cockpit-models.js";
+import { LAYOUT_MODES } from "../src/global/ink/layout.js";
+import {
+  overviewBrandTitle,
+  shouldShowWordmark,
+  wordmarkLines
+} from "../src/global/ink/brand/wordmark.js";
 import {
   adaptControlCenterToOverview,
   buildOverviewDetails,
@@ -56,6 +62,37 @@ test("adapter maps health tones and unavailable headlines", () => {
   assert.deepEqual(buildOverviewDetails({}), ["No extra evidence beyond the metrics above."]);
 });
 
+test("wordmark shows on wide/compact only; minimal is textual", () => {
+  assert.equal(shouldShowWordmark(LAYOUT_MODES.WIDE), true);
+  assert.equal(shouldShowWordmark(LAYOUT_MODES.COMPACT), true);
+  assert.equal(shouldShowWordmark(LAYOUT_MODES.MINIMAL), false);
+  assert.ok(wordmarkLines(LAYOUT_MODES.WIDE).length >= 3);
+  assert.ok(wordmarkLines(LAYOUT_MODES.COMPACT).length >= 1);
+  assert.deepEqual(wordmarkLines(LAYOUT_MODES.MINIMAL), []);
+  assert.equal(overviewBrandTitle(LAYOUT_MODES.MINIMAL), "KAIRO · Overview");
+  assert.equal(overviewBrandTitle(LAYOUT_MODES.WIDE), null);
+
+  const wide = SemanticOverviewPanel({
+    model: modelFor(CONTROL_PLANE_HEALTH.HEALTHY),
+    layoutMode: LAYOUT_MODES.WIDE,
+    unicode: true
+  });
+  const compact = SemanticOverviewPanel({
+    model: modelFor(CONTROL_PLANE_HEALTH.HEALTHY),
+    layoutMode: LAYOUT_MODES.COMPACT,
+    unicode: false
+  });
+  const minimal = SemanticOverviewPanel({
+    model: modelFor(CONTROL_PLANE_HEALTH.HEALTHY),
+    layoutMode: LAYOUT_MODES.MINIMAL,
+    unicode: true
+  });
+  assert.match(JSON.stringify(wide), /╦╔═╔═╗/);
+  assert.match(JSON.stringify(compact), /KAIRO/);
+  assert.match(JSON.stringify(minimal), /KAIRO · Overview/);
+  assert.doesNotMatch(JSON.stringify(minimal), /╦╔═╔═╗/);
+});
+
 test("metrics ActionList never shows selection; panel primary has no focus mark", () => {
   const list = ActionList({
     items: adaptControlCenterToOverview(modelFor(CONTROL_PLANE_HEALTH.HEALTHY)).metrics,
@@ -70,7 +107,8 @@ test("metrics ActionList never shows selection; panel primary has no focus mark"
   const panel = SemanticOverviewPanel({
     model: modelFor(CONTROL_PLANE_HEALTH.ACTION_REQUIRED),
     detailsOpen: false,
-    unicode: false
+    unicode: false,
+    layoutMode: LAYOUT_MODES.COMPACT
   });
   const blob = JSON.stringify(panel);
   assert.doesNotMatch(blob, /"> [^"]+"/);
