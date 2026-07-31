@@ -78,10 +78,20 @@ function receiptLines(receipt, entry) {
   ].filter(Boolean);
 }
 
+/** Browse-only: profile · apply · preflight · sources. */
+function profilePolicyItems(snapshot = null, diagnostics = null) {
+  const p = snapshot?.policy, s = diagnostics?.profile?.sources;
+  const src = [s?.global && "global", s?.project && "project"].filter(Boolean).join(", ") || "none";
+  return [
+    { id: "policy", label: `Policy · ${p?.profile ?? "none"} · apply ${p?.applyMode ?? "n/a"}` },
+    { id: "preflight", label: `Preflight · ${p?.preflight ?? "n/a"} · sources · ${src}` }
+  ];
+}
+
 /** Pure adapter: browse window · preview Details · confirm intent · receipt first. */
 export function adaptSettingsModel({
-  integrations = listCuratedIntegrations(), listIndex = 0,
-  settingsAction = null, layoutMode = LAYOUT_MODES.COMPACT
+  integrations = listCuratedIntegrations(), listIndex = 0, settingsAction = null,
+  layoutMode = LAYOUT_MODES.COMPACT, snapshot = null, diagnostics = null
 } = {}) {
   const phase = settingsAction?.phase ?? SETTINGS_PHASE.BROWSE;
   const catalog = Array.isArray(integrations) ? integrations : [];
@@ -132,15 +142,19 @@ export function adaptSettingsModel({
     receipt: phase === SETTINGS_PHASE.COMPLETED && settingsAction?.receipt
       ? { title: "Receipt", lines: receiptLines(settingsAction.receipt, entry) }
       : null,
+    profilePolicy: browsing ? profilePolicyItems(snapshot, diagnostics) : [],
     keyHints: settingsKeyHints(phase)
   };
 }
 
 export function SemanticSettingsPanel({
   integrations = listCuratedIntegrations(), listIndex = 0, settingsAction = null,
-  layoutMode = LAYOUT_MODES.COMPACT, contentFocused = false, colorEnabled = true, unicode = true
+  layoutMode = LAYOUT_MODES.COMPACT, contentFocused = false, colorEnabled = true, unicode = true,
+  snapshot = null, diagnostics = null
 }) {
-  const model = adaptSettingsModel({ integrations, listIndex, settingsAction, layoutMode });
+  const model = adaptSettingsModel({
+    integrations, listIndex, settingsAction, layoutMode, snapshot, diagnostics
+  });
   const listFocused = contentFocused && model.listFocused;
   return React.createElement(Box, { flexDirection: "column" },
     model.receipt && React.createElement(Receipt, {
@@ -161,6 +175,12 @@ export function SemanticSettingsPanel({
       items: model.items, selectedIndex: model.selectedIndex,
       focused: listFocused, colorEnabled, unicode
     }),
+    model.profilePolicy.length > 0 && React.createElement(Box, { flexDirection: "column" },
+      React.createElement(Text, { bold: true }, "Profile & Policy"),
+      React.createElement(ActionList, {
+        items: model.profilePolicy, selectedIndex: -1, focused: false, colorEnabled, unicode
+      })
+    ),
     model.detailsOpen && React.createElement(Details, {
       open: true, summary: "Details", lines: model.details,
       colorEnabled, focused: false, mark: " "

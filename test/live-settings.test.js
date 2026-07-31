@@ -161,6 +161,15 @@ test("key ownership: KeyBar/footer keeps Y/N/Esc; reduceSettingsAction intact", 
   assert.equal(completed().receipt.wroteFiles, false);
 });
 
+test("browse keeps Profile & Policy from snapshot/diagnostics; non-browse hides it", () => {
+  const snap = { policy: { profile: "local", applyMode: "confirm", preflight: "strict" } };
+  const diag = { profile: { sources: { global: true, project: true } } };
+  const labels = adaptSettingsModel({ snapshot: snap, diagnostics: diag }).profilePolicy.map((i) => i.label).join("\n");
+  assert.match(labels, /Policy · local · apply confirm/);
+  assert.match(labels, /Preflight · strict · sources · global, project/);
+  assert.equal(adaptSettingsModel({ settingsAction: preview(), snapshot: snap }).profilePolicy.length, 0);
+});
+
 test("NO_COLOR and ASCII: panel renders without requiring color or unicode focus glyph", () => {
   const panel = SemanticSettingsPanel({
     integrations: listCuratedIntegrations(), listIndex: 0,

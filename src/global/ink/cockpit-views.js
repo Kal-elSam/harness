@@ -157,6 +157,8 @@ export function renderCockpitView({
         integrations: listCuratedIntegrations(),
         listIndex,
         settingsAction,
+        snapshot,
+        diagnostics,
         layoutMode,
         contentFocused,
         colorEnabled,
