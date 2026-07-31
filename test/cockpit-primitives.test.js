@@ -9,13 +9,13 @@ import {
 } from "../src/global/ink/cockpit/primitives.js";
 import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 
-test("CockpitFooter scales bar to terminal columns", () => {
+test("CockpitFooter is a single shortcut line scaled to columns", () => {
   const narrow = CockpitFooter({ model: { text: "↑↓ Navigate" }, columns: 40 });
   const wide = CockpitFooter({ model: { text: "↑↓ Navigate" }, columns: 100 });
-  assert.equal(narrow.props.flexDirection, "column");
+  assert.equal(narrow.props.width, "100%");
   assert.equal(wide.props.width, "100%");
-  assert.ok(Array.isArray(narrow.props.children));
-  assert.ok(Array.isArray(wide.props.children));
+  assert.equal(narrow.props.children.props.children, "↑↓ Navigate");
+  assert.equal(wide.props.children.props.children, "↑↓ Navigate");
 });
 
 test("CockpitNavStrip and Section primitives accept models", () => {
@@ -47,6 +47,7 @@ test("CockpitNavStrip and Section primitives accept models", () => {
     focused: true
   });
   assert.equal(strip.props.flexDirection, "column");
+  assert.equal(strip.props.borderStyle, undefined);
   const section = CockpitSection({
     title: "NEXT",
     children: CockpitKeyHint({ keys: "Enter", label: "Activate" })
@@ -54,7 +55,7 @@ test("CockpitNavStrip and Section primitives accept models", () => {
   assert.equal(section.props.flexDirection, "column");
 });
 
-test("CockpitShell is single-panel without system props", () => {
+test("CockpitShell is single-panel without system props or nested borders", () => {
   const shell = CockpitShell({
     topBar: { brand: "KAIRO", status: "ONLINE", projectLabel: "Project: demo" },
     footer: { text: "Esc Exit" },
@@ -78,4 +79,8 @@ test("CockpitShell is single-panel without system props", () => {
   assert.equal(shell.props.flexDirection, "column");
   assert.equal(shell.props.system, undefined);
   assert.equal(shell.props.children.length, 4);
+  const nav = shell.props.children[1];
+  const panel = shell.props.children[2];
+  assert.equal(nav.props.borderStyle, undefined);
+  assert.equal(panel.props.borderStyle, undefined);
 });
