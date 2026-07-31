@@ -41,7 +41,7 @@ import { handleLaunchInput } from "./launch-input.js";
 import { useTerminalSize } from "./use-terminal-size.js";
 import { useOrchestratorData } from "./use-orchestrator-data.js";
 import { resolveTerminalCapabilities } from "./terminal-capabilities.js";
-import { COCKPIT_COLORS } from "./theme.js";
+import { COCKPIT_COLORS, resolveInkColor } from "./theme.js";
 import { LAYOUT_MODES } from "./layout.js";
 import { CHANGES_PHASE } from "./cockpit-changes.js";
 import { RECOVERY_PHASE, listRecoverySnapshots } from "./cockpit-recovery.js";
@@ -466,14 +466,22 @@ export function OrchestratorApp({
 
   if (data.loading) {
     return React.createElement(Box, { flexDirection: "column" },
-      React.createElement(Text, { bold: true, color: COCKPIT_COLORS.primary }, "KAIRO"),
-      React.createElement(Text, { color: COCKPIT_COLORS.muted }, "Loading cockpit…")
+      React.createElement(Text, {
+        bold: true,
+        color: resolveInkColor(caps.color, COCKPIT_COLORS.brand)
+      }, "KAIRO"),
+      React.createElement(Text, {
+        color: resolveInkColor(caps.color, COCKPIT_COLORS.muted)
+      }, "Loading cockpit…")
     );
   }
 
   if (data.error) {
     return React.createElement(Box, { flexDirection: "column" },
-      React.createElement(Text, { bold: true, color: COCKPIT_COLORS.danger }, "Runtime error"),
+      React.createElement(Text, {
+        bold: true,
+        color: resolveInkColor(caps.color, COCKPIT_COLORS.danger)
+      }, "Runtime error"),
       React.createElement(Text, null, data.error),
       React.createElement(Text, { dimColor: true },
         data.retrying ? "Retrying read-only scan…" : "R Retry · Esc to exit")
