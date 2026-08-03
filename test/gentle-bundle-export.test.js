@@ -88,6 +88,10 @@ test("export CLI + absolute binary binding + typed provider errors", async () =>
   });
   assert.equal(ok.ok, true);
   assert.equal(seen.cmd, "/usr/bin/gentle-ai");
+  assert.deepEqual(seen.args, [
+    "review-bundle-export", "--cwd", "/work/repo",
+    "--lineage", "review-4d877864f603b4e5", "--out", outPath
+  ]);
   assert.deepEqual(await readFile(outPath), sentinel);
 
   const secret = "token=sk-live-SECRET path=/Users/private/.ssh/id_rsa";
@@ -109,6 +113,9 @@ test("export CLI + absolute binary binding + typed provider errors", async () =>
     reviewsAction: "export", lineage: "review-aaaaaaaaaaaaaaaa",
     outPath: "/tmp/bundle.json", cwd: "/repo", json: true
   }, {}, { exportGentleReviewBundle: async () => failed });
+  assert.equal(wired.code, "provider_error");
+  assert.equal(wired.exitCode, 2);
+  assert.equal(process.exitCode, 2);
   assert.equal(JSON.stringify(wired).includes("SECRET"), false);
   process.exitCode = prev;
 });
