@@ -275,22 +275,8 @@ export async function stopRun(homeDir, runId, { signal = "SIGTERM" } = {}) {
     return state;
   }
 
-  const lock = await readSupervisorLock(homeDir, runId);
-  const child = activeProcesses.get(runId);
-
-  if (child) {
-    child.kill(signal);
-  } else {
-    const targets = [lock?.agentPid, state.pid, lock?.supervisorPid].filter(Boolean);
-    for (const pid of targets) {
-      try {
-        process.kill(pid, signal);
-      } catch {
-        // Process may already be gone.
-      }
-    }
-  }
-
+  // Persist cancel markers BEFORE kill/close so the supervisor close handler
+  // cannot lose the race and finalize as FAILED while promises stay pending.
   await writeCancelSignal(homeDir, runId, {
     requested: true,
     signal,
@@ -308,6 +294,22 @@ export async function stopRun(homeDir, runId, { signal = "SIGTERM" } = {}) {
     type: "run.cancelled",
     data: { signal }
   }));
+
+  const lock = await readSupervisorLock(homeDir, runId);
+  const child = activeProcesses.get(runId);
+
+  if (child) {
+    child.kill(signal);
+  } else {
+    const targets = [lock?.agentPid, state.pid, lock?.supervisorPid].filter(Boolean);
+    for (const pid of targets) {
+      try {
+        process.kill(pid, signal);
+      } catch {
+        // Process may already be gone.
+      }
+    }
+  }
 
   activeProcesses.delete(runId);
   return metadata;

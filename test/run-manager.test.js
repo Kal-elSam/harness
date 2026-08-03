@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  getActiveProcess,
   recoverRuns,
   startRun,
   stopRun
@@ -16,7 +17,11 @@ import { hasRunHandoff, writeRunHandoff } from "../src/global/runtime/run-handof
 import { writeCancelSignal } from "../src/global/runtime/run-cancel-signal.js";
 import { transitionRunState } from "../src/global/runtime/run-events.js";
 import { runPaths } from "../src/global/paths.js";
-import { spawnDetachedSupervisor } from "../src/global/runtime/run-supervisor.js";
+import {
+  resetAfterMissedCancelCheckForTests,
+  setAfterMissedCancelCheckForTests,
+  spawnDetachedSupervisor
+} from "../src/global/runtime/run-supervisor.js";
 import { writeSupervisorLock } from "../src/global/runtime/run-supervisor-lock.js";
 import { withStubExecutables } from "./helpers/stub-executables.js";
 
@@ -271,6 +276,130 @@ test("supervisor preserves cancelled state written by another process", async ()
   });
 });
 
+test("stopRun cancel contract wins when kill closes synchronously", async () => {
+  await withStubExecutables(["codex"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-stop-sync-close-"));
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.pid = 6100;
+    let closeCount = 0;
+    child.kill = () => {
+      closeCount += 1;
+      child.emit("close", 130);
+    };
+
+    const { runId, completion } = await startRun({
+      homeDir,
+      agentId: "codex",
+      task: "sync close cancel contract",
+      cwd: homeDir,
+      cliVersion: "0.5.1",
+      spawnImpl: () => child
+    });
+
+    let ready = false;
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      const snapshot = await readRunState(homeDir, runId);
+      if (
+        snapshot?.state === RUN_STATES.RUNNING
+        && snapshot?.pid === child.pid
+        && getActiveProcess(runId)
+      ) {
+        ready = true;
+        break;
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(ready, true, "run did not reach RUNNING with persisted pid");
+
+    const cancelled = await stopRun(homeDir, runId);
+    assert.equal(cancelled.state, RUN_STATES.CANCELLED);
+    assert.equal(closeCount, 1, "stopRun must kill the active child once");
+
+    // Duplicate close is a second symptom vector of the same race; completion
+    // must already be settled CANCELLED and must ignore the late exit(0).
+    child.emit("close", 0);
+    const final = await Promise.race([
+      completion,
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("supervisor completion did not settle")), 1_000);
+      })
+    ]);
+    assert.equal(final.state, RUN_STATES.CANCELLED);
+
+    const saved = await readRunState(homeDir, runId);
+    assert.equal(saved.state, RUN_STATES.CANCELLED);
+
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+});
+
+test("supervisor prefers CANCELLED after missed cancel-preserve window", async () => {
+  await withStubExecutables(["codex"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-missed-cancel-window-"));
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.pid = 6200;
+    child.kill = () => {};
+
+    const { runId, completion } = await startRun({
+      homeDir,
+      agentId: "codex",
+      task: "missed cancel window",
+      cwd: homeDir,
+      cliVersion: "0.5.1",
+      spawnImpl: () => child
+    });
+
+    let ready = false;
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      const snapshot = await readRunState(homeDir, runId);
+      if (
+        snapshot?.state === RUN_STATES.RUNNING
+        && snapshot?.pid === child.pid
+        && getActiveProcess(runId)
+      ) {
+        ready = true;
+        break;
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(ready, true, "run did not reach RUNNING with persisted pid");
+
+    // Deterministic race: first preserve check misses, then cancel markers land
+    // before FAILED is written — same two symptoms as the CI flake.
+    setAfterMissedCancelCheckForTests(async () => {
+      await writeCancelSignal(homeDir, runId, {
+        requested: true,
+        signal: "SIGTERM",
+        requestedAt: new Date().toISOString()
+      });
+      const current = await readRunState(homeDir, runId);
+      await writeRunState(homeDir, transitionRunState(current, RUN_STATES.CANCELLED, {
+        error: "Run cancelled by user."
+      }));
+    });
+
+    try {
+      child.emit("close", 130);
+      const final = await Promise.race([
+        completion,
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("supervisor completion did not settle")), 1_000);
+        })
+      ]);
+      assert.equal(final.state, RUN_STATES.CANCELLED);
+      const saved = await readRunState(homeDir, runId);
+      assert.equal(saved.state, RUN_STATES.CANCELLED);
+    } finally {
+      resetAfterMissedCancelCheckForTests();
+    }
+  });
+});
+
 test("stopRun against concurrent supervisor stress ends CANCELLED", async () => {
   await withStubExecutables(["codex"], async () => {
     for (let i = 0; i < 12; i++) {
@@ -293,19 +422,23 @@ test("stopRun against concurrent supervisor stress ends CANCELLED", async () => 
       let ready = false;
       for (let attempt = 0; attempt < 500; attempt += 1) {
         const snapshot = await readRunState(homeDir, runId);
-        if (snapshot?.state === RUN_STATES.RUNNING) {
+        if (snapshot?.state === RUN_STATES.RUNNING && getActiveProcess(runId)) {
           ready = true;
           break;
         }
         await new Promise((resolve) => setImmediate(resolve));
       }
-      assert.equal(ready, true, `run did not reach RUNNING (iteration ${i})`);
+      assert.equal(ready, true, `run did not reach RUNNING with active process (iteration ${i})`);
 
       const cancelled = await stopRun(homeDir, runId);
       assert.equal(cancelled.state, RUN_STATES.CANCELLED);
 
-      child.emit("close", 0);
-      const final = await completion;
+      const final = await Promise.race([
+        completion,
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`supervisor completion did not settle (iteration ${i})`)), 1_000);
+        })
+      ]);
       assert.equal(final.state, RUN_STATES.CANCELLED);
     }
   });

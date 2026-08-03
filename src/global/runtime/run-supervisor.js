@@ -36,6 +36,17 @@ async function shouldPreserveCancelledState(homeDir, runId) {
   return null;
 }
 
+let afterMissedCancelCheckForTests = null;
+
+/** Test seam: runs after a cancel-preserve miss, before writing FAILED/COMPLETED. */
+export function setAfterMissedCancelCheckForTests(fn) {
+  afterMissedCancelCheckForTests = fn;
+}
+
+export function resetAfterMissedCancelCheckForTests() {
+  afterMissedCancelCheckForTests = null;
+}
+
 const workerPath = fileURLToPath(new URL("./run-supervisor-worker.js", import.meta.url));
 
 export function spawnDetachedSupervisor({ homeDir, runId, spawnImpl = spawn }) {
@@ -182,34 +193,73 @@ export async function supervisePreparedRun({
   };
 
   const completion = new Promise((resolve, reject) => {
+    let settled = false;
+    const settleResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const settleReject = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    const settleCancelled = async () => {
+      cancelledRuns?.delete(runId);
+      try {
+        const fresh = await readRunState(homeDir, runId);
+        if (fresh?.state === RUN_STATES.CANCELLED) {
+          settleResolve(fresh);
+          return;
+        }
+        settleResolve({ ...(fresh ?? metadata), state: RUN_STATES.CANCELLED });
+      } catch {
+        settleResolve({ ...metadata, state: RUN_STATES.CANCELLED });
+      }
+    };
+
+    const preferCancelled = async () => {
+      const preserved = await shouldPreserveCancelledState(homeDir, runId);
+      if (preserved || cancelledRuns?.has(runId)) {
+        await settleCancelled();
+        return true;
+      }
+      return false;
+    };
+
     child.on("error", async (error) => {
       if (timeoutHandle) clearTimeout(timeoutHandle);
       activeProcesses?.delete(runId);
 
-      await serializeStateWrite(async () => {
-        const preserved = await shouldPreserveCancelledState(homeDir, runId);
-        if (preserved) {
-          cancelledRuns?.delete(runId);
-          resolve(preserved.state === RUN_STATES.CANCELLED
-            ? preserved
-            : { ...preserved, state: RUN_STATES.CANCELLED });
-          return;
-        }
+      try {
+        await serializeStateWrite(async () => {
+          if (await preferCancelled()) return;
 
-        metadata = transitionRunState(metadata, RUN_STATES.FAILED, {
-          error: error.message
+          if (afterMissedCancelCheckForTests) {
+            await afterMissedCancelCheckForTests({ runId, homeDir, phase: "error" });
+          }
+          if (await preferCancelled()) return;
+
+          metadata = transitionRunState(metadata, RUN_STATES.FAILED, {
+            error: error.message
+          });
+          await writeRunState(homeDir, metadata);
+          await appendRunEvent(homeDir, createRunEvent({
+            runId,
+            type: "run.failed",
+            data: { error: error.message }
+          }), { captureTranscript: shouldPersistTranscript(captureTranscript) });
         });
-        await writeRunState(homeDir, metadata);
-        await appendRunEvent(homeDir, createRunEvent({
-          runId,
-          type: "run.failed",
-          data: { error: error.message }
-        }), { captureTranscript: shouldPersistTranscript(captureTranscript) });
-      });
-      reject(error);
+        if (!settled) settleReject(error);
+      } catch (handlerError) {
+        settleReject(handlerError);
+      }
     });
 
     child.on("close", async (exitCode) => {
+      if (settled) return;
+
       try {
         if (timeoutHandle) clearTimeout(timeoutHandle);
         activeProcesses?.delete(runId);
@@ -230,24 +280,14 @@ export async function supervisePreparedRun({
         await stateWrites;
 
         await serializeStateWrite(async () => {
-          const preserved = await shouldPreserveCancelledState(homeDir, runId);
-          if (preserved) {
-            cancelledRuns?.delete(runId);
-            resolve(preserved.state === RUN_STATES.CANCELLED
-              ? preserved
-              : { ...preserved, state: RUN_STATES.CANCELLED });
-            return;
-          }
+          if (settled) return;
+          if (await preferCancelled()) return;
 
-          if (cancelledRuns?.has(runId)) {
-            cancelledRuns.delete(runId);
-            try {
-              resolve(await readRunState(homeDir, runId));
-            } catch {
-              resolve({ ...metadata, state: RUN_STATES.CANCELLED });
-            }
-            return;
+          if (afterMissedCancelCheckForTests) {
+            await afterMissedCancelCheckForTests({ runId, homeDir, phase: "close", exitCode });
           }
+          if (settled) return;
+          if (await preferCancelled()) return;
 
           const failed = exitCode !== 0;
           const nextState = failed ? RUN_STATES.FAILED : RUN_STATES.COMPLETED;
@@ -264,10 +304,10 @@ export async function supervisePreparedRun({
           if (!failed && strategy === RUN_STRATEGIES.ORCHESTRATED) {
             await finalizeOrchState(runId, { homeDir, recovered: false });
           }
-          resolve(metadata);
+          settleResolve(metadata);
         });
       } catch (error) {
-        reject(error);
+        settleReject(error);
       }
     });
   });
