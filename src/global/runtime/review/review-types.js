@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const REVIEW_SCOPE_MODES = Object.freeze({
-  WORKING_TREE: "working-tree", BASE: "base", COMMIT: "commit"
+  WORKING_TREE: "working-tree", BASE: "base", COMMIT: "commit", STAGED: "staged"
 });
 export const REVIEW_SEVERITIES = Object.freeze({ HIGH: "high", MEDIUM: "medium", LOW: "low" });
 export const REVIEW_STATES = Object.freeze({
@@ -30,12 +30,14 @@ export class ReviewSnapshotError extends Error {
   }
 }
 
-export function resolveReviewScopeMode({ base = null, commit = null } = {}) {
-  if (base && commit) {
-    throw new ReviewSnapshotError("--base and --commit are mutually exclusive.", {
+export function resolveReviewScopeMode({ base = null, commit = null, staged = false } = {}) {
+  const selected = [Boolean(base), Boolean(commit), Boolean(staged)].filter(Boolean).length;
+  if (selected > 1) {
+    throw new ReviewSnapshotError("--base, --commit, and --staged are mutually exclusive.", {
       code: REVIEW_SNAPSHOT_ERROR_CODES.INVALID_SCOPE
     });
   }
+  if (staged) return REVIEW_SCOPE_MODES.STAGED;
   if (base) return REVIEW_SCOPE_MODES.BASE;
   if (commit) return REVIEW_SCOPE_MODES.COMMIT;
   return REVIEW_SCOPE_MODES.WORKING_TREE;

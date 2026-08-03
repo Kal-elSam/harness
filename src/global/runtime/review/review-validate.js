@@ -32,7 +32,10 @@ const RECEIPT_SHAPE = Object.freeze({
     commit: "string?",
     fingerprint: "string",
     totals: { fileCount: "number", changedLines: "number", diffBytes: "number" },
-    files: [{ path: "string", sourcePath: "string?", status: "string", hash: "string", changedLines: "number" }],
+    files: [{
+      path: "string", sourcePath: "string?", status: "string", hash: "string",
+      mode: "string?", changedLines: "number"
+    }],
     excluded: [{ path: "string", reason: "string" }]
   },
   findings: [{
@@ -173,6 +176,7 @@ function assertMatchesShape(value, shape, path) {
   }
   for (const [key, childShape] of Object.entries(shape)) {
     if (!(key in body)) {
+      if (typeof childShape === "string" && isOptionalScalar(childShape)) continue;
       throw new ReviewValidationError(`Missing field "${key}" at ${path}.`, {
         code: REVIEW_VALIDATION_ERROR_CODES.INVALID_OUTPUT, details: { path, key }
       });

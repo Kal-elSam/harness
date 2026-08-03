@@ -35,16 +35,20 @@ function snapshotProvenance(snapshot) {
     commit: snapshot.commit ?? null,
     fingerprint: snapshot.fingerprint,
     totals: snapshot.totals,
-    files: (snapshot.files ?? []).map((f) => ({
-      path: f.path,
-      sourcePath: f.sourcePath ?? null,
-      status: f.status, hash: f.hash, changedLines: f.changedLines
-    })),
+    files: (snapshot.files ?? []).map((f) => {
+      const entry = {
+        path: f.path,
+        sourcePath: f.sourcePath ?? null,
+        status: f.status, hash: f.hash, changedLines: f.changedLines
+      };
+      if (f.mode != null) entry.mode = f.mode;
+      return entry;
+    }),
     excluded: (snapshot.excluded ?? []).map((e) => ({ path: e.path, reason: e.reason }))
   };
 }
 
-/** Build a v1 receipt: findings + provenance only (no prompt/diff/transcript/raw). */
+/** Build a secret-free receipt (v2 for staged candidates; v1 otherwise). */
 export function buildReviewReceipt({
   reviewId,
   agentId,
@@ -59,8 +63,9 @@ export function buildReviewReceipt({
   createdAt = null
 } = {}) {
   assertSafeReviewId(reviewId);
+  const version = snapshot?.mode === "staged" ? 2 : 1;
   const receipt = {
-    version: 1,
+    version,
     reviewId,
     agentId,
     model,

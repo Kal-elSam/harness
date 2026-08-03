@@ -101,6 +101,8 @@ export async function buildScopedReviewPatch(snapshot, { execFileImpl = defaultE
     raw = await gitDiff(
       cwd, ["show", "--format=", "--patch", snapshot.commit, "--", ...admitted], execFileImpl
     );
+  } else if (snapshot.mode === REVIEW_SCOPE_MODES.STAGED) {
+    raw = await gitDiff(cwd, ["diff", "--cached", "--", ...admitted], execFileImpl);
   } else {
     raw = [
       await gitDiff(cwd, ["diff", "--", ...admitted], execFileImpl),
