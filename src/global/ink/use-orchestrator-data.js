@@ -41,6 +41,8 @@ import {
 import { listReviewReceipts } from "../runtime/review/review-receipts.js";
 import { assertReceiptSecretFree } from "../runtime/review/review-validate.js";
 import { listAlerts, resolveAlert, dismissAlert } from "../runtime/alerts/alert-store.js";
+import { buildCompanionSnapshot } from "../observability/build-companion-snapshot.js";
+import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
 
 export function useOrchestratorData({
   homeDir,
@@ -56,6 +58,7 @@ export function useOrchestratorData({
   const [dashboard, setDashboard] = useState(null);
   const [diagnostics, setDiagnostics] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
+  const [companion, setCompanion] = useState(null);
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedEvents, setSelectedEvents] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -78,7 +81,18 @@ export function useOrchestratorData({
     cliVersion,
     buildDashboard: buildRuntimeDashboardData,
     buildDiagnostics: buildReadOnlyDiagnostics,
-    buildSnapshot: buildControlPlaneSnapshot
+    buildSnapshot: buildControlPlaneSnapshot,
+    buildCompanion: async ({ dashboard, snapshot: snap }) => buildCompanionSnapshot({
+      controlPlaneHealth: snap?.health ?? null,
+      runs: dashboard?.recentRuns ?? [],
+      inspectEngram: (ctx) => inspectEngramIntegration({
+        env: ctx?.env ?? process.env,
+        homeDir: ctx?.homeDir ?? homeDir
+      }),
+      observabilityContext: { cwd: workspaceRoot, env: process.env },
+      loadReviews: async () => listReviewReceipts({ homeDir, limit: 20 }),
+      loadAlerts: async () => listAlerts({ homeDir, limit: 50 })
+    })
   })), [homeDir, workspaceRoot, packageName, packageRoot, cliVersion]);
 
   const reload = async ({ showLoading = false, asRetry = false } = {}) => {
@@ -98,6 +112,7 @@ export function useOrchestratorData({
     setDashboard(outcome.result.dashboard);
     setDiagnostics(outcome.result.diagnostics);
     setSnapshot(outcome.result.snapshot);
+    setCompanion(outcome.result.companion ?? null);
     try {
       setAlerts(await listAlerts({ homeDir, limit: 50 }));
     } catch {
@@ -427,6 +442,7 @@ export function useOrchestratorData({
     dashboard,
     diagnostics,
     snapshot,
+    companion,
     selectedRun,
     setSelectedRun,
     selectedEvents,

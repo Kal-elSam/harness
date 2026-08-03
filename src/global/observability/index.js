@@ -26,6 +26,15 @@ export {
   resolveGraphifyBinaryPath, probeGraphify, createGraphifyProbe
 } from "./graphify-probe.js";
 export { runGraphifyOp, runGraphifyCli } from "./graphify-ops.js";
+export {
+  SOFT_LINK_WINDOW_MS,
+  parseCompanionTimestamp,
+  resolveRunTimestamp,
+  resolveReviewTimestamp,
+  softLinkReviewToRun,
+  summarizeCompanionProbes,
+  buildCompanionSnapshot
+} from "./build-companion-snapshot.js";
 
 export function ensureObservabilityProbesRegistered() {
   if (!getObservabilityProbe("gentle")) registerObservabilityProbe(createGentleProbe());

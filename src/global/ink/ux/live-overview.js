@@ -55,6 +55,10 @@ export function buildOverviewDetails(model = {}) {
   if (typeof model.alerts?.count === "number") {
     lines.push(`Open alerts · ${model.alerts.count}`);
   }
+  const secondary = model.companionNextAction;
+  if (secondary?.title && secondary.kind !== "idle") {
+    lines.push(`Companion · ${secondary.title}`);
+  }
   if (lines.length === 0) return ["No extra evidence beyond the metrics above."];
   return lines;
 }
@@ -62,10 +66,15 @@ export function buildOverviewDetails(model = {}) {
 /**
  * Pure adapter: buildControlCenterModel → semantic overview props.
  * Callout / CTA / metrics never include paths or IDs.
+ * Primary action is always governance CTA — companion is secondary metrics/details only.
  */
 export function adaptControlCenterToOverview(model = {}) {
   const status = model.status ?? model.health ?? {};
   const next = model.nextAction ?? model.cta ?? {};
+  const companionMetrics = (model.companion?.lines ?? []).map((label, i) => ({
+    id: `companion-${i}`,
+    label
+  }));
   return {
     title: model.title ?? "Overview",
     callout: {
@@ -81,7 +90,8 @@ export function adaptControlCenterToOverview(model = {}) {
     metrics: [
       { id: "activity", label: `Activity · ${model.activity?.headline ?? "Idle"}` },
       { id: "alerts", label: `Alerts · ${model.alerts?.headline ?? "Alert data unavailable"}` },
-      { id: "tokens", label: `Tokens · ${model.tokens?.headline ?? "Data unavailable"}` }
+      { id: "tokens", label: `Tokens · ${model.tokens?.headline ?? "Data unavailable"}` },
+      ...companionMetrics
     ],
     details: buildOverviewDetails(model)
   };
