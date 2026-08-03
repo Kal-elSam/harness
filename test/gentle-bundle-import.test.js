@@ -94,7 +94,9 @@ test("import CLI parse + consent assertion + exact argv + mutation outcomes", as
   const secret = "token=sk-live-SECRET path=/Users/private/.ssh/id_rsa";
   for (const provider of [
     { ok: false, status: 3, stdout: "", stderr: secret, error: null, timedOut: false },
-    { ok: false, status: null, stdout: "", stderr: secret, error: null, timedOut: true }
+    { ok: false, status: null, stdout: "", stderr: secret, error: null, timedOut: true },
+    { ok: true, status: null, stdout: "", stderr: secret, error: null, timedOut: false },
+    { ok: true, status: 0, stdout: "", stderr: secret, error: null, timedOut: true }
   ]) {
     const failed = await importGentleReviewBundle({
       bundlePath: "/tmp/in.bundle", cwd: "/repo", confirmImport: true,
@@ -106,8 +108,19 @@ test("import CLI parse + consent assertion + exact argv + mutation outcomes", as
     assert.ok(!("providerStderr" in failed));
     assert.equal(JSON.stringify(failed).includes("SECRET"), false);
     if (provider.timedOut) assert.ok(failed.diagnostics.includes("timed_out"));
-    else assert.ok(failed.diagnostics.includes("status=3"));
+    else if (provider.status != null) assert.ok(failed.diagnostics.includes(`status=${provider.status}`));
+    else assert.ok(failed.diagnostics.includes("status_unknown"));
   }
+
+  const threw = await importGentleReviewBundle({
+    bundlePath: "/tmp/in.bundle", cwd: "/repo", confirmImport: true,
+    probeGentle: async () => availableProbe,
+    probeCommand: () => { throw new Error(`spawn boom ${secret}`); }
+  });
+  assert.equal(threw.code, "mutation_outcome_unknown");
+  assert.equal(threw.mutationOutcome, "unknown");
+  assert.ok(threw.diagnostics.includes("spawn_interrupted"));
+  assert.equal(JSON.stringify(threw).includes("SECRET"), false);
 
   const prev = process.exitCode;
   process.exitCode = undefined;

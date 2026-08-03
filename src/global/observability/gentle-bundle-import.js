@@ -78,22 +78,31 @@ export async function importGentleReviewBundle({
     ], { bundlePath, cwd, permissionAuthority });
   }
 
-  const provider = probeCommand(binary, [
-    "review-bundle-import", "--cwd", cwd, "--bundle", bundlePath
-  ], { cwd, env, timeoutMs: IMPORT_TIMEOUT_MS });
+  let provider;
+  try {
+    provider = probeCommand(binary, [
+      "review-bundle-import", "--cwd", cwd, "--bundle", bundlePath
+    ], { cwd, env, timeoutMs: IMPORT_TIMEOUT_MS });
+  } catch {
+    return fail("mutation_outcome_unknown", ["provider_error", "spawn_interrupted"], {
+      mutationOutcome: "unknown",
+      bundlePath, cwd, binary, permissionAuthority
+    });
+  }
 
-  if (!provider.ok) {
+  const timedOut = Boolean(provider?.timedOut);
+  const status = provider?.status ?? null;
+  const committed = provider?.ok === true && status === 0 && timedOut !== true;
+  if (!committed) {
     const diagnostics = ["provider_error"];
-    if (provider.timedOut) diagnostics.push("timed_out");
-    if (provider.status != null) diagnostics.push(`status=${provider.status}`);
+    if (timedOut) diagnostics.push("timed_out");
+    if (status != null) diagnostics.push(`status=${status}`);
+    else diagnostics.push("status_unknown");
     return fail("mutation_outcome_unknown", diagnostics, {
       mutationOutcome: "unknown",
-      bundlePath,
-      cwd,
-      binary,
-      permissionAuthority,
-      providerStatus: provider.status ?? null,
-      timedOut: Boolean(provider.timedOut)
+      bundlePath, cwd, binary, permissionAuthority,
+      providerStatus: status,
+      timedOut
     });
   }
 
@@ -106,7 +115,7 @@ export async function importGentleReviewBundle({
     cwd,
     binary,
     diagnostics: [],
-    providerStatus: provider.status,
+    providerStatus: status,
     timedOut: false,
     permissionAuthority
   };
