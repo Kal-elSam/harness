@@ -13,6 +13,7 @@ import {
 import { resolveExecutionAdapter } from "./execution-adapters/index.js";
 import { resolveProfileAgents } from "../profile.js";
 import { resolveRuntimeOptions } from "./run-profile.js";
+import { authorizeRunPermissions } from "./run-permissions.js";
 import { cleanupStaleHandoffs, deleteRunHandoff, writeRunHandoff } from "./run-handoff.js";
 import { isRunAlive } from "./run-liveness.js";
 import { readSupervisorLock, writeSupervisorLock } from "./run-supervisor-lock.js";
@@ -93,6 +94,9 @@ async function prepareRun({
   cwd,
   model = null,
   permissions = [],
+  allowUnsafePermissions = false,
+  permissionSource = "cli",
+  permissionConsentType = null,
   captureTranscript = false,
   cliVersion,
   profile = null,
@@ -113,6 +117,14 @@ async function prepareRun({
     );
   }
 
+  const authorized = authorizeRunPermissions({
+    permissions,
+    agentId,
+    allowUnsafePermissions,
+    source: permissionSource,
+    consentType: permissionConsentType
+  });
+
   if (normalizedStrategy === RUN_STRATEGIES.ORCHESTRATED) {
     await assertManagedMinionExtension(homeDir);
   }
@@ -126,7 +138,8 @@ async function prepareRun({
     model,
     task,
     cwd,
-    permissions,
+    permissions: authorized.permissions,
+    permissionAuthority: authorized.permissionAuthority,
     captureTranscript,
     cliVersion,
     profileSources: profile?.sources ?? null,
@@ -141,7 +154,7 @@ async function prepareRun({
     task,
     cwd,
     model,
-    permissions,
+    permissions: authorized.permissions,
     captureTranscript,
     cliVersion,
     profile: profile?.profile ?? null,
@@ -173,6 +186,9 @@ export async function startRun({
   cwd,
   model = null,
   permissions = [],
+  allowUnsafePermissions = false,
+  permissionSource = "cli",
+  permissionConsentType = null,
   captureTranscript = false,
   cliVersion,
   profile = null,
@@ -190,6 +206,9 @@ export async function startRun({
     cwd,
     model,
     permissions,
+    allowUnsafePermissions,
+    permissionSource,
+    permissionConsentType,
     captureTranscript,
     cliVersion,
     profile,

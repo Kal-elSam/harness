@@ -72,7 +72,8 @@ export default createExecutionAdapter({
     diff: false,
     cancel: true,
     transcript: true,
-    reviewCompatible: true
+    reviewCompatible: true,
+    permissionModes: ["yolo"]
   },
   buildLaunch: buildCodexLaunch,
   parseEventLine: parseCodexEventLine

@@ -58,7 +58,8 @@ export default createExecutionAdapter({
     tokens: true,
     diff: false,
     cancel: true,
-    transcript: true
+    transcript: true,
+    permissionModes: ["force", "yolo"]
   },
   buildLaunch: buildClaudeLaunch,
   parseEventLine: parseClaudeEventLine

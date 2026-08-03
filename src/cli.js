@@ -395,6 +395,7 @@ export function parseArgs(argv) {
     strategy: "direct",
     intelligenceBackend: null,
     permissions: null,
+    allowUnsafePermissions: false,
     captureTranscript: false,
     follow: false,
     wait: true,
@@ -521,6 +522,7 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--backend=")) options.intelligenceBackend = arg.slice("--backend=".length);
     else if (arg === "--permissions") options.permissions = parsePathList(args[++index]);
     else if (arg.startsWith("--permissions=")) options.permissions = parsePathList(arg.slice("--permissions=".length));
+    else if (arg === "--allow-unsafe-permissions") options.allowUnsafePermissions = true;
     else if (arg === "--capture-transcript") options.captureTranscript = true;
     else if (arg === "--follow") options.follow = true;
     else if (arg === "--no-wait") options.wait = false;
@@ -830,7 +832,7 @@ Usage:
   ${cli} --dry-run                      Setup dry-run (scriptable)
   ${cli} --version
   ${cli} shell                          Operations cockpit (TTY)
-  ${cli} run --agent <id> --task "..." [--strategy direct|orchestrated] [--model <name>] [--cwd <dir>] [--permissions force] [--capture-transcript] [--follow] [--no-wait] [--json]
+  ${cli} run --agent <id> --task "..." [--strategy direct|orchestrated] [--model <name>] [--cwd <dir>] [--permissions force|yolo|read-only] [--allow-unsafe-permissions] [--capture-transcript] [--follow] [--no-wait] [--json]
   ${cli} runs list [--json] [--limit <n>] [--active-only]
   ${cli} runs show <runId> [--json] [--limit <n>] [--follow]
   ${cli} runs stop <runId> [--json]
