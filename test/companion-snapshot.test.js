@@ -57,6 +57,23 @@ test("companion fail-soft, isolated provider errors, stale informational", async
   });
   assert.equal(engramFail.ok, true);
   assert.equal(engramFail.engram.status, "error");
+  assert.equal(engramFail.nextSafeAction.kind, "investigate");
+
+  let loadReviewsCalls = 0;
+  const viaLoader = await buildCompanionSnapshot({
+    controlPlaneHealth: CONTROL_PLANE_HEALTH.HEALTHY,
+    buildObservability: async () => ({ probes: [{ id: "gentle", state: "available", evidence: [] }] }),
+    inspectEngram: () => ({ status: "configured", binary: { path: "/bin/engram" } }),
+    runs: [{ runId: "r1", agentId: "codex", updatedAt: mins(-10) }],
+    loadReviews: async () => {
+      loadReviewsCalls += 1;
+      return [{ reviewId: "v1", agentId: "codex", createdAt: mins(0) }];
+    }
+  });
+  assert.equal(loadReviewsCalls, 1);
+  assert.equal(viaLoader.links.length, 1);
+  assert.equal(viaLoader.links[0]?.runId, "r1");
+  assert.equal(viaLoader.links[0]?.displayOnly, true);
 
   const mixed = await buildCompanionSnapshot({
     controlPlaneHealth: CONTROL_PLANE_HEALTH.HEALTHY,

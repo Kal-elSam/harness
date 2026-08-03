@@ -85,7 +85,7 @@ function rankNext({ controlPlaneHealth, signals, engram }) {
   let title = "Companion signals quiet";
   let detail = "No companion follow-up required.";
   if (gentleState === "error" || graphState === "error" || graphStatus === "error"
-    || engramStatus === "conflict" || engramStatus === "unsupported") {
+    || engramStatus === "error" || engramStatus === "conflict" || engramStatus === "unsupported") {
     kind = "investigate";
     title = "Investigate companion diagnostics";
     detail = "Optional tools reported a hard failure; inspect Gentle/Graphify/Engram read-only.";
@@ -124,7 +124,7 @@ function emptyCompanion(error = null) {
 
 /** Fail-soft companion snapshot for Cockpit overlay — never throws. */
 export async function buildCompanionSnapshot({
-  controlPlaneHealth = null, runs = [], reviews = [], alerts = null,
+  controlPlaneHealth = null, runs = [], reviews = null, alerts = null,
   buildObservability = defaultObs, inspectEngram = null,
   ensureRegistered = defaultEnsure, loadReviews = null, loadAlerts = null,
   observabilityContext = {}
@@ -141,9 +141,11 @@ export async function buildCompanionSnapshot({
       catch (err) { engram = { status: "error", binary: null, error: err?.message ?? String(err) }; }
     }
 
-    const reviewList = Array.isArray(reviews) ? reviews
+    const reviewList = Array.isArray(reviews)
+      ? reviews
       : (typeof loadReviews === "function" ? await loadReviews() : []);
-    const alertList = Array.isArray(alerts) ? alerts
+    const alertList = Array.isArray(alerts)
+      ? alerts
       : (typeof loadAlerts === "function" ? await loadAlerts() : null);
     const signals = summarizeCompanionProbes(obs?.probes ?? []);
     const links = [];
