@@ -6,6 +6,7 @@ import {
   isInteractiveTerminal, promptApplyConfirmation
 } from "../../apply-confirmation.js";
 import { exportGentleReviewBundle as defaultExportGentleReviewBundle } from "../../observability/gentle-bundle-export.js";
+import { importGentleReviewBundle as defaultImportGentleReviewBundle } from "../../observability/gentle-bundle-import.js";
 import {
   REVIEW_EXIT_CODES, REVIEW_SEVERITIES,
   assertReceiptSecretFree, assertSafeReviewId,
@@ -211,7 +212,43 @@ export async function runGlobalReviews(options, _packageManifest, deps = {}) {
       }
       return { ...exported, exitCode };
     }
-    throw new Error(`Unknown reviews action "${action}". Use list, show, verify, or export.`);
+    if (action === "import") {
+      if (!options.bundlePath) {
+        throw new Error(
+          `Missing --bundle. Use: ${formatCliCommand("reviews import --bundle <path> --confirm-import")}`
+        );
+      }
+      const imported = await (deps.importGentleReviewBundle ?? defaultImportGentleReviewBundle)({
+        bundlePath: options.bundlePath,
+        cwd: options.cwd ?? process.cwd(),
+        confirmImport: Boolean(options.confirmImport)
+      });
+      const exitCode = imported.ok ? REVIEW_EXIT_CODES.OK : REVIEW_EXIT_CODES.ERROR;
+      process.exitCode = exitCode;
+      if (options.json) {
+        printJson({
+          ok: imported.ok,
+          exitCode,
+          code: imported.code,
+          mutationOutcome: imported.mutationOutcome,
+          bundlePath: imported.bundlePath,
+          cwd: imported.cwd,
+          diagnostics: imported.diagnostics,
+          providerStatus: imported.providerStatus ?? null,
+          timedOut: Boolean(imported.timedOut),
+          permissionAuthority: imported.permissionAuthority ?? null
+        });
+      } else {
+        console.log(commandHeader(`reviews import ${imported.bundlePath ?? options.bundlePath}`));
+        if (imported.ok) console.log("Imported via Gentle AI (provider-owned authority).");
+        else {
+          console.error(`Import failed (${imported.code}; mutation=${imported.mutationOutcome}).`);
+          for (const line of imported.diagnostics ?? []) console.error(`  ${line}`);
+        }
+      }
+      return { ...imported, exitCode };
+    }
+    throw new Error(`Unknown reviews action "${action}". Use list, show, verify, export, or import.`);
   } catch (error) {
     const exitCode = REVIEW_EXIT_CODES.ERROR;
     const message = String(error?.message ?? error);

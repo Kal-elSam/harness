@@ -19,6 +19,7 @@ export {
   resolveGentleBinaryPath
 } from "./gentle-probe.js";
 export { exportGentleReviewBundle, resolveNegotiatedGentleBinary } from "./gentle-bundle-export.js";
+export { importGentleReviewBundle } from "./gentle-bundle-import.js";
 
 export function ensureObservabilityProbesRegistered() {
   if (!getObservabilityProbe("gentle")) registerObservabilityProbe(createGentleProbe());

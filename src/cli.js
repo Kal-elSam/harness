@@ -386,6 +386,7 @@ export function parseArgs(argv) {
     reviewId: null,
     lineage: null,
     reviewsAction: null,
+    confirmImport: false,
     base: null,
     commit: null,
     staged: false,
@@ -523,6 +524,9 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--backend=")) options.intelligenceBackend = arg.slice("--backend=".length);
     else if (arg === "--permissions") options.permissions = parsePathList(args[++index]);
     else if (arg.startsWith("--permissions=")) options.permissions = parsePathList(arg.slice("--permissions=".length));
+    else if (arg === "--bundle") options.bundlePath = resolve(args[++index]);
+    else if (arg.startsWith("--bundle=")) options.bundlePath = resolve(arg.slice("--bundle=".length));
+    else if (arg === "--confirm-import") options.confirmImport = true;
     else if (arg === "--allow-unsafe-permissions") options.allowUnsafePermissions = true;
     else if (arg === "--capture-transcript") options.captureTranscript = true;
     else if (arg === "--follow") options.follow = true;
@@ -549,6 +553,12 @@ export function parseArgs(argv) {
 
   if (command === "run" && !options.task && args.length > 0) {
     options.task = args.join(" ").trim();
+  }
+
+  if (command === "reviews" && options.reviewsAction === "import" && !options.bundlePath) {
+    throw new Error(
+      `Missing --bundle. Use: ${formatCliCommand("reviews import --bundle <path> --confirm-import")}`
+    );
   }
 
   return { command, options, isImplicitCommand: implicitCommand };
@@ -677,8 +687,8 @@ function parseReviewsAction(args, options) {
     options.reviewsAction = "list";
     return;
   }
-  if (!new Set(["list", "show", "verify", "export"]).has(action)) {
-    throw new Error(`Unknown reviews action "${action}". Use list, show, verify, or export.`);
+  if (!new Set(["list", "show", "verify", "export", "import"]).has(action)) {
+    throw new Error(`Unknown reviews action "${action}". Use list, show, verify, export, or import.`);
   }
   args.shift();
   options.reviewsAction = action;
@@ -851,6 +861,7 @@ Usage:
   ${cli} reviews show <reviewId> [--json]
   ${cli} reviews verify <reviewId> --staged [--json]
   ${cli} reviews export <lineage> --out <path> [--json]
+  ${cli} reviews import --bundle <path> --confirm-import [--cwd <dir>] [--json]
   ${cli} orchestrator [--json]          Read-only agent capability diagnostics
   ${cli} intelligence [status|models|context|route|ask] [--json]
   ${cli} intelligence models --backend opencode-go|opencode-zen|opencode
@@ -900,7 +911,7 @@ Commands:
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
   review     Bounded read-only review via Codex or Pi; receipts under ~/.harness/reviews/.
-  reviews    List/show/verify receipts, or export a Gentle portable bundle.
+  reviews    List/show/verify receipts, or Gentle portable export/import.
   monitor    Opt-in anomaly monitor (enable|disable|status|tick). macOS LaunchAgent; notify shell:false.
   orchestrator  Read-only capability registry diagnostics (--json supported).
   intelligence  Harness Engineering layer: backends, context packs, routing, budgets.
