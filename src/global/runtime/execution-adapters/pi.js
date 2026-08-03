@@ -186,7 +186,8 @@ export default createExecutionAdapter({
     diff: false,
     cancel: true,
     transcript: true,
-    reviewCompatible: true
+    reviewCompatible: true,
+    permissionModes: ["read-only"]
   },
   checkAvailability: checkPiAvailability,
   buildLaunch: buildPiLaunch,

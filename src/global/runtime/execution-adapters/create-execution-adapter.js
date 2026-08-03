@@ -1,4 +1,7 @@
 import { isExecutableAvailable } from "../../cli-probe.js";
+import { buildPermissionsArgs } from "../run-permissions.js";
+
+export { buildPermissionsArgs };
 
 export function createExecutionAdapter({
   id,
@@ -76,18 +79,4 @@ export function parseNdjsonLine(line) {
   } catch {
     return null;
   }
-}
-
-export function buildPermissionsArgs(permissions = []) {
-  const normalized = new Set(permissions.map((entry) => String(entry).toLowerCase()));
-
-  if (normalized.has("all") || normalized.has("force")) {
-    return ["--force"];
-  }
-
-  if (normalized.has("yolo") || normalized.has("dangerously-skip-permissions")) {
-    return ["--dangerously-skip-permissions"];
-  }
-
-  return [];
 }

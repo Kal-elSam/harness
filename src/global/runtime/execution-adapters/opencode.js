@@ -31,7 +31,8 @@ export default createExecutionAdapter({
     tokens: false,
     diff: false,
     cancel: true,
-    transcript: false
+    transcript: false,
+    permissionModes: ["force"]
   },
   buildLaunch: buildOpencodeLaunch,
   parseEventLine: null

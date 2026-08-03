@@ -42,6 +42,8 @@ export async function runGlobalRun(options, packageManifest, { startRunImpl = st
     cwd: options.cwd,
     model: options.model ?? runtime.model,
     permissions,
+    allowUnsafePermissions: Boolean(options.allowUnsafePermissions),
+    permissionSource: "cli",
     captureTranscript,
     cliVersion: packageManifest.version,
     profile: profileResolved,

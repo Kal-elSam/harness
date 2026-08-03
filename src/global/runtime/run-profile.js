@@ -1,5 +1,6 @@
 import { resolveProfileAgents } from "../profile.js";
 import { EXECUTION_ADAPTER_IDS } from "./execution-adapters/index.js";
+import { validateDefaultPermissions } from "./run-permissions.js";
 
 export function resolveRuntimeOptions(profileResolved, overrides = {}) {
   const profile = profileResolved?.profile ?? profileResolved ?? {};
@@ -56,6 +57,7 @@ export function validateRuntimeProfile(profile) {
   if (defaultPermissions != null && !Array.isArray(defaultPermissions)) {
     throw new Error("Profile defaultPermissions must be an array.");
   }
+  validateDefaultPermissions(defaultPermissions);
 
   if (
     profile.defaultRuntimeAgent != null
