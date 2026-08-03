@@ -40,6 +40,7 @@ import { runIntelligenceCli } from "./global/intelligence-cli.js";
 import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
+import { runGraphifyCli } from "./global/observability/graphify-ops.js";
 import { normalizeRunStrategy } from "./global/runtime/run-strategy.js";
 import {
   LEGACY_PACKAGE_NAME,
@@ -122,6 +123,9 @@ export async function runCli(argv) {
       return;
     case "monitor":
       await runGlobalMonitor(optionsWithPolicy, packageManifest, { packageRoot });
+      return;
+    case "graphify":
+      await runGraphifyCli(optionsWithPolicy, packageManifest);
       return;
     case "intelligence":
       await runIntelligenceCli(optionsWithPolicy, packageManifest);
@@ -387,6 +391,7 @@ export function parseArgs(argv) {
     lineage: null,
     reviewsAction: null,
     confirmImport: false,
+    graphifyAction: null, graphifyArgs: [], graphifyBudget: null, graphPath: null,
     base: null,
     commit: null,
     staged: false,
@@ -434,6 +439,8 @@ export function parseArgs(argv) {
   if (command === "monitor") {
     parseMonitorAction(args, options);
   }
+
+  if (command === "graphify") parseGraphifyAction(args, options);
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -526,6 +533,10 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--permissions=")) options.permissions = parsePathList(arg.slice("--permissions=".length));
     else if (arg === "--bundle") options.bundlePath = resolve(args[++index]);
     else if (arg.startsWith("--bundle=")) options.bundlePath = resolve(arg.slice("--bundle=".length));
+    else if (arg === "--graph") options.graphPath = resolve(args[++index]);
+    else if (arg.startsWith("--graph=")) options.graphPath = resolve(arg.slice("--graph=".length));
+    else if (arg === "--budget") options.graphifyBudget = requireFlagValue("--budget", args[++index]);
+    else if (arg.startsWith("--budget=")) options.graphifyBudget = requireFlagValue("--budget", arg.slice("--budget=".length));
     else if (arg === "--confirm-import") options.confirmImport = true;
     else if (arg === "--allow-unsafe-permissions") options.allowUnsafePermissions = true;
     else if (arg === "--capture-transcript") options.captureTranscript = true;
@@ -559,6 +570,10 @@ export function parseArgs(argv) {
     throw new Error(
       `Missing --bundle. Use: ${formatCliCommand("reviews import --bundle <path> --confirm-import")}`
     );
+  }
+
+  if (command === "graphify" && !options.graphPath) {
+    throw new Error(`Missing --graph. Use: ${formatCliCommand("graphify <query|path|explain> ... --graph <path>")}`);
   }
 
   return { command, options, isImplicitCommand: implicitCommand };
@@ -738,6 +753,26 @@ function parseIntelligenceAction(args, options) {
   options.intelligenceAction = action;
 }
 
+function parseGraphifyAction(args, options) {
+  const action = args[0];
+  const usage = formatCliCommand("graphify <query|path|explain> ... --graph <path>");
+  if (!action || action.startsWith("-")) throw new Error(`Missing graphify action. Use: ${usage}`);
+  if (!["query", "path", "explain"].includes(action)) {
+    throw new Error(`Unknown graphify action "${action}". Use query, path, or explain.`);
+  }
+  args.shift();
+  options.graphifyAction = action;
+  const positional = [];
+  while (args.length && !String(args[0]).startsWith("-")) positional.push(args.shift());
+  const need = action === "path" ? 2 : 1;
+  if (positional.length < need) {
+    throw new Error(action === "path"
+      ? `Missing arguments. Use: ${formatCliCommand('graphify path "<A>" "<B>" --graph <path>')}`
+      : `Missing argument. Use: ${formatCliCommand(`graphify ${action} "<text>" --graph <path>`)}`);
+  }
+  options.graphifyArgs = positional.slice(0, need);
+}
+
 function parsePathList(value) {
   if (!value) return [];
   return [...new Set(
@@ -782,6 +817,7 @@ function normalizeCommand(command) {
   if (command === "review") return "review";
   if (command === "reviews") return "reviews";
   if (command === "monitor") return "monitor";
+  if (command === "graphify") return "graphify";
   if (command === "intelligence" || command === "intel") return "intelligence";
   if (command === "setup") return "setup";
   if (command === "status") return "status";
@@ -862,6 +898,7 @@ Usage:
   ${cli} reviews verify <reviewId> --staged [--json]
   ${cli} reviews export <lineage> --out <path> [--json]
   ${cli} reviews import --bundle <path> --confirm-import [--cwd <dir>] [--json]
+  ${cli} graphify query|path|explain ... --graph <path> [--budget N] [--json]
   ${cli} orchestrator [--json]          Read-only agent capability diagnostics
   ${cli} intelligence [status|models|context|route|ask] [--json]
   ${cli} intelligence models --backend opencode-go|opencode-zen|opencode

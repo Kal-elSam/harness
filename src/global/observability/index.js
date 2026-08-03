@@ -1,4 +1,5 @@
 import { createGentleProbe } from "./gentle-probe.js";
+import { createGraphifyProbe } from "./graphify-probe.js";
 import { getObservabilityProbe, registerObservabilityProbe } from "./probe-registry.js";
 
 export {
@@ -20,7 +21,13 @@ export {
 } from "./gentle-probe.js";
 export { exportGentleReviewBundle, resolveNegotiatedGentleBinary } from "./gentle-bundle-export.js";
 export { importGentleReviewBundle } from "./gentle-bundle-import.js";
+export {
+  inspectGraphArtifact, assertGraphInsideWorkspace,
+  resolveGraphifyBinaryPath, probeGraphify, createGraphifyProbe
+} from "./graphify-probe.js";
+export { runGraphifyOp, runGraphifyCli } from "./graphify-ops.js";
 
 export function ensureObservabilityProbesRegistered() {
   if (!getObservabilityProbe("gentle")) registerObservabilityProbe(createGentleProbe());
+  if (!getObservabilityProbe("graphify")) registerObservabilityProbe(createGraphifyProbe());
 }
