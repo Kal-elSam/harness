@@ -105,10 +105,10 @@ function fingerprintPayload(s) {
 
 function parseRawDiff(text) {
   return text.split("\n").filter((l) => l.startsWith(":")).map((line) => {
-    const [meta, paths] = line.slice(1).split("\t");
-    const parts = meta.trim().split(/\s+/);
+    const columns = line.slice(1).split("\t");
+    const parts = columns[0].trim().split(/\s+/);
     const [oldMode, newMode, oldHash, newHash, status] = parts;
-    const pathParts = (paths ?? "").split("\t").map(unquotePath);
+    const pathParts = columns.slice(1).map(unquotePath);
     if (pathParts.length >= 2) {
       return {
         oldMode, newMode, oldHash, newHash, status,
@@ -120,6 +120,38 @@ function parseRawDiff(text) {
       sourcePath: null, path: pathParts[0]
     };
   });
+}
+
+async function resolveObjectIdLength(cwd, execFileImpl) {
+  try {
+    const format = (await git(cwd, ["rev-parse", "--show-object-format"], execFileImpl)).trim();
+    return format === "sha256" ? 64 : 40;
+  } catch {
+    return 40;
+  }
+}
+
+function assertFullObjectId(hash, expectedLength, { path, role = "blob" } = {}) {
+  if (hash == null || hash === "" || /^0+$/.test(hash)) {
+    throw new ReviewSnapshotError(
+      `Missing ${role} object ID for staged path "${path}".`,
+      {
+        code: REVIEW_SNAPSHOT_ERROR_CODES.TRUNCATED_OBJECT_ID,
+        details: { path, role, hash, expectedLength }
+      }
+    );
+  }
+  if (!new RegExp(`^[a-f0-9]{${expectedLength}}$`, "i").test(hash)) {
+    throw new ReviewSnapshotError(
+      `Truncated or invalid ${role} object ID for "${path}" `
+      + `(got length ${String(hash).length}, expected ${expectedLength}).`,
+      {
+        code: REVIEW_SNAPSHOT_ERROR_CODES.TRUNCATED_OBJECT_ID,
+        details: { path, role, hash, expectedLength }
+      }
+    );
+  }
+  return hash.toLowerCase();
 }
 
 async function blobIsBinary(cwd, blobHash, execFileImpl) {
@@ -146,6 +178,7 @@ export async function resolveReviewSnapshot({
   let numstat = new Map();
   let diffBytes = 0;
   let rawIdentity = new Map();
+  let stagedObjectIdLength = null;
 
   if (mode === REVIEW_SCOPE_MODES.WORKING_TREE) {
     rawEntries = parsePorcelain(await git(cwd, ["status", "--porcelain=v1", "-uall"], execFileImpl));
@@ -156,10 +189,14 @@ export async function resolveReviewSnapshot({
     diffBytes = Buffer.byteLength(await git(cwd, ["diff"], execFileImpl), "utf8")
       + Buffer.byteLength(await git(cwd, ["diff", "--cached"], execFileImpl), "utf8");
   } else if (mode === REVIEW_SCOPE_MODES.STAGED) {
+    stagedObjectIdLength = await resolveObjectIdLength(cwd, execFileImpl);
     rawEntries = parseNameStatus(await git(cwd, ["diff", "--cached", "--name-status"], execFileImpl));
     numstat = parseNumstat(await git(cwd, ["diff", "--cached", "--numstat"], execFileImpl));
     diffBytes = Buffer.byteLength(await git(cwd, ["diff", "--cached"], execFileImpl), "utf8");
-    for (const entry of parseRawDiff(await git(cwd, ["diff", "--cached", "--raw"], execFileImpl))) {
+    const rawText = await git(cwd, [
+      "-c", "core.abbrev=no", "diff", "--cached", "--raw", "--full-index"
+    ], execFileImpl);
+    for (const entry of parseRawDiff(rawText)) {
       rawIdentity.set(entry.path, entry);
     }
   } else if (mode === REVIEW_SCOPE_MODES.BASE) {
@@ -215,17 +252,24 @@ export async function resolveReviewSnapshot({
       if (entry.status === "??") diffBytes += bytes;
     } else if (mode === REVIEW_SCOPE_MODES.STAGED) {
       const identity = rawIdentity.get(path);
-      const blobHash = deleted
-        ? (identity?.oldHash ?? null)
-        : (identity?.newHash ?? null);
-      modeBits = deleted ? (identity?.oldMode ?? null) : (identity?.newMode ?? null);
-      if (modeBits === "000000") modeBits = identity?.oldMode ?? null;
-      if (blobHash && !/^0+$/.test(blobHash) && await blobIsBinary(cwd, blobHash, execFileImpl)) {
+      if (!identity) {
+        throw new ReviewSnapshotError(
+          `Missing staged raw identity for "${path}".`,
+          {
+            code: REVIEW_SNAPSHOT_ERROR_CODES.TRUNCATED_OBJECT_ID,
+            details: { path }
+          }
+        );
+      }
+      const blobHash = deleted ? identity.oldHash : identity.newHash;
+      modeBits = deleted ? identity.oldMode : identity.newMode;
+      if (modeBits === "000000") modeBits = identity.oldMode;
+      const fullHash = assertFullObjectId(blobHash, stagedObjectIdLength, { path });
+      if (await blobIsBinary(cwd, fullHash, execFileImpl)) {
         excluded.push({ path, reason: "binary" });
         continue;
       }
-      if (blobHash && !/^0+$/.test(blobHash)) hash = blobHash;
-      else hash = createHash("sha256").update(`${entry.status}:${path}`).digest("hex");
+      hash = fullHash;
     } else {
       const blobRef = mode === REVIEW_SCOPE_MODES.COMMIT ? `${commit}:${path}` : `HEAD:${path}`;
       try { hash = (await git(cwd, ["rev-parse", blobRef], execFileImpl)).trim(); }
