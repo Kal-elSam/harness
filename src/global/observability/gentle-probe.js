@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import {
   isExecutableAvailable,
   parseVersionFromOutput,
@@ -22,6 +23,21 @@ function result(partial) {
     id: "gentle", version: null, contractCompatible: null,
     diagnostics: [], evidence: [], error: null, ...partial
   }, "gentle");
+}
+
+function defaultWhichAbsolute(command, env) {
+  if (!isExecutableAvailable(command, { env })) return "";
+  const which = defaultProbeCommand("which", [command], { env, timeoutMs: 3000 });
+  const path = String(which.stdout ?? "").trim().split(/\r?\n/)[0] ?? "";
+  return isAbsolute(path) ? path : "";
+}
+
+/** Resolve absolute Gentle binary; never return a bare command name. */
+export function resolveGentleBinaryPath(command = "gentle-ai", env = process.env, {
+  whichCommand = defaultWhichAbsolute
+} = {}) {
+  const resolved = whichCommand(command, env) || null;
+  return resolved && isAbsolute(resolved) ? resolved : null;
 }
 
 /** Package version is evidence only — never the compatibility gate. */
@@ -74,14 +90,16 @@ export function evaluateGentleCapabilities(payload) {
 export async function probeGentle({
   env = process.env,
   cwd = process.cwd(),
-  whichCommand = (cmd, e) => (isExecutableAvailable(cmd, { env: e }) ? cmd : ""),
+  whichCommand = defaultWhichAbsolute,
   probeCommand = defaultProbeCommand
 } = {}) {
-  const path = whichCommand("gentle-ai", env) || null;
+  const path = resolveGentleBinaryPath("gentle-ai", env, { whichCommand });
   if (!path) {
     return result({
       state: "missing",
-      diagnostics: ["gentle-ai not found in PATH. Install Gentle AI separately, then re-run the probe."],
+      diagnostics: [
+        "gentle-ai absolute binary not resolved. Install Gentle AI separately, then re-run the probe."
+      ],
       evidence: [{ kind: "binary", path: null }]
     });
   }
@@ -99,7 +117,7 @@ export async function probeGentle({
   if (!capsResult.ok && !String(capsResult.stdout ?? "").trim()) {
     return result({
       state: "error", version, evidence,
-      diagnostics: [capsResult.stderr || capsResult.error || "gentle-ai review capabilities failed"],
+      diagnostics: ["gentle-ai review capabilities failed"],
       error: capsResult.error ?? `exit ${capsResult.status}`
     });
   }

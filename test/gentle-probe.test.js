@@ -61,6 +61,7 @@ test("probeGentle missing / available / error", async () => {
   assert.equal(available.state, "available");
   assert.equal(available.version, "2.2.4");
   assert.equal(available.contractCompatible, true);
+  assert.equal(available.evidence.find((e) => e.kind === "binary").path, "/usr/bin/gentle-ai");
 
   assert.equal((await probeGentle({
     whichCommand: () => "/usr/bin/gentle-ai",

@@ -198,7 +198,8 @@ export async function runGlobalReviews(options, _packageManifest, deps = {}) {
           lineage: exported.lineage,
           outPath: exported.outPath,
           diagnostics: exported.diagnostics,
-          providerStatus: exported.providerStatus ?? null
+          providerStatus: exported.providerStatus ?? null,
+          timedOut: Boolean(exported.timedOut)
         });
       } else {
         console.log(commandHeader(`reviews export ${exported.lineage ?? options.lineage}`));

@@ -15,10 +15,10 @@ export {
 export { buildObservabilitySnapshot } from "./build-observability-snapshot.js";
 export {
   SUPPORTED_PROTOCOL, SUPPORTED_SCHEMA, SUPPORTED_CONTRACT,
-  SUPPORTED_MANDATORY_FEATURES, evaluateGentleCapabilities, probeGentle, createGentleProbe
+  SUPPORTED_MANDATORY_FEATURES, evaluateGentleCapabilities, probeGentle, createGentleProbe,
+  resolveGentleBinaryPath
 } from "./gentle-probe.js";
-
-export { exportGentleReviewBundle } from "./gentle-bundle-export.js";
+export { exportGentleReviewBundle, resolveNegotiatedGentleBinary } from "./gentle-bundle-export.js";
 
 export function ensureObservabilityProbesRegistered() {
   if (!getObservabilityProbe("gentle")) registerObservabilityProbe(createGentleProbe());
