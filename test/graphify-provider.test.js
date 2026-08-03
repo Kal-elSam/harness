@@ -5,11 +5,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "../src/cli.js";
 import {
-  assertGraphInsideWorkspace, inspectGraphArtifact
+  assertGraphInsideWorkspace, inspectGraphArtifact, probeGraphify
 } from "../src/global/observability/graphify-probe.js";
 import { runGraphifyOp } from "../src/global/observability/graphify-ops.js";
 
 const okJson = () => JSON.stringify({ nodes: [{ id: "a" }], links: [] });
+
+test("graphify probe fail-soft: which throw and graph IO error", async () => {
+  const threw = await probeGraphify({ whichCommand: () => { throw new Error("which boom"); } });
+  assert.equal(threw.state, "error");
+  assert.match(String(threw.error), /which boom/);
+  const io = await probeGraphify({
+    whichCommand: () => "/usr/bin/graphify",
+    inspectGraph: () => ({ status: "error", path: "/ws/g.json", error: "EACCES", diagnostics: ["read_error"] })
+  });
+  assert.equal(io.state === "error" && io.error === "EACCES", true);
+  assert.equal(io.evidence.find((e) => e.kind === "graph")?.status, "error");
+  assert.equal(io.evidence.find((e) => e.kind === "binary")?.path, "/usr/bin/graphify");
+});
 
 test("graphify inspect, containment, stale ops, opaque stdout", async () => {
   const root = await mkdtemp(join(tmpdir(), "kairo-g4-"));
@@ -21,7 +34,6 @@ test("graphify inspect, containment, stale ops, opaque stdout", async () => {
   const rp = (p) => p;
   const rf = (p) => String(p).endsWith("GRAPH_REPORT.md") ? "Built from commit: `4fba5fe`\n" : okJson();
   const head = "01099efaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
   assert.equal(inspectGraphArtifact("/x", {
     readFile: () => { const e = new Error("n"); e.code = "ENOENT"; throw e; },
     realpath: () => { const e = new Error("n"); e.code = "ENOENT"; throw e; }
@@ -48,9 +60,7 @@ test("graphify inspect, containment, stale ops, opaque stdout", async () => {
       return { ok: true, status: 0, stdout: "opaque", stderr: "token=SECRET", timedOut: false };
     }
   });
-  assert.equal(ok.ok, true);
-  assert.equal(ok.graphStatus, "stale");
-  assert.equal(ok.text, "opaque");
+  assert.equal(ok.ok && ok.graphStatus === "stale" && ok.text === "opaque", true);
   assert.deepEqual(inspected, [graphPath]);
   assert.deepEqual(seen, ["query", "how?", "--budget", "100", "--graph", graphPath]);
   assert.equal(JSON.stringify(ok).includes("SECRET"), false);

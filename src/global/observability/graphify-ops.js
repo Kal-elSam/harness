@@ -18,14 +18,11 @@ function fail(code, diagnostics, extra = {}) {
     op: null, graphPath: null, graphStatus: null, binary: null, ...extra
   };
 }
-
 function clampBudget(raw) {
   if (raw == null || raw === "") return DEFAULT_QUERY_BUDGET;
   const n = Number(raw);
   return Number.isInteger(n) && n >= 1 && n <= MAX_QUERY_BUDGET ? n : null;
 }
-
-/** Read-only transport; re-inspects the exact --graph realpath before spawn. */
 export async function runGraphifyOp({
   op, args = [], graphPath, cwd = process.cwd(), workspaceRoot = cwd,
   env = process.env, budget = DEFAULT_QUERY_BUDGET, whichCommand,
@@ -57,14 +54,10 @@ export async function runGraphifyOp({
   }
 
   const artifact = inspectGraph(contained.path, { cwd, headSha });
-  if (artifact.status === "missing" || artifact.status === "malformed") {
-    return fail("graph_unavailable", artifact.diagnostics?.length ? artifact.diagnostics : [`graph ${artifact.status}`], {
+  if (artifact.status === "missing" || artifact.status === "malformed" || artifact.status === "error") {
+    const code = artifact.status === "error" ? "graphify_error" : "graph_unavailable";
+    return fail(code, artifact.diagnostics?.length ? artifact.diagnostics : [`graph ${artifact.status}`], {
       op, graphPath: artifact.path, graphStatus: artifact.status, binary
-    });
-  }
-  if (artifact.status === "error") {
-    return fail("graphify_error", artifact.diagnostics?.length ? artifact.diagnostics : ["graph inspect error"], {
-      op, graphPath: artifact.path, graphStatus: "error", binary
     });
   }
 
@@ -118,9 +111,8 @@ export async function runGraphifyCli(options, _pkg, deps = {}) {
         truncated: result.truncated, diagnostics: result.diagnostics,
         providerStatus: result.providerStatus, timedOut: result.timedOut
       });
-    } else if (result.ok) {
-      console.log(`${commandHeader(`graphify ${options.graphifyAction}`)}\n${result.text ?? ""}`);
-    } else {
+    } else if (result.ok) console.log(`${commandHeader(`graphify ${options.graphifyAction}`)}\n${result.text ?? ""}`);
+    else {
       console.error(`graphify ${options.graphifyAction} failed (${result.code}).`);
       for (const line of result.diagnostics ?? []) console.error(`  ${line}`);
     }

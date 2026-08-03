@@ -95,24 +95,27 @@ export async function probeGraphify({
   env = process.env, cwd = process.cwd(), whichCommand = defaultWhichAbsolute,
   inspectGraph = inspectGraphArtifact, headSha = null
 } = {}) {
-  const path = resolveGraphifyBinaryPath("graphify", env, { whichCommand });
-  if (!path) {
-    return normalizeProbeResult({
-      id: "graphify", state: "missing", diagnostics: ["graphify absolute binary not resolved."],
-      evidence: [{ kind: "binary", path: null }]
-    }, "graphify");
-  }
+  let path = null;
   try {
+    path = resolveGraphifyBinaryPath("graphify", env, { whichCommand });
+    if (!path) {
+      return normalizeProbeResult({
+        id: "graphify", state: "missing", diagnostics: ["graphify absolute binary not resolved."],
+        evidence: [{ kind: "binary", path: null }]
+      }, "graphify");
+    }
     const graph = inspectGraph(join(cwd, "graphify-out", "graph.json"), { cwd, headSha });
+    const state = graph.status === "error" ? "error" : "available";
     return normalizeProbeResult({
-      id: "graphify", state: "available", diagnostics: [...(graph.diagnostics ?? [])],
+      id: "graphify", state, diagnostics: [...(graph.diagnostics ?? [])],
       evidence: [{ kind: "binary", path }, { kind: "graph", path: graph.path, status: graph.status }],
       error: graph.status === "error" ? graph.error : null
     }, "graphify");
   } catch (err) {
     return normalizeProbeResult({
       id: "graphify", state: "error", evidence: [{ kind: "binary", path }],
-      diagnostics: ["graph inspect failed"], error: err?.message ?? String(err)
+      diagnostics: [path ? "graph inspect failed" : "graphify binary resolve failed"],
+      error: err?.message ?? String(err)
     }, "graphify");
   }
 }
