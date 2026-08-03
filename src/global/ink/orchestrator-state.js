@@ -47,7 +47,8 @@ export const LAUNCH_WIZARD_STEPS = {
   TASK: "task",
   MODEL: "model",
   PERMISSIONS: "permissions",
-  CONFIRM: "confirm"
+  CONFIRM: "confirm",
+  UNSAFE_CONFIRM: "unsafe-confirm"
 };
 
 export const LAUNCH_PERMISSION_OPTIONS = [
@@ -75,7 +76,7 @@ export function resolveLaunchPermissions(draft) {
   return LAUNCH_PERMISSION_OPTIONS[draft.permissionIndex]?.permissions ?? [];
 }
 
-export function advanceLaunchWizardStep(currentStep) {
+export function advanceLaunchWizardStep(currentStep, { permissionIndex = 0 } = {}) {
   switch (currentStep) {
     case LAUNCH_WIZARD_STEPS.AGENT:
       return LAUNCH_WIZARD_STEPS.TASK;
@@ -85,6 +86,10 @@ export function advanceLaunchWizardStep(currentStep) {
       return LAUNCH_WIZARD_STEPS.PERMISSIONS;
     case LAUNCH_WIZARD_STEPS.PERMISSIONS:
       return LAUNCH_WIZARD_STEPS.CONFIRM;
+    case LAUNCH_WIZARD_STEPS.CONFIRM: {
+      const perms = resolveLaunchPermissions({ permissionIndex });
+      return perms.length > 0 ? LAUNCH_WIZARD_STEPS.UNSAFE_CONFIRM : LAUNCH_WIZARD_STEPS.CONFIRM;
+    }
     default:
       return LAUNCH_WIZARD_STEPS.CONFIRM;
   }
@@ -92,6 +97,8 @@ export function advanceLaunchWizardStep(currentStep) {
 
 export function retreatLaunchWizardStep(currentStep) {
   switch (currentStep) {
+    case LAUNCH_WIZARD_STEPS.UNSAFE_CONFIRM:
+      return LAUNCH_WIZARD_STEPS.CONFIRM;
     case LAUNCH_WIZARD_STEPS.CONFIRM:
       return LAUNCH_WIZARD_STEPS.PERMISSIONS;
     case LAUNCH_WIZARD_STEPS.PERMISSIONS:
@@ -144,6 +151,14 @@ export function formatLaunchWizardLines({
       const marker = index === permissionIndex ? "›" : " ";
       lines.push(`${marker} ${option.label}`);
     }
+    return lines;
+  }
+
+  if (step === LAUNCH_WIZARD_STEPS.UNSAFE_CONFIRM) {
+    const label = LAUNCH_PERMISSION_OPTIONS[permissionIndex]?.label ?? "unsafe";
+    lines.push(`Unsafe mode selected: ${label}`);
+    lines.push("This skips agent permission prompts for this run only.");
+    lines.push("Press Y to confirm unsafe launch · N/Esc to go back");
     return lines;
   }
 
