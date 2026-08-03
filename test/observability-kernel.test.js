@@ -45,10 +45,11 @@ test("probe contract, registry soft-get, snapshot degrade", async () => {
   assert.equal(listObservabilityProbes().length, 2);
 });
 
-test("ensureObservabilityProbesRegistered installs gentle once", () => {
+test("ensureObservabilityProbesRegistered installs gentle+graphify once", () => {
   resetObservabilityProbesForTests();
   ensureObservabilityProbesRegistered();
   ensureObservabilityProbesRegistered();
   assert.equal(getObservabilityProbe("gentle")?.id, "gentle");
-  assert.equal(listObservabilityProbes().length, 1);
+  assert.equal(getObservabilityProbe("graphify")?.id, "graphify");
+  assert.equal(listObservabilityProbes().length, 2);
 });
