@@ -7,7 +7,13 @@ export const PERMISSION_MODES = Object.freeze({
 export const CONSENT_TYPES = Object.freeze({
   NONE: "none",
   ALLOW_UNSAFE_PERMISSIONS: "allow-unsafe-permissions",
-  COCKPIT_UNSAFE_CONFIRM: "cockpit-unsafe-confirm"
+  COCKPIT_UNSAFE_CONFIRM: "cockpit-unsafe-confirm",
+  CLI_CONFIRM_IMPORT: "cli-confirm-import"
+});
+
+/** Closed set of non-agent unsafe operations (import, future controlled actions). */
+export const UNSAFE_OPERATIONS = Object.freeze({
+  GENTLE_BUNDLE_IMPORT: "gentle-bundle-import"
 });
 
 const UNSAFE = new Set(["force", "yolo"]);
@@ -141,4 +147,39 @@ export function buildPermissionsArgs(permissions = []) {
   if (normalized.includes("force")) return ["--force"];
   if (normalized.includes("yolo")) return ["--dangerously-skip-permissions"];
   return [];
+}
+
+/**
+ * Generic fail-closed authority for unsafe non-agent operations (e.g. Gentle import).
+ * Does not use agentId / run permissions — callers assert explicit confirmed consent.
+ */
+export function authorizeUnsafeOperation({
+  operation,
+  confirmed = false,
+  source = "cli",
+  consentType = null
+} = {}) {
+  const known = new Set(Object.values(UNSAFE_OPERATIONS));
+  if (!known.has(operation)) {
+    throw new PermissionAuthorityError(`Unknown unsafe operation "${operation}".`, {
+      code: "unknown_unsafe_operation",
+      details: { operation }
+    });
+  }
+  if (!confirmed) {
+    throw new PermissionAuthorityError(
+      `Unsafe operation "${operation}" requires explicit confirmation.`,
+      { code: "import_consent_required", details: { operation, source } }
+    );
+  }
+  const consent = consentType ?? CONSENT_TYPES.CLI_CONFIRM_IMPORT;
+  return {
+    operation,
+    permissionAuthority: {
+      mode: PERMISSION_MODES.UNSAFE,
+      source: source === "cockpit" ? "cockpit" : "cli",
+      consent,
+      operation
+    }
+  };
 }
