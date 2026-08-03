@@ -12,7 +12,8 @@ export async function loadCockpitScanBundle({
   cliVersion,
   buildDashboard,
   buildDiagnostics,
-  buildSnapshot
+  buildSnapshot,
+  buildCompanion = null
 }) {
   const [dashboard, diagnostics, snapshot] = await Promise.all([
     buildDashboard({ homeDir, workspaceRoot, cliVersion }),
@@ -26,7 +27,24 @@ export async function loadCockpitScanBundle({
       ...CONTROL_PLANE_AUTO_SCAN
     })
   ]);
-  return { dashboard, diagnostics, snapshot };
+  let companion = null;
+  if (typeof buildCompanion === "function") {
+    try {
+      companion = await buildCompanion({
+        homeDir, workspaceRoot, packageName, packageRoot, cliVersion, dashboard, snapshot
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      companion = {
+        ok: false, error: detail, signals: null, engram: null, links: [], alertsCount: null,
+        nextSafeAction: {
+          kind: "investigate", title: "Investigate companion diagnostics",
+          detail, secondary: true, displayOnly: true
+        }
+      };
+    }
+  }
+  return { dashboard, diagnostics, snapshot, companion };
 }
 
 /**

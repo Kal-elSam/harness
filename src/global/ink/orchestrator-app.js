@@ -502,7 +502,8 @@ export function OrchestratorApp({
     snapshot: data.snapshot,
     dashboard: data.dashboard,
     layoutMode: mode,
-    alerts: data.alerts
+    alerts: data.alerts,
+    companion: data.companion
   });
   const systemOnline = data.snapshot
     ? data.snapshot.health !== CONTROL_PLANE_HEALTH.NOT_CONFIGURED
