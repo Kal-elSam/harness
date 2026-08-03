@@ -384,6 +384,7 @@ export function parseArgs(argv) {
     runsAction: null,
     runId: null,
     reviewId: null,
+    lineage: null,
     reviewsAction: null,
     base: null,
     commit: null,
@@ -676,8 +677,8 @@ function parseReviewsAction(args, options) {
     options.reviewsAction = "list";
     return;
   }
-  if (!new Set(["list", "show", "verify"]).has(action)) {
-    throw new Error(`Unknown reviews action "${action}". Use list, show, or verify.`);
+  if (!new Set(["list", "show", "verify", "export"]).has(action)) {
+    throw new Error(`Unknown reviews action "${action}". Use list, show, verify, or export.`);
   }
   args.shift();
   options.reviewsAction = action;
@@ -687,6 +688,15 @@ function parseReviewsAction(args, options) {
       throw new Error(`Missing review id. Use: ${formatCliCommand(`reviews ${action} <reviewId>`)}`);
     }
     options.reviewId = args.shift();
+  }
+  if (action === "export") {
+    const lineage = args[0];
+    if (!lineage || lineage.startsWith("-")) {
+      throw new Error(
+        `Missing lineage. Use: ${formatCliCommand("reviews export <lineage> --out <path>")}`
+      );
+    }
+    options.lineage = args.shift();
   }
 }
 
@@ -840,6 +850,7 @@ Usage:
   ${cli} reviews list [--limit <n>] [--json]
   ${cli} reviews show <reviewId> [--json]
   ${cli} reviews verify <reviewId> --staged [--json]
+  ${cli} reviews export <lineage> --out <path> [--json]
   ${cli} orchestrator [--json]          Read-only agent capability diagnostics
   ${cli} intelligence [status|models|context|route|ask] [--json]
   ${cli} intelligence models --backend opencode-go|opencode-zen|opencode
@@ -889,7 +900,7 @@ Commands:
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
   review     Bounded read-only review via Codex or Pi; receipts under ~/.harness/reviews/.
-  reviews    List or show prior review receipts (secret-free).
+  reviews    List/show/verify receipts, or export a Gentle portable bundle.
   monitor    Opt-in anomaly monitor (enable|disable|status|tick). macOS LaunchAgent; notify shell:false.
   orchestrator  Read-only capability registry diagnostics (--json supported).
   intelligence  Harness Engineering layer: backends, context packs, routing, budgets.

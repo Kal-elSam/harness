@@ -5,6 +5,7 @@ import { formatCliCommand } from "../../brand/cli.js";
 import {
   isInteractiveTerminal, promptApplyConfirmation
 } from "../../apply-confirmation.js";
+import { exportGentleReviewBundle as defaultExportGentleReviewBundle } from "../../observability/gentle-bundle-export.js";
 import {
   REVIEW_EXIT_CODES, REVIEW_SEVERITIES,
   assertReceiptSecretFree, assertSafeReviewId,
@@ -171,7 +172,46 @@ export async function runGlobalReviews(options, _packageManifest, deps = {}) {
       process.exitCode = exitCode;
       return { ...verified, exitCode, receipt };
     }
-    throw new Error(`Unknown reviews action "${action}". Use list, show, or verify.`);
+    if (action === "export") {
+      if (!options.lineage) {
+        throw new Error(
+          `Missing lineage. Use: ${formatCliCommand("reviews export <lineage> --out <path>")}`
+        );
+      }
+      if (!options.outPath) {
+        throw new Error(
+          `Missing --out. Use: ${formatCliCommand("reviews export <lineage> --out <path>")}`
+        );
+      }
+      const exported = await (deps.exportGentleReviewBundle ?? defaultExportGentleReviewBundle)({
+        lineage: options.lineage,
+        outPath: options.outPath,
+        cwd: options.cwd ?? process.cwd()
+      });
+      const exitCode = exported.ok ? REVIEW_EXIT_CODES.OK : REVIEW_EXIT_CODES.ERROR;
+      process.exitCode = exitCode;
+      if (options.json) {
+        printJson({
+          ok: exported.ok,
+          exitCode,
+          code: exported.code,
+          lineage: exported.lineage,
+          outPath: exported.outPath,
+          diagnostics: exported.diagnostics,
+          providerStatus: exported.providerStatus ?? null,
+          timedOut: Boolean(exported.timedOut)
+        });
+      } else {
+        console.log(commandHeader(`reviews export ${exported.lineage ?? options.lineage}`));
+        if (exported.ok) console.log(`Exported via Gentle AI → ${exported.outPath}`);
+        else {
+          console.error(`Export failed (${exported.code}).`);
+          for (const line of exported.diagnostics ?? []) console.error(`  ${line}`);
+        }
+      }
+      return { ...exported, exitCode };
+    }
+    throw new Error(`Unknown reviews action "${action}". Use list, show, verify, or export.`);
   } catch (error) {
     const exitCode = REVIEW_EXIT_CODES.ERROR;
     const message = String(error?.message ?? error);
