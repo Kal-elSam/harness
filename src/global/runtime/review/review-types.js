@@ -18,7 +18,8 @@ export const REVIEW_SNAPSHOT_ERROR_CODES = Object.freeze({
   INVALID_SCOPE: "invalid_scope",
   INVALID_PATH: "invalid_path",
   LIMIT_EXCEEDED: "limit_exceeded",
-  PRIVATE_CONSENT_REQUIRED: "private_consent_required"
+  PRIVATE_CONSENT_REQUIRED: "private_consent_required",
+  TRUNCATED_OBJECT_ID: "truncated_object_id"
 });
 
 export class ReviewSnapshotError extends Error {
