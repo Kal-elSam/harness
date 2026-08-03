@@ -1,6 +1,7 @@
 import {
   LAUNCH_PERMISSION_OPTIONS,
   LAUNCH_WIZARD_STEPS,
+  advanceLaunchWizardStep,
   retreatLaunchWizardStep
 } from "./orchestrator-state.js";
 
@@ -92,13 +93,43 @@ export function handleLaunchInput(ctx) {
 
   if (launchStep === LAUNCH_WIZARD_STEPS.CONFIRM) {
     if (key.return) {
-      handleLaunch({ ...launchDraft, permissionIndex: launchPermissionIndex });
+      const next = advanceLaunchWizardStep(LAUNCH_WIZARD_STEPS.CONFIRM, {
+        permissionIndex: launchPermissionIndex
+      });
+      if (next === LAUNCH_WIZARD_STEPS.UNSAFE_CONFIRM) {
+        setLaunchStep(LAUNCH_WIZARD_STEPS.UNSAFE_CONFIRM);
+        return true;
+      }
+      handleLaunch({
+        ...launchDraft,
+        permissionIndex: launchPermissionIndex,
+        allowUnsafePermissions: false,
+        permissionSource: "cockpit"
+      });
       return true;
     }
     if (key.escape) {
       setLaunchStep(retreatLaunchWizardStep(launchStep));
       return allowEscapeRetreat ? "retreated" : true;
     }
+  }
+
+  if (launchStep === LAUNCH_WIZARD_STEPS.UNSAFE_CONFIRM) {
+    const answer = String(inputKey ?? "").toLowerCase();
+    if (answer === "y") {
+      handleLaunch({
+        ...launchDraft,
+        permissionIndex: launchPermissionIndex,
+        allowUnsafePermissions: true,
+        permissionSource: "cockpit"
+      });
+      return true;
+    }
+    if (answer === "n" || key.escape) {
+      setLaunchStep(LAUNCH_WIZARD_STEPS.CONFIRM);
+      return allowEscapeRetreat && key.escape ? "retreated" : true;
+    }
+    return true;
   }
 
   if (inputKey.toLowerCase() === "r") {
