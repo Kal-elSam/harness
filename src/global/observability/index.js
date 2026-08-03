@@ -18,6 +18,8 @@ export {
   SUPPORTED_MANDATORY_FEATURES, evaluateGentleCapabilities, probeGentle, createGentleProbe
 } from "./gentle-probe.js";
 
+export { exportGentleReviewBundle } from "./gentle-bundle-export.js";
+
 export function ensureObservabilityProbesRegistered() {
   if (!getObservabilityProbe("gentle")) registerObservabilityProbe(createGentleProbe());
 }
