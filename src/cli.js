@@ -387,6 +387,7 @@ export function parseArgs(argv) {
     reviewsAction: null,
     base: null,
     commit: null,
+    staged: false,
     failOn: null,
     agent: null,
     task: null,
@@ -533,7 +534,8 @@ export function parseArgs(argv) {
     else if (arg === "--commit") options.commit = requireFlagValue("--commit", args[++index]);
     else if (arg.startsWith("--commit=")) {
       options.commit = requireFlagValue("--commit", arg.slice("--commit=".length));
-    } else if (arg === "--fail-on") options.failOn = requireFlagValue("--fail-on", args[++index]);
+    } else if (arg === "--staged") options.staged = true;
+    else if (arg === "--fail-on") options.failOn = requireFlagValue("--fail-on", args[++index]);
     else if (arg.startsWith("--fail-on=")) {
       options.failOn = requireFlagValue("--fail-on", arg.slice("--fail-on=".length));
     }
@@ -672,15 +674,15 @@ function parseReviewsAction(args, options) {
     options.reviewsAction = "list";
     return;
   }
-  if (!new Set(["list", "show"]).has(action)) {
-    throw new Error(`Unknown reviews action "${action}". Use list or show.`);
+  if (!new Set(["list", "show", "verify"]).has(action)) {
+    throw new Error(`Unknown reviews action "${action}". Use list, show, or verify.`);
   }
   args.shift();
   options.reviewsAction = action;
-  if (action === "show") {
+  if (action === "show" || action === "verify") {
     const reviewId = args[0];
     if (!reviewId || reviewId.startsWith("-")) {
-      throw new Error(`Missing review id. Use: ${formatCliCommand("reviews show <reviewId>")}`);
+      throw new Error(`Missing review id. Use: ${formatCliCommand(`reviews ${action} <reviewId>`)}`);
     }
     options.reviewId = args.shift();
   }
@@ -832,9 +834,10 @@ Usage:
   ${cli} runs list [--json] [--limit <n>] [--active-only]
   ${cli} runs show <runId> [--json] [--limit <n>] [--follow]
   ${cli} runs stop <runId> [--json]
-  ${cli} review --agent codex|pi [--base <ref>|--commit <sha>] [--model <name>] [--include-private] [--yes|--confirm] [--fail-on high|medium|low] [--json]
+  ${cli} review --agent codex|pi [--base <ref>|--commit <sha>|--staged] [--model <name>] [--include-private] [--yes|--confirm] [--fail-on high|medium|low] [--json]
   ${cli} reviews list [--limit <n>] [--json]
   ${cli} reviews show <reviewId> [--json]
+  ${cli} reviews verify <reviewId> --staged [--json]
   ${cli} orchestrator [--json]          Read-only agent capability diagnostics
   ${cli} intelligence [status|models|context|route|ask] [--json]
   ${cli} intelligence models --backend opencode-go|opencode-zen|opencode

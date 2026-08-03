@@ -60,7 +60,7 @@ function classifyAgentError(error) {
  * Never returns/persists prompt, patch, JSONL, or transcript.
  */
 export async function runReview({
-  cwd, agent, base = null, commit = null, model = null,
+  cwd, agent, base = null, commit = null, staged = false, model = null,
   includePrivate = false, privateConfirmed = false, failOn = null,
   homeDir, cliVersion = null,
   resolveSnapshot = resolveReviewSnapshot,
@@ -73,7 +73,7 @@ export async function runReview({
   const reviewId = createId();
   const startedAt = now();
   const snapshot = await resolveSnapshot({
-    cwd, base, commit, includePrivate, privateConfirmed
+    cwd, base, commit, staged, includePrivate, privateConfirmed
   });
 
   let state = REVIEW_STATES.COMPLETED;

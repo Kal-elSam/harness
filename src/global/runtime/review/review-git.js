@@ -91,24 +91,61 @@ function parseNameStatus(text) {
 function fingerprintPayload(s) {
   return {
     mode: s.mode, headSha: s.headSha, base: s.base ?? null, commit: s.commit ?? null,
-    files: s.files.map((f) => ({
-      path: f.path, sourcePath: f.sourcePath ?? null, status: f.status, hash: f.hash, changedLines: f.changedLines
-    })),
+    files: s.files.map((f) => {
+      const entry = {
+        path: f.path, sourcePath: f.sourcePath ?? null, status: f.status,
+        hash: f.hash, changedLines: f.changedLines
+      };
+      if (f.mode != null) entry.mode = f.mode;
+      return entry;
+    }),
     excluded: s.excluded.map((e) => ({ path: e.path, reason: e.reason }))
   };
 }
 
+function parseRawDiff(text) {
+  return text.split("\n").filter((l) => l.startsWith(":")).map((line) => {
+    const [meta, paths] = line.slice(1).split("\t");
+    const parts = meta.trim().split(/\s+/);
+    const [oldMode, newMode, oldHash, newHash, status] = parts;
+    const pathParts = (paths ?? "").split("\t").map(unquotePath);
+    if (pathParts.length >= 2) {
+      return {
+        oldMode, newMode, oldHash, newHash, status,
+        sourcePath: pathParts[0], path: pathParts[1]
+      };
+    }
+    return {
+      oldMode, newMode, oldHash, newHash, status,
+      sourcePath: null, path: pathParts[0]
+    };
+  });
+}
+
+async function blobIsBinary(cwd, blobHash, execFileImpl) {
+  if (!blobHash || /^0+$/.test(blobHash)) return false;
+  try {
+    const { stdout } = await execFileImpl("git", ["cat-file", "-p", blobHash], {
+      cwd, encoding: null, maxBuffer: 8 * 1024 * 1024
+    });
+    return isBinaryContent(Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout ?? ""));
+  } catch {
+    return false;
+  }
+}
+
 /** Bounded Git review snapshot via argv-only git (no shell, no repo writes). */
 export async function resolveReviewSnapshot({
-  cwd, base = null, commit = null, includePrivate = false, privateConfirmed = false,
+  cwd, base = null, commit = null, staged = false, includePrivate = false, privateConfirmed = false,
   execFileImpl = defaultExecFile
 } = {}) {
-  const mode = resolveReviewScopeMode({ base, commit });
+  const mode = resolveReviewScopeMode({ base, commit, staged });
   await assertGitRepo(cwd, execFileImpl);
   const headSha = (await git(cwd, ["rev-parse", "HEAD"], execFileImpl)).trim();
   let rawEntries = [];
   let numstat = new Map();
   let diffBytes = 0;
+  let rawIdentity = new Map();
 
   if (mode === REVIEW_SCOPE_MODES.WORKING_TREE) {
     rawEntries = parsePorcelain(await git(cwd, ["status", "--porcelain=v1", "-uall"], execFileImpl));
@@ -118,6 +155,13 @@ export async function resolveReviewSnapshot({
     ]);
     diffBytes = Buffer.byteLength(await git(cwd, ["diff"], execFileImpl), "utf8")
       + Buffer.byteLength(await git(cwd, ["diff", "--cached"], execFileImpl), "utf8");
+  } else if (mode === REVIEW_SCOPE_MODES.STAGED) {
+    rawEntries = parseNameStatus(await git(cwd, ["diff", "--cached", "--name-status"], execFileImpl));
+    numstat = parseNumstat(await git(cwd, ["diff", "--cached", "--numstat"], execFileImpl));
+    diffBytes = Buffer.byteLength(await git(cwd, ["diff", "--cached"], execFileImpl), "utf8");
+    for (const entry of parseRawDiff(await git(cwd, ["diff", "--cached", "--raw"], execFileImpl))) {
+      rawIdentity.set(entry.path, entry);
+    }
   } else if (mode === REVIEW_SCOPE_MODES.BASE) {
     const range = `${base}...HEAD`;
     await git(cwd, ["rev-parse", "--verify", base], execFileImpl);
@@ -127,10 +171,10 @@ export async function resolveReviewSnapshot({
   } else {
     await git(cwd, ["rev-parse", "--verify", `${commit}^{commit}`], execFileImpl);
     rawEntries = parseNameStatus(
-      await git(cwd, ["diff-tree", "--no-commit-id", "--name-status", "-r", commit], execFileImpl)
+      await git(cwd, ["diff-tree", "--no-commit-id", "--name-status", "-r", "--root", commit], execFileImpl)
     );
     numstat = parseNumstat(
-      await git(cwd, ["diff-tree", "--no-commit-id", "--numstat", "-r", commit], execFileImpl)
+      await git(cwd, ["diff-tree", "--no-commit-id", "--numstat", "-r", "--root", commit], execFileImpl)
     );
     diffBytes = Buffer.byteLength(await git(cwd, ["show", "--format=", "--patch", commit], execFileImpl), "utf8");
   }
@@ -149,6 +193,7 @@ export async function resolveReviewSnapshot({
     }
 
     let hash;
+    let modeBits = null;
     let changedLines = numstat.get(path) ?? 0;
     let bytes = 0;
     const deleted = /D/.test(entry.status);
@@ -168,14 +213,30 @@ export async function resolveReviewSnapshot({
       bytes = buffer.length;
       if (!numstat.has(path)) changedLines = buffer.toString("utf8").split(/\r?\n/).length;
       if (entry.status === "??") diffBytes += bytes;
+    } else if (mode === REVIEW_SCOPE_MODES.STAGED) {
+      const identity = rawIdentity.get(path);
+      const blobHash = deleted
+        ? (identity?.oldHash ?? null)
+        : (identity?.newHash ?? null);
+      modeBits = deleted ? (identity?.oldMode ?? null) : (identity?.newMode ?? null);
+      if (modeBits === "000000") modeBits = identity?.oldMode ?? null;
+      if (blobHash && !/^0+$/.test(blobHash) && await blobIsBinary(cwd, blobHash, execFileImpl)) {
+        excluded.push({ path, reason: "binary" });
+        continue;
+      }
+      if (blobHash && !/^0+$/.test(blobHash)) hash = blobHash;
+      else hash = createHash("sha256").update(`${entry.status}:${path}`).digest("hex");
     } else {
-      try { hash = (await git(cwd, ["rev-parse", `HEAD:${path}`], execFileImpl)).trim(); }
+      const blobRef = mode === REVIEW_SCOPE_MODES.COMMIT ? `${commit}:${path}` : `HEAD:${path}`;
+      try { hash = (await git(cwd, ["rev-parse", blobRef], execFileImpl)).trim(); }
       catch { hash = createHash("sha256").update(`${entry.status}:${path}`).digest("hex"); }
     }
 
-    files.push({
+    const file = {
       path, sourcePath, status: entry.status.trim(), hash, changedLines, bytes
-    });
+    };
+    if (modeBits != null) file.mode = modeBits;
+    files.push(file);
   }
 
   requirePrivateConsent({ includePrivate, privateConfirmed, privatePaths: privateCandidates });
@@ -185,7 +246,8 @@ export async function resolveReviewSnapshot({
   assertWithinReviewLimits({ fileCount: files.length, changedLines, diffBytes });
 
   const snapshot = {
-    version: 1, mode, cwd, headSha, base: base ?? null, commit: commit ?? null,
+    version: mode === REVIEW_SCOPE_MODES.STAGED ? 2 : 1,
+    mode, cwd, headSha, base: base ?? null, commit: commit ?? null,
     files, excluded, totals: { fileCount: files.length, changedLines, diffBytes }, fingerprint: null
   };
   snapshot.fingerprint = canonicalFingerprint(fingerprintPayload(snapshot));
@@ -199,6 +261,7 @@ export function fingerprintReviewSnapshot(snapshot) {
 export async function detectReviewSnapshotDrift(previous, options = {}) {
   const next = await resolveReviewSnapshot({
     cwd: previous.cwd, base: previous.base, commit: previous.commit,
+    staged: previous.mode === REVIEW_SCOPE_MODES.STAGED,
     includePrivate: options.includePrivate ?? false,
     privateConfirmed: options.privateConfirmed ?? false,
     execFileImpl: options.execFileImpl
@@ -208,5 +271,29 @@ export async function detectReviewSnapshotDrift(previous, options = {}) {
     previousFingerprint: previous.fingerprint,
     nextFingerprint: next.fingerprint,
     next
+  };
+}
+
+/** Fail-closed staged candidate check against a receipt snapshot. */
+export async function verifyStagedReviewReceipt(receipt, {
+  cwd = null, includePrivate = false, privateConfirmed = false, execFileImpl = defaultExecFile
+} = {}) {
+  const snapshot = receipt?.snapshot;
+  if (!snapshot || snapshot.mode !== REVIEW_SCOPE_MODES.STAGED) {
+    throw new ReviewSnapshotError("Staged verification requires a staged review receipt.", {
+      code: REVIEW_SNAPSHOT_ERROR_CODES.INVALID_SCOPE,
+      details: { mode: snapshot?.mode ?? null }
+    });
+  }
+  const drift = await detectReviewSnapshotDrift(
+    { ...snapshot, cwd: cwd ?? snapshot.cwd },
+    { includePrivate, privateConfirmed, execFileImpl }
+  );
+  return {
+    ok: !drift.stale,
+    stale: drift.stale,
+    previousFingerprint: drift.previousFingerprint,
+    nextFingerprint: drift.nextFingerprint,
+    headSha: drift.next.headSha
   };
 }

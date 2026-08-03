@@ -8,7 +8,7 @@ import {
 import {
   REVIEW_EXIT_CODES, REVIEW_SEVERITIES,
   assertReceiptSecretFree, assertSafeReviewId,
-  listReviewReceipts, loadReviewReceipt
+  listReviewReceipts, loadReviewReceipt, verifyStagedReviewReceipt
 } from "./index.js";
 import { runReview } from "./review-runner.js";
 
@@ -83,7 +83,8 @@ export async function runGlobalReview(options, packageManifest, deps = {}) {
 
     const result = await (deps.runReview ?? runReview)({
       cwd: options.cwd, agent: options.agent, base: options.base ?? null,
-      commit: options.commit ?? null, model: options.model ?? null,
+      commit: options.commit ?? null, staged: Boolean(options.staged),
+      model: options.model ?? null,
       includePrivate: Boolean(options.includePrivate),
       privateConfirmed: consent.privateConfirmed, failOn,
       homeDir, cliVersion: packageManifest?.version ?? null
@@ -138,7 +139,39 @@ export async function runGlobalReviews(options, _packageManifest, deps = {}) {
       else printReviewHuman(receipt, REVIEW_EXIT_CODES.OK);
       return { receipt };
     }
-    throw new Error(`Unknown reviews action "${action}". Use list or show.`);
+    if (action === "verify") {
+      if (!options.reviewId) {
+        throw new Error(`Missing review id. Use: ${formatCliCommand("reviews verify <reviewId> --staged")}`);
+      }
+      if (!options.staged) {
+        throw new Error(`Staged verification requires --staged. Use: ${formatCliCommand("reviews verify <reviewId> --staged")}`);
+      }
+      try { assertSafeReviewId(options.reviewId); }
+      catch { throw new Error(`Invalid review id "${options.reviewId}".`); }
+      let receipt;
+      try {
+        receipt = publicReceipt(await loadReviewReceipt(options.reviewId, { homeDir }));
+      } catch {
+        throw new Error(`Review receipt not found: ${options.reviewId}`);
+      }
+      const verified = await (deps.verifyStaged ?? verifyStagedReviewReceipt)(receipt, {
+        cwd: options.cwd ?? process.cwd()
+      });
+      const exitCode = verified.ok ? REVIEW_EXIT_CODES.OK : REVIEW_EXIT_CODES.ERROR;
+      if (options.json) {
+        printJson({
+          ok: verified.ok, exitCode, stale: verified.stale, reviewId: receipt.reviewId,
+          previousFingerprint: verified.previousFingerprint,
+          nextFingerprint: verified.nextFingerprint, headSha: verified.headSha
+        });
+      } else {
+        console.log(commandHeader(`reviews verify ${receipt.reviewId}`));
+        console.log(verified.ok ? "Staged candidate matches receipt." : "Staged candidate drifted; receipt invalid.");
+      }
+      process.exitCode = exitCode;
+      return { ...verified, exitCode, receipt };
+    }
+    throw new Error(`Unknown reviews action "${action}". Use list, show, or verify.`);
   } catch (error) {
     const exitCode = REVIEW_EXIT_CODES.ERROR;
     const message = String(error?.message ?? error);

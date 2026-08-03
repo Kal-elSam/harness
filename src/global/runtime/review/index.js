@@ -6,7 +6,7 @@ export {
 } from "./review-types.js";
 export {
   resolveReviewSnapshot, fingerprintReviewSnapshot, detectReviewSnapshotDrift,
-  readReviewRegularFile
+  verifyStagedReviewReceipt, readReviewRegularFile
 } from "./review-git.js";
 export {
   REVIEW_PATCH_ERROR_CODES, filterDiffToAdmittedPaths, buildScopedReviewPatch
