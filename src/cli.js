@@ -40,6 +40,7 @@ import { runIntelligenceCli } from "./global/intelligence-cli.js";
 import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
+import { runGlobalAlerts } from "./global/runtime/alerts/alert-cli.js";
 import { runGraphifyCli } from "./global/observability/graphify-ops.js";
 import { runKairoMcp } from "./global/mcp/kairo-mcp.js";
 import { normalizeRunStrategy } from "./global/runtime/run-strategy.js";
@@ -124,6 +125,9 @@ export async function runCli(argv) {
       return;
     case "monitor":
       await runGlobalMonitor(optionsWithPolicy, packageManifest, { packageRoot });
+      return;
+    case "alerts":
+      await runGlobalAlerts(optionsWithPolicy);
       return;
     case "graphify":
       await runGraphifyCli(optionsWithPolicy, packageManifest);
@@ -401,6 +405,10 @@ export function parseArgs(argv) {
     lineage: null,
     reviewsAction: null,
     confirmImport: false,
+    alertsAction: null,
+    alertId: null,
+    confirmResolve: false,
+    confirmDismiss: false,
     graphifyAction: null, graphifyArgs: [], graphifyBudget: null, graphPath: null,
     base: null,
     commit: null,
@@ -448,6 +456,10 @@ export function parseArgs(argv) {
 
   if (command === "monitor") {
     parseMonitorAction(args, options);
+  }
+
+  if (command === "alerts") {
+    parseAlertsAction(args, options);
   }
 
   if (command === "graphify") parseGraphifyAction(args, options);
@@ -548,6 +560,8 @@ export function parseArgs(argv) {
     else if (arg === "--budget") options.graphifyBudget = requireFlagValue("--budget", args[++index]);
     else if (arg.startsWith("--budget=")) options.graphifyBudget = requireFlagValue("--budget", arg.slice("--budget=".length));
     else if (arg === "--confirm-import") options.confirmImport = true;
+    else if (arg === "--confirm-resolve") options.confirmResolve = true;
+    else if (arg === "--confirm-dismiss") options.confirmDismiss = true;
     else if (arg === "--allow-unsafe-permissions") options.allowUnsafePermissions = true;
     else if (arg === "--capture-transcript") options.captureTranscript = true;
     else if (arg === "--follow") options.follow = true;
@@ -748,6 +762,20 @@ function parseMonitorAction(args, options) {
   options.monitorAction = action;
 }
 
+function parseAlertsAction(args, options) {
+  const action = args[0];
+  if (!action || action.startsWith("-") || !new Set(["resolve", "dismiss"]).has(action)) {
+    throw new Error(`Unknown alerts action "${action ?? ""}". Use resolve or dismiss.`);
+  }
+  args.shift();
+  options.alertsAction = action;
+  const alertId = args[0];
+  if (!alertId || alertId.startsWith("-")) {
+    throw new Error(`Missing alert id. Use: ${formatCliCommand(`alerts ${action} <alertId>`)}`);
+  }
+  options.alertId = args.shift();
+}
+
 function parseIntelligenceAction(args, options) {
   const action = args[0];
   if (!action || action.startsWith("-")) {
@@ -827,6 +855,7 @@ function normalizeCommand(command) {
   if (command === "review") return "review";
   if (command === "reviews") return "reviews";
   if (command === "monitor") return "monitor";
+  if (command === "alerts") return "alerts";
   if (command === "graphify") return "graphify";
   if (command === "mcp") return "mcp";
   if (command === "intelligence" || command === "intel") return "intelligence";
@@ -903,6 +932,7 @@ Usage:
   ${cli} runs list [--json] [--limit <n>] [--active-only]
   ${cli} runs show <runId> [--json] [--limit <n>] [--follow]
   ${cli} runs stop <runId> [--json]
+  ${cli} alerts resolve|dismiss <alertId> --confirm-resolve|--confirm-dismiss [--json]
   ${cli} review --agent codex|pi [--base <ref>|--commit <sha>|--staged] [--model <name>] [--include-private] [--yes|--confirm] [--fail-on high|medium|low] [--json]
   ${cli} reviews list [--limit <n>] [--json]
   ${cli} reviews show <reviewId> [--json]
@@ -958,6 +988,7 @@ Commands:
              Tab switches region only when content is interactive (runs/launch).
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
+  alerts     Consent-gated alert resolve/dismiss (Permission Authority).
   review     Bounded read-only review via Codex or Pi; receipts under ~/.harness/reviews/.
   reviews    List/show/verify receipts, or Gentle portable export/import.
   monitor    Opt-in anomaly monitor (enable|disable|status|tick). macOS LaunchAgent; notify shell:false.
