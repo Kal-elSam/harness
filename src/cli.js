@@ -41,6 +41,7 @@ import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
 import { runGraphifyCli } from "./global/observability/graphify-ops.js";
+import { runKairoMcp } from "./global/mcp/kairo-mcp.js";
 import { normalizeRunStrategy } from "./global/runtime/run-strategy.js";
 import {
   LEGACY_PACKAGE_NAME,
@@ -126,6 +127,15 @@ export async function runCli(argv) {
       return;
     case "graphify":
       await runGraphifyCli(optionsWithPolicy, packageManifest);
+      return;
+    case "mcp":
+      // stdout reserved for MCP protocol — no banners/logs here
+      await runKairoMcp({
+        cwd: optionsWithPolicy.cwd,
+        packageRoot,
+        packageName: packageManifest.name,
+        version: packageManifest.version
+      });
       return;
     case "intelligence":
       await runIntelligenceCli(optionsWithPolicy, packageManifest);
@@ -818,6 +828,7 @@ function normalizeCommand(command) {
   if (command === "reviews") return "reviews";
   if (command === "monitor") return "monitor";
   if (command === "graphify") return "graphify";
+  if (command === "mcp") return "mcp";
   if (command === "intelligence" || command === "intel") return "intelligence";
   if (command === "setup") return "setup";
   if (command === "status") return "status";
