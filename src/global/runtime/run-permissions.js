@@ -22,8 +22,19 @@ export const UNSAFE_OPERATIONS = Object.freeze({
   ALERT_DISMISS: "alert-dismiss"
 });
 
+/** Exact (operation, source, consent) triples — reject all other combinations. */
+export const UNSAFE_CONSENT_BINDINGS = Object.freeze([
+  [UNSAFE_OPERATIONS.GENTLE_BUNDLE_IMPORT, "cli", CONSENT_TYPES.CLI_CONFIRM_IMPORT],
+  [UNSAFE_OPERATIONS.ALERT_RESOLVE, "cli", CONSENT_TYPES.CLI_CONFIRM_ALERT_RESOLVE],
+  [UNSAFE_OPERATIONS.ALERT_RESOLVE, "cockpit", CONSENT_TYPES.COCKPIT_ALERT_RESOLVE],
+  [UNSAFE_OPERATIONS.ALERT_DISMISS, "cli", CONSENT_TYPES.CLI_CONFIRM_ALERT_DISMISS],
+  [UNSAFE_OPERATIONS.ALERT_DISMISS, "cockpit", CONSENT_TYPES.COCKPIT_ALERT_DISMISS]
+].map(([operation, source, consent]) => Object.freeze({ operation, source, consent })));
+
 const UNSAFE = new Set(["force", "yolo"]);
 const SAFE = new Set(["read-only"]);
+const UNSAFE_SOURCES = new Set(["cli", "cockpit"]);
+const BINDING_KEYS = new Set(UNSAFE_CONSENT_BINDINGS.map((b) => `${b.operation}\0${b.source}\0${b.consent}`));
 
 /** Canonical permission modes each adapter may accept (empty = normal always ok). */
 export const ADAPTER_PERMISSION_MODES = Object.freeze({
@@ -155,57 +166,68 @@ export function buildPermissionsArgs(permissions = []) {
   return [];
 }
 
-/**
- * Generic fail-closed authority for unsafe non-agent operations (e.g. Gentle import).
- * Does not use agentId / run permissions — callers assert explicit confirmed consent.
- */
-function defaultUnsafeConsent(operation, source) {
-  const cockpit = source === "cockpit";
-  if (operation === UNSAFE_OPERATIONS.GENTLE_BUNDLE_IMPORT) return CONSENT_TYPES.CLI_CONFIRM_IMPORT;
-  if (operation === UNSAFE_OPERATIONS.ALERT_RESOLVE) {
-    return cockpit ? CONSENT_TYPES.COCKPIT_ALERT_RESOLVE : CONSENT_TYPES.CLI_CONFIRM_ALERT_RESOLVE;
+/** Fail-closed unsafe-op authority: closed (operation, source, consent) bindings only. */
+function resolveConsentBinding(operation, source, consentType) {
+  if (!UNSAFE_SOURCES.has(source)) {
+    throw new PermissionAuthorityError(`Unknown unsafe source "${source}".`, {
+      code: "invalid_unsafe_consent", details: { operation, source, consentType }
+    });
   }
-  if (operation === UNSAFE_OPERATIONS.ALERT_DISMISS) {
-    return cockpit ? CONSENT_TYPES.COCKPIT_ALERT_DISMISS : CONSENT_TYPES.CLI_CONFIRM_ALERT_DISMISS;
+  if (consentType == null) {
+    const match = UNSAFE_CONSENT_BINDINGS.find((b) => b.operation === operation && b.source === source);
+    if (!match) {
+      throw new PermissionAuthorityError(`No consent binding for "${operation}" / "${source}".`, {
+        code: "invalid_unsafe_consent", details: { operation, source }
+      });
+    }
+    return match.consent;
   }
-  return null;
+  if (!BINDING_KEYS.has(`${operation}\0${source}\0${consentType}`)) {
+    throw new PermissionAuthorityError(
+      `Invalid consent binding for "${operation}" / "${source}" / "${consentType}".`,
+      { code: "invalid_unsafe_consent", details: { operation, source, consentType } }
+    );
+  }
+  return consentType;
+}
+
+export function assertUnsafePermissionAuthority(permissionAuthority, { expectedOperation } = {}) {
+  const pa = permissionAuthority;
+  if (!pa || typeof pa !== "object" || Array.isArray(pa) || pa.mode !== PERMISSION_MODES.UNSAFE) {
+    throw new PermissionAuthorityError("Unsafe mutation requires permissionAuthority.", {
+      code: pa ? "invalid_unsafe_consent" : "permission_authority_required",
+      details: pa ? { permissionAuthority: pa } : null
+    });
+  }
+  if (expectedOperation && pa.operation !== expectedOperation) {
+    throw new PermissionAuthorityError(
+      `permissionAuthority.operation "${pa.operation}" does not match "${expectedOperation}".`,
+      { code: "invalid_unsafe_consent", details: { operation: pa.operation, expectedOperation } }
+    );
+  }
+  resolveConsentBinding(pa.operation, pa.source, pa.consent);
+  return pa;
 }
 
 export function authorizeUnsafeOperation({
-  operation,
-  confirmed = false,
-  source = "cli",
-  consentType = null
+  operation, confirmed = false, source = "cli", consentType = null
 } = {}) {
-  const known = new Set(Object.values(UNSAFE_OPERATIONS));
-  if (!known.has(operation)) {
+  if (!Object.values(UNSAFE_OPERATIONS).includes(operation)) {
     throw new PermissionAuthorityError(`Unknown unsafe operation "${operation}".`, {
-      code: "unknown_unsafe_operation",
-      details: { operation }
+      code: "unknown_unsafe_operation", details: { operation }
     });
   }
   if (!confirmed) {
     const code = operation === UNSAFE_OPERATIONS.GENTLE_BUNDLE_IMPORT
-      ? "import_consent_required"
-      : "unsafe_consent_required";
+      ? "import_consent_required" : "unsafe_consent_required";
     throw new PermissionAuthorityError(
       `Unsafe operation "${operation}" requires explicit confirmation.`,
       { code, details: { operation, source } }
     );
   }
-  const consent = consentType ?? defaultUnsafeConsent(operation, source);
-  if (!consent) {
-    throw new PermissionAuthorityError(`Missing consent type for "${operation}".`, {
-      code: "unsafe_consent_required", details: { operation, source }
-    });
-  }
+  const consent = resolveConsentBinding(operation, source, consentType);
   return {
     operation,
-    permissionAuthority: {
-      mode: PERMISSION_MODES.UNSAFE,
-      source: source === "cockpit" ? "cockpit" : "cli",
-      consent,
-      operation
-    }
+    permissionAuthority: { mode: PERMISSION_MODES.UNSAFE, source, consent, operation }
   };
 }

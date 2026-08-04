@@ -932,8 +932,7 @@ Usage:
   ${cli} runs list [--json] [--limit <n>] [--active-only]
   ${cli} runs show <runId> [--json] [--limit <n>] [--follow]
   ${cli} runs stop <runId> [--json]
-  ${cli} alerts resolve <alertId> --confirm-resolve [--json]
-  ${cli} alerts dismiss <alertId> --confirm-dismiss [--json]
+  ${cli} alerts resolve|dismiss <alertId> --confirm-resolve|--confirm-dismiss [--json]
   ${cli} review --agent codex|pi [--base <ref>|--commit <sha>|--staged] [--model <name>] [--include-private] [--yes|--confirm] [--fail-on high|medium|low] [--json]
   ${cli} reviews list [--limit <n>] [--json]
   ${cli} reviews show <reviewId> [--json]
@@ -989,7 +988,7 @@ Commands:
              Tab switches region only when content is interactive (runs/launch).
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
-  alerts     Resolve or dismiss alerts with explicit confirm flags (Permission Authority).
+  alerts     Consent-gated alert resolve/dismiss (Permission Authority).
   review     Bounded read-only review via Codex or Pi; receipts under ~/.harness/reviews/.
   reviews    List/show/verify receipts, or Gentle portable export/import.
   monitor    Opt-in anomaly monitor (enable|disable|status|tick). macOS LaunchAgent; notify shell:false.

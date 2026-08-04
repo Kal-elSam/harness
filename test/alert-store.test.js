@@ -22,10 +22,18 @@ import {
   saveAlert
 } from "../src/global/runtime/alerts/alert-store.js";
 import {
+  UNSAFE_OPERATIONS,
+  authorizeUnsafeOperation
+} from "../src/global/runtime/run-permissions.js";
+import {
   formatAlertDetailLines,
   formatAlertListLines,
   formatAlertsHeadline
 } from "../src/global/ink/cockpit-alerts.js";
+
+const alertPa = (operation, source = "cli") => authorizeUnsafeOperation({
+  operation, confirmed: true, source
+}).permissionAuthority;
 
 test("validation is fail-closed for nested secrets and fingerprint mismatch", () => {
   const base = createAlert({ kind: "run.failed", title: "Codex failed", source: "runtime" });
@@ -76,11 +84,15 @@ test("resolve writes history and removes authoritative open claim", async () => 
   const { alert } = await saveAlert({ kind: "x", title: "Need attention", severity: "high" }, { homeDir });
   assert.match(formatAlertListLines([alert])[0], /high · Need attention/);
   assert.doesNotMatch(formatAlertListLines([alert])[0], /alt-/);
-  await resolveAlert(alert.alertId, { homeDir });
+  await resolveAlert(alert.alertId, {
+    homeDir, permissionAuthority: alertPa(UNSAFE_OPERATIONS.ALERT_RESOLVE)
+  });
   assert.equal((await listAlerts({ homeDir, state: ALERT_STATES.OPEN })).length, 0);
   const again = await saveAlert({ kind: "x", title: "Need attention" }, { homeDir });
   assert.equal(again.deduped, false);
-  await dismissAlert(again.alert.alertId, { homeDir });
+  await dismissAlert(again.alert.alertId, {
+    homeDir, permissionAuthority: alertPa(UNSAFE_OPERATIONS.ALERT_DISMISS)
+  });
 });
 
 test("open/<fingerprint> alone is authoritative without alert.json", async () => {
@@ -101,7 +113,9 @@ test("open/<fingerprint> alone is authoritative without alert.json", async () =>
 test("dead-owner style planted claim + 20 concurrent saves keep one open", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
   const { alert } = await saveAlert({ kind: "stale", title: "Done once", source: "test" }, { homeDir });
-  await resolveAlert(alert.alertId, { homeDir });
+  await resolveAlert(alert.alertId, {
+    homeDir, permissionAuthority: alertPa(UNSAFE_OPERATIONS.ALERT_RESOLVE)
+  });
   const openDir = join(harnessHomePaths(homeDir).alertsDir, "open");
   await mkdir(openDir, { recursive: true });
   await writeFile(join(openDir, alert.fingerprint), `${JSON.stringify(alert, null, 2)}\n`);
@@ -123,7 +137,9 @@ test("concurrent resolve + saves never lose the EEXIST-read race", async () => {
       kind: "race", title: "Resolve vs save", source: "test"
     }, { homeDir });
     const settled = await Promise.allSettled([
-      resolveAlert(alert.alertId, { homeDir }),
+      resolveAlert(alert.alertId, {
+        homeDir, permissionAuthority: alertPa(UNSAFE_OPERATIONS.ALERT_RESOLVE)
+      }),
       ...Array.from({ length: 20 }, () => saveAlert({
         kind: "race", title: "Resolve vs save", source: "test"
       }, { homeDir }))
