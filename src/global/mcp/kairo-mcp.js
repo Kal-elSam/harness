@@ -9,6 +9,7 @@ import { listReviewReceipts } from "../runtime/review/review-receipts.js";
 import { buildCompanionSnapshot } from "../observability/build-companion-snapshot.js";
 import { probeGentle } from "../observability/gentle-probe.js";
 import { runGraphifyOp } from "../observability/graphify-ops.js";
+import { resolveGitHeadSha } from "../observability/graphify-probe.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
 
 export const KAIRO_MCP_TOOLS = Object.freeze([
@@ -100,6 +101,9 @@ export function createToolHandlers(deps = {}) {
     homeDir, workspaceRoot: cwd, packageRoot: deps.packageRoot, packageName: deps.packageName,
     cliVersion: deps.version, includeDiff: false, includeExplain: false, includeRuntime: true
   }));
+  const resolveHead = deps.resolveHead ?? ((dir) => resolveGitHeadSha(dir));
+  /** Fresh HEAD per request/snapshot — never cache across MCP tool calls. */
+  const requestHead = () => resolveHead(cwd);
   const buildCompanion = deps.buildCompanion ?? ((ctx) => buildCompanionSnapshot({
     ...ctx,
     inspectEngram: deps.inspectEngram ?? ((c) => inspectEngramIntegration(c)),
@@ -107,14 +111,15 @@ export function createToolHandlers(deps = {}) {
     loadReviews: async () => listReviews(),
     buildObservability: deps.buildObservability,
     ensureRegistered: deps.ensureRegistered,
-    observabilityContext: { cwd, homeDir, workspaceRoot: cwd }
+    observabilityContext: { cwd, homeDir, workspaceRoot: cwd, headSha: requestHead() }
   }));
   const gentleProbe = deps.probeGentle ?? ((ctx) => probeGentle(ctx));
   const graphOp = deps.runGraphifyOp ?? runGraphifyOp;
-  const gOpts = {
-    cwd, workspaceRoot: cwd, whichCommand: deps.whichCommand, probeCommand: deps.probeCommand,
-    containPath: deps.containPath, inspectGraph: deps.inspectGraph
-  };
+  const gOpts = () => ({
+    cwd, workspaceRoot: cwd, headSha: requestHead(), whichCommand: deps.whichCommand,
+    probeCommand: deps.probeCommand, containPath: deps.containPath,
+    inspectGraph: deps.inspectGraph, resolveHead
+  });
   const soft = (code, data) => mcpResult({
     ok: true, code, data,
     diagnostics: code === "degraded" ? [`${Object.keys(data)[0]}_unavailable`] : []
@@ -164,12 +169,18 @@ export function createToolHandlers(deps = {}) {
       }
     },
     async kairo_graph_query({ graph, question, budget = 2000 }) {
-      try { return graphEnvelope(await graphOp({ op: "query", args: [question], graphPath: graph, budget, ...gOpts })); }
-      catch { return graphFail(); }
+      try {
+        return graphEnvelope(await graphOp({
+          op: "query", args: [question], graphPath: graph, budget, ...gOpts()
+        }));
+      } catch { return graphFail(); }
     },
     async kairo_graph_path({ graph, from, to }) {
-      try { return graphEnvelope(await graphOp({ op: "path", args: [from, to], graphPath: graph, ...gOpts })); }
-      catch { return graphFail(); }
+      try {
+        return graphEnvelope(await graphOp({
+          op: "path", args: [from, to], graphPath: graph, ...gOpts()
+        }));
+      } catch { return graphFail(); }
     },
     async kairo_context_summary() {
       try {

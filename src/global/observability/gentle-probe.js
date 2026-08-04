@@ -114,11 +114,16 @@ export async function probeGentle({
     { cwd, env, timeoutMs: 8000 }
   );
   evidence.push({ kind: "capabilities", ok: capsResult.ok, status: capsResult.status });
-  if (!capsResult.ok && !String(capsResult.stdout ?? "").trim()) {
+  // Failed exit / timeout never promotes stdout into a negotiated capability.
+  if (capsResult.timedOut || capsResult.status !== 0) {
     return result({
       state: "error", version, evidence,
-      diagnostics: ["gentle-ai review capabilities failed"],
-      error: capsResult.error ?? `exit ${capsResult.status}`
+      diagnostics: [
+        capsResult.timedOut
+          ? "gentle-ai review capabilities timed out"
+          : "gentle-ai review capabilities failed"
+      ],
+      error: capsResult.error ?? (capsResult.timedOut ? "timeout" : `exit ${capsResult.status}`)
     });
   }
   let payload;

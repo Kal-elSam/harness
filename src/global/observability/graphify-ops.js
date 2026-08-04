@@ -2,7 +2,7 @@ import { printJson } from "../json-output.js";
 import { commandHeader } from "../brand/index.js";
 import { probeCommand as defaultProbeCommand } from "../cli-probe.js";
 import {
-  assertGraphInsideWorkspace, inspectGraphArtifact, resolveGraphifyBinaryPath
+  assertGraphInsideWorkspace, inspectGraphArtifact, resolveGitHeadSha, resolveGraphifyBinaryPath
 } from "./graphify-probe.js";
 
 const OPS_TIMEOUT_MS = 15_000;
@@ -28,6 +28,7 @@ export async function runGraphifyOp({
   env = process.env, budget = DEFAULT_QUERY_BUDGET, whichCommand,
   probeCommand = defaultProbeCommand, inspectGraph = inspectGraphArtifact,
   containPath = assertGraphInsideWorkspace, headSha = null,
+  resolveHead = resolveGitHeadSha,
   timeoutMs = OPS_TIMEOUT_MS, maxStdoutBytes = MAX_STDOUT_BYTES
 } = {}) {
   if (!OPS.has(op)) return fail("invalid_request", [`Unknown graphify op "${op}".`], { op, graphPath });
@@ -53,7 +54,10 @@ export async function runGraphifyOp({
     ], { op, graphPath: contained.path, binary });
   }
 
-  const artifact = inspectGraph(contained.path, { cwd, headSha });
+  const head = (typeof headSha === "string" && headSha.trim())
+    ? headSha.trim()
+    : resolveHead(cwd);
+  const artifact = inspectGraph(contained.path, { cwd, headSha: head });
   if (artifact.status === "missing" || artifact.status === "malformed" || artifact.status === "error") {
     const code = artifact.status === "error" ? "graphify_error" : "graph_unavailable";
     return fail(code, artifact.diagnostics?.length ? artifact.diagnostics : [`graph ${artifact.status}`], {
@@ -101,7 +105,9 @@ export async function runGraphifyCli(options, _pkg, deps = {}) {
     const result = await (deps.runGraphifyOp ?? runGraphifyOp)({
       op: options.graphifyAction, args: options.graphifyArgs ?? [],
       graphPath: options.graphPath, cwd: options.cwd ?? process.cwd(),
-      workspaceRoot: options.cwd ?? process.cwd(), budget: options.graphifyBudget
+      workspaceRoot: options.cwd ?? process.cwd(), budget: options.graphifyBudget,
+      headSha: options.headSha ?? deps.headSha ?? null,
+      resolveHead: deps.resolveHead
     });
     process.exitCode = result.exitCode;
     if (options.json) {

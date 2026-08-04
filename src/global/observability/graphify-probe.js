@@ -1,9 +1,57 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isExecutableAvailable, probeCommand as defaultProbeCommand } from "../cli-probe.js";
 import { normalizeProbeResult } from "./probe-contract.js";
 
 export const GRAPH_REPORT_COMMIT_PATTERN = /Built from commit:\s*`([0-9a-f]+)`/i;
+
+/** Env keys that redirect Git away from cwd — strip before rev-parse. */
+const GIT_OVERRIDE_KEYS = Object.freeze([
+  "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+  "GIT_INDEX_FILE", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CEILING_DIRECTORIES",
+  "GIT_NAMESPACE"
+]);
+
+export function scrubGitOverrideEnv(env = process.env) {
+  const clean = { ...env };
+  for (const key of GIT_OVERRIDE_KEYS) delete clean[key];
+  return clean;
+}
+
+/** Fail-soft productive HEAD bound to workspace top-level; never throws. */
+export function resolveGitHeadSha(cwd = process.cwd(), {
+  spawn = spawnSync, timeoutMs = 3000, env = process.env, realpath = realpathSync
+} = {}) {
+  try {
+    const cleanEnv = scrubGitOverrideEnv(env);
+    const opts = { cwd, encoding: "utf8", timeout: timeoutMs, env: cleanEnv };
+    const top = spawn("git", ["rev-parse", "--show-toplevel"], opts);
+    if (top.status !== 0) return null;
+    const topLevel = String(top.stdout ?? "").trim();
+    if (!topLevel) return null;
+    let wanted;
+    let actual;
+    try {
+      wanted = realpath(resolve(cwd));
+      actual = realpath(topLevel);
+    } catch {
+      return null;
+    }
+    if (wanted !== actual) return null;
+    const head = spawn("git", ["rev-parse", "HEAD"], opts);
+    if (head.status !== 0) return null;
+    const sha = String(head.stdout ?? "").trim();
+    return /^[0-9a-f]{7,64}$/i.test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+function effectiveHeadSha(headSha, cwd, resolveHead) {
+  if (typeof headSha === "string" && headSha.trim()) return headSha.trim();
+  return resolveHead(cwd);
+}
 
 function defaultWhichAbsolute(command, env) {
   if (!isExecutableAvailable(command, { env })) return "";
@@ -93,7 +141,7 @@ export function assertGraphInsideWorkspace(workspaceRoot, graphPath, {
 
 export async function probeGraphify({
   env = process.env, cwd = process.cwd(), whichCommand = defaultWhichAbsolute,
-  inspectGraph = inspectGraphArtifact, headSha = null
+  inspectGraph = inspectGraphArtifact, headSha = null, resolveHead = resolveGitHeadSha
 } = {}) {
   let path = null;
   try {
@@ -104,7 +152,8 @@ export async function probeGraphify({
         evidence: [{ kind: "binary", path: null }]
       }, "graphify");
     }
-    const graph = inspectGraph(join(cwd, "graphify-out", "graph.json"), { cwd, headSha });
+    const head = effectiveHeadSha(headSha, cwd, resolveHead);
+    const graph = inspectGraph(join(cwd, "graphify-out", "graph.json"), { cwd, headSha: head });
     const state = graph.status === "error" ? "error" : "available";
     return normalizeProbeResult({
       id: "graphify", state, diagnostics: [...(graph.diagnostics ?? [])],
