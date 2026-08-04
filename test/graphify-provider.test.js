@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "../src/cli.js";
 import {
-  assertGraphInsideWorkspace, inspectGraphArtifact, probeGraphify
+  assertGraphInsideWorkspace, inspectGraphArtifact, probeGraphify, resolveGitHeadSha
 } from "../src/global/observability/graphify-probe.js";
 import { runGraphifyOp } from "../src/global/observability/graphify-ops.js";
 
@@ -104,4 +104,20 @@ test("graphify inspect, containment, stale ops, opaque stdout", async () => {
     cwd: root, whichCommand: () => "/usr/bin/graphify", resolveHead: () => head,
     inspectGraph: (p, o) => inspectGraphArtifact(p, { ...o, realpath: (x) => x, readFile: rf })
   })).evidence.find((e) => e.kind === "graph")?.status, "stale");
+
+  // HEAD must bind to workspace top-level and ignore GIT_* overrides / parent discovery.
+  const calls = [];
+  assert.equal(resolveGitHeadSha(root, {
+    env: { ...process.env, GIT_DIR: "/tmp/other.git", GIT_WORK_TREE: "/tmp/other" },
+    realpath: (p) => p,
+    spawn: (cmd, args, opts) => {
+      calls.push({ args: [...args], hasGitDir: Boolean(opts?.env?.GIT_DIR) });
+      if (args.includes("--show-toplevel")) {
+        return { status: 0, stdout: "/other/repo\n", stderr: "" };
+      }
+      return { status: 0, stdout: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", stderr: "" };
+    }
+  }), null);
+  assert.equal(calls.every((c) => c.hasGitDir === false), true);
+  assert.equal(calls.some((c) => c.args.includes("--show-toplevel")), true);
 });

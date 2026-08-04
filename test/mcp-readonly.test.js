@@ -114,6 +114,26 @@ test("registry schemas + handlers + productive loaders + sanitize", async () => 
   assert.equal(summary.structuredContent.data.links[0].displayOnly, true);
   assert.equal(summary.structuredContent.data.engram.error, null);
 
+  // Persistent MCP must resolve HEAD per request, not once at handler creation.
+  let headCalls = 0;
+  const heads = createToolHandlers({
+    cwd: "/ws",
+    resolveHead: () => { headCalls += 1; return `sha${headCalls}`; },
+    runGraphifyOp: async () => ({
+      ok: true, code: "ok", op: "query", text: "t", truncated: false,
+      graphPath: "g.json", graphStatus: "ok", diagnostics: []
+    }),
+    buildStatus: async () => ({ health: "healthy", coverage: null, cta: null }),
+    listRuns: async () => [], listReviews: async () => [], listAlerts: async () => [],
+    ensureRegistered: () => {},
+    buildObservability: async () => ({ probes: [] }),
+    inspectEngram: () => ({ status: "missing", binary: null })
+  });
+  await heads.kairo_status();
+  await heads.kairo_graph_query({ graph: "g.json", question: "q" });
+  await heads.kairo_context_summary();
+  assert.equal(headCalls >= 3, true);
+
   const names = [];
   class FakeServer {
     constructor(info) { this.info = info; }

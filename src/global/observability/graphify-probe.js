@@ -6,17 +6,43 @@ import { normalizeProbeResult } from "./probe-contract.js";
 
 export const GRAPH_REPORT_COMMIT_PATTERN = /Built from commit:\s*`([0-9a-f]+)`/i;
 
-/** Fail-soft productive HEAD for freshness; never throws. */
+/** Env keys that redirect Git away from cwd — strip before rev-parse. */
+const GIT_OVERRIDE_KEYS = Object.freeze([
+  "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+  "GIT_INDEX_FILE", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CEILING_DIRECTORIES",
+  "GIT_NAMESPACE"
+]);
+
+export function scrubGitOverrideEnv(env = process.env) {
+  const clean = { ...env };
+  for (const key of GIT_OVERRIDE_KEYS) delete clean[key];
+  return clean;
+}
+
+/** Fail-soft productive HEAD bound to workspace top-level; never throws. */
 export function resolveGitHeadSha(cwd = process.cwd(), {
-  spawn = spawnSync, timeoutMs = 3000
+  spawn = spawnSync, timeoutMs = 3000, env = process.env, realpath = realpathSync
 } = {}) {
   try {
-    const result = spawn("git", ["rev-parse", "HEAD"], {
-      cwd, encoding: "utf8", timeout: timeoutMs
-    });
-    if (result.status !== 0) return null;
-    const head = String(result.stdout ?? "").trim();
-    return /^[0-9a-f]{7,64}$/i.test(head) ? head : null;
+    const cleanEnv = scrubGitOverrideEnv(env);
+    const opts = { cwd, encoding: "utf8", timeout: timeoutMs, env: cleanEnv };
+    const top = spawn("git", ["rev-parse", "--show-toplevel"], opts);
+    if (top.status !== 0) return null;
+    const topLevel = String(top.stdout ?? "").trim();
+    if (!topLevel) return null;
+    let wanted;
+    let actual;
+    try {
+      wanted = realpath(resolve(cwd));
+      actual = realpath(topLevel);
+    } catch {
+      return null;
+    }
+    if (wanted !== actual) return null;
+    const head = spawn("git", ["rev-parse", "HEAD"], opts);
+    if (head.status !== 0) return null;
+    const sha = String(head.stdout ?? "").trim();
+    return /^[0-9a-f]{7,64}$/i.test(sha) ? sha : null;
   } catch {
     return null;
   }

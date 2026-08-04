@@ -23,7 +23,8 @@ export { exportGentleReviewBundle, resolveNegotiatedGentleBinary } from "./gentl
 export { importGentleReviewBundle } from "./gentle-bundle-import.js";
 export {
   inspectGraphArtifact, assertGraphInsideWorkspace,
-  resolveGraphifyBinaryPath, resolveGitHeadSha, probeGraphify, createGraphifyProbe
+  resolveGraphifyBinaryPath, resolveGitHeadSha, scrubGitOverrideEnv,
+  probeGraphify, createGraphifyProbe
 } from "./graphify-probe.js";
 export { runGraphifyOp, runGraphifyCli } from "./graphify-ops.js";
 export {
