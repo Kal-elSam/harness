@@ -89,4 +89,19 @@ test("graphify inspect, containment, stale ops, opaque stdout", async () => {
     }
   });
   assert.deepEqual(bound, [other]);
+
+  // Productive consumers resolve HEAD when headSha is omitted.
+  const auto = await runGraphifyOp({
+    op: "query", args: ["q"], graphPath, cwd: root, workspaceRoot: root, budget: 50,
+    whichCommand: () => "/usr/bin/graphify",
+    resolveHead: () => head,
+    containPath: (ws, gp, o) => assertGraphInsideWorkspace(ws, gp, { ...o, realpath: rp }),
+    inspectGraph: (p, o) => inspectGraphArtifact(p, { ...o, realpath: rp, readFile: rf }),
+    probeCommand: () => ({ ok: true, status: 0, stdout: "x", stderr: "", timedOut: false })
+  });
+  assert.equal(auto.graphStatus, "stale");
+  assert.equal((await probeGraphify({
+    cwd: root, whichCommand: () => "/usr/bin/graphify", resolveHead: () => head,
+    inspectGraph: (p, o) => inspectGraphArtifact(p, { ...o, realpath: (x) => x, readFile: rf })
+  })).evidence.find((e) => e.kind === "graph")?.status, "stale");
 });

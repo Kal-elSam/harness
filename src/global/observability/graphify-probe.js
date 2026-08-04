@@ -1,9 +1,31 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isExecutableAvailable, probeCommand as defaultProbeCommand } from "../cli-probe.js";
 import { normalizeProbeResult } from "./probe-contract.js";
 
 export const GRAPH_REPORT_COMMIT_PATTERN = /Built from commit:\s*`([0-9a-f]+)`/i;
+
+/** Fail-soft productive HEAD for freshness; never throws. */
+export function resolveGitHeadSha(cwd = process.cwd(), {
+  spawn = spawnSync, timeoutMs = 3000
+} = {}) {
+  try {
+    const result = spawn("git", ["rev-parse", "HEAD"], {
+      cwd, encoding: "utf8", timeout: timeoutMs
+    });
+    if (result.status !== 0) return null;
+    const head = String(result.stdout ?? "").trim();
+    return /^[0-9a-f]{7,64}$/i.test(head) ? head : null;
+  } catch {
+    return null;
+  }
+}
+
+function effectiveHeadSha(headSha, cwd, resolveHead) {
+  if (typeof headSha === "string" && headSha.trim()) return headSha.trim();
+  return resolveHead(cwd);
+}
 
 function defaultWhichAbsolute(command, env) {
   if (!isExecutableAvailable(command, { env })) return "";
@@ -93,7 +115,7 @@ export function assertGraphInsideWorkspace(workspaceRoot, graphPath, {
 
 export async function probeGraphify({
   env = process.env, cwd = process.cwd(), whichCommand = defaultWhichAbsolute,
-  inspectGraph = inspectGraphArtifact, headSha = null
+  inspectGraph = inspectGraphArtifact, headSha = null, resolveHead = resolveGitHeadSha
 } = {}) {
   let path = null;
   try {
@@ -104,7 +126,8 @@ export async function probeGraphify({
         evidence: [{ kind: "binary", path: null }]
       }, "graphify");
     }
-    const graph = inspectGraph(join(cwd, "graphify-out", "graph.json"), { cwd, headSha });
+    const head = effectiveHeadSha(headSha, cwd, resolveHead);
+    const graph = inspectGraph(join(cwd, "graphify-out", "graph.json"), { cwd, headSha: head });
     const state = graph.status === "error" ? "error" : "available";
     return normalizeProbeResult({
       id: "graphify", state, diagnostics: [...(graph.diagnostics ?? [])],

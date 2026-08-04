@@ -68,6 +68,31 @@ test("probeGentle missing / available / error", async () => {
     probeCommand: () => ({ ok: true, status: 0, stdout: "not-json", stderr: "", error: null })
   })).state, "error");
 
+  // Valid capabilities JSON must not override a failed / timed-out capability probe.
+  const failedExit = await probeGentle({
+    whichCommand: () => "/usr/bin/gentle-ai",
+    probeCommand: (_c, args) => args.includes("capabilities")
+      ? {
+        ok: false, status: 1, timedOut: false, stdout: JSON.stringify(caps()),
+        stderr: "boom", error: null
+      }
+      : { ok: true, status: 0, stdout: "gentle-ai 2.2.4", stderr: "", error: null, timedOut: false }
+  });
+  assert.equal(failedExit.state, "error");
+  assert.match(String(failedExit.error), /exit 1/);
+
+  const timedOut = await probeGentle({
+    whichCommand: () => "/usr/bin/gentle-ai",
+    probeCommand: (_c, args) => args.includes("capabilities")
+      ? {
+        ok: false, status: null, timedOut: true, stdout: JSON.stringify(caps()),
+        stderr: "", error: "ETIMEDOUT"
+      }
+      : { ok: true, status: 0, stdout: "gentle-ai 2.2.4", stderr: "", error: null, timedOut: false }
+  });
+  assert.equal(timedOut.state, "error");
+  assert.match(String(timedOut.diagnostics.join(" ")), /timed out/);
+
   const probe = createGentleProbe({ whichCommand: () => "" });
   assert.equal(probe.id, "gentle");
   assert.equal((await probe.probe({})).state, "missing");
