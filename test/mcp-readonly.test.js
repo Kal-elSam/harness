@@ -72,10 +72,11 @@ test("registry schemas + handlers + productive loaders + sanitize", async () => 
   assert.equal(JSON.stringify(escaped).includes("SECRET"), false);
   const pf = await createToolHandlers({
     runGraphifyOp: async () => ({
-      ok: false, code: "provider_error", op: "path", text: null, truncated: false,
+      ok: false, code: "provider_error", op: "path", text: "token=SECRET\nError: internal stack", truncated: false,
       graphPath: "/ws/g.json", graphStatus: "fresh", diagnostics: ["provider_error", "status=1", "token=SECRET"]
     })
   }).kairo_graph_path({ graph: "/ws/g.json", from: "a", to: "b" });
+  assert.equal(pf.structuredContent.data.text === null && !/SECRET|internal stack/.test(JSON.stringify(pf)), true);
   assert.deepEqual(pf.structuredContent.diagnostics, ["provider_error", "status=1"]);
   assert.equal((await createToolHandlers({
     runGraphifyOp: async () => { throw new Error("spawn boom"); }

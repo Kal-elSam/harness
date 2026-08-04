@@ -83,7 +83,7 @@ function graphEnvelope(result) {
   return mcpResult({
     ok: Boolean(result.ok), code: result.ok ? "ok" : (result.code ?? "graphify_error"),
     data: {
-      op: result.op ?? null, text: result.text ?? null, truncated: Boolean(result.truncated),
+      op: result.op ?? null, text: result.ok ? (result.text ?? null) : null, truncated: Boolean(result.truncated),
       graphPath: result.graphPath ?? null, graphStatus: result.graphStatus ?? null
     },
     diagnostics: result.diagnostics ?? [], isError: !result.ok
