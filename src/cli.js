@@ -40,6 +40,9 @@ import { runIntelligenceCli } from "./global/intelligence-cli.js";
 import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
+import { runGlobalAlerts } from "./global/runtime/alerts/alert-cli.js";
+import { runGraphifyCli } from "./global/observability/graphify-ops.js";
+import { runKairoMcp } from "./global/mcp/kairo-mcp.js";
 import { normalizeRunStrategy } from "./global/runtime/run-strategy.js";
 import {
   LEGACY_PACKAGE_NAME,
@@ -122,6 +125,21 @@ export async function runCli(argv) {
       return;
     case "monitor":
       await runGlobalMonitor(optionsWithPolicy, packageManifest, { packageRoot });
+      return;
+    case "alerts":
+      await runGlobalAlerts(optionsWithPolicy);
+      return;
+    case "graphify":
+      await runGraphifyCli(optionsWithPolicy, packageManifest);
+      return;
+    case "mcp":
+      // stdout reserved for MCP protocol — no banners/logs here
+      await runKairoMcp({
+        cwd: optionsWithPolicy.cwd,
+        packageRoot,
+        packageName: packageManifest.name,
+        version: packageManifest.version
+      });
       return;
     case "intelligence":
       await runIntelligenceCli(optionsWithPolicy, packageManifest);
@@ -384,7 +402,14 @@ export function parseArgs(argv) {
     runsAction: null,
     runId: null,
     reviewId: null,
+    lineage: null,
     reviewsAction: null,
+    confirmImport: false,
+    alertsAction: null,
+    alertId: null,
+    confirmResolve: false,
+    confirmDismiss: false,
+    graphifyAction: null, graphifyArgs: [], graphifyBudget: null, graphPath: null,
     base: null,
     commit: null,
     staged: false,
@@ -432,6 +457,12 @@ export function parseArgs(argv) {
   if (command === "monitor") {
     parseMonitorAction(args, options);
   }
+
+  if (command === "alerts") {
+    parseAlertsAction(args, options);
+  }
+
+  if (command === "graphify") parseGraphifyAction(args, options);
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -522,6 +553,15 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--backend=")) options.intelligenceBackend = arg.slice("--backend=".length);
     else if (arg === "--permissions") options.permissions = parsePathList(args[++index]);
     else if (arg.startsWith("--permissions=")) options.permissions = parsePathList(arg.slice("--permissions=".length));
+    else if (arg === "--bundle") options.bundlePath = resolve(args[++index]);
+    else if (arg.startsWith("--bundle=")) options.bundlePath = resolve(arg.slice("--bundle=".length));
+    else if (arg === "--graph") options.graphPath = resolve(args[++index]);
+    else if (arg.startsWith("--graph=")) options.graphPath = resolve(arg.slice("--graph=".length));
+    else if (arg === "--budget") options.graphifyBudget = requireFlagValue("--budget", args[++index]);
+    else if (arg.startsWith("--budget=")) options.graphifyBudget = requireFlagValue("--budget", arg.slice("--budget=".length));
+    else if (arg === "--confirm-import") options.confirmImport = true;
+    else if (arg === "--confirm-resolve") options.confirmResolve = true;
+    else if (arg === "--confirm-dismiss") options.confirmDismiss = true;
     else if (arg === "--allow-unsafe-permissions") options.allowUnsafePermissions = true;
     else if (arg === "--capture-transcript") options.captureTranscript = true;
     else if (arg === "--follow") options.follow = true;
@@ -548,6 +588,16 @@ export function parseArgs(argv) {
 
   if (command === "run" && !options.task && args.length > 0) {
     options.task = args.join(" ").trim();
+  }
+
+  if (command === "reviews" && options.reviewsAction === "import" && !options.bundlePath) {
+    throw new Error(
+      `Missing --bundle. Use: ${formatCliCommand("reviews import --bundle <path> --confirm-import")}`
+    );
+  }
+
+  if (command === "graphify" && !options.graphPath) {
+    throw new Error(`Missing --graph. Use: ${formatCliCommand("graphify <query|path|explain> ... --graph <path>")}`);
   }
 
   return { command, options, isImplicitCommand: implicitCommand };
@@ -676,8 +726,8 @@ function parseReviewsAction(args, options) {
     options.reviewsAction = "list";
     return;
   }
-  if (!new Set(["list", "show", "verify"]).has(action)) {
-    throw new Error(`Unknown reviews action "${action}". Use list, show, or verify.`);
+  if (!new Set(["list", "show", "verify", "export", "import"]).has(action)) {
+    throw new Error(`Unknown reviews action "${action}". Use list, show, verify, export, or import.`);
   }
   args.shift();
   options.reviewsAction = action;
@@ -687,6 +737,15 @@ function parseReviewsAction(args, options) {
       throw new Error(`Missing review id. Use: ${formatCliCommand(`reviews ${action} <reviewId>`)}`);
     }
     options.reviewId = args.shift();
+  }
+  if (action === "export") {
+    const lineage = args[0];
+    if (!lineage || lineage.startsWith("-")) {
+      throw new Error(
+        `Missing lineage. Use: ${formatCliCommand("reviews export <lineage> --out <path>")}`
+      );
+    }
+    options.lineage = args.shift();
   }
 }
 
@@ -703,6 +762,20 @@ function parseMonitorAction(args, options) {
   options.monitorAction = action;
 }
 
+function parseAlertsAction(args, options) {
+  const action = args[0];
+  if (!action || action.startsWith("-") || !new Set(["resolve", "dismiss"]).has(action)) {
+    throw new Error(`Unknown alerts action "${action ?? ""}". Use resolve or dismiss.`);
+  }
+  args.shift();
+  options.alertsAction = action;
+  const alertId = args[0];
+  if (!alertId || alertId.startsWith("-")) {
+    throw new Error(`Missing alert id. Use: ${formatCliCommand(`alerts ${action} <alertId>`)}`);
+  }
+  options.alertId = args.shift();
+}
+
 function parseIntelligenceAction(args, options) {
   const action = args[0];
   if (!action || action.startsWith("-")) {
@@ -716,6 +789,26 @@ function parseIntelligenceAction(args, options) {
     throw new Error(`Unknown intelligence action "${action}". Use status, models, context, route, or ask.`);
   }
   options.intelligenceAction = action;
+}
+
+function parseGraphifyAction(args, options) {
+  const action = args[0];
+  const usage = formatCliCommand("graphify <query|path|explain> ... --graph <path>");
+  if (!action || action.startsWith("-")) throw new Error(`Missing graphify action. Use: ${usage}`);
+  if (!["query", "path", "explain"].includes(action)) {
+    throw new Error(`Unknown graphify action "${action}". Use query, path, or explain.`);
+  }
+  args.shift();
+  options.graphifyAction = action;
+  const positional = [];
+  while (args.length && !String(args[0]).startsWith("-")) positional.push(args.shift());
+  const need = action === "path" ? 2 : 1;
+  if (positional.length < need) {
+    throw new Error(action === "path"
+      ? `Missing arguments. Use: ${formatCliCommand('graphify path "<A>" "<B>" --graph <path>')}`
+      : `Missing argument. Use: ${formatCliCommand(`graphify ${action} "<text>" --graph <path>`)}`);
+  }
+  options.graphifyArgs = positional.slice(0, need);
 }
 
 function parsePathList(value) {
@@ -762,6 +855,9 @@ function normalizeCommand(command) {
   if (command === "review") return "review";
   if (command === "reviews") return "reviews";
   if (command === "monitor") return "monitor";
+  if (command === "alerts") return "alerts";
+  if (command === "graphify") return "graphify";
+  if (command === "mcp") return "mcp";
   if (command === "intelligence" || command === "intel") return "intelligence";
   if (command === "setup") return "setup";
   if (command === "status") return "status";
@@ -836,10 +932,14 @@ Usage:
   ${cli} runs list [--json] [--limit <n>] [--active-only]
   ${cli} runs show <runId> [--json] [--limit <n>] [--follow]
   ${cli} runs stop <runId> [--json]
+  ${cli} alerts resolve|dismiss <alertId> --confirm-resolve|--confirm-dismiss [--json]
   ${cli} review --agent codex|pi [--base <ref>|--commit <sha>|--staged] [--model <name>] [--include-private] [--yes|--confirm] [--fail-on high|medium|low] [--json]
   ${cli} reviews list [--limit <n>] [--json]
   ${cli} reviews show <reviewId> [--json]
   ${cli} reviews verify <reviewId> --staged [--json]
+  ${cli} reviews export <lineage> --out <path> [--json]
+  ${cli} reviews import --bundle <path> --confirm-import [--cwd <dir>] [--json]
+  ${cli} graphify query|path|explain ... --graph <path> [--budget N] [--json]
   ${cli} orchestrator [--json]          Read-only agent capability diagnostics
   ${cli} intelligence [status|models|context|route|ask] [--json]
   ${cli} intelligence models --backend opencode-go|opencode-zen|opencode
@@ -888,8 +988,9 @@ Commands:
              Tab switches region only when content is interactive (runs/launch).
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
+  alerts     Consent-gated alert resolve/dismiss (Permission Authority).
   review     Bounded read-only review via Codex or Pi; receipts under ~/.harness/reviews/.
-  reviews    List or show prior review receipts (secret-free).
+  reviews    List/show/verify receipts, or Gentle portable export/import.
   monitor    Opt-in anomaly monitor (enable|disable|status|tick). macOS LaunchAgent; notify shell:false.
   orchestrator  Read-only capability registry diagnostics (--json supported).
   intelligence  Harness Engineering layer: backends, context packs, routing, budgets.

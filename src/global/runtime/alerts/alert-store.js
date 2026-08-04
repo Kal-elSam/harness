@@ -10,6 +10,11 @@ import {
   createAlertFingerprint
 } from "./alert-types.js";
 import { assertAlertSecretFree } from "./alert-validate.js";
+import {
+  PermissionAuthorityError,
+  UNSAFE_OPERATIONS,
+  assertUnsafePermissionAuthority
+} from "../run-permissions.js";
 
 const TERMINAL_ALERT_STATES = new Set([ALERT_STATES.RESOLVED, ALERT_STATES.DISMISSED]);
 
@@ -190,7 +195,7 @@ export async function listAlerts({ homeDir, state = null, limit = null } = {}) {
   return Number.isInteger(limit) && limit >= 0 ? filtered.slice(0, limit) : filtered;
 }
 
-async function transitionAlert(alertId, nextState, { homeDir } = {}) {
+async function transitionAlert(alertId, nextState, { homeDir, permissionAuthority } = {}) {
   const current = await loadAlert(alertId, { homeDir });
   if (current.state !== ALERT_STATES.OPEN) return current;
   const now = new Date().toISOString();
@@ -198,7 +203,8 @@ async function transitionAlert(alertId, nextState, { homeDir } = {}) {
     ...current,
     state: nextState,
     updatedAt: now,
-    resolvedAt: now
+    resolvedAt: now,
+    permissionAuthority
   }, { homeDir });
   const indexPath = openIndexPath(homeDir, current.fingerprint);
   await unlink(indexPath).catch((error) => {
@@ -207,10 +213,27 @@ async function transitionAlert(alertId, nextState, { homeDir } = {}) {
   return updated;
 }
 
-export async function resolveAlert(alertId, { homeDir } = {}) {
-  return transitionAlert(alertId, ALERT_STATES.RESOLVED, { homeDir });
+function requireMutationAuthority(permissionAuthority, expectedOperation) {
+  try {
+    return assertUnsafePermissionAuthority(permissionAuthority, { expectedOperation });
+  } catch (error) {
+    if (error instanceof PermissionAuthorityError) {
+      throw new AlertStoreError(error.message, {
+        code: error.code ?? "permission_authority_required", details: error.details
+      });
+    }
+    throw error;
+  }
 }
 
-export async function dismissAlert(alertId, { homeDir } = {}) {
-  return transitionAlert(alertId, ALERT_STATES.DISMISSED, { homeDir });
+export async function resolveAlert(alertId, { homeDir, permissionAuthority } = {}) {
+  return transitionAlert(alertId, ALERT_STATES.RESOLVED, {
+    homeDir, permissionAuthority: requireMutationAuthority(permissionAuthority, UNSAFE_OPERATIONS.ALERT_RESOLVE)
+  });
+}
+
+export async function dismissAlert(alertId, { homeDir, permissionAuthority } = {}) {
+  return transitionAlert(alertId, ALERT_STATES.DISMISSED, {
+    homeDir, permissionAuthority: requireMutationAuthority(permissionAuthority, UNSAFE_OPERATIONS.ALERT_DISMISS)
+  });
 }

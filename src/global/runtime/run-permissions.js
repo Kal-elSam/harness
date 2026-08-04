@@ -7,11 +7,33 @@ export const PERMISSION_MODES = Object.freeze({
 export const CONSENT_TYPES = Object.freeze({
   NONE: "none",
   ALLOW_UNSAFE_PERMISSIONS: "allow-unsafe-permissions",
-  COCKPIT_UNSAFE_CONFIRM: "cockpit-unsafe-confirm"
+  COCKPIT_UNSAFE_CONFIRM: "cockpit-unsafe-confirm",
+  CLI_CONFIRM_IMPORT: "cli-confirm-import",
+  COCKPIT_ALERT_RESOLVE: "cockpit-alert-resolve",
+  COCKPIT_ALERT_DISMISS: "cockpit-alert-dismiss",
+  CLI_CONFIRM_ALERT_RESOLVE: "cli-confirm-alert-resolve",
+  CLI_CONFIRM_ALERT_DISMISS: "cli-confirm-alert-dismiss"
 });
+
+/** Closed set of non-agent unsafe operations (import, controlled alerts). */
+export const UNSAFE_OPERATIONS = Object.freeze({
+  GENTLE_BUNDLE_IMPORT: "gentle-bundle-import",
+  ALERT_RESOLVE: "alert-resolve",
+  ALERT_DISMISS: "alert-dismiss"
+});
+
+/** Exact (operation, source, consent) triples — reject all other combinations. */
+export const UNSAFE_CONSENT_BINDINGS = Object.freeze([
+  [UNSAFE_OPERATIONS.GENTLE_BUNDLE_IMPORT, "cli", CONSENT_TYPES.CLI_CONFIRM_IMPORT],
+  [UNSAFE_OPERATIONS.ALERT_RESOLVE, "cli", CONSENT_TYPES.CLI_CONFIRM_ALERT_RESOLVE],
+  [UNSAFE_OPERATIONS.ALERT_RESOLVE, "cockpit", CONSENT_TYPES.COCKPIT_ALERT_RESOLVE],
+  [UNSAFE_OPERATIONS.ALERT_DISMISS, "cli", CONSENT_TYPES.CLI_CONFIRM_ALERT_DISMISS],
+  [UNSAFE_OPERATIONS.ALERT_DISMISS, "cockpit", CONSENT_TYPES.COCKPIT_ALERT_DISMISS]
+].map(([operation, source, consent]) => Object.freeze({ operation, source, consent })));
 
 const UNSAFE = new Set(["force", "yolo"]);
 const SAFE = new Set(["read-only"]);
+const UNSAFE_SOURCES = new Set(["cli", "cockpit"]);
 
 /** Canonical permission modes each adapter may accept (empty = normal always ok). */
 export const ADAPTER_PERMISSION_MODES = Object.freeze({
@@ -141,4 +163,69 @@ export function buildPermissionsArgs(permissions = []) {
   if (normalized.includes("force")) return ["--force"];
   if (normalized.includes("yolo")) return ["--dangerously-skip-permissions"];
   return [];
+}
+
+/** Fail-closed unsafe-op authority: closed bindings + frozen process-local issuance. */
+const ISSUED_UNSAFE_AUTHORITIES = new WeakMap();
+
+function resolveConsentBinding(operation, source, consentType) {
+  const match = UNSAFE_SOURCES.has(source)
+    ? UNSAFE_CONSENT_BINDINGS.find((b) => b.operation === operation && b.source === source)
+    : null;
+  if (!match || (consentType != null && consentType !== match.consent)) {
+    throw new PermissionAuthorityError(
+      `Invalid consent binding for "${operation}" / "${source}"`
+      + (consentType != null ? ` / "${consentType}"` : "") + ".",
+      { code: "invalid_unsafe_consent", details: { operation, source, consentType } }
+    );
+  }
+  return match.consent;
+}
+
+export function assertUnsafePermissionAuthority(permissionAuthority, { expectedOperation } = {}) {
+  const pa = permissionAuthority;
+  if (!pa || typeof pa !== "object" || Array.isArray(pa) || pa.mode !== PERMISSION_MODES.UNSAFE) {
+    throw new PermissionAuthorityError("Unsafe mutation requires permissionAuthority.", {
+      code: pa ? "invalid_unsafe_consent" : "permission_authority_required",
+      details: pa ? { permissionAuthority: pa } : null
+    });
+  }
+  const issued = ISSUED_UNSAFE_AUTHORITIES.get(pa);
+  if (!issued) {
+    throw new PermissionAuthorityError("permissionAuthority was not issued by authorizeUnsafeOperation.", {
+      code: "permission_authority_forged", details: { operation: pa.operation, source: pa.source }
+    });
+  }
+  if (expectedOperation && issued.operation !== expectedOperation) {
+    throw new PermissionAuthorityError(
+      `permissionAuthority.operation "${issued.operation}" does not match "${expectedOperation}".`,
+      { code: "invalid_unsafe_consent", details: { operation: issued.operation, expectedOperation } }
+    );
+  }
+  resolveConsentBinding(issued.operation, issued.source, issued.consent);
+  return issued;
+}
+
+export function authorizeUnsafeOperation({
+  operation, confirmed = false, source = "cli", consentType = null
+} = {}) {
+  if (!Object.values(UNSAFE_OPERATIONS).includes(operation)) {
+    throw new PermissionAuthorityError(`Unknown unsafe operation "${operation}".`, {
+      code: "unknown_unsafe_operation", details: { operation }
+    });
+  }
+  if (!confirmed) {
+    const code = operation === UNSAFE_OPERATIONS.GENTLE_BUNDLE_IMPORT
+      ? "import_consent_required" : "unsafe_consent_required";
+    throw new PermissionAuthorityError(
+      `Unsafe operation "${operation}" requires explicit confirmation.`,
+      { code, details: { operation, source } }
+    );
+  }
+  const consent = resolveConsentBinding(operation, source, consentType);
+  const permissionAuthority = Object.freeze({
+    mode: PERMISSION_MODES.UNSAFE, source, consent, operation
+  });
+  ISSUED_UNSAFE_AUTHORITIES.set(permissionAuthority, permissionAuthority);
+  return { operation, permissionAuthority };
 }

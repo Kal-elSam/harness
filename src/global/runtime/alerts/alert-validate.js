@@ -19,8 +19,10 @@ const FORBIDDEN_KEYS = new Set([
 ]);
 const ALLOWED = new Set([
   "version", "alertId", "kind", "severity", "title", "summary",
-  "source", "fingerprint", "state", "createdAt", "updatedAt", "resolvedAt"
+  "source", "fingerprint", "state", "createdAt", "updatedAt", "resolvedAt",
+  "permissionAuthority"
 ]);
+const PA_KEYS = new Set(["mode", "source", "consent", "operation"]);
 
 export class AlertValidationError extends Error {
   constructor(message, { code, details = null } = {}) {
@@ -101,6 +103,28 @@ export function assertAlertSecretFree(alert) {
     throw new AlertValidationError("Unknown alert severity or state.", {
       code: ALERT_VALIDATION_ERROR_CODES.INVALID_ALERT
     });
+  }
+  if (alert.permissionAuthority != null) {
+    const pa = alert.permissionAuthority;
+    if (!pa || typeof pa !== "object" || Array.isArray(pa)) {
+      throw new AlertValidationError("Invalid alert.permissionAuthority.", {
+        code: ALERT_VALIDATION_ERROR_CODES.INVALID_ALERT
+      });
+    }
+    for (const key of Object.keys(pa)) {
+      if (!PA_KEYS.has(key) || typeof pa[key] !== "string" || !pa[key].trim()) {
+        throw new AlertValidationError(`Invalid alert.permissionAuthority.${key}.`, {
+          code: ALERT_VALIDATION_ERROR_CODES.INVALID_ALERT, details: { key }
+        });
+      }
+    }
+    for (const key of PA_KEYS) {
+      if (typeof pa[key] !== "string" || !pa[key].trim()) {
+        throw new AlertValidationError(`Missing alert.permissionAuthority.${key}.`, {
+          code: ALERT_VALIDATION_ERROR_CODES.INVALID_ALERT, details: { key }
+        });
+      }
+    }
   }
   const expected = createAlertFingerprint({
     kind: alert.kind,

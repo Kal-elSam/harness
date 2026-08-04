@@ -11,7 +11,8 @@ export function buildControlCenterModel({
   snapshot = null,
   dashboard = null,
   layoutMode = "compact",
-  alerts = null
+  alerts = null,
+  companion = null
 } = {}) {
   if (!snapshot) {
     return {
@@ -49,6 +50,8 @@ export function buildControlCenterModel({
       activity: { headline: "No activity yet" },
       alerts: formatAlertsHeadline(alerts),
       tokens: { headline: "Data unavailable" },
+      companion: null,
+      companionNextAction: null,
       includeEmbeddedStatus: layoutMode !== "wide",
       runsSecondaryHint: "Detail via Enter · / actions"
     };
@@ -94,8 +97,30 @@ export function buildControlCenterModel({
     },
     alerts: formatAlertsHeadline(alerts),
     tokens: { headline: formatTokenHeadline(snapshot.budgets) },
+    companion: formatCompanionOverlay(companion),
+    companionNextAction: companion?.nextSafeAction ?? null,
     includeEmbeddedStatus: layoutMode !== "wide",
     runsSecondaryHint: "Detail via Enter · / actions"
+  };
+}
+
+function formatCompanionOverlay(companion) {
+  if (!companion) return null;
+  const g = companion.signals?.gentle?.state ?? "unknown";
+  const gy = companion.signals?.graphify;
+  const graphBit = gy?.graphStatus ? `/${gy.graphStatus}` : "";
+  const en = companion.engram?.status ?? "unknown";
+  const links = companion.links?.length ?? 0;
+  return {
+    ok: companion.ok !== false,
+    lines: [
+      `Gentle · ${g}`,
+      `Graphify · ${gy?.state ?? "unknown"}${graphBit}`,
+      `Engram · ${en}`,
+      `Soft links · ${links}`
+    ],
+    links: companion.links ?? [],
+    error: companion.error ?? null
   };
 }
 

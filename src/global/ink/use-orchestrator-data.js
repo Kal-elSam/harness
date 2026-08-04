@@ -40,7 +40,13 @@ import {
 } from "./cockpit-settings.js";
 import { listReviewReceipts } from "../runtime/review/review-receipts.js";
 import { assertReceiptSecretFree } from "../runtime/review/review-validate.js";
-import { listAlerts, resolveAlert, dismissAlert } from "../runtime/alerts/alert-store.js";
+import { listAlerts } from "../runtime/alerts/alert-store.js";
+import {
+  controlledDismissAlert, controlledResolveAlert
+} from "../runtime/alerts/controlled-alert-actions.js";
+import { buildCompanionSnapshot } from "../observability/build-companion-snapshot.js";
+import { resolveGitHeadSha } from "../observability/graphify-probe.js";
+import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
 
 export function useOrchestratorData({
   homeDir,
@@ -56,6 +62,7 @@ export function useOrchestratorData({
   const [dashboard, setDashboard] = useState(null);
   const [diagnostics, setDiagnostics] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
+  const [companion, setCompanion] = useState(null);
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedEvents, setSelectedEvents] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -78,7 +85,20 @@ export function useOrchestratorData({
     cliVersion,
     buildDashboard: buildRuntimeDashboardData,
     buildDiagnostics: buildReadOnlyDiagnostics,
-    buildSnapshot: buildControlPlaneSnapshot
+    buildSnapshot: buildControlPlaneSnapshot,
+    buildCompanion: async ({ dashboard, snapshot: snap }) => buildCompanionSnapshot({
+      controlPlaneHealth: snap?.health ?? null,
+      runs: dashboard?.recentRuns ?? [],
+      inspectEngram: (ctx) => inspectEngramIntegration({
+        env: ctx?.env ?? process.env,
+        homeDir: ctx?.homeDir ?? homeDir
+      }),
+      observabilityContext: {
+        cwd: workspaceRoot, env: process.env, headSha: resolveGitHeadSha(workspaceRoot)
+      },
+      loadReviews: async () => listReviewReceipts({ homeDir, limit: 20 }),
+      loadAlerts: async () => listAlerts({ homeDir, limit: 50 })
+    })
   })), [homeDir, workspaceRoot, packageName, packageRoot, cliVersion]);
 
   const reload = async ({ showLoading = false, asRetry = false } = {}) => {
@@ -98,6 +118,7 @@ export function useOrchestratorData({
     setDashboard(outcome.result.dashboard);
     setDiagnostics(outcome.result.diagnostics);
     setSnapshot(outcome.result.snapshot);
+    setCompanion(outcome.result.companion ?? null);
     try {
       setAlerts(await listAlerts({ homeDir, limit: 50 }));
     } catch {
@@ -166,8 +187,14 @@ export function useOrchestratorData({
     if (!alert) return;
     setBusy(true);
     try {
-      if (action === "dismiss") await dismissAlert(alert.alertId, { homeDir });
-      else await resolveAlert(alert.alertId, { homeDir });
+      const result = action === "dismiss"
+        ? await controlledDismissAlert({
+          alertId: alert.alertId, confirmed: true, source: "cockpit", homeDir
+        })
+        : await controlledResolveAlert({
+          alertId: alert.alertId, confirmed: true, source: "cockpit", homeDir
+        });
+      if (!result.ok) throw new Error(result.message ?? result.code);
       setAlerts(await listAlerts({ homeDir, limit: 50 }));
       setStatusMessage(action === "dismiss" ? "Alert dismissed" : "Alert resolved");
     } catch (error) {
@@ -427,6 +454,7 @@ export function useOrchestratorData({
     dashboard,
     diagnostics,
     snapshot,
+    companion,
     selectedRun,
     setSelectedRun,
     selectedEvents,
