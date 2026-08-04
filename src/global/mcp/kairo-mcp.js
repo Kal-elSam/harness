@@ -5,6 +5,7 @@ import { resolveHomeDir } from "../paths.js";
 import { buildControlPlaneSnapshot } from "../control-plane-snapshot.js";
 import { listRunRecords } from "../runtime/run-store.js";
 import { listAlerts } from "../runtime/alerts/alert-store.js";
+import { listReviewReceipts } from "../runtime/review/review-receipts.js";
 import { buildCompanionSnapshot } from "../observability/build-companion-snapshot.js";
 import { probeGentle } from "../observability/gentle-probe.js";
 import { runGraphifyOp } from "../observability/graphify-ops.js";
@@ -30,12 +31,14 @@ export const mcpSchemas = Object.freeze({
   graphPath: z.object({ graph: z.string().min(1), from: z.string().min(1), to: z.string().min(1) })
 });
 
+const CODE_RE = /^(?:[a-z][a-z0-9_]{0,48}|status=\d+)$/;
+export const pubCodes = (xs = []) => xs.map(String).filter((d) => CODE_RE.test(d));
+
 export function mcpResult({ ok, code, data = null, diagnostics = [], isError = false }) {
-  const structuredContent = { ok, code, data, diagnostics: diagnostics.map(String) };
+  const structuredContent = { ok, code, data, diagnostics: pubCodes(diagnostics) };
   return {
     content: [{ type: "text", text: JSON.stringify(structuredContent) }],
-    structuredContent,
-    ...(isError ? { isError: true } : {})
+    structuredContent, ...(isError ? { isError: true } : {})
   };
 }
 
@@ -48,15 +51,42 @@ const pubAlert = (a) => ({
   alertId: a?.alertId ?? null, state: a?.state ?? null, kind: a?.kind ?? null,
   severity: a?.severity ?? null, title: a?.title ?? null, createdAt: a?.createdAt ?? null
 });
+export const pubCoverage = (c) => (c == null ? null : {
+  detectedAgents: Number(c.detectedAgents) || 0, governedAgents: Number(c.governedAgents) || 0,
+  components: Number(c.components) || 0,
+  activeModules: Array.isArray(c.activeModules) ? c.activeModules.map(String) : []
+});
+export const pubGentle = (p) => ({
+  state: p?.state ?? "missing", error: null,
+  diagnostics: (p?.state === "error") ? ["provider_error"] : pubCodes(p?.diagnostics)
+});
+export const pubSignals = (s) => ({
+  gentle: { state: s?.gentle?.state ?? "missing", error: null, diagnostics: [] },
+  graphify: {
+    state: s?.graphify?.state ?? "missing", error: null, diagnostics: [],
+    graphStatus: s?.graphify?.graphStatus ?? null
+  }
+});
+export const pubEngram = (e) => ({ status: e?.status ?? "missing", binary: null, error: null });
+const pubNext = (n) => (n == null ? null : { kind: n.kind ?? null, displayOnly: true, secondary: true });
+const pubCompanion = (c) => ({
+  ok: Boolean(c?.ok), signals: pubSignals(c?.signals), engram: pubEngram(c?.engram),
+  nextSafeAction: pubNext(c?.nextSafeAction), alertsCount: c?.alertsCount ?? null,
+  linksCount: c?.links?.length ?? 0
+});
+const pubLinks = (links) => (links ?? []).map((l) => ({
+  kind: "soft", displayOnly: true, agentId: l.agentId ?? null,
+  reviewId: l.reviewId ?? null, runId: l.runId ?? null, deltaMs: l.deltaMs ?? null
+}));
 
 function graphEnvelope(result) {
-  const data = {
-    op: result.op ?? null, text: result.text ?? null, truncated: Boolean(result.truncated),
-    graphPath: result.graphPath ?? null, graphStatus: result.graphStatus ?? null
-  };
   return mcpResult({
     ok: Boolean(result.ok), code: result.ok ? "ok" : (result.code ?? "graphify_error"),
-    data, diagnostics: result.diagnostics ?? [], isError: !result.ok
+    data: {
+      op: result.op ?? null, text: result.text ?? null, truncated: Boolean(result.truncated),
+      graphPath: result.graphPath ?? null, graphStatus: result.graphStatus ?? null
+    },
+    diagnostics: result.diagnostics ?? [], isError: !result.ok
   });
 }
 
@@ -65,6 +95,7 @@ export function createToolHandlers(deps = {}) {
   const cwd = deps.cwd ?? process.cwd();
   const listRuns = deps.listRuns ?? ((o) => listRunRecords(homeDir, o));
   const listAlertRows = deps.listAlerts ?? ((o) => listAlerts({ homeDir, ...o }));
+  const listReviews = deps.listReviews ?? (() => listReviewReceipts({ homeDir, limit: 20 }));
   const buildStatus = deps.buildStatus ?? (() => buildControlPlaneSnapshot({
     homeDir, workspaceRoot: cwd, packageRoot: deps.packageRoot, packageName: deps.packageName,
     cliVersion: deps.version, includeDiff: false, includeExplain: false, includeRuntime: true
@@ -73,15 +104,24 @@ export function createToolHandlers(deps = {}) {
     ...ctx,
     inspectEngram: deps.inspectEngram ?? ((c) => inspectEngramIntegration(c)),
     loadAlerts: async () => listAlertRows({ limit: 50 }),
+    loadReviews: async () => listReviews(),
+    buildObservability: deps.buildObservability,
+    ensureRegistered: deps.ensureRegistered,
     observabilityContext: { cwd, homeDir, workspaceRoot: cwd }
   }));
   const gentleProbe = deps.probeGentle ?? ((ctx) => probeGentle(ctx));
   const graphOp = deps.runGraphifyOp ?? runGraphifyOp;
-  const graphOpts = {
+  const gOpts = {
     cwd, workspaceRoot: cwd, whichCommand: deps.whichCommand, probeCommand: deps.probeCommand,
     containPath: deps.containPath, inspectGraph: deps.inspectGraph
   };
-  const soft = async (code, data) => mcpResult({ ok: true, code, data, diagnostics: [code === "degraded" ? `${Object.keys(data)[0]}_unavailable` : ""].filter(Boolean) });
+  const soft = (code, data) => mcpResult({
+    ok: true, code, data,
+    diagnostics: code === "degraded" ? [`${Object.keys(data)[0]}_unavailable`] : []
+  });
+  const graphFail = () => mcpResult({
+    ok: false, code: "provider_error", data: null, diagnostics: ["provider_error"], isError: true
+  });
 
   return {
     async kairo_status() {
@@ -92,18 +132,12 @@ export function createToolHandlers(deps = {}) {
         return mcpResult({
           ok: true, code: "ok",
           data: {
-            health: snap?.health ?? null,
+            health: snap?.health ?? null, coverage: pubCoverage(snap?.coverage),
             cta: snap?.cta ? { kind: snap.cta.kind ?? null } : null,
-            companion: {
-              ok: companion?.ok ?? false, signals: companion?.signals ?? null,
-              nextSafeAction: companion?.nextSafeAction ?? null,
-              alertsCount: companion?.alertsCount ?? null, linksCount: companion?.links?.length ?? 0
-            }
+            companion: pubCompanion(companion)
           }
         });
-      } catch {
-        return soft("degraded", { health: null, companion: null });
-      }
+      } catch { return soft("degraded", { health: null, coverage: null, companion: null }); }
     },
     async kairo_runs({ limit = 20, activeOnly = false } = {}) {
       try {
@@ -117,43 +151,35 @@ export function createToolHandlers(deps = {}) {
     },
     async kairo_gentle_status() {
       try {
-        const probe = await gentleProbe({ cwd, homeDir, workspaceRoot: cwd });
-        const state = probe?.state ?? "missing";
+        const probe = pubGentle(await gentleProbe({ cwd, homeDir, workspaceRoot: cwd }));
         return mcpResult({
-          ok: true, code: state === "available" ? "ok" : "degraded",
-          data: { state, error: probe?.error == null ? null : String(probe.error), diagnostics: (probe?.diagnostics ?? []).map(String) },
-          diagnostics: state === "missing" ? ["gentle_missing"] : []
+          ok: true, code: probe.state === "available" ? "ok" : "degraded", data: probe,
+          diagnostics: probe.state === "missing" ? ["gentle_missing"] : []
         });
       } catch {
-        return mcpResult({ ok: true, code: "degraded", data: { state: "missing", error: null, diagnostics: [] }, diagnostics: ["gentle_unavailable"] });
+        return mcpResult({
+          ok: true, code: "degraded", data: { state: "missing", error: null, diagnostics: [] },
+          diagnostics: ["gentle_unavailable"]
+        });
       }
     },
     async kairo_graph_query({ graph, question, budget = 2000 }) {
-      try {
-        return graphEnvelope(await graphOp({ op: "query", args: [question], graphPath: graph, budget, ...graphOpts }));
-      } catch {
-        return mcpResult({ ok: false, code: "provider_error", data: null, diagnostics: ["provider_error"], isError: true });
-      }
+      try { return graphEnvelope(await graphOp({ op: "query", args: [question], graphPath: graph, budget, ...gOpts })); }
+      catch { return graphFail(); }
     },
     async kairo_graph_path({ graph, from, to }) {
-      try {
-        return graphEnvelope(await graphOp({ op: "path", args: [from, to], graphPath: graph, ...graphOpts }));
-      } catch {
-        return mcpResult({ ok: false, code: "provider_error", data: null, diagnostics: ["provider_error"], isError: true });
-      }
+      try { return graphEnvelope(await graphOp({ op: "path", args: [from, to], graphPath: graph, ...gOpts })); }
+      catch { return graphFail(); }
     },
     async kairo_context_summary() {
       try {
         const companion = await buildCompanion({ runs: await listRuns({ limit: 20, activeOnly: false }) });
-        const links = (companion?.links ?? []).map((l) => ({
-          kind: "soft", displayOnly: true, agentId: l.agentId ?? null,
-          reviewId: l.reviewId ?? null, runId: l.runId ?? null, deltaMs: l.deltaMs ?? null
-        }));
         return mcpResult({
           ok: true, code: companion?.ok === false ? "degraded" : "ok",
           data: {
-            signals: companion?.signals ?? null, engram: companion?.engram ?? null, links,
-            alertsCount: companion?.alertsCount ?? null, nextSafeAction: companion?.nextSafeAction ?? null
+            signals: pubSignals(companion?.signals), engram: pubEngram(companion?.engram),
+            links: pubLinks(companion?.links), alertsCount: companion?.alertsCount ?? null,
+            nextSafeAction: pubNext(companion?.nextSafeAction)
           },
           diagnostics: companion?.ok === false ? ["companion_degraded"] : []
         });
@@ -166,7 +192,7 @@ export function createToolHandlers(deps = {}) {
 
 export function registerKairoMcpTools(registerTool, deps = {}) {
   const h = createToolHandlers(deps);
-  const catalog = [
+  for (const [name, description, inputSchema] of [
     ["kairo_status", "Read-only control-plane + companion summary", empty],
     ["kairo_runs", "Read-only run list", mcpSchemas.runs],
     ["kairo_alerts", "Read-only alert list", mcpSchemas.alerts],
@@ -174,23 +200,17 @@ export function registerKairoMcpTools(registerTool, deps = {}) {
     ["kairo_graph_query", "Read-only Graphify query", mcpSchemas.graphQuery],
     ["kairo_graph_path", "Read-only Graphify path", mcpSchemas.graphPath],
     ["kairo_context_summary", "Companion + soft links + alerts count", empty]
-  ];
-  for (const [name, description, inputSchema] of catalog) registerTool(name, { description, inputSchema }, h[name]);
+  ]) registerTool(name, { description, inputSchema }, h[name]);
   return h;
 }
 
 export function createKairoMcpServer(deps = {}) {
   const Server = deps.McpServer ?? McpServer;
   const server = new Server({ name: "kairo", version: deps.version ?? "0.11.0" });
-  const register = deps.registerTool
-    ? (n, c, h) => deps.registerTool(n, c, h)
-    : (n, c, h) => server.registerTool(n, c, h);
-  registerKairoMcpTools(register, deps);
+  registerKairoMcpTools(deps.registerTool ?? ((n, c, h) => server.registerTool(n, c, h)), deps);
   return server;
 }
 
 export function runKairoMcp(deps = {}) {
-  const serve = deps.serveStdio ?? serveStdio;
-  const createServer = () => createKairoMcpServer(deps);
-  return serve(createServer);
+  return (deps.serveStdio ?? serveStdio)(() => createKairoMcpServer(deps));
 }
