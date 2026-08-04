@@ -34,7 +34,6 @@ export const UNSAFE_CONSENT_BINDINGS = Object.freeze([
 const UNSAFE = new Set(["force", "yolo"]);
 const SAFE = new Set(["read-only"]);
 const UNSAFE_SOURCES = new Set(["cli", "cockpit"]);
-const BINDING_KEYS = new Set(UNSAFE_CONSENT_BINDINGS.map((b) => `${b.operation}\0${b.source}\0${b.consent}`));
 
 /** Canonical permission modes each adapter may accept (empty = normal always ok). */
 export const ADAPTER_PERMISSION_MODES = Object.freeze({
@@ -166,31 +165,21 @@ export function buildPermissionsArgs(permissions = []) {
   return [];
 }
 
-/** Fail-closed unsafe-op authority: closed bindings + process-local issuance. */
-const ISSUED_UNSAFE_AUTHORITIES = new WeakSet();
+/** Fail-closed unsafe-op authority: closed bindings + frozen process-local issuance. */
+const ISSUED_UNSAFE_AUTHORITIES = new WeakMap();
 
 function resolveConsentBinding(operation, source, consentType) {
-  if (!UNSAFE_SOURCES.has(source)) {
-    throw new PermissionAuthorityError(`Unknown unsafe source "${source}".`, {
-      code: "invalid_unsafe_consent", details: { operation, source, consentType }
-    });
-  }
-  if (consentType == null) {
-    const match = UNSAFE_CONSENT_BINDINGS.find((b) => b.operation === operation && b.source === source);
-    if (!match) {
-      throw new PermissionAuthorityError(`No consent binding for "${operation}" / "${source}".`, {
-        code: "invalid_unsafe_consent", details: { operation, source }
-      });
-    }
-    return match.consent;
-  }
-  if (!BINDING_KEYS.has(`${operation}\0${source}\0${consentType}`)) {
+  const match = UNSAFE_SOURCES.has(source)
+    ? UNSAFE_CONSENT_BINDINGS.find((b) => b.operation === operation && b.source === source)
+    : null;
+  if (!match || (consentType != null && consentType !== match.consent)) {
     throw new PermissionAuthorityError(
-      `Invalid consent binding for "${operation}" / "${source}" / "${consentType}".`,
+      `Invalid consent binding for "${operation}" / "${source}"`
+      + (consentType != null ? ` / "${consentType}"` : "") + ".",
       { code: "invalid_unsafe_consent", details: { operation, source, consentType } }
     );
   }
-  return consentType;
+  return match.consent;
 }
 
 export function assertUnsafePermissionAuthority(permissionAuthority, { expectedOperation } = {}) {
@@ -201,19 +190,20 @@ export function assertUnsafePermissionAuthority(permissionAuthority, { expectedO
       details: pa ? { permissionAuthority: pa } : null
     });
   }
-  if (!ISSUED_UNSAFE_AUTHORITIES.has(pa)) {
+  const issued = ISSUED_UNSAFE_AUTHORITIES.get(pa);
+  if (!issued) {
     throw new PermissionAuthorityError("permissionAuthority was not issued by authorizeUnsafeOperation.", {
       code: "permission_authority_forged", details: { operation: pa.operation, source: pa.source }
     });
   }
-  if (expectedOperation && pa.operation !== expectedOperation) {
+  if (expectedOperation && issued.operation !== expectedOperation) {
     throw new PermissionAuthorityError(
-      `permissionAuthority.operation "${pa.operation}" does not match "${expectedOperation}".`,
-      { code: "invalid_unsafe_consent", details: { operation: pa.operation, expectedOperation } }
+      `permissionAuthority.operation "${issued.operation}" does not match "${expectedOperation}".`,
+      { code: "invalid_unsafe_consent", details: { operation: issued.operation, expectedOperation } }
     );
   }
-  resolveConsentBinding(pa.operation, pa.source, pa.consent);
-  return pa;
+  resolveConsentBinding(issued.operation, issued.source, issued.consent);
+  return issued;
 }
 
 export function authorizeUnsafeOperation({
@@ -233,7 +223,9 @@ export function authorizeUnsafeOperation({
     );
   }
   const consent = resolveConsentBinding(operation, source, consentType);
-  const permissionAuthority = { mode: PERMISSION_MODES.UNSAFE, source, consent, operation };
-  ISSUED_UNSAFE_AUTHORITIES.add(permissionAuthority);
+  const permissionAuthority = Object.freeze({
+    mode: PERMISSION_MODES.UNSAFE, source, consent, operation
+  });
+  ISSUED_UNSAFE_AUTHORITIES.set(permissionAuthority, permissionAuthority);
   return { operation, permissionAuthority };
 }

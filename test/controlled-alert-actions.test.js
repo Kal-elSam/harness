@@ -37,6 +37,10 @@ test("PA issuance + store boundary + controlled alerts + MCP/CLI", async () => {
     }),
     (e) => e.code === "invalid_unsafe_consent"
   );
+  const issued = authorizeUnsafeOperation({
+    operation: UNSAFE_OPERATIONS.ALERT_RESOLVE, confirmed: true, source: "cli"
+  }).permissionAuthority;
+  assert.throws(() => { issued.operation = UNSAFE_OPERATIONS.ALERT_DISMISS; });
   assert.equal(authorizeUnsafeOperation({
     operation: UNSAFE_OPERATIONS.ALERT_DISMISS, confirmed: true, source: "cockpit"
   }).permissionAuthority.consent, CONSENT_TYPES.COCKPIT_ALERT_DISMISS);
@@ -70,6 +74,6 @@ test("PA issuance + store boundary + controlled alerts + MCP/CLI", async () => {
   const proc = spawnSync(process.execPath, [
     "bin/kairo.js", "alerts", "resolve", "alt-aaaaaaaaaaaaaaaa", "--json"
   ], { encoding: "utf8", cwd: process.cwd() });
-  assert.notEqual(proc.status, 0);
+  assert.equal(proc.status, 2);
   assert.equal(JSON.parse(proc.stdout).ok, false);
 });
