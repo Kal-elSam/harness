@@ -190,7 +190,7 @@ export async function listAlerts({ homeDir, state = null, limit = null } = {}) {
   return Number.isInteger(limit) && limit >= 0 ? filtered.slice(0, limit) : filtered;
 }
 
-async function transitionAlert(alertId, nextState, { homeDir } = {}) {
+async function transitionAlert(alertId, nextState, { homeDir, permissionAuthority = null } = {}) {
   const current = await loadAlert(alertId, { homeDir });
   if (current.state !== ALERT_STATES.OPEN) return current;
   const now = new Date().toISOString();
@@ -198,7 +198,8 @@ async function transitionAlert(alertId, nextState, { homeDir } = {}) {
     ...current,
     state: nextState,
     updatedAt: now,
-    resolvedAt: now
+    resolvedAt: now,
+    ...(permissionAuthority ? { permissionAuthority } : {})
   }, { homeDir });
   const indexPath = openIndexPath(homeDir, current.fingerprint);
   await unlink(indexPath).catch((error) => {
@@ -207,10 +208,10 @@ async function transitionAlert(alertId, nextState, { homeDir } = {}) {
   return updated;
 }
 
-export async function resolveAlert(alertId, { homeDir } = {}) {
-  return transitionAlert(alertId, ALERT_STATES.RESOLVED, { homeDir });
+export async function resolveAlert(alertId, { homeDir, permissionAuthority = null } = {}) {
+  return transitionAlert(alertId, ALERT_STATES.RESOLVED, { homeDir, permissionAuthority });
 }
 
-export async function dismissAlert(alertId, { homeDir } = {}) {
-  return transitionAlert(alertId, ALERT_STATES.DISMISSED, { homeDir });
+export async function dismissAlert(alertId, { homeDir, permissionAuthority = null } = {}) {
+  return transitionAlert(alertId, ALERT_STATES.DISMISSED, { homeDir, permissionAuthority });
 }

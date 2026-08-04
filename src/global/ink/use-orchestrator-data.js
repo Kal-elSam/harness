@@ -40,7 +40,10 @@ import {
 } from "./cockpit-settings.js";
 import { listReviewReceipts } from "../runtime/review/review-receipts.js";
 import { assertReceiptSecretFree } from "../runtime/review/review-validate.js";
-import { listAlerts, resolveAlert, dismissAlert } from "../runtime/alerts/alert-store.js";
+import { listAlerts } from "../runtime/alerts/alert-store.js";
+import {
+  controlledDismissAlert, controlledResolveAlert
+} from "../runtime/alerts/controlled-alert-actions.js";
 import { buildCompanionSnapshot } from "../observability/build-companion-snapshot.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
 
@@ -181,8 +184,14 @@ export function useOrchestratorData({
     if (!alert) return;
     setBusy(true);
     try {
-      if (action === "dismiss") await dismissAlert(alert.alertId, { homeDir });
-      else await resolveAlert(alert.alertId, { homeDir });
+      const result = action === "dismiss"
+        ? await controlledDismissAlert({
+          alertId: alert.alertId, confirmed: true, source: "cockpit", homeDir
+        })
+        : await controlledResolveAlert({
+          alertId: alert.alertId, confirmed: true, source: "cockpit", homeDir
+        });
+      if (!result.ok) throw new Error(result.message ?? result.code);
       setAlerts(await listAlerts({ homeDir, limit: 50 }));
       setStatusMessage(action === "dismiss" ? "Alert dismissed" : "Alert resolved");
     } catch (error) {

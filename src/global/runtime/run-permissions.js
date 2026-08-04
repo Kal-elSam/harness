@@ -8,12 +8,18 @@ export const CONSENT_TYPES = Object.freeze({
   NONE: "none",
   ALLOW_UNSAFE_PERMISSIONS: "allow-unsafe-permissions",
   COCKPIT_UNSAFE_CONFIRM: "cockpit-unsafe-confirm",
-  CLI_CONFIRM_IMPORT: "cli-confirm-import"
+  CLI_CONFIRM_IMPORT: "cli-confirm-import",
+  COCKPIT_ALERT_RESOLVE: "cockpit-alert-resolve",
+  COCKPIT_ALERT_DISMISS: "cockpit-alert-dismiss",
+  CLI_CONFIRM_ALERT_RESOLVE: "cli-confirm-alert-resolve",
+  CLI_CONFIRM_ALERT_DISMISS: "cli-confirm-alert-dismiss"
 });
 
-/** Closed set of non-agent unsafe operations (import, future controlled actions). */
+/** Closed set of non-agent unsafe operations (import, controlled alerts). */
 export const UNSAFE_OPERATIONS = Object.freeze({
-  GENTLE_BUNDLE_IMPORT: "gentle-bundle-import"
+  GENTLE_BUNDLE_IMPORT: "gentle-bundle-import",
+  ALERT_RESOLVE: "alert-resolve",
+  ALERT_DISMISS: "alert-dismiss"
 });
 
 const UNSAFE = new Set(["force", "yolo"]);
@@ -153,6 +159,18 @@ export function buildPermissionsArgs(permissions = []) {
  * Generic fail-closed authority for unsafe non-agent operations (e.g. Gentle import).
  * Does not use agentId / run permissions — callers assert explicit confirmed consent.
  */
+function defaultUnsafeConsent(operation, source) {
+  const cockpit = source === "cockpit";
+  if (operation === UNSAFE_OPERATIONS.GENTLE_BUNDLE_IMPORT) return CONSENT_TYPES.CLI_CONFIRM_IMPORT;
+  if (operation === UNSAFE_OPERATIONS.ALERT_RESOLVE) {
+    return cockpit ? CONSENT_TYPES.COCKPIT_ALERT_RESOLVE : CONSENT_TYPES.CLI_CONFIRM_ALERT_RESOLVE;
+  }
+  if (operation === UNSAFE_OPERATIONS.ALERT_DISMISS) {
+    return cockpit ? CONSENT_TYPES.COCKPIT_ALERT_DISMISS : CONSENT_TYPES.CLI_CONFIRM_ALERT_DISMISS;
+  }
+  return null;
+}
+
 export function authorizeUnsafeOperation({
   operation,
   confirmed = false,
@@ -167,12 +185,20 @@ export function authorizeUnsafeOperation({
     });
   }
   if (!confirmed) {
+    const code = operation === UNSAFE_OPERATIONS.GENTLE_BUNDLE_IMPORT
+      ? "import_consent_required"
+      : "unsafe_consent_required";
     throw new PermissionAuthorityError(
       `Unsafe operation "${operation}" requires explicit confirmation.`,
-      { code: "import_consent_required", details: { operation, source } }
+      { code, details: { operation, source } }
     );
   }
-  const consent = consentType ?? CONSENT_TYPES.CLI_CONFIRM_IMPORT;
+  const consent = consentType ?? defaultUnsafeConsent(operation, source);
+  if (!consent) {
+    throw new PermissionAuthorityError(`Missing consent type for "${operation}".`, {
+      code: "unsafe_consent_required", details: { operation, source }
+    });
+  }
   return {
     operation,
     permissionAuthority: {
