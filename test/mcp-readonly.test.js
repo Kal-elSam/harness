@@ -84,6 +84,11 @@ test("handlers happy + degrade; graph escape; soft displayOnly; factory inject",
     })
   }).kairo_graph_path({ graph: "/ws/g.json", from: "a", to: "b" });
   assert.equal(pf.isError && pf.structuredContent.code === "provider_error", true);
+  const threw = await createToolHandlers({
+    runGraphifyOp: async () => { throw new Error("spawn boom"); }
+  }).kairo_graph_query({ graph: "/ws/g.json", question: "x" });
+  assert.equal(threw.isError && threw.structuredContent.code === "provider_error", true);
+  assert.equal(JSON.stringify(threw).includes("boom"), false);
 
   const link = softLinkReviewToRun(
     { reviewId: "rev1", agentId: "codex", createdAt: "2026-01-01T01:00:00Z" },

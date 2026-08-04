@@ -129,10 +129,18 @@ export function createToolHandlers(deps = {}) {
       }
     },
     async kairo_graph_query({ graph, question, budget = 2000 }) {
-      return graphEnvelope(await graphOp({ op: "query", args: [question], graphPath: graph, budget, ...graphOpts }));
+      try {
+        return graphEnvelope(await graphOp({ op: "query", args: [question], graphPath: graph, budget, ...graphOpts }));
+      } catch {
+        return mcpResult({ ok: false, code: "provider_error", data: null, diagnostics: ["provider_error"], isError: true });
+      }
     },
     async kairo_graph_path({ graph, from, to }) {
-      return graphEnvelope(await graphOp({ op: "path", args: [from, to], graphPath: graph, ...graphOpts }));
+      try {
+        return graphEnvelope(await graphOp({ op: "path", args: [from, to], graphPath: graph, ...graphOpts }));
+      } catch {
+        return mcpResult({ ok: false, code: "provider_error", data: null, diagnostics: ["provider_error"], isError: true });
+      }
     },
     async kairo_context_summary() {
       try {
