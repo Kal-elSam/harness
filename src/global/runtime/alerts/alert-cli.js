@@ -25,7 +25,7 @@ export async function runGlobalAlerts(options) {
     console.log(`${commandHeader(`alerts ${action}`)}\n${alertId} → ${result.alert.state}`);
   } else {
     console.error(`alerts ${action} failed (${result.code}).`);
-    process.exitCode = 2;
   }
+  if (!result.ok) process.exitCode = 2;
   return result;
 }

@@ -166,7 +166,9 @@ export function buildPermissionsArgs(permissions = []) {
   return [];
 }
 
-/** Fail-closed unsafe-op authority: closed (operation, source, consent) bindings only. */
+/** Fail-closed unsafe-op authority: closed bindings + process-local issuance. */
+const ISSUED_UNSAFE_AUTHORITIES = new WeakSet();
+
 function resolveConsentBinding(operation, source, consentType) {
   if (!UNSAFE_SOURCES.has(source)) {
     throw new PermissionAuthorityError(`Unknown unsafe source "${source}".`, {
@@ -199,6 +201,11 @@ export function assertUnsafePermissionAuthority(permissionAuthority, { expectedO
       details: pa ? { permissionAuthority: pa } : null
     });
   }
+  if (!ISSUED_UNSAFE_AUTHORITIES.has(pa)) {
+    throw new PermissionAuthorityError("permissionAuthority was not issued by authorizeUnsafeOperation.", {
+      code: "permission_authority_forged", details: { operation: pa.operation, source: pa.source }
+    });
+  }
   if (expectedOperation && pa.operation !== expectedOperation) {
     throw new PermissionAuthorityError(
       `permissionAuthority.operation "${pa.operation}" does not match "${expectedOperation}".`,
@@ -226,8 +233,7 @@ export function authorizeUnsafeOperation({
     );
   }
   const consent = resolveConsentBinding(operation, source, consentType);
-  return {
-    operation,
-    permissionAuthority: { mode: PERMISSION_MODES.UNSAFE, source, consent, operation }
-  };
+  const permissionAuthority = { mode: PERMISSION_MODES.UNSAFE, source, consent, operation };
+  ISSUED_UNSAFE_AUTHORITIES.add(permissionAuthority);
+  return { operation, permissionAuthority };
 }
