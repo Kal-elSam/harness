@@ -10,6 +10,7 @@ import { buildCompanionSnapshot } from "../observability/build-companion-snapsho
 import { probeGentle } from "../observability/gentle-probe.js";
 import { runGraphifyOp } from "../observability/graphify-ops.js";
 import { resolveGitHeadSha } from "../observability/graphify-probe.js";
+import { runPassiveObservabilitySnapshot } from "../observability/passive-snapshot-flight.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
 
 export const KAIRO_MCP_TOOLS = Object.freeze([
@@ -104,12 +105,14 @@ export function createToolHandlers(deps = {}) {
   const resolveHead = deps.resolveHead ?? ((dir) => resolveGitHeadSha(dir));
   /** Fresh HEAD per request/snapshot — never cache across MCP tool calls. */
   const requestHead = () => resolveHead(cwd);
+  const buildObs = deps.buildObservability
+    ?? ((ctx) => runPassiveObservabilitySnapshot(ctx, { force: Boolean(ctx?.force) }));
   const buildCompanion = deps.buildCompanion ?? ((ctx) => buildCompanionSnapshot({
     ...ctx,
     inspectEngram: deps.inspectEngram ?? ((c) => inspectEngramIntegration(c)),
     loadAlerts: async () => listAlertRows({ limit: 50 }),
     loadReviews: async () => listReviews(),
-    buildObservability: deps.buildObservability,
+    buildObservability: buildObs,
     ensureRegistered: deps.ensureRegistered,
     observabilityContext: { cwd, homeDir, workspaceRoot: cwd, headSha: requestHead() }
   }));

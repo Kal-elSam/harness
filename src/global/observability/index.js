@@ -15,6 +15,13 @@ export {
 } from "./probe-registry.js";
 export { buildObservabilitySnapshot } from "./build-observability-snapshot.js";
 export {
+  PASSIVE_SNAPSHOT_TTL_MS,
+  PASSIVE_SNAPSHOT_MAX_ENTRIES,
+  buildPassiveSnapshotKey,
+  resetPassiveSnapshotFlightForTests,
+  runPassiveObservabilitySnapshot
+} from "./passive-snapshot-flight.js";
+export {
   SUPPORTED_PROTOCOL, SUPPORTED_SCHEMA, SUPPORTED_CONTRACT,
   SUPPORTED_MANDATORY_FEATURES, evaluateGentleCapabilities, probeGentle, createGentleProbe,
   resolveGentleBinaryPath
