@@ -15,6 +15,13 @@ export {
 } from "./probe-registry.js";
 export { buildObservabilitySnapshot } from "./build-observability-snapshot.js";
 export {
+  PASSIVE_SNAPSHOT_TTL_MS,
+  PASSIVE_SNAPSHOT_MAX_ENTRIES,
+  buildPassiveSnapshotKey,
+  resetPassiveSnapshotFlightForTests,
+  runPassiveObservabilitySnapshot
+} from "./passive-snapshot-flight.js";
+export {
   SUPPORTED_PROTOCOL, SUPPORTED_SCHEMA, SUPPORTED_CONTRACT,
   SUPPORTED_MANDATORY_FEATURES, evaluateGentleCapabilities, probeGentle, createGentleProbe,
   resolveGentleBinaryPath
@@ -26,6 +33,13 @@ export {
   resolveGraphifyBinaryPath, resolveGitHeadSha, scrubGitOverrideEnv,
   probeGraphify, createGraphifyProbe
 } from "./graphify-probe.js";
+export {
+  GRAPHIFY_PARSE_TTL_MS,
+  GRAPHIFY_PARSE_MAX_ENTRIES,
+  buildGraphifyParseIdentity,
+  resetGraphifyParseCacheForTests,
+  inspectGraphArtifactCached
+} from "./graphify-parse-cache.js";
 export { runGraphifyOp, runGraphifyCli } from "./graphify-ops.js";
 export {
   SOFT_LINK_WINDOW_MS,

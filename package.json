@@ -30,6 +30,7 @@
   ],
   "scripts": {
     "test": "node --test",
+    "test:cool": "node --test --test-concurrency=1",
     "doctor": "node ./bin/kairo.js doctor",
     "smoke": "bash scripts/smoke-test.sh",
     "ux:smoke": "bash scripts/ux-smoke-test.sh",

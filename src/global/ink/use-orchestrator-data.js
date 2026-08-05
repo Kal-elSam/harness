@@ -46,6 +46,7 @@ import {
 } from "../runtime/alerts/controlled-alert-actions.js";
 import { buildCompanionSnapshot } from "../observability/build-companion-snapshot.js";
 import { resolveGitHeadSha } from "../observability/graphify-probe.js";
+import { runPassiveObservabilitySnapshot } from "../observability/passive-snapshot-flight.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
 
 export function useOrchestratorData({
@@ -93,8 +94,12 @@ export function useOrchestratorData({
         env: ctx?.env ?? process.env,
         homeDir: ctx?.homeDir ?? homeDir
       }),
+      buildObservability: (ctx) => runPassiveObservabilitySnapshot(ctx, {
+        force: Boolean(ctx?.force)
+      }),
       observabilityContext: {
-        cwd: workspaceRoot, env: process.env, headSha: resolveGitHeadSha(workspaceRoot)
+        cwd: workspaceRoot, workspaceRoot, env: process.env,
+        headSha: resolveGitHeadSha(workspaceRoot)
       },
       loadReviews: async () => listReviewReceipts({ homeDir, limit: 20 }),
       loadAlerts: async () => listAlerts({ homeDir, limit: 50 })
