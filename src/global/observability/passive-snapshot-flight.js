@@ -5,15 +5,22 @@ import { listObservabilityProbes } from "./probe-registry.js";
 export const PASSIVE_SNAPSHOT_TTL_MS = 5_000;
 export const PASSIVE_SNAPSHOT_MAX_ENTRIES = 8;
 
-/** @type {Map<string, { promise?: Promise<unknown>, value?: unknown, expiresAt?: number }>} */
-const entries = new Map();
+/** @type {Map<string, Promise<unknown>>} */
+const flights = new Map();
+/** @type {Map<string, { value: unknown, expiresAt: number }>} */
+const completed = new Map();
 
 export function resetPassiveSnapshotFlightForTests() {
-  entries.clear();
+  flights.clear();
+  completed.clear();
 }
 
 export function passiveSnapshotFlightSizeForTests() {
-  return entries.size;
+  return completed.size;
+}
+
+export function passiveSnapshotInFlightSizeForTests() {
+  return flights.size;
 }
 
 export function buildPassiveSnapshotKey(context = {}, {
@@ -25,23 +32,24 @@ export function buildPassiveSnapshotKey(context = {}, {
   return `${workspace}\0${head}\0${providers}`;
 }
 
-function touch(key, entry) {
-  entries.delete(key);
-  entries.set(key, entry);
+function touchCompleted(key, entry) {
+  completed.delete(key);
+  completed.set(key, entry);
 }
 
-function evictOldest(maxEntries) {
-  while (entries.size > maxEntries) {
-    const oldest = entries.keys().next().value;
+function evictOldestCompleted(maxEntries) {
+  while (completed.size > maxEntries) {
+    const oldest = completed.keys().next().value;
     if (oldest == null) break;
-    entries.delete(oldest);
+    completed.delete(oldest);
   }
 }
 
 /**
  * Single-flight + short TTL for passive observability snapshots.
  * force skips completed hits but joins identical in-flight work.
- * Errors delete the entry so the next call retries.
+ * Errors delete the flight entry so the next call retries.
+ * LRU applies only to completed values — never evicts active flights.
  */
 export async function runPassiveObservabilitySnapshot(context = {}, {
   force = false,
@@ -52,28 +60,30 @@ export async function runPassiveObservabilitySnapshot(context = {}, {
   maxEntries = PASSIVE_SNAPSHOT_MAX_ENTRIES
 } = {}) {
   const key = buildPassiveSnapshotKey(context, { listProviders });
-  const current = entries.get(key);
+  const inflight = flights.get(key);
+  if (inflight) return inflight;
 
-  if (current?.promise) return current.promise;
-
-  if (!force && current && current.value !== undefined && (current.expiresAt ?? 0) > now()) {
-    touch(key, current);
-    return current.value;
+  const cached = completed.get(key);
+  if (!force && cached && cached.expiresAt > now()) {
+    touchCompleted(key, cached);
+    return cached.value;
   }
 
   const promise = Promise.resolve()
     .then(() => build(context))
     .then((value) => {
-      touch(key, { value, expiresAt: now() + ttlMs });
-      evictOldest(maxEntries);
+      if (flights.get(key) === promise) {
+        flights.delete(key);
+        touchCompleted(key, { value, expiresAt: now() + ttlMs });
+        evictOldestCompleted(maxEntries);
+      }
       return value;
     })
     .catch((err) => {
-      entries.delete(key);
+      if (flights.get(key) === promise) flights.delete(key);
       throw err;
     });
 
-  touch(key, { promise });
-  evictOldest(maxEntries);
+  flights.set(key, promise);
   return promise;
 }

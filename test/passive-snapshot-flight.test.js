@@ -5,6 +5,7 @@ import {
   PASSIVE_SNAPSHOT_TTL_MS,
   buildPassiveSnapshotKey,
   passiveSnapshotFlightSizeForTests,
+  passiveSnapshotInFlightSizeForTests,
   resetPassiveSnapshotFlightForTests,
   runPassiveObservabilitySnapshot
 } from "../src/global/observability/passive-snapshot-flight.js";
@@ -88,5 +89,46 @@ test("passive snapshot flight: coalesce, TTL, force, key, error retry, LRU", asy
       { ...opts, build: async () => ({ i }) }
     );
   }
+  assert.equal(passiveSnapshotFlightSizeForTests(), PASSIVE_SNAPSHOT_MAX_ENTRIES);
+});
+
+test("passive snapshot flight: capacity pressure never double-starts a key", async () => {
+  resetPassiveSnapshotFlightForTests();
+  const providers = () => [{ id: "gentle" }];
+  const started = new Map();
+  /** @type {Array<() => void>} */
+  const unlocks = [];
+  const build = async (ctx) => {
+    const k = ctx.cwd;
+    started.set(k, (started.get(k) ?? 0) + 1);
+    await new Promise((resolve) => { unlocks.push(resolve); });
+    return { cwd: k };
+  };
+  const opts = {
+    build, now: () => 1_000, listProviders: providers,
+    ttlMs: 5_000, maxEntries: PASSIVE_SNAPSHOT_MAX_ENTRIES
+  };
+
+  const pending = [];
+  for (let i = 0; i < PASSIVE_SNAPSHOT_MAX_ENTRIES + 1; i += 1) {
+    pending.push(runPassiveObservabilitySnapshot({ cwd: `/ws-${i}`, headSha: "h" }, opts));
+  }
+  await Promise.resolve();
+  assert.equal(passiveSnapshotInFlightSizeForTests(), PASSIVE_SNAPSHOT_MAX_ENTRIES + 1);
+  assert.equal(passiveSnapshotFlightSizeForTests(), 0);
+
+  const joinFirst = runPassiveObservabilitySnapshot({ cwd: "/ws-0", headSha: "h" }, opts);
+  await Promise.resolve();
+  assert.equal(started.get("/ws-0"), 1);
+
+  for (const unlock of unlocks) unlock();
+  const results = await Promise.all([...pending, joinFirst]);
+  assert.equal(results[0].cwd, "/ws-0");
+  assert.equal(results.at(-1).cwd, "/ws-0");
+  assert.equal(started.get("/ws-0"), 1);
+  for (let i = 0; i < PASSIVE_SNAPSHOT_MAX_ENTRIES + 1; i += 1) {
+    assert.equal(started.get(`/ws-${i}`), 1);
+  }
+  assert.equal(passiveSnapshotInFlightSizeForTests(), 0);
   assert.equal(passiveSnapshotFlightSizeForTests(), PASSIVE_SNAPSHOT_MAX_ENTRIES);
 });

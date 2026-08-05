@@ -19,6 +19,7 @@ export {
   PASSIVE_SNAPSHOT_MAX_ENTRIES,
   buildPassiveSnapshotKey,
   resetPassiveSnapshotFlightForTests,
+  passiveSnapshotInFlightSizeForTests,
   runPassiveObservabilitySnapshot
 } from "./passive-snapshot-flight.js";
 export {
