@@ -3,6 +3,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isExecutableAvailable, probeCommand as defaultProbeCommand } from "../cli-probe.js";
 import { normalizeProbeResult } from "./probe-contract.js";
+import { inspectGraphArtifactCached } from "./graphify-parse-cache.js";
 
 export const GRAPH_REPORT_COMMIT_PATTERN = /Built from commit:\s*`([0-9a-f]+)`/i;
 
@@ -141,7 +142,10 @@ export function assertGraphInsideWorkspace(workspaceRoot, graphPath, {
 
 export async function probeGraphify({
   env = process.env, cwd = process.cwd(), whichCommand = defaultWhichAbsolute,
-  inspectGraph = inspectGraphArtifact, headSha = null, resolveHead = resolveGitHeadSha
+  inspectGraph = (path, opts) => inspectGraphArtifactCached(path, {
+    ...opts, inspect: inspectGraphArtifact
+  }),
+  headSha = null, resolveHead = resolveGitHeadSha
 } = {}) {
   let path = null;
   try {

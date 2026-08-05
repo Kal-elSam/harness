@@ -33,6 +33,13 @@ export {
   resolveGraphifyBinaryPath, resolveGitHeadSha, scrubGitOverrideEnv,
   probeGraphify, createGraphifyProbe
 } from "./graphify-probe.js";
+export {
+  GRAPHIFY_PARSE_TTL_MS,
+  GRAPHIFY_PARSE_MAX_ENTRIES,
+  buildGraphifyParseIdentity,
+  resetGraphifyParseCacheForTests,
+  inspectGraphArtifactCached
+} from "./graphify-parse-cache.js";
 export { runGraphifyOp, runGraphifyCli } from "./graphify-ops.js";
 export {
   SOFT_LINK_WINDOW_MS,
