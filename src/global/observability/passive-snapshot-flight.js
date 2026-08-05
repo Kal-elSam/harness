@@ -48,7 +48,8 @@ function evictOldestCompleted(maxEntries) {
 /**
  * Single-flight + short TTL for passive observability snapshots.
  * force skips completed hits but joins identical in-flight work.
- * Errors delete the flight entry so the next call retries.
+ * Errors clear that key's flight and completed entry so the next call rebuilds
+ * (a failed force refresh must not leave a stale completed hit).
  * LRU applies only to completed values — never evicts active flights.
  */
 export async function runPassiveObservabilitySnapshot(context = {}, {
@@ -80,7 +81,10 @@ export async function runPassiveObservabilitySnapshot(context = {}, {
       return value;
     })
     .catch((err) => {
-      if (flights.get(key) === promise) flights.delete(key);
+      if (flights.get(key) === promise) {
+        flights.delete(key);
+        completed.delete(key);
+      }
       throw err;
     });
 

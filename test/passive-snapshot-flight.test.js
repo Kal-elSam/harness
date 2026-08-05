@@ -132,3 +132,49 @@ test("passive snapshot flight: capacity pressure never double-starts a key", asy
   assert.equal(passiveSnapshotInFlightSizeForTests(), 0);
   assert.equal(passiveSnapshotFlightSizeForTests(), PASSIVE_SNAPSHOT_MAX_ENTRIES);
 });
+
+test("passive snapshot flight: force reject invalidates seeded cache", async () => {
+  resetPassiveSnapshotFlightForTests();
+  let calls = 0;
+  let clock = 1_000;
+  const providers = () => [{ id: "gentle" }];
+  const ctx = { cwd: "/ws", headSha: "abc" };
+  const opts = {
+    now: () => clock, listProviders: providers, ttlMs: 5_000, maxEntries: 8
+  };
+
+  await runPassiveObservabilitySnapshot(ctx, {
+    ...opts,
+    build: async () => {
+      calls += 1;
+      return { n: calls, tag: "seed" };
+    }
+  });
+  assert.equal(calls, 1);
+  assert.equal(passiveSnapshotFlightSizeForTests(), 1);
+
+  await assert.rejects(
+    () => runPassiveObservabilitySnapshot(ctx, {
+      ...opts,
+      force: true,
+      build: async () => {
+        calls += 1;
+        throw new Error("refresh boom");
+      }
+    }),
+    /refresh boom/
+  );
+  assert.equal(calls, 2);
+  assert.equal(passiveSnapshotFlightSizeForTests(), 0);
+
+  const rebuilt = await runPassiveObservabilitySnapshot(ctx, {
+    ...opts,
+    build: async () => {
+      calls += 1;
+      return { n: calls, tag: "rebuild" };
+    }
+  });
+  assert.equal(calls, 3);
+  assert.equal(rebuilt.tag, "rebuild");
+  assert.equal(rebuilt.n, 3);
+});
