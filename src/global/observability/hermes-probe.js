@@ -27,10 +27,9 @@ function boundText(raw, maxBytes = MAX_PROBE_BYTES) {
   return Buffer.from(text, "utf8").subarray(0, maxBytes).toString("utf8");
 }
 
-/** Single bounded `which` — never a second unscoped spawn. */
 function whichAbsolutePath(command, env, run = defaultProbeCommand) {
   const which = run("which", [command], { env, timeoutMs: WHICH_TIMEOUT_MS });
-  if (!which?.ok || which.timedOut || which.error) return "";
+  if (!which?.ok) return "";
   const path = String(which.stdout ?? "").trim().split(/\r?\n/)[0] ?? "";
   return isAbsolute(path) ? path : "";
 }
@@ -52,8 +51,7 @@ export function detectHermesDiagnosticSurfaces(helpText) {
   const text = boundText(helpText);
   const found = Object.create(null);
   for (const name of HERMES_DIAGNOSTIC_SURFACES) {
-    const re = new RegExp(`(?:^|[\\s,{|/])${name}(?=[\\s,}|/-]|$)`, "m");
-    found[name] = re.test(text);
+    found[name] = new RegExp(`(?:^|[\\s,{|/])${name}(?=[\\s,}|/-]|$)`, "m").test(text);
   }
   return Object.freeze(found);
 }
@@ -77,12 +75,16 @@ function spawnFailure(label, probeResult, evidence, extra = {}) {
   return null;
 }
 
+/** which: preserve timeout/spawn_error; exit/empty → missing (not failure). */
+function whichFailure(probeResult, evidence) {
+  if (probeResult?.timedOut) return softError("which", "timeout", evidence);
+  if (probeResult?.error) return softError("which", "spawn", evidence);
+  return null;
+}
+
 function runProbe(probeCommand, cmd, args, opts) {
-  try {
-    return { ok: true, value: probeCommand(cmd, args, opts) };
-  } catch {
-    return { ok: false };
-  }
+  try { return { ok: true, value: probeCommand(cmd, args, opts) }; }
+  catch { return { ok: false }; }
 }
 
 export async function probeHermes({
@@ -91,19 +93,28 @@ export async function probeHermes({
   whichCommand,
   probeCommand = defaultProbeCommand
 } = {}) {
+  const noBinary = [{ kind: "binary", path: null }];
   let path;
-  try {
-    path = resolveHermesBinaryPath("hermes", env, { whichCommand, probeCommand });
-  } catch {
-    return softError("which", "spawn", [{ kind: "binary", path: null }]);
+
+  if (typeof whichCommand === "function") {
+    try { path = resolveHermesBinaryPath("hermes", env, { whichCommand, probeCommand }); }
+    catch { return softError("which", "spawn", noBinary); }
+  } else {
+    const inv = runProbe(probeCommand, "which", ["hermes"], { env, timeoutMs: WHICH_TIMEOUT_MS });
+    if (!inv.ok) return softError("which", "spawn", noBinary);
+    const fail = whichFailure(inv.value, noBinary);
+    if (fail) return fail;
+    const candidate = String(inv.value?.stdout ?? "").trim().split(/\r?\n/)[0] ?? "";
+    path = inv.value?.ok && isAbsolute(candidate) ? candidate : null;
   }
+
   if (!path) {
     return result({
       state: "missing",
       diagnostics: [
         "hermes absolute binary not resolved. Install Hermes Agent separately, then re-run the probe."
       ],
-      evidence: [{ kind: "binary", path: null }]
+      evidence: noBinary
     });
   }
 
@@ -118,9 +129,7 @@ export async function probeHermes({
   evidence.push({ kind: "version", version, ok: true });
   if (!version) {
     return result({
-      state: "incompatible",
-      contractCompatible: false,
-      evidence,
+      state: "incompatible", contractCompatible: false, evidence,
       diagnostics: ["hermes --version did not yield a parseable version"]
     });
   }
