@@ -1,5 +1,6 @@
 import { createGentleProbe } from "./gentle-probe.js";
 import { createGraphifyProbe } from "./graphify-probe.js";
+import { createHermesProbe } from "./hermes-probe.js";
 import { getObservabilityProbe, registerObservabilityProbe } from "./probe-registry.js";
 
 export {
@@ -28,6 +29,11 @@ export {
 } from "./graphify-probe.js";
 export { runGraphifyOp, runGraphifyCli } from "./graphify-ops.js";
 export {
+  HERMES_DIAGNOSTIC_SURFACES, HERMES_MANDATORY_SURFACES,
+  detectHermesDiagnosticSurfaces, resolveHermesBinaryPath,
+  probeHermes, createHermesProbe
+} from "./hermes-probe.js";
+export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
   resolveRunTimestamp,
@@ -40,4 +46,5 @@ export {
 export function ensureObservabilityProbesRegistered() {
   if (!getObservabilityProbe("gentle")) registerObservabilityProbe(createGentleProbe());
   if (!getObservabilityProbe("graphify")) registerObservabilityProbe(createGraphifyProbe());
+  if (!getObservabilityProbe("hermes")) registerObservabilityProbe(createHermesProbe());
 }
