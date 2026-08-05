@@ -1,6 +1,5 @@
 import { isAbsolute } from "node:path";
 import {
-  isExecutableAvailable,
   parseVersionFromOutput,
   probeCommand as defaultProbeCommand
 } from "../cli-probe.js";
@@ -28,25 +27,27 @@ function boundText(raw, maxBytes = MAX_PROBE_BYTES) {
   return Buffer.from(text, "utf8").subarray(0, maxBytes).toString("utf8");
 }
 
-function defaultWhichAbsolute(command, env) {
-  if (!isExecutableAvailable(command, { env })) return "";
-  const which = defaultProbeCommand("which", [command], { env, timeoutMs: WHICH_TIMEOUT_MS });
+/** Single bounded `which` — never a second unscoped spawn. */
+function whichAbsolutePath(command, env, run = defaultProbeCommand) {
+  const which = run("which", [command], { env, timeoutMs: WHICH_TIMEOUT_MS });
+  if (!which?.ok || which.timedOut || which.error) return "";
   const path = String(which.stdout ?? "").trim().split(/\r?\n/)[0] ?? "";
   return isAbsolute(path) ? path : "";
 }
 
 /** Resolve absolute Hermes binary; never return a bare command name. */
 export function resolveHermesBinaryPath(command = "hermes", env = process.env, {
-  whichCommand = defaultWhichAbsolute
+  whichCommand,
+  probeCommand = defaultProbeCommand
 } = {}) {
-  const resolved = whichCommand(command, env) || null;
+  const resolver = typeof whichCommand === "function"
+    ? whichCommand
+    : (cmd, e) => whichAbsolutePath(cmd, e, probeCommand);
+  const resolved = resolver(command, env) || null;
   return resolved && isAbsolute(resolved) ? resolved : null;
 }
 
-/**
- * Detect diagnostic capability names in help text.
- * Presence means the CLI *declares* the surface — not that Kairo may run it.
- */
+/** Presence means the CLI *declares* the surface — not that Kairo may run it. */
 export function detectHermesDiagnosticSurfaces(helpText) {
   const text = boundText(helpText);
   const found = Object.create(null);
@@ -57,34 +58,45 @@ export function detectHermesDiagnosticSurfaces(helpText) {
   return Object.freeze(found);
 }
 
-function spawnFailure(label, probeResult) {
-  if (probeResult?.timedOut) {
-    return { state: "error", diagnostics: [`hermes ${label} timed out`], error: "timeout" };
-  }
-  if (probeResult?.error) {
-    return {
-      state: "error",
-      diagnostics: [`hermes ${label} failed`],
-      error: "spawn_error"
-    };
-  }
+function softError(label, kind, evidence, extra = {}) {
+  return result({
+    state: "error",
+    diagnostics: [`hermes ${label} ${kind === "timeout" ? "timed out" : "failed"}`],
+    error: kind === "timeout" ? "timeout" : kind === "exit" ? `exit ${extra.code}` : "spawn_error",
+    evidence,
+    ...extra.fields
+  });
+}
+
+function spawnFailure(label, probeResult, evidence, extra = {}) {
+  if (probeResult?.timedOut) return softError(label, "timeout", evidence, extra);
+  if (probeResult?.error) return softError(label, "spawn", evidence, extra);
   if (probeResult?.status !== 0) {
-    return {
-      state: "error",
-      diagnostics: [`hermes ${label} failed`],
-      error: `exit ${probeResult?.status ?? "unknown"}`
-    };
+    return softError(label, "exit", evidence, { ...extra, code: probeResult?.status ?? "unknown" });
   }
   return null;
+}
+
+function runProbe(probeCommand, cmd, args, opts) {
+  try {
+    return { ok: true, value: probeCommand(cmd, args, opts) };
+  } catch {
+    return { ok: false };
+  }
 }
 
 export async function probeHermes({
   env = process.env,
   cwd = process.cwd(),
-  whichCommand = defaultWhichAbsolute,
+  whichCommand,
   probeCommand = defaultProbeCommand
 } = {}) {
-  const path = resolveHermesBinaryPath("hermes", env, { whichCommand });
+  let path;
+  try {
+    path = resolveHermesBinaryPath("hermes", env, { whichCommand, probeCommand });
+  } catch {
+    return softError("which", "spawn", [{ kind: "binary", path: null }]);
+  }
   if (!path) {
     return result({
       state: "missing",
@@ -96,15 +108,13 @@ export async function probeHermes({
   }
 
   const evidence = [{ kind: "binary", path }];
-
-  const versionResult = probeCommand(path, ["--version"], {
+  const versionInv = runProbe(probeCommand, path, ["--version"], {
     cwd, env, timeoutMs: VERSION_TIMEOUT_MS
   });
-  const versionFail = spawnFailure("--version", versionResult);
-  if (versionFail) {
-    return result({ ...versionFail, evidence });
-  }
-  const version = parseVersionFromOutput(boundText(versionResult.stdout));
+  if (!versionInv.ok) return softError("--version", "spawn", evidence);
+  const versionFail = spawnFailure("--version", versionInv.value, evidence);
+  if (versionFail) return versionFail;
+  const version = parseVersionFromOutput(boundText(versionInv.value.stdout));
   evidence.push({ kind: "version", version, ok: true });
   if (!version) {
     return result({
@@ -115,41 +125,28 @@ export async function probeHermes({
     });
   }
 
-  const helpResult = probeCommand(path, ["--help"], {
+  const helpInv = runProbe(probeCommand, path, ["--help"], {
     cwd, env, timeoutMs: HELP_TIMEOUT_MS
   });
-  const helpFail = spawnFailure("--help", helpResult);
-  if (helpFail) {
-    return result({ ...helpFail, version, evidence });
-  }
+  if (!helpInv.ok) return softError("--help", "spawn", evidence, { fields: { version } });
+  const helpFail = spawnFailure("--help", helpInv.value, evidence, { fields: { version } });
+  if (helpFail) return helpFail;
 
-  const surfaces = detectHermesDiagnosticSurfaces(helpResult.stdout);
-  evidence.push({
-    kind: "diagnostic_surfaces",
-    surfaces: { ...surfaces },
-    /** Capability availability only — surfaces were not executed. */
-    executed: false
-  });
+  const surfaces = detectHermesDiagnosticSurfaces(helpInv.value.stdout);
+  // Capability availability only — surfaces were not executed.
+  evidence.push({ kind: "diagnostic_surfaces", surfaces: { ...surfaces }, executed: false });
 
   const missingMandatory = HERMES_MANDATORY_SURFACES.filter((name) => !surfaces[name]);
   if (missingMandatory.length) {
     return result({
-      state: "incompatible",
-      version,
-      contractCompatible: false,
-      evidence,
+      state: "incompatible", version, contractCompatible: false, evidence,
       diagnostics: missingMandatory.map((name) => `missing mandatory surface in --help: ${name}`)
     });
   }
 
   return result({
-    state: "available",
-    version,
-    contractCompatible: true,
-    evidence,
-    diagnostics: surfaces.status
-      ? []
-      : ["optional surface absent in --help: status"]
+    state: "available", version, contractCompatible: true, evidence,
+    diagnostics: surfaces.status ? [] : ["optional surface absent in --help: status"]
   });
 }
 
