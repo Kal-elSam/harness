@@ -43,6 +43,10 @@ export {
 } from "./graphify-parse-cache.js";
 export { runGraphifyOp, runGraphifyCli } from "./graphify-ops.js";
 export {
+  SYSTEM_RESOURCES_TIMEOUT_MS, PROCESS_ALLOWLIST,
+  parseProcessTable, loadSystemResources
+} from "./system-resources.js";
+export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
   resolveRunTimestamp,

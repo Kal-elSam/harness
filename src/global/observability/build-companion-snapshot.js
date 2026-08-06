@@ -2,6 +2,7 @@ import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
 import { buildObservabilitySnapshot as defaultObs } from "./build-observability-snapshot.js";
 import { createGentleProbe } from "./gentle-probe.js";
 import { createGraphifyProbe } from "./graphify-probe.js";
+import { loadSystemResources as defaultSystemResources } from "./system-resources.js";
 import { getObservabilityProbe, registerObservabilityProbe } from "./probe-registry.js";
 
 export const SOFT_LINK_WINDOW_MS = 60 * 60 * 1000;
@@ -16,6 +17,28 @@ const GOV_PRIMARY = new Set([
 function defaultEnsure() {
   if (!getObservabilityProbe("gentle")) registerObservabilityProbe(createGentleProbe());
   if (!getObservabilityProbe("graphify")) registerObservabilityProbe(createGraphifyProbe());
+}
+
+function emptySystemResources() {
+  return {
+    state: "error", sampledAt: null, diagnostics: [],
+    memory: null, swap: null, disk: null,
+    processes: { totalCount: 0, zombieCount: 0, tracked: [] },
+    thermal: { state: "unavailable" }, ssdWear: { state: "unavailable" }
+  };
+}
+function summarizeSystemResources(raw) {
+  if (raw == null || typeof raw !== "object") return emptySystemResources();
+  const empty = emptySystemResources();
+  return {
+    state: raw.state ?? "error",
+    sampledAt: raw.sampledAt ?? null,
+    diagnostics: Array.isArray(raw.diagnostics) ? raw.diagnostics.map(String) : [],
+    memory: raw.memory ?? null, swap: raw.swap ?? null, disk: raw.disk ?? null,
+    processes: raw.processes ?? empty.processes,
+    thermal: raw.thermal ?? { state: "unavailable" },
+    ssdWear: raw.ssdWear ?? { state: "unavailable" }
+  };
 }
 
 export function parseCompanionTimestamp(value) {
@@ -110,7 +133,8 @@ function emptyCompanion(error = null) {
     generatedAt: new Date().toISOString(),
     signals: {
       gentle: { state: "error", error: null, diagnostics: [] },
-      graphify: { state: "error", error: null, diagnostics: [], graphStatus: null }
+      graphify: { state: "error", error: null, diagnostics: [], graphStatus: null },
+      system: { resources: emptySystemResources() }
     },
     engram: { status: "error", binary: null },
     links: [], alertsCount: null,
@@ -127,6 +151,7 @@ export async function buildCompanionSnapshot({
   controlPlaneHealth = null, runs = [], reviews = null, alerts = null,
   buildObservability = defaultObs, inspectEngram = null,
   ensureRegistered = defaultEnsure, loadReviews = null, loadAlerts = null,
+  loadSystemResources = defaultSystemResources,
   observabilityContext = {}
 } = {}) {
   try {
@@ -141,13 +166,25 @@ export async function buildCompanionSnapshot({
       catch (err) { engram = { status: "error", binary: null, error: err?.message ?? String(err) }; }
     }
 
+    let systemResources = emptySystemResources();
+    try {
+      systemResources = summarizeSystemResources(
+        await loadSystemResources({ ...(observabilityContext ?? {}) })
+      );
+    } catch {
+      systemResources = emptySystemResources();
+    }
+
     const reviewList = Array.isArray(reviews)
       ? reviews
       : (typeof loadReviews === "function" ? await loadReviews() : []);
     const alertList = Array.isArray(alerts)
       ? alerts
       : (typeof loadAlerts === "function" ? await loadAlerts() : null);
-    const signals = summarizeCompanionProbes(obs?.probes ?? []);
+    const signals = {
+      ...summarizeCompanionProbes(obs?.probes ?? []),
+      system: { resources: systemResources }
+    };
     const links = [];
     for (const review of reviewList ?? []) {
       const link = softLinkReviewToRun(review, runs);
