@@ -98,7 +98,7 @@ export function normalizeHermesSession(raw, { nowMs = Date.now() } = {}) {
     startedAt: iso(started.ms), endedAt: iso(ended.ms), lastActiveAt: iso(lastActiveMs),
     messageCount: messageCount.n, toolCallCount: toolCallCount.n,
     tokenCount: inputTokens.n + outputTokens.n,
-    active: !isEnded && lastActiveMs != null && (nowMs - lastActiveMs) <= HERMES_ACTIVE_WINDOW_MS
+    active: !isEnded && lastActiveMs != null && (nowMs - lastActiveMs) >= 0 && (nowMs - lastActiveMs) <= HERMES_ACTIVE_WINDOW_MS
   };
 }
 

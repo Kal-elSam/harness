@@ -145,8 +145,8 @@ test("transport + inverted/synthetic schemas → incompatible; invalid rows abor
   assert.equal(five.state, "error"); assertNoSecret(five);
 
   assert.equal(normalizeHermesSession({
-    id: "a", started_at: (NOW - 120_000) / 1000, last_active: (NOW - 60_000) / 1000, message_count: 1
-  }, { nowMs: NOW }).active, true);
+    id: "f", started_at: NOW / 1000 - 120, last_active: NOW / 1000 + 86_400, message_count: 1
+  }, { nowMs: NOW }).active, false);
   assert.equal(normalizeHermesSession({ session_id: "renamed", started_at: NOW / 1000 }), null);
   assert.equal(normalizeHermesSession({ id: "x", started_at: "not-a-date" }), null);
   assert.equal(normalizeHermesSession({ id: "x", source: {} }), null);
