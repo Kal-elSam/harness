@@ -18,48 +18,124 @@ import {
 import {
   adaptControlCenterToOverview,
   buildOverviewDetails,
+  humanizeCompanionNeed,
+  humanizeHealthTitle,
   mapHealthTone,
+  partitionCompanionLines,
   SemanticOverviewPanel
 } from "../src/global/ink/ux/live-overview.js";
 
 function modelFor(health, extras = {}) {
+  const ctaByHealth = {
+    [CONTROL_PLANE_HEALTH.NOT_CONFIGURED]: {
+      kind: "setup", title: "Finish local setup", detail: "Configure agents.", destination: "setup"
+    },
+    [CONTROL_PLANE_HEALTH.ACTION_REQUIRED]: {
+      kind: "repair",
+      title: "Review and repair drift",
+      detail: 'Run "kairo sync" to repair managed content.',
+      destination: "changes"
+    },
+    [CONTROL_PLANE_HEALTH.CHECK_FAILED]: {
+      kind: "verify", title: "Investigate failed checks", detail: "Run kairo doctor.", destination: "control-center"
+    },
+    [CONTROL_PLANE_HEALTH.HEALTHY]: {
+      kind: "idle", title: "Ecosystem healthy", detail: "No action needed.", destination: "control-center"
+    },
+    [CONTROL_PLANE_HEALTH.HEALTHY_WITH_NOTES]: {
+      kind: "review", title: "Review notes", detail: "Open Changes.", destination: "control-center"
+    }
+  };
   return buildControlCenterModel({
     projectName: "demo",
     snapshot: {
       health,
       coverage: { governedAgents: 1, detectedAgents: 2 },
-      diff: { hasChanges: false },
-      cta: { title: "Finish local setup", detail: "Configure agents.", destination: "setup" },
+      diff: { hasChanges: health === CONTROL_PLANE_HEALTH.ACTION_REQUIRED },
+      cta: ctaByHealth[health] ?? ctaByHealth[CONTROL_PLANE_HEALTH.HEALTHY],
       ...extras
     },
     alerts: extras.alerts
   });
 }
 
-test("adapter maps health tones and unavailable headlines", () => {
+test("adapter maps health tones and plain-language titles", () => {
   assert.equal(mapHealthTone(CONTROL_PLANE_HEALTH.CHECK_FAILED), "danger");
   assert.equal(mapHealthTone(CONTROL_PLANE_HEALTH.ACTION_REQUIRED), "warn");
   assert.equal(mapHealthTone(CONTROL_PLANE_HEALTH.NOT_CONFIGURED), "warn");
   assert.equal(mapHealthTone(CONTROL_PLANE_HEALTH.HEALTHY_WITH_NOTES), "warn");
   assert.equal(mapHealthTone(CONTROL_PLANE_HEALTH.HEALTHY), "ready");
+  assert.equal(humanizeHealthTitle(CONTROL_PLANE_HEALTH.ACTION_REQUIRED), "Needs attention");
+  assert.equal(humanizeHealthTitle(CONTROL_PLANE_HEALTH.HEALTHY), "Ready");
 
   const failed = adaptControlCenterToOverview(modelFor(CONTROL_PLANE_HEALTH.CHECK_FAILED));
   assert.equal(failed.callout.tone, "danger");
-  assert.match(failed.primary.label, /Finish local setup|Review/);
+  assert.equal(failed.callout.title, "Something failed");
+  assert.match(failed.primary.label, /Check what failed|Fix|Start/i);
+  assert.match(failed.purpose, /coordina/i);
 
   const missing = adaptControlCenterToOverview(buildControlCenterModel({ projectName: "x" }));
   assert.equal(missing.callout.tone, "danger");
-  assert.match(missing.metrics[1].label, /unavailable/i);
-  assert.match(missing.metrics[2].label, /unavailable/i);
-  assert.deepEqual(missing.details, ["No extra evidence beyond the metrics above."]);
+  assert.equal(missing.callout.title, "Something failed");
+  assert.match(missing.primary.label, /Check what failed/i);
+  assert.ok(missing.metrics.some((m) => /Nothing else needs you|more in Details/i.test(m.label)));
   assert.doesNotMatch(JSON.stringify(missing), /\/Users|alertId|run-|Paths and IDs/i);
 
   const withEvidence = adaptControlCenterToOverview(modelFor(CONTROL_PLANE_HEALTH.ACTION_REQUIRED, {
     alerts: [{ state: "open" }, { state: "open" }]
   }));
+  assert.equal(withEvidence.callout.title, "Needs attention");
+  assert.equal(withEvidence.primary.label, "Fix drift");
+  assert.match(withEvidence.primary.detail, /kairo sync/i);
   assert.ok(withEvidence.details.some((line) => /Open alerts · 2/.test(line)));
-  assert.ok(withEvidence.details.some((line) => /Next destination · Setup/.test(line)));
-  assert.deepEqual(buildOverviewDetails({}), ["No extra evidence beyond the metrics above."]);
+  assert.ok(withEvidence.details.some((line) => /Opens · Governance/.test(line)));
+  assert.deepEqual(buildOverviewDetails({}), ["Nothing else to show right now."]);
+});
+
+test("companion needs are plain language; system noise stays in Details", () => {
+  assert.equal(
+    humanizeCompanionNeed("Obsidian · unconfigured"),
+    "Obsidian not connected · open Settings to choose your vault"
+  );
+  assert.match(humanizeCompanionNeed("Updates · 1 available"), /kairo updates check/);
+  assert.equal(humanizeCompanionNeed("System · RAM 1.4% free · critical"), null);
+  assert.equal(humanizeCompanionNeed("Advisor · critical · Free disk space"), null);
+  assert.equal(humanizeCompanionNeed("Gentle · available"), null);
+  assert.equal(humanizeCompanionNeed("  · cursor x16"), null);
+
+  const { needs, rest } = partitionCompanionLines([
+    "Gentle · available",
+    "System · RAM 1% free · critical",
+    "Advisor · critical · Free disk",
+    "Obsidian · unconfigured",
+    "Updates · 1 available",
+    "Engram · conflict",
+    "  · cursor x16"
+  ]);
+  assert.deepEqual(needs, [
+    "Obsidian not connected · open Settings to choose your vault",
+    "Update available · run kairo updates check",
+    "Memory conflict · open Settings → Engram"
+  ]);
+  assert.ok(rest.some((l) => l.startsWith("System")));
+  assert.ok(rest.some((l) => l.startsWith("Advisor")));
+  assert.ok(!needs.some((l) => l.startsWith("System") || l.startsWith("Advisor")));
+  assert.ok(!needs.some((l) => /RAM \d|Disk \d|cursor x\d/i.test(l)));
+
+  const view = adaptControlCenterToOverview({
+    ...modelFor(CONTROL_PLANE_HEALTH.ACTION_REQUIRED),
+    companion: {
+      lines: [
+        "System · RAM 1% free · critical",
+        "Obsidian · unconfigured",
+        "Updates · 1 available"
+      ]
+    }
+  });
+  assert.ok(view.metrics.some((m) => /Obsidian not connected/.test(m.label)));
+  assert.ok(view.metrics.some((m) => /Update available/.test(m.label)));
+  assert.ok(!view.metrics.some((m) => /System|RAM|Advisor/i.test(m.label)));
+  assert.ok(view.details.some((l) => /System ·/.test(l)));
 });
 
 test("wordmark shows on wide/compact only; minimal is textual", () => {
@@ -91,6 +167,7 @@ test("wordmark shows on wide/compact only; minimal is textual", () => {
   assert.match(JSON.stringify(compact), /KAIRO/);
   assert.match(JSON.stringify(minimal), /KAIRO · Overview/);
   assert.doesNotMatch(JSON.stringify(minimal), /╦╔═╔═╗/);
+  assert.match(JSON.stringify(compact), /coordina/i);
 });
 
 test("metrics ActionList never shows selection; panel primary has no focus mark", () => {
@@ -100,7 +177,9 @@ test("metrics ActionList never shows selection; panel primary has no focus mark"
     focused: false,
     unicode: false
   });
-  for (const child of list.props.children) {
+  const children = [].concat(list.props.children ?? []).filter(Boolean);
+  assert.ok(children.length >= 1);
+  for (const child of children) {
     assert.match(String(child.props.children), /^ {1}/);
     assert.equal(child.props.bold, false);
   }
@@ -112,7 +191,8 @@ test("metrics ActionList never shows selection; panel primary has no focus mark"
   });
   const blob = JSON.stringify(panel);
   assert.doesNotMatch(blob, /"> [^"]+"/);
-  assert.match(blob, /Review and repair|Finish local setup|Configure|Preview/i);
+  assert.match(blob, /Fix drift|kairo sync/i);
+  assert.doesNotMatch(blob, /ACTION REQUIRED/);
 });
 
 test("Space toggles overview Details; Esc closes before exit", () => {
