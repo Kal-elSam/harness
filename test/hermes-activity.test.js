@@ -175,6 +175,7 @@ test("companion carries hermes.activity without steering governance", async () =
       baseUrl: "http://127.0.0.1:8642", sessions: [],
       aggregates: { returnedCount: 0, activeCount: 0, endedCount: 0, hasMore: false, lastActiveAt: null }
     }),
+    loadEcosystemUpdates: async () => ({ state: "available", tools: {}, diagnostics: [], cacheHit: true }),
     runs: [], reviews: [], alerts: []
   });
   assert.equal(snap.ok, true);
@@ -184,6 +185,7 @@ test("companion carries hermes.activity without steering governance", async () =
     controlPlaneHealth: CONTROL_PLANE_HEALTH.HEALTHY,
     buildObservability: async () => ({ probes: [] }),
     loadHermesActivity: async () => { throw new Error("boom " + SECRET); },
+    loadEcosystemUpdates: async () => ({ state: "available", tools: {}, diagnostics: [], cacheHit: true }),
     runs: [], reviews: [], alerts: []
   });
   assert.equal(threw.signals.hermes.activity.state, "error");

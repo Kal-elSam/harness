@@ -65,7 +65,8 @@ test("companion advice defaults to shallow refresh", async () => {
       processes: { totalCount: 1, zombieCount: 0, tracked: [] },
       thermal: { state: "unavailable" },
       ssdWear: { state: "unavailable" }
-    })
+    }),
+    loadEcosystemUpdates: async () => ({ state: "available", tools: {}, diagnostics: [], cacheHit: true })
   });
   assert.equal(snap.signals.system.advice.deepScan, false);
   assert.ok(snap.signals.system.advice.recommendations.some((r) => r.id === "free-disk-critical"));

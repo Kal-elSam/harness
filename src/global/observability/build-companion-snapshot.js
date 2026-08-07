@@ -6,6 +6,7 @@ import { createHermesProbe } from "./hermes-probe.js";
 import { loadHermesActivity as defaultHermesActivity } from "./hermes-activity.js";
 import { loadSystemResources as defaultSystemResources } from "./system-resources.js";
 import { recommendSystemResources } from "./resource-advisor.js";
+import { loadEcosystemUpdates as defaultEcosystemUpdates } from "./ecosystem-updates.js";
 import { getObservabilityProbe, registerObservabilityProbe } from "./probe-registry.js";
 
 export const SOFT_LINK_WINDOW_MS = 60 * 60 * 1000;
@@ -36,6 +37,28 @@ function summarizeHermesActivity(a) {
     state: a.state ?? "error", error: a.error ?? null, baseUrl: a.baseUrl ?? null,
     diagnostics: Array.isArray(a.diagnostics) ? a.diagnostics.map(String) : [],
     sessions: Array.isArray(a.sessions) ? a.sessions : [], aggregates: a.aggregates ?? empty.aggregates
+  };
+}
+
+function emptyEcosystemUpdates() {
+  return {
+    state: "error", checkedAt: null, cacheHit: false, diagnostics: [],
+    tools: {
+      kairo: { id: "kairo", state: "error", updateAvailable: false },
+      hermes: { id: "hermes", state: "error", updateAvailable: false },
+      gentle: { id: "gentle", state: "error", updateAvailable: false },
+      skills: { id: "skills", state: "error", updateAvailable: false }
+    }
+  };
+}
+function summarizeEcosystemUpdates(raw) {
+  if (raw == null || typeof raw !== "object") return emptyEcosystemUpdates();
+  return {
+    state: raw.state ?? "error",
+    checkedAt: raw.checkedAt ?? null,
+    cacheHit: raw.cacheHit === true,
+    diagnostics: Array.isArray(raw.diagnostics) ? raw.diagnostics.map(String) : [],
+    tools: raw.tools ?? emptyEcosystemUpdates().tools
   };
 }
 
@@ -155,7 +178,8 @@ function emptyCompanion(error = null) {
       gentle: { state: "error", error: null, diagnostics: [] },
       graphify: { state: "error", error: null, diagnostics: [], graphStatus: null },
       hermes: { activity: emptyHermesActivity() },
-      system: { resources: emptySystemResources(), advice: { recommendations: [], deepScan: false } }
+      system: { resources: emptySystemResources(), advice: { recommendations: [], deepScan: false } },
+      ecosystem: { updates: emptyEcosystemUpdates() }
     },
     engram: { status: "error", binary: null },
     links: [], alertsCount: null,
@@ -174,6 +198,7 @@ export async function buildCompanionSnapshot({
   ensureRegistered = defaultEnsure, loadReviews = null, loadAlerts = null,
   loadHermesActivity = defaultHermesActivity,
   loadSystemResources = defaultSystemResources,
+  loadEcosystemUpdates = defaultEcosystemUpdates,
   resourceDeepScan = false,
   observabilityContext = {}
 } = {}) {
@@ -210,6 +235,20 @@ export async function buildCompanionSnapshot({
       deepScan: resourceDeepScan === true
     });
 
+    let ecosystemUpdates = emptyEcosystemUpdates();
+    try {
+      ecosystemUpdates = summarizeEcosystemUpdates(
+        await loadEcosystemUpdates({
+          ...(observabilityContext ?? {}),
+          packageName: observabilityContext?.packageName,
+          installedVersion: observabilityContext?.installedVersion ?? observabilityContext?.cliVersion,
+          homeDir: observabilityContext?.homeDir
+        })
+      );
+    } catch {
+      ecosystemUpdates = emptyEcosystemUpdates();
+    }
+
     const reviewList = Array.isArray(reviews)
       ? reviews
       : (typeof loadReviews === "function" ? await loadReviews() : []);
@@ -219,7 +258,8 @@ export async function buildCompanionSnapshot({
     const signals = {
       ...summarizeCompanionProbes(obs?.probes ?? []),
       hermes: { activity: hermesActivity },
-      system: { resources: systemResources, advice: systemAdvice }
+      system: { resources: systemResources, advice: systemAdvice },
+      ecosystem: { updates: ecosystemUpdates }
     };
     const links = [];
     for (const review of reviewList ?? []) {
