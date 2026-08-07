@@ -87,6 +87,14 @@ export {
   loadObsidianKnowledgePreview
 } from "./obsidian-knowledge-preview.js";
 export {
+  KAIRO_MANAGED_FRONTMATTER,
+  BACKUP_DIR_NAME,
+  hasConsent,
+  classifyNoteWrite,
+  planObsidianPublish,
+  publishObsidianProposals
+} from "./obsidian-publisher.js";
+export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
   resolveRunTimestamp,
