@@ -5,8 +5,15 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.13.1 — 2026-08-07 (Kairo Runtime)
+
+Patch release. Docs/UX/license polish for npm adoption. Publish tag:
+`kairo-runtime-v0.13.1`.
+
 ### Changed
 
+- Cockpit Overview: plain-language purpose + one next step; companion system
+  dumps moved off the first screen (Details only).
 - License: `UNLICENSED` → **MIT** (root `LICENSE`; also `@kal-elsam/harness` bridge).
 - npm README trimmed to a short product page; long reference moved under `docs/`.
 - `kairo help` shows four day-to-day commands; `kairo help --all` lists the rest.
