@@ -11,11 +11,17 @@ import {
 } from "../src/global/component-registry.js";
 import { loadComponentCatalog } from "../src/global/load-component-catalog.js";
 
-test("registry lists bundled components with optional engram and graphify", () => {
+test("registry lists bundled components with optional engram, graphify, and agent-skills", () => {
   const components = listComponents();
 
-  assert.equal(components.length, 4);
-  assert.deepEqual(COMPONENT_IDS, ["orchestrator", "sdd-core", "engram-memory", "graphify-context"]);
+  assert.equal(components.length, 5);
+  assert.deepEqual(COMPONENT_IDS, [
+    "orchestrator",
+    "sdd-core",
+    "engram-memory",
+    "graphify-context",
+    "agent-skills"
+  ]);
   assert.deepEqual(DEFAULT_COMPONENT_IDS, ["orchestrator", "sdd-core"]);
 });
 
@@ -130,12 +136,13 @@ test("describeComponentCatalog exposes defaults and adapter hint keys", () => {
 
   assert.deepEqual(
     entries.map((entry) => entry.id),
-    ["orchestrator", "sdd-core", "engram-memory", "graphify-context"]
+    ["orchestrator", "sdd-core", "engram-memory", "graphify-context", "agent-skills"]
   );
   assert.equal(entries.filter((entry) => entry.defaultEnabled).length, 2);
   assert.deepEqual(entries.filter((entry) => !entry.defaultEnabled).map((entry) => entry.id), [
     "engram-memory",
-    "graphify-context"
+    "graphify-context",
+    "agent-skills"
   ]);
   assert.deepEqual(entries[1].adapterHints, ["cursor", "codex", "claude", "opencode", "pi"]);
 });

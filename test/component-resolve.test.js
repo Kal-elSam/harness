@@ -48,7 +48,7 @@ test("workspace dependency on bundled component expands in closure", async () =>
 
   const resolved = resolveComponentClosure(["team-rules"], { workspaceRoot });
   assert.deepEqual(resolved.map((component) => component.id), ["orchestrator", "team-rules"]);
-  assert.equal(listComponents({ workspaceRoot }).length, 5);
+  assert.equal(listComponents({ workspaceRoot }).length, 6);
 });
 
 test("explicit selection still honors --no-default-components empty set", () => {

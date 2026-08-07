@@ -108,6 +108,35 @@
         "claude": "- Graphify CLI is not auto-installed; run `graphify update .` after code changes when graphify is in PATH.",
         "opencode": "- Graphify CLI is not auto-installed; run `graphify update .` after code changes when graphify is in PATH."
       }
+    },
+    {
+      "id": "agent-skills",
+      "kind": "component",
+      "label": "Agent Skills (complementary)",
+      "version": "1.0.0",
+      "defaultEnabled": false,
+      "capabilities": ["skills.complementary"],
+      "dependencies": [],
+      "healthChecks": [
+        { "id": "assets", "type": "assets" },
+        { "id": "drift", "type": "drift" }
+      ],
+      "assetFiles": [
+        "LICENSE",
+        "PROVENANCE.md",
+        "skills/context-engineering/SKILL.md",
+        "skills/source-driven-development/SKILL.md",
+        "skills/frontend-ui-engineering/SKILL.md",
+        "skills/performance-optimization/SKILL.md",
+        "skills/observability-and-instrumentation/SKILL.md"
+      ],
+      "adapterHints": {
+        "cursor": "- Complementary only; Gentle AI remains methodological authority. After install, run `gentle-ai skill-registry refresh` when available.",
+        "codex": "- Complementary only; Gentle AI remains methodological authority. After install, run `gentle-ai skill-registry refresh` when available.",
+        "claude": "- Complementary only; Gentle AI remains methodological authority. After install, run `gentle-ai skill-registry refresh` when available.",
+        "opencode": "- Complementary only; Gentle AI remains methodological authority. After install, run `gentle-ai skill-registry refresh` when available.",
+        "pi": "- Complementary only; Gentle AI remains methodological authority. Skills load from the shared Agent Skills root when linked; do not replace Gentle AI SDD/review gates."
+      }
     }
   ]
 }
