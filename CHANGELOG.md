@@ -5,13 +5,21 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.14.0 — 2026-08-07 (Kairo Runtime)
+
+Minor release. Simpler Cockpit, one-command CLI self-update, pnpm for
+contributors, and a minimal IDE status panel. Publish tag:
+`kairo-runtime-v0.14.0`.
+
 ### Added
 
+- Cockpit Home with three tabs (Home · Settings · History) and two clear
+  actions (prepare/repair + Configure). Secondary destinations stay in `/`.
+- `kairo update`: update the Kairo CLI from npm (`--yes` applies). Workspace
+  template refresh stays at `kairo update --scope=workspace`.
 - VS Code / Cursor extension scaffold in `packages/kairo-vscode`: status bar +
   explorer tree from `kairo status --json`; sync/doctor/cockpit open a terminal
   (no silent writes). Local VSIX via `npm run package`.
-- `kairo update`: update the Kairo CLI from npm (`--yes` applies). Workspace
-  template refresh stays at `kairo update --scope=workspace`.
 
 ### Changed
 

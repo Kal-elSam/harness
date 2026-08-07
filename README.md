@@ -24,25 +24,23 @@ KAIRO
 Needs attention · 4/4 agents · drift pending
 Kairo coordinates installed AI agents for this project.
 
-→ Fix drift
-  Run "kairo sync" to repair managed content.
-  Enter → preview in Governance
+→ Repair 3 changes
+  You will see the exact plan before anything is written.
 
-  Last activity · codex · failed
-  Obsidian not connected · open Settings to choose your vault
-  Update available · run kairo updates check
-  9 more in Details · Space
+  Configure
+  Agents, Obsidian vault, integrations.
 ```
 
-`↑↓` move · `Enter` open · `Space` details · `R` refresh · `Esc` back · `?` help
+`↑↓` move · `Enter` open · `Tab` nav · `Space` details · `R` refresh · `Esc` back · `?` help
 
-## The four commands
+## Day-to-day commands
 
 | Command | What it does |
 |---|---|
 | `kairo` | Open the cockpit |
 | `kairo status` | See how your setup is doing |
 | `kairo sync` | Repair what drifted |
+| `kairo update` | Update Kairo itself from npm |
 | `kairo doctor` | Deeper health checks |
 
 Run `kairo help --all` for everything else, or read the
@@ -69,6 +67,10 @@ npx @kal-elsam/kairo-runtime
 
 # Install globally
 npm i -g @kal-elsam/kairo-runtime && kairo
+
+# Later: update the CLI itself
+kairo update
+kairo update --yes
 
 # Preview the setup plan, write nothing
 npx @kal-elsam/kairo-runtime --dry-run
