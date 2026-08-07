@@ -2,6 +2,8 @@ import { CONTROL_PLANE_HEALTH } from "../control-plane-snapshot.js";
 import { buildObservabilitySnapshot as defaultObs } from "./build-observability-snapshot.js";
 import { createGentleProbe } from "./gentle-probe.js";
 import { createGraphifyProbe } from "./graphify-probe.js";
+import { createHermesProbe } from "./hermes-probe.js";
+import { loadHermesActivity as defaultHermesActivity } from "./hermes-activity.js";
 import { getObservabilityProbe, registerObservabilityProbe } from "./probe-registry.js";
 
 export const SOFT_LINK_WINDOW_MS = 60 * 60 * 1000;
@@ -16,6 +18,23 @@ const GOV_PRIMARY = new Set([
 function defaultEnsure() {
   if (!getObservabilityProbe("gentle")) registerObservabilityProbe(createGentleProbe());
   if (!getObservabilityProbe("graphify")) registerObservabilityProbe(createGraphifyProbe());
+  if (!getObservabilityProbe("hermes")) registerObservabilityProbe(createHermesProbe());
+}
+
+function emptyHermesActivity() {
+  return {
+    state: "error", error: "error", diagnostics: [], baseUrl: null, sessions: [],
+    aggregates: { returnedCount: 0, activeCount: 0, endedCount: 0, hasMore: false, lastActiveAt: null }
+  };
+}
+function summarizeHermesActivity(a) {
+  if (a == null || typeof a !== "object") return emptyHermesActivity();
+  const empty = emptyHermesActivity();
+  return {
+    state: a.state ?? "error", error: a.error ?? null, baseUrl: a.baseUrl ?? null,
+    diagnostics: Array.isArray(a.diagnostics) ? a.diagnostics.map(String) : [],
+    sessions: Array.isArray(a.sessions) ? a.sessions : [], aggregates: a.aggregates ?? empty.aggregates
+  };
 }
 
 export function parseCompanionTimestamp(value) {
@@ -110,7 +129,8 @@ function emptyCompanion(error = null) {
     generatedAt: new Date().toISOString(),
     signals: {
       gentle: { state: "error", error: null, diagnostics: [] },
-      graphify: { state: "error", error: null, diagnostics: [], graphStatus: null }
+      graphify: { state: "error", error: null, diagnostics: [], graphStatus: null },
+      hermes: { activity: emptyHermesActivity() }
     },
     engram: { status: "error", binary: null },
     links: [], alertsCount: null,
@@ -127,6 +147,7 @@ export async function buildCompanionSnapshot({
   controlPlaneHealth = null, runs = [], reviews = null, alerts = null,
   buildObservability = defaultObs, inspectEngram = null,
   ensureRegistered = defaultEnsure, loadReviews = null, loadAlerts = null,
+  loadHermesActivity = defaultHermesActivity,
   observabilityContext = {}
 } = {}) {
   try {
@@ -141,13 +162,25 @@ export async function buildCompanionSnapshot({
       catch (err) { engram = { status: "error", binary: null, error: err?.message ?? String(err) }; }
     }
 
+    let hermesActivity = emptyHermesActivity();
+    try {
+      hermesActivity = summarizeHermesActivity(
+        await loadHermesActivity({ ...(observabilityContext ?? {}) })
+      );
+    } catch {
+      hermesActivity = emptyHermesActivity();
+    }
+
     const reviewList = Array.isArray(reviews)
       ? reviews
       : (typeof loadReviews === "function" ? await loadReviews() : []);
     const alertList = Array.isArray(alerts)
       ? alerts
       : (typeof loadAlerts === "function" ? await loadAlerts() : null);
-    const signals = summarizeCompanionProbes(obs?.probes ?? []);
+    const signals = {
+      ...summarizeCompanionProbes(obs?.probes ?? []),
+      hermes: { activity: hermesActivity }
+    };
     const links = [];
     for (const review of reviewList ?? []) {
       const link = softLinkReviewToRun(review, runs);

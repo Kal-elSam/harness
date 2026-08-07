@@ -1,5 +1,6 @@
 import { createGentleProbe } from "./gentle-probe.js";
 import { createGraphifyProbe } from "./graphify-probe.js";
+import { createHermesProbe } from "./hermes-probe.js";
 import { getObservabilityProbe, registerObservabilityProbe } from "./probe-registry.js";
 
 export {
@@ -43,6 +44,18 @@ export {
 } from "./graphify-parse-cache.js";
 export { runGraphifyOp, runGraphifyCli } from "./graphify-ops.js";
 export {
+  HERMES_DIAGNOSTIC_SURFACES, HERMES_MANDATORY_SURFACES,
+  detectHermesDiagnosticSurfaces, resolveHermesBinaryPath,
+  probeHermes, createHermesProbe
+} from "./hermes-probe.js";
+export {
+  DEFAULT_HERMES_API_URL,
+  HERMES_ACTIVITY_LIMIT_DEFAULT, HERMES_ACTIVITY_LIMIT_MAX,
+  HERMES_ACTIVITY_TIMEOUT_MS, HERMES_ACTIVE_WINDOW_MS,
+  assertHermesLoopbackUrl, capabilitiesAdvertiseSessionsList,
+  normalizeHermesSession, loadHermesActivity
+} from "./hermes-activity.js";
+export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
   resolveRunTimestamp,
@@ -55,4 +68,5 @@ export {
 export function ensureObservabilityProbesRegistered() {
   if (!getObservabilityProbe("gentle")) registerObservabilityProbe(createGentleProbe());
   if (!getObservabilityProbe("graphify")) registerObservabilityProbe(createGraphifyProbe());
+  if (!getObservabilityProbe("hermes")) registerObservabilityProbe(createHermesProbe());
 }
