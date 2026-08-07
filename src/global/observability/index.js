@@ -34,6 +34,13 @@ export {
   probeHermes, createHermesProbe
 } from "./hermes-probe.js";
 export {
+  DEFAULT_HERMES_API_URL,
+  HERMES_ACTIVITY_LIMIT_DEFAULT, HERMES_ACTIVITY_LIMIT_MAX,
+  HERMES_ACTIVITY_TIMEOUT_MS, HERMES_ACTIVE_WINDOW_MS,
+  assertHermesLoopbackUrl, capabilitiesAdvertiseSessionsList,
+  normalizeHermesSession, loadHermesActivity
+} from "./hermes-activity.js";
+export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
   resolveRunTimestamp,
