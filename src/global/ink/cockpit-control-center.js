@@ -11,6 +11,7 @@ import {
   formatResourceAdviceLines
 } from "./system-resources-display.js";
 import { formatEcosystemUpdateLines } from "./ecosystem-updates-display.js";
+import { formatObsidianVaultLines } from "./obsidian-vault-display.js";
 
 const HERMES_WIDE_SESSION_LIMIT = 3;
 const HERMES_TITLE_MAX = 48;
@@ -21,6 +22,7 @@ export {
   formatResourceAdviceLines
 } from "./system-resources-display.js";
 export { formatEcosystemUpdateLines } from "./ecosystem-updates-display.js";
+export { formatObsidianVaultLines } from "./obsidian-vault-display.js";
 
 export function buildControlCenterModel({
   projectName = "project",
@@ -192,7 +194,8 @@ function formatCompanionOverlay(companion, layoutMode = LAYOUT_MODES.COMPACT) {
       ...formatHermesActivityLines(companion.signals?.hermes?.activity, layoutMode),
       ...formatSystemResourcesLines(companion.signals?.system?.resources, layoutMode),
       ...formatResourceAdviceLines(companion.signals?.system?.advice, layoutMode),
-      ...formatEcosystemUpdateLines(companion.signals?.ecosystem?.updates, layoutMode)
+      ...formatEcosystemUpdateLines(companion.signals?.ecosystem?.updates, layoutMode),
+      ...formatObsidianVaultLines(companion.signals?.obsidian?.vault, layoutMode)
     ],
     links: companion.links ?? [],
     error: companion.error ?? null

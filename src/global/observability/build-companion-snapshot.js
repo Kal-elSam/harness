@@ -7,6 +7,11 @@ import { loadHermesActivity as defaultHermesActivity } from "./hermes-activity.j
 import { loadSystemResources as defaultSystemResources } from "./system-resources.js";
 import { recommendSystemResources } from "./resource-advisor.js";
 import { loadEcosystemUpdates as defaultEcosystemUpdates } from "./ecosystem-updates.js";
+import {
+  emptyObsidianVaultStatus,
+  loadObsidianVaultStatus as defaultObsidianVault,
+  summarizeObsidianVaultStatus
+} from "./obsidian-status.js";
 import { getObservabilityProbe, registerObservabilityProbe } from "./probe-registry.js";
 
 export const SOFT_LINK_WINDOW_MS = 60 * 60 * 1000;
@@ -179,7 +184,8 @@ function emptyCompanion(error = null) {
       graphify: { state: "error", error: null, diagnostics: [], graphStatus: null },
       hermes: { activity: emptyHermesActivity() },
       system: { resources: emptySystemResources(), advice: { recommendations: [], deepScan: false } },
-      ecosystem: { updates: emptyEcosystemUpdates() }
+      ecosystem: { updates: emptyEcosystemUpdates() },
+      obsidian: { vault: emptyObsidianVaultStatus() }
     },
     engram: { status: "error", binary: null },
     links: [], alertsCount: null,
@@ -199,6 +205,7 @@ export async function buildCompanionSnapshot({
   loadHermesActivity = defaultHermesActivity,
   loadSystemResources = defaultSystemResources,
   loadEcosystemUpdates = defaultEcosystemUpdates,
+  loadObsidianVaultStatus = defaultObsidianVault,
   resourceDeepScan = false,
   observabilityContext = {}
 } = {}) {
@@ -249,6 +256,19 @@ export async function buildCompanionSnapshot({
       ecosystemUpdates = emptyEcosystemUpdates();
     }
 
+    let obsidianVault = emptyObsidianVaultStatus();
+    try {
+      obsidianVault = summarizeObsidianVaultStatus(
+        await loadObsidianVaultStatus({
+          vaultPath: observabilityContext?.obsidianVaultPath ?? observabilityContext?.vaultPath ?? null,
+          lastPublishAt: observabilityContext?.obsidianLastPublishAt ?? null,
+          pendingProposals: observabilityContext?.obsidianPendingProposals ?? 0
+        })
+      );
+    } catch {
+      obsidianVault = emptyObsidianVaultStatus();
+    }
+
     const reviewList = Array.isArray(reviews)
       ? reviews
       : (typeof loadReviews === "function" ? await loadReviews() : []);
@@ -259,7 +279,8 @@ export async function buildCompanionSnapshot({
       ...summarizeCompanionProbes(obs?.probes ?? []),
       hermes: { activity: hermesActivity },
       system: { resources: systemResources, advice: systemAdvice },
-      ecosystem: { updates: ecosystemUpdates }
+      ecosystem: { updates: ecosystemUpdates },
+      obsidian: { vault: obsidianVault }
     };
     const links = [];
     for (const review of reviewList ?? []) {
