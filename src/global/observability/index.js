@@ -69,6 +69,45 @@ export {
   loadEcosystemUpdates
 } from "./ecosystem-updates.js";
 export {
+  KAIRO_VAULT_SUBDIR,
+  EXCLUDED_DIR_NAMES,
+  normalizeVaultPath,
+  isExcludedDirName,
+  isSecretBasename,
+  isAllowedKairoNoteName,
+  assertInsideKairoRoot,
+  resolveKairoNotePath,
+  inspectObsidianVault
+} from "./obsidian-vault.js";
+export {
+  formatKnowledgeFrontmatter,
+  renderDecisionMarkdown,
+  renderArchitectureMarkdown,
+  buildObsidianKnowledgePreview,
+  loadObsidianKnowledgePreview
+} from "./obsidian-knowledge-preview.js";
+export {
+  KAIRO_MANAGED_FRONTMATTER,
+  BACKUP_DIR_NAME,
+  hasConsent,
+  classifyNoteWrite,
+  planObsidianPublish,
+  publishObsidianProposals
+} from "./obsidian-publisher.js";
+export {
+  KAIRO_VIEW_KINDS,
+  parseKnowledgeFrontmatter,
+  extractWikilinks,
+  buildObsidianKnowledgeViews,
+  buildKnowledgeIndexProposals,
+  loadObsidianKnowledgeViews
+} from "./obsidian-knowledge-views.js";
+export {
+  emptyObsidianVaultStatus,
+  summarizeObsidianVaultStatus,
+  loadObsidianVaultStatus
+} from "./obsidian-status.js";
+export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
   resolveRunTimestamp,
