@@ -32,6 +32,7 @@ import {
   runGlobalHistory,
   runGlobalReport
 } from "./global/global-cli.js";
+import { runEcosystemUpdatesCheck } from "./global/updates-cli.js";
 import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
 import { resolveHomeDir } from "./global/paths.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
@@ -159,6 +160,9 @@ export async function runCli(argv) {
       return;
     case "upgrade":
       await runGlobalUpgrade(optionsWithPolicy, packageManifest, packageRoot);
+      return;
+    case "updates":
+      await runEcosystemUpdatesCheck(optionsWithPolicy, packageManifest);
       return;
     case "install":
       await dispatchByScope(options, "agent-global", {
@@ -410,6 +414,7 @@ export function parseArgs(argv) {
     confirmResolve: false,
     confirmDismiss: false,
     graphifyAction: null, graphifyArgs: [], graphifyBudget: null, graphPath: null,
+    updatesAction: "check",
     base: null,
     commit: null,
     staged: false,
@@ -463,6 +468,7 @@ export function parseArgs(argv) {
   }
 
   if (command === "graphify") parseGraphifyAction(args, options);
+  if (command === "updates") parseUpdatesAction(args, options);
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -811,6 +817,19 @@ function parseGraphifyAction(args, options) {
   options.graphifyArgs = positional.slice(0, need);
 }
 
+function parseUpdatesAction(args, options) {
+  const action = args[0];
+  if (!action || action.startsWith("-")) {
+    options.updatesAction = "check";
+    return;
+  }
+  if (action !== "check") {
+    throw new Error(`Unknown updates action "${action}". Use: kairo updates check`);
+  }
+  args.shift();
+  options.updatesAction = "check";
+}
+
 function parsePathList(value) {
   if (!value) return [];
   return [...new Set(
@@ -863,6 +882,7 @@ function normalizeCommand(command) {
   if (command === "status") return "status";
   if (command === "sync") return "sync";
   if (command === "upgrade") return "upgrade";
+  if (command === "updates") return "updates";
   if (command === "init") return "init";
   if (command === "update" || command === "u") return "update";
   if (command === "doctor") return "doctor";
@@ -949,6 +969,7 @@ Usage:
   ${cli} status [--json]
   ${cli} sync [--dry-run] [--yes] [--confirm] [--json] [--no-preflight]
   ${cli} upgrade [--dry-run] [--yes] [--confirm] [--no-preflight]
+  ${cli} updates check [--json] [--force]
   ${cli} install [--agents <list|all>] [--components <list>] [--dry-run]
   ${cli} install --no-default-components
   ${cli} doctor [--json]
@@ -1001,6 +1022,7 @@ Commands:
   status     Control panel: agents, components, drift, backups, next action.
   sync       Converge managed content (repair drift), then show status.
   upgrade    Preview or apply ecosystem updates (apply requires --yes).
+  updates    Read-only ecosystem update check (kairo/hermes/gentle/skills). Never applies.
   install    Non-interactive configure (agent-global) or legacy workspace scaffold.
   doctor     Detailed health checks for managed state and configs.
   update     Technical repair alias (prefer sync for day-to-day use).

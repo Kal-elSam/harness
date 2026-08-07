@@ -10,6 +10,15 @@ import { loadCockpitScanBundle } from "../src/global/ink/cockpit-scan.js";
 
 const t0 = Date.parse("2026-08-03T12:00:00.000Z");
 const mins = (n) => new Date(t0 + n * 60_000).toISOString();
+const stubUpdates = async () => ({
+  state: "available", checkedAt: mins(0), cacheHit: true, diagnostics: [],
+  tools: {
+    kairo: { id: "kairo", state: "available", updateAvailable: false },
+    hermes: { id: "hermes", state: "unavailable", updateAvailable: false },
+    gentle: { id: "gentle", state: "unavailable", updateAvailable: false },
+    skills: { id: "skills", state: "available", updateAvailable: false }
+  }
+});
 
 test("soft correlation: window, agent, invalid stamps, tie-break", () => {
   const runs = [
@@ -45,6 +54,7 @@ test("companion fail-soft, isolated provider errors, stale informational", async
     controlPlaneHealth: CONTROL_PLANE_HEALTH.HEALTHY,
     buildObservability: async () => { throw new Error("boom"); },
     inspectEngram: () => ({ status: "missing", binary: { path: null } }),
+    loadEcosystemUpdates: stubUpdates,
     runs: [], reviews: [], alerts: []
   });
   assert.equal(threw.ok, false);
@@ -53,6 +63,7 @@ test("companion fail-soft, isolated provider errors, stale informational", async
     controlPlaneHealth: CONTROL_PLANE_HEALTH.HEALTHY,
     buildObservability: async () => ({ probes: [{ id: "gentle", state: "available", evidence: [] }] }),
     inspectEngram: () => { throw new Error("engram down"); },
+    loadEcosystemUpdates: stubUpdates,
     runs: [], reviews: [], alerts: []
   });
   assert.equal(engramFail.ok, true);
@@ -64,6 +75,7 @@ test("companion fail-soft, isolated provider errors, stale informational", async
     controlPlaneHealth: CONTROL_PLANE_HEALTH.HEALTHY,
     buildObservability: async () => ({ probes: [{ id: "gentle", state: "available", evidence: [] }] }),
     inspectEngram: () => ({ status: "configured", binary: { path: "/bin/engram" } }),
+    loadEcosystemUpdates: stubUpdates,
     runs: [{ runId: "r1", agentId: "codex", updatedAt: mins(-10) }],
     loadReviews: async () => {
       loadReviewsCalls += 1;
@@ -87,6 +99,7 @@ test("companion fail-soft, isolated provider errors, stale informational", async
       ]
     }),
     inspectEngram: () => ({ status: "missing", binary: { path: null } }),
+    loadEcosystemUpdates: stubUpdates,
     runs: [{ runId: "r1", agentId: "codex", updatedAt: mins(-10) }],
     reviews: [{ reviewId: "v1", agentId: "codex", createdAt: mins(0) }],
     alerts: [{ state: "open" }]
@@ -106,6 +119,7 @@ test("overview keeps governance health+CTA; compact primary unchanged", async ()
     controlPlaneHealth: CONTROL_PLANE_HEALTH.ACTION_REQUIRED,
     buildObservability: async () => ({ probes: [{ id: "gentle", state: "missing", evidence: [] }] }),
     inspectEngram: () => ({ status: "missing", binary: { path: null } }),
+    loadEcosystemUpdates: stubUpdates,
     runs: [], reviews: [], alerts: []
   });
   const model = buildControlCenterModel({

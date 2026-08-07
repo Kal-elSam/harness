@@ -5,6 +5,12 @@ import {
   parseGentleUpdateOutput,
   parseHermesUpdateCheck
 } from "../src/global/observability/ecosystem-updates.js";
+import { formatEcosystemUpdateLines } from "../src/global/ink/ecosystem-updates-display.js";
+import { LAYOUT_MODES } from "../src/global/ink/layout.js";
+import { buildCompanionSnapshot } from "../src/global/observability/build-companion-snapshot.js";
+import { CONTROL_PLANE_HEALTH } from "../src/global/control-plane-snapshot.js";
+import { parseArgs } from "../src/cli.js";
+import { runEcosystemUpdatesCheck } from "../src/global/updates-cli.js";
 
 test("parsers: gentle rows and hermes check states", () => {
   const rows = parseGentleUpdateOutput(`[ok] gentle-ai installed: 2.2.4 latest: 2.2.4\n[UP] x installed: 1.0.0 latest: 1.0.1`);
@@ -100,4 +106,62 @@ test("24h cache hit skips probes; check path has no apply flags", async () => {
   assert.equal(cached.cacheHit, true);
   assert.ok(!calls.includes("fetch-again"));
   assert.ok(!calls.some((c) => /\b(upgrade|--yes)\b/.test(String(c))));
+});
+
+test("display + companion surface + CLI parse (Slice 02)", async () => {
+  const pending = {
+    state: "partial", checkedAt: "2026-08-07T12:00:00.000Z", cacheHit: false, diagnostics: [],
+    tools: {
+      kairo: { id: "kairo", state: "available", updateAvailable: true, installed: "0.11.0", latest: "0.12.0" },
+      hermes: { id: "hermes", state: "unavailable", updateAvailable: false },
+      gentle: { id: "gentle", state: "unavailable", updateAvailable: false },
+      skills: { id: "skills", state: "available", updateAvailable: false, installed: "d247", latest: "d247" }
+    }
+  };
+  assert.match(formatEcosystemUpdateLines(pending, LAYOUT_MODES.MINIMAL)[0], /1 available/);
+  assert.ok(formatEcosystemUpdateLines(pending, LAYOUT_MODES.COMPACT).some((l) => /kairo/.test(l)));
+  assert.equal(formatEcosystemUpdateLines(null)[0], "Updates · unavailable");
+
+  const snap = await buildCompanionSnapshot({
+    controlPlaneHealth: CONTROL_PLANE_HEALTH.HEALTHY,
+    buildObservability: async () => ({ probes: [] }),
+    loadHermesActivity: async () => ({ state: "unavailable", sessions: [], aggregates: {} }),
+    loadSystemResources: async () => ({ state: "unavailable" }),
+    loadEcosystemUpdates: async () => pending,
+    runs: [], reviews: [], alerts: []
+  });
+  assert.equal(snap.signals.ecosystem.updates.tools.kairo.updateAvailable, true);
+  const threw = await buildCompanionSnapshot({
+    controlPlaneHealth: CONTROL_PLANE_HEALTH.HEALTHY,
+    buildObservability: async () => ({ probes: [] }),
+    loadEcosystemUpdates: async () => { throw new Error("net"); },
+    runs: [], reviews: [], alerts: []
+  });
+  assert.equal(threw.signals.ecosystem.updates.state, "error");
+
+  const parsed = parseArgs(["updates", "check", "--json", "--force"]);
+  assert.equal(parsed.command, "updates");
+  assert.equal(parsed.options.updatesAction, "check");
+  assert.equal(parsed.options.json, true);
+  assert.equal(parsed.options.force, true);
+  assert.throws(() => parseArgs(["updates", "apply"]), /Unknown updates action/);
+
+  const logs = [];
+  const orig = console.log;
+  console.log = (...a) => logs.push(a.join(" "));
+  try {
+    const report = await runEcosystemUpdatesCheck(
+      { json: true, updatesAction: "check", force: true },
+      { name: "@kal-elsam/kairo-runtime", version: "0.11.0" },
+      { loadEcosystemUpdates: async () => pending }
+    );
+    assert.equal(report.tools.kairo.updateAvailable, true);
+    assert.ok(logs.some((l) => /"command": "updates"/.test(l) || /"action": "check"/.test(l)));
+  } finally {
+    console.log = orig;
+  }
+  await assert.rejects(
+    () => runEcosystemUpdatesCheck({ updatesAction: "apply" }, {}),
+    /Unknown updates action/
+  );
 });
