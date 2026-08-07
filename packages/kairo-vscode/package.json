@@ -1,0 +1,56 @@
+{
+  "name": "kairo",
+  "displayName": "Kairo",
+  "description": "Status bar and explorer tree for Kairo Runtime — drift, next action, no silent writes.",
+  "version": "0.1.0",
+  "publisher": "kal-elsam",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "kairo.openCockpit",
+        "title": "Kairo: Open Cockpit"
+      },
+      {
+        "command": "kairo.sync",
+        "title": "Kairo: Sync"
+      },
+      {
+        "command": "kairo.doctor",
+        "title": "Kairo: Doctor"
+      },
+      {
+        "command": "kairo.refresh",
+        "title": "Kairo: Refresh Status"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "kairo.status",
+          "name": "Kairo",
+          "visibility": "collapsed"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "package": "npx --yes @vscode/vsce package --no-dependencies"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kal-elSam/harness.git",
+    "directory": "packages/kairo-vscode"
+  }
+}

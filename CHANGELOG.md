@@ -5,6 +5,12 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+### Added
+
+- VS Code / Cursor extension scaffold in `packages/kairo-vscode`: status bar +
+  explorer tree from `kairo status --json`; sync/doctor/cockpit open a terminal
+  (no silent writes). Local VSIX via `npm run package`.
+
 ### Changed
 
 - Local development and CI use **pnpm 10.x** (`packageManager` pinned). End-user
