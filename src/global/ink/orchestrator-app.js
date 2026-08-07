@@ -46,6 +46,7 @@ import { LAYOUT_MODES } from "./layout.js";
 import { CHANGES_PHASE } from "./cockpit-changes.js";
 import { RECOVERY_PHASE, listRecoverySnapshots } from "./cockpit-recovery.js";
 import { SETTINGS_PHASE } from "./cockpit-settings.js";
+import { buildOverviewButtons, OVERVIEW_BUTTON_COUNT } from "./ux/overview-actions.js";
 
 export function OrchestratorApp({
   homeDir,
@@ -245,7 +246,9 @@ export function OrchestratorApp({
       return;
     }
 
-    const listLength = ui.view === ORCHESTRATOR_VIEWS.RUNS
+    const listLength = ui.view === ORCHESTRATOR_VIEWS.HOME
+      ? OVERVIEW_BUTTON_COUNT
+      : ui.view === ORCHESTRATOR_VIEWS.RUNS
       ? RUNS_HUB_ITEMS.length
       : ui.view === ORCHESTRATOR_VIEWS.ACTIVE_RUNS
         ? (data.dashboard?.activeRuns ?? []).length
@@ -300,6 +303,21 @@ export function OrchestratorApp({
           });
           return;
         }
+      }
+      if (routed.type === "enter-home-button") {
+        const buttons = buildOverviewButtons({
+          hasGlobalState,
+          snapshot: data.snapshot,
+          diagnostics: data.diagnostics,
+          dashboard: data.dashboard
+        });
+        const selected = buttons[Math.min(Math.max(0, ui.listIndex), buttons.length - 1)];
+        const intent = selected?.intent ?? null;
+        if (intent === "setup") {
+          finish({ cancelled: false, action: "setup" });
+          return;
+        }
+        if (intent && openDestination(intent)) return;
       }
       dispatch(routed);
       return;
@@ -583,7 +601,8 @@ export function OrchestratorApp({
         governanceDetailsOpen: ui.governanceDetailsOpen,
         activityDetailsOpen: ui.activityDetailsOpen,
         contentFocused: ui.region === COCKPIT_REGIONS.CONTENT,
-        homeDir
+        homeDir,
+        hasGlobalState
       })
     )
   );

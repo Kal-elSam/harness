@@ -86,7 +86,7 @@ const asciiNav = buildNavModel({
 assert.equal(asciiNav.items[1].marker, ">");
 assert.equal(asciiNav.items[0].current, true);
 assert.equal(asciiNav.items[1].selected, true);
-assert.match(asciiNav.explanation, /Repair|Govern|Activity|Usage|Settings|Overview/i);
+assert.match(asciiNav.explanation, /agents|Obsidian|integrations/i);
 
 function applyKey(state, keyAction) {
   const routed = routeCockpitKey(state, keyAction);
@@ -99,25 +99,29 @@ function smokeNavigation(layoutMode) {
     layoutMode,
     region: layoutMode === LAYOUT_MODES.MINIMAL ? COCKPIT_REGIONS.CONTENT : COCKPIT_REGIONS.NAV
   });
-  const diagnosticsIndex = COCKPIT_NAV.findIndex((item) => item.id === "governance");
-  while (state.navIndex < diagnosticsIndex) {
+  const settingsIndex = COCKPIT_NAV.findIndex((item) => item.id === "settings");
+  while (state.navIndex < settingsIndex) {
     state = applyKey(state, { type: "arrow", direction: "down" });
   }
   state = applyKey(state, { type: "enter" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES);
-  assert.equal(state.region, COCKPIT_REGIONS.NAV);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.PROFILE);
+  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
 
-  state = applyKey(state, { type: "arrow", direction: "up" });
+  state = applyKey(state, { type: "tab" });
+  assert.equal(state.region, COCKPIT_REGIONS.NAV);
+  while (state.navIndex > 0) {
+    state = applyKey(state, { type: "arrow", direction: "up" });
+  }
   state = applyKey(state, { type: "enter" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);
-  assert.equal(state.region, COCKPIT_REGIONS.NAV);
+  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
 
   const footer = buildFooterModel({
-    view: ORCHESTRATOR_VIEWS.CHANGES,
-    region: COCKPIT_REGIONS.NAV,
+    view: ORCHESTRATOR_VIEWS.HOME,
+    region: COCKPIT_REGIONS.CONTENT,
     unicode: false
   });
-  assert.doesNotMatch(footer.text, /Tab/);
+  assert.match(footer.text, /Tab/);
 
   state = applyKey(state, { type: "escape" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);

@@ -68,25 +68,41 @@ test("adapter maps health tones and plain-language titles", () => {
   assert.equal(humanizeHealthTitle(CONTROL_PLANE_HEALTH.ACTION_REQUIRED), "Needs attention");
   assert.equal(humanizeHealthTitle(CONTROL_PLANE_HEALTH.HEALTHY), "Ready");
 
-  const failed = adaptControlCenterToOverview(modelFor(CONTROL_PLANE_HEALTH.CHECK_FAILED));
+  const failed = adaptControlCenterToOverview(modelFor(CONTROL_PLANE_HEALTH.CHECK_FAILED), {
+    hasGlobalState: true,
+    snapshot: { coverage: { detectedAgents: 2 }, diff: { hasChanges: false } }
+  });
   assert.equal(failed.callout.tone, "danger");
   assert.equal(failed.callout.title, "Something failed");
   assert.match(failed.primary.label, /Check what failed|Fix|Start/i);
   assert.match(failed.purpose, /coordina/i);
+  assert.equal(failed.buttons.length, 2);
+  assert.equal(failed.buttons[1].intent, "settings");
 
-  const missing = adaptControlCenterToOverview(buildControlCenterModel({ projectName: "x" }));
+  const missing = adaptControlCenterToOverview(buildControlCenterModel({ projectName: "x" }), {
+    hasGlobalState: false
+  });
   assert.equal(missing.callout.tone, "danger");
   assert.equal(missing.callout.title, "Something failed");
   assert.match(missing.primary.label, /Check what failed/i);
+  assert.equal(missing.buttons[0].intent, "setup");
   assert.ok(missing.metrics.some((m) => /Nothing else needs you|more in Details/i.test(m.label)));
   assert.doesNotMatch(JSON.stringify(missing), /\/Users|alertId|run-|Paths and IDs/i);
 
   const withEvidence = adaptControlCenterToOverview(modelFor(CONTROL_PLANE_HEALTH.ACTION_REQUIRED, {
     alerts: [{ state: "open" }, { state: "open" }]
-  }));
+  }), {
+    hasGlobalState: true,
+    snapshot: {
+      coverage: { detectedAgents: 2 },
+      diff: { hasChanges: true, changeCount: 1 }
+    }
+  });
   assert.equal(withEvidence.callout.title, "Needs attention");
   assert.equal(withEvidence.primary.label, "Fix drift");
   assert.match(withEvidence.primary.detail, /kairo sync/i);
+  assert.equal(withEvidence.buttons[0].intent, "governance");
+  assert.match(withEvidence.buttons[0].label, /Repair/i);
   assert.ok(withEvidence.details.some((line) => /Open alerts · 2/.test(line)));
   assert.ok(withEvidence.details.some((line) => /Opens · Governance/.test(line)));
   assert.deepEqual(buildOverviewDetails({}), ["Nothing else to show right now."]);
@@ -170,7 +186,7 @@ test("wordmark shows on wide/compact only; minimal is textual", () => {
   assert.match(JSON.stringify(compact), /coordina/i);
 });
 
-test("metrics ActionList never shows selection; panel primary has no focus mark", () => {
+test("metrics ActionList never shows selection; focused Home button shows focus mark", () => {
   const list = ActionList({
     items: adaptControlCenterToOverview(modelFor(CONTROL_PLANE_HEALTH.HEALTHY)).metrics,
     selectedIndex: -1,
@@ -187,11 +203,18 @@ test("metrics ActionList never shows selection; panel primary has no focus mark"
     model: modelFor(CONTROL_PLANE_HEALTH.ACTION_REQUIRED),
     detailsOpen: false,
     unicode: false,
-    layoutMode: LAYOUT_MODES.COMPACT
+    layoutMode: LAYOUT_MODES.COMPACT,
+    selectedIndex: 0,
+    contentFocused: true,
+    hasGlobalState: true,
+    snapshot: {
+      coverage: { detectedAgents: 2 },
+      diff: { hasChanges: true, changeCount: 1 }
+    }
   });
   const blob = JSON.stringify(panel);
-  assert.doesNotMatch(blob, /"> [^"]+"/);
-  assert.match(blob, /Fix drift|kairo sync/i);
+  assert.match(blob, /"> Repair 1 change"/);
+  assert.match(blob, /Configure/);
   assert.doesNotMatch(blob, /ACTION REQUIRED/);
 });
 
@@ -230,5 +253,5 @@ test("Space toggles overview Details; Esc closes before exit", () => {
     unicode: false,
     columns: 80
   });
-  assert.ok(homeFooter.text.length <= 40, "HOME footer must fit one 80-col line");
+  assert.ok(homeFooter.text.length <= 48, "HOME footer must fit one 80-col line");
 });

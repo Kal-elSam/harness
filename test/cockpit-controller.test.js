@@ -4,7 +4,7 @@ import {
   createCockpitUiState,
   reduceCockpitUi
 } from "../src/global/ink/cockpit-controller.js";
-import { COCKPIT_REGIONS } from "../src/global/ink/cockpit-models.js";
+import { COCKPIT_REGIONS, navIndexForView } from "../src/global/ink/cockpit-models.js";
 import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
 
@@ -33,20 +33,24 @@ test("escape returns to home then signals exit", () => {
   });
   state = reduceCockpitUi(state, { type: "escape" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);
-  assert.equal(state.region, COCKPIT_REGIONS.NAV);
+  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
   assert.equal(state.shouldExit, false);
 
   state = reduceCockpitUi(state, { type: "escape" });
   assert.equal(state.shouldExit, true);
 });
 
-test("arrows move nav focus and enter opens Runs hub with content focus", () => {
+test("set-view opens Runs hub with content focus", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     region: COCKPIT_REGIONS.NAV,
-    navIndex: 3
+    navIndex: 0
   });
-  state = reduceCockpitUi(state, { type: "enter-nav" });
+  state = reduceCockpitUi(state, {
+    type: "set-view",
+    view: ORCHESTRATOR_VIEWS.RUNS,
+    navIndex: navIndexForView(ORCHESTRATOR_VIEWS.RUNS)
+  });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.RUNS);
   assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
 });
@@ -64,7 +68,7 @@ test("resize remaps invalid SYSTEM region away from retired column", () => {
   assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
 });
 
-test("help toggle opens and closes with nav focus", () => {
+test("help toggle opens with nav focus and closes to home content", () => {
   let state = createCockpitUiState();
   state = reduceCockpitUi(state, { type: "toggle-help" });
   assert.equal(state.helpOpen, true);
@@ -73,5 +77,5 @@ test("help toggle opens and closes with nav focus", () => {
   state = reduceCockpitUi(state, { type: "toggle-help" });
   assert.equal(state.helpOpen, false);
   assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);
-  assert.equal(state.region, COCKPIT_REGIONS.NAV);
+  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
 });

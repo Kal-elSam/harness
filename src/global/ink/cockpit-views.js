@@ -100,7 +100,8 @@ export function renderCockpitView({
   governanceDetailsOpen = false,
   activityDetailsOpen = false,
   contentFocused = false,
-  homeDir = null
+  homeDir = null,
+  hasGlobalState = false
 }) {
   if (palette) {
     return React.createElement(PalettePanel, { model: palette, colorEnabled });
@@ -112,7 +113,13 @@ export function renderCockpitView({
         detailsOpen: overviewDetailsOpen,
         colorEnabled,
         unicode,
-        layoutMode
+        layoutMode,
+        selectedIndex: listIndex,
+        contentFocused,
+        hasGlobalState,
+        snapshot,
+        diagnostics,
+        dashboard
       });
     case ORCHESTRATOR_VIEWS.USAGE:
       return React.createElement(SemanticUsagePanel, {
