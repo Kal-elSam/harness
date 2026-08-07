@@ -3,6 +3,30 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.12.0 — 2026-08-07 (Kairo Runtime)
+
+Minor release. Observe-and-recommend companion surfaces: Hermes activity,
+local system resources + advisor, pinned agent-skills bundle, and read-only
+ecosystem update checks. Publish tag: `kairo-runtime-v0.12.0`.
+
+### Added
+
+- HermesProvider companion: loopback probe, session activity signal, Cockpit
+  overlay lines (wide/compact/minimal). Observe-only — no start/stop control.
+- Local Resource Advisor: macOS system resource sampling (memory/swap/disk/
+  processes), deterministic recommendations, Cockpit display. No mutators.
+- Pinned complementary agent-skills component under
+  `global-template/components/agent-skills/` (rev `d2478bf0…`).
+- Ecosystem Update Advisor (check surface): `loadEcosystemUpdates`,
+  `kairo updates check`, companion `signals.ecosystem.updates`, Cockpit
+  Updates lines. Read-only — consent-gated apply deferred.
+
+### Compatibility
+
+- Auto-detect only; apply/publish still requires explicit consent.
+- Companion overlays remain secondary to governance health/CTA.
+- No permanent daemon; no silent writes from these surfaces.
+
 ## 0.11.0 — 2026-07-31 (Kairo Runtime)
 
 Minor release. Cockpit visual identity: amber/ice brand palette, borderless
