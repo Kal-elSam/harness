@@ -70,7 +70,9 @@ test("resolveSuggestedInvocation prefers kairo package for npx installs", () => 
     "harness"
   );
   assert.equal(
-    resolveFromCli(PACKAGE_NAME, ["node", "/tmp/node_modules/.bin/kairo.js"]),
+    resolveFromCli(PACKAGE_NAME, ["node", "/tmp/node_modules/.bin/kairo.js"], {
+      env: {}
+    }),
     `npx ${PACKAGE_NAME}`
   );
 });

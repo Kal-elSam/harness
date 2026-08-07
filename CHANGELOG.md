@@ -5,6 +5,13 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+### Changed
+
+- Local development and CI use **pnpm 10.x** (`packageManager` pinned). End-user
+  installs and `npm publish` (OIDC Trusted Publishing) stay on npm.
+- Install scripts blocked by default (`pnpm.onlyBuiltDependencies: []`);
+  `.npmrc` sets `strict-dep-builds` and `minimum-release-age=1440`.
+
 ## 0.13.1 — 2026-08-07 (Kairo Runtime)
 
 Patch release. Docs/UX/license polish for npm adoption. Publish tag:
