@@ -2,10 +2,13 @@
  * Live semantic Overview for Cockpit HOME — product cover.
  * Nav owns the sole focus mark — this panel never renders `>`.
  * ASCII wordmark only here (wide/compact); minimal is textual.
+ *
+ * Rule: show purpose + one next step + a few plain-language needs.
+ * Machine/system noise stays out of the first screen (Details only).
  */
 import React from "react";
 import { Box, Text } from "ink";
-import { CONTROL_PLANE_HEALTH } from "../../control-plane-snapshot.js";
+import { DASHBOARD_PURPOSE } from "../../dashboard-guidance.js";
 import { LAYOUT_MODES } from "../layout.js";
 import { COCKPIT_COLORS } from "../theme.js";
 import {
@@ -14,86 +17,95 @@ import {
   wordmarkLines
 } from "../brand/wordmark.js";
 import { ActionList, Callout, Details } from "./semantic.js";
+import {
+  humanizeDestination,
+  humanizeHealthTitle,
+  humanizePrimary,
+  mapHealthTone,
+  partitionCompanionLines
+} from "./overview-needs.js";
 
-const DESTINATION_LABELS = {
-  setup: "Setup",
-  changes: "Governance",
-  ides: "Agents",
-  runs: "Orchestration",
-  "control-center": "Overview",
-  activity: "Activity",
-  usage: "Usage",
-  profile: "Settings"
-};
+export {
+  humanizeCompanionNeed,
+  humanizeHealthTitle,
+  humanizePrimary,
+  mapHealthTone,
+  partitionCompanionLines
+} from "./overview-needs.js";
 
-export function mapHealthTone(kind) {
-  switch (kind) {
-    case CONTROL_PLANE_HEALTH.CHECK_FAILED:
-      return "danger";
-    case CONTROL_PLANE_HEALTH.ACTION_REQUIRED:
-    case CONTROL_PLANE_HEALTH.NOT_CONFIGURED:
-    case CONTROL_PLANE_HEALTH.HEALTHY_WITH_NOTES:
-      return "warn";
-    case CONTROL_PLANE_HEALTH.HEALTHY:
-      return "ready";
-    default:
-      return "warn";
-  }
-}
-
-function humanizeDestination(destination) {
-  if (!destination) return null;
-  return DESTINATION_LABELS[destination] ?? null;
-}
-
-/** Safe Details lines only — never invent paths/IDs; honest empty when none. */
-export function buildOverviewDetails(model = {}) {
+/** Safe Details lines — leftovers + raw signals; never invent paths/IDs. */
+export function buildOverviewDetails(model = {}, companionRest = []) {
   const lines = [];
   const next = model.nextAction ?? model.cta ?? {};
   const dest = humanizeDestination(next.destination);
-  if (dest) lines.push(`Next destination · ${dest}`);
-  if (typeof model.alerts?.count === "number") {
+  if (dest) lines.push(`Opens · ${dest}`);
+  if (typeof model.alerts?.count === "number" && model.alerts.count > 0) {
     lines.push(`Open alerts · ${model.alerts.count}`);
+  }
+  const tokens = model.tokens?.headline;
+  if (typeof tokens === "string" && tokens && !/unavailable/i.test(tokens)) {
+    lines.push(`Tokens · ${tokens}`);
   }
   const secondary = model.companionNextAction;
   if (secondary?.title && secondary.kind !== "idle") {
     lines.push(`Companion · ${secondary.title}`);
   }
-  if (lines.length === 0) return ["No extra evidence beyond the metrics above."];
+  for (const line of companionRest) {
+    if (typeof line === "string" && line.trim()) lines.push(line);
+  }
+  if (lines.length === 0) return ["Nothing else to show right now."];
   return lines;
 }
 
 /**
  * Pure adapter: buildControlCenterModel → semantic overview props.
- * Callout / CTA / metrics never include paths or IDs.
- * Primary action is always governance CTA — companion is secondary metrics/details only.
+ * First screen = purpose + next step + plain needs. Machine noise → Details.
  */
 export function adaptControlCenterToOverview(model = {}) {
   const status = model.status ?? model.health ?? {};
   const next = model.nextAction ?? model.cta ?? {};
-  const companionMetrics = (model.companion?.lines ?? []).map((label, i) => ({
-    id: `companion-${i}`,
-    label
-  }));
+  const { needs, rest } = partitionCompanionLines(model.companion?.lines ?? []);
+  const primary = humanizePrimary(next);
+
+  const activity = model.activity?.headline;
+  const metrics = [];
+  const hasUsefulActivity = typeof activity === "string"
+    && activity
+    && activity !== "Idle"
+    && activity !== "No activity yet";
+  if (hasUsefulActivity) {
+    metrics.push({ id: "activity", label: `Last activity · ${activity.replace(/^Last ·\s*/, "")}` });
+  }
+  for (let i = 0; i < needs.length; i += 1) {
+    metrics.push({ id: `need-${i}`, label: needs[i] });
+  }
+  if ((model.alerts?.count ?? 0) > 0) {
+    metrics.push({
+      id: "alerts",
+      label: `Alerts · ${model.alerts.headline ?? `${model.alerts.count} open`}`
+    });
+  }
+  if (rest.length > 0) {
+    metrics.push({
+      id: "more",
+      label: `${rest.length} more in Details · Space`
+    });
+  }
+  if (metrics.length === 0) {
+    metrics.push({ id: "quiet", label: "Nothing else needs you right now" });
+  }
+
   return {
     title: model.title ?? "Overview",
+    purpose: DASHBOARD_PURPOSE,
     callout: {
       tone: mapHealthTone(status.kind),
-      title: status.label ?? "Unknown",
+      title: humanizeHealthTitle(status.kind, status.label),
       body: status.summaryLine ?? ""
     },
-    primary: {
-      label: next.actionTitle ?? "Review control plane",
-      detail: next.actionDetail || null,
-      hint: next.enterHint ?? null
-    },
-    metrics: [
-      { id: "activity", label: `Activity · ${model.activity?.headline ?? "Idle"}` },
-      { id: "alerts", label: `Alerts · ${model.alerts?.headline ?? "Alert data unavailable"}` },
-      { id: "tokens", label: `Tokens · ${model.tokens?.headline ?? "Data unavailable"}` },
-      ...companionMetrics
-    ],
-    details: buildOverviewDetails(model)
+    primary,
+    metrics,
+    details: buildOverviewDetails(model, rest)
   };
 }
 
@@ -150,11 +162,14 @@ export function SemanticOverviewPanel({
 
   return React.createElement(Box, { flexDirection: "column" },
     hero,
+    React.createElement(Text, {
+      color: colorEnabled ? COCKPIT_COLORS.muted : undefined
+    }, view.purpose),
     React.createElement(Box, { marginTop: 1, flexDirection: "column" },
       React.createElement(Text, {
         bold: true,
         color: colorEnabled ? COCKPIT_COLORS.interactive : undefined
-      }, view.primary.label),
+      }, `→ ${view.primary.label}`),
       view.primary.detail
         ? React.createElement(Text, null, view.primary.detail)
         : null,
@@ -175,7 +190,7 @@ export function SemanticOverviewPanel({
     ),
     React.createElement(Details, {
       open: detailsOpen,
-      summary: "Details",
+      summary: "More info",
       lines: view.details,
       colorEnabled,
       focused: false,

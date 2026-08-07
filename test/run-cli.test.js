@@ -115,7 +115,16 @@ test("runGlobalRuns list returns persisted runs", async () => {
 });
 
 test("help documents runtime commands", () => {
-  const cli = spawnSync(process.execPath, [kairoBin, "help"], {
+  const short = spawnSync(process.execPath, [kairoBin, "help"], {
+    cwd: packageRoot,
+    encoding: "utf8",
+    env: { ...process.env, HARNESS_INK: "0" }
+  });
+  assert.equal(short.status, 0);
+  assert.match(short.stdout, /help --all/);
+  assert.match(short.stdout, /kairo status/);
+
+  const cli = spawnSync(process.execPath, [kairoBin, "help", "--all"], {
     cwd: packageRoot,
     encoding: "utf8",
     env: { ...process.env, HARNESS_INK: "0" }

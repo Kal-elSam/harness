@@ -136,8 +136,14 @@ test("overview keeps governance health+CTA; compact primary unchanged", async ()
   assert.equal(model.cta.destination, "changes");
   assert.equal(model.nextAction.destination, "changes");
   const view = adaptControlCenterToOverview(model);
-  assert.match(view.primary.label, /repair|Review/i);
-  assert.ok(view.metrics.some((m) => /Gentle|Graphify|Engram/i.test(m.label)));
+  assert.match(view.primary.label, /Fix drift|repair|Review/i);
+  assert.match(view.purpose, /coordina/i);
+  // Machine/probe noise stays in Details; Engram missing becomes a plain need.
+  assert.ok(
+    view.metrics.some((m) => /Memory not ready|Engram/i.test(m.label))
+    || view.details.some((l) => /Gentle|Graphify|Engram/i.test(l))
+  );
+  assert.ok(!view.metrics.some((m) => /^Gentle|^Graphify|^System/i.test(m.label)));
 
   const bundle = await loadCockpitScanBundle({
     homeDir: "/tmp", workspaceRoot: "/tmp", packageName: "x", packageRoot: "/tmp", cliVersion: "0",

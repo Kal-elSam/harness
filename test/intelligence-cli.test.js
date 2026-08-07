@@ -68,7 +68,7 @@ test("intelligence ask without backend stays diagnostics-safe", () => {
 });
 
 test("help documents intelligence command", () => {
-  const result = runKairo(["help"]);
+  const result = runKairo(["help", "--all"]);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /intelligence/);
   assert.match(result.stdout, /OPENROUTER_API_KEY/);

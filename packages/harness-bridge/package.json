@@ -20,7 +20,8 @@
   },
   "files": [
     "bin",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "keywords": [
     "ai",
@@ -30,7 +31,7 @@
     "kairo-runtime",
     "compatibility"
   ],
-  "license": "UNLICENSED",
+  "license": "MIT",
   "publishConfig": {
     "access": "public"
   },

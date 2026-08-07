@@ -3,6 +3,14 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## Unreleased
+
+### Changed
+
+- License: `UNLICENSED` → **MIT** (root `LICENSE`; also `@kal-elsam/harness` bridge).
+- npm README trimmed to a short product page; long reference moved under `docs/`.
+- `kairo help` shows four day-to-day commands; `kairo help --all` lists the rest.
+
 ## 0.13.0 — 2026-08-07 (Kairo Runtime)
 
 Minor release. Obsidian Knowledge Hub: human knowledge surface under `Kairo/`
