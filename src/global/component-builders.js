@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { buildAgentSkillsManagedSection } from "./components/agent-skills.js";
 import { buildEngramMemoryManagedSection } from "./components/engram-memory.js";
 import { buildGraphifyContextManagedSection } from "./components/graphify-context.js";
 import { buildOrchestratorManagedSection } from "./components/orchestrator.js";
@@ -8,7 +9,8 @@ export const COMPONENT_BUILDERS = {
   orchestrator: buildOrchestratorManagedSection,
   "sdd-core": buildSddCoreManagedSection,
   "engram-memory": buildEngramMemoryManagedSection,
-  "graphify-context": buildGraphifyContextManagedSection
+  "graphify-context": buildGraphifyContextManagedSection,
+  "agent-skills": buildAgentSkillsManagedSection
 };
 
 export function resolveComponentBuilder(componentId) {
