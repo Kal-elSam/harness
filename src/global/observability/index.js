@@ -80,6 +80,13 @@ export {
   inspectObsidianVault
 } from "./obsidian-vault.js";
 export {
+  formatKnowledgeFrontmatter,
+  renderDecisionMarkdown,
+  renderArchitectureMarkdown,
+  buildObsidianKnowledgePreview,
+  loadObsidianKnowledgePreview
+} from "./obsidian-knowledge-preview.js";
+export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
   resolveRunTimestamp,
