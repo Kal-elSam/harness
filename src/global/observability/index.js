@@ -69,6 +69,17 @@ export {
   loadEcosystemUpdates
 } from "./ecosystem-updates.js";
 export {
+  KAIRO_VAULT_SUBDIR,
+  EXCLUDED_DIR_NAMES,
+  normalizeVaultPath,
+  isExcludedDirName,
+  isSecretBasename,
+  isAllowedKairoNoteName,
+  assertInsideKairoRoot,
+  resolveKairoNotePath,
+  inspectObsidianVault
+} from "./obsidian-vault.js";
+export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
   resolveRunTimestamp,
