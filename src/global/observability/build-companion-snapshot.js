@@ -4,6 +4,8 @@ import { createGentleProbe } from "./gentle-probe.js";
 import { createGraphifyProbe } from "./graphify-probe.js";
 import { createHermesProbe } from "./hermes-probe.js";
 import { loadHermesActivity as defaultHermesActivity } from "./hermes-activity.js";
+import { loadSystemResources as defaultSystemResources } from "./system-resources.js";
+import { recommendSystemResources } from "./resource-advisor.js";
 import { getObservabilityProbe, registerObservabilityProbe } from "./probe-registry.js";
 
 export const SOFT_LINK_WINDOW_MS = 60 * 60 * 1000;
@@ -34,6 +36,28 @@ function summarizeHermesActivity(a) {
     state: a.state ?? "error", error: a.error ?? null, baseUrl: a.baseUrl ?? null,
     diagnostics: Array.isArray(a.diagnostics) ? a.diagnostics.map(String) : [],
     sessions: Array.isArray(a.sessions) ? a.sessions : [], aggregates: a.aggregates ?? empty.aggregates
+  };
+}
+
+function emptySystemResources() {
+  return {
+    state: "error", sampledAt: null, diagnostics: [],
+    memory: null, swap: null, disk: null,
+    processes: { totalCount: 0, zombieCount: 0, tracked: [] },
+    thermal: { state: "unavailable" }, ssdWear: { state: "unavailable" }
+  };
+}
+function summarizeSystemResources(raw) {
+  if (raw == null || typeof raw !== "object") return emptySystemResources();
+  const empty = emptySystemResources();
+  return {
+    state: raw.state ?? "error",
+    sampledAt: raw.sampledAt ?? null,
+    diagnostics: Array.isArray(raw.diagnostics) ? raw.diagnostics.map(String) : [],
+    memory: raw.memory ?? null, swap: raw.swap ?? null, disk: raw.disk ?? null,
+    processes: raw.processes ?? empty.processes,
+    thermal: raw.thermal ?? { state: "unavailable" },
+    ssdWear: raw.ssdWear ?? { state: "unavailable" }
   };
 }
 
@@ -130,7 +154,8 @@ function emptyCompanion(error = null) {
     signals: {
       gentle: { state: "error", error: null, diagnostics: [] },
       graphify: { state: "error", error: null, diagnostics: [], graphStatus: null },
-      hermes: { activity: emptyHermesActivity() }
+      hermes: { activity: emptyHermesActivity() },
+      system: { resources: emptySystemResources(), advice: { recommendations: [], deepScan: false } }
     },
     engram: { status: "error", binary: null },
     links: [], alertsCount: null,
@@ -148,6 +173,8 @@ export async function buildCompanionSnapshot({
   buildObservability = defaultObs, inspectEngram = null,
   ensureRegistered = defaultEnsure, loadReviews = null, loadAlerts = null,
   loadHermesActivity = defaultHermesActivity,
+  loadSystemResources = defaultSystemResources,
+  resourceDeepScan = false,
   observabilityContext = {}
 } = {}) {
   try {
@@ -171,6 +198,18 @@ export async function buildCompanionSnapshot({
       hermesActivity = emptyHermesActivity();
     }
 
+    let systemResources = emptySystemResources();
+    try {
+      systemResources = summarizeSystemResources(
+        await loadSystemResources({ ...(observabilityContext ?? {}) })
+      );
+    } catch {
+      systemResources = emptySystemResources();
+    }
+    const systemAdvice = recommendSystemResources(systemResources, {
+      deepScan: resourceDeepScan === true
+    });
+
     const reviewList = Array.isArray(reviews)
       ? reviews
       : (typeof loadReviews === "function" ? await loadReviews() : []);
@@ -179,7 +218,8 @@ export async function buildCompanionSnapshot({
       : (typeof loadAlerts === "function" ? await loadAlerts() : null);
     const signals = {
       ...summarizeCompanionProbes(obs?.probes ?? []),
-      hermes: { activity: hermesActivity }
+      hermes: { activity: hermesActivity },
+      system: { resources: systemResources, advice: systemAdvice }
     };
     const links = [];
     for (const review of reviewList ?? []) {
