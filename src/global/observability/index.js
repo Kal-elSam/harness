@@ -103,6 +103,11 @@ export {
   loadObsidianKnowledgeViews
 } from "./obsidian-knowledge-views.js";
 export {
+  emptyObsidianVaultStatus,
+  summarizeObsidianVaultStatus,
+  loadObsidianVaultStatus
+} from "./obsidian-status.js";
+export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
   resolveRunTimestamp,
