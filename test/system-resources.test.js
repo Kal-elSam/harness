@@ -110,6 +110,7 @@ test("companion carries signals.system.resources; fail-soft on throw", async () 
       processes: { totalCount: 1, zombieCount: 0, tracked: [{ name: "cursor", count: 1 }] },
       thermal: { state: "unavailable" }, ssdWear: { state: "unavailable" }
     }),
+    loadEcosystemUpdates: async () => ({ state: "available", tools: {}, diagnostics: [], cacheHit: true }),
     runs: [], reviews: [], alerts: []
   });
   assert.equal(snap.signals.system.resources.state, "available");
@@ -118,6 +119,7 @@ test("companion carries signals.system.resources; fail-soft on throw", async () 
     controlPlaneHealth: CONTROL_PLANE_HEALTH.HEALTHY,
     buildObservability: async () => ({ probes: [] }),
     loadSystemResources: async () => { throw new Error("boom"); },
+    loadEcosystemUpdates: async () => ({ state: "available", tools: {}, diagnostics: [], cacheHit: true }),
     runs: [], reviews: [], alerts: []
   });
   assert.equal(threw.signals.system.resources.state, "error");
