@@ -30,6 +30,7 @@ import {
   runGlobalReport
 } from "./global/global-cli.js";
 import { runEcosystemUpdatesCheck } from "./global/updates-cli.js";
+import { runSelfUpdate } from "./global/self-update.js";
 import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
 import { resolveHomeDir } from "./global/paths.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
@@ -173,9 +174,15 @@ export async function runCli(argv) {
       });
       return;
     case "update":
-      await dispatchByScope(options, "agent-global", {
-        "agent-global": () => runGlobalInstall(options, packageManifest, packageRoot, { update: true }),
-        workspace: () => runWorkspaceUpdate(options, packageManifest, packageRoot)
+      if (options.scope === "workspace") {
+        await runWorkspaceUpdate(options, packageManifest, packageRoot);
+        return;
+      }
+      await runSelfUpdate({
+        packageName: packageManifest.name,
+        cliVersion: packageManifest.version,
+        yes: optionsWithPolicy.yes === true,
+        json: optionsWithPolicy.json === true
       });
       return;
     case "doctor":
