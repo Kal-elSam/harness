@@ -3,6 +3,31 @@
 All notable changes to `@kal-elsam/kairo-runtime` are documented here.
 Historical entries below may reference the legacy `@kal-elsam/harness` package name.
 
+## 0.13.0 — 2026-08-07 (Kairo Runtime)
+
+Minor release. Obsidian Knowledge Hub: human knowledge surface under `Kairo/`
+with consent-gated publish and Cockpit status (no auto-sync). Publish tag:
+`kairo-runtime-v0.13.0`.
+
+### Added
+
+- Obsidian vault adapter: absolute vault path only; access limited to `Kairo/`;
+  refuses escaping symlinks, `.obsidian`, attachments, and secret basenames.
+- Knowledge preview from injectable Engram/Graphify *export* adapters (never
+  internal DBs); Markdown proposals with frontmatter + wikilinks.
+- Consent-gated publisher: atomic write, backups under `.kairo-backups/`,
+  refuse overwrite of manual notes; dry-run / missing consent never writes.
+- Knowledge views: projects / decisions / architecture / sessions / reviews
+  index helpers + index-note proposals (publish via consent only).
+- Cockpit companion `signals.obsidian.vault` + display lines (wide/compact/
+  minimal). Unconfigured without absolute `obsidianVaultPath`; no write CTAs.
+
+### Compatibility
+
+- Obsidian is a human UI — not a fourth authority beside Engram/Graphify/Kairo.
+- No automatic vault sync; no silent writes.
+- Companion overlays remain secondary to governance health/CTA.
+
 ## 0.12.0 — 2026-08-07 (Kairo Runtime)
 
 Minor release. Observe-and-recommend companion surfaces: Hermes activity,
