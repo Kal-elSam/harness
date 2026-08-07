@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildControlCenterModel, formatUsageLines } from "../src/global/ink/cockpit-control-center.js";
+import {
+  buildControlCenterModel,
+  formatHermesActivityLines,
+  formatUsageLines
+} from "../src/global/ink/cockpit-control-center.js";
 import { CONTROL_PLANE_HEALTH } from "../src/global/control-plane-snapshot.js";
 import { COCKPIT_NAV } from "../src/global/ink/cockpit-models.js";
 import {
@@ -9,6 +13,7 @@ import {
   loadCockpitScanBundle
 } from "../src/global/ink/cockpit-scan.js";
 import { resolveEnterNavIntent } from "../src/global/ink/cockpit-enter.js";
+import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
 import { formatOrchestrationStatus, formatRunsHubLines, RUNS_HUB_ITEMS } from "../src/global/ink/cockpit-runs.js";
 import { formatRunDetailLines } from "../src/global/ink/orchestrator-state.js";
@@ -219,6 +224,84 @@ test("serialized reload keeps only the latest outcome and preserves prior error 
   assert.equal(outcomes[1].stale, false);
   assert.equal(outcomes[1].result.token, "fresh");
   assert.equal(outcomes[1].error, null);
+});
+
+test("Hermes activity lines degrade opaquely and vary by layout", () => {
+  assert.deepEqual(formatHermesActivityLines(null), ["Hermes · unavailable"]);
+  assert.deepEqual(formatHermesActivityLines({ state: "error" }), ["Hermes · error"]);
+  assert.deepEqual(formatHermesActivityLines({ state: "unavailable" }), ["Hermes · unavailable"]);
+  assert.deepEqual(
+    formatHermesActivityLines({
+      state: "available",
+      aggregates: { activeCount: 2, endedCount: 5, hasMore: false },
+      sessions: []
+    }, LAYOUT_MODES.MINIMAL),
+    ["Hermes · available · 2 active"]
+  );
+  assert.deepEqual(
+    formatHermesActivityLines({
+      state: "partial",
+      aggregates: { activeCount: 1, endedCount: 4, hasMore: false },
+      sessions: []
+    }, LAYOUT_MODES.COMPACT),
+    ["Hermes · partial · 1 active · 4 ended"]
+  );
+
+  const wide = formatHermesActivityLines({
+    state: "available",
+    aggregates: { activeCount: 2, endedCount: 1, hasMore: true },
+    sessions: [
+      { id: "sess-secret", title: "Refactor auth", active: true },
+      { id: "sess-2", source: "cli", active: false },
+      { id: "sess-3", title: "x".repeat(80), active: true },
+      { id: "sess-4", title: "hidden", active: false }
+    ]
+  }, LAYOUT_MODES.WIDE);
+  assert.equal(wide[0], "Hermes · available · 2 active · 1 ended");
+  assert.equal(wide[1], "  · Refactor auth · active");
+  assert.equal(wide[2], "  · cli · ended");
+  assert.equal(wide[3], `  · ${"x".repeat(48)} · active`);
+  assert.equal(wide[4], "  · … more sessions");
+  assert.equal(wide.length, 5);
+  assert.doesNotMatch(wide.join("\n"), /sess-secret|sess-2|baseUrl|http:\/\//i);
+});
+
+test("control center companion overlay includes Hermes observe-only lines", () => {
+  const companion = {
+    ok: true,
+    signals: {
+      gentle: { state: "available" },
+      graphify: { state: "available", graphStatus: "fresh" },
+      hermes: {
+        activity: {
+          state: "available",
+          aggregates: { activeCount: 1, endedCount: 0, hasMore: false },
+          sessions: [{ id: "do-not-leak", title: "Probe session", active: true }]
+        }
+      }
+    },
+    engram: { status: "ready" },
+    links: [],
+    nextSafeAction: { kind: "idle", title: "quiet" }
+  };
+  const compact = buildControlCenterModel({
+    projectName: "p",
+    layoutMode: LAYOUT_MODES.COMPACT,
+    snapshot: { health: CONTROL_PLANE_HEALTH.HEALTHY, coverage: {}, diff: { hasChanges: false } },
+    companion
+  });
+  assert.ok(compact.companion.lines.some((line) => line === "Hermes · available · 1 active · 0 ended"));
+  assert.ok(!compact.companion.lines.some((line) => /do-not-leak|Probe session/.test(line)));
+
+  const wide = buildControlCenterModel({
+    projectName: "p",
+    layoutMode: LAYOUT_MODES.WIDE,
+    snapshot: { health: CONTROL_PLANE_HEALTH.HEALTHY, coverage: {}, diff: { hasChanges: false } },
+    companion
+  });
+  assert.ok(wide.companion.lines.some((line) => line === "  · Probe session · active"));
+  assert.doesNotMatch(wide.companion.lines.join("\n"), /do-not-leak/);
+  assert.equal(wide.includeEmbeddedStatus, false);
 });
 
 test("Enter intent separates Control center open from CTA activation", () => {

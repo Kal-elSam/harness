@@ -5,12 +5,16 @@ import {
   formatMeasuredBudgets,
   formatUsageLinesFromModel
 } from "./cockpit-usage.js";
+import { LAYOUT_MODES } from "./layout.js";
+
+const HERMES_WIDE_SESSION_LIMIT = 3;
+const HERMES_TITLE_MAX = 48;
 
 export function buildControlCenterModel({
   projectName = "project",
   snapshot = null,
   dashboard = null,
-  layoutMode = "compact",
+  layoutMode = LAYOUT_MODES.COMPACT,
   alerts = null,
   companion = null
 } = {}) {
@@ -52,7 +56,7 @@ export function buildControlCenterModel({
       tokens: { headline: "Data unavailable" },
       companion: null,
       companionNextAction: null,
-      includeEmbeddedStatus: layoutMode !== "wide",
+      includeEmbeddedStatus: layoutMode !== LAYOUT_MODES.WIDE,
       runsSecondaryHint: "Detail via Enter · / actions"
     };
   }
@@ -97,14 +101,69 @@ export function buildControlCenterModel({
     },
     alerts: formatAlertsHeadline(alerts),
     tokens: { headline: formatTokenHeadline(snapshot.budgets) },
-    companion: formatCompanionOverlay(companion),
+    companion: formatCompanionOverlay(companion, layoutMode),
     companionNextAction: companion?.nextSafeAction ?? null,
-    includeEmbeddedStatus: layoutMode !== "wide",
+    includeEmbeddedStatus: layoutMode !== LAYOUT_MODES.WIDE,
     runsSecondaryHint: "Detail via Enter · / actions"
   };
 }
 
-function formatCompanionOverlay(companion) {
+/**
+ * Observe-only Hermes activity lines for Cockpit overlay.
+ * Never includes session ids, baseUrl, diagnostics dumps, or control affordances.
+ */
+export function formatHermesActivityLines(activity, layoutMode = LAYOUT_MODES.COMPACT) {
+  if (activity == null || typeof activity !== "object") {
+    return ["Hermes · unavailable"];
+  }
+  const state = typeof activity.state === "string" && activity.state.length > 0
+    ? activity.state
+    : "error";
+  if (state !== "available" && state !== "partial") {
+    return [`Hermes · ${state}`];
+  }
+
+  const agg = activity.aggregates && typeof activity.aggregates === "object"
+    ? activity.aggregates
+    : {};
+  const active = Number.isInteger(agg.activeCount) ? agg.activeCount : null;
+  const ended = Number.isInteger(agg.endedCount) ? agg.endedCount : null;
+  const bits = [`Hermes · ${state}`];
+  if (active != null) bits.push(`${active} active`);
+  if (layoutMode !== LAYOUT_MODES.MINIMAL && ended != null) {
+    bits.push(`${ended} ended`);
+  }
+  const lines = [bits.join(" · ")];
+
+  if (layoutMode !== LAYOUT_MODES.WIDE) return lines;
+
+  const sessions = Array.isArray(activity.sessions) ? activity.sessions : [];
+  for (const session of sessions.slice(0, HERMES_WIDE_SESSION_LIMIT)) {
+    const label = hermesSessionLabel(session);
+    if (label) lines.push(`  · ${label}`);
+  }
+  if (agg.hasMore === true || sessions.length > HERMES_WIDE_SESSION_LIMIT) {
+    lines.push("  · … more sessions");
+  }
+  return lines;
+}
+
+function hermesSessionLabel(session) {
+  if (session == null || typeof session !== "object" || Array.isArray(session)) return null;
+  const title = typeof session.title === "string" && session.title.trim()
+    ? session.title.trim()
+    : null;
+  const source = typeof session.source === "string" && session.source.trim()
+    ? session.source.trim()
+    : null;
+  const head = (title ?? source ?? "untitled")
+    .replace(/[\r\n\t]+/g, " ")
+    .slice(0, HERMES_TITLE_MAX);
+  const flag = session.active === true ? "active" : "ended";
+  return `${head} · ${flag}`;
+}
+
+function formatCompanionOverlay(companion, layoutMode = LAYOUT_MODES.COMPACT) {
   if (!companion) return null;
   const g = companion.signals?.gentle?.state ?? "unknown";
   const gy = companion.signals?.graphify;
@@ -117,7 +176,8 @@ function formatCompanionOverlay(companion) {
       `Gentle · ${g}`,
       `Graphify · ${gy?.state ?? "unknown"}${graphBit}`,
       `Engram · ${en}`,
-      `Soft links · ${links}`
+      `Soft links · ${links}`,
+      ...formatHermesActivityLines(companion.signals?.hermes?.activity, layoutMode)
     ],
     links: companion.links ?? [],
     error: companion.error ?? null
