@@ -2,13 +2,17 @@
 
 ## Quick start
 
-Recommended entry — run Kairo Runtime in your terminal:
+Recommended entry — run Kairo Runtime in your terminal (npm registry; no pnpm
+required for end users):
 
 ```bash
 npx @kal-elsam/kairo-runtime
 # or, after a global install:
+npm install -g @kal-elsam/kairo-runtime
 kairo
 ```
+
+Contributors clone the repo and use **pnpm** — see [Contributing](contributing.md).
 
 **First run** (no `~/.harness/state.json`): semantic Setup (Detect → Agents →
 Components → Preview → Confirm) → full-screen Control Center.

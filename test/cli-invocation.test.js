@@ -38,7 +38,8 @@ test("formatSuggestedCliCommand uses global bin when invoked from PATH", () => {
 test("formatSuggestedCliCommand uses npx when invoked via script path", () => {
   assert.equal(
     formatSuggestedCliCommand("status", {
-      argv: ["node", "/tmp/node_modules/.bin/kairo.js"]
+      argv: ["node", "/tmp/node_modules/.bin/kairo.js"],
+      env: {}
     }),
     "npx @kal-elsam/kairo-runtime status"
   );

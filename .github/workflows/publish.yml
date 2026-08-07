@@ -49,37 +49,42 @@ jobs:
           esac
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-          package-manager-cache: false
+          cache: pnpm
 
       - name: Install locked dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile
 
       - name: Run tests
-        run: npm test
+        run: pnpm test
 
       - name: Run smoke tests
-        run: npm run smoke
+        run: pnpm run smoke
 
       - name: Run bridge smoke tests
         if: steps.publish.outputs.kind == 'bridge'
-        run: npm run smoke:bridge
+        run: pnpm run smoke:bridge
 
       - name: Verify package contents
         working-directory: ${{ steps.publish.outputs.directory }}
         run: npm pack --dry-run
 
       - name: Verify release commit hygiene
-        run: npm run release:check
+        run: pnpm run release:check
 
       - name: Install bridge dependencies
         if: steps.publish.outputs.kind == 'bridge'
         working-directory: packages/harness-bridge
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile
 
       - name: Publish with npm Trusted Publishing
         working-directory: ${{ steps.publish.outputs.directory }}
