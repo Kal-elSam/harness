@@ -61,6 +61,14 @@ export {
 } from "./system-resources.js";
 export { recommendSystemResources } from "./resource-advisor.js";
 export {
+  ECOSYSTEM_UPDATES_CACHE_MS,
+  ECOSYSTEM_UPDATES_TIMEOUT_MS,
+  AGENT_SKILLS_PINNED_REV,
+  parseGentleUpdateOutput,
+  parseHermesUpdateCheck,
+  loadEcosystemUpdates
+} from "./ecosystem-updates.js";
+export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
   resolveRunTimestamp,
