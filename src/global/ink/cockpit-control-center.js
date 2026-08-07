@@ -6,9 +6,12 @@ import {
   formatUsageLinesFromModel
 } from "./cockpit-usage.js";
 import { LAYOUT_MODES } from "./layout.js";
+import { formatSystemResourcesLines } from "./system-resources-display.js";
 
 const HERMES_WIDE_SESSION_LIMIT = 3;
 const HERMES_TITLE_MAX = 48;
+
+export { diskFreeTone, formatSystemResourcesLines } from "./system-resources-display.js";
 
 export function buildControlCenterModel({
   projectName = "project",
@@ -177,7 +180,8 @@ function formatCompanionOverlay(companion, layoutMode = LAYOUT_MODES.COMPACT) {
       `Graphify · ${gy?.state ?? "unknown"}${graphBit}`,
       `Engram · ${en}`,
       `Soft links · ${links}`,
-      ...formatHermesActivityLines(companion.signals?.hermes?.activity, layoutMode)
+      ...formatHermesActivityLines(companion.signals?.hermes?.activity, layoutMode),
+      ...formatSystemResourcesLines(companion.signals?.system?.resources, layoutMode)
     ],
     links: companion.links ?? [],
     error: companion.error ?? null
