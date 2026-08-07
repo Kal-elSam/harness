@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { parseArgs } from "../src/cli.js";
 import { formatHelpAll, formatHelpShort } from "../src/global/cli-help.js";
 
-test("short help shows four commands and points to --all", () => {
+test("short help shows core commands and points to --all", () => {
   const text = formatHelpShort();
   assert.match(text, /Kairo Runtime/);
   assert.match(text, /Local Agent Operating System/);
   assert.match(text, /kairo status/);
   assert.match(text, /kairo sync/);
+  assert.match(text, /kairo update/);
   assert.match(text, /kairo doctor/);
   assert.match(text, /help --all/);
   assert.doesNotMatch(text, /OPENROUTER_API_KEY/);

@@ -10,6 +10,8 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 - VS Code / Cursor extension scaffold in `packages/kairo-vscode`: status bar +
   explorer tree from `kairo status --json`; sync/doctor/cockpit open a terminal
   (no silent writes). Local VSIX via `npm run package`.
+- `kairo update`: update the Kairo CLI from npm (`--yes` applies). Workspace
+  template refresh stays at `kairo update --scope=workspace`.
 
 ### Changed
 

@@ -29,6 +29,7 @@ Usage:
   ${cli}                 Open the cockpit (setup on first run)
   ${cli} status          See how your setup is doing
   ${cli} sync            Repair what drifted
+  ${cli} update          Update Kairo itself (npm)
   ${cli} doctor          Deeper health checks
 
   ${cli} help --all      Every command and flag
@@ -63,7 +64,8 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} updates check [--json] [--force]
   ${cli} install [--agents <list|all>] [--components <list>] [--dry-run]
   ${cli} install --no-default-components
-  ${cli} update [--dry-run]             Technical repair alias (prefer sync)
+  ${cli} update [--yes] [--json]        Update the Kairo CLI from npm
+  ${cli} update --scope=workspace [--dry-run]  Refresh workspace template files
   ${cli} uninstall [--dry-run]
 
 ## Agents & runs
@@ -143,7 +145,7 @@ Commands:
   updates    Read-only ecosystem update check (kairo/hermes/gentle/skills). Never applies.
   install    Non-interactive configure (agent-global) or legacy workspace scaffold.
   doctor     Detailed health checks for managed state and configs.
-  update     Technical repair alias (prefer sync for day-to-day use).
+  update     Update the Kairo CLI from npm (--yes applies). Workspace templates: --scope=workspace.
   detect     Inspect global agents and the current project. Read-only.
   adapters   Official adapter matrix: roots, config files, detected/managed.
   explain    Read-only audit of managed adapters, configs, markers, and backups.
