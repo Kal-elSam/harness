@@ -84,3 +84,26 @@ export function formatSystemResourcesLines(resources, layoutMode = LAYOUT_MODES.
   lines.push(`  · SSD wear · ${ssd}`);
   return lines;
 }
+
+/** Display-only advisor lines from deterministic recommendations. */
+export function formatResourceAdviceLines(advice, layoutMode = LAYOUT_MODES.COMPACT) {
+  const list = Array.isArray(advice?.recommendations) ? advice.recommendations : [];
+  if (list.length === 0) return ["Advisor · quiet"];
+  const top = list[0];
+  const severity = typeof top.severity === "string" ? top.severity : "info";
+  const title = typeof top.title === "string" ? top.title : "recommendation";
+  const lines = [`Advisor · ${severity} · ${title}`];
+  if (layoutMode === LAYOUT_MODES.MINIMAL) return lines;
+  if (typeof top.detail === "string" && top.detail.length > 0) {
+    lines.push(`  · ${top.detail.slice(0, 96)}`);
+  }
+  if (layoutMode === LAYOUT_MODES.WIDE) {
+    for (const item of list.slice(1, 3)) {
+      if (item == null || typeof item !== "object") continue;
+      const sev = typeof item.severity === "string" ? item.severity : "info";
+      const t = typeof item.title === "string" ? item.title : "recommendation";
+      lines.push(`  · ${sev} · ${t}`);
+    }
+  }
+  return lines;
+}

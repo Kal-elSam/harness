@@ -5,6 +5,7 @@ import { createGraphifyProbe } from "./graphify-probe.js";
 import { createHermesProbe } from "./hermes-probe.js";
 import { loadHermesActivity as defaultHermesActivity } from "./hermes-activity.js";
 import { loadSystemResources as defaultSystemResources } from "./system-resources.js";
+import { recommendSystemResources } from "./resource-advisor.js";
 import { getObservabilityProbe, registerObservabilityProbe } from "./probe-registry.js";
 
 export const SOFT_LINK_WINDOW_MS = 60 * 60 * 1000;
@@ -154,7 +155,7 @@ function emptyCompanion(error = null) {
       gentle: { state: "error", error: null, diagnostics: [] },
       graphify: { state: "error", error: null, diagnostics: [], graphStatus: null },
       hermes: { activity: emptyHermesActivity() },
-      system: { resources: emptySystemResources() }
+      system: { resources: emptySystemResources(), advice: { recommendations: [], deepScan: false } }
     },
     engram: { status: "error", binary: null },
     links: [], alertsCount: null,
@@ -173,6 +174,7 @@ export async function buildCompanionSnapshot({
   ensureRegistered = defaultEnsure, loadReviews = null, loadAlerts = null,
   loadHermesActivity = defaultHermesActivity,
   loadSystemResources = defaultSystemResources,
+  resourceDeepScan = false,
   observabilityContext = {}
 } = {}) {
   try {
@@ -204,6 +206,9 @@ export async function buildCompanionSnapshot({
     } catch {
       systemResources = emptySystemResources();
     }
+    const systemAdvice = recommendSystemResources(systemResources, {
+      deepScan: resourceDeepScan === true
+    });
 
     const reviewList = Array.isArray(reviews)
       ? reviews
@@ -214,7 +219,7 @@ export async function buildCompanionSnapshot({
     const signals = {
       ...summarizeCompanionProbes(obs?.probes ?? []),
       hermes: { activity: hermesActivity },
-      system: { resources: systemResources }
+      system: { resources: systemResources, advice: systemAdvice }
     };
     const links = [];
     for (const review of reviewList ?? []) {

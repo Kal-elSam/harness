@@ -59,6 +59,7 @@ export {
   SYSTEM_RESOURCES_TIMEOUT_MS, PROCESS_ALLOWLIST,
   parseProcessTable, loadSystemResources
 } from "./system-resources.js";
+export { recommendSystemResources } from "./resource-advisor.js";
 export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
