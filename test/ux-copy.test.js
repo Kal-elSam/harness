@@ -62,8 +62,8 @@ function snapshotLines(output, patterns) {
   });
 }
 
-test("help lists all supported JSON commands", () => {
-  const cli = runHarness(["help"], mkdtempSyncSafe());
+test("help --all lists all supported JSON commands", () => {
+  const cli = runHarness(["help", "--all"], mkdtempSyncSafe());
   assert.equal(cli.status, 0, cli.stderr);
 
   for (const command of JSON_HELP_COMMANDS) {
