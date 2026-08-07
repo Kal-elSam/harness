@@ -95,6 +95,14 @@ export {
   publishObsidianProposals
 } from "./obsidian-publisher.js";
 export {
+  KAIRO_VIEW_KINDS,
+  parseKnowledgeFrontmatter,
+  extractWikilinks,
+  buildObsidianKnowledgeViews,
+  buildKnowledgeIndexProposals,
+  loadObsidianKnowledgeViews
+} from "./obsidian-knowledge-views.js";
+export {
   SOFT_LINK_WINDOW_MS,
   parseCompanionTimestamp,
   resolveRunTimestamp,
