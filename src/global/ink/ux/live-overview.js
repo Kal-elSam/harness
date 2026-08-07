@@ -1,16 +1,16 @@
 /**
  * Live semantic Overview for Cockpit HOME — product cover.
- * Nav owns the sole focus mark — this panel never renders `>`.
+ * Content owns the button focus mark when region=content.
  * ASCII wordmark only here (wide/compact); minimal is textual.
  *
- * Rule: show purpose + one next step + a few plain-language needs.
+ * Rule: show purpose + two buttons + a few plain-language needs.
  * Machine/system noise stays out of the first screen (Details only).
  */
 import React from "react";
 import { Box, Text } from "ink";
 import { DASHBOARD_PURPOSE } from "../../dashboard-guidance.js";
 import { LAYOUT_MODES } from "../layout.js";
-import { COCKPIT_COLORS } from "../theme.js";
+import { COCKPIT_COLORS, resolveGlyphs } from "../theme.js";
 import {
   overviewBrandTitle,
   shouldShowWordmark,
@@ -24,6 +24,7 @@ import {
   mapHealthTone,
   partitionCompanionLines
 } from "./overview-needs.js";
+import { buildOverviewButtons, OVERVIEW_BUTTON_COUNT } from "./overview-actions.js";
 
 export {
   humanizeCompanionNeed,
@@ -32,6 +33,8 @@ export {
   mapHealthTone,
   partitionCompanionLines
 } from "./overview-needs.js";
+
+export { buildOverviewButtons, OVERVIEW_BUTTON_COUNT } from "./overview-actions.js";
 
 /** Safe Details lines — leftovers + raw signals; never invent paths/IDs. */
 export function buildOverviewDetails(model = {}, companionRest = []) {
@@ -59,13 +62,19 @@ export function buildOverviewDetails(model = {}, companionRest = []) {
 
 /**
  * Pure adapter: buildControlCenterModel → semantic overview props.
- * First screen = purpose + next step + plain needs. Machine noise → Details.
+ * First screen = purpose + two buttons + plain needs. Machine noise → Details.
  */
-export function adaptControlCenterToOverview(model = {}) {
+export function adaptControlCenterToOverview(model = {}, options = {}) {
   const status = model.status ?? model.health ?? {};
   const next = model.nextAction ?? model.cta ?? {};
   const { needs, rest } = partitionCompanionLines(model.companion?.lines ?? []);
   const primary = humanizePrimary(next);
+  const buttons = buildOverviewButtons({
+    hasGlobalState: options.hasGlobalState,
+    snapshot: options.snapshot,
+    diagnostics: options.diagnostics,
+    dashboard: options.dashboard
+  });
 
   const activity = model.activity?.headline;
   const metrics = [];
@@ -104,6 +113,7 @@ export function adaptControlCenterToOverview(model = {}) {
       body: status.summaryLine ?? ""
     },
     primary,
+    buttons,
     metrics,
     details: buildOverviewDetails(model, rest)
   };
@@ -136,14 +146,30 @@ export function SemanticOverviewPanel({
   detailsOpen = false,
   colorEnabled = true,
   unicode = true,
-  layoutMode = LAYOUT_MODES.COMPACT
+  layoutMode = LAYOUT_MODES.COMPACT,
+  selectedIndex = 0,
+  contentFocused = false,
+  hasGlobalState = false,
+  snapshot = null,
+  diagnostics = null,
+  dashboard = null
 }) {
-  const view = adaptControlCenterToOverview(model);
+  const view = adaptControlCenterToOverview(model, {
+    hasGlobalState,
+    snapshot,
+    diagnostics,
+    dashboard
+  });
   const showArt = shouldShowWordmark(layoutMode);
   const brandTitle = overviewBrandTitle(layoutMode);
   const isWide = layoutMode === LAYOUT_MODES.WIDE;
   const mark = renderWordmark({ layoutMode, colorEnabled, unicode });
   const status = renderCallout(view, colorEnabled);
+  const safeIndex = Math.min(
+    Math.max(0, selectedIndex),
+    Math.max(0, view.buttons.length - 1)
+  );
+  const glyphs = resolveGlyphs(unicode);
 
   const hero = showArt
     ? (isWide
@@ -166,18 +192,25 @@ export function SemanticOverviewPanel({
       color: colorEnabled ? COCKPIT_COLORS.muted : undefined
     }, view.purpose),
     React.createElement(Box, { marginTop: 1, flexDirection: "column" },
-      React.createElement(Text, {
-        bold: true,
-        color: colorEnabled ? COCKPIT_COLORS.interactive : undefined
-      }, `→ ${view.primary.label}`),
-      view.primary.detail
-        ? React.createElement(Text, null, view.primary.detail)
-        : null,
-      view.primary.hint
-        ? React.createElement(Text, {
-          color: colorEnabled ? COCKPIT_COLORS.muted : undefined
-        }, view.primary.hint)
-        : null
+      ...view.buttons.map((button, index) => {
+        const selected = index === safeIndex;
+        const focused = contentFocused && selected;
+        return React.createElement(Box, {
+          key: button.id,
+          flexDirection: "column",
+          marginBottom: index === view.buttons.length - 1 ? 0 : 1
+        },
+          React.createElement(Text, {
+            bold: true,
+            color: focused && colorEnabled ? COCKPIT_COLORS.interactive : undefined
+          }, `${focused ? glyphs.focus : " "} ${button.label}`),
+          button.detail
+            ? React.createElement(Text, {
+              color: colorEnabled ? COCKPIT_COLORS.muted : undefined
+            }, `  ${button.detail}`)
+            : null
+        );
+      })
     ),
     React.createElement(Box, { marginTop: 1, flexDirection: "column" },
       React.createElement(ActionList, {

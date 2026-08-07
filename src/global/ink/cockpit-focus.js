@@ -3,7 +3,6 @@ import { ORCHESTRATOR_VIEWS } from "./orchestrator-state.js";
 import { LAYOUT_MODES } from "./layout.js";
 
 const NAV_FOCUSED_VIEWS = new Set([
-  ORCHESTRATOR_VIEWS.HOME,
   ORCHESTRATOR_VIEWS.IDES,
   ORCHESTRATOR_VIEWS.MODULES,
   ORCHESTRATOR_VIEWS.CHANGES,
@@ -14,6 +13,7 @@ const NAV_FOCUSED_VIEWS = new Set([
 ]);
 
 const CONTENT_INTERACTIVE_VIEWS = new Set([
+  ORCHESTRATOR_VIEWS.HOME,
   ORCHESTRATOR_VIEWS.RUNS,
   ORCHESTRATOR_VIEWS.ACTIVE_RUNS,
   ORCHESTRATOR_VIEWS.RECENT_RUNS,
@@ -101,6 +101,12 @@ export function routeCockpitKey(state, keyAction) {
     case "enter":
       if (state.region === COCKPIT_REGIONS.NAV || isNavFocusedView(state.view)) {
         return { type: "enter-nav" };
+      }
+      if (
+        state.region === COCKPIT_REGIONS.CONTENT
+        && state.view === ORCHESTRATOR_VIEWS.HOME
+      ) {
+        return { type: "enter-home-button" };
       }
       return null;
     default:

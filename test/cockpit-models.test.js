@@ -30,15 +30,12 @@ test("regionsForLayout matches single-panel shell breakpoints", () => {
   assert.deepEqual(regionsForLayout(LAYOUT_MODES.MINIMAL), [COCKPIT_REGIONS.CONTENT]);
 });
 
-test("nav labels expose six user destinations", () => {
+test("nav labels expose three user destinations", () => {
   const labels = COCKPIT_NAV.map((item) => item.label);
   assert.deepEqual(labels, [
-    "Overview",
-    "Governance",
-    "Activity",
-    "Orchestration",
-    "Usage",
-    "Settings"
+    "Home",
+    "Settings",
+    "History"
   ]);
   assert.ok(COCKPIT_NAV.every((item) => item.description));
 });
@@ -58,14 +55,16 @@ test("top bar and nav models expose selected vs current plus explanation", () =>
   });
   assert.equal(nav.title, "NAVIGATION");
   assert.equal(nav.items[1].selected, true);
-  assert.equal(nav.items[1].label, "Governance");
+  assert.equal(nav.items[1].label, "Settings");
   assert.equal(nav.items[0].current, true);
   assert.equal(nav.items[0].selected, false);
-  assert.match(nav.explanation, /Repair|drift|Govern/i);
+  assert.match(nav.explanation, /agents|Obsidian|integrations/i);
+  assert.equal(buildNavModel({ navIndex: 0 }).explanation, "");
   assert.ok(nav.items[0].statusSummary);
-  assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.ACTIVE_RUNS), 3);
-  assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.RUNS), 3);
-  assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.LAUNCH), 3);
+  assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.ACTIVE_RUNS), 2);
+  assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.RUNS), 2);
+  assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.LAUNCH), 2);
+  assert.equal(navIndexForView(ORCHESTRATOR_VIEWS.ACTIVITY), 2);
 });
 
 test("home model derives readiness, last run CTA destination, and explore guidance", () => {
@@ -148,8 +147,8 @@ test("footer and project name helpers", () => {
   const footer = buildFooterModel({ view: "home", unicode: false, columns: 80 });
   assert.match(footer.text, /↑↓/);
   assert.match(footer.text, /Space/);
-  assert.ok(footer.text.length <= 40);
-  assert.doesNotMatch(footer.text, /Tab/);
+  assert.match(footer.text, /Tab/);
+  assert.ok(footer.text.length <= 48);
   assert.equal(footer.columns, 80);
   const retry = buildFooterModel({ hasError: true, unicode: false, columns: 64 });
   assert.match(retry.text, /Retry/);

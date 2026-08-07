@@ -122,9 +122,7 @@ export function reduceCockpitUi(state, action) {
       if (state.region === COCKPIT_REGIONS.SYSTEM) return state;
 
       const navigatesNav = state.region === COCKPIT_REGIONS.NAV
-        || isNavFocusedView(state.view)
-        || (state.view === ORCHESTRATOR_VIEWS.HOME
-          && state.layoutMode === LAYOUT_MODES.MINIMAL);
+        || isNavFocusedView(state.view);
 
       if (navigatesNav) {
         const delta = action.direction === "up" ? -1 : 1;

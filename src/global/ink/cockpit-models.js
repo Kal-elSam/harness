@@ -17,22 +17,32 @@ export const COCKPIT_REGIONS = {
 
 export const COCKPIT_NAV = [
   {
-    id: "overview",
-    label: "Overview",
+    id: "home",
+    label: "Home",
     view: ORCHESTRATOR_VIEWS.HOME,
-    description: "Status, next action, activity, alerts, and tokens."
+    description: "What needs you, and what to do about it."
   },
+  {
+    id: "settings",
+    label: "Settings",
+    view: ORCHESTRATOR_VIEWS.PROFILE,
+    description: "Choose agents, connect Obsidian, add integrations."
+  },
+  {
+    id: "history",
+    label: "History",
+    view: ORCHESTRATOR_VIEWS.ACTIVITY,
+    description: "What Kairo changed, and how to undo it."
+  }
+];
+
+/** Destinations reachable via the action palette, not the top nav. */
+export const COCKPIT_SECONDARY = [
   {
     id: "governance",
     label: "Governance",
     view: ORCHESTRATOR_VIEWS.CHANGES,
     description: "Repair drift and apply governed changes."
-  },
-  {
-    id: "activity",
-    label: "Activity",
-    view: ORCHESTRATOR_VIEWS.ACTIVITY,
-    description: "Operations, backups, and recovery."
   },
   {
     id: "orchestration",
@@ -45,12 +55,6 @@ export const COCKPIT_NAV = [
     label: "Usage",
     view: ORCHESTRATOR_VIEWS.USAGE,
     description: "Token and context pressure when auditable."
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    view: ORCHESTRATOR_VIEWS.PROFILE,
-    description: "Profile, policy, and guided configuration."
   }
 ];
 
@@ -64,8 +68,8 @@ export function regionsForLayout(layoutMode) {
 
 export function navIndexForView(view, items = COCKPIT_NAV) {
   if (isRunsBranchView(view)) {
-    const orchIndex = items.findIndex((item) => item.id === "orchestration");
-    return orchIndex >= 0 ? orchIndex : 0;
+    const historyIndex = items.findIndex((item) => item.id === "history");
+    return historyIndex >= 0 ? historyIndex : 0;
   }
   const index = items.findIndex((item) => item.view === view);
   return index >= 0 ? index : 0;
@@ -105,6 +109,7 @@ export function resolveNavStatusSummary(item, {
   const backups = snapshot?.backups?.count ?? 0;
 
   switch (item.id) {
+    case "home":
     case "overview":
       return snapshot?.health?.replaceAll("_", " ")
         ?? resolveProjectReadiness({
@@ -114,6 +119,7 @@ export function resolveNavStatusSummary(item, {
         }).label;
     case "governance":
       return changes > 0 ? `${changes} pending` : "Clean";
+    case "history":
     case "activity":
       return backups > 0 ? `${backups} backups` : "No backups";
     case "orchestration":
@@ -174,6 +180,7 @@ export function buildNavModel({
   const mapped = items.map((item, index) => {
     const isSelected = index === navIndex;
     const isCurrent = item.view === currentView
+      || (item.id === "history" && isRunsBranchView(currentView))
       || (item.id === "orchestration" && isRunsBranchView(currentView));
     return {
       ...item,
@@ -185,11 +192,13 @@ export function buildNavModel({
     };
   });
 
+  const explanation = !selected || selected.id === "home" || selected.id === "overview"
+    ? ""
+    : (selected.description ?? "");
+
   return {
     title: "NAVIGATION",
-    explanation: selected
-      ? `${selected.description} (${resolveNavStatusSummary(selected, { dashboard, diagnostics, snapshot })})`
-      : "",
+    explanation,
     items: mapped
   };
 }
@@ -320,7 +329,7 @@ export function buildFooterModel({
   // HOME footer must stay on one line at 80 cols (frame already near 24 rows).
   if (view === ORCHESTRATOR_VIEWS.HOME) {
     return {
-      text: ["↑↓", "Enter", "Space", "R", "?", "/", "Esc"].join(` ${glyphs.bullet} `),
+      text: ["↑↓", "Enter", "Tab", "Space", "R", "?", "/", "Esc"].join(` ${glyphs.bullet} `),
       columns: footerColumns
     };
   }

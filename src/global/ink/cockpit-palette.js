@@ -1,5 +1,7 @@
-import { COCKPIT_NAV } from "./cockpit-models.js";
+import { COCKPIT_NAV, COCKPIT_SECONDARY } from "./cockpit-models.js";
 import { ORCHESTRATOR_VIEWS } from "./orchestrator-state.js";
+
+const PALETTE_NAV_ITEMS = [...COCKPIT_NAV, ...COCKPIT_SECONDARY];
 
 export const PALETTE_KINDS = Object.freeze({
   NAVIGATE: "navigate",
@@ -12,10 +14,13 @@ const DESTINATION_VIEWS = Object.freeze({
   changes: ORCHESTRATOR_VIEWS.CHANGES,
   governance: ORCHESTRATOR_VIEWS.CHANGES,
   "control-center": ORCHESTRATOR_VIEWS.HOME,
+  home: ORCHESTRATOR_VIEWS.HOME,
   ides: ORCHESTRATOR_VIEWS.IDES,
   modules: ORCHESTRATOR_VIEWS.MODULES,
   activity: ORCHESTRATOR_VIEWS.ACTIVITY,
+  history: ORCHESTRATOR_VIEWS.ACTIVITY,
   profile: ORCHESTRATOR_VIEWS.PROFILE,
+  settings: ORCHESTRATOR_VIEWS.PROFILE,
   runs: ORCHESTRATOR_VIEWS.RUNS,
   orchestration: ORCHESTRATOR_VIEWS.RUNS,
   usage: ORCHESTRATOR_VIEWS.USAGE,
@@ -30,12 +35,12 @@ export function canOpenPalette({ loading = false, busy = false, confirming = fal
   return !loading && !busy && !confirming;
 }
 
-/** Optional CTA + six destinations + Refresh + Help. No write shortcuts. */
+/** Optional CTA + primary/secondary destinations + Refresh + Help. No write shortcuts. */
 export function buildPaletteActions({
   ctaDestination = null,
   ctaTitle = null,
   ctaDetail = null,
-  navItems = COCKPIT_NAV
+  navItems = PALETTE_NAV_ITEMS
 } = {}) {
   const actions = [];
   if (ctaDestination === "setup") {

@@ -136,16 +136,13 @@ test("orchestration hub labels stay selectable; detail keeps ids under DETAILS",
   assert.doesNotMatch(dtext, /JSON|\{"input"/);
 });
 
-test("primary nav lists six user destinations", () => {
+test("primary nav lists three user destinations", () => {
   assert.deepEqual(COCKPIT_NAV.map((item) => item.label), [
-    "Overview",
-    "Governance",
-    "Activity",
-    "Orchestration",
-    "Usage",
-    "Settings"
+    "Home",
+    "Settings",
+    "History"
   ]);
-  assert.equal(COCKPIT_NAV[3].view, ORCHESTRATOR_VIEWS.RUNS);
+  assert.equal(COCKPIT_NAV[2].view, ORCHESTRATOR_VIEWS.ACTIVITY);
   assert.deepEqual(RUNS_HUB_ITEMS.map((item) => item.label), [
     "Active runs",
     "History",

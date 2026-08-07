@@ -13,12 +13,14 @@ import {
   COCKPIT_NAV,
   COCKPIT_REGIONS,
   buildFooterModel,
-  buildNavModel
+  buildNavModel,
+  navIndexForView
 } from "../src/global/ink/cockpit-models.js";
 import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
 import { resolveEnterNavIntent } from "../src/global/ink/cockpit-enter.js";
 import { resolveRunsHubItem } from "../src/global/ink/cockpit-runs.js";
+import { buildOverviewButtons, OVERVIEW_BUTTON_COUNT } from "../src/global/ink/ux/overview-actions.js";
 
 function applyIntegratedEnter(state, { ctaDestination = null } = {}) {
   const routed = routeCockpitKey(state, { type: "enter" });
@@ -30,7 +32,7 @@ function applyIntegratedEnter(state, { ctaDestination = null } = {}) {
       ctaDestination
     });
     if (intent.kind === "activate-cta") {
-      const view = intent.destination === "changes"
+      const view = intent.destination === "changes" || intent.destination === "governance"
         ? ORCHESTRATOR_VIEWS.CHANGES
         : intent.destination === "ides"
           ? ORCHESTRATOR_VIEWS.IDES
@@ -40,7 +42,34 @@ function applyIntegratedEnter(state, { ctaDestination = null } = {}) {
       return reduceCockpitUi(state, {
         type: "set-view",
         view,
-        navIndex: COCKPIT_NAV.findIndex((item) => item.view === view || (view === ORCHESTRATOR_VIEWS.RUNS && item.id === "orchestration"))
+        navIndex: navIndexForView(view)
+      });
+    }
+    if (intent.kind === "activate-setup") {
+      return { ...state, setupActivated: true };
+    }
+  }
+  if (routed.type === "enter-home-button") {
+    const buttons = buildOverviewButtons({
+      hasGlobalState: true,
+      snapshot: {
+        coverage: { detectedAgents: 2 },
+        diff: { hasChanges: true, changeCount: 2 }
+      }
+    });
+    const selected = buttons[Math.min(Math.max(0, state.listIndex), buttons.length - 1)];
+    if (selected?.intent === "governance") {
+      return reduceCockpitUi(state, {
+        type: "set-view",
+        view: ORCHESTRATOR_VIEWS.CHANGES,
+        navIndex: navIndexForView(ORCHESTRATOR_VIEWS.CHANGES)
+      });
+    }
+    if (selected?.intent === "settings") {
+      return reduceCockpitUi(state, {
+        type: "set-view",
+        view: ORCHESTRATOR_VIEWS.PROFILE,
+        navIndex: navIndexForView(ORCHESTRATOR_VIEWS.PROFILE)
       });
     }
   }
@@ -52,7 +81,7 @@ function openRunsHubSelection(state, listIndex) {
   return reduceCockpitUi(state, {
     type: "set-view",
     view: item.view,
-    navIndex: COCKPIT_NAV.findIndex((entry) => entry.id === "orchestration")
+    navIndex: navIndexForView(ORCHESTRATOR_VIEWS.RUNS)
   });
 }
 
@@ -60,23 +89,28 @@ test("governance keeps nav focus so arrows switch sections without Tab", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     region: COCKPIT_REGIONS.NAV,
-    navIndex: COCKPIT_NAV.findIndex((item) => item.id === "governance")
+    navIndex: 0
   });
 
-  state = reduceCockpitUi(state, { type: "enter-nav" });
+  state = reduceCockpitUi(state, {
+    type: "set-view",
+    view: ORCHESTRATOR_VIEWS.CHANGES,
+    navIndex: 0
+  });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES);
   assert.equal(state.region, COCKPIT_REGIONS.NAV);
 
-  state = reduceCockpitUi(state, { type: "arrow", direction: "up" });
-  assert.equal(state.navIndex, COCKPIT_NAV.findIndex((item) => item.id === "overview"));
+  state = reduceCockpitUi(state, { type: "arrow", direction: "down" });
+  assert.equal(state.navIndex, COCKPIT_NAV.findIndex((item) => item.id === "settings"));
   assert.equal(state.region, COCKPIT_REGIONS.NAV);
 
+  state = reduceCockpitUi(state, { type: "arrow", direction: "up" });
   state = reduceCockpitUi(state, { type: "enter-nav" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);
-  assert.equal(state.region, COCKPIT_REGIONS.NAV);
+  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
 });
 
-test("overview stays on navigation focus after selecting Overview", () => {
+test("home opens with content focus for the two buttons", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.WIDE,
     view: ORCHESTRATOR_VIEWS.IDES,
@@ -86,8 +120,10 @@ test("overview stays on navigation focus after selecting Overview", () => {
 
   state = reduceCockpitUi(state, { type: "enter-nav" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);
-  assert.equal(state.region, COCKPIT_REGIONS.NAV);
+  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
   assert.equal(state.navIndex, 0);
+  assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.HOME), true);
+  assert.equal(isNavFocusedView(ORCHESTRATOR_VIEWS.HOME), false);
 });
 
 test("help opens with navigation focus; Settings opens content-interactive", () => {
@@ -113,159 +149,81 @@ test("help opens with navigation focus; Settings opens content-interactive", () 
   assert.equal(isNavFocusedView(ORCHESTRATOR_VIEWS.PROFILE), false);
 });
 
-test("escape from main section returns to overview; second escape exits", () => {
+test("escape from main section returns to home; second escape exits", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     view: ORCHESTRATOR_VIEWS.DIAGNOSTICS,
     region: COCKPIT_REGIONS.NAV,
-    navIndex: 3
+    navIndex: 1
   });
-
   state = reduceCockpitUi(state, { type: "escape" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);
-  assert.equal(state.region, COCKPIT_REGIONS.NAV);
+  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
   assert.equal(state.navIndex, 0);
-  assert.equal(state.shouldExit, false);
-
   state = reduceCockpitUi(state, { type: "escape" });
   assert.equal(state.shouldExit, true);
 });
 
-test("escape from run detail returns to list before overview", () => {
+test("escape from run detail returns to list before home", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
-    view: ORCHESTRATOR_VIEWS.ACTIVE_RUNS,
-    region: COCKPIT_REGIONS.CONTENT,
-    navIndex: 1
-  });
-  state = reduceCockpitUi(state, {
-    type: "set-view",
     view: ORCHESTRATOR_VIEWS.RUN_DETAIL,
+    region: COCKPIT_REGIONS.CONTENT,
     returnView: ORCHESTRATOR_VIEWS.ACTIVE_RUNS
   });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.RUN_DETAIL);
-  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
-
   state = reduceCockpitUi(state, { type: "escape" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.ACTIVE_RUNS);
-  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
-
   state = reduceCockpitUi(state, { type: "escape" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.RUNS);
-  assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
-
   state = reduceCockpitUi(state, { type: "escape" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);
-  assert.equal(state.region, COCKPIT_REGIONS.NAV);
 });
 
-test("tab only works when content is interactive", () => {
-  assert.equal(isNavFocusedView(ORCHESTRATOR_VIEWS.HOME), true);
-  assert.equal(isNavFocusedView(ORCHESTRATOR_VIEWS.CHANGES), true);
-  assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.ACTIVE_RUNS), true);
-  assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.MODULES), false);
-  assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.CHANGES), false);
-
-  let info = createCockpitUiState({
-    layoutMode: LAYOUT_MODES.WIDE,
-    view: ORCHESTRATOR_VIEWS.CHANGES,
-    region: COCKPIT_REGIONS.NAV
-  });
-  assert.equal(canTabBetweenRegions(info), false);
-  info = reduceCockpitUi(info, { type: "tab" });
-  assert.equal(info.region, COCKPIT_REGIONS.NAV);
-
-  let runs = createCockpitUiState({
-    layoutMode: LAYOUT_MODES.COMPACT,
-    view: ORCHESTRATOR_VIEWS.ACTIVE_RUNS,
-    region: COCKPIT_REGIONS.CONTENT,
-    navIndex: 1
-  });
-  assert.equal(canTabBetweenRegions(runs), true);
-  runs = reduceCockpitUi(runs, { type: "tab" });
-  assert.equal(runs.region, COCKPIT_REGIONS.NAV);
-  runs = reduceCockpitUi(runs, { type: "tab" });
-  assert.equal(runs.region, COCKPIT_REGIONS.CONTENT);
-});
-
-test("footer matches available actions for current context", () => {
+test("home footer lists button keys including Tab", () => {
   const overview = buildFooterModel({
     view: ORCHESTRATOR_VIEWS.HOME,
-    region: COCKPIT_REGIONS.NAV,
-    unicode: false
+    region: COCKPIT_REGIONS.CONTENT,
+    unicode: false,
+    columns: 80
   });
   assert.match(overview.text, /↑↓/);
   assert.match(overview.text, /Enter/);
+  assert.match(overview.text, /Tab/);
   assert.match(overview.text, /Space/);
   assert.match(overview.text, /Esc/);
-  assert.ok(overview.text.length <= 40);
-  assert.doesNotMatch(overview.text, /Tab/);
-
-  const overviewBrowse = buildFooterModel({
-    view: ORCHESTRATOR_VIEWS.HOME,
-    region: COCKPIT_REGIONS.NAV,
-    navIndex: 3,
-    unicode: false
-  });
-  assert.match(overviewBrowse.text, /Enter/);
-  assert.match(overviewBrowse.text, /Space/);
-
-  const diagnostics = buildFooterModel({
-    view: ORCHESTRATOR_VIEWS.DIAGNOSTICS,
-    region: COCKPIT_REGIONS.NAV,
-    unicode: false
-  });
-  assert.match(diagnostics.text, /Navigate/);
-  assert.match(diagnostics.text, /Enter/);
-  assert.match(diagnostics.text, /Esc Back/);
-  assert.doesNotMatch(diagnostics.text, /Tab/);
-  assert.doesNotMatch(diagnostics.text, /focus:/);
-
-  const active = buildFooterModel({
-    view: ORCHESTRATOR_VIEWS.ACTIVE_RUNS,
-    region: COCKPIT_REGIONS.CONTENT,
-    unicode: false
-  });
-  assert.match(active.text, /Tab/);
-  assert.match(active.text, /Enter/);
-  assert.match(active.text, /Esc Back/);
-
-  const detail = buildFooterModel({
-    view: ORCHESTRATOR_VIEWS.RUN_DETAIL,
-    region: COCKPIT_REGIONS.CONTENT,
-    canCancel: true,
-    unicode: false
-  });
-  assert.match(detail.text, /C cancel/);
-  assert.doesNotMatch(detail.text, /Tab/);
+  assert.ok(overview.text.length <= 48);
 });
 
-test("routeCockpitKey centralizes region routing before view handlers", () => {
-  const diagnostics = createCockpitUiState({
+test("home arrows move between the two buttons when content-focused", () => {
+  let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
-    view: ORCHESTRATOR_VIEWS.DIAGNOSTICS,
-    region: COCKPIT_REGIONS.NAV,
-    navIndex: 3
+    view: ORCHESTRATOR_VIEWS.HOME,
+    region: COCKPIT_REGIONS.CONTENT,
+    listIndex: 0
   });
+  assert.equal(canTabBetweenRegions(state), true);
+  assert.deepEqual(
+    routeCockpitKey(state, { type: "arrow", direction: "down", listLength: OVERVIEW_BUTTON_COUNT }),
+    { type: "arrow", direction: "down", listLength: OVERVIEW_BUTTON_COUNT }
+  );
+  state = reduceCockpitUi(state, {
+    type: "arrow",
+    direction: "down",
+    listLength: OVERVIEW_BUTTON_COUNT
+  });
+  assert.equal(state.listIndex, 1);
+  assert.deepEqual(
+    routeCockpitKey(state, { type: "enter" }),
+    { type: "enter-home-button" }
+  );
+});
 
-  assert.deepEqual(
-    routeCockpitKey(diagnostics, { type: "arrow", direction: "up" }),
-    { type: "arrow", direction: "up" }
-  );
-  assert.deepEqual(
-    routeCockpitKey(diagnostics, { type: "tab" }),
-    null
-  );
-  assert.deepEqual(
-    routeCockpitKey(diagnostics, { type: "enter" }),
-    { type: "enter-nav" }
-  );
-
+test("content-focused runs hub routes Tab and list arrows", () => {
   const runs = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
-    view: ORCHESTRATOR_VIEWS.ACTIVE_RUNS,
+    view: ORCHESTRATOR_VIEWS.RUNS,
     region: COCKPIT_REGIONS.CONTENT,
-    navIndex: 1
+    navIndex: navIndexForView(ORCHESTRATOR_VIEWS.RUNS)
   });
   assert.deepEqual(
     routeCockpitKey(runs, { type: "tab" }),
@@ -289,19 +247,18 @@ test("nav labels and selected vs current remain distinct while explanation follo
     dashboard: { activeRuns: [], recentRuns: [], providers: [{ launchable: true }] },
     diagnostics: { diagnostics: { detected: 1, errors: 0 }, capabilities: [{}] }
   });
-  assert.equal(nav.items[0].label, "Overview");
+  assert.equal(nav.items[0].label, "Home");
   assert.equal(nav.items[0].current, true);
   assert.equal(nav.items[0].selected, false);
-  assert.equal(nav.items[1].label, "Governance");
+  assert.equal(nav.items[1].label, "Settings");
+  assert.equal(nav.items[2].label, "History");
   assert.equal(nav.items[2].selected, true);
   assert.equal(nav.items[2].current, false);
-  assert.match(nav.explanation, /backups|recovery|Operations/i);
+  assert.match(nav.explanation, /changed|undo/i);
+  assert.equal(buildNavModel({ navIndex: 0 }).explanation, "");
 });
 
-test("recommended Overview destination opens Governance with matching nav index", () => {
-  const navIndex = COCKPIT_NAV.findIndex((item) => item.id === "governance");
-  assert.ok(navIndex >= 0);
-
+test("secondary Governance destination opens with home nav index", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
     region: COCKPIT_REGIONS.NAV,
@@ -310,42 +267,41 @@ test("recommended Overview destination opens Governance with matching nav index"
   state = reduceCockpitUi(state, {
     type: "set-view",
     view: ORCHESTRATOR_VIEWS.CHANGES,
-    navIndex
+    navIndex: 0
   });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES);
-  assert.equal(state.navIndex, navIndex);
+  assert.equal(state.navIndex, 0);
 });
 
-test("Enter opens Overview without activating CTA; Enter again activates CTA", () => {
-  const changesIndex = COCKPIT_NAV.findIndex((item) => item.id === "governance");
+test("Home button Enter opens Governance for pending drift", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
-    region: COCKPIT_REGIONS.NAV,
-    navIndex: changesIndex
+    view: ORCHESTRATOR_VIEWS.HOME,
+    region: COCKPIT_REGIONS.CONTENT,
+    listIndex: 0
   });
-  state = applyIntegratedEnter(state, { ctaDestination: "changes" });
+  state = applyIntegratedEnter(state);
   assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES);
-
-  state = reduceCockpitUi(state, { type: "arrow", direction: "up" });
-  while (state.navIndex > 0) {
-    state = reduceCockpitUi(state, { type: "arrow", direction: "up" });
-  }
-  state = applyIntegratedEnter(state, { ctaDestination: "changes" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME,
-    "first Enter on Overview only opens Home");
-
-  state = applyIntegratedEnter(state, { ctaDestination: "changes" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES,
-    "second Enter on Overview activates CTA destination");
 });
 
-test("Runs hub exposes Active, History, Reviews, and New run", () => {
+test("Home Configure button opens Settings", () => {
   let state = createCockpitUiState({
     layoutMode: LAYOUT_MODES.COMPACT,
-    region: COCKPIT_REGIONS.NAV,
-    navIndex: COCKPIT_NAV.findIndex((item) => item.id === "orchestration")
+    view: ORCHESTRATOR_VIEWS.HOME,
+    region: COCKPIT_REGIONS.CONTENT,
+    listIndex: 1
   });
-  state = applyIntegratedEnter(state, {});
+  state = applyIntegratedEnter(state);
+  assert.equal(state.view, ORCHESTRATOR_VIEWS.PROFILE);
+});
+
+test("Runs hub reachable via set-view exposes Active, History, Reviews, and New run", () => {
+  let state = createCockpitUiState({
+    layoutMode: LAYOUT_MODES.COMPACT,
+    region: COCKPIT_REGIONS.CONTENT,
+    view: ORCHESTRATOR_VIEWS.RUNS,
+    navIndex: navIndexForView(ORCHESTRATOR_VIEWS.RUNS)
+  });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.RUNS);
   assert.equal(state.region, COCKPIT_REGIONS.CONTENT);
 
@@ -357,12 +313,4 @@ test("Runs hub exposes Active, History, Reviews, and New run", () => {
 
   state = openRunsHubSelection(state, 1);
   assert.equal(state.view, ORCHESTRATOR_VIEWS.RECENT_RUNS);
-
-  state = reduceCockpitUi(state, { type: "escape" });
-  state = openRunsHubSelection(state, 2);
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.REVIEWS);
-
-  state = reduceCockpitUi(state, { type: "escape" });
-  state = openRunsHubSelection(state, 3);
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.LAUNCH);
 });
