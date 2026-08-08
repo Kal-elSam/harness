@@ -42,6 +42,17 @@ test("agent mapping, version classes, and dry-run plan", () => {
     writeFileSync(join(homeDir, ".codex", "config.toml"), "[mcp_servers.engram]\ncommand = \"engram\"\n");
     assert.equal(inspectEngramAgentConfig("codex", { homeDir }).status, ENGRAM_INTEGRATION_STATUS.CONFIGURED);
     assert.equal(inspectEngramAgentConfig("claude", { homeDir }).status, ENGRAM_INTEGRATION_STATUS.UNCONFIGURED);
+    // Claude may use ~/.claude/mcp/engram.json without mcpServers in settings.json —
+    // missing key must not be treated as conflict.
+    mkdirSync(join(homeDir, ".claude", "mcp"), { recursive: true });
+    writeFileSync(join(homeDir, ".claude", "settings.json"), JSON.stringify({ effortLevel: "medium" }));
+    writeFileSync(
+      join(homeDir, ".claude", "mcp", "engram.json"),
+      JSON.stringify({ command: "engram", args: ["mcp"] })
+    );
+    const claudeOnlyFile = inspectEngramAgentConfig("claude", { homeDir });
+    assert.equal(claudeOnlyFile.status, ENGRAM_INTEGRATION_STATUS.CONFIGURED);
+    assert.ok(claudeOnlyFile.evidence.every((e) => e.conflict === false));
     const inspection = inspectEngramIntegration({
       homeDir,
       agentIds: ["codex", "claude"],
@@ -49,7 +60,7 @@ test("agent mapping, version classes, and dry-run plan", () => {
       probe: () => ({ ok: true, stdout: "engram 1.19.0", stderr: "", status: 0, error: null, timedOut: false })
     });
     assert.equal(inspection.doctorInvoked, false);
-    assert.equal(inspection.status, ENGRAM_INTEGRATION_STATUS.AVAILABLE);
+    assert.equal(inspection.status, ENGRAM_INTEGRATION_STATUS.CONFIGURED);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
   }

@@ -9,6 +9,7 @@ import { requireIntegrationProvider } from "./integrations/provider-registry.js"
 import { buildEngramIntegrationChecks, buildSddIntegrationChecks } from "./component-integration-cli.js";
 import { KAIRO_ENGRAM_AGENT_IDS } from "./integrations/engram-evidence.js";
 import { SDD_MANAGED_AGENT_IDS } from "./integrations/sdd-destinations.js";
+import { adoptedHashesFromState } from "./integrations/sdd-state.js";
 import { harnessHomePaths } from "./paths.js";
 import { readGlobalState } from "./state.js";
 
@@ -78,6 +79,7 @@ async function buildSddChecks({ homeDir }) {
       requestedAgentIds: installedAgents.length ? installedAgents : [],
       detectedAgentIds: installedAgents,
       trackedFiles,
+      adoptedFiles: adoptedHashesFromState(state?.sdd),
       personaAgentIds: state?.sdd?.personaAgentIds ?? [],
       packageRoot: PACKAGE_ROOT
     });

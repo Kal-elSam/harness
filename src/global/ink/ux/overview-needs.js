@@ -4,7 +4,7 @@
 import { CONTROL_PLANE_HEALTH } from "../../control-plane-snapshot.js";
 import { formatCliCommand } from "../../brand/cli.js";
 
-export const OVERVIEW_NEED_LIMIT = 3;
+export const OVERVIEW_NEED_LIMIT = 2;
 
 /** Prefixes that never belong on the first screen (machine / internals). */
 export const DETAILS_ONLY_PREFIXES = [

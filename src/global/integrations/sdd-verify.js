@@ -26,6 +26,7 @@ export async function verifySddConfigure({
   homeDir,
   packageRoot,
   trackedFiles = {},
+  adoptedFiles = {},
   personaAgentIds = [],
   exists = existsSync,
   readFileImpl = readFile
@@ -49,14 +50,15 @@ export async function verifySddConfigure({
         const fileExists = exists(destinationPath);
         const diskHash = fileExists ? hashBuffer(await readFileImpl(destinationPath)) : null;
         const trackedHash = trackedFiles[destinationPath] ?? null;
+        const adoptedHash = adoptedFiles[destinationPath] ?? null;
         const health = classifySddVerifyHealth({
-          exists: fileExists, canonicalHash, diskHash, trackedHash
+          exists: fileExists, canonicalHash, diskHash, trackedHash, adoptedHash
         });
         findings.push({
           skillId, relativePath: file.relativePath, destinationPath,
           agentIds: [...group.agentIds], kind: group.kind,
           status: health.status, drift: health.drift, reason: health.reason,
-          canonicalHash, skillHash, diskHash, trackedHash
+          canonicalHash, skillHash, diskHash, trackedHash, adoptedHash
         });
       }
     }
@@ -66,13 +68,15 @@ export async function verifySddConfigure({
     || compareSkillPaths(a.relativePath, b.relativePath)
     || compareSkillPaths(a.destinationPath, b.destinationPath));
 
-  const summary = { configured: 0, missing: 0, drifted: 0, conflict: 0 };
+  const summary = { configured: 0, adopted: 0, missing: 0, drifted: 0, conflict: 0 };
   for (const entry of findings) summary[entry.status] += 1;
 
   const consumers = normalizePersonaAgentIds(personaAgentIds);
   const incompleteAgentIds = consumers.filter((id) => {
     const mine = findings.filter((e) => e.agentIds.includes(id));
-    return !mine.length || mine.some((e) => e.status !== SDD_HEALTH.CONFIGURED);
+    return !mine.length || mine.some((e) =>
+      e.status !== SDD_HEALTH.CONFIGURED && e.status !== SDD_HEALTH.ADOPTED
+    );
   });
   let gatePresent = true;
   for (const id of consumers) {
@@ -100,6 +104,7 @@ export function summarizeSddHealth(summary) {
   if (summary.conflict > 0) return SDD_HEALTH.CONFLICT;
   if (summary.missing > 0) return SDD_HEALTH.MISSING;
   if (summary.drifted > 0) return SDD_HEALTH.DRIFTED;
+  if ((summary.adopted ?? 0) > 0 && (summary.configured ?? 0) === 0) return SDD_HEALTH.ADOPTED;
   return SDD_HEALTH.CONFIGURED;
 }
 

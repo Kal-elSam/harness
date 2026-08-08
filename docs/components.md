@@ -64,21 +64,34 @@ never code/docs/commits/PRs). `--persona off` removes teaching only for the
 targeted agents.
 
 **Consent and conflicts.** Dry-run writes nothing. Non-interactive mutating
-configure/rollback without `--json` requires `--yes`, `--confirm`, or
+configure/rollback/adopt without `--json` requires `--yes`, `--confirm`, or
 `--no-preflight`. `--json` selects machine-readable output and skips the
 prompt/consent gate (same apply-confirmation policy as setup/sync/upgrade).
-Conflicts and user-owned files are never overwritten, even with `--yes`.
+By default, conflicts and user-owned files are never overwritten, even with
+`--yes`. Resolve them explicitly:
+
+- `kairo components diff sdd-core` — read-only canonical vs disk.
+- `kairo components adopt sdd-core` — keep disk bytes; record them as adopted
+  in state (no file writes). Adopted files report health `adopted` and stop
+  blocking status.
+- `kairo components configure sdd-core --overwrite-conflicts` — backup then
+  replace with canonical Kairo skills (opt-in; never used by `kairo sync`).
+
 Receipts live under `~/.harness/integrations/sdd-core/` and may be `partial`
-when some actions succeed and others fail.
+when some actions succeed and others fail. Status checks may include a
+`resolutions[]` array so the IDE panel can offer these buttons directly.
 
 **Session refresh.** After skill or managed-section changes, results report
 `session_refresh_required` — restart agents to load skills; Kairo does not claim
 existing sessions already loaded them. Verify health is
-`configured` | `missing` | `drifted` | `conflict`.
+`configured` | `adopted` | `missing` | `drifted` | `conflict`.
 
 ```bash
 kairo components configure sdd-core --agents codex,opencode,cursor,claude --persona off --dry-run
 kairo components configure sdd-core --agents codex,opencode --persona teaching --yes
+kairo components diff sdd-core --agents claude
+kairo components adopt sdd-core --agents claude --dry-run
+kairo components configure sdd-core --agents claude --overwrite-conflicts --dry-run
 kairo components verify sdd-core --json
 kairo components rollback sdd-core --receipt <id> --dry-run
 ```

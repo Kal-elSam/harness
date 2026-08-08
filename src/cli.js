@@ -7,6 +7,10 @@ import {
   runComponentsVerify
 } from "./global/component-integration-cli.js";
 import {
+  runComponentsAdopt,
+  runComponentsDiff
+} from "./global/components-resolve-cli.js";
+import {
   printGlobalComponents,
   printGlobalDetect,
   runComponentsImport,
@@ -128,15 +132,88 @@ export async function runCli(argv) {
       await runGraphifyCli(optionsWithPolicy, packageManifest);
       return;
     case "mcp": {
-      // Lazy-load: MCP SDK is heavy and optional for day-to-day CLI (help/status/sync).
-      const { runKairoMcp } = await import("./global/mcp/kairo-mcp.js");
-      // stdout reserved for MCP protocol — no banners/logs here
-      await runKairoMcp({
+      const { runMcpCli } = await import("./global/mcp-install.js");
+      await runMcpCli({
+        mcpAction: optionsWithPolicy.mcpAction ?? "serve",
+        mcpClient: optionsWithPolicy.mcpClient ?? "cursor",
+        yes: optionsWithPolicy.yes === true,
+        json: optionsWithPolicy.json === true,
         cwd: optionsWithPolicy.cwd,
         packageRoot,
         packageName: packageManifest.name,
         version: packageManifest.version
       });
+      return;
+    }
+    case "connections": {
+      const { buildConnectionsReport } = await import("./global/connections.js");
+      const { printJson } = await import("./global/json-output.js");
+      const { commandHeader } = await import("./global/brand/index.js");
+      const report = await buildConnectionsReport({
+        workspaceRoot: optionsWithPolicy.cwd,
+        packageRoot,
+        packageName: packageManifest.name,
+        cliVersion: packageManifest.version,
+        client: optionsWithPolicy.mcpClient ?? "cursor"
+      });
+      if (optionsWithPolicy.json) {
+        printJson(report);
+      } else {
+        console.log(commandHeader("Connections"));
+        for (const c of report.connections) {
+          console.log(`${c.label} · ${c.state}`);
+          console.log(`  ${c.access}`);
+          if (c.detail) console.log(`  ${c.detail}`);
+        }
+      }
+      return;
+    }
+    case "fleet": {
+      const fleetAction = optionsWithPolicy.fleetAction ?? "show";
+      if (fleetAction === "set") {
+        const { runFleetSet } = await import("./global/fleet-set.js");
+        await runFleetSet({
+          platform: optionsWithPolicy.fleetPlatform,
+          agent: optionsWithPolicy.fleetAgent ?? optionsWithPolicy.agent,
+          model: optionsWithPolicy.model,
+          yes: optionsWithPolicy.yes === true,
+          dryRun: optionsWithPolicy.dryRun === true,
+          json: optionsWithPolicy.json === true
+        });
+        return;
+      }
+      if (fleetAction === "configure") {
+        const { runFleetConfigure } = await import("./global/fleet-configure.js");
+        await runFleetConfigure({
+          yes: optionsWithPolicy.yes === true,
+          json: optionsWithPolicy.json === true,
+          platforms: optionsWithPolicy.fleetPlatforms ?? null,
+          from: optionsWithPolicy.fleetFrom ?? "profile",
+          assignmentsRaw: optionsWithPolicy.fleetAssignments ?? null,
+          codexModel: optionsWithPolicy.fleetCodexModel ?? null
+        });
+        return;
+      }
+      if (fleetAction === "models") {
+        const { runFleetModels } = await import("./global/fleet-configure.js");
+        await runFleetModels({
+          json: optionsWithPolicy.json === true,
+          profile: optionsWithPolicy.fleetProfile === true
+        });
+        return;
+      }
+      const { buildFleetReport, formatFleetText } = await import("./global/observability/fleet-probe.js");
+      const { printJson } = await import("./global/json-output.js");
+      const report = await buildFleetReport({
+        includeVariants: optionsWithPolicy.includeVariants === true
+      });
+      if (optionsWithPolicy.json) {
+        printJson(report);
+      } else {
+        console.log(formatFleetText(report, {
+          verbose: optionsWithPolicy.verbose === true || optionsWithPolicy.includeVariants === true
+        }));
+      }
       return;
     }
     case "intelligence":
@@ -285,6 +362,12 @@ async function dispatchComponentsCommand(options, invoke) {
     case "verify":
       await runComponentsVerify({ ...options, packageRoot });
       return;
+    case "adopt":
+      await runComponentsAdopt({ ...options, packageRoot });
+      return;
+    case "diff":
+      await runComponentsDiff({ ...options, packageRoot });
+      return;
     case "rollback":
       await runComponentsRollback(options);
       return;
@@ -382,6 +465,7 @@ export function parseArgs(argv) {
     dryRun: false,
     yes: false,
     confirm: false,
+    overwriteConflicts: false,
     preflight: true,
     preflightExplicit: false,
     yesExplicit: false,
@@ -419,6 +503,18 @@ export function parseArgs(argv) {
     confirmDismiss: false,
     graphifyAction: null, graphifyArgs: [], graphifyBudget: null, graphPath: null,
     updatesAction: "check",
+    mcpAction: "serve",
+    mcpClient: "cursor",
+    fleetAction: "show",
+    fleetPlatform: null,
+    fleetAgent: null,
+    fleetPlatforms: null,
+    fleetFrom: "profile",
+    fleetAssignments: null,
+    fleetCodexModel: null,
+    fleetProfile: false,
+    includeVariants: false,
+    verbose: false,
     base: null,
     commit: null,
     staged: false,
@@ -473,6 +569,8 @@ export function parseArgs(argv) {
 
   if (command === "graphify") parseGraphifyAction(args, options);
   if (command === "updates") parseUpdatesAction(args, options);
+  if (command === "mcp") parseMcpAction(args, options);
+  if (command === "fleet") parseFleetAction(args, options);
 
   if (command === "help") {
     while (args[0] === "all" || args[0] === "--all") {
@@ -518,8 +616,26 @@ export function parseArgs(argv) {
       options.componentsExplicit = true;
     } else if (arg === "--force") options.force = true;
     else if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--overwrite-conflicts") options.overwriteConflicts = true;
     else if (arg === "--json") options.json = true;
-    else if (arg === "--yes" || arg === "-y") {
+    else if (arg === "--include-variants") options.includeVariants = true;
+    else if (arg === "--platforms") options.fleetPlatforms = args[++index];
+    else if (arg.startsWith("--platforms=")) options.fleetPlatforms = arg.slice("--platforms=".length);
+    else if (arg === "--from") options.fleetFrom = args[++index];
+    else if (arg.startsWith("--from=")) options.fleetFrom = arg.slice("--from=".length);
+    else if (arg === "--assignments") options.fleetAssignments = args[++index];
+    else if (arg.startsWith("--assignments=")) options.fleetAssignments = arg.slice("--assignments=".length);
+    else if (arg === "--codex-model") options.fleetCodexModel = args[++index];
+    else if (arg.startsWith("--codex-model=")) options.fleetCodexModel = arg.slice("--codex-model=".length);
+    else if (arg === "--profile") options.fleetProfile = true;
+    else if (arg === "--verbose") options.verbose = true;
+    else if (arg === "--platform") options.fleetPlatform = args[++index];
+    else if (arg.startsWith("--platform=")) options.fleetPlatform = arg.slice("--platform=".length);
+    else if (arg === "--client") {
+      options.mcpClient = args[++index];
+    } else if (arg.startsWith("--client=")) {
+      options.mcpClient = arg.slice("--client=".length);
+    } else if (arg === "--yes" || arg === "-y") {
       options.yes = true;
       options.yesExplicit = true;
     } else if (arg === "--confirm") {
@@ -651,7 +767,8 @@ function parseComponentsAction(args, options) {
 
   if (action === "validate") return;
 
-  if (action === "configure" || action === "verify" || action === "rollback") {
+  if (action === "configure" || action === "verify" || action === "rollback"
+    || action === "adopt" || action === "diff") {
     const componentId = args[0];
     if (!componentId || componentId.startsWith("-")) {
       throw new Error(
@@ -662,7 +779,7 @@ function parseComponentsAction(args, options) {
     return;
   }
 
-  throw new Error(`Unknown components action "${action}". Use validate, init, pack, import, configure, verify, or rollback.`);
+  throw new Error(`Unknown components action "${action}". Use validate, init, pack, import, configure, verify, adopt, diff, or rollback.`);
 }
 
 function parsePolicyAction(args, options) {
@@ -842,6 +959,36 @@ function parseUpdatesAction(args, options) {
   options.updatesAction = "check";
 }
 
+function parseMcpAction(args, options) {
+  const action = args[0];
+  if (!action || action.startsWith("-")) {
+    options.mcpAction = "serve";
+    return;
+  }
+  if (!new Set(["serve", "install"]).has(action)) {
+    throw new Error(
+      `Unknown mcp action "${action}". Use: ${formatCliCommand("mcp")} or ${formatCliCommand("mcp install [--yes]")}`
+    );
+  }
+  args.shift();
+  options.mcpAction = action;
+}
+
+function parseFleetAction(args, options) {
+  const action = args[0];
+  if (!action || action.startsWith("-")) {
+    options.fleetAction = "show";
+    return;
+  }
+  if (!new Set(["show", "set", "activity", "configure", "models"]).has(action)) {
+    throw new Error(
+      `Unknown fleet action "${action}". Use: ${formatCliCommand("fleet")}, ${formatCliCommand("fleet models")}, ${formatCliCommand("fleet configure")}, or ${formatCliCommand("fleet set --platform opencode --agent <id> --model <id>")}`
+    );
+  }
+  args.shift();
+  options.fleetAction = action === "activity" ? "show" : action;
+}
+
 function parsePathList(value) {
   if (!value) return [];
   return [...new Set(
@@ -889,6 +1036,8 @@ function normalizeCommand(command) {
   if (command === "alerts") return "alerts";
   if (command === "graphify") return "graphify";
   if (command === "mcp") return "mcp";
+  if (command === "connections") return "connections";
+  if (command === "fleet") return "fleet";
   if (command === "intelligence" || command === "intel") return "intelligence";
   if (command === "setup") return "setup";
   if (command === "status") return "status";

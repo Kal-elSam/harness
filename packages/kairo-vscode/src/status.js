@@ -15,6 +15,7 @@ function fetchKairoStatus({
   args = ["status", "--json"],
   timeoutMs = DEFAULT_TIMEOUT_MS,
   env = process.env,
+  cwd = undefined,
   spawnFn = spawn
 } = {}) {
   return new Promise((resolve) => {
@@ -41,11 +42,13 @@ function fetchKairoStatus({
     }, timeoutMs);
 
     try {
-      child = spawnFn(command, args, {
+      const spawnOpts = {
         env,
         stdio: ["ignore", "pipe", "pipe"],
         shell: false
-      });
+      };
+      if (typeof cwd === "string" && cwd) spawnOpts.cwd = cwd;
+      child = spawnFn(command, args, spawnOpts);
     } catch (error) {
       finish(failureStatus({
         installed: false,
@@ -208,6 +211,7 @@ function buildTreeModel(status) {
 module.exports = {
   DEFAULT_TTL_MS,
   DEFAULT_TIMEOUT_MS,
+  INSTALL_HINT,
   StatusCache,
   buildTreeModel,
   fetchKairoStatus,

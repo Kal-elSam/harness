@@ -16,6 +16,7 @@ export const SDD_FILE_OUTCOMES = Object.freeze({
 
 export const SDD_HEALTH = Object.freeze({
   CONFIGURED: "configured",
+  ADOPTED: "adopted",
   MISSING: "missing",
   DRIFTED: "drifted",
   CONFLICT: "conflict"
@@ -23,18 +24,28 @@ export const SDD_HEALTH = Object.freeze({
 
 /**
  * Classify one destination file against canonical bytes and optional tracked hash.
- * Untracked or user-modified files are conflicts and must never be overwritten.
+ * Untracked or user-modified files are conflicts and must never be overwritten
+ * unless overwriteConflicts is requested at apply time.
+ * adoptedHash (disk content accepted as-is) yields NOOP without claiming managed.
  */
 export function classifySddSkillFile({
   exists,
   canonicalHash,
   diskHash = null,
-  trackedHash = null
+  trackedHash = null,
+  adoptedHash = null
 } = {}) {
   if (!exists) {
     return {
       action: SDD_PLAN_ACTIONS.CREATE,
       reason: "Destination missing; physical copy planned."
+    };
+  }
+
+  if (adoptedHash != null && adoptedHash === diskHash) {
+    return {
+      action: SDD_PLAN_ACTIONS.NOOP,
+      reason: "Adopted disk bytes; preserving byte-for-byte."
     };
   }
 
@@ -70,10 +81,18 @@ export function classifySddVerifyHealth({
   exists,
   canonicalHash,
   diskHash = null,
-  trackedHash = null
+  trackedHash = null,
+  adoptedHash = null
 } = {}) {
   if (!exists) {
     return { status: SDD_HEALTH.MISSING, drift: null, reason: "Destination missing on disk." };
+  }
+  if (adoptedHash != null && adoptedHash === diskHash) {
+    return {
+      status: SDD_HEALTH.ADOPTED,
+      drift: null,
+      reason: "Disk matches adopted hash (not Kairo-managed)."
+    };
   }
   if (trackedHash == null) {
     return { status: SDD_HEALTH.CONFLICT, drift: null, reason: "Pre-existing untracked file." };

@@ -1,8 +1,8 @@
 {
   "name": "kairo",
   "displayName": "Kairo",
-  "description": "Status bar and explorer tree for Kairo Runtime — drift, next action, no silent writes.",
-  "version": "0.1.0",
+  "description": "IDE panel for Kairo Runtime — check resolutions, Setup, optional connections.",
+  "version": "0.6.5",
   "publisher": "kal-elsam",
   "license": "MIT",
   "engines": {
@@ -18,8 +18,20 @@
   "contributes": {
     "commands": [
       {
+        "command": "kairo.openPanel",
+        "title": "Kairo: Open Panel"
+      },
+      {
+        "command": "kairo.setup",
+        "title": "Kairo: Setup"
+      },
+      {
+        "command": "kairo.connectAgent",
+        "title": "Kairo: Connect Agent (MCP)"
+      },
+      {
         "command": "kairo.openCockpit",
-        "title": "Kairo: Open Cockpit"
+        "title": "Kairo: Open Terminal Cockpit"
       },
       {
         "command": "kairo.sync",
@@ -34,7 +46,23 @@
         "title": "Kairo: Refresh Status"
       }
     ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "kairo-panel-container",
+          "title": "Kairo",
+          "icon": "media/kairo.svg"
+        }
+      ]
+    },
     "views": {
+      "kairo-panel-container": [
+        {
+          "type": "webview",
+          "id": "kairo.panel",
+          "name": "Kairo"
+        }
+      ],
       "explorer": [
         {
           "id": "kairo.status",

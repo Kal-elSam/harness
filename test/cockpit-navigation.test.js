@@ -179,19 +179,27 @@ test("escape from run detail returns to list before home", () => {
   assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);
 });
 
-test("home footer lists button keys including Tab", () => {
+test("home footer spells out what each key does", () => {
   const overview = buildFooterModel({
     view: ORCHESTRATOR_VIEWS.HOME,
     region: COCKPIT_REGIONS.CONTENT,
     unicode: false,
     columns: 80
   });
-  assert.match(overview.text, /↑↓/);
-  assert.match(overview.text, /Enter/);
-  assert.match(overview.text, /Tab/);
-  assert.match(overview.text, /Space/);
-  assert.match(overview.text, /Esc/);
+  assert.match(overview.text, /1·2 Select/);
+  assert.match(overview.text, /Enter Run/);
+  assert.match(overview.text, /Esc Exit/);
   assert.ok(overview.text.length <= 48);
+
+  const nav = buildFooterModel({
+    view: ORCHESTRATOR_VIEWS.HOME,
+    region: COCKPIT_REGIONS.NAV,
+    unicode: false,
+    columns: 80
+  });
+  assert.match(nav.text, /↑↓ Section/);
+  assert.match(nav.text, /Enter Open/);
+  assert.ok(nav.text.length <= 48);
 });
 
 test("home arrows move between the two buttons when content-focused", () => {

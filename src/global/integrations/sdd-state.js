@@ -8,6 +8,7 @@ export function defaultSddState() {
     personaAgentIds: [],
     agentIds: [],
     files: [],
+    adopted: [],
     lastReceiptId: null,
     updatedAt: null
   };
@@ -25,6 +26,7 @@ export function normalizeSddState(raw) {
     personaAgentIds,
     agentIds: Array.isArray(raw.agentIds) ? [...raw.agentIds] : [],
     files: Array.isArray(raw.files) ? raw.files.map(normalizeSddFile) : [],
+    adopted: Array.isArray(raw.adopted) ? raw.adopted.map(normalizeAdoptedFile).filter(Boolean) : [],
     lastReceiptId: typeof raw.lastReceiptId === "string" ? raw.lastReceiptId : null,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null
   };
@@ -39,6 +41,72 @@ function normalizeSddFile(entry) {
     hash: entry.hash ?? null,
     skillHash: entry.skillHash ?? null,
     action: entry.action ?? null
+  };
+}
+
+function normalizeAdoptedFile(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  if (typeof entry.destinationPath !== "string" || !entry.destinationPath) return null;
+  if (typeof entry.hash !== "string" || !entry.hash) return null;
+  return {
+    destinationPath: entry.destinationPath,
+    hash: entry.hash,
+    skillId: typeof entry.skillId === "string" ? entry.skillId : null,
+    agentIds: Array.isArray(entry.agentIds) ? [...entry.agentIds] : [],
+    relativePath: typeof entry.relativePath === "string" ? entry.relativePath : "SKILL.md",
+    adoptedAt: typeof entry.adoptedAt === "string" ? entry.adoptedAt : null,
+    reason: typeof entry.reason === "string" ? entry.reason : null
+  };
+}
+
+/** Map destinationPath → adopted hash for verify/plan. */
+export function adoptedHashesFromState(sdd) {
+  const adopted = normalizeSddState(sdd).adopted;
+  return Object.fromEntries(adopted.map((entry) => [entry.destinationPath, entry.hash]));
+}
+
+/** Record conflict findings as adopted disk hashes (no file writes). */
+export function recordSddAdoptions(state, {
+  adoptions = [],
+  now = () => new Date().toISOString()
+} = {}) {
+  const current = normalizeSddState(state?.sdd);
+  const byPath = new Map(current.adopted.map((entry) => [entry.destinationPath, entry]));
+  for (const entry of adoptions) {
+    const normalized = normalizeAdoptedFile({
+      ...entry,
+      adoptedAt: entry.adoptedAt ?? now()
+    });
+    if (!normalized) continue;
+    byPath.set(normalized.destinationPath, normalized);
+  }
+  const adopted = [...byPath.values()].sort((a, b) =>
+    a.destinationPath.localeCompare(b.destinationPath)
+  );
+  return {
+    ...(state ?? {}),
+    sdd: {
+      ...current,
+      adopted,
+      updatedAt: now()
+    }
+  };
+}
+
+/** Drop adopted entries for paths that become Kairo-managed (overwrite/apply). */
+export function clearSddAdoptionsForPaths(state, paths = [], {
+  now = () => new Date().toISOString()
+} = {}) {
+  const current = normalizeSddState(state?.sdd);
+  const drop = new Set(paths);
+  const adopted = current.adopted.filter((entry) => !drop.has(entry.destinationPath));
+  return {
+    ...(state ?? {}),
+    sdd: {
+      ...current,
+      adopted,
+      updatedAt: now()
+    }
   };
 }
 
@@ -116,6 +184,7 @@ export function recordSddMaterialization(state, { receipt, now = () => new Date(
       personaAgentIds,
       agentIds: collectAgentIds(files),
       files,
+      adopted: current.adopted,
       lastReceiptId: receipt.id ?? current.lastReceiptId,
       updatedAt: now()
     }

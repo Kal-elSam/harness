@@ -52,7 +52,7 @@ function simulateSession(layoutMode) {
     region: state.region,
     unicode: false
   });
-  assert.match(footer.text, /Tab/);
+  assert.match(footer.text, /↑↓ Section/);
 
   // Already on Home: Esc exits.
   state = applyKey(state, { type: "escape" });

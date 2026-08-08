@@ -12,9 +12,12 @@ const HOSTILE = ["token=SECRET", "Authorization: Bearer abc", "stderr: boom"];
 
 test("registry schemas + handlers + productive loaders + sanitize", async () => {
   assert.equal(parseArgs(["mcp"]).command, "mcp");
+  assert.equal(parseArgs(["fleet", "--json"]).command, "fleet");
+  assert.equal(parseArgs(["fleet", "--json"]).options.json, true);
   const tools = new Map();
   registerKairoMcpTools((n, c, h) => { assert.equal(WRITE_RE.test(n), false); tools.set(n, h); }, {});
   assert.deepEqual([...tools.keys()], [...KAIRO_MCP_TOOLS]);
+  assert.ok(KAIRO_MCP_TOOLS.includes("kairo_fleet"));
   assert.equal(mcpSchemas.runs.parse({}).limit, 20);
   assert.equal(mcpSchemas.alerts.parse({}).limit, 50);
   assert.equal(mcpSchemas.graphQuery.parse({ graph: "g", question: "q" }).budget, 2000);
@@ -38,6 +41,16 @@ test("registry schemas + handlers + productive loaders + sanitize", async () => 
       links: [], alertsCount: 1, nextSafeAction: { kind: "missing", detail: "token=SECRET" }
     }),
     probeGentle: async () => ({ state: "available", diagnostics: [], error: null }),
+    buildFleet: async () => ({
+      ok: true, kind: "declared+activity", note: "declared", orchestratorAuthority: "gentle-ai",
+      fleets: [{
+        platform: "opencode",
+        orchestrator: { id: "gentle-orchestrator", model: "opencode-go/deepseek-v4-pro", opaque: false },
+        minions: [{ id: "sdd-apply", model: "opencode-go/deepseek-v4-pro", role: "executor" }]
+      }],
+      activity: { available: true, activeCount: 0, agents: [], sessions: [] },
+      generatedAt: "t"
+    }),
     runGraphifyOp: async () => ({
       ok: true, code: "ok", op: "query", text: "hit", truncated: false,
       graphPath: "/ws/g.json", graphStatus: "fresh", diagnostics: []
@@ -49,15 +62,21 @@ test("registry schemas + handlers + productive loaders + sanitize", async () => 
   assert.equal((await ok.kairo_runs()).structuredContent.data.runs[0].runId, "r1");
   assert.equal((await ok.kairo_gentle_status()).structuredContent.data.state, "available");
   assert.equal((await ok.kairo_graph_query({ graph: "/ws/g.json", question: "q" })).structuredContent.data.text, "hit");
+  const fleet = await ok.kairo_fleet();
+  assert.equal(fleet.structuredContent.code, "ok");
+  assert.equal(fleet.structuredContent.data.fleets[0].orchestrator.id, "gentle-orchestrator");
+  assert.equal(fleet.structuredContent.data.orchestratorAuthority, "gentle-ai");
+  assert.ok("activity" in fleet.structuredContent.data);
 
   const bad = createToolHandlers({
     buildStatus: async () => { throw new Error("boom"); },
     listRuns: async () => { throw new Error("boom"); },
     listAlerts: async () => { throw new Error("boom"); },
     probeGentle: async () => ({ state: "missing" }),
-    buildCompanion: async () => { throw new Error("boom"); }
+    buildCompanion: async () => { throw new Error("boom"); },
+    buildFleet: async () => { throw new Error("boom"); }
   });
-  for (const name of ["kairo_status", "kairo_runs", "kairo_alerts", "kairo_gentle_status", "kairo_context_summary"]) {
+  for (const name of ["kairo_status", "kairo_runs", "kairo_alerts", "kairo_gentle_status", "kairo_context_summary", "kairo_fleet"]) {
     assert.equal((await bad[name]()).structuredContent.code, "degraded");
   }
 
