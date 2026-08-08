@@ -215,12 +215,17 @@ function jsonKeyEvidence(path, keyPath, kind) {
   try {
     let cursor = JSON.parse(readFileSync(path, "utf8"));
     for (const key of keyPath) {
-      if (cursor == null || typeof cursor !== "object") {
+      if (cursor == null || typeof cursor !== "object" || Array.isArray(cursor)) {
         return { path, kind, present: false, conflict: true, keyPath, detail: "invalid structure" };
+      }
+      // Missing key = unconfigured evidence, not a conflict (file may use another MCP path).
+      if (!Object.prototype.hasOwnProperty.call(cursor, key)) {
+        return { path, kind, present: false, conflict: false, keyPath };
       }
       cursor = cursor[key];
     }
-    return { path, kind, present: cursor != null && typeof cursor === "object", conflict: false, keyPath };
+    const present = cursor != null && typeof cursor === "object" && !Array.isArray(cursor);
+    return { path, kind, present, conflict: false, keyPath };
   } catch {
     return { path, kind, present: false, conflict: true, keyPath, detail: "unreadable json" };
   }

@@ -328,8 +328,11 @@ export function buildFooterModel({
 
   // HOME footer must stay on one line at 80 cols (frame already near 24 rows).
   if (view === ORCHESTRATOR_VIEWS.HOME) {
+    const homeParts = region === COCKPIT_REGIONS.NAV
+      ? ["↑↓ Section", "Enter Open", "? Help", "Esc Exit"]
+      : ["1·2 Select", "Enter Run", "? Help", "Esc Exit"];
     return {
-      text: ["↑↓", "Enter", "Tab", "Space", "R", "?", "/", "Esc"].join(` ${glyphs.bullet} `),
+      text: homeParts.join(` ${glyphs.bullet} `),
       columns: footerColumns
     };
   }

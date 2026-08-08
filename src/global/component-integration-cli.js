@@ -9,11 +9,13 @@ import { formatCliCommand } from "./brand/cli.js";
 import { requireIntegrationProvider } from "./integrations/provider-registry.js";
 import { ensureIntegrationProvidersRegistered } from "./integrations/index.js";
 import { ENGRAM_INTEGRATION_STATUS } from "./integrations/engram-evidence.js";
-import { SDD_HEALTH } from "./integrations/sdd-evidence.js";
+import { SDD_HEALTH, SDD_FILE_OUTCOMES } from "./integrations/sdd-evidence.js";
 import {
-  hasSuccessfulSddRollbackMutations, recordSddMaterialization, reconcileSddStateAfterRollback
+  hasSuccessfulSddRollbackMutations, recordSddMaterialization, reconcileSddStateAfterRollback,
+  adoptedHashesFromState, clearSddAdoptionsForPaths
 } from "./integrations/sdd-state.js";
 import { loadSddReceipt } from "./integrations/sdd-receipts.js";
+import { buildSddSkillResolutions } from "./integrations/sdd-resolutions.js";
 
 const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -169,14 +171,24 @@ async function buildProviderContext(options, { homeDir, componentId }) {
     packageRoot: options.packageRoot ?? DEFAULT_PACKAGE_ROOT,
     persona: options.persona ?? state?.sdd?.persona ?? "off",
     personaAgentIds: state?.sdd?.personaAgentIds ?? [],
-    trackedFiles
+    trackedFiles,
+    adoptedFiles: adoptedHashesFromState(state?.sdd),
+    overwriteConflicts: Boolean(options.overwriteConflicts)
   };
 }
 
 async function persistSddReceiptState(homeDir, receipt) {
   const paths = harnessHomePaths(homeDir);
   const state = (await readGlobalState(paths.statePath)) ?? {};
-  await writeGlobalState(paths.statePath, recordSddMaterialization(state, { receipt }));
+  let next = recordSddMaterialization(state, { receipt });
+  const appliedPaths = (receipt.files ?? [])
+    .filter((file) => file.outcome === SDD_FILE_OUTCOMES.APPLIED)
+    .map((file) => file.destinationPath)
+    .filter(Boolean);
+  if (appliedPaths.length) {
+    next = clearSddAdoptionsForPaths(next, appliedPaths);
+  }
+  await writeGlobalState(paths.statePath, next);
 }
 
 async function reconcileSddRollbackState(homeDir, result) {
@@ -230,13 +242,19 @@ export function buildEngramIntegrationChecks(inspection) {
 export function buildSddIntegrationChecks(verification) {
   const summary = verification.summary ?? {};
   const persona = verification.persona ?? {};
+  const skillsHealthy = verification.status === SDD_HEALTH.CONFIGURED
+    || verification.status === SDD_HEALTH.ADOPTED;
+  const skillsCheck = {
+    name: "sdd-core:skills",
+    status: skillsHealthy ? "ok" : "warning",
+    category: "integration",
+    componentId: "sdd-core",
+    detail: `SDD skills ${verification.status}: configured=${summary.configured ?? 0}, adopted=${summary.adopted ?? 0}, missing=${summary.missing ?? 0}, drifted=${summary.drifted ?? 0}, conflict=${summary.conflict ?? 0} (disk presence ≠ runtime active).`
+  };
+  const resolutions = buildSddSkillResolutions(verification);
+  if (resolutions.length) skillsCheck.resolutions = resolutions;
   return [
-    {
-      name: "sdd-core:skills",
-      status: verification.status === SDD_HEALTH.CONFIGURED ? "ok" : "warning",
-      category: "integration", componentId: "sdd-core",
-      detail: `SDD skills ${verification.status}: configured=${summary.configured ?? 0}, missing=${summary.missing ?? 0}, drifted=${summary.drifted ?? 0}, conflict=${summary.conflict ?? 0} (disk presence ≠ runtime active).`
-    },
+    skillsCheck,
     {
       name: "sdd-core:persona",
       status: persona.status === "configured" || persona.status === "off" ? "ok" : "warning",
@@ -283,6 +301,7 @@ function printSddConfigureHuman(result) {
   if (result.dryRun) return void console.log("Dry-run only — no skills materialized.");
   if (result.cancelled) return void console.log("Cancelled.");
   if (result.blocked) return void console.log(`Blocked: ${result.reason ?? "conflicts present"}`);
+  if (result.overwriteConflicts) console.log("Mode: overwrite-conflicts (backups before replace).");
   if (result.receipt) {
     console.log(`Receipt: ${result.receipt.id}${result.receipt.partial ? " (partial)" : ""}`);
     if (result.sessionRefreshRequired) {

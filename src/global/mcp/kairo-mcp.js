@@ -12,10 +12,11 @@ import { runGraphifyOp } from "../observability/graphify-ops.js";
 import { resolveGitHeadSha } from "../observability/graphify-probe.js";
 import { runPassiveObservabilitySnapshot } from "../observability/passive-snapshot-flight.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
+import { buildFleetReport } from "../observability/fleet-probe.js";
 
 export const KAIRO_MCP_TOOLS = Object.freeze([
   "kairo_status", "kairo_runs", "kairo_alerts", "kairo_gentle_status",
-  "kairo_graph_query", "kairo_graph_path", "kairo_context_summary"
+  "kairo_graph_query", "kairo_graph_path", "kairo_context_summary", "kairo_fleet"
 ]);
 
 const empty = z.object({});
@@ -117,6 +118,7 @@ export function createToolHandlers(deps = {}) {
     observabilityContext: { cwd, homeDir, workspaceRoot: cwd, headSha: requestHead() }
   }));
   const gentleProbe = deps.probeGentle ?? ((ctx) => probeGentle(ctx));
+  const fleetProbe = deps.buildFleet ?? ((ctx) => buildFleetReport(ctx));
   const graphOp = deps.runGraphifyOp ?? runGraphifyOp;
   const gOpts = () => ({
     cwd, workspaceRoot: cwd, headSha: requestHead(), whichCommand: deps.whichCommand,
@@ -200,6 +202,27 @@ export function createToolHandlers(deps = {}) {
       } catch {
         return soft("degraded", { signals: null, engram: null, links: [], alertsCount: null, nextSafeAction: null });
       }
+    },
+    async kairo_fleet() {
+      try {
+        const report = await fleetProbe({ homeDir });
+        return mcpResult({
+          ok: true,
+          code: "ok",
+          data: {
+            kind: report?.kind ?? "declared",
+            note: report?.note ?? null,
+            orchestratorAuthority: report?.orchestratorAuthority ?? null,
+            fleets: Array.isArray(report?.fleets) ? report.fleets : [],
+            activity: report?.activity ?? null,
+            generatedAt: report?.generatedAt ?? null
+          }
+        });
+      } catch {
+        return soft("degraded", {
+          kind: "declared", fleets: [], activity: null, note: null, orchestratorAuthority: null
+        });
+      }
     }
   };
 }
@@ -213,7 +236,8 @@ export function registerKairoMcpTools(registerTool, deps = {}) {
     ["kairo_gentle_status", "Gentle probe / companion gentle signal", empty],
     ["kairo_graph_query", "Read-only Graphify query", mcpSchemas.graphQuery],
     ["kairo_graph_path", "Read-only Graphify path", mcpSchemas.graphPath],
-    ["kairo_context_summary", "Companion + soft links + alerts count", empty]
+    ["kairo_context_summary", "Companion + soft links + alerts count", empty],
+    ["kairo_fleet", "Declared fleet topology + OpenCode live activity", empty]
   ]) registerTool(name, { description, inputSchema }, h[name]);
   return h;
 }

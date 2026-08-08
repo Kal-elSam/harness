@@ -94,12 +94,6 @@ export function adaptControlCenterToOverview(model = {}, options = {}) {
       label: `Alerts · ${model.alerts.headline ?? `${model.alerts.count} open`}`
     });
   }
-  if (rest.length > 0) {
-    metrics.push({
-      id: "more",
-      label: `${rest.length} more in Details · Space`
-    });
-  }
   if (metrics.length === 0) {
     metrics.push({ id: "quiet", label: "Nothing else needs you right now" });
   }
@@ -201,13 +195,13 @@ export function SemanticOverviewPanel({
           marginBottom: index === view.buttons.length - 1 ? 0 : 1
         },
           React.createElement(Text, {
-            bold: true,
-            color: focused && colorEnabled ? COCKPIT_COLORS.interactive : undefined
-          }, `${focused ? glyphs.focus : " "} ${button.label}`),
+            bold: selected,
+            color: colorEnabled && selected ? COCKPIT_COLORS.interactive : undefined
+          }, `${selected ? glyphs.focus : " "} [${index + 1}] ${button.label}${focused ? "  ← Press Enter" : ""}`),
           button.detail
             ? React.createElement(Text, {
               color: colorEnabled ? COCKPIT_COLORS.muted : undefined
-            }, `  ${button.detail}`)
+            }, `      ${button.detail}`)
             : null
         );
       })
@@ -223,7 +217,7 @@ export function SemanticOverviewPanel({
     ),
     React.createElement(Details, {
       open: detailsOpen,
-      summary: "More info",
+      summary: `More info (${view.details.length})`,
       lines: view.details,
       colorEnabled,
       focused: false,

@@ -21,6 +21,21 @@ kairo setup --agents all
 kairo install --agents cursor,codex --yes
 kairo status
 kairo status --json
+kairo connections
+kairo connections --json
+kairo fleet
+kairo fleet --json
+kairo fleet models
+kairo fleet models --profile
+kairo fleet configure
+kairo fleet configure --yes
+kairo fleet configure --codex-model gpt-5.6-sol --yes
+kairo fleet configure --from gentle --platforms claude,opencode
+kairo fleet set --platform opencode --agent sdd-apply --model opencode-go/deepseek-v4-pro
+kairo fleet set --platform opencode --agent sdd-apply --model opencode-go/deepseek-v4-pro --yes
+kairo mcp
+kairo mcp install
+kairo mcp install --yes
 kairo adapters
 kairo adapters --json
 kairo sync
@@ -43,13 +58,18 @@ kairo intelligence route --task "explain architecture"
 kairo intelligence ask --prompt "Summarize project risks" --json
 # Cloud (OpenRouter/free) only after explicit consent + confirm:
 # OPENROUTER_API_KEY=... kairo intelligence ask --prompt "..." --cloud-consent --yes
-kairo update   # technical alias; prefer sync
+kairo update   # update the Kairo CLI from npm (--yes applies)
 kairo detect
 kairo components
 kairo components validate
 kairo components init <id> --label "<label>"
 kairo components pack <id> --out <file>    # advanced
 kairo components import <file>             # advanced
+kairo components configure sdd-core [--overwrite-conflicts] [--dry-run|--yes]
+kairo components adopt sdd-core [--agents <list>] [--dry-run|--yes]
+kairo components diff sdd-core [--agents <list>] [--json]
+kairo components verify sdd-core [--json]
+kairo components rollback sdd-core --receipt <id> [--dry-run|--yes]
 kairo backups
 kairo history
 kairo history --command sync --action repaired
@@ -62,6 +82,8 @@ kairo uninstall
 kairo install --scope=workspace   # opt-in / legacy
 ```
 
+MCP details: [docs/mcp.md](mcp.md).
+
 Legacy CLI aliases (backward compatible): `harness`, `agentic-harness`, `sgs-harness`, `harness-sgs`
 
 `kairo help` lists commands and JSON support; longer examples live in this README.
@@ -71,6 +93,8 @@ To try locally from this repo:
 ```bash
 node ./bin/kairo.js setup --dry-run
 node ./bin/kairo.js status
+node ./bin/kairo.js connections --json
+node ./bin/kairo.js fleet --json
 node ./bin/kairo.js sync --dry-run
 node ./bin/kairo.js adapters --json
 node ./bin/kairo.js install --dry-run

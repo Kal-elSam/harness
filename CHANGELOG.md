@@ -5,6 +5,72 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+### Added
+
+- Panel **0.6.5**: One **Configure all** for multi-agent (Claude + OpenCode +
+  Cursor agents). **Codex aparte** (`--codex-model`). `kairo fleet models`
+  shows available vs enabled per tool. Cursor desk: open agents/skills/rules.
+  Profile at `~/.harness/fleet-models.json` (seeded from disk; preserves
+  tuned OpenCode). `--from gentle` remaps OpenCode tiers when you want that.
+- Panel **0.6.4**: Fleet Details puts configure buttons first (Edit per
+  minion on Claude/OpenCode; Cursor offers Claude/OpenCode configure +
+  optional Pixel Agents). `fleet configure` defaults to Claude only (no
+  surprise OpenCode overwrite).
+- `kairo fleet configure`: Gentle-style model assignments across OpenCode +
+  Claude (+ Codex when `codex_default` set). Plan / `--yes` + backups. Panel
+  **Models** button. Cursor Auto remains IDE-managed.
+- Panel **0.6.2**: Fleet floor (compact platform desks). Working floor only
+  shows live agents — no idle OpenCode wall. CLI `kairo fleet` compact by
+  default (`--verbose` for full minion list).
+- Panel **0.6.3**: Configure models toolbar + desk actions for sync/set.
+- `kairo fleet [--json]`: declared orchestrator→minion fleet topology from
+  OpenCode config (Gentle + SDD models); Cursor Auto marked opaque.
+  MCP tool `kairo_fleet`; `kairo connections --json` includes `fleets`.
+- Panel **0.5.0**: Fleet tree under connections (platform · orchestrator ·
+  model, indented minions). Details note: declared config, not live tokens.
+- `kairo connections [--json]`: Gentle / Hermes / Engram / Graphify / Agent
+  connection chips for the IDE panel (companion probes + MCP registration).
+- `kairo mcp install [--yes]`: consent-gated registration of Kairo MCP in
+  `~/.cursor/mcp.json` (plan first; atomic write + backup).
+- VS Code / Cursor panel **0.3.0**: connection chips, Connect Agent button,
+  Entries + Details webview. Docs: `docs/mcp.md`.
+- Panel **0.3.1**: soften "not installed / unconfigured" entries to `note`;
+  fix false Engram conflict when Claude uses `~/.claude/mcp/engram.json`
+  without `mcpServers.engram` in settings.json.
+- Panel **0.3.2**: **Setup** button + per-connection actions (Configure /
+  How to install / Update graph). Optional tools labeled; Kairo never
+  auto-installs Gentle/Hermes/Graphify.
+- Panel **0.3.3**: every Entry shows resolve buttons in Details (Fix SDD,
+  Repair, Update graph, Why optional?). Hermes chip offers **Start Hermes
+  gateway**. Conflicts sort first so buttons are visible immediately.
+- Panel **0.3.4**: Hermes tip documents `API_SERVER_ENABLED=true` — gateway
+  alone without API Server does not expose :8642.
+- Check **resolutions[]** contract + panel **0.4.0**: status checks can declare
+  clickable fix buttons. For `sdd-core:skills` conflicts:
+  - `kairo components diff sdd-core` (read-only)
+  - `kairo components adopt sdd-core` (keep disk; record adopted hashes)
+  - `kairo components configure sdd-core --overwrite-conflicts` (backup + replace)
+  Destructive overwrite asks for a modal confirm in the IDE panel.
+- Panel **0.4.1**: adopt/overwrite buttons apply with `--yes` (click = consent).
+  Previous `--dry-run` left CONFLICT unchanged after clicking Conservar el mío.
+- Panel **0.4.2**: status/connections/terminal use the open workspace folder as
+  `cwd`, so graphify-out/ is detected (was falsely "not found" from IDE cwd).
+
+### Fixed
+
+- Cockpit Home opened with focus on the tab bar, so the two Home buttons never
+  showed a selection mark and the arrow keys moved between tabs instead. Home
+  now starts on the buttons.
+
+### Changed
+
+- Home buttons render as `› [1] Label` with `← Press Enter` on the focused
+  option; press `1` / `2` to run a button without arrow navigation.
+- Home footer names each key (`1·2 Select · Enter Run · ? Help · Esc Exit`)
+  instead of listing bare keys.
+- Home shows at most two plain-language needs; the rest collapse into the
+  `More info (n)` disclosure, which absorbs the duplicated "n more" line.
+
 ## 0.14.0 — 2026-08-07 (Kairo Runtime)
 
 Minor release. Simpler Cockpit, one-command CLI self-update, pnpm for

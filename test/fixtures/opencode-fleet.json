@@ -1,0 +1,35 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode-go/deepseek-v4-pro",
+  "agent": {
+    "gentle-orchestrator": {
+      "description": "Gentle AI SDD Orchestrator",
+      "mode": "primary"
+    },
+    "sdd-apply": {
+      "description": "Apply",
+      "mode": "subagent",
+      "model": "opencode-go/deepseek-v4-pro"
+    },
+    "sdd-apply-zen": {
+      "description": "Apply zen variant",
+      "mode": "subagent",
+      "model": "opencode-zen/claude-sonnet-4-6"
+    },
+    "sdd-explore": {
+      "description": "Explore",
+      "mode": "subagent",
+      "model": "opencode-go/qwen3.5-plus"
+    },
+    "sdd-verify": {
+      "description": "Verify",
+      "mode": "subagent",
+      "model": "opencode-go/deepseek-v4-flash"
+    },
+    "build": {
+      "description": "non-sdd",
+      "mode": "subagent",
+      "model": "opencode-go/deepseek-v4-pro"
+    }
+  }
+}

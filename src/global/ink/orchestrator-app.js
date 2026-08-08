@@ -63,8 +63,7 @@ export function OrchestratorApp({
   const [ui, dispatch] = useReducer(
     reduceCockpitUi,
     createCockpitUiState({
-      layoutMode: layoutMode ?? LAYOUT_MODES.COMPACT,
-      region: COCKPIT_REGIONS.NAV
+      layoutMode: layoutMode ?? LAYOUT_MODES.COMPACT
     })
   );
   const data = useOrchestratorData({
@@ -164,6 +163,26 @@ export function OrchestratorApp({
       && canOpenPalette({ loading: data.loading, busy: data.busy, confirming })) {
       dispatch({ type: "toggle-palette" });
       return;
+    }
+
+    if (ui.view === ORCHESTRATOR_VIEWS.HOME && !ui.paletteOpen) {
+      const digit = inputKey === "1" ? 0 : inputKey === "2" ? 1 : -1;
+      if (digit >= 0) {
+        const buttons = buildOverviewButtons({
+          hasGlobalState,
+          snapshot: data.snapshot,
+          diagnostics: data.diagnostics,
+          dashboard: data.dashboard
+        });
+        const selected = buttons[digit];
+        const intent = selected?.intent ?? null;
+        if (intent === "setup") {
+          finish({ cancelled: false, action: "setup" });
+          return;
+        }
+        if (intent && openDestination(intent)) return;
+        return;
+      }
     }
 
     if (inputKey === " " && ui.view === ORCHESTRATOR_VIEWS.HOME && !ui.paletteOpen) {

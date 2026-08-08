@@ -29,7 +29,7 @@ export {
 export function createCockpitUiState({
   layoutMode = LAYOUT_MODES.COMPACT,
   view = ORCHESTRATOR_VIEWS.HOME,
-  region = COCKPIT_REGIONS.NAV,
+  region = null,
   navIndex = 0,
   listIndex = 0,
   helpOpen = false,

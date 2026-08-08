@@ -146,8 +146,8 @@ test("windowLinesForLayout truncates long agent and diagnostic lists", () => {
 test("footer and project name helpers", () => {
   const footer = buildFooterModel({ view: "home", unicode: false, columns: 80 });
   assert.match(footer.text, /↑↓/);
-  assert.match(footer.text, /Space/);
-  assert.match(footer.text, /Tab/);
+  assert.match(footer.text, /Enter/);
+  assert.match(footer.text, /Esc/);
   assert.ok(footer.text.length <= 48);
   assert.equal(footer.columns, 80);
   const retry = buildFooterModel({ hasError: true, unicode: false, columns: 64 });

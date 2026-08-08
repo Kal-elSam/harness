@@ -25,6 +25,8 @@ export async function planSddConfigure({
   persona = "off",
   personaAgentIds = [],
   trackedFiles = {},
+  adoptedFiles = {},
+  overwriteConflicts = false,
   preservePersona = false,
   dryRun = true,
   exists = existsSync,
@@ -50,16 +52,31 @@ export async function planSddConfigure({
       for (const group of destinationGroups) {
         const destinationPath = join(group.root, skillId, ...file.relativePath.split("/"));
         const trackedHash = trackedFiles[destinationPath] ?? null;
+        const adoptedHash = adoptedFiles[destinationPath] ?? null;
         const fileExists = exists(destinationPath);
         const diskHash = fileExists ? hashBuffer(await readFileImpl(destinationPath)) : null;
-        const classification = classifySddSkillFile({
-          exists: fileExists, canonicalHash, diskHash, trackedHash
+        let classification = classifySddSkillFile({
+          exists: fileExists, canonicalHash, diskHash, trackedHash, adoptedHash
         });
+        let overwrote = false;
+        if (
+          overwriteConflicts
+          && classification.action === SDD_PLAN_ACTIONS.CONFLICT
+          && fileExists
+        ) {
+          classification = {
+            action: SDD_PLAN_ACTIONS.UPDATE,
+            reason: "Overwrite conflicts requested; backup then replace with canonical."
+          };
+          overwrote = true;
+        }
         actions.push({
           skillId, relativePath: file.relativePath, destinationPath,
           agentIds: [...group.agentIds], kind: group.kind,
           action: classification.action, reason: classification.reason,
-          canonicalHash, skillHash, diskHash, trackedHash, writes: false, executes: false
+          canonicalHash, skillHash, diskHash, trackedHash, adoptedHash,
+          overwrote, overwriteConflicts: Boolean(overwriteConflicts),
+          writes: false, executes: false
         });
       }
     }
@@ -78,6 +95,7 @@ export async function planSddConfigure({
   return {
     provider: "sdd-core", componentId: "sdd-core", dryRun: Boolean(dryRun),
     executes: false, writes: false, requestedPersona: persona, preservePersona,
+    overwriteConflicts: Boolean(overwriteConflicts),
     persona: personaTransition.persona,
     personaPath: resolveCanonicalTeachingPersonaPath(packageRoot),
     personaActive: personaTransition.after.length > 0, personaTransition, agentIds, actions,

@@ -130,9 +130,9 @@ test("companion needs are plain language; system noise stays in Details", () => 
   ]);
   assert.deepEqual(needs, [
     "Obsidian not connected · open Settings to choose your vault",
-    "Update available · run kairo updates check",
-    "Memory conflict · open Settings → Engram"
+    "Update available · run kairo updates check"
   ]);
+  assert.ok(rest.includes("Engram · conflict"));
   assert.ok(rest.some((l) => l.startsWith("System")));
   assert.ok(rest.some((l) => l.startsWith("Advisor")));
   assert.ok(!needs.some((l) => l.startsWith("System") || l.startsWith("Advisor")));
@@ -213,9 +213,27 @@ test("metrics ActionList never shows selection; focused Home button shows focus 
     }
   });
   const blob = JSON.stringify(panel);
-  assert.match(blob, /"> Repair 1 change"/);
-  assert.match(blob, /Configure/);
+  assert.match(blob, /"> \[1\] Repair 1 change  ← Press Enter"/);
+  assert.match(blob, /"  \[2\] Configure"/);
   assert.doesNotMatch(blob, /ACTION REQUIRED/);
+});
+
+test("Home buttons stay visibly selectable while the menu holds focus", () => {
+  const panel = SemanticOverviewPanel({
+    model: modelFor(CONTROL_PLANE_HEALTH.ACTION_REQUIRED),
+    unicode: false,
+    layoutMode: LAYOUT_MODES.COMPACT,
+    selectedIndex: 0,
+    contentFocused: false,
+    hasGlobalState: true,
+    snapshot: {
+      coverage: { detectedAgents: 2 },
+      diff: { hasChanges: true, changeCount: 1 }
+    }
+  });
+  const blob = JSON.stringify(panel);
+  assert.match(blob, /"> \[1\] Repair 1 change"/);
+  assert.doesNotMatch(blob, /Press Enter/);
 });
 
 test("Space toggles overview Details; Esc closes before exit", () => {

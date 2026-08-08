@@ -17,7 +17,8 @@ const APPLYING_ACTIONS = new Set([SDD_PLAN_ACTIONS.CREATE, SDD_PLAN_ACTIONS.UPDA
 
 export async function applySddConfigure({
   requestedAgentIds = null, detectedAgentIds = [], homeDir, packageRoot, persona = "off",
-  personaAgentIds = [], trackedFiles = {}, preservePersona = false, dryRun = false, yes = false,
+  personaAgentIds = [], trackedFiles = {}, adoptedFiles = {}, overwriteConflicts = false,
+  preservePersona = false, dryRun = false, yes = false,
   json = false, interactive = null, receiptId = null, plan = planSddConfigure,
   confirm = promptApplyConfirmation, saveReceipt = saveSddReceipt,
   now = () => new Date().toISOString()
@@ -28,14 +29,16 @@ export async function applySddConfigure({
 
   const planned = await plan({
     requestedAgentIds, detectedAgentIds, homeDir, packageRoot, persona, personaAgentIds,
-    trackedFiles, preservePersona, dryRun: true
+    trackedFiles, adoptedFiles, overwriteConflicts, preservePersona, dryRun: true
   });
   if (dryRun) return { ...planned, applied: false, cancelled: false, receipt: null };
 
   if (shouldPromptApplyConfirmation({ applying: true, dryRun, json, confirm: yes, interactive })) {
     const accepted = await confirm({
       command: "components configure sdd-core",
-      question: "Materialize SDD skills for the planned agents? [Y/n]: "
+      question: overwriteConflicts
+        ? "Overwrite conflicting SDD skills with canonical Kairo copies (backups first)? [Y/n]: "
+        : "Materialize SDD skills for the planned agents? [Y/n]: "
     });
     if (!accepted) return { ...planned, applied: false, cancelled: true, receipt: null };
   }
@@ -66,7 +69,8 @@ export async function applySddConfigure({
     try {
       const managedRoot = resolveSddSkillRoot(action.agentIds[0], homeDir);
       const outcome = await materializeOne(action, {
-        homeDir, packageRoot, managedRoot, receiptId: resolvedReceiptId
+        homeDir, packageRoot, managedRoot, receiptId: resolvedReceiptId,
+        overwriteConflicts: Boolean(action.overwrote || overwriteConflicts)
       });
       if (outcome.conflict) {
         files.push({
@@ -78,7 +82,8 @@ export async function applySddConfigure({
       if (outcome.backup) backups.push(outcome.backup);
       files.push({
         ...record, applied: true, skipped: false, outcome: SDD_FILE_OUTCOMES.APPLIED,
-        afterHash: outcome.afterHash, parentRealpath: outcome.parentRealpath
+        afterHash: outcome.afterHash, parentRealpath: outcome.parentRealpath,
+        overwrote: Boolean(action.overwrote)
       });
     } catch (error) {
       failed = { skillId: action.skillId, destinationPath: action.destinationPath, error: error.message };
@@ -141,7 +146,9 @@ async function readCanonicalBytes(action, packageRoot) {
   ));
 }
 
-async function materializeOne(action, { homeDir, packageRoot, managedRoot, receiptId }) {
+async function materializeOne(action, {
+  homeDir, packageRoot, managedRoot, receiptId, overwriteConflicts = false
+}) {
   const chain = await assertSafePathChain(action.destinationPath, managedRoot, homeDir);
   if (!chain.ok) return { conflict: chain.reason };
 
@@ -169,7 +176,10 @@ async function materializeOne(action, { homeDir, packageRoot, managedRoot, recei
     return { conflict: "Managed destination disappeared after planning; preserving byte-for-byte." };
   }
   const snap = await snapshotRegularFile(action.destinationPath);
-  if (snap.hash !== action.trackedHash) {
+  const expectedHash = overwriteConflicts || action.overwrote
+    ? snap.hash
+    : action.trackedHash;
+  if (snap.hash !== expectedHash) {
     return { conflict: "Managed file changed after planning; preserving byte-for-byte." };
   }
   const parent = await parentRealpath(action.destinationPath);

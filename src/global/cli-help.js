@@ -109,10 +109,18 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} components
   ${cli} components validate|init|pack|import ...
   ${cli} components configure engram-memory [--agents <list>] [--dry-run|--yes] [--json]
-  ${cli} components configure sdd-core [--agents <list>] [--persona off|teaching] [--dry-run|--yes] [--json]
+  ${cli} components configure sdd-core [--agents <list>] [--persona off|teaching] [--overwrite-conflicts] [--dry-run|--yes] [--json]
   ${cli} components verify sdd-core [--agents <list>] [--json]
+  ${cli} components adopt sdd-core [--agents <list>] [--dry-run|--yes] [--json]
+  ${cli} components diff sdd-core [--agents <list>] [--json]
   ${cli} components rollback engram-memory|sdd-core --receipt <id> [--dry-run|--yes] [--json]
+  ${cli} connections [--json] [--client cursor]
+  ${cli} fleet [--json] [--verbose] [--include-variants]
+  ${cli} fleet models [--profile] [--json]
+  ${cli} fleet configure [--platforms claude,opencode,cursor|codex] [--from profile|gentle] [--codex-model <id>] [--assignments a=b,...] [--yes] [--json]
+  ${cli} fleet set --platform opencode|claude|codex --agent <id> --model <id> [--yes] [--json]
   ${cli} mcp
+  ${cli} mcp install [--yes] [--json] [--client cursor]
   ${cli} install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
   ${cli} init [--mode minimal|standard|enterprise] (workspace alias)
 
@@ -157,12 +165,19 @@ Commands:
   policy     View or edit local operation preferences under ~/.harness/policy.json.
   report     Read-only diagnostics bundle: status, policy, adapters, diff, history.
   components List, validate, scaffold, pack, import, or configure integrations (Engram, SDD).
+  connections Companion chips + MCP registration (IDE panel).
+  fleet      Declared fleet floor + working activity; configure/set models across CLIs.
+             fleet models [--profile]   available vs enabled per tool
+             fleet configure            one plan for Claude+OpenCode+Cursor (profile)
+             fleet configure --codex-model <id>   Codex only (single-default)
+             fleet set --platform opencode|claude|codex --agent <id> --model <id> [--yes]
+  mcp        Serve or install read-only MCP for agents (mcp install).
   uninstall  Remove managed sections and global state. Backups are preserved.
   init       Alias for install --scope=workspace (legacy).
 
 JSON output (--json on supported commands):
   status, sync, doctor, adapters, explain, diff, history, history last,
-  policy (show/set/reset), report, monitor
+  policy (show/set/reset), report, monitor, connections, fleet
   Human text remains the default. See docs/cli-reference.md for examples and field notes.
 
 Version:
