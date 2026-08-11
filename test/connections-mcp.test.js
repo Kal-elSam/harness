@@ -85,11 +85,21 @@ test("detectAgentMcpRegistration reads mcpServers.kairo", async () => {
   const connected = await detectAgentMcpRegistration({
     homeDir: "/tmp/fake-home",
     readFileFn: async () => JSON.stringify({
-      mcpServers: { kairo: { command: "kairo", args: ["mcp"] }, engram: {} }
+      mcpServers: { kairo: { command: "kairo", args: ["mcp"], cwd: "." }, engram: {} }
     })
   });
   assert.equal(connected.connected, true);
   assert.equal(connected.state, "connected");
+
+  const legacy = await detectAgentMcpRegistration({
+    homeDir: "/tmp/fake-home",
+    readFileFn: async () => JSON.stringify({
+      mcpServers: { kairo: { command: "kairo", args: ["mcp"] } }
+    })
+  });
+  assert.equal(legacy.connected, false);
+  assert.equal(legacy.state, "error");
+  assert.match(legacy.detail, /cwd/);
 });
 
 test("mcp install plans without --yes and applies with backup", async () => {
@@ -97,6 +107,7 @@ test("mcp install plans without --yes and applies with backup", async () => {
   const copies = [];
   const ruleCalls = [];
   const homeDir = "/tmp/kairo-mcp-home";
+  const healthyEntry = { command: "kairo", args: ["mcp"], cwd: "." };
 
   const planOnly = await runMcpInstall({
     homeDir,
@@ -122,6 +133,7 @@ test("mcp install plans without --yes and applies with backup", async () => {
   });
   assert.equal(planOnly.applied, false);
   assert.equal(planOnly.plan.entry.command, "kairo");
+  assert.equal(planOnly.plan.entry.cwd, ".");
   assert.equal(planOnly.plan.ruleWouldWrite, true);
   assert.match(planOnly.plan.rulePath, /kairo-work-snapshot\.mdc$/);
   assert.equal(ruleCalls[0].apply, false);
@@ -149,7 +161,7 @@ test("mcp install plans without --yes and applies with backup", async () => {
   assert.equal(applied.applied, true);
   assert.equal(writes.length, 1);
   assert.equal(writes[0].value.mcpServers.engram.command, "engram");
-  assert.deepEqual(writes[0].value.mcpServers.kairo, { command: "kairo", args: ["mcp"] });
+  assert.deepEqual(writes[0].value.mcpServers.kairo, healthyEntry);
   assert.equal(copies.length, 1);
   assert.match(copies[0].to, /\.kairo-backup\.42$/);
   assert.equal(applied.ruleWrote, true);
@@ -157,9 +169,81 @@ test("mcp install plans without --yes and applies with backup", async () => {
 
   const planned = buildMcpInstallPlan({
     homeDir,
-    existing: { mcpServers: { kairo: { command: "kairo", args: ["mcp"] } } },
+    existing: { mcpServers: { kairo: healthyEntry } },
     alreadyConnected: true
   });
   assert.equal(planned.wouldWrite, false);
   assert.match(planned.rulePath, /kairo-work-snapshot\.mdc$/);
+});
+
+test("mcp install migrates legacy entry without cwd and preserves peers", async () => {
+  const homeDir = "/tmp/kairo-mcp-migrate";
+  const writes = [];
+  const applied = await runMcpInstall({
+    homeDir,
+    yes: true,
+    json: true,
+    now: () => 7,
+    readFileFn: async () => JSON.stringify({
+      mcpServers: {
+        engram: { command: "engram" },
+        kairo: { command: "kairo", args: ["mcp"] }
+      }
+    }),
+    mkdirFn: async () => {},
+    copyFileFn: async () => {},
+    writeAtomicJsonFn: async (path, value) => { writes.push({ path, value }); },
+    ensureRule: async () => ({
+      path: `${homeDir}/.cursor/rules/kairo-work-snapshot.mdc`,
+      wouldWrite: false,
+      wrote: false,
+      backupPath: null
+    })
+  });
+  assert.equal(applied.applied, true);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].value.mcpServers.kairo, {
+    command: "kairo", args: ["mcp"], cwd: "."
+  });
+  assert.equal(writes[0].value.mcpServers.engram.command, "engram");
+});
+
+test("mcp install and detection honor HARNESS_HOME via resolveHomeDir contract", async () => {
+  const harnessHome = "/tmp/kairo-harness-home-override";
+  const osHome = "/tmp/kairo-os-home-unused";
+  const seen = [];
+  await runMcpInstall({
+    homeDir: harnessHome,
+    yes: false,
+    json: true,
+    readFileFn: async (path) => {
+      seen.push(path);
+      const err = new Error("ENOENT");
+      err.code = "ENOENT";
+      throw err;
+    },
+    ensureRule: async (opts) => {
+      seen.push(opts.homeDir);
+      return {
+        path: `${opts.homeDir}/.cursor/rules/kairo-work-snapshot.mdc`,
+        wouldWrite: true,
+        wrote: false,
+        backupPath: null
+      };
+    }
+  });
+  assert.ok(seen.every((item) => String(item).startsWith(harnessHome)));
+  assert.ok(seen.every((item) => !String(item).startsWith(osHome)));
+
+  const detected = await detectAgentMcpRegistration({
+    homeDir: harnessHome,
+    readFileFn: async (path) => {
+      assert.match(path, new RegExp(`^${harnessHome}/`));
+      return JSON.stringify({
+        mcpServers: { kairo: { command: "kairo", args: ["mcp"], cwd: "." } }
+      });
+    }
+  });
+  assert.equal(detected.connected, true);
+  assert.match(detected.path, new RegExp(`^${harnessHome}/`));
 });

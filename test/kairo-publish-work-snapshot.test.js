@@ -57,6 +57,16 @@ test("publish enrolls once, updates same chat, rejects bad payloads", async () =
     assert.equal((await publishWorkSnapshot({
       ...base, conversationId: IGNORED_SMOKE_CONVERSATION_IDS[0]
     }, { homeDir, cwd })).code, "ignored_conversation");
+
+    const benign = await publishWorkSnapshot({
+      ...base,
+      conversationId: "chat-benign-id",
+      goal: "Ship kairo.nextAction wiring",
+      now: "Published honest nextAction label",
+      next: "Panel stays active"
+    }, { homeDir, cwd });
+    assert.equal(benign.ok, true);
+    assert.equal(benign.data.snapshot.goal, "Ship kairo.nextAction wiring");
   } finally {
     await rm(homeDir, { recursive: true, force: true });
   }
