@@ -3,6 +3,7 @@
 const vscode = require("vscode");
 const { StatusCache, mapStatusBar, fetchKairoStatus } = require("./status");
 const { ConnectionsCache, fetchKairoConnections } = require("./connections-cache");
+const { NextCache, fetchKairoNext } = require("./next-cache");
 const { KairoStatusTreeProvider } = require("./tree");
 const { KairoPanelProvider, VIEW_ID } = require("./panel");
 
@@ -50,6 +51,9 @@ function activate(context) {
   const connectionsCache = new ConnectionsCache({
     fetch: () => fetchKairoConnections({ cwd: workspaceCwd() })
   });
+  const nextCache = new NextCache({
+    fetch: () => fetchKairoNext({ cwd: workspaceCwd() })
+  });
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   item.command = "kairo.openPanel";
   item.show();
@@ -61,6 +65,7 @@ function activate(context) {
   const panel = new KairoPanelProvider({
     cache,
     connectionsCache,
+    nextCache,
     onAction: async (id, message = {}) => {
       if (id === "refresh") {
         await refreshAll({ force: true });
@@ -96,6 +101,7 @@ function activate(context) {
     if (force) {
       cache.invalidate();
       connectionsCache.invalidate();
+      nextCache.invalidate();
     }
     const status = await cache.get({ force });
     const mapped = mapStatusBar(status);
@@ -127,6 +133,11 @@ function activate(context) {
   context.subscriptions.push(
     vscode.window.onDidChangeWindowState((state) => {
       if (state.focused) void refreshAll({ force: true });
+    })
+  );
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void refreshAll({ force: true });
     })
   );
 
