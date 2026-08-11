@@ -1,7 +1,9 @@
 # Kairo MCP
 
-Kairo exposes a **read-only** MCP server so agents (Cursor, etc.) can observe
-governance status, runs, alerts, Gentle, and Graphify without writing configs.
+Kairo exposes an MCP server so agents (Cursor, etc.) can observe governance
+status, runs, alerts, Gentle, and Graphify, and publish a semantic work
+snapshot for the runtime workspace. Config mutations stay consent-gated in
+the CLI / panel.
 
 ## Connect from the IDE
 
@@ -13,26 +15,22 @@ governance status, runs, alerts, Gentle, and Graphify without writing configs.
 Or from any terminal:
 
 ```bash
-kairo mcp install          # show plan
-kairo mcp install --yes    # write ~/.cursor/mcp.json entry
+kairo mcp install          # show plan (MCP entry + managed rule)
+kairo mcp install --yes    # write ~/.cursor/mcp.json + ~/.cursor/rules/kairo-work-snapshot.mdc
 kairo connections --json   # chips including Agent · connected
-```
-
-Entry written:
-
-```json
-{
-  "mcpServers": {
-    "kairo": {
-      "command": "kairo",
-      "args": ["mcp"]
-    }
-  }
-}
+kairo next --json          # selected work snapshot + integration state
 ```
 
 `--client=cursor` is the only client in v1. A backup `*.kairo-backup.<ts>` is
-created when the file already exists.
+created when an existing file is replaced.
+
+## Managed Cursor rule
+
+`kairo mcp install --yes` also installs `~/.cursor/rules/kairo-work-snapshot.mdc`
+(`alwaysApply: true`). It instructs the agent to call
+`kairo_publish_work_snapshot` after significant turns with Goal / Progress /
+Now / Blockers / Next — never prompts, transcripts, or agent-supplied
+workspace paths. The first publish enrolls the conversation automatically.
 
 ## Serve (stdio)
 
@@ -42,7 +40,7 @@ kairo mcp
 
 Stdout is reserved for the MCP protocol — no banners.
 
-## Tools (read-only)
+## Tools
 
 | Tool | Purpose |
 |---|---|
@@ -53,7 +51,8 @@ Stdout is reserved for the MCP protocol — no banners.
 | `kairo_graph_query` | Graphify query on a workspace graph |
 | `kairo_graph_path` | Graphify path between nodes |
 | `kairo_context_summary` | Companion signals, Engram status, soft links |
-| `kairo_fleet` | Declared fleets + OpenCode live activity (parent→child sessions) |
+| `kairo_fleet` | Declared fleets + OpenCode live activity |
+| `kairo_publish_work_snapshot` | Write `kairo.work-snapshot/v1` (enrolls conversation) |
 
 What an agent can ask:
 
@@ -61,9 +60,12 @@ What an agent can ask:
 - List open alerts / recent runs.
 - Is Gentle available? Is Engram configured?
 - Query the Graphify knowledge graph (read-only).
+- Publish the current semantic work snapshot.
 
-What MCP does **not** do: sync, setup, install agents, or mutate configs.
-Those stay consent-gated in the CLI / panel buttons (terminal).
+What MCP does **not** do: sync, setup, install agents, or mutate configs
+beyond the consent-gated `mcp install` path. Workspace identity for snapshot
+publish is derived from the MCP process cwd — agents cannot supply
+`projectKey` / paths.
 
 ## Connections chips
 
