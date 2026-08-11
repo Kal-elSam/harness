@@ -168,6 +168,15 @@ export async function runCli(argv) {
       }
       return;
     }
+    case "next": {
+      const { runNextCli } = await import("./global/next/next-cli.js");
+      await runNextCli({
+        cwd: optionsWithPolicy.cwd,
+        json: optionsWithPolicy.json === true,
+        mcpClient: optionsWithPolicy.mcpClient ?? "cursor"
+      });
+      return;
+    }
     case "fleet": {
       const fleetAction = optionsWithPolicy.fleetAction ?? "show";
       if (fleetAction === "set") {
@@ -1037,6 +1046,7 @@ function normalizeCommand(command) {
   if (command === "graphify") return "graphify";
   if (command === "mcp") return "mcp";
   if (command === "connections") return "connections";
+  if (command === "next") return "next";
   if (command === "fleet") return "fleet";
   if (command === "intelligence" || command === "intel") return "intelligence";
   if (command === "setup") return "setup";

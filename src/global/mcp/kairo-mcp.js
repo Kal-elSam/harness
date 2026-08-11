@@ -13,10 +13,18 @@ import { resolveGitHeadSha } from "../observability/graphify-probe.js";
 import { runPassiveObservabilitySnapshot } from "../observability/passive-snapshot-flight.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
 import { buildFleetReport } from "../observability/fleet-probe.js";
+import {
+  createPublishWorkSnapshotHandler,
+  workSnapshotPublishSchema
+} from "./work-snapshot-tool.js";
+
+/** Sole MCP write tool for companion snapshots. */
+export const KAIRO_MCP_WRITE_TOOLS = Object.freeze(["kairo_publish_work_snapshot"]);
 
 export const KAIRO_MCP_TOOLS = Object.freeze([
   "kairo_status", "kairo_runs", "kairo_alerts", "kairo_gentle_status",
-  "kairo_graph_query", "kairo_graph_path", "kairo_context_summary", "kairo_fleet"
+  "kairo_graph_query", "kairo_graph_path", "kairo_context_summary", "kairo_fleet",
+  ...KAIRO_MCP_WRITE_TOOLS
 ]);
 
 const empty = z.object({});
@@ -31,7 +39,8 @@ export const mcpSchemas = Object.freeze({
     graph: z.string().min(1), question: z.string().min(1),
     budget: z.number().int().min(1).max(8000).default(2000)
   }),
-  graphPath: z.object({ graph: z.string().min(1), from: z.string().min(1), to: z.string().min(1) })
+  graphPath: z.object({ graph: z.string().min(1), from: z.string().min(1), to: z.string().min(1) }),
+  workSnapshotPublish: workSnapshotPublishSchema
 });
 
 const CODE_RE = /^(?:[a-z][a-z0-9_]{0,48}|status=\d+)$/;
@@ -223,7 +232,15 @@ export function createToolHandlers(deps = {}) {
           kind: "declared", fleets: [], activity: null, note: null, orchestratorAuthority: null
         });
       }
-    }
+    },
+    kairo_publish_work_snapshot: createPublishWorkSnapshotHandler({
+      homeDir,
+      cwd,
+      now: deps.now,
+      writeAtomic: deps.writeAtomic,
+      publishWorkSnapshot: deps.publishWorkSnapshot,
+      mcpResult
+    })
   };
 }
 
@@ -237,7 +254,12 @@ export function registerKairoMcpTools(registerTool, deps = {}) {
     ["kairo_graph_query", "Read-only Graphify query", mcpSchemas.graphQuery],
     ["kairo_graph_path", "Read-only Graphify path", mcpSchemas.graphPath],
     ["kairo_context_summary", "Companion + soft links + alerts count", empty],
-    ["kairo_fleet", "Declared fleet topology + OpenCode live activity", empty]
+    ["kairo_fleet", "Declared fleet topology + OpenCode live activity", empty],
+    [
+      "kairo_publish_work_snapshot",
+      "Publish kairo.work-snapshot/v1 for the runtime workspace (enrolls conversation)",
+      mcpSchemas.workSnapshotPublish
+    ]
   ]) registerTool(name, { description, inputSchema }, h[name]);
   return h;
 }
