@@ -115,6 +115,7 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} components diff sdd-core [--agents <list>] [--json]
   ${cli} components rollback engram-memory|sdd-core --receipt <id> [--dry-run|--yes] [--json]
   ${cli} connections [--json] [--client cursor]
+  ${cli} next [--json] [--client cursor]
   ${cli} fleet [--json] [--verbose] [--include-variants]
   ${cli} fleet models [--profile] [--json]
   ${cli} fleet configure [--platforms claude,opencode,cursor|codex] [--from profile|gentle] [--codex-model <id>] [--assignments a=b,...] [--yes] [--json]
@@ -166,6 +167,7 @@ Commands:
   report     Read-only diagnostics bundle: status, policy, adapters, diff, history.
   components List, validate, scaffold, pack, import, or configure integrations (Engram, SDD).
   connections Companion chips + MCP registration (IDE panel).
+  next        Selected work snapshot + integration state (panel contract).
   fleet      Declared fleet floor + working activity; configure/set models across CLIs.
              fleet models [--profile]   available vs enabled per tool
              fleet configure            one plan for Claude+OpenCode+Cursor (profile)
