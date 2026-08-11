@@ -42,6 +42,31 @@ test("createWorkSnapshot strips leaks and rejects private payloads", () => {
   assert.equal(snapshotIsComplete(snap), true);
 });
 
+test("sanitizer keeps honest identifiers but filters contract tokens", () => {
+  const honest = createWorkSnapshot({
+    goal: "Track kairo.nextAction for the panel",
+    now: "Publishing with honest nextAction id",
+    next: "Confirm active integration",
+    progress: ["Mapped kairo.nextAction"],
+    blockers: ["Waiting on review"]
+  });
+  assert.equal(honest.goal, "Track kairo.nextAction for the panel");
+  assert.equal(honest.now, "Publishing with honest nextAction id");
+  assert.deepEqual(honest.progress, ["Mapped kairo.nextAction"]);
+  assert.equal(snapshotIsComplete(honest), true);
+
+  const leak = createWorkSnapshot({
+    goal: "Do not embed kairo.next/v1 in goal",
+    now: "schema: kairo.work-snapshot/v1",
+    next: "Still going",
+    progress: ["ok"],
+    blockers: []
+  });
+  assert.equal(leak.goal, null);
+  assert.equal(leak.now, null);
+  assert.equal(snapshotIsComplete(leak), false);
+});
+
 test("incomplete snapshot keeps nulls and never invents content", () => {
   const snap = createWorkSnapshot({ goal: "Only goal" });
   assert.equal(snap.now, null);

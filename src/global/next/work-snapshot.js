@@ -21,7 +21,7 @@ const PRIVATE_KEYS = Object.freeze([
 ]);
 
 const TECH_LEAK_RE =
-  /\bks_[a-f0-9]{8,}\b|kairo\.(?:work|next|session)|call kairo_|engramRef|schema\s*[:=]/i;
+  /\bks_[a-f0-9]{8,}\b|kairo\.(?:work|next|session)\b|call kairo_|engramRef|schema\s*[:=]/i;
 
 export function isIgnoredSmokeConversationId(id) {
   return Boolean(id) && IGNORED_SMOKE_CONVERSATION_IDS.includes(String(id));

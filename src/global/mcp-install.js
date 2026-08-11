@@ -4,7 +4,6 @@
  */
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { homedir } from "node:os";
 import { writeAtomicJson } from "./runtime/write-atomic-json.js";
 import {
   MCP_CLIENTS,
@@ -19,11 +18,22 @@ import {
   ensureWorkSnapshotRule,
   resolveWorkSnapshotRulePath
 } from "./mcp/work-snapshot-rule.js";
+import { resolveHomeDir } from "./paths.js";
 
+/** Cursor MCP entry — cwd "." binds identity to the workspace folder, never $HOME. */
 export const KAIRO_MCP_SERVER_ENTRY = Object.freeze({
   command: "kairo",
-  args: Object.freeze(["mcp"])
+  args: Object.freeze(["mcp"]),
+  cwd: "."
 });
+
+export function buildKairoMcpServerEntry() {
+  return {
+    command: KAIRO_MCP_SERVER_ENTRY.command,
+    args: [...KAIRO_MCP_SERVER_ENTRY.args],
+    cwd: KAIRO_MCP_SERVER_ENTRY.cwd
+  };
+}
 
 function backupPath(configPath, stamp = Date.now()) {
   return `${configPath}.kairo-backup.${stamp}`;
@@ -31,17 +41,18 @@ function backupPath(configPath, stamp = Date.now()) {
 
 export function buildMcpInstallPlan({
   client = "cursor",
-  homeDir = homedir(),
+  homeDir = resolveHomeDir(),
   existing = null,
   alreadyConnected = false
 } = {}) {
   const clientMeta = MCP_CLIENTS[client] ?? MCP_CLIENTS.cursor;
   const path = resolveMcpConfigPath(client, { homeDir });
+  const entry = buildKairoMcpServerEntry();
   const next = {
     ...(existing && typeof existing === "object" ? existing : {}),
     mcpServers: {
       ...((existing && typeof existing === "object" && existing.mcpServers) || {}),
-      kairo: { command: KAIRO_MCP_SERVER_ENTRY.command, args: [...KAIRO_MCP_SERVER_ENTRY.args] }
+      kairo: entry
     }
   };
   return {
@@ -79,7 +90,7 @@ export async function runMcpInstall({
   client = "cursor",
   yes = false,
   json = false,
-  homeDir = homedir(),
+  homeDir = resolveHomeDir(),
   readFileFn = readFile,
   mkdirFn = mkdir,
   copyFileFn = copyFile,
@@ -202,7 +213,7 @@ export async function runMcpCli(options = {}) {
       client: options.mcpClient ?? "cursor",
       yes: options.yes === true,
       json: options.json === true,
-      homeDir: options.homeDir
+      homeDir: options.homeDir ?? resolveHomeDir()
     });
   }
   if (action === "serve" || action == null) {

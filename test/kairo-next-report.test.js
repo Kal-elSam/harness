@@ -50,7 +50,7 @@ test("next report selects latest snapshot and maps integration states", async ()
 
     await mkdir(cursorDir, { recursive: true });
     await writeFile(join(cursorDir, "mcp.json"), JSON.stringify({
-      mcpServers: { kairo: { command: "kairo", args: ["mcp"] } }
+      mcpServers: { kairo: { command: "kairo", args: ["mcp"], cwd: "." } }
     }));
 
     const ready = await buildNextReport({
@@ -60,6 +60,18 @@ test("next report selects latest snapshot and maps integration states", async ()
     });
     assert.equal(ready.integration.state, INTEGRATION_STATE.READY);
     assert.equal(ready.integration.showRepair, false);
+
+    const legacyBroken = await buildNextReport({
+      homeDir,
+      cwd,
+      detectAgent: async () => ({
+        connected: false,
+        state: "error",
+        detail: "Kairo MCP entry is missing cwd: \".\"."
+      })
+    });
+    assert.equal(legacyBroken.integration.state, INTEGRATION_STATE.BROKEN);
+    assert.equal(legacyBroken.integration.showRepair, true);
 
     await publishWorkSnapshot(snap, {
       homeDir, cwd, now: () => "2026-08-11T12:00:00.000Z"
