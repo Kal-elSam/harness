@@ -95,6 +95,7 @@ test("detectAgentMcpRegistration reads mcpServers.kairo", async () => {
 test("mcp install plans without --yes and applies with backup", async () => {
   const writes = [];
   const copies = [];
+  const ruleCalls = [];
   const homeDir = "/tmp/kairo-mcp-home";
 
   const planOnly = await runMcpInstall({
@@ -108,10 +109,22 @@ test("mcp install plans without --yes and applies with backup", async () => {
     },
     writeAtomicJsonFn: async () => {
       throw new Error("should not write");
+    },
+    ensureRule: async (opts) => {
+      ruleCalls.push(opts);
+      return {
+        path: `${homeDir}/.cursor/rules/kairo-work-snapshot.mdc`,
+        wouldWrite: true,
+        wrote: false,
+        backupPath: null
+      };
     }
   });
   assert.equal(planOnly.applied, false);
   assert.equal(planOnly.plan.entry.command, "kairo");
+  assert.equal(planOnly.plan.ruleWouldWrite, true);
+  assert.match(planOnly.plan.rulePath, /kairo-work-snapshot\.mdc$/);
+  assert.equal(ruleCalls[0].apply, false);
 
   const existing = { mcpServers: { engram: { command: "engram" } } };
   const applied = await runMcpInstall({
@@ -122,7 +135,16 @@ test("mcp install plans without --yes and applies with backup", async () => {
     readFileFn: async () => JSON.stringify(existing),
     mkdirFn: async () => {},
     copyFileFn: async (from, to) => { copies.push({ from, to }); },
-    writeAtomicJsonFn: async (path, value) => { writes.push({ path, value }); }
+    writeAtomicJsonFn: async (path, value) => { writes.push({ path, value }); },
+    ensureRule: async (opts) => {
+      ruleCalls.push(opts);
+      return {
+        path: `${homeDir}/.cursor/rules/kairo-work-snapshot.mdc`,
+        wouldWrite: true,
+        wrote: opts.apply === true,
+        backupPath: null
+      };
+    }
   });
   assert.equal(applied.applied, true);
   assert.equal(writes.length, 1);
@@ -130,6 +152,8 @@ test("mcp install plans without --yes and applies with backup", async () => {
   assert.deepEqual(writes[0].value.mcpServers.kairo, { command: "kairo", args: ["mcp"] });
   assert.equal(copies.length, 1);
   assert.match(copies[0].to, /\.kairo-backup\.42$/);
+  assert.equal(applied.ruleWrote, true);
+  assert.ok(ruleCalls.some((c) => c.apply === true));
 
   const planned = buildMcpInstallPlan({
     homeDir,
@@ -137,4 +161,5 @@ test("mcp install plans without --yes and applies with backup", async () => {
     alreadyConnected: true
   });
   assert.equal(planned.wouldWrite, false);
+  assert.match(planned.rulePath, /kairo-work-snapshot\.mdc$/);
 });

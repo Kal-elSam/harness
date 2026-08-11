@@ -153,6 +153,13 @@ function panelStyles() {
     .details p { margin: 0 0 8px; color: var(--muted); }
     .empty { padding: 24px 14px; color: var(--muted); text-align: center; }
     .hint { margin-top: 16px; font-size: 12px; color: var(--muted); }
+    .work { border-bottom: 1px solid var(--border); padding: 10px 14px 12px; }
+    .work-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-weight: 600; }
+    .work-row { margin: 0 0 8px; }
+    .work-label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; margin-bottom: 2px; }
+    .work-list { margin: 0; padding-left: 18px; }
+    .work-empty, .work-detail { color: var(--muted); }
+    .muted { color: var(--muted); }
   `;
 }
 
