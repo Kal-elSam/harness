@@ -2,6 +2,7 @@
 
 const { enrichEntry, sortEntries } = require("./entry-actions");
 const { buildFleetNodes, buildActivityNodes } = require("./panel-fleet");
+const { buildWorkViewport } = require("./panel-work");
 
 const INSTALL_HINT = "Install Kairo: npm install -g @kal-elsam/kairo-runtime";
 
@@ -15,13 +16,14 @@ const SAFETY_RANK = Object.freeze({
  * Console-Ninja-style panel model: headline + actions + entries + connection chips.
  * Actions never write — they only describe a terminal command to run.
  */
-function buildPanelModel(status, connections = [], fleetReport = null) {
+function buildPanelModel(status, connections = [], fleetReport = null, nextReport = null) {
   const fleetNodes = buildFleetNodes(fleetReport);
   const { activityNodes, activityNote, activityActiveCount, showActivityFloor } = buildActivityNodes(fleetReport);
   const fleetNote = fleetReport?.fleetNote
     ?? fleetReport?.note
     ?? "Declared config, not live tokens.";
   const orchestratorAuthority = fleetReport?.orchestratorAuthority ?? null;
+  const work = buildWorkViewport(nextReport);
 
   if (!status || status.installed === false || status.overall === "missing") {
     return {
@@ -40,6 +42,7 @@ function buildPanelModel(status, connections = [], fleetReport = null) {
       showActivityFloor: showActivityFloor === true,
       fleetNote,
       orchestratorAuthority,
+      work,
       entries: []
     };
   }
@@ -152,6 +155,15 @@ function buildPanelModel(status, connections = [], fleetReport = null) {
       primary: false
     });
   }
+  if (work.showRepair) {
+    actions.push({
+      id: "repair-integration",
+      label: "Repair integration",
+      command: "kairo mcp install --yes",
+      primary: true,
+      safety: "consent"
+    });
+  }
   actions.push(
     { id: "fleet", label: "Fleet", command: "kairo fleet", primary: false },
     { id: "doctor", label: "Doctor", command: "kairo doctor", primary: false },
@@ -174,6 +186,7 @@ function buildPanelModel(status, connections = [], fleetReport = null) {
     showActivityFloor: showActivityFloor === true,
     fleetNote,
     orchestratorAuthority,
+    work,
     entries
   };
 }

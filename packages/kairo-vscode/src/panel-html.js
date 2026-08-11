@@ -82,6 +82,45 @@ function renderActivityTree(activityNodes, activeCount = 0, showFloor = false) {
   return `<div class="fleet activity" id="activity">${head}<div class="floor">${desks}</div></div>`;
 }
 
+function renderList(items) {
+  if (!Array.isArray(items) || items.length === 0) return "";
+  return `<ul class="work-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderWorkViewport(work) {
+  const w = work ?? { present: false, emptyReason: "no_snapshot", integrationState: "missing" };
+  const meta = [
+    w.integrationState ? `Integration · ${w.integrationState}` : null,
+    w.conversationId ? `Chat · ${w.conversationId}` : null,
+    w.updatedAt ? `Updated · ${w.updatedAt}` : null
+  ].filter(Boolean).join(" · ");
+
+  if (!w.present) {
+    const reason = w.emptyReason === "next_unavailable"
+      ? "Work snapshot unavailable."
+      : "No published work snapshot for this workspace.";
+    return `<section class="work" id="work">
+      <div class="work-head"><span>Work</span><span class="muted">${escapeHtml(meta || "—")}</span></div>
+      <div class="work-empty">${escapeHtml(reason)}</div>
+      ${w.detail ? `<div class="muted work-detail">${escapeHtml(w.detail)}</div>` : ""}
+    </section>`;
+  }
+
+  const team = w.team?.members?.length
+    ? `<div class="work-row"><span class="work-label">Team</span>${renderList(w.team.members.map((m) => m.title || m.workId))}</div>`
+    : "";
+
+  return `<section class="work" id="work">
+    <div class="work-head"><span>Work</span><span class="muted">${escapeHtml(meta)}</span></div>
+    ${w.goal ? `<div class="work-row"><span class="work-label">Goal</span><div>${escapeHtml(w.goal)}</div></div>` : ""}
+    ${w.progress?.length ? `<div class="work-row"><span class="work-label">Progress</span>${renderList(w.progress)}</div>` : ""}
+    ${w.now ? `<div class="work-row"><span class="work-label">Now</span><div>${escapeHtml(w.now)}</div></div>` : ""}
+    ${w.blockers?.length ? `<div class="work-row"><span class="work-label">Blockers</span>${renderList(w.blockers)}</div>` : ""}
+    ${w.next ? `<div class="work-row"><span class="work-label">Next</span><div>${escapeHtml(w.next)}</div></div>` : ""}
+    ${team}
+  </section>`;
+}
+
 function renderPanelHtml(model, nonce) {
   const entries = model.entries ?? [];
   const actions = model.actions ?? [];
@@ -128,6 +167,7 @@ function renderPanelHtml(model, nonce) {
   </header>
   <div class="actions">${renderActionButtons(actions)}</div>
   <div class="connections" id="connections">${chips}</div>
+  ${renderWorkViewport(model.work)}
   ${renderFleetTree(fleetNodes)}
   ${renderActivityTree(activityNodes, model.activityActiveCount ?? 0, model.showActivityFloor === true)}
   <div class="panes">
@@ -302,4 +342,4 @@ function renderPanelHtml(model, nonce) {
 </html>`;
 }
 
-module.exports = { escapeHtml, renderPanelHtml, renderFleetTree, renderActivityTree, chipGlyph };
+module.exports = { escapeHtml, renderPanelHtml, renderFleetTree, renderActivityTree, renderWorkViewport, chipGlyph };

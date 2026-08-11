@@ -173,7 +173,7 @@ Commands:
              fleet configure            one plan for Claude+OpenCode+Cursor (profile)
              fleet configure --codex-model <id>   Codex only (single-default)
              fleet set --platform opencode|claude|codex --agent <id> --model <id> [--yes]
-  mcp        Serve or install read-only MCP for agents (mcp install).
+  mcp        Serve or install MCP for agents (mcp install writes entry + snapshot rule).
   uninstall  Remove managed sections and global state. Backups are preserved.
   init       Alias for install --scope=workspace (legacy).
 
