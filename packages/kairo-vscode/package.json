@@ -1,8 +1,8 @@
 {
   "name": "kairo",
   "displayName": "Kairo",
-  "description": "IDE panel for Kairo Runtime — check resolutions, Setup, optional connections.",
-  "version": "0.6.5",
+  "description": "IDE panel for Kairo Runtime — work snapshot, check resolutions, Setup, optional connections.",
+  "version": "0.7.0",
   "publisher": "kal-elsam",
   "license": "MIT",
   "engines": {
