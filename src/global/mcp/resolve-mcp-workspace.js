@@ -6,6 +6,7 @@
  * VSCODE_CWD / WORKSPACE_FOLDER_PATHS — prefer those over process.cwd().
  */
 import { resolve } from "node:path";
+import { canonicalizeProjectPath } from "../next/project-key.js";
 
 function firstNonEmpty(value) {
   if (typeof value !== "string") return null;
@@ -34,19 +35,17 @@ export function resolveMcpWorkspaceCwd({
   cwd,
   env = process.env
 } = {}) {
+  let chosen;
   if (typeof cwd === "string" && cwd.trim()) {
-    return resolve(cwd.trim());
+    chosen = resolve(cwd.trim());
+  } else {
+    const fromFolders = parseWorkspaceFolderPaths(env.WORKSPACE_FOLDER_PATHS);
+    if (fromFolders.length > 0) {
+      chosen = resolve(fromFolders[0]);
+    } else {
+      const vscodeCwd = firstNonEmpty(env.VSCODE_CWD);
+      chosen = vscodeCwd ? resolve(vscodeCwd) : resolve(process.cwd());
+    }
   }
-
-  const fromFolders = parseWorkspaceFolderPaths(env.WORKSPACE_FOLDER_PATHS);
-  if (fromFolders.length > 0) {
-    return resolve(fromFolders[0]);
-  }
-
-  const vscodeCwd = firstNonEmpty(env.VSCODE_CWD);
-  if (vscodeCwd) {
-    return resolve(vscodeCwd);
-  }
-
-  return resolve(process.cwd());
+  return canonicalizeProjectPath(chosen);
 }

@@ -8,9 +8,13 @@ import {
   resolveMcpWorkspaceCwd
 } from "../src/global/mcp/resolve-mcp-workspace.js";
 import { publishWorkSnapshot } from "../src/global/next/publish-work-snapshot.js";
-import { projectKeyForPath } from "../src/global/next/project-key.js";
+import {
+  canonicalizeProjectPath,
+  projectKeyForPath
+} from "../src/global/next/project-key.js";
 import { parseArgs } from "../src/cli.js";
 import { resolveMcpServeCwd } from "../src/global/mcp-install.js";
+import { realpathSync } from "node:fs";
 
 test("parseWorkspaceFolderPaths follows Cursor comma-separated folders", () => {
   assert.deepEqual(parseWorkspaceFolderPaths(""), []);
@@ -27,7 +31,7 @@ test("resolveMcpWorkspaceCwd prefers explicit cwd", () => {
     cwd: "/explicit/ws",
     env: { VSCODE_CWD: "/injected/ws", WORKSPACE_FOLDER_PATHS: "/folders/ws" }
   });
-  assert.equal(got, resolve("/explicit/ws"));
+  assert.equal(got, canonicalizeProjectPath("/explicit/ws"));
 });
 
 test("resolveMcpWorkspaceCwd prefers WORKSPACE_FOLDER_PATHS then VSCODE_CWD", () => {
@@ -38,11 +42,24 @@ test("resolveMcpWorkspaceCwd prefers WORKSPACE_FOLDER_PATHS then VSCODE_CWD", ()
         VSCODE_CWD: "/vscode/ws"
       }
     }),
-    resolve("/ws/a")
+    canonicalizeProjectPath("/ws/a")
   );
   assert.equal(
     resolveMcpWorkspaceCwd({ env: { VSCODE_CWD: "/vscode/ws" } }),
-    resolve("/vscode/ws")
+    canonicalizeProjectPath("/vscode/ws")
+  );
+});
+
+test("projectKeyForPath aliases macOS /tmp and /private/tmp", () => {
+  const tmpReal = realpathSync("/tmp");
+  if (!tmpReal.startsWith("/private/tmp")) return;
+  assert.equal(
+    projectKeyForPath("/tmp/kairo-alias-accept-path"),
+    projectKeyForPath("/private/tmp/kairo-alias-accept-path")
+  );
+  assert.equal(
+    canonicalizeProjectPath("/tmp/kairo-alias-accept-path"),
+    canonicalizeProjectPath("/private/tmp/kairo-alias-accept-path")
   );
 });
 
@@ -59,7 +76,7 @@ test("bare MCP CLI defers HOME cwd to Cursor workspace env", async () => {
         cwd: resolveMcpServeCwd(bare.options),
         env: { WORKSPACE_FOLDER_PATHS: workspace }
       }),
-      resolve(workspace)
+      canonicalizeProjectPath(workspace)
     );
 
     const explicit = parseArgs(["mcp", "--cwd", "/explicit/workspace"]);
@@ -68,7 +85,7 @@ test("bare MCP CLI defers HOME cwd to Cursor workspace env", async () => {
         cwd: resolveMcpServeCwd(explicit.options),
         env: { WORKSPACE_FOLDER_PATHS: workspace, HOME: homeDir }
       }),
-      resolve("/explicit/workspace")
+      canonicalizeProjectPath("/explicit/workspace")
     );
   } finally {
     process.chdir(prevCwd);
@@ -85,8 +102,8 @@ test("Cursor HOME spawn + VSCODE_CWD publishes under workspace key", async () =>
     const cwd = resolveMcpWorkspaceCwd({
       env: { ...process.env, VSCODE_CWD: workspaceA, HOME: homeDir }
     });
-    assert.equal(cwd, resolve(workspaceA));
-    assert.notEqual(cwd, resolve(homeDir));
+    assert.equal(cwd, canonicalizeProjectPath(workspaceA));
+    assert.notEqual(cwd, canonicalizeProjectPath(homeDir));
 
     const result = await publishWorkSnapshot({
       conversationId: "cursor-ide-cwd-regression",
