@@ -44,11 +44,15 @@ from GitHub Actions — no `NPM_TOKEN`.
 |---|---|---|
 | `kairo-runtime-v*` | `@kal-elsam/kairo-runtime` | repo root |
 | `harness-bridge-v*` | `@kal-elsam/harness` | `packages/harness-bridge/` |
+| `kairo-vscode-v*` | `packages/kairo-vscode` (VSIX via GitHub Release) | `packages/kairo-vscode/` |
 | `v*` | legacy / historical root releases | repo root |
 
 Kairo Runtime releases should use `kairo-runtime-vX.Y.Z` going forward. The first
 bootstrap used `v0.1.0`; later releases use package-aware tags such as
 `kairo-runtime-v0.1.1`.
+
+Kairo Extension releases use `kairo-vscode-vX.Y.Z`. The first public canonical
+line is `kairo-vscode-v0.7.0` (GitHub Release VSIX — not Marketplace/Open VSX).
 
 Before tagging a new version:
 

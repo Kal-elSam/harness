@@ -1,0 +1,136 @@
+name: Publish Kairo VS Code Extension
+
+on:
+  push:
+    tags:
+      - "kairo-vscode-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kairo-vscode-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build VSIX and GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Validate tag, manifest, and main ancestry
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          case "$TAG" in
+            kairo-vscode-v*)
+              VERSION="${TAG#kairo-vscode-v}"
+              ;;
+            *)
+              echo "Unexpected tag: $TAG" >&2
+              exit 1
+              ;;
+          esac
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag version must be semver X.Y.Z, got: $VERSION" >&2
+            exit 1
+          fi
+
+          MANIFEST_VERSION="$(node -p "require('./packages/kairo-vscode/package.json').version")"
+          if [[ "$MANIFEST_VERSION" != "$VERSION" ]]; then
+            echo "Tag $TAG does not match packages/kairo-vscode/package.json version $MANIFEST_VERSION" >&2
+            exit 1
+          fi
+
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Tagged SHA $GITHUB_SHA is not an ancestor of origin/main" >&2
+            exit 1
+          fi
+
+          ASSET="kairo-vscode-${VERSION}.vsix"
+          CHECKSUM="${ASSET}.sha256"
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "asset=$ASSET"
+            echo "checksum=$CHECKSUM"
+          } >> "$GITHUB_OUTPUT"
+          echo "Validated $TAG ↔ manifest $MANIFEST_VERSION; SHA on origin/main"
+
+      - name: Run extension tests
+        working-directory: packages/kairo-vscode
+        run: npm test
+
+      - name: Package VSIX with pinned vsce
+        working-directory: packages/kairo-vscode
+        run: |
+          set -euo pipefail
+          rm -f ./*.vsix
+          npx --yes @vscode/vsce@3.9.2 package --no-dependencies
+          DEFAULT_VSIX="kairo-${{ steps.meta.outputs.version }}.vsix"
+          if [[ ! -f "$DEFAULT_VSIX" ]]; then
+            echo "Expected $DEFAULT_VSIX from vsce" >&2
+            ls -la ./*.vsix || true
+            exit 1
+          fi
+          mv "$DEFAULT_VSIX" "${{ steps.meta.outputs.asset }}"
+          shasum -a 256 "${{ steps.meta.outputs.asset }}" | tee "${{ steps.meta.outputs.checksum }}"
+
+      - name: Verify VSIX contents
+        working-directory: packages/kairo-vscode
+        run: |
+          set -euo pipefail
+          ASSET="${{ steps.meta.outputs.asset }}"
+          LIST="$(unzip -Z1 "$ASSET")"
+          echo "$LIST" | grep -Fqx "extension/src/next-cache.js"
+          echo "$LIST" | grep -Fqx "extension/src/panel-work.js"
+          echo "$LIST" | grep -Eq 'extension/src/(extension|status|panel)\.js'
+          echo "$LIST" | grep -Eiq '^extension/readme\.md$'
+          echo "$LIST" | grep -Fqx "extension/package.json"
+          if echo "$LIST" | grep -E '(^|/)(test/|graphify-out/|\.vscode-test/)' >/dev/null; then
+            echo "VSIX includes excluded development paths" >&2
+            exit 1
+          fi
+          if echo "$LIST" | grep -Ei '\.vsix$' >/dev/null; then
+            echo "VSIX nested inside VSIX" >&2
+            exit 1
+          fi
+          echo "VSIX content checks passed"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          ASSET="${{ steps.meta.outputs.asset }}"
+          CHECKSUM="${{ steps.meta.outputs.checksum }}"
+          cd packages/kairo-vscode
+          gh release create "$TAG" \
+            --title "Kairo Extension ${VERSION}" \
+            --notes "$(cat <<EOF
+          First public canonical release of the Kairo VS Code / Cursor extension.
+
+          - Extension version: \`${VERSION}\`
+          - Requires Kairo Runtime \`>= 0.15.0\` (\`npm i -g @kal-elsam/kairo-runtime\`)
+          - Install manually in Cursor from the VSIX asset below
+          - Not published to VS Marketplace / Open VSX
+
+          Asset: \`${ASSET}\` (SHA-256 in \`${CHECKSUM}\`)
+          EOF
+          )" \
+            "$ASSET" \
+            "$CHECKSUM"
