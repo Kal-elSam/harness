@@ -17,6 +17,7 @@ import {
   createPublishWorkSnapshotHandler,
   workSnapshotPublishSchema
 } from "./work-snapshot-tool.js";
+import { resolveMcpWorkspaceCwd } from "./resolve-mcp-workspace.js";
 
 /** Sole MCP write tool for companion snapshots. */
 export const KAIRO_MCP_WRITE_TOOLS = Object.freeze(["kairo_publish_work_snapshot"]);
@@ -104,7 +105,11 @@ function graphEnvelope(result) {
 
 export function createToolHandlers(deps = {}) {
   const homeDir = deps.homeDir ?? resolveHomeDir();
-  const cwd = deps.cwd ?? process.cwd();
+  // Cursor may spawn MCP under $HOME; prefer VSCODE_CWD / WORKSPACE_FOLDER_PATHS.
+  const cwd = resolveMcpWorkspaceCwd({
+    cwd: deps.cwd,
+    env: deps.env ?? process.env
+  });
   const listRuns = deps.listRuns ?? ((o) => listRunRecords(homeDir, o));
   const listAlertRows = deps.listAlerts ?? ((o) => listAlerts({ homeDir, ...o }));
   const listReviews = deps.listReviews ?? (() => listReviewReceipts({ homeDir, limit: 20 }));
