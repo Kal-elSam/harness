@@ -86,8 +86,10 @@ to end:
 Release flow (Kairo Runtime):
 
 ```bash
-# bump version in package.json and pnpm-lock.yaml
-git add .
+# bump version in package.json (pnpm-lock.yaml does not store the root version)
+pnpm install --lockfile-only   # regenerate lockfile; commit only if it changes
+git add package.json CHANGELOG.md docs/contributing.md
+# git add pnpm-lock.yaml   # only when the regenerator produced a real diff
 git commit -m "chore: release kairo-runtime 0.1.1"
 pnpm run release:check
 git tag kairo-runtime-v0.1.1
@@ -98,7 +100,8 @@ git push origin kairo-runtime-v0.1.1
 Bridge release flow:
 
 ```bash
-# bump packages/harness-bridge/package.json (+ pnpm-lock.yaml)
+# bump packages/harness-bridge/package.json
+# regenerate pnpm-lock.yaml; commit it only if content changes
 git add .
 git commit -m "chore: release harness bridge 0.30.0"
 pnpm run release:check

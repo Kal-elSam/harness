@@ -5,8 +5,28 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.15.0 — 2026-08-12 (Kairo Runtime)
+
+Minor release. Declared Fleet board + model configure, and the Cursor
+observable companion (work snapshots, MCP publish, `kairo next`, managed
+rule, honest panel). Publish tag: `kairo-runtime-v0.15.0`. Extension
+marketplace delivery stays out of this unit.
+
 ### Added
 
+- Contract `kairo.work-snapshot/v1` and MCP tool `kairo_publish_work_snapshot`
+  to enroll the current Cursor conversation with Goal / Progress / Now /
+  Constraints / Next.
+- `kairo next` / `kairo.next/v1`: selected work snapshot plus integration
+  state (`active` / `enrolled` / `showRepair`) for the IDE panel.
+- `kairo mcp install [--yes]`: consent-gated registration of Kairo MCP in
+  `~/.cursor/mcp.json` (plan first; atomic write + backup) and managed
+  Cursor rule `~/.cursor/rules/kairo-work-snapshot.mdc` (`alwaysApply`).
+- Panel **0.7.0**: honest companion surface — Repair only when integration
+  is broken; otherwise active/enrolled without false prompts.
+- MCP workspace binding: prefer Cursor env (`VSCODE_CWD` /
+  `WORKSPACE_FOLDER_PATHS`) over process cwd; canonicalize macOS `/tmp` vs
+  `/private/tmp` before hashing `projectKey`.
 - Panel **0.6.5**: One **Configure all** for multi-agent (Claude + OpenCode +
   Cursor agents). **Codex aparte** (`--codex-model`). `kairo fleet models`
   shows available vs enabled per tool. Cursor desk: open agents/skills/rules.
@@ -30,8 +50,6 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
   model, indented minions). Details note: declared config, not live tokens.
 - `kairo connections [--json]`: Gentle / Hermes / Engram / Graphify / Agent
   connection chips for the IDE panel (companion probes + MCP registration).
-- `kairo mcp install [--yes]`: consent-gated registration of Kairo MCP in
-  `~/.cursor/mcp.json` (plan first; atomic write + backup).
 - VS Code / Cursor panel **0.3.0**: connection chips, Connect Agent button,
   Entries + Details webview. Docs: `docs/mcp.md`.
 - Panel **0.3.1**: soften "not installed / unconfigured" entries to `note`;
