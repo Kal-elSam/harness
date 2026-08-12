@@ -139,6 +139,7 @@ export async function runCli(argv) {
         yes: optionsWithPolicy.yes === true,
         json: optionsWithPolicy.json === true,
         cwd: optionsWithPolicy.cwd,
+        cwdExplicit: optionsWithPolicy.cwdExplicit,
         packageRoot,
         packageName: packageManifest.name,
         version: packageManifest.version
@@ -455,6 +456,7 @@ export function parseArgs(argv) {
   const command = normalizeCommand(rawCommand);
   const options = {
     cwd: process.cwd(),
+    cwdExplicit: false,
     scope: null,
     mode: "standard",
     modeExplicit: false,
@@ -591,7 +593,10 @@ export function parseArgs(argv) {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
 
-    if (arg === "--cwd") options.cwd = resolve(args[++index]);
+    if (arg === "--cwd") {
+      options.cwd = resolve(args[++index]);
+      options.cwdExplicit = true;
+    }
     else if (arg === "--scope") options.scope = parseScope(args[++index]);
     else if (arg.startsWith("--scope=")) options.scope = parseScope(arg.slice("--scope=".length));
     else if (arg === "--mode") {

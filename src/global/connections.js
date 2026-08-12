@@ -118,7 +118,9 @@ export function resolveMcpConfigPath(client = "cursor", { homeDir = resolveHomeD
   return join(homeDir, entry.configRelativePath);
 }
 
-/** Healthy Cursor entry must bind workspace via cwd: "." (never absolute paths). */
+/** Healthy Cursor entry must include cwd: "." (legacy without cwd → Repair).
+ * Runtime workspace identity still prefers VSCODE_CWD when Cursor spawns under $HOME.
+ */
 export function isHealthyKairoMcpEntry(entry) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
   if (entry.command !== "kairo") return false;

@@ -64,8 +64,9 @@ What an agent can ask:
 
 What MCP does **not** do: sync, setup, install agents, or mutate configs
 beyond the consent-gated `mcp install` path. Workspace identity for snapshot
-publish is derived from the MCP process cwd — agents cannot supply
-`projectKey` / paths.
+publish is derived at runtime from Cursor-injected `VSCODE_CWD` /
+`WORKSPACE_FOLDER_PATHS` when present, otherwise the MCP process cwd —
+agents cannot supply `projectKey` / paths.
 
 ## Connections chips
 

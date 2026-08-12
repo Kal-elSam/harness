@@ -20,7 +20,11 @@ import {
 } from "./mcp/work-snapshot-rule.js";
 import { resolveHomeDir } from "./paths.js";
 
-/** Cursor MCP entry — cwd "." binds identity to the workspace folder, never $HOME. */
+/**
+ * Cursor MCP entry. `cwd: "."` is best-effort for clients that honor it.
+ * Cursor IDE 3.15+ may still spawn under $HOME — runtime identity then uses
+ * VSCODE_CWD / WORKSPACE_FOLDER_PATHS (see resolve-mcp-workspace.js).
+ */
 export const KAIRO_MCP_SERVER_ENTRY = Object.freeze({
   command: "kairo",
   args: Object.freeze(["mcp"]),
@@ -206,6 +210,10 @@ export async function runMcpInstall({
   return receipt;
 }
 
+export function resolveMcpServeCwd(options = {}) {
+  return options.cwdExplicit === false ? undefined : options.cwd;
+}
+
 export async function runMcpCli(options = {}) {
   const action = options.mcpAction ?? "serve";
   if (action === "install") {
@@ -219,7 +227,7 @@ export async function runMcpCli(options = {}) {
   if (action === "serve" || action == null) {
     const { runKairoMcp } = await import("./mcp/kairo-mcp.js");
     return runKairoMcp({
-      cwd: options.cwd,
+      cwd: resolveMcpServeCwd(options),
       packageRoot: options.packageRoot,
       packageName: options.packageName,
       version: options.version
