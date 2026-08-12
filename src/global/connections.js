@@ -2,7 +2,6 @@
  * Connection chips for IDE panel / CLI — companion probes + agent MCP registration.
  * Read-only; never mutates configs.
  */
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { resolveHomeDir } from "./paths.js";
@@ -114,17 +113,30 @@ function graphifyDetail(state, graphStatus) {
   return `Graphify state: ${state}${graphStatus ? ` / ${graphStatus}` : ""}.`;
 }
 
-export function resolveMcpConfigPath(client = "cursor", { homeDir = homedir() } = {}) {
+export function resolveMcpConfigPath(client = "cursor", { homeDir = resolveHomeDir() } = {}) {
   const entry = MCP_CLIENTS[client] ?? MCP_CLIENTS.cursor;
   return join(homeDir, entry.configRelativePath);
 }
 
+/** Healthy Cursor entry must include cwd: "." (legacy without cwd → Repair).
+ * Runtime workspace identity still prefers VSCODE_CWD when Cursor spawns under $HOME.
+ */
+export function isHealthyKairoMcpEntry(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+  if (entry.command !== "kairo") return false;
+  if (!Array.isArray(entry.args) || entry.args.length !== 1 || entry.args[0] !== "mcp") {
+    return false;
+  }
+  return entry.cwd === ".";
+}
+
 /**
  * Read-only: is Kairo registered under mcpServers.kairo for the client?
+ * Entries without cwd: "." are broken (Repair), not connected.
  */
 export async function detectAgentMcpRegistration({
   client = "cursor",
-  homeDir = homedir(),
+  homeDir = resolveHomeDir(),
   readFileFn = readFile
 } = {}) {
   const path = resolveMcpConfigPath(client, { homeDir });
@@ -133,11 +145,19 @@ export async function detectAgentMcpRegistration({
     const parsed = JSON.parse(raw);
     const entry = parsed?.mcpServers?.kairo;
     if (entry && typeof entry === "object") {
+      if (isHealthyKairoMcpEntry(entry)) {
+        return {
+          connected: true,
+          state: "connected",
+          path,
+          detail: `Kairo MCP registered in ${path}. Reload Cursor MCP if tools are missing.`
+        };
+      }
       return {
-        connected: true,
-        state: "connected",
+        connected: false,
+        state: "error",
         path,
-        detail: `Kairo MCP registered in ${path}. Reload Cursor MCP if tools are missing.`
+        detail: "Kairo MCP entry is unhealthy (require command kairo, args [mcp], cwd \".\"). Re-run kairo mcp install --yes."
       };
     }
     return {

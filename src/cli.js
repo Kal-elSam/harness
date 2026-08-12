@@ -139,6 +139,7 @@ export async function runCli(argv) {
         yes: optionsWithPolicy.yes === true,
         json: optionsWithPolicy.json === true,
         cwd: optionsWithPolicy.cwd,
+        cwdExplicit: optionsWithPolicy.cwdExplicit,
         packageRoot,
         packageName: packageManifest.name,
         version: packageManifest.version
@@ -166,6 +167,15 @@ export async function runCli(argv) {
           if (c.detail) console.log(`  ${c.detail}`);
         }
       }
+      return;
+    }
+    case "next": {
+      const { runNextCli } = await import("./global/next/next-cli.js");
+      await runNextCli({
+        cwd: optionsWithPolicy.cwd,
+        json: optionsWithPolicy.json === true,
+        mcpClient: optionsWithPolicy.mcpClient ?? "cursor"
+      });
       return;
     }
     case "fleet": {
@@ -446,6 +456,7 @@ export function parseArgs(argv) {
   const command = normalizeCommand(rawCommand);
   const options = {
     cwd: process.cwd(),
+    cwdExplicit: false,
     scope: null,
     mode: "standard",
     modeExplicit: false,
@@ -582,7 +593,10 @@ export function parseArgs(argv) {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
 
-    if (arg === "--cwd") options.cwd = resolve(args[++index]);
+    if (arg === "--cwd") {
+      options.cwd = resolve(args[++index]);
+      options.cwdExplicit = true;
+    }
     else if (arg === "--scope") options.scope = parseScope(args[++index]);
     else if (arg.startsWith("--scope=")) options.scope = parseScope(arg.slice("--scope=".length));
     else if (arg === "--mode") {
@@ -1037,6 +1051,7 @@ function normalizeCommand(command) {
   if (command === "graphify") return "graphify";
   if (command === "mcp") return "mcp";
   if (command === "connections") return "connections";
+  if (command === "next") return "next";
   if (command === "fleet") return "fleet";
   if (command === "intelligence" || command === "intel") return "intelligence";
   if (command === "setup") return "setup";

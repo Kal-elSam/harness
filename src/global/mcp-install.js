@@ -4,7 +4,6 @@
  */
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { homedir } from "node:os";
 import { writeAtomicJson } from "./runtime/write-atomic-json.js";
 import {
   MCP_CLIENTS,
@@ -14,11 +13,31 @@ import {
 import { printJson } from "./json-output.js";
 import { commandHeader } from "./brand/index.js";
 import { formatCliCommand } from "./brand/cli.js";
+import {
+  buildWorkSnapshotRuleFile,
+  ensureWorkSnapshotRule,
+  resolveWorkSnapshotRulePath
+} from "./mcp/work-snapshot-rule.js";
+import { resolveHomeDir } from "./paths.js";
 
+/**
+ * Cursor MCP entry. `cwd: "."` is best-effort for clients that honor it.
+ * Cursor IDE 3.15+ may still spawn under $HOME — runtime identity then uses
+ * VSCODE_CWD / WORKSPACE_FOLDER_PATHS (see resolve-mcp-workspace.js).
+ */
 export const KAIRO_MCP_SERVER_ENTRY = Object.freeze({
   command: "kairo",
-  args: Object.freeze(["mcp"])
+  args: Object.freeze(["mcp"]),
+  cwd: "."
 });
+
+export function buildKairoMcpServerEntry() {
+  return {
+    command: KAIRO_MCP_SERVER_ENTRY.command,
+    args: [...KAIRO_MCP_SERVER_ENTRY.args],
+    cwd: KAIRO_MCP_SERVER_ENTRY.cwd
+  };
+}
 
 function backupPath(configPath, stamp = Date.now()) {
   return `${configPath}.kairo-backup.${stamp}`;
@@ -26,17 +45,18 @@ function backupPath(configPath, stamp = Date.now()) {
 
 export function buildMcpInstallPlan({
   client = "cursor",
-  homeDir = homedir(),
+  homeDir = resolveHomeDir(),
   existing = null,
   alreadyConnected = false
 } = {}) {
   const clientMeta = MCP_CLIENTS[client] ?? MCP_CLIENTS.cursor;
   const path = resolveMcpConfigPath(client, { homeDir });
+  const entry = buildKairoMcpServerEntry();
   const next = {
     ...(existing && typeof existing === "object" ? existing : {}),
     mcpServers: {
       ...((existing && typeof existing === "object" && existing.mcpServers) || {}),
-      kairo: { command: KAIRO_MCP_SERVER_ENTRY.command, args: [...KAIRO_MCP_SERVER_ENTRY.args] }
+      kairo: entry
     }
   };
   return {
@@ -49,6 +69,8 @@ export function buildMcpInstallPlan({
     entry: next.mcpServers.kairo,
     next,
     backupPath: backupPath(path),
+    rulePath: resolveWorkSnapshotRulePath(homeDir),
+    ruleBody: buildWorkSnapshotRuleFile(),
     note: alreadyConnected
       ? "Kairo MCP already registered; --yes rewrites the entry if it drifted."
       : `Will add mcpServers.kairo to ${path}. Reload Cursor MCP after apply.`
@@ -72,11 +94,14 @@ export async function runMcpInstall({
   client = "cursor",
   yes = false,
   json = false,
-  homeDir = homedir(),
+  homeDir = resolveHomeDir(),
   readFileFn = readFile,
   mkdirFn = mkdir,
   copyFileFn = copyFile,
   writeAtomicJsonFn = writeAtomicJson,
+  writeFileFn = null,
+  renameFn = null,
+  ensureRule = ensureWorkSnapshotRule,
   detectAgent = detectAgentMcpRegistration,
   now = () => Date.now()
 } = {}) {
@@ -96,6 +121,18 @@ export async function runMcpInstall({
     alreadyConnected: detection.connected === true
   });
   plan.backupPath = backupPath(path, now());
+  const rulePlan = await ensureRule({
+    homeDir,
+    apply: false,
+    now,
+    readFileFn,
+    mkdirFn,
+    copyFileFn,
+    writeFileFn: writeFileFn ?? undefined,
+    renameFn: renameFn ?? undefined
+  });
+  plan.ruleWouldWrite = rulePlan.wouldWrite === true;
+  plan.rulePath = rulePlan.path;
 
   if (!yes) {
     const payload = {
@@ -107,6 +144,8 @@ export async function runMcpInstall({
         alreadyConnected: plan.alreadyConnected,
         wouldWrite: plan.wouldWrite,
         entry: plan.entry,
+        rulePath: plan.rulePath,
+        ruleWouldWrite: plan.ruleWouldWrite,
         note: plan.note,
         applyWith: formatCliCommand("mcp install --yes")
       }
@@ -118,6 +157,7 @@ export async function runMcpInstall({
       console.log(`Client · ${plan.clientLabel}`);
       console.log(`Path · ${plan.path}`);
       console.log(`Entry · ${JSON.stringify(plan.entry)}`);
+      console.log(`Rule · ${plan.rulePath}${plan.ruleWouldWrite ? " (will write)" : " (up to date)"}`);
       console.log(plan.note);
       console.log(`Apply · ${formatCliCommand("mcp install --yes")}`);
     }
@@ -125,19 +165,34 @@ export async function runMcpInstall({
   }
 
   await mkdirFn(dirname(path), { recursive: true });
-  if (existing != null) {
+  if (existing != null && plan.wouldWrite) {
     await copyFileFn(path, plan.backupPath);
   }
+  if (plan.wouldWrite) {
+    await writeAtomicJsonFn(path, plan.next);
+  }
 
-  await writeAtomicJsonFn(path, plan.next);
+  const ruleReceipt = await ensureRule({
+    homeDir,
+    apply: true,
+    now,
+    readFileFn,
+    mkdirFn,
+    copyFileFn,
+    writeFileFn: writeFileFn ?? undefined,
+    renameFn: renameFn ?? undefined
+  });
 
   const receipt = {
     ok: true,
     applied: true,
     path,
-    backupPath: existing != null ? plan.backupPath : null,
+    backupPath: existing != null && plan.wouldWrite ? plan.backupPath : null,
     entry: plan.entry,
     client: plan.client,
+    rulePath: ruleReceipt.path,
+    ruleWrote: ruleReceipt.wrote === true,
+    ruleBackupPath: ruleReceipt.backupPath,
     note: "Reload Cursor MCP (Command Palette → MCP: Restart) to load kairo_* tools."
   };
 
@@ -145,11 +200,18 @@ export async function runMcpInstall({
     printJson(receipt);
   } else {
     console.log(commandHeader("MCP install"));
-    console.log(`Wrote · ${path}`);
+    if (plan.wouldWrite) console.log(`Wrote · ${path}`);
+    else console.log(`MCP · up to date (${path})`);
     if (receipt.backupPath) console.log(`Backup · ${receipt.backupPath}`);
+    console.log(`Rule · ${receipt.rulePath}${receipt.ruleWrote ? " (wrote)" : " (up to date)"}`);
+    if (receipt.ruleBackupPath) console.log(`Rule backup · ${receipt.ruleBackupPath}`);
     console.log(receipt.note);
   }
   return receipt;
+}
+
+export function resolveMcpServeCwd(options = {}) {
+  return options.cwdExplicit === false ? undefined : options.cwd;
 }
 
 export async function runMcpCli(options = {}) {
@@ -159,13 +221,13 @@ export async function runMcpCli(options = {}) {
       client: options.mcpClient ?? "cursor",
       yes: options.yes === true,
       json: options.json === true,
-      homeDir: options.homeDir
+      homeDir: options.homeDir ?? resolveHomeDir()
     });
   }
   if (action === "serve" || action == null) {
     const { runKairoMcp } = await import("./mcp/kairo-mcp.js");
     return runKairoMcp({
-      cwd: options.cwd,
+      cwd: resolveMcpServeCwd(options),
       packageRoot: options.packageRoot,
       packageName: options.packageName,
       version: options.version

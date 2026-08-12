@@ -7,9 +7,10 @@ const { renderPanelHtml } = require("./panel-html");
 const VIEW_ID = "kairo.panel";
 
 class KairoPanelProvider {
-  constructor({ cache, connectionsCache, onAction }) {
+  constructor({ cache, connectionsCache, nextCache, onAction }) {
     this.cache = cache;
     this.connectionsCache = connectionsCache;
+    this.nextCache = nextCache;
     this.onAction = onAction;
     this._view = null;
   }
@@ -31,16 +32,20 @@ class KairoPanelProvider {
 
   async refresh() {
     if (!this._view) return;
-    const [status, connectionsReport] = await Promise.all([
+    const [status, connectionsReport, nextReport] = await Promise.all([
       this.cache.get({ force: true }),
       this.connectionsCache
         ? this.connectionsCache.get({ force: true })
-        : Promise.resolve({ connections: [] })
+        : Promise.resolve({ connections: [] }),
+      this.nextCache
+        ? this.nextCache.get({ force: true })
+        : Promise.resolve(null)
     ]);
     const model = buildPanelModel(
       status,
       connectionsReport?.connections ?? [],
-      connectionsReport
+      connectionsReport,
+      nextReport
     );
     const nonce = String(Date.now());
     this._view.webview.html = renderPanelHtml(model, nonce);

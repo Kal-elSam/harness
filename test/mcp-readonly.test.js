@@ -2,22 +2,29 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseArgs } from "../src/cli.js";
 import {
-  KAIRO_MCP_TOOLS, mcpSchemas, mcpResult, createToolHandlers,
+  KAIRO_MCP_TOOLS, KAIRO_MCP_WRITE_TOOLS, mcpSchemas, mcpResult, createToolHandlers,
   registerKairoMcpTools, createKairoMcpServer, runKairoMcp, pubCodes
 } from "../src/global/mcp/kairo-mcp.js";
 import { softLinkReviewToRun } from "../src/global/observability/build-companion-snapshot.js";
 
-const WRITE_RE = /write|create|resolve|dismiss|import|export|apply|delete|mutate/i;
+const WRITE_RE = /write|create|resolve|dismiss|import|export|apply|delete|mutate|publish/i;
 const HOSTILE = ["token=SECRET", "Authorization: Bearer abc", "stderr: boom"];
+const WRITE_ALLOW = new Set(KAIRO_MCP_WRITE_TOOLS);
+
+function assertToolWritePolicy(name) {
+  if (WRITE_ALLOW.has(name)) return;
+  assert.equal(WRITE_RE.test(name), false);
+}
 
 test("registry schemas + handlers + productive loaders + sanitize", async () => {
   assert.equal(parseArgs(["mcp"]).command, "mcp");
   assert.equal(parseArgs(["fleet", "--json"]).command, "fleet");
   assert.equal(parseArgs(["fleet", "--json"]).options.json, true);
   const tools = new Map();
-  registerKairoMcpTools((n, c, h) => { assert.equal(WRITE_RE.test(n), false); tools.set(n, h); }, {});
+  registerKairoMcpTools((n, c, h) => { assertToolWritePolicy(n); tools.set(n, h); }, {});
   assert.deepEqual([...tools.keys()], [...KAIRO_MCP_TOOLS]);
   assert.ok(KAIRO_MCP_TOOLS.includes("kairo_fleet"));
+  assert.deepEqual([...KAIRO_MCP_WRITE_TOOLS], ["kairo_publish_work_snapshot"]);
   assert.equal(mcpSchemas.runs.parse({}).limit, 20);
   assert.equal(mcpSchemas.alerts.parse({}).limit, 50);
   assert.equal(mcpSchemas.graphQuery.parse({ graph: "g", question: "q" }).budget, 2000);
@@ -156,7 +163,7 @@ test("registry schemas + handlers + productive loaders + sanitize", async () => 
   const names = [];
   class FakeServer {
     constructor(info) { this.info = info; }
-    registerTool(name) { assert.equal(WRITE_RE.test(name), false); names.push(name); }
+    registerTool(name) { assertToolWritePolicy(name); names.push(name); }
   }
   let factory;
   await runKairoMcp({
