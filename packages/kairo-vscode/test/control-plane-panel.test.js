@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { fleetReportFromControlPlane } = require("../src/control-plane-cache.js");
 const { buildPanelModel } = require("../src/panel-model.js");
+const { panelStyles } = require("../src/panel-styles.js");
 const {
   primaryActionsFromModel,
   renderFleetTree,
@@ -124,7 +125,7 @@ test("renderWorkflowSection fixtures: upgrade / incompatible / official next_tra
   assert.match(incompatible, /incompatible/);
   assert.match(incompatible, /Fail closed/);
 
-  const command = "gentle-ai review start --contract=gentle-ai.review-integration/v2 --consent=relay";
+  const command = "gentle-ai review start --contract=gentle-ai.review-integration/v2 --target=sha256:37367ed91a1878791655f52b33cc0123456789abcdef0123456789abcdef0123 --consent=relay --agent claude-code";
   const connected = renderWorkflowSection({
     kind: "review",
     active: true,
@@ -137,6 +138,18 @@ test("renderWorkflowSection fixtures: upgrade / incompatible / official next_tra
     review: { receipt: null, gate: null }
   });
   assert.match(connected, /fresh_target_ready/);
-  assert.match(connected, /gentle-ai review start --contract=gentle-ai.review-integration\/v2 --consent=relay/);
+  assert.match(connected, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(connected, /<pre class="next-cmd">/);
+  assert.doesNotMatch(connected, /next-cmd[^>]*>[^<]*…/);
   assert.doesNotMatch(connected, /\[object Object\]/);
+  const css = panelStyles();
+  assert.match(css, /\.next-cmd\s*\{[^}]*white-space:\s*pre-wrap/);
+  assert.match(css, /\.next-cmd\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.doesNotMatch(css, /overflow-x:\s*hidden/);
+  assert.doesNotMatch(renderPanelHtml({
+    headline: "Ready", overall: "ok", entries: [], connections: [], fleetNodes: [],
+    attention: { items: [], primaryActions: [], secondaryActions: [] },
+    workflow: { kind: "review", active: true, nextTransition: { execute: { command } } },
+    work: { present: true }
+  }, "n-wrap"), /overflow-x:\s*hidden/);
 });
