@@ -2,6 +2,11 @@
 
 ## Gentle AI integration
 
+Kairo 0.8.0 is Gentle’s observable companion: it negotiates
+`gentle-ai.review-integration/v2` and projects official `next_transition` /
+`sdd-status --json`. It does not invent methodology. See
+[Gentle companion boundary](gentle-companion.md).
+
 After installing the harness in a repo, run:
 
 ```bash
