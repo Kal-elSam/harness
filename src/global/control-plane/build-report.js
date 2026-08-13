@@ -171,6 +171,9 @@ export async function buildControlPlaneReport({
 
   const gentle = await loadWorkflow({ cwd });
   let workflow = gentle.workflow;
+  if (workflow && gentle.provider && workflow.provider == null) {
+    workflow = { ...workflow, provider: gentle.provider };
+  }
   if (!gentle.ok) {
     sections.workflow = sectionErr(gentle.error ?? "gentle_unavailable");
     diagnostics.push(gentle.error ?? "gentle_unavailable");
@@ -182,7 +185,8 @@ export async function buildControlPlaneReport({
         phase: null,
         nextTransition: null,
         changeName: null,
-        review: null
+        review: null,
+        provider: gentle.provider ?? workflow?.provider ?? null
       };
     }
   }

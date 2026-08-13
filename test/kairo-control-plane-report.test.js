@@ -50,6 +50,7 @@ test("buildControlPlaneReport composes sections and survives Gentle failure", as
     loadWorkflow: async () => ({
       ok: false,
       error: "gentle_unavailable",
+      provider: "unavailable",
       workflow: {
         kind: WORKFLOW_KIND.NONE,
         active: false,
@@ -57,7 +58,8 @@ test("buildControlPlaneReport composes sections and survives Gentle failure", as
         phase: null,
         nextTransition: null,
         changeName: null,
-        review: null
+        review: null,
+        provider: "unavailable"
       }
     })
   });
@@ -70,6 +72,7 @@ test("buildControlPlaneReport composes sections and survives Gentle failure", as
   assert.equal(report.sections.team.ok, true);
   assert.equal(report.team.platforms[0].agents.length, 10);
   assert.ok(report.diagnostics.includes("gentle_unavailable"));
+  assert.equal(report.workflow.provider, "unavailable");
   assert.ok(report.attention.primaryActions.length <= 2);
 });
 

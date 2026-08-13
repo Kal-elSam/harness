@@ -18,3 +18,17 @@ export const HONESTY = Object.freeze({
 });
 
 export const NO_ACTIVE_WORKFLOW = "No active workflow";
+
+/** Control-plane Gentle provider — distinct from observability probe states. */
+export const PROVIDER = Object.freeze({
+  CONNECTED: "connected",
+  UPGRADE_REQUIRED: "upgrade_required",
+  UNAVAILABLE: "unavailable",
+  INCOMPATIBLE: "incompatible"
+});
+
+export const PROVIDER_ERROR = Object.freeze({
+  [PROVIDER.UPGRADE_REQUIRED]: "gentle_upgrade_required",
+  [PROVIDER.UNAVAILABLE]: "gentle_unavailable",
+  [PROVIDER.INCOMPATIBLE]: "gentle_incompatible"
+});

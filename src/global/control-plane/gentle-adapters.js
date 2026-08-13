@@ -1,9 +1,15 @@
 /**
  * Read-only Gentle adapters for control-plane workflow/review.
- * Never invents Direct/Delegated/SDD from agent prose — only Gentle payloads.
+ * Negotiate capabilities before any workflow fetch. Never invent authority.
  */
 import { spawnSync } from "node:child_process";
-import { WORKFLOW_KIND, NO_ACTIVE_WORKFLOW } from "./constants.js";
+import { probeGentle } from "../observability/gentle-probe.js";
+import { WORKFLOW_KIND, NO_ACTIVE_WORKFLOW, PROVIDER } from "./constants.js";
+import {
+  emptyGentleWorkflow,
+  mapGentleProviderState,
+  providerError
+} from "./provider.js";
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
@@ -178,48 +184,44 @@ export function mapReviewStatusToReview(payload) {
   };
 }
 
-export function loadGentleWorkflow({
+export async function loadGentleWorkflow({
   cwd,
   env,
   timeoutMs,
   spawn,
   command,
+  probe = probeGentle,
   runCommand = runGentleCommand
 } = {}) {
-  const sdd = runCommand(["sdd-status"], { cwd, env, timeoutMs, spawn, command });
-  const reviewRun = runCommand(["review", "status"], { cwd, env, timeoutMs, spawn, command });
-
-  const workflow = sdd.ok
-    ? mapSddStatusToWorkflow(sdd.payload)
-    : {
-        kind: WORKFLOW_KIND.NONE,
-        active: false,
-        label: NO_ACTIVE_WORKFLOW,
-        phase: null,
-        nextTransition: null,
-        changeName: null,
-        review: null
-      };
-
-  if (reviewRun.ok) {
-    const review = mapReviewStatusToReview(reviewRun.payload);
-    if (review) {
-      workflow.review = review;
-      if (!workflow.active && workflow.kind === WORKFLOW_KIND.NONE) {
-        workflow.kind = WORKFLOW_KIND.REVIEW;
-        workflow.active = true;
-        workflow.label = "Review";
-      }
-    }
+  const probed = await probe({ cwd, env });
+  const provider = mapGentleProviderState(probed);
+  if (provider !== PROVIDER.CONNECTED) {
+    return {
+      ok: false,
+      error: providerError(provider, probed),
+      provider,
+      workflow: emptyGentleWorkflow({ provider })
+    };
   }
 
-  const hasWorkflow = workflow.active === true || workflow.review != null;
-  if (!sdd.ok && !hasWorkflow) {
-    return { ok: false, error: sdd.error ?? "gentle_sdd_unavailable", workflow };
+  // Connected: project SDD only. Never call unnegotiated `review status`.
+  const sdd = runCommand(["sdd-status"], { cwd, env, timeoutMs, spawn, command });
+  const workflow = sdd.ok
+    ? { ...mapSddStatusToWorkflow(sdd.payload), provider }
+    : emptyGentleWorkflow({ provider });
+
+  if (!sdd.ok) {
+    return {
+      ok: false,
+      error: sdd.error ?? "gentle_sdd_unavailable",
+      provider,
+      workflow
+    };
   }
   return {
     ok: true,
-    error: sdd.ok ? null : (sdd.error ?? "gentle_sdd_unavailable"),
+    error: null,
+    provider,
     workflow
   };
 }

@@ -50,11 +50,17 @@ test("mapSddStatusToWorkflow accepts explicit Gentle direct/delegated route only
   assert.equal(mapSddStatusToWorkflow({ goal: "x" }).kind, WORKFLOW_KIND.NONE);
 });
 
-test("loadGentleWorkflow still reads review when sdd-status fails", () => {
-  let calls = 0;
-  const result = loadGentleWorkflow({
+test("loadGentleWorkflow does not invent review when sdd-status fails", async () => {
+  const calls = [];
+  const result = await loadGentleWorkflow({
+    probe: async () => ({
+      state: "available",
+      contractCompatible: true,
+      diagnostics: [],
+      evidence: []
+    }),
     runCommand(args) {
-      calls += 1;
+      calls.push(args[0]);
       if (args[0] === "sdd-status") {
         return { ok: false, error: "gentle_parse_failed", payload: null };
       }
@@ -73,10 +79,11 @@ test("loadGentleWorkflow still reads review when sdd-status fails", () => {
       };
     }
   });
-  assert.equal(calls, 2);
-  assert.equal(result.ok, true);
-  assert.equal(result.workflow.kind, WORKFLOW_KIND.REVIEW);
-  assert.equal(result.workflow.review.receipt, "sha256:abc");
+  assert.deepEqual(calls, ["sdd-status"]);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "gentle_parse_failed");
+  assert.equal(result.workflow.review, null);
+  assert.equal(result.provider, "connected");
 });
 
 test("runGentleCommand prefers stdout JSON and rejects nonzero status", () => {
