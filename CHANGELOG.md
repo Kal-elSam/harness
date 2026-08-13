@@ -5,6 +5,24 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.16.0 — 2026-08-13 (Kairo Runtime)
+
+Minor release. Public `kairo control-plane` command and
+`kairo.control-plane/v1` Gentle companion report. Publish tag:
+`kairo-runtime-v0.16.0`. Extension VSIX stays out of this unit.
+
+### Added
+
+- `kairo control-plane [--json] [--client cursor]`: atomic panel report
+  (work + Gentle workflow + team + attention) as `kairo.control-plane/v1`.
+- Negotiate `gentle-ai.review-integration/v2` (protocol 2.0 and 2.1) before
+  any workflow fetch. Provider states: `connected`, `upgrade_required`,
+  `unavailable`, `incompatible`.
+- Official `review status` from Gentle's announced bootstrap argv; pass
+  `next_transition` through unaltered. Receipt/gate only when Gentle publishes
+  them.
+- `sdd-status --json` projection copies `changeName` / `nextRecommended` only.
+
 ### Docs
 
 - Gentle companion boundary: Kairo observes `gentle-ai.review-integration/v2`
