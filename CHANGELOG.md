@@ -5,6 +5,14 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+### Docs
+
+- Gentle companion boundary: Kairo observes `gentle-ai.review-integration/v2`
+  and projects official `next_transition` / `sdd-status --json`. Freeze
+  `kairo review`, Cockpit receipts, orchestrator, and intelligence routing so
+  they do not feed the panel Workflow. Propose upstream `gentle-ai observe --json`
+  in Kairo docs only (`docs/gentle-companion.md`).
+
 ## 0.15.0 — 2026-08-12 (Kairo Runtime)
 
 Minor release. Declared Fleet board + model configure, and the Cursor

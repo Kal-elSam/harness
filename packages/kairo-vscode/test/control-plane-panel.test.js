@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { fleetReportFromControlPlane } = require("../src/control-plane-cache.js");
 const { buildPanelModel } = require("../src/panel-model.js");
+const { panelStyles } = require("../src/panel-styles.js");
 const {
   primaryActionsFromModel,
   renderFleetTree,
@@ -105,5 +106,50 @@ test("renderWorkflowSection shows receipt only with Gentle evidence", () => {
     { degraded: true, error: "gentle_unavailable" }
   );
   assert.match(degraded, /degraded/);
-  assert.match(degraded, /gentle_unavailable/);
+  assert.match(degraded, /Install gentle-ai separately/);
+  assert.match(degraded, /Work and Equipo remain/);
+});
+
+test("renderWorkflowSection fixtures: upgrade / incompatible / official next_transition", () => {
+  const upgrade = renderWorkflowSection(
+    { kind: "none", active: false, provider: "upgrade_required" },
+    { degraded: true, error: "gentle_upgrade_required" }
+  );
+  assert.match(upgrade, /Upgrade Gentle/);
+  assert.doesNotMatch(upgrade, /Review/);
+
+  const incompatible = renderWorkflowSection(
+    { kind: "none", active: false, provider: "incompatible" },
+    { degraded: true, error: "gentle_incompatible" }
+  );
+  assert.match(incompatible, /incompatible/);
+  assert.match(incompatible, /Fail closed/);
+
+  const command = "gentle-ai review start --contract=gentle-ai.review-integration/v2 --target=sha256:37367ed91a1878791655f52b33cc0123456789abcdef0123456789abcdef0123 --consent=relay --agent claude-code";
+  const connected = renderWorkflowSection({
+    kind: "review",
+    active: true,
+    label: "Review",
+    nextTransition: {
+      kind: "execute",
+      reason_code: "fresh_target_ready",
+      execute: { operation: "review.start", command }
+    },
+    review: { receipt: null, gate: null }
+  });
+  assert.match(connected, /fresh_target_ready/);
+  assert.match(connected, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(connected, /<pre class="next-cmd">/);
+  assert.doesNotMatch(connected, /next-cmd[^>]*>[^<]*…/);
+  assert.doesNotMatch(connected, /\[object Object\]/);
+  const css = panelStyles();
+  assert.match(css, /\.next-cmd\s*\{[^}]*white-space:\s*pre-wrap/);
+  assert.match(css, /\.next-cmd\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.doesNotMatch(css, /overflow-x:\s*hidden/);
+  assert.doesNotMatch(renderPanelHtml({
+    headline: "Ready", overall: "ok", entries: [], connections: [], fleetNodes: [],
+    attention: { items: [], primaryActions: [], secondaryActions: [] },
+    workflow: { kind: "review", active: true, nextTransition: { execute: { command } } },
+    work: { present: true }
+  }, "n-wrap"), /overflow-x:\s*hidden/);
 });
