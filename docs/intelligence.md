@@ -2,6 +2,10 @@
 
 Kairo owns **Harness Engineering** governance: compile relevant project context, route to a backend, and require human confirmation for cloud transmission. It does not store credentials and never reads OpenCode `auth.json`.
 
+**0.8.0 freeze:** intelligence routing does **not** feed the Gentle workflow
+section of `kairo control-plane`. Methodology, SDD, and `next_transition`
+stay Gentle’s — see [Gentle companion boundary](gentle-companion.md).
+
 | Backend | Detection | Invoke |
 |---|---|---|
 | Ollama | `GET $OLLAMA_HOST/api/tags` (default `http://127.0.0.1:11434`) | Local chat |

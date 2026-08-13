@@ -3,7 +3,7 @@
 Gentle **control plane** panel (extension `0.8.0`):
 
 - **Ahora** — Goal / Progress / Now / Next from the embedded `kairo.next/v1` work report
-- **Workflow** — Gentle SDD / review (phase + next transition); receipt/gate only when Gentle confirms
+- **Workflow** — Gentle SDD / review when `provider=connected`; official `next_transition` unaltered; **Upgrade Gentle** (`gentle-ai doctor`) when v1. Receipt/gate only when Gentle publishes them. Work and Equipo survive degradation. See [Gentle companion boundary](../../docs/gentle-companion.md).
 - **Equipo** — declared fleets with honesty badges (`live` | `declared` | `opaque`)
 - **Atención** — actionable items; ≤2 primary actions; Setup / Models / Catalog / Doctor secondary
 - Connection chips (Gentle · Hermes · Engram · Graphify · Agent) marked **optional**
