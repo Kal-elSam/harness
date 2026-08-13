@@ -16,7 +16,7 @@ const SAFETY_RANK = Object.freeze({
  * Console-Ninja-style panel model: headline + actions + entries + connection chips.
  * Actions never write — they only describe a terminal command to run.
  */
-function buildPanelModel(status, connections = [], fleetReport = null, nextReport = null) {
+function buildPanelModel(status, connections = [], fleetReport = null, nextReport = null, controlPlane = null) {
   const fleetNodes = buildFleetNodes(fleetReport);
   const { activityNodes, activityNote, activityActiveCount, showActivityFloor } = buildActivityNodes(fleetReport);
   const fleetNote = fleetReport?.fleetNote
@@ -24,6 +24,10 @@ function buildPanelModel(status, connections = [], fleetReport = null, nextRepor
     ?? "Declared config, not live tokens.";
   const orchestratorAuthority = fleetReport?.orchestratorAuthority ?? null;
   const work = buildWorkViewport(nextReport);
+  const teamSectionOk = controlPlane?.sections?.team?.ok !== false;
+  const platformsPresent = (controlPlane?.team?.platforms?.length ?? fleetNodes.length) > 0;
+  // Never claim "no platforms" when the atomic report already listed them or team fetch failed.
+  const hideEmptyPlatforms = platformsPresent || teamSectionOk === false;
 
   if (!status || status.installed === false || status.overall === "missing") {
     return {
@@ -43,6 +47,10 @@ function buildPanelModel(status, connections = [], fleetReport = null, nextRepor
       fleetNote,
       orchestratorAuthority,
       work,
+      controlPlane,
+      workflow: controlPlane?.workflow ?? null,
+      attention: controlPlane?.attention ?? null,
+      hideEmptyPlatforms: hideEmptyPlatforms === true,
       entries: []
     };
   }
@@ -187,6 +195,10 @@ function buildPanelModel(status, connections = [], fleetReport = null, nextRepor
     fleetNote,
     orchestratorAuthority,
     work,
+    controlPlane,
+    workflow: controlPlane?.workflow ?? null,
+    attention: controlPlane?.attention ?? null,
+    hideEmptyPlatforms: hideEmptyPlatforms === true,
     entries
   };
 }
