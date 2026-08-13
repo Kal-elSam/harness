@@ -10,17 +10,28 @@ import {
   mapGentleProviderState,
   providerError
 } from "./provider.js";
+import {
+  REVIEW_STATUS_ARGS,
+  mapOfficialReviewStatus
+} from "./review-status.js";
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
+export function parseStrictJson(text) {
+  if (typeof text !== "string" || !text.trim()) return null;
+  try {
+    const parsed = JSON.parse(text.trim());
+    return parsed != null && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export function extractJsonPayload(text) {
   if (typeof text !== "string" || !text.trim()) return null;
+  const strict = parseStrictJson(text);
+  if (strict) return strict;
   const trimmed = text.trim();
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    /* fall through */
-  }
   const fenced = trimmed.match(/```json\s*([\s\S]*?)```/i);
   if (fenced?.[1]) {
     try {
@@ -46,7 +57,8 @@ export function runGentleCommand(args, {
   env = process.env,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   spawn = spawnSync,
-  command = "gentle-ai"
+  command = "gentle-ai",
+  strict = false
 } = {}) {
   try {
     const result = spawn(command, args, {
@@ -59,8 +71,9 @@ export function runGentleCommand(args, {
     if (result.error) {
       return { ok: false, error: result.error.message || "gentle_spawn_failed", payload: null };
     }
-    const payload = extractJsonPayload(result.stdout ?? "")
-      ?? extractJsonPayload(result.stderr ?? "");
+    const payload = strict
+      ? parseStrictJson(result.stdout ?? "")
+      : (extractJsonPayload(result.stdout ?? "") ?? extractJsonPayload(result.stderr ?? ""));
     if (!payload) {
       return { ok: false, error: "gentle_parse_failed", payload: null, status: result.status };
     }
@@ -151,37 +164,14 @@ export function mapSddStatusToWorkflow(payload) {
   };
 }
 
-/**
- * Only surface review when Gentle reports authoritative receipt/gate state.
- */
-export function mapReviewStatusToReview(payload) {
-  if (!payload || typeof payload !== "object") return null;
-  if (payload.authoritative !== true) return null;
-  const entries = Array.isArray(payload.entries) ? payload.entries : [];
-  const active = entries.find((row) =>
-    row
-    && typeof row === "object"
-    && row.status !== "superseded"
-    && (row.status === "active" || row.status === "current" || row.status === "recovered")
-    && (row.receipt || row.revision || row.snapshot_identity || row.gate || row.state)
-  ) ?? null;
-  if (!active) return null;
-
-  const receipt = active.receipt
-    ?? active.revision
-    ?? active.snapshot_identity
-    ?? null;
-  const gate = active.gate ?? payload.gate ?? null;
-  // Prefer receipt/gate evidence; state alone is insufficient for panel receipt UI.
-  if (!receipt && !gate) return null;
-
-  return {
-    lineageId: typeof active.lineage_id === "string" ? active.lineage_id : null,
-    state: typeof active.state === "string" ? active.state : null,
-    status: typeof active.status === "string" ? active.status : null,
-    receipt: typeof receipt === "string" ? receipt : null,
-    gate: typeof gate === "string" ? gate : null
-  };
+function applyOfficialReview(workflow, mapped) {
+  workflow.review = mapped.review;
+  workflow.nextTransition = mapped.nextTransition;
+  if (workflow.kind === WORKFLOW_KIND.NONE && mapped.nextTransition != null) {
+    workflow.kind = WORKFLOW_KIND.REVIEW;
+    workflow.active = mapped.nextTransition?.kind === "execute" || mapped.review != null;
+    workflow.label = "Review";
+  }
 }
 
 export async function loadGentleWorkflow({
@@ -204,13 +194,20 @@ export async function loadGentleWorkflow({
     };
   }
 
-  // Connected: project SDD only. Never call unnegotiated `review status`.
   const sdd = runCommand(["sdd-status"], { cwd, env, timeoutMs, spawn, command });
   const workflow = sdd.ok
     ? { ...mapSddStatusToWorkflow(sdd.payload), provider }
     : emptyGentleWorkflow({ provider });
 
-  if (!sdd.ok) {
+  const reviewRun = runCommand([...REVIEW_STATUS_ARGS], {
+    cwd, env, timeoutMs, spawn, command, strict: true
+  });
+  if (reviewRun.ok) {
+    const mapped = mapOfficialReviewStatus(reviewRun.payload);
+    if (mapped.ok) applyOfficialReview(workflow, mapped);
+  }
+
+  if (!sdd.ok && workflow.kind === WORKFLOW_KIND.NONE && workflow.review == null) {
     return {
       ok: false,
       error: sdd.error ?? "gentle_sdd_unavailable",
@@ -220,7 +217,7 @@ export async function loadGentleWorkflow({
   }
   return {
     ok: true,
-    error: null,
+    error: sdd.ok ? null : (sdd.error ?? "gentle_sdd_unavailable"),
     provider,
     workflow
   };

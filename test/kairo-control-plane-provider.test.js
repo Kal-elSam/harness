@@ -11,6 +11,7 @@ import {
   providerError
 } from "../src/global/control-plane/provider.js";
 import { loadGentleWorkflow } from "../src/global/control-plane/gentle-adapters.js";
+import { REVIEW_STATUS_ARGS } from "../src/global/control-plane/review-status.js";
 
 test("mapGentleProviderState: missing → unavailable, v2 → connected", () => {
   assert.equal(mapGentleProviderState({ state: "missing" }), PROVIDER.UNAVAILABLE);
@@ -115,7 +116,9 @@ test("loadGentleWorkflow when connected never calls unnegotiated review status",
   assert.equal(result.provider, PROVIDER.CONNECTED);
   assert.equal(result.workflow.provider, PROVIDER.CONNECTED);
   assert.equal(result.workflow.review, null);
-  assert.deepEqual(calls, [["sdd-status"]]);
+  assert.deepEqual(calls[0], ["sdd-status"]);
+  assert.deepEqual(calls[1], [...REVIEW_STATUS_ARGS]);
+  assert.equal(calls.length, 2);
 });
 
 test("emptyGentleWorkflow carries provider and no invented review", () => {

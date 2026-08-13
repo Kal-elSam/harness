@@ -3,10 +3,11 @@ import test from "node:test";
 import {
   extractJsonPayload,
   loadGentleWorkflow,
-  mapReviewStatusToReview,
   mapSddStatusToWorkflow,
+  parseStrictJson,
   runGentleCommand
 } from "../src/global/control-plane/gentle-adapters.js";
+import { REVIEW_STATUS_ARGS } from "../src/global/control-plane/review-status.js";
 import {
   NO_ACTIVE_WORKFLOW,
   WORKFLOW_KIND
@@ -79,7 +80,7 @@ test("loadGentleWorkflow does not invent review when sdd-status fails", async ()
       };
     }
   });
-  assert.deepEqual(calls, ["sdd-status"]);
+  assert.deepEqual(calls, ["sdd-status", "review"]);
   assert.equal(result.ok, false);
   assert.equal(result.error, "gentle_parse_failed");
   assert.equal(result.workflow.review, null);
@@ -108,23 +109,8 @@ test("runGentleCommand prefers stdout JSON and rejects nonzero status", () => {
   assert.equal(bad.error, "gentle_nonzero_status");
 });
 
-test("mapReviewStatusToReview requires authoritative receipt evidence", () => {
-  assert.equal(mapReviewStatusToReview({ authoritative: false, entries: [] }), null);
-  assert.equal(mapReviewStatusToReview({
-    authoritative: true,
-    entries: [{ status: "superseded", state: "approved" }]
-  }), null);
-  const review = mapReviewStatusToReview({
-    authoritative: true,
-    entries: [{
-      status: "active",
-      state: "approved",
-      lineage_id: "rev-1",
-      revision: "sha256:abc",
-      gate: "pre-commit"
-    }]
-  });
-  assert.equal(review.receipt, "sha256:abc");
-  assert.equal(review.gate, "pre-commit");
-  assert.equal(review.lineageId, "rev-1");
+test("parseStrictJson rejects markdown fences and slices", () => {
+  assert.equal(parseStrictJson("```json\n{\"a\":1}\n```"), null);
+  assert.equal(parseStrictJson("prefix {\"a\":1}"), null);
+  assert.deepEqual(parseStrictJson('{"a":1}'), { a: 1 });
 });
