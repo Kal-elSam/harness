@@ -185,6 +185,12 @@ function buildFleetNodes(fleetReport = null) {
       `${m.id} · ${m.modelShort ?? m.model ?? "—"}${m.opaque ? " · opaque" : ""}`
     ));
 
+    const honesty = String(
+      fleet?.honesty
+      ?? orch?.honesty
+      ?? (orch?.opaque || fleet?.opaque ? "opaque" : "declared")
+    ).toLowerCase();
+
     nodes.push({
       id: `${platform}:desk`,
       kind: "desk",
@@ -192,7 +198,7 @@ function buildFleetNodes(fleetReport = null) {
       glyph: PLATFORM_GLYPH[platform] ?? platform.slice(0, 2).toUpperCase(),
       title: `${platformLabel(platform)} · ${modelLabel}`,
       subtitle: orch?.opaque
-        ? `${orchId} · IDE-managed`
+        ? `${orchId} · IDE-managed · ${minions.length} agent${minions.length === 1 ? "" : "s"}`
         : platform === "codex"
           ? `${orchId} · single model`
           : `${orchId} · ${minions.length} minion${minions.length === 1 ? "" : "s"}`,
@@ -203,16 +209,18 @@ function buildFleetNodes(fleetReport = null) {
         platform === "codex"
           ? "Codex is single-default — configure apart from the multi-agent phase map."
           : null,
+        `Honesty · ${honesty}`,
         `Platform · ${platformLabel(platform)}`,
         `Orchestrator · ${orchId}`,
         orch?.opaque ? "Model · opaque · IDE-managed" : `Model · ${orch?.model ?? "—"}`,
         minions.length ? `Minions\n${minionLines.join("\n")}` : "No declared minions",
         fleet?.note ? String(fleet.note) : null,
-        "Prefer Configure all (multi-agent). Codex aparte. kairo fleet models = available/enabled.",
+        "Prefer Configure all (multi-agent). Codex aparte. Live requires OpenCode activity evidence.",
         note
       ].filter(Boolean).join("\n"),
       indent: 0,
-      opaque: Boolean(orch?.opaque),
+      opaque: Boolean(orch?.opaque) || honesty === "opaque",
+      honesty,
       minionCount: minions.length,
       actions: deskActions(fleet)
     });
