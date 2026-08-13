@@ -127,12 +127,41 @@ function renderWorkViewport(work) {
   </section>`;
 }
 
+function degradedWorkflowCopy(error) {
+  if (error === "gentle_upgrade_required") {
+    return "Upgrade Gentle. Work and Equipo remain.";
+  }
+  if (error === "gentle_unavailable" || error === "gentle_capabilities_failed") {
+    return "Install gentle-ai separately, then Refresh. Work and Equipo remain.";
+  }
+  if (error === "gentle_incompatible") {
+    return "Gentle response is incompatible. Fail closed. Work and Equipo remain.";
+  }
+  return `Workflow unavailable${error ? ` · ${error}` : ""}. Work and Equipo remain.`;
+}
+
+function renderNextTransition(nextTransition) {
+  if (nextTransition == null) return "";
+  if (typeof nextTransition === "string") {
+    return `<div class="work-row"><span class="work-label">Next transition</span><div>${escapeHtml(nextTransition)}</div></div>`;
+  }
+  if (typeof nextTransition !== "object") return "";
+  const kind = typeof nextTransition.kind === "string" ? nextTransition.kind : "";
+  const reason = typeof nextTransition.reason_code === "string" ? nextTransition.reason_code : "";
+  const command = nextTransition.execute?.command;
+  const summary = [kind, reason].filter(Boolean).join(" · ");
+  const cmd = typeof command === "string" && command
+    ? `<pre class="next-cmd">${escapeHtml(command)}</pre>`
+    : "";
+  return `<div class="work-row"><span class="work-label">Next transition</span><div>${escapeHtml(summary)}${cmd}</div></div>`;
+}
+
 function renderWorkflowSection(workflow, { degraded = false, error = null } = {}) {
   const wf = workflow ?? { kind: "none", active: false, label: "No active workflow" };
   if (degraded) {
     return `<section class="section" id="workflow">
       <div class="section-head"><span>Workflow Gentle</span><span class="muted">degraded</span></div>
-      <p class="muted">Workflow unavailable${error ? ` · ${escapeHtml(error)}` : ""}. Work and Equipo remain.</p>
+      <p class="muted">${escapeHtml(degradedWorkflowCopy(error))}</p>
     </section>`;
   }
   if (!wf.active) {
@@ -154,8 +183,7 @@ function renderWorkflowSection(workflow, { degraded = false, error = null } = {}
   return `<section class="section" id="workflow">
     <div class="section-head"><span>Workflow Gentle</span><span class="muted">${escapeHtml(wf.label || wf.kind)}</span></div>
     ${wf.changeName ? `<div class="work-row"><span class="work-label">Change</span><div>${escapeHtml(wf.changeName)}</div></div>` : ""}
-    ${wf.phase ? `<div class="work-row"><span class="work-label">Phase</span><div>${escapeHtml(wf.phase)}</div></div>` : ""}
-    ${wf.nextTransition ? `<div class="work-row"><span class="work-label">Next transition</span><div>${escapeHtml(wf.nextTransition)}</div></div>` : ""}
+    ${renderNextTransition(wf.nextTransition)}
     ${review}
   </section>`;
 }

@@ -105,5 +105,38 @@ test("renderWorkflowSection shows receipt only with Gentle evidence", () => {
     { degraded: true, error: "gentle_unavailable" }
   );
   assert.match(degraded, /degraded/);
-  assert.match(degraded, /gentle_unavailable/);
+  assert.match(degraded, /Install gentle-ai separately/);
+  assert.match(degraded, /Work and Equipo remain/);
+});
+
+test("renderWorkflowSection fixtures: upgrade / incompatible / official next_transition", () => {
+  const upgrade = renderWorkflowSection(
+    { kind: "none", active: false, provider: "upgrade_required" },
+    { degraded: true, error: "gentle_upgrade_required" }
+  );
+  assert.match(upgrade, /Upgrade Gentle/);
+  assert.doesNotMatch(upgrade, /Review/);
+
+  const incompatible = renderWorkflowSection(
+    { kind: "none", active: false, provider: "incompatible" },
+    { degraded: true, error: "gentle_incompatible" }
+  );
+  assert.match(incompatible, /incompatible/);
+  assert.match(incompatible, /Fail closed/);
+
+  const command = "gentle-ai review start --contract=gentle-ai.review-integration/v2 --consent=relay";
+  const connected = renderWorkflowSection({
+    kind: "review",
+    active: true,
+    label: "Review",
+    nextTransition: {
+      kind: "execute",
+      reason_code: "fresh_target_ready",
+      execute: { operation: "review.start", command }
+    },
+    review: { receipt: null, gate: null }
+  });
+  assert.match(connected, /fresh_target_ready/);
+  assert.match(connected, /gentle-ai review start --contract=gentle-ai.review-integration\/v2 --consent=relay/);
+  assert.doesNotMatch(connected, /\[object Object\]/);
 });
