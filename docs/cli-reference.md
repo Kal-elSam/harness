@@ -23,6 +23,7 @@ kairo status
 kairo status --json
 kairo connections
 kairo connections --json
+kairo control-plane --json
 kairo fleet
 kairo fleet --json
 kairo fleet models
@@ -113,6 +114,8 @@ Bare `kairo` opens the Ink setup UI (**Local Agent Operating System**) in a TTY.
 is equivalent. Detects agents, shows a plan, and lets you choose agents/components before
 applying. Use `--dry-run` to preview without writing, or `--yes` / flags to skip prompts.
 Use `kairo install` for explicit non-interactive configure in CI and scripts.
+Setup writes Kairo-owned `~/.harness` state and managed adapter sections — not
+Gentle methodology files ([companion boundary](gentle-companion.md)).
 
 ```bash
 kairo
@@ -140,6 +143,16 @@ kairo status --json
 `nextAction`, `cliVersion`). Human text remains the default. Exit code is non-zero when
 `overall` is not `ok`.
 
+### `kairo control-plane`
+
+Atomic IDE panel report (`kairo.control-plane/v1`): work snapshot + Gentle
+workflow + team + attention. Gentle workflow is a passthrough of
+`gentle-ai.review-integration/v2` — see [Gentle companion boundary](gentle-companion.md).
+
+```bash
+kairo control-plane --json
+```
+
 ### `kairo sync`
 
 Primary convergence command. Detects managed state, repairs drift with the same
@@ -155,6 +168,9 @@ kairo sync --dry-run --json
 - No state → recommends `kairo setup`, writes nothing.
 - Already OK → writes nothing.
 - Drift/missing/stale → repairs, then shows status.
+- Writes **Kairo-owned** managed sections and `~/.harness` only — not Gentle
+  `.gentle-ai/` files, review inventory, or SDD change documents
+  ([companion boundary](gentle-companion.md)).
 - `--json` uses the same stable envelope as `status`, plus sync fields
   (`action`, `wrote`, planned/applied repairs when present).
 - `kairo update` remains as a technical alias.

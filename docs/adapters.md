@@ -78,6 +78,11 @@ confirm or `--yes`/`--confirm`. Exit codes: `0` ok, `1` severity threshold,
 Cockpit: **Runs → Reviews** lists receipts and opens a read-only detail view
 (no launch from Cockpit in v1).
 
+**0.8.0 freeze:** `kairo review`, `kairo reviews`, and Cockpit Reviews stay
+available but **do not** feed the Gentle workflow in `kairo control-plane`.
+Gentle authority is `gentle-ai.review-integration/v2` only — see
+[Gentle companion boundary](gentle-companion.md).
+
 Primary governance flow:
 
 ```txt

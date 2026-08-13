@@ -41,6 +41,10 @@ load MCP; configuration evidence is not runtime-active. Receipts live under
 
 ### SDD Core skills
 
+`sdd-core` ships skill copies into Kairo-managed adapter roots. Live SDD
+authority (change name, `nextRecommended`, `next_transition`) is Gentle — see
+[Gentle companion boundary](gentle-companion.md).
+
 `sdd-core` (default with setup/install) materializes nine phase skills:
 
 `sdd-init`, `sdd-explore`, `sdd-propose`, `sdd-spec`, `sdd-design`,

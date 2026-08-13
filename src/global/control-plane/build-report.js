@@ -9,6 +9,7 @@ import {
   NO_ACTIVE_WORKFLOW,
   WORKFLOW_KIND
 } from "./constants.js";
+import { buildAttention } from "./attention.js";
 import { loadGentleWorkflow } from "./gentle-adapters.js";
 import { normalizeTeam } from "./team.js";
 
@@ -18,78 +19,6 @@ function sectionOk() {
 
 function sectionErr(error) {
   return { ok: false, error: String(error ?? "section_failed") };
-}
-
-function buildAttention({ work, workflow, team, connections }) {
-  const items = [];
-  const primaryActions = [];
-  const secondaryActions = [
-    { id: "setup", label: "Setup", command: "kairo setup --dry-run" },
-    { id: "models", label: "Models", command: "kairo fleet models" },
-    { id: "catalog", label: "Catalog", command: "kairo fleet" },
-    { id: "doctor", label: "Doctor", command: "kairo doctor" }
-  ];
-
-  if (work?.integration?.showRepair === true) {
-    items.push({
-      id: "repair-integration",
-      severity: "error",
-      message: work.integration.detail ?? "MCP integration needs repair."
-    });
-    primaryActions.push({
-      id: "repair",
-      label: "Repair",
-      command: "kairo mcp install --yes"
-    });
-  }
-
-  if (work?.integration?.state === "missing") {
-    items.push({
-      id: "connect-mcp",
-      severity: "warning",
-      message: "Kairo MCP is not registered."
-    });
-    if (primaryActions.length < 2) {
-      primaryActions.push({
-        id: "connect",
-        label: "Connect Agent",
-        command: "kairo mcp install --yes"
-      });
-    }
-  }
-
-  for (const chip of connections ?? []) {
-    if (chip?.state === "error" || chip?.state === "conflict") {
-      items.push({
-        id: `conn-${chip.id}`,
-        severity: "warning",
-        message: `${chip.label ?? chip.id}: ${chip.detail ?? chip.state}`
-      });
-    }
-  }
-
-  if (!team?.platforms?.length) {
-    items.push({
-      id: "no-platforms",
-      severity: "info",
-      message: "No platforms detected in declared fleet topology."
-    });
-  }
-
-  if (workflow?.kind === WORKFLOW_KIND.NONE && !workflow?.active) {
-    // Informational only — not a primary action.
-    items.push({
-      id: "no-workflow",
-      severity: "info",
-      message: NO_ACTIVE_WORKFLOW
-    });
-  }
-
-  return {
-    items,
-    primaryActions: primaryActions.slice(0, 2),
-    secondaryActions
-  };
 }
 
 export async function buildControlPlaneReport({

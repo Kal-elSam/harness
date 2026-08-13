@@ -155,11 +155,20 @@ function panelStyles() {
     .hint { margin-top: 16px; font-size: 12px; color: var(--muted); }
     .work { border-bottom: 1px solid var(--border); padding: 10px 14px 12px; }
     .work-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-weight: 600; }
-    .work-row { margin: 0 0 8px; }
+    .work-row { margin: 0 0 8px; min-width: 0; max-width: 100%; }
+    .work-row > div { min-width: 0; max-width: 100%; }
     .work-label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; margin-bottom: 2px; }
     .work-list { margin: 0; padding-left: 18px; }
     .work-empty, .work-detail { color: var(--muted); }
-    .section { border-bottom: 1px solid var(--border); padding: 10px 14px 12px; }
+    .next-cmd {
+      display: block; margin: 6px 0 0; padding: 8px 10px;
+      max-width: 100%; min-width: 0; overflow: visible;
+      white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+      font: 11px/1.45 var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+      background: color-mix(in srgb, var(--fg) 8%, transparent); border-radius: 4px;
+      user-select: text;
+    }
+    .section { border-bottom: 1px solid var(--border); padding: 10px 14px 12px; min-width: 0; max-width: 100%; }
     .section-head {
       display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
       margin-bottom: 8px; font-size: 11px; letter-spacing: 0.06em;
