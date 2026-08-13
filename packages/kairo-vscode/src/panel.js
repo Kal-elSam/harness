@@ -3,14 +3,14 @@
 const vscode = require("vscode");
 const { buildPanelModel } = require("./panel-model");
 const { renderPanelHtml } = require("./panel-html");
+const { fleetReportFromControlPlane } = require("./control-plane-cache");
 
 const VIEW_ID = "kairo.panel";
 
 class KairoPanelProvider {
-  constructor({ cache, connectionsCache, nextCache, onAction }) {
+  constructor({ cache, controlPlaneCache, onAction }) {
     this.cache = cache;
-    this.connectionsCache = connectionsCache;
-    this.nextCache = nextCache;
+    this.controlPlaneCache = controlPlaneCache;
     this.onAction = onAction;
     this._view = null;
   }
@@ -32,21 +32,17 @@ class KairoPanelProvider {
 
   async refresh() {
     if (!this._view) return;
-    const [status, connectionsReport, nextReport] = await Promise.all([
+    // Single atomic report for connections/fleet/work/workflow — avoids contradictory partial UI.
+    const [status, controlPlane] = await Promise.all([
       this.cache.get({ force: true }),
-      this.connectionsCache
-        ? this.connectionsCache.get({ force: true })
-        : Promise.resolve({ connections: [] }),
-      this.nextCache
-        ? this.nextCache.get({ force: true })
+      this.controlPlaneCache
+        ? this.controlPlaneCache.get({ force: true })
         : Promise.resolve(null)
     ]);
-    const model = buildPanelModel(
-      status,
-      connectionsReport?.connections ?? [],
-      connectionsReport,
-      nextReport
-    );
+    const fleetReport = fleetReportFromControlPlane(controlPlane);
+    const connections = fleetReport.connections ?? [];
+    const nextReport = controlPlane?.work ?? null;
+    const model = buildPanelModel(status, connections, fleetReport, nextReport, controlPlane);
     const nonce = String(Date.now());
     this._view.webview.html = renderPanelHtml(model, nonce);
     this._view.title = `Kairo · ${model.headline}`;
