@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  SUPPORTED_PROTOCOL, SUPPORTED_SCHEMA, SUPPORTED_CONTRACT, SUPPORTED_MANDATORY_FEATURES,
-  createGentleProbe, evaluateGentleCapabilities, probeGentle
+  SUPPORTED_PROTOCOL, SUPPORTED_PROTOCOL_MINORS, SUPPORTED_SCHEMA, SUPPORTED_SCHEMA_V21,
+  SUPPORTED_CAPABILITY_SCHEMAS, SUPPORTED_CONTRACT, SUPPORTED_MANDATORY_FEATURES,
+  ADDITIVE_MINOR_POLICY, createGentleProbe, evaluateGentleCapabilities, probeGentle
 } from "../src/global/observability/gentle-probe.js";
 
 const TEN = [...SUPPORTED_MANDATORY_FEATURES];
@@ -22,13 +23,15 @@ const caps = (o = {}) => ({
 
 test("locked support set and capability gates", () => {
   assert.deepEqual(SUPPORTED_PROTOCOL, { major: 2, minor: 0 });
-  assert.equal(SUPPORTED_SCHEMA, "gentle-ai.review-integration.capabilities/v2");
+  assert.deepEqual(SUPPORTED_PROTOCOL_MINORS, [0, 1]);
+  assert.deepEqual(SUPPORTED_CAPABILITY_SCHEMAS, [SUPPORTED_SCHEMA, SUPPORTED_SCHEMA_V21]);
   assert.equal(SUPPORTED_CONTRACT, "gentle-ai.review-integration/v2");
+  assert.equal(ADDITIVE_MINOR_POLICY, "optional-fields-only");
   assert.equal(SUPPORTED_MANDATORY_FEATURES.length, 10);
   assert.equal(evaluateGentleCapabilities(caps()).state, "available");
   assert.equal(evaluateGentleCapabilities(caps({
     payload: { protocol: { major: 2, minor: 1 } }
-  })).state, "incompatible");
+  })).state, "available");
   assert.equal(evaluateGentleCapabilities(caps({
     mandatory: [...TEN, "brand_new_mandatory"]
   })).state, "incompatible");
@@ -44,6 +47,50 @@ test("locked support set and capability gates", () => {
   assert.equal(evaluateGentleCapabilities(caps({
     payload: { package: { name: "gentle-ai", version: "99.0.0" } }
   })).state, "available");
+  assert.equal(evaluateGentleCapabilities(caps({
+    payload: { schema: SUPPORTED_SCHEMA_V21, protocol: { major: 2, minor: 1 } }
+  })).state, "available");
+  assert.equal(evaluateGentleCapabilities(caps({
+    payload: { schema: "gentle-ai.review-integration.capabilities/v2.2" }
+  })).state, "incompatible");
+  assert.equal(evaluateGentleCapabilities(caps({
+    payload: { protocol: { major: 2, minor: 2 } }
+  })).state, "incompatible");
+  assert.equal(evaluateGentleCapabilities(caps({
+    payload: { compatibility: { additive_minor_policy: "rewrite-fields" } }
+  })).state, "incompatible");
+});
+
+test("Gentle 2.2.4 v2.0 and 2.3.0 v2.1 preserve announced bootstrap", () => {
+  const v20 = evaluateGentleCapabilities(caps({
+    payload: {
+      package: { name: "gentle-ai", version: "2.2.4" },
+      protocol: { major: 2, minor: 0 },
+      bootstrap: {
+        command: "gentle-ai review status --cwd <repo> --contract gentle-ai.review-integration/v2 --next-transition",
+        required_feature: "native_next_transition"
+      }
+    }
+  }));
+  assert.equal(v20.state, "available");
+  assert.equal(
+    v20.evidence.find((row) => row.kind === "bootstrap")?.command.includes("--agent"),
+    false
+  );
+
+  const v21 = evaluateGentleCapabilities(caps({
+    payload: {
+      schema: SUPPORTED_SCHEMA_V21,
+      package: { name: "gentle-ai", version: "2.3.0" },
+      protocol: { major: 2, minor: 1 },
+      bootstrap: {
+        command: "gentle-ai review status --cwd <repo> --contract gentle-ai.review-integration/v2 --agent claude-code --next-transition",
+        required_feature: "native_next_transition"
+      }
+    }
+  }));
+  assert.equal(v21.state, "available");
+  assert.match(v21.evidence.find((row) => row.kind === "bootstrap").command, /--agent claude-code/);
 });
 
 test("probeGentle missing / available / error", async () => {
