@@ -24,7 +24,8 @@ export {
   runPassiveObservabilitySnapshot
 } from "./passive-snapshot-flight.js";
 export {
-  SUPPORTED_PROTOCOL, SUPPORTED_SCHEMA, SUPPORTED_CONTRACT,
+  SUPPORTED_PROTOCOL, SUPPORTED_PROTOCOL_MINORS, SUPPORTED_SCHEMA, SUPPORTED_SCHEMA_V21,
+  SUPPORTED_CAPABILITY_SCHEMAS, SUPPORTED_CONTRACT, ADDITIVE_MINOR_POLICY,
   SUPPORTED_MANDATORY_FEATURES, evaluateGentleCapabilities, probeGentle, createGentleProbe,
   resolveGentleBinaryPath
 } from "./gentle-probe.js";

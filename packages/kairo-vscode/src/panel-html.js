@@ -38,24 +38,32 @@ function renderEntryDetail(entry) {
     <p class="hint">Buttons open a terminal. Kairo never writes without your consent.</p>`;
 }
 
-function renderFleetTree(fleetNodes) {
+function renderFleetTree(fleetNodes, { hideEmptyPlatforms = false, teamError = null } = {}) {
   const head = `<div class="fleet-head">
-    <span>Fleet floor</span>
+    <span>Equipo</span>
     <button class="btn fleet-head-btn" type="button" data-action="fleet" data-command="kairo fleet" data-safety="read-only">CLI</button>
   </div>`;
   if (!Array.isArray(fleetNodes) || fleetNodes.length === 0) {
-    return `<div class="fleet">${head}<div class="muted" style="padding:4px 14px 8px">No platforms detected.</div></div>`;
+    const empty = teamError
+      ? "Team unavailable — Work still shown."
+      : hideEmptyPlatforms
+        ? "Team section degraded."
+        : "No platforms detected.";
+    return `<div class="fleet">${head}<div class="muted" style="padding:4px 14px 8px">${escapeHtml(empty)}</div></div>`;
   }
   const desks = fleetNodes.map((node, index) => {
+    const honesty = node.honesty ? String(node.honesty) : (node.opaque ? "opaque" : "declared");
+    const honestyLabel = honesty.charAt(0).toUpperCase() + honesty.slice(1);
     const cls = [
       "desk",
-      node.opaque ? "desk-opaque" : "",
+      node.opaque || honesty === "opaque" ? "desk-opaque" : "",
+      honesty === "live" ? "desk-working" : "",
       `desk-${escapeHtml(node.platform)}`
     ].filter(Boolean).join(" ");
     return `<button class="${cls}" type="button" data-fleet="${index}" title="${escapeHtml(node.detail)}">
       <span class="desk-glyph">${escapeHtml(node.glyph || "?")}</span>
       <span class="desk-body">
-        <span class="desk-title">${escapeHtml(node.title)}</span>
+        <span class="desk-title">${escapeHtml(node.title)} <span class="honesty ${escapeHtml(honesty)}">${escapeHtml(honestyLabel)}</span></span>
         <span class="desk-sub">${escapeHtml(node.subtitle || "")}</span>
       </span>
     </button>`;
@@ -90,47 +98,164 @@ function renderList(items) {
 function renderWorkViewport(work) {
   const w = work ?? { present: false, emptyReason: "no_snapshot", integrationState: "missing" };
   const meta = [
-    w.integrationState ? `Integration · ${w.integrationState}` : null,
-    w.conversationId ? `Chat · ${w.conversationId}` : null,
-    w.updatedAt ? `Updated · ${w.updatedAt}` : null
+    w.integrationState ? `Estado · ${w.integrationState}` : null,
+    w.conversationId ? `Conversación · ${w.conversationId}` : null,
+    w.updatedAt ? `Actualizado · ${w.updatedAt}` : null
   ].filter(Boolean).join(" · ");
 
   if (!w.present) {
     const reason = w.emptyReason === "next_unavailable"
       ? "Work snapshot unavailable."
       : "No published work snapshot for this workspace.";
-    return `<section class="work" id="work">
-      <div class="work-head"><span>Work</span><span class="muted">${escapeHtml(meta || "—")}</span></div>
+    return `<section class="section" id="ahora">
+      <div class="section-head"><span>Ahora</span><span class="muted">${escapeHtml(meta || "—")}</span></div>
       <div class="work-empty">${escapeHtml(reason)}</div>
       ${w.detail ? `<div class="muted work-detail">${escapeHtml(w.detail)}</div>` : ""}
     </section>`;
   }
 
-  const team = w.team?.members?.length
-    ? `<div class="work-row"><span class="work-label">Team</span>${renderList(w.team.members.map((m) => m.title || m.workId))}</div>`
-    : "";
-
-  return `<section class="work" id="work">
-    <div class="work-head"><span>Work</span><span class="muted">${escapeHtml(meta)}</span></div>
+  return `<section class="section" id="ahora">
+    <div class="section-head"><span>Ahora</span><span class="muted">${escapeHtml(meta)}</span></div>
     ${w.goal ? `<div class="work-row"><span class="work-label">Goal</span><div>${escapeHtml(w.goal)}</div></div>` : ""}
     ${w.progress?.length ? `<div class="work-row"><span class="work-label">Progress</span>${renderList(w.progress)}</div>` : ""}
     ${w.now ? `<div class="work-row"><span class="work-label">Now</span><div>${escapeHtml(w.now)}</div></div>` : ""}
     ${w.blockers?.length ? `<div class="work-row"><span class="work-label">Blockers</span>${renderList(w.blockers)}</div>` : ""}
     ${w.next ? `<div class="work-row"><span class="work-label">Next</span><div>${escapeHtml(w.next)}</div></div>` : ""}
-    ${team}
+    ${w.team?.members?.length ? `<div class="work-row"><span class="work-label">Team</span>${renderList(
+      w.team.members.map((m) => [m.title || m.workId, m.role, m.state].filter(Boolean).join(" · "))
+    )}</div>` : ""}
   </section>`;
+}
+
+function degradedWorkflowCopy(error) {
+  if (error === "gentle_upgrade_required") {
+    return "Upgrade Gentle. Work and Equipo remain.";
+  }
+  if (error === "gentle_unavailable" || error === "gentle_capabilities_failed") {
+    return "Install gentle-ai separately, then Refresh. Work and Equipo remain.";
+  }
+  if (error === "gentle_incompatible") {
+    return "Gentle response is incompatible. Fail closed. Work and Equipo remain.";
+  }
+  return `Workflow unavailable${error ? ` · ${error}` : ""}. Work and Equipo remain.`;
+}
+
+function renderNextTransition(nextTransition) {
+  if (nextTransition == null) return "";
+  if (typeof nextTransition === "string") {
+    return `<div class="work-row"><span class="work-label">Next transition</span><div>${escapeHtml(nextTransition)}</div></div>`;
+  }
+  if (typeof nextTransition !== "object") return "";
+  const kind = typeof nextTransition.kind === "string" ? nextTransition.kind : "";
+  const reason = typeof nextTransition.reason_code === "string" ? nextTransition.reason_code : "";
+  const command = nextTransition.execute?.command;
+  const summary = [kind, reason].filter(Boolean).join(" · ");
+  const cmd = typeof command === "string" && command
+    ? `<pre class="next-cmd">${escapeHtml(command)}</pre>`
+    : "";
+  return `<div class="work-row"><span class="work-label">Next transition</span><div>${escapeHtml(summary)}${cmd}</div></div>`;
+}
+
+function renderWorkflowSection(workflow, { degraded = false, error = null } = {}) {
+  const wf = workflow ?? { kind: "none", active: false, label: "No active workflow" };
+  if (degraded) {
+    return `<section class="section" id="workflow">
+      <div class="section-head"><span>Workflow Gentle</span><span class="muted">degraded</span></div>
+      <p class="muted">${escapeHtml(degradedWorkflowCopy(error))}</p>
+    </section>`;
+  }
+  if (!wf.active) {
+    return `<section class="section" id="workflow">
+      <div class="section-head"><span>Workflow Gentle</span></div>
+      <p class="muted">${escapeHtml(wf.label || "No active workflow")}</p>
+    </section>`;
+  }
+  const reviewBits = [];
+  if (wf.review?.state) reviewBits.push(String(wf.review.state));
+  if (wf.review?.gate) reviewBits.push(`gate ${wf.review.gate}`);
+  if (wf.review?.receipt) {
+    const receipt = String(wf.review.receipt);
+    reviewBits.push(`receipt ${receipt.length > 28 ? `${receipt.slice(0, 24)}…` : receipt}`);
+  }
+  const review = reviewBits.length
+    ? `<div class="work-row"><span class="work-label">Review</span><div>${escapeHtml(reviewBits.join(" · "))}</div></div>`
+    : "";
+  return `<section class="section" id="workflow">
+    <div class="section-head"><span>Workflow Gentle</span><span class="muted">${escapeHtml(wf.label || wf.kind)}</span></div>
+    ${wf.changeName ? `<div class="work-row"><span class="work-label">Change</span><div>${escapeHtml(wf.changeName)}</div></div>` : ""}
+    ${renderNextTransition(wf.nextTransition)}
+    ${review}
+  </section>`;
+}
+
+function renderAttentionSection(attention, entries) {
+  const items = [];
+  for (const item of attention?.items ?? []) {
+    if (item.severity === "info" && item.id === "no-workflow") continue;
+    items.push(item);
+  }
+  for (const entry of entries ?? []) {
+    if (entry.status === "ok" || entry.status === "note" || entry.status === "info") continue;
+    items.push({
+      id: entry.id,
+      severity: entry.status,
+      message: entry.title
+    });
+  }
+  const rows = items.length === 0
+    ? `<div class="empty">Nothing needs you right now.</div>`
+    : items.map((item) => `<div class="attention-item ${escapeHtml(item.severity || "info")}">${escapeHtml(item.message)}</div>`).join("");
+  return `<section class="section" id="atencion">
+    <div class="section-head"><span>Atención</span></div>
+    ${rows}
+  </section>`;
+}
+
+function primaryActionsFromModel(model) {
+  const fromCp = model.attention?.primaryActions;
+  if (Array.isArray(fromCp) && fromCp.length) {
+    return fromCp.slice(0, 2).map((a) => ({
+      id: a.id,
+      label: a.label,
+      command: a.command,
+      primary: true,
+      safety: "consent"
+    }));
+  }
+  return (model.actions ?? []).filter((a) => a.primary).slice(0, 2);
+}
+
+function secondaryActionsFromModel(model) {
+  const fromCp = model.attention?.secondaryActions;
+  if (Array.isArray(fromCp) && fromCp.length) {
+    return fromCp.map((a) => ({
+      id: a.id,
+      label: a.label,
+      command: a.command,
+      primary: false,
+      safety: "consent"
+    })).concat([{ id: "refresh", label: "Refresh", command: null, primary: false }]);
+  }
+  return (model.actions ?? []).filter((a) => !a.primary);
 }
 
 function renderPanelHtml(model, nonce) {
   const entries = model.entries ?? [];
-  const actions = model.actions ?? [];
   const connections = model.connections ?? [];
   const fleetNodes = model.fleetNodes ?? [];
   const activityNodes = model.activityNodes ?? [];
+  const primaryActions = primaryActionsFromModel(model);
+  const secondaryActions = secondaryActionsFromModel(model);
   const selected = entries[0] ?? null;
+  const teamError = model.controlPlane?.sections?.team?.ok === false
+    ? (model.controlPlane.sections.team.error ?? "team_failed")
+    : null;
+  const hasControlPlane = model.controlPlane != null;
 
   const chips = connections.length === 0
-    ? `<span class="muted">Connections loading…</span>`
+    ? (hasControlPlane
+      ? `<span class="muted">No companion chips in report.</span>`
+      : `<span class="muted">Connections loading…</span>`)
     : connections.map((c, index) => `
         <button class="chip" type="button" data-connection="${index}" title="${escapeHtml(c.access)}">
           <span class="chip-glyph ${escapeHtml(c.state)}">${chipGlyph(c.state)}</span>
@@ -138,17 +263,10 @@ function renderPanelHtml(model, nonce) {
           <span class="chip-state">${escapeHtml(c.state)}${c.optional ? " · optional" : ""}</span>
         </button>`).join("");
 
-  const entryRows = entries.length === 0
-    ? `<div class="empty">Nothing needs you right now.</div>`
-    : entries.map((entry, index) => `
-        <button class="entry${index === 0 ? " selected" : ""}" data-entry="${index}" type="button">
-          <span class="badge ${escapeHtml(entry.status)}">${escapeHtml(entry.status)}</span>
-          <span class="entry-title">${escapeHtml(entry.title)}</span>
-        </button>`).join("");
-
   const authority = model.orchestratorAuthority
     ? ` · authority ${escapeHtml(model.orchestratorAuthority)}`
     : "";
+  const headlineOk = model.overall === "ok" || model.work?.integrationState === "active";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -162,24 +280,27 @@ function renderPanelHtml(model, nonce) {
 <body>
   <header>
     <h1>Kairo</h1>
-    <span class="headline ${model.overall === "ok" ? "ok" : ""}">${escapeHtml(model.headline)}</span>
-    <span class="meta">${model.cliVersion ? `v${escapeHtml(model.cliVersion)}` : ""} · ${entries.length} entries${authority}</span>
+    <span class="headline ${headlineOk ? "ok" : ""}">${escapeHtml(model.headline)}</span>
+    <span class="meta">${model.cliVersion ? `v${escapeHtml(model.cliVersion)}` : ""}${authority}</span>
   </header>
-  <div class="actions">${renderActionButtons(actions)}</div>
-  <div class="connections" id="connections">${chips}</div>
+  <div class="actions primary-actions">${renderActionButtons(primaryActions)}</div>
   ${renderWorkViewport(model.work)}
-  ${renderFleetTree(fleetNodes)}
+  ${renderWorkflowSection(model.workflow, {
+    degraded: model.controlPlane?.sections?.workflow?.ok === false,
+    error: model.controlPlane?.sections?.workflow?.error ?? null
+  })}
+  ${renderFleetTree(fleetNodes, {
+    hideEmptyPlatforms: model.hideEmptyPlatforms === true,
+    teamError
+  })}
   ${renderActivityTree(activityNodes, model.activityActiveCount ?? 0, model.showActivityFloor === true)}
-  <div class="panes">
-    <section class="pane">
-      <div class="pane-title">Entries ${entries.length}</div>
-      <div class="entries" id="entries">${entryRows}</div>
-    </section>
-    <section class="pane">
-      <div class="pane-title">Details</div>
-      <div class="details" id="details">${renderEntryDetail(selected)}</div>
-    </section>
-  </div>
+  ${renderAttentionSection(model.attention, entries)}
+  <div class="connections" id="connections">${chips}</div>
+  <div class="actions secondary-actions">${renderActionButtons(secondaryActions)}</div>
+  <section class="pane details-pane">
+    <div class="pane-title">Details</div>
+    <div class="details" id="details">${renderEntryDetail(selected)}</div>
+  </section>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const entries = ${JSON.stringify(entries)};
@@ -231,7 +352,6 @@ function renderPanelHtml(model, nonce) {
     }
 
     function clearSelection(except) {
-      if (except !== "entry") document.querySelectorAll(".entry").forEach((el) => el.classList.remove("selected"));
       if (except !== "chip") document.querySelectorAll(".chip").forEach((el) => el.classList.remove("selected"));
       if (except !== "fleet") document.querySelectorAll("[data-fleet]").forEach((el) => el.classList.remove("selected"));
       if (except !== "activity") document.querySelectorAll("[data-activity]").forEach((el) => el.classList.remove("selected"));
@@ -240,10 +360,6 @@ function renderPanelHtml(model, nonce) {
     function showEntry(index) {
       const entry = entries[index];
       if (!entry) return;
-      clearSelection("entry");
-      document.querySelectorAll(".entry").forEach((el, i) => {
-        el.classList.toggle("selected", i === index);
-      });
       details.innerHTML = "<h2>" + escapeHtml(entry.title) + "</h2>"
         + "<p>" + escapeHtml(entry.detail || "No extra detail.") + "</p>"
         + (entry.category ? "<p>Category · " + escapeHtml(entry.category) + "</p>" : "")
@@ -281,9 +397,10 @@ function renderPanelHtml(model, nonce) {
       ).join("");
       details.innerHTML = "<h2>" + escapeHtml(node.title) + "</h2>"
         + (node.subtitle ? "<p>" + escapeHtml(node.subtitle) + "</p>" : "")
+        + (node.honesty ? "<p>Honesty · " + escapeHtml(node.honesty) + "</p>" : "")
         + detailActionButtons(node.actions)
         + lines
-        + "<p class=\\"hint\\">Use the buttons first. Plan opens a terminal; add --yes to write (backup created). Pixel Agents is optional visual for Claude terminals.</p>";
+        + "<p class=\\"hint\\">Use the buttons first. Plan opens a terminal; add --yes to write (backup created). Live = OpenCode evidence only.</p>";
       bindDetailActions();
     }
 
@@ -315,11 +432,6 @@ function renderPanelHtml(model, nonce) {
         vscode.postMessage({ type: "run-command", command, id, safety });
       });
     });
-    document.querySelectorAll("[data-entry]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        showEntry(Number(btn.getAttribute("data-entry")));
-      });
-    });
     document.querySelectorAll("[data-connection]").forEach((btn) => {
       btn.addEventListener("click", () => {
         showConnection(Number(btn.getAttribute("data-connection")));
@@ -337,9 +449,21 @@ function renderPanelHtml(model, nonce) {
     });
 
     if (entries.length > 0) showEntry(0);
+    else bindDetailActions();
   </script>
 </body>
 </html>`;
 }
 
-module.exports = { escapeHtml, renderPanelHtml, renderFleetTree, renderActivityTree, renderWorkViewport, chipGlyph };
+module.exports = {
+  escapeHtml,
+  renderPanelHtml,
+  renderFleetTree,
+  renderActivityTree,
+  renderWorkViewport,
+  renderWorkflowSection,
+  renderAttentionSection,
+  primaryActionsFromModel,
+  secondaryActionsFromModel,
+  chipGlyph
+};
