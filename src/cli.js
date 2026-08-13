@@ -178,6 +178,15 @@ export async function runCli(argv) {
       });
       return;
     }
+    case "control-plane": {
+      const { runControlPlaneCli } = await import("./global/control-plane/cli.js");
+      await runControlPlaneCli({
+        cwd: optionsWithPolicy.cwd,
+        json: optionsWithPolicy.json === true,
+        mcpClient: optionsWithPolicy.mcpClient ?? "cursor"
+      });
+      return;
+    }
     case "fleet": {
       const fleetAction = optionsWithPolicy.fleetAction ?? "show";
       if (fleetAction === "set") {
@@ -1052,6 +1061,7 @@ function normalizeCommand(command) {
   if (command === "mcp") return "mcp";
   if (command === "connections") return "connections";
   if (command === "next") return "next";
+  if (command === "control-plane") return "control-plane";
   if (command === "fleet") return "fleet";
   if (command === "intelligence" || command === "intel") return "intelligence";
   if (command === "setup") return "setup";
