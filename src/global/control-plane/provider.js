@@ -21,6 +21,7 @@ export function emptyGentleWorkflow({ provider = null } = {}) {
     nextTransition: null,
     changeName: null,
     review: null,
+    sdd: null,
     provider
   };
 }

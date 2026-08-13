@@ -32,3 +32,7 @@ export const PROVIDER_ERROR = Object.freeze({
   [PROVIDER.UNAVAILABLE]: "gentle_unavailable",
   [PROVIDER.INCOMPATIBLE]: "gentle_incompatible"
 });
+
+export const GENTLE_INSTALL_HINT = "Install gentle-ai separately, then Refresh.";
+export const GENTLE_UPGRADE_LABEL = "Upgrade Gentle";
+export const GENTLE_DOCTOR_COMMAND = "gentle-ai doctor";

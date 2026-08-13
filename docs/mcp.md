@@ -74,7 +74,7 @@ agents cannot supply `projectKey` / paths.
 
 | Chip | Access |
 |---|---|
-| Gentle | Probe contract; review-bundle export/import (import needs consent) |
+| Gentle | Capabilities probe → control-plane `provider`; review-bundle export/import (import needs consent). Workflow authority is Gentle v2 only — [companion boundary](gentle-companion.md) |
 | Hermes | Read-only sessions via loopback API |
 | Engram | Disk evidence + version; setup needs consent |
 | Graphify | Read-only query / path / explain |
