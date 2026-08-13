@@ -7,7 +7,7 @@ import {
   parseStrictJson,
   runGentleCommand
 } from "../src/global/control-plane/gentle-adapters.js";
-import { REVIEW_STATUS_ARGS } from "../src/global/control-plane/review-status.js";
+import { GENTLE_224_BOOTSTRAP } from "../src/global/control-plane/review-status.js";
 import {
   NO_ACTIVE_WORKFLOW,
   WORKFLOW_KIND
@@ -58,7 +58,7 @@ test("loadGentleWorkflow does not invent review when sdd-status fails", async ()
       state: "available",
       contractCompatible: true,
       diagnostics: [],
-      evidence: []
+      evidence: [{ kind: "binary", path: "/usr/bin/gentle-ai" }, { kind: "bootstrap", command: GENTLE_224_BOOTSTRAP }]
     }),
     runCommand(args) {
       calls.push(args[0]);
@@ -89,16 +89,21 @@ test("loadGentleWorkflow does not invent review when sdd-status fails", async ()
 
 test("runGentleCommand prefers stdout JSON and rejects nonzero status", () => {
   const ok = runGentleCommand(["sdd-status"], {
-    spawn: () => ({
-      status: 0,
-      stdout: '{"changeName":"x","phase":"sdd-spec"}',
-      stderr: "warn: ignore {not json"
-    })
+    command: "/usr/bin/gentle-ai",
+    spawn: (_cmd, _args, opts) => {
+      assert.equal(opts.shell, false);
+      return {
+        status: 0,
+        stdout: '{"changeName":"x","phase":"sdd-spec"}',
+        stderr: "warn: ignore {not json"
+      };
+    }
   });
   assert.equal(ok.ok, true);
   assert.equal(ok.payload.changeName, "x");
 
   const bad = runGentleCommand(["sdd-status"], {
+    command: "/usr/bin/gentle-ai",
     spawn: () => ({
       status: 2,
       stdout: '{"changeName":"x"}',

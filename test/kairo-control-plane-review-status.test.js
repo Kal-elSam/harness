@@ -3,10 +3,21 @@ import test from "node:test";
 import { SUPPORTED_CONTRACT } from "../src/global/observability/gentle-probe.js";
 import { WORKFLOW_KIND } from "../src/global/control-plane/constants.js";
 import {
-  REVIEW_STATUS_ARGS,
+  GENTLE_224_BOOTSTRAP,
+  GENTLE_230_BOOTSTRAP,
+  argvFromBootstrap,
   mapOfficialReviewStatus
 } from "../src/global/control-plane/review-status.js";
 import { loadGentleWorkflow } from "../src/global/control-plane/gentle-adapters.js";
+
+const BIN = "/usr/bin/gentle-ai";
+const REPO = "/tmp/repo";
+const connectedProbe = {
+  state: "available",
+  contractCompatible: true,
+  diagnostics: [],
+  evidence: [{ kind: "binary", path: BIN }, { kind: "bootstrap", command: GENTLE_224_BOOTSTRAP }]
+};
 
 const nextTransition = {
   kind: "execute",
@@ -65,13 +76,15 @@ test("mapOfficialReviewStatus publishes receipt only from Gentle fields", () => 
 });
 
 test("loadGentleWorkflow uses contracted review status and ignores inventory", async () => {
+  const expected = argvFromBootstrap(GENTLE_224_BOOTSTRAP, { repo: REPO, binaryPath: BIN });
   const result = await loadGentleWorkflow({
-    probe: async () => ({ state: "available", contractCompatible: true, diagnostics: [], evidence: [] }),
+    cwd: REPO,
+    probe: async () => connectedProbe,
     runCommand(args) {
       if (args[0] === "sdd-status") {
         return { ok: true, payload: { schemaName: "gentle-ai.sdd-status", changeName: null } };
       }
-      assert.deepEqual(args, [...REVIEW_STATUS_ARGS]);
+      assert.deepEqual(args, expected.argv);
       return { ok: true, payload: v3Status() };
     }
   });
@@ -79,4 +92,18 @@ test("loadGentleWorkflow uses contracted review status and ignores inventory", a
   assert.equal(result.workflow.kind, WORKFLOW_KIND.REVIEW);
   assert.deepEqual(result.workflow.nextTransition, nextTransition);
   assert.equal(result.workflow.review.lineageId, null);
+});
+
+test("argvFromBootstrap: 2.2.4 v2.0, 2.3.0 v2.1, fail closed", () => {
+  const opts = { repo: REPO, binaryPath: BIN };
+  const v20 = argvFromBootstrap(GENTLE_224_BOOTSTRAP, opts);
+  assert.equal(v20.argv.includes("--agent"), false);
+  assert.deepEqual(v20.argv, ["review", "status", "--cwd", REPO, "--contract", "gentle-ai.review-integration/v2", "--next-transition"]);
+  assert.deepEqual(
+    argvFromBootstrap(GENTLE_230_BOOTSTRAP, opts).argv,
+    ["review", "status", "--cwd", REPO, "--contract", "gentle-ai.review-integration/v2", "--agent", "claude-code", "--next-transition"]
+  );
+  assert.equal(argvFromBootstrap("gentle-ai review start --cwd <repo>", opts).ok, false);
+  assert.equal(argvFromBootstrap("gentle-ai review status --cwd <repo> | rm", opts).ok, false);
+  assert.equal(argvFromBootstrap(GENTLE_224_BOOTSTRAP, { repo: REPO, binaryPath: "gentle-ai" }).ok, false);
 });

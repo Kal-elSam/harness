@@ -1,6 +1,7 @@
 /**
  * Official Gentle review status v2/v3 only. Never read authority inventory.
  */
+import { isAbsolute } from "node:path";
 import { SUPPORTED_CONTRACT } from "../observability/gentle-probe.js";
 
 export const REVIEW_STATUS_SCHEMAS = Object.freeze([
@@ -9,14 +10,44 @@ export const REVIEW_STATUS_SCHEMAS = Object.freeze([
 ]);
 
 const INVENTORY_SCHEMA = "gentle-ai.review-authority-status/v1";
+const UNSAFE_TOKEN = /[|;&$`\n\r]/;
+const PLACEHOLDER = /^<[^>]+>$/;
 
-export const REVIEW_STATUS_ARGS = Object.freeze([
-  "review",
-  "status",
-  "--contract",
-  SUPPORTED_CONTRACT,
-  "--next-transition"
-]);
+export const GENTLE_224_BOOTSTRAP =
+  "gentle-ai review status --cwd <repo> --contract gentle-ai.review-integration/v2 --next-transition";
+export const GENTLE_230_BOOTSTRAP =
+  "gentle-ai review status --cwd <repo> --contract gentle-ai.review-integration/v2 --agent claude-code --next-transition";
+
+const failArgv = () => ({ ok: false, error: "gentle_incompatible", binary: null, argv: null });
+
+export function bootstrapCommandFromProbe(probe) {
+  return probe?.evidence?.find((row) => row?.kind === "bootstrap" && row.command)?.command ?? null;
+}
+
+export function argvFromBootstrap(command, { repo, binaryPath }) {
+  if (typeof command !== "string" || !command.trim() || UNSAFE_TOKEN.test(command)) return failArgv();
+  if (typeof binaryPath !== "string" || !isAbsolute(binaryPath)) return failArgv();
+  if (typeof repo !== "string" || !repo) return failArgv();
+  const tokens = command.trim().split(/\s+/);
+  if (tokens[0] !== "gentle-ai") return failArgv();
+  const args = [];
+  const rest = tokens.slice(1);
+  for (let i = 0; i < rest.length; i += 1) {
+    const tok = rest[i];
+    if (UNSAFE_TOKEN.test(tok)) return failArgv();
+    if (tok === "--cwd") {
+      const next = rest[i + 1];
+      const needsRepo = next === "<repo>" || next == null || next.startsWith("-");
+      args.push("--cwd", needsRepo ? repo : next);
+      if (!needsRepo || next === "<repo>") i += 1;
+      continue;
+    }
+    if (PLACEHOLDER.test(tok)) return failArgv();
+    args.push(tok);
+  }
+  if (args[0] !== "review" || args[1] !== "status") return failArgv();
+  return { ok: true, error: null, binary: binaryPath, argv: args };
+}
 
 function isObject(value) {
   return value != null && typeof value === "object" && !Array.isArray(value);

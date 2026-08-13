@@ -3,7 +3,8 @@
  * Negotiate capabilities before any workflow fetch. Never invent authority.
  */
 import { spawnSync } from "node:child_process";
-import { probeGentle } from "../observability/gentle-probe.js";
+import { isAbsolute } from "node:path";
+import { probeGentle, resolveGentleBinaryPath } from "../observability/gentle-probe.js";
 import { WORKFLOW_KIND, NO_ACTIVE_WORKFLOW, PROVIDER } from "./constants.js";
 import {
   emptyGentleWorkflow,
@@ -11,7 +12,8 @@ import {
   providerError
 } from "./provider.js";
 import {
-  REVIEW_STATUS_ARGS,
+  argvFromBootstrap,
+  bootstrapCommandFromProbe,
   mapOfficialReviewStatus
 } from "./review-status.js";
 
@@ -52,21 +54,31 @@ export function extractJsonPayload(text) {
   return null;
 }
 
+function resolvedGentleBinary(probed, command) {
+  if (typeof command === "string" && isAbsolute(command)) return command;
+  const path = probed?.evidence?.find((row) => row?.kind === "binary")?.path;
+  return typeof path === "string" && isAbsolute(path) ? path : resolveGentleBinaryPath();
+}
+
 export function runGentleCommand(args, {
   cwd = process.cwd(),
   env = process.env,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   spawn = spawnSync,
-  command = "gentle-ai",
+  command,
   strict = false
 } = {}) {
   try {
+    if (typeof command !== "string" || !isAbsolute(command)) {
+      return { ok: false, error: "gentle_incompatible", payload: null };
+    }
     const result = spawn(command, args, {
       cwd,
       env,
       encoding: "utf8",
       timeout: timeoutMs,
-      maxBuffer: 2 * 1024 * 1024
+      maxBuffer: 2 * 1024 * 1024,
+      shell: false
     });
     if (result.error) {
       return { ok: false, error: result.error.message || "gentle_spawn_failed", payload: null };
@@ -194,13 +206,27 @@ export async function loadGentleWorkflow({
     };
   }
 
-  const sdd = runCommand(["sdd-status"], { cwd, env, timeoutMs, spawn, command });
+  const parsed = argvFromBootstrap(bootstrapCommandFromProbe(probed), {
+    repo: cwd ?? process.cwd(),
+    binaryPath: resolvedGentleBinary(probed, command)
+  });
+  if (!parsed.ok) {
+    const incompatible = PROVIDER.INCOMPATIBLE;
+    return {
+      ok: false, error: "gentle_incompatible", provider: incompatible,
+      workflow: emptyGentleWorkflow({ provider: incompatible })
+    };
+  }
+
+  const sdd = runCommand(["sdd-status"], {
+    cwd, env, timeoutMs, spawn, command: parsed.binary
+  });
   const workflow = sdd.ok
     ? { ...mapSddStatusToWorkflow(sdd.payload), provider }
     : emptyGentleWorkflow({ provider });
 
-  const reviewRun = runCommand([...REVIEW_STATUS_ARGS], {
-    cwd, env, timeoutMs, spawn, command, strict: true
+  const reviewRun = runCommand(parsed.argv, {
+    cwd, env, timeoutMs, spawn, command: parsed.binary, strict: true
   });
   if (reviewRun.ok) {
     const mapped = mapOfficialReviewStatus(reviewRun.payload);

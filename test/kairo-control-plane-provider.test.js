@@ -11,7 +11,10 @@ import {
   providerError
 } from "../src/global/control-plane/provider.js";
 import { loadGentleWorkflow } from "../src/global/control-plane/gentle-adapters.js";
-import { REVIEW_STATUS_ARGS } from "../src/global/control-plane/review-status.js";
+import {
+  GENTLE_224_BOOTSTRAP,
+  argvFromBootstrap
+} from "../src/global/control-plane/review-status.js";
 
 test("mapGentleProviderState: missing → unavailable, v2 → connected", () => {
   assert.equal(mapGentleProviderState({ state: "missing" }), PROVIDER.UNAVAILABLE);
@@ -97,12 +100,16 @@ test("loadGentleWorkflow skips workflow fetch unless connected", async () => {
 
 test("loadGentleWorkflow when connected never calls unnegotiated review status", async () => {
   const calls = [];
+  const cwd = "/tmp/repo";
+  const expected = argvFromBootstrap(GENTLE_224_BOOTSTRAP, {
+    repo: cwd,
+    binaryPath: "/usr/bin/gentle-ai"
+  });
   const result = await loadGentleWorkflow({
+    cwd,
     probe: async () => ({
-      state: "available",
-      contractCompatible: true,
-      diagnostics: [],
-      evidence: []
+      state: "available", contractCompatible: true, diagnostics: [],
+      evidence: [{ kind: "binary", path: "/usr/bin/gentle-ai" }, { kind: "bootstrap", command: GENTLE_224_BOOTSTRAP }]
     }),
     runCommand(args) {
       calls.push(args);
@@ -117,7 +124,7 @@ test("loadGentleWorkflow when connected never calls unnegotiated review status",
   assert.equal(result.workflow.provider, PROVIDER.CONNECTED);
   assert.equal(result.workflow.review, null);
   assert.deepEqual(calls[0], ["sdd-status"]);
-  assert.deepEqual(calls[1], [...REVIEW_STATUS_ARGS]);
+  assert.deepEqual(calls[1], expected.argv);
   assert.equal(calls.length, 2);
 });
 
