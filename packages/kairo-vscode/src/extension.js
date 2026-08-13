@@ -2,8 +2,7 @@
 
 const vscode = require("vscode");
 const { StatusCache, mapStatusBar, fetchKairoStatus } = require("./status");
-const { ConnectionsCache, fetchKairoConnections } = require("./connections-cache");
-const { NextCache, fetchKairoNext } = require("./next-cache");
+const { ControlPlaneCache, fetchKairoControlPlane } = require("./control-plane-cache");
 const { KairoStatusTreeProvider } = require("./tree");
 const { KairoPanelProvider, VIEW_ID } = require("./panel");
 
@@ -48,11 +47,8 @@ function activate(context) {
   const cache = new StatusCache({
     fetch: () => fetchKairoStatus({ cwd: workspaceCwd() })
   });
-  const connectionsCache = new ConnectionsCache({
-    fetch: () => fetchKairoConnections({ cwd: workspaceCwd() })
-  });
-  const nextCache = new NextCache({
-    fetch: () => fetchKairoNext({ cwd: workspaceCwd() })
+  const controlPlaneCache = new ControlPlaneCache({
+    fetch: () => fetchKairoControlPlane({ cwd: workspaceCwd() })
   });
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   item.command = "kairo.openPanel";
@@ -64,8 +60,7 @@ function activate(context) {
 
   const panel = new KairoPanelProvider({
     cache,
-    connectionsCache,
-    nextCache,
+    controlPlaneCache,
     onAction: async (id, message = {}) => {
       if (id === "refresh") {
         await refreshAll({ force: true });
@@ -100,8 +95,7 @@ function activate(context) {
   const refreshAll = async ({ force = true } = {}) => {
     if (force) {
       cache.invalidate();
-      connectionsCache.invalidate();
-      nextCache.invalidate();
+      controlPlaneCache.invalidate();
     }
     const status = await cache.get({ force });
     const mapped = mapStatusBar(status);
