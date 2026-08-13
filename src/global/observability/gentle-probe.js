@@ -7,8 +7,15 @@ import {
 import { normalizeProbeResult } from "./probe-contract.js";
 
 export const SUPPORTED_PROTOCOL = Object.freeze({ major: 2, minor: 0 });
+export const SUPPORTED_PROTOCOL_MINORS = Object.freeze([0, 1]);
 export const SUPPORTED_SCHEMA = "gentle-ai.review-integration.capabilities/v2";
+export const SUPPORTED_SCHEMA_V21 = "gentle-ai.review-integration.capabilities/v2.1";
+export const SUPPORTED_CAPABILITY_SCHEMAS = Object.freeze([
+  SUPPORTED_SCHEMA,
+  SUPPORTED_SCHEMA_V21
+]);
 export const SUPPORTED_CONTRACT = "gentle-ai.review-integration/v2";
+export const ADDITIVE_MINOR_POLICY = "optional-fields-only";
 export const SUPPORTED_MANDATORY_FEATURES = Object.freeze([
   "compact_v2_authority", "exact_receipt_replay", "five_delivery_gates",
   "immutable_snapshot", "legacy_v1_target_scoped_read_only",
@@ -51,7 +58,7 @@ export function evaluateGentleCapabilities(payload) {
       diagnostics: ["Capabilities payload is not an object."]
     });
   }
-  if (payload.schema !== SUPPORTED_SCHEMA) {
+  if (!SUPPORTED_CAPABILITY_SCHEMAS.includes(payload.schema)) {
     diagnostics.push(`schema mismatch: got ${String(payload.schema)}`);
   }
   if (payload.contract !== SUPPORTED_CONTRACT) {
@@ -60,8 +67,29 @@ export function evaluateGentleCapabilities(payload) {
   if (payload.protocol?.major !== SUPPORTED_PROTOCOL.major) {
     diagnostics.push(`protocol.major mismatch: got ${String(payload.protocol?.major)}`);
   }
-  if (payload.protocol?.minor !== SUPPORTED_PROTOCOL.minor) {
+  if (!SUPPORTED_PROTOCOL_MINORS.includes(payload.protocol?.minor)) {
     diagnostics.push(`protocol.minor mismatch: got ${String(payload.protocol?.minor)}`);
+  }
+  const additivePolicy = payload.compatibility?.additive_minor_policy;
+  if (additivePolicy != null && additivePolicy !== ADDITIVE_MINOR_POLICY) {
+    diagnostics.push(`additive_minor_policy mismatch: got ${String(additivePolicy)}`);
+  }
+  if (typeof payload.bootstrap?.command === "string" && payload.bootstrap.command) {
+    evidence.push({
+      kind: "bootstrap",
+      command: payload.bootstrap.command,
+      required_feature: payload.bootstrap.required_feature ?? null
+    });
+  }
+  const requiredFeature = payload.bootstrap?.required_feature;
+  if (typeof requiredFeature === "string" && requiredFeature) {
+    const named = [
+      ...(Array.isArray(payload.features?.mandatory) ? payload.features.mandatory : []),
+      ...(Array.isArray(payload.features?.optional) ? payload.features.optional : [])
+    ];
+    if (!named.some((feature) => feature?.name === requiredFeature && feature.supported === true)) {
+      diagnostics.push(`bootstrap required_feature not supported: ${requiredFeature}`);
+    }
   }
   const mandatory = payload.features?.mandatory;
   if (!Array.isArray(mandatory)) {

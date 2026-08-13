@@ -1,20 +1,44 @@
 /**
  * Read-only Gentle adapters for control-plane workflow/review.
- * Never invents Direct/Delegated/SDD from agent prose — only Gentle payloads.
+ * Negotiate capabilities before any workflow fetch. Never invent authority.
  */
 import { spawnSync } from "node:child_process";
-import { WORKFLOW_KIND, NO_ACTIVE_WORKFLOW } from "./constants.js";
+import { isAbsolute } from "node:path";
+import { probeGentle, resolveGentleBinaryPath } from "../observability/gentle-probe.js";
+import { WORKFLOW_KIND, PROVIDER } from "./constants.js";
+import {
+  emptyGentleWorkflow,
+  mapGentleProviderState,
+  providerError
+} from "./provider.js";
+import {
+  argvFromBootstrap,
+  bootstrapCommandFromProbe,
+  mapOfficialReviewStatus
+} from "./review-status.js";
+import {
+  SDD_STATUS_ARGS,
+  applySddProjection,
+  mapOfficialSddStatus
+} from "./sdd-status.js";
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
+export function parseStrictJson(text) {
+  if (typeof text !== "string" || !text.trim()) return null;
+  try {
+    const parsed = JSON.parse(text.trim());
+    return parsed != null && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export function extractJsonPayload(text) {
   if (typeof text !== "string" || !text.trim()) return null;
+  const strict = parseStrictJson(text);
+  if (strict) return strict;
   const trimmed = text.trim();
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    /* fall through */
-  }
   const fenced = trimmed.match(/```json\s*([\s\S]*?)```/i);
   if (fenced?.[1]) {
     try {
@@ -35,26 +59,38 @@ export function extractJsonPayload(text) {
   return null;
 }
 
+function resolvedGentleBinary(probed, command) {
+  if (typeof command === "string" && isAbsolute(command)) return command;
+  const path = probed?.evidence?.find((row) => row?.kind === "binary")?.path;
+  return typeof path === "string" && isAbsolute(path) ? path : resolveGentleBinaryPath();
+}
+
 export function runGentleCommand(args, {
   cwd = process.cwd(),
   env = process.env,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   spawn = spawnSync,
-  command = "gentle-ai"
+  command,
+  strict = false
 } = {}) {
   try {
+    if (typeof command !== "string" || !isAbsolute(command)) {
+      return { ok: false, error: "gentle_incompatible", payload: null };
+    }
     const result = spawn(command, args, {
       cwd,
       env,
       encoding: "utf8",
       timeout: timeoutMs,
-      maxBuffer: 2 * 1024 * 1024
+      maxBuffer: 2 * 1024 * 1024,
+      shell: false
     });
     if (result.error) {
       return { ok: false, error: result.error.message || "gentle_spawn_failed", payload: null };
     }
-    const payload = extractJsonPayload(result.stdout ?? "")
-      ?? extractJsonPayload(result.stderr ?? "");
+    const payload = strict
+      ? parseStrictJson(result.stdout ?? "")
+      : (extractJsonPayload(result.stdout ?? "") ?? extractJsonPayload(result.stderr ?? ""));
     if (!payload) {
       return { ok: false, error: "gentle_parse_failed", payload: null, status: result.status };
     }
@@ -71,155 +107,77 @@ export function runGentleCommand(args, {
   }
 }
 
-function explicitRoute(payload) {
-  const raw = payload?.route ?? payload?.workflowKind ?? payload?.kind ?? null;
-  if (typeof raw !== "string") return null;
-  const normalized = raw.trim().toLowerCase();
-  if (normalized === WORKFLOW_KIND.DIRECT) return WORKFLOW_KIND.DIRECT;
-  if (normalized === WORKFLOW_KIND.DELEGATED) return WORKFLOW_KIND.DELEGATED;
-  if (normalized === WORKFLOW_KIND.SDD) return WORKFLOW_KIND.SDD;
-  if (normalized === WORKFLOW_KIND.REVIEW) return WORKFLOW_KIND.REVIEW;
-  return null;
+function applyOfficialReview(workflow, mapped) {
+  workflow.review = mapped.review;
+  workflow.nextTransition = mapped.nextTransition;
+  if (workflow.kind === WORKFLOW_KIND.NONE && mapped.nextTransition != null) {
+    workflow.kind = WORKFLOW_KIND.REVIEW;
+    workflow.active = mapped.nextTransition?.kind === "execute" || mapped.review != null;
+    workflow.label = "Review";
+  }
 }
 
-/**
- * Map gentle-ai.sdd-status@1 (+ optional explicit route) into workflow section.
- */
-export function mapSddStatusToWorkflow(payload) {
-  if (!payload || typeof payload !== "object") {
-    return {
-      kind: WORKFLOW_KIND.NONE,
-      active: false,
-      label: NO_ACTIVE_WORKFLOW,
-      phase: null,
-      nextTransition: null,
-      changeName: null,
-      review: null
-    };
-  }
-
-  const route = explicitRoute(payload);
-  const changeName = typeof payload.changeName === "string" && payload.changeName
-    ? payload.changeName
-    : null;
-  const nextTransition = typeof payload.next === "string" && payload.next
-    ? payload.next
-    : (typeof payload.nextTransition === "string" ? payload.nextTransition : null);
-  const phase = typeof payload.phase === "string"
-    ? payload.phase
-    : (typeof payload.currentPhase === "string" ? payload.currentPhase : null);
-  const hasActiveChange = Boolean(changeName);
-
-  if (route === WORKFLOW_KIND.DIRECT || route === WORKFLOW_KIND.DELEGATED) {
-    return {
-      kind: route,
-      active: true,
-      label: route === WORKFLOW_KIND.DIRECT ? "Direct" : "Delegated",
-      phase,
-      nextTransition,
-      changeName,
-      review: null
-    };
-  }
-
-  if (hasActiveChange || route === WORKFLOW_KIND.SDD) {
-    return {
-      kind: WORKFLOW_KIND.SDD,
-      active: hasActiveChange,
-      label: hasActiveChange ? "SDD" : NO_ACTIVE_WORKFLOW,
-      phase: phase ?? (hasActiveChange ? null : null),
-      nextTransition,
-      changeName,
-      review: null
-    };
-  }
-
-  return {
-    kind: WORKFLOW_KIND.NONE,
-    active: false,
-    label: NO_ACTIVE_WORKFLOW,
-    phase: null,
-    nextTransition: nextTransition === "sdd-new" ? nextTransition : nextTransition,
-    changeName: null,
-    review: null
-  };
-}
-
-/**
- * Only surface review when Gentle reports authoritative receipt/gate state.
- */
-export function mapReviewStatusToReview(payload) {
-  if (!payload || typeof payload !== "object") return null;
-  if (payload.authoritative !== true) return null;
-  const entries = Array.isArray(payload.entries) ? payload.entries : [];
-  const active = entries.find((row) =>
-    row
-    && typeof row === "object"
-    && row.status !== "superseded"
-    && (row.status === "active" || row.status === "current" || row.status === "recovered")
-    && (row.receipt || row.revision || row.snapshot_identity || row.gate || row.state)
-  ) ?? null;
-  if (!active) return null;
-
-  const receipt = active.receipt
-    ?? active.revision
-    ?? active.snapshot_identity
-    ?? null;
-  const gate = active.gate ?? payload.gate ?? null;
-  // Prefer receipt/gate evidence; state alone is insufficient for panel receipt UI.
-  if (!receipt && !gate) return null;
-
-  return {
-    lineageId: typeof active.lineage_id === "string" ? active.lineage_id : null,
-    state: typeof active.state === "string" ? active.state : null,
-    status: typeof active.status === "string" ? active.status : null,
-    receipt: typeof receipt === "string" ? receipt : null,
-    gate: typeof gate === "string" ? gate : null
-  };
-}
-
-export function loadGentleWorkflow({
+export async function loadGentleWorkflow({
   cwd,
   env,
   timeoutMs,
   spawn,
   command,
+  probe = probeGentle,
   runCommand = runGentleCommand
 } = {}) {
-  const sdd = runCommand(["sdd-status"], { cwd, env, timeoutMs, spawn, command });
-  const reviewRun = runCommand(["review", "status"], { cwd, env, timeoutMs, spawn, command });
-
-  const workflow = sdd.ok
-    ? mapSddStatusToWorkflow(sdd.payload)
-    : {
-        kind: WORKFLOW_KIND.NONE,
-        active: false,
-        label: NO_ACTIVE_WORKFLOW,
-        phase: null,
-        nextTransition: null,
-        changeName: null,
-        review: null
-      };
-
-  if (reviewRun.ok) {
-    const review = mapReviewStatusToReview(reviewRun.payload);
-    if (review) {
-      workflow.review = review;
-      if (!workflow.active && workflow.kind === WORKFLOW_KIND.NONE) {
-        workflow.kind = WORKFLOW_KIND.REVIEW;
-        workflow.active = true;
-        workflow.label = "Review";
-      }
-    }
+  const probed = await probe({ cwd, env });
+  const provider = mapGentleProviderState(probed);
+  if (provider !== PROVIDER.CONNECTED) {
+    return {
+      ok: false,
+      error: providerError(provider, probed),
+      provider,
+      workflow: emptyGentleWorkflow({ provider })
+    };
   }
 
-  const hasWorkflow = workflow.active === true || workflow.review != null;
-  if (!sdd.ok && !hasWorkflow) {
-    return { ok: false, error: sdd.error ?? "gentle_sdd_unavailable", workflow };
+  const parsed = argvFromBootstrap(bootstrapCommandFromProbe(probed), {
+    repo: cwd ?? process.cwd(),
+    binaryPath: resolvedGentleBinary(probed, command)
+  });
+  if (!parsed.ok) {
+    const incompatible = PROVIDER.INCOMPATIBLE;
+    return {
+      ok: false, error: "gentle_incompatible", provider: incompatible,
+      workflow: emptyGentleWorkflow({ provider: incompatible })
+    };
+  }
+
+  const workflow = emptyGentleWorkflow({ provider });
+  const sdd = runCommand([...SDD_STATUS_ARGS], {
+    cwd, env, timeoutMs, spawn, command: parsed.binary, strict: true
+  });
+  if (sdd.ok) {
+    const mappedSdd = mapOfficialSddStatus(sdd.payload);
+    if (mappedSdd.ok) applySddProjection(workflow, mappedSdd.projection);
+  }
+
+  const reviewRun = runCommand(parsed.argv, {
+    cwd, env, timeoutMs, spawn, command: parsed.binary, strict: true
+  });
+  if (reviewRun.ok) {
+    const mapped = mapOfficialReviewStatus(reviewRun.payload);
+    if (mapped.ok) applyOfficialReview(workflow, mapped);
+  }
+
+  if (!sdd.ok && workflow.kind === WORKFLOW_KIND.NONE && workflow.review == null) {
+    return {
+      ok: false,
+      error: sdd.error ?? "gentle_sdd_unavailable",
+      provider,
+      workflow
+    };
   }
   return {
     ok: true,
     error: sdd.ok ? null : (sdd.error ?? "gentle_sdd_unavailable"),
+    provider,
     workflow
   };
 }
