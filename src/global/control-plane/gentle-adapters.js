@@ -53,10 +53,13 @@ export function runGentleCommand(args, {
     if (result.error) {
       return { ok: false, error: result.error.message || "gentle_spawn_failed", payload: null };
     }
-    const text = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-    const payload = extractJsonPayload(text);
+    const payload = extractJsonPayload(result.stdout ?? "")
+      ?? extractJsonPayload(result.stderr ?? "");
     if (!payload) {
       return { ok: false, error: "gentle_parse_failed", payload: null, status: result.status };
+    }
+    if (result.status !== 0 && result.status != null) {
+      return { ok: false, error: "gentle_nonzero_status", payload, status: result.status };
     }
     return { ok: true, payload, status: result.status, error: null };
   } catch (error) {
@@ -184,11 +187,11 @@ export function loadGentleWorkflow({
   runCommand = runGentleCommand
 } = {}) {
   const sdd = runCommand(["sdd-status"], { cwd, env, timeoutMs, spawn, command });
-  if (!sdd.ok) {
-    return {
-      ok: false,
-      error: sdd.error ?? "gentle_sdd_unavailable",
-      workflow: {
+  const reviewRun = runCommand(["review", "status"], { cwd, env, timeoutMs, spawn, command });
+
+  const workflow = sdd.ok
+    ? mapSddStatusToWorkflow(sdd.payload)
+    : {
         kind: WORKFLOW_KIND.NONE,
         active: false,
         label: NO_ACTIVE_WORKFLOW,
@@ -196,12 +199,8 @@ export function loadGentleWorkflow({
         nextTransition: null,
         changeName: null,
         review: null
-      }
-    };
-  }
+      };
 
-  const workflow = mapSddStatusToWorkflow(sdd.payload);
-  const reviewRun = runCommand(["review", "status"], { cwd, env, timeoutMs, spawn, command });
   if (reviewRun.ok) {
     const review = mapReviewStatusToReview(reviewRun.payload);
     if (review) {
@@ -214,5 +213,13 @@ export function loadGentleWorkflow({
     }
   }
 
-  return { ok: true, error: null, workflow };
+  const hasWorkflow = workflow.active === true || workflow.review != null;
+  if (!sdd.ok && !hasWorkflow) {
+    return { ok: false, error: sdd.error ?? "gentle_sdd_unavailable", workflow };
+  }
+  return {
+    ok: true,
+    error: sdd.ok ? null : (sdd.error ?? "gentle_sdd_unavailable"),
+    workflow
+  };
 }
