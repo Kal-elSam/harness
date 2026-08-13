@@ -123,7 +123,7 @@ test("loadGentleWorkflow when connected never calls unnegotiated review status",
   assert.equal(result.provider, PROVIDER.CONNECTED);
   assert.equal(result.workflow.provider, PROVIDER.CONNECTED);
   assert.equal(result.workflow.review, null);
-  assert.deepEqual(calls[0], ["sdd-status"]);
+  assert.deepEqual(calls[0], ["sdd-status", "--json"]);
   assert.deepEqual(calls[1], expected.argv);
   assert.equal(calls.length, 2);
 });

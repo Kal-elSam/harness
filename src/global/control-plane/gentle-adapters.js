@@ -5,7 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { probeGentle, resolveGentleBinaryPath } from "../observability/gentle-probe.js";
-import { WORKFLOW_KIND, NO_ACTIVE_WORKFLOW, PROVIDER } from "./constants.js";
+import { WORKFLOW_KIND, PROVIDER } from "./constants.js";
 import {
   emptyGentleWorkflow,
   mapGentleProviderState,
@@ -16,6 +16,11 @@ import {
   bootstrapCommandFromProbe,
   mapOfficialReviewStatus
 } from "./review-status.js";
+import {
+  SDD_STATUS_ARGS,
+  applySddProjection,
+  mapOfficialSddStatus
+} from "./sdd-status.js";
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
@@ -102,80 +107,6 @@ export function runGentleCommand(args, {
   }
 }
 
-function explicitRoute(payload) {
-  const raw = payload?.route ?? payload?.workflowKind ?? payload?.kind ?? null;
-  if (typeof raw !== "string") return null;
-  const normalized = raw.trim().toLowerCase();
-  if (normalized === WORKFLOW_KIND.DIRECT) return WORKFLOW_KIND.DIRECT;
-  if (normalized === WORKFLOW_KIND.DELEGATED) return WORKFLOW_KIND.DELEGATED;
-  if (normalized === WORKFLOW_KIND.SDD) return WORKFLOW_KIND.SDD;
-  if (normalized === WORKFLOW_KIND.REVIEW) return WORKFLOW_KIND.REVIEW;
-  return null;
-}
-
-/**
- * Map gentle-ai.sdd-status@1 (+ optional explicit route) into workflow section.
- */
-export function mapSddStatusToWorkflow(payload) {
-  if (!payload || typeof payload !== "object") {
-    return {
-      kind: WORKFLOW_KIND.NONE,
-      active: false,
-      label: NO_ACTIVE_WORKFLOW,
-      phase: null,
-      nextTransition: null,
-      changeName: null,
-      review: null
-    };
-  }
-
-  const route = explicitRoute(payload);
-  const changeName = typeof payload.changeName === "string" && payload.changeName
-    ? payload.changeName
-    : null;
-  const nextTransition = typeof payload.next === "string" && payload.next
-    ? payload.next
-    : (typeof payload.nextTransition === "string" ? payload.nextTransition : null);
-  const phase = typeof payload.phase === "string"
-    ? payload.phase
-    : (typeof payload.currentPhase === "string" ? payload.currentPhase : null);
-  const hasActiveChange = Boolean(changeName);
-
-  if (route === WORKFLOW_KIND.DIRECT || route === WORKFLOW_KIND.DELEGATED) {
-    return {
-      kind: route,
-      active: true,
-      label: route === WORKFLOW_KIND.DIRECT ? "Direct" : "Delegated",
-      phase,
-      nextTransition,
-      changeName,
-      review: null
-    };
-  }
-
-  if (hasActiveChange || route === WORKFLOW_KIND.SDD) {
-    return {
-      kind: WORKFLOW_KIND.SDD,
-      active: hasActiveChange,
-      label: hasActiveChange ? "SDD" : NO_ACTIVE_WORKFLOW,
-      phase: phase ?? (hasActiveChange ? null : null),
-      nextTransition,
-      changeName,
-      review: null
-    };
-  }
-
-  return {
-    kind: WORKFLOW_KIND.NONE,
-    active: false,
-    label: NO_ACTIVE_WORKFLOW,
-    phase: null,
-    nextTransition: nextTransition === "sdd-new" ? nextTransition : nextTransition,
-    changeName: null,
-    review: null
-  };
-}
-
 function applyOfficialReview(workflow, mapped) {
   workflow.review = mapped.review;
   workflow.nextTransition = mapped.nextTransition;
@@ -218,12 +149,14 @@ export async function loadGentleWorkflow({
     };
   }
 
-  const sdd = runCommand(["sdd-status"], {
-    cwd, env, timeoutMs, spawn, command: parsed.binary
+  const workflow = emptyGentleWorkflow({ provider });
+  const sdd = runCommand([...SDD_STATUS_ARGS], {
+    cwd, env, timeoutMs, spawn, command: parsed.binary, strict: true
   });
-  const workflow = sdd.ok
-    ? { ...mapSddStatusToWorkflow(sdd.payload), provider }
-    : emptyGentleWorkflow({ provider });
+  if (sdd.ok) {
+    const mappedSdd = mapOfficialSddStatus(sdd.payload);
+    if (mappedSdd.ok) applySddProjection(workflow, mappedSdd.projection);
+  }
 
   const reviewRun = runCommand(parsed.argv, {
     cwd, env, timeoutMs, spawn, command: parsed.binary, strict: true
