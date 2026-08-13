@@ -10,8 +10,11 @@ Gentle command **verbatim**. It does not invent workflow.
 ## Provider states
 
 Mapped from the existing capabilities probe (`probeGentle` /
-`evaluateGentleCapabilities`). Version numbers are not a floor: Gentle 2.2.4
-may be `connected` when the v2 contract and `next_transition` are official.
+`evaluateGentleCapabilities`). Accepted capability schemas are
+`gentle-ai.review-integration.capabilities/v2` (protocol 2.0) and
+`…/v2.1` (protocol 2.1). Unknown schemas and unknown minors fail closed.
+Version numbers are not a floor: Gentle 2.2.4 may be `connected` when v2.0
+is official.
 
 | `workflow.provider` | Meaning | Panel |
 |---|---|---|
@@ -22,8 +25,20 @@ may be `connected` when the v2 contract and `next_transition` are official.
 
 ## Official reads (connected only)
 
+Review status is **not** hard-coded. Kairo keeps Gentle’s announced
+`bootstrap.command`, substitutes `<repo>`, uses the resolved absolute binary,
+and spawns with `shell:false`. Only the official `review status` operation is
+allowed.
+
+```text
+Gentle 2.2.4 / v2.0:
+  <bin> review status --cwd <repo> --contract gentle-ai.review-integration/v2 --next-transition
+
+Gentle 2.3.0 / v2.1:
+  <bin> review status --cwd <repo> --contract gentle-ai.review-integration/v2 --agent claude-code --next-transition
+```
+
 ```bash
-gentle-ai review status --contract gentle-ai.review-integration/v2 --next-transition
 gentle-ai sdd-status --json
 ```
 
