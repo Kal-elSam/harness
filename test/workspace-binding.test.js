@@ -34,7 +34,7 @@ test("parseArgs records --workspace-bound and explicit --cwd", () => {
   assert.equal(parseArgs(["mcp"]).options.workspaceBound, false);
 });
 
-test("unbound and inherited env never authorize writes", async () => {
+test("VSCODE_CWD never authorizes writes; flags stay mandatory", async () => {
   const root = await mkdtemp(join(tmpdir(), "kairo-bind-un-"));
   const ws = join(root, "ws");
   await mkdir(ws);
@@ -84,6 +84,96 @@ test("multi-root is ambiguous; cwd/process mismatch fails closed", async () => {
       }).code,
       WORKSPACE_BINDING_CODES.UNBOUND
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("unique WORKSPACE_FOLDER_PATHS may match --cwd when process cwd is HOME", async () => {
+  const root = await mkdtemp(join(tmpdir(), "kairo-bind-home-"));
+  const ws = join(root, "ws");
+  const other = join(root, "other");
+  await mkdir(ws);
+  await mkdir(other);
+  try {
+    const home = homedir();
+    assert.equal(resolveWorkspaceWriteBinding({
+      workspaceBound: true,
+      cwdExplicit: true,
+      cwd: ws,
+      processCwd: home,
+      userHome: home,
+      env: { HOME: home, WORKSPACE_FOLDER_PATHS: ws }
+    }).writable, true);
+    assert.equal(resolveWorkspaceWriteBinding({
+      workspaceBound: true,
+      cwdExplicit: true,
+      cwd: ws,
+      processCwd: home,
+      userHome: home,
+      env: { HOME: home }
+    }).code, WORKSPACE_BINDING_CODES.MISMATCH);
+    assert.equal(resolveWorkspaceWriteBinding({
+      workspaceBound: true,
+      cwdExplicit: true,
+      cwd: ws,
+      processCwd: home,
+      userHome: home,
+      env: { HOME: home, WORKSPACE_FOLDER_PATHS: other }
+    }).code, WORKSPACE_BINDING_CODES.MISMATCH);
+    assert.equal(resolveWorkspaceWriteBinding({
+      workspaceBound: true,
+      cwdExplicit: true,
+      cwd: ws,
+      processCwd: home,
+      userHome: home,
+      env: { HOME: home, VSCODE_CWD: ws }
+    }).code, WORKSPACE_BINDING_CODES.MISMATCH);
+    assert.equal(resolveWorkspaceWriteBinding({
+      workspaceBound: true,
+      cwdExplicit: true,
+      cwd: ws,
+      processCwd: home,
+      userHome: home,
+      env: { HOME: home, WORKSPACE_FOLDER_PATHS: `${ws},${other}` }
+    }).code, WORKSPACE_BINDING_CODES.AMBIGUOUS);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("diverging symlink vs unique folder fails closed; aliases still converge", async () => {
+  const root = await mkdtemp(join(tmpdir(), "kairo-bind-div-"));
+  const realA = join(root, "real-a");
+  const realB = join(root, "real-b");
+  const linkA = join(root, "link-a");
+  await mkdir(realA);
+  await mkdir(realB);
+  await symlink(realA, linkA);
+  try {
+    const home = homedir();
+    const diverged = resolveWorkspaceWriteBinding({
+      workspaceBound: true,
+      cwdExplicit: true,
+      cwd: linkA,
+      processCwd: home,
+      userHome: home,
+      env: { HOME: home, WORKSPACE_FOLDER_PATHS: realB }
+    });
+    assert.equal(diverged.writable, false);
+    assert.equal(diverged.code, WORKSPACE_BINDING_CODES.MISMATCH);
+
+    const viaAlias = resolveWorkspaceWriteBinding({
+      workspaceBound: true,
+      cwdExplicit: true,
+      cwd: linkA,
+      processCwd: home,
+      userHome: home,
+      env: { HOME: home, WORKSPACE_FOLDER_PATHS: realA }
+    });
+    assert.equal(viaAlias.writable, true);
+    assert.equal(viaAlias.cwd, canonicalizeProjectPath(realA));
+    assert.equal(viaAlias.projectKey, projectKeyForPath(realA));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
