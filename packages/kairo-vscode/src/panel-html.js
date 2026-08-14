@@ -1,6 +1,7 @@
 "use strict";
 
 const { panelStyles } = require("./panel-styles");
+const { isRegistrationRepairAction } = require("./panel-binding");
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -212,17 +213,23 @@ function renderAttentionSection(attention, entries) {
 }
 
 function primaryActionsFromModel(model) {
+  const ready = !model.workspaceBinding?.known || model.workspaceBinding.state === "ready";
+  const recovery = model.workspaceBinding?.known && model.workspaceBinding.state !== "ready"
+    ? model.workspaceBinding.recovery
+    : null;
   const fromCp = model.attention?.primaryActions;
-  if (Array.isArray(fromCp) && fromCp.length) {
-    return fromCp.slice(0, 2).map((a) => ({
+  const base = Array.isArray(fromCp) && fromCp.length
+    ? fromCp.slice(0, 2).map((a) => ({
       id: a.id,
       label: a.label,
       command: a.command,
       primary: true,
       safety: "consent"
-    }));
-  }
-  return (model.actions ?? []).filter((a) => a.primary).slice(0, 2);
+    }))
+    : (model.actions ?? []).filter((a) => a.primary).slice(0, 2);
+  const filtered = ready ? base : base.filter((a) => !isRegistrationRepairAction(a));
+  if (!recovery) return filtered;
+  return [recovery, ...filtered.filter((a) => a.id !== recovery.id)].slice(0, 2);
 }
 
 function secondaryActionsFromModel(model) {

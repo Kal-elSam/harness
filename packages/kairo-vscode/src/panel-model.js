@@ -3,6 +3,7 @@
 const { enrichEntry, sortEntries } = require("./entry-actions");
 const { buildFleetNodes, buildActivityNodes } = require("./panel-fleet");
 const { buildWorkViewport } = require("./panel-work");
+const { applyWorkspaceBinding } = require("./panel-binding");
 
 const INSTALL_HINT = "Install Kairo: npm install -g @kal-elsam/kairo-runtime";
 
@@ -16,7 +17,14 @@ const SAFETY_RANK = Object.freeze({
  * Console-Ninja-style panel model: headline + actions + entries + connection chips.
  * Actions never write — they only describe a terminal command to run.
  */
-function buildPanelModel(status, connections = [], fleetReport = null, nextReport = null, controlPlane = null) {
+function buildPanelModel(
+  status,
+  connections = [],
+  fleetReport = null,
+  nextReport = null,
+  controlPlane = null,
+  workspaceContext = null
+) {
   const fleetNodes = buildFleetNodes(fleetReport);
   const { activityNodes, activityNote, activityActiveCount, showActivityFloor } = buildActivityNodes(fleetReport);
   const fleetNote = fleetReport?.fleetNote
@@ -30,7 +38,7 @@ function buildPanelModel(status, connections = [], fleetReport = null, nextRepor
   const hideEmptyPlatforms = platformsPresent || teamSectionOk === false;
 
   if (!status || status.installed === false || status.overall === "missing") {
-    return {
+    return applyWorkspaceBinding({
       title: "Kairo",
       headline: "Not installed",
       detail: status?.nextAction ?? INSTALL_HINT,
@@ -52,7 +60,7 @@ function buildPanelModel(status, connections = [], fleetReport = null, nextRepor
       attention: controlPlane?.attention ?? null,
       hideEmptyPlatforms: hideEmptyPlatforms === true,
       entries: []
-    };
+    }, workspaceContext);
   }
 
   const overall = status.overall ?? "unknown";
@@ -178,7 +186,7 @@ function buildPanelModel(status, connections = [], fleetReport = null, nextRepor
     { id: "refresh", label: "Refresh", command: null, primary: false }
   );
 
-  return {
+  return applyWorkspaceBinding({
     title: "Kairo",
     headline,
     detail: status.nextAction ?? "",
@@ -200,7 +208,7 @@ function buildPanelModel(status, connections = [], fleetReport = null, nextRepor
     attention: controlPlane?.attention ?? null,
     hideEmptyPlatforms: hideEmptyPlatforms === true,
     entries
-  };
+  }, workspaceContext);
 }
 
 function mapResolutionToAction(resolution) {

@@ -69,6 +69,16 @@ function activate(context) {
         await refreshAll({ force: true });
         return;
       }
+      if (id === "open-folder") {
+        await vscode.commands.executeCommand("workbench.action.files.openFolder");
+        return;
+      }
+      if (id === "upgrade-cursor") {
+        void vscode.window.showInformationMessage(
+          "This Cursor build cannot register workspace-bound MCP. Upgrade Cursor. Repair / mcp install will not bind writes."
+        );
+        return;
+      }
       if (id === "guide") {
         const tip = GUIDE_TIPS[message.detail]
           ?? "This tool is optional and installed outside Kairo. Read Details, install yourself if you want it, then Refresh.";
