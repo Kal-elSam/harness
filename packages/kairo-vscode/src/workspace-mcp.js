@@ -3,14 +3,24 @@
 const SERVER_ID = "kairo-workspace";
 const SERVER_LABEL = "Kairo (workspace)";
 const COMMAND = "kairo";
-const ARGS = Object.freeze(["mcp", "--workspace-bound", "--cwd", "."]);
+const STATES = Object.freeze({
+  registering: "registering",
+  registered: "registered",
+  unbound: "unbound",
+  ambiguous: "ambiguous",
+  registration_failed: "registration_failed"
+});
 
 let registrationState = {
   registered: false,
-  state: "unbound",
+  state: STATES.unbound,
   code: "workspace_unbound",
-  reason: null
+  reason: null,
+  root: null
 };
+let registeredName = null;
+let registeredRoot = null;
+let queue = Promise.resolve();
 
 function getWorkspaceMcpRegistration() {
   return { ...registrationState };
@@ -18,180 +28,155 @@ function getWorkspaceMcpRegistration() {
 
 function setRegistrationState(next) {
   registrationState = {
-    registered: next.registered === true,
+    registered: next.state === STATES.registered,
     state: next.state,
     code: next.code ?? null,
-    reason: next.reason ?? null
+    reason: next.reason ?? null,
+    root: next.root ?? null
   };
+}
+
+function boundMcpArgs(absPath) {
+  return ["mcp", "--workspace-bound", "--cwd", absPath];
 }
 
 function folderPath(folder) {
   if (!folder || typeof folder !== "object") return null;
-  const fsPath = folder.uri && typeof folder.uri.fsPath === "string"
-    ? folder.uri.fsPath
+  const uri = folder.uri && typeof folder.uri === "object" ? folder.uri : null;
+  const fsPath = uri && typeof uri.fsPath === "string"
+    ? uri.fsPath
     : (typeof folder.fsPath === "string" ? folder.fsPath : null);
   const trimmed = typeof fsPath === "string" ? fsPath.trim() : "";
-  return trimmed || null;
+  if (!trimmed) return null;
+  const scheme = typeof uri?.scheme === "string" ? uri.scheme : "file";
+  return { path: trimmed, scheme };
 }
 
 /**
  * Decide whether this window may register a writable workspace MCP.
- * Multi-root and empty windows fail closed — no inferred HOME/`/` cwd.
+ * Trusted file:// single-root only — no inferred HOME/`/` cwd.
  *
- * @param {readonly { uri?: { fsPath?: string }, fsPath?: string }[] | null | undefined} folders
+ * @param {readonly { uri?: { fsPath?: string, scheme?: string }, fsPath?: string }[] | null | undefined} folders
  */
-function planWorkspaceMcpServer(folders) {
+function planWorkspaceMcpServer(folders, options = {}) {
   const list = Array.isArray(folders) ? folders : [];
-  if (list.length === 0) {
-    return {
-      register: false,
-      code: "workspace_unbound",
-      id: SERVER_ID,
-      command: COMMAND,
-      args: [...ARGS],
-      cwd: null
-    };
+  const base = { register: false, id: SERVER_ID, command: COMMAND, args: null, env: {}, cwd: null };
+  if (options.trusted === false) {
+    return { ...base, code: "workspace_unbound", reason: "workspace_untrusted" };
   }
-  if (list.length > 1) {
-    return {
-      register: false,
-      code: "workspace_ambiguous",
-      id: SERVER_ID,
-      command: COMMAND,
-      args: [...ARGS],
-      cwd: null
-    };
-  }
-  const cwd = folderPath(list[0]);
-  if (!cwd) {
-    return {
-      register: false,
-      code: "workspace_unbound",
-      id: SERVER_ID,
-      command: COMMAND,
-      args: [...ARGS],
-      cwd: null
-    };
-  }
+  if (list.length === 0) return { ...base, code: "workspace_unbound", reason: "empty_window" };
+  if (list.length > 1) return { ...base, code: "workspace_ambiguous", reason: "multi_root" };
+  const info = folderPath(list[0]);
+  if (!info) return { ...base, code: "workspace_unbound", reason: "empty_window" };
+  if (info.scheme !== "file") return { ...base, code: "workspace_unbound", reason: "unsupported_scheme" };
   return {
     register: true,
     code: null,
+    reason: null,
     id: SERVER_ID,
     label: SERVER_LABEL,
     command: COMMAND,
-    args: [...ARGS],
-    cwd
+    args: boundMcpArgs(info.path),
+    env: {},
+    cwd: info.path
   };
 }
 
-function createWorkspaceMcpDefinition(vscodeApi, plan) {
-  if (!plan || plan.register !== true || typeof vscodeApi?.McpStdioServerDefinition !== "function") {
-    return null;
-  }
-  const def = new vscodeApi.McpStdioServerDefinition(
-    plan.label,
-    plan.command,
-    [...plan.args],
-    {},
-    undefined
-  );
-  if (plan.cwd && vscodeApi.Uri?.file) def.cwd = vscodeApi.Uri.file(plan.cwd);
-  else if (plan.cwd) def.cwd = plan.cwd;
-  return def;
+function nativeMcpApi(vscodeApi) {
+  const registerServer = vscodeApi?.cursor?.mcp?.registerServer;
+  const unregisterServer = vscodeApi?.cursor?.mcp?.unregisterServer;
+  if (typeof registerServer !== "function" || typeof unregisterServer !== "function") return null;
+  return {
+    registerServer: registerServer.bind(vscodeApi.cursor.mcp),
+    unregisterServer: unregisterServer.bind(vscodeApi.cursor.mcp)
+  };
 }
 
-function disposeRegistration(disposable) {
-  if (!disposable || typeof disposable.dispose !== "function") return;
-  try {
-    disposable.dispose();
-  } catch {
-    // Cursor may dispose twice on window close.
+function buildNativeServerConfig(plan) {
+  if (!plan || plan.register !== true) return null;
+  return { name: plan.id, server: { command: plan.command, args: [...plan.args], env: {} } };
+}
+
+async function unregisterCurrent(api) {
+  const name = registeredName;
+  registeredName = null;
+  registeredRoot = null;
+  if (!name || !api) return;
+  try { api.unregisterServer(name); } catch { /* window already gone */ }
+}
+
+function enqueue(work) {
+  const run = queue.then(work, work);
+  queue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function syncRegistration(vscodeApi) {
+  const api = nativeMcpApi(vscodeApi);
+  const plan = planWorkspaceMcpServer(
+    vscodeApi?.workspace?.workspaceFolders,
+    { trusted: vscodeApi?.workspace?.isTrusted === true }
+  );
+  if (!api) {
+    await unregisterCurrent(null);
+    setRegistrationState({ state: STATES.unbound, code: "workspace_unbound", reason: "api_unavailable" });
+    return getWorkspaceMcpRegistration();
   }
+  if (plan.register !== true) {
+    setRegistrationState({
+      state: plan.code === "workspace_ambiguous" ? STATES.ambiguous : STATES.unbound,
+      code: plan.code,
+      reason: plan.reason
+    });
+    await unregisterCurrent(api);
+    return getWorkspaceMcpRegistration();
+  }
+  if (registeredRoot === plan.cwd && registrationState.state === STATES.registered) {
+    return getWorkspaceMcpRegistration();
+  }
+  setRegistrationState({ state: STATES.registering, code: null, reason: null, root: plan.cwd });
+  try {
+    await unregisterCurrent(api);
+    api.registerServer(buildNativeServerConfig(plan));
+    registeredName = plan.id;
+    registeredRoot = plan.cwd;
+    setRegistrationState({ state: STATES.registered, code: null, reason: null, root: plan.cwd });
+  } catch {
+    registeredName = null;
+    registeredRoot = null;
+    setRegistrationState({
+      state: STATES.registration_failed, code: "workspace_unbound", reason: "register_failed"
+    });
+  }
+  return getWorkspaceMcpRegistration();
 }
 
 function registerWorkspaceMcpProvider(vscodeApi, context) {
-  const registerFn = vscodeApi?.lm?.registerMcpServerDefinitionProvider;
-  const apiAvailable = typeof registerFn === "function";
-  let disposable = null;
-  let provider = null;
-  const emitter = apiAvailable && typeof vscodeApi.EventEmitter === "function"
-    ? new vscodeApi.EventEmitter()
-    : null;
-
-  function syncRegistration() {
-    const plan = planWorkspaceMcpServer(vscodeApi.workspace?.workspaceFolders);
-    if (!apiAvailable) {
-      disposeRegistration(disposable);
-      disposable = null;
-      provider = null;
-      setRegistrationState({
-        registered: false,
-        state: "unbound",
-        code: "workspace_unbound",
-        reason: "api_unavailable"
-      });
-      return getWorkspaceMcpRegistration();
+  const sync = () => enqueue(() => syncRegistration(vscodeApi));
+  const pending = sync();
+  if (context?.subscriptions) {
+    context.subscriptions.push({
+      dispose: () => enqueue(() => unregisterCurrent(nativeMcpApi(vscodeApi)))
+    });
+    if (typeof vscodeApi.workspace?.onDidChangeWorkspaceFolders === "function") {
+      context.subscriptions.push(vscodeApi.workspace.onDidChangeWorkspaceFolders(() => { void sync(); }));
     }
-    if (plan.register !== true) {
-      disposeRegistration(disposable);
-      disposable = null;
-      provider = null;
-      setRegistrationState({
-        registered: false,
-        state: plan.code === "workspace_ambiguous" ? "ambiguous" : "unbound",
-        code: plan.code
-      });
-      return getWorkspaceMcpRegistration();
+    if (typeof vscodeApi.workspace?.onDidGrantWorkspaceTrust === "function") {
+      context.subscriptions.push(vscodeApi.workspace.onDidGrantWorkspaceTrust(() => { void sync(); }));
     }
-    if (disposable) {
-      setRegistrationState({ registered: true, state: "ready", code: null });
-      return getWorkspaceMcpRegistration();
-    }
-    provider = {
-      onDidChangeMcpServerDefinitions: emitter.event,
-      provideMcpServerDefinitions: () => {
-        const next = planWorkspaceMcpServer(vscodeApi.workspace?.workspaceFolders);
-        const def = createWorkspaceMcpDefinition(vscodeApi, next);
-        return def ? [def] : [];
-      },
-      refresh: () => emitter.fire()
-    };
-    try {
-      disposable = registerFn.call(vscodeApi.lm, SERVER_ID, provider);
-      setRegistrationState({ registered: true, state: "ready", code: null });
-    } catch {
-      disposable = null;
-      provider = null;
-      setRegistrationState({
-        registered: false,
-        state: "unbound",
-        code: "workspace_unbound",
-        reason: "register_failed"
-      });
-    }
-    return getWorkspaceMcpRegistration();
   }
-
-  const result = syncRegistration();
-  if (context?.subscriptions && emitter && typeof vscodeApi.workspace?.onDidChangeWorkspaceFolders === "function") {
-    context.subscriptions.push(
-      emitter,
-      { dispose: () => disposeRegistration(disposable) },
-      vscodeApi.workspace.onDidChangeWorkspaceFolders(() => {
-        syncRegistration();
-      })
-    );
-  }
-  return { ...result, provider, id: SERVER_ID, syncRegistration };
+  return { pending, syncRegistration: sync, id: SERVER_ID, getWorkspaceMcpRegistration };
 }
 
 module.exports = {
   SERVER_ID,
   SERVER_LABEL,
   COMMAND,
-  ARGS,
+  STATES,
+  boundMcpArgs,
   planWorkspaceMcpServer,
-  createWorkspaceMcpDefinition,
+  buildNativeServerConfig,
+  nativeMcpApi,
   registerWorkspaceMcpProvider,
   getWorkspaceMcpRegistration
 };

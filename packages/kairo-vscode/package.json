@@ -16,12 +16,6 @@
   ],
   "main": "./src/extension.js",
   "contributes": {
-    "mcpServerDefinitionProviders": [
-      {
-        "id": "kairo-workspace",
-        "label": "Kairo (workspace)"
-      }
-    ],
     "commands": [
       {
         "command": "kairo.openPanel",

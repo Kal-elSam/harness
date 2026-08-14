@@ -6,54 +6,46 @@ const { join } = require("node:path");
 const { test } = require("node:test");
 const {
   SERVER_ID,
-  ARGS,
+  boundMcpArgs,
   planWorkspaceMcpServer,
-  createWorkspaceMcpDefinition,
+  buildNativeServerConfig,
+  nativeMcpApi,
   registerWorkspaceMcpProvider,
   getWorkspaceMcpRegistration
 } = require("../src/workspace-mcp.js");
 
-function fakeVscode({ folders, registerImpl } = {}) {
-  const created = [];
-  class McpStdioServerDefinition {
-    constructor(label, command, args) {
-      this.label = label;
-      this.command = command;
-      this.args = args;
-      created.push(this);
-    }
-  }
-  let folderHandler;
+function fakeVscode({ folders, trusted = true, registerImpl } = {}) {
   const list = folders ? [...folders] : [];
+  let folderHandler;
   const lm = {
     calls: 0,
-    id: null,
-    provider: null,
-    registerMcpServerDefinitionProvider(id, provider) {
+    registerMcpServerDefinitionProvider() {
       this.calls += 1;
-      this.id = id;
-      this.provider = provider;
-      if (typeof registerImpl === "function") return registerImpl(id, provider);
-      return { dispose() { this.disposed = true; } };
+      return { dispose() {} };
     }
   };
+  const mcp = {
+    registerCalls: [],
+    unregisterCalls: [],
+    registerServer(config) {
+      this.registerCalls.push(config);
+      if (typeof registerImpl === "function") return registerImpl(config);
+    },
+    unregisterServer(name) { this.unregisterCalls.push(name); }
+  };
   return {
-    created,
     lm,
+    cursor: { mcp },
     get folderHandler() { return folderHandler; },
     folders: list,
-    McpStdioServerDefinition,
-    Uri: { file: (p) => ({ fsPath: p }) },
-    EventEmitter: class {
-      constructor() { this.event = () => {}; }
-      fire() { this.fired = true; }
-    },
     workspace: {
+      isTrusted: trusted,
       get workspaceFolders() { return list; },
       onDidChangeWorkspaceFolders(fn) {
         folderHandler = fn;
         return { dispose() {} };
-      }
+      },
+      onDidGrantWorkspaceTrust() { return { dispose() {} }; }
     }
   };
 }
@@ -72,48 +64,62 @@ test("single-root plans bound kairo argv; empty and multi-root fail closed", () 
   assert.equal(plan.register, true);
   assert.equal(plan.id, SERVER_ID);
   assert.equal(plan.id === "kairo", false);
-  assert.deepEqual(plan.args, [...ARGS]);
+  assert.deepEqual(plan.args, boundMcpArgs("/ws/only"));
   assert.equal(plan.cwd, "/ws/only");
+  assert.deepEqual(buildNativeServerConfig(plan).server.env, {});
+  assert.equal(nativeMcpApi({ lm: { registerMcpServerDefinitionProvider() {} } }), null);
 });
 
-test("registers provider only for single-root and captures success or failure", () => {
+test("registers native server only for trusted single-root; captures success or failure", async () => {
   const manifest = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf8"));
-  const contrib = manifest.contributes.mcpServerDefinitionProviders;
-  assert.equal(contrib[0].id, "kairo-workspace");
+  assert.equal(manifest.contributes.mcpServerDefinitionProviders, undefined);
 
   const empty = fakeVscode({ folders: [] });
-  const emptyResult = registerWorkspaceMcpProvider(empty, { subscriptions: [] });
-  assert.equal(emptyResult.registered, false);
+  await registerWorkspaceMcpProvider(empty, { subscriptions: [] }).pending;
+  assert.equal(empty.cursor.mcp.registerCalls.length, 0);
   assert.equal(empty.lm.calls, 0);
   assert.equal(getWorkspaceMcpRegistration().state, "unbound");
 
   const multi = fakeVscode({
     folders: [{ uri: { fsPath: "/a" } }, { uri: { fsPath: "/b" } }]
   });
-  assert.equal(registerWorkspaceMcpProvider(multi, { subscriptions: [] }).registered, false);
-  assert.equal(multi.lm.calls, 0);
+  await registerWorkspaceMcpProvider(multi, { subscriptions: [] }).pending;
+  assert.equal(multi.cursor.mcp.registerCalls.length, 0);
   assert.equal(getWorkspaceMcpRegistration().state, "ambiguous");
 
   const ok = fakeVscode({ folders: [{ uri: { fsPath: "/proj" } }] });
-  const subs = [];
-  const result = registerWorkspaceMcpProvider(ok, { subscriptions: subs });
+  const handle = registerWorkspaceMcpProvider(ok, { subscriptions: [] });
+  const result = await handle.pending;
   assert.equal(result.registered, true);
-  assert.equal(result.state, "ready");
-  assert.equal(ok.lm.calls, 1);
-  assert.equal(ok.lm.id, "kairo-workspace");
-  assert.equal(ok.lm.provider.provideMcpServerDefinitions()[0].cwd.fsPath, "/proj");
+  assert.equal(result.state, "registered");
+  assert.equal(ok.lm.calls, 0);
+  assert.deepEqual(ok.cursor.mcp.registerCalls[0].server.args, boundMcpArgs("/proj"));
+  await handle.syncRegistration();
+  assert.equal(ok.cursor.mcp.registerCalls.length, 1);
   ok.folders.splice(0, 1, { uri: { fsPath: "/x" } }, { uri: { fsPath: "/y" } });
   ok.folderHandler();
+  await handle.syncRegistration();
   assert.equal(getWorkspaceMcpRegistration().registered, false);
   assert.equal(getWorkspaceMcpRegistration().state, "ambiguous");
+  assert.deepEqual(ok.cursor.mcp.unregisterCalls, ["kairo-workspace"]);
 
   const boom = fakeVscode({
     folders: [{ uri: { fsPath: "/proj" } }],
     registerImpl() { throw new Error("no"); }
   });
-  const failed = registerWorkspaceMcpProvider(boom, { subscriptions: [] });
-  assert.equal(failed.registered, false);
-  assert.equal(failed.reason, "register_failed");
-  assert.equal(registerWorkspaceMcpProvider({ workspace: {} }, { subscriptions: [] }).registered, false);
-  assert.equal(createWorkspaceMcpDefinition({}, { register: true, cwd: "/proj" }), null);
+  await registerWorkspaceMcpProvider(boom, { subscriptions: [] }).pending;
+  assert.equal(getWorkspaceMcpRegistration().state, "registration_failed");
+  const untrusted = fakeVscode({ folders: [{ uri: { fsPath: "/proj" } }], trusted: false });
+  await registerWorkspaceMcpProvider(untrusted, { subscriptions: [] }).pending;
+  assert.equal(getWorkspaceMcpRegistration().reason, "workspace_untrusted");
+  const stubOnly = {
+    lm: { calls: 0, registerMcpServerDefinitionProvider() { this.calls += 1; } },
+    workspace: { workspaceFolders: [{ uri: { fsPath: "/proj" } }], isTrusted: true }
+  };
+  await registerWorkspaceMcpProvider(stubOnly, { subscriptions: [] }).pending;
+  assert.equal(stubOnly.lm.calls, 0);
+  assert.equal(getWorkspaceMcpRegistration().reason, "api_unavailable");
+  const remote = fakeVscode({ folders: [{ uri: { fsPath: "/proj", scheme: "vscode-remote" } }] });
+  await registerWorkspaceMcpProvider(remote, { subscriptions: [] }).pending;
+  assert.equal(getWorkspaceMcpRegistration().reason, "unsupported_scheme");
 });
