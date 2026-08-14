@@ -133,17 +133,11 @@ export async function runCli(argv) {
       return;
     case "mcp": {
       const { runMcpCli } = await import("./global/mcp-install.js");
-      await runMcpCli({
-        mcpAction: optionsWithPolicy.mcpAction ?? "serve",
-        mcpClient: optionsWithPolicy.mcpClient ?? "cursor",
-        yes: optionsWithPolicy.yes === true,
-        json: optionsWithPolicy.json === true,
-        cwd: optionsWithPolicy.cwd,
-        cwdExplicit: optionsWithPolicy.cwdExplicit,
+      await runMcpCli(buildMcpCliOptions(optionsWithPolicy, {
         packageRoot,
         packageName: packageManifest.name,
         version: packageManifest.version
-      });
+      }));
       return;
     }
     case "connections": {
@@ -457,6 +451,19 @@ function argsWantsWorkspaceScope(args) {
   return false;
 }
 
+export function buildMcpCliOptions(options = {}, extras = {}) {
+  return {
+    mcpAction: options.mcpAction ?? "serve",
+    mcpClient: options.mcpClient ?? "cursor",
+    yes: options.yes === true,
+    json: options.json === true,
+    cwd: options.cwd,
+    cwdExplicit: options.cwdExplicit,
+    workspaceBound: options.workspaceBound === true,
+    ...extras
+  };
+}
+
 export function parseArgs(argv) {
   const args = [...argv];
   const firstArg = args[0];
@@ -466,6 +473,7 @@ export function parseArgs(argv) {
   const options = {
     cwd: process.cwd(),
     cwdExplicit: false,
+    workspaceBound: false,
     scope: null,
     mode: "standard",
     modeExplicit: false,
@@ -606,6 +614,7 @@ export function parseArgs(argv) {
       options.cwd = resolve(args[++index]);
       options.cwdExplicit = true;
     }
+    else if (arg === "--workspace-bound") options.workspaceBound = true;
     else if (arg === "--scope") options.scope = parseScope(args[++index]);
     else if (arg.startsWith("--scope=")) options.scope = parseScope(arg.slice("--scope=".length));
     else if (arg === "--mode") {

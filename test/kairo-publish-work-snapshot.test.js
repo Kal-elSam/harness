@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createToolHandlers } from "../src/global/mcp/kairo-mcp.js";
@@ -76,6 +76,8 @@ test("workspaces stay isolated; MCP uses runtime cwd; enroll is idempotent", asy
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-pub-iso-"));
   const wsA = join(homeDir, "a");
   const wsB = join(homeDir, "b");
+  await mkdir(wsA);
+  await mkdir(wsB);
   try {
     await publishWorkSnapshot(base, { homeDir, cwd: wsA });
     await publishWorkSnapshot({ ...base, conversationId: "chat-b", goal: "Other workspace" }, {
@@ -93,6 +95,9 @@ test("workspaces stay isolated; MCP uses runtime cwd; enroll is idempotent", asy
     const handlers = createToolHandlers({
       homeDir,
       cwd: wsA,
+      cwdExplicit: true,
+      workspaceBound: true,
+      processCwd: wsA,
       publishWorkSnapshot: async (input) => publishWorkSnapshot(input, { homeDir, cwd: wsA })
     });
     const res = await handlers.kairo_publish_work_snapshot({

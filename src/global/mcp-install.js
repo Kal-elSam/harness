@@ -227,7 +227,14 @@ export async function runMcpCli(options = {}) {
   if (action === "serve" || action == null) {
     const { runKairoMcp } = await import("./mcp/kairo-mcp.js");
     return runKairoMcp({
-      cwd: resolveMcpServeCwd(options),
+      cwd: resolveMcpServeCwd(options) ?? options.cwd,
+      cwdExplicit: options.cwdExplicit === true,
+      workspaceBound: options.workspaceBound === true,
+      processCwd: options.processCwd ?? process.cwd(),
+      homeDir: options.homeDir,
+      env: options.env,
+      registerTool: options.registerTool,
+      serveStdio: options.serveStdio,
       packageRoot: options.packageRoot,
       packageName: options.packageName,
       version: options.version

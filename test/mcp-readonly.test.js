@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseArgs } from "../src/cli.js";
 import {
-  KAIRO_MCP_TOOLS, KAIRO_MCP_WRITE_TOOLS, mcpSchemas, mcpResult, createToolHandlers,
-  registerKairoMcpTools, createKairoMcpServer, runKairoMcp, pubCodes
+  KAIRO_MCP_TOOLS, KAIRO_MCP_READ_TOOLS, KAIRO_MCP_WRITE_TOOLS, mcpSchemas, mcpResult,
+  createToolHandlers, registerKairoMcpTools, createKairoMcpServer, runKairoMcp, pubCodes
 } from "../src/global/mcp/kairo-mcp.js";
 import { softLinkReviewToRun } from "../src/global/observability/build-companion-snapshot.js";
 
@@ -22,8 +22,9 @@ test("registry schemas + handlers + productive loaders + sanitize", async () => 
   assert.equal(parseArgs(["fleet", "--json"]).options.json, true);
   const tools = new Map();
   registerKairoMcpTools((n, c, h) => { assertToolWritePolicy(n); tools.set(n, h); }, {});
-  assert.deepEqual([...tools.keys()], [...KAIRO_MCP_TOOLS]);
+  assert.deepEqual([...tools.keys()], [...KAIRO_MCP_READ_TOOLS]);
   assert.ok(KAIRO_MCP_TOOLS.includes("kairo_fleet"));
+  assert.ok(KAIRO_MCP_READ_TOOLS.includes("kairo_fleet"));
   assert.deepEqual([...KAIRO_MCP_WRITE_TOOLS], ["kairo_publish_work_snapshot"]);
   assert.equal(mcpSchemas.runs.parse({}).limit, 20);
   assert.equal(mcpSchemas.alerts.parse({}).limit, 50);
@@ -171,7 +172,7 @@ test("registry schemas + handlers + productive loaders + sanitize", async () => 
     buildCompanion: async () => ({ ok: true, links: [] })
   });
   assert.equal(factory().info.name, "kairo");
-  assert.deepEqual(names, [...KAIRO_MCP_TOOLS]);
+  assert.deepEqual(names, [...KAIRO_MCP_READ_TOOLS]);
   assert.ok(createKairoMcpServer({ McpServer: FakeServer, registerTool: () => {} }));
   assert.equal(JSON.parse(mcpResult({ ok: true, code: "ok", data: { x: 1 } }).content[0].text).data.x, 1);
 });

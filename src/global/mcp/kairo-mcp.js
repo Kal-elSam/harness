@@ -18,15 +18,34 @@ import {
   workSnapshotPublishSchema
 } from "./work-snapshot-tool.js";
 import { resolveMcpWorkspaceCwd } from "./resolve-mcp-workspace.js";
+import {
+  WORKSPACE_BINDING_CODES,
+  resolveWorkspaceWriteBinding
+} from "./workspace-binding.js";
 
-/** Sole MCP write tool for companion snapshots. */
+/** Sole MCP write tool for companion snapshots. Bound servers only. */
 export const KAIRO_MCP_WRITE_TOOLS = Object.freeze(["kairo_publish_work_snapshot"]);
 
-export const KAIRO_MCP_TOOLS = Object.freeze([
+export const KAIRO_MCP_READ_TOOLS = Object.freeze([
   "kairo_status", "kairo_runs", "kairo_alerts", "kairo_gentle_status",
-  "kairo_graph_query", "kairo_graph_path", "kairo_context_summary", "kairo_fleet",
+  "kairo_graph_query", "kairo_graph_path", "kairo_context_summary", "kairo_fleet"
+]);
+
+export const KAIRO_MCP_TOOLS = Object.freeze([
+  ...KAIRO_MCP_READ_TOOLS,
   ...KAIRO_MCP_WRITE_TOOLS
 ]);
+
+export function mcpWorkspaceBinding(deps = {}) {
+  return resolveWorkspaceWriteBinding({
+    workspaceBound: deps.workspaceBound === true,
+    cwdExplicit: deps.cwdExplicit === true,
+    cwd: deps.cwd,
+    processCwd: deps.processCwd ?? process.cwd(),
+    userHome: deps.userHome,
+    env: deps.env ?? process.env
+  });
+}
 
 const empty = z.object({});
 export const mcpSchemas = Object.freeze({
@@ -105,11 +124,14 @@ function graphEnvelope(result) {
 
 export function createToolHandlers(deps = {}) {
   const homeDir = deps.homeDir ?? resolveHomeDir();
-  // Cursor may spawn MCP under $HOME; prefer VSCODE_CWD / WORKSPACE_FOLDER_PATHS.
-  const cwd = resolveMcpWorkspaceCwd({
-    cwd: deps.cwd,
-    env: deps.env ?? process.env
-  });
+  const env = deps.env ?? process.env;
+  const binding = mcpWorkspaceBinding({ ...deps, env });
+  const cwd = binding.writable
+    ? binding.cwd
+    : resolveMcpWorkspaceCwd({
+      cwd: deps.cwdExplicit === true ? deps.cwd : (binding.bound ? undefined : deps.cwd),
+      env: binding.bound ? {} : env
+    });
   const listRuns = deps.listRuns ?? ((o) => listRunRecords(homeDir, o));
   const listAlertRows = deps.listAlerts ?? ((o) => listAlerts({ homeDir, ...o }));
   const listReviews = deps.listReviews ?? (() => listReviewReceipts({ homeDir, limit: 20 }));
@@ -238,20 +260,26 @@ export function createToolHandlers(deps = {}) {
         });
       }
     },
-    kairo_publish_work_snapshot: createPublishWorkSnapshotHandler({
-      homeDir,
-      cwd,
-      now: deps.now,
-      writeAtomic: deps.writeAtomic,
-      publishWorkSnapshot: deps.publishWorkSnapshot,
-      mcpResult
-    })
+    kairo_publish_work_snapshot: async (args = {}) => {
+      if (!binding.writable) {
+        const code = binding.code ?? WORKSPACE_BINDING_CODES.UNBOUND;
+        return mcpResult({ ok: false, code, data: null, diagnostics: [code], isError: true });
+      }
+      return createPublishWorkSnapshotHandler({
+        homeDir,
+        cwd: binding.cwd,
+        now: deps.now,
+        writeAtomic: deps.writeAtomic,
+        publishWorkSnapshot: deps.publishWorkSnapshot,
+        mcpResult
+      })(args);
+    }
   };
 }
 
 export function registerKairoMcpTools(registerTool, deps = {}) {
   const h = createToolHandlers(deps);
-  for (const [name, description, inputSchema] of [
+  const catalog = [
     ["kairo_status", "Read-only control-plane + companion summary", empty],
     ["kairo_runs", "Read-only run list", mcpSchemas.runs],
     ["kairo_alerts", "Read-only alert list", mcpSchemas.alerts],
@@ -265,7 +293,12 @@ export function registerKairoMcpTools(registerTool, deps = {}) {
       "Publish kairo.work-snapshot/v1 for the runtime workspace (enrolls conversation)",
       mcpSchemas.workSnapshotPublish
     ]
-  ]) registerTool(name, { description, inputSchema }, h[name]);
+  ];
+  const writable = mcpWorkspaceBinding(deps).writable;
+  for (const [name, description, inputSchema] of catalog) {
+    if (!writable && KAIRO_MCP_WRITE_TOOLS.includes(name)) continue;
+    registerTool(name, { description, inputSchema }, h[name]);
+  }
   return h;
 }
 
