@@ -7,9 +7,10 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ### Changed
 
-- MCP snapshot writes require an explicit workspace binding
-  (`kairo mcp --workspace-bound --cwd .`). The global `kairo` MCP stays
-  read-only until a later consented removal. See [MCP](docs/mcp.md).
+- MCP snapshot writes require `--workspace-bound` plus an absolute `--cwd`
+  that matches `process.cwd()` or the unique `WORKSPACE_FOLDER_PATHS` folder.
+  The Cursor panel shows **Bound** after native `registerServer`, not live/ready.
+  The global `kairo` MCP stays read-only. See [MCP](docs/mcp.md).
 
 ## 0.16.0 — 2026-08-13 (Kairo Runtime)
 

@@ -1,8 +1,7 @@
 "use strict";
 
-const { planWorkspaceMcpServer } = require("./workspace-mcp");
-
 const REGISTRATION_REPAIR_IDS = Object.freeze(["repair-integration"]);
+const BOUND_STATES = Object.freeze(["bound", "registered"]);
 
 function isRegistrationRepairAction(action) {
   if (!action || typeof action !== "object") return false;
@@ -11,16 +10,20 @@ function isRegistrationRepairAction(action) {
   return /\bmcp install\b/.test(command);
 }
 
-function recoveryOpenFolder(label) {
-  return { id: "open-folder", label, command: null, primary: true };
+function isBoundState(state) {
+  return BOUND_STATES.includes(state);
 }
 
-function unboundResult({ recovery, message, reason = null }) {
+function recovery(id, label) {
+  return { id, label, command: null, primary: true };
+}
+
+function attentionResult({ state, code, recovery, message, reason = null, writable = false }) {
   return {
     known: true,
-    state: "unbound",
-    writable: false,
-    code: "workspace_unbound",
+    state,
+    writable,
+    code,
     recovery,
     attention: { id: "workspace-binding", severity: "warning", message },
     reason
@@ -28,10 +31,7 @@ function unboundResult({ recovery, message, reason = null }) {
 }
 
 /**
- * Panel-facing write identity from observed registration, not live PID.
- * API + single-root alone is never "ready".
- *
- * @param {{ folders?: unknown, mcpApiAvailable?: boolean, providerRegistered?: boolean } | null | undefined} context
+ * Panel-facing write identity from observed native registration, not typeof stubs.
  */
 function describeWorkspaceBinding(context) {
   if (!context || typeof context !== "object") {
@@ -40,36 +40,84 @@ function describeWorkspaceBinding(context) {
     };
   }
   const folders = Array.isArray(context.folders) ? context.folders : [];
-  if (folders.length > 1) {
-    return {
-      known: true,
+  const registration = context.registration && typeof context.registration === "object"
+    ? context.registration
+    : {};
+  const reason = typeof registration.reason === "string" ? registration.reason : null;
+  const regState = typeof registration.state === "string" ? registration.state : null;
+
+  if (folders.length > 1 || regState === "ambiguous" || reason === "multi_root") {
+    return attentionResult({
       state: "ambiguous",
-      writable: false,
       code: "workspace_ambiguous",
-      recovery: recoveryOpenFolder("Open single folder"),
-      attention: {
-        id: "workspace-binding",
-        severity: "warning",
-        message: "Writes are blocked: this window has multiple folders. Open a single-folder workspace. mcp.json registration is not the fix."
-      },
-      reason: null
-    };
+      recovery: recovery("open-folder", "Open single folder"),
+      message: "Writes are blocked: this window has multiple folders. Open a single-folder workspace. mcp.json registration is not the fix."
+    });
   }
-  if (context.mcpApiAvailable === false) {
-    return unboundResult({
-      reason: "api_unavailable",
-      recovery: { id: "upgrade-cursor", label: "Upgrade Cursor", command: null, primary: true },
+  if (reason === "api_unavailable") {
+    return attentionResult({
+      state: "unbound",
+      code: "workspace_unbound",
+      reason,
+      recovery: recovery("upgrade-cursor", "Upgrade Cursor"),
       message: "This Cursor build cannot register workspace MCP. Upgrade Cursor — Reload Window / mcp install will not bind writes."
     });
   }
-  if (context.providerRegistered === true && folders.length === 1 && planWorkspaceMcpServer(folders).register) {
+  if (reason === "register_failed" || regState === "registration_failed") {
+    return attentionResult({
+      state: "unbound",
+      code: "workspace_unbound",
+      reason: "register_failed",
+      recovery: recovery("reload-window", "Reload Window"),
+      message: "Workspace MCP registration failed. Retry with Reload Window. Do not Repair via mcp install."
+    });
+  }
+  if (reason === "workspace_untrusted") {
+    return attentionResult({
+      state: "unbound",
+      code: "workspace_unbound",
+      reason,
+      recovery: recovery("trust-workspace", "Trust Workspace"),
+      message: "Writes are blocked until this workspace is trusted. Trust Workspace — mcp install will not bind writes."
+    });
+  }
+  if (reason === "unsupported_scheme") {
+    return attentionResult({
+      state: "unbound",
+      code: "workspace_unbound",
+      reason,
+      recovery: recovery("open-folder", "Open single folder"),
+      message: "Writes are blocked: this window is not a local file folder."
+    });
+  }
+  if (regState === "registering") {
     return {
-      known: true, state: "ready", writable: true, code: null, recovery: null, attention: null, reason: null
+      known: true,
+      state: "unbound",
+      writable: false,
+      code: null,
+      recovery: null,
+      attention: null,
+      reason: "registering"
     };
   }
-  return unboundResult({
-    reason: context.providerRegistered === true ? null : "unregistered",
-    recovery: recoveryOpenFolder("Open folder"),
+  if (regState === "registered") {
+    return {
+      known: true,
+      state: "bound",
+      writable: true,
+      code: null,
+      recovery: null,
+      attention: null,
+      reason: null,
+      label: "Bound"
+    };
+  }
+  return attentionResult({
+    state: "unbound",
+    code: "workspace_unbound",
+    reason: reason ?? (folders.length === 0 ? "empty_window" : "unregistered"),
+    recovery: recovery("open-folder", folders.length === 0 ? "Open folder" : "Open single folder"),
     message: folders.length === 0
       ? "Writes are blocked: this window has no folder. Open a single-folder workspace. Do not Repair via mcp install."
       : "Workspace MCP is not registered in this window. Open a single-folder workspace. Do not Repair via mcp install."
@@ -79,7 +127,11 @@ function describeWorkspaceBinding(context) {
 function applyWorkspaceBinding(model, context) {
   const binding = describeWorkspaceBinding(context);
   const next = { ...model, workspaceBinding: binding };
-  if (!binding.known || binding.state === "ready") return next;
+  if (!binding.known || isBoundState(binding.state)) return next;
+  if (binding.reason === "registering") {
+    next.actions = (model.actions ?? []).filter((action) => !isRegistrationRepairAction(action));
+    return next;
+  }
 
   if (model.overall !== "missing" && model.headline !== "Not installed") {
     next.headline = "Needs attention";
@@ -91,6 +143,7 @@ function applyWorkspaceBinding(model, context) {
       ...next.actions.filter((action) => action.id !== binding.recovery.id)
     ];
   }
+  if (!binding.attention) return next;
   const attention = model.attention && typeof model.attention === "object"
     ? model.attention
     : { items: [] };
@@ -102,5 +155,6 @@ function applyWorkspaceBinding(model, context) {
 module.exports = {
   describeWorkspaceBinding,
   applyWorkspaceBinding,
-  isRegistrationRepairAction
+  isRegistrationRepairAction,
+  isBoundState
 };

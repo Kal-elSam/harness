@@ -36,7 +36,7 @@ test("unbound and ambiguous show attention, not Repair-for-registration", () => 
   const inferred = describeWorkspaceBinding({
     folders: [{ uri: { fsPath: "/ws/only" } }],
     mcpApiAvailable: true,
-    providerRegistered: false
+    providerRegistered: true
   });
   assert.equal(inferred.state, "unbound");
   assert.equal(inferred.writable, false);
@@ -47,16 +47,16 @@ test("unbound and ambiguous show attention, not Repair-for-registration", () => 
     null,
     brokenNext,
     null,
-    { folders: [], mcpApiAvailable: true, providerRegistered: false }
+    { folders: [], registration: { state: "unbound", reason: "empty_window" } }
   );
   assert.equal(unbound.headline, "Needs attention");
   assert.equal(unbound.workspaceBinding.state, "unbound");
   assert.ok(!unbound.actions.some((a) => a.id === "repair-integration"));
   assert.equal(unbound.actions[0].id, "open-folder");
-  assert.equal(unbound.work.goal, null);
   const html = renderPanelHtml(unbound, "n");
   assert.match(html, /Open folder/);
   assert.doesNotMatch(html, /kairo mcp install/);
+  assert.doesNotMatch(html, />Bound</);
 
   const ambiguous = buildPanelModel(
     readyStatus,
@@ -66,17 +66,15 @@ test("unbound and ambiguous show attention, not Repair-for-registration", () => 
     null,
     {
       folders: [{ uri: { fsPath: "/a" } }, { uri: { fsPath: "/b" } }],
-      mcpApiAvailable: true,
-      providerRegistered: false
+      registration: { state: "ambiguous", reason: "multi_root" }
     }
   );
   assert.equal(ambiguous.workspaceBinding.state, "ambiguous");
-  assert.ok(!ambiguous.actions.some((a) => a.id === "repair-integration"));
   assert.equal(primaryActionsFromModel(ambiguous)[0].id, "open-folder");
 });
 
-test("ready requires observed registration; missing API offers Upgrade Cursor", () => {
-  const ready = buildPanelModel(
+test("Bound requires registered state; recoveries match reason", () => {
+  const bound = buildPanelModel(
     readyStatus,
     [{ id: "agent", state: "not_connected" }],
     null,
@@ -91,13 +89,15 @@ test("ready requires observed registration; missing API offers Upgrade Cursor", 
       integration: { state: "active", showRepair: false, mcpConnected: false }
     },
     null,
-    { folders: [{ uri: { fsPath: "/ws/only" } }], mcpApiAvailable: true, providerRegistered: true }
+    {
+      folders: [{ uri: { fsPath: "/ws/only" } }],
+      registration: { state: "registered", registered: true }
+    }
   );
-  assert.equal(ready.headline, "Ready");
-  assert.equal(ready.workspaceBinding.state, "ready");
-  assert.ok(!ready.attention?.items?.some((item) => item.id === "workspace-binding"));
-  assert.ok(ready.actions.some((a) => a.id === "connect-agent"));
-  assert.doesNotMatch(JSON.stringify(ready.workspaceBinding), /live process|PID/i);
+  assert.equal(bound.workspaceBinding.state, "bound");
+  assert.equal(bound.workspaceBinding.label, "Bound");
+  assert.match(renderPanelHtml(bound, "n"), />Bound</);
+  assert.doesNotMatch(JSON.stringify(bound.workspaceBinding), /live|PID|ready/i);
 
   const missingApi = buildPanelModel(
     readyStatus,
@@ -105,10 +105,51 @@ test("ready requires observed registration; missing API offers Upgrade Cursor", 
     null,
     null,
     null,
-    { folders: [{ uri: { fsPath: "/ws/only" } }], mcpApiAvailable: false, providerRegistered: false }
+    {
+      folders: [{ uri: { fsPath: "/ws/only" } }],
+      registration: { state: "unbound", reason: "api_unavailable" }
+    }
   );
-  assert.equal(missingApi.workspaceBinding.state, "unbound");
   assert.equal(primaryActionsFromModel(missingApi)[0].id, "upgrade-cursor");
-  assert.ok(!missingApi.actions.some((a) => a.id === "reload-window"));
   assert.ok(!missingApi.actions.some((a) => a.id === "repair-integration"));
+
+  const failed = describeWorkspaceBinding({
+    folders: [{ uri: { fsPath: "/ws/only" } }],
+    registration: { state: "registration_failed", reason: "register_failed" }
+  });
+  assert.equal(failed.recovery.id, "reload-window");
+
+  const untrusted = describeWorkspaceBinding({
+    folders: [{ uri: { fsPath: "/ws/only" } }],
+    registration: { state: "unbound", reason: "workspace_untrusted" }
+  });
+  assert.equal(untrusted.recovery.id, "trust-workspace");
+
+  const remote = describeWorkspaceBinding({
+    folders: [{ uri: { fsPath: "/ws/only" } }],
+    registration: { state: "unbound", reason: "unsupported_scheme" }
+  });
+  assert.match(remote.attention.message, /not a local file folder/);
+
+  const registering = describeWorkspaceBinding({
+    folders: [{ uri: { fsPath: "/ws/only" } }],
+    registration: { state: "registering" }
+  });
+  assert.equal(registering.state, "unbound");
+  assert.equal(registering.recovery, null);
+  assert.equal(registering.label, undefined);
+
+  const pending = buildPanelModel(
+    readyStatus,
+    [{ id: "agent", state: "connected" }],
+    null,
+    brokenNext,
+    null,
+    {
+      folders: [{ uri: { fsPath: "/ws/only" } }],
+      registration: { state: "registering" }
+    }
+  );
+  assert.notEqual(pending.headline, "Needs attention");
+  assert.ok(!pending.actions.some((a) => a.id === "repair-integration"));
 });

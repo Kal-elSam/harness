@@ -7,11 +7,9 @@ const { fleetReportFromControlPlane } = require("./control-plane-cache");
 const { getWorkspaceMcpRegistration } = require("./workspace-mcp");
 
 function workspacePanelContext() {
-  const registration = getWorkspaceMcpRegistration();
   return {
     folders: vscode.workspace.workspaceFolders,
-    mcpApiAvailable: typeof vscode.lm?.registerMcpServerDefinitionProvider === "function",
-    providerRegistered: registration.registered === true
+    registration: getWorkspaceMcpRegistration()
   };
 }
 
@@ -62,7 +60,9 @@ class KairoPanelProvider {
     );
     const nonce = String(Date.now());
     this._view.webview.html = renderPanelHtml(model, nonce);
-    this._view.title = `Kairo · ${model.headline}`;
+    this._view.title = model.workspaceBinding?.label
+      ? `Kairo · ${model.workspaceBinding.label}`
+      : `Kairo · ${model.headline}`;
   }
 }
 
