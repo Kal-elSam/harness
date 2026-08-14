@@ -23,6 +23,7 @@ test("full help groups commands and documents advanced surfaces", () => {
   assert.match(text, /## Governance & audit/);
   assert.match(text, /## Advanced/);
   assert.match(text, /kairo run --agent/);
+  assert.match(text, /--workspace-bound --cwd/);
   assert.match(text, /runs list/);
   assert.match(text, /Operations cockpit/);
   assert.match(text, /intelligence/);

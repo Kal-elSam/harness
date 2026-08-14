@@ -18,13 +18,15 @@ export function resolveWorkSnapshotRulePath(homeDir = homedir()) {
 
 export const WORK_SNAPSHOT_RULE_BODY = `# Kairo work snapshot
 
-After each significant turn, publish the true work state with MCP \`kairo_publish_work_snapshot\`:
+After each significant turn, publish the true work state with MCP \`kairo_publish_work_snapshot\` **only on \`kairo-workspace\`** (\`kairo mcp --workspace-bound --cwd .\`):
 
 - Required: \`conversationId\`, \`provider\` (\`cursor\`), \`goal\`, \`now\`, \`next\`
 - Optional: \`progress\` (≤3), \`blockers\`, \`delegations\` (only real ones)
-- Workspace identity is derived by Kairo from the runtime — never send \`projectKey\`, paths, or \`cwd\`
+- Workspace identity is derived by Kairo from the bound process — never send \`projectKey\`, paths, or \`cwd\`
 - Never invent work. Never send prompts, transcripts, or tool dumps
 - Reuse the same \`conversationId\` for later turns in this chat
+- If the publish tool is missing, stop. The global \`kairo\` MCP does not register it. Do not retry with paths.
+- On the bound server, \`workspace_ambiguous\` or \`workspace_mismatch\` also means stop. Never retry with paths.
 `;
 
 export function buildWorkSnapshotRuleFile() {

@@ -14,8 +14,15 @@ test("managed rule forbids agent-supplied workspace identity", () => {
   const body = buildWorkSnapshotRuleFile();
   assert.match(body, /alwaysApply: true/);
   assert.match(body, /kairo_publish_work_snapshot/);
+  assert.match(body, /kairo-workspace/);
+  assert.match(body, /--workspace-bound/);
   assert.match(body, /never send `projectKey`/);
+  assert.match(body, /does not register/);
+  assert.match(body, /workspace_ambiguous/);
+  assert.match(body, /workspace_mismatch/);
   assert.match(WORK_SNAPSHOT_RULE_BODY, /Never invent work/);
+  assert.match(WORK_SNAPSHOT_RULE_BODY, /Do not retry with paths/);
+  assert.doesNotMatch(body, /returns `workspace_unbound`/);
   assert.doesNotMatch(body, /projectPath|transcripts to Kairo/i);
 });
 

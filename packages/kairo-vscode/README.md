@@ -64,4 +64,4 @@ Do not reuse an old ignored `*.vsix` on disk for releases — always rebuild.
 
 ## Privacy
 
-No prompts or transcripts are scraped. Work appears only after an Agent publishes a snapshot via MCP (`kairo_publish_work_snapshot`) or hooks.
+No prompts or transcripts are scraped. Work appears only after an Agent publishes a snapshot via the **workspace-bound** MCP (`kairo-workspace` / `kairo_publish_work_snapshot`) or hooks. Never send paths or `projectKey`. The global `kairo` MCP is read-only.

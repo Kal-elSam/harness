@@ -5,6 +5,12 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+### Changed
+
+- MCP snapshot writes require an explicit workspace binding
+  (`kairo mcp --workspace-bound --cwd .`). The global `kairo` MCP stays
+  read-only until a later consented removal. See [MCP](docs/mcp.md).
+
 ## 0.16.0 — 2026-08-13 (Kairo Runtime)
 
 Minor release. Public `kairo control-plane` command and
