@@ -16,6 +16,7 @@ Actions open a terminal — the extension never writes configs itself. Kairo doe
 ## Requirements
 
 - **Kairo Runtime with `kairo control-plane`** (shipped in this tracker; public npm release is a separate unit after merge)
+- **Node.js ≥20** on PATH as an absolute `node` binary (the extension never spawns PATH `kairo`)
 
 ```bash
 # From a checkout that includes control-plane, or after the runtime release:
@@ -49,10 +50,12 @@ Until `0.8.0` is published, keep using the last GitHub Release (`0.7.0`) or pack
 ```bash
 cd packages/kairo-vscode
 npm test
-npm run package   # pins @vscode/vsce@3.9.2; writes kairo-0.8.0.vsix
+npm run package   # esbuild@0.25.9 → dist/kairo-workspace.cjs, then vsce@3.9.2
 ```
 
-Do not reuse an old ignored `*.vsix` on disk for releases — always rebuild.
+The VSIX must contain `extension/dist/kairo-workspace.cjs`. The bundle is not
+committed; `npm run package` regenerates it. Do not reuse an old ignored
+`*.vsix` on disk.
 
 ## Honesty
 

@@ -63,6 +63,15 @@ function describeWorkspaceBinding(context) {
       message: "This Cursor build cannot register workspace MCP. Upgrade Cursor — Reload Window / mcp install will not bind writes."
     });
   }
+  if (reason === "runtime_unavailable") {
+    return attentionResult({
+      state: "unbound",
+      code: "workspace_unbound",
+      reason,
+      recovery: recovery("reload-window", "Reload Window"),
+      message: "Node.js 20+ is required to bind workspace MCP. Install Node 20+, then Reload Window. PATH kairo / mcp install will not bind writes."
+    });
+  }
   if (reason === "register_failed" || regState === "registration_failed") {
     return attentionResult({
       state: "unbound",
