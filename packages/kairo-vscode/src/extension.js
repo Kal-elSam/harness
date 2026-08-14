@@ -5,6 +5,7 @@ const { StatusCache, mapStatusBar, fetchKairoStatus } = require("./status");
 const { ControlPlaneCache, fetchKairoControlPlane } = require("./control-plane-cache");
 const { KairoStatusTreeProvider } = require("./tree");
 const { KairoPanelProvider, VIEW_ID } = require("./panel");
+const { registerWorkspaceMcpProvider } = require("./workspace-mcp");
 
 const REFRESH_INTERVAL_MS = 60_000;
 const TERMINAL_NAME = "Kairo";
@@ -44,6 +45,8 @@ function runInKairoTerminal(commandLine) {
 }
 
 function activate(context) {
+  registerWorkspaceMcpProvider(vscode, context);
+
   const cache = new StatusCache({
     fetch: () => fetchKairoStatus({ cwd: workspaceCwd() })
   });
