@@ -5,3 +5,4 @@ node_modules/
 .atl/
 graphify-out/
 .pnpm-store/
+packages/kairo-vscode/dist/

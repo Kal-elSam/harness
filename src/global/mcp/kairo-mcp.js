@@ -294,9 +294,9 @@ export function registerKairoMcpTools(registerTool, deps = {}) {
       mcpSchemas.workSnapshotPublish
     ]
   ];
-  const writable = mcpWorkspaceBinding(deps).writable;
+  const bound = deps.workspaceBound === true;
   for (const [name, description, inputSchema] of catalog) {
-    if (!writable && KAIRO_MCP_WRITE_TOOLS.includes(name)) continue;
+    if (bound ? !KAIRO_MCP_WRITE_TOOLS.includes(name) : KAIRO_MCP_WRITE_TOOLS.includes(name)) continue;
     registerTool(name, { description, inputSchema }, h[name]);
   }
   return h;

@@ -119,6 +119,13 @@ test("Bound requires registered state; recoveries match reason", () => {
   });
   assert.equal(failed.recovery.id, "reload-window");
 
+  const noRuntime = describeWorkspaceBinding({
+    folders: [{ uri: { fsPath: "/ws/only" } }],
+    registration: { state: "registration_failed", reason: "runtime_unavailable" }
+  });
+  assert.equal(noRuntime.reason, "runtime_unavailable");
+  assert.match(noRuntime.attention.message, /Node\.js 20\+/);
+
   const untrusted = describeWorkspaceBinding({
     folders: [{ uri: { fsPath: "/ws/only" } }],
     registration: { state: "unbound", reason: "workspace_untrusted" }
