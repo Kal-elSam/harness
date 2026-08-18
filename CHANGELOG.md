@@ -5,6 +5,14 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+### Changed
+
+- MCP snapshot writes require `--workspace-bound` plus an absolute `--cwd`
+  that matches `process.cwd()` or the unique `WORKSPACE_FOLDER_PATHS` folder.
+  Bound servers expose only `kairo_publish_work_snapshot`; the Cursor
+  extension ships that runtime as `dist/kairo-workspace.cjs` and spawns
+  absolute Node ≥20 — never PATH `kairo`. See [MCP](docs/mcp.md).
+
 ## 0.16.0 — 2026-08-13 (Kairo Runtime)
 
 Minor release. Public `kairo control-plane` command and
