@@ -25,6 +25,15 @@ import {
 import { writeSupervisorLock } from "../src/global/runtime/run-supervisor-lock.js";
 import { withStubExecutables } from "./helpers/stub-executables.js";
 
+async function waitUntil(predicate, { timeoutMs = 3000, message = "condition not met" } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(false, true, message);
+}
+
 function createFakeSpawn(lines, { exitCode = 0 } = {}) {
   return (_command, _args, _options) => {
     const child = new EventEmitter();
@@ -298,20 +307,12 @@ test("stopRun cancel contract wins when kill closes synchronously", async () => 
       spawnImpl: () => child
     });
 
-    let ready = false;
-    for (let attempt = 0; attempt < 500; attempt += 1) {
+    await waitUntil(async () => {
       const snapshot = await readRunState(homeDir, runId);
-      if (
-        snapshot?.state === RUN_STATES.RUNNING
+      return snapshot?.state === RUN_STATES.RUNNING
         && snapshot?.pid === child.pid
-        && getActiveProcess(runId)
-      ) {
-        ready = true;
-        break;
-      }
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    assert.equal(ready, true, "run did not reach RUNNING with persisted pid");
+        && Boolean(getActiveProcess(runId));
+    }, { message: "run did not reach RUNNING with persisted pid" });
 
     const cancelled = await stopRun(homeDir, runId);
     assert.equal(cancelled.state, RUN_STATES.CANCELLED);
@@ -354,20 +355,12 @@ test("supervisor prefers CANCELLED after missed cancel-preserve window", async (
       spawnImpl: () => child
     });
 
-    let ready = false;
-    for (let attempt = 0; attempt < 500; attempt += 1) {
+    await waitUntil(async () => {
       const snapshot = await readRunState(homeDir, runId);
-      if (
-        snapshot?.state === RUN_STATES.RUNNING
+      return snapshot?.state === RUN_STATES.RUNNING
         && snapshot?.pid === child.pid
-        && getActiveProcess(runId)
-      ) {
-        ready = true;
-        break;
-      }
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    assert.equal(ready, true, "run did not reach RUNNING with persisted pid");
+        && Boolean(getActiveProcess(runId));
+    }, { message: "run did not reach RUNNING with persisted pid" });
 
     // Deterministic race: first preserve check misses, then cancel markers land
     // before FAILED is written — same two symptoms as the CI flake.
@@ -419,16 +412,10 @@ test("stopRun against concurrent supervisor stress ends CANCELLED", async () => 
         spawnImpl: () => child
       });
 
-      let ready = false;
-      for (let attempt = 0; attempt < 500; attempt += 1) {
+      await waitUntil(async () => {
         const snapshot = await readRunState(homeDir, runId);
-        if (snapshot?.state === RUN_STATES.RUNNING && getActiveProcess(runId)) {
-          ready = true;
-          break;
-        }
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-      assert.equal(ready, true, `run did not reach RUNNING with active process (iteration ${i})`);
+        return snapshot?.state === RUN_STATES.RUNNING && Boolean(getActiveProcess(runId));
+      }, { message: `run did not reach RUNNING with active process (iteration ${i})` });
 
       const cancelled = await stopRun(homeDir, runId);
       assert.equal(cancelled.state, RUN_STATES.CANCELLED);

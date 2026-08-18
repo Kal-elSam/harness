@@ -74,7 +74,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "package": "npx --yes @vscode/vsce@3.9.2 package --no-dependencies"
+    "bundle:workspace-mcp": "node ./scripts/bundle-workspace-mcp.js",
+    "package": "npm run bundle:workspace-mcp && npx --yes @vscode/vsce@3.9.2 package --no-dependencies"
   },
   "repository": {
     "type": "git",
