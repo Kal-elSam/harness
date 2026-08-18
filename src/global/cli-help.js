@@ -121,6 +121,7 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} fleet models [--profile] [--json]
   ${cli} fleet configure [--platforms claude,opencode,cursor|codex] [--from profile|gentle] [--codex-model <id>] [--assignments a=b,...] [--yes] [--json]
   ${cli} fleet set --platform opencode|claude|codex --agent <id> --model <id> [--yes] [--json]
+  ${cli} mcp --workspace-bound --cwd <abs>
   ${cli} mcp
   ${cli} mcp install [--yes] [--json] [--client cursor]
   ${cli} install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
@@ -175,7 +176,7 @@ Commands:
              fleet configure            one plan for Claude+OpenCode+Cursor (profile)
              fleet configure --codex-model <id>   Codex only (single-default)
              fleet set --platform opencode|claude|codex --agent <id> --model <id> [--yes]
-  mcp        Serve or install MCP for agents (mcp install writes entry + snapshot rule).
+  mcp        Serve MCP. \`mcp --workspace-bound --cwd <abs>\` is the write path; bare \`mcp\` is read-only.
   uninstall  Remove managed sections and global state. Backups are preserved.
   init       Alias for install --scope=workspace (legacy).
 
