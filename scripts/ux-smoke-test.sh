@@ -76,9 +76,9 @@ echo "Kairo Runtime UX smoke — capturing terminal output to $CAPTURE_DIR"
 echo
 
 run_capture help help
-assert_contains "$CAPTURE_DIR/help.txt" "JSON output (--json on supported commands):"
-assert_contains "$CAPTURE_DIR/help.txt" "report"
-assert_contains "$CAPTURE_DIR/help.txt" "More examples: README.md"
+assert_contains "$CAPTURE_DIR/help.txt" "Usage:"
+assert_contains "$CAPTURE_DIR/help.txt" "kairo help --all"
+assert_contains "$CAPTURE_DIR/help.txt" "Docs: README.md · docs/cli-reference.md"
 assert_not_contains "$CAPTURE_DIR/help.txt" "Stable fields: ok, overall"
 assert_exit help 0
 

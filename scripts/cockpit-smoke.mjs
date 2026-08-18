@@ -121,7 +121,7 @@ function smokeNavigation(layoutMode) {
     region: COCKPIT_REGIONS.CONTENT,
     unicode: false
   });
-  assert.match(footer.text, /Tab/);
+  assert.equal(footer.text, "1·2 Select - Enter Run - ? Help - Esc Exit");
 
   state = applyKey(state, { type: "escape" });
   assert.equal(state.view, ORCHESTRATOR_VIEWS.HOME);
