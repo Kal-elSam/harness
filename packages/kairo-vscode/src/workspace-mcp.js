@@ -1,8 +1,9 @@
 "use strict";
 
+const { resolveNodeExecutable, resolveWorkspaceBundlePath } = require("./node-runtime");
+
 const SERVER_ID = "kairo-workspace";
 const SERVER_LABEL = "Kairo (workspace)";
-const COMMAND = "kairo";
 const STATES = Object.freeze({
   registering: "registering",
   registered: "registered",
@@ -36,8 +37,8 @@ function setRegistrationState(next) {
   };
 }
 
-function boundMcpArgs(absPath) {
-  return ["mcp", "--workspace-bound", "--cwd", absPath];
+function boundMcpArgs(absPath, bundlePath) {
+  return [bundlePath, "mcp", "--workspace-bound", "--cwd", absPath];
 }
 
 function folderPath(folder) {
@@ -52,15 +53,31 @@ function folderPath(folder) {
   return { path: trimmed, scheme };
 }
 
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function resolveRuntime(options = {}) {
+  const bundlePath = hasOwn(options, "bundlePath")
+    ? options.bundlePath
+    : resolveWorkspaceBundlePath(options.extensionPath);
+  const nodePath = hasOwn(options, "nodePath")
+    ? options.nodePath
+    : resolveNodeExecutable();
+  return { nodePath, bundlePath };
+}
+
 /**
- * Decide whether this window may register a writable workspace MCP.
- * Trusted file:// single-root only — no inferred HOME/`/` cwd.
+ * Trusted file:// single-root only. Spawns absolute Node + bundled MCP.
  *
  * @param {readonly { uri?: { fsPath?: string, scheme?: string }, fsPath?: string }[] | null | undefined} folders
  */
 function planWorkspaceMcpServer(folders, options = {}) {
   const list = Array.isArray(folders) ? folders : [];
-  const base = { register: false, id: SERVER_ID, command: COMMAND, args: null, env: {}, cwd: null };
+  const runtime = resolveRuntime(options);
+  const base = {
+    register: false, id: SERVER_ID, command: runtime.nodePath, args: null, env: {}, cwd: null
+  };
   if (options.trusted === false) {
     return { ...base, code: "workspace_unbound", reason: "workspace_untrusted" };
   }
@@ -69,14 +86,17 @@ function planWorkspaceMcpServer(folders, options = {}) {
   const info = folderPath(list[0]);
   if (!info) return { ...base, code: "workspace_unbound", reason: "empty_window" };
   if (info.scheme !== "file") return { ...base, code: "workspace_unbound", reason: "unsupported_scheme" };
+  if (!runtime.nodePath || !runtime.bundlePath) {
+    return { ...base, code: "workspace_unbound", reason: "runtime_unavailable" };
+  }
   return {
     register: true,
     code: null,
     reason: null,
     id: SERVER_ID,
     label: SERVER_LABEL,
-    command: COMMAND,
-    args: boundMcpArgs(info.path),
+    command: runtime.nodePath,
+    args: boundMcpArgs(info.path, runtime.bundlePath),
     env: {},
     cwd: info.path
   };
@@ -111,15 +131,25 @@ function enqueue(work) {
   return run;
 }
 
-async function syncRegistration(vscodeApi) {
+async function syncRegistration(vscodeApi, runtimeOptions = {}) {
   const api = nativeMcpApi(vscodeApi);
   const plan = planWorkspaceMcpServer(
     vscodeApi?.workspace?.workspaceFolders,
-    { trusted: vscodeApi?.workspace?.isTrusted === true }
+    {
+      trusted: vscodeApi?.workspace?.isTrusted === true,
+      ...runtimeOptions
+    }
   );
   if (!api) {
     await unregisterCurrent(null);
     setRegistrationState({ state: STATES.unbound, code: "workspace_unbound", reason: "api_unavailable" });
+    return getWorkspaceMcpRegistration();
+  }
+  if (plan.reason === "runtime_unavailable") {
+    setRegistrationState({
+      state: STATES.registration_failed, code: "workspace_unbound", reason: "runtime_unavailable"
+    });
+    await unregisterCurrent(api);
     return getWorkspaceMcpRegistration();
   }
   if (plan.register !== true) {
@@ -152,7 +182,12 @@ async function syncRegistration(vscodeApi) {
 }
 
 function registerWorkspaceMcpProvider(vscodeApi, context) {
-  const sync = () => enqueue(() => syncRegistration(vscodeApi));
+  const runtimeOptions = {
+    extensionPath: context?.extensionPath,
+    ...(hasOwn(context ?? {}, "nodePath") ? { nodePath: context.nodePath } : {}),
+    ...(hasOwn(context ?? {}, "bundlePath") ? { bundlePath: context.bundlePath } : {})
+  };
+  const sync = () => enqueue(() => syncRegistration(vscodeApi, runtimeOptions));
   const pending = sync();
   if (context?.subscriptions) {
     context.subscriptions.push({
@@ -171,7 +206,6 @@ function registerWorkspaceMcpProvider(vscodeApi, context) {
 module.exports = {
   SERVER_ID,
   SERVER_LABEL,
-  COMMAND,
   STATES,
   boundMcpArgs,
   planWorkspaceMcpServer,

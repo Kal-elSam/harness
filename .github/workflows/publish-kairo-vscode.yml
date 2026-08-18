@@ -73,12 +73,12 @@ jobs:
         working-directory: packages/kairo-vscode
         run: npm test
 
-      - name: Package VSIX with pinned vsce
+      - name: Package VSIX with pinned esbuild + vsce
         working-directory: packages/kairo-vscode
         run: |
           set -euo pipefail
           rm -f ./*.vsix
-          npx --yes @vscode/vsce@3.9.2 package --no-dependencies
+          npm run package
           DEFAULT_VSIX="kairo-${{ steps.meta.outputs.version }}.vsix"
           if [[ ! -f "$DEFAULT_VSIX" ]]; then
             echo "Expected $DEFAULT_VSIX from vsce" >&2
@@ -94,17 +94,18 @@ jobs:
           set -euo pipefail
           ASSET="${{ steps.meta.outputs.asset }}"
           LIST="$(unzip -Z1 "$ASSET")"
+          echo "$LIST" | grep -Fqx "extension/dist/kairo-workspace.cjs"
           echo "$LIST" | grep -Fqx "extension/src/next-cache.js"
           echo "$LIST" | grep -Fqx "extension/src/panel-work.js"
           echo "$LIST" | grep -Eq 'extension/src/(extension|status|panel)\.js'
           echo "$LIST" | grep -Eiq '^extension/readme\.md$'
           echo "$LIST" | grep -Fqx "extension/package.json"
-          if echo "$LIST" | grep -E '(^|/)(test/|graphify-out/|\.vscode-test/)' >/dev/null; then
+          if echo "$LIST" | grep -E '(^|/)(test/|graphify-out/|\.vscode-test/|node_modules/)' >/dev/null; then
             echo "VSIX includes excluded development paths" >&2
             exit 1
           fi
-          if echo "$LIST" | grep -Ei '\.vsix$' >/dev/null; then
-            echo "VSIX nested inside VSIX" >&2
+          if echo "$LIST" | grep -Ei '\.(vsix|map)$' >/dev/null; then
+            echo "VSIX nested artifact or source map" >&2
             exit 1
           fi
           echo "VSIX content checks passed"

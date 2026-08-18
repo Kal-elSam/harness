@@ -9,23 +9,25 @@ the CLI / panel. The `kairo.work-snapshot/v1` payload is unchanged.
 
 | Server id | How it starts | Writes |
 |---|---|---|
-| `kairo-workspace` | Cursor extension, per single-root window: `kairo mcp --workspace-bound --cwd .` with `cwd` = that folder | Snapshots / enrollments |
-| `kairo` (global) | `~/.cursor/mcp.json` via `kairo mcp install` — `kairo mcp` | Read-only. **Does not register** `kairo_publish_work_snapshot`. |
+| `kairo-workspace` | Cursor extension: absolute Node ≥20 + VSIX `dist/kairo-workspace.cjs` + `mcp --workspace-bound --cwd <absolute-folder>` (native `registerServer`; `env: {}`; no PATH `kairo`) | Snapshots / enrollments |
+| `kairo` (global) | `~/.cursor/mcp.json` via `kairo mcp install` — `kairo mcp` | Read-only. **Does not register** `kairo_publish_work_snapshot`. Pre-main isolation: **disable** this server and report it as *disabled*, not read-only. |
 
 Keep the global server until a later consented removal. It must not expose
-the publish tool — never “accidentally” write into the right project.
+the publish tool. After a compatible runtime ships, restore that global MCP
+and prove its live catalog still omits publish before any pilot session.
 
 ## Connect from the IDE
 
 1. Open a **single-folder** Cursor window (multi-root and empty windows cannot bind writes).
-2. Confirm the Kairo panel shows **ready** (provider registered, single-root) — not unbound / ambiguous Atención. The panel does not claim a live PID.
+2. Confirm the Kairo panel shows **Bound** after native registration resolves — not live, connected, or ready. Unbound / ambiguous show Atención. A resolved register proves configuration, not a live PID.
 3. **Connect Agent** still registers the global read-only `kairo` entry (`kairo mcp install`). That is not workspace binding.
 4. Reload Cursor MCP (Command Palette → MCP: Restart / Reload Window).
 
 Or from any terminal:
 
 ```bash
-kairo mcp --workspace-bound --cwd .   # writable stdio (extension sets cwd)
+node dist/kairo-workspace.cjs mcp --workspace-bound --cwd /abs/folder  # VSIX write runtime
+kairo mcp --workspace-bound --cwd /abs/folder   # checkout / post-release CLI
 kairo mcp                             # global / unbound: read tools only
 kairo mcp install                     # show plan (global MCP entry + managed rule)
 kairo mcp install --yes               # write ~/.cursor/mcp.json + managed rule
@@ -54,13 +56,14 @@ mean stop.
 ## Serve (stdio)
 
 ```bash
-kairo mcp --workspace-bound --cwd .
+kairo mcp --workspace-bound --cwd /abs/folder
 ```
 
 Stdout is reserved for the MCP protocol — no banners. Bound mode requires
-`--workspace-bound` **and** explicit `--cwd` whose realpath equals `process.cwd()`.
-HOME, `/`, inherited `VSCODE_CWD`, inherited `WORKSPACE_FOLDER_PATHS`, and
-payload identity fields never authorize a write.
+`--workspace-bound` **and** an explicit `--cwd` whose canonical path equals
+`process.cwd()` **or** the unique canonical `WORKSPACE_FOLDER_PATHS` folder.
+HOME, `/`, inherited `VSCODE_CWD`, multiple roots, invalid paths, diverging
+symlinks, and payload identity fields never authorize a write.
 
 ## Tools
 
@@ -111,10 +114,10 @@ Window B is only a second identity to prove isolation. It is not a dependency of
 Checklist:
 
 1. Publish A → B → A. Each snapshot/enrollment lands only in that window’s key.
-2. Confirm PID / argv / binding: `kairo mcp --workspace-bound --cwd .` with cwd = that folder. Server id `kairo-workspace`.
-3. Global `kairo` MCP: publish tool is **absent** from the catalog; zero snapshots.
+2. Confirm spawned argv: absolute Node, installed `kairo-workspace.cjs`, `mcp --workspace-bound --cwd <absolute-folder>`. Never PATH `kairo`. Server id `kairo-workspace`. Native stdio has no `cwd` field (`env: {}`).
+3. Pre-main: disable the legacy global `kairo` MCP and report it as **disabled** (not read-only). After a compatible runtime ships, restore it and prove the live catalog omits publish.
 4. Repeat after **Reload Window**, **MCP: Restart**, and a full Cursor restart.
-5. Single-root + successful provider register: panel `ready`. Multi-root: `ambiguous`, no writable provider. Empty window or register failure: `unbound`. Missing MCP API: **Upgrade Cursor** (not Reload Window). Symlink aliases converge via realpath.
-6. Panel: unbound/ambiguous show Atención + Open folder / Upgrade Cursor — never Repair as `kairo mcp install`. Do not treat registration as a live process.
+5. Trusted single-root + resolved native register: panel **Bound**. Multi-root: `ambiguous`. Empty window: `unbound`. Missing/old Node: `registration_failed` / `runtime_unavailable`. Register failure: Reload Window. Missing `vscode.cursor.mcp.registerServer`: **Upgrade Cursor**. Untrusted: Trust Workspace. Non-`file://`: unsupported. Converging symlinks bind; diverging ones do not.
+6. Panel: recoveries are Upgrade Cursor / Reload Window / Trust Workspace / Open single folder — never Repair as `kairo mcp install`. Do not treat registration as a live process.
 
 Pilot sessions stay **0/5** until this matrix PASSes.
