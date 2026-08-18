@@ -18,7 +18,7 @@ export function resolveWorkSnapshotRulePath(homeDir = homedir()) {
 
 export const WORK_SNAPSHOT_RULE_BODY = `# Kairo work snapshot
 
-After each significant turn, publish the true work state with MCP \`kairo_publish_work_snapshot\` **only on \`kairo-workspace\`** (\`kairo mcp --workspace-bound --cwd .\`):
+After each significant turn, publish the true work state with MCP \`kairo_publish_work_snapshot\` **only on \`kairo-workspace\`** (\`kairo mcp --workspace-bound --cwd <absolute-folder>\`; unique \`WORKSPACE_FOLDER_PATHS\` may bind):
 
 - Required: \`conversationId\`, \`provider\` (\`cursor\`), \`goal\`, \`now\`, \`next\`
 - Optional: \`progress\` (≤3), \`blockers\`, \`delegations\` (only real ones)

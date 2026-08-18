@@ -16,6 +16,7 @@ import {
 import { listWorkSnapshots } from "../src/global/next/work-snapshot.js";
 import { loadEnrollment } from "../src/global/next/work-enroll.js";
 import { runMcpCli } from "../src/global/mcp-install.js";
+import { parseWorkspaceMcpArgv, startWorkspaceMcp } from "../src/global/mcp/workspace-mcp-entry.js";
 
 const payload = {
   conversationId: "pilot-chat",
@@ -236,7 +237,7 @@ test("MCP publish is absent unless bound; unbound writes nothing", async () => {
     registerKairoMcpTools((name) => registered.push(name), {
       homeDir, cwd: ws, workspaceBound: true, cwdExplicit: true, processCwd: ws
     });
-    assert.ok(registered.includes("kairo_publish_work_snapshot"));
+    assert.deepEqual(registered, [...KAIRO_MCP_WRITE_TOOLS]);
     const readonly = [];
     registerKairoMcpTools((name) => readonly.push(name), { homeDir });
     assert.deepEqual(readonly, [...KAIRO_MCP_READ_TOOLS]);
@@ -264,7 +265,17 @@ test("CLI dispatch registers publish only when workspace-bound", async () => {
     );
     assert.equal(bound.workspaceBound, true);
     await runMcpCli(bound);
-    assert.ok(boundNames.includes("kairo_publish_work_snapshot"));
+    assert.deepEqual(boundNames, [...KAIRO_MCP_WRITE_TOOLS]);
+    assert.deepEqual(parseWorkspaceMcpArgv(["mcp", "--workspace-bound", "--cwd", ws]), {
+      workspaceBound: true, cwd: ws, cwdExplicit: true
+    });
+    const entryNames = [];
+    await startWorkspaceMcp(["mcp", "--workspace-bound", "--cwd", ws], {
+      homeDir, processCwd: ws, env: { HOME: homeDir },
+      registerTool: (name) => entryNames.push(name),
+      serveStdio: (factory) => factory()
+    });
+    assert.deepEqual(entryNames, [...KAIRO_MCP_WRITE_TOOLS]);
 
     const unboundNames = [];
     await runMcpCli(buildMcpCliOptions(parseArgs(["mcp"]).options, {
