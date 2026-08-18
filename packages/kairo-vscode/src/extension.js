@@ -45,7 +45,7 @@ function runInKairoTerminal(commandLine) {
 }
 
 function activate(context) {
-  registerWorkspaceMcpProvider(vscode, context);
+  const mcpHandle = registerWorkspaceMcpProvider(vscode, context);
 
   const cache = new StatusCache({
     fetch: () => fetchKairoStatus({ cwd: workspaceCwd() })
@@ -67,6 +67,35 @@ function activate(context) {
     onAction: async (id, message = {}) => {
       if (id === "refresh") {
         await refreshAll({ force: true });
+        return;
+      }
+      if (id === "open-folder") {
+        await vscode.commands.executeCommand("workbench.action.files.openFolder");
+        return;
+      }
+      if (id === "upgrade-cursor") {
+        void vscode.window.showInformationMessage(
+          "This Cursor build cannot register workspace-bound MCP. Upgrade Cursor. Repair / mcp install will not bind writes."
+        );
+        return;
+      }
+      if (id === "reload-window") {
+        await vscode.commands.executeCommand("workbench.action.reloadWindow");
+        return;
+      }
+      if (id === "retry-register") {
+        if (mcpHandle?.syncRegistration) await mcpHandle.syncRegistration();
+        await refreshAll({ force: true });
+        return;
+      }
+      if (id === "trust-workspace") {
+        if (typeof vscode.workspace.requestWorkspaceTrust === "function") {
+          await vscode.workspace.requestWorkspaceTrust();
+        } else {
+          void vscode.window.showInformationMessage(
+            "Trust this workspace in Cursor to bind Kairo writes. mcp install will not bind them."
+          );
+        }
         return;
       }
       if (id === "guide") {
@@ -138,7 +167,7 @@ function activate(context) {
     })
   );
 
-  void refreshAll({ force: true });
+  void Promise.resolve(mcpHandle?.pending).then(() => refreshAll({ force: true }));
 }
 
 function deactivate() {}

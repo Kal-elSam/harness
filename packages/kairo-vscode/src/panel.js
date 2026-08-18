@@ -4,6 +4,14 @@ const vscode = require("vscode");
 const { buildPanelModel } = require("./panel-model");
 const { renderPanelHtml } = require("./panel-html");
 const { fleetReportFromControlPlane } = require("./control-plane-cache");
+const { getWorkspaceMcpRegistration } = require("./workspace-mcp");
+
+function workspacePanelContext() {
+  return {
+    folders: vscode.workspace.workspaceFolders,
+    registration: getWorkspaceMcpRegistration()
+  };
+}
 
 const VIEW_ID = "kairo.panel";
 
@@ -42,10 +50,19 @@ class KairoPanelProvider {
     const fleetReport = fleetReportFromControlPlane(controlPlane);
     const connections = fleetReport.connections ?? [];
     const nextReport = controlPlane?.work ?? null;
-    const model = buildPanelModel(status, connections, fleetReport, nextReport, controlPlane);
+    const model = buildPanelModel(
+      status,
+      connections,
+      fleetReport,
+      nextReport,
+      controlPlane,
+      workspacePanelContext()
+    );
     const nonce = String(Date.now());
     this._view.webview.html = renderPanelHtml(model, nonce);
-    this._view.title = `Kairo · ${model.headline}`;
+    this._view.title = model.workspaceBinding?.label
+      ? `Kairo · ${model.workspaceBinding.label}`
+      : `Kairo · ${model.headline}`;
   }
 }
 
