@@ -16,6 +16,8 @@ test("managed rule forbids agent-supplied workspace identity", () => {
   assert.match(body, /kairo_publish_work_snapshot/);
   assert.match(body, /kairo-workspace/);
   assert.match(body, /--workspace-bound/);
+  assert.match(body, /absolute-folder/);
+  assert.match(body, /WORKSPACE_FOLDER_PATHS/);
   assert.match(body, /never send `projectKey`/);
   assert.match(body, /does not register/);
   assert.match(body, /workspace_ambiguous/);

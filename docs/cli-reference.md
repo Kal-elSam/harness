@@ -35,7 +35,7 @@ kairo fleet configure --from gentle --platforms claude,opencode
 kairo fleet set --platform opencode --agent sdd-apply --model opencode-go/deepseek-v4-pro
 kairo fleet set --platform opencode --agent sdd-apply --model opencode-go/deepseek-v4-pro --yes
 kairo mcp
-kairo mcp --workspace-bound --cwd .
+kairo mcp --workspace-bound --cwd <abs>
 kairo mcp install
 kairo mcp install --yes
 kairo adapters

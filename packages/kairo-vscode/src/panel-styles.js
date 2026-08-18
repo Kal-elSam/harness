@@ -30,6 +30,7 @@ function panelStyles() {
     header h1 { margin: 0; font-size: 14px; font-weight: 600; }
     header .headline { color: var(--warn); font-weight: 600; }
     header .headline.ok { color: var(--ok); }
+    header .binding { color: var(--ok); font-weight: 600; font-size: 12px; }
     header .meta { margin-left: auto; color: var(--muted); font-size: 12px; }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid var(--border); }
     .btn {
