@@ -213,8 +213,8 @@ function renderAttentionSection(attention, entries) {
 }
 
 function primaryActionsFromModel(model) {
-  const ready = !model.workspaceBinding?.known || model.workspaceBinding.state === "ready";
-  const recovery = model.workspaceBinding?.known && model.workspaceBinding.state !== "ready"
+  const bound = !model.workspaceBinding?.known || model.workspaceBinding.state === "bound";
+  const recovery = model.workspaceBinding?.known && model.workspaceBinding.state !== "bound"
     ? model.workspaceBinding.recovery
     : null;
   const fromCp = model.attention?.primaryActions;
@@ -227,7 +227,7 @@ function primaryActionsFromModel(model) {
       safety: "consent"
     }))
     : (model.actions ?? []).filter((a) => a.primary).slice(0, 2);
-  const filtered = ready ? base : base.filter((a) => !isRegistrationRepairAction(a));
+  const filtered = bound ? base : base.filter((a) => !isRegistrationRepairAction(a));
   if (!recovery) return filtered;
   return [recovery, ...filtered.filter((a) => a.id !== recovery.id)].slice(0, 2);
 }
@@ -274,6 +274,7 @@ function renderPanelHtml(model, nonce) {
     ? ` · authority ${escapeHtml(model.orchestratorAuthority)}`
     : "";
   const headlineOk = model.overall === "ok" || model.work?.integrationState === "active";
+  const bindingLabel = model.workspaceBinding?.state === "bound" ? "Bound" : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -288,6 +289,7 @@ function renderPanelHtml(model, nonce) {
   <header>
     <h1>Kairo</h1>
     <span class="headline ${headlineOk ? "ok" : ""}">${escapeHtml(model.headline)}</span>
+    ${bindingLabel ? `<span class="binding">${escapeHtml(bindingLabel)}</span>` : ""}
     <span class="meta">${model.cliVersion ? `v${escapeHtml(model.cliVersion)}` : ""}${authority}</span>
   </header>
   <div class="actions primary-actions">${renderActionButtons(primaryActions)}</div>
