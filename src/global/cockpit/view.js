@@ -258,61 +258,74 @@ export class CockpitView {
     for (const line of this.compactHealthLines()) lines.push(cardLine(line, CARD_TONE.INFO, theme, width));
     lines.push(cardBottom(CARD_TONE.INFO, theme, width));
 
-    const sessionTone = this.mode === "confirm-execute" ? CARD_TONE.WARNING : CARD_TONE.INFO;
-    // How much of the transcript actually fits is real content, not padding:
-    // give centerColumnLines() the real remaining height so it can show as
-    // much genuine history as the terminal allows instead of an arbitrary
-    // fixed cap — a short session just renders short, no fake filler lines.
-    const viewportRows = this.getViewportRows?.();
-    const footerLineCount = this.selectedRow() ? 2 : 1;
-    const overhead = lines.length + 2 /* session cardTop/cardBottom */ + footerLineCount;
-    const transcriptBudget = Number.isFinite(viewportRows) ? Math.max(0, viewportRows - overhead) : undefined;
+    // STATUS is a small, informative widget (current task's phase/provider,
+    // or a pending decision) — separate from the chat below, the way
+    // Claude Code/Codex CLI keep their scrollback apart from status chrome.
+    // It's just omitted when there's nothing to report, so it never grows
+    // by padding itself with anything that isn't real.
+    const row = this.selectedRow();
+    if (row || this.mode === "confirm-execute") {
+      const statusTone = this.mode === "confirm-execute" ? CARD_TONE.WARNING : CARD_TONE.INFO;
+      lines.push(cardTop("STATUS", statusTone, theme, width));
+      for (const line of this.statusLines(row)) lines.push(cardLine(line, statusTone, theme, width));
+      lines.push(cardBottom(statusTone, theme, width));
+    }
 
-    lines.push(cardTop("SESSION", sessionTone, theme, width));
-    for (const line of this.centerColumnLines(transcriptBudget)) lines.push(cardLine(line, sessionTone, theme, width));
-    lines.push(cardBottom(sessionTone, theme, width));
-    lines.push(theme.fg("muted", "Enter send · /help · /usage · q quit"));
-    if (this.selectedRow()) lines.push(theme.fg("muted", "Plan controls: Enter open · a approve · j reject · x implement"));
+    const footerLines = [theme.fg("muted", "Enter send · /help · /usage · q quit")];
+    if (row) footerLines.push(theme.fg("muted", "Plan controls: Enter open · a approve · j reject · x implement"));
+
+    // The chat is plain, unframed text — it's the dominant, scrollable
+    // conversation surface, not another bordered widget. How much of it
+    // fits is real content, not padding: a short conversation just renders
+    // short instead of being stretched or capped by an arbitrary constant.
+    const viewportRows = this.getViewportRows?.();
+    const overhead = lines.length + 1 /* spacer before chat */ + footerLines.length;
+    const chatBudget = Number.isFinite(viewportRows) ? Math.max(0, viewportRows - overhead) : undefined;
+
+    lines.push("");
+    lines.push(...this.chatLines(chatBudget));
+    lines.push(...footerLines);
     return lines.map((line) => truncateToWidth(line, width, "…"));
   }
 
-  /**
-   * @param {number} [transcriptBudget] - how many transcript lines actually
-   *   fit on screen; omitted (tests, narrow terminals) falls back to a fixed
-   *   recent-history window instead of showing everything unbounded.
-   */
-  centerColumnLines(transcriptBudget) {
-    if (this.mode === "detail") {
-      return [theme.bold(`Plan: ${this.detailTaskId ?? ""}`), "", ...String(this.detailText).split("\n")];
-    }
-    const row = this.selectedRow();
+  /** @param {import("./rows.js").CockpitRow|null} row */
+  statusLines(row) {
     const lines = [];
-    if (!row) {
-      lines.push(theme.fg("muted", "Ask Kairo about this project, or describe work to plan."));
-      lines.push("");
-      lines.push(theme.fg("muted", "Use /help to see commands."));
-    } else {
+    if (row) {
       lines.push(theme.fg("muted", "WORKFLOW"));
       lines.push(theme.fg(rowTone(row), derivePhase(row)));
       if (row.taskText) lines.push(row.taskText);
       if (row.planProvider || row.execProvider) lines.push(theme.fg("muted", this.selectedProviderLine(row)));
     }
     if (this.mode === "confirm-execute") {
-      lines.push("");
+      if (row) lines.push("");
       lines.push(...this.confirmPromptLines(row));
-    } else if (this.statusMessage) {
-      lines.push("");
-      lines.push(theme.fg("accent", this.statusMessage));
     }
-    if (this.transcript.length > 0) {
+    return lines;
+  }
+
+  /**
+   * @param {number} [chatBudget] - how many chat lines actually fit on
+   *   screen; omitted (tests, narrow terminals) falls back to a fixed
+   *   recent-history window instead of showing everything unbounded.
+   */
+  chatLines(chatBudget) {
+    if (this.transcript.length === 0 && !this.statusMessage) {
+      return [
+        theme.fg("muted", "Ask Kairo about this project, or describe work to plan."),
+        "",
+        theme.fg("muted", "Use /help to see commands.")
+      ];
+    }
+    const lines = [];
+    if (this.statusMessage) {
+      lines.push(theme.fg("accent", this.statusMessage));
       lines.push("");
-      const historyLimit = Number.isFinite(transcriptBudget)
-        ? Math.max(1, transcriptBudget - lines.length)
-        : 8;
-      for (const entry of this.transcript.slice(-historyLimit)) {
-        const prefix = entry.role === "You" ? theme.fg("accent", "> ") : theme.fg("info", "Kairo ");
-        lines.push(`${prefix}${entry.text}`);
-      }
+    }
+    const historyLimit = Number.isFinite(chatBudget) ? Math.max(1, chatBudget - lines.length) : 8;
+    for (const entry of this.transcript.slice(-historyLimit)) {
+      const prefix = entry.role === "You" ? theme.fg("accent", "> ") : theme.fg("info", "Kairo ");
+      lines.push(`${prefix}${entry.text}`);
     }
     return lines;
   }
