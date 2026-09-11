@@ -1,0 +1,291 @@
+// Task -> provider/model routing. Deliberately NOT a black box: every
+// decision is traceable to the exact keywords that matched and the exact
+// real availability/quota data that ruled a candidate in or out. This is a
+// heuristic keyword classifier, not a learned model — do not oversell it as
+// "AI routing" in any UI copy that surfaces its output.
+//
+// Distinct from `intelligence/router.js`, which selects among model
+// *backends* (Ollama/Zen/OpenRouter) for a different purpose — this module
+// selects among Kairo's execution adapters (codex/claude/opencode-go/
+// opencode-zen/cursor) for running an approved task.
+
+const REPETITIVE_KEYWORDS = [
+  "rename", "boilerplate", "mock", "fixture", "typo", "lint", "format",
+  "docstring", "comment", "changelog", "readme", "scaffold", "stub"
+];
+const REASONING_KEYWORDS = [
+  "architecture", "design", "investigate", "root cause", "race condition",
+  "refactor", "security", "performance", "algorithm", "diagnose", "why does",
+  "tradeoff", "evaluate"
+];
+const MULTI_FILE_KEYWORDS = [
+  "integrate", "multi-file", "across", "backend and frontend", "full feature",
+  "migrate", "end to end", "end-to-end", "wire up", "plumb"
+];
+const QUESTION_WORDS = [
+  "qué", "que", "cómo", "como", "cuál", "cual", "cuáles", "por qué", "porque",
+  "quién", "quien", "dónde", "donde", "cuándo", "cuando",
+  "what", "how", "why", "which", "who", "where", "when",
+  "is ", "are ", "does ", "do ", "can ", "could ", "should ", "explain", "explica", "describe"
+];
+const ACTION_VERBS = [
+  "implementa", "implement", "agrega", "add", "crea", "create", "arregla", "fix",
+  "refactoriza", "refactor", "migra", "migrate", "actualiza", "update", "elimina", "remove",
+  "borra", "delete", "cambia", "change", "escribe", "write", "rename", "renombra",
+  "integra", "integrate", "corrige", "wire up", "build", "construye"
+];
+
+/**
+ * A read-only heuristic — never a model call — for whether a prompt reads
+ * like a question/exploration rather than a change request. Deliberately
+ * conservative: an action verb anywhere in the text always wins (so "explain
+ * this, then fix the bug" still routes as a task), and anything not clearly
+ * question-shaped falls back to "task" (today's existing behavior), so this
+ * can only ever remove work Kairo used to do wrong, never add new
+ * uncertainty to what already worked.
+ * @param {string} text
+ */
+export function isLikelyQuestion(text) {
+  const normalized = String(text ?? "").trim().toLowerCase();
+  if (!normalized) return false;
+  if (ACTION_VERBS.some((verb) => normalized.includes(verb))) return false;
+  if (normalized.endsWith("?")) return true;
+  return QUESTION_WORDS.some((word) => normalized.startsWith(word));
+}
+
+const RISK_KEYWORDS = [
+  "auth", "authentication", "payment", "security", "production", "credential",
+  "secret", "delete", "drop table", "migration", "billing", "pii"
+];
+
+/** Matches in the order they actually appear in the text, so a "why" built from them reads naturally. */
+/**
+ * Matches a task against the project's real skill catalog (name +
+ * description, read by skill-catalog.js from each SKILL.md — never
+ * guessed from a bare folder name). Word-overlap only, sorted by overlap
+ * size — surfaced as transparent evidence in the routing "why", not (yet)
+ * a factor that changes which provider is picked; that needs more design
+ * than a simple overlap heuristic should be trusted with.
+ * @param {string} taskText
+ * @param {Array<{name: string, description: string}>} skills
+ */
+export function matchSkills(taskText, skills = []) {
+  const taskWords = new Set(String(taskText ?? "").toLowerCase().split(/\W+/).filter((word) => word.length > 3));
+  const matches = [];
+  for (const skill of skills) {
+    const descriptionWords = String(skill.description ?? "").toLowerCase().split(/\W+/).filter((word) => word.length > 3);
+    const overlap = descriptionWords.filter((word) => taskWords.has(word));
+    if (overlap.length > 0) matches.push({ name: skill.name, overlap: [...new Set(overlap)] });
+  }
+  return matches.sort((a, b) => b.overlap.length - a.overlap.length);
+}
+
+function countMatches(text, keywords) {
+  return keywords
+    .map((keyword) => ({ keyword, index: text.indexOf(keyword) }))
+    .filter((entry) => entry.index !== -1)
+    .sort((a, b) => a.index - b.index)
+    .map((entry) => entry.keyword);
+}
+
+/**
+ * Pure keyword classifier — no model call, no network, deterministic and
+ * fast enough to run on every task submission. Returns which keywords
+ * actually matched (not just a score) so the router's "why" can quote them.
+ * @param {string} taskText
+ */
+export function classifyTask(taskText) {
+  const text = String(taskText ?? "").toLowerCase();
+  const repetitive = countMatches(text, REPETITIVE_KEYWORDS);
+  const reasoning = countMatches(text, REASONING_KEYWORDS);
+  const multiFile = countMatches(text, MULTI_FILE_KEYWORDS);
+  const risk = countMatches(text, RISK_KEYWORDS);
+  return {
+    repetitive, reasoning, multiFile, risk,
+    repetitionScore: repetitive.length,
+    reasoningScore: reasoning.length,
+    multiFileScore: multiFile.length,
+    riskScore: risk.length
+  };
+}
+
+/**
+ * @param {string} adapterId - "codex" | "claude" | "opencode-go" | "opencode-zen" | "cursor"
+ * @param {ReturnType<typeof import("../runtime/execution-adapters/index.js").inspectExecutionAdapters>} adapters
+ */
+function findAdapter(adapterId, adapters) {
+  const baseId = adapterId.startsWith("opencode") ? "opencode" : adapterId;
+  return adapters.find((adapter) => adapter.id === baseId) ?? null;
+}
+
+/** @param {object|null} usageEntry - a codex/claude usage-probe result (primary/secondary windows) */
+function remainingPercent(usageEntry) {
+  return usageEntry?.primary?.remainingPercent ?? null;
+}
+
+/**
+ * @param {string} adapterId
+ * @param {{adapters: object[], codexUsage: object|null, claudeUsage: object|null}} context
+ * @returns {{ok: boolean, reason: string|null}}
+ */
+function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage }) {
+  const adapter = findAdapter(adapterId, adapters);
+  if (!adapter) return { ok: false, reason: `${adapterId}: no adapter found` };
+  if (!adapter.available) return { ok: false, reason: adapter.reason ?? `${adapterId}: not available` };
+  if (!adapter.launchable) return { ok: false, reason: adapter.reason ?? `${adapterId}: not launchable yet` };
+
+  if (adapterId === "codex") {
+    const left = remainingPercent(codexUsage);
+    if (left != null && left < 5) return { ok: false, reason: `Codex quota nearly exhausted (${left}% left)` };
+  }
+  if (adapterId === "claude") {
+    const left = remainingPercent(claudeUsage);
+    if (left != null && left < 5) return { ok: false, reason: `Claude quota nearly exhausted (${left}% left)` };
+  }
+  return { ok: true, reason: null };
+}
+
+/** Picks the provider's default model from its real catalog; null (never a guessed id) if none is marked default. */
+function defaultModelFor(adapterId, catalogs) {
+  const catalogKey = adapterId === "opencode-go" ? "opencodeGo" : adapterId === "opencode-zen" ? "opencodeZen" : adapterId;
+  const catalog = catalogs?.[catalogKey];
+  if (!catalog || catalog.status === "unknown") return null;
+  const models = catalog.models ?? [];
+  return models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? null;
+}
+
+/**
+ * Decides an ordered candidate list (most to least preferred) from the
+ * classification alone — availability/quota filtering happens next, in
+ * `selectExecutionProvider`. Kept separate so the "why this order" reasoning
+ * stays inspectable.
+ */
+function candidateOrder(profile) {
+  if (profile.riskScore > 0 && (profile.reasoningScore > 0 || profile.multiFileScore > 0)) {
+    return { needsApproval: true, order: [] };
+  }
+  if (profile.reasoningScore >= profile.multiFileScore && profile.reasoningScore >= profile.repetitionScore && profile.reasoningScore > 0) {
+    return { needsApproval: false, order: ["codex", "claude"] };
+  }
+  if (profile.multiFileScore > 0) {
+    return { needsApproval: false, order: ["claude", "codex"] };
+  }
+  if (profile.repetitionScore > 0) {
+    return { needsApproval: false, order: ["opencode-go", "claude"] };
+  }
+  // No signal either way — today's existing default behavior, not a guess.
+  return { needsApproval: false, order: ["claude", "codex"] };
+}
+
+function reasonPhrase(adapterId, profile) {
+  if (adapterId === "codex") return profile.reasoning.length ? `reasoning task (${profile.reasoning.join(", ")})` : "default planning provider";
+  if (adapterId === "claude") return profile.multiFile.length ? `multi-file/integration task (${profile.multiFile.join(", ")})` : "default implementation provider";
+  if (adapterId === "opencode-go") return `repetitive/low-risk task (${profile.repetitive.join(", ")})`;
+  return adapterId;
+}
+
+/**
+ * Routes a read-only question to a provider — deliberately NOT the same
+ * risk/reasoning gating as selectExecutionProvider: a question ABOUT a
+ * risky topic ("how does auth work here?") is itself completely safe,
+ * unlike actually implementing changes to it, so this never returns
+ * WAIT_FOR_APPROVAL. Just: is a real, quota-healthy, ask-capable provider
+ * available, with its real default model.
+ * @param {object} args
+ * @param {object[]} args.adapters
+ * @param {object|null} [args.codexUsage]
+ * @param {object|null} [args.claudeUsage]
+ * @param {object} [args.catalogs]
+ */
+export function selectAskProvider({ adapters, codexUsage = null, claudeUsage = null, catalogs = {} }) {
+  const attempts = [];
+  for (const adapterId of ["claude", "codex"]) {
+    const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage });
+    attempts.push({ adapterId, ...check });
+    if (check.ok) {
+      return {
+        decision: "ROUTED",
+        provider: adapterId,
+        model: defaultModelFor(adapterId, catalogs),
+        why: "read-only question",
+        rejectedCandidates: attempts.filter((entry) => !entry.ok)
+      };
+    }
+  }
+  return {
+    decision: "NO_PROVIDER_AVAILABLE",
+    provider: null,
+    model: null,
+    why: `no ask-capable provider available: ${attempts.map((entry) => entry.reason).join("; ")}`,
+    rejectedCandidates: attempts
+  };
+}
+
+/**
+ * The actual router: classification -> ordered candidates -> real
+ * availability/quota filtering -> a real model id from a real catalog, or
+ * an explicit WAIT_FOR_APPROVAL decision when risk is too high to route
+ * automatically. Never returns a provider that failed its availability
+ * check, and never returns a model id that isn't in that provider's real
+ * catalog.
+ *
+ * @param {object} args
+ * @param {string} args.task
+ * @param {object[]} args.adapters - inspectExecutionAdapters() result
+ * @param {object|null} [args.codexUsage]
+ * @param {object|null} [args.claudeUsage]
+ * @param {object} [args.catalogs] - { codex, opencodeGo, opencodeZen, cursor, claude } readXModels() results
+ */
+export function selectExecutionProvider({
+  task, adapters, codexUsage = null, claudeUsage = null, catalogs = {}, skills = []
+}) {
+  const profile = classifyTask(task);
+  const { needsApproval, order } = candidateOrder(profile);
+  const matchedSkills = matchSkills(task, skills);
+  const skillNote = matchedSkills.length > 0
+    ? ` · matches skill "${matchedSkills[0].name}" (${matchedSkills[0].overlap.join(", ")})`
+    : "";
+
+  if (needsApproval) {
+    return {
+      decision: "WAIT_FOR_APPROVAL",
+      provider: null,
+      model: null,
+      why: `high risk (${profile.risk.join(", ")}) combined with reasoning/multi-file scope — routing automatically would be unsafe; a human should pick the provider.${skillNote}`,
+      fallback: null,
+      matchedSkills,
+      profile
+    };
+  }
+
+  const attempts = [];
+  for (const adapterId of order) {
+    const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage });
+    attempts.push({ adapterId, ...check });
+    if (check.ok) {
+      const model = defaultModelFor(adapterId, catalogs);
+      const remaining = order.slice(order.indexOf(adapterId) + 1);
+      return {
+        decision: "ROUTED",
+        provider: adapterId,
+        model,
+        why: `${reasonPhrase(adapterId, profile)}${skillNote}`,
+        fallback: remaining[0] ?? null,
+        rejectedCandidates: attempts.filter((entry) => !entry.ok),
+        matchedSkills,
+        profile
+      };
+    }
+  }
+
+  return {
+    decision: "NO_PROVIDER_AVAILABLE",
+    provider: null,
+    model: null,
+    why: `every candidate provider was unavailable: ${attempts.map((entry) => entry.reason).join("; ")}`,
+    fallback: null,
+    rejectedCandidates: attempts,
+    matchedSkills,
+    profile
+  };
+}

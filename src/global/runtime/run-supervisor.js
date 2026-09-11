@@ -72,10 +72,11 @@ export async function supervisePreparedRun({
   timeoutMs = null,
   spawnImpl = spawn,
   cancelledRuns = null,
-  activeProcesses = null
+  activeProcesses = null,
+  resolveAdapterImpl = resolveExecutionAdapter
 }) {
   const handoff = await consumeRunHandoff(homeDir, runId);
-  const adapter = resolveExecutionAdapter(handoff.agentId);
+  const adapter = resolveAdapterImpl(handoff.agentId);
   let metadata = await readRunState(homeDir, runId);
 
   if (!metadata) {
@@ -85,16 +86,6 @@ export async function supervisePreparedRun({
   const captureTranscript = handoff.captureTranscript === true;
   const strategy = normalizeRunStrategy(handoff.strategy ?? metadata.strategy ?? "direct");
   const extensionPath = resolveOrchestratedExtensionPath(homeDir, strategy);
-  const launch = adapter.buildLaunch({
-    task: handoff.task,
-    cwd: handoff.cwd,
-    model: handoff.model,
-    permissions: handoff.permissions ?? [],
-    profile: handoff.profile ?? null,
-    strategy,
-    extensionPath
-  });
-
   metadata = {
     ...metadata,
     state: RUN_STATES.RUNNING,
@@ -107,6 +98,26 @@ export async function supervisePreparedRun({
     agentPid: null,
     startedAt: new Date().toISOString(),
     lastHeartbeat: new Date().toISOString()
+  });
+
+  try {
+    await adapter.preflight({ cwd: handoff.cwd });
+  } catch (error) {
+    metadata = transitionRunState(metadata, RUN_STATES.FAILED, { error: error.message });
+    await writeRunState(homeDir, metadata);
+    await appendRunEvent(homeDir, createRunEvent({
+      runId, type: "run.failed", data: { error: error.message }
+    }), { captureTranscript: shouldPersistTranscript(captureTranscript) });
+    throw error;
+  }
+  const launch = adapter.buildLaunch({
+    task: handoff.task,
+    cwd: handoff.cwd,
+    model: handoff.model,
+    permissions: handoff.permissions ?? [],
+    profile: handoff.profile ?? null,
+    strategy,
+    extensionPath
   });
 
   const child = spawnImpl(launch.command, launch.args, {

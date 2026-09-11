@@ -53,6 +53,13 @@ kairo install --agents cursor,codex --components orchestrator,sdd-core
 kairo doctor
 kairo doctor --json
 kairo orchestrator --json
+kairo architect --task "Design duplicate-payment protection"
+kairo ui --cwd /path/to/repository
+kairo conversation snapshot --cwd /path/to/repository --json
+kairo plans list
+kairo plans show <taskId>
+kairo plans approve <taskId>
+kairo plans reject <taskId>
 kairo intelligence status
 kairo intelligence models
 kairo intelligence context --json
@@ -108,6 +115,79 @@ node ./bin/kairo.js install --dry-run
 |---|---|---|
 | `agent-global` | bare `kairo`, `setup`, `install`, `update`, `doctor`, `status`, `uninstall` | Primary path. Configures local agent roots, managed sections, `~/.harness` state. No project folders. |
 | `workspace` | `init` only (opt-in/legacy) | Explicit `--scope=workspace`. Copies `repo-template/` into the current repo. |
+
+### Architecture plans
+
+`kairo architect` runs the subscription-authenticated Codex CLI in read-only,
+ephemeral mode. It supplies a bounded context pack from Kairo's existing compiler,
+including applicable `AGENTS.md` governance while excluding private files and broad
+repository dumps. Kairo captures the final plan and writes the Git-owned handoff to
+`.ai/tasks/<taskId>/`:
+
+```text
+task.md       Original task
+plan.md       Codex architecture plan
+status.json   Digests, base HEAD, state, and decision evidence
+execution.json Reserved Claude run linkage after explicit execution
+```
+
+Plans start as `awaiting_approval`. Approval and rejection are explicit; both
+refuse changed artifacts or a different Git `HEAD`.
+Identical requests reuse an awaiting plan or a draft held by a live process;
+an interrupted orphan draft is failed and replaced after stale-lock recovery. The
+request identity includes canonical project root, Git `HEAD`, normalized task, and model.
+
+```bash
+kairo architect --task "Refactor authentication boundaries"
+kairo plans approve <taskId>
+```
+
+An approved plan can be started explicitly with `kairo conversation execute <taskId>`.
+Kairo revalidates the plan digests, Git `HEAD`, and the working-tree fingerprint
+captured at approval, then starts a detached Claude run. Claude must report
+first-party `claude.ai` subscription authentication; API-key and alternate-cloud
+credentials are stripped, and the new flow uses `--permission-mode auto` with no
+permission bypass flags. `kairo conversation cancel <taskId>` cancels an active run.
+OpenCode execution remains unavailable until Kairo can verify `opencode-go/*` and
+that server-side **Use balance** is disabled.
+
+`kairo ui --cwd <repo>` starts the same architecture conversation workflow on an
+ephemeral loopback URL. The URL carries a per-process token; API requests also require
+that token and valid loopback Host/Origin headers. The timeline is derived from the
+Git-owned task artifacts, so browser and Cursor refreshes preserve state. Plan approval
+remains separate from execution: only the explicit **Execute with Claude** action
+starts implementation. The timeline polls detached run state without claiming that
+approval itself started work.
+
+### `kairo start`
+
+`kairo start` is the terminal-first conversation cockpit. It keeps the editor at the
+bottom of a full-screen terminal view and shows the current project, provider status,
+integration status, recent task transcript, plans, and detached executions. Provider
+quota is deliberately displayed as `unknown` unless a provider reports a measured value;
+Kairo never invents subscription percentages.
+
+For Codex, the cockpit performs a bounded read-only `codex app-server` query
+(`account/rateLimits/read`) and displays the measured five-hour and weekly windows when
+the installed CLI supports them. It sends `supportsLunaReserve: false` and never reads
+or enables credit/PAYG details. Errors and timeouts remain `unknown` (fail-closed).
+
+```bash
+kairo start --cwd /path/to/repository
+```
+
+Type a task and press Enter to request a Codex architecture plan. Use `Tab` to move
+between the composer and plan list, `a` to approve, `x` then `y` to explicitly execute
+an approved plan with Claude, `c` to cancel an active run, and `q` to exit. Composer
+commands include `/help`, `/usage`, `/providers`, `/status`, `/clear`, and `/quit`.
+OpenCode remains visibly blocked until its billing safety can be verified.
+
+OpenCode Go usage is read from the authenticated, read-only Zen usage endpoint when
+the local `opencode-go` credential is present. OpenCode Zen has no supported remote
+balance endpoint here, so `opencode stats --days 7 --models` is shown only as
+`local_recorded` history for `opencode/*` models. It is not a subscription balance or
+invoice. Kairo labels Zen `PAYG`, keeps balance/auto-reload `unknown`, and enforces
+`PAYG blocked`; it never enables **Use balance**, auto-reload, or model execution.
 
 ### `kairo` / `kairo setup`
 
@@ -302,5 +382,3 @@ detailed `checks` array.
 
 Removes managed sections from agent configs (with a fresh backup first),
 deletes `~/.harness/state.json` and `~/.harness/core/`. Backups are preserved.
-
-

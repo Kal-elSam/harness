@@ -4,5 +4,6 @@ node_modules/
 *.vsix
 .atl/
 graphify-out/
+.codegraph/
 .pnpm-store/
 packages/kairo-vscode/dist/

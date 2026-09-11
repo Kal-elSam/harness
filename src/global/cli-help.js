@@ -70,6 +70,11 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
 
 ## Agents & runs
   ${cli} shell                          Operations cockpit (TTY)
+  ${cli} architect --task "..." [--model <name>] [--cwd <dir>] [--json]
+  ${cli} plans list|show|approve|reject [<taskId>] [--cwd <dir>] [--json]
+  ${cli} start [--cwd <dir>]             Interactive cockpit TUI (approve/execute/cancel plans)
+  ${cli} ui [--cwd <dir>] [--port <n>]       Local loopback conversation UI
+  ${cli} conversation snapshot|architect|show|approve|reject|execute|cancel ... [--json]
   ${cli} run --agent <id> --task "..." [--strategy direct|orchestrated] [--model <name>] [--cwd <dir>] [--permissions force|yolo|read-only] [--allow-unsafe-permissions] [--capture-transcript] [--follow] [--no-wait] [--json]
   ${cli} runs list [--json] [--limit <n>] [--active-only]
   ${cli} runs show <runId> [--json] [--limit <n>] [--follow]
@@ -134,6 +139,8 @@ Scopes:
                           Explicit --scope=workspace only.
 
 Commands:
+  architect  Run subscription-authenticated Codex in bounded read-only planning mode.
+  plans      Inspect and explicitly approve or reject project-local architecture plans.
   shell      Operations cockpit (TTY). Bare ${cli} opens onboarding when ~/.harness/state.json
              is missing, otherwise the cockpit. Explicit ${cli} shell always opens the cockpit.
              Keys: ↑↓ · Enter · Esc back/exit · R refresh · C cancel · ? help.

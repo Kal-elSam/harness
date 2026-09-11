@@ -41,6 +41,9 @@ test("packed tarball includes release scripts and full SDD skill packs", () => {
     assert.ok(listing.includes("package/scripts/install.sh"));
     assert.ok(listing.includes("package/scripts/check-published-release.mjs"));
     assert.ok(listing.includes("package/scripts/lib/attribution-guard.mjs"));
+    assert.ok(listing.includes("package/src/global/conversation/service.js"));
+    assert.ok(listing.includes("package/src/global/conversation/cli.js"));
+    assert.ok(listing.includes("package/src/global/conversation/ui.js"));
     assert.ok(listing.includes("package/global-template/components/catalog.json"));
     assert.ok(listing.includes(`${SDD_PREFIX}/personas/teaching.md`));
 

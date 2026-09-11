@@ -100,10 +100,12 @@ async function prepareRun({
   captureTranscript = false,
   cliVersion,
   profile = null,
-  strategy = "direct"
+  strategy = "direct",
+  runId: requestedRunId = null,
+  resolveAdapterImpl = resolveExecutionAdapter
 }) {
   const normalizedStrategy = assertOrchestratedAgent(agentId, strategy);
-  const adapter = resolveExecutionAdapter(agentId);
+  const adapter = resolveAdapterImpl(agentId);
   const availability = adapter.availability({ cwd });
 
   if (!availability.available) {
@@ -117,6 +119,8 @@ async function prepareRun({
     );
   }
 
+  await adapter.preflight({ cwd });
+
   const authorized = authorizeRunPermissions({
     permissions,
     agentId,
@@ -129,7 +133,7 @@ async function prepareRun({
     await assertManagedMinionExtension(homeDir);
   }
 
-  const runId = createRunId();
+  const runId = requestedRunId ?? createRunId();
   const lineage = createRootRunLineage(runId);
   const metadata = createRunMetadata({
     runId,
@@ -197,7 +201,9 @@ export async function startRun({
   timeoutMs = null,
   wait = true,
   spawnImpl = spawn,
-  forkDetachedSupervisorImpl = forkDetachedSupervisor
+  forkDetachedSupervisorImpl = forkDetachedSupervisor,
+  runId: requestedRunId = null,
+  resolveAdapterImpl = resolveExecutionAdapter
 }) {
   const { runId, metadata } = await prepareRun({
     homeDir,
@@ -212,7 +218,9 @@ export async function startRun({
     captureTranscript,
     cliVersion,
     profile,
-    strategy: normalizeRunStrategy(strategy)
+    strategy: normalizeRunStrategy(strategy),
+    runId: requestedRunId,
+    resolveAdapterImpl
   });
 
   if (!wait) {
@@ -274,7 +282,8 @@ export async function startRun({
     timeoutMs,
     spawnImpl,
     cancelledRuns,
-    activeProcesses
+    activeProcesses,
+    resolveAdapterImpl
   });
 
   return {

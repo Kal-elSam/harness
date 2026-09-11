@@ -1,4 +1,5 @@
 import { createExecutionAdapter, parseNdjsonLine } from "./create-execution-adapter.js";
+import { verifyCodexSubscriptionAuth } from "../../architect/architect-codex.js";
 
 const EXECUTABLE = "codex";
 
@@ -13,7 +14,12 @@ function buildCodexPermissionsArgs(permissions = []) {
     return ["--dangerously-bypass-approvals-and-sandbox"];
   }
 
-  return [];
+  // Safe headless default: sandboxed to the workspace, with approval
+  // requests auto-reviewed instead of blocking forever on a human who
+  // can't respond in a non-interactive run — mirrors claude.js's
+  // `--permission-mode auto --permission-prompts none`. Without this,
+  // `codex exec` hangs on its default on-request approval policy.
+  return ["--sandbox", "workspace-write", "--approve-for-me"];
 }
 
 function buildCodexLaunch({ task, cwd, model, permissions = [] }) {
@@ -76,5 +82,6 @@ export default createExecutionAdapter({
     permissionModes: ["yolo"]
   },
   buildLaunch: buildCodexLaunch,
-  parseEventLine: parseCodexEventLine
+  parseEventLine: parseCodexEventLine,
+  preflight: verifyCodexSubscriptionAuth
 });

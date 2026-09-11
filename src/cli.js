@@ -41,6 +41,10 @@ import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceU
 import { runOrchestratorDiagnostics, runOrchestratorShell } from "./global/orchestrator.js";
 import { runIntelligenceCli } from "./global/intelligence-cli.js";
 import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
+import { runArchitectCli, runPlansCli } from "./global/architect/architect-cli.js";
+import { runConversationCli } from "./global/conversation/cli.js";
+import { runUiCli } from "./global/conversation/ui.js";
+import { runCockpitCli } from "./global/cockpit/cli.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
 import { runGlobalAlerts } from "./global/runtime/alerts/alert-cli.js";
@@ -115,6 +119,21 @@ export async function runCli(argv) {
       return;
     case "runs":
       await runGlobalRuns(optionsWithPolicy, packageManifest);
+      return;
+    case "architect":
+      await runArchitectCli(optionsWithPolicy);
+      return;
+    case "plans":
+      await runPlansCli(optionsWithPolicy);
+      return;
+    case "conversation":
+      await runConversationCli(optionsWithPolicy);
+      return;
+    case "ui":
+      await runUiCli(optionsWithPolicy);
+      return;
+    case "start":
+      await runCockpitCli(optionsWithPolicy);
       return;
     case "review":
       await runGlobalReview(optionsWithPolicy, packageManifest);
@@ -521,6 +540,9 @@ export function parseArgs(argv) {
     intelligencePaths: [],
     runsAction: null,
     runId: null,
+    plansAction: null,
+    conversationAction: null,
+    taskId: null,
     reviewId: null,
     lineage: null,
     reviewsAction: null,
@@ -560,7 +582,8 @@ export function parseArgs(argv) {
     activeOnly: false,
     timeoutMs: null,
     includePrivate: false,
-    cloudConsent: false
+    cloudConsent: false,
+    port: null
   };
 
   if (command === "components") {
@@ -578,6 +601,12 @@ export function parseArgs(argv) {
   if (command === "runs") {
     parseRunsAction(args, options);
   }
+
+  if (command === "plans") {
+    parsePlansAction(args, options);
+  }
+
+  if (command === "conversation") parseConversationAction(args, options);
 
   if (command === "reviews") {
     parseReviewsAction(args, options);
@@ -696,7 +725,7 @@ export function parseArgs(argv) {
     else if (arg === "--simple") options.simple = true;
     else if (arg === "--task" || arg.startsWith("--task=")) {
       const taskValue = arg.startsWith("--task=") ? arg.slice("--task=".length) : args[++index];
-      if (command === "run") options.task = taskValue;
+      if (command === "run" || command === "architect" || command === "conversation") options.task = taskValue;
       else options.intelligenceTask = taskValue;
     }
     else if (arg === "--prompt") options.intelligencePrompt = args[++index];
@@ -736,6 +765,8 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--timeout=")) options.timeoutMs = parsePositiveInt(arg.slice("--timeout=".length), "timeout") * 1000;
     else if (arg === "--include-private") options.includePrivate = true;
     else if (arg === "--cloud-consent") options.cloudConsent = true;
+    else if (arg === "--port") options.port = parsePositiveInt(args[++index], "port");
+    else if (arg.startsWith("--port=")) options.port = parsePositiveInt(arg.slice("--port=".length), "port");
     else if (arg === "--base") options.base = requireFlagValue("--base", args[++index]);
     else if (arg.startsWith("--base=")) options.base = requireFlagValue("--base", arg.slice("--base=".length));
     else if (arg === "--commit") options.commit = requireFlagValue("--commit", args[++index]);
@@ -752,7 +783,7 @@ export function parseArgs(argv) {
     else throw new Error(`Unknown option "${arg}".`);
   }
 
-  if (command === "run" && !options.task && args.length > 0) {
+  if ((command === "run" || command === "architect") && !options.task && args.length > 0) {
     options.task = args.join(" ").trim();
   }
 
@@ -767,6 +798,24 @@ export function parseArgs(argv) {
   }
 
   return { command, options, isImplicitCommand: implicitCommand };
+}
+
+function parseConversationAction(args, options) {
+  const action = args[0];
+  if (!action || action.startsWith("-")) {
+    options.conversationAction = "snapshot";
+    return;
+  }
+  if (!new Set(["snapshot", "architect", "show", "approve", "reject", "execute", "cancel"]).has(action)) {
+    throw new Error(`Unknown conversation action "${action}".`);
+  }
+  args.shift();
+  options.conversationAction = action;
+  if (["show", "approve", "reject", "execute", "cancel"].includes(action)) {
+    const taskId = args.shift();
+    if (!taskId || taskId.startsWith("-")) throw new Error(`Missing task id for conversation ${action}.`);
+    options.taskId = taskId;
+  }
 }
 
 function parseComponentsAction(args, options) {
@@ -884,6 +933,26 @@ function parseRunsAction(args, options) {
       throw new Error(`Missing run id. Use: ${formatCliCommand(`runs ${action} <runId>`)}`);
     }
     options.runId = args.shift();
+  }
+}
+
+function parsePlansAction(args, options) {
+  const action = args[0];
+  if (!action || action.startsWith("-")) {
+    options.plansAction = "list";
+    return;
+  }
+  if (!new Set(["list", "show", "approve", "reject"]).has(action)) {
+    throw new Error(`Unknown plans action "${action}". Use list, show, approve, or reject.`);
+  }
+  args.shift();
+  options.plansAction = action;
+  if (action !== "list") {
+    const taskId = args[0];
+    if (!taskId || taskId.startsWith("-")) {
+      throw new Error(`Missing task id. Use: ${formatCliCommand(`plans ${action} <taskId>`)}`);
+    }
+    options.taskId = args.shift();
   }
 }
 
@@ -1062,6 +1131,11 @@ function normalizeCommand(command) {
   if (command === "orchestrator") return "orchestrator";
   if (command === "run") return "run";
   if (command === "runs") return "runs";
+  if (command === "architect") return "architect";
+  if (command === "plans") return "plans";
+  if (command === "conversation") return "conversation";
+  if (command === "ui") return "ui";
+  if (command === "start") return "start";
   if (command === "review") return "review";
   if (command === "reviews") return "reviews";
   if (command === "monitor") return "monitor";

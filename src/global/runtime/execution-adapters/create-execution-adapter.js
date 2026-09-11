@@ -11,7 +11,8 @@ export function createExecutionAdapter({
   buildLaunch,
   parseEventLine = null,
   checkAvailability = null,
-  launchable = null
+  launchable = null,
+  preflight = null
 }) {
   return {
     id,
@@ -61,6 +62,10 @@ export function createExecutionAdapter({
 
     buildLaunch(options) {
       return buildLaunch(options);
+    },
+
+    async preflight(context = {}) {
+      return preflight ? preflight(context) : { ok: true };
     },
 
     parseEventLine(line, context = {}) {

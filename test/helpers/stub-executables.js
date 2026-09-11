@@ -10,7 +10,15 @@ export async function withStubExecutables(names, fn) {
   const binDir = await mkdtemp(join(tmpdir(), "kairo-stub-bin-"));
   for (const name of names) {
     const filePath = join(binDir, name);
-    await writeFile(filePath, "#!/bin/sh\nexit 0\n", "utf8");
+    // codex.js's execution adapter now runs a real preflight
+    // (verifyCodexSubscriptionAuth -> `codex login status`) before every
+    // launch, so a bare `exit 0` stub fails it. Answer that one subcommand
+    // the way a logged-in Codex CLI does; every other invocation still
+    // just succeeds, matching what these supervisor-mechanics tests need.
+    const script = name === "codex"
+      ? "#!/bin/sh\nif [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then echo \"Logged in using ChatGPT\"; fi\nexit 0\n"
+      : "#!/bin/sh\nexit 0\n";
+    await writeFile(filePath, script, "utf8");
     await chmod(filePath, 0o755);
   }
 

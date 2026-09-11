@@ -24,6 +24,18 @@ import {
 } from "../src/global/runtime/run-supervisor.js";
 import { writeSupervisorLock } from "../src/global/runtime/run-supervisor-lock.js";
 import { withStubExecutables } from "./helpers/stub-executables.js";
+import { resolveExecutionAdapter } from "../src/global/runtime/execution-adapters/index.js";
+
+// These tests exercise generic run-supervision mechanics (spawn/complete/
+// cancel/detach), not any provider's real auth — so the adapter's real
+// preflight (a real `codex login status` child-process spawn) is replaced
+// with a no-op. Doing this via dependency injection, rather than relying on
+// the PATH-stubbed `codex` binary to satisfy it, avoids spawning a real
+// process per test purely for auth, which was empirically flaky here.
+function resolveAdapterWithNoopPreflight(agentId) {
+  const adapter = resolveExecutionAdapter(agentId);
+  return { ...adapter, preflight: async () => ({ ok: true }) };
+}
 
 async function waitUntil(predicate, { timeoutMs = 3000, message = "condition not met" } = {}) {
   const deadline = Date.now() + timeoutMs;
@@ -69,6 +81,7 @@ test("startRun supervises process, normalizes events, and completes", async () =
     const { runId, completion } = await startRun({
       homeDir,
       agentId: "codex",
+      resolveAdapterImpl: resolveAdapterWithNoopPreflight,
       task: "run tests",
       cwd: homeDir,
       cliVersion: "0.2.1",
@@ -93,6 +106,7 @@ test("startRun marks failure on non-zero exit", async () => {
     const { completion } = await startRun({
       homeDir,
       agentId: "codex",
+      resolveAdapterImpl: resolveAdapterWithNoopPreflight,
       task: "fail",
       cwd: homeDir,
       cliVersion: "0.2.1",
@@ -113,6 +127,7 @@ test("stopRun cancels active run", async () => {
     const { runId } = await startRun({
       homeDir,
       agentId: "codex",
+        resolveAdapterImpl: resolveAdapterWithNoopPreflight,
       task: "long task",
       cwd: homeDir,
       cliVersion: "0.2.1",
@@ -223,6 +238,7 @@ test("startRun with wait false detaches supervision", async () => {
     const result = await startRun({
       homeDir,
       agentId: "codex",
+      resolveAdapterImpl: resolveAdapterWithNoopPreflight,
       task: "detached task",
       cwd: homeDir,
       cliVersion: "0.2.1",
@@ -252,6 +268,7 @@ test("supervisor preserves cancelled state written by another process", async ()
     const { runId, completion } = await startRun({
       homeDir,
       agentId: "codex",
+      resolveAdapterImpl: resolveAdapterWithNoopPreflight,
       task: "long task",
       cwd: homeDir,
       cliVersion: "0.2.1",
@@ -301,6 +318,7 @@ test("stopRun cancel contract wins when kill closes synchronously", async () => 
     const { runId, completion } = await startRun({
       homeDir,
       agentId: "codex",
+      resolveAdapterImpl: resolveAdapterWithNoopPreflight,
       task: "sync close cancel contract",
       cwd: homeDir,
       cliVersion: "0.5.1",
@@ -349,6 +367,7 @@ test("supervisor prefers CANCELLED after missed cancel-preserve window", async (
     const { runId, completion } = await startRun({
       homeDir,
       agentId: "codex",
+      resolveAdapterImpl: resolveAdapterWithNoopPreflight,
       task: "missed cancel window",
       cwd: homeDir,
       cliVersion: "0.5.1",
@@ -406,6 +425,7 @@ test("stopRun against concurrent supervisor stress ends CANCELLED", async () => 
       const { runId, completion } = await startRun({
         homeDir,
         agentId: "codex",
+        resolveAdapterImpl: resolveAdapterWithNoopPreflight,
         task: `stop stress ${i}`,
         cwd: homeDir,
         cliVersion: "0.5.1",
