@@ -6,6 +6,8 @@ const { ControlPlaneCache, fetchKairoControlPlane } = require("./control-plane-c
 const { KairoStatusTreeProvider } = require("./tree");
 const { KairoPanelProvider, VIEW_ID } = require("./panel");
 const { registerWorkspaceMcpProvider } = require("./workspace-mcp");
+const { createArchitectActions } = require("./architect-actions");
+const { fetchConversation } = require("./conversation-cache");
 
 const REFRESH_INTERVAL_MS = 60_000;
 const TERMINAL_NAME = "Kairo";
@@ -46,6 +48,7 @@ function runInKairoTerminal(commandLine) {
 
 function activate(context) {
   const mcpHandle = registerWorkspaceMcpProvider(vscode, context);
+  const architectActions = createArchitectActions(vscode);
 
   const cache = new StatusCache({
     fetch: () => fetchKairoStatus({ cwd: workspaceCwd() })
@@ -64,7 +67,20 @@ function activate(context) {
   const panel = new KairoPanelProvider({
     cache,
     controlPlaneCache,
+    conversationFetch: () => fetchConversation({ cwd: workspaceCwd() }),
     onAction: async (id, message = {}) => {
+      if (id === "conversation") {
+        let result = null;
+        if (message.action === "architect") result = await architectActions.architectTask(message.task);
+        else if (message.action === "open") result = await architectActions.openPlanById(message.taskId);
+        else if (message.action === "approve" || message.action === "reject") {
+          result = await architectActions.decideById(message.action, message.taskId);
+        }
+        else if (message.action === "execute") result = await architectActions.executeById(message.taskId);
+        else if (message.action === "cancel") result = await architectActions.cancelById(message.taskId);
+        if (result) await refreshAll({ force: true });
+        return;
+      }
       if (id === "refresh") {
         await refreshAll({ force: true });
         return;
@@ -147,7 +163,12 @@ function activate(context) {
     ["kairo.setup", () => runInKairoTerminal("kairo setup")],
     ["kairo.sync", () => runInKairoTerminal("kairo sync")],
     ["kairo.doctor", () => runInKairoTerminal("kairo doctor")],
-    ["kairo.connectAgent", () => runInKairoTerminal("kairo mcp install")]
+    ["kairo.connectAgent", () => runInKairoTerminal("kairo mcp install")],
+    ["kairo.architect", () => architectActions.architect()],
+    ["kairo.openPlan", () => architectActions.openPlan()],
+    ["kairo.approvePlan", () => architectActions.decide("approve")],
+    ["kairo.rejectPlan", () => architectActions.decide("reject")],
+    ["kairo.implementPlan", () => architectActions.implementPlan()]
   ]) {
     context.subscriptions.push(vscode.commands.registerCommand(id, fn));
   }

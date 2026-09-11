@@ -23,7 +23,8 @@ function buildPanelModel(
   fleetReport = null,
   nextReport = null,
   controlPlane = null,
-  workspaceContext = null
+  workspaceContext = null,
+  conversation = null
 ) {
   const fleetNodes = buildFleetNodes(fleetReport);
   const { activityNodes, activityNote, activityActiveCount, showActivityFloor } = buildActivityNodes(fleetReport);
@@ -56,6 +57,7 @@ function buildPanelModel(
       orchestratorAuthority,
       work,
       controlPlane,
+      conversation,
       workflow: controlPlane?.workflow ?? null,
       attention: controlPlane?.attention ?? null,
       hideEmptyPlatforms: hideEmptyPlatforms === true,
@@ -204,6 +206,7 @@ function buildPanelModel(
     orchestratorAuthority,
     work,
     controlPlane,
+    conversation,
     workflow: controlPlane?.workflow ?? null,
     attention: controlPlane?.attention ?? null,
     hideEmptyPlatforms: hideEmptyPlatforms === true,

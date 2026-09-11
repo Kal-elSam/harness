@@ -8,10 +8,23 @@ Gentle **control plane** panel (extension `0.8.0`):
 - **Atención** — actionable items; ≤2 primary actions; Setup / Models / Catalog / Doctor secondary
 - Connection chips (Gentle · Hermes · Engram · Graphify · Agent) marked **optional**
 - Working floor — live OpenCode sessions only (no Cursor/Claude agent theater)
+- **Architecture commands** — create a bounded Codex plan, approve/reject it,
+  and open the exact approved `.ai/tasks/<taskId>/plan.md` artifact for Cursor Auto
+- **Conversation** — submit architecture tasks and refresh the durable plan timeline
+  through the public `kairo conversation` CLI protocol; approved plans expose an
+  explicit, modal-confirmed **Execute with Claude** action and active runs can be cancelled
 
 The panel does a **single** fetch of `kairo control-plane --json` (plus `kairo status --json` for the status bar / checks). It does not assemble contradictory partial UI from parallel `connections` + `next` calls.
 
-Actions open a terminal — the extension never writes configs itself. Kairo does **not** brew-install Gentle, Hermes, or Graphify.
+Configuration actions open a terminal — the extension never writes agent configs
+itself. Architecture commands invoke the local Kairo CLI without a shell; Kairo
+writes only the selected repository's structured plan artifacts. Kairo does **not**
+brew-install Gentle, Hermes, or Graphify.
+The panel does not inject Cursor Chat or use private Cursor APIs. Plan approval does
+not claim implementation started. Claude execution requires a separate explicit
+confirmation and Kairo's subscription-only, safe-permission preflight. OpenCode
+automatic execution remains unavailable until its subscription/balance state can be
+verified without reading or storing secrets.
 
 ## Requirements
 

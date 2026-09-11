@@ -44,6 +44,26 @@
       {
         "command": "kairo.refresh",
         "title": "Kairo: Refresh Status"
+      },
+      {
+        "command": "kairo.architect",
+        "title": "Kairo: Create Architecture Plan"
+      },
+      {
+        "command": "kairo.openPlan",
+        "title": "Kairo: Open Architecture Plan"
+      },
+      {
+        "command": "kairo.approvePlan",
+        "title": "Kairo: Approve Architecture Plan"
+      },
+      {
+        "command": "kairo.rejectPlan",
+        "title": "Kairo: Reject Architecture Plan"
+      },
+      {
+        "command": "kairo.implementPlan",
+        "title": "Kairo: Implement Approved Plan"
       }
     ],
     "viewsContainers": {

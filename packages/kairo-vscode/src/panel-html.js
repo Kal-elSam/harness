@@ -293,6 +293,7 @@ function renderPanelHtml(model, nonce) {
     <span class="meta">${model.cliVersion ? `v${escapeHtml(model.cliVersion)}` : ""}${authority}</span>
   </header>
   <div class="actions primary-actions">${renderActionButtons(primaryActions)}</div>
+  ${renderConversationSection(model.conversation)}
   ${renderWorkViewport(model.work)}
   ${renderWorkflowSection(model.workflow, {
     degraded: model.controlPlane?.sections?.workflow?.ok === false,
@@ -316,6 +317,7 @@ function renderPanelHtml(model, nonce) {
     const connections = ${JSON.stringify(connections)};
     const fleetNodes = ${JSON.stringify(fleetNodes)};
     const activityNodes = ${JSON.stringify(activityNodes)};
+    const conversation = ${safeJson(model.conversation ?? { timeline: [] })};
     const details = document.getElementById("details");
 
     function escapeHtml(value) {
@@ -365,6 +367,21 @@ function renderPanelHtml(model, nonce) {
       if (except !== "fleet") document.querySelectorAll("[data-fleet]").forEach((el) => el.classList.remove("selected"));
       if (except !== "activity") document.querySelectorAll("[data-activity]").forEach((el) => el.classList.remove("selected"));
     }
+
+    const conversationForm = document.getElementById("kairo-conversation-form");
+    if (conversationForm) conversationForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const field = document.getElementById("kairo-conversation-task");
+      const task = String(field?.value || "").trim();
+      if (task) vscode.postMessage({ type: "conversation", action: "architect", task });
+    });
+    document.querySelectorAll("[data-conversation-action]").forEach((button) => {
+      button.addEventListener("click", () => vscode.postMessage({
+        type: "conversation",
+        action: button.getAttribute("data-conversation-action"),
+        taskId: button.getAttribute("data-task-id")
+      }));
+    });
 
     function showEntry(index) {
       const entry = entries[index];
@@ -464,9 +481,39 @@ function renderPanelHtml(model, nonce) {
 </html>`;
 }
 
+function safeJson(value) {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
+function renderConversationSection(conversation) {
+  const timeline = Array.isArray(conversation?.timeline) ? conversation.timeline : [];
+  const cards = timeline.length ? timeline.map((plan) => {
+    const taskId = escapeHtml(plan.taskId);
+    const actions = plan.planReady
+      ? `<button type="button" data-conversation-action="open" data-task-id="${taskId}">Open plan</button>`
+      : "";
+    const decisions = plan.state === "awaiting_approval"
+      ? `<button type="button" data-conversation-action="approve" data-task-id="${taskId}">Approve</button><button type="button" data-conversation-action="reject" data-task-id="${taskId}">Reject</button>`
+      : "";
+    const execution = plan.execution ?? { state: "not_started", active: false };
+    const executionActions = plan.state === "approved" && execution.state === "not_started"
+      ? `<button type="button" data-conversation-action="execute" data-task-id="${taskId}">Execute with Claude</button>`
+      : execution.active
+        ? `<button type="button" data-conversation-action="cancel" data-task-id="${taskId}">Cancel Claude run</button>`
+        : "";
+    return `<article class="entry"><strong>${taskId}</strong><p>${escapeHtml(plan.state)}</p><p class="muted">${escapeHtml(execution.message ?? "Claude execution has not started.")}</p>${actions}${decisions}${executionActions}</article>`;
+  }).join("") : `<p class="muted">No architecture plans yet.</p>`;
+  const error = conversation?.error ? `<p class="error">${escapeHtml(conversation.error)}</p>` : "";
+  return `<section class="pane" id="conversation"><div class="pane-title">Conversation</div>
+    <p class="muted">Codex plans in read-only mode. Approval does not start implementation.</p>${error}
+    <form id="kairo-conversation-form"><textarea id="kairo-conversation-task" rows="3" placeholder="Describe an architecture task" required></textarea><br><button type="submit">Create architecture plan</button></form>
+    <div>${cards}</div><p class="hint">Claude execution is explicit, subscription-only, and uses safe permissions. OpenCode execution remains unavailable. Kairo never fabricates Gentle approval.</p></section>`;
+}
+
 module.exports = {
   escapeHtml,
   renderPanelHtml,
+  renderConversationSection,
   renderFleetTree,
   renderActivityTree,
   renderWorkViewport,

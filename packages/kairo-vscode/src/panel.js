@@ -16,9 +16,10 @@ function workspacePanelContext() {
 const VIEW_ID = "kairo.panel";
 
 class KairoPanelProvider {
-  constructor({ cache, controlPlaneCache, onAction }) {
+  constructor({ cache, controlPlaneCache, conversationFetch, onAction }) {
     this.cache = cache;
     this.controlPlaneCache = controlPlaneCache;
+    this.conversationFetch = conversationFetch;
     this.onAction = onAction;
     this._view = null;
   }
@@ -33,6 +34,10 @@ class KairoPanelProvider {
       }
       if (message?.type === "run-command" && typeof message.command === "string" && message.command) {
         await this.onAction("run-command", message);
+        return;
+      }
+      if (message?.type === "conversation" && typeof message.action === "string") {
+        await this.onAction("conversation", message);
       }
     });
     void this.refresh();
@@ -41,11 +46,12 @@ class KairoPanelProvider {
   async refresh() {
     if (!this._view) return;
     // Single atomic report for connections/fleet/work/workflow — avoids contradictory partial UI.
-    const [status, controlPlane] = await Promise.all([
+    const [status, controlPlane, conversation] = await Promise.all([
       this.cache.get({ force: true }),
       this.controlPlaneCache
         ? this.controlPlaneCache.get({ force: true })
-        : Promise.resolve(null)
+        : Promise.resolve(null),
+      this.conversationFetch ? this.conversationFetch() : Promise.resolve(null)
     ]);
     const fleetReport = fleetReportFromControlPlane(controlPlane);
     const connections = fleetReport.connections ?? [];
@@ -56,7 +62,8 @@ class KairoPanelProvider {
       fleetReport,
       nextReport,
       controlPlane,
-      workspacePanelContext()
+      workspacePanelContext(),
+      conversation
     );
     const nonce = String(Date.now());
     this._view.webview.html = renderPanelHtml(model, nonce);
