@@ -124,7 +124,7 @@ function providersFromAdapters(adapters, usageByAgent = {}, codexUsage = null, c
     const goLabel = go?.status === "measured" || go?.status === "rate-limited"
       ? (go.windows ?? []).map((w) => `${w.name} ${w.remainingPercent}% left`).join(" · ") : "Go usage unknown";
     const zenLabel = zen?.status === "local_recorded" ? `Zen 7d $${zen.totalCost.toFixed(2)} local` : "Zen 7d local unknown";
-    providers.OpenCode = { status: `${goLabel} · ${zenLabel} · PAYG blocked`, usage: opencodeUsage };
+    providers.OpenCode = { status: `${goLabel} · ${zenLabel}`, usage: opencodeUsage };
   }
   return providers;
 }

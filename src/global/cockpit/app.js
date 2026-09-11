@@ -1,4 +1,4 @@
-import { Editor, ProcessTerminal, TuiAltScreen, matchesKey } from "@earendil-works/pi-tui";
+import { Editor, ProcessTerminal, TuiAltScreen, VStack, isViewportTUI, matchesKey } from "@earendil-works/pi-tui";
 import { createConversationService } from "../conversation/service.js";
 import { CockpitView } from "./view.js";
 import { editorTheme } from "./theme.js";
@@ -157,8 +157,16 @@ export async function runCockpitApp({
   function focusEditor() { tui.setFocus(editor); }
   function focusList() { tui.setFocus(view); }
 
-  tui.addChild(view);
-  tui.addChild(editor);
+  if (isViewportTUI(tui)) {
+    tui.setLayoutRoot(new VStack([
+      { component: view, grow: 1, minSize: 4 },
+      { component: editor, basis: 3, shrink: 0 }
+    ], { gap: 1 }));
+  } else {
+    // Test doubles and older pi-tui versions retain the stacked fallback.
+    tui.addChild(view);
+    tui.addChild(editor);
+  }
   focusEditor();
   // Safety net: raw mode intercepts Ctrl+C before it becomes SIGINT, so make
   // sure the cockpit always exits cleanly even if focus is ever lost. Tab

@@ -2,18 +2,13 @@ import { matchesKey, Key, truncateToWidth, visibleWidth } from "@earendil-works/
 import {
   buildTaskRows, clampSelection, derivePhase, formatRowText, headerLine, isActionAvailable, keyHintsLine, rowTone
 } from "./rows.js";
-import { CARD_TONE, cardBottom, cardInnerWidth, cardLine, cardTop } from "./card.js";
+import { CARD_TONE, cardBottom, cardLine, cardTop } from "./card.js";
 import { theme } from "./theme.js";
 
 // Below this width tiled panels have no room to breathe — fall back to the
 // single stacked column instead of truncating everything into illegibility.
 const MIN_WORKSPACE_WIDTH = 100;
 const PANEL_GAP = " ";
-
-function padVisible(text, width) {
-  const clipped = truncateToWidth(text ?? "", width, "…");
-  return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
-}
 
 /**
  * Builds one fully-framed panel (own top/bottom border, own title) — the
@@ -281,57 +276,33 @@ export class CockpitView {
    * @returns {string[]}
    */
   render(width) {
-    if (width < MIN_WORKSPACE_WIDTH) {
-      if (this.mode === "detail") return this.renderDetail(width);
-      return this.renderList(width, { confirming: this.mode === "confirm-execute" });
-    }
+    if (this.mode === "detail") return this.renderDetail(width);
     return this.renderWorkspace(width);
   }
 
   /**
-   * Tiled independently-bordered panels — TASKS | WORKSPACE (conversation/
-   * plan/prompt) | AGENTS (usage gauges + integrations) — styled after
-   * real multi-pane terminal dashboards (lazygit/herdr-style widgets)
-   * rather than one shared card with internal column dividers. The layout
-   * stays visible across list/detail/confirm-execute so context (which
-   * task, which agents) never disappears behind a full-screen mode switch.
+   * Conversation-first workspace, framed like the rest of the cockpit
+   * (rounded cards, per-line tone) instead of plain padded text — a compact
+   * usage card up top, the transcript/workflow card owning the rest of the
+   * screen, and key hints as a plain footer beneath both.
    */
   renderWorkspace(width) {
     const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
-    const gapWidth = visibleWidth(PANEL_GAP) * 2;
-    const usable = Math.max(30, width - gapWidth);
-    const leftWidth = Math.max(20, Math.floor(usable * 0.24));
-    const rightWidth = Math.max(28, Math.floor(usable * 0.34));
-    const centerWidth = Math.max(24, usable - leftWidth - rightWidth);
-
     const lines = [];
-    lines.push(`${theme.fg("accent", "✿ KAIRO")}${theme.fg("muted", ` · ${project} · ${this.modeName}`)}`);
-    lines.push("");
-    lines.push(...tilePanels([
-      { title: "TASKS", tone: CARD_TONE.INFO, width: leftWidth, lines: this.leftColumnLines(cardInnerWidth(leftWidth)) },
-      { title: this.mode === "detail" ? "PLAN" : "TASK", tone: CARD_TONE.INFO, width: centerWidth, lines: this.centerColumnLines() },
-      { title: "AGENTS", tone: CARD_TONE.INFO, width: rightWidth, lines: this.rightColumnLines() }
-    ]));
-    lines.push("");
-    lines.push(theme.fg("muted", "Enter send · Tab focus · /help commands · /usage status · q quit"));
-    lines.push(theme.fg("muted", keyHintsLine(this.selectedRow())));
-    return lines;
-  }
 
-  /** @param {number} innerWidth - the TASKS panel's inner content width, for a full-width selection highlight */
-  leftColumnLines(innerWidth) {
-    const lines = [theme.bold("TASKS"), ""];
-    if (this.rows.length === 0) {
-      lines.push(theme.fg("muted", "(no plans yet)"));
-    } else {
-      this.rows.forEach((row, index) => {
-        const selected = index === this.selectedIndex;
-        const bullet = theme.fg(rowTone(row), "●");
-        const plain = `${bullet} ${row.taskId}`;
-        lines.push(selected ? theme.bg("selection", padVisible(plain, innerWidth)) : plain);
-      });
-    }
-    return lines;
+    lines.push(cardTop(`KAIRO · ${project} · ${this.modeName}`, CARD_TONE.INFO, theme, width));
+    lines.push(cardLine(theme.fg("muted", "USAGE"), CARD_TONE.INFO, theme, width));
+    for (const line of this.compactHealthLines()) lines.push(cardLine(line, CARD_TONE.INFO, theme, width));
+    lines.push(cardBottom(CARD_TONE.INFO, theme, width));
+
+    const sessionTone = this.mode === "confirm-execute" ? CARD_TONE.WARNING : CARD_TONE.INFO;
+    lines.push(cardTop("SESSION", sessionTone, theme, width));
+    for (const line of this.centerColumnLines()) lines.push(cardLine(line, sessionTone, theme, width));
+    lines.push(cardBottom(sessionTone, theme, width));
+
+    lines.push(theme.fg("muted", "Enter send · /help · /usage · q quit"));
+    if (this.selectedRow()) lines.push(theme.fg("muted", "Plan controls: Enter open · a approve · j reject · x implement"));
+    return lines.map((line) => truncateToWidth(line, width, "…"));
   }
 
   centerColumnLines() {
@@ -341,25 +312,24 @@ export class CockpitView {
     const row = this.selectedRow();
     const lines = [];
     if (!row) {
-      lines.push(theme.fg("muted", "No active task — type one below and press Enter."));
+      lines.push(theme.fg("muted", "Ask Kairo about this project, or describe work to plan."));
+      lines.push("");
+      lines.push(theme.fg("muted", "Use /help to see commands."));
     } else {
-      lines.push(theme.bold(row.taskId));
-      lines.push("");
-      lines.push(theme.fg("muted", "PHASE"));
+      lines.push(theme.fg("muted", "WORKFLOW"));
       lines.push(theme.fg(rowTone(row), derivePhase(row)));
-      lines.push("");
-      lines.push(theme.fg("muted", "SELECTED"));
-      lines.push(this.selectedProviderLine(row));
+      if (row.planProvider || row.execProvider) lines.push(theme.fg("muted", this.selectedProviderLine(row)));
     }
-    lines.push("");
     if (this.mode === "confirm-execute") {
+      lines.push("");
       lines.push(...this.confirmPromptLines(row));
     } else if (this.statusMessage) {
+      lines.push("");
       lines.push(theme.fg("accent", this.statusMessage));
     }
     if (this.transcript.length > 0) {
       lines.push("");
-      for (const entry of this.transcript.slice(-4)) {
+      for (const entry of this.transcript.slice(-8)) {
         const prefix = entry.role === "You" ? theme.fg("accent", "> ") : theme.fg("info", "Kairo ");
         lines.push(`${prefix}${entry.text}`);
       }
@@ -385,28 +355,6 @@ export class CockpitView {
     return `${label} · ${modelText}`;
   }
 
-  rightColumnLines() {
-    const lines = [theme.bold("ACTIVITY"), ""];
-    lines.push(...this.activityLines());
-    lines.push("");
-    lines.push(theme.bold("HEALTH"));
-    lines.push(...this.compactHealthLines());
-    return lines;
-  }
-
-  /** What's actually running right now for the selected task, or "Idle" — never a fabricated file/step count. */
-  activityLines() {
-    const row = this.selectedRow();
-    if (row?.execActive) {
-      const provider = row.execProvider ? row.execProvider.charAt(0).toUpperCase() + row.execProvider.slice(1) : "Agent";
-      return [
-        `${theme.fg("warning", "●")} ${provider}`,
-        theme.fg("muted", row.execMessage ?? "Working…")
-      ];
-    }
-    return [theme.fg("muted", "Idle — no active run")];
-  }
-
   /**
    * One compact line per provider Kairo actually routes to (Codex, Claude,
    * OpenCode Go, OpenCode Zen) — no bars, no idle "cards", just real
@@ -422,30 +370,33 @@ export class CockpitView {
 
     const codex = usage.codex;
     const codexText = codex?.primary
-      ? `${codex.primary.name ?? "5h"} ${codex.primary.remainingPercent}%${codex.secondary ? ` · ${codex.secondary.name ?? "week"} ${codex.secondary.remainingPercent}%` : ""}`
+      ? `5h ${codex.primary.remainingPercent}%${codex.secondary ? ` · W ${codex.secondary.remainingPercent}%` : ""}`
       : (status("Codex") ?? "usage unknown");
 
     const claude = usage.claude;
     const claudeText = claude?.primary
-      ? `${claude.primary.label ?? "session"} ${claude.primary.remainingPercent}%${claude.secondary ? ` · ${claude.secondary.label ?? "week"} ${claude.secondary.remainingPercent}%` : ""}`
+      ? `S ${claude.primary.remainingPercent}%${claude.secondary ? ` · W ${claude.secondary.remainingPercent}%` : ""}`
       : (status("Claude") ?? "usage unknown");
 
     const go = usage.opencode?.go;
-    const goText = go?.windows?.length
-      ? go.windows.map((window) => `${shortWindowName(window.name)} ${window.remainingPercent}%${window.status === "rate-limited" ? " LIMITED" : ""}`).join(" · ")
-      : (status("OpenCode") ?? "usage unknown");
 
     const zen = usage.opencode?.zen;
-    const zenText = zen?.status === "local_recorded"
-      ? `$${zen.totalCost.toFixed(2)} local/7d · PAYG blocked`
-      : "local activity unknown · PAYG blocked";
-
-    return [
+    const lines = [
       theme.fg("muted", `Codex   ${codexText}`),
-      theme.fg("muted", `Claude  ${claudeText}`),
-      theme.fg("muted", `Go      ${goText}`),
-      theme.fg("muted", `Zen     ${zenText}`)
+      theme.fg("muted", `Claude  ${claudeText}`)
     ];
+    if (go?.windows?.length) {
+      go.windows.forEach((window, index) => {
+        const label = index === 0 ? "Go      " : "        ";
+        lines.push(theme.fg("muted", `${label}${shortWindowName(window.name)} ${window.remainingPercent}%${window.status === "rate-limited" ? " LIMITED" : ""}`));
+      });
+    } else {
+      lines.push(theme.fg("muted", `Go      ${status("OpenCode") ?? "usage unknown"}`));
+    }
+    lines.push(theme.fg("muted", zen?.status === "local_recorded"
+      ? `Zen     $${zen.totalCost.toFixed(2)} local / 7d`
+      : "Zen     local activity unknown"));
+    return lines;
   }
 
   renderList(width, { confirming }) {
@@ -517,8 +468,8 @@ export class CockpitView {
       : "usage unknown";
     const zen = open?.zen;
     const zenText = zen?.status === "local_recorded"
-      ? `7d local $${zen.totalCost.toFixed(2)} · ${compactNumber(zen.totalTokens)} · balance unknown · PAYG blocked`
-      : "7d local unknown · balance unknown · PAYG blocked";
+      ? `7d local $${zen.totalCost.toFixed(2)} · ${compactNumber(zen.totalTokens)}`
+      : "7d local unknown";
     return [
       `Codex    ${codexText}`,
       `Claude   ${claudeText}`,
@@ -556,7 +507,7 @@ export class CockpitView {
 
   openCodeUsageLine() {
     const usage = this.snapshot?.usage?.opencode;
-    if (!usage) return "OpenCode usage unknown · Go/Zen source unavailable · PAYG blocked";
+    if (!usage) return "OpenCode usage unknown · Go/Zen source unavailable";
     const go = usage.go;
     const zen = usage.zen;
     const goText = go?.windows?.length
@@ -565,7 +516,7 @@ export class CockpitView {
     const zenText = zen?.status === "local_recorded"
       ? `Zen 7d local recorded $${zen.totalCost.toFixed(2)} / ${zen.totalTokens} tokens`
       : "Zen balance unknown";
-    return `OpenCode ${goText} · ${zenText} · source: ${go?.source ?? zen?.source ?? "unknown"} · PAYG blocked`;
+    return `OpenCode ${goText} · ${zenText} · source: ${go?.source ?? zen?.source ?? "unknown"}`;
   }
 
   usageLines() {
@@ -586,8 +537,8 @@ export class CockpitView {
       : "Go usage unknown · source unavailable");
     const zen = open?.zen;
     lines.push(zen?.status === "local_recorded"
-      ? `Zen 7d local ${zen.totalCost.toFixed(2)} · ${compactNumber(zen.totalTokens)} tokens · balance unknown · PAYG blocked`
-      : "Zen 7d local unknown · balance unknown · auto-reload unknown · PAYG blocked");
+      ? `Zen 7d local $${zen.totalCost.toFixed(2)} · ${compactNumber(zen.totalTokens)} tokens`
+      : "Zen 7d local unknown");
     return lines;
   }
 

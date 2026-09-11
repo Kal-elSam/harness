@@ -27,16 +27,14 @@ function makeView(overrideActions = {}) {
   return { view, calls };
 }
 
-test("render(width) never exceeds the requested width and lists every row", () => {
+test("conversation render never exceeds the requested width", () => {
   const { view } = makeView();
   const lines = view.render(60);
   for (const line of lines) assert.ok(visibleWidth(line) <= 60, `line "${line}" exceeds width`);
-  const joined = lines.join("\n");
-  assert.match(joined, /task-a/);
-  assert.match(joined, /task-b/);
+  assert.match(lines.join("\n"), /KAIRO/);
 });
 
-test("render shows the header, current task phase/selected provider, compact health, and composer guidance — integration detail stays out of the always-visible panel", () => {
+test("render gives conversation priority and keeps compact usage in the header", () => {
   const { view } = makeView();
   view.setSnapshot({
     projectRoot: "/repo/demo",
@@ -47,13 +45,14 @@ test("render shows the header, current task phase/selected provider, compact hea
   const joined = view.render(120).join("\n");
   assert.match(joined, /KAIRO/);
   assert.match(joined, /demo · BALANCED/);
-  assert.match(joined, /PHASE/);
+  assert.match(joined, /USAGE/);
+  assert.match(joined, /WORKFLOW/);
   assert.match(joined, /WAITING APPROVAL/);
-  assert.match(joined, /SELECTED/);
-  assert.match(joined, /HEALTH/);
   assert.match(joined, /Claude\s+Pro/);
   assert.match(joined, /Fix the login flow/);
   assert.match(joined, /Enter send/);
+  assert.doesNotMatch(joined, /TASKS/);
+  assert.doesNotMatch(joined, /ACTIVITY/);
   // Integration detail (Engram/MCP/etc.) is deliberately kept out of the
   // always-visible workspace — it's still reachable via view.integrationsLine()
   // behind /status, but shouldn't compete with the current task on screen.
@@ -79,9 +78,32 @@ test("narrow dashboard keeps Go and Zen on separate readable rows", () => {
   });
   const lines = view.render(70).join("\n");
   assert.match(lines, /Go\s+roll 100%/);
-  assert.match(lines, /month 0% RATE LIMITED/);
-  assert.match(lines, /Zen\s+7d local \$33\.81/);
-  assert.match(lines, /balance unknown/);
+  assert.match(lines, /week 100%/);
+  assert.match(lines, /month 0% LIMITED/);
+  assert.match(lines, /Zen\s+\$33\.81 local \/ 7d/);
+  assert.doesNotMatch(lines, /PAYG blocked/);
+});
+
+test("workspace health shows every measured Go window and Zen local spend without policy noise", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    usage: {
+      opencode: {
+        go: { windows: [
+          { name: "rolling", remainingPercent: 100, status: "ok" },
+          { name: "weekly", remainingPercent: 75, status: "ok" },
+          { name: "monthly", remainingPercent: 0, status: "rate-limited" }
+        ] },
+        zen: { status: "local_recorded", totalCost: 33.81 }
+      }
+    }
+  });
+  const lines = view.compactHealthLines().join("\n");
+  assert.match(lines, /Go\s+roll 100%/);
+  assert.match(lines, /week 75%/);
+  assert.match(lines, /month 0% LIMITED/);
+  assert.match(lines, /Zen\s+\$33\.81 local \/ 7d/);
+  assert.doesNotMatch(lines, /PAYG blocked/);
 });
 
 test("render keeps a complete multi-line usage response visible", () => {
@@ -217,5 +239,5 @@ test("r refreshes and setStatus/setRows update state without throwing on empty r
   view.setRows([]);
   assert.equal(view.selectedIndex, 0);
   const lines = view.render(40).join("\n");
-  assert.match(lines, /no plans yet/);
+  assert.match(lines, /Ask Kairo about this project/);
 });
