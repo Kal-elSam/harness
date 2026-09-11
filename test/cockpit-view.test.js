@@ -44,7 +44,7 @@ test("render gives conversation priority and keeps compact usage in the header",
   view.addTranscript("user", "Fix the login flow");
   const joined = view.render(120).join("\n");
   assert.match(joined, /KAIRO/);
-  assert.match(joined, /demo · BALANCED/);
+  assert.match(joined, /demo/);
   assert.match(joined, /USAGE/);
   assert.match(joined, /WORKFLOW/);
   assert.match(joined, /WAITING APPROVAL/);

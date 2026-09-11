@@ -70,6 +70,12 @@ export async function runCockpitApp({
 
   const view = new CockpitView({
     requestRender: () => tui.requestRender(),
+    // Editor takes a fixed basis:3 plus the 1-row gap between stack entries
+    // (see the VStack layout below) — the rest of the terminal is the view's.
+    getViewportRows: () => {
+      const rows = Number(terminal?.rows);
+      return Number.isFinite(rows) && rows > 0 ? Math.max(10, rows - 4) : undefined;
+    },
     actions: {
       onShowPlan: (taskId) => {
         runAction("Loading plan", async () => {

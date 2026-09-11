@@ -1,49 +1,9 @@
 import { matchesKey, Key, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
-  buildTaskRows, clampSelection, derivePhase, formatRowText, headerLine, isActionAvailable, keyHintsLine, rowTone
+  buildTaskRows, clampSelection, derivePhase, isActionAvailable, rowTone
 } from "./rows.js";
 import { CARD_TONE, cardBottom, cardLine, cardTop } from "./card.js";
 import { theme } from "./theme.js";
-
-// Below this width tiled panels have no room to breathe — fall back to the
-// single stacked column instead of truncating everything into illegibility.
-const MIN_WORKSPACE_WIDTH = 100;
-const PANEL_GAP = " ";
-
-/**
- * Builds one fully-framed panel (own top/bottom border, own title) — the
- * lazygit/herdr-style look of several independent bordered widgets, rather
- * than one shared card with internal column dividers.
- * @param {string} title
- * @param {string} tone
- * @param {number} width - full panel width, border included
- * @param {string[]} contentLines
- */
-function renderPanel(title, tone, width, contentLines) {
-  const lines = [cardTop(title, tone, theme, width)];
-  for (const line of contentLines) lines.push(cardLine(line, tone, theme, width));
-  lines.push(cardBottom(tone, theme, width));
-  return lines;
-}
-
-/**
- * Tiles fully-framed panels side by side. Content is padded to the tallest
- * panel's line count *before* framing, so every panel's border reaches the
- * same row and the seam between panels stays a clean straight line.
- * @param {Array<{title: string, tone: string, width: number, lines: string[]}>} panels
- */
-function tilePanels(panels) {
-  const maxContentLines = Math.max(...panels.map((panel) => panel.lines.length));
-  const boxes = panels.map((panel) => renderPanel(
-    panel.title, panel.tone, panel.width,
-    Array.from({ length: maxContentLines }, (_, i) => panel.lines[i] ?? "")
-  ));
-  const rows = [];
-  for (let i = 0; i < boxes[0].length; i += 1) {
-    rows.push(boxes.map((box) => box[i]).join(PANEL_GAP));
-  }
-  return rows;
-}
 
 function compactNumber(value) {
   const n = Number(value);
@@ -76,10 +36,15 @@ export class CockpitView {
    * @param {() => void} deps.actions.onRefresh
    * @param {() => void} deps.actions.onQuit
    * @param {() => void} [deps.requestRender]
+   * @param {() => number|undefined} [deps.getViewportRows] - rows available to this
+   *   component (terminal height minus whatever else the layout reserves, e.g. the
+   *   editor). Used only to pad the session card so it reaches the bottom of the
+   *   screen instead of leaving dead space below a short frame; omit in tests.
    */
-  constructor({ actions, requestRender = () => {} }) {
+  constructor({ actions, requestRender = () => {}, getViewportRows = () => undefined }) {
     this.actions = actions;
     this.requestRender = requestRender;
+    this.getViewportRows = getViewportRows;
     this.rows = [];
     this.selectedIndex = 0;
     this.mode = "list"; // "list" | "detail" | "confirm-execute"
@@ -88,7 +53,6 @@ export class CockpitView {
     this.statusMessage = "";
     this.snapshot = null;
     this.transcript = [];
-    this.modeName = "BALANCED";
     this.executeDecision = null;
   }
 
@@ -109,7 +73,6 @@ export class CockpitView {
   /** Store the latest control-plane snapshot for the dashboard header. */
   setSnapshot(snapshot) {
     this.snapshot = snapshot ?? null;
-    this.modeName = snapshot?.mode ?? snapshot?.policy?.mode ?? "BALANCED";
     this.requestRender();
   }
 
@@ -290,18 +253,34 @@ export class CockpitView {
     const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
     const lines = [];
 
-    lines.push(cardTop(`KAIRO · ${project} · ${this.modeName}`, CARD_TONE.INFO, theme, width));
+    lines.push(cardTop(`KAIRO · ${project}`, CARD_TONE.INFO, theme, width));
     lines.push(cardLine(theme.fg("muted", "USAGE"), CARD_TONE.INFO, theme, width));
     for (const line of this.compactHealthLines()) lines.push(cardLine(line, CARD_TONE.INFO, theme, width));
     lines.push(cardBottom(CARD_TONE.INFO, theme, width));
 
     const sessionTone = this.mode === "confirm-execute" ? CARD_TONE.WARNING : CARD_TONE.INFO;
-    lines.push(cardTop("SESSION", sessionTone, theme, width));
-    for (const line of this.centerColumnLines()) lines.push(cardLine(line, sessionTone, theme, width));
-    lines.push(cardBottom(sessionTone, theme, width));
+    const sessionContent = this.centerColumnLines();
+    const footerLines = [theme.fg("muted", "Enter send · /help · /usage · q quit")];
+    if (this.selectedRow()) footerLines.push(theme.fg("muted", "Plan controls: Enter open · a approve · j reject · x implement"));
 
-    lines.push(theme.fg("muted", "Enter send · /help · /usage · q quit"));
-    if (this.selectedRow()) lines.push(theme.fg("muted", "Plan controls: Enter open · a approve · j reject · x implement"));
+    // Fill the session card down to the real terminal height instead of
+    // leaving dead space below a short frame: pi-tui's stack layout crops a
+    // grow component's output to its allocated height, it never stretches a
+    // shorter render to fill it, so the card has to pad itself.
+    const viewportRows = this.getViewportRows?.();
+    const sessionFrameOverhead = 2; // cardTop + cardBottom
+    let sessionLines = sessionContent;
+    if (Number.isFinite(viewportRows)) {
+      const targetInnerLines = viewportRows - lines.length - sessionFrameOverhead - footerLines.length;
+      if (targetInnerLines > sessionLines.length) {
+        sessionLines = sessionLines.concat(Array(targetInnerLines - sessionLines.length).fill(""));
+      }
+    }
+
+    lines.push(cardTop("SESSION", sessionTone, theme, width));
+    for (const line of sessionLines) lines.push(cardLine(line, sessionTone, theme, width));
+    lines.push(cardBottom(sessionTone, theme, width));
+    lines.push(...footerLines);
     return lines.map((line) => truncateToWidth(line, width, "…"));
   }
 
@@ -399,54 +378,6 @@ export class CockpitView {
     return lines;
   }
 
-  renderList(width, { confirming }) {
-    const lines = [];
-    const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
-    lines.push(cardTop(`KAIRO · ${project} · ${this.modeName}`, CARD_TONE.INFO, theme, width));
-    for (const providerLine of this.providerLines()) {
-      lines.push(cardLine(theme.fg("muted", providerLine), CARD_TONE.INFO, theme, width));
-    }
-    lines.push(cardLine(theme.fg("muted", this.integrationsLine()), CARD_TONE.INFO, theme, width));
-    lines.push(cardLine("", CARD_TONE.INFO, theme, width));
-    if (this.transcript.length > 0) {
-      // Keep a complete /usage response visible: Codex, Claude, Go, Zen, and
-      // the integrations summary currently occupy five transcript entries.
-      for (const entry of this.transcript.slice(-8)) {
-        const prefix = entry.role === "You" ? theme.fg("accent", "> ") : theme.fg("info", "Kairo ");
-        lines.push(cardLine(`${prefix}${entry.text}`, CARD_TONE.INFO, theme, width));
-      }
-      lines.push(cardLine("", CARD_TONE.INFO, theme, width));
-    }
-    lines.push(cardLine(theme.bold("PLANS / EXECUTIONS"), CARD_TONE.INFO, theme, width));
-    lines.push(cardLine(theme.bold(headerLine()), CARD_TONE.INFO, theme, width));
-    if (this.rows.length === 0) {
-      lines.push(cardLine(theme.fg("muted", "(no plans yet for this project)"), CARD_TONE.INFO, theme, width));
-    } else {
-      this.rows.forEach((row, index) => {
-        const selected = index === this.selectedIndex;
-        const text = formatRowText(row, { selected });
-        lines.push(cardLine(selected ? theme.bold(text) : text, rowTone(row), theme, width));
-      });
-    }
-    lines.push(cardLine("", CARD_TONE.INFO, theme, width));
-    if (confirming) {
-      const row = this.selectedRow();
-      for (const line of this.confirmPromptLines(row)) {
-        lines.push(cardLine(line, CARD_TONE.WARNING, theme, width));
-      }
-    } else if (this.statusMessage) {
-      lines.push(cardLine(theme.fg("accent", this.statusMessage), CARD_TONE.INFO, theme, width));
-    }
-    lines.push(cardLine(theme.fg("muted", "Enter send · Tab focus · /help commands · /usage status · q quit"), CARD_TONE.INFO, theme, width));
-    lines.push(cardLine(theme.fg("muted", keyHintsLine(this.selectedRow())), CARD_TONE.INFO, theme, width));
-    lines.push(cardBottom(CARD_TONE.INFO, theme, width));
-    return lines;
-  }
-
-  providerLine() {
-    return this.providerLines().join("   ");
-  }
-
   providerLines() {
     const providers = this.snapshot?.providers ?? {};
     const entry = (name, fallback) => {
@@ -490,33 +421,6 @@ export class CockpitView {
       `Graphify ${state("graphify", "unknown")}`,
       `Gentle ${state("gentle", "policy active")}`
     ].join("   ");
-  }
-
-  usageLine() {
-    const usage = this.snapshot?.usage?.codex;
-    if (!usage || usage.status === "unknown") {
-      return "Codex usage unknown · source: Codex app-server · no quota fabricated";
-    }
-    const windows = (usage.windows ?? []).map((window) => {
-      const resetValue = window.resetsAtIso ?? window.resetsAt;
-      const reset = resetValue ? ` reset ${resetValue}` : " reset unknown";
-      return `${window.name} ${window.remainingPercent}% left${reset}`;
-    });
-    return `Codex ${windows.join(" · ")} · source: ${usage.source ?? "measured"}`;
-  }
-
-  openCodeUsageLine() {
-    const usage = this.snapshot?.usage?.opencode;
-    if (!usage) return "OpenCode usage unknown · Go/Zen source unavailable";
-    const go = usage.go;
-    const zen = usage.zen;
-    const goText = go?.windows?.length
-      ? go.windows.map((window) => `${window.name} ${window.remainingPercent}% left${window.resetsAt ? ` reset ${window.resetsAt}` : ""}`).join(" · ")
-      : "Go usage unknown";
-    const zenText = zen?.status === "local_recorded"
-      ? `Zen 7d local recorded $${zen.totalCost.toFixed(2)} / ${zen.totalTokens} tokens`
-      : "Zen balance unknown";
-    return `OpenCode ${goText} · ${zenText} · source: ${go?.source ?? zen?.source ?? "unknown"}`;
   }
 
   usageLines() {
