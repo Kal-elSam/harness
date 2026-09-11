@@ -48,7 +48,10 @@ export const theme = { fg, bold, bg };
  * type contract.
  */
 export const editorTheme = {
-  borderColor: (text) => fg("border", text),
+  // Bright, not the muted "border" gray used for card rules elsewhere — the
+  // composer is the one place the user is actively typing, so it needs to
+  // read as a distinct, easy-to-find zone rather than blend into the frame.
+  borderColor: (text) => fg("success", text),
   selectList: {
     selectedPrefix: (text) => fg("accent", text),
     selectedText: (text) => bold(text),

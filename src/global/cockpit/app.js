@@ -1,7 +1,19 @@
 import { Editor, ProcessTerminal, TuiAltScreen, VStack, isViewportTUI, matchesKey } from "@earendil-works/pi-tui";
 import { createConversationService } from "../conversation/service.js";
 import { CockpitView } from "./view.js";
-import { editorTheme } from "./theme.js";
+import { editorTheme, theme } from "./theme.js";
+import { CARD_TONE, cardTop } from "./card.js";
+
+// The composer is otherwise just two flat, muted rules from pi-tui's Editor
+// (no title, no corners) — easy to miss right under the cockpit's colorful
+// framed cards. This title bar gives it the same rounded-corner, titled
+// look as the rest of the cockpit so it reads as its own zone: a blank
+// spacer row separates it from whatever is above (SESSION), then the title
+// sits directly on top of the editor's own rule with no gap, so the two
+// read as one continuous framed box rather than two disconnected pieces.
+function composerHeader(width) {
+  return ["", cardTop("Message Kairo", CARD_TONE.SUCCESS, theme, width)];
+}
 
 const DEFAULT_POLL_MS = 2000;
 
@@ -70,11 +82,12 @@ export async function runCockpitApp({
 
   const view = new CockpitView({
     requestRender: () => tui.requestRender(),
-    // Editor takes a fixed basis:3 plus the 1-row gap between stack entries
-    // (see the VStack layout below) — the rest of the terminal is the view's.
+    // Composer header (basis:2, includes its own spacer row) + editor
+    // (basis:3) reserve 5 rows (the VStack below has no gap) — the rest of
+    // the terminal is the view's.
     getViewportRows: () => {
       const rows = Number(terminal?.rows);
-      return Number.isFinite(rows) && rows > 0 ? Math.max(10, rows - 4) : undefined;
+      return Number.isFinite(rows) && rows > 0 ? Math.max(10, rows - 5) : undefined;
     },
     actions: {
       onShowPlan: (taskId) => {
@@ -166,8 +179,9 @@ export async function runCockpitApp({
   if (isViewportTUI(tui)) {
     tui.setLayoutRoot(new VStack([
       { component: view, grow: 1, minSize: 4 },
+      { component: { render: composerHeader }, basis: 2, shrink: 0 },
       { component: editor, basis: 3, shrink: 0 }
-    ], { gap: 1 }));
+    ], { gap: 0 }));
   } else {
     // Test doubles and older pi-tui versions retain the stacked fallback.
     tui.addChild(view);
