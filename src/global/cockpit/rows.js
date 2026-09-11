@@ -4,6 +4,7 @@
 /**
  * @typedef {object} CockpitRow
  * @property {string} taskId
+ * @property {string|null} taskText - the real task description, never the noisy taskId slug
  * @property {string} planState - one of the PLAN_STATES values (draft/awaiting_approval/approved/rejected/failed)
  * @property {string} approval - "approved" | "rejected" | "not_decided"
  * @property {string} execState - "not_started" | "reserved" | "running" | "done" | "failed" | ...
@@ -23,6 +24,7 @@ export function buildTaskRows(timeline) {
   if (!Array.isArray(timeline)) return [];
   return timeline.map((plan) => ({
     taskId: plan.taskId,
+    taskText: plan.taskText ?? null,
     planState: plan.state,
     approval: plan.approval ?? "not_decided",
     execState: plan.execution?.state ?? "not_started",

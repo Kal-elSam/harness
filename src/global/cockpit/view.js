@@ -259,32 +259,29 @@ export class CockpitView {
     lines.push(cardBottom(CARD_TONE.INFO, theme, width));
 
     const sessionTone = this.mode === "confirm-execute" ? CARD_TONE.WARNING : CARD_TONE.INFO;
-    const sessionContent = this.centerColumnLines();
-    const footerLines = [theme.fg("muted", "Enter send · /help · /usage · q quit")];
-    if (this.selectedRow()) footerLines.push(theme.fg("muted", "Plan controls: Enter open · a approve · j reject · x implement"));
-
-    // Fill the session card down to the real terminal height instead of
-    // leaving dead space below a short frame: pi-tui's stack layout crops a
-    // grow component's output to its allocated height, it never stretches a
-    // shorter render to fill it, so the card has to pad itself.
+    // How much of the transcript actually fits is real content, not padding:
+    // give centerColumnLines() the real remaining height so it can show as
+    // much genuine history as the terminal allows instead of an arbitrary
+    // fixed cap — a short session just renders short, no fake filler lines.
     const viewportRows = this.getViewportRows?.();
-    const sessionFrameOverhead = 2; // cardTop + cardBottom
-    let sessionLines = sessionContent;
-    if (Number.isFinite(viewportRows)) {
-      const targetInnerLines = viewportRows - lines.length - sessionFrameOverhead - footerLines.length;
-      if (targetInnerLines > sessionLines.length) {
-        sessionLines = sessionLines.concat(Array(targetInnerLines - sessionLines.length).fill(""));
-      }
-    }
+    const footerLineCount = this.selectedRow() ? 2 : 1;
+    const overhead = lines.length + 2 /* session cardTop/cardBottom */ + footerLineCount;
+    const transcriptBudget = Number.isFinite(viewportRows) ? Math.max(0, viewportRows - overhead) : undefined;
 
     lines.push(cardTop("SESSION", sessionTone, theme, width));
-    for (const line of sessionLines) lines.push(cardLine(line, sessionTone, theme, width));
+    for (const line of this.centerColumnLines(transcriptBudget)) lines.push(cardLine(line, sessionTone, theme, width));
     lines.push(cardBottom(sessionTone, theme, width));
-    lines.push(...footerLines);
+    lines.push(theme.fg("muted", "Enter send · /help · /usage · q quit"));
+    if (this.selectedRow()) lines.push(theme.fg("muted", "Plan controls: Enter open · a approve · j reject · x implement"));
     return lines.map((line) => truncateToWidth(line, width, "…"));
   }
 
-  centerColumnLines() {
+  /**
+   * @param {number} [transcriptBudget] - how many transcript lines actually
+   *   fit on screen; omitted (tests, narrow terminals) falls back to a fixed
+   *   recent-history window instead of showing everything unbounded.
+   */
+  centerColumnLines(transcriptBudget) {
     if (this.mode === "detail") {
       return [theme.bold(`Plan: ${this.detailTaskId ?? ""}`), "", ...String(this.detailText).split("\n")];
     }
@@ -297,6 +294,7 @@ export class CockpitView {
     } else {
       lines.push(theme.fg("muted", "WORKFLOW"));
       lines.push(theme.fg(rowTone(row), derivePhase(row)));
+      if (row.taskText) lines.push(row.taskText);
       if (row.planProvider || row.execProvider) lines.push(theme.fg("muted", this.selectedProviderLine(row)));
     }
     if (this.mode === "confirm-execute") {
@@ -308,7 +306,10 @@ export class CockpitView {
     }
     if (this.transcript.length > 0) {
       lines.push("");
-      for (const entry of this.transcript.slice(-8)) {
+      const historyLimit = Number.isFinite(transcriptBudget)
+        ? Math.max(1, transcriptBudget - lines.length)
+        : 8;
+      for (const entry of this.transcript.slice(-historyLimit)) {
         const prefix = entry.role === "You" ? theme.fg("accent", "> ") : theme.fg("info", "Kairo ");
         lines.push(`${prefix}${entry.text}`);
       }

@@ -158,6 +158,17 @@ export async function readTaskRecord(projectRoot, taskId) {
   return { status, taskMarkdown, planMarkdown, paths };
 }
 
+/**
+ * Pulls the real task description back out of `# Task\n\n<text>\n` so the
+ * cockpit can show what a task actually is instead of just its taskId (a
+ * timestamp+slug+hash string with no human meaning on its own).
+ * @param {string} taskMarkdown
+ * @returns {string}
+ */
+function extractTaskText(taskMarkdown) {
+  return String(taskMarkdown ?? "").replace(/^#\s*Task\s*\n+/, "").trim();
+}
+
 export async function listTaskRecords(projectRoot) {
   const tasksRoot = join(projectRoot, TASKS_RELATIVE_DIR);
   const stat = await statOrNull(tasksRoot);
@@ -169,7 +180,7 @@ export async function listTaskRecords(projectRoot) {
     if (!entry.isDirectory() || entry.isSymbolicLink() || !/^[a-z0-9][a-z0-9-]{0,95}$/.test(entry.name)) continue;
     try {
       const record = await readTaskRecord(projectRoot, entry.name);
-      if (record) rows.push(record.status);
+      if (record) rows.push({ ...record.status, taskText: extractTaskText(record.taskMarkdown) });
     } catch { /* malformed task is not advertised */ }
   }
   return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));

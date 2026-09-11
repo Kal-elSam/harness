@@ -20,7 +20,7 @@ test("buildTaskRows maps a conversation snapshot timeline into display rows", ()
   const rows = buildTaskRows(TIMELINE);
   assert.equal(rows.length, 3);
   assert.deepEqual(rows[0], {
-    taskId: "task-a", planState: "awaiting_approval", approval: "not_decided",
+    taskId: "task-a", taskText: null, planState: "awaiting_approval", approval: "not_decided",
     execState: "not_started", execActive: false, execMessage: "Approval is required.",
     planProvider: "codex", planModel: null, execProvider: null
   });

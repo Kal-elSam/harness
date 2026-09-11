@@ -27,6 +27,7 @@ function publicPlan(record, execution = null) {
   const status = record.status ?? record;
   return {
     taskId: status.taskId,
+    taskText: status.taskText ?? null,
     state: status.state,
     provider: status.provider,
     model: status.model ?? null,
