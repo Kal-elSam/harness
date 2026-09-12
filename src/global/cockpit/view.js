@@ -54,6 +54,11 @@ export class CockpitView {
     this.snapshot = null;
     this.transcript = [];
     this.executeDecision = null;
+    // Set by app.js's focus toggling — the "a approve · j reject ·
+    // x implement" hint is only true while the list actually has focus;
+    // with the composer focused those same letters just become message
+    // text instead of triggering an action.
+    this.hasListFocus = false;
   }
 
   /**
@@ -272,7 +277,11 @@ export class CockpitView {
     }
 
     const footerLines = [theme.fg("muted", "Enter send · /help · /usage · q quit")];
-    if (row) footerLines.push(theme.fg("muted", "Plan controls: Enter open · a approve · j reject · x implement"));
+    if (row) {
+      footerLines.push(theme.fg("muted", this.hasListFocus
+        ? "Plan controls: Enter open · a approve · j reject · x implement"
+        : "Tab for plan controls (approve/reject/implement) — typing here just sends a message"));
+    }
 
     // The chat is plain, unframed text — it's the dominant, scrollable
     // conversation surface, not another bordered widget. How much of it

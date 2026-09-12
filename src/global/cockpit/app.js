@@ -173,8 +173,13 @@ export async function runCockpitApp({
     }).finally(() => { editor.disableSubmit = false; });
   };
 
-  function focusEditor() { tui.setFocus(editor); }
-  function focusList() { tui.setFocus(view); }
+  // view.hasListFocus gates whether the footer claims "a approve · j reject
+  // · x implement" — those keys only actually do that while the list has
+  // focus; while typing, the same letters just become message text (e.g.
+  // pressing "j" to reject, with the composer focused, submits a task
+  // literally named "j" instead of rejecting anything).
+  function focusEditor() { tui.setFocus(editor); view.hasListFocus = false; }
+  function focusList() { tui.setFocus(view); view.hasListFocus = true; }
 
   if (isViewportTUI(tui)) {
     tui.setLayoutRoot(new VStack([
