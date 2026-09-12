@@ -24,7 +24,8 @@ export function harnessHomePaths(homeDir) {
     monitorStatePath: join(root, "monitor", "state.json"),
     coreDir: join(root, "core"),
     backupsDir: join(root, "backups"),
-    sessionsDir: join(root, "sessions")
+    sessionsDir: join(root, "sessions"),
+    modelIntelligencePath: join(root, "model-intelligence.json")
   };
 }
 
