@@ -204,7 +204,7 @@ test("opencode is rejected for auditable runs", async () => {
         cliVersion: "0.2.1",
         spawnImpl: createFakeSpawn([])
       }),
-      /launchable|structured events|auditable|compatible/i
+      /launchable|structured events|auditable|compatible|provider-isolation/i
     );
   });
 });

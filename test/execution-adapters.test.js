@@ -86,12 +86,15 @@ test("codex adapter uses real yolo flag for bypass approvals", () => {
   assert.ok(!launch.args.includes("--force"));
 });
 
-test("opencode adapter reports limited compatibility and is not launchable", () => {
+test("opencode adapter reports real structured-event compatibility but stays blocked pending Go/Zen provider-isolation proof", () => {
   const availability = opencodeAdapter.availability();
   assert.equal(availability.launchable, false);
   if (availability.available) {
-    assert.equal(availability.compatible, false);
-    assert.match(availability.reason ?? "", /structured events|auditable/i);
+    // Verified live: the CLI genuinely emits parseable structured events
+    // now, so compatible is honestly true — the block is a separate,
+    // deliberate safety gate (see opencode.js), not a capability gap.
+    assert.equal(availability.compatible, true);
+    assert.match(availability.reason ?? "", /provider tier|provider-isolation|opencode-go/i);
   } else {
     assert.equal(availability.compatible, false);
   }
