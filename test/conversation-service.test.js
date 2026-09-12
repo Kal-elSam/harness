@@ -171,14 +171,15 @@ test("submitTask still creates a plan for an actual change request", async () =>
   assert.deepEqual(planCalls, [{ cwd: "/repo", task: "Implement pagination on the users table", model: null }]);
 });
 
-test("loadTranscript resolves the project root and reads real persisted history", async () => {
+test("loadTranscript resolves the project root and reads real persisted history from the global harness home", async () => {
   const reads = [];
   const service = createConversationService({
     resolveRoot: async () => "/repo",
-    readTranscript: async (projectRoot) => { reads.push(projectRoot); return [{ role: "user", text: "hi", at: "2026-01-01T00:00:00Z" }]; }
+    homeDir: "/home/kal-el",
+    readTranscript: async (homeDir, projectRoot) => { reads.push({ homeDir, projectRoot }); return [{ role: "user", text: "hi", at: "2026-01-01T00:00:00Z" }]; }
   });
   const entries = await service.loadTranscript({ cwd: "/repo" });
-  assert.deepEqual(reads, ["/repo"]);
+  assert.deepEqual(reads, [{ homeDir: "/home/kal-el", projectRoot: "/repo" }]);
   assert.deepEqual(entries, [{ role: "user", text: "hi", at: "2026-01-01T00:00:00Z" }]);
 });
 
@@ -186,10 +187,11 @@ test("appendTranscript persists one real entry and propagates a write failure", 
   const appends = [];
   const service = createConversationService({
     resolveRoot: async () => "/repo",
-    appendTranscriptEntry: async (projectRoot, entry) => { appends.push({ projectRoot, entry }); }
+    homeDir: "/home/kal-el",
+    appendTranscriptEntry: async (homeDir, projectRoot, entry) => { appends.push({ homeDir, projectRoot, entry }); }
   });
   await service.appendTranscript({ cwd: "/repo", role: "kairo", text: "claude: it orchestrates." });
-  assert.deepEqual(appends, [{ projectRoot: "/repo", entry: { role: "kairo", text: "claude: it orchestrates." } }]);
+  assert.deepEqual(appends, [{ homeDir: "/home/kal-el", projectRoot: "/repo", entry: { role: "kairo", text: "claude: it orchestrates." } }]);
 
   const failing = createConversationService({
     resolveRoot: async () => "/repo",
@@ -202,10 +204,11 @@ test("clearTranscript persists an empty transcript for the real project root", a
   const calls = [];
   const service = createConversationService({
     resolveRoot: async () => "/repo",
-    clearTranscript: async (projectRoot) => { calls.push(projectRoot); }
+    homeDir: "/home/kal-el",
+    clearTranscript: async (homeDir, projectRoot) => { calls.push({ homeDir, projectRoot }); }
   });
   await service.clearTranscript({ cwd: "/repo" });
-  assert.deepEqual(calls, ["/repo"]);
+  assert.deepEqual(calls, [{ homeDir: "/home/kal-el", projectRoot: "/repo" }]);
 });
 
 test("askQuestion refuses to fabricate an answer when no ask-capable provider is available", async () => {

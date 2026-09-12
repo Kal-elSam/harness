@@ -366,23 +366,25 @@ export function createConversationService(deps = {}) {
       return { kind: "plan", ...plan };
     },
     /**
-     * Real persisted chat history for this project (`.ai/kairo/transcript.json`)
-     * — loaded once at cockpit startup so a restart never silently drops the
+     * Real persisted chat history for this project, kept globally under
+     * `~/.harness/sessions/<projectKey>/transcript.json` (not inside the
+     * repo — matches Claude Code/Codex/OpenCode's own convention) — loaded
+     * once at cockpit startup so a restart never silently drops the
      * conversation, the way plan/task state already survives restarts.
      */
     async loadTranscript({ cwd }) {
       const projectRoot = await root(cwd);
-      return readTranscriptImpl(projectRoot);
+      return readTranscriptImpl(homeDir, projectRoot);
     },
     /** Persists one chat entry; a write failure throws so the caller can surface it. */
     async appendTranscript({ cwd, role, text }) {
       const projectRoot = await root(cwd);
-      await appendTranscriptImpl(projectRoot, { role, text });
+      await appendTranscriptImpl(homeDir, projectRoot, { role, text });
     },
     /** Persists an empty transcript so `/clear` stays cleared across a restart. */
     async clearTranscript({ cwd }) {
       const projectRoot = await root(cwd);
-      await clearTranscriptImpl(projectRoot);
+      await clearTranscriptImpl(homeDir, projectRoot);
     },
     async showPlan({ cwd, taskId }) {
       const projectRoot = await root(cwd);
