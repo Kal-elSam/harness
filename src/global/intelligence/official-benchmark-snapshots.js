@@ -52,6 +52,12 @@ export const OFFICIAL_BENCHMARK_SNAPSHOTS = [
     source: "openai-official",
     url: "https://openai.com/index/gpt-6-astra/",
     published: "2026-09-03",
+    // Kept as "gpqa-diamond", deliberately distinct from AA's own "gpqa"
+    // metric: same underlying benchmark, but AA reports it as a 0-1
+    // fraction while this manufacturer table reports a 0-100 score —
+    // merging them under one key would let bestEvidence silently pick
+    // whichever is more recent and display it without a scale, which
+    // would misrepresent the other source's real number.
     benchmark: "gpqa-diamond", benchmarkVersion: null,
     caveat: "OpenAI's own reported results, run at maximum reasoning effort in an environment that may differ from production.",
     scores: [

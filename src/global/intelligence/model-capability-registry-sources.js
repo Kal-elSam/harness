@@ -11,8 +11,14 @@
 import { matchArtificialAnalysisScore } from "./model-intelligence.js";
 
 // One evidence entry per real, non-null field AA reports — never a
-// fabricated zero for a metric AA doesn't have for that model.
-const AA_METRICS = ["intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "outputTokensPerSecond"];
+// fabricated zero for a metric AA doesn't have for that model. The
+// per-benchmark fields (gpqa, hle, ...) are real scores the free API
+// already returns alongside the composite indices — verified live, an
+// earlier assumption that free tier lacked them was wrong.
+const AA_METRICS = [
+  "intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "outputTokensPerSecond",
+  "gpqa", "hle", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "tau2", "tauBanking"
+];
 
 /**
  * Registers every real, matched (provider catalog ↔ Artificial Analysis)

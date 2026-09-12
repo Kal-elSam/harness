@@ -46,6 +46,29 @@ test("a successful live fetch normalizes real entries and persists a cache", asy
   assert.equal(onDisk.models[0].slug, "gpt-6-astra");
 });
 
+test("normalizeModel also extracts real per-benchmark scores (gpqa, hle, etc.) that the free API already returns alongside the composite indices", async () => {
+  const homeDir = await tempHome();
+  const payload = {
+    data: [{
+      slug: "kimi-k3", name: "Kimi K3",
+      model_creator: { slug: "moonshotai" },
+      evaluations: {
+        artificial_analysis_intelligence_index: 43.8, artificial_analysis_coding_index: 76.2, artificial_analysis_math_index: null,
+        gpqa: 0.935, hle: 0.469, scicode: 0.595, mmlu_pro: null, livecodebench: null, ifbench: null,
+        terminalbench_hard: null, terminalbench_v2_1: 0.850187265917603, tau2: null, tau_banking: 0.45979381443299
+      }
+    }]
+  };
+  const result = await readArtificialAnalysisModels({ apiKey: "aa_test_key", homeDir, fetchImpl: async () => fakeResponse(payload) });
+  const model = result.models[0];
+  assert.equal(model.gpqa, 0.935);
+  assert.equal(model.hle, 0.469);
+  assert.equal(model.sciCode, 0.595);
+  assert.equal(model.terminalBenchV2, 0.850187265917603);
+  assert.equal(model.tauBanking, 0.45979381443299);
+  assert.equal(model.mmluPro, null); // never fabricated when AA itself reports null
+});
+
 test("falls back to a cached snapshot (marked as such, with a real age) when the live fetch fails", async () => {
   const homeDir = await tempHome();
   const payload = { data: [{ slug: "claude-opus-5", name: "Claude Opus 5", model_creator: { slug: "anthropic" }, evaluations: {} }] };

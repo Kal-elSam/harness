@@ -13,7 +13,14 @@ import { bestEvidence } from "./model-capability-registry.js";
 // Terminal-Bench/GPQA/HLE aren't the same measurement as AA's
 // intelligenceIndex/codingIndex and averaging them would violate the
 // registry's own no-blending contract.
-const CORROBORATION_METRICS = ["terminal-bench", "terminal-bench-science", "gpqa-diamond", "hle", "cursorbench", "kairo.success"];
+const CORROBORATION_METRICS = [
+  "terminal-bench", "terminal-bench-science", "gpqa-diamond", "hle", "cursorbench", "kairo.success",
+  // AA's own real per-benchmark scores (0-1 scale, as AA reports them) —
+  // verified live to already be in the free API response alongside the
+  // composite indices, kept distinct from the manufacturer-reported
+  // 0-100 scale metrics above.
+  "gpqa", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "tau2", "tauBanking"
+];
 
 /**
  * Attaches real registry evidence (Hugging Face, manufacturer snapshots,

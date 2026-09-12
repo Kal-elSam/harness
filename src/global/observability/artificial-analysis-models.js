@@ -16,13 +16,31 @@ const API_URL = "https://artificialanalysis.ai/api/v2/data/llms/models";
 const DEFAULT_TIMEOUT_MS = 8000;
 
 function normalizeModel(entry) {
+  const evaluations = entry.evaluations ?? {};
   return {
     slug: entry.slug,
     name: entry.name,
     creator: entry.model_creator?.slug ?? null,
-    intelligenceIndex: entry.evaluations?.artificial_analysis_intelligence_index ?? null,
-    codingIndex: entry.evaluations?.artificial_analysis_coding_index ?? null,
-    mathIndex: entry.evaluations?.artificial_analysis_math_index ?? null,
+    intelligenceIndex: evaluations.artificial_analysis_intelligence_index ?? null,
+    codingIndex: evaluations.artificial_analysis_coding_index ?? null,
+    mathIndex: evaluations.artificial_analysis_math_index ?? null,
+    // Real per-benchmark scores the free API already returns alongside the
+    // composite indices above — verified live (not documented anywhere as
+    // a free-tier feature, an earlier assumption here was wrong). These
+    // matter because the composite intelligenceIndex can blur a real,
+    // benchmark-specific near-tie: e.g. two models 18% apart on the
+    // composite can be 0.2 points apart on GPQA specifically. Real,
+    // 0-1 scale values as AA reports them — never rescaled or blended.
+    gpqa: evaluations.gpqa ?? null,
+    hle: evaluations.hle ?? null,
+    sciCode: evaluations.scicode ?? null,
+    mmluPro: evaluations.mmlu_pro ?? null,
+    liveCodeBench: evaluations.livecodebench ?? null,
+    ifBench: evaluations.ifbench ?? null,
+    terminalBenchHard: evaluations.terminalbench_hard ?? null,
+    terminalBenchV2: evaluations.terminalbench_v2_1 ?? null,
+    tau2: evaluations.tau2 ?? null,
+    tauBanking: evaluations.tau_banking ?? null,
     // Real reported numbers, not derived scores — used to flag the
     // cheapest/fastest real option among what you actually have access to,
     // never blended into a single invented composite.
