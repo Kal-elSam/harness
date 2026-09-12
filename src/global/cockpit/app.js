@@ -147,9 +147,9 @@ export async function runCockpitApp({
         }
         pushTranscript("kairo", view.integrationsLine());
       } else if (command === "/models") {
-        // AI TEAM renders in the widget; /models also writes it to the
-        // chat transcript for reference.
-        for (const line of view.fitLines()) pushTranscript("kairo", line);
+        // The widget only shows Role -> effective model; /models writes
+        // the full primary/fallback/reason breakdown behind each pick.
+        for (const line of view.aiTeamDetailLines()) pushTranscript("kairo", line);
       } else if (command === "/why") {
         // Drill-down for FIT: which providers were excluded and the exact
         // real reason (quota, availability, PAYG/manual-only policy).

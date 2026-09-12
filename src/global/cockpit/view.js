@@ -354,19 +354,34 @@ export class CockpitView {
   }
 
   /**
-   * The global "AI TEAM": one line per role (Explorer / Architect /
-   * Builder / Debugger / Tester / Reviewer / Economy), each naming a
-   * primary model plus a real fallback plus current availability. This is
-   * a real distribution policy (buildAiTeam), not seven independent
-   * maxima — a role only keeps a raw capability winner when its real edge
-   * over the next provider is decisive; near-equivalent roles spread
-   * across whichever provider is least used so far, so ties (never real
-   * wins) are what create diversity. `reason` is only shown when the pick
-   * needed explaining (a near-tie, an independence swap, or the leader
-   * being temporarily unavailable) — a plain decisive win says nothing
-   * extra. This is the general team, not a per-project portfolio: which
-   * of these roles a given repo actually activates is a separate, later
-   * decision.
+   * Model shown for a role in the compact widget: whichever one Kairo
+   * would actually use right now — the primary when it's available, else
+   * the fallback when that's available, else null (nothing eligible
+   * covers this role). Never the unavailable primary itself: showing an
+   * unusable model as the headline is exactly the confusion this method
+   * exists to avoid — the full primary/fallback/availability breakdown
+   * stays one level down, in aiTeamDetailLines().
+   */
+  static effectiveTeamModel({ primary, fallback }) {
+    if (primary.available) return primary;
+    if (fallback?.available) return fallback;
+    return null;
+  }
+
+  aiTeamLabel(model) {
+    const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
+    return `${provider} · ${model.displayName ?? model.modelId}`;
+  }
+
+  /**
+   * The global "AI TEAM" widget: one line per role (Explorer / Architect /
+   * Builder / Debugger / Tester / Reviewer / Economy) naming only the
+   * model that would actually run right now. This is the general team,
+   * not a per-project portfolio: which of these roles a given repo
+   * activates is a separate, later decision. Kept deliberately terse —
+   * the real distribution policy behind each pick (capability margins,
+   * fallback, why it isn't always the raw top score) lives in
+   * aiTeamDetailLines(), reachable via /models, not cluttering the glance.
    */
   fitLines() {
     const intel = this.snapshot?.modelIntelligence;
@@ -383,18 +398,35 @@ export class CockpitView {
       return [theme.fg("muted", `Artificial Analysis, ${freshness}`), theme.fg("warning", "No eligible model signals right now"), ...reasons.map((r) => theme.fg("muted", r))];
     }
     const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
-    const label = (model) => {
-      const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
-      return `${provider} · ${model.displayName ?? model.modelId}`;
-    };
+    for (const entry of team) {
+      const effective = CockpitView.effectiveTeamModel(entry);
+      const modelText = effective ? this.aiTeamLabel(effective) : theme.fg("warning", "no eligible option right now");
+      lines.push(`${entry.role.padEnd(10)} ${modelText}`);
+    }
+    lines.push(theme.fg("muted", "Use /models for why, and /why for coverage and eligibility."));
+    return lines;
+  }
+
+  /**
+   * The full breakdown behind each AI TEAM pick — primary, availability,
+   * fallback, and the distribution-policy reason (near-tie, independence
+   * swap, temporarily-unavailable leader) — surfaced via /models instead
+   * of the always-visible widget.
+   */
+  aiTeamDetailLines() {
+    const intel = this.snapshot?.modelIntelligence;
+    if (!intel || intel.status === "unknown") return this.fitLines();
+    const team = intel.aiTeam ?? [];
+    if (!team.length) return this.fitLines();
+    const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
+    const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
     for (const { role, primary, fallback, reason } of team) {
-      const primaryText = primary.available ? label(primary) : `${label(primary)} (not available)`;
+      const primaryText = primary.available ? this.aiTeamLabel(primary) : `${this.aiTeamLabel(primary)} (not available)`;
       lines.push(`${role.padEnd(10)} ${primaryText}`);
-      if (fallback) lines.push(theme.fg("muted", `  fallback ${label(fallback)}`));
+      if (fallback) lines.push(theme.fg("muted", `  fallback ${this.aiTeamLabel(fallback)}`));
       else if (!primary.available) lines.push(theme.fg("warning", "  no eligible fallback right now"));
       if (reason) lines.push(theme.fg("muted", `  ${reason}`));
     }
-    lines.push(theme.fg("muted", "Use /why for coverage and eligibility."));
     return lines;
   }
 

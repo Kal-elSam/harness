@@ -61,7 +61,7 @@ test("render gives conversation priority and keeps compact usage in the header",
   assert.doesNotMatch(joined, /Engram connected/);
 });
 
-test("AI TEAM shows a primary and fallback per role, never a blended score", () => {
+test("AI TEAM's compact widget shows only Role -> effective model, never fallback or reason noise", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({
@@ -72,12 +72,13 @@ test("AI TEAM shows a primary and fallback per role, never a blended score", () 
         {
           role: "Explorer",
           primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", available: true },
-          fallback: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", available: true }
+          fallback: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", available: true },
+          reason: "Near-equivalent alternatives (~1.1%) — assigned to balance provider load."
         },
         {
           role: "Economy",
           primary: { adapterId: "opencode-go", modelId: "go-luna", displayName: "GPT-5.6-Luna", available: true },
-          fallback: null
+          fallback: null, reason: null
         }
       ]
     }
@@ -85,12 +86,13 @@ test("AI TEAM shows a primary and fallback per role, never a blended score", () 
   const lines = view.render(160).join("\n");
   assert.match(lines, /Artificial Analysis, live/);
   assert.match(lines, /Explorer\s+Codex · GPT-6-Astra/);
-  assert.match(lines, /fallback Claude · Claude Fable 5\.1/);
   assert.match(lines, /Economy\s+Opencode-go · GPT-5\.6-Luna/);
+  assert.doesNotMatch(lines, /fallback/);
+  assert.doesNotMatch(lines, /Near-equivalent/);
   assert.doesNotMatch(lines, /Global signals — not a project strategy/);
 });
 
-test("AI TEAM keeps a preferred-but-unavailable primary visible and surfaces its real fallback instead of hiding it", () => {
+test("AI TEAM's compact widget shows the real fallback as the headline (not the unavailable primary) when the preferred model can't run", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({
@@ -101,14 +103,56 @@ test("AI TEAM keeps a preferred-but-unavailable primary visible and surfaces its
         {
           role: "Tester",
           primary: { adapterId: "opencode-go", modelId: "go-tester", displayName: "OpenCode Go Tester", available: false },
-          fallback: { adapterId: "claude", modelId: "claude-sonnet-5", displayName: "Claude Sonnet 5", available: true }
+          fallback: { adapterId: "claude", modelId: "claude-sonnet-5", displayName: "Claude Sonnet 5", available: true },
+          reason: null
         }
       ]
     }
   });
   const lines = view.fitLines().join("\n");
+  assert.match(lines, /Tester\s+Claude · Claude Sonnet 5/);
+  assert.doesNotMatch(lines, /not available/);
+  assert.doesNotMatch(lines, /OpenCode Go Tester/);
+});
+
+test("AI TEAM's compact widget honestly says so when neither primary nor fallback is available", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [{
+        role: "Economy",
+        primary: { adapterId: "opencode-go", modelId: "go-hy3", displayName: "Hy3", available: false },
+        fallback: null, reason: "No eligible provider currently covers this role."
+      }]
+    }
+  });
+  const lines = view.fitLines().join("\n");
+  assert.match(lines, /Economy[\s\S]*?no eligible option right now/);
+});
+
+test("/models writes the full primary/fallback/reason breakdown that the compact widget leaves out", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [
+        {
+          role: "Tester",
+          primary: { adapterId: "opencode-go", modelId: "go-tester", displayName: "OpenCode Go Tester", available: false },
+          fallback: { adapterId: "claude", modelId: "claude-sonnet-5", displayName: "Claude Sonnet 5", available: true },
+          reason: "Real capability leader is temporarily unavailable (rate limited)."
+        }
+      ]
+    }
+  });
+  const lines = view.aiTeamDetailLines().join("\n");
   assert.match(lines, /Tester\s+Opencode-go · OpenCode Go Tester \(not available\)/);
   assert.match(lines, /fallback Claude · Claude Sonnet 5/);
+  assert.match(lines, /temporarily unavailable/);
 });
 
 test("USAGE and AI TEAM tile side by side once the terminal is wide enough", () => {
