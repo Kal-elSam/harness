@@ -303,12 +303,25 @@ export function buildAiTeam(models, eligibility = {}) {
 
   // A model is never the sole reviewer of its own family's work when a
   // real independent alternative exists — this is a hard requirement, not
-  // a tie-break preference, so it's applied after settlement.
+  // a tie-break preference, so it's applied after settlement. But
+  // independence never overrides a real capability floor: the swap only
+  // happens when an independent alternative is a near-equivalent
+  // (same NEAR_EQUIVALENCE_BAND used everywhere else), never when the
+  // only other option is decisively worse — forcing a much weaker model
+  // in just to satisfy independence would trade away real review quality
+  // for a formality.
   const builderPick = chosenByRole.Builder;
   const reviewerRanked = roleRankings.find((r) => r.role === "Reviewer")?.ranked ?? [];
-  if (builderPick && chosenByRole.Reviewer && chosenByRole.Reviewer.model.adapterId === builderPick.model.adapterId) {
-    const independent = reviewerRanked.find((r) => r.model.adapterId !== builderPick.model.adapterId);
+  const currentReviewer = chosenByRole.Reviewer;
+  if (builderPick && currentReviewer && currentReviewer.model.adapterId === builderPick.model.adapterId) {
+    const scale = Math.abs(currentReviewer.value) || 1;
+    const independent = reviewerRanked.find((r) => (
+      r.model.adapterId !== builderPick.model.adapterId
+      && Math.abs(currentReviewer.value - r.value) / scale <= NEAR_EQUIVALENCE_BAND
+    ));
     if (independent) chosenByRole.Reviewer = independent;
+    // else: no independent alternative clears the capability floor — keep
+    // the same-provider pick rather than forcing a much weaker reviewer.
   }
 
   const entries = [];

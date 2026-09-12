@@ -250,3 +250,21 @@ test("buildAiTeam keeps Reviewer on Builder's own provider when no independent r
   assert.equal(byRole.Reviewer.primary.adapterId, "claude");
   assert.equal(byRole.Builder.primary.adapterId, "claude");
 });
+
+test("buildAiTeam never forces Reviewer onto a decisively worse independent alternative just to satisfy independence — a capability floor gates the swap", () => {
+  // codex-model is dramatically weaker on every real metric (not a near
+  // tie) — the only "independent" option here fails the same
+  // NEAR_EQUIVALENCE_BAND used everywhere else, so Reviewer must stay on
+  // Builder's own provider rather than being forced onto a much worse model.
+  const aa = [
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 20, codingIndex: 20, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
+  );
+  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
+  assert.equal(byRole.Builder.primary.adapterId, "claude");
+  assert.equal(byRole.Reviewer.primary.adapterId, "claude", "independence must not override a real capability floor");
+});
