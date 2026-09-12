@@ -139,12 +139,18 @@ export async function runCockpitApp({
     if (!task) return;
     if (task.startsWith("/")) {
       const command = task.split(/\s+/)[0].toLowerCase();
+      // Echo the command itself into the transcript before acting on it —
+      // without this, scrolling back through history is a wall of Kairo-only
+      // blocks with no indication of which command produced which one.
+      pushTranscript("user", task);
       if (command === "/help") {
         pushTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /models AI team · /why eligibility detail · /clear · /quit");
-      } else if (command === "/usage" || command === "/providers" || command === "/status") {
-        for (const line of command === "/usage" ? view.usageLines() : view.providerLines()) {
-          pushTranscript("kairo", line);
-        }
+      } else if (command === "/usage") {
+        for (const line of view.usageLines()) pushTranscript("kairo", line);
+      } else if (command === "/providers") {
+        for (const line of view.providerLines()) pushTranscript("kairo", line);
+      } else if (command === "/status") {
+        for (const line of view.providerLines()) pushTranscript("kairo", line);
         pushTranscript("kairo", view.integrationsLine());
       } else if (command === "/models") {
         // The widget only shows Role -> effective model; /models writes
@@ -161,7 +167,6 @@ export async function runCockpitApp({
           editor.setText("");
           return;
         }
-        pushTranscript("user", planTask);
         editor.disableSubmit = true;
         editor.setText("");
         return runAction("Asking Codex for a plan", async () => {

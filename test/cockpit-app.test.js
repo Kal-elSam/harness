@@ -215,6 +215,85 @@ test("/models prints the AI TEAM into the chat even when a task row is selected"
   app.stop();
 });
 
+test("/models' role separators survive the real persisted-transcript pipeline, not just the raw line array", async () => {
+  // Regression: a blank-string ("") separator looks correct against
+  // aiTeamDetailLines() in isolation, but addTranscript trims and drops
+  // empty text — so it silently vanished once actually routed through
+  // pushTranscript. This exercises the real pipeline, not just the array.
+  let editor;
+  const service = {
+    snapshot: async () => ({
+      ...makeSnapshot([BASE_ROW]),
+      modelIntelligence: {
+        status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+        aiTeam: [
+          { role: "Explorer", primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", available: true }, fallback: null },
+          { role: "Builder", primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", available: true }, fallback: null }
+        ]
+      }
+    })
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+  editor.setText("/models");
+  await editor.onSubmit(editor.getText());
+  const texts = app.view.transcript.map((entry) => entry.text);
+  const explorerIndex = texts.findIndex((t) => t.includes("Explorer"));
+  const builderIndex = texts.findIndex((t) => t.includes("Builder"));
+  assert.equal(builderIndex, explorerIndex + 2, "the separator entry must actually be present between the two roles in the real transcript");
+  app.stop();
+});
+
+test("a slash command is echoed into the transcript as the user's own message before Kairo's response", async () => {
+  let editor;
+  const service = { snapshot: async () => makeSnapshot([BASE_ROW]) };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+
+  editor.setText("/usage");
+  await editor.onSubmit(editor.getText());
+  const [first, second] = app.view.transcript;
+  assert.equal(first.role, "You");
+  assert.equal(first.text, "/usage");
+  assert.notEqual(second.role, "You");
+  app.stop();
+});
+
+test("/usage and /providers stay scoped to their own data — only /status also shows integration status", async () => {
+  let editor;
+  const service = {
+    snapshot: async () => ({
+      ...makeSnapshot([BASE_ROW]),
+      providers: { claude: { status: "Pro · usage unknown" } },
+      integrations: { engram: { status: "connected" } }
+    })
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+
+  editor.setText("/usage");
+  await editor.onSubmit(editor.getText());
+  editor.setText("/providers");
+  await editor.onSubmit(editor.getText());
+  const beforeStatus = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.doesNotMatch(beforeStatus, /Engram connected/);
+
+  editor.setText("/status");
+  await editor.onSubmit(editor.getText());
+  const afterStatus = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.match(afterStatus, /Engram connected/);
+  app.stop();
+});
+
 test("boot loads real persisted transcript history before the first render", async () => {
   const service = {
     snapshot: async () => makeSnapshot([]),

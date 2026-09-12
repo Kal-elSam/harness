@@ -155,6 +155,27 @@ test("/models writes the full primary/fallback/reason breakdown that the compact
   assert.match(lines, /temporarily unavailable/);
 });
 
+test("/models separates each role's block with a blank line, so scrolling through the full breakdown stays readable", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [
+        { role: "Explorer", primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", available: true }, fallback: null, reason: null },
+        { role: "Builder", primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", available: true }, fallback: null, reason: null }
+      ]
+    }
+  });
+  const lines = view.aiTeamDetailLines();
+  const builderIndex = lines.findIndex((line) => line.includes("Builder"));
+  // A blank string ("") would be silently dropped once routed through the
+  // persisted chat transcript (addTranscript trims and discards empty
+  // text) — the separator must be real, visible, non-whitespace content
+  // so it survives into the actual chat history, not just this array.
+  assert.match(lines[builderIndex - 1], /\S/, "the separator must be visible content, not a blank line that gets dropped by addTranscript");
+});
+
 test("USAGE and AI TEAM tile side by side once the terminal is wide enough", () => {
   const { view } = makeView();
   view.setRows([]);

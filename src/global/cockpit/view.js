@@ -427,7 +427,12 @@ export class CockpitView {
     const corroborationLine = (model) => (model.corroboration ?? [])
       .map((entry) => `${entry.metric}=${entry.value} (${entry.source})`)
       .join(" · ");
-    for (const { role, primary, fallback, reason } of team) {
+    team.forEach(({ role, primary, fallback, reason }, index) => {
+      // A blank string here would get silently dropped once this line is
+      // routed through the persisted chat transcript (addTranscript trims
+      // and discards empty text) — a visible divider is the only separator
+      // that actually survives into the real, persisted chat history.
+      if (index > 0) lines.push(theme.fg("muted", "·"));
       const primaryText = primary.available ? this.aiTeamLabel(primary) : `${this.aiTeamLabel(primary)} (not available)`;
       lines.push(`${role.padEnd(10)} ${primaryText}`);
       const primaryEvidence = corroborationLine(primary);
@@ -435,7 +440,7 @@ export class CockpitView {
       if (fallback) lines.push(theme.fg("muted", `  fallback ${this.aiTeamLabel(fallback)}`));
       else if (!primary.available) lines.push(theme.fg("warning", "  no eligible fallback right now"));
       if (reason) lines.push(theme.fg("muted", `  ${reason}`));
-    }
+    });
     return lines;
   }
 
