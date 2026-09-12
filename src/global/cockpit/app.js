@@ -140,12 +140,18 @@ export async function runCockpitApp({
     if (task.startsWith("/")) {
       const command = task.split(/\s+/)[0].toLowerCase();
       if (command === "/help") {
-        pushTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /clear · /quit");
+        pushTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /models model fit · /clear · /quit");
       } else if (command === "/usage" || command === "/providers" || command === "/status") {
         for (const line of command === "/usage" ? view.usageLines() : view.providerLines()) {
           pushTranscript("kairo", line);
         }
         pushTranscript("kairo", view.integrationsLine());
+      } else if (command === "/models") {
+        // STATUS only shows model fit when no task row is selected — once
+        // any task exists in history (even a rejected one) a row is always
+        // selected, so this is the only reliable way to see it. Uses the
+        // same real, already-polled modelIntelligence — no extra fetch.
+        for (const line of view.modelIntelligenceLines()) pushTranscript("kairo", line);
       } else if (command === "/plan") {
         const planTask = task.slice(command.length).trim();
         if (!planTask) {

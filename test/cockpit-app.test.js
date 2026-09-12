@@ -180,6 +180,38 @@ test("onExecute passes the exact decision shown as the confirm-execute agentId/m
   app.stop();
 });
 
+test("/models prints real model fit into the chat even when a task row is selected (STATUS's idle-only view would never show it)", async () => {
+  let editor;
+  const service = {
+    snapshot: async () => ({
+      ...makeSnapshot([BASE_ROW]),
+      modelIntelligence: {
+        status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+        models: [{ adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null, bestFor: ["best coding"] }]
+      }
+    })
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  // A row is selected by default (BASE_ROW), matching the real scenario
+  // that broke STATUS's idle-only display.
+  editor.setText("/models");
+  await editor.onSubmit(editor.getText());
+  const printed = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.match(printed, /MODEL FIT — Artificial Analysis, live/);
+  assert.match(printed, /GPT-6-Astra/);
+  assert.match(printed, /best coding/);
+  app.stop();
+});
+
 test("boot loads real persisted transcript history before the first render", async () => {
   const service = {
     snapshot: async () => makeSnapshot([]),
