@@ -96,7 +96,11 @@ test("snapshot surfaces real Claude session/weekly usage percentages via /usage,
       status: "measured",
       primary: { label: "Current session", usedPercent: 34, remainingPercent: 66, resetsAt: "Sep 11 at 8pm" },
       secondary: { label: "Current week (all models)", usedPercent: 61, remainingPercent: 39, resetsAt: "Sep 14 at 9am" }
-    })
+    }),
+    readCodexModels: async () => ({ status: "unknown", models: [] }),
+    readOpenCodeModels: async () => ({ status: "unknown", models: [] }),
+    readCursorModels: async () => ({ status: "unknown", models: [] }),
+    readArtificialAnalysisModels: async () => ({ status: "unknown", source: null, age: null, models: [] })
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
@@ -184,6 +188,8 @@ test("snapshot cross-references real model catalogs with real Artificial Analysi
     readClaudeUsage: async () => null,
     readCodexModels: async () => ({ status: "measured", models: [{ id: "gpt-6-astra", displayName: "GPT-6 Astra" }] }),
     readClaudeModels: () => ({ status: "documented", models: [{ id: "claude-opus-5" }] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
     readArtificialAnalysisModels: async () => ({
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
       models: [
@@ -386,6 +392,10 @@ test("snapshot deduplicates in-flight Codex usage probes and honors its TTL", as
       return { status: "measured", windows: [], primary: null, secondary: null };
     },
     readClaudeUsage: async () => ({ status: "unknown" }),
+    readCodexModels: async () => ({ status: "unknown", models: [] }),
+    readOpenCodeModels: async () => ({ status: "unknown", models: [] }),
+    readCursorModels: async () => ({ status: "unknown", models: [] }),
+    readArtificialAnalysisModels: async () => ({ status: "unknown", source: null, age: null, models: [] }),
     listPlans: async () => [],
     recoverRuns: async () => {},
     listRunRecords: async () => [],

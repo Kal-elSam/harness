@@ -35,6 +35,15 @@ test("scoreAvailableModels only includes models Kairo actually has access to, wi
   assert.equal(results[1].intelligenceIndex, 50.7);
 });
 
+test("scoreAvailableModels handles Cursor's real catalog shape (plain model name strings), not just {id} objects", () => {
+  const results = scoreAvailableModels(
+    [{ adapterId: "cursor", models: ["claude-opus-5", "totally-unmatched"] }], AA_MODELS
+  );
+  assert.equal(results.length, 1);
+  assert.equal(results[0].adapterId, "cursor");
+  assert.equal(results[0].modelId, "claude-opus-5");
+});
+
 test("scoreAvailableModels returns an empty list, never a fabricated entry, when nothing matches", () => {
   const results = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "unknown-model" }] }], AA_MODELS);
   assert.deepEqual(results, []);

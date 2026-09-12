@@ -17,6 +17,7 @@ import { readOpenCodeUsage, readOpenCodeGoUsage, readOpenCodeStats } from "../ob
 import { readCodexModels } from "../observability/codex-models.js";
 import { readOpenCodeModels } from "../observability/opencode-models.js";
 import { readClaudeModels } from "../observability/claude-models.js";
+import { readCursorModels } from "../observability/cursor-models.js";
 import { isLikelyQuestion, selectAskProvider, selectExecutionProvider } from "../intelligence/execution-router.js";
 import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
@@ -246,7 +247,12 @@ export function createConversationService(deps = {}) {
   }
   const readCodexUsageCached = createCachedProbe(readCodexUsageImpl, codexUsageTtlMs);
   const readClaudeUsageCached = createCachedProbe(readClaudeUsageImpl, claudeUsageTtlMs);
+  const readCursorModelsImpl = deps.readCursorModels ?? readCursorModels;
   const readCodexModelsCached = createCachedProbe(readCodexModelsImpl, modelCatalogTtlMs);
+  const readOpenCodeGoModelsCached = createCachedProbe(
+    () => readOpenCodeModelsImpl({ provider: "opencode-go" }), modelCatalogTtlMs
+  );
+  const readCursorModelsCached = createCachedProbe(readCursorModelsImpl, modelCatalogTtlMs);
   const readArtificialAnalysisModelsCached = createCachedProbe(
     (args) => readArtificialAnalysisModelsImpl({ ...args, homeDir }), artificialAnalysisTtlMs
   );
@@ -332,12 +338,19 @@ export function createConversationService(deps = {}) {
       result.usage.claude = claudeUsage;
       result.usage.opencode = opencodeUsage;
       if (enableProviderProbes) {
-        const [codexCatalog, aa] = await Promise.all([
+        const [codexCatalog, opencodeGoCatalog, cursorCatalog, aa] = await Promise.all([
           readCodexModelsCached(projectRoot, { cwd: projectRoot }),
+          readOpenCodeGoModelsCached("global", {}),
+          readCursorModelsCached(projectRoot, { cwd: projectRoot }),
           readArtificialAnalysisModelsCached("global", {})
         ]);
         const scored = scoreAvailableModels(
-          [{ adapterId: "codex", models: codexCatalog?.models ?? [] }, { adapterId: "claude", models: readClaudeModelsImpl().models }],
+          [
+            { adapterId: "codex", models: codexCatalog?.models ?? [] },
+            { adapterId: "claude", models: readClaudeModelsImpl().models },
+            { adapterId: "opencode-go", models: opencodeGoCatalog?.models ?? [] },
+            { adapterId: "cursor", models: cursorCatalog?.models ?? [] }
+          ],
           aa.models
         );
         result.modelIntelligence = { status: aa.status, source: aa.source, age: aa.age, models: scored };
