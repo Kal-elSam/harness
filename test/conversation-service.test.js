@@ -261,6 +261,42 @@ test("snapshot excludes a provider from FIT once its real quota is exhausted, ev
   assert.equal(explorer.fallback.available, true);
 });
 
+test("snapshot lets AI TEAM recommend a real, accessible opencode-go model even though it isn't launchable yet", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [
+      { id: "codex", available: true, launchable: true, reason: null },
+      { id: "claude", available: true, launchable: true, reason: null },
+      // Real, verified state: OpenCode is available (CLI on PATH, real
+      // structured events) but not launchable — blocked pending
+      // provider-isolation proof between Go and Zen.
+      { id: "opencode", available: true, launchable: false, reason: "blocked pending provider-isolation proof" }
+    ],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [] }),
+    readClaudeModels: () => ({ status: "documented", models: [] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [{ id: "glm-5.3", displayName: "GLM 5.3" }] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    readArtificialAnalysisModels: async () => ({
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [{ slug: "glm-5.3", name: "GLM 5.3", intelligenceIndex: 44.9, codingIndex: 74.8, mathIndex: null, priceInputPerMTok: 1.4 }]
+    })
+  });
+
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  // Real, accessible via the Go subscription — AI TEAM can recommend it.
+  assert.equal(snapshot.modelIntelligence.eligibility["opencode-go"].ok, true);
+  const economy = snapshot.modelIntelligence.aiTeam.find((t) => t.role === "Economy");
+  assert.equal(economy.primary.adapterId, "opencode-go");
+  assert.equal(economy.primary.available, true);
+});
+
 test("snapshot always excludes opencode-zen and cursor from FIT's automatic candidates, independent of their catalogs", async () => {
   const service = createConversationService({
     resolveRoot: async () => "/repo",

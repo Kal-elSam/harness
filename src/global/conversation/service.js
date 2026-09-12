@@ -345,15 +345,21 @@ export function createConversationService(deps = {}) {
           readCursorModelsCached(projectRoot, { cwd: projectRoot }),
           readArtificialAnalysisModelsCached("global", {})
         ]);
-        // Same eligibility policy the execution/ask router uses: FIT can
-        // never recommend a provider that isn't actually available,
-        // launchable, or has usable quota right now — capability alone
-        // never overrides that. Zen and Cursor are always excluded here
-        // (PAYG risk / manual-only), independent of any benchmark score.
+        // Same eligibility policy the execution/ask router uses, with one
+        // deliberate exception: opencode-go is allowed here even without
+        // `launchable` (requireLaunchable: false) — you do have real
+        // access to its models via the Go subscription, so AI TEAM can
+        // name them as real options, even though Kairo can't yet safely
+        // auto-execute through the shared opencode adapter (see
+        // execution-adapters/opencode.js). Real task routing never gets
+        // this exception (selectExecutionProvider always requires
+        // launchable), so Kairo never actually picks Go for a real run
+        // it's guaranteed to reject at launch. Zen and Cursor stay
+        // excluded here regardless (PAYG risk / manual-only).
         const eligibility = {};
         const candidates = [];
         for (const adapterId of ["codex", "claude", "opencode-go", "opencode-zen", "cursor"]) {
-          const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage: opencodeUsage?.go });
+          const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage: opencodeUsage?.go }, { requireLaunchable: false });
           eligibility[adapterId] = check;
           if (check.ok) candidates.push(adapterId);
         }

@@ -271,6 +271,25 @@ test("checkCandidate still applies the real codex/claude quota floor unchanged",
   assert.match(low.reason, /nearly exhausted/);
 });
 
+test("checkCandidate({requireLaunchable: false}) lets opencode-go through on availability alone — for AI TEAM's recommendation surface only", () => {
+  const adapters = [{ id: "opencode", available: true, launchable: false, reason: "blocked pending provider-isolation proof" }];
+  const strict = checkCandidate("opencode-go", { adapters });
+  assert.equal(strict.ok, false, "real task routing (the default) must still require launchable");
+
+  const forRecommendation = checkCandidate("opencode-go", { adapters }, { requireLaunchable: false });
+  assert.equal(forRecommendation.ok, true, "AI TEAM can still recommend a real, accessible Go model");
+});
+
+test("checkCandidate({requireLaunchable: false}) never loosens codex/claude/cursor/zen — the exception is opencode-go only", () => {
+  const adapters = [{ id: "codex", available: true, launchable: false, reason: "codex not launchable" }];
+  const codex = checkCandidate("codex", { adapters }, { requireLaunchable: false });
+  assert.equal(codex.ok, false);
+  const cursor = checkCandidate("cursor", { adapters }, { requireLaunchable: false });
+  assert.equal(cursor.ok, false);
+  const zen = checkCandidate("opencode-zen", { adapters }, { requireLaunchable: false });
+  assert.equal(zen.ok, false);
+});
+
 test("selectExecutionProvider sizes the model to the task's real effort too — a trivial fix doesn't get Claude's biggest model", () => {
   const trivial = selectExecutionProvider({
     task: "Fix the button color", adapters: ADAPTERS, catalogs: CLAUDE_CATALOG

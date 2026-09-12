@@ -137,8 +137,17 @@ const MIN_QUOTA_PERCENT = 5;
  * @param {string} adapterId - "codex" | "claude" | "opencode-go" | "opencode-zen" | "cursor"
  * @param {{adapters: object[], codexUsage?: object|null, claudeUsage?: object|null, opencodeGoUsage?: object|null}} context
  * @returns {{ok: boolean, reason: string|null}}
+ * @param {{requireLaunchable?: boolean}} [options] - `requireLaunchable: false`
+ *   is for AI TEAM's recommendation surface only (service.js's snapshot()):
+ *   it lets opencode-go be named as a real, accessible option — you do
+ *   have the model via the Go subscription — without claiming Kairo can
+ *   safely auto-execute through it yet (see opencode.js's checkAvailability
+ *   for why: no per-event way to prove a run didn't silently bill Zen).
+ *   Real task routing (selectExecutionProvider/selectAskProvider) always
+ *   uses the default `true` — it must never pick something guaranteed to
+ *   fail at launch (run-manager.js's own launchable gate would reject it).
  */
-export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage }) {
+export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage }, { requireLaunchable = true } = {}) {
   // Zen carries real PAYG/billing risk (see conversation/service.js's
   // capabilities.openCodeExecution) and Cursor is a deliberate manual-only
   // choice from an earlier decision — neither is ever an automatic pick,
@@ -149,7 +158,8 @@ export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, o
   const adapter = findAdapter(adapterId, adapters);
   if (!adapter) return { ok: false, reason: `${adapterId}: no adapter found` };
   if (!adapter.available) return { ok: false, reason: adapter.reason ?? `${adapterId}: not available` };
-  if (!adapter.launchable) return { ok: false, reason: adapter.reason ?? `${adapterId}: not launchable yet` };
+  const launchableRequired = requireLaunchable || adapterId !== "opencode-go";
+  if (launchableRequired && !adapter.launchable) return { ok: false, reason: adapter.reason ?? `${adapterId}: not launchable yet` };
 
   if (adapterId === "codex") {
     const left = remainingPercent(codexUsage);
