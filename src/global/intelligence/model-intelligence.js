@@ -97,7 +97,14 @@ export function scoreAvailableModels(providerCatalogs, aaModels) {
         adapterId, modelId: model.id, displayName: model.displayName ?? null,
         slug: score.slug, name: score.name,
         intelligenceIndex: score.intelligenceIndex, codingIndex: score.codingIndex, mathIndex: score.mathIndex,
-        priceInputPerMTok: score.priceInputPerMTok ?? null, outputTokensPerSecond: score.outputTokensPerSecond ?? null
+        priceInputPerMTok: score.priceInputPerMTok ?? null, outputTokensPerSecond: score.outputTokensPerSecond ?? null,
+        // Real per-benchmark scores AA's free API also returns — used as
+        // optional role-specific tie-breakers in AI_TEAM_ROLE_DEFINITIONS,
+        // never blended into the composite indices above.
+        gpqa: score.gpqa ?? null, hle: score.hle ?? null, sciCode: score.sciCode ?? null,
+        mmluPro: score.mmluPro ?? null, liveCodeBench: score.liveCodeBench ?? null, ifBench: score.ifBench ?? null,
+        terminalBenchHard: score.terminalBenchHard ?? null, terminalBenchV2: score.terminalBenchV2 ?? null,
+        tau2: score.tau2 ?? null, tauBanking: score.tauBanking ?? null
       });
     }
   }
@@ -229,17 +236,65 @@ export function bestModelPerRole(models) {
   return entries;
 }
 
-// Same real metrics as ROLE_DEFINITIONS, relabeled to the seven-role team
-// vocabulary the user settled on for the "AI TEAM" widget (Explorer /
-// Architect / Builder / Debugger / Tester / Reviewer / Economy). Kept as a
-// separate list — rather than renaming ROLE_DEFINITIONS in place — so the
-// existing bestModelPerRole() contract and its tests stay untouched.
+// AA's composite indices (intelligenceIndex/codingIndex/mathIndex) are
+// reported on a 0-100 scale; its individual per-benchmark evaluations
+// (gpqa, hle, tauBanking, terminalBenchV2, ...) are reported as 0-1
+// fractions. Converting the 0-100 ones down to the same 0-1 scale is a
+// real, FIXED unit conversion — not a pool-relative rescaling. That
+// distinction matters: a percentile- or min-max-by-pool approach
+// degenerates to always reporting just the two extremes {0, 1} whenever
+// there are only 2 real candidates (Kairo's typical case — usually just
+// Codex vs Claude, sometimes plus Go), which would destroy the real
+// magnitude of the gap entirely. Fixed unit conversion preserves it.
+const HUNDRED_SCALE_METRICS = new Set(["intelligenceIndex", "codingIndex", "mathIndex"]);
+
+function toUnitScale(key, value) {
+  if (value == null) return null;
+  return HUNDRED_SCALE_METRICS.has(key) ? value / 100 : value;
+}
+
+/**
+ * Builds a compute() for a role that needs more than one real metric,
+ * possibly on different scales. `requiredKeys` are a hard capability
+ * floor — a model missing any of them doesn't qualify for this role at
+ * all (same as the existing null-filter elsewhere). `optionalKeys` only
+ * tighten the bottleneck when a model actually reports them — so a role
+ * gaining a new, sparser real benchmark (e.g. terminalBenchV2) never
+ * shrinks its candidate pool for models AA simply hasn't scored on it yet.
+ * Every included metric is converted to the same 0-1 unit scale (see
+ * toUnitScale) before taking the minimum, so mixing scales is fair
+ * without losing real magnitude information.
+ */
+function scaledBottleneck(requiredKeys, optionalKeys = []) {
+  return (model) => {
+    if (requiredKeys.some((key) => model[key] == null)) return null;
+    const keys = [...requiredKeys, ...optionalKeys.filter((key) => model[key] != null)];
+    let worst = null;
+    for (const key of keys) {
+      const v = toUnitScale(key, model[key]);
+      if (worst == null || v < worst) worst = v;
+    }
+    return worst;
+  };
+}
+
+/**
+ * Same real metrics as ROLE_DEFINITIONS, relabeled to the seven-role team
+ * vocabulary the user settled on for the "AI TEAM" widget (Explorer /
+ * Architect / Builder / Debugger / Tester / Reviewer / Economy) — plus,
+ * per explicit decision, real role-specific benchmarks layered in as
+ * optional tie-breakers wherever AA reports them (gpqa for reasoning-heavy
+ * roles, tauBanking for agentic/tool-use, terminalBenchV2 for
+ * terminal-involved roles) instead of only ever comparing the same two
+ * composite indices. Kept as a separate list from ROLE_DEFINITIONS so
+ * bestModelPerRole()'s existing contract and tests stay untouched.
+ */
 const AI_TEAM_ROLE_DEFINITIONS = [
-  { role: "Explorer", compute: (m) => m.intelligenceIndex, better: "max" },
-  { role: "Architect", compute: (m) => m.intelligenceIndex, better: "max" },
-  { role: "Builder", compute: (m) => m.codingIndex, better: "max" },
-  { role: "Debugger", compute: (m) => minOfReal(m.intelligenceIndex, m.codingIndex), better: "max" },
-  { role: "Tester", compute: (m) => m.codingIndex, better: "max" },
+  { role: "Explorer", compute: scaledBottleneck(["intelligenceIndex"], ["gpqa"]), better: "max" },
+  { role: "Architect", compute: scaledBottleneck(["intelligenceIndex"], ["gpqa"]), better: "max" },
+  { role: "Builder", compute: scaledBottleneck(["codingIndex"], ["tauBanking"]), better: "max" },
+  { role: "Debugger", compute: scaledBottleneck(["intelligenceIndex", "codingIndex"], ["terminalBenchV2"]), better: "max" },
+  { role: "Tester", compute: scaledBottleneck(["codingIndex"], ["terminalBenchV2"]), better: "max" },
   { role: "Reviewer", compute: (m) => minOfReal(m.intelligenceIndex, m.codingIndex), better: "max" },
   { role: "Economy", compute: (m) => m.priceInputPerMTok, better: "min" }
 ];

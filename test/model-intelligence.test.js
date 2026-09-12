@@ -362,3 +362,37 @@ test("buildAiTeam falls back to usage-based diversity when near-equivalent alter
   const tester = team.find((t) => t.role === "Tester");
   assert.ok(["claude", "codex"].includes(tester.primary.adapterId));
 });
+
+test("Debugger's real optional terminalBenchV2 signal can flip a near-equivalent pick, without requiring every model to report it", () => {
+  const aa = [
+    // Both models tie exactly on intelligence/coding, so the bottleneck
+    // comes down to their real, meaningfully different terminal-bench score.
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.60 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.95 }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
+  );
+  const claude = scored.find((m) => m.adapterId === "claude");
+  assert.equal(claude.terminalBenchV2, 0.60); // confirms the field actually flows through scoreAvailableModels
+  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  const debugger_ = team.find((t) => t.role === "Debugger");
+  assert.equal(debugger_.primary.adapterId, "codex", "the real terminal-bench gap should be the deciding bottleneck once intelligence/coding are this close");
+});
+
+test("a role's optional metric never shrinks its candidate pool for a model AA simply hasn't scored on it yet", () => {
+  const aa = [
+    // Only one model reports tauBanking (Builder's optional metric) — the
+    // other must still qualify for Builder using codingIndex alone.
+    { slug: "has-tau", name: "Has Tau", intelligenceIndex: 50, codingIndex: 60, mathIndex: null, tauBanking: 0.9 },
+    { slug: "no-tau", name: "No Tau", intelligenceIndex: 50, codingIndex: 95, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "has-tau" }] }, { adapterId: "codex", models: [{ id: "no-tau" }] }], aa
+  );
+  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  const builder = team.find((t) => t.role === "Builder");
+  // no-tau's real ~58% coding advantage must still win decisively —
+  // missing the optional metric must not disqualify or penalize it.
+  assert.equal(builder.primary.adapterId, "codex");
+});
