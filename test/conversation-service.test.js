@@ -182,7 +182,10 @@ test("snapshot cross-references real model catalogs with real Artificial Analysi
     enableProviderProbes: true,
     listPlans: async () => [],
     recoverRuns: async () => {},
-    inspectExecutionAdapters: () => [],
+    inspectExecutionAdapters: () => [
+      { id: "codex", available: true, launchable: true, reason: null },
+      { id: "claude", available: true, launchable: true, reason: null }
+    ],
     inspectEngramIntegration: () => ({ status: "configured" }),
     readCodexUsage: async () => null,
     readClaudeUsage: async () => null,
@@ -203,6 +206,76 @@ test("snapshot cross-references real model catalogs with real Artificial Analysi
   assert.equal(snapshot.modelIntelligence.status, "live");
   assert.equal(snapshot.modelIntelligence.models.length, 2);
   assert.deepEqual(snapshot.modelIntelligence.models.map((m) => m.modelId), ["gpt-6-astra", "claude-opus-5"]);
+});
+
+test("snapshot excludes a provider from FIT once its real quota is exhausted, even though it would otherwise win on capability", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [
+      { id: "codex", available: true, launchable: true, reason: null },
+      { id: "claude", available: true, launchable: true, reason: null }
+    ],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => ({ primary: { remainingPercent: 2 } }), // nearly exhausted
+    readCodexModels: async () => ({ status: "measured", models: [{ id: "gpt-6-astra", displayName: "GPT-6 Astra" }] }),
+    readClaudeModels: () => ({ status: "documented", models: [{ id: "claude-opus-5" }] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    readArtificialAnalysisModels: async () => ({
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [
+        // Claude objectively wins on every real metric, but its quota is exhausted.
+        { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 30, codingIndex: 30, mathIndex: null },
+        { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 99, codingIndex: 99, mathIndex: null }
+      ]
+    })
+  });
+
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.deepEqual(snapshot.modelIntelligence.models.map((m) => m.adapterId), ["codex"]);
+  assert.equal(snapshot.modelIntelligence.eligibility.claude.ok, false);
+  assert.match(snapshot.modelIntelligence.eligibility.claude.reason, /nearly exhausted/);
+  assert.equal(snapshot.modelIntelligence.eligibility.codex.ok, true);
+  // Claude never wins a role despite the higher real score, because it was excluded before comparison.
+  assert.ok(snapshot.modelIntelligence.roles.every((r) => r.adapterId === "codex"));
+});
+
+test("snapshot always excludes opencode-zen and cursor from FIT's automatic candidates, independent of their catalogs", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [
+      { id: "codex", available: true, launchable: true, reason: null },
+      { id: "claude", available: true, launchable: true, reason: null },
+      { id: "cursor", available: true, launchable: true, reason: null }
+    ],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [] }),
+    readClaudeModels: () => ({ status: "documented", models: [] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: ["claude-opus-5"] }),
+    readArtificialAnalysisModels: async () => ({
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [{ slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 99, codingIndex: 99, mathIndex: null }]
+    })
+  });
+
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.deepEqual(snapshot.modelIntelligence.models, []);
+  assert.equal(snapshot.modelIntelligence.eligibility.cursor.ok, false);
+  assert.match(snapshot.modelIntelligence.eligibility.cursor.reason, /manual-only/);
+  assert.equal(snapshot.modelIntelligence.eligibility["opencode-zen"].ok, false);
+  assert.match(snapshot.modelIntelligence.eligibility["opencode-zen"].reason, /PAYG/);
 });
 
 test("snapshot leaves modelIntelligence at its honest unknown default when probes are disabled", async () => {

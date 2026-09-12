@@ -18,7 +18,7 @@ import { readCodexModels } from "../observability/codex-models.js";
 import { readOpenCodeModels } from "../observability/opencode-models.js";
 import { readClaudeModels } from "../observability/claude-models.js";
 import { readCursorModels } from "../observability/cursor-models.js";
-import { isLikelyQuestion, selectAskProvider, selectExecutionProvider } from "../intelligence/execution-router.js";
+import { checkCandidate, isLikelyQuestion, selectAskProvider, selectExecutionProvider } from "../intelligence/execution-router.js";
 import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
@@ -152,7 +152,7 @@ function snapshot(projectRoot, plans, providers = {}, integrations = {}) {
     providers,
     integrations,
     usage: { codex: null, claude: null, opencode: null },
-    modelIntelligence: { status: "unknown", source: null, age: null, models: [], roles: [] },
+    modelIntelligence: { status: "unknown", source: null, age: null, models: [], roles: [], eligibility: {} },
     governance: {
       methodologyOwner: "gentle-ai",
       orchestratorOwner: "kairo",
@@ -290,15 +290,16 @@ export function createConversationService(deps = {}) {
     if (!enableProviderProbes) {
       return routeTask({ task: taskText, adapters, codexUsage: null, claudeUsage: null, catalogs: {}, skills });
     }
-    const [codexUsage, claudeUsage, codexCatalog, opencodeGoCatalog, opencodeZenCatalog] = await Promise.all([
+    const [codexUsage, claudeUsage, opencodeGoUsage, codexCatalog, opencodeGoCatalog, opencodeZenCatalog] = await Promise.all([
       readCodexUsageCached(projectRoot, { cwd: projectRoot }),
       readClaudeUsageCached("global", {}),
+      readOpenCodeGoCached("global", {}),
       readCodexModelsImpl(),
       readOpenCodeModelsImpl({ provider: "opencode-go" }),
       readOpenCodeModelsImpl({ provider: "opencode" })
     ]);
     return routeTask({
-      task: taskText, adapters, codexUsage, claudeUsage, skills,
+      task: taskText, adapters, codexUsage, claudeUsage, opencodeGoUsage, skills,
       catalogs: {
         codex: codexCatalog, opencodeGo: opencodeGoCatalog, opencodeZen: opencodeZenCatalog,
         claude: readClaudeModelsImpl()
@@ -344,16 +345,31 @@ export function createConversationService(deps = {}) {
           readCursorModelsCached(projectRoot, { cwd: projectRoot }),
           readArtificialAnalysisModelsCached("global", {})
         ]);
+        // Same eligibility policy the execution/ask router uses: FIT can
+        // never recommend a provider that isn't actually available,
+        // launchable, or has usable quota right now — capability alone
+        // never overrides that. Zen and Cursor are always excluded here
+        // (PAYG risk / manual-only), independent of any benchmark score.
+        const eligibility = {};
+        const candidates = [];
+        for (const adapterId of ["codex", "claude", "opencode-go", "opencode-zen", "cursor"]) {
+          const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage: opencodeUsage?.go });
+          eligibility[adapterId] = check;
+          if (check.ok) candidates.push(adapterId);
+        }
+        const catalogsByAdapter = {
+          codex: codexCatalog?.models ?? [],
+          claude: readClaudeModelsImpl().models,
+          "opencode-go": opencodeGoCatalog?.models ?? [],
+          cursor: cursorCatalog?.models ?? []
+        };
         const scored = scoreAvailableModels(
-          [
-            { adapterId: "codex", models: codexCatalog?.models ?? [] },
-            { adapterId: "claude", models: readClaudeModelsImpl().models },
-            { adapterId: "opencode-go", models: opencodeGoCatalog?.models ?? [] },
-            { adapterId: "cursor", models: cursorCatalog?.models ?? [] }
-          ],
+          candidates.map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
           aa.models
         );
-        result.modelIntelligence = { status: aa.status, source: aa.source, age: aa.age, models: scored, roles: bestModelPerRole(scored) };
+        result.modelIntelligence = {
+          status: aa.status, source: aa.source, age: aa.age, models: scored, roles: bestModelPerRole(scored), eligibility
+        };
       }
       return result;
     },

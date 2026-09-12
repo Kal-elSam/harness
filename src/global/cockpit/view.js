@@ -321,9 +321,18 @@ export class CockpitView {
    */
   fitLines() {
     const intel = this.snapshot?.modelIntelligence;
-    if (!intel || intel.status === "unknown" || !intel.roles?.length) {
-      const reason = intel?.status === "unknown" && intel?.error ? ` (${intel.error})` : "";
+    if (!intel || intel.status === "unknown") {
+      const reason = intel?.error ? ` (${intel.error})` : "";
       return [theme.fg("muted", `No model benchmark data yet${reason}`)];
+    }
+    if (!intel.roles?.length) {
+      // Real data exists, but no provider survived the eligibility check
+      // (availability/launchability/quota) — show the real reason each one
+      // was rejected instead of silently showing nothing or a fake winner.
+      const reasons = Object.entries(intel.eligibility ?? {})
+        .filter(([, check]) => !check.ok)
+        .map(([adapterId, check]) => `${adapterId}: ${check.reason}`);
+      return [theme.fg("warning", "No eligible provider right now"), ...reasons.map((r) => theme.fg("muted", r))];
     }
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
     const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
@@ -332,6 +341,20 @@ export class CockpitView {
       lines.push(`${entry.role.padEnd(22)} ${provider} · ${entry.displayName ?? entry.modelId}`);
     }
     return lines;
+  }
+
+  /**
+   * `/why` detail: every candidate provider's real eligibility outcome —
+   * which ones were rejected and their exact reason, which survived. The
+   * main FIT widget stays a single line per role; this is the drill-down.
+   */
+  fitWhyLines() {
+    const intel = this.snapshot?.modelIntelligence;
+    const entries = Object.entries(intel?.eligibility ?? {});
+    if (!entries.length) return [theme.fg("muted", "No eligibility data yet.")];
+    return entries.map(([adapterId, check]) => (check.ok
+      ? theme.fg("success", `${adapterId}: eligible`)
+      : theme.fg("muted", `${adapterId}: excluded — ${check.reason}`)));
   }
 
   /**

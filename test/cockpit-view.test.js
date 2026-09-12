@@ -92,6 +92,45 @@ test("FIT reports honestly when there is no benchmark data yet, never a fabricat
   assert.match(lines, /No model benchmark data yet \(no API key configured\)/);
 });
 
+test("FIT shows the real rejection reasons when data exists but no provider is eligible right now — never a fake winner", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [], roles: [],
+      eligibility: {
+        codex: { ok: false, reason: "Codex quota nearly exhausted (2% left)" },
+        claude: { ok: false, reason: "Claude quota nearly exhausted (1% left)" },
+        "opencode-go": { ok: false, reason: "opencode-go: not available" },
+        "opencode-zen": { ok: false, reason: "OpenCode Zen is excluded from automatic routing (PAYG risk)" },
+        cursor: { ok: false, reason: "Cursor is manual-only, not used for automatic recommendations" }
+      }
+    }
+  });
+  const lines = view.render(100).join("\n");
+  assert.match(lines, /No eligible provider right now/);
+  assert.match(lines, /codex: Codex quota nearly exhausted \(2% left\)/);
+  assert.match(lines, /claude: Claude quota nearly exhausted \(1% left\)/);
+});
+
+test("/why-style fitWhyLines names every candidate's real eligibility outcome, not just the excluded ones", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      eligibility: {
+        codex: { ok: true, reason: null },
+        claude: { ok: false, reason: "Claude quota nearly exhausted (2% left)" }
+      }
+    }
+  });
+  const lines = view.fitWhyLines().join("\n");
+  assert.match(lines, /codex: eligible/);
+  assert.match(lines, /claude: excluded — Claude quota nearly exhausted \(2% left\)/);
+});
+
 test("narrow dashboard keeps Go and Zen on separate readable rows", () => {
   const { view } = makeView();
   view.setSnapshot({

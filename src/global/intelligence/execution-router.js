@@ -123,12 +123,29 @@ function remainingPercent(usageEntry) {
   return usageEntry?.primary?.remainingPercent ?? null;
 }
 
+// Below this real remaining-quota percentage, a provider is treated as
+// exhausted for automatic routing — conserved for the tests explicitly
+// listed as this increment's scope, not a newly-invented number.
+const MIN_QUOTA_PERCENT = 5;
+
 /**
- * @param {string} adapterId
- * @param {{adapters: object[], codexUsage: object|null, claudeUsage: object|null}} context
+ * The single eligibility policy shared by execution routing, ask routing,
+ * and the FIT widget — one candidate is judged the same way everywhere, so
+ * a provider that FIT recommends is guaranteed to actually be launchable.
+ * Real availability/launchability/quota only; never a capability judgment
+ * (that's scoreAvailableModels' job, applied only to survivors of this).
+ * @param {string} adapterId - "codex" | "claude" | "opencode-go" | "opencode-zen" | "cursor"
+ * @param {{adapters: object[], codexUsage?: object|null, claudeUsage?: object|null, opencodeGoUsage?: object|null}} context
  * @returns {{ok: boolean, reason: string|null}}
  */
-function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage }) {
+export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage }) {
+  // Zen carries real PAYG/billing risk (see conversation/service.js's
+  // capabilities.openCodeExecution) and Cursor is a deliberate manual-only
+  // choice from an earlier decision — neither is ever an automatic pick,
+  // regardless of what their real catalogs/benchmarks might otherwise say.
+  if (adapterId === "opencode-zen") return { ok: false, reason: "OpenCode Zen is excluded from automatic routing (PAYG risk)" };
+  if (adapterId === "cursor") return { ok: false, reason: "Cursor is manual-only, not used for automatic recommendations" };
+
   const adapter = findAdapter(adapterId, adapters);
   if (!adapter) return { ok: false, reason: `${adapterId}: no adapter found` };
   if (!adapter.available) return { ok: false, reason: adapter.reason ?? `${adapterId}: not available` };
@@ -136,11 +153,19 @@ function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage }) {
 
   if (adapterId === "codex") {
     const left = remainingPercent(codexUsage);
-    if (left != null && left < 5) return { ok: false, reason: `Codex quota nearly exhausted (${left}% left)` };
+    if (left != null && left < MIN_QUOTA_PERCENT) return { ok: false, reason: `Codex quota nearly exhausted (${left}% left)` };
   }
   if (adapterId === "claude") {
     const left = remainingPercent(claudeUsage);
-    if (left != null && left < 5) return { ok: false, reason: `Claude quota nearly exhausted (${left}% left)` };
+    if (left != null && left < MIN_QUOTA_PERCENT) return { ok: false, reason: `Claude quota nearly exhausted (${left}% left)` };
+  }
+  if (adapterId === "opencode-go") {
+    const windows = opencodeGoUsage?.go?.windows ?? opencodeGoUsage?.windows ?? [];
+    // A cap being hit blocks real requests regardless of other windows
+    // having headroom — any rate-limited window is real evidence of that,
+    // so it's the conservative (fail-closed) reading, not a guess.
+    const limited = windows.find((window) => window.status === "rate-limited");
+    if (limited) return { ok: false, reason: `OpenCode Go ${limited.name} window is rate-limited` };
   }
   return { ok: true, reason: null };
 }
@@ -306,7 +331,7 @@ export function selectAskProvider({ adapters, codexUsage = null, claudeUsage = n
  * @param {object} [args.catalogs] - { codex, opencodeGo, opencodeZen, cursor, claude } readXModels() results
  */
 export function selectExecutionProvider({
-  task, adapters, codexUsage = null, claudeUsage = null, catalogs = {}, skills = []
+  task, adapters, codexUsage = null, claudeUsage = null, opencodeGoUsage = null, catalogs = {}, skills = []
 }) {
   const profile = classifyTask(task);
   const { needsApproval, order } = candidateOrder(profile);
@@ -329,7 +354,7 @@ export function selectExecutionProvider({
 
   const attempts = [];
   for (const adapterId of order) {
-    const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage });
+    const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage });
     attempts.push({ adapterId, ...check });
     if (check.ok) {
       const model = defaultModelFor(adapterId, catalogs);

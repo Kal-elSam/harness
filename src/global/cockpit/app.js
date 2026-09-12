@@ -140,7 +140,7 @@ export async function runCockpitApp({
     if (task.startsWith("/")) {
       const command = task.split(/\s+/)[0].toLowerCase();
       if (command === "/help") {
-        pushTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /models model fit · /clear · /quit");
+        pushTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /models model fit · /why eligibility detail · /clear · /quit");
       } else if (command === "/usage" || command === "/providers" || command === "/status") {
         for (const line of command === "/usage" ? view.usageLines() : view.providerLines()) {
           pushTranscript("kairo", line);
@@ -150,6 +150,10 @@ export async function runCockpitApp({
         // FIT already renders this permanently in its own widget; /models
         // is a convenience to also see it in the chat transcript history.
         for (const line of view.fitLines()) pushTranscript("kairo", line);
+      } else if (command === "/why") {
+        // Drill-down for FIT: which providers were excluded and the exact
+        // real reason (quota, availability, PAYG/manual-only policy).
+        for (const line of view.fitWhyLines()) pushTranscript("kairo", line);
       } else if (command === "/plan") {
         const planTask = task.slice(command.length).trim();
         if (!planTask) {

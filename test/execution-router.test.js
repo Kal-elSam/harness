@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  classifyAskEffort, classifyTask, isLikelyQuestion, matchSkills, selectAskProvider, selectExecutionProvider
+  checkCandidate, classifyAskEffort, classifyTask, isLikelyQuestion, matchSkills, selectAskProvider, selectExecutionProvider
 } from "../src/global/intelligence/execution-router.js";
 
 const CLAUDE_CATALOG = {
@@ -224,4 +224,40 @@ test("selectExecutionProvider surfaces the best-matching skill in why, without l
   assert.equal(result.decision, "ROUTED");
   assert.equal(result.matchedSkills[0].name, "go-testing");
   assert.match(result.why, /matches skill "go-testing"/);
+});
+
+test("checkCandidate always excludes opencode-zen (PAYG risk) and cursor (manual-only), regardless of adapter status", () => {
+  const zen = checkCandidate("opencode-zen", { adapters: [{ id: "opencode", available: true, launchable: true }] });
+  assert.equal(zen.ok, false);
+  assert.match(zen.reason, /PAYG/);
+
+  const cursor = checkCandidate("cursor", { adapters: [{ id: "cursor", available: true, launchable: true }] });
+  assert.equal(cursor.ok, false);
+  assert.match(cursor.reason, /manual-only/);
+});
+
+test("checkCandidate rejects opencode-go when any real window is rate-limited, even with other windows healthy", () => {
+  const adapters = [{ id: "opencode", available: true, launchable: true, reason: null }];
+  const limited = checkCandidate("opencode-go", {
+    adapters,
+    opencodeGoUsage: { windows: [
+      { name: "rolling", remainingPercent: 100, status: "ok" },
+      { name: "monthly", remainingPercent: 0, status: "rate-limited" }
+    ] }
+  });
+  assert.equal(limited.ok, false);
+  assert.match(limited.reason, /rate-limited/);
+
+  const healthy = checkCandidate("opencode-go", {
+    adapters,
+    opencodeGoUsage: { windows: [{ name: "rolling", remainingPercent: 80, status: "ok" }] }
+  });
+  assert.equal(healthy.ok, true);
+});
+
+test("checkCandidate still applies the real codex/claude quota floor unchanged", () => {
+  const adapters = [{ id: "codex", available: true, launchable: true, reason: null }];
+  const low = checkCandidate("codex", { adapters, codexUsage: { primary: { remainingPercent: 2 } } });
+  assert.equal(low.ok, false);
+  assert.match(low.reason, /nearly exhausted/);
 });
