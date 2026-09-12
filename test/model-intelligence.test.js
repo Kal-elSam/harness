@@ -396,3 +396,31 @@ test("a role's optional metric never shrinks its candidate pool for a model AA s
   // missing the optional metric must not disqualify or penalize it.
   assert.equal(builder.primary.adapterId, "codex");
 });
+
+test("Economy requires a real capability floor — a model AA never scored on intelligence or coding can't win purely on price", () => {
+  const aa = [
+    { slug: "unscored-cheap", name: "Unscored Cheap", intelligenceIndex: null, codingIndex: null, mathIndex: null, priceInputPerMTok: 0.01 },
+    { slug: "scored-pricier", name: "Scored Pricier", intelligenceIndex: 50, codingIndex: 60, mathIndex: null, priceInputPerMTok: 5 }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "codex", models: [{ id: "unscored-cheap" }] }, { adapterId: "claude", models: [{ id: "scored-pricier" }] }], aa
+  );
+  const team = buildAiTeam(scored, { codex: { ok: true }, claude: { ok: true } });
+  const economy = team.find((t) => t.role === "Economy");
+  assert.equal(economy.primary.adapterId, "claude", "an unscored model must never win Economy just because it's cheaper");
+});
+
+test("buildAiTeam prefers real higher throughput as the tie-break after price, before falling back to usage", () => {
+  const aa = [
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 77.0, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 150 }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
+  );
+  // Same real price — speed should decide the near-equivalent tie instead
+  // of immediately falling back to usage-based rotation.
+  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  const tester = team.find((t) => t.role === "Tester");
+  assert.equal(tester.primary.adapterId, "codex", "the real 3x faster option should win the tie when price doesn't distinguish them");
+});

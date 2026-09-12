@@ -296,7 +296,12 @@ const AI_TEAM_ROLE_DEFINITIONS = [
   { role: "Debugger", compute: scaledBottleneck(["intelligenceIndex", "codingIndex"], ["terminalBenchV2"]), better: "max" },
   { role: "Tester", compute: scaledBottleneck(["codingIndex"], ["terminalBenchV2"]), better: "max" },
   { role: "Reviewer", compute: (m) => minOfReal(m.intelligenceIndex, m.codingIndex), better: "max" },
-  { role: "Economy", compute: (m) => m.priceInputPerMTok, better: "min" }
+  // Capability floor: cheapest-wins-outright would let a model with zero
+  // known real capability (AA tracks a price for it but never scored its
+  // intelligence or coding) win Economy purely on price. Requiring at
+  // least one of the two composite indices is the same real floor every
+  // other role already has, just applied before ranking by price.
+  { role: "Economy", compute: (m) => (m.intelligenceIndex == null && m.codingIndex == null ? null : m.priceInputPerMTok), better: "min" }
 ];
 
 function toTeamModel(model, available, registry = null) {
@@ -364,10 +369,10 @@ const NEAR_EQUIVALENCE_BAND = 0.08;
  *    alternative from another provider by more than NEAR_EQUIVALENCE_BAND,
  *    that real advantage is never sacrificed for diversity.
  * 3. Near-equivalent roles favor real savings — among alternatives within
- *    the band, the genuinely cheaper real option wins the tie (falling
- *    back to whichever provider is least-used so far when price is
- *    unknown or equal), so ties (never real wins) are what create
- *    diversity and conserve both money and quota.
+ *    the band, the genuinely cheaper real option wins the tie; if price
+ *    doesn't decide, the real faster option wins next; only then does it
+ *    fall back to whichever provider is least-used so far. Ties (never
+ *    real wins) are what create diversity and conserve money, speed, and quota.
  * 4. Review independence — Reviewer is reassigned off Builder's own
  *    provider whenever a real alternative exists, so a model is never the
  *    sole judge of its own family's work.
@@ -406,13 +411,21 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
       if (margin <= NEAR_EQUIVALENCE_BAND) {
         // Among real near-equivalents, prefer the genuinely cheaper real
         // option first — capability being close enough is exactly when
-        // cost/quota should decide, not a tie-break of last resort. Only
-        // fall back to spreading load across the least-used provider when
-        // real prices are unknown or actually equal.
+        // cost/quota should decide, not a tie-break of last resort. If
+        // price doesn't decide (unknown or equal), prefer real higher
+        // throughput next (outputTokensPerSecond is an unbounded raw
+        // rate, not a 0-100/0-1 index — it's used only as a tie-break
+        // here, never blended into the bottleneck, so it doesn't need a
+        // scale conversion). Only fall back to spreading load across the
+        // least-used provider when neither price nor speed distinguishes them.
         const leaderPrice = leader.model.priceInputPerMTok;
         const rivalPrice = rival.model.priceInputPerMTok;
+        const leaderSpeed = leader.model.outputTokensPerSecond;
+        const rivalSpeed = rival.model.outputTokensPerSecond;
         if (leaderPrice != null && rivalPrice != null && leaderPrice !== rivalPrice) {
           if (rivalPrice < leaderPrice) pick = rival;
+        } else if (leaderSpeed != null && rivalSpeed != null && leaderSpeed !== rivalSpeed) {
+          if (rivalSpeed > leaderSpeed) pick = rival;
         } else {
           const leaderUsage = usageCount[leader.model.adapterId] ?? 0;
           const rivalUsage = usageCount[rival.model.adapterId] ?? 0;
