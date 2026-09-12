@@ -44,6 +44,26 @@ test("scoreAvailableModels handles Cursor's real catalog shape (plain model name
   assert.equal(results[0].modelId, "claude-opus-5");
 });
 
+test("scoreAvailableModels tags each model with the real, unweighted metrics it actually wins — never a blended composite score", () => {
+  const aa = [
+    { slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: 60, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 },
+    { slug: "model-b", name: "Model B", intelligenceIndex: 50, codingIndex: 95, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 200 }
+  ];
+  const results = scoreAvailableModels(
+    [{ adapterId: "codex", models: [{ id: "model-a" }, { id: "model-b" }] }], aa
+  );
+  const a = results.find((r) => r.modelId === "model-a");
+  const b = results.find((r) => r.modelId === "model-b");
+  assert.deepEqual(a.bestFor, ["best reasoning"]);
+  assert.deepEqual(b.bestFor, ["best coding", "fastest", "cheapest"]);
+});
+
+test("scoreAvailableModels never tags a model as best on a metric it doesn't actually report", () => {
+  const aa = [{ slug: "model-a", name: "Model A", intelligenceIndex: null, codingIndex: null, mathIndex: null, priceInputPerMTok: null, outputTokensPerSecond: null }];
+  const results = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "model-a" }] }], aa);
+  assert.deepEqual(results[0].bestFor, []);
+});
+
 test("scoreAvailableModels returns an empty list, never a fabricated entry, when nothing matches", () => {
   const results = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "unknown-model" }] }], AA_MODELS);
   assert.deepEqual(results, []);

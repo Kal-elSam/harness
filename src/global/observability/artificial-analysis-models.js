@@ -22,7 +22,13 @@ function normalizeModel(entry) {
     creator: entry.model_creator?.slug ?? null,
     intelligenceIndex: entry.evaluations?.artificial_analysis_intelligence_index ?? null,
     codingIndex: entry.evaluations?.artificial_analysis_coding_index ?? null,
-    mathIndex: entry.evaluations?.artificial_analysis_math_index ?? null
+    mathIndex: entry.evaluations?.artificial_analysis_math_index ?? null,
+    // Real reported numbers, not derived scores — used to flag the
+    // cheapest/fastest real option among what you actually have access to,
+    // never blended into a single invented composite.
+    priceInputPerMTok: entry.pricing?.price_1m_input_tokens ?? null,
+    priceOutputPerMTok: entry.pricing?.price_1m_output_tokens ?? null,
+    outputTokensPerSecond: entry.median_output_tokens_per_second ?? null
   };
 }
 

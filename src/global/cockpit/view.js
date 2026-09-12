@@ -340,10 +340,12 @@ export class CockpitView {
 
   /**
    * Real models Kairo can actually launch right now, ranked by real
-   * Artificial Analysis coding score — never AA's full catalog, and never
-   * a model Kairo can't confidently match to a real score (see
-   * intelligence/model-intelligence.js). Shown when no task is selected,
-   * so the widget carries real information instead of sitting empty.
+   * Artificial Analysis coding score, each tagged with which real metric(s)
+   * it actually wins among your available models (see bestFor in
+   * intelligence/model-intelligence.js) — e.g. "best reasoning", "cheapest"
+   * — never a blended/invented composite score or a fixed role label.
+   * Shown when no task is selected, so the widget carries real information
+   * instead of sitting empty.
    */
   modelIntelligenceLines() {
     const intel = this.snapshot?.modelIntelligence;
@@ -358,7 +360,8 @@ export class CockpitView {
       const provider = entry.adapterId.charAt(0).toUpperCase() + entry.adapterId.slice(1);
       const coding = entry.codingIndex != null ? entry.codingIndex.toFixed(1) : "—";
       const intelligence = entry.intelligenceIndex != null ? entry.intelligenceIndex.toFixed(1) : "—";
-      lines.push(`${provider.padEnd(8)} ${(entry.displayName ?? entry.modelId).padEnd(20)} coding ${coding.padStart(5)}  intel ${intelligence.padStart(5)}`);
+      const tag = entry.bestFor?.length ? theme.fg("success", ` ← ${entry.bestFor.join(", ")}`) : "";
+      lines.push(`${provider.padEnd(8)} ${(entry.displayName ?? entry.modelId).padEnd(20)} coding ${coding.padStart(5)}  intel ${intelligence.padStart(5)}${tag}`);
     }
     return lines;
   }
