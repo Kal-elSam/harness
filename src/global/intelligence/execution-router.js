@@ -232,6 +232,22 @@ function reasonPhrase(adapterId, profile) {
 }
 
 /**
+ * Orders ask candidates by real remaining quota so repeated questions don't
+ * always burn the same account — but only when BOTH sides have a real
+ * measured number; with either one unknown there's no honest comparison to
+ * make, so it keeps today's existing claude-first default instead of
+ * guessing which side "probably" has more room.
+ * @param {number|null} codexRemaining
+ * @param {number|null} claudeRemaining
+ */
+function pickAskOrder(codexRemaining, claudeRemaining) {
+  if (codexRemaining == null || claudeRemaining == null) return { order: ["claude", "codex"], usedQuota: false };
+  return codexRemaining >= claudeRemaining
+    ? { order: ["codex", "claude"], usedQuota: true }
+    : { order: ["claude", "codex"], usedQuota: true };
+}
+
+/**
  * Routes a read-only question to a provider — deliberately NOT the same
  * risk/reasoning gating as selectExecutionProvider: a question ABOUT a
  * risky topic ("how does auth work here?") is itself completely safe,
@@ -249,16 +265,18 @@ function reasonPhrase(adapterId, profile) {
  */
 export function selectAskProvider({ adapters, codexUsage = null, claudeUsage = null, catalogs = {}, taskText = "" }) {
   const effort = classifyAskEffort(taskText);
+  const { order, usedQuota } = pickAskOrder(remainingPercent(codexUsage), remainingPercent(claudeUsage));
   const attempts = [];
-  for (const adapterId of ["claude", "codex"]) {
+  for (const adapterId of order) {
     const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage });
     attempts.push({ adapterId, ...check });
     if (check.ok) {
+      const quotaNote = usedQuota ? "; more real quota remaining" : "";
       return {
         decision: "ROUTED",
         provider: adapterId,
         model: pickModelForEffort(adapterId, effort, catalogs),
-        why: `read-only question (${effort} effort)`,
+        why: `read-only question (${effort} effort${quotaNote})`,
         rejectedCandidates: attempts.filter((entry) => !entry.ok)
       };
     }

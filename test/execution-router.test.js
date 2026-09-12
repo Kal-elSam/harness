@@ -164,6 +164,37 @@ test("selectAskProvider never picks a tiered model for a provider with no cost/s
   assert.equal(result.model, "gpt-6-astra");
 });
 
+test("selectAskProvider picks whichever provider has more real remaining quota, when both are known", () => {
+  const codexAhead = selectAskProvider({
+    adapters: ADAPTERS,
+    codexUsage: { primary: { remainingPercent: 90 } },
+    claudeUsage: { primary: { remainingPercent: 20 } },
+    catalogs: { codex: { models: [{ id: "gpt-6-astra", isDefault: true }] } }
+  });
+  assert.equal(codexAhead.provider, "codex");
+  assert.match(codexAhead.why, /more real quota remaining/);
+
+  const claudeAhead = selectAskProvider({
+    adapters: ADAPTERS,
+    codexUsage: { primary: { remainingPercent: 10 } },
+    claudeUsage: { primary: { remainingPercent: 80 } },
+    catalogs: CLAUDE_CATALOG
+  });
+  assert.equal(claudeAhead.provider, "claude");
+  assert.match(claudeAhead.why, /more real quota remaining/);
+});
+
+test("selectAskProvider keeps the claude-first default when either side's quota is unknown, instead of guessing", () => {
+  const oneUnknown = selectAskProvider({
+    adapters: ADAPTERS,
+    codexUsage: { primary: { remainingPercent: 90 } },
+    claudeUsage: null,
+    catalogs: CLAUDE_CATALOG
+  });
+  assert.equal(oneUnknown.provider, "claude");
+  assert.doesNotMatch(oneUnknown.why, /more real quota remaining/);
+});
+
 test("selectAskProvider falls back to codex when claude is unavailable, and reports no provider when both are", () => {
   const claudeDown = ADAPTERS.map((a) => (a.id === "claude" ? { ...a, available: false, reason: "not logged in" } : a));
   const fallback = selectAskProvider({ adapters: claudeDown, catalogs: { codex: { models: [{ id: "gpt-6-astra", isDefault: true }] } } });
