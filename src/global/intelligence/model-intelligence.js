@@ -475,27 +475,6 @@ function rankEligible(models, eligibility, compute, better) {
   return rankBy(models.filter((m) => eligibility[m.adapterId]?.ok === true), compute, better);
 }
 
-/** The best real alternative from a DIFFERENT adapter than `ranked[0]` — null if none exists. */
-function rivalOf(ranked) {
-  if (!ranked.length) return null;
-  return ranked.find((entry) => entry.model.adapterId !== ranked[0].model.adapterId) ?? null;
-}
-
-/**
- * How decisive a role's real winner is over the best real alternative from
- * another provider: 0 means a dead tie, larger means a bigger real gap.
- * Infinity means there is no real alternative at all (the winner is
- * forced — never overridden for diversity). Roles are settled in
- * descending order of this value so a genuine capability gap always locks
- * in its true winner before any near-tied role gets spread elsewhere.
- */
-function decisiveness(ranked) {
-  if (!ranked.length) return -Infinity;
-  const rival = rivalOf(ranked);
-  if (!rival) return Infinity;
-  const scale = Math.abs(ranked[0].value) || 1;
-  return Math.abs(ranked[0].value - rival.value) / scale;
-}
 
 // Calibrated directly against real measured data, not picked arbitrarily.
 // Per explicit decision: capability alone isn't the only thing that
@@ -554,61 +533,24 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
     role, compute, better, ranked: rankEligible(models, eligibility, compute, better)
   }));
 
-  const settlementOrder = [...roleRankings].sort((a, b) => decisiveness(b.ranked) - decisiveness(a.ranked));
-  const usageCount = {};
+  // AI TEAM is deliberately pure maximum-capability per role: the real
+  // eligible winner, full stop. Price, real cost, and provider balance
+  // never displace it here — that's what EFFICIENT TEAM (buildEfficientTeam)
+  // is for. The two share the exact same ranking and evidence; they only
+  // differ in which real thing decides among near-equivalents.
   const chosenByRole = {};
-  for (const { role, ranked } of settlementOrder) {
-    if (!ranked.length) { chosenByRole[role] = null; continue; }
-    const leader = ranked[0];
-    const rival = rivalOf(ranked);
-    let pick = leader;
-    if (rival) {
-      const scale = Math.abs(leader.value) || 1;
-      const margin = Math.abs(leader.value - rival.value) / scale;
-      if (margin <= NEAR_EQUIVALENCE_BAND) {
-        // Among real near-equivalents, prefer the genuinely cheaper real
-        // option first — capability being close enough is exactly when
-        // cost/quota should decide, not a tie-break of last resort. If
-        // price doesn't decide, prefer real speed next — and "real speed"
-        // means Kairo's own observed duration for that exact model
-        // (kairo.durationMs, lower is better) when it exists, since that's
-        // what actually happened inside your subscriptions, not AA's
-        // reported throughput for a benchmark run elsewhere. Only fall
-        // back to AA's outputTokensPerSecond (an unbounded raw rate, used
-        // only as a tie-break, never blended into the bottleneck) when no
-        // real telemetry exists yet, then to usage-based rotation last.
-        const leaderPrice = resolveMetric(effectiveRegistry, leader.model, "priceInputPerMTok");
-        const rivalPrice = resolveMetric(effectiveRegistry, rival.model, "priceInputPerMTok");
-        const leaderDuration = bestEvidence(effectiveRegistry, effectiveRegistry.registerIdentity(leader.model.adapterId, leader.model.modelId), "kairo.durationMs");
-        const rivalDuration = bestEvidence(effectiveRegistry, effectiveRegistry.registerIdentity(rival.model.adapterId, rival.model.modelId), "kairo.durationMs");
-        const leaderSpeed = resolveMetric(effectiveRegistry, leader.model, "outputTokensPerSecond");
-        const rivalSpeed = resolveMetric(effectiveRegistry, rival.model, "outputTokensPerSecond");
-        if (leaderPrice != null && rivalPrice != null && leaderPrice !== rivalPrice) {
-          if (rivalPrice < leaderPrice) pick = rival;
-        } else if (leaderDuration && rivalDuration && leaderDuration.value !== rivalDuration.value) {
-          if (rivalDuration.value < leaderDuration.value) pick = rival;
-        } else if (leaderSpeed != null && rivalSpeed != null && leaderSpeed !== rivalSpeed) {
-          if (rivalSpeed > leaderSpeed) pick = rival;
-        } else {
-          const leaderUsage = usageCount[leader.model.adapterId] ?? 0;
-          const rivalUsage = usageCount[rival.model.adapterId] ?? 0;
-          if (rivalUsage <= leaderUsage) pick = rival;
-        }
-      }
-    }
-    chosenByRole[role] = pick;
-    usageCount[pick.model.adapterId] = (usageCount[pick.model.adapterId] ?? 0) + 1;
+  for (const { role, ranked } of roleRankings) {
+    chosenByRole[role] = ranked.length ? ranked[0] : null;
   }
 
   // A model is never the sole reviewer of its own family's work when a
-  // real independent alternative exists — this is a hard requirement, not
-  // a tie-break preference, so it's applied after settlement. But
-  // independence never overrides a real capability floor: the swap only
-  // happens when an independent alternative is a near-equivalent
-  // (same NEAR_EQUIVALENCE_BAND used everywhere else), never when the
-  // only other option is decisively worse — forcing a much weaker model
-  // in just to satisfy independence would trade away real review quality
-  // for a formality.
+  // real independent alternative exists — a review-quality/bias concern,
+  // not a cost one, so it applies in AI TEAM too. Independence never
+  // overrides a real capability floor: the swap only happens when an
+  // independent alternative is a near-equivalent (same NEAR_EQUIVALENCE_BAND
+  // used for classification elsewhere), never when the only other option
+  // is decisively worse — forcing a much weaker model in just to satisfy
+  // independence would trade away real review quality for a formality.
   const builderPick = chosenByRole.Builder;
   const reviewerRanked = roleRankings.find((r) => r.role === "Reviewer")?.ranked ?? [];
   const currentReviewer = chosenByRole.Reviewer;
@@ -651,26 +593,123 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
     }
 
     const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
+    const isIndependenceSwap = role === "Reviewer" && builderPick && chosen.model.adapterId !== builderPick.model.adapterId
+      && eligibleRanked[0]?.model.adapterId === builderPick.model.adapterId;
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason: describeChoice(role, chosen, eligibleRanked, builderPick)
+      reason: isIndependenceSwap ? "Kept independent from Builder's provider." : null
     });
   }
   return entries;
 }
 
-/** Explains a role's pick only when it isn't the unremarkable default (a clear real win). */
-function describeChoice(role, chosen, ranked, builderPick) {
-  const leader = ranked[0];
-  const rival = rivalOf(ranked);
-  if (!rival) return null;
-  const scale = Math.abs(leader.value) || 1;
-  const marginPct = ((Math.abs(leader.value - rival.value) / scale) * 100).toFixed(1);
-  const isDecisiveLeader = leader.model.adapterId === chosen.model.adapterId && Number(marginPct) > NEAR_EQUIVALENCE_BAND * 100;
-  if (isDecisiveLeader) return null;
-  if (role === "Reviewer" && builderPick && chosen.model.adapterId !== builderPick.model.adapterId && leader.model.adapterId === builderPick.model.adapterId) {
-    return "Kept independent from Builder's provider.";
+// The real signals EFFICIENT TEAM checks, in priority order, to choose
+// among candidates that are already real near-equivalents of the
+// capability leader (see buildEfficientTeam) — never a blended score,
+// each one only decides when the previous ones don't (unknown or tied).
+const EFFICIENCY_DIMENSIONS = [
+  { key: "kairo.quotaRemainingPercent", better: "max", label: "lower real subscription quota pressure" },
+  { key: "kairo.cost", better: "min", label: "lower real observed cost per task" },
+  { key: "kairo.durationMs", better: "min", label: "lower real observed duration" },
+  { key: "priceInputPerMTok", better: "min", label: "lower real price" },
+  { key: "outputTokensPerSecond", better: "max", label: "higher reported throughput" }
+];
+
+/**
+ * Orders real near-equivalents by the EFFICIENCY_DIMENSIONS priority
+ * chain. Falls back to a stable adapterId/modelId tiebreak so the same
+ * real near-tie always resolves the same way run to run, instead of
+ * depending on array order.
+ */
+function pickMostEfficient(candidates, registry) {
+  const sorted = [...candidates].sort((a, b) => {
+    for (const { key, better } of EFFICIENCY_DIMENSIONS) {
+      const av = resolveMetric(registry, a.model, key);
+      const bv = resolveMetric(registry, b.model, key);
+      if (av == null || bv == null || av === bv) continue;
+      return better === "max" ? bv - av : av - bv;
+    }
+    const adapterCompare = a.model.adapterId.localeCompare(b.model.adapterId);
+    return adapterCompare !== 0 ? adapterCompare : a.model.modelId.localeCompare(b.model.modelId);
+  });
+  return sorted[0];
+}
+
+/** Names the real dimension that actually decided an EFFICIENT TEAM pick, or null when it's just the unremarkable capability leader itself. */
+function describeEfficiencyChoice(chosen, leader, registry) {
+  if (chosen.model.adapterId === leader.model.adapterId && chosen.model.modelId === leader.model.modelId) return null;
+  for (const { key, better, label } of EFFICIENCY_DIMENSIONS) {
+    const chosenValue = resolveMetric(registry, chosen.model, key);
+    const leaderValue = resolveMetric(registry, leader.model, key);
+    if (chosenValue == null || leaderValue == null || chosenValue === leaderValue) continue;
+    const chosenIsBetter = better === "max" ? chosenValue > leaderValue : chosenValue < leaderValue;
+    if (chosenIsBetter) return `Near-equivalent capability — chosen for ${label}.`;
+    break; // this dimension didn't favor the switch; a later one must have (stable tiebreak) — no real number to report
   }
-  return `Near-equivalent alternatives (~${marginPct}%) — assigned to balance provider load.`;
+  return "Near-equivalent capability — chosen by a stable tiebreak, no real cost/quota/speed signal distinguished them.";
+}
+
+/**
+ * EFFICIENT TEAM: the exact same real ranking and evidence as AI TEAM,
+ * but among candidates within NEAR_EQUIVALENCE_BAND of the real
+ * capability leader, prefers whichever real signal actually reduces
+ * resource pressure (see EFFICIENCY_DIMENSIONS) instead of always taking
+ * the raw leader. Never invents a savings percentage or a blended score
+ * — only ever orders by a real, already-connected signal, and falls back
+ * to a stable tiebreak when none of them distinguish the candidates. If
+ * nothing within the band beats the leader on any real signal, EFFICIENT
+ * TEAM shows the exact same model as AI TEAM for that role — a fallback
+ * is never dressed up as an "economical" alternative.
+ * @param {Array<object>} models - scoreAvailableModels() output, computed
+ *   across every candidate provider regardless of current eligibility.
+ * @param {Record<string, {ok: boolean, reason?: string}>} eligibility
+ * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>|null} [registry]
+ * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
+ */
+export function buildEfficientTeam(models, eligibility = {}, registry = null) {
+  const effectiveRegistry = ensureRegistry(models, registry);
+  const roleDefinitions = buildAiTeamRoleDefinitions(effectiveRegistry);
+  const entries = [];
+
+  for (const { role, compute, better } of roleDefinitions) {
+    const eligibleRanked = rankEligible(models, eligibility, compute, better);
+    const globalRanked = rankBy(models, compute, better);
+    if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
+
+    if (!eligibleRanked.length) {
+      const globalLeader = globalRanked[0];
+      entries.push({
+        role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: null,
+        reason: "No eligible provider currently covers this role."
+      });
+      continue;
+    }
+
+    const leader = eligibleRanked[0];
+    const scale = Math.abs(leader.value) || 1;
+    const withinBand = eligibleRanked.filter((entry) => Math.abs(leader.value - entry.value) / scale <= NEAR_EQUIVALENCE_BAND);
+    const chosen = pickMostEfficient(withinBand, effectiveRegistry);
+
+    const globalLeader = globalRanked[0];
+    const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
+    const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > leader.value : globalLeader.value < leader.value;
+    if (!globalLeaderEligible && globalLeaderIsStrictlyBetter) {
+      // Same "unavailable real leader" transparency AI TEAM has — never
+      // hidden, with the efficient real pick among the rest as fallback.
+      entries.push({
+        role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
+        reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`
+      });
+      continue;
+    }
+
+    const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
+    entries.push({
+      role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
+      fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
+      reason: describeEfficiencyChoice(chosen, leader, effectiveRegistry)
+    });
+  }
+  return entries;
 }

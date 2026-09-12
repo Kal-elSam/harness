@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { annotateWithRegistryEvidence, bestModelPerRole, buildAiTeam, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage } from "../src/global/intelligence/model-intelligence.js";
+import { annotateWithRegistryEvidence, bestModelPerRole, buildAiTeam, buildEfficientTeam, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 import { ingestHuggingFaceLeaderboardEvidence } from "../src/global/intelligence/model-capability-registry-sources.js";
 import { ingestOfficialSnapshotEvidence } from "../src/global/intelligence/official-benchmark-snapshots.js";
@@ -208,10 +208,10 @@ test("buildAiTeam reports no fallback, never a fabricated one, when no eligible 
   assert.equal(team.find((t) => t.role === "Explorer").fallback, null);
 });
 
-test("buildAiTeam never lets one model win every role: a real decisive gap locks in its winner, but near-equivalent roles spread to the less-used provider", () => {
-  // Claude has a real, meaningful coding edge (~26%, decisive even under
-  // the wider 8% band) but only a razor-thin intelligence edge (~1.1%,
-  // a real tie) over Codex.
+test("buildAiTeam is pure maximum-capability: the real leader wins every role that shares its metric, even a razor-thin real edge — no diversity, no cost tie-break", () => {
+  // Claude has a real, meaningful coding edge (~26%) AND a razor-thin
+  // intelligence edge (~1.1%) over Codex — AI TEAM takes the real leader
+  // in both cases; only EFFICIENT TEAM treats a near-tie differently.
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 60.0, mathIndex: null }
@@ -222,27 +222,43 @@ test("buildAiTeam never lets one model win every role: a real decisive gap locks
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
-  // Builder/Tester: the real ~5.2% coding gap is decisive — never sacrificed for diversity.
   assert.equal(byRole.Builder.primary.adapterId, "claude");
   assert.equal(byRole.Tester.primary.adapterId, "claude");
+  assert.equal(byRole.Explorer.primary.adapterId, "claude", "AI TEAM never spreads a razor-thin real edge to a different provider — that's EFFICIENT TEAM's job");
+  assert.equal(byRole.Architect.primary.adapterId, "claude");
   assert.equal(byRole.Builder.reason, null); // an unremarkable, clear real win needs no explanation
+  assert.equal(byRole.Explorer.reason, null);
 
-  // Explorer/Architect: the ~1.1% intelligence gap is a real tie. Once
-  // Claude already carries Builder+Tester, these spread to Codex instead
-  // of piling every role onto the same subscription.
-  assert.equal(byRole.Explorer.primary.adapterId, "codex");
-  assert.equal(byRole.Architect.primary.adapterId, "codex");
-  // Regression: the reason text must report the real leader-vs-rival gap
-  // (~1.1%) even when the pick diverged from the raw leader — computing
-  // the rival relative to `chosen` instead of the raw leader previously
-  // collapsed this to a bogus "~0.0%".
-  assert.match(byRole.Explorer.reason, /Near-equivalent alternatives \(~1\.1%\)/);
-
-  // Reviewer must never default to reviewing Builder's own provider's work
-  // when a real independent alternative exists — even though the raw
-  // tie-break (usage counts alone) would land it back on Claude here, the
-  // independence rule catches that and reassigns it to Codex.
+  // Reviewer independence still applies in AI TEAM — a review-quality/bias
+  // concern, not a cost one — so it's the one role allowed to diverge.
   assert.notEqual(byRole.Reviewer.primary.adapterId, byRole.Builder.primary.adapterId);
+});
+
+test("buildEfficientTeam resolves a real near-tie deterministically via the stable tiebreak when no real cost/quota/duration/speed signal distinguishes the candidates", () => {
+  // Codex has the raw intelligence lead (~1.1%, a real near-tie) but
+  // Claude has the decisive ~26% coding lead — the two roles must not
+  // interfere with each other.
+  const aa = [
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 52.8, codingIndex: 81.6, mathIndex: null },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 53.4, codingIndex: 60.0, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
+  );
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
+
+  // Builder/Tester: the real ~26% coding gap is decisive — never sacrificed for efficiency.
+  assert.equal(byRole.Builder.primary.adapterId, "claude");
+  assert.equal(byRole.Tester.primary.adapterId, "claude");
+
+  // Explorer/Architect: the raw leader is codex (~1.1% ahead), a real
+  // near-tie — with no real price/quota/duration/speed data to break it,
+  // EFFICIENT TEAM falls back to the stable adapterId tiebreak ("claude"
+  // sorts before "codex"), never a fabricated savings percentage.
+  assert.equal(byRole.Explorer.primary.adapterId, "claude");
+  assert.equal(byRole.Architect.primary.adapterId, "claude");
+  assert.match(byRole.Explorer.reason, /stable tiebreak/);
 });
 
 test("buildAiTeam keeps Reviewer on Builder's own provider when no independent real alternative exists, rather than forcing an incapable model", () => {
@@ -320,7 +336,7 @@ test("buildAiTeam attaches corroboration to a team pick when given a registry, w
   assert.deepEqual(builderWith.primary.corroboration, [{ metric: "kairo.success", value: 1, source: "kairo-telemetry" }]);
 });
 
-test("buildAiTeam prefers a real, meaningfully cheaper near-equivalent over the raw leader — capability being close enough is when cost should decide", () => {
+test("buildEfficientTeam prefers a real, meaningfully cheaper near-equivalent over the raw leader — capability being close enough is when cost should decide", () => {
   // Shaped directly on real measured data: Claude Fable 5.1 vs OpenCode
   // Go's Kimi K3 sit ~6.6% apart on codingIndex (within the 8% band) at
   // roughly a third of the real price.
@@ -331,10 +347,23 @@ test("buildAiTeam prefers a real, meaningfully cheaper near-equivalent over the 
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "fable-model" }] }, { adapterId: "opencode-go", models: [{ id: "kimi-model" }] }], aa
   );
-  const team = buildAiTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } });
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } });
   const tester = team.find((t) => t.role === "Tester"); // pure codingIndex, no independence rule involved
   assert.equal(tester.primary.adapterId, "opencode-go", "the cheaper, near-equivalent real option should win over the raw leader");
-  assert.match(tester.reason, /Near-equivalent/);
+  assert.match(tester.reason, /lower real price/);
+});
+
+test("buildAiTeam ignores price entirely: the same near-equivalent scenario still picks the raw capability leader", () => {
+  const aa = [
+    { slug: "fable-model", name: "Fable-shaped", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10 },
+    { slug: "kimi-model", name: "Kimi-shaped", intelligenceIndex: 43.8, codingIndex: 76.2, mathIndex: null, priceInputPerMTok: 3 }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "fable-model" }] }, { adapterId: "opencode-go", models: [{ id: "kimi-model" }] }], aa
+  );
+  const team = buildAiTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } });
+  const tester = team.find((t) => t.role === "Tester");
+  assert.equal(tester.primary.adapterId, "claude", "AI TEAM never lets price move the pick away from the raw capability leader");
 });
 
 test("buildAiTeam only prefers cost when a real alternative is actually near-equivalent — a genuinely large real gap still wins on capability, whatever the price", () => {
@@ -412,7 +441,7 @@ test("Economy requires a real capability floor — a model AA never scored on in
   assert.equal(economy.primary.adapterId, "claude", "an unscored model must never win Economy just because it's cheaper");
 });
 
-test("buildAiTeam prefers real higher throughput as the tie-break after price, before falling back to usage", () => {
+test("buildEfficientTeam prefers real higher throughput as the tie-break after price", () => {
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 77.0, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 150 }
@@ -420,9 +449,8 @@ test("buildAiTeam prefers real higher throughput as the tie-break after price, b
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
   );
-  // Same real price — speed should decide the near-equivalent tie instead
-  // of immediately falling back to usage-based rotation.
-  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  // Same real price — speed should decide the near-equivalent tie.
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } });
   const tester = team.find((t) => t.role === "Tester");
   assert.equal(tester.primary.adapterId, "codex", "the real 3x faster option should win the tie when price doesn't distinguish them");
 });
@@ -449,7 +477,7 @@ test("a role's optional metric can be satisfied by real registry evidence from a
   assert.equal(explorer.primary.adapterId, "codex", "gpqa evidence from a non-AA source in the registry must actually decide the pick, not just show as /models corroboration");
 });
 
-test("buildAiTeam prefers Kairo's own observed real duration over AA's reported throughput when both exist", () => {
+test("buildEfficientTeam prefers Kairo's own observed real duration over AA's reported throughput when both exist", () => {
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 150 },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 77.0, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 }
@@ -466,7 +494,7 @@ test("buildAiTeam prefers Kairo's own observed real duration over AA's reported 
   registry.addEvidence(claudeId, { metric: "kairo.durationMs", value: 9000, source: "kairo-telemetry", verified: true });
   registry.addEvidence(codexId, { metric: "kairo.durationMs", value: 3000, source: "kairo-telemetry", verified: true });
 
-  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } }, registry);
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, registry);
   const tester = team.find((t) => t.role === "Tester");
   assert.equal(tester.primary.adapterId, "codex", "real observed duration must win over AA's reported throughput, which alone would have picked claude here");
 });

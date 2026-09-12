@@ -25,12 +25,13 @@ import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transc
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
-  annotateWithRegistryEvidence, bestModelPerRole, buildAiTeam, scoreAvailableModels, summarizeCatalogCoverage
+  annotateWithRegistryEvidence, bestModelPerRole, buildAiTeam, buildEfficientTeam, scoreAvailableModels, summarizeCatalogCoverage
 } from "../intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../intelligence/model-capability-registry.js";
 import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../intelligence/model-capability-registry-sources.js";
 import { ingestOfficialSnapshotEvidence } from "../intelligence/official-benchmark-snapshots.js";
 import { ingestKairoTelemetryEvidence } from "../intelligence/kairo-telemetry-source.js";
+import { ingestQuotaPressureEvidence } from "../intelligence/subscription-pressure-source.js";
 
 export const CONVERSATION_SCHEMA = "kairo.conversation/v1";
 
@@ -113,6 +114,28 @@ function formatClaudeUsage(usage) {
   return `${parts.join(" · ") || "usage unavailable"} · ${usage.status}`;
 }
 
+// Real subscription headroom per adapter, for EFFICIENT TEAM's quota-pressure
+// dimension (subscription-pressure-source.js). Quota is account-wide, so this
+// picks the worst-case real window — a provider isn't "healthy" just because
+// its 5h window has room if its weekly window (or, for Go, any one of its
+// windows) is nearly exhausted.
+function remainingPercentByAdapter(codexUsage, claudeUsage, opencodeUsage) {
+  const result = {};
+  const worstOf = (usage) => {
+    const values = [usage?.primary?.remainingPercent, usage?.secondary?.remainingPercent]
+      .filter((v) => typeof v === "number");
+    return values.length ? Math.min(...values) : null;
+  };
+  const codexRemaining = worstOf(codexUsage);
+  if (codexRemaining != null) result.codex = codexRemaining;
+  const claudeRemaining = worstOf(claudeUsage);
+  if (claudeRemaining != null) result.claude = claudeRemaining;
+  const goWindows = opencodeUsage?.go?.windows ?? [];
+  const goValues = goWindows.map((w) => w.remainingPercent).filter((v) => typeof v === "number");
+  if (goValues.length) result["opencode-go"] = Math.min(...goValues);
+  return result;
+}
+
 function providersFromAdapters(adapters, usageByAgent = {}, codexUsage = null, claudeUsage = null, opencodeUsage = null) {
   const providers = {};
   for (const adapter of adapters) {
@@ -159,7 +182,7 @@ function snapshot(projectRoot, plans, providers = {}, integrations = {}) {
     providers,
     integrations,
     usage: { codex: null, claude: null, opencode: null },
-    modelIntelligence: { status: "unknown", source: null, age: null, models: [], roles: [], eligibility: {}, coverage: [], aiTeam: [] },
+    modelIntelligence: { status: "unknown", source: null, age: null, models: [], roles: [], eligibility: {}, coverage: [], aiTeam: [], efficientTeam: [] },
     governance: {
       methodologyOwner: "gentle-ai",
       orchestratorOwner: "kairo",
@@ -438,11 +461,14 @@ export function createConversationService(deps = {}) {
         ingestOfficialSnapshotEvidence(registry);
         const runRecords = await listRunRecordsCached("runs", null).catch(() => []);
         ingestKairoTelemetryEvidence(registry, runRecords);
+        ingestQuotaPressureEvidence(registry, catalogsByAdapter, remainingPercentByAdapter(codexUsage, claudeUsage, opencodeUsage));
 
         result.modelIntelligence = {
           status: aa.status, source: aa.source, age: aa.age,
           models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(scored),
-          eligibility, coverage, aiTeam: buildAiTeam(scoredAll, eligibility, registry)
+          eligibility, coverage,
+          aiTeam: buildAiTeam(scoredAll, eligibility, registry),
+          efficientTeam: buildEfficientTeam(scoredAll, eligibility, registry)
         };
       }
       return result;
