@@ -61,92 +61,84 @@ test("render gives conversation priority and keeps compact usage in the header",
   assert.doesNotMatch(joined, /Engram connected/);
 });
 
-test("FIT always shows real per-role winners — plain role names, no numbers, no invented composite — regardless of task selection", () => {
+test("MODEL SIGNALS shows only factual metric leaders, never generic role assignments", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({
     projectRoot: "/repo/demo",
     modelIntelligence: {
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      models: [],
-      roles: [
-        { role: "Planning / Architecture", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra" },
-        { role: "Coding", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" },
-        { role: "Quick & cheap tasks", adapterId: "claude", modelId: "claude-haiku-4-5", displayName: "Claude Haiku 4.5" }
-      ]
+      models: [
+        { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", bestFor: ["best reasoning"] },
+        { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", bestFor: ["best coding", "fastest"] }
+      ],
+      roles: []
     }
   });
   const lines = view.render(100).join("\n");
   assert.match(lines, /Artificial Analysis, live/);
-  assert.match(lines, /Planning \/ Architecture[\s\S]*?\n[\s\S]*?→ Codex · GPT-6-Astra/);
-  assert.match(lines, /Coding[\s\S]*?\n[\s\S]*?→ Claude · Claude Fable 5\.1/);
-  assert.match(lines, /Quick & cheap tasks[\s\S]*?\n[\s\S]*?→ Claude · Claude Haiku 4\.5/);
-  assert.doesNotMatch(lines, /\d+\.\d.*intel/); // no raw scores leaking into FIT
+  assert.match(lines, /Global signals — not a project strategy/);
+  assert.match(lines, /Codex · GPT-6-Astra[\s\S]*?best reasoning/);
+  assert.match(lines, /Claude · Claude Fable 5\.1[\s\S]*?best coding · fastest/);
+  assert.doesNotMatch(lines, /Planning \/ Architecture|Explorer|Implementer/);
 });
 
-test("fitLines groups roles that share the same real winner into one line, instead of implying N independent judgments", () => {
+test("MODEL SIGNALS groups multiple real metric wins under one model without manufacturing roles", () => {
   const { view } = makeView();
   view.setSnapshot({
     projectRoot: "/repo/demo",
     modelIntelligence: {
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      models: [],
-      roles: [
-        { role: "Explorer", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" },
-        { role: "Architect / Planner", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" },
-        { role: "Implementer", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" },
-        { role: "Economy", adapterId: "codex", modelId: "gpt-5.6-luna", displayName: "GPT-5.6-Luna" }
-      ]
+      models: [
+        { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", bestFor: ["best reasoning", "best coding"] },
+        { adapterId: "codex", modelId: "gpt-5.6-luna", displayName: "GPT-5.6-Luna", bestFor: ["cheapest"] }
+      ],
+      roles: []
     }
   });
   const lines = view.fitLines();
-  // The three Claude Fable winners collapse into one grouped role line + one winner line —
-  // not three separate "Role  Provider · Model" rows repeating the same conclusion.
-  assert.equal(lines.length, 5); // header + (grouped role line + winner line) x 2 groups
-  assert.equal(lines[1], "Explorer, Architect / Planner, Implementer");
-  assert.equal(lines[2], "  → Claude · Claude Fable 5.1");
-  assert.equal(lines[3], "Economy");
-  assert.equal(lines[4], "  → Codex · GPT-5.6-Luna");
+  assert.equal(lines.length, 7);
+  assert.match(lines[1], /not a project strategy/);
+  assert.equal(lines[2], "Claude · Claude Fable 5.1");
+  assert.match(lines[3], /best reasoning · best coding/);
+  assert.equal(lines[4], "Codex · GPT-5.6-Luna");
+  assert.match(lines[5], /cheapest/);
 });
 
-test("USAGE and FIT tile side by side once the terminal is wide enough, each still readable in full", () => {
+test("USAGE and MODEL SIGNALS tile side by side once the terminal is wide enough", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({
     projectRoot: "/repo/demo",
     modelIntelligence: {
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      models: [],
-      roles: [{ role: "Planning / Architecture", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" }]
+      models: [{ adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", bestFor: ["best coding"] }], roles: []
     }
   });
   const lines = view.render(160);
-  // Both cards' top borders must appear on the SAME line for a true side-by-side tile.
   const topLine = lines.find((line) => line.includes("KAIRO"));
-  assert.ok(topLine.includes("FIT"), "USAGE and FIT top borders should share one row when tiled");
-  const joined = lines.join("\n");
-  assert.match(joined, /Planning \/ Architecture[\s\S]*?\n[\s\S]*?→ Claude · Claude Fable 5\.1/); // not truncated
+  assert.ok(topLine.includes("MODEL SIGNALS"));
+  assert.match(lines.join("\n"), /Claude · Claude Fable 5\.1[\s\S]*?best coding/);
   for (const line of lines) assert.ok(visibleWidth(line) <= 160, `line "${line}" exceeds width`);
 });
 
-test("USAGE and FIT stack (not tile) below the width threshold, so content never truncates into illegibility", () => {
+test("USAGE and MODEL SIGNALS stack below the width threshold", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({
     projectRoot: "/repo/demo",
     modelIntelligence: {
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      models: [],
-      roles: [{ role: "Planning / Architecture", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" }]
+      models: [{ adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", bestFor: ["best coding"] }], roles: []
     }
   });
   const lines = view.render(100);
   const topLine = lines.find((line) => line.includes("KAIRO"));
-  assert.ok(!topLine.includes("FIT"), "below the threshold, USAGE and FIT must not share a row");
-  assert.match(lines.join("\n"), /Planning \/ Architecture[\s\S]*?\n[\s\S]*?→ Claude · Claude Fable 5\.1/);
+  assert.ok(!topLine.includes("MODEL SIGNALS"));
+  assert.match(lines.join("\n"), /Claude · Claude Fable 5\.1[\s\S]*?best coding/);
 });
 
-test("FIT reports honestly when there is no benchmark data yet, never a fabricated ranking", () => {
+test("MODEL SIGNALS reports honestly when there is no benchmark data yet", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({ projectRoot: "/repo/demo", modelIntelligence: { status: "unknown", source: null, age: null, models: [], error: "no API key configured" } });
@@ -154,7 +146,7 @@ test("FIT reports honestly when there is no benchmark data yet, never a fabricat
   assert.match(lines, /No model benchmark data yet \(no API key configured\)/);
 });
 
-test("FIT shows the real rejection reasons when data exists but no provider is eligible right now — never a fake winner", () => {
+test("MODEL SIGNALS shows real rejection reasons when no provider is eligible", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({
@@ -172,7 +164,7 @@ test("FIT shows the real rejection reasons when data exists but no provider is e
     }
   });
   const lines = view.render(100).join("\n");
-  assert.match(lines, /No eligible provider right now/);
+  assert.match(lines, /No eligible model signals right now/);
   assert.match(lines, /codex: Codex quota nearly exhausted \(2% left\)/);
   assert.match(lines, /claude: Claude quota nearly exhausted \(1% left\)/);
 });

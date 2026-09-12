@@ -23,7 +23,7 @@ function renderPanel(title, tone, width, contentLines, targetLineCount = content
 
 /**
  * Tiles two independently-framed cards side by side — used only for
- * USAGE + FIT, the two reference widgets meant to be compared at a
+ * USAGE + MODEL SIGNALS, the two reference widgets meant to be compared at a
  * glance rather than read one above the other.
  * @param {{title: string, tone: string, lines: string[]}} left
  * @param {{title: string, tone: string, lines: string[]}} right
@@ -320,9 +320,8 @@ export class CockpitView {
     // is *always* selected, so it can't be tucked behind "nothing else to
     // show" the way STATUS's own content is.
     const usagePanel = { title: `KAIRO · ${project}`, tone: CARD_TONE.INFO, lines: [theme.fg("muted", "USAGE"), ...this.compactHealthLines()] };
-    const fitPanel = { title: "FIT", tone: CARD_TONE.SUCCESS, lines: this.fitLines() };
-    // FIT's longest real line ("Planning / Architecture  Claude · Claude
-    // Fable 5.1") needs ~50 visible columns plus framing on each side —
+    const fitPanel = { title: "MODEL SIGNALS", tone: CARD_TONE.SUCCESS, lines: this.fitLines() };
+    // MODEL SIGNALS' longest real line needs ~50 visible columns plus framing on each side —
     // below this threshold, tiling would truncate the very info being
     // shown, so it falls back to full-width stacking instead.
     if (width >= 140) {
@@ -355,13 +354,11 @@ export class CockpitView {
   }
 
   /**
-   * Which real available model is best for which real job, in plain task-
-   * role language ("Planning / Architecture", "Coding", "Quick & cheap
-   * tasks") — no numbers, no percentages, no invented composite score.
-   * Each role is backed by exactly one real Artificial Analysis metric
-   * (see intelligence/model-intelligence.js's bestModelPerRole); a role
-   * with no real winner among your available models is simply omitted,
-   * never guessed.
+   * Compact, factual global signals for models that are executable now.
+   * This intentionally does NOT present generic benchmark winners as a
+   * project team: project roles require a ProjectSnapshot and a portfolio.
+   * `bestFor` contains only real, unweighted metric wins calculated by the
+   * intelligence module (for example: best reasoning, best coding).
    */
   fitLines() {
     const intel = this.snapshot?.modelIntelligence;
@@ -369,36 +366,24 @@ export class CockpitView {
       const reason = intel?.error ? ` (${intel.error})` : "";
       return [theme.fg("muted", `No model benchmark data yet${reason}`)];
     }
-    if (!intel.roles?.length) {
-      // Real data exists, but no provider survived the eligibility check
-      // (availability/launchability/quota) — show the real reason each one
-      // was rejected instead of silently showing nothing or a fake winner.
+    const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
+    const leaders = (intel.models ?? []).filter((model) => Array.isArray(model.bestFor) && model.bestFor.length > 0);
+    if (!leaders.length) {
       const reasons = Object.entries(intel.eligibility ?? {})
         .filter(([, check]) => !check.ok)
         .map(([adapterId, check]) => `${adapterId}: ${check.reason}`);
-      return [theme.fg("warning", "No eligible provider right now"), ...reasons.map((r) => theme.fg("muted", r))];
+      return [theme.fg("muted", `Artificial Analysis, ${freshness}`), theme.fg("warning", "No eligible model signals right now"), ...reasons.map((r) => theme.fg("muted", r))];
     }
-    const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-    const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
-    // Several roles share the same real metric today (Explorer reuses
-    // Architect/Planner's intelligence signal, Test Author reuses
-    // Implementer's coding signal, etc. — see model-intelligence.js), so
-    // they often land on the same winner. Showing that as N separate rows
-    // would misleadingly imply N independent judgments; grouping the roles
-    // that share one real winner shows the actual number of distinct
-    // conclusions instead.
-    const groups = [];
-    for (const entry of intel.roles) {
-      const key = `${entry.adapterId}::${entry.modelId}`;
-      let group = groups.find((g) => g.key === key);
-      if (!group) { group = { key, adapterId: entry.adapterId, displayName: entry.displayName, modelId: entry.modelId, roles: [] }; groups.push(group); }
-      group.roles.push(entry.role);
+    const lines = [
+      theme.fg("muted", `Artificial Analysis, ${freshness}`),
+      theme.fg("muted", "Global signals — not a project strategy")
+    ];
+    for (const model of leaders) {
+      const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
+      lines.push(`${provider} · ${model.displayName ?? model.modelId}`);
+      lines.push(theme.fg("muted", `  ${model.bestFor.join(" · ")}`));
     }
-    for (const group of groups) {
-      const provider = group.adapterId.charAt(0).toUpperCase() + group.adapterId.slice(1);
-      lines.push(group.roles.join(", "));
-      lines.push(`  → ${provider} · ${group.displayName ?? group.modelId}`);
-    }
+    lines.push(theme.fg("muted", "Use /why for coverage and eligibility."));
     return lines;
   }
 
