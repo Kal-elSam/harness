@@ -180,15 +180,18 @@ test("onExecute passes the exact decision shown as the confirm-execute agentId/m
   app.stop();
 });
 
-test("/models prints factual global model signals into the chat even when a task row is selected", async () => {
+test("/models prints the AI TEAM into the chat even when a task row is selected", async () => {
   let editor;
   const service = {
     snapshot: async () => ({
       ...makeSnapshot([BASE_ROW]),
       modelIntelligence: {
         status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-        models: [{ adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", bestFor: ["best reasoning", "best coding"] }],
-        roles: []
+        aiTeam: [{
+          role: "Architect",
+          primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", available: true },
+          fallback: null
+        }]
       }
     })
   };
@@ -208,9 +211,7 @@ test("/models prints factual global model signals into the chat even when a task
   await editor.onSubmit(editor.getText());
   const printed = app.view.transcript.map((entry) => entry.text).join("\n");
   assert.match(printed, /Artificial Analysis, live/);
-  assert.match(printed, /Global signals — not a project strategy/);
-  assert.match(printed, /Codex · GPT-6-Astra/);
-  assert.match(printed, /best reasoning · best coding/);
+  assert.match(printed, /Architect\s+Codex · GPT-6-Astra/);
   app.stop();
 });
 

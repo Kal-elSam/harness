@@ -23,7 +23,7 @@ import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
-import { bestModelPerRole, scoreAvailableModels, summarizeCatalogCoverage } from "../intelligence/model-intelligence.js";
+import { bestModelPerRole, buildAiTeam, scoreAvailableModels, summarizeCatalogCoverage } from "../intelligence/model-intelligence.js";
 
 export const CONVERSATION_SCHEMA = "kairo.conversation/v1";
 
@@ -152,7 +152,7 @@ function snapshot(projectRoot, plans, providers = {}, integrations = {}) {
     providers,
     integrations,
     usage: { codex: null, claude: null, opencode: null },
-    modelIntelligence: { status: "unknown", source: null, age: null, models: [], roles: [], eligibility: {}, coverage: [] },
+    modelIntelligence: { status: "unknown", source: null, age: null, models: [], roles: [], eligibility: {}, coverage: [], aiTeam: [] },
     governance: {
       methodologyOwner: "gentle-ai",
       orchestratorOwner: "kairo",
@@ -368,6 +368,15 @@ export function createConversationService(deps = {}) {
           candidates.map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
           aa.models
         );
+        // AI TEAM needs the full real capability picture — including
+        // providers that are temporarily ineligible (quota exhausted, rate
+        // limited) — so a preferred model never just vanishes; it's shown
+        // unavailable with a real eligible fallback instead. `scored`
+        // above stays eligibility-filtered for existing consumers.
+        const scoredAll = scoreAvailableModels(
+          Object.keys(catalogsByAdapter).map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
+          aa.models
+        );
         // How much of each real catalog could even be matched to AA data —
         // independent of runtime eligibility above. A provider can be fully
         // eligible right now and still have unmatched models simply because
@@ -380,7 +389,8 @@ export function createConversationService(deps = {}) {
           { adapterId: "cursor", catalogStatus: cursorCatalog?.status ?? "unknown", models: cursorCatalog?.models ?? [] }
         ], aa.models);
         result.modelIntelligence = {
-          status: aa.status, source: aa.source, age: aa.age, models: scored, roles: bestModelPerRole(scored), eligibility, coverage
+          status: aa.status, source: aa.source, age: aa.age, models: scored, roles: bestModelPerRole(scored),
+          eligibility, coverage, aiTeam: buildAiTeam(scoredAll, eligibility)
         };
       }
       return result;

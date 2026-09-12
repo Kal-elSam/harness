@@ -184,3 +184,65 @@ export function bestModelPerRole(models) {
   }
   return entries;
 }
+
+// Same real metrics as ROLE_DEFINITIONS, relabeled to the seven-role team
+// vocabulary the user settled on for the "AI TEAM" widget (Explorer /
+// Architect / Builder / Debugger / Tester / Reviewer / Economy). Kept as a
+// separate list — rather than renaming ROLE_DEFINITIONS in place — so the
+// existing bestModelPerRole() contract and its tests stay untouched.
+const AI_TEAM_ROLE_DEFINITIONS = [
+  { role: "Explorer", compute: (m) => m.intelligenceIndex, better: "max" },
+  { role: "Architect", compute: (m) => m.intelligenceIndex, better: "max" },
+  { role: "Builder", compute: (m) => m.codingIndex, better: "max" },
+  { role: "Debugger", compute: (m) => minOfReal(m.intelligenceIndex, m.codingIndex), better: "max" },
+  { role: "Tester", compute: (m) => m.codingIndex, better: "max" },
+  { role: "Reviewer", compute: (m) => minOfReal(m.intelligenceIndex, m.codingIndex), better: "max" },
+  { role: "Economy", compute: (m) => m.priceInputPerMTok, better: "min" }
+];
+
+function toTeamModel(model, eligibility) {
+  return {
+    adapterId: model.adapterId,
+    modelId: model.modelId,
+    displayName: model.displayName,
+    available: eligibility[model.adapterId]?.ok === true
+  };
+}
+
+/**
+ * The "AI TEAM" view: one primary + one fallback per role, computed from
+ * ALL real candidate catalogs (not just the currently-eligible ones) so a
+ * temporarily unavailable preferred model never just disappears — it's
+ * still named as the real capability winner, only flagged unavailable,
+ * with a real (eligible) runner-up surfaced as the fallback. Never invents
+ * a tiebreak: primary is strictly the best real metric score among ALL
+ * candidates; fallback is the next-best real score among candidates that
+ * are actually eligible right now (skipping the exact same model as
+ * primary). If no eligible runner-up exists, fallback is null rather than
+ * showing an equally-unavailable model as if it were usable.
+ * @param {Array<object>} models - scoreAvailableModels() output, computed
+ *   across every candidate provider regardless of current eligibility.
+ * @param {Record<string, {ok: boolean, reason?: string}>} eligibility -
+ *   checkCandidate() results per adapterId, applied AFTER ranking.
+ * @returns {Array<{role: string, primary: object|null, fallback: object|null}>}
+ */
+export function buildAiTeam(models, eligibility = {}) {
+  const entries = [];
+  for (const { role, compute, better } of AI_TEAM_ROLE_DEFINITIONS) {
+    const ranked = models
+      .map((model) => ({ model, value: compute(model) }))
+      .filter((entry) => entry.value != null)
+      .sort((a, b) => (better === "max" ? b.value - a.value : a.value - b.value));
+    if (!ranked.length) continue;
+    const primaryModel = ranked[0].model;
+    const primary = toTeamModel(primaryModel, eligibility);
+    let fallback = null;
+    for (let i = 1; i < ranked.length; i += 1) {
+      const candidate = ranked[i].model;
+      if (candidate.adapterId === primaryModel.adapterId && candidate.modelId === primaryModel.modelId) continue;
+      if (eligibility[candidate.adapterId]?.ok === true) { fallback = toTeamModel(candidate, eligibility); break; }
+    }
+    entries.push({ role, primary, fallback });
+  }
+  return entries;
+}

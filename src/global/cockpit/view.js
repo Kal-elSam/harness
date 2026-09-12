@@ -23,7 +23,7 @@ function renderPanel(title, tone, width, contentLines, targetLineCount = content
 
 /**
  * Tiles two independently-framed cards side by side — used only for
- * USAGE + MODEL SIGNALS, the two reference widgets meant to be compared at a
+ * USAGE + AI TEAM, the two reference widgets meant to be compared at a
  * glance rather than read one above the other.
  * @param {{title: string, tone: string, lines: string[]}} left
  * @param {{title: string, tone: string, lines: string[]}} right
@@ -320,8 +320,8 @@ export class CockpitView {
     // is *always* selected, so it can't be tucked behind "nothing else to
     // show" the way STATUS's own content is.
     const usagePanel = { title: `KAIRO · ${project}`, tone: CARD_TONE.INFO, lines: [theme.fg("muted", "USAGE"), ...this.compactHealthLines()] };
-    const fitPanel = { title: "MODEL SIGNALS", tone: CARD_TONE.SUCCESS, lines: this.fitLines() };
-    // MODEL SIGNALS' longest real line needs ~50 visible columns plus framing on each side —
+    const fitPanel = { title: "AI TEAM", tone: CARD_TONE.SUCCESS, lines: this.fitLines() };
+    // AI TEAM's longest real line needs ~50 visible columns plus framing on each side —
     // below this threshold, tiling would truncate the very info being
     // shown, so it falls back to full-width stacking instead.
     if (width >= 140) {
@@ -354,11 +354,18 @@ export class CockpitView {
   }
 
   /**
-   * Compact, factual global signals for models that are executable now.
-   * This intentionally does NOT present generic benchmark winners as a
-   * project team: project roles require a ProjectSnapshot and a portfolio.
-   * `bestFor` contains only real, unweighted metric wins calculated by the
-   * intelligence module (for example: best reasoning, best coding).
+   * The global "AI TEAM": one line per role (Explorer / Architect /
+   * Builder / Debugger / Tester / Reviewer / Economy), each naming a
+   * primary model plus a real fallback plus current availability — never
+   * a blended score. This is the general team, not a per-project
+   * portfolio: which of these roles a given repo actually activates is a
+   * separate, later decision. Computed across every real candidate
+   * catalog (not just currently-eligible ones), so a temporarily
+   * unavailable preferred model (e.g. OpenCode Go rate-limited) doesn't
+   * just vanish — it still shows as the real capability winner, flagged
+   * unavailable, with its fallback surfaced right there. That's what
+   * keeps Claude from silently looking like "the answer for everything"
+   * whenever another provider is under quota pressure.
    */
   fitLines() {
     const intel = this.snapshot?.modelIntelligence;
@@ -367,21 +374,23 @@ export class CockpitView {
       return [theme.fg("muted", `No model benchmark data yet${reason}`)];
     }
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-    const leaders = (intel.models ?? []).filter((model) => Array.isArray(model.bestFor) && model.bestFor.length > 0);
-    if (!leaders.length) {
+    const team = intel.aiTeam ?? [];
+    if (!team.length) {
       const reasons = Object.entries(intel.eligibility ?? {})
         .filter(([, check]) => !check.ok)
         .map(([adapterId, check]) => `${adapterId}: ${check.reason}`);
       return [theme.fg("muted", `Artificial Analysis, ${freshness}`), theme.fg("warning", "No eligible model signals right now"), ...reasons.map((r) => theme.fg("muted", r))];
     }
-    const lines = [
-      theme.fg("muted", `Artificial Analysis, ${freshness}`),
-      theme.fg("muted", "Global signals — not a project strategy")
-    ];
-    for (const model of leaders) {
+    const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
+    const label = (model) => {
       const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
-      lines.push(`${provider} · ${model.displayName ?? model.modelId}`);
-      lines.push(theme.fg("muted", `  ${model.bestFor.join(" · ")}`));
+      return `${provider} · ${model.displayName ?? model.modelId}`;
+    };
+    for (const { role, primary, fallback } of team) {
+      const primaryText = primary.available ? label(primary) : `${label(primary)} (not available)`;
+      lines.push(`${role.padEnd(10)} ${primaryText}`);
+      if (fallback) lines.push(theme.fg("muted", `  fallback ${label(fallback)}`));
+      else if (!primary.available) lines.push(theme.fg("warning", "  no eligible fallback right now"));
     }
     lines.push(theme.fg("muted", "Use /why for coverage and eligibility."));
     return lines;

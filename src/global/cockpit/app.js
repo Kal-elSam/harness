@@ -140,15 +140,15 @@ export async function runCockpitApp({
     if (task.startsWith("/")) {
       const command = task.split(/\s+/)[0].toLowerCase();
       if (command === "/help") {
-        pushTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /models model signals · /why eligibility detail · /clear · /quit");
+        pushTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /models AI team · /why eligibility detail · /clear · /quit");
       } else if (command === "/usage" || command === "/providers" || command === "/status") {
         for (const line of command === "/usage" ? view.usageLines() : view.providerLines()) {
           pushTranscript("kairo", line);
         }
         pushTranscript("kairo", view.integrationsLine());
       } else if (command === "/models") {
-        // MODEL SIGNALS renders in the widget; /models also writes its factual
-        // global evidence summary to the chat transcript.
+        // AI TEAM renders in the widget; /models also writes it to the
+        // chat transcript for reference.
         for (const line of view.fitLines()) pushTranscript("kairo", line);
       } else if (command === "/why") {
         // Drill-down for FIT: which providers were excluded and the exact

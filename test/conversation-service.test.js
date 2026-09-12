@@ -250,6 +250,15 @@ test("snapshot excludes a provider from FIT once its real quota is exhausted, ev
   assert.equal(snapshot.modelIntelligence.eligibility.codex.ok, true);
   // Claude never wins a role despite the higher real score, because it was excluded before comparison.
   assert.ok(snapshot.modelIntelligence.roles.every((r) => r.adapterId === "codex"));
+  // AI TEAM is different on purpose: it's computed across every real
+  // candidate, so Claude still shows as the true capability winner — just
+  // flagged unavailable — with Codex surfaced as the real eligible fallback,
+  // instead of silently disappearing the way `roles`/`models` do above.
+  const explorer = snapshot.modelIntelligence.aiTeam.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "claude");
+  assert.equal(explorer.primary.available, false);
+  assert.equal(explorer.fallback.adapterId, "codex");
+  assert.equal(explorer.fallback.available, true);
 });
 
 test("snapshot always excludes opencode-zen and cursor from FIT's automatic candidates, independent of their catalogs", async () => {

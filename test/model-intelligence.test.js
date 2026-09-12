@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bestModelPerRole, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage } from "../src/global/intelligence/model-intelligence.js";
+import { bestModelPerRole, buildAiTeam, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage } from "../src/global/intelligence/model-intelligence.js";
 
 const AA_MODELS = [
   { slug: "gpt-6-astra", name: "GPT-6 Astra (max)", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null },
@@ -156,4 +156,51 @@ test("summarizeCatalogCoverage handles Cursor's plain-string catalog shape too",
     [{ adapterId: "cursor", catalogStatus: "measured", models: ["claude-opus-5", "unmatched-model"] }], aa
   );
   assert.deepEqual(coverage, [{ adapterId: "cursor", catalogStatus: "measured", totalModels: 2, matchedModels: 1 }]);
+});
+
+test("buildAiTeam names a real primary and eligible fallback for each of the seven team roles", () => {
+  const aa = [
+    { slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: 60, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 },
+    { slug: "model-b", name: "Model B", intelligenceIndex: 50, codingIndex: 95, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 200 }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "model-a" }] }, { adapterId: "codex", models: [{ id: "model-b" }] }], aa
+  );
+  const eligibility = { claude: { ok: true }, codex: { ok: true } };
+  const team = buildAiTeam(scored, eligibility);
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "claude");
+  assert.equal(explorer.primary.available, true);
+  assert.equal(explorer.fallback.adapterId, "codex");
+  const economy = team.find((t) => t.role === "Economy");
+  assert.equal(economy.primary.adapterId, "codex"); // cheapest priceInputPerMTok
+  assert.equal(economy.fallback.adapterId, "claude");
+  assert.ok(!team.some((t) => t.role === "Orchestrator"));
+});
+
+test("buildAiTeam keeps a preferred-but-ineligible primary visible instead of dropping it, and picks an eligible fallback", () => {
+  const aa = [
+    { slug: "go-model", name: "Go Model", intelligenceIndex: 40, codingIndex: 99, mathIndex: null },
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 40, codingIndex: 70, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "opencode-go", models: [{ id: "go-model" }] }, { adapterId: "claude", models: [{ id: "claude-model" }] }], aa
+  );
+  // OpenCode Go is rate-limited right now — it stays the real capability
+  // winner for Tester (best codingIndex), but should be flagged unavailable
+  // with Claude surfaced as the real, eligible fallback.
+  const eligibility = { "opencode-go": { ok: false, reason: "rate limited" }, claude: { ok: true } };
+  const team = buildAiTeam(scored, eligibility);
+  const tester = team.find((t) => t.role === "Tester");
+  assert.equal(tester.primary.adapterId, "opencode-go");
+  assert.equal(tester.primary.available, false);
+  assert.equal(tester.fallback.adapterId, "claude");
+  assert.equal(tester.fallback.available, true);
+});
+
+test("buildAiTeam reports no fallback, never a fabricated one, when no eligible alternative exists", () => {
+  const aa = [{ slug: "only-model", name: "Only Model", intelligenceIndex: 80, codingIndex: 80, mathIndex: null }];
+  const scored = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "only-model" }] }], aa);
+  const team = buildAiTeam(scored, { codex: { ok: true } });
+  assert.equal(team.find((t) => t.role === "Explorer").fallback, null);
 });

@@ -61,84 +61,98 @@ test("render gives conversation priority and keeps compact usage in the header",
   assert.doesNotMatch(joined, /Engram connected/);
 });
 
-test("MODEL SIGNALS shows only factual metric leaders, never generic role assignments", () => {
+test("AI TEAM shows a primary and fallback per role, never a blended score", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({
     projectRoot: "/repo/demo",
     modelIntelligence: {
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      models: [
-        { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", bestFor: ["best reasoning"] },
-        { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", bestFor: ["best coding", "fastest"] }
-      ],
-      roles: []
+      aiTeam: [
+        {
+          role: "Explorer",
+          primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", available: true },
+          fallback: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", available: true }
+        },
+        {
+          role: "Economy",
+          primary: { adapterId: "opencode-go", modelId: "go-luna", displayName: "GPT-5.6-Luna", available: true },
+          fallback: null
+        }
+      ]
     }
   });
-  const lines = view.render(100).join("\n");
+  const lines = view.render(160).join("\n");
   assert.match(lines, /Artificial Analysis, live/);
-  assert.match(lines, /Global signals — not a project strategy/);
-  assert.match(lines, /Codex · GPT-6-Astra[\s\S]*?best reasoning/);
-  assert.match(lines, /Claude · Claude Fable 5\.1[\s\S]*?best coding · fastest/);
-  assert.doesNotMatch(lines, /Planning \/ Architecture|Explorer|Implementer/);
+  assert.match(lines, /Explorer\s+Codex · GPT-6-Astra/);
+  assert.match(lines, /fallback Claude · Claude Fable 5\.1/);
+  assert.match(lines, /Economy\s+Opencode-go · GPT-5\.6-Luna/);
+  assert.doesNotMatch(lines, /Global signals — not a project strategy/);
 });
 
-test("MODEL SIGNALS groups multiple real metric wins under one model without manufacturing roles", () => {
-  const { view } = makeView();
-  view.setSnapshot({
-    projectRoot: "/repo/demo",
-    modelIntelligence: {
-      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      models: [
-        { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", bestFor: ["best reasoning", "best coding"] },
-        { adapterId: "codex", modelId: "gpt-5.6-luna", displayName: "GPT-5.6-Luna", bestFor: ["cheapest"] }
-      ],
-      roles: []
-    }
-  });
-  const lines = view.fitLines();
-  assert.equal(lines.length, 7);
-  assert.match(lines[1], /not a project strategy/);
-  assert.equal(lines[2], "Claude · Claude Fable 5.1");
-  assert.match(lines[3], /best reasoning · best coding/);
-  assert.equal(lines[4], "Codex · GPT-5.6-Luna");
-  assert.match(lines[5], /cheapest/);
-});
-
-test("USAGE and MODEL SIGNALS tile side by side once the terminal is wide enough", () => {
+test("AI TEAM keeps a preferred-but-unavailable primary visible and surfaces its real fallback instead of hiding it", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({
     projectRoot: "/repo/demo",
     modelIntelligence: {
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      models: [{ adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", bestFor: ["best coding"] }], roles: []
+      aiTeam: [
+        {
+          role: "Tester",
+          primary: { adapterId: "opencode-go", modelId: "go-tester", displayName: "OpenCode Go Tester", available: false },
+          fallback: { adapterId: "claude", modelId: "claude-sonnet-5", displayName: "Claude Sonnet 5", available: true }
+        }
+      ]
+    }
+  });
+  const lines = view.fitLines().join("\n");
+  assert.match(lines, /Tester\s+Opencode-go · OpenCode Go Tester \(not available\)/);
+  assert.match(lines, /fallback Claude · Claude Sonnet 5/);
+});
+
+test("USAGE and AI TEAM tile side by side once the terminal is wide enough", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [{
+        role: "Builder",
+        primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", available: true },
+        fallback: null
+      }]
     }
   });
   const lines = view.render(160);
   const topLine = lines.find((line) => line.includes("KAIRO"));
-  assert.ok(topLine.includes("MODEL SIGNALS"));
-  assert.match(lines.join("\n"), /Claude · Claude Fable 5\.1[\s\S]*?best coding/);
+  assert.ok(topLine.includes("AI TEAM"));
+  assert.match(lines.join("\n"), /Builder\s+Claude · Claude Fable 5\.1/);
   for (const line of lines) assert.ok(visibleWidth(line) <= 160, `line "${line}" exceeds width`);
 });
 
-test("USAGE and MODEL SIGNALS stack below the width threshold", () => {
+test("USAGE and AI TEAM stack below the width threshold", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({
     projectRoot: "/repo/demo",
     modelIntelligence: {
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      models: [{ adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", bestFor: ["best coding"] }], roles: []
+      aiTeam: [{
+        role: "Builder",
+        primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", available: true },
+        fallback: null
+      }]
     }
   });
   const lines = view.render(100);
   const topLine = lines.find((line) => line.includes("KAIRO"));
-  assert.ok(!topLine.includes("MODEL SIGNALS"));
-  assert.match(lines.join("\n"), /Claude · Claude Fable 5\.1[\s\S]*?best coding/);
+  assert.ok(!topLine.includes("AI TEAM"));
+  assert.match(lines.join("\n"), /Builder\s+Claude · Claude Fable 5\.1/);
 });
 
-test("MODEL SIGNALS reports honestly when there is no benchmark data yet", () => {
+test("AI TEAM reports honestly when there is no benchmark data yet", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({ projectRoot: "/repo/demo", modelIntelligence: { status: "unknown", source: null, age: null, models: [], error: "no API key configured" } });
@@ -146,14 +160,14 @@ test("MODEL SIGNALS reports honestly when there is no benchmark data yet", () =>
   assert.match(lines, /No model benchmark data yet \(no API key configured\)/);
 });
 
-test("MODEL SIGNALS shows real rejection reasons when no provider is eligible", () => {
+test("AI TEAM shows real rejection reasons when no provider is eligible", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({
     projectRoot: "/repo/demo",
     modelIntelligence: {
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      models: [], roles: [],
+      aiTeam: [],
       eligibility: {
         codex: { ok: false, reason: "Codex quota nearly exhausted (2% left)" },
         claude: { ok: false, reason: "Claude quota nearly exhausted (1% left)" },
