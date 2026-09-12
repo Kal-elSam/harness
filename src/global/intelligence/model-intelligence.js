@@ -6,6 +6,43 @@
 // A model with no confident match gets no score, never a guessed one —
 // same fail-closed rule as everywhere else in Kairo's routing.
 
+import { bestEvidence } from "./model-capability-registry.js";
+
+// Real per-benchmark metrics worth surfacing as corroborating evidence
+// alongside a pick — never blended into the ranking itself, since
+// Terminal-Bench/GPQA/HLE aren't the same measurement as AA's
+// intelligenceIndex/codingIndex and averaging them would violate the
+// registry's own no-blending contract.
+const CORROBORATION_METRICS = ["terminal-bench", "terminal-bench-science", "gpqa-diamond", "hle", "cursorbench", "kairo.success"];
+
+/**
+ * Attaches real registry evidence (Hugging Face, manufacturer snapshots,
+ * Kairo's own telemetry) to a model, purely for transparency — never used
+ * to change a ranking value. `registry` is optional; without one, models
+ * pass through unchanged (existing callers/tests keep working).
+ * @param {object} model - has adapterId/modelId
+ * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>|null} registry
+ */
+function withCorroboration(model, registry) {
+  if (!registry) return model;
+  const id = registry.registerIdentity(model.adapterId, model.modelId);
+  const corroboration = [];
+  for (const metric of CORROBORATION_METRICS) {
+    const best = bestEvidence(registry, id, metric);
+    if (best) corroboration.push({ metric, value: best.value, source: best.source });
+  }
+  return corroboration.length ? { ...model, corroboration } : model;
+}
+
+/**
+ * @param {Array<object>} models - scoreAvailableModels() output
+ * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>|null} [registry]
+ */
+export function annotateWithRegistryEvidence(models, registry = null) {
+  if (!registry) return models;
+  return models.map((model) => withCorroboration(model, registry));
+}
+
 function normalizeId(id) {
   return String(id ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -200,8 +237,9 @@ const AI_TEAM_ROLE_DEFINITIONS = [
   { role: "Economy", compute: (m) => m.priceInputPerMTok, better: "min" }
 ];
 
-function toTeamModel(model, available) {
-  return { adapterId: model.adapterId, modelId: model.modelId, displayName: model.displayName, available };
+function toTeamModel(model, available, registry = null) {
+  const base = { adapterId: model.adapterId, modelId: model.modelId, displayName: model.displayName, available };
+  return withCorroboration(base, registry);
 }
 
 function rankBy(models, compute, better) {
@@ -273,9 +311,13 @@ const NEAR_EQUIVALENCE_BAND = 0.02;
  *   across every candidate provider regardless of current eligibility.
  * @param {Record<string, {ok: boolean, reason?: string}>} eligibility -
  *   checkCandidate() results per adapterId.
+ * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>|null} [registry] -
+ *   when given, each primary/fallback also carries `corroboration` (real
+ *   Hugging Face / manufacturer-snapshot / Kairo-telemetry evidence for
+ *   that exact model) — purely informational, never part of the ranking.
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
-export function buildAiTeam(models, eligibility = {}) {
+export function buildAiTeam(models, eligibility = {}, registry = null) {
   const roleRankings = AI_TEAM_ROLE_DEFINITIONS.map(({ role, compute, better }) => ({
     role, compute, better, ranked: rankEligible(models, eligibility, compute, better)
   }));
@@ -334,7 +376,7 @@ export function buildAiTeam(models, eligibility = {}) {
     if (!chosen) {
       const globalLeader = globalRanked[0];
       entries.push({
-        role, primary: toTeamModel(globalLeader.model, false), fallback: null,
+        role, primary: toTeamModel(globalLeader.model, false, registry), fallback: null,
         reason: "No eligible provider currently covers this role."
       });
       continue;
@@ -345,7 +387,7 @@ export function buildAiTeam(models, eligibility = {}) {
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > chosen.value : globalLeader.value < chosen.value;
     if (!globalLeaderEligible && globalLeaderIsStrictlyBetter) {
       entries.push({
-        role, primary: toTeamModel(globalLeader.model, false), fallback: toTeamModel(chosen.model, true),
+        role, primary: toTeamModel(globalLeader.model, false, registry), fallback: toTeamModel(chosen.model, true, registry),
         reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`
       });
       continue;
@@ -353,8 +395,8 @@ export function buildAiTeam(models, eligibility = {}) {
 
     const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
     entries.push({
-      role, primary: toTeamModel(chosen.model, true),
-      fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true) : null,
+      role, primary: toTeamModel(chosen.model, true, registry),
+      fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, registry) : null,
       reason: describeChoice(role, chosen, eligibleRanked, builderPick)
     });
   }

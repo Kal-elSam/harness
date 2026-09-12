@@ -409,9 +409,13 @@ export class CockpitView {
 
   /**
    * The full breakdown behind each AI TEAM pick — primary, availability,
-   * fallback, and the distribution-policy reason (near-tie, independence
-   * swap, temporarily-unavailable leader) — surfaced via /models instead
-   * of the always-visible widget.
+   * fallback, the distribution-policy reason (near-tie, independence
+   * swap, temporarily-unavailable leader), and any real corroborating
+   * evidence the Model Intelligence Foundation registry has for that
+   * exact model (Hugging Face, manufacturer snapshots, Kairo's own
+   * telemetry) — surfaced via /models instead of the always-visible
+   * widget. Corroboration is informational only: it never changed which
+   * model was picked, so it's shown, never blended into the reason.
    */
   aiTeamDetailLines() {
     const intel = this.snapshot?.modelIntelligence;
@@ -420,9 +424,14 @@ export class CockpitView {
     if (!team.length) return this.fitLines();
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
     const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
+    const corroborationLine = (model) => (model.corroboration ?? [])
+      .map((entry) => `${entry.metric}=${entry.value} (${entry.source})`)
+      .join(" · ");
     for (const { role, primary, fallback, reason } of team) {
       const primaryText = primary.available ? this.aiTeamLabel(primary) : `${this.aiTeamLabel(primary)} (not available)`;
       lines.push(`${role.padEnd(10)} ${primaryText}`);
+      const primaryEvidence = corroborationLine(primary);
+      if (primaryEvidence) lines.push(theme.fg("muted", `  also: ${primaryEvidence}`));
       if (fallback) lines.push(theme.fg("muted", `  fallback ${this.aiTeamLabel(fallback)}`));
       else if (!primary.available) lines.push(theme.fg("warning", "  no eligible fallback right now"));
       if (reason) lines.push(theme.fg("muted", `  ${reason}`));

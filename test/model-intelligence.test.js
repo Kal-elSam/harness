@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bestModelPerRole, buildAiTeam, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage } from "../src/global/intelligence/model-intelligence.js";
+import { annotateWithRegistryEvidence, bestModelPerRole, buildAiTeam, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage } from "../src/global/intelligence/model-intelligence.js";
+import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 
 const AA_MODELS = [
   { slug: "gpt-6-astra", name: "GPT-6 Astra (max)", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null },
@@ -267,4 +268,52 @@ test("buildAiTeam never forces Reviewer onto a decisively worse independent alte
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
   assert.equal(byRole.Builder.primary.adapterId, "claude");
   assert.equal(byRole.Reviewer.primary.adapterId, "claude", "independence must not override a real capability floor");
+});
+
+test("annotateWithRegistryEvidence attaches real registry evidence without changing any ranking value", () => {
+  const aa = [{ slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null }];
+  const scored = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "gpt-6-astra" }] }], aa);
+  const registry = createCapabilityRegistry();
+  const id = registry.registerIdentity("codex", "gpt-6-astra");
+  registry.addEvidence(id, { metric: "gpqa-diamond", value: 96.0, source: "openai-official", date: "2026-09-03", verified: false });
+
+  const annotated = annotateWithRegistryEvidence(scored, registry);
+  assert.equal(annotated[0].intelligenceIndex, 52.8); // unchanged
+  assert.deepEqual(annotated[0].corroboration, [{ metric: "gpqa-diamond", value: 96.0, source: "openai-official" }]);
+});
+
+test("annotateWithRegistryEvidence omits corroboration (no extra field) when the registry has nothing for a model", () => {
+  const aa = [{ slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null }];
+  const scored = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "gpt-6-astra" }] }], aa);
+  const registry = createCapabilityRegistry();
+  const annotated = annotateWithRegistryEvidence(scored, registry);
+  assert.equal(annotated[0].corroboration, undefined);
+});
+
+test("annotateWithRegistryEvidence returns models unchanged when no registry is given", () => {
+  const aa = [{ slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null }];
+  const scored = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "gpt-6-astra" }] }], aa);
+  assert.equal(annotateWithRegistryEvidence(scored), scored);
+});
+
+test("buildAiTeam attaches corroboration to a team pick when given a registry, without changing which model was chosen", () => {
+  const aa = [
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 20, codingIndex: 20, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
+  );
+  const registry = createCapabilityRegistry();
+  const id = registry.registerIdentity("claude", "claude-model");
+  registry.addEvidence(id, { metric: "kairo.success", value: 1, source: "kairo-telemetry", date: "2026-09-12", verified: true });
+
+  const withoutRegistry = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  const withRegistry = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } }, registry);
+  const builderWithout = withoutRegistry.find((t) => t.role === "Builder");
+  const builderWith = withRegistry.find((t) => t.role === "Builder");
+
+  assert.equal(builderWith.primary.adapterId, builderWithout.primary.adapterId, "the pick itself never changes");
+  assert.equal(builderWithout.primary.corroboration, undefined);
+  assert.deepEqual(builderWith.primary.corroboration, [{ metric: "kairo.success", value: 1, source: "kairo-telemetry" }]);
 });

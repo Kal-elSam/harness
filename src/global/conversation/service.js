@@ -23,7 +23,14 @@ import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
-import { bestModelPerRole, buildAiTeam, scoreAvailableModels, summarizeCatalogCoverage } from "../intelligence/model-intelligence.js";
+import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
+import {
+  annotateWithRegistryEvidence, bestModelPerRole, buildAiTeam, scoreAvailableModels, summarizeCatalogCoverage
+} from "../intelligence/model-intelligence.js";
+import { createCapabilityRegistry } from "../intelligence/model-capability-registry.js";
+import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../intelligence/model-capability-registry-sources.js";
+import { ingestOfficialSnapshotEvidence } from "../intelligence/official-benchmark-snapshots.js";
+import { ingestKairoTelemetryEvidence } from "../intelligence/kairo-telemetry-source.js";
 
 export const CONVERSATION_SCHEMA = "kairo.conversation/v1";
 
@@ -223,6 +230,11 @@ export function createConversationService(deps = {}) {
   // than usage, not a fresh read on every poll.
   const modelCatalogTtlMs = deps.modelCatalogTtlMs ?? 600_000;
   const artificialAnalysisTtlMs = deps.artificialAnalysisTtlMs ?? 6 * 60 * 60_000;
+  // Same scale as Artificial Analysis: real benchmark leaderboards don't
+  // change minute to minute. Telemetry reads local run records already on
+  // disk (no network call) but still shouldn't re-scan on every 2s poll.
+  const huggingFaceLeaderboardTtlMs = deps.huggingFaceLeaderboardTtlMs ?? 6 * 60 * 60_000;
+  const telemetryTtlMs = deps.telemetryTtlMs ?? 30_000;
   const now = deps.now ?? (() => Date.now());
 
   // Shared TTL + in-flight-dedupe cache for both provider usage probes:
@@ -256,6 +268,12 @@ export function createConversationService(deps = {}) {
   const readArtificialAnalysisModelsCached = createCachedProbe(
     (args) => readArtificialAnalysisModelsImpl({ ...args, homeDir }), artificialAnalysisTtlMs
   );
+  const readHuggingFaceLeaderboardImpl = deps.readHuggingFaceLeaderboard ?? readHuggingFaceLeaderboard;
+  const readHuggingFaceLeaderboardCached = createCachedProbe(
+    (datasetId) => readHuggingFaceLeaderboardImpl({ datasetId, homeDir }), huggingFaceLeaderboardTtlMs
+  );
+  const listRunRecordsImpl = deps.listRunRecords ?? listRunRecords;
+  const listRunRecordsCached = createCachedProbe(() => listRunRecordsImpl(homeDir), telemetryTtlMs);
   const readOpenCodeUsageCached = createCachedProbe(readOpenCodeUsageImpl, opencodeUsageTtlMs);
   const readOpenCodeGoCached = createCachedProbe(readOpenCodeGoImpl, opencodeGoUsageTtlMs);
   const readOpenCodeStatsCached = createCachedProbe(readOpenCodeStatsImpl, opencodeUsageTtlMs);
@@ -394,9 +412,37 @@ export function createConversationService(deps = {}) {
           { adapterId: "opencode-go", catalogStatus: opencodeGoCatalog?.status ?? "unknown", models: opencodeGoCatalog?.models ?? [] },
           { adapterId: "cursor", catalogStatus: cursorCatalog?.status ?? "unknown", models: cursorCatalog?.models ?? [] }
         ], aa.models);
+
+        // The Model Intelligence Foundation registry: every source Kairo
+        // has (AA, Hugging Face scoped to Go, manufacturer snapshots,
+        // Kairo's own real run telemetry) collected with provenance, not
+        // blended into AI TEAM's ranking math — Terminal-Bench and AA's
+        // codingIndex aren't the same measurement, and averaging them would
+        // violate the registry's own no-blending contract. Instead it's
+        // surfaced as corroborating evidence alongside each pick (see
+        // annotateWithRegistryEvidence), so AI TEAM's actual decision stays
+        // exactly the real-metric ranking it already was, while /models can
+        // now also show what else is known about the chosen model.
+        const registry = createCapabilityRegistry();
+        ingestArtificialAnalysisEvidence(
+          registry, Object.keys(catalogsByAdapter).map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
+          aa.models, { fetchedAt: aa.fetchedAt ?? new Date().toISOString() }
+        );
+        const hle = await readHuggingFaceLeaderboardCached("cais/hle", "cais/hle").catch(() => null);
+        if (hle?.entries?.length) {
+          ingestHuggingFaceLeaderboardEvidence(
+            registry, [{ adapterId: "opencode-go", models: catalogsByAdapter["opencode-go"] ?? [] }],
+            hle.entries, { metric: "hle", fetchedAt: hle.fetchedAt }
+          );
+        }
+        ingestOfficialSnapshotEvidence(registry);
+        const runRecords = await listRunRecordsCached("runs", null).catch(() => []);
+        ingestKairoTelemetryEvidence(registry, runRecords);
+
         result.modelIntelligence = {
-          status: aa.status, source: aa.source, age: aa.age, models: scored, roles: bestModelPerRole(scored),
-          eligibility, coverage, aiTeam: buildAiTeam(scoredAll, eligibility)
+          status: aa.status, source: aa.source, age: aa.age,
+          models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(scored),
+          eligibility, coverage, aiTeam: buildAiTeam(scoredAll, eligibility, registry)
         };
       }
       return result;

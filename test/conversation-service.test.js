@@ -100,7 +100,8 @@ test("snapshot surfaces real Claude session/weekly usage percentages via /usage,
     readCodexModels: async () => ({ status: "unknown", models: [] }),
     readOpenCodeModels: async () => ({ status: "unknown", models: [] }),
     readCursorModels: async () => ({ status: "unknown", models: [] }),
-    readArtificialAnalysisModels: async () => ({ status: "unknown", source: null, age: null, models: [] })
+    readArtificialAnalysisModels: async () => ({ status: "unknown", source: null, age: null, models: [] }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" })
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
@@ -199,7 +200,9 @@ test("snapshot cross-references real model catalogs with real Artificial Analysi
         { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null },
         { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 50.7, codingIndex: 78, mathIndex: null }
       ]
-    })
+    }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
@@ -240,7 +243,9 @@ test("snapshot excludes a provider from FIT once its real quota is exhausted, ev
         { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 30, codingIndex: 30, mathIndex: null },
         { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 99, codingIndex: 99, mathIndex: null }
       ]
-    })
+    }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
@@ -286,7 +291,15 @@ test("snapshot lets AI TEAM recommend a real, accessible opencode-go model even 
     readArtificialAnalysisModels: async () => ({
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
       models: [{ slug: "glm-5.3", name: "GLM 5.3", intelligenceIndex: 44.9, codingIndex: 74.8, mathIndex: null, priceInputPerMTok: 1.4 }]
-    })
+    }),
+    // Real-shaped HF leaderboard evidence for this exact Go model, so this
+    // test also proves the Model Intelligence Foundation registry is wired
+    // into AI TEAM's picks as corroboration (never as a ranking input).
+    readHuggingFaceLeaderboard: async () => ({
+      status: "live", source: "huggingface datasets api (leaderboard)", fetchedAt: "2026-09-12T00:00:00.000Z", age: "<1h",
+      entries: [{ modelId: "zai-org/GLM-5.3", value: 62.5, verified: false, rank: 2 }], error: null
+    }),
+    listRunRecords: async () => []
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
@@ -295,6 +308,7 @@ test("snapshot lets AI TEAM recommend a real, accessible opencode-go model even 
   const economy = snapshot.modelIntelligence.aiTeam.find((t) => t.role === "Economy");
   assert.equal(economy.primary.adapterId, "opencode-go");
   assert.equal(economy.primary.available, true);
+  assert.deepEqual(economy.primary.corroboration, [{ metric: "hle", value: 62.5, source: "huggingface-leaderboard" }]);
 });
 
 test("snapshot always excludes opencode-zen and cursor from FIT's automatic candidates, independent of their catalogs", async () => {
@@ -319,7 +333,9 @@ test("snapshot always excludes opencode-zen and cursor from FIT's automatic cand
     readArtificialAnalysisModels: async () => ({
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
       models: [{ slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 99, codingIndex: 99, mathIndex: null }]
-    })
+    }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
@@ -521,6 +537,7 @@ test("snapshot deduplicates in-flight Codex usage probes and honors its TTL", as
     readOpenCodeModels: async () => ({ status: "unknown", models: [] }),
     readCursorModels: async () => ({ status: "unknown", models: [] }),
     readArtificialAnalysisModels: async () => ({ status: "unknown", source: null, age: null, models: [] }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
     listPlans: async () => [],
     recoverRuns: async () => {},
     listRunRecords: async () => [],
