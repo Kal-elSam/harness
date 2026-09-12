@@ -25,7 +25,8 @@ export function harnessHomePaths(homeDir) {
     coreDir: join(root, "core"),
     backupsDir: join(root, "backups"),
     sessionsDir: join(root, "sessions"),
-    modelIntelligencePath: join(root, "model-intelligence.json")
+    modelIntelligencePath: join(root, "model-intelligence.json"),
+    huggingfaceLeaderboardPath: join(root, "huggingface-leaderboard.json")
   };
 }
 
