@@ -33,9 +33,17 @@ export const OFFICIAL_BENCHMARK_SNAPSHOTS = [
     url: "https://openai.com/index/gpt-6-astra/",
     published: "2026-09-03",
     benchmark: "terminal-bench", benchmarkVersion: "4.0",
+    // Corrected from an earlier 57.7 (a transcription error introduced by
+    // paraphrasing a search summary instead of the source) after
+    // cross-checking multiple independent citations of OpenAI's own
+    // launch page. Other real numbers exist for other configs — Astra at
+    // "xhigh"/"max" reasoning effort, and Artificial Analysis's own
+    // independently-measured snapshot — but those are different real
+    // measurements, not this one; they belong in their own entries if
+    // ever added, never blended into this vendor's reported baseline.
     caveat: "OpenAI's own reported results, run at maximum reasoning effort in an environment that may differ from production.",
     scores: [
-      { adapterId: "codex", modelId: "gpt-6-astra", value: 57.7 },
+      { adapterId: "codex", modelId: "gpt-6-astra", value: 57.9 },
       { adapterId: "codex", modelId: "gpt-5.6-sol", value: 37.3 },
       { adapterId: "claude", modelId: "claude-fable-5-1", value: 55.8 }
     ]
@@ -89,15 +97,50 @@ export const OFFICIAL_BENCHMARK_SNAPSHOTS = [
   }
 ];
 
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Structural integrity check for hand-curated snapshot data — this can't
+ * verify a number is *correct* against the live source (nothing here can
+ * re-fetch OpenAI's blocked page), but it can catch the failure modes that
+ * actually happened while authoring this file: a missing citation, a
+ * malformed date, an unreferenced adapter/model, or an accidental exact
+ * duplicate row within the same vendor snapshot. Throws on the first
+ * violation — fail loud, never ingest a malformed entry silently.
+ * @param {Array<object>} snapshots
+ */
+export function validateSnapshotIntegrity(snapshots) {
+  const seen = new Set();
+  snapshots.forEach((snapshot, index) => {
+    const where = `snapshot[${index}] (${snapshot.source ?? "?"}/${snapshot.benchmark ?? "?"})`;
+    if (!snapshot.source) throw new Error(`${where}: missing source`);
+    if (!/^https:\/\//.test(snapshot.url ?? "")) throw new Error(`${where}: url must be a real https link, got ${snapshot.url}`);
+    if (!DATE_PATTERN.test(snapshot.published ?? "")) throw new Error(`${where}: published must be an ISO date (YYYY-MM-DD), got ${snapshot.published}`);
+    if (!snapshot.benchmark) throw new Error(`${where}: missing benchmark`);
+    if (!snapshot.caveat) throw new Error(`${where}: missing the vendor's own methodology caveat`);
+    if (!Array.isArray(snapshot.scores) || !snapshot.scores.length) throw new Error(`${where}: scores must be a non-empty array`);
+    for (const score of snapshot.scores) {
+      if (!score.adapterId || !score.modelId) throw new Error(`${where}: every score needs adapterId and modelId, got ${JSON.stringify(score)}`);
+      if (score.value != null && !Number.isFinite(score.value)) throw new Error(`${where}: score.value must be a finite number or null, got ${score.value}`);
+      const key = `${snapshot.source}|${snapshot.benchmark}|${snapshot.benchmarkVersion}|${score.adapterId}|${score.modelId}`;
+      if (seen.has(key)) throw new Error(`${where}: duplicate row for ${score.adapterId}/${score.modelId} — same vendor reporting the same benchmark/model twice is almost certainly a copy-paste mistake`);
+      seen.add(key);
+    }
+  });
+}
+
 /**
  * Registers every model named in a snapshot and records its real reported
  * score as evidence — always `verified: false` (manufacturer-reported is
  * never independent, regardless of which vendor published it), with the
  * vendor's own caveat preserved as `modelConfig` so it isn't lost.
+ * Validates snapshot integrity first (see validateSnapshotIntegrity) —
+ * never ingests a structurally malformed entry.
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
  * @param {Array<object>} [snapshots] - defaults to OFFICIAL_BENCHMARK_SNAPSHOTS
  */
 export function ingestOfficialSnapshotEvidence(registry, snapshots = OFFICIAL_BENCHMARK_SNAPSHOTS) {
+  validateSnapshotIntegrity(snapshots);
   for (const snapshot of snapshots) {
     for (const { adapterId, modelId, value } of snapshot.scores) {
       if (value == null) continue;
