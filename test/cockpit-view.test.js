@@ -46,13 +46,15 @@ test("render gives conversation priority and keeps compact usage in the header",
   assert.match(joined, /KAIRO/);
   assert.match(joined, /demo/);
   assert.match(joined, /USAGE/);
-  assert.match(joined, /WORKFLOW/);
-  assert.match(joined, /WAITING APPROVAL/);
   assert.match(joined, /Claude\s+Pro/);
   assert.match(joined, /Fix the login flow/);
   assert.match(joined, /Enter send/);
   assert.doesNotMatch(joined, /TASKS/);
   assert.doesNotMatch(joined, /ACTIVITY/);
+  // STATUS added no real value (only ever showed a leftover task's phase)
+  // and was removed outright per explicit user decision.
+  assert.doesNotMatch(joined, /STATUS/);
+  assert.doesNotMatch(joined, /WORKFLOW/);
   // Integration detail (Engram/MCP/etc.) is deliberately kept out of the
   // always-visible workspace — it's still reachable via view.integrationsLine()
   // behind /status, but shouldn't compete with the current task on screen.
@@ -82,7 +84,7 @@ test("FIT always shows real per-role winners — plain role names, no numbers, n
   assert.doesNotMatch(lines, /\d+\.\d.*intel/); // no raw scores leaking into FIT
 });
 
-test("STATUS reports honestly when there is no benchmark data yet, never a fabricated ranking", () => {
+test("FIT reports honestly when there is no benchmark data yet, never a fabricated ranking", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({ projectRoot: "/repo/demo", modelIntelligence: { status: "unknown", source: null, age: null, models: [], error: "no API key configured" } });

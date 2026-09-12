@@ -1,7 +1,5 @@
 import { matchesKey, Key, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import {
-  buildTaskRows, clampSelection, derivePhase, isActionAvailable, rowTone
-} from "./rows.js";
+import { buildTaskRows, clampSelection, isActionAvailable } from "./rows.js";
 import { CARD_TONE, cardBottom, cardLine, cardTop } from "./card.js";
 import { theme } from "./theme.js";
 
@@ -290,19 +288,7 @@ export class CockpitView {
     for (const line of this.fitLines()) lines.push(cardLine(line, CARD_TONE.SUCCESS, theme, width));
     lines.push(cardBottom(CARD_TONE.SUCCESS, theme, width));
 
-    // STATUS is a small, informative widget (current task's phase/provider,
-    // or a pending decision) — separate from the chat below, the way
-    // Claude Code/Codex CLI keep their scrollback apart from status chrome.
-    // It's just omitted when there's nothing to report, so it never grows
-    // by padding itself with anything that isn't real.
     const row = this.selectedRow();
-    if (row || this.mode === "confirm-execute") {
-      const statusTone = this.mode === "confirm-execute" ? CARD_TONE.WARNING : CARD_TONE.INFO;
-      lines.push(cardTop("STATUS", statusTone, theme, width));
-      for (const line of this.statusLines(row)) lines.push(cardLine(line, statusTone, theme, width));
-      lines.push(cardBottom(statusTone, theme, width));
-    }
-
     const footerLines = [theme.fg("muted", "Enter send · /help · /usage · q quit")];
     if (row) {
       footerLines.push(theme.fg("muted", this.hasListFocus
@@ -322,22 +308,6 @@ export class CockpitView {
     lines.push(...this.chatLines(chatBudget));
     lines.push(...footerLines);
     return lines.map((line) => truncateToWidth(line, width, "…"));
-  }
-
-  /** @param {import("./rows.js").CockpitRow|null} row */
-  statusLines(row) {
-    const lines = [];
-    if (row) {
-      lines.push(theme.fg("muted", "WORKFLOW"));
-      lines.push(theme.fg(rowTone(row), derivePhase(row)));
-      if (row.taskText) lines.push(row.taskText);
-      if (row.planProvider || row.execProvider) lines.push(theme.fg("muted", this.selectedProviderLine(row)));
-    }
-    if (this.mode === "confirm-execute") {
-      if (row) lines.push("");
-      lines.push(...this.confirmPromptLines(row));
-    }
-    return lines;
   }
 
   /**
@@ -370,7 +340,7 @@ export class CockpitView {
    *   recent-history window instead of showing everything unbounded.
    */
   chatLines(chatBudget) {
-    if (this.transcript.length === 0 && !this.statusMessage) {
+    if (this.mode !== "confirm-execute" && this.transcript.length === 0 && !this.statusMessage) {
       return [
         theme.fg("muted", "Ask Kairo about this project, or describe work to plan."),
         "",
@@ -378,6 +348,13 @@ export class CockpitView {
       ];
     }
     const lines = [];
+    // The execute confirmation (y/n) is a real pending decision, not status
+    // chrome — it belongs in the dominant chat surface, not a separate
+    // widget that could be scrolled past or removed.
+    if (this.mode === "confirm-execute") {
+      lines.push(...this.confirmPromptLines(this.selectedRow()));
+      lines.push("");
+    }
     if (this.statusMessage) {
       lines.push(theme.fg("accent", this.statusMessage));
       lines.push("");
@@ -388,24 +365,6 @@ export class CockpitView {
       lines.push(`${prefix}${entry.text}`);
     }
     return lines;
-  }
-
-  /**
-   * Real provider/model recorded for this row: the plan's real
-   * `planProvider` while it's still just a plan, or the real `execProvider`
-   * once a run has actually started — never the router's *pending*
-   * recommendation, which only exists as a preview inside a confirm-execute
-   * prompt (see confirmPromptLines/executeDecision). Shows "<Provider>
-   * default" when no explicit model was requested, per the same
-   * never-invent-a-model rule the usage probes follow.
-   */
-  selectedProviderLine(row) {
-    const executing = row.execState !== "not_started" && row.execProvider;
-    const providerId = executing ? row.execProvider : row.planProvider;
-    if (!providerId) return theme.fg("muted", "unknown");
-    const label = providerId.charAt(0).toUpperCase() + providerId.slice(1);
-    const modelText = !executing && row.planModel ? row.planModel : "default";
-    return `${label} · ${modelText}`;
   }
 
   /**
