@@ -208,7 +208,7 @@ test("/models prints the real per-role fit into the chat even when a task row is
   await editor.onSubmit(editor.getText());
   const printed = app.view.transcript.map((entry) => entry.text).join("\n");
   assert.match(printed, /Artificial Analysis, live/);
-  assert.match(printed, /Coding\s+Codex · GPT-6-Astra/);
+  assert.match(printed, /Coding[\s\S]*?\n[\s\S]*?→ Codex · GPT-6-Astra/);
   app.stop();
 });
 

@@ -78,10 +78,35 @@ test("FIT always shows real per-role winners — plain role names, no numbers, n
   });
   const lines = view.render(100).join("\n");
   assert.match(lines, /Artificial Analysis, live/);
-  assert.match(lines, /Planning \/ Architecture\s+Codex · GPT-6-Astra/);
-  assert.match(lines, /Coding\s+Claude · Claude Fable 5\.1/);
-  assert.match(lines, /Quick & cheap tasks\s+Claude · Claude Haiku 4\.5/);
+  assert.match(lines, /Planning \/ Architecture[\s\S]*?\n[\s\S]*?→ Codex · GPT-6-Astra/);
+  assert.match(lines, /Coding[\s\S]*?\n[\s\S]*?→ Claude · Claude Fable 5\.1/);
+  assert.match(lines, /Quick & cheap tasks[\s\S]*?\n[\s\S]*?→ Claude · Claude Haiku 4\.5/);
   assert.doesNotMatch(lines, /\d+\.\d.*intel/); // no raw scores leaking into FIT
+});
+
+test("fitLines groups roles that share the same real winner into one line, instead of implying N independent judgments", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [],
+      roles: [
+        { role: "Explorer", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" },
+        { role: "Architect / Planner", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" },
+        { role: "Implementer", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" },
+        { role: "Economy", adapterId: "codex", modelId: "gpt-5.6-luna", displayName: "GPT-5.6-Luna" }
+      ]
+    }
+  });
+  const lines = view.fitLines();
+  // The three Claude Fable winners collapse into one grouped role line + one winner line —
+  // not three separate "Role  Provider · Model" rows repeating the same conclusion.
+  assert.equal(lines.length, 5); // header + (grouped role line + winner line) x 2 groups
+  assert.equal(lines[1], "Explorer, Architect / Planner, Implementer");
+  assert.equal(lines[2], "  → Claude · Claude Fable 5.1");
+  assert.equal(lines[3], "Economy");
+  assert.equal(lines[4], "  → Codex · GPT-5.6-Luna");
 });
 
 test("USAGE and FIT tile side by side once the terminal is wide enough, each still readable in full", () => {
@@ -100,7 +125,7 @@ test("USAGE and FIT tile side by side once the terminal is wide enough, each sti
   const topLine = lines.find((line) => line.includes("KAIRO"));
   assert.ok(topLine.includes("FIT"), "USAGE and FIT top borders should share one row when tiled");
   const joined = lines.join("\n");
-  assert.match(joined, /Planning \/ Architecture\s+Claude · Claude Fable 5\.1/); // not truncated
+  assert.match(joined, /Planning \/ Architecture[\s\S]*?\n[\s\S]*?→ Claude · Claude Fable 5\.1/); // not truncated
   for (const line of lines) assert.ok(visibleWidth(line) <= 160, `line "${line}" exceeds width`);
 });
 
@@ -118,7 +143,7 @@ test("USAGE and FIT stack (not tile) below the width threshold, so content never
   const lines = view.render(100);
   const topLine = lines.find((line) => line.includes("KAIRO"));
   assert.ok(!topLine.includes("FIT"), "below the threshold, USAGE and FIT must not share a row");
-  assert.match(lines.join("\n"), /Planning \/ Architecture\s+Claude · Claude Fable 5\.1/);
+  assert.match(lines.join("\n"), /Planning \/ Architecture[\s\S]*?\n[\s\S]*?→ Claude · Claude Fable 5\.1/);
 });
 
 test("FIT reports honestly when there is no benchmark data yet, never a fabricated ranking", () => {

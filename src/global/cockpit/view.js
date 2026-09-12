@@ -380,9 +380,24 @@ export class CockpitView {
     }
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
     const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
+    // Several roles share the same real metric today (Explorer reuses
+    // Architect/Planner's intelligence signal, Test Author reuses
+    // Implementer's coding signal, etc. — see model-intelligence.js), so
+    // they often land on the same winner. Showing that as N separate rows
+    // would misleadingly imply N independent judgments; grouping the roles
+    // that share one real winner shows the actual number of distinct
+    // conclusions instead.
+    const groups = [];
     for (const entry of intel.roles) {
-      const provider = entry.adapterId.charAt(0).toUpperCase() + entry.adapterId.slice(1);
-      lines.push(`${entry.role.padEnd(22)} ${provider} · ${entry.displayName ?? entry.modelId}`);
+      const key = `${entry.adapterId}::${entry.modelId}`;
+      let group = groups.find((g) => g.key === key);
+      if (!group) { group = { key, adapterId: entry.adapterId, displayName: entry.displayName, modelId: entry.modelId, roles: [] }; groups.push(group); }
+      group.roles.push(entry.role);
+    }
+    for (const group of groups) {
+      const provider = group.adapterId.charAt(0).toUpperCase() + group.adapterId.slice(1);
+      lines.push(group.roles.join(", "));
+      lines.push(`  → ${provider} · ${group.displayName ?? group.modelId}`);
     }
     return lines;
   }
