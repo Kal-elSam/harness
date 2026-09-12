@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bestModelPerRole, matchArtificialAnalysisScore, scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
+import { bestModelPerRole, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage } from "../src/global/intelligence/model-intelligence.js";
 
 const AA_MODELS = [
   { slug: "gpt-6-astra", name: "GPT-6 Astra (max)", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null },
@@ -131,4 +131,29 @@ test("bestModelPerRole never invents an Orchestrator role — that's Kairo itsel
   const roles = bestModelPerRole(scored).map((r) => r.role);
   assert.ok(!roles.includes("Orchestrator"));
   assert.ok(!roles.includes("Tests"));
+});
+
+test("summarizeCatalogCoverage reports real total/matched counts per provider, independent of runtime eligibility", () => {
+  const aa = [
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null },
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 50.7, codingIndex: 78, mathIndex: null }
+  ];
+  const coverage = summarizeCatalogCoverage([
+    { adapterId: "codex", catalogStatus: "measured", models: [{ id: "gpt-6-astra" }, { id: "some-unreleased-model" }] },
+    { adapterId: "claude", catalogStatus: "documented", models: [{ id: "claude-opus-5" }] },
+    { adapterId: "cursor", catalogStatus: "measured", models: [] }
+  ], aa);
+  assert.deepEqual(coverage, [
+    { adapterId: "codex", catalogStatus: "measured", totalModels: 2, matchedModels: 1 },
+    { adapterId: "claude", catalogStatus: "documented", totalModels: 1, matchedModels: 1 },
+    { adapterId: "cursor", catalogStatus: "measured", totalModels: 0, matchedModels: 0 }
+  ]);
+});
+
+test("summarizeCatalogCoverage handles Cursor's plain-string catalog shape too", () => {
+  const aa = [{ slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 50.7, codingIndex: 78, mathIndex: null }];
+  const coverage = summarizeCatalogCoverage(
+    [{ adapterId: "cursor", catalogStatus: "measured", models: ["claude-opus-5", "unmatched-model"] }], aa
+  );
+  assert.deepEqual(coverage, [{ adapterId: "cursor", catalogStatus: "measured", totalModels: 2, matchedModels: 1 }]);
 });

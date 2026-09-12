@@ -193,6 +193,23 @@ test("/why-style fitWhyLines names every candidate's real eligibility outcome, n
   assert.match(lines, /claude: excluded — Claude quota nearly exhausted \(2% left\)/);
 });
 
+test("/why also shows real catalog coverage — separate from runtime eligibility, so 'best available' is never confused with 'the only thing Kairo can see'", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      eligibility: { codex: { ok: true, reason: null } },
+      coverage: [
+        { adapterId: "codex", catalogStatus: "measured", totalModels: 5, matchedModels: 5 },
+        { adapterId: "claude", catalogStatus: "documented", totalModels: 9, matchedModels: 8 }
+      ]
+    }
+  });
+  const lines = view.fitWhyLines().join("\n");
+  assert.match(lines, /codex: measured catalog, 5\/5 models matched to Artificial Analysis/);
+  assert.match(lines, /claude: documented catalog, 8\/9 models matched to Artificial Analysis/);
+});
+
 test("narrow dashboard keeps Go and Zen on separate readable rows", () => {
   const { view } = makeView();
   view.setSnapshot({

@@ -23,7 +23,7 @@ import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
-import { bestModelPerRole, scoreAvailableModels } from "../intelligence/model-intelligence.js";
+import { bestModelPerRole, scoreAvailableModels, summarizeCatalogCoverage } from "../intelligence/model-intelligence.js";
 
 export const CONVERSATION_SCHEMA = "kairo.conversation/v1";
 
@@ -152,7 +152,7 @@ function snapshot(projectRoot, plans, providers = {}, integrations = {}) {
     providers,
     integrations,
     usage: { codex: null, claude: null, opencode: null },
-    modelIntelligence: { status: "unknown", source: null, age: null, models: [], roles: [], eligibility: {} },
+    modelIntelligence: { status: "unknown", source: null, age: null, models: [], roles: [], eligibility: {}, coverage: [] },
     governance: {
       methodologyOwner: "gentle-ai",
       orchestratorOwner: "kairo",
@@ -357,9 +357,10 @@ export function createConversationService(deps = {}) {
           eligibility[adapterId] = check;
           if (check.ok) candidates.push(adapterId);
         }
+        const claudeCatalog = readClaudeModelsImpl();
         const catalogsByAdapter = {
           codex: codexCatalog?.models ?? [],
-          claude: readClaudeModelsImpl().models,
+          claude: claudeCatalog.models,
           "opencode-go": opencodeGoCatalog?.models ?? [],
           cursor: cursorCatalog?.models ?? []
         };
@@ -367,8 +368,19 @@ export function createConversationService(deps = {}) {
           candidates.map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
           aa.models
         );
+        // How much of each real catalog could even be matched to AA data —
+        // independent of runtime eligibility above. A provider can be fully
+        // eligible right now and still have unmatched models simply because
+        // AA doesn't track them, or (Claude, today) Kairo only has a
+        // documented catalog rather than a live per-account discovery.
+        const coverage = summarizeCatalogCoverage([
+          { adapterId: "codex", catalogStatus: codexCatalog?.status ?? "unknown", models: codexCatalog?.models ?? [] },
+          { adapterId: "claude", catalogStatus: claudeCatalog.status, models: claudeCatalog.models },
+          { adapterId: "opencode-go", catalogStatus: opencodeGoCatalog?.status ?? "unknown", models: opencodeGoCatalog?.models ?? [] },
+          { adapterId: "cursor", catalogStatus: cursorCatalog?.status ?? "unknown", models: cursorCatalog?.models ?? [] }
+        ], aa.models);
         result.modelIntelligence = {
-          status: aa.status, source: aa.source, age: aa.age, models: scored, roles: bestModelPerRole(scored), eligibility
+          status: aa.status, source: aa.source, age: aa.age, models: scored, roles: bestModelPerRole(scored), eligibility, coverage
         };
       }
       return result;

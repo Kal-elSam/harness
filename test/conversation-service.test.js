@@ -206,6 +206,13 @@ test("snapshot cross-references real model catalogs with real Artificial Analysi
   assert.equal(snapshot.modelIntelligence.status, "live");
   assert.equal(snapshot.modelIntelligence.models.length, 2);
   assert.deepEqual(snapshot.modelIntelligence.models.map((m) => m.modelId), ["gpt-6-astra", "claude-opus-5"]);
+  // Coverage/confidence: real catalog status + how much of it matched AA,
+  // independent of runtime eligibility — Claude stays "documented" (no
+  // live per-account discovery exists), Codex is "measured".
+  const codexCoverage = snapshot.modelIntelligence.coverage.find((c) => c.adapterId === "codex");
+  const claudeCoverage = snapshot.modelIntelligence.coverage.find((c) => c.adapterId === "claude");
+  assert.deepEqual(codexCoverage, { adapterId: "codex", catalogStatus: "measured", totalModels: 1, matchedModels: 1 });
+  assert.deepEqual(claudeCoverage, { adapterId: "claude", catalogStatus: "documented", totalModels: 1, matchedModels: 1 });
 });
 
 test("snapshot excludes a provider from FIT once its real quota is exhausted, even though it would otherwise win on capability", async () => {

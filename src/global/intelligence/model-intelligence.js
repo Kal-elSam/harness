@@ -60,6 +60,30 @@ export function scoreAvailableModels(providerCatalogs, aaModels) {
   return annotateBestFit(results);
 }
 
+/**
+ * How much of each provider's real catalog Kairo could actually match to
+ * real Artificial Analysis data — separate from RUNTIME eligibility
+ * (checkCandidate's quota/availability check): a provider can be fully
+ * entitled and runtime-eligible yet still have unmatched models simply
+ * because AA doesn't track them, or Kairo's own catalog is only
+ * "documented" rather than a live discovery (Claude, today). Surfaces
+ * that distinction so "Fable is the best model available now" is never
+ * confused with "Fable is the only model Kairo could ever evaluate."
+ * @param {Array<{adapterId: string, catalogStatus: string, models: Array<object|string>}>} providerCatalogs
+ * @param {Array<object>} aaModels
+ * @returns {Array<{adapterId: string, catalogStatus: string, totalModels: number, matchedModels: number}>}
+ */
+export function summarizeCatalogCoverage(providerCatalogs, aaModels) {
+  return providerCatalogs.map(({ adapterId, catalogStatus, models }) => {
+    const list = models ?? [];
+    const matched = list.filter((entry) => {
+      const id = typeof entry === "string" ? entry : entry.id;
+      return matchArtificialAnalysisScore(id, aaModels) != null;
+    });
+    return { adapterId, catalogStatus, totalModels: list.length, matchedModels: matched.length };
+  });
+}
+
 // Which real, unweighted metric each model is best at among the models you
 // actually have access to right now — never a blended/invented composite
 // score. "better" says which direction wins for that metric (higher coding

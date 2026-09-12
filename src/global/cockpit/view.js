@@ -403,17 +403,34 @@ export class CockpitView {
   }
 
   /**
-   * `/why` detail: every candidate provider's real eligibility outcome —
-   * which ones were rejected and their exact reason, which survived. The
-   * main FIT widget stays a single line per role; this is the drill-down.
+   * `/why` detail: every candidate provider's real eligibility outcome
+   * (which were rejected and their exact reason, which survived) plus a
+   * coverage/confidence line per provider — its real catalog source
+   * (measured vs. documented) and how much of it Kairo could match to
+   * real Artificial Analysis data. This is what stops "Fable is the best
+   * model available now" from being read as "Fable is the only model
+   * Kairo could ever evaluate": a provider can be fully eligible and
+   * still have unmatched models simply because AA doesn't track them, or
+   * because Kairo only has a documented catalog for it, not a live
+   * per-account discovery (true for Claude today). The main FIT widget
+   * stays a single line per role; this is the drill-down.
    */
   fitWhyLines() {
     const intel = this.snapshot?.modelIntelligence;
-    const entries = Object.entries(intel?.eligibility ?? {});
-    if (!entries.length) return [theme.fg("muted", "No eligibility data yet.")];
-    return entries.map(([adapterId, check]) => (check.ok
+    const eligibility = Object.entries(intel?.eligibility ?? {});
+    const coverage = intel?.coverage ?? [];
+    if (!eligibility.length && !coverage.length) return [theme.fg("muted", "No eligibility data yet.")];
+    const lines = eligibility.map(([adapterId, check]) => (check.ok
       ? theme.fg("success", `${adapterId}: eligible`)
       : theme.fg("muted", `${adapterId}: excluded — ${check.reason}`)));
+    if (coverage.length) {
+      lines.push("");
+      lines.push(theme.fg("muted", "Catalog coverage (real data matched, not runtime eligibility):"));
+      for (const entry of coverage) {
+        lines.push(theme.fg("muted", `${entry.adapterId}: ${entry.catalogStatus} catalog, ${entry.matchedModels}/${entry.totalModels} models matched to Artificial Analysis`));
+      }
+    }
+    return lines;
   }
 
   /**
