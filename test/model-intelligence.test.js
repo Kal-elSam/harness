@@ -69,7 +69,7 @@ test("scoreAvailableModels returns an empty list, never a fabricated entry, when
   assert.deepEqual(results, []);
 });
 
-test("bestModelPerRole names one real winner per role, each backed by exactly one real metric — no weights, no blend", () => {
+test("bestModelPerRole names a real winner for all seven roles, each derived from real metrics — no weights, no blend", () => {
   const aa = [
     { slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: 60, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 },
     { slug: "model-b", name: "Model B", intelligenceIndex: 50, codingIndex: 95, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 200 }
@@ -79,20 +79,54 @@ test("bestModelPerRole names one real winner per role, each backed by exactly on
   );
   const roles = bestModelPerRole(scored);
   assert.deepEqual(roles, [
-    { role: "Planning / Architecture", adapterId: "claude", modelId: "model-a", displayName: null },
-    { role: "Coding", adapterId: "codex", modelId: "model-b", displayName: null },
-    { role: "Quick & cheap tasks", adapterId: "codex", modelId: "model-b", displayName: null }
+    { role: "Explorer", adapterId: "claude", modelId: "model-a", displayName: null },
+    { role: "Architect / Planner", adapterId: "claude", modelId: "model-a", displayName: null },
+    { role: "Implementer", adapterId: "codex", modelId: "model-b", displayName: null },
+    // Debugger/Reviewer = min(intelligence, coding): model-a min(90,60)=60 beats model-b min(50,95)=50.
+    { role: "Debugger", adapterId: "claude", modelId: "model-a", displayName: null },
+    { role: "Test Author", adapterId: "codex", modelId: "model-b", displayName: null },
+    { role: "Reviewer", adapterId: "claude", modelId: "model-a", displayName: null },
+    { role: "Economy", adapterId: "codex", modelId: "model-b", displayName: null }
   ]);
+});
+
+test("Debugger and Reviewer use the bottleneck (minimum) of intelligence and coding, never an average or invented weight", () => {
+  const aa = [
+    // High intelligence but weak coding — the bottleneck should punish this for Debugger/Reviewer.
+    { slug: "model-lopsided", name: "Lopsided", intelligenceIndex: 99, codingIndex: 10, mathIndex: null },
+    // Balanced, lower peak but higher minimum.
+    { slug: "model-balanced", name: "Balanced", intelligenceIndex: 60, codingIndex: 60, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "model-lopsided" }, { id: "model-balanced" }] }], aa
+  );
+  const roles = bestModelPerRole(scored);
+  const debugger_ = roles.find((r) => r.role === "Debugger");
+  const reviewer = roles.find((r) => r.role === "Reviewer");
+  assert.equal(debugger_.modelId, "model-balanced"); // min(60,60)=60 beats min(99,10)=10
+  assert.equal(reviewer.modelId, "model-balanced");
+  // But Architect/Planner (pure intelligence) still favors the lopsided model.
+  assert.equal(roles.find((r) => r.role === "Architect / Planner").modelId, "model-lopsided");
+});
+
+test("Debugger/Reviewer are omitted, never guessed, when a model reports only one of the two required real metrics", () => {
+  const aa = [{ slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: null, mathIndex: null }];
+  const scored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "model-a" }] }], aa);
+  const roles = bestModelPerRole(scored);
+  assert.ok(!roles.some((r) => r.role === "Debugger"));
+  assert.ok(!roles.some((r) => r.role === "Reviewer"));
+  assert.ok(!roles.some((r) => r.role === "Implementer")); // no coding index either
+  assert.ok(roles.some((r) => r.role === "Explorer"));
 });
 
 test("bestModelPerRole omits a role entirely when no available model reports that metric, never guessing a winner", () => {
   const aa = [{ slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: null, outputTokensPerSecond: null }];
   const scored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "model-a" }] }], aa);
   const roles = bestModelPerRole(scored);
-  assert.deepEqual(roles.map((r) => r.role), ["Planning / Architecture"]);
+  assert.deepEqual(roles.map((r) => r.role), ["Explorer", "Architect / Planner"]);
 });
 
-test("bestModelPerRole never invents Orchestrator or Tests roles — no real distinct benchmark exists for either", () => {
+test("bestModelPerRole never invents an Orchestrator role — that's Kairo itself, never a ranked model", () => {
   const scored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "gpt-6-astra" }] }], AA_MODELS);
   const roles = bestModelPerRole(scored).map((r) => r.role);
   assert.ok(!roles.includes("Orchestrator"));

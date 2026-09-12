@@ -71,16 +71,36 @@ const BEST_FIT_METRICS = [
   { key: "priceInputPerMTok", label: "cheapest", better: "min" }
 ];
 
-function bestIndexFor(models, key, better) {
+/**
+ * @param {Array<object>} models
+ * @param {(model: object) => number|null} getValue
+ * @param {"max"|"min"} better
+ */
+function bestIndexForValue(models, getValue, better) {
   let bestIndex = -1;
+  let bestValue = null;
   for (let i = 0; i < models.length; i += 1) {
-    const value = models[i][key];
+    const value = getValue(models[i]);
     if (value == null) continue;
-    const currentBest = bestIndex === -1 ? null : models[bestIndex][key];
-    const wins = currentBest == null || (better === "max" ? value > currentBest : value < currentBest);
-    if (wins) bestIndex = i;
+    const wins = bestValue == null || (better === "max" ? value > bestValue : value < bestValue);
+    if (wins) { bestIndex = i; bestValue = value; }
   }
   return bestIndex;
+}
+
+function bestIndexFor(models, key, better) {
+  return bestIndexForValue(models, (model) => model[key], better);
+}
+
+/**
+ * The bottleneck (worst-case) of two real metrics — never their average or
+ * a weighted blend. Used for roles that plausibly need both signals
+ * (Debugger, Reviewer) but have no distinct benchmark of their own: a
+ * model is only as good at the composite job as its weaker real skill.
+ * Null if either input is missing — never guesses with partial data.
+ */
+function minOfReal(a, b) {
+  return a == null || b == null ? null : Math.min(a, b);
 }
 
 /**
@@ -98,29 +118,42 @@ function annotateBestFit(models) {
   return models.map((model, i) => ({ ...model, bestFor: bestFor[i] }));
 }
 
-// The task-role language you actually asked for, each backed by one real
-// metric — never a weighted blend, never a role we have no real signal
-// for. "Orchestrator" and "tests" are deliberately excluded: Artificial
-// Analysis's free-tier data has no distinct benchmark for either (no
-// Agentic Index is exposed at this tier, verified against the real
-// response), and picking an existing metric to stand in for them would be
-// exactly the kind of guess this project avoids everywhere else.
-const ROLE_METRICS = [
-  { role: "Planning / Architecture", key: "intelligenceIndex", better: "max" },
-  { role: "Coding", key: "codingIndex", better: "max" },
-  { role: "Quick & cheap tasks", key: "priceInputPerMTok", better: "min" }
+// The seven reusable role profiles, each resolved from real metrics only —
+// never a weighted blend, never an invented percentage. Three have a
+// direct real benchmark (Architect/Planner, Implementer, Economy); the
+// rest are honestly derived:
+//   - Explorer: same real signal as Architect/Planner (intelligence) —
+//     Kairo has no distinct "exploration" benchmark, so it doesn't
+//     pretend otherwise with a different-looking number.
+//   - Debugger / Reviewer: the bottleneck (minimum, not an average) of
+//     intelligence and coding — a model is only as good at either
+//     composite job as its weaker real skill.
+//   - Test Author: the same real coding signal as Implementer — there is
+//     no distinct testing benchmark in this data either.
+// "Orchestrator" is deliberately not a role: it's Kairo itself, never a
+// ranked model. "Terminal-required" and "autonomous execution" are real
+// gaps (no Agentic Index at this API tier, verified against the live
+// response) — logged as future work, not faked with a stand-in metric.
+const ROLE_DEFINITIONS = [
+  { role: "Explorer", compute: (m) => m.intelligenceIndex, better: "max" },
+  { role: "Architect / Planner", compute: (m) => m.intelligenceIndex, better: "max" },
+  { role: "Implementer", compute: (m) => m.codingIndex, better: "max" },
+  { role: "Debugger", compute: (m) => minOfReal(m.intelligenceIndex, m.codingIndex), better: "max" },
+  { role: "Test Author", compute: (m) => m.codingIndex, better: "max" },
+  { role: "Reviewer", compute: (m) => minOfReal(m.intelligenceIndex, m.codingIndex), better: "max" },
+  { role: "Economy", compute: (m) => m.priceInputPerMTok, better: "min" }
 ];
 
 /**
  * @param {Array<object>} models - scoreAvailableModels() output
  * @returns {Array<{role: string, adapterId: string, modelId: string, displayName: string|null}>}
  *   One entry per role that has a real winner; a role is simply omitted
- *   when no available model reports that metric at all.
+ *   when no available model reports the metric(s) it needs.
  */
 export function bestModelPerRole(models) {
   const entries = [];
-  for (const { role, key, better } of ROLE_METRICS) {
-    const bestIndex = bestIndexFor(models, key, better);
+  for (const { role, compute, better } of ROLE_DEFINITIONS) {
+    const bestIndex = bestIndexForValue(models, compute, better);
     if (bestIndex === -1) continue;
     const winner = models[bestIndex];
     entries.push({ role, adapterId: winner.adapterId, modelId: winner.modelId, displayName: winner.displayName });
