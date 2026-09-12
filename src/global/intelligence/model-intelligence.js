@@ -71,6 +71,18 @@ const BEST_FIT_METRICS = [
   { key: "priceInputPerMTok", label: "cheapest", better: "min" }
 ];
 
+function bestIndexFor(models, key, better) {
+  let bestIndex = -1;
+  for (let i = 0; i < models.length; i += 1) {
+    const value = models[i][key];
+    if (value == null) continue;
+    const currentBest = bestIndex === -1 ? null : models[bestIndex][key];
+    const wins = currentBest == null || (better === "max" ? value > currentBest : value < currentBest);
+    if (wins) bestIndex = i;
+  }
+  return bestIndex;
+}
+
 /**
  * Tags each model with which real metrics it wins, relative only to the
  * other models actually in this list — a purely relative, computed fact,
@@ -80,16 +92,38 @@ const BEST_FIT_METRICS = [
 function annotateBestFit(models) {
   const bestFor = models.map(() => []);
   for (const metric of BEST_FIT_METRICS) {
-    let bestIndex = -1;
-    for (let i = 0; i < models.length; i += 1) {
-      const value = models[i][metric.key];
-      if (value == null) continue;
-      const currentBest = bestIndex === -1 ? null : models[bestIndex][metric.key];
-      const wins = currentBest == null
-        || (metric.better === "max" ? value > currentBest : value < currentBest);
-      if (wins) bestIndex = i;
-    }
+    const bestIndex = bestIndexFor(models, metric.key, metric.better);
     if (bestIndex !== -1) bestFor[bestIndex].push(metric.label);
   }
   return models.map((model, i) => ({ ...model, bestFor: bestFor[i] }));
+}
+
+// The task-role language you actually asked for, each backed by one real
+// metric — never a weighted blend, never a role we have no real signal
+// for. "Orchestrator" and "tests" are deliberately excluded: Artificial
+// Analysis's free-tier data has no distinct benchmark for either (no
+// Agentic Index is exposed at this tier, verified against the real
+// response), and picking an existing metric to stand in for them would be
+// exactly the kind of guess this project avoids everywhere else.
+const ROLE_METRICS = [
+  { role: "Planning / Architecture", key: "intelligenceIndex", better: "max" },
+  { role: "Coding", key: "codingIndex", better: "max" },
+  { role: "Quick & cheap tasks", key: "priceInputPerMTok", better: "min" }
+];
+
+/**
+ * @param {Array<object>} models - scoreAvailableModels() output
+ * @returns {Array<{role: string, adapterId: string, modelId: string, displayName: string|null}>}
+ *   One entry per role that has a real winner; a role is simply omitted
+ *   when no available model reports that metric at all.
+ */
+export function bestModelPerRole(models) {
+  const entries = [];
+  for (const { role, key, better } of ROLE_METRICS) {
+    const bestIndex = bestIndexFor(models, key, better);
+    if (bestIndex === -1) continue;
+    const winner = models[bestIndex];
+    entries.push({ role, adapterId: winner.adapterId, modelId: winner.modelId, displayName: winner.displayName });
+  }
+  return entries;
 }

@@ -147,11 +147,9 @@ export async function runCockpitApp({
         }
         pushTranscript("kairo", view.integrationsLine());
       } else if (command === "/models") {
-        // STATUS only shows model fit when no task row is selected — once
-        // any task exists in history (even a rejected one) a row is always
-        // selected, so this is the only reliable way to see it. Uses the
-        // same real, already-polled modelIntelligence — no extra fetch.
-        for (const line of view.modelIntelligenceLines()) pushTranscript("kairo", line);
+        // FIT already renders this permanently in its own widget; /models
+        // is a convenience to also see it in the chat transcript history.
+        for (const line of view.fitLines()) pushTranscript("kairo", line);
       } else if (command === "/plan") {
         const planTask = task.slice(command.length).trim();
         if (!planTask) {

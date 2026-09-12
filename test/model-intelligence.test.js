@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { matchArtificialAnalysisScore, scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
+import { bestModelPerRole, matchArtificialAnalysisScore, scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 
 const AA_MODELS = [
   { slug: "gpt-6-astra", name: "GPT-6 Astra (max)", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null },
@@ -67,4 +67,34 @@ test("scoreAvailableModels never tags a model as best on a metric it doesn't act
 test("scoreAvailableModels returns an empty list, never a fabricated entry, when nothing matches", () => {
   const results = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "unknown-model" }] }], AA_MODELS);
   assert.deepEqual(results, []);
+});
+
+test("bestModelPerRole names one real winner per role, each backed by exactly one real metric — no weights, no blend", () => {
+  const aa = [
+    { slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: 60, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 },
+    { slug: "model-b", name: "Model B", intelligenceIndex: 50, codingIndex: 95, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 200 }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "model-a" }] }, { adapterId: "codex", models: [{ id: "model-b" }] }], aa
+  );
+  const roles = bestModelPerRole(scored);
+  assert.deepEqual(roles, [
+    { role: "Planning / Architecture", adapterId: "claude", modelId: "model-a", displayName: null },
+    { role: "Coding", adapterId: "codex", modelId: "model-b", displayName: null },
+    { role: "Quick & cheap tasks", adapterId: "codex", modelId: "model-b", displayName: null }
+  ]);
+});
+
+test("bestModelPerRole omits a role entirely when no available model reports that metric, never guessing a winner", () => {
+  const aa = [{ slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: null, outputTokensPerSecond: null }];
+  const scored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "model-a" }] }], aa);
+  const roles = bestModelPerRole(scored);
+  assert.deepEqual(roles.map((r) => r.role), ["Planning / Architecture"]);
+});
+
+test("bestModelPerRole never invents Orchestrator or Tests roles — no real distinct benchmark exists for either", () => {
+  const scored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "gpt-6-astra" }] }], AA_MODELS);
+  const roles = bestModelPerRole(scored).map((r) => r.role);
+  assert.ok(!roles.includes("Orchestrator"));
+  assert.ok(!roles.includes("Tests"));
 });

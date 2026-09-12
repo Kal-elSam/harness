@@ -280,6 +280,16 @@ export class CockpitView {
     for (const line of this.compactHealthLines()) lines.push(cardLine(line, CARD_TONE.INFO, theme, width));
     lines.push(cardBottom(CARD_TONE.INFO, theme, width));
 
+    // FIT is always visible, independent of task selection — which real
+    // available model is best for which real job, in plain role language,
+    // no numbers. Separate from STATUS (task-specific) because STATUS is
+    // only reachable while a row is selected, and once any task exists in
+    // history a row is *always* selected — this can't be tucked behind
+    // "nothing else to show" the way STATUS's own content is.
+    lines.push(cardTop("FIT", CARD_TONE.SUCCESS, theme, width));
+    for (const line of this.fitLines()) lines.push(cardLine(line, CARD_TONE.SUCCESS, theme, width));
+    lines.push(cardBottom(CARD_TONE.SUCCESS, theme, width));
+
     // STATUS is a small, informative widget (current task's phase/provider,
     // or a pending decision) — separate from the chat below, the way
     // Claude Code/Codex CLI keep their scrollback apart from status chrome.
@@ -291,14 +301,6 @@ export class CockpitView {
       lines.push(cardTop("STATUS", statusTone, theme, width));
       for (const line of this.statusLines(row)) lines.push(cardLine(line, statusTone, theme, width));
       lines.push(cardBottom(statusTone, theme, width));
-    } else {
-      // Nothing selected yet: instead of an empty widget, show what Kairo
-      // actually knows about which of your real, available models would
-      // theoretically fit each kind of task — real Artificial Analysis
-      // scores crossed with real provider catalogs, never a guess.
-      lines.push(cardTop("STATUS", CARD_TONE.INFO, theme, width));
-      for (const line of this.modelIntelligenceLines()) lines.push(cardLine(line, CARD_TONE.INFO, theme, width));
-      lines.push(cardBottom(CARD_TONE.INFO, theme, width));
     }
 
     const footerLines = [theme.fg("muted", "Enter send · /help · /usage · q quit")];
@@ -339,29 +341,25 @@ export class CockpitView {
   }
 
   /**
-   * Real models Kairo can actually launch right now, ranked by real
-   * Artificial Analysis coding score, each tagged with which real metric(s)
-   * it actually wins among your available models (see bestFor in
-   * intelligence/model-intelligence.js) — e.g. "best reasoning", "cheapest"
-   * — never a blended/invented composite score or a fixed role label.
-   * Shown when no task is selected, so the widget carries real information
-   * instead of sitting empty.
+   * Which real available model is best for which real job, in plain task-
+   * role language ("Planning / Architecture", "Coding", "Quick & cheap
+   * tasks") — no numbers, no percentages, no invented composite score.
+   * Each role is backed by exactly one real Artificial Analysis metric
+   * (see intelligence/model-intelligence.js's bestModelPerRole); a role
+   * with no real winner among your available models is simply omitted,
+   * never guessed.
    */
-  modelIntelligenceLines() {
+  fitLines() {
     const intel = this.snapshot?.modelIntelligence;
-    if (!intel || intel.status === "unknown" || intel.models.length === 0) {
+    if (!intel || intel.status === "unknown" || !intel.roles?.length) {
       const reason = intel?.status === "unknown" && intel?.error ? ` (${intel.error})` : "";
-      return [theme.fg("muted", `MODEL FIT — no benchmark data yet${reason}`)];
+      return [theme.fg("muted", `No model benchmark data yet${reason}`)];
     }
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-    const lines = [theme.fg("muted", `MODEL FIT — Artificial Analysis, ${freshness}`)];
-    const ranked = [...intel.models].sort((a, b) => (b.codingIndex ?? -1) - (a.codingIndex ?? -1)).slice(0, 6);
-    for (const entry of ranked) {
+    const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
+    for (const entry of intel.roles) {
       const provider = entry.adapterId.charAt(0).toUpperCase() + entry.adapterId.slice(1);
-      const coding = entry.codingIndex != null ? entry.codingIndex.toFixed(1) : "—";
-      const intelligence = entry.intelligenceIndex != null ? entry.intelligenceIndex.toFixed(1) : "—";
-      const tag = entry.bestFor?.length ? theme.fg("success", ` ← ${entry.bestFor.join(", ")}`) : "";
-      lines.push(`${provider.padEnd(8)} ${(entry.displayName ?? entry.modelId).padEnd(20)} coding ${coding.padStart(5)}  intel ${intelligence.padStart(5)}${tag}`);
+      lines.push(`${entry.role.padEnd(22)} ${provider} · ${entry.displayName ?? entry.modelId}`);
     }
     return lines;
   }

@@ -23,7 +23,7 @@ import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
-import { scoreAvailableModels } from "../intelligence/model-intelligence.js";
+import { bestModelPerRole, scoreAvailableModels } from "../intelligence/model-intelligence.js";
 
 export const CONVERSATION_SCHEMA = "kairo.conversation/v1";
 
@@ -152,7 +152,7 @@ function snapshot(projectRoot, plans, providers = {}, integrations = {}) {
     providers,
     integrations,
     usage: { codex: null, claude: null, opencode: null },
-    modelIntelligence: { status: "unknown", source: null, age: null, models: [] },
+    modelIntelligence: { status: "unknown", source: null, age: null, models: [], roles: [] },
     governance: {
       methodologyOwner: "gentle-ai",
       orchestratorOwner: "kairo",
@@ -353,7 +353,7 @@ export function createConversationService(deps = {}) {
           ],
           aa.models
         );
-        result.modelIntelligence = { status: aa.status, source: aa.source, age: aa.age, models: scored };
+        result.modelIntelligence = { status: aa.status, source: aa.source, age: aa.age, models: scored, roles: bestModelPerRole(scored) };
       }
       return result;
     },
