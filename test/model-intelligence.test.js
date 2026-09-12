@@ -424,3 +424,47 @@ test("buildAiTeam prefers real higher throughput as the tie-break after price, b
   const tester = team.find((t) => t.role === "Tester");
   assert.equal(tester.primary.adapterId, "codex", "the real 3x faster option should win the tie when price doesn't distinguish them");
 });
+
+test("a role's optional metric can be satisfied by real registry evidence from any connected source, not just the AA field baked onto the model", () => {
+  const aa = [
+    // Neither model reports gpqa via AA at all — the registry is the only
+    // place this evidence exists, simulating a non-AA source (e.g. a
+    // manufacturer snapshot or Hugging Face leaderboard).
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
+  );
+  const registry = createCapabilityRegistry();
+  const claudeId = registry.registerIdentity("claude", "claude-model");
+  const codexId = registry.registerIdentity("codex", "codex-model");
+  registry.addEvidence(claudeId, { metric: "gpqa", value: 0.60, source: "other-source", verified: true });
+  registry.addEvidence(codexId, { metric: "gpqa", value: 0.95, source: "other-source", verified: true });
+
+  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } }, registry);
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "codex", "gpqa evidence from a non-AA source in the registry must actually decide the pick, not just show as /models corroboration");
+});
+
+test("buildAiTeam prefers Kairo's own observed real duration over AA's reported throughput when both exist", () => {
+  const aa = [
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 150 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 77.0, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
+  );
+  const registry = createCapabilityRegistry();
+  const claudeId = registry.registerIdentity("claude", "claude-model");
+  const codexId = registry.registerIdentity("codex", "codex-model");
+  // Real observed telemetry says the opposite of AA's reported throughput:
+  // Codex is actually faster in Kairo's own real runs (lower durationMs),
+  // even though AA reports Claude as the higher-throughput model.
+  registry.addEvidence(claudeId, { metric: "kairo.durationMs", value: 9000, source: "kairo-telemetry", verified: true });
+  registry.addEvidence(codexId, { metric: "kairo.durationMs", value: 3000, source: "kairo-telemetry", verified: true });
+
+  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } }, registry);
+  const tester = team.find((t) => t.role === "Tester");
+  assert.equal(tester.primary.adapterId, "codex", "real observed duration must win over AA's reported throughput, which alone would have picked claude here");
+});

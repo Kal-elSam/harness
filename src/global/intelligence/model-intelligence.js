@@ -6,7 +6,7 @@
 // A model with no confident match gets no score, never a guessed one —
 // same fail-closed rule as everywhere else in Kairo's routing.
 
-import { bestEvidence } from "./model-capability-registry.js";
+import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
 
 // Real per-benchmark metrics worth surfacing as corroborating evidence
 // alongside a pick — never blended into the ranking itself, since
@@ -253,25 +253,82 @@ function toUnitScale(key, value) {
   return HUNDRED_SCALE_METRICS.has(key) ? value / 100 : value;
 }
 
+// Every metric a role definition might ask for — re-ingested into a
+// throwaway registry (see ensureRegistry) when the caller doesn't pass a
+// real one, so role compute() functions always have exactly one code path
+// (resolve via the registry) regardless of whether richer evidence
+// (Hugging Face, manufacturer snapshots, Kairo's own telemetry) is
+// actually available for this call.
+const KNOWN_MODEL_METRICS = [
+  "intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "outputTokensPerSecond",
+  "gpqa", "hle", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "tau2", "tauBanking"
+];
+
+/**
+ * Guarantees buildAiTeam always has a real registry to resolve role
+ * requirements against — a role's compute() must have exactly one code
+ * path (resolve via the registry) whether or not the caller supplied one.
+ * When none is given, builds a throwaway one seeded only from the AA
+ * fields already present on `models` (scoreAvailableModels' output) —
+ * identical data to what compute() would have read directly before, so
+ * every existing call site (most tests, and any caller not yet passing
+ * the real Model Intelligence Foundation registry) behaves exactly as
+ * before. A caller that DOES pass a real registry (service.js, wired to
+ * AA + Hugging Face + manufacturer snapshots + Kairo's own telemetry)
+ * lets every role requirement resolve against the full evidence base,
+ * not just AA.
+ */
+function ensureRegistry(models, registry) {
+  if (registry) return registry;
+  const fallback = createCapabilityRegistry();
+  for (const model of models) {
+    const id = fallback.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
+    for (const metric of KNOWN_MODEL_METRICS) {
+      const value = model[metric];
+      if (value == null) continue;
+      fallback.addEvidence(id, { metric, value, source: "artificial-analysis-free", benchmarkVersion: null, modelConfig: null, date: null, verified: false });
+    }
+  }
+  return fallback;
+}
+
+/**
+ * Resolves one real metric for a model through the evidence registry
+ * first (bestEvidence already prefers verified/most-recent across every
+ * connected source — AA, Hugging Face, manufacturer snapshots, Kairo's
+ * own telemetry), falling back to the field already on `model` only if
+ * the registry somehow has nothing for it. This is what actually
+ * "connects the registry to each role's requirements" instead of only
+ * ever reading the one AA field baked onto the model object.
+ */
+function resolveMetric(registry, model, key) {
+  const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
+  const best = bestEvidence(registry, id, key);
+  return best ? best.value : (model[key] ?? null);
+}
+
 /**
  * Builds a compute() for a role that needs more than one real metric,
- * possibly on different scales. `requiredKeys` are a hard capability
- * floor — a model missing any of them doesn't qualify for this role at
- * all (same as the existing null-filter elsewhere). `optionalKeys` only
- * tighten the bottleneck when a model actually reports them — so a role
- * gaining a new, sparser real benchmark (e.g. terminalBenchV2) never
- * shrinks its candidate pool for models AA simply hasn't scored on it yet.
- * Every included metric is converted to the same 0-1 unit scale (see
- * toUnitScale) before taking the minimum, so mixing scales is fair
- * without losing real magnitude information.
+ * possibly on different scales, resolved through the registry (see
+ * resolveMetric) so any connected source can satisfy a requirement, not
+ * just AA. `requiredKeys` are a hard capability floor — a model missing
+ * any of them doesn't qualify for this role at all (same as the existing
+ * null-filter elsewhere). `optionalKeys` only tighten the bottleneck when
+ * a model actually has real evidence for them — so a role gaining a new,
+ * sparser real benchmark (e.g. terminalBenchV2) never shrinks its
+ * candidate pool for models nothing has scored on it yet. Every included
+ * metric is converted to the same 0-1 unit scale (see toUnitScale) before
+ * taking the minimum, so mixing scales is fair without losing real
+ * magnitude information.
  */
-function scaledBottleneck(requiredKeys, optionalKeys = []) {
+function scaledBottleneck(registry, requiredKeys, optionalKeys = []) {
   return (model) => {
-    if (requiredKeys.some((key) => model[key] == null)) return null;
-    const keys = [...requiredKeys, ...optionalKeys.filter((key) => model[key] != null)];
+    const get = (key) => resolveMetric(registry, model, key);
+    if (requiredKeys.some((key) => get(key) == null)) return null;
+    const keys = [...requiredKeys, ...optionalKeys.filter((key) => get(key) != null)];
     let worst = null;
     for (const key of keys) {
-      const v = toUnitScale(key, model[key]);
+      const v = toUnitScale(key, get(key));
       if (worst == null || v < worst) worst = v;
     }
     return worst;
@@ -283,26 +340,39 @@ function scaledBottleneck(requiredKeys, optionalKeys = []) {
  * vocabulary the user settled on for the "AI TEAM" widget (Explorer /
  * Architect / Builder / Debugger / Tester / Reviewer / Economy) — plus,
  * per explicit decision, real role-specific benchmarks layered in as
- * optional tie-breakers wherever AA reports them (gpqa for reasoning-heavy
- * roles, tauBanking for agentic/tool-use, terminalBenchV2 for
- * terminal-involved roles) instead of only ever comparing the same two
- * composite indices. Kept as a separate list from ROLE_DEFINITIONS so
+ * optional tie-breakers (gpqa for reasoning-heavy roles, tauBanking for
+ * agentic/tool-use, terminalBenchV2 for terminal-involved roles), every
+ * one of them resolved through the evidence registry (see resolveMetric)
+ * so Hugging Face / manufacturer-snapshot / Kairo-telemetry evidence can
+ * actually satisfy a role's requirement, not just sit as /models
+ * corroboration. Built fresh per buildAiTeam() call (registry differs per
+ * call). Kept as a separate list from ROLE_DEFINITIONS so
  * bestModelPerRole()'s existing contract and tests stay untouched.
  */
-const AI_TEAM_ROLE_DEFINITIONS = [
-  { role: "Explorer", compute: scaledBottleneck(["intelligenceIndex"], ["gpqa"]), better: "max" },
-  { role: "Architect", compute: scaledBottleneck(["intelligenceIndex"], ["gpqa"]), better: "max" },
-  { role: "Builder", compute: scaledBottleneck(["codingIndex"], ["tauBanking"]), better: "max" },
-  { role: "Debugger", compute: scaledBottleneck(["intelligenceIndex", "codingIndex"], ["terminalBenchV2"]), better: "max" },
-  { role: "Tester", compute: scaledBottleneck(["codingIndex"], ["terminalBenchV2"]), better: "max" },
-  { role: "Reviewer", compute: (m) => minOfReal(m.intelligenceIndex, m.codingIndex), better: "max" },
-  // Capability floor: cheapest-wins-outright would let a model with zero
-  // known real capability (AA tracks a price for it but never scored its
-  // intelligence or coding) win Economy purely on price. Requiring at
-  // least one of the two composite indices is the same real floor every
-  // other role already has, just applied before ranking by price.
-  { role: "Economy", compute: (m) => (m.intelligenceIndex == null && m.codingIndex == null ? null : m.priceInputPerMTok), better: "min" }
-];
+function buildAiTeamRoleDefinitions(registry) {
+  return [
+    { role: "Explorer", compute: scaledBottleneck(registry, ["intelligenceIndex"], ["gpqa"]), better: "max" },
+    { role: "Architect", compute: scaledBottleneck(registry, ["intelligenceIndex"], ["gpqa"]), better: "max" },
+    { role: "Builder", compute: scaledBottleneck(registry, ["codingIndex"], ["tauBanking"]), better: "max" },
+    { role: "Debugger", compute: scaledBottleneck(registry, ["intelligenceIndex", "codingIndex"], ["terminalBenchV2"]), better: "max" },
+    { role: "Tester", compute: scaledBottleneck(registry, ["codingIndex"], ["terminalBenchV2"]), better: "max" },
+    { role: "Reviewer", compute: (m) => minOfReal(resolveMetric(registry, m, "intelligenceIndex"), resolveMetric(registry, m, "codingIndex")), better: "max" },
+    // Capability floor: cheapest-wins-outright would let a model with zero
+    // known real capability (AA tracks a price for it but never scored its
+    // intelligence or coding) win Economy purely on price. Requiring at
+    // least one of the two composite indices is the same real floor every
+    // other role already has, just applied before ranking by price.
+    {
+      role: "Economy",
+      compute: (m) => {
+        const intel = resolveMetric(registry, m, "intelligenceIndex");
+        const coding = resolveMetric(registry, m, "codingIndex");
+        return intel == null && coding == null ? null : resolveMetric(registry, m, "priceInputPerMTok");
+      },
+      better: "min"
+    }
+  ];
+}
 
 function toTeamModel(model, available, registry = null) {
   const base = { adapterId: model.adapterId, modelId: model.modelId, displayName: model.displayName, available };
@@ -393,7 +463,9 @@ const NEAR_EQUIVALENCE_BAND = 0.08;
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildAiTeam(models, eligibility = {}, registry = null) {
-  const roleRankings = AI_TEAM_ROLE_DEFINITIONS.map(({ role, compute, better }) => ({
+  const effectiveRegistry = ensureRegistry(models, registry);
+  const roleDefinitions = buildAiTeamRoleDefinitions(effectiveRegistry);
+  const roleRankings = roleDefinitions.map(({ role, compute, better }) => ({
     role, compute, better, ranked: rankEligible(models, eligibility, compute, better)
   }));
 
@@ -412,18 +484,24 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
         // Among real near-equivalents, prefer the genuinely cheaper real
         // option first — capability being close enough is exactly when
         // cost/quota should decide, not a tie-break of last resort. If
-        // price doesn't decide (unknown or equal), prefer real higher
-        // throughput next (outputTokensPerSecond is an unbounded raw
-        // rate, not a 0-100/0-1 index — it's used only as a tie-break
-        // here, never blended into the bottleneck, so it doesn't need a
-        // scale conversion). Only fall back to spreading load across the
-        // least-used provider when neither price nor speed distinguishes them.
+        // price doesn't decide, prefer real speed next — and "real speed"
+        // means Kairo's own observed duration for that exact model
+        // (kairo.durationMs, lower is better) when it exists, since that's
+        // what actually happened inside your subscriptions, not AA's
+        // reported throughput for a benchmark run elsewhere. Only fall
+        // back to AA's outputTokensPerSecond (an unbounded raw rate, used
+        // only as a tie-break, never blended into the bottleneck) when no
+        // real telemetry exists yet, then to usage-based rotation last.
         const leaderPrice = leader.model.priceInputPerMTok;
         const rivalPrice = rival.model.priceInputPerMTok;
+        const leaderDuration = bestEvidence(effectiveRegistry, effectiveRegistry.registerIdentity(leader.model.adapterId, leader.model.modelId), "kairo.durationMs");
+        const rivalDuration = bestEvidence(effectiveRegistry, effectiveRegistry.registerIdentity(rival.model.adapterId, rival.model.modelId), "kairo.durationMs");
         const leaderSpeed = leader.model.outputTokensPerSecond;
         const rivalSpeed = rival.model.outputTokensPerSecond;
         if (leaderPrice != null && rivalPrice != null && leaderPrice !== rivalPrice) {
           if (rivalPrice < leaderPrice) pick = rival;
+        } else if (leaderDuration && rivalDuration && leaderDuration.value !== rivalDuration.value) {
+          if (rivalDuration.value < leaderDuration.value) pick = rival;
         } else if (leaderSpeed != null && rivalSpeed != null && leaderSpeed !== rivalSpeed) {
           if (rivalSpeed > leaderSpeed) pick = rival;
         } else {
@@ -461,7 +539,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
   }
 
   const entries = [];
-  for (const { role, compute, better } of AI_TEAM_ROLE_DEFINITIONS) {
+  for (const { role, compute, better } of roleDefinitions) {
     const chosen = chosenByRole[role];
     const eligibleRanked = roleRankings.find((r) => r.role === role).ranked;
     const globalRanked = rankBy(models, compute, better);
@@ -470,7 +548,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
     if (!chosen) {
       const globalLeader = globalRanked[0];
       entries.push({
-        role, primary: toTeamModel(globalLeader.model, false, registry), fallback: null,
+        role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: null,
         reason: "No eligible provider currently covers this role."
       });
       continue;
@@ -481,7 +559,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > chosen.value : globalLeader.value < chosen.value;
     if (!globalLeaderEligible && globalLeaderIsStrictlyBetter) {
       entries.push({
-        role, primary: toTeamModel(globalLeader.model, false, registry), fallback: toTeamModel(chosen.model, true, registry),
+        role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
         reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`
       });
       continue;
@@ -489,8 +567,8 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
 
     const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
     entries.push({
-      role, primary: toTeamModel(chosen.model, true, registry),
-      fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, registry) : null,
+      role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
+      fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
       reason: describeChoice(role, chosen, eligibleRanked, builderPick)
     });
   }
