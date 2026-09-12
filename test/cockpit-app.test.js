@@ -180,6 +180,106 @@ test("onExecute passes the exact decision shown as the confirm-execute agentId/m
   app.stop();
 });
 
+test("boot loads real persisted transcript history before the first render", async () => {
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    loadTranscript: async (args) => {
+      assert.deepEqual(args, { cwd: "/repo" });
+      return [{ role: "user", text: "what is this project?" }, { role: "kairo", text: "claude: an orchestrator." }];
+    }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  assert.equal(app.view.transcript.length, 2);
+  assert.equal(app.view.transcript[0].text, "what is this project?");
+  app.stop();
+});
+
+test("a message the user sends is persisted via service.appendTranscript, not just kept in memory", async () => {
+  let editor;
+  const appended = [];
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    submitTask: async () => ({ kind: "answer", provider: "claude", answer: "It orchestrates providers." }),
+    appendTranscript: async (args) => { appended.push(args); }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  editor.setText("What is this project about?");
+  await editor.onSubmit(editor.getText());
+  assert.deepEqual(appended, [
+    { cwd: "/repo", role: "user", text: "What is this project about?" },
+    { cwd: "/repo", role: "kairo", text: "claude: It orchestrates providers." }
+  ]);
+  app.stop();
+});
+
+test("a transcript save failure surfaces on the status line instead of silently losing the message", async () => {
+  // Uses /help (no runAction wrapping, so nothing else clears statusMessage
+  // afterward) to deterministically observe the background save's own
+  // failure handling, isolated from an unrelated success status racing it.
+  let editor;
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    appendTranscript: async () => { throw new Error("disk full"); }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  editor.setText("/help");
+  await editor.onSubmit(editor.getText());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(app.view.statusMessage, /Transcript save failed/);
+  app.stop();
+});
+
+test("/clear wipes the persisted transcript too, so a cleared chat stays cleared after a restart", async () => {
+  let editor;
+  const cleared = [];
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    clearTranscript: async (args) => { cleared.push(args); }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  editor.setText("/clear");
+  await editor.onSubmit(editor.getText());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(cleared, [{ cwd: "/repo" }]);
+  app.stop();
+});
+
 test("submitting a change request goes through submitTask, creates a plan, clears the text, and refreshes", async () => {
   let tui, editor;
   const submitted = [];

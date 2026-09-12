@@ -20,6 +20,7 @@ import { readClaudeModels } from "../observability/claude-models.js";
 import { isLikelyQuestion, selectAskProvider, selectExecutionProvider } from "../intelligence/execution-router.js";
 import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
+import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 
 export const CONVERSATION_SCHEMA = "kairo.conversation/v1";
 
@@ -201,6 +202,9 @@ export function createConversationService(deps = {}) {
   const readSkillCatalogImpl = deps.readSkillCatalog ?? readSkillCatalog;
   const routeAsk = deps.selectAskProvider ?? selectAskProvider;
   const askProviderImpl = deps.askProvider ?? askProvider;
+  const appendTranscriptImpl = deps.appendTranscriptEntry ?? appendTranscriptEntry;
+  const readTranscriptImpl = deps.readTranscript ?? readTranscript;
+  const clearTranscriptImpl = deps.clearTranscript ?? clearTranscript;
   // Unit tests inject resolveRoot and must remain provider-call free. The real
   // cockpit opts in explicitly so a refresh performs one bounded read-only probe.
   const enableProviderProbes = deps.enableProviderProbes ?? !deps.resolveRoot;
@@ -360,6 +364,25 @@ export function createConversationService(deps = {}) {
       }
       const plan = await this.submitArchitecture({ cwd, task });
       return { kind: "plan", ...plan };
+    },
+    /**
+     * Real persisted chat history for this project (`.ai/kairo/transcript.json`)
+     * — loaded once at cockpit startup so a restart never silently drops the
+     * conversation, the way plan/task state already survives restarts.
+     */
+    async loadTranscript({ cwd }) {
+      const projectRoot = await root(cwd);
+      return readTranscriptImpl(projectRoot);
+    },
+    /** Persists one chat entry; a write failure throws so the caller can surface it. */
+    async appendTranscript({ cwd, role, text }) {
+      const projectRoot = await root(cwd);
+      await appendTranscriptImpl(projectRoot, { role, text });
+    },
+    /** Persists an empty transcript so `/clear` stays cleared across a restart. */
+    async clearTranscript({ cwd }) {
+      const projectRoot = await root(cwd);
+      await clearTranscriptImpl(projectRoot);
     },
     async showPlan({ cwd, taskId }) {
       const projectRoot = await root(cwd);

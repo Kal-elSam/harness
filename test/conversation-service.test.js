@@ -171,6 +171,43 @@ test("submitTask still creates a plan for an actual change request", async () =>
   assert.deepEqual(planCalls, [{ cwd: "/repo", task: "Implement pagination on the users table", model: null }]);
 });
 
+test("loadTranscript resolves the project root and reads real persisted history", async () => {
+  const reads = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    readTranscript: async (projectRoot) => { reads.push(projectRoot); return [{ role: "user", text: "hi", at: "2026-01-01T00:00:00Z" }]; }
+  });
+  const entries = await service.loadTranscript({ cwd: "/repo" });
+  assert.deepEqual(reads, ["/repo"]);
+  assert.deepEqual(entries, [{ role: "user", text: "hi", at: "2026-01-01T00:00:00Z" }]);
+});
+
+test("appendTranscript persists one real entry and propagates a write failure", async () => {
+  const appends = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    appendTranscriptEntry: async (projectRoot, entry) => { appends.push({ projectRoot, entry }); }
+  });
+  await service.appendTranscript({ cwd: "/repo", role: "kairo", text: "claude: it orchestrates." });
+  assert.deepEqual(appends, [{ projectRoot: "/repo", entry: { role: "kairo", text: "claude: it orchestrates." } }]);
+
+  const failing = createConversationService({
+    resolveRoot: async () => "/repo",
+    appendTranscriptEntry: async () => { throw new Error("disk full"); }
+  });
+  await assert.rejects(() => failing.appendTranscript({ cwd: "/repo", role: "user", text: "hi" }), /disk full/);
+});
+
+test("clearTranscript persists an empty transcript for the real project root", async () => {
+  const calls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    clearTranscript: async (projectRoot) => { calls.push(projectRoot); }
+  });
+  await service.clearTranscript({ cwd: "/repo" });
+  assert.deepEqual(calls, ["/repo"]);
+});
+
 test("askQuestion refuses to fabricate an answer when no ask-capable provider is available", async () => {
   const service = createConversationService({
     resolveRoot: async () => "/repo",

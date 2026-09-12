@@ -122,51 +122,66 @@ export async function runCockpitApp({
     }
   });
 
+  // Every transcript entry a real chat CLI shows is worth keeping across a
+  // restart the same way plan/task state already is — so every addition
+  // goes through this instead of view.addTranscript directly, and gets
+  // persisted to `.ai/kairo/transcript.json`. A save failure surfaces on
+  // the status line rather than silently losing the message.
+  function pushTranscript(role, text) {
+    view.addTranscript(role, text);
+    service.appendTranscript?.({ cwd, role, text })?.catch((error) => {
+      view.setStatus(`Transcript save failed: ${error.message ?? String(error)}`);
+    });
+  }
+
   editor.onSubmit = (text) => {
     const task = text.trim();
     if (!task) return;
     if (task.startsWith("/")) {
       const command = task.split(/\s+/)[0].toLowerCase();
       if (command === "/help") {
-        view.addTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /clear · /quit");
+        pushTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /clear · /quit");
       } else if (command === "/usage" || command === "/providers" || command === "/status") {
         for (const line of command === "/usage" ? view.usageLines() : view.providerLines()) {
-          view.addTranscript("kairo", line);
+          pushTranscript("kairo", line);
         }
-        view.addTranscript("kairo", view.integrationsLine());
+        pushTranscript("kairo", view.integrationsLine());
       } else if (command === "/plan") {
         const planTask = task.slice(command.length).trim();
         if (!planTask) {
-          view.addTranscript("kairo", "Usage: /plan <task description>");
+          pushTranscript("kairo", "Usage: /plan <task description>");
           editor.setText("");
           return;
         }
-        view.addTranscript("user", planTask);
+        pushTranscript("user", planTask);
         editor.disableSubmit = true;
         editor.setText("");
         return runAction("Asking Codex for a plan", async () => {
           await service.submitArchitecture({ cwd, task: planTask });
-          view.addTranscript("kairo", "Plan requested from Codex. Review it below, then press a to approve.");
+          pushTranscript("kairo", "Plan requested from Codex. Review it below, then press a to approve.");
           editor.addToHistory(task);
         }).finally(() => { editor.disableSubmit = false; });
       } else if (command === "/clear") {
         view.clearTranscript();
+        service.clearTranscript?.({ cwd })?.catch((error) => {
+          view.setStatus(`Transcript clear failed: ${error.message ?? String(error)}`);
+        });
       } else if (command === "/quit" || command === "/exit") {
         stop();
       } else {
-        view.addTranscript("kairo", `Unknown command: ${command}. Try /help.`);
+        pushTranscript("kairo", `Unknown command: ${command}. Try /help.`);
       }
       editor.setText("");
       return;
     }
-    view.addTranscript("user", task);
+    pushTranscript("user", task);
     editor.disableSubmit = true;
     return runAction("Asking Kairo", async () => {
       const result = await service.submitTask({ cwd, task });
       if (result.kind === "answer") {
-        view.addTranscript("kairo", `${result.provider}${result.model ? ` · ${result.model}` : ""}: ${result.answer}`);
+        pushTranscript("kairo", `${result.provider}${result.model ? ` · ${result.model}` : ""}: ${result.answer}`);
       } else {
-        view.addTranscript("kairo", "Plan requested from Codex. Review it below, then press a to approve.");
+        pushTranscript("kairo", "Plan requested from Codex. Review it below, then press a to approve.");
       }
       editor.setText("");
       editor.addToHistory(task);
@@ -207,6 +222,13 @@ export async function runCockpitApp({
     return undefined;
   });
 
+  // Load persisted chat history before the first render so a restart never
+  // shows an empty chat while STATUS still shows a task from before it.
+  try {
+    view.loadTranscript(await service.loadTranscript?.({ cwd }));
+  } catch (error) {
+    view.setStatus(`Transcript load failed: ${error.message ?? String(error)}`);
+  }
   await refresh();
   tui.start();
   timer = setIntervalImpl(() => refresh(), pollIntervalMs);

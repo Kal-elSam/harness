@@ -86,7 +86,24 @@ export class CockpitView {
     const value = String(text ?? "").trim();
     if (!value) return;
     this.transcript.push({ role: role === "user" ? "You" : "Kairo", text: value });
-    if (this.transcript.length > 8) this.transcript.shift();
+    // A generous safety cap, not a display constraint — what actually shows
+    // on screen is decided per-render by the real viewport budget
+    // (see chatLines()), not by how much history this array retains.
+    if (this.transcript.length > 500) this.transcript.shift();
+    this.requestRender();
+  }
+
+  /**
+   * Seeds the transcript from persisted history (service.loadTranscript())
+   * at cockpit startup — one render for the whole batch, and never
+   * re-persists what was just loaded back from disk.
+   * @param {Array<{role: "user"|"kairo", text: string}>} entries
+   */
+  loadTranscript(entries) {
+    this.transcript = (entries ?? [])
+      .map((entry) => ({ role: entry.role === "user" ? "You" : "Kairo", text: String(entry.text ?? "").trim() }))
+      .filter((entry) => entry.text)
+      .slice(-500);
     this.requestRender();
   }
 
