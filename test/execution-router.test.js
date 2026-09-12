@@ -134,6 +134,15 @@ test("classifyEffort: short and simple is light, reasoning/risk keywords always 
   assert.equal(classifyEffort(longButSimple), "standard");
 });
 
+test("classifyEffort: a mechanical multi-file task (rename/boilerplate spanning many files) is NOT heavy — spread isn't complexity", () => {
+  // Real repro of the reported bug: multi-file signal alone used to force "heavy"
+  // even for a purely mechanical rename, which real-world capability doesn't need.
+  assert.equal(classifyEffort("Rename this DTO field across 15 files"), "light");
+  // But real integration/architecture scope, not dominated by repetition, stays heavy.
+  assert.equal(classifyEffort("Integrate the new billing API across the backend and frontend"), "heavy");
+  assert.equal(classifyEffort("Wire up SSO across web and mobile"), "heavy");
+});
+
 test("selectAskProvider picks Haiku for a simple question and Opus for a reasoning-heavy one, from the real catalog — never a fabricated model id", () => {
   const simple = selectAskProvider({ adapters: ADAPTERS, catalogs: CLAUDE_CATALOG, taskText: "what is this project about?" });
   assert.equal(simple.provider, "claude");

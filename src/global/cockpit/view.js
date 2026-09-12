@@ -3,6 +3,44 @@ import { buildTaskRows, clampSelection, isActionAvailable } from "./rows.js";
 import { CARD_TONE, cardBottom, cardLine, cardTop } from "./card.js";
 import { theme } from "./theme.js";
 
+/**
+ * Frames raw content lines into one bordered card. Content is padded to
+ * `targetLineCount` (when given) *before* framing, so two panels tiled
+ * side by side reach the same row and their borders stay a clean line.
+ * @param {string} title
+ * @param {string} tone
+ * @param {number} width
+ * @param {string[]} contentLines
+ * @param {number} [targetLineCount]
+ */
+function renderPanel(title, tone, width, contentLines, targetLineCount = contentLines.length) {
+  const padded = Array.from({ length: targetLineCount }, (_, i) => contentLines[i] ?? "");
+  const lines = [cardTop(title, tone, theme, width)];
+  for (const line of padded) lines.push(cardLine(line, tone, theme, width));
+  lines.push(cardBottom(tone, theme, width));
+  return lines;
+}
+
+/**
+ * Tiles two independently-framed cards side by side — used only for
+ * USAGE + FIT, the two reference widgets meant to be compared at a
+ * glance rather than read one above the other.
+ * @param {{title: string, tone: string, lines: string[]}} left
+ * @param {{title: string, tone: string, lines: string[]}} right
+ * @param {number} totalWidth
+ */
+function tileTwoPanels(left, right, totalWidth) {
+  const gap = 1;
+  const leftWidth = Math.floor((totalWidth - gap) / 2);
+  const rightWidth = totalWidth - gap - leftWidth;
+  const targetLineCount = Math.max(left.lines.length, right.lines.length);
+  const leftBox = renderPanel(left.title, left.tone, leftWidth, left.lines, targetLineCount);
+  const rightBox = renderPanel(right.title, right.tone, rightWidth, right.lines, targetLineCount);
+  const rows = [];
+  for (let i = 0; i < leftBox.length; i += 1) rows.push(`${leftBox[i]}${" ".repeat(gap)}${rightBox[i]}`);
+  return rows;
+}
+
 function compactNumber(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "unknown";
@@ -273,20 +311,26 @@ export class CockpitView {
     const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
     const lines = [];
 
-    lines.push(cardTop(`KAIRO · ${project}`, CARD_TONE.INFO, theme, width));
-    lines.push(cardLine(theme.fg("muted", "USAGE"), CARD_TONE.INFO, theme, width));
-    for (const line of this.compactHealthLines()) lines.push(cardLine(line, CARD_TONE.INFO, theme, width));
-    lines.push(cardBottom(CARD_TONE.INFO, theme, width));
-
-    // FIT is always visible, independent of task selection — which real
-    // available model is best for which real job, in plain role language,
-    // no numbers. Separate from STATUS (task-specific) because STATUS is
-    // only reachable while a row is selected, and once any task exists in
-    // history a row is *always* selected — this can't be tucked behind
-    // "nothing else to show" the way STATUS's own content is.
-    lines.push(cardTop("FIT", CARD_TONE.SUCCESS, theme, width));
-    for (const line of this.fitLines()) lines.push(cardLine(line, CARD_TONE.SUCCESS, theme, width));
-    lines.push(cardBottom(CARD_TONE.SUCCESS, theme, width));
+    // USAGE and FIT are both reference widgets meant to be scanned
+    // together, so side by side when there's room; narrow terminals fall
+    // back to stacking (a half-width card below ~50 cols truncates into
+    // illegibility). FIT is always visible, independent of task selection
+    // — separate from STATUS (task-specific), which is only reachable
+    // while a row is selected, and once any task exists in history a row
+    // is *always* selected, so it can't be tucked behind "nothing else to
+    // show" the way STATUS's own content is.
+    const usagePanel = { title: `KAIRO · ${project}`, tone: CARD_TONE.INFO, lines: [theme.fg("muted", "USAGE"), ...this.compactHealthLines()] };
+    const fitPanel = { title: "FIT", tone: CARD_TONE.SUCCESS, lines: this.fitLines() };
+    // FIT's longest real line ("Planning / Architecture  Claude · Claude
+    // Fable 5.1") needs ~50 visible columns plus framing on each side —
+    // below this threshold, tiling would truncate the very info being
+    // shown, so it falls back to full-width stacking instead.
+    if (width >= 140) {
+      lines.push(...tileTwoPanels(usagePanel, fitPanel, width));
+    } else {
+      lines.push(...renderPanel(usagePanel.title, usagePanel.tone, width, usagePanel.lines));
+      lines.push(...renderPanel(fitPanel.title, fitPanel.tone, width, fitPanel.lines));
+    }
 
     const row = this.selectedRow();
     const footerLines = [theme.fg("muted", "Enter send · /help · /usage · q quit")];

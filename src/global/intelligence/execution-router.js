@@ -199,10 +199,14 @@ const LIGHT_TASK_MAX_LENGTH = 100;
 export function classifyEffort(taskText) {
   const text = String(taskText ?? "");
   const profile = classifyTask(text);
-  // Reasoning, risk, or genuine multi-file/integration scope all mean real
-  // complexity regardless of how short the task description reads — "wire
-  // up SSO across web and mobile" is short but not trivial.
-  if (profile.reasoningScore > 0 || profile.riskScore > 0 || profile.multiFileScore > 0) return "heavy";
+  // Reasoning or risk always means real complexity, regardless of length —
+  // "why does auth break?" is short but not trivial. Multi-file/integration
+  // scope counts too, UNLESS it's dominated by repetition: "rename this DTO
+  // field across 15 files" spans many files but is mechanical, not complex
+  // — the repetition signal is real evidence the multi-file spread doesn't
+  // make it harder, just wider.
+  if (profile.reasoningScore > 0 || profile.riskScore > 0) return "heavy";
+  if (profile.multiFileScore > 0 && profile.multiFileScore > profile.repetitionScore) return "heavy";
   if (text.trim().length <= LIGHT_TASK_MAX_LENGTH) return "light";
   return "standard";
 }

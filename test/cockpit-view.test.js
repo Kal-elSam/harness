@@ -84,6 +84,43 @@ test("FIT always shows real per-role winners — plain role names, no numbers, n
   assert.doesNotMatch(lines, /\d+\.\d.*intel/); // no raw scores leaking into FIT
 });
 
+test("USAGE and FIT tile side by side once the terminal is wide enough, each still readable in full", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [],
+      roles: [{ role: "Planning / Architecture", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" }]
+    }
+  });
+  const lines = view.render(160);
+  // Both cards' top borders must appear on the SAME line for a true side-by-side tile.
+  const topLine = lines.find((line) => line.includes("KAIRO"));
+  assert.ok(topLine.includes("FIT"), "USAGE and FIT top borders should share one row when tiled");
+  const joined = lines.join("\n");
+  assert.match(joined, /Planning \/ Architecture\s+Claude · Claude Fable 5\.1/); // not truncated
+  for (const line of lines) assert.ok(visibleWidth(line) <= 160, `line "${line}" exceeds width`);
+});
+
+test("USAGE and FIT stack (not tile) below the width threshold, so content never truncates into illegibility", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [],
+      roles: [{ role: "Planning / Architecture", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" }]
+    }
+  });
+  const lines = view.render(100);
+  const topLine = lines.find((line) => line.includes("KAIRO"));
+  assert.ok(!topLine.includes("FIT"), "below the threshold, USAGE and FIT must not share a row");
+  assert.match(lines.join("\n"), /Planning \/ Architecture\s+Claude · Claude Fable 5\.1/);
+});
+
 test("FIT reports honestly when there is no benchmark data yet, never a fabricated ranking", () => {
   const { view } = makeView();
   view.setRows([]);
