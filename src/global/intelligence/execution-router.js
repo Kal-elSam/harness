@@ -179,33 +179,37 @@ function defaultModelFor(adapterId, catalogs) {
   return models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? null;
 }
 
-// A question this short with no reasoning/risk signal doesn't need the
-// account's biggest model — "what does this project do?" shouldn't burn the
-// same model as "why is there a race condition in the auth flow?".
-const LIGHT_QUESTION_MAX_LENGTH = 100;
+// Short with no reasoning/risk signal doesn't need the account's biggest
+// model — "what does this project do?" or "fix the button color" shouldn't
+// burn the same model as "why is there a race condition in the auth flow?".
+const LIGHT_TASK_MAX_LENGTH = 100;
 
 /**
- * How much model capability a read-only question actually needs. Reuses
- * classifyTask()'s real keyword signal rather than a separate heuristic —
- * a question that reads as reasoning-heavy or touches a risk keyword still
- * deserves a capable model even if it's short ("why does auth break?").
+ * How much model capability a task (question OR real execution work)
+ * actually needs. Reuses classifyTask()'s real keyword signal rather than
+ * a separate heuristic — anything that reads as reasoning-heavy or touches
+ * a risk keyword still deserves a capable model even if it's short ("why
+ * does auth break?"). Governs which MODEL a provider uses, independent of
+ * which PROVIDER gets picked (candidateOrder's job) — a trivial fix still
+ * goes to whichever provider the task shape favors, just with its
+ * cheapest adequate model instead of automatically reaching for the top.
  * @param {string} taskText
  * @returns {"light"|"standard"|"heavy"}
  */
-export function classifyAskEffort(taskText) {
+export function classifyEffort(taskText) {
   const text = String(taskText ?? "");
   const profile = classifyTask(text);
-  if (profile.reasoningScore > 0 || profile.riskScore > 0) return "heavy";
-  if (text.trim().length <= LIGHT_QUESTION_MAX_LENGTH) return "light";
+  // Reasoning, risk, or genuine multi-file/integration scope all mean real
+  // complexity regardless of how short the task description reads — "wire
+  // up SSO across web and mobile" is short but not trivial.
+  if (profile.reasoningScore > 0 || profile.riskScore > 0 || profile.multiFileScore > 0) return "heavy";
+  if (text.trim().length <= LIGHT_TASK_MAX_LENGTH) return "light";
   return "standard";
 }
 
 // Anthropic's own public model line naming (Haiku < Sonnet < Opus) is a
 // real, documented capability ordering — not a guess — so it's safe to
-// match against real catalog entries by name. No other provider's catalog
-// (Codex/OpenCode/Cursor) carries any cost/size signal today (their real
-// discovered models expose only id/displayName/isDefault/hidden), so
-// picking a tier for them would be inventing data instead of reading it.
+// match against real catalog entries by name.
 const CLAUDE_EFFORT_NAME_PATTERNS = { light: "haiku", standard: "sonnet", heavy: "opus" };
 
 /**
@@ -222,6 +226,23 @@ function pickModelForEffort(adapterId, effort, catalogs) {
     const pattern = CLAUDE_EFFORT_NAME_PATTERNS[effort];
     const tiered = pattern ? models.find((model) => model.id.toLowerCase().includes(pattern)) : null;
     if (tiered) return tiered.id;
+  }
+  // OpenCode Go's real catalog reports a real per-model cost
+  // (costInputPerMTok) — no naming convention to trust here, but real
+  // price is itself a real, ungamed signal: sort by it and pick the
+  // cheapest/median/priciest model for light/standard/heavy. Codex and
+  // Cursor's real catalogs carry neither a naming convention nor a cost
+  // field (verified: id/displayName/isDefault/hidden only), so picking a
+  // tier for them would be inventing data instead of reading it — they
+  // keep using the provider's own default.
+  if (adapterId === "opencode-go") {
+    const withCost = (catalogs?.opencodeGo?.models ?? []).filter((model) => typeof model.costInputPerMTok === "number");
+    if (withCost.length > 0) {
+      const sorted = [...withCost].sort((a, b) => a.costInputPerMTok - b.costInputPerMTok);
+      if (effort === "light") return sorted[0].id;
+      if (effort === "heavy") return sorted[sorted.length - 1].id;
+      return sorted[Math.floor((sorted.length - 1) / 2)].id;
+    }
   }
   return defaultModelFor(adapterId, catalogs);
 }
@@ -285,11 +306,11 @@ function pickAskOrder(codexRemaining, claudeRemaining) {
  * @param {object|null} [args.claudeUsage]
  * @param {object} [args.catalogs]
  * @param {string} [args.taskText] - the real question text, used only to size
- *   how much model capability it needs (see classifyAskEffort) — never to
+ *   how much model capability it needs (see classifyEffort) — never to
  *   change which provider is picked or to gate on risk.
  */
 export function selectAskProvider({ adapters, codexUsage = null, claudeUsage = null, catalogs = {}, taskText = "" }) {
-  const effort = classifyAskEffort(taskText);
+  const effort = classifyEffort(taskText);
   const { order, usedQuota } = pickAskOrder(remainingPercent(codexUsage), remainingPercent(claudeUsage));
   const attempts = [];
   for (const adapterId of order) {
@@ -339,6 +360,12 @@ export function selectExecutionProvider({
   const skillNote = matchedSkills.length > 0
     ? ` · matches skill "${matchedSkills[0].name}" (${matchedSkills[0].overlap.join(", ")})`
     : "";
+  // Which provider handles the task and how capable a model it needs are
+  // separate questions — a trivial fix still goes wherever the task shape
+  // favors, just with the cheapest adequate model instead of always
+  // reaching for the account's top one (e.g. Claude Opus/Fable for
+  // "fix the button color").
+  const effort = classifyEffort(task);
 
   if (needsApproval) {
     return {
@@ -357,13 +384,13 @@ export function selectExecutionProvider({
     const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage });
     attempts.push({ adapterId, ...check });
     if (check.ok) {
-      const model = defaultModelFor(adapterId, catalogs);
+      const model = pickModelForEffort(adapterId, effort, catalogs);
       const remaining = order.slice(order.indexOf(adapterId) + 1);
       return {
         decision: "ROUTED",
         provider: adapterId,
         model,
-        why: `${reasonPhrase(adapterId, profile)}${skillNote}`,
+        why: `${reasonPhrase(adapterId, profile)} (${effort} effort)${skillNote}`,
         fallback: remaining[0] ?? null,
         rejectedCandidates: attempts.filter((entry) => !entry.ok),
         matchedSkills,

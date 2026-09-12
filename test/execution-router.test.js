@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  checkCandidate, classifyAskEffort, classifyTask, isLikelyQuestion, matchSkills, selectAskProvider, selectExecutionProvider
+  checkCandidate, classifyEffort, classifyTask, isLikelyQuestion, matchSkills, selectAskProvider, selectExecutionProvider
 } from "../src/global/intelligence/execution-router.js";
 
 const CLAUDE_CATALOG = {
@@ -124,14 +124,14 @@ test("selectAskProvider never gates on risk keywords — a question about a risk
   assert.equal(result.provider, "claude");
 });
 
-test("classifyAskEffort: short and simple is light, reasoning/risk keywords always win regardless of length, otherwise standard", () => {
-  assert.equal(classifyAskEffort("what does this project do?"), "light");
-  assert.equal(classifyAskEffort("why?"), "light");
-  assert.equal(classifyAskEffort("why does auth break under load?"), "heavy");
-  assert.equal(classifyAskEffort("is it safe to store a payment credential here?"), "heavy");
+test("classifyEffort: short and simple is light, reasoning/risk keywords always win regardless of length, otherwise standard", () => {
+  assert.equal(classifyEffort("what does this project do?"), "light");
+  assert.equal(classifyEffort("why?"), "light");
+  assert.equal(classifyEffort("why does auth break under load?"), "heavy");
+  assert.equal(classifyEffort("is it safe to store a payment credential here?"), "heavy");
   const longButSimple = "explain, in plain terms, roughly what this whole codebase is trying to accomplish for a new teammate joining today";
   assert.ok(longButSimple.length > 100);
-  assert.equal(classifyAskEffort(longButSimple), "standard");
+  assert.equal(classifyEffort(longButSimple), "standard");
 });
 
 test("selectAskProvider picks Haiku for a simple question and Opus for a reasoning-heavy one, from the real catalog — never a fabricated model id", () => {
@@ -260,4 +260,56 @@ test("checkCandidate still applies the real codex/claude quota floor unchanged",
   const low = checkCandidate("codex", { adapters, codexUsage: { primary: { remainingPercent: 2 } } });
   assert.equal(low.ok, false);
   assert.match(low.reason, /nearly exhausted/);
+});
+
+test("selectExecutionProvider sizes the model to the task's real effort too — a trivial fix doesn't get Claude's biggest model", () => {
+  const trivial = selectExecutionProvider({
+    task: "Fix the button color", adapters: ADAPTERS, catalogs: CLAUDE_CATALOG
+  });
+  assert.equal(trivial.provider, "claude");
+  assert.equal(trivial.model, "claude-haiku-4-5");
+  assert.match(trivial.why, /light effort/);
+
+  const complex = selectExecutionProvider({
+    task: "Investigate why sessions are duplicated under concurrent payment requests",
+    adapters: ADAPTERS, catalogs: CLAUDE_CATALOG
+  });
+  // "payment" is a risk keyword combined with reasoning scope, so this actually needs approval —
+  // proves risk gating still fires before model-effort sizing ever runs.
+  assert.equal(complex.decision, "WAIT_FOR_APPROVAL");
+
+  const genuinelyComplex = selectExecutionProvider({
+    task: "Wire up the new pagination component across the table views, it's a fairly involved integration",
+    adapters: ADAPTERS, catalogs: CLAUDE_CATALOG
+  });
+  assert.equal(genuinelyComplex.provider, "claude");
+  assert.equal(genuinelyComplex.model, "claude-opus-5");
+  assert.match(genuinelyComplex.why, /heavy effort/);
+});
+
+test("selectExecutionProvider picks OpenCode Go's real cheapest/median model by real cost, for light/standard effort", () => {
+  const opencodeGoCatalog = {
+    opencodeGo: {
+      status: "measured",
+      models: [
+        { id: "deepseek-v4-flash", costInputPerMTok: 0.15 },
+        { id: "deepseek-v4-pro", costInputPerMTok: 0.66 },
+        { id: "glm-5.3", costInputPerMTok: 1.2 }
+      ]
+    }
+  };
+  const adapters = ADAPTERS.map((a) => (a.id === "opencode" ? { ...a, launchable: true, reason: null } : a));
+
+  const light = selectExecutionProvider({ task: "Fix the typo in the readme", adapters, catalogs: opencodeGoCatalog });
+  assert.equal(light.provider, "opencode-go");
+  assert.equal(light.model, "deepseek-v4-flash"); // cheapest real option
+
+  // Purely repetitive keywords, long enough to clear the "light" length
+  // threshold, with no reasoning/risk/multi-file keyword — stays "standard".
+  const standard = selectExecutionProvider({
+    task: "Rename this old variable and fix the leftover typo, then update the changelog and the readme boilerplate stub",
+    adapters, catalogs: opencodeGoCatalog
+  });
+  assert.equal(standard.provider, "opencode-go");
+  assert.equal(standard.model, "deepseek-v4-pro"); // real median-cost option
 });
