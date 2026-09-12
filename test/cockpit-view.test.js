@@ -59,6 +59,36 @@ test("render gives conversation priority and keeps compact usage in the header",
   assert.doesNotMatch(joined, /Engram connected/);
 });
 
+test("with no task selected, STATUS shows real model fit ranked by real coding score instead of sitting empty", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [
+        { adapterId: "claude", modelId: "claude-sonnet-5", displayName: "Claude Sonnet 5", intelligenceIndex: 38.4, codingIndex: 71.5, mathIndex: null },
+        { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null }
+      ]
+    }
+  });
+  const lines = view.render(100).join("\n");
+  assert.match(lines, /MODEL FIT — Artificial Analysis, live/);
+  // GPT-6-Astra has the higher coding score (76.9 vs 71.5) so it must rank first.
+  const codexLine = lines.indexOf("Codex");
+  const claudeLine = lines.indexOf("Claude");
+  assert.ok(codexLine !== -1 && claudeLine !== -1 && codexLine < claudeLine);
+  assert.match(lines, /coding\s+76\.9/);
+});
+
+test("STATUS reports honestly when there is no benchmark data yet, never a fabricated ranking", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setSnapshot({ projectRoot: "/repo/demo", modelIntelligence: { status: "unknown", source: null, age: null, models: [], error: "no API key configured" } });
+  const lines = view.render(100).join("\n");
+  assert.match(lines, /MODEL FIT — no benchmark data yet \(no API key configured\)/);
+});
+
 test("narrow dashboard keeps Go and Zen on separate readable rows", () => {
   const { view } = makeView();
   view.setSnapshot({

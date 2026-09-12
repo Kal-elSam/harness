@@ -21,6 +21,8 @@ import { isLikelyQuestion, selectAskProvider, selectExecutionProvider } from "..
 import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
+import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
+import { scoreAvailableModels } from "../intelligence/model-intelligence.js";
 
 export const CONVERSATION_SCHEMA = "kairo.conversation/v1";
 
@@ -149,6 +151,7 @@ function snapshot(projectRoot, plans, providers = {}, integrations = {}) {
     providers,
     integrations,
     usage: { codex: null, claude: null, opencode: null },
+    modelIntelligence: { status: "unknown", source: null, age: null, models: [] },
     governance: {
       methodologyOwner: "gentle-ai",
       orchestratorOwner: "kairo",
@@ -205,6 +208,7 @@ export function createConversationService(deps = {}) {
   const appendTranscriptImpl = deps.appendTranscriptEntry ?? appendTranscriptEntry;
   const readTranscriptImpl = deps.readTranscript ?? readTranscript;
   const clearTranscriptImpl = deps.clearTranscript ?? clearTranscript;
+  const readArtificialAnalysisModelsImpl = deps.readArtificialAnalysisModels ?? readArtificialAnalysisModels;
   // Unit tests inject resolveRoot and must remain provider-call free. The real
   // cockpit opts in explicitly so a refresh performs one bounded read-only probe.
   const enableProviderProbes = deps.enableProviderProbes ?? !deps.resolveRoot;
@@ -212,6 +216,12 @@ export function createConversationService(deps = {}) {
   const claudeUsageTtlMs = deps.claudeUsageTtlMs ?? 60_000;
   const opencodeUsageTtlMs = deps.opencodeUsageTtlMs ?? 300_000;
   const opencodeGoUsageTtlMs = deps.opencodeGoUsageTtlMs ?? 60_000;
+  // Model catalogs and Artificial Analysis's real benchmark scores both
+  // change slowly and cost real subprocess spawns / a real network call —
+  // snapshot() polls every couple seconds, so these need a much longer TTL
+  // than usage, not a fresh read on every poll.
+  const modelCatalogTtlMs = deps.modelCatalogTtlMs ?? 600_000;
+  const artificialAnalysisTtlMs = deps.artificialAnalysisTtlMs ?? 6 * 60 * 60_000;
   const now = deps.now ?? (() => Date.now());
 
   // Shared TTL + in-flight-dedupe cache for both provider usage probes:
@@ -236,6 +246,10 @@ export function createConversationService(deps = {}) {
   }
   const readCodexUsageCached = createCachedProbe(readCodexUsageImpl, codexUsageTtlMs);
   const readClaudeUsageCached = createCachedProbe(readClaudeUsageImpl, claudeUsageTtlMs);
+  const readCodexModelsCached = createCachedProbe(readCodexModelsImpl, modelCatalogTtlMs);
+  const readArtificialAnalysisModelsCached = createCachedProbe(
+    (args) => readArtificialAnalysisModelsImpl({ ...args, homeDir }), artificialAnalysisTtlMs
+  );
   const readOpenCodeUsageCached = createCachedProbe(readOpenCodeUsageImpl, opencodeUsageTtlMs);
   const readOpenCodeGoCached = createCachedProbe(readOpenCodeGoImpl, opencodeGoUsageTtlMs);
   const readOpenCodeStatsCached = createCachedProbe(readOpenCodeStatsImpl, opencodeUsageTtlMs);
@@ -317,6 +331,17 @@ export function createConversationService(deps = {}) {
       result.usage.codex = codexUsage;
       result.usage.claude = claudeUsage;
       result.usage.opencode = opencodeUsage;
+      if (enableProviderProbes) {
+        const [codexCatalog, aa] = await Promise.all([
+          readCodexModelsCached(projectRoot, { cwd: projectRoot }),
+          readArtificialAnalysisModelsCached("global", {})
+        ]);
+        const scored = scoreAvailableModels(
+          [{ adapterId: "codex", models: codexCatalog?.models ?? [] }, { adapterId: "claude", models: readClaudeModelsImpl().models }],
+          aa.models
+        );
+        result.modelIntelligence = { status: aa.status, source: aa.source, age: aa.age, models: scored };
+      }
       return result;
     },
     async submitArchitecture({ cwd, task, model = null }) {

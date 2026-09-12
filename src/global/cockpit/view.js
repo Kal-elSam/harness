@@ -291,6 +291,14 @@ export class CockpitView {
       lines.push(cardTop("STATUS", statusTone, theme, width));
       for (const line of this.statusLines(row)) lines.push(cardLine(line, statusTone, theme, width));
       lines.push(cardBottom(statusTone, theme, width));
+    } else {
+      // Nothing selected yet: instead of an empty widget, show what Kairo
+      // actually knows about which of your real, available models would
+      // theoretically fit each kind of task — real Artificial Analysis
+      // scores crossed with real provider catalogs, never a guess.
+      lines.push(cardTop("STATUS", CARD_TONE.INFO, theme, width));
+      for (const line of this.modelIntelligenceLines()) lines.push(cardLine(line, CARD_TONE.INFO, theme, width));
+      lines.push(cardBottom(CARD_TONE.INFO, theme, width));
     }
 
     const footerLines = [theme.fg("muted", "Enter send · /help · /usage · q quit")];
@@ -326,6 +334,31 @@ export class CockpitView {
     if (this.mode === "confirm-execute") {
       if (row) lines.push("");
       lines.push(...this.confirmPromptLines(row));
+    }
+    return lines;
+  }
+
+  /**
+   * Real models Kairo can actually launch right now, ranked by real
+   * Artificial Analysis coding score — never AA's full catalog, and never
+   * a model Kairo can't confidently match to a real score (see
+   * intelligence/model-intelligence.js). Shown when no task is selected,
+   * so the widget carries real information instead of sitting empty.
+   */
+  modelIntelligenceLines() {
+    const intel = this.snapshot?.modelIntelligence;
+    if (!intel || intel.status === "unknown" || intel.models.length === 0) {
+      const reason = intel?.status === "unknown" && intel?.error ? ` (${intel.error})` : "";
+      return [theme.fg("muted", `MODEL FIT — no benchmark data yet${reason}`)];
+    }
+    const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
+    const lines = [theme.fg("muted", `MODEL FIT — Artificial Analysis, ${freshness}`)];
+    const ranked = [...intel.models].sort((a, b) => (b.codingIndex ?? -1) - (a.codingIndex ?? -1)).slice(0, 6);
+    for (const entry of ranked) {
+      const provider = entry.adapterId.charAt(0).toUpperCase() + entry.adapterId.slice(1);
+      const coding = entry.codingIndex != null ? entry.codingIndex.toFixed(1) : "—";
+      const intelligence = entry.intelligenceIndex != null ? entry.intelligenceIndex.toFixed(1) : "—";
+      lines.push(`${provider.padEnd(8)} ${(entry.displayName ?? entry.modelId).padEnd(20)} coding ${coding.padStart(5)}  intel ${intelligence.padStart(5)}`);
     }
     return lines;
   }

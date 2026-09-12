@@ -171,6 +171,47 @@ test("submitTask still creates a plan for an actual change request", async () =>
   assert.deepEqual(planCalls, [{ cwd: "/repo", task: "Implement pagination on the users table", model: null }]);
 });
 
+test("snapshot cross-references real model catalogs with real Artificial Analysis scores when probes are enabled", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [{ id: "gpt-6-astra", displayName: "GPT-6 Astra" }] }),
+    readClaudeModels: () => ({ status: "documented", models: [{ id: "claude-opus-5" }] }),
+    readArtificialAnalysisModels: async () => ({
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [
+        { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null },
+        { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 50.7, codingIndex: 78, mathIndex: null }
+      ]
+    })
+  });
+
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.equal(snapshot.modelIntelligence.status, "live");
+  assert.equal(snapshot.modelIntelligence.models.length, 2);
+  assert.deepEqual(snapshot.modelIntelligence.models.map((m) => m.modelId), ["gpt-6-astra", "claude-opus-5"]);
+});
+
+test("snapshot leaves modelIntelligence at its honest unknown default when probes are disabled", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [],
+    inspectEngramIntegration: () => ({ status: "configured" })
+  });
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.equal(snapshot.modelIntelligence.status, "unknown");
+  assert.deepEqual(snapshot.modelIntelligence.models, []);
+});
+
 test("loadTranscript resolves the project root and reads real persisted history from the global harness home", async () => {
   const reads = [];
   const service = createConversationService({
