@@ -282,14 +282,20 @@ function decisiveness(ranked) {
   return Math.abs(ranked[0].value - rival.value) / scale;
 }
 
-// Calibrated directly against real measured data, not picked arbitrarily:
-// Claude Fable 5.1 vs Codex GPT-6 Astra on intelligence sit ~1.1% apart
-// (a real coin flip — no reason to spend the same subscription on every
-// role just because it happens to be a hair ahead), while Fable 5.1 vs
-// Codex GPT-5.6 Sol on coding sit ~5.2% apart (a real, meaningful edge
-// that should never be sacrificed for diversity). 2% sits safely between
-// the two so both keep their honest classification.
-const NEAR_EQUIVALENCE_BAND = 0.02;
+// Calibrated directly against real measured data, not picked arbitrarily.
+// Per explicit decision: capability alone isn't the only thing that
+// matters — a model being capable of everything doesn't mean it should
+// always be the one doing it, especially when a real, meaningfully
+// cheaper alternative is genuinely close enough. Two real data points
+// anchor this band: Claude Fable 5.1 vs OpenCode Go's Kimi K3 sit ~6.6%
+// apart on codingIndex (real GPQA scores are within 0.2 points of each
+// other — the composite index alone overstates the gap) at roughly a
+// third of the price, while Fable 5.1 vs Codex GPT-5.6 Sol on coding sit
+// ~5.2% apart with no price advantage either way. 8% includes the
+// genuinely-close, meaningfully-cheaper case without swallowing gaps
+// this codebase has already confirmed are real and decisive elsewhere
+// (e.g. the 18%+ gaps used in this file's own tests).
+const NEAR_EQUIVALENCE_BAND = 0.08;
 
 /**
  * The "AI TEAM" distribution policy: decides which real, eligible provider
@@ -302,9 +308,11 @@ const NEAR_EQUIVALENCE_BAND = 0.02;
  * 2. Decisive roles settle first — if a role's real winner beats the best
  *    alternative from another provider by more than NEAR_EQUIVALENCE_BAND,
  *    that real advantage is never sacrificed for diversity.
- * 3. Near-equivalent roles spread across providers — among alternatives
- *    within the band, the least-used provider so far wins the tie, so
- *    ties (never real wins) are what create diversity and conserve quota.
+ * 3. Near-equivalent roles favor real savings — among alternatives within
+ *    the band, the genuinely cheaper real option wins the tie (falling
+ *    back to whichever provider is least-used so far when price is
+ *    unknown or equal), so ties (never real wins) are what create
+ *    diversity and conserve both money and quota.
  * 4. Review independence — Reviewer is reassigned off Builder's own
  *    provider whenever a real alternative exists, so a model is never the
  *    sole judge of its own family's work.
@@ -341,9 +349,20 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
       const scale = Math.abs(leader.value) || 1;
       const margin = Math.abs(leader.value - rival.value) / scale;
       if (margin <= NEAR_EQUIVALENCE_BAND) {
-        const leaderUsage = usageCount[leader.model.adapterId] ?? 0;
-        const rivalUsage = usageCount[rival.model.adapterId] ?? 0;
-        if (rivalUsage <= leaderUsage) pick = rival;
+        // Among real near-equivalents, prefer the genuinely cheaper real
+        // option first — capability being close enough is exactly when
+        // cost/quota should decide, not a tie-break of last resort. Only
+        // fall back to spreading load across the least-used provider when
+        // real prices are unknown or actually equal.
+        const leaderPrice = leader.model.priceInputPerMTok;
+        const rivalPrice = rival.model.priceInputPerMTok;
+        if (leaderPrice != null && rivalPrice != null && leaderPrice !== rivalPrice) {
+          if (rivalPrice < leaderPrice) pick = rival;
+        } else {
+          const leaderUsage = usageCount[leader.model.adapterId] ?? 0;
+          const rivalUsage = usageCount[rival.model.adapterId] ?? 0;
+          if (rivalUsage <= leaderUsage) pick = rival;
+        }
       }
     }
     chosenByRole[role] = pick;

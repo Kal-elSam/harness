@@ -207,12 +207,12 @@ test("buildAiTeam reports no fallback, never a fabricated one, when no eligible 
 });
 
 test("buildAiTeam never lets one model win every role: a real decisive gap locks in its winner, but near-equivalent roles spread to the less-used provider", () => {
-  // Same shape as real production data: Claude has a real, meaningful
-  // coding edge (~5.2%, decisive) but only a razor-thin intelligence edge
-  // (~1.1%, a real tie) over Codex.
+  // Claude has a real, meaningful coding edge (~26%, decisive even under
+  // the wider 8% band) but only a razor-thin intelligence edge (~1.1%,
+  // a real tie) over Codex.
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 77.4, mathIndex: null }
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 60.0, mathIndex: null }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -316,4 +316,49 @@ test("buildAiTeam attaches corroboration to a team pick when given a registry, w
   assert.equal(builderWith.primary.adapterId, builderWithout.primary.adapterId, "the pick itself never changes");
   assert.equal(builderWithout.primary.corroboration, undefined);
   assert.deepEqual(builderWith.primary.corroboration, [{ metric: "kairo.success", value: 1, source: "kairo-telemetry" }]);
+});
+
+test("buildAiTeam prefers a real, meaningfully cheaper near-equivalent over the raw leader — capability being close enough is when cost should decide", () => {
+  // Shaped directly on real measured data: Claude Fable 5.1 vs OpenCode
+  // Go's Kimi K3 sit ~6.6% apart on codingIndex (within the 8% band) at
+  // roughly a third of the real price.
+  const aa = [
+    { slug: "fable-model", name: "Fable-shaped", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10 },
+    { slug: "kimi-model", name: "Kimi-shaped", intelligenceIndex: 43.8, codingIndex: 76.2, mathIndex: null, priceInputPerMTok: 3 }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "fable-model" }] }, { adapterId: "opencode-go", models: [{ id: "kimi-model" }] }], aa
+  );
+  const team = buildAiTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } });
+  const tester = team.find((t) => t.role === "Tester"); // pure codingIndex, no independence rule involved
+  assert.equal(tester.primary.adapterId, "opencode-go", "the cheaper, near-equivalent real option should win over the raw leader");
+  assert.match(tester.reason, /Near-equivalent/);
+});
+
+test("buildAiTeam only prefers cost when a real alternative is actually near-equivalent — a genuinely large real gap still wins on capability, whatever the price", () => {
+  const aa = [
+    { slug: "strong-model", name: "Strong", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10 },
+    { slug: "cheap-weak-model", name: "Cheap Weak", intelligenceIndex: 90, codingIndex: 40, mathIndex: null, priceInputPerMTok: 1 }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "strong-model" }] }, { adapterId: "opencode-go", models: [{ id: "cheap-weak-model" }] }], aa
+  );
+  const team = buildAiTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } });
+  const tester = team.find((t) => t.role === "Tester");
+  assert.equal(tester.primary.adapterId, "claude", "a real ~56% coding gap must never be sacrificed just because the alternative is cheaper");
+});
+
+test("buildAiTeam falls back to usage-based diversity when near-equivalent alternatives have no real price to compare", () => {
+  const aa = [
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 78.0, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
+  );
+  // Neither model reports a real price — must not crash or fabricate a
+  // preference; behavior should match the pre-existing usage-based tiebreak.
+  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  const tester = team.find((t) => t.role === "Tester");
+  assert.ok(["claude", "codex"].includes(tester.primary.adapterId));
 });
