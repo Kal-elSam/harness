@@ -220,6 +220,21 @@ test("askQuestion refuses to fabricate an answer when no ask-capable provider is
   await assert.rejects(() => service.askQuestion({ cwd: "/repo", task: "What is this?" }), /no ask-capable provider/);
 });
 
+test("askQuestion threads the real question text through to the router, so effort-tier model selection sees the actual complexity", async () => {
+  const routeCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    selectAskProvider: (args) => {
+      routeCalls.push(args.taskText);
+      return { decision: "ROUTED", provider: "claude", model: "claude-haiku-4-5", why: "read-only question (light effort)" };
+    },
+    askProvider: async () => ({ status: "answered", answer: "It's an orchestrator." })
+  });
+  await service.askQuestion({ cwd: "/repo", task: "what is this project about?" });
+  assert.deepEqual(routeCalls, ["what is this project about?"]);
+});
+
 test("planExecution previews the real router's decision without reserving or launching anything", async () => {
   const status = {
     taskId: "task-id", state: "approved", provider: "codex", model: null,

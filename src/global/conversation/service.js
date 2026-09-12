@@ -345,7 +345,7 @@ export function createConversationService(deps = {}) {
         ]);
         claudeCatalog = readClaudeModelsImpl();
       }
-      const decision = routeAsk({ adapters, codexUsage, claudeUsage, catalogs: { codex: codexCatalog, claude: claudeCatalog } });
+      const decision = routeAsk({ adapters, codexUsage, claudeUsage, catalogs: { codex: codexCatalog, claude: claudeCatalog }, taskText: task });
       if (decision.decision !== "ROUTED") throw new Error(`Cannot answer: ${decision.why}`);
       const result = await askProviderImpl({ provider: decision.provider, question: task, model: decision.model, cwd: projectRoot });
       if (result.status !== "answered") throw new Error(result.error ?? `${decision.provider} gave no answer.`);

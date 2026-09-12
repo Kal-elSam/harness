@@ -154,6 +154,53 @@ function defaultModelFor(adapterId, catalogs) {
   return models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? null;
 }
 
+// A question this short with no reasoning/risk signal doesn't need the
+// account's biggest model — "what does this project do?" shouldn't burn the
+// same model as "why is there a race condition in the auth flow?".
+const LIGHT_QUESTION_MAX_LENGTH = 100;
+
+/**
+ * How much model capability a read-only question actually needs. Reuses
+ * classifyTask()'s real keyword signal rather than a separate heuristic —
+ * a question that reads as reasoning-heavy or touches a risk keyword still
+ * deserves a capable model even if it's short ("why does auth break?").
+ * @param {string} taskText
+ * @returns {"light"|"standard"|"heavy"}
+ */
+export function classifyAskEffort(taskText) {
+  const text = String(taskText ?? "");
+  const profile = classifyTask(text);
+  if (profile.reasoningScore > 0 || profile.riskScore > 0) return "heavy";
+  if (text.trim().length <= LIGHT_QUESTION_MAX_LENGTH) return "light";
+  return "standard";
+}
+
+// Anthropic's own public model line naming (Haiku < Sonnet < Opus) is a
+// real, documented capability ordering — not a guess — so it's safe to
+// match against real catalog entries by name. No other provider's catalog
+// (Codex/OpenCode/Cursor) carries any cost/size signal today (their real
+// discovered models expose only id/displayName/isDefault/hidden), so
+// picking a tier for them would be inventing data instead of reading it.
+const CLAUDE_EFFORT_NAME_PATTERNS = { light: "haiku", standard: "sonnet", heavy: "opus" };
+
+/**
+ * Picks a real model id from the provider's actual catalog for the given
+ * effort tier, falling back to the provider's own default when no matching
+ * tier exists in that catalog (never a fabricated id).
+ * @param {string} adapterId
+ * @param {"light"|"standard"|"heavy"} effort
+ * @param {object} catalogs
+ */
+function pickModelForEffort(adapterId, effort, catalogs) {
+  if (adapterId === "claude") {
+    const models = catalogs?.claude?.models ?? [];
+    const pattern = CLAUDE_EFFORT_NAME_PATTERNS[effort];
+    const tiered = pattern ? models.find((model) => model.id.toLowerCase().includes(pattern)) : null;
+    if (tiered) return tiered.id;
+  }
+  return defaultModelFor(adapterId, catalogs);
+}
+
 /**
  * Decides an ordered candidate list (most to least preferred) from the
  * classification alone — availability/quota filtering happens next, in
@@ -196,8 +243,12 @@ function reasonPhrase(adapterId, profile) {
  * @param {object|null} [args.codexUsage]
  * @param {object|null} [args.claudeUsage]
  * @param {object} [args.catalogs]
+ * @param {string} [args.taskText] - the real question text, used only to size
+ *   how much model capability it needs (see classifyAskEffort) — never to
+ *   change which provider is picked or to gate on risk.
  */
-export function selectAskProvider({ adapters, codexUsage = null, claudeUsage = null, catalogs = {} }) {
+export function selectAskProvider({ adapters, codexUsage = null, claudeUsage = null, catalogs = {}, taskText = "" }) {
+  const effort = classifyAskEffort(taskText);
   const attempts = [];
   for (const adapterId of ["claude", "codex"]) {
     const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage });
@@ -206,8 +257,8 @@ export function selectAskProvider({ adapters, codexUsage = null, claudeUsage = n
       return {
         decision: "ROUTED",
         provider: adapterId,
-        model: defaultModelFor(adapterId, catalogs),
-        why: "read-only question",
+        model: pickModelForEffort(adapterId, effort, catalogs),
+        why: `read-only question (${effort} effort)`,
         rejectedCandidates: attempts.filter((entry) => !entry.ok)
       };
     }

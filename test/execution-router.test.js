@@ -1,8 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  classifyTask, isLikelyQuestion, matchSkills, selectAskProvider, selectExecutionProvider
+  classifyAskEffort, classifyTask, isLikelyQuestion, matchSkills, selectAskProvider, selectExecutionProvider
 } from "../src/global/intelligence/execution-router.js";
+
+const CLAUDE_CATALOG = {
+  claude: {
+    models: [
+      { id: "claude-opus-5", isDefault: false },
+      { id: "claude-sonnet-5", isDefault: true },
+      { id: "claude-haiku-4-5", isDefault: false }
+    ]
+  }
+};
 
 const SKILLS = [
   { name: "go-testing", description: "Apply focused Go testing patterns for teatest and golden files." },
@@ -112,6 +122,46 @@ test("selectAskProvider never gates on risk keywords — a question about a risk
   const result = selectAskProvider({ adapters: ADAPTERS });
   assert.equal(result.decision, "ROUTED");
   assert.equal(result.provider, "claude");
+});
+
+test("classifyAskEffort: short and simple is light, reasoning/risk keywords always win regardless of length, otherwise standard", () => {
+  assert.equal(classifyAskEffort("what does this project do?"), "light");
+  assert.equal(classifyAskEffort("why?"), "light");
+  assert.equal(classifyAskEffort("why does auth break under load?"), "heavy");
+  assert.equal(classifyAskEffort("is it safe to store a payment credential here?"), "heavy");
+  const longButSimple = "explain, in plain terms, roughly what this whole codebase is trying to accomplish for a new teammate joining today";
+  assert.ok(longButSimple.length > 100);
+  assert.equal(classifyAskEffort(longButSimple), "standard");
+});
+
+test("selectAskProvider picks Haiku for a simple question and Opus for a reasoning-heavy one, from the real catalog — never a fabricated model id", () => {
+  const simple = selectAskProvider({ adapters: ADAPTERS, catalogs: CLAUDE_CATALOG, taskText: "what is this project about?" });
+  assert.equal(simple.provider, "claude");
+  assert.equal(simple.model, "claude-haiku-4-5");
+  assert.match(simple.why, /light effort/);
+
+  const heavy = selectAskProvider({ adapters: ADAPTERS, catalogs: CLAUDE_CATALOG, taskText: "why does auth break under a race condition?" });
+  assert.equal(heavy.model, "claude-opus-5");
+  assert.match(heavy.why, /heavy effort/);
+});
+
+test("selectAskProvider falls back to the provider's default model when the catalog has no model for that effort tier", () => {
+  const noHaiku = selectAskProvider({
+    adapters: ADAPTERS,
+    catalogs: { claude: { models: [{ id: "claude-opus-5", isDefault: true }] } },
+    taskText: "what is this?"
+  });
+  assert.equal(noHaiku.model, "claude-opus-5");
+});
+
+test("selectAskProvider never picks a tiered model for a provider with no cost/size signal in its real catalog (e.g. codex)", () => {
+  const result = selectAskProvider({
+    adapters: ADAPTERS.map((a) => (a.id === "claude" ? { ...a, available: false, reason: "not logged in" } : a)),
+    catalogs: { codex: { models: [{ id: "gpt-6-astra", isDefault: true }] } },
+    taskText: "what is this project about?"
+  });
+  assert.equal(result.provider, "codex");
+  assert.equal(result.model, "gpt-6-astra");
 });
 
 test("selectAskProvider falls back to codex when claude is unavailable, and reports no provider when both are", () => {
