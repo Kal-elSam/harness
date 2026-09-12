@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { annotateWithRegistryEvidence, bestModelPerRole, buildAiTeam, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
+import { ingestHuggingFaceLeaderboardEvidence } from "../src/global/intelligence/model-capability-registry-sources.js";
+import { ingestOfficialSnapshotEvidence } from "../src/global/intelligence/official-benchmark-snapshots.js";
 
 const AA_MODELS = [
   { slug: "gpt-6-astra", name: "GPT-6 Astra (max)", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null },
@@ -467,4 +469,64 @@ test("buildAiTeam prefers Kairo's own observed real duration over AA's reported 
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } }, registry);
   const tester = team.find((t) => t.role === "Tester");
   assert.equal(tester.primary.adapterId, "codex", "real observed duration must win over AA's reported throughput, which alone would have picked claude here");
+});
+
+// The tests below use the REAL production ingestion functions
+// (ingestOfficialSnapshotEvidence, ingestHuggingFaceLeaderboardEvidence)
+// with the exact metric names those sources actually write in production
+// ("terminal-bench", "hle") — not a hand-picked synthetic key like "gpqa"
+// added directly via registry.addEvidence(). This is what proves the
+// canonical capability mapping (CANONICAL_CAPABILITIES) actually bridges
+// real vocabulary mismatches, not just a same-named test fixture.
+
+test("Debugger's terminalExecution requirement is satisfied by the real ingestOfficialSnapshotEvidence pipeline (metric name \"terminal-bench\", not a same-named synthetic key)", () => {
+  const aa = [
+    { slug: "astra-model", name: "Astra Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
+    { slug: "fable-model", name: "Fable Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "codex", models: [{ id: "astra-model" }] }, { adapterId: "claude", models: [{ id: "fable-model" }] }], aa
+  );
+  const registry = createCapabilityRegistry();
+  // Real production function, real integrity validation, real metric name
+  // ("terminal-bench") — only the magnitudes are a test fixture, chosen
+  // large enough to demonstrate decisive influence unambiguously.
+  ingestOfficialSnapshotEvidence(registry, [{
+    source: "test-official", url: "https://example.com/test-official", published: "2026-09-12",
+    benchmark: "terminal-bench", benchmarkVersion: "test", caveat: "test fixture, not a real published table",
+    scores: [
+      { adapterId: "codex", modelId: "astra-model", value: 30 },
+      { adapterId: "claude", modelId: "fable-model", value: 90 }
+    ]
+  }]);
+
+  const team = buildAiTeam(scored, { codex: { ok: true }, claude: { ok: true } }, registry);
+  const debugger_ = team.find((t) => t.role === "Debugger");
+  assert.equal(debugger_.primary.adapterId, "claude", "real terminal-bench evidence from the actual production ingestion pipeline must decide this, not just AA's tied intelligence/coding");
+});
+
+test("Explorer's reasoning requirement is satisfied by the real ingestHuggingFaceLeaderboardEvidence pipeline (metric name \"hle\", not a same-named synthetic key)", () => {
+  const aa = [
+    { slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
+    { slug: "model-b", name: "Model B", intelligenceIndex: 90, codingIndex: 90, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "model-a" }] }, { adapterId: "opencode-go", models: [{ id: "model-b" }] }], aa
+  );
+  const registry = createCapabilityRegistry();
+  // Real production function and real HF entry shape (org/model modelId,
+  // verified flag) — only the magnitudes are a test fixture.
+  ingestHuggingFaceLeaderboardEvidence(
+    registry,
+    [{ adapterId: "claude", models: [{ id: "model-a" }] }, { adapterId: "opencode-go", models: [{ id: "model-b" }] }],
+    [
+      { modelId: "anthropic/model-a", value: 0.30, verified: false, rank: 10 },
+      { modelId: "moonshotai/model-b", value: 0.85, verified: true, rank: 1 }
+    ],
+    { metric: "hle", fetchedAt: "2026-09-12" }
+  );
+
+  const team = buildAiTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } }, registry);
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "opencode-go", "real hle evidence from the actual production Hugging Face ingestion pipeline must decide this, not just AA's tied intelligence");
 });

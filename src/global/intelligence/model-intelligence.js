@@ -300,6 +300,14 @@ function ensureRegistry(models, registry) {
  * the registry somehow has nothing for it. This is what actually
  * "connects the registry to each role's requirements" instead of only
  * ever reading the one AA field baked onto the model object.
+ *
+ * Only safe for metrics with ONE real name across every source (today:
+ * intelligenceIndex, codingIndex, priceInputPerMTok — nothing else calls
+ * them anything different yet). A metric multiple sources name
+ * differently (GPQA as AA's "gpqa" vs a manufacturer table's
+ * "gpqa-diamond") needs resolveCanonicalCapability instead — looking up
+ * one exact key would silently miss every other source's real evidence
+ * for the same real thing, which is exactly the gap found and fixed here.
  */
 function resolveMetric(registry, model, key) {
   const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
@@ -307,31 +315,106 @@ function resolveMetric(registry, model, key) {
   return best ? best.value : (model[key] ?? null);
 }
 
+function dateOf(entry) {
+  const parsed = Date.parse(entry?.date ?? "");
+  return Number.isFinite(parsed) ? parsed : -Infinity;
+}
+
+function convertByScale(scale, value) {
+  if (value == null) return null;
+  return scale === "hundred" ? value / 100 : value;
+}
+
+// Canonical capabilities: a real thing a role cares about (reasoning,
+// terminal execution, software execution) mapped to every real metric
+// name any connected source uses to measure it, each with its own real
+// scale. Different sources name the same real benchmark differently —
+// AA's free API reports GPQA as "gpqa" (0-1); a manufacturer's own
+// published table reports the identical benchmark as "gpqa-diamond"
+// (0-100). Without this mapping, a role asking for "gpqa" would find
+// AA's own number but silently miss a manufacturer-reported or
+// Hugging-Face-reported score for the exact same real benchmark, which
+// defeats the entire point of connecting a multi-source registry.
+const CANONICAL_CAPABILITIES = {
+  // gpqa/gpqa-diamond are the same real benchmark under different source
+  // names/scales; hle (Humanity's Last Exam) is a different real
+  // reasoning benchmark, not a rename of GPQA — included because it's the
+  // one Hugging Face's leaderboard integration actually reports for Go's
+  // models in production (see model-capability-registry-sources.js), and
+  // "never average, take the single most trustworthy real evidence" still
+  // applies: whichever real reasoning score is best-evidenced wins, none
+  // of them are blended together.
+  reasoning: [
+    { metric: "gpqa", scale: "unit" },
+    { metric: "gpqa-diamond", scale: "hundred" },
+    { metric: "hle", scale: "unit" }
+  ],
+  terminalExecution: [
+    { metric: "terminalBenchV2", scale: "unit" },
+    { metric: "terminalBenchHard", scale: "unit" },
+    { metric: "terminal-bench", scale: "hundred" },
+    { metric: "terminal-bench-science", scale: "hundred" }
+  ],
+  softwareExecution: [
+    { metric: "tauBanking", scale: "unit" },
+    { metric: "cursorbench", scale: "hundred" },
+    { metric: "kairo.success", scale: "unit" }
+  ]
+};
+
 /**
- * Builds a compute() for a role that needs more than one real metric,
- * possibly on different scales, resolved through the registry (see
- * resolveMetric) so any connected source can satisfy a requirement, not
- * just AA. `requiredKeys` are a hard capability floor — a model missing
- * any of them doesn't qualify for this role at all (same as the existing
- * null-filter elsewhere). `optionalKeys` only tighten the bottleneck when
- * a model actually has real evidence for them — so a role gaining a new,
- * sparser real benchmark (e.g. terminalBenchV2) never shrinks its
- * candidate pool for models nothing has scored on it yet. Every included
- * metric is converted to the same 0-1 unit scale (see toUnitScale) before
- * taking the minimum, so mixing scales is fair without losing real
- * magnitude information.
+ * Resolves a canonical capability by checking every real metric name any
+ * connected source uses for it (see CANONICAL_CAPABILITIES), converting
+ * each candidate to the same 0-1 scale, and keeping only the single most
+ * trustworthy real result across all of them (verified first, then most
+ * recent) — never averaging across different metrics, since "gpqa" and
+ * "gpqa-diamond" are still not literally the identical measurement even
+ * once mapped to the same real-world concept. Falls back to whichever
+ * mapped AA-native field the model object itself reports directly, for
+ * callers using a registry that wasn't seeded with these metrics (a
+ * sparse registry passed directly in a test, for instance).
  */
-function scaledBottleneck(registry, requiredKeys, optionalKeys = []) {
+function resolveCanonicalCapability(registry, model, canonicalName) {
+  const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
+  const mappings = CANONICAL_CAPABILITIES[canonicalName] ?? [];
+  let best = null;
+  for (const mapping of mappings) {
+    for (const entry of registry.getEvidence(id, mapping.metric)) {
+      const isBetter = !best
+        || (entry.verified && !best.entry.verified)
+        || (entry.verified === best.entry.verified && dateOf(entry) > dateOf(best.entry));
+      if (isBetter) best = { entry, scale: mapping.scale };
+    }
+  }
+  if (best) return convertByScale(best.scale, best.entry.value);
+  for (const mapping of mappings) {
+    if (model[mapping.metric] != null) return convertByScale(mapping.scale, model[mapping.metric]);
+  }
+  return null;
+}
+
+/**
+ * Builds a compute() for a role that needs more than one real signal,
+ * possibly on different scales and named differently across sources.
+ * `requiredKeys` are single-name real metrics (intelligenceIndex,
+ * codingIndex — no source names these differently yet) resolved via
+ * resolveMetric, and form a hard capability floor: a model missing any
+ * of them doesn't qualify for this role at all. `optionalCapabilities`
+ * are canonical names (see CANONICAL_CAPABILITIES) resolved via
+ * resolveCanonicalCapability across every real source that measures
+ * them — present only tightens the bottleneck, absent never excludes or
+ * penalizes a model, so a role gaining a new, sparser real signal never
+ * shrinks its candidate pool for models nothing has scored on it yet.
+ */
+function scaledBottleneck(registry, requiredKeys, optionalCapabilities = []) {
   return (model) => {
     const get = (key) => resolveMetric(registry, model, key);
     if (requiredKeys.some((key) => get(key) == null)) return null;
-    const keys = [...requiredKeys, ...optionalKeys.filter((key) => get(key) != null)];
-    let worst = null;
-    for (const key of keys) {
-      const v = toUnitScale(key, get(key));
-      if (worst == null || v < worst) worst = v;
-    }
-    return worst;
+    const requiredValues = requiredKeys.map((key) => toUnitScale(key, get(key)));
+    const optionalValues = optionalCapabilities
+      .map((name) => resolveCanonicalCapability(registry, model, name))
+      .filter((v) => v != null);
+    return Math.min(...requiredValues, ...optionalValues);
   };
 }
 
@@ -339,23 +422,25 @@ function scaledBottleneck(registry, requiredKeys, optionalKeys = []) {
  * Same real metrics as ROLE_DEFINITIONS, relabeled to the seven-role team
  * vocabulary the user settled on for the "AI TEAM" widget (Explorer /
  * Architect / Builder / Debugger / Tester / Reviewer / Economy) — plus,
- * per explicit decision, real role-specific benchmarks layered in as
- * optional tie-breakers (gpqa for reasoning-heavy roles, tauBanking for
- * agentic/tool-use, terminalBenchV2 for terminal-involved roles), every
- * one of them resolved through the evidence registry (see resolveMetric)
- * so Hugging Face / manufacturer-snapshot / Kairo-telemetry evidence can
- * actually satisfy a role's requirement, not just sit as /models
- * corroboration. Built fresh per buildAiTeam() call (registry differs per
- * call). Kept as a separate list from ROLE_DEFINITIONS so
+ * per explicit decision, real role-specific capabilities layered in as
+ * optional tie-breakers (reasoning for reasoning-heavy roles,
+ * softwareExecution for agentic/tool-use, terminalExecution for
+ * terminal-involved roles), resolved as CANONICAL capabilities (see
+ * CANONICAL_CAPABILITIES) — not a single exact metric name — so a
+ * manufacturer snapshot's "gpqa-diamond", Hugging Face's "hle"-shaped
+ * evidence for the mapped benchmark, or Kairo's own "kairo.success" can
+ * all actually satisfy a role's requirement, not just AA's own
+ * exact-named field. Built fresh per buildAiTeam() call (registry
+ * differs per call). Kept as a separate list from ROLE_DEFINITIONS so
  * bestModelPerRole()'s existing contract and tests stay untouched.
  */
 function buildAiTeamRoleDefinitions(registry) {
   return [
-    { role: "Explorer", compute: scaledBottleneck(registry, ["intelligenceIndex"], ["gpqa"]), better: "max" },
-    { role: "Architect", compute: scaledBottleneck(registry, ["intelligenceIndex"], ["gpqa"]), better: "max" },
-    { role: "Builder", compute: scaledBottleneck(registry, ["codingIndex"], ["tauBanking"]), better: "max" },
-    { role: "Debugger", compute: scaledBottleneck(registry, ["intelligenceIndex", "codingIndex"], ["terminalBenchV2"]), better: "max" },
-    { role: "Tester", compute: scaledBottleneck(registry, ["codingIndex"], ["terminalBenchV2"]), better: "max" },
+    { role: "Explorer", compute: scaledBottleneck(registry, ["intelligenceIndex"], ["reasoning"]), better: "max" },
+    { role: "Architect", compute: scaledBottleneck(registry, ["intelligenceIndex"], ["reasoning"]), better: "max" },
+    { role: "Builder", compute: scaledBottleneck(registry, ["codingIndex"], ["softwareExecution"]), better: "max" },
+    { role: "Debugger", compute: scaledBottleneck(registry, ["intelligenceIndex", "codingIndex"], ["terminalExecution"]), better: "max" },
+    { role: "Tester", compute: scaledBottleneck(registry, ["codingIndex"], ["terminalExecution"]), better: "max" },
     { role: "Reviewer", compute: (m) => minOfReal(resolveMetric(registry, m, "intelligenceIndex"), resolveMetric(registry, m, "codingIndex")), better: "max" },
     // Capability floor: cheapest-wins-outright would let a model with zero
     // known real capability (AA tracks a price for it but never scored its
@@ -492,12 +577,12 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
         // back to AA's outputTokensPerSecond (an unbounded raw rate, used
         // only as a tie-break, never blended into the bottleneck) when no
         // real telemetry exists yet, then to usage-based rotation last.
-        const leaderPrice = leader.model.priceInputPerMTok;
-        const rivalPrice = rival.model.priceInputPerMTok;
+        const leaderPrice = resolveMetric(effectiveRegistry, leader.model, "priceInputPerMTok");
+        const rivalPrice = resolveMetric(effectiveRegistry, rival.model, "priceInputPerMTok");
         const leaderDuration = bestEvidence(effectiveRegistry, effectiveRegistry.registerIdentity(leader.model.adapterId, leader.model.modelId), "kairo.durationMs");
         const rivalDuration = bestEvidence(effectiveRegistry, effectiveRegistry.registerIdentity(rival.model.adapterId, rival.model.modelId), "kairo.durationMs");
-        const leaderSpeed = leader.model.outputTokensPerSecond;
-        const rivalSpeed = rival.model.outputTokensPerSecond;
+        const leaderSpeed = resolveMetric(effectiveRegistry, leader.model, "outputTokensPerSecond");
+        const rivalSpeed = resolveMetric(effectiveRegistry, rival.model, "outputTokensPerSecond");
         if (leaderPrice != null && rivalPrice != null && leaderPrice !== rivalPrice) {
           if (rivalPrice < leaderPrice) pick = rival;
         } else if (leaderDuration && rivalDuration && leaderDuration.value !== rivalDuration.value) {
