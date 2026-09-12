@@ -356,16 +356,17 @@ export class CockpitView {
   /**
    * The global "AI TEAM": one line per role (Explorer / Architect /
    * Builder / Debugger / Tester / Reviewer / Economy), each naming a
-   * primary model plus a real fallback plus current availability — never
-   * a blended score. This is the general team, not a per-project
-   * portfolio: which of these roles a given repo actually activates is a
-   * separate, later decision. Computed across every real candidate
-   * catalog (not just currently-eligible ones), so a temporarily
-   * unavailable preferred model (e.g. OpenCode Go rate-limited) doesn't
-   * just vanish — it still shows as the real capability winner, flagged
-   * unavailable, with its fallback surfaced right there. That's what
-   * keeps Claude from silently looking like "the answer for everything"
-   * whenever another provider is under quota pressure.
+   * primary model plus a real fallback plus current availability. This is
+   * a real distribution policy (buildAiTeam), not seven independent
+   * maxima — a role only keeps a raw capability winner when its real edge
+   * over the next provider is decisive; near-equivalent roles spread
+   * across whichever provider is least used so far, so ties (never real
+   * wins) are what create diversity. `reason` is only shown when the pick
+   * needed explaining (a near-tie, an independence swap, or the leader
+   * being temporarily unavailable) — a plain decisive win says nothing
+   * extra. This is the general team, not a per-project portfolio: which
+   * of these roles a given repo actually activates is a separate, later
+   * decision.
    */
   fitLines() {
     const intel = this.snapshot?.modelIntelligence;
@@ -386,11 +387,12 @@ export class CockpitView {
       const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
       return `${provider} · ${model.displayName ?? model.modelId}`;
     };
-    for (const { role, primary, fallback } of team) {
+    for (const { role, primary, fallback, reason } of team) {
       const primaryText = primary.available ? label(primary) : `${label(primary)} (not available)`;
       lines.push(`${role.padEnd(10)} ${primaryText}`);
       if (fallback) lines.push(theme.fg("muted", `  fallback ${label(fallback)}`));
       else if (!primary.available) lines.push(theme.fg("warning", "  no eligible fallback right now"));
+      if (reason) lines.push(theme.fg("muted", `  ${reason}`));
     }
     lines.push(theme.fg("muted", "Use /why for coverage and eligibility."));
     return lines;

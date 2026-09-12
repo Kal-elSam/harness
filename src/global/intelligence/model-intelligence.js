@@ -200,49 +200,165 @@ const AI_TEAM_ROLE_DEFINITIONS = [
   { role: "Economy", compute: (m) => m.priceInputPerMTok, better: "min" }
 ];
 
-function toTeamModel(model, eligibility) {
-  return {
-    adapterId: model.adapterId,
-    modelId: model.modelId,
-    displayName: model.displayName,
-    available: eligibility[model.adapterId]?.ok === true
-  };
+function toTeamModel(model, available) {
+  return { adapterId: model.adapterId, modelId: model.modelId, displayName: model.displayName, available };
+}
+
+function rankBy(models, compute, better) {
+  return models
+    .map((model) => ({ model, value: compute(model) }))
+    .filter((entry) => entry.value != null)
+    .sort((a, b) => (better === "max" ? b.value - a.value : a.value - b.value));
+}
+
+function rankEligible(models, eligibility, compute, better) {
+  return rankBy(models.filter((m) => eligibility[m.adapterId]?.ok === true), compute, better);
+}
+
+/** The best real alternative from a DIFFERENT adapter than `ranked[0]` — null if none exists. */
+function rivalOf(ranked) {
+  if (!ranked.length) return null;
+  return ranked.find((entry) => entry.model.adapterId !== ranked[0].model.adapterId) ?? null;
 }
 
 /**
- * The "AI TEAM" view: one primary + one fallback per role, computed from
- * ALL real candidate catalogs (not just the currently-eligible ones) so a
- * temporarily unavailable preferred model never just disappears — it's
- * still named as the real capability winner, only flagged unavailable,
- * with a real (eligible) runner-up surfaced as the fallback. Never invents
- * a tiebreak: primary is strictly the best real metric score among ALL
- * candidates; fallback is the next-best real score among candidates that
- * are actually eligible right now (skipping the exact same model as
- * primary). If no eligible runner-up exists, fallback is null rather than
- * showing an equally-unavailable model as if it were usable.
+ * How decisive a role's real winner is over the best real alternative from
+ * another provider: 0 means a dead tie, larger means a bigger real gap.
+ * Infinity means there is no real alternative at all (the winner is
+ * forced — never overridden for diversity). Roles are settled in
+ * descending order of this value so a genuine capability gap always locks
+ * in its true winner before any near-tied role gets spread elsewhere.
+ */
+function decisiveness(ranked) {
+  if (!ranked.length) return -Infinity;
+  const rival = rivalOf(ranked);
+  if (!rival) return Infinity;
+  const scale = Math.abs(ranked[0].value) || 1;
+  return Math.abs(ranked[0].value - rival.value) / scale;
+}
+
+// Calibrated directly against real measured data, not picked arbitrarily:
+// Claude Fable 5.1 vs Codex GPT-6 Astra on intelligence sit ~1.1% apart
+// (a real coin flip — no reason to spend the same subscription on every
+// role just because it happens to be a hair ahead), while Fable 5.1 vs
+// Codex GPT-5.6 Sol on coding sit ~5.2% apart (a real, meaningful edge
+// that should never be sacrificed for diversity). 2% sits safely between
+// the two so both keep their honest classification.
+const NEAR_EQUIVALENCE_BAND = 0.02;
+
+/**
+ * The "AI TEAM" distribution policy: decides which real, eligible provider
+ * actually gets reserved for each role — not just "who scores highest
+ * seven times over," which is what let one model (Fable) win every role
+ * that shares a real metric. The policy, in order:
+ *
+ * 1. Capability floor — a role only considers models that report the real
+ *    metric(s) it needs (unchanged from before: `rankBy` drops nulls).
+ * 2. Decisive roles settle first — if a role's real winner beats the best
+ *    alternative from another provider by more than NEAR_EQUIVALENCE_BAND,
+ *    that real advantage is never sacrificed for diversity.
+ * 3. Near-equivalent roles spread across providers — among alternatives
+ *    within the band, the least-used provider so far wins the tie, so
+ *    ties (never real wins) are what create diversity and conserve quota.
+ * 4. Review independence — Reviewer is reassigned off Builder's own
+ *    provider whenever a real alternative exists, so a model is never the
+ *    sole judge of its own family's work.
+ *
+ * A temporarily unavailable real leader (quota/rate-limit) still never
+ * just disappears: if the true global winner (across every candidate,
+ * eligible or not) is stronger than the eligible pick, it's shown as the
+ * primary, honestly flagged unavailable, with the eligible pick surfaced
+ * as the fallback instead.
  * @param {Array<object>} models - scoreAvailableModels() output, computed
  *   across every candidate provider regardless of current eligibility.
  * @param {Record<string, {ok: boolean, reason?: string}>} eligibility -
- *   checkCandidate() results per adapterId, applied AFTER ranking.
- * @returns {Array<{role: string, primary: object|null, fallback: object|null}>}
+ *   checkCandidate() results per adapterId.
+ * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildAiTeam(models, eligibility = {}) {
+  const roleRankings = AI_TEAM_ROLE_DEFINITIONS.map(({ role, compute, better }) => ({
+    role, compute, better, ranked: rankEligible(models, eligibility, compute, better)
+  }));
+
+  const settlementOrder = [...roleRankings].sort((a, b) => decisiveness(b.ranked) - decisiveness(a.ranked));
+  const usageCount = {};
+  const chosenByRole = {};
+  for (const { role, ranked } of settlementOrder) {
+    if (!ranked.length) { chosenByRole[role] = null; continue; }
+    const leader = ranked[0];
+    const rival = rivalOf(ranked);
+    let pick = leader;
+    if (rival) {
+      const scale = Math.abs(leader.value) || 1;
+      const margin = Math.abs(leader.value - rival.value) / scale;
+      if (margin <= NEAR_EQUIVALENCE_BAND) {
+        const leaderUsage = usageCount[leader.model.adapterId] ?? 0;
+        const rivalUsage = usageCount[rival.model.adapterId] ?? 0;
+        if (rivalUsage <= leaderUsage) pick = rival;
+      }
+    }
+    chosenByRole[role] = pick;
+    usageCount[pick.model.adapterId] = (usageCount[pick.model.adapterId] ?? 0) + 1;
+  }
+
+  // A model is never the sole reviewer of its own family's work when a
+  // real independent alternative exists — this is a hard requirement, not
+  // a tie-break preference, so it's applied after settlement.
+  const builderPick = chosenByRole.Builder;
+  const reviewerRanked = roleRankings.find((r) => r.role === "Reviewer")?.ranked ?? [];
+  if (builderPick && chosenByRole.Reviewer && chosenByRole.Reviewer.model.adapterId === builderPick.model.adapterId) {
+    const independent = reviewerRanked.find((r) => r.model.adapterId !== builderPick.model.adapterId);
+    if (independent) chosenByRole.Reviewer = independent;
+  }
+
   const entries = [];
   for (const { role, compute, better } of AI_TEAM_ROLE_DEFINITIONS) {
-    const ranked = models
-      .map((model) => ({ model, value: compute(model) }))
-      .filter((entry) => entry.value != null)
-      .sort((a, b) => (better === "max" ? b.value - a.value : a.value - b.value));
-    if (!ranked.length) continue;
-    const primaryModel = ranked[0].model;
-    const primary = toTeamModel(primaryModel, eligibility);
-    let fallback = null;
-    for (let i = 1; i < ranked.length; i += 1) {
-      const candidate = ranked[i].model;
-      if (candidate.adapterId === primaryModel.adapterId && candidate.modelId === primaryModel.modelId) continue;
-      if (eligibility[candidate.adapterId]?.ok === true) { fallback = toTeamModel(candidate, eligibility); break; }
+    const chosen = chosenByRole[role];
+    const eligibleRanked = roleRankings.find((r) => r.role === role).ranked;
+    const globalRanked = rankBy(models, compute, better);
+    if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
+
+    if (!chosen) {
+      const globalLeader = globalRanked[0];
+      entries.push({
+        role, primary: toTeamModel(globalLeader.model, false), fallback: null,
+        reason: "No eligible provider currently covers this role."
+      });
+      continue;
     }
-    entries.push({ role, primary, fallback });
+
+    const globalLeader = globalRanked[0];
+    const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
+    const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > chosen.value : globalLeader.value < chosen.value;
+    if (!globalLeaderEligible && globalLeaderIsStrictlyBetter) {
+      entries.push({
+        role, primary: toTeamModel(globalLeader.model, false), fallback: toTeamModel(chosen.model, true),
+        reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`
+      });
+      continue;
+    }
+
+    const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
+    entries.push({
+      role, primary: toTeamModel(chosen.model, true),
+      fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true) : null,
+      reason: describeChoice(role, chosen, eligibleRanked, builderPick)
+    });
   }
   return entries;
+}
+
+/** Explains a role's pick only when it isn't the unremarkable default (a clear real win). */
+function describeChoice(role, chosen, ranked, builderPick) {
+  const leader = ranked[0];
+  const rival = rivalOf(ranked);
+  if (!rival) return null;
+  const scale = Math.abs(leader.value) || 1;
+  const marginPct = ((Math.abs(leader.value - rival.value) / scale) * 100).toFixed(1);
+  const isDecisiveLeader = leader.model.adapterId === chosen.model.adapterId && Number(marginPct) > NEAR_EQUIVALENCE_BAND * 100;
+  if (isDecisiveLeader) return null;
+  if (role === "Reviewer" && builderPick && chosen.model.adapterId !== builderPick.model.adapterId && leader.model.adapterId === builderPick.model.adapterId) {
+    return "Kept independent from Builder's provider.";
+  }
+  return `Near-equivalent alternatives (~${marginPct}%) — assigned to balance provider load.`;
 }

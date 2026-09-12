@@ -204,3 +204,49 @@ test("buildAiTeam reports no fallback, never a fabricated one, when no eligible 
   const team = buildAiTeam(scored, { codex: { ok: true } });
   assert.equal(team.find((t) => t.role === "Explorer").fallback, null);
 });
+
+test("buildAiTeam never lets one model win every role: a real decisive gap locks in its winner, but near-equivalent roles spread to the less-used provider", () => {
+  // Same shape as real production data: Claude has a real, meaningful
+  // coding edge (~5.2%, decisive) but only a razor-thin intelligence edge
+  // (~1.1%, a real tie) over Codex.
+  const aa = [
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 77.4, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
+  );
+  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
+
+  // Builder/Tester: the real ~5.2% coding gap is decisive — never sacrificed for diversity.
+  assert.equal(byRole.Builder.primary.adapterId, "claude");
+  assert.equal(byRole.Tester.primary.adapterId, "claude");
+  assert.equal(byRole.Builder.reason, null); // an unremarkable, clear real win needs no explanation
+
+  // Explorer/Architect: the ~1.1% intelligence gap is a real tie. Once
+  // Claude already carries Builder+Tester, these spread to Codex instead
+  // of piling every role onto the same subscription.
+  assert.equal(byRole.Explorer.primary.adapterId, "codex");
+  assert.equal(byRole.Architect.primary.adapterId, "codex");
+  // Regression: the reason text must report the real leader-vs-rival gap
+  // (~1.1%) even when the pick diverged from the raw leader — computing
+  // the rival relative to `chosen` instead of the raw leader previously
+  // collapsed this to a bogus "~0.0%".
+  assert.match(byRole.Explorer.reason, /Near-equivalent alternatives \(~1\.1%\)/);
+
+  // Reviewer must never default to reviewing Builder's own provider's work
+  // when a real independent alternative exists — even though the raw
+  // tie-break (usage counts alone) would land it back on Claude here, the
+  // independence rule catches that and reassigns it to Codex.
+  assert.notEqual(byRole.Reviewer.primary.adapterId, byRole.Builder.primary.adapterId);
+});
+
+test("buildAiTeam keeps Reviewer on Builder's own provider when no independent real alternative exists, rather than forcing an incapable model", () => {
+  const aa = [{ slug: "only-model", name: "Only Model", intelligenceIndex: 80, codingIndex: 80, mathIndex: null }];
+  const scored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "only-model" }] }], aa);
+  const team = buildAiTeam(scored, { claude: { ok: true } });
+  const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
+  assert.equal(byRole.Reviewer.primary.adapterId, "claude");
+  assert.equal(byRole.Builder.primary.adapterId, "claude");
+});
