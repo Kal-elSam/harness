@@ -491,24 +491,248 @@ function rankEligible(models, eligibility, compute, better) {
 // (e.g. the 18%+ gaps used in this file's own tests).
 const NEAR_EQUIVALENCE_BAND = 0.08;
 
+// Portfolio-level concentration limits — applied to BOTH teams while
+// assigning roles, not just a per-role decision. Seven independent
+// per-role winners don't form a team: without these, the same one or two
+// real models/providers can end up covering every technical role, which
+// is a monoculture risk (a single outage or rate-limit takes out the
+// whole portfolio) even when each individual pick was locally correct.
+// Economy is deliberately exempt from both limits — it's a distinct,
+// single-signal role (real price) with its own hard capability floor
+// already, not part of the "coordinate the technical roles" problem these
+// limits exist to solve.
+const MAX_ROLES_PER_MODEL = 2;
+const MAX_TECHNICAL_ROLES_PER_PROVIDER = 3;
+const TECHNICAL_ROLES = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
+
+function modelKey(model) {
+  return `${model.adapterId}::${model.modelId}`;
+}
+
+/**
+ * The real capability leader's advantage over the rest of a pool, as a
+ * fraction of its own value — never a fabricated percentage. A
+ * single-candidate pool is trivially decisive (Infinity): there is
+ * nothing to concentrate away from.
+ */
+function leaderAdvantage(pool, better) {
+  if (pool.length < 2) return Infinity;
+  const leader = pool[0];
+  const scale = Math.abs(leader.value) || 1;
+  let minDiff = Infinity;
+  for (let i = 1; i < pool.length; i += 1) {
+    const diff = better === "max" ? leader.value - pool[i].value : pool[i].value - leader.value;
+    minDiff = Math.min(minDiff, diff / scale);
+  }
+  return minDiff;
+}
+
+/** A real decisive real-capability advantage (see NEAR_EQUIVALENCE_BAND) is allowed to break the portfolio's concentration limits — a model that dramatically outclasses every other real candidate for a role should never be sacrificed just to spread load. */
+function isDecisiveLeader(pool, better) {
+  return leaderAdvantage(pool, better) > NEAR_EQUIVALENCE_BAND;
+}
+
+/**
+ * Orders roles for coordinated assignment: fewer real alternatives first,
+ * so the most-constrained roles claim their pick before a more flexible
+ * role could have taken it instead. Economy goes last (exempt from
+ * concentration, order doesn't matter for it). Builder is always resolved
+ * before Reviewer, regardless of pool-size ordering, since Reviewer's
+ * independence constraint depends on knowing Builder's chosen provider.
+ */
+function orderRolesForAssignment(rolePools) {
+  const technical = rolePools.filter((r) => r.role !== "Economy");
+  const economy = rolePools.filter((r) => r.role === "Economy");
+  technical.sort((a, b) => a.pool.length - b.pool.length);
+  const reviewerIndex = technical.findIndex((r) => r.role === "Reviewer");
+  const builderIndex = technical.findIndex((r) => r.role === "Builder");
+  if (reviewerIndex !== -1 && builderIndex !== -1 && reviewerIndex < builderIndex) {
+    const [reviewerEntry] = technical.splice(reviewerIndex, 1);
+    technical.push(reviewerEntry);
+  }
+  return [...technical, ...economy].map((r) => r.role);
+}
+
+/**
+ * Assigns one role's real winner under the portfolio's concentration
+ * limits. Never a benchmark or an invented diversity score — diversity is
+ * purely a hard constraint on an already-adequate real candidate pool,
+ * applied in this order:
+ *   1. A decisive real leader (see isDecisiveLeader) always wins, even if
+ *      it means exceeding a concentration limit.
+ *   2. Otherwise, only candidates that keep every limit intact are
+ *      eligible; `sortWithinAllowed` picks among those (each team's own
+ *      real priority order — see buildAiTeam/buildEfficientTeam).
+ *   3. If NO candidate keeps every limit intact and there's no decisive
+ *      leader either, the real leader is repeated anyway — a portfolio
+ *      constraint must never force an incapable model in just to satisfy
+ *      diversity for its own sake.
+ * @param {object} params
+ * @param {string} params.role
+ * @param {Array<{model: object, value: number}>} params.pool - already
+ *   filtered to this role's real candidate pool (capability-band or
+ *   capability-floor, per team).
+ * @param {"max"|"min"} params.better
+ * @param {Map<string, number>} params.modelUsage
+ * @param {Map<string, number>} params.providerTechnicalUsage
+ * @param {string|null} params.reviewerBuilderAdapter - Builder's chosen
+ *   adapterId, only when assigning Reviewer; null otherwise.
+ * @param {(candidates: Array<{model: object, value: number}>) => Array<{model: object, value: number}>} params.sortWithinAllowed
+ * @param {"capability"|"efficient"} params.mode
+ * @returns {{entry: {model: object, value: number}, reasonKind: string|null}|null}
+ */
+function assignOneRole({ role, pool, better, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed, mode }) {
+  if (!pool.length) return null;
+
+  if (pool.length === 1) {
+    const only = pool[0];
+    const passes = passesConcentration(only, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter);
+    if (passes) {
+      // capability mode: a lone real winner needs no explanation — this is
+      // the common case (most roles have a clear leader well outside the
+      // much narrower 8% band). efficient mode: a lone adequate candidate
+      // means nothing smaller cleared the capability floor — worth saying.
+      return { entry: only, reasonKind: mode === "efficient" ? "only-adequate-floor" : null };
+    }
+    return { entry: only, reasonKind: "only-adequate-concentration" };
+  }
+
+  const leader = pool[0];
+  const allowed = pool.filter((candidate) => passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter));
+
+  let candidatePool;
+  let forcedReasonKind = null;
+  if (allowed.includes(leader)) {
+    // The real capability leader doesn't even hit a concentration limit
+    // here — let it compete normally against every other real candidate
+    // already known to be adequate (CAPABILITY's own diversity priority,
+    // or EFFICIENT's real cost/duration/price/throughput chain). A
+    // decisive real capability advantage never needs to short-circuit
+    // that comparison when there's no actual limit to break.
+    candidatePool = allowed;
+  } else if (isDecisiveLeader(pool, better)) {
+    // The leader IS blocked by concentration, but its real capability
+    // advantage over the rest of this pool is decisive (> NEAR_EQUIVALENCE_BAND)
+    // — a portfolio limit never sacrifices a real, decisive capability
+    // gap just to spread load.
+    candidatePool = [leader];
+    forcedReasonKind = "decisive-override";
+  } else if (allowed.length) {
+    candidatePool = allowed;
+  } else {
+    candidatePool = [leader];
+    forcedReasonKind = "only-adequate-concentration";
+  }
+
+  const chosen = sortWithinAllowed(candidatePool)[0];
+  const reasonKind = forcedReasonKind ?? (chosen === leader ? null : "diversity");
+  return { entry: chosen, reasonKind };
+}
+
+function passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter) {
+  const key = modelKey(candidate.model);
+  if ((modelUsage.get(key) ?? 0) >= MAX_ROLES_PER_MODEL) return false;
+  if (TECHNICAL_ROLES.includes(role) && (providerTechnicalUsage.get(candidate.model.adapterId) ?? 0) >= MAX_TECHNICAL_ROLES_PER_PROVIDER) return false;
+  if (role === "Reviewer" && reviewerBuilderAdapter != null && candidate.model.adapterId === reviewerBuilderAdapter) return false;
+  return true;
+}
+
+/**
+ * Runs the coordinated portfolio assignment across every role's pool,
+ * tracking model/provider usage as it goes so later roles see the real
+ * concentration state left by earlier ones. Shared by buildAiTeam and
+ * buildEfficientTeam — they differ only in how each role's pool is built
+ * and how candidates are ordered within it (`makeSorter`).
+ * @param {Array<{role: string, better: string, pool: Array<{model: object, value: number}>}>} rolePools
+ * @param {(role: string, modelUsage: Map<string, number>, providerTechnicalUsage: Map<string, number>) => (candidates: Array<{model: object, value: number}>) => Array<{model: object, value: number}>} makeSorter -
+ *   receives the SAME live Map instances this function mutates as it
+ *   assigns roles, so a role's sort always sees the real concentration
+ *   state left by every role assigned before it.
+ * @param {"capability"|"efficient"} mode
+ */
+function assignCoordinatedTeam(rolePools, makeSorter, mode) {
+  const order = orderRolesForAssignment(rolePools);
+  const modelUsage = new Map();
+  const providerTechnicalUsage = new Map();
+  const results = {};
+  let builderAdapter = null;
+
+  for (const role of order) {
+    const { better, pool } = rolePools.find((r) => r.role === role);
+    // Snapshot the concentration state as it stood BEFORE this role was
+    // assigned — describeEfficiencyChoice must explain a decision using
+    // the state that was actually true when it was made, never the
+    // portfolio's final state after every later role has also been
+    // assigned (which would misattribute a plain capability/price/etc.
+    // pick made before any concentration existed as if it had been a
+    // deliberate concentration-avoidance move).
+    const modelUsageSnapshot = new Map(modelUsage);
+    const providerUsageSnapshot = new Map(providerTechnicalUsage);
+    if (role === "Economy") {
+      results[role] = pool.length
+        ? { entry: pool[0], reasonKind: null, modelUsageSnapshot, providerUsageSnapshot }
+        : null;
+      continue;
+    }
+    const result = assignOneRole({
+      role, pool, better, modelUsage, providerTechnicalUsage,
+      reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null,
+      sortWithinAllowed: makeSorter(role, modelUsage, providerTechnicalUsage), mode
+    });
+    if (result) {
+      result.modelUsageSnapshot = modelUsageSnapshot;
+      result.providerUsageSnapshot = providerUsageSnapshot;
+      const key = modelKey(result.entry.model);
+      modelUsage.set(key, (modelUsage.get(key) ?? 0) + 1);
+      providerTechnicalUsage.set(result.entry.model.adapterId, (providerTechnicalUsage.get(result.entry.model.adapterId) ?? 0) + 1);
+      if (role === "Builder") builderAdapter = result.entry.model.adapterId;
+    }
+    results[role] = result;
+  }
+  return { results, modelUsage, providerTechnicalUsage };
+}
+
+function capabilityPool(ranked, better) {
+  if (!ranked.length) return [];
+  const leader = ranked[0];
+  const scale = Math.abs(leader.value) || 1;
+  return ranked.filter((entry) => Math.abs(leader.value - entry.value) / scale <= NEAR_EQUIVALENCE_BAND);
+}
+
+/** CAPABILITY priority: real capability value, then diversity (least-used model, then least-used provider), then a stable tiebreak. */
+function sortByCapabilityPriority(candidates, better, modelUsage, providerTechnicalUsage) {
+  return [...candidates].sort((a, b) => {
+    if (a.value !== b.value) return better === "max" ? b.value - a.value : a.value - b.value;
+    const aModelUsage = modelUsage.get(modelKey(a.model)) ?? 0;
+    const bModelUsage = modelUsage.get(modelKey(b.model)) ?? 0;
+    if (aModelUsage !== bModelUsage) return aModelUsage - bModelUsage;
+    const aProviderUsage = providerTechnicalUsage.get(a.model.adapterId) ?? 0;
+    const bProviderUsage = providerTechnicalUsage.get(b.model.adapterId) ?? 0;
+    if (aProviderUsage !== bProviderUsage) return aProviderUsage - bProviderUsage;
+    const adapterCompare = a.model.adapterId.localeCompare(b.model.adapterId);
+    return adapterCompare !== 0 ? adapterCompare : a.model.modelId.localeCompare(b.model.modelId);
+  });
+}
+
 /**
  * The "AI TEAM" distribution policy: decides which real, eligible provider
- * actually gets reserved for each role — pure maximum capability, full
- * stop. The policy, in order:
+ * actually gets reserved for each role, coordinated across the whole
+ * portfolio rather than seven independent per-role decisions — seven
+ * individual winners don't form a team. The policy, in order:
  *
  * 1. Capability floor — a role only considers models that report the real
  *    metric(s) it needs (unchanged from before: `rankBy` drops nulls).
- * 2. The real winner wins — whichever eligible model actually scores
- *    highest for the role, whatever the price, cost, duration, throughput,
- *    or provider quota. AI TEAM never trades capability for resource
- *    savings or provider diversity — that policy lives in
- *    buildEfficientTeam() instead, using the exact same real ranking and
- *    evidence.
- * 3. Review independence — Reviewer is reassigned off Builder's own
- *    provider whenever a real, near-equivalent (NEAR_EQUIVALENCE_BAND)
- *    alternative exists, so a model is never the sole judge of its own
- *    family's work. This is the one exception to "pure capability" — a
- *    review-quality/bias concern, not a cost one.
+ * 2. Real capability decides — within each role's real near-equivalence
+ *    pool (NEAR_EQUIVALENCE_BAND), the highest-scoring eligible model
+ *    wins, UNLESS the portfolio's concentration limits (max 2 roles per
+ *    model, max 3 of 6 technical roles per provider) would be exceeded
+ *    and a real, near-equivalent alternative exists — then the
+ *    less-concentrated alternative is preferred instead. A decisive real
+ *    advantage (outside the band) always overrides the limits: capability
+ *    is never sacrificed just to spread load.
+ * 3. Review independence — Reviewer is additionally constrained off
+ *    Builder's own provider whenever a real, near-equivalent alternative
+ *    exists, so a model is never the sole judge of its own family's work.
  *
  * A temporarily unavailable real leader (quota/rate-limit) still never
  * just disappears: if the true global winner (across every candidate,
@@ -532,46 +756,24 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
     role, compute, better, ranked: rankEligible(models, eligibility, compute, better)
   }));
 
-  // AI TEAM is deliberately pure maximum-capability per role: the real
-  // eligible winner, full stop. Price, real cost, and provider balance
-  // never displace it here — that's what EFFICIENT TEAM (buildEfficientTeam)
-  // is for. The two share the exact same ranking and evidence; they only
-  // differ in which real thing decides among near-equivalents.
-  const chosenByRole = {};
-  for (const { role, ranked } of roleRankings) {
-    chosenByRole[role] = ranked.length ? ranked[0] : null;
-  }
-
-  // A model is never the sole reviewer of its own family's work when a
-  // real independent alternative exists — a review-quality/bias concern,
-  // not a cost one, so it applies in AI TEAM too. Independence never
-  // overrides a real capability floor: the swap only happens when an
-  // independent alternative is a near-equivalent (same NEAR_EQUIVALENCE_BAND
-  // used for classification elsewhere), never when the only other option
-  // is decisively worse — forcing a much weaker model in just to satisfy
-  // independence would trade away real review quality for a formality.
-  const builderPick = chosenByRole.Builder;
-  const reviewerRanked = roleRankings.find((r) => r.role === "Reviewer")?.ranked ?? [];
-  const currentReviewer = chosenByRole.Reviewer;
-  if (builderPick && currentReviewer && currentReviewer.model.adapterId === builderPick.model.adapterId) {
-    const scale = Math.abs(currentReviewer.value) || 1;
-    const independent = reviewerRanked.find((r) => (
-      r.model.adapterId !== builderPick.model.adapterId
-      && Math.abs(currentReviewer.value - r.value) / scale <= NEAR_EQUIVALENCE_BAND
-    ));
-    if (independent) chosenByRole.Reviewer = independent;
-    // else: no independent alternative clears the capability floor — keep
-    // the same-provider pick rather than forcing a much weaker reviewer.
-  }
+  const rolePools = roleRankings.map(({ role, better, ranked }) => ({
+    role, better,
+    pool: role === "Economy" ? ranked.slice(0, 1) : capabilityPool(ranked, better)
+  }));
+  const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
+    const { better } = rolePools.find((r) => r.role === role);
+    return (candidates) => sortByCapabilityPriority(candidates, better, modelUsage, providerTechnicalUsage);
+  };
+  const { results } = assignCoordinatedTeam(rolePools, makeSorter, "capability");
 
   const entries = [];
   for (const { role, compute, better } of roleDefinitions) {
-    const chosen = chosenByRole[role];
+    const result = results[role];
     const eligibleRanked = roleRankings.find((r) => r.role === role).ranked;
     const globalRanked = rankBy(models, compute, better);
     if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
 
-    if (!chosen) {
+    if (!result) {
       const globalLeader = globalRanked[0];
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: null,
@@ -580,6 +782,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
       continue;
     }
 
+    const chosen = result.entry;
     const globalLeader = globalRanked[0];
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > chosen.value : globalLeader.value < chosen.value;
@@ -592,12 +795,25 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
     }
 
     const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
-    const isIndependenceSwap = role === "Reviewer" && builderPick && chosen.model.adapterId !== builderPick.model.adapterId
-      && eligibleRanked[0]?.model.adapterId === builderPick.model.adapterId;
+    const pool = rolePools.find((r) => r.role === role).pool;
+    const reviewerLeaderWasBuilderAdapter = role === "Reviewer" && pool.length
+      && pool[0].model.adapterId === entries.find((e) => e.role === "Builder")?.primary.adapterId;
+    let reason;
+    if (reviewerLeaderWasBuilderAdapter && chosen.model.adapterId !== pool[0].model.adapterId) {
+      reason = "Kept independent from Builder's provider.";
+    } else if (result.reasonKind === "only-adequate-concentration") {
+      reason = "Only adequate option — no real alternative avoids concentration without forcing a repeat.";
+    } else if (result.reasonKind === "decisive-override") {
+      reason = "Decisive real capability advantage — kept despite exceeding the concentration limit.";
+    } else if (result.reasonKind === "diversity") {
+      reason = "Near-equivalent alternatives — assigned to a different model/provider to avoid concentration.";
+    } else {
+      reason = null;
+    }
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason: isIndependenceSwap ? "Kept independent from Builder's provider." : null
+      reason
     });
   }
   return entries;
@@ -614,10 +830,11 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
 // is deliberately NOT one of these — it isn't a per-model measurement at
 // all (every model under a provider shares the exact same real number),
 // so it's resolved separately, by adapterId, and checked only as the very
-// last tiebreak (see pickMostEfficient/describeEfficiencyChoice) —
-// strictly after every real per-model signal here has been exhausted. A
-// provider's spare quota must never, by itself, decide who wins a role
-// over a model with genuinely better per-task economics.
+// last tiebreak (see sortByEfficiencyPriority/describeEfficiencyChoice) —
+// strictly after every real per-model signal AND the portfolio's own
+// concentration state have been exhausted. A provider's spare quota must
+// never, by itself, decide who wins a role over a model with genuinely
+// better per-task economics.
 const EFFICIENCY_DIMENSIONS = [
   { key: "kairo.totalTokens", better: "min", label: "lower real observed token consumption" },
   { key: "kairo.cost", better: "min", label: "lower real observed cost per task" },
@@ -642,46 +859,52 @@ function resolveProviderCapacity(providerCapacity, model) {
 // fraction of the real capability leader's score to be considered
 // "adequate" for a role — a genuinely different policy from
 // NEAR_EQUIVALENCE_BAND's "almost identical" test. NEAR_EQUIVALENCE_BAND
-// (0.08, ~8%) keeps governing maximum-capability equivalence (Reviewer
-// independence, "these two are basically tied" comparisons) — it no
-// longer governs EFFICIENT TEAM. This floor is intentionally much wider:
-// EFFICIENT TEAM's job is "the minimum model that's still genuinely
-// sufficient for the role," not "whichever near-identical model happens
-// to be cheaper." 0.80 is an initial, explicitly configurable starting
-// point (see buildEfficientTeam's `capabilityFloor` parameter) — not
-// calibrated against measured data the way NEAR_EQUIVALENCE_BAND was,
-// since "sufficient" is a product decision, not something derivable from
+// (0.08, ~8%) keeps governing maximum-capability equivalence (AI TEAM's
+// near-equivalence pool, Reviewer independence) — it no longer governs
+// EFFICIENT TEAM. This floor is intentionally much wider: EFFICIENT
+// TEAM's job is "the minimum model that's still genuinely sufficient for
+// the role," not "whichever near-identical model happens to be cheaper."
+// 0.80 is an initial, explicitly configurable starting point (see
+// buildEfficientTeam's `options.capabilityFloor`) — not calibrated
+// against measured data the way NEAR_EQUIVALENCE_BAND was, since
+// "sufficient" is a product decision, not something derivable from
 // benchmark gaps alone.
 export const EFFICIENT_CAPABILITY_FLOOR = 0.80;
 
 /**
- * Orders real near-equivalents by the EFFICIENCY_DIMENSIONS priority
- * chain (real per-model economics). Only when NONE of those distinguish
- * the candidates does a real ProviderCapacity signal (quota) get to
- * decide — resolved per-adapter, never per-model, so it can never
- * masquerade as evidence about one model being more efficient than
- * another from a different provider. Falls back to a stable
- * adapterId/modelId tiebreak so the same real near-tie always resolves
- * the same way run to run, instead of depending on array order.
+ * Orders real adequate candidates by the EFFICIENCY_DIMENSIONS priority
+ * chain (real per-model economics), then by the portfolio's own
+ * concentration state (prefer the less-used model, then the less-used
+ * provider), then a real ProviderCapacity signal (quota, resolved
+ * per-adapter, never per-model), and only then a stable adapterId/modelId
+ * tiebreak so the same real near-tie always resolves the same way run to
+ * run.
  * @param {Array<{model: object, value: number}>} candidates
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
- * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} [providerCapacity]
+ * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} providerCapacity
+ * @param {Map<string, number>} modelUsage
+ * @param {Map<string, number>} providerTechnicalUsage
  */
-function pickMostEfficient(candidates, registry, providerCapacity = null) {
-  const sorted = [...candidates].sort((a, b) => {
+function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelUsage, providerTechnicalUsage) {
+  return [...candidates].sort((a, b) => {
     for (const { key, better } of EFFICIENCY_DIMENSIONS) {
       const av = resolveMetric(registry, a.model, key);
       const bv = resolveMetric(registry, b.model, key);
       if (av == null || bv == null || av === bv) continue;
       return better === "max" ? bv - av : av - bv;
     }
+    const aModelUsage = modelUsage.get(modelKey(a.model)) ?? 0;
+    const bModelUsage = modelUsage.get(modelKey(b.model)) ?? 0;
+    if (aModelUsage !== bModelUsage) return aModelUsage - bModelUsage;
+    const aProviderUsage = providerTechnicalUsage.get(a.model.adapterId) ?? 0;
+    const bProviderUsage = providerTechnicalUsage.get(b.model.adapterId) ?? 0;
+    if (aProviderUsage !== bProviderUsage) return aProviderUsage - bProviderUsage;
     const aQuota = resolveProviderCapacity(providerCapacity, a.model);
     const bQuota = resolveProviderCapacity(providerCapacity, b.model);
     if (aQuota != null && bQuota != null && aQuota !== bQuota) return bQuota - aQuota; // higher headroom wins
     const adapterCompare = a.model.adapterId.localeCompare(b.model.adapterId);
     return adapterCompare !== 0 ? adapterCompare : a.model.modelId.localeCompare(b.model.modelId);
   });
-  return sorted[0];
 }
 
 /**
@@ -690,9 +913,11 @@ function pickMostEfficient(candidates, registry, providerCapacity = null) {
  * @param {{model: object, value: number}} chosen
  * @param {{model: object, value: number}} leader
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
- * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} [providerCapacity]
+ * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} providerCapacity
+ * @param {Map<string, number>} modelUsage
+ * @param {Map<string, number>} providerTechnicalUsage
  */
-function describeEfficiencyChoice(chosen, leader, registry, providerCapacity = null) {
+function describeEfficiencyChoice(chosen, leader, registry, providerCapacity, modelUsage, providerTechnicalUsage) {
   if (chosen.model.adapterId === leader.model.adapterId && chosen.model.modelId === leader.model.modelId) return null;
   for (const { key, better, label } of EFFICIENCY_DIMENSIONS) {
     const chosenValue = resolveMetric(registry, chosen.model, key);
@@ -700,14 +925,21 @@ function describeEfficiencyChoice(chosen, leader, registry, providerCapacity = n
     if (chosenValue == null || leaderValue == null || chosenValue === leaderValue) continue;
     const chosenIsBetter = better === "max" ? chosenValue > leaderValue : chosenValue < leaderValue;
     if (chosenIsBetter) return `Adequate capability — chosen for ${label}.`;
-    break; // this dimension didn't favor the switch; a later real per-model signal or provider quota must have — no real number to report
+    break; // this dimension didn't favor the switch; a later real signal must have — no real number to report
+  }
+  const chosenModelUsage = modelUsage.get(modelKey(chosen.model)) ?? 0;
+  const leaderModelUsage = modelUsage.get(modelKey(leader.model)) ?? 0;
+  const chosenProviderUsage = providerTechnicalUsage.get(chosen.model.adapterId) ?? 0;
+  const leaderProviderUsage = providerTechnicalUsage.get(leader.model.adapterId) ?? 0;
+  if (chosenModelUsage < leaderModelUsage || chosenProviderUsage < leaderProviderUsage) {
+    return "Adequate capability — assigned to a different model/provider to avoid concentration.";
   }
   const chosenQuota = resolveProviderCapacity(providerCapacity, chosen.model);
   const leaderQuota = resolveProviderCapacity(providerCapacity, leader.model);
   if (chosenQuota != null && leaderQuota != null && chosenQuota > leaderQuota) {
     return "Adequate capability — chosen for lower real provider quota pressure.";
   }
-  return "Adequate capability — chosen by a stable tiebreak, no real consumption/cost/duration/price/speed/quota signal distinguished them.";
+  return "Adequate capability — chosen by a stable tiebreak, no real consumption/cost/duration/price/speed/concentration/quota signal distinguished them.";
 }
 
 /**
@@ -721,6 +953,7 @@ function describeEfficiencyChoice(chosen, leader, registry, providerCapacity = n
  * the wrong axis entirely.
  */
 function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
+  if (!eligibleRanked.length) return [];
   if (better !== "max") return eligibleRanked;
   const floorValue = leader.value * capabilityFloor;
   return eligibleRanked.filter((entry) => entry.value >= floorValue);
@@ -729,15 +962,19 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
 /**
  * EFFICIENT TEAM: the minimum real model that's still genuinely
  * sufficient for a role — not "whichever near-identical model happens to
- * be cheaper." Among eligible candidates that retain at least
- * `capabilityFloor` (default EFFICIENT_CAPABILITY_FLOOR, 0.80) of the
- * real capability leader's score, prefers whichever real signal actually
- * reduces resource pressure (see EFFICIENCY_DIMENSIONS — token
- * consumption, then cost, duration, price, throughput, and only last a
- * provider's real quota headroom) instead of always taking the raw
- * leader. Never invents a savings percentage or a blended score — only
- * ever orders by a real, already-connected signal, and falls back to a
- * stable tiebreak when none of them distinguish the candidates.
+ * be cheaper" — coordinated across the whole portfolio the same way
+ * buildAiTeam is, so EFFICIENT TEAM doesn't just trade one monoculture
+ * (always the capability leader) for another (always the single cheapest
+ * real model). Among eligible candidates that retain at least
+ * `options.capabilityFloor` (default EFFICIENT_CAPABILITY_FLOOR, 0.80) of
+ * the real capability leader's score, prefers whichever real signal
+ * actually reduces resource pressure (see EFFICIENCY_DIMENSIONS — token
+ * consumption, then cost, duration, price, throughput), then the
+ * portfolio's own concentration state, then a provider's real quota
+ * headroom, instead of always taking the raw leader. Never invents a
+ * savings percentage or a blended score — only ever orders by a real,
+ * already-connected signal, and falls back to a stable tiebreak when none
+ * of them distinguish the candidates.
  *
  * Astra/Fable/Opus-class leaders can still appear here — precisely when
  * no smaller real model clears the floor, EFFICIENT TEAM shows the exact
@@ -747,23 +984,39 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
  *   across every candidate provider regardless of current eligibility.
  * @param {Record<string, {ok: boolean, reason?: string}>} eligibility
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>|null} [registry]
- * @param {number} [capabilityFloor] - fraction of the leader's real score a
- *   candidate must retain to be considered adequate (default 0.80).
- * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} [providerCapacity] -
+ * @param {object} [options]
+ * @param {number} [options.capabilityFloor] - fraction of the leader's
+ *   real score a candidate must retain to be considered adequate
+ *   (default 0.80).
+ * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} [options.providerCapacity] -
  *   real per-adapter quota headroom (see subscription-pressure-source.js's
  *   buildProviderCapacity) — a PROVIDER-level signal, checked only as the
  *   very last tiebreak, strictly after every per-model EFFICIENCY_DIMENSIONS
- *   signal. Never blended with or treated as evidence about a specific
- *   model's own efficiency.
+ *   signal AND the portfolio's own concentration state. Never blended
+ *   with or treated as evidence about a specific model's own efficiency.
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
-export function buildEfficientTeam(models, eligibility = {}, registry = null, capabilityFloor = EFFICIENT_CAPABILITY_FLOOR, providerCapacity = null) {
+export function buildEfficientTeam(models, eligibility = {}, registry = null, options = {}) {
+  const { capabilityFloor = EFFICIENT_CAPABILITY_FLOOR, providerCapacity = null } = options;
   const effectiveRegistry = ensureRegistry(models, registry);
   const roleDefinitions = buildAiTeamRoleDefinitions(effectiveRegistry);
-  const entries = [];
+  const roleRankings = roleDefinitions.map(({ role, compute, better }) => ({
+    role, compute, better, ranked: rankEligible(models, eligibility, compute, better)
+  }));
 
+  const rolePools = roleRankings.map(({ role, better, ranked }) => ({
+    role, better,
+    pool: role === "Economy" ? ranked.slice(0, 1) : adequateCandidates(ranked, ranked[0], better, capabilityFloor)
+  }));
+  const makeSorter = (_role, modelUsage, providerTechnicalUsage) => (candidates) => (
+    sortByEfficiencyPriority(candidates, effectiveRegistry, providerCapacity, modelUsage, providerTechnicalUsage)
+  );
+  const { results } = assignCoordinatedTeam(rolePools, makeSorter, "efficient");
+
+  const entries = [];
   for (const { role, compute, better } of roleDefinitions) {
-    const eligibleRanked = rankEligible(models, eligibility, compute, better);
+    const result = results[role];
+    const eligibleRanked = roleRankings.find((r) => r.role === role).ranked;
     const globalRanked = rankBy(models, compute, better);
     if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
 
@@ -777,10 +1030,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, ca
     }
 
     const leader = eligibleRanked[0];
-    const adequate = adequateCandidates(eligibleRanked, leader, better, capabilityFloor);
-    const chosen = pickMostEfficient(adequate, effectiveRegistry, providerCapacity);
-    const isOnlyAdequateOption = adequate.length === 1
-      && chosen.model.adapterId === leader.model.adapterId && chosen.model.modelId === leader.model.modelId;
+    const chosen = result.entry;
 
     const globalLeader = globalRanked[0];
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
@@ -796,12 +1046,20 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, ca
     }
 
     const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
+    let reason;
+    if (result.reasonKind === "only-adequate-floor") {
+      reason = "Only adequate option — no real alternative clears the capability floor.";
+    } else if (result.reasonKind === "only-adequate-concentration") {
+      reason = "Only adequate option — no real alternative avoids concentration without forcing a repeat.";
+    } else if (result.reasonKind === "decisive-override") {
+      reason = "Decisive real capability advantage — kept despite exceeding the concentration limit.";
+    } else {
+      reason = describeEfficiencyChoice(chosen, leader, effectiveRegistry, providerCapacity, result.modelUsageSnapshot, result.providerUsageSnapshot);
+    }
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason: isOnlyAdequateOption
-        ? "Only adequate option — no real alternative clears the capability floor."
-        : describeEfficiencyChoice(chosen, leader, effectiveRegistry, providerCapacity)
+      reason
     });
   }
   return entries;

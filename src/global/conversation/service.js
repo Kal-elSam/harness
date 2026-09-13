@@ -472,7 +472,7 @@ export function createConversationService(deps = {}) {
           models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(scored),
           eligibility, coverage,
           aiTeam: buildAiTeam(scoredAll, eligibility, registry),
-          efficientTeam: buildEfficientTeam(scoredAll, eligibility, registry, undefined, providerCapacity)
+          efficientTeam: buildEfficientTeam(scoredAll, eligibility, registry, { providerCapacity })
         };
       }
       return result;

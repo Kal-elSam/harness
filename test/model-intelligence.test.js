@@ -208,36 +208,94 @@ test("buildAiTeam reports no fallback, never a fabricated one, when no eligible 
   assert.equal(team.find((t) => t.role === "Explorer").fallback, null);
 });
 
-test("buildAiTeam is pure maximum-capability: the real leader wins every role that shares its metric, even a razor-thin real edge — no diversity, no cost tie-break", () => {
-  // Claude has a real, meaningful coding edge (~26%) AND a razor-thin
-  // intelligence edge (~1.1%) over Codex — AI TEAM takes the real leader
-  // in both cases; only EFFICIENT TEAM treats a near-tie differently.
+test("buildAiTeam coordinates the whole portfolio: real capability decides first, but a model that already claimed 2 roles cedes a near-equivalent role to a real alternative instead of taking a 3rd", () => {
+  // Three real providers. Claude clearly leads coding (26.5% ahead of
+  // Codex — decisive, no alternative qualifies); intelligence is a real
+  // three-way near-tie (Codex ~1.1% behind, Go ~6.4% behind, both within
+  // the 8% band).
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 60.0, mathIndex: null }
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 60.0, mathIndex: null },
+    { slug: "go-model", name: "Go Model", intelligenceIndex: 50.0, codingIndex: 78.0, mathIndex: null }
   ];
-  const scored = scoreAvailableModels(
-    [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
-  );
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "claude-model" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }] },
+    { adapterId: "opencode-go", models: [{ id: "go-model" }] }
+  ], aa);
+  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
+  const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
+
+  // Builder/Tester (real coding leader): Claude wins both — its real
+  // ~4.4% edge over Go is within the band, but Claude hasn't claimed any
+  // role yet, so real capability decides cleanly. No message needed.
+  assert.equal(byRole.Builder.primary.adapterId, "claude");
+  assert.equal(byRole.Tester.primary.adapterId, "claude");
+  assert.equal(byRole.Builder.reason, null);
+  assert.equal(byRole.Tester.reason, null);
+
+  // Explorer/Architect (real intelligence near-tie): by now Claude has
+  // already claimed 2 roles (the portfolio limit) — with a real,
+  // near-equivalent alternative (Codex, ~1.1% behind) available, Claude
+  // cedes these roles rather than taking a 3rd.
+  assert.equal(byRole.Explorer.primary.adapterId, "codex");
+  assert.equal(byRole.Architect.primary.adapterId, "codex");
+  assert.match(byRole.Explorer.reason, /assigned to a different model\/provider to avoid concentration/);
+
+  // Debugger (same near-tie pool): both Claude AND Codex have now hit
+  // their real 2-role limit, so Go — the real third-closest option
+  // (~6.4% behind the leader, still within the band) — gets it instead.
+  // Diversity never means an incapable model: Codex's real ~26.5% coding
+  // gap kept it out of Builder/Tester the whole time.
+  assert.equal(byRole.Debugger.primary.adapterId, "opencode-go");
+
+  // Reviewer independence still applies — Builder's provider (Claude) is
+  // excluded, and with real room left on Go, Reviewer lands there too,
+  // genuinely independent from Builder.
+  assert.notEqual(byRole.Reviewer.primary.adapterId, byRole.Builder.primary.adapterId);
+  assert.match(byRole.Reviewer.reason, /Kept independent from Builder's provider\./);
+});
+
+test("buildAiTeam caps a single provider at 3 of the 6 technical roles when a real alternative provider exists — even across two different real models under it", () => {
+  // Two real Claude models plus one real Codex model, all real
+  // near-equivalents of each other (each within the 8% band of the
+  // leader). The 2-role-per-model limit alone wouldn't stop Claude from
+  // covering most roles (claude-a takes 2, claude-b takes 2), but the
+  // 3-per-provider limit kicks in first — once Claude (either model) has
+  // covered 3 technical roles, Codex (a real, capable alternative) gets
+  // the next one instead of a 3rd Claude model or a 4th Claude role.
+  const aa = [
+    { slug: "claude-a", name: "Claude A", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
+    { slug: "claude-b", name: "Claude B", intelligenceIndex: 89, codingIndex: 89, mathIndex: null },
+    { slug: "codex-model", name: "Codex", intelligenceIndex: 84, codingIndex: 84, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "claude-a" }, { id: "claude-b" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }] }
+  ], aa);
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
-  assert.equal(byRole.Builder.primary.adapterId, "claude");
-  assert.equal(byRole.Tester.primary.adapterId, "claude");
-  assert.equal(byRole.Explorer.primary.adapterId, "claude", "AI TEAM never spreads a razor-thin real edge to a different provider — that's EFFICIENT TEAM's job");
+  // Explorer/Architect/Builder: Claude covers these first (real capability
+  // leader), reaching its real 3-role provider limit by Builder.
+  assert.equal(byRole.Explorer.primary.adapterId, "claude");
   assert.equal(byRole.Architect.primary.adapterId, "claude");
-  assert.equal(byRole.Builder.reason, null); // an unremarkable, clear real win needs no explanation
-  assert.equal(byRole.Explorer.reason, null);
+  assert.equal(byRole.Builder.primary.adapterId, "claude");
 
-  // Reviewer independence still applies in AI TEAM — a review-quality/bias
-  // concern, not a cost one — so it's the one role allowed to diverge.
-  assert.notEqual(byRole.Reviewer.primary.adapterId, byRole.Builder.primary.adapterId);
+  // Debugger/Tester: Claude has now hit its 3-role provider limit — Codex,
+  // a real near-equivalent alternative, covers these instead of a 4th
+  // Claude role.
+  assert.equal(byRole.Debugger.primary.adapterId, "codex");
+  assert.equal(byRole.Tester.primary.adapterId, "codex");
+  assert.match(byRole.Debugger.reason, /assigned to a different model\/provider to avoid concentration/);
 });
 
-test("buildEfficientTeam resolves a real near-tie deterministically via the stable tiebreak when no real cost/quota/duration/speed signal distinguishes the candidates", () => {
-  // Codex has the raw intelligence lead (~1.1%, a real near-tie) but
-  // Claude has the decisive ~26% coding lead — the two roles must not
-  // interfere with each other.
+test("buildEfficientTeam coordinates the portfolio too: a model that already claimed its 2-role limit on the coding floor cedes an adequate intelligence role to the real alternative", () => {
+  // Codex's coding score (60.0) is only ~73.5% of Claude's (81.6) — below
+  // the 80% floor, so Claude is the ONLY adequate candidate for
+  // Builder/Tester; Codex never clears the coding floor for those roles.
+  // Codex is the raw intelligence leader (53.4 vs Claude's 52.8, ~1.1%
+  // ahead) — Claude still clears the 80% floor there (well within it).
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 52.8, codingIndex: 81.6, mathIndex: null },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 53.4, codingIndex: 60.0, mathIndex: null }
@@ -248,17 +306,18 @@ test("buildEfficientTeam resolves a real near-tie deterministically via the stab
   const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
-  // Builder/Tester: the real ~26% coding gap is decisive — never sacrificed for efficiency.
+  // Builder/Tester: Claude is the ONLY real candidate that clears the
+  // coding floor — Codex never even qualifies for these roles, so it
+  // never claims the portfolio's 2-role limit here.
   assert.equal(byRole.Builder.primary.adapterId, "claude");
   assert.equal(byRole.Tester.primary.adapterId, "claude");
 
-  // Explorer/Architect: the raw leader is codex (~1.1% ahead), a real
-  // near-tie — with no real price/quota/duration/speed data to break it,
-  // EFFICIENT TEAM falls back to the stable adapterId tiebreak ("claude"
-  // sorts before "codex"), never a fabricated savings percentage.
-  assert.equal(byRole.Explorer.primary.adapterId, "claude");
-  assert.equal(byRole.Architect.primary.adapterId, "claude");
-  assert.match(byRole.Explorer.reason, /stable tiebreak/);
+  // Explorer/Architect: Claude has now claimed 2 roles (its limit) on the
+  // coding-floor roles; both Codex and Claude clear the intelligence
+  // floor here, so with Claude's limit already reached, Codex — the real
+  // intelligence leader and adequate alternative — gets these instead.
+  assert.equal(byRole.Explorer.primary.adapterId, "codex");
+  assert.equal(byRole.Architect.primary.adapterId, "codex");
 });
 
 test("buildAiTeam keeps Reviewer on Builder's own provider when no independent real alternative exists, rather than forcing an incapable model", () => {
@@ -347,13 +406,24 @@ test("buildEfficientTeam prefers a real, meaningfully cheaper near-equivalent ov
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "fable-model" }] }, { adapterId: "opencode-go", models: [{ id: "kimi-model" }] }], aa
   );
+  // Checked on Explorer — the first role assigned in this fixture (Kimi
+  // also clears the intelligence floor here), so the portfolio's own
+  // 2-role concentration limit can't yet have contaminated the result.
   const team = buildEfficientTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } });
-  const tester = team.find((t) => t.role === "Tester"); // pure codingIndex, no independence rule involved
-  assert.equal(tester.primary.adapterId, "opencode-go", "the cheaper, near-equivalent real option should win over the raw leader");
-  assert.match(tester.reason, /lower real price/);
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "opencode-go", "the cheaper, near-equivalent real option should win over the raw leader");
+  assert.match(explorer.reason, /lower real price/);
 });
 
-test("buildAiTeam ignores price entirely: the same near-equivalent scenario still picks the raw capability leader", () => {
+test("buildAiTeam never lets price itself decide — it only ever sees a role's real capability and the portfolio's concentration state", () => {
+  // Fable's intelligence lead over Kimi (~18%) is decisive — Kimi never
+  // even qualifies for Explorer/Architect/Debugger, so Fable claims those
+  // 3 roles first (no alternative existed, so none of them count as
+  // "spending" a choice). By the time Builder/Tester come up (coding,
+  // only ~6.6% apart — a real near-equivalent), Fable has already hit its
+  // real 2-role portfolio limit, so Kimi — the real, capable alternative
+  // — gets them instead. Kimi never wins because it's cheaper; price
+  // never appears anywhere in this reasoning.
   const aa = [
     { slug: "fable-model", name: "Fable-shaped", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10 },
     { slug: "kimi-model", name: "Kimi-shaped", intelligenceIndex: 43.8, codingIndex: 76.2, mathIndex: null, priceInputPerMTok: 3 }
@@ -362,8 +432,17 @@ test("buildAiTeam ignores price entirely: the same near-equivalent scenario stil
     [{ adapterId: "claude", models: [{ id: "fable-model" }] }, { adapterId: "opencode-go", models: [{ id: "kimi-model" }] }], aa
   );
   const team = buildAiTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } });
-  const tester = team.find((t) => t.role === "Tester");
-  assert.equal(tester.primary.adapterId, "claude", "AI TEAM never lets price move the pick away from the raw capability leader");
+  const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
+
+  assert.equal(byRole.Explorer.primary.adapterId, "claude");
+  assert.equal(byRole.Architect.primary.adapterId, "claude");
+  assert.equal(byRole.Debugger.primary.adapterId, "claude");
+  assert.equal(byRole.Builder.primary.adapterId, "opencode-go", "the real coding near-equivalent gets Builder once Fable's 2-role limit is spent");
+  assert.match(byRole.Builder.reason, /assigned to a different model\/provider to avoid concentration/);
+
+  for (const entry of team) {
+    if (entry.reason) assert.doesNotMatch(entry.reason, /price/i, "AI TEAM's reasoning must never mention price at all");
+  }
 });
 
 test("buildAiTeam only prefers cost when a real alternative is actually near-equivalent — a genuinely large real gap still wins on capability, whatever the price", () => {
@@ -449,10 +528,14 @@ test("buildEfficientTeam prefers real higher throughput as the tie-break after p
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
   );
-  // Same real price — speed should decide the near-equivalent tie.
+  // Same real price — speed should decide the near-equivalent tie. Checked
+  // on Explorer (intelligence), the first role assigned in this fixture —
+  // Builder/Tester (coding) also clear the floor here and would otherwise
+  // get contaminated by whichever model Explorer/Architect claim first
+  // under the portfolio's own 2-role concentration limit.
   const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } });
-  const tester = team.find((t) => t.role === "Tester");
-  assert.equal(tester.primary.adapterId, "codex", "the real 3x faster option should win the tie when price doesn't distinguish them");
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "codex", "the real 3x faster option should win the tie when price doesn't distinguish them");
 });
 
 test("a role's optional metric can be satisfied by real registry evidence from any connected source, not just the AA field baked onto the model", () => {
@@ -494,9 +577,11 @@ test("buildEfficientTeam prefers Kairo's own observed real duration over AA's re
   registry.addEvidence(claudeId, { metric: "kairo.durationMs", value: 9000, source: "kairo-telemetry", verified: true });
   registry.addEvidence(codexId, { metric: "kairo.durationMs", value: 3000, source: "kairo-telemetry", verified: true });
 
+  // Checked on Explorer — the first role assigned in this fixture, so the
+  // portfolio's own concentration limits can't contaminate the result.
   const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, registry);
-  const tester = team.find((t) => t.role === "Tester");
-  assert.equal(tester.primary.adapterId, "codex", "real observed duration must win over AA's reported throughput, which alone would have picked claude here");
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "codex", "real observed duration must win over AA's reported throughput, which alone would have picked claude here");
 });
 
 // The tests below cover EFFICIENT_CAPABILITY_FLOOR (0.80) — a genuinely
@@ -525,12 +610,19 @@ test("a model at or above the 80% capability floor competes on efficiency, even 
     { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10 },
     // 85% of the leader's coding score — well outside NEAR_EQUIVALENCE_BAND
     // (8%), but still within the new, wider 80% floor.
-    { slug: "adequate-model", name: "Adequate", intelligenceIndex: 90, codingIndex: 76.5, mathIndex: null, priceInputPerMTok: 1 }
+    { slug: "adequate-model", name: "Adequate", intelligenceIndex: 20, codingIndex: 76.5, mathIndex: null, priceInputPerMTok: 1 },
+    // A third, real distractor so Explorer/Architect/Debugger/Reviewer
+    // (intelligence) claim a different model entirely, never touching
+    // "adequate-model" — isolating Builder/Tester (coding) from the
+    // portfolio's own 2-role concentration limit for this check.
+    { slug: "distractor-model", name: "Distractor", intelligenceIndex: 88, codingIndex: 20, mathIndex: null, priceInputPerMTok: 5 }
   ];
-  const scored = scoreAvailableModels(
-    [{ adapterId: "claude", models: [{ id: "leader-model" }] }, { adapterId: "codex", models: [{ id: "adequate-model" }] }], aa
-  );
-  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "adequate-model" }] },
+    { adapterId: "opencode-go", models: [{ id: "distractor-model" }] }
+  ], aa);
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
   const builder = team.find((t) => t.role === "Builder");
   assert.equal(builder.primary.adapterId, "codex", "a model that clears the wider capability floor should win on price, even though it's well outside the old 8% near-equivalence band");
 });
@@ -543,7 +635,7 @@ test("the capability floor is configurable via buildEfficientTeam's fourth argum
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "leader-model" }] }, { adapterId: "codex", models: [{ id: "adequate-model" }] }], aa
   );
-  const strictFloor = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, null, 0.9);
+  const strictFloor = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, null, { capabilityFloor: 0.9 });
   const builder = strictFloor.find((t) => t.role === "Builder");
   assert.equal(builder.primary.adapterId, "claude", "a stricter 90% floor should exclude the 85%-capable candidate");
 });
@@ -571,10 +663,14 @@ test("a provider's real quota headroom alone can never decide a role when a real
   // the per-model registry above.
   const providerCapacity = { codex: { adapterId: "codex", quotaRemainingPercent: 95 }, claude: { adapterId: "claude", quotaRemainingPercent: 10 } };
 
-  const team = buildEfficientTeam(scored, { codex: { ok: true }, claude: { ok: true } }, registry, undefined, providerCapacity);
-  const builder = team.find((t) => t.role === "Builder");
-  assert.equal(builder.primary.adapterId, "claude", "real observed cost must decide before quota, even when the other provider has far more headroom");
-  assert.match(builder.reason, /lower real observed cost per task/);
+  // Checked on Explorer — the first role assigned in this fixture (both
+  // models tie exactly on intelligence, so the same real cost evidence
+  // decides there too), before the portfolio's own 2-role concentration
+  // limit could contaminate a later role's result.
+  const team = buildEfficientTeam(scored, { codex: { ok: true }, claude: { ok: true } }, registry, { providerCapacity });
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "claude", "real observed cost must decide before quota, even when the other provider has far more headroom");
+  assert.match(explorer.reason, /lower real observed cost per task/);
 });
 
 test("real provider quota still decides as a last resort when no per-model signal distinguishes otherwise-adequate candidates", () => {
@@ -590,10 +686,12 @@ test("real provider quota still decides as a last resort when no per-model signa
   // legitimate for it to decide, just last in line.
   const providerCapacity = { claude: { adapterId: "claude", quotaRemainingPercent: 10 }, codex: { adapterId: "codex", quotaRemainingPercent: 95 } };
 
-  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, null, undefined, providerCapacity);
-  const builder = team.find((t) => t.role === "Builder");
-  assert.equal(builder.primary.adapterId, "codex", "with no other real signal, quota headroom is a legitimate last-resort tiebreak");
-  assert.match(builder.reason, /lower real provider quota pressure/);
+  // Checked on Explorer — the first role assigned in this fixture (both
+  // models tie exactly on intelligence, so quota decides there first).
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, null, { providerCapacity });
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "codex", "with no other real signal, quota headroom is a legitimate last-resort tiebreak");
+  assert.match(explorer.reason, /lower real provider quota pressure/);
 });
 
 test("provider quota is resolved per-adapter, not per-model — two models under the winning provider both benefit identically", () => {
@@ -609,9 +707,11 @@ test("provider quota is resolved per-adapter, not per-model — two models under
   // headroom is the only distinguishing signal, and it applies equally to
   // BOTH Claude models, not just whichever one happens to be the leader.
   const providerCapacity = { claude: { adapterId: "claude", quotaRemainingPercent: 90 }, codex: { adapterId: "codex", quotaRemainingPercent: 5 } };
-  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, null, undefined, providerCapacity);
-  const builder = team.find((t) => t.role === "Builder");
-  assert.equal(builder.primary.adapterId, "claude", "the provider with more real headroom should win when nothing else distinguishes the candidates");
+  // Checked on Explorer — the first role assigned in this fixture, before
+  // the portfolio's own concentration state could contaminate the result.
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, null, { providerCapacity });
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "claude", "the provider with more real headroom should win when nothing else distinguishes the candidates");
 });
 
 // The tests below use the REAL production ingestion functions

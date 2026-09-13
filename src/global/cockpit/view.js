@@ -1,6 +1,6 @@
 import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { buildTaskRows, clampSelection, isActionAvailable } from "./rows.js";
-import { CARD_TONE, cardBottom, cardLine, cardTop } from "./card.js";
+import { CARD_TONE, cardBottom, cardInnerWidth, cardLine, cardTop } from "./card.js";
 import { theme } from "./theme.js";
 
 /**
@@ -31,15 +31,30 @@ function renderPanel(title, tone, width, contentLines, targetLineCount = content
  * @param {number} totalWidth
  * @param {number} [leftRatio]
  */
+const TILE_GAP = 1;
+
+/**
+ * The exact left/right EXTERNAL panel widths tileTwoPanels() will use for
+ * a given total width and ratio — exposed separately so a caller can know
+ * a panel's real width BEFORE rendering its content (e.g. MODEL TEAMS
+ * needs its own real width to size its columns), instead of guessing and
+ * risking a mismatch with what tileTwoPanels() actually renders.
+ * @param {number} totalWidth
+ * @param {number} [leftRatio]
+ */
+function splitPanelWidths(totalWidth, leftRatio = 0.5) {
+  const leftWidth = Math.max(1, Math.floor((totalWidth - TILE_GAP) * leftRatio));
+  const rightWidth = totalWidth - TILE_GAP - leftWidth;
+  return { leftWidth, rightWidth };
+}
+
 function tileTwoPanels(left, right, totalWidth, leftRatio = 0.5) {
-  const gap = 1;
-  const leftWidth = Math.max(1, Math.floor((totalWidth - gap) * leftRatio));
-  const rightWidth = totalWidth - gap - leftWidth;
+  const { leftWidth, rightWidth } = splitPanelWidths(totalWidth, leftRatio);
   const targetLineCount = Math.max(left.lines.length, right.lines.length);
   const leftBox = renderPanel(left.title, left.tone, leftWidth, left.lines, targetLineCount);
   const rightBox = renderPanel(right.title, right.tone, rightWidth, right.lines, targetLineCount);
   const rows = [];
-  for (let i = 0; i < leftBox.length; i += 1) rows.push(`${leftBox[i]}${" ".repeat(gap)}${rightBox[i]}`);
+  for (let i = 0; i < leftBox.length; i += 1) rows.push(`${leftBox[i]}${" ".repeat(TILE_GAP)}${rightBox[i]}`);
   return rows;
 }
 
@@ -327,10 +342,17 @@ export class CockpitView {
     const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
     const lines = [];
     const usagePanel = { title: `KAIRO · ${project}`, tone: CARD_TONE.INFO, lines: [theme.fg("muted", "USAGE"), ...this.compactHealthLines()] };
-    const modelTeamsPanel = { title: "MODEL TEAMS", tone: CARD_TONE.SUCCESS, lines: this.teamsColumnsLines() };
     if (width >= 140) {
+      // MODEL TEAMS needs its own real EXTERNAL panel width (not the full
+      // dashboard width) to size its CAPABILITY/EFFICIENT columns
+      // correctly — computed the same way tileTwoPanels() will actually
+      // split the row, so the columns never mismatch the frame they end
+      // up rendered inside.
+      const { rightWidth } = splitPanelWidths(width, 0.33);
+      const modelTeamsPanel = { title: "MODEL TEAMS", tone: CARD_TONE.SUCCESS, lines: this.teamsColumnsLines(cardInnerWidth(rightWidth)) };
       lines.push(...tileTwoPanels(usagePanel, modelTeamsPanel, width, 0.33));
     } else {
+      const modelTeamsPanel = { title: "MODEL TEAMS", tone: CARD_TONE.SUCCESS, lines: this.teamsColumnsLines(cardInnerWidth(width)) };
       lines.push(...renderPanel(usagePanel.title, usagePanel.tone, width, usagePanel.lines));
       lines.push(...renderPanel(modelTeamsPanel.title, modelTeamsPanel.tone, width, modelTeamsPanel.lines));
     }
@@ -485,23 +507,49 @@ export class CockpitView {
   }
 
   /**
-   * MODEL TEAMS' unified widget: one combined panel with a CAPABILITY and
-   * an EFFICIENT column per role, instead of two separate AI TEAM/
-   * EFFICIENT TEAM cards. This is now the ONLY dashboard team widget —
-   * used at every width, side by side with USAGE on medium/wide terminals
-   * and stacked below it on narrow ones (see renderDashboardLines()).
+   * MODEL TEAMS' unified widget: one combined panel with a real, drawn "│"
+   * separator between the CAPABILITY and EFFICIENT columns, instead of
+   * two separate AI TEAM/EFFICIENT TEAM cards or a plain-space gap that
+   * could look like column drift. This is now the ONLY dashboard team
+   * widget — used at every width, side by side with USAGE on medium/wide
+   * terminals and stacked below it on narrow ones (see
+   * renderDashboardLines()).
+   *
+   * Both column widths are computed from the real width actually
+   * available (never a fixed constant) — split evenly between CAPABILITY
+   * and EFFICIENT after reserving room for the role column and both real
+   * "│" separators — and each cell is truncated INDEPENDENTLY, so a long
+   * CAPABILITY entry can never bleed into the EFFICIENT column even under
+   * a narrow terminal; truncation only ever happens when content actually
+   * doesn't fit, never as a fixed cap.
+   * @param {number} [width] - real content width available to this panel
+   *   (already inside its frame — see cardInnerWidth()); defaults to a
+   *   reasonable width for callers that don't have a real one yet (tests).
    */
-  teamsColumnsLines() {
+  teamsColumnsLines(width = 80) {
     const intel = this.snapshot?.modelIntelligence;
     if (!intel || intel.status === "unknown") return this.fitLines();
     const aiTeam = intel.aiTeam ?? [];
     if (!aiTeam.length) return this.fitLines();
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
     const efficientByRole = Object.fromEntries((intel.efficientTeam ?? []).map((entry) => [entry.role, entry]));
-    const capabilityWidth = 24;
+
+    const roleWidth = 10;
+    const separator = " │ ";
+    const remaining = Math.max(2, width - roleWidth - separator.length * 2);
+    const capabilityWidth = Math.max(1, Math.ceil(remaining / 2));
+    const efficientWidth = Math.max(1, remaining - capabilityWidth);
+    const formatRow = (roleText, capabilityText, efficientText) => {
+      const roleCell = truncateToWidth(roleText, roleWidth, "").padEnd(roleWidth);
+      const capabilityClipped = truncateToWidth(capabilityText, capabilityWidth, "…");
+      const capabilityCell = capabilityClipped + " ".repeat(Math.max(0, capabilityWidth - visibleWidth(capabilityClipped)));
+      const efficientCell = truncateToWidth(efficientText, efficientWidth, "…");
+      return `${roleCell}${separator}${capabilityCell}${separator}${efficientCell}`;
+    };
+
     const lines = [
       theme.fg("muted", `Artificial Analysis, ${freshness}`),
-      theme.fg("muted", `${"".padEnd(10)} ${"CAPABILITY".padEnd(capabilityWidth)} EFFICIENT`)
+      theme.fg("muted", formatRow("", "CAPABILITY", "EFFICIENT"))
     ];
     for (const entry of aiTeam) {
       const capabilityEffective = CockpitView.effectiveTeamModel(entry);
@@ -509,7 +557,7 @@ export class CockpitView {
       const efficientEntry = efficientByRole[entry.role];
       const efficientEffective = efficientEntry ? CockpitView.effectiveTeamModel(efficientEntry) : null;
       const efficientText = efficientEffective ? this.aiTeamLabel(efficientEffective) : "—";
-      lines.push(`${entry.role.padEnd(10)} ${capabilityText.padEnd(capabilityWidth)} ${efficientText}`);
+      lines.push(formatRow(entry.role, capabilityText, efficientText));
     }
     lines.push(theme.fg("muted", "Use /models for why."));
     return lines;

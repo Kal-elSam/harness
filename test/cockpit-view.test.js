@@ -85,8 +85,8 @@ test("AI TEAM's compact widget shows only Role -> effective model, never fallbac
   });
   const lines = view.render(160).join("\n");
   assert.match(lines, /Artificial Analysis, live/);
-  assert.match(lines, /Explorer\s+Codex · GPT-6-Astra/);
-  assert.match(lines, /Economy\s+Opencode-go · GPT-5\.6-Luna/);
+  assert.match(lines, /Explorer\s+│ Codex · GPT-6-Astra/);
+  assert.match(lines, /Economy\s+│ Opencode-go · GPT-5\.6-Luna/);
   assert.doesNotMatch(lines, /fallback/);
   assert.doesNotMatch(lines, /Near-equivalent/);
   assert.doesNotMatch(lines, /Global signals — not a project strategy/);
@@ -253,6 +253,40 @@ test("modelsExplainLines() marks a currently-unavailable primary and names the r
   assert.match(lines, /Fallback: Claude · Claude Sonnet 5 — used if this model becomes unavailable\./);
 });
 
+test("modelsExplainLines() distinguishes every real portfolio outcome the plan calls for — decisive capability, concentration avoidance, minimal-sufficient alternative, forced repeat, and Reviewer independence", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [
+        // 1. Decisive capability — no special reason needed, falls back
+        // to the plain role blurb.
+        { role: "Builder", primary: { adapterId: "claude", modelId: "claude-x", displayName: "Fable 5.1", available: true }, fallback: null, reason: null },
+        // 2. Assigned to avoid concentration.
+        { role: "Explorer", primary: { adapterId: "codex", modelId: "codex-x", displayName: "GPT-6 Astra", available: true }, fallback: null, reason: "Near-equivalent alternatives — assigned to a different model/provider to avoid concentration." },
+        // 4. Forced to repeat — no real alternative avoids concentration.
+        { role: "Tester", primary: { adapterId: "claude", modelId: "claude-x", displayName: "Fable 5.1", available: true }, fallback: null, reason: "Only adequate option — no real alternative avoids concentration without forcing a repeat." },
+        // 5. Reviewer independence.
+        { role: "Reviewer", primary: { adapterId: "opencode-go", modelId: "go-x", displayName: "GLM-5.3", available: true }, fallback: null, reason: "Kept independent from Builder's provider." }
+      ],
+      efficientTeam: [
+        { role: "Builder", primary: { adapterId: "claude", modelId: "claude-x", displayName: "Fable 5.1", available: true }, fallback: null, reason: null },
+        { role: "Explorer", primary: { adapterId: "codex", modelId: "codex-x", displayName: "GPT-6 Astra", available: true }, fallback: null, reason: null },
+        // 3. Minimal-sufficient alternative (EFFICIENT's own reasoning).
+        { role: "Tester", primary: { adapterId: "opencode-go", modelId: "go-y", displayName: "GLM-5.3-Flash", available: true }, fallback: null, reason: "Adequate capability — chosen for lower real price." },
+        { role: "Reviewer", primary: { adapterId: "opencode-go", modelId: "go-x", displayName: "GLM-5.3", available: true }, fallback: null, reason: null }
+      ]
+    }
+  });
+  const lines = view.modelsExplainLines().join("\n");
+  assert.match(lines, /assigned to a different model\/provider to avoid concentration/, "2. concentration avoidance must be named");
+  assert.match(lines, /Adequate capability — chosen for lower real price\./, "3. a minimal-sufficient efficient alternative must be named");
+  assert.match(lines, /Only adequate option — no real alternative avoids concentration without forcing a repeat\./, "4. a forced repeat must be named, never silently hidden");
+  assert.match(lines, /Kept independent from Builder's provider\./, "5. Reviewer independence must be named");
+  assert.doesNotMatch(lines, /%|kairo\.|artificial-analysis-free|source:/i, "none of this must leak raw metrics, percentages, or source names");
+});
+
 function aiPlusEfficientSnapshot() {
   return {
     projectRoot: "/repo/demo",
@@ -283,7 +317,7 @@ test("USAGE and MODEL TEAMS tile side by side once the terminal is wide enough �
   const joined = lines.join("\n");
   assert.match(joined, /CAPABILITY/);
   assert.match(joined, /EFFICIENT/);
-  assert.match(joined, /Builder\s+Claude · Claude Fable 5\.1\s+Opencode-go · GLM 5\.3/);
+  assert.match(joined, /Builder\s+│ Claude · Claude Fable 5\.1\s+│ Opencode-go · GLM 5\.3/);
   for (const line of lines) assert.ok(visibleWidth(line) <= 160, `line "${line}" exceeds width`);
 });
 
@@ -308,7 +342,59 @@ test("below the width threshold, USAGE stacks above the unified MODEL TEAMS pane
   const joined = lines.join("\n");
   assert.match(joined, /CAPABILITY/);
   assert.match(joined, /EFFICIENT/);
-  assert.match(joined, /Builder\s+Claude · Claude Fable 5\.1\s+Opencode-go · GLM 5\.3/);
+  assert.match(joined, /Builder\s+│ Claude · Claude Fable 5\.1\s+│ Opencode-go · GLM 5\.3/);
+});
+
+test("teamsColumnsLines() truncates each column independently — a long CAPABILITY name never bleeds into the EFFICIENT column", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [{
+        role: "Builder",
+        primary: { adapterId: "claude", modelId: "claude-x", displayName: "A Genuinely Extremely Long Real Model Display Name That Would Overflow", available: true },
+        fallback: null, reason: null
+      }],
+      efficientTeam: [{
+        role: "Builder",
+        primary: { adapterId: "opencode-go", modelId: "go-x", displayName: "GLM-5.3", available: true },
+        fallback: null, reason: null
+      }]
+    }
+  });
+  // Wide enough for the short EFFICIENT cell to fit whole, but not
+  // remotely enough for the deliberately long CAPABILITY name.
+  const lines = view.teamsColumnsLines(70);
+  const builderLine = lines.find((line) => line.includes("Builder"));
+  assert.match(builderLine, /│/, "columns must be separated by a real drawn │, not just whitespace");
+  assert.match(builderLine, /Opencode-go · GLM-5\.3\s*$/, "the EFFICIENT column must stay intact and readable, never pushed out by an overflowing CAPABILITY cell");
+  assert.match(builderLine, /…/, "the long CAPABILITY name should be honestly truncated, not silently cut without a marker");
+});
+
+test("teamsColumnsLines() never truncates when the real content already fits", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [{
+        role: "Builder",
+        primary: { adapterId: "claude", modelId: "claude-x", displayName: "Fable 5.1", available: true },
+        fallback: null, reason: null
+      }],
+      efficientTeam: [{
+        role: "Builder",
+        primary: { adapterId: "opencode-go", modelId: "go-x", displayName: "GLM-5.3", available: true },
+        fallback: null, reason: null
+      }]
+    }
+  });
+  const lines = view.teamsColumnsLines(100);
+  const builderLine = lines.find((line) => line.includes("Builder"));
+  assert.doesNotMatch(builderLine, /…/, "short real content that already fits must never be truncated");
+  assert.match(builderLine, /Claude · Fable 5\.1/);
+  assert.match(builderLine, /Opencode-go · GLM-5\.3/);
 });
 
 test("AI TEAM reports honestly when there is no benchmark data yet", () => {
