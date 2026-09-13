@@ -215,6 +215,46 @@ test("/models prints the AI TEAM into the chat even when a task row is selected"
   app.stop();
 });
 
+test("/models --evidence keeps the technical breakdown (corroboration/source detail); plain /models does not", async () => {
+  let editor;
+  const service = {
+    snapshot: async () => ({
+      ...makeSnapshot([BASE_ROW]),
+      modelIntelligence: {
+        status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+        aiTeam: [{
+          role: "Architect",
+          primary: {
+            adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", available: true,
+            corroboration: [{ metric: "gpqa", value: 0.6, source: "other-source" }]
+          },
+          fallback: null, reason: null
+        }],
+        efficientTeam: []
+      }
+    })
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+
+  editor.setText("/models");
+  await editor.onSubmit(editor.getText());
+  const plain = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.doesNotMatch(plain, /gpqa=/);
+  assert.doesNotMatch(plain, /other-source/);
+  assert.match(plain, /Selected for general reasoning capability\./);
+
+  app.view.clearTranscript();
+  editor.setText("/models --evidence");
+  await editor.onSubmit(editor.getText());
+  const evidence = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.match(evidence, /gpqa=0\.6 \(other-source\)/);
+  app.stop();
+});
+
 test("/models' role separators survive the real persisted-transcript pipeline, not just the raw line array", async () => {
   // Regression: a blank-string ("") separator looks correct against
   // aiTeamDetailLines() in isolation, but addTranscript trims and drops
@@ -243,7 +283,12 @@ test("/models' role separators survive the real persisted-transcript pipeline, n
   const texts = app.view.transcript.map((entry) => entry.text);
   const explorerIndex = texts.findIndex((t) => t.includes("Explorer"));
   const builderIndex = texts.findIndex((t) => t.includes("Builder"));
-  assert.equal(builderIndex, explorerIndex + 2, "the separator entry must actually be present between the two roles in the real transcript");
+  // Each role now emits a headline + a "why" line before the next role's
+  // separator, so the gap is 3 entries, not 2 — but the real point of this
+  // regression test still holds: a real, non-empty separator entry sits
+  // between the two roles in the persisted transcript.
+  assert.equal(builderIndex, explorerIndex + 3, "the separator entry must actually be present between the two roles in the real transcript");
+  assert.match(texts[explorerIndex + 2], /\S/, "the separator must be visible content, not a blank line addTranscript would drop");
   app.stop();
 });
 

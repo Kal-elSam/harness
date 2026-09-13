@@ -22,9 +22,10 @@ function renderPanel(title, tone, width, contentLines, targetLineCount = content
 }
 
 /**
- * Tiles two independently-framed cards side by side — used only for
- * USAGE + AI TEAM, the two reference widgets meant to be compared at a
- * glance rather than read one above the other.
+ * Tiles two independently-framed cards side by side — used for the medium
+ * width tier (USAGE full-width on top, AI TEAM + EFFICIENT TEAM tiled below)
+ * and as a fallback wherever exactly two panels need to sit next to each
+ * other.
  * @param {{title: string, tone: string, lines: string[]}} left
  * @param {{title: string, tone: string, lines: string[]}} right
  * @param {number} totalWidth
@@ -38,6 +39,30 @@ function tileTwoPanels(left, right, totalWidth) {
   const rightBox = renderPanel(right.title, right.tone, rightWidth, right.lines, targetLineCount);
   const rows = [];
   for (let i = 0; i < leftBox.length; i += 1) rows.push(`${leftBox[i]}${" ".repeat(gap)}${rightBox[i]}`);
+  return rows;
+}
+
+/**
+ * Tiles three independently-framed cards side by side — USAGE | AI TEAM |
+ * EFFICIENT TEAM, only used once the terminal is wide enough that none of
+ * the three gets truncated into illegibility.
+ * @param {{title: string, tone: string, lines: string[]}} left
+ * @param {{title: string, tone: string, lines: string[]}} middle
+ * @param {{title: string, tone: string, lines: string[]}} right
+ * @param {number} totalWidth
+ */
+function tileThreePanels(left, middle, right, totalWidth) {
+  const gap = 1;
+  const usable = totalWidth - gap * 2;
+  const leftWidth = Math.floor(usable / 3);
+  const middleWidth = Math.floor((usable - leftWidth) / 2);
+  const rightWidth = usable - leftWidth - middleWidth;
+  const targetLineCount = Math.max(left.lines.length, middle.lines.length, right.lines.length);
+  const leftBox = renderPanel(left.title, left.tone, leftWidth, left.lines, targetLineCount);
+  const middleBox = renderPanel(middle.title, middle.tone, middleWidth, middle.lines, targetLineCount);
+  const rightBox = renderPanel(right.title, right.tone, rightWidth, right.lines, targetLineCount);
+  const rows = [];
+  for (let i = 0; i < leftBox.length; i += 1) rows.push(`${leftBox[i]}${" ".repeat(gap)}${middleBox[i]}${" ".repeat(gap)}${rightBox[i]}`);
   return rows;
 }
 
@@ -311,24 +336,29 @@ export class CockpitView {
     const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
     const lines = [];
 
-    // USAGE and FIT are both reference widgets meant to be scanned
-    // together, so side by side when there's room; narrow terminals fall
-    // back to stacking (a half-width card below ~50 cols truncates into
-    // illegibility). FIT is always visible, independent of task selection
-    // — separate from STATUS (task-specific), which is only reachable
-    // while a row is selected, and once any task exists in history a row
-    // is *always* selected, so it can't be tucked behind "nothing else to
-    // show" the way STATUS's own content is.
+    // USAGE, AI TEAM, and EFFICIENT TEAM are all reference widgets meant to
+    // be scanned together. Three tiers, by how much room there is:
+    //   - wide enough for all three side by side (each needs ~50 visible
+    //     columns plus framing before truncation starts eating real info);
+    //   - medium: USAGE full-width on top, the two teams tiled below it;
+    //   - narrow: USAGE, then one combined TEAMS panel with a CAPABILITY
+    //     and an EFFICIENT column instead of two separate cards.
+    // AI TEAM/EFFICIENT TEAM are always visible, independent of task
+    // selection — separate from STATUS (task-specific), which is only
+    // reachable while a row is selected, and once any task exists in
+    // history a row is *always* selected, so it can't be tucked behind
+    // "nothing else to show" the way STATUS's own content is.
     const usagePanel = { title: `KAIRO · ${project}`, tone: CARD_TONE.INFO, lines: [theme.fg("muted", "USAGE"), ...this.compactHealthLines()] };
-    const fitPanel = { title: "AI TEAM", tone: CARD_TONE.SUCCESS, lines: this.fitLines() };
-    // AI TEAM's longest real line needs ~50 visible columns plus framing on each side —
-    // below this threshold, tiling would truncate the very info being
-    // shown, so it falls back to full-width stacking instead.
-    if (width >= 140) {
-      lines.push(...tileTwoPanels(usagePanel, fitPanel, width));
+    const aiTeamPanel = { title: "AI TEAM", tone: CARD_TONE.SUCCESS, lines: this.fitLines() };
+    const efficientTeamPanel = { title: "EFFICIENT TEAM", tone: CARD_TONE.INFO, lines: this.efficientTeamLines() };
+    if (width >= 200) {
+      lines.push(...tileThreePanels(usagePanel, aiTeamPanel, efficientTeamPanel, width));
+    } else if (width >= 140) {
+      lines.push(...renderPanel(usagePanel.title, usagePanel.tone, width, usagePanel.lines));
+      lines.push(...tileTwoPanels(aiTeamPanel, efficientTeamPanel, width));
     } else {
       lines.push(...renderPanel(usagePanel.title, usagePanel.tone, width, usagePanel.lines));
-      lines.push(...renderPanel(fitPanel.title, fitPanel.tone, width, fitPanel.lines));
+      lines.push(...renderPanel("TEAMS", CARD_TONE.SUCCESS, width, this.teamsColumnsLines()));
     }
 
     const row = this.selectedRow();
@@ -408,22 +438,137 @@ export class CockpitView {
   }
 
   /**
-   * The full breakdown behind each AI TEAM pick — primary, availability,
-   * fallback, the distribution-policy reason (near-tie, independence
-   * swap, temporarily-unavailable leader), and any real corroborating
-   * evidence the Model Intelligence Foundation registry has for that
-   * exact model (Hugging Face, manufacturer snapshots, Kairo's own
-   * telemetry) — surfaced via /models instead of the always-visible
-   * widget. Corroboration is informational only: it never changed which
-   * model was picked, so it's shown, never blended into the reason.
+   * EFFICIENT TEAM's compact widget: same one-line-per-role shape as
+   * fitLines(), reading `intel.efficientTeam` instead of `intel.aiTeam`.
+   * EFFICIENT TEAM only ever differs from AI TEAM within the existing
+   * near-equivalence capability floor — it's never a lower-capability
+   * substitute, so this widget never needs its own capability-floor
+   * messaging beyond what AI TEAM already surfaces.
    */
-  aiTeamDetailLines() {
+  efficientTeamLines() {
+    const intel = this.snapshot?.modelIntelligence;
+    if (!intel || intel.status === "unknown") {
+      const reason = intel?.error ? ` (${intel.error})` : "";
+      return [theme.fg("muted", `No model benchmark data yet${reason}`)];
+    }
+    const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
+    const team = intel.efficientTeam ?? [];
+    if (!team.length) {
+      return [theme.fg("muted", `Artificial Analysis, ${freshness}`), theme.fg("warning", "No efficient-team signal yet")];
+    }
+    const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
+    for (const entry of team) {
+      const effective = CockpitView.effectiveTeamModel(entry);
+      const modelText = effective ? this.aiTeamLabel(effective) : theme.fg("warning", "no eligible option right now");
+      lines.push(`${entry.role.padEnd(10)} ${modelText}`);
+    }
+    lines.push(theme.fg("muted", "Within capability floor · lower cost/quota when it differs from AI TEAM."));
+    return lines;
+  }
+
+  /**
+   * Narrow-terminal fallback for AI TEAM + EFFICIENT TEAM: one combined
+   * "TEAMS" panel with a CAPABILITY and an EFFICIENT column per role,
+   * instead of two full cards that wouldn't fit side by side without
+   * truncating into illegibility.
+   */
+  teamsColumnsLines() {
     const intel = this.snapshot?.modelIntelligence;
     if (!intel || intel.status === "unknown") return this.fitLines();
-    const team = intel.aiTeam ?? [];
-    if (!team.length) return this.fitLines();
+    const aiTeam = intel.aiTeam ?? [];
+    if (!aiTeam.length) return this.fitLines();
+    const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
+    const efficientByRole = Object.fromEntries((intel.efficientTeam ?? []).map((entry) => [entry.role, entry]));
+    const capabilityWidth = 24;
+    const lines = [
+      theme.fg("muted", `Artificial Analysis, ${freshness}`),
+      theme.fg("muted", `${"".padEnd(10)} ${"CAPABILITY".padEnd(capabilityWidth)} EFFICIENT`)
+    ];
+    for (const entry of aiTeam) {
+      const capabilityEffective = CockpitView.effectiveTeamModel(entry);
+      const capabilityText = capabilityEffective ? this.aiTeamLabel(capabilityEffective) : "no eligible option";
+      const efficientEntry = efficientByRole[entry.role];
+      const efficientEffective = efficientEntry ? CockpitView.effectiveTeamModel(efficientEntry) : null;
+      const efficientText = efficientEffective ? this.aiTeamLabel(efficientEffective) : "—";
+      lines.push(`${entry.role.padEnd(10)} ${capabilityText.padEnd(capabilityWidth)} ${efficientText}`);
+    }
+    lines.push(theme.fg("muted", "Use /models for why."));
+    return lines;
+  }
+
+/** Plain-language description of what each role optimizes for — mirrors
+   * buildAiTeamRoleDefinitions()'s real compute functions in
+   * model-intelligence.js, never a per-model claim, so it never needs
+   * updating when the underlying models change. */
+  static ROLE_CAPABILITY_BLURB = {
+    Explorer: "general reasoning capability",
+    Architect: "general reasoning capability",
+    Builder: "coding capability",
+    Debugger: "reasoning and terminal-debugging capability",
+    Tester: "coding and terminal-execution capability",
+    Reviewer: "independent reasoning and coding review",
+    Economy: "lowest real price among models that clear the capability floor"
+  };
+
+  /**
+   * The default, human-readable `/models` output: per role, the selected
+   * model, why (the real distribution-policy reason when there is one,
+   * else the role's plain-language capability requirement), the
+   * EFFICIENT TEAM alternative when it actually differs, and the real
+   * fallback used if the selection becomes unavailable. Deliberately no
+   * raw metrics, percentages, internal ids, or source names — that detail
+   * moves to /models --evidence (aiTeamDetailLines()) instead.
+   */
+  modelsExplainLines() {
+    const intel = this.snapshot?.modelIntelligence;
+    if (!intel || intel.status === "unknown") return this.fitLines();
+    const aiTeam = intel.aiTeam ?? [];
+    if (!aiTeam.length) return this.fitLines();
+    const efficientByRole = Object.fromEntries((intel.efficientTeam ?? []).map((entry) => [entry.role, entry]));
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
     const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
+    aiTeam.forEach(({ role, primary, fallback, reason }, index) => {
+      // A blank string here would get silently dropped once routed through
+      // the persisted chat transcript (addTranscript trims and discards
+      // empty text) — a visible divider is the only separator that
+      // actually survives into the real, persisted chat history.
+      if (index > 0) lines.push(theme.fg("muted", "·"));
+      const availabilityNote = primary.available ? "" : " (currently unavailable)";
+      lines.push(`${role.padEnd(10)} ${this.aiTeamLabel(primary)}${availabilityNote}`);
+      const why = reason ?? `Selected for ${CockpitView.ROLE_CAPABILITY_BLURB[role] ?? "this role's capability requirement"}.`;
+      lines.push(theme.fg("muted", `  ${why}`));
+
+      const efficientEntry = efficientByRole[role];
+      if (efficientEntry) {
+        const samePick = efficientEntry.primary.adapterId === primary.adapterId && efficientEntry.primary.modelId === primary.modelId;
+        if (samePick) {
+          lines.push(theme.fg("muted", "  Efficient: same pick — no cheaper or faster real alternative within the capability floor."));
+        } else {
+          const efficientWhy = efficientEntry.reason ? ` — ${efficientEntry.reason}` : "";
+          lines.push(theme.fg("muted", `  Efficient: ${this.aiTeamLabel(efficientEntry.primary)}${efficientWhy}`));
+        }
+      }
+
+      if (fallback) {
+        lines.push(theme.fg("muted", `  Fallback: ${this.aiTeamLabel(fallback)} — used if this model becomes unavailable.`));
+      } else if (!primary.available) {
+        lines.push(theme.fg("warning", "  Fallback: none eligible right now."));
+      }
+    });
+    lines.push(theme.fg("muted", "Use /models --evidence for the underlying metrics and sources."));
+    return lines;
+  }
+
+  /**
+   * Renders one team's full technical breakdown — primary, availability,
+   * fallback, the distribution-policy reason, and any real corroborating
+   * evidence the Model Intelligence Foundation registry has for that
+   * exact model. Shared by AI TEAM and EFFICIENT TEAM inside
+   * aiTeamDetailLines(); never called on its own.
+   * @param {Array<object>} team
+   */
+  teamEvidenceLines(team) {
+    const lines = [];
     const corroborationLine = (model) => (model.corroboration ?? [])
       .map((entry) => `${entry.metric}=${entry.value} (${entry.source})`)
       .join(" · ");
@@ -441,6 +586,35 @@ export class CockpitView {
       else if (!primary.available) lines.push(theme.fg("warning", "  no eligible fallback right now"));
       if (reason) lines.push(theme.fg("muted", `  ${reason}`));
     });
+    return lines;
+  }
+
+  /**
+   * `/models --evidence`: the full breakdown behind both AI TEAM and
+   * EFFICIENT TEAM picks — primary, availability, fallback, the real
+   * distribution-policy reason (near-tie, independence swap,
+   * temporarily-unavailable leader, efficiency dimension), and any real
+   * corroborating evidence the Model Intelligence Foundation registry has
+   * for that exact model (Hugging Face, manufacturer snapshots, Kairo's
+   * own telemetry). Corroboration is informational only: it never changed
+   * which model was picked, so it's shown, never blended into the reason.
+   * This is the technical audit trail; modelsExplainLines() is the plain-
+   * language default /models shows instead.
+   */
+  aiTeamDetailLines() {
+    const intel = this.snapshot?.modelIntelligence;
+    if (!intel || intel.status === "unknown") return this.fitLines();
+    const team = intel.aiTeam ?? [];
+    if (!team.length) return this.fitLines();
+    const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
+    const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
+    lines.push(...this.teamEvidenceLines(team));
+    const efficientTeam = intel.efficientTeam ?? [];
+    if (efficientTeam.length) {
+      lines.push(theme.fg("muted", "·"));
+      lines.push(theme.fg("muted", "EFFICIENT TEAM"));
+      lines.push(...this.teamEvidenceLines(efficientTeam));
+    }
     return lines;
   }
 

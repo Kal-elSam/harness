@@ -176,45 +176,159 @@ test("/models separates each role's block with a blank line, so scrolling throug
   assert.match(lines[builderIndex - 1], /\S/, "the separator must be visible content, not a blank line that gets dropped by addTranscript");
 });
 
-test("USAGE and AI TEAM tile side by side once the terminal is wide enough", () => {
+test("modelsExplainLines() gives concrete plain-language reasons, never raw metrics, percentages, or source names", () => {
   const { view } = makeView();
-  view.setRows([]);
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [{
+        role: "Debugger",
+        primary: {
+          adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", available: true,
+          corroboration: [{ metric: "terminal-bench", value: 57.9, source: "openai-official" }]
+        },
+        fallback: { adapterId: "codex", modelId: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", available: true },
+        reason: null
+      }],
+      efficientTeam: [{
+        role: "Debugger",
+        primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1", available: true },
+        fallback: null,
+        reason: "Near-equivalent capability — chosen for lower real subscription quota pressure."
+      }]
+    }
+  });
+  const lines = view.modelsExplainLines().join("\n");
+  assert.match(lines, /Debugger\s+Codex · GPT-6 Astra/);
+  assert.match(lines, /Selected for reasoning and terminal-debugging capability\./);
+  assert.match(lines, /Efficient: Claude · Fable 5\.1 — Near-equivalent capability — chosen for lower real subscription quota pressure\./);
+  assert.match(lines, /Fallback: Codex · GPT-5\.6 Sol — used if this model becomes unavailable\./);
+  assert.doesNotMatch(lines, /terminal-bench=/);
+  assert.doesNotMatch(lines, /openai-official/);
+  assert.doesNotMatch(lines, /%/);
+  assert.doesNotMatch(lines, /gpt-6-astra/); // no raw model-id slugs, only display names
+});
+
+test("modelsExplainLines() says so plainly when EFFICIENT TEAM has no cheaper or faster real alternative", () => {
+  const { view } = makeView();
   view.setSnapshot({
     projectRoot: "/repo/demo",
     modelIntelligence: {
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
       aiTeam: [{
         role: "Builder",
-        primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", available: true },
-        fallback: null
+        primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1", available: true },
+        fallback: null, reason: null
+      }],
+      efficientTeam: [{
+        role: "Builder",
+        primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1", available: true },
+        fallback: null, reason: null
       }]
     }
   });
-  const lines = view.render(160);
+  const lines = view.modelsExplainLines().join("\n");
+  assert.match(lines, /Efficient: same pick — no cheaper or faster real alternative within the capability floor\./);
+});
+
+test("modelsExplainLines() marks a currently-unavailable primary and names the real fallback used instead", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [{
+        role: "Tester",
+        primary: { adapterId: "opencode-go", modelId: "go-tester", displayName: "OpenCode Go Tester", available: false },
+        fallback: { adapterId: "claude", modelId: "claude-sonnet-5", displayName: "Claude Sonnet 5", available: true },
+        reason: "Real capability leader is temporarily unavailable (rate limited)."
+      }],
+      efficientTeam: []
+    }
+  });
+  const lines = view.modelsExplainLines().join("\n");
+  assert.match(lines, /Tester\s+Opencode-go · OpenCode Go Tester \(currently unavailable\)/);
+  assert.match(lines, /Real capability leader is temporarily unavailable \(rate limited\)\./);
+  assert.match(lines, /Fallback: Claude · Claude Sonnet 5 — used if this model becomes unavailable\./);
+});
+
+test("efficientTeamLines() renders one line per role, same shape as AI TEAM's compact widget", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      efficientTeam: [{
+        role: "Economy",
+        primary: { adapterId: "opencode-go", modelId: "go-hy3", displayName: "Hy3", available: true },
+        fallback: null, reason: null
+      }]
+    }
+  });
+  const lines = view.efficientTeamLines().join("\n");
+  assert.match(lines, /Artificial Analysis, live/);
+  assert.match(lines, /Economy\s+Opencode-go · Hy3/);
+});
+
+function aiPlusEfficientSnapshot() {
+  return {
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [{
+        role: "Builder",
+        primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", available: true },
+        fallback: null, reason: null
+      }],
+      efficientTeam: [{
+        role: "Builder",
+        primary: { adapterId: "opencode-go", modelId: "go-glm", displayName: "GLM 5.3", available: true },
+        fallback: null, reason: "Near-equivalent capability — chosen for lower real price."
+      }]
+    }
+  };
+}
+
+test("USAGE, AI TEAM, and EFFICIENT TEAM tile side by side once the terminal is wide enough", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setSnapshot(aiPlusEfficientSnapshot());
+  const lines = view.render(220);
   const topLine = lines.find((line) => line.includes("KAIRO"));
   assert.ok(topLine.includes("AI TEAM"));
+  assert.ok(topLine.includes("EFFICIENT TEAM"));
   assert.match(lines.join("\n"), /Builder\s+Claude · Claude Fable 5\.1/);
+  assert.match(lines.join("\n"), /Builder\s+Opencode-go · GLM 5\.3/);
+  for (const line of lines) assert.ok(visibleWidth(line) <= 220, `line "${line}" exceeds width`);
+});
+
+test("at medium width, USAGE sits full-width on top and AI TEAM + EFFICIENT TEAM tile below it", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setSnapshot(aiPlusEfficientSnapshot());
+  const lines = view.render(160);
+  const topLine = lines.find((line) => line.includes("KAIRO"));
+  assert.ok(!topLine.includes("AI TEAM"), "USAGE's own top border shouldn't share a row with AI TEAM at medium width");
+  const teamHeaderLine = lines.find((line) => line.includes("AI TEAM"));
+  assert.ok(teamHeaderLine.includes("EFFICIENT TEAM"), "AI TEAM and EFFICIENT TEAM tile side by side below USAGE");
+  assert.match(lines.join("\n"), /Builder\s+Claude · Claude Fable 5\.1/);
+  assert.match(lines.join("\n"), /Builder\s+Opencode-go · GLM 5\.3/);
   for (const line of lines) assert.ok(visibleWidth(line) <= 160, `line "${line}" exceeds width`);
 });
 
-test("USAGE and AI TEAM stack below the width threshold", () => {
+test("below the medium threshold, AI TEAM and EFFICIENT TEAM collapse into one TEAMS panel with CAPABILITY/EFFICIENT columns", () => {
   const { view } = makeView();
   view.setRows([]);
-  view.setSnapshot({
-    projectRoot: "/repo/demo",
-    modelIntelligence: {
-      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      aiTeam: [{
-        role: "Builder",
-        primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", available: true },
-        fallback: null
-      }]
-    }
-  });
+  view.setSnapshot(aiPlusEfficientSnapshot());
   const lines = view.render(100);
   const topLine = lines.find((line) => line.includes("KAIRO"));
   assert.ok(!topLine.includes("AI TEAM"));
-  assert.match(lines.join("\n"), /Builder\s+Claude · Claude Fable 5\.1/);
+  assert.ok(lines.some((line) => line.includes("TEAMS")));
+  const joined = lines.join("\n");
+  assert.match(joined, /CAPABILITY/);
+  assert.match(joined, /EFFICIENT/);
+  assert.match(joined, /Builder\s+Claude · Claude Fable 5\.1\s+Opencode-go · GLM 5\.3/);
 });
 
 test("AI TEAM reports honestly when there is no benchmark data yet", () => {

@@ -144,7 +144,7 @@ export async function runCockpitApp({
       // blocks with no indication of which command produced which one.
       pushTranscript("user", task);
       if (command === "/help") {
-        pushTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /models AI team · /why eligibility detail · /clear · /quit");
+        pushTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /models AI TEAM + EFFICIENT TEAM picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
       } else if (command === "/usage") {
         for (const line of view.usageLines()) pushTranscript("kairo", line);
       } else if (command === "/providers") {
@@ -153,9 +153,13 @@ export async function runCockpitApp({
         for (const line of view.providerLines()) pushTranscript("kairo", line);
         pushTranscript("kairo", view.integrationsLine());
       } else if (command === "/models") {
-        // The widget only shows Role -> effective model; /models writes
-        // the full primary/fallback/reason breakdown behind each pick.
-        for (const line of view.aiTeamDetailLines()) pushTranscript("kairo", line);
+        // The widgets only show Role -> effective model; /models writes
+        // the plain-language why (capability, efficient alternative,
+        // fallback), never raw metrics/percentages/ids/sources. Those
+        // stay behind the explicit --evidence flag for technical audit.
+        const flag = task.slice(command.length).trim();
+        const explainLines = flag === "--evidence" ? view.aiTeamDetailLines() : view.modelsExplainLines();
+        for (const line of explainLines) pushTranscript("kairo", line);
       } else if (command === "/why") {
         // Drill-down for FIT: which providers were excluded and the exact
         // real reason (quota, availability, PAYG/manual-only policy).
