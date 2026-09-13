@@ -31,7 +31,7 @@ import { createCapabilityRegistry } from "../intelligence/model-capability-regis
 import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../intelligence/model-capability-registry-sources.js";
 import { ingestOfficialSnapshotEvidence } from "../intelligence/official-benchmark-snapshots.js";
 import { ingestKairoTelemetryEvidence } from "../intelligence/kairo-telemetry-source.js";
-import { ingestQuotaPressureEvidence } from "../intelligence/subscription-pressure-source.js";
+import { buildProviderCapacity } from "../intelligence/subscription-pressure-source.js";
 
 export const CONVERSATION_SCHEMA = "kairo.conversation/v1";
 
@@ -461,14 +461,18 @@ export function createConversationService(deps = {}) {
         ingestOfficialSnapshotEvidence(registry);
         const runRecords = await listRunRecordsCached("runs", null).catch(() => []);
         ingestKairoTelemetryEvidence(registry, runRecords);
-        ingestQuotaPressureEvidence(registry, catalogsByAdapter, remainingPercentByAdapter(codexUsage, claudeUsage, opencodeUsage));
+        // Provider quota is a PROVIDER-level fact, never copied into the
+        // per-model capability registry as if it were model evidence — see
+        // subscription-pressure-source.js. buildEfficientTeam resolves it
+        // separately, by adapterId, only as its very last tiebreak.
+        const providerCapacity = buildProviderCapacity(remainingPercentByAdapter(codexUsage, claudeUsage, opencodeUsage));
 
         result.modelIntelligence = {
           status: aa.status, source: aa.source, age: aa.age,
           models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(scored),
           eligibility, coverage,
           aiTeam: buildAiTeam(scoredAll, eligibility, registry),
-          efficientTeam: buildEfficientTeam(scoredAll, eligibility, registry)
+          efficientTeam: buildEfficientTeam(scoredAll, eligibility, registry, undefined, providerCapacity)
         };
       }
       return result;

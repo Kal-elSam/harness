@@ -603,29 +603,40 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
   return entries;
 }
 
-// The real signals EFFICIENT TEAM checks, in priority order, to choose
-// among candidates that already clear EFFICIENT_CAPABILITY_FLOOR (see
-// buildEfficientTeam) — never a blended score, each one only decides when
-// the previous ones don't (unknown or tied).
+// The real, per-MODEL signals EFFICIENT TEAM checks, in priority order, to
+// choose among candidates that already clear EFFICIENT_CAPABILITY_FLOOR
+// (see buildEfficientTeam) — never a blended score, each one only decides
+// when the previous ones don't (unknown or tied). This is the
+// "ModelEfficiency" side of the split: real per-task economics that
+// genuinely differ model to model.
 //
-// kairo.quotaRemainingPercent is deliberately LAST, not first. It's a real
-// PROVIDER-level signal (account-wide headroom — see
-// subscription-pressure-source.js), not a per-model efficiency
-// measurement, and it's attached identically to every model under that
-// provider purely so it can be looked up the same way as a model-specific
-// metric. Putting it ahead of the model-specific signals below let a
-// provider's spare quota alone decide who wins a role even when a
-// candidate had real, decisive cost/duration/price/throughput evidence —
-// exactly the bug this ordering fixes (a model must never win purely
-// because its provider happens to have more room left).
+// Provider quota (ProviderCapacity, see subscription-pressure-source.js)
+// is deliberately NOT one of these — it isn't a per-model measurement at
+// all (every model under a provider shares the exact same real number),
+// so it's resolved separately, by adapterId, and checked only as the very
+// last tiebreak (see pickMostEfficient/describeEfficiencyChoice) —
+// strictly after every real per-model signal here has been exhausted. A
+// provider's spare quota must never, by itself, decide who wins a role
+// over a model with genuinely better per-task economics.
 const EFFICIENCY_DIMENSIONS = [
   { key: "kairo.totalTokens", better: "min", label: "lower real observed token consumption" },
   { key: "kairo.cost", better: "min", label: "lower real observed cost per task" },
   { key: "kairo.durationMs", better: "min", label: "lower real observed duration" },
   { key: "priceInputPerMTok", better: "min", label: "lower real price" },
-  { key: "outputTokensPerSecond", better: "max", label: "higher reported throughput" },
-  { key: "kairo.quotaRemainingPercent", better: "max", label: "lower real provider quota pressure" }
+  { key: "outputTokensPerSecond", better: "max", label: "higher reported throughput" }
 ];
+
+/**
+ * Resolves a real ProviderCapacity signal for a model's adapter — never
+ * the model's own identity. Two models under the same adapter always
+ * resolve to the exact same value here, because quota genuinely is an
+ * account-wide, not per-model, real fact.
+ * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} providerCapacity
+ * @param {{adapterId: string}} model
+ */
+function resolveProviderCapacity(providerCapacity, model) {
+  return providerCapacity?.[model.adapterId]?.quotaRemainingPercent ?? null;
+}
 
 // EFFICIENT TEAM's capability floor: a candidate must retain at least this
 // fraction of the real capability leader's score to be considered
@@ -645,11 +656,18 @@ export const EFFICIENT_CAPABILITY_FLOOR = 0.80;
 
 /**
  * Orders real near-equivalents by the EFFICIENCY_DIMENSIONS priority
- * chain. Falls back to a stable adapterId/modelId tiebreak so the same
- * real near-tie always resolves the same way run to run, instead of
- * depending on array order.
+ * chain (real per-model economics). Only when NONE of those distinguish
+ * the candidates does a real ProviderCapacity signal (quota) get to
+ * decide — resolved per-adapter, never per-model, so it can never
+ * masquerade as evidence about one model being more efficient than
+ * another from a different provider. Falls back to a stable
+ * adapterId/modelId tiebreak so the same real near-tie always resolves
+ * the same way run to run, instead of depending on array order.
+ * @param {Array<{model: object, value: number}>} candidates
+ * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
+ * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} [providerCapacity]
  */
-function pickMostEfficient(candidates, registry) {
+function pickMostEfficient(candidates, registry, providerCapacity = null) {
   const sorted = [...candidates].sort((a, b) => {
     for (const { key, better } of EFFICIENCY_DIMENSIONS) {
       const av = resolveMetric(registry, a.model, key);
@@ -657,14 +675,24 @@ function pickMostEfficient(candidates, registry) {
       if (av == null || bv == null || av === bv) continue;
       return better === "max" ? bv - av : av - bv;
     }
+    const aQuota = resolveProviderCapacity(providerCapacity, a.model);
+    const bQuota = resolveProviderCapacity(providerCapacity, b.model);
+    if (aQuota != null && bQuota != null && aQuota !== bQuota) return bQuota - aQuota; // higher headroom wins
     const adapterCompare = a.model.adapterId.localeCompare(b.model.adapterId);
     return adapterCompare !== 0 ? adapterCompare : a.model.modelId.localeCompare(b.model.modelId);
   });
   return sorted[0];
 }
 
-/** Names the real dimension that actually decided an EFFICIENT TEAM pick, or null when it's just the unremarkable capability leader itself. */
-function describeEfficiencyChoice(chosen, leader, registry) {
+/**
+ * Names the real dimension that actually decided an EFFICIENT TEAM pick,
+ * or null when it's just the unremarkable capability leader itself.
+ * @param {{model: object, value: number}} chosen
+ * @param {{model: object, value: number}} leader
+ * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
+ * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} [providerCapacity]
+ */
+function describeEfficiencyChoice(chosen, leader, registry, providerCapacity = null) {
   if (chosen.model.adapterId === leader.model.adapterId && chosen.model.modelId === leader.model.modelId) return null;
   for (const { key, better, label } of EFFICIENCY_DIMENSIONS) {
     const chosenValue = resolveMetric(registry, chosen.model, key);
@@ -672,7 +700,12 @@ function describeEfficiencyChoice(chosen, leader, registry) {
     if (chosenValue == null || leaderValue == null || chosenValue === leaderValue) continue;
     const chosenIsBetter = better === "max" ? chosenValue > leaderValue : chosenValue < leaderValue;
     if (chosenIsBetter) return `Adequate capability — chosen for ${label}.`;
-    break; // this dimension didn't favor the switch; a later one must have (stable tiebreak) — no real number to report
+    break; // this dimension didn't favor the switch; a later real per-model signal or provider quota must have — no real number to report
+  }
+  const chosenQuota = resolveProviderCapacity(providerCapacity, chosen.model);
+  const leaderQuota = resolveProviderCapacity(providerCapacity, leader.model);
+  if (chosenQuota != null && leaderQuota != null && chosenQuota > leaderQuota) {
+    return "Adequate capability — chosen for lower real provider quota pressure.";
   }
   return "Adequate capability — chosen by a stable tiebreak, no real consumption/cost/duration/price/speed/quota signal distinguished them.";
 }
@@ -716,9 +749,15 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>|null} [registry]
  * @param {number} [capabilityFloor] - fraction of the leader's real score a
  *   candidate must retain to be considered adequate (default 0.80).
+ * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} [providerCapacity] -
+ *   real per-adapter quota headroom (see subscription-pressure-source.js's
+ *   buildProviderCapacity) — a PROVIDER-level signal, checked only as the
+ *   very last tiebreak, strictly after every per-model EFFICIENCY_DIMENSIONS
+ *   signal. Never blended with or treated as evidence about a specific
+ *   model's own efficiency.
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
-export function buildEfficientTeam(models, eligibility = {}, registry = null, capabilityFloor = EFFICIENT_CAPABILITY_FLOOR) {
+export function buildEfficientTeam(models, eligibility = {}, registry = null, capabilityFloor = EFFICIENT_CAPABILITY_FLOOR, providerCapacity = null) {
   const effectiveRegistry = ensureRegistry(models, registry);
   const roleDefinitions = buildAiTeamRoleDefinitions(effectiveRegistry);
   const entries = [];
@@ -739,7 +778,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, ca
 
     const leader = eligibleRanked[0];
     const adequate = adequateCandidates(eligibleRanked, leader, better, capabilityFloor);
-    const chosen = pickMostEfficient(adequate, effectiveRegistry);
+    const chosen = pickMostEfficient(adequate, effectiveRegistry, providerCapacity);
     const isOnlyAdequateOption = adequate.length === 1
       && chosen.model.adapterId === leader.model.adapterId && chosen.model.modelId === leader.model.modelId;
 
@@ -762,7 +801,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, ca
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
       reason: isOnlyAdequateOption
         ? "Only adequate option — no real alternative clears the capability floor."
-        : describeEfficiencyChoice(chosen, leader, effectiveRegistry)
+        : describeEfficiencyChoice(chosen, leader, effectiveRegistry, providerCapacity)
     });
   }
   return entries;

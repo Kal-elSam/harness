@@ -561,16 +561,17 @@ test("a provider's real quota headroom alone can never decide a role when a real
   const registry = createCapabilityRegistry();
   const codexId = registry.registerIdentity("codex", "codex-model");
   const claudeId = registry.registerIdentity("claude", "claude-model");
-  // Codex's provider has far more real quota headroom than Claude's...
-  registry.addEvidence(codexId, { metric: "kairo.quotaRemainingPercent", value: 95, source: "kairo-telemetry", verified: true });
-  registry.addEvidence(claudeId, { metric: "kairo.quotaRemainingPercent", value: 10, source: "kairo-telemetry", verified: true });
-  // ...but Claude's real observed cost per task is meaningfully lower —
-  // a genuine per-model efficiency signal that must decide first, even
+  // Claude's real observed cost per task is meaningfully lower — a
+  // genuine per-model efficiency signal that must decide first, even
   // though it means picking the model whose provider has far LESS quota.
   registry.addEvidence(codexId, { metric: "kairo.cost", value: 0.40, source: "kairo-telemetry", verified: true });
   registry.addEvidence(claudeId, { metric: "kairo.cost", value: 0.05, source: "kairo-telemetry", verified: true });
+  // Codex's PROVIDER has far more real quota headroom than Claude's —
+  // modeled as ProviderCapacity, resolved by adapterId, never copied into
+  // the per-model registry above.
+  const providerCapacity = { codex: { adapterId: "codex", quotaRemainingPercent: 95 }, claude: { adapterId: "claude", quotaRemainingPercent: 10 } };
 
-  const team = buildEfficientTeam(scored, { codex: { ok: true }, claude: { ok: true } }, registry);
+  const team = buildEfficientTeam(scored, { codex: { ok: true }, claude: { ok: true } }, registry, undefined, providerCapacity);
   const builder = team.find((t) => t.role === "Builder");
   assert.equal(builder.primary.adapterId, "claude", "real observed cost must decide before quota, even when the other provider has far more headroom");
   assert.match(builder.reason, /lower real observed cost per task/);
@@ -584,19 +585,33 @@ test("real provider quota still decides as a last resort when no per-model signa
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
   );
-  const registry = createCapabilityRegistry();
-  const claudeId = registry.registerIdentity("claude", "claude-model");
-  const codexId = registry.registerIdentity("codex", "codex-model");
   // No real consumption/cost/duration/price/throughput evidence for
   // either model — quota is the only real signal available, so it's
   // legitimate for it to decide, just last in line.
-  registry.addEvidence(claudeId, { metric: "kairo.quotaRemainingPercent", value: 10, source: "kairo-telemetry", verified: true });
-  registry.addEvidence(codexId, { metric: "kairo.quotaRemainingPercent", value: 95, source: "kairo-telemetry", verified: true });
+  const providerCapacity = { claude: { adapterId: "claude", quotaRemainingPercent: 10 }, codex: { adapterId: "codex", quotaRemainingPercent: 95 } };
 
-  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, registry);
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, null, undefined, providerCapacity);
   const builder = team.find((t) => t.role === "Builder");
   assert.equal(builder.primary.adapterId, "codex", "with no other real signal, quota headroom is a legitimate last-resort tiebreak");
   assert.match(builder.reason, /lower real provider quota pressure/);
+});
+
+test("provider quota is resolved per-adapter, not per-model — two models under the winning provider both benefit identically", () => {
+  const aa = [
+    { slug: "claude-fable", name: "Fable", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
+    { slug: "claude-opus", name: "Opus", intelligenceIndex: 90, codingIndex: 88, mathIndex: null }, // ~97.8%, clears the floor
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 89, mathIndex: null } // ~98.9%, clears the floor
+  ];
+  const scored = scoreAvailableModels(
+    [{ adapterId: "claude", models: [{ id: "claude-fable" }, { id: "claude-opus" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
+  );
+  // No per-model signal for any of the three — Claude's real quota
+  // headroom is the only distinguishing signal, and it applies equally to
+  // BOTH Claude models, not just whichever one happens to be the leader.
+  const providerCapacity = { claude: { adapterId: "claude", quotaRemainingPercent: 90 }, codex: { adapterId: "codex", quotaRemainingPercent: 5 } };
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, null, undefined, providerCapacity);
+  const builder = team.find((t) => t.role === "Builder");
+  assert.equal(builder.primary.adapterId, "claude", "the provider with more real headroom should win when nothing else distinguishes the candidates");
 });
 
 // The tests below use the REAL production ingestion functions
