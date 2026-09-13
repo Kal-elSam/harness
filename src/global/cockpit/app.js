@@ -172,7 +172,7 @@ export async function runCockpitApp({
       // blocks with no indication of which command produced which one.
       pushTranscript("user", task);
       if (command === "/help") {
-        pushTranscript("kairo", "/plan <task> force a plan · /usage provider status · /providers connections · /models AI TEAM + EFFICIENT TEAM picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
+        pushTranscript("kairo", "/plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
       } else if (command === "/usage") {
         for (const line of view.usageLines()) pushTranscript("kairo", line);
       } else if (command === "/providers") {

@@ -493,23 +493,22 @@ const NEAR_EQUIVALENCE_BAND = 0.08;
 
 /**
  * The "AI TEAM" distribution policy: decides which real, eligible provider
- * actually gets reserved for each role — not just "who scores highest
- * seven times over," which is what let one model (Fable) win every role
- * that shares a real metric. The policy, in order:
+ * actually gets reserved for each role — pure maximum capability, full
+ * stop. The policy, in order:
  *
  * 1. Capability floor — a role only considers models that report the real
  *    metric(s) it needs (unchanged from before: `rankBy` drops nulls).
- * 2. Decisive roles settle first — if a role's real winner beats the best
- *    alternative from another provider by more than NEAR_EQUIVALENCE_BAND,
- *    that real advantage is never sacrificed for diversity.
- * 3. Near-equivalent roles favor real savings — among alternatives within
- *    the band, the genuinely cheaper real option wins the tie; if price
- *    doesn't decide, the real faster option wins next; only then does it
- *    fall back to whichever provider is least-used so far. Ties (never
- *    real wins) are what create diversity and conserve money, speed, and quota.
- * 4. Review independence — Reviewer is reassigned off Builder's own
- *    provider whenever a real alternative exists, so a model is never the
- *    sole judge of its own family's work.
+ * 2. The real winner wins — whichever eligible model actually scores
+ *    highest for the role, whatever the price, cost, duration, throughput,
+ *    or provider quota. AI TEAM never trades capability for resource
+ *    savings or provider diversity — that policy lives in
+ *    buildEfficientTeam() instead, using the exact same real ranking and
+ *    evidence.
+ * 3. Review independence — Reviewer is reassigned off Builder's own
+ *    provider whenever a real, near-equivalent (NEAR_EQUIVALENCE_BAND)
+ *    alternative exists, so a model is never the sole judge of its own
+ *    family's work. This is the one exception to "pure capability" — a
+ *    review-quality/bias concern, not a cost one.
  *
  * A temporarily unavailable real leader (quota/rate-limit) still never
  * just disappears: if the true global winner (across every candidate,
@@ -605,16 +604,44 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
 }
 
 // The real signals EFFICIENT TEAM checks, in priority order, to choose
-// among candidates that are already real near-equivalents of the
-// capability leader (see buildEfficientTeam) — never a blended score,
-// each one only decides when the previous ones don't (unknown or tied).
+// among candidates that already clear EFFICIENT_CAPABILITY_FLOOR (see
+// buildEfficientTeam) — never a blended score, each one only decides when
+// the previous ones don't (unknown or tied).
+//
+// kairo.quotaRemainingPercent is deliberately LAST, not first. It's a real
+// PROVIDER-level signal (account-wide headroom — see
+// subscription-pressure-source.js), not a per-model efficiency
+// measurement, and it's attached identically to every model under that
+// provider purely so it can be looked up the same way as a model-specific
+// metric. Putting it ahead of the model-specific signals below let a
+// provider's spare quota alone decide who wins a role even when a
+// candidate had real, decisive cost/duration/price/throughput evidence —
+// exactly the bug this ordering fixes (a model must never win purely
+// because its provider happens to have more room left).
 const EFFICIENCY_DIMENSIONS = [
-  { key: "kairo.quotaRemainingPercent", better: "max", label: "lower real subscription quota pressure" },
+  { key: "kairo.totalTokens", better: "min", label: "lower real observed token consumption" },
   { key: "kairo.cost", better: "min", label: "lower real observed cost per task" },
   { key: "kairo.durationMs", better: "min", label: "lower real observed duration" },
   { key: "priceInputPerMTok", better: "min", label: "lower real price" },
-  { key: "outputTokensPerSecond", better: "max", label: "higher reported throughput" }
+  { key: "outputTokensPerSecond", better: "max", label: "higher reported throughput" },
+  { key: "kairo.quotaRemainingPercent", better: "max", label: "lower real provider quota pressure" }
 ];
+
+// EFFICIENT TEAM's capability floor: a candidate must retain at least this
+// fraction of the real capability leader's score to be considered
+// "adequate" for a role — a genuinely different policy from
+// NEAR_EQUIVALENCE_BAND's "almost identical" test. NEAR_EQUIVALENCE_BAND
+// (0.08, ~8%) keeps governing maximum-capability equivalence (Reviewer
+// independence, "these two are basically tied" comparisons) — it no
+// longer governs EFFICIENT TEAM. This floor is intentionally much wider:
+// EFFICIENT TEAM's job is "the minimum model that's still genuinely
+// sufficient for the role," not "whichever near-identical model happens
+// to be cheaper." 0.80 is an initial, explicitly configurable starting
+// point (see buildEfficientTeam's `capabilityFloor` parameter) — not
+// calibrated against measured data the way NEAR_EQUIVALENCE_BAND was,
+// since "sufficient" is a product decision, not something derivable from
+// benchmark gaps alone.
+export const EFFICIENT_CAPABILITY_FLOOR = 0.80;
 
 /**
  * Orders real near-equivalents by the EFFICIENCY_DIMENSIONS priority
@@ -644,30 +671,54 @@ function describeEfficiencyChoice(chosen, leader, registry) {
     const leaderValue = resolveMetric(registry, leader.model, key);
     if (chosenValue == null || leaderValue == null || chosenValue === leaderValue) continue;
     const chosenIsBetter = better === "max" ? chosenValue > leaderValue : chosenValue < leaderValue;
-    if (chosenIsBetter) return `Near-equivalent capability — chosen for ${label}.`;
+    if (chosenIsBetter) return `Adequate capability — chosen for ${label}.`;
     break; // this dimension didn't favor the switch; a later one must have (stable tiebreak) — no real number to report
   }
-  return "Near-equivalent capability — chosen by a stable tiebreak, no real cost/quota/speed signal distinguished them.";
+  return "Adequate capability — chosen by a stable tiebreak, no real consumption/cost/duration/price/speed/quota signal distinguished them.";
 }
 
 /**
- * EFFICIENT TEAM: the exact same real ranking and evidence as AI TEAM,
- * but among candidates within NEAR_EQUIVALENCE_BAND of the real
- * capability leader, prefers whichever real signal actually reduces
- * resource pressure (see EFFICIENCY_DIMENSIONS) instead of always taking
- * the raw leader. Never invents a savings percentage or a blended score
- * — only ever orders by a real, already-connected signal, and falls back
- * to a stable tiebreak when none of them distinguish the candidates. If
- * nothing within the band beats the leader on any real signal, EFFICIENT
- * TEAM shows the exact same model as AI TEAM for that role — a fallback
- * is never dressed up as an "economical" alternative.
+ * Which eligible, ranked candidates are "adequate" for a role under the
+ * capability-floor policy — retain at least `capabilityFloor` fraction of
+ * the real leader's score. Roles ranked "min" (Economy, ranked by price)
+ * have no meaningful capability floor to apply here: their own compute()
+ * already enforces a hard intelligence/coding floor before ranking by
+ * price, so every eligible candidate already qualifies as "adequate" —
+ * applying a floor to the ranked value (price) would be applying it to
+ * the wrong axis entirely.
+ */
+function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
+  if (better !== "max") return eligibleRanked;
+  const floorValue = leader.value * capabilityFloor;
+  return eligibleRanked.filter((entry) => entry.value >= floorValue);
+}
+
+/**
+ * EFFICIENT TEAM: the minimum real model that's still genuinely
+ * sufficient for a role — not "whichever near-identical model happens to
+ * be cheaper." Among eligible candidates that retain at least
+ * `capabilityFloor` (default EFFICIENT_CAPABILITY_FLOOR, 0.80) of the
+ * real capability leader's score, prefers whichever real signal actually
+ * reduces resource pressure (see EFFICIENCY_DIMENSIONS — token
+ * consumption, then cost, duration, price, throughput, and only last a
+ * provider's real quota headroom) instead of always taking the raw
+ * leader. Never invents a savings percentage or a blended score — only
+ * ever orders by a real, already-connected signal, and falls back to a
+ * stable tiebreak when none of them distinguish the candidates.
+ *
+ * Astra/Fable/Opus-class leaders can still appear here — precisely when
+ * no smaller real model clears the floor, EFFICIENT TEAM shows the exact
+ * same model as AI TEAM for that role, with an honest "Only adequate
+ * option" reason rather than a fabricated savings claim.
  * @param {Array<object>} models - scoreAvailableModels() output, computed
  *   across every candidate provider regardless of current eligibility.
  * @param {Record<string, {ok: boolean, reason?: string}>} eligibility
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>|null} [registry]
+ * @param {number} [capabilityFloor] - fraction of the leader's real score a
+ *   candidate must retain to be considered adequate (default 0.80).
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
-export function buildEfficientTeam(models, eligibility = {}, registry = null) {
+export function buildEfficientTeam(models, eligibility = {}, registry = null, capabilityFloor = EFFICIENT_CAPABILITY_FLOOR) {
   const effectiveRegistry = ensureRegistry(models, registry);
   const roleDefinitions = buildAiTeamRoleDefinitions(effectiveRegistry);
   const entries = [];
@@ -687,9 +738,10 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null) {
     }
 
     const leader = eligibleRanked[0];
-    const scale = Math.abs(leader.value) || 1;
-    const withinBand = eligibleRanked.filter((entry) => Math.abs(leader.value - entry.value) / scale <= NEAR_EQUIVALENCE_BAND);
-    const chosen = pickMostEfficient(withinBand, effectiveRegistry);
+    const adequate = adequateCandidates(eligibleRanked, leader, better, capabilityFloor);
+    const chosen = pickMostEfficient(adequate, effectiveRegistry);
+    const isOnlyAdequateOption = adequate.length === 1
+      && chosen.model.adapterId === leader.model.adapterId && chosen.model.modelId === leader.model.modelId;
 
     const globalLeader = globalRanked[0];
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
@@ -708,7 +760,9 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null) {
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason: describeEfficiencyChoice(chosen, leader, effectiveRegistry)
+      reason: isOnlyAdequateOption
+        ? "Only adequate option — no real alternative clears the capability floor."
+        : describeEfficiencyChoice(chosen, leader, effectiveRegistry)
     });
   }
   return entries;

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { CockpitView } from "../src/global/cockpit/view.js";
 
 const ROWS = [
@@ -253,24 +253,6 @@ test("modelsExplainLines() marks a currently-unavailable primary and names the r
   assert.match(lines, /Fallback: Claude · Claude Sonnet 5 — used if this model becomes unavailable\./);
 });
 
-test("efficientTeamLines() renders one line per role, same shape as AI TEAM's compact widget", () => {
-  const { view } = makeView();
-  view.setSnapshot({
-    projectRoot: "/repo/demo",
-    modelIntelligence: {
-      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      efficientTeam: [{
-        role: "Economy",
-        primary: { adapterId: "opencode-go", modelId: "go-hy3", displayName: "Hy3", available: true },
-        fallback: null, reason: null
-      }]
-    }
-  });
-  const lines = view.efficientTeamLines().join("\n");
-  assert.match(lines, /Artificial Analysis, live/);
-  assert.match(lines, /Economy\s+Opencode-go · Hy3/);
-});
-
 function aiPlusEfficientSnapshot() {
   return {
     projectRoot: "/repo/demo",
@@ -290,41 +272,39 @@ function aiPlusEfficientSnapshot() {
   };
 }
 
-test("USAGE, AI TEAM, and EFFICIENT TEAM tile side by side once the terminal is wide enough", () => {
-  const { view } = makeView();
-  view.setRows([]);
-  view.setSnapshot(aiPlusEfficientSnapshot());
-  const lines = view.render(220);
-  const topLine = lines.find((line) => line.includes("KAIRO"));
-  assert.ok(topLine.includes("AI TEAM"));
-  assert.ok(topLine.includes("EFFICIENT TEAM"));
-  assert.match(lines.join("\n"), /Builder\s+Claude · Claude Fable 5\.1/);
-  assert.match(lines.join("\n"), /Builder\s+Opencode-go · GLM 5\.3/);
-  for (const line of lines) assert.ok(visibleWidth(line) <= 220, `line "${line}" exceeds width`);
-});
-
-test("at medium width, USAGE sits full-width on top and AI TEAM + EFFICIENT TEAM tile below it", () => {
+test("USAGE and MODEL TEAMS tile side by side once the terminal is wide enough — one unified widget, never separate AI TEAM/EFFICIENT TEAM cards", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot(aiPlusEfficientSnapshot());
   const lines = view.render(160);
   const topLine = lines.find((line) => line.includes("KAIRO"));
-  assert.ok(!topLine.includes("AI TEAM"), "USAGE's own top border shouldn't share a row with AI TEAM at medium width");
-  const teamHeaderLine = lines.find((line) => line.includes("AI TEAM"));
-  assert.ok(teamHeaderLine.includes("EFFICIENT TEAM"), "AI TEAM and EFFICIENT TEAM tile side by side below USAGE");
-  assert.match(lines.join("\n"), /Builder\s+Claude · Claude Fable 5\.1/);
-  assert.match(lines.join("\n"), /Builder\s+Opencode-go · GLM 5\.3/);
+  assert.ok(topLine.includes("MODEL TEAMS"));
+  assert.doesNotMatch(lines.join("\n"), /✿ AI TEAM|✿ EFFICIENT TEAM/, "the three-card layout must never come back");
+  const joined = lines.join("\n");
+  assert.match(joined, /CAPABILITY/);
+  assert.match(joined, /EFFICIENT/);
+  assert.match(joined, /Builder\s+Claude · Claude Fable 5\.1\s+Opencode-go · GLM 5\.3/);
   for (const line of lines) assert.ok(visibleWidth(line) <= 160, `line "${line}" exceeds width`);
 });
 
-test("below the medium threshold, AI TEAM and EFFICIENT TEAM collapse into one TEAMS panel with CAPABILITY/EFFICIENT columns", () => {
+test("USAGE takes roughly a third of the width when tiled with MODEL TEAMS", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setSnapshot(aiPlusEfficientSnapshot());
+  const lines = view.render(150);
+  const topLine = stripTerminalSequences(lines.find((line) => line.includes("KAIRO")));
+  const usageWidth = topLine.indexOf("MODEL TEAMS") - 3; // -3 for the gap and the right panel's own left border/space
+  assert.ok(usageWidth >= 40 && usageWidth <= 60, `USAGE panel should be roughly a third of 150 cols, got ${usageWidth}`);
+});
+
+test("below the width threshold, USAGE stacks above the unified MODEL TEAMS panel", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot(aiPlusEfficientSnapshot());
   const lines = view.render(100);
   const topLine = lines.find((line) => line.includes("KAIRO"));
-  assert.ok(!topLine.includes("AI TEAM"));
-  assert.ok(lines.some((line) => line.includes("TEAMS")));
+  assert.ok(!topLine.includes("MODEL TEAMS"), "USAGE's own top border shouldn't share a row with MODEL TEAMS below the threshold");
+  assert.ok(lines.some((line) => line.includes("MODEL TEAMS")));
   const joined = lines.join("\n");
   assert.match(joined, /CAPABILITY/);
   assert.match(joined, /EFFICIENT/);
@@ -395,7 +375,7 @@ test("/why also shows real catalog coverage — separate from runtime eligibilit
   assert.match(lines, /claude: documented catalog, 8\/9 models matched to Artificial Analysis/);
 });
 
-test("narrow dashboard keeps Go and Zen on separate readable rows", () => {
+test("narrow dashboard keeps every Go window on a separate readable row, and never shows Zen (manual/PAYG, not automatic)", () => {
   const { view } = makeView();
   view.setSnapshot({
     projectRoot: "/repo/demo",
@@ -416,11 +396,10 @@ test("narrow dashboard keeps Go and Zen on separate readable rows", () => {
   assert.match(lines, /Go\s+roll 100%/);
   assert.match(lines, /week 100%/);
   assert.match(lines, /month 0% LIMITED/);
-  assert.match(lines, /Zen\s+\$33\.81 local \/ 7d/);
-  assert.doesNotMatch(lines, /PAYG blocked/);
+  assert.doesNotMatch(lines, /Zen/, "USAGE only shows automatic-routing resources — Zen belongs in /providers");
 });
 
-test("workspace health shows every measured Go window and Zen local spend without policy noise", () => {
+test("compactHealthLines shows every measured Go window without policy noise, and never Zen", () => {
   const { view } = makeView();
   view.setSnapshot({
     usage: {
@@ -438,8 +417,38 @@ test("workspace health shows every measured Go window and Zen local spend withou
   assert.match(lines, /Go\s+roll 100%/);
   assert.match(lines, /week 75%/);
   assert.match(lines, /month 0% LIMITED/);
-  assert.match(lines, /Zen\s+\$33\.81 local \/ 7d/);
+  assert.doesNotMatch(lines, /Zen/);
   assert.doesNotMatch(lines, /PAYG blocked/);
+});
+
+test("/usage shows only the automatic-routing providers (Codex, Claude, Go) and never Zen", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    usage: {
+      codex: { windows: [{ name: "5h", remainingPercent: 69 }, { name: "weekly", remainingPercent: 87 }], source: "codex app-server" },
+      claude: { windows: [{ label: "S", remainingPercent: 50 }, { label: "W", remainingPercent: 67 }], source: "claude -p usage" },
+      opencode: {
+        go: { windows: [{ name: "rolling", remainingPercent: 78 }, { name: "weekly", remainingPercent: 91 }, { name: "monthly", remainingPercent: 96 }], source: "opencode go" },
+        zen: { status: "local_recorded", totalCost: 33.83, totalTokens: 10_300_000 }
+      }
+    }
+  });
+  const lines = view.usageLines().join("\n");
+  assert.match(lines, /Codex/);
+  assert.match(lines, /Claude/);
+  assert.match(lines, /Go/);
+  assert.doesNotMatch(lines, /Zen/, "Zen is PAYG/manual — it must never appear in /usage's automatic-resource summary");
+});
+
+test("/providers keeps Zen, explicitly identified as PAYG/manual", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    usage: {
+      opencode: { zen: { status: "local_recorded", totalCost: 33.83, totalTokens: 10_300_000 } }
+    }
+  });
+  const lines = view.providerLines().join("\n");
+  assert.match(lines, /Zen\s+PAYG\/manual/, "/providers must keep Zen, explicitly labeled PAYG/manual");
 });
 
 test("render keeps a complete multi-line usage response visible", () => {

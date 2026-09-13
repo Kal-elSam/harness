@@ -22,47 +22,24 @@ function renderPanel(title, tone, width, contentLines, targetLineCount = content
 }
 
 /**
- * Tiles two independently-framed cards side by side — used for the medium
- * width tier (USAGE full-width on top, AI TEAM + EFFICIENT TEAM tiled below)
- * and as a fallback wherever exactly two panels need to sit next to each
- * other.
+ * Tiles two independently-framed cards side by side — used for USAGE |
+ * MODEL TEAMS on wide-enough terminals. `leftRatio` controls how much of
+ * the total width the left panel gets (default even split); USAGE uses
+ * roughly a third, leaving the rest for MODEL TEAMS' two columns.
  * @param {{title: string, tone: string, lines: string[]}} left
  * @param {{title: string, tone: string, lines: string[]}} right
  * @param {number} totalWidth
+ * @param {number} [leftRatio]
  */
-function tileTwoPanels(left, right, totalWidth) {
+function tileTwoPanels(left, right, totalWidth, leftRatio = 0.5) {
   const gap = 1;
-  const leftWidth = Math.floor((totalWidth - gap) / 2);
+  const leftWidth = Math.max(1, Math.floor((totalWidth - gap) * leftRatio));
   const rightWidth = totalWidth - gap - leftWidth;
   const targetLineCount = Math.max(left.lines.length, right.lines.length);
   const leftBox = renderPanel(left.title, left.tone, leftWidth, left.lines, targetLineCount);
   const rightBox = renderPanel(right.title, right.tone, rightWidth, right.lines, targetLineCount);
   const rows = [];
   for (let i = 0; i < leftBox.length; i += 1) rows.push(`${leftBox[i]}${" ".repeat(gap)}${rightBox[i]}`);
-  return rows;
-}
-
-/**
- * Tiles three independently-framed cards side by side — USAGE | AI TEAM |
- * EFFICIENT TEAM, only used once the terminal is wide enough that none of
- * the three gets truncated into illegibility.
- * @param {{title: string, tone: string, lines: string[]}} left
- * @param {{title: string, tone: string, lines: string[]}} middle
- * @param {{title: string, tone: string, lines: string[]}} right
- * @param {number} totalWidth
- */
-function tileThreePanels(left, middle, right, totalWidth) {
-  const gap = 1;
-  const usable = totalWidth - gap * 2;
-  const leftWidth = Math.floor(usable / 3);
-  const middleWidth = Math.floor((usable - leftWidth) / 2);
-  const rightWidth = usable - leftWidth - middleWidth;
-  const targetLineCount = Math.max(left.lines.length, middle.lines.length, right.lines.length);
-  const leftBox = renderPanel(left.title, left.tone, leftWidth, left.lines, targetLineCount);
-  const middleBox = renderPanel(middle.title, middle.tone, middleWidth, middle.lines, targetLineCount);
-  const rightBox = renderPanel(right.title, right.tone, rightWidth, right.lines, targetLineCount);
-  const rows = [];
-  for (let i = 0; i < leftBox.length; i += 1) rows.push(`${leftBox[i]}${" ".repeat(gap)}${middleBox[i]}${" ".repeat(gap)}${rightBox[i]}`);
   return rows;
 }
 
@@ -327,19 +304,20 @@ export class CockpitView {
   }
 
   /**
-   * The dashboard's card content — USAGE, AI TEAM, and EFFICIENT TEAM —
-   * without the footer or conversation. Shared by renderWorkspace() (the
-   * monolithic fallback) and renderDashboard() (the fixed dashboard zone
-   * in the real-scroll layout), so both stay in sync automatically instead
-   * of drifting apart.
+   * The dashboard's card content — USAGE and MODEL TEAMS — without the
+   * footer or conversation. Shared by renderWorkspace() (the monolithic
+   * fallback) and renderDashboard() (the fixed dashboard zone in the
+   * real-scroll layout), so both stay in sync automatically instead of
+   * drifting apart.
    *
-   * Three tiers, by how much room there is:
-   *   - wide enough for all three side by side (each needs ~50 visible
-   *     columns plus framing before truncation starts eating real info);
-   *   - medium: USAGE full-width on top, the two teams tiled below it;
-   *   - narrow: USAGE, then one combined TEAMS panel with a CAPABILITY
-   *     and an EFFICIENT column instead of two separate cards.
-   * AI TEAM/EFFICIENT TEAM are always visible, independent of task
+   * One unified MODEL TEAMS widget (CAPABILITY/EFFICIENT columns, one row
+   * per role — see teamsColumnsLines()), never two separate AI TEAM/
+   * EFFICIENT TEAM cards: side by side with USAGE (roughly a third of the
+   * width) on medium/wide terminals, stacked below USAGE on narrow ones.
+   * There is deliberately no third, wider tier — MODEL TEAMS' own two
+   * columns already use the extra room a wider terminal provides, so a
+   * separate breakpoint would just widen the same panel, not add
+   * information. MODEL TEAMS is always visible, independent of task
    * selection — separate from STATUS (task-specific), which is only
    * reachable while a row is selected, and once any task exists in
    * history a row is *always* selected, so it can't be tucked behind
@@ -349,16 +327,12 @@ export class CockpitView {
     const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
     const lines = [];
     const usagePanel = { title: `KAIRO · ${project}`, tone: CARD_TONE.INFO, lines: [theme.fg("muted", "USAGE"), ...this.compactHealthLines()] };
-    const aiTeamPanel = { title: "AI TEAM", tone: CARD_TONE.SUCCESS, lines: this.fitLines() };
-    const efficientTeamPanel = { title: "EFFICIENT TEAM", tone: CARD_TONE.INFO, lines: this.efficientTeamLines() };
-    if (width >= 200) {
-      lines.push(...tileThreePanels(usagePanel, aiTeamPanel, efficientTeamPanel, width));
-    } else if (width >= 140) {
-      lines.push(...renderPanel(usagePanel.title, usagePanel.tone, width, usagePanel.lines));
-      lines.push(...tileTwoPanels(aiTeamPanel, efficientTeamPanel, width));
+    const modelTeamsPanel = { title: "MODEL TEAMS", tone: CARD_TONE.SUCCESS, lines: this.teamsColumnsLines() };
+    if (width >= 140) {
+      lines.push(...tileTwoPanels(usagePanel, modelTeamsPanel, width, 0.33));
     } else {
       lines.push(...renderPanel(usagePanel.title, usagePanel.tone, width, usagePanel.lines));
-      lines.push(...renderPanel("TEAMS", CARD_TONE.SUCCESS, width, this.teamsColumnsLines()));
+      lines.push(...renderPanel(modelTeamsPanel.title, modelTeamsPanel.tone, width, modelTeamsPanel.lines));
     }
     return lines;
   }
@@ -511,39 +485,11 @@ export class CockpitView {
   }
 
   /**
-   * EFFICIENT TEAM's compact widget: same one-line-per-role shape as
-   * fitLines(), reading `intel.efficientTeam` instead of `intel.aiTeam`.
-   * EFFICIENT TEAM only ever differs from AI TEAM within the existing
-   * near-equivalence capability floor — it's never a lower-capability
-   * substitute, so this widget never needs its own capability-floor
-   * messaging beyond what AI TEAM already surfaces.
-   */
-  efficientTeamLines() {
-    const intel = this.snapshot?.modelIntelligence;
-    if (!intel || intel.status === "unknown") {
-      const reason = intel?.error ? ` (${intel.error})` : "";
-      return [theme.fg("muted", `No model benchmark data yet${reason}`)];
-    }
-    const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-    const team = intel.efficientTeam ?? [];
-    if (!team.length) {
-      return [theme.fg("muted", `Artificial Analysis, ${freshness}`), theme.fg("warning", "No efficient-team signal yet")];
-    }
-    const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
-    for (const entry of team) {
-      const effective = CockpitView.effectiveTeamModel(entry);
-      const modelText = effective ? this.aiTeamLabel(effective) : theme.fg("warning", "no eligible option right now");
-      lines.push(`${entry.role.padEnd(10)} ${modelText}`);
-    }
-    lines.push(theme.fg("muted", "Within capability floor · lower cost/quota when it differs from AI TEAM."));
-    return lines;
-  }
-
-  /**
-   * Narrow-terminal fallback for AI TEAM + EFFICIENT TEAM: one combined
-   * "TEAMS" panel with a CAPABILITY and an EFFICIENT column per role,
-   * instead of two full cards that wouldn't fit side by side without
-   * truncating into illegibility.
+   * MODEL TEAMS' unified widget: one combined panel with a CAPABILITY and
+   * an EFFICIENT column per role, instead of two separate AI TEAM/
+   * EFFICIENT TEAM cards. This is now the ONLY dashboard team widget —
+   * used at every width, side by side with USAGE on medium/wide terminals
+   * and stacked below it on narrow ones (see renderDashboardLines()).
    */
   teamsColumnsLines() {
     const intel = this.snapshot?.modelIntelligence;
@@ -756,12 +702,13 @@ export class CockpitView {
   }
 
   /**
-   * One compact line per provider Kairo actually routes to (Codex, Claude,
-   * OpenCode Go, OpenCode Zen) — no bars, no idle "cards", just real
-   * measured numbers or the honest "usage unknown" fallback. Cursor is
-   * deliberately excluded here: it's manual-only with no verifiable usage
-   * source today, so it stays in `/providers` instead of implying it's an
-   * automatic worker.
+   * One compact line per AUTOMATIC-routing provider (Codex, Claude,
+   * OpenCode Go) — no bars, no idle "cards", just real measured numbers or
+   * the honest "usage unknown" fallback. Zen and Cursor are deliberately
+   * excluded here: both are manual/PAYG-risk, never routed to
+   * automatically, so showing their usage here would misleadingly imply
+   * they're part of the same automatic resource pool as Codex/Claude/Go.
+   * They stay in `/providers`, explicitly identified as manual/PAYG.
    */
   compactHealthLines() {
     const usage = this.snapshot?.usage ?? {};
@@ -780,7 +727,6 @@ export class CockpitView {
 
     const go = usage.opencode?.go;
 
-    const zen = usage.opencode?.zen;
     const lines = [
       theme.fg("muted", `Codex   ${codexText}`),
       theme.fg("muted", `Claude  ${claudeText}`)
@@ -793,9 +739,6 @@ export class CockpitView {
     } else {
       lines.push(theme.fg("muted", `Go      ${status("OpenCode") ?? "usage unknown"}`));
     }
-    lines.push(theme.fg("muted", zen?.status === "local_recorded"
-      ? `Zen     $${zen.totalCost.toFixed(2)} local / 7d`
-      : "Zen     local activity unknown"));
     return lines;
   }
 
@@ -820,8 +763,8 @@ export class CockpitView {
       : "usage unknown";
     const zen = open?.zen;
     const zenText = zen?.status === "local_recorded"
-      ? `7d local $${zen.totalCost.toFixed(2)} · ${compactNumber(zen.totalTokens)}`
-      : "7d local unknown";
+      ? `PAYG/manual · 7d local $${zen.totalCost.toFixed(2)} · ${compactNumber(zen.totalTokens)}`
+      : "PAYG/manual · 7d local unknown";
     return [
       `Codex    ${codexText}`,
       `Claude   ${claudeText}`,
@@ -844,6 +787,13 @@ export class CockpitView {
     ].join("   ");
   }
 
+  /**
+   * `/usage`: real automatic-routing resources only (Codex, Claude, Go).
+   * Zen is explicitly PAYG/manual, never part of Kairo's automatic
+   * resource pool — showing it here would misleadingly suggest it's on
+   * the same footing as the automatic providers; it stays in
+   * `/providers`, clearly labeled.
+   */
   usageLines() {
     const usage = this.snapshot?.usage ?? {};
     const lines = [];
@@ -855,15 +805,10 @@ export class CockpitView {
     lines.push(claude?.windows?.length
       ? `Claude ${claude.windows.map((window) => `${window.label ?? window.name} ${window.remainingPercent}% left`).join(" · ")} · source: ${claude.source ?? "measured"}`
       : "Claude usage unknown · no quota fabricated");
-    const open = usage.opencode;
-    const go = open?.go;
+    const go = usage.opencode?.go;
     lines.push(go?.windows?.length
       ? `Go ${go.windows.map((window) => `${shortWindowName(window.name)} ${window.remainingPercent}%${window.status === "rate-limited" ? " RATE LIMITED" : ""}`).join(" · ")} · source: ${go.source ?? "measured"}`
       : "Go usage unknown · source unavailable");
-    const zen = open?.zen;
-    lines.push(zen?.status === "local_recorded"
-      ? `Zen 7d local $${zen.totalCost.toFixed(2)} · ${compactNumber(zen.totalTokens)} tokens`
-      : "Zen 7d local unknown");
     return lines;
   }
 
