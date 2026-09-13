@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runCockpitApp } from "../src/global/cockpit/app.js";
+import { ScrollView, stripTerminalSequences } from "@earendil-works/pi-tui";
+import { buildViewportLayoutRoot, runCockpitApp } from "../src/global/cockpit/app.js";
+import { CockpitView } from "../src/global/cockpit/view.js";
 
 function makeFakeTui() {
   return {
@@ -577,4 +579,77 @@ test("onQuit stops the tui and resolves done exactly once", async () => {
   assert.equal(tui.stopped, true);
   assert.equal(clears, 1);
   await app.done;
+});
+
+test("buildViewportLayoutRoot wires a real ScrollView around the conversation, with dashboard/composer/editor fixed around it", () => {
+  const view = new CockpitView({ actions: {
+    onShowPlan() {}, onApprove() {}, onReject() {}, onRequestExecute() {}, onExecute() {},
+    onCancel() {}, onRefresh() {}, onQuit() {}
+  }, requestRender: () => {} });
+  view.setSnapshot({ projectRoot: "/repo/demo" });
+  view.addTranscript("user", "hello");
+  const editor = { render: () => [""], handleInput() {}, invalidate() {} };
+
+  const root = buildViewportLayoutRoot(view, editor);
+  assert.equal(root.entries.length, 4);
+
+  const [dashboardEntry, scrollEntry, composerEntry, editorEntry] = root.entries;
+  assert.equal(dashboardEntry.shrink, 0);
+  assert.match(dashboardEntry.component.render(100).join("\n"), /USAGE/);
+
+  assert.ok(scrollEntry.component instanceof ScrollView, "the conversation zone must be a real pi-tui ScrollView, not a plain component");
+  assert.equal(scrollEntry.grow, 1);
+  assert.equal(scrollEntry.minSize, 4);
+  assert.equal(scrollEntry.component.primary, true, "must be the primary scroll view so native PageUp/PageDown/mouse-wheel/scrollbar route to it");
+  assert.equal(scrollEntry.component.followEnd, true);
+  assert.equal(scrollEntry.component.overscroll, "contain");
+  assert.equal(scrollEntry.component.scrollbar, "auto");
+  assert.match(scrollEntry.component.render(100).join("\n"), /hello/);
+
+  assert.equal(composerEntry.basis, 2);
+  assert.equal(composerEntry.shrink, 0);
+  assert.equal(editorEntry.component, editor);
+  assert.equal(editorEntry.basis, 3);
+  assert.equal(editorEntry.shrink, 0);
+});
+
+test("renderConversation renders every retained transcript entry unsliced and unwrapped-off-screen (no chatBudget/historyLimit)", () => {
+  const view = new CockpitView({ actions: {
+    onShowPlan() {}, onApprove() {}, onReject() {}, onRequestExecute() {}, onExecute() {},
+    onCancel() {}, onRefresh() {}, onQuit() {}
+  }, requestRender: () => {} });
+  for (let i = 0; i < 20; i += 1) view.addTranscript(i % 2 === 0 ? "user" : "kairo", `message ${i}`);
+  const lines = view.renderConversation(80);
+  // The old chatLines() fallback defaults to an 8-entry recent-history
+  // window when no viewport budget is given; renderConversation() must
+  // never do that — every one of the 20 retained messages should appear.
+  for (let i = 0; i < 20; i += 1) assert.match(lines.join("\n"), new RegExp(`message ${i}(?!\\d)`));
+});
+
+test("renderConversation wraps a long message across multiple lines instead of truncating it", () => {
+  const view = new CockpitView({ actions: {
+    onShowPlan() {}, onApprove() {}, onReject() {}, onRequestExecute() {}, onExecute() {},
+    onCancel() {}, onRefresh() {}, onQuit() {}
+  }, requestRender: () => {} });
+  const longText = "word ".repeat(40).trim();
+  view.addTranscript("kairo", longText);
+  const lines = view.renderConversation(30);
+  assert.ok(lines.length > 1, "a message longer than the width must wrap onto more than one line");
+  for (const line of lines) assert.ok(line.length < longText.length, "no line should be as long as the full unwrapped message");
+  const rejoined = lines.map((line) => stripTerminalSequences(line).replace(/^Kairo /, "").trim()).join(" ").replace(/\s+/g, " ");
+  assert.equal(rejoined, longText, "wrapping must never drop or truncate the original text");
+});
+
+test("renderConversation puts the pending confirm-execute prompt at the very end, after all history", () => {
+  const view = new CockpitView({ actions: {
+    onShowPlan() {}, onApprove() {}, onReject() {}, onRequestExecute() {}, onExecute() {},
+    onCancel() {}, onRefresh() {}, onQuit() {}
+  }, requestRender: () => {} });
+  view.setRows([{ taskId: "task-a", planState: "approved", approval: "approved", execState: "not_started", execActive: false, execMessage: null }]);
+  view.addTranscript("user", "please run this");
+  view.showExecuteConfirm("task-a", { decision: "ROUTED", provider: "claude", model: "fable", why: "best fit" });
+  const lines = view.renderConversation(100);
+  const historyIndex = lines.findIndex((line) => line.includes("please run this"));
+  const confirmIndex = lines.findIndex((line) => line.includes("Execute"));
+  assert.ok(historyIndex >= 0 && confirmIndex > historyIndex, "the confirm prompt must come after the transcript history");
 });

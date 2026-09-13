@@ -1,4 +1,4 @@
-import { Editor, ProcessTerminal, TuiAltScreen, VStack, isViewportTUI, matchesKey } from "@earendil-works/pi-tui";
+import { Editor, ProcessTerminal, ScrollView, TuiAltScreen, VStack, isViewportTUI, matchesKey } from "@earendil-works/pi-tui";
 import { createConversationService } from "../conversation/service.js";
 import { CockpitView } from "./view.js";
 import { editorTheme, theme } from "./theme.js";
@@ -16,6 +16,34 @@ function composerHeader(width) {
 }
 
 const DEFAULT_POLL_MS = 2000;
+
+/**
+ * Builds the real-scroll layout tree: dashboard (fixed) + conversation
+ * (the only scrollable zone, via pi-tui's own ScrollView) + composer
+ * header (fixed) + editor (fixed). Extracted as a pure function so the
+ * exact shape/options can be unit tested directly — pi-tui's
+ * isViewportTUI() gate checks an internal, non-exported symbol that test
+ * doubles can't fake, so this can't be exercised end-to-end through
+ * runCockpitApp() in a unit test the way the addChild() fallback can.
+ * `view` still owns all cockpit state; dashboardComponent/
+ * conversationComponent are thin render adapters, not new state.
+ * @param {import("./view.js").CockpitView} view
+ * @param {object} editor
+ * @returns {object} a VStack ready for tui.setLayoutRoot()
+ */
+export function buildViewportLayoutRoot(view, editor) {
+  const dashboardComponent = { render: (width) => view.renderDashboard(width) };
+  const conversationComponent = { render: (width) => view.renderConversation(width) };
+  const conversationScroll = new ScrollView(conversationComponent, {
+    follow: "end", primary: true, overscroll: "contain", scrollbar: "auto"
+  });
+  return new VStack([
+    { component: dashboardComponent, shrink: 0 },
+    { component: conversationScroll, grow: 1, minSize: 4 },
+    { component: { render: composerHeader }, basis: 2, shrink: 0 },
+    { component: editor, basis: 3, shrink: 0 }
+  ], { gap: 0 });
+}
 
 /**
  * Boots the interactive `kairo start` cockpit: a full-screen pi-tui app wired
@@ -214,13 +242,16 @@ export async function runCockpitApp({
   function focusList() { tui.setFocus(view); view.hasListFocus = true; }
 
   if (isViewportTUI(tui)) {
-    tui.setLayoutRoot(new VStack([
-      { component: view, grow: 1, minSize: 4 },
-      { component: { render: composerHeader }, basis: 2, shrink: 0 },
-      { component: editor, basis: 3, shrink: 0 }
-    ], { gap: 0 }));
+    // Real scroll: the dashboard (USAGE/AI TEAM/EFFICIENT TEAM + footer)
+    // and composer/editor stay fixed; only the conversation scrolls, via
+    // pi-tui's own ScrollView — it owns viewport windowing, PageUp/
+    // PageDown/Home/End, mouse wheel, scrollbar drag, and follow-the-end
+    // behavior natively (see scroll-view.js / layout.js), so none of that
+    // is reimplemented here.
+    tui.setLayoutRoot(buildViewportLayoutRoot(view, editor));
   } else {
-    // Test doubles and older pi-tui versions retain the stacked fallback.
+    // Test doubles and older pi-tui versions retain the stacked,
+    // monolithic-render fallback (view.render() -> renderWorkspace()).
     tui.addChild(view);
     tui.addChild(editor);
   }

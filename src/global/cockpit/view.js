@@ -1,4 +1,4 @@
-import { matchesKey, Key, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { buildTaskRows, clampSelection, isActionAvailable } from "./rows.js";
 import { CARD_TONE, cardBottom, cardLine, cardTop } from "./card.js";
 import { theme } from "./theme.js";
@@ -327,27 +327,27 @@ export class CockpitView {
   }
 
   /**
-   * Conversation-first workspace, framed like the rest of the cockpit
-   * (rounded cards, per-line tone) instead of plain padded text — a compact
-   * usage card up top, the transcript/workflow card owning the rest of the
-   * screen, and key hints as a plain footer beneath both.
+   * The dashboard's card content — USAGE, AI TEAM, and EFFICIENT TEAM —
+   * without the footer or conversation. Shared by renderWorkspace() (the
+   * monolithic fallback) and renderDashboard() (the fixed dashboard zone
+   * in the real-scroll layout), so both stay in sync automatically instead
+   * of drifting apart.
+   *
+   * Three tiers, by how much room there is:
+   *   - wide enough for all three side by side (each needs ~50 visible
+   *     columns plus framing before truncation starts eating real info);
+   *   - medium: USAGE full-width on top, the two teams tiled below it;
+   *   - narrow: USAGE, then one combined TEAMS panel with a CAPABILITY
+   *     and an EFFICIENT column instead of two separate cards.
+   * AI TEAM/EFFICIENT TEAM are always visible, independent of task
+   * selection — separate from STATUS (task-specific), which is only
+   * reachable while a row is selected, and once any task exists in
+   * history a row is *always* selected, so it can't be tucked behind
+   * "nothing else to show" the way STATUS's own content is.
    */
-  renderWorkspace(width) {
+  renderDashboardLines(width) {
     const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
     const lines = [];
-
-    // USAGE, AI TEAM, and EFFICIENT TEAM are all reference widgets meant to
-    // be scanned together. Three tiers, by how much room there is:
-    //   - wide enough for all three side by side (each needs ~50 visible
-    //     columns plus framing before truncation starts eating real info);
-    //   - medium: USAGE full-width on top, the two teams tiled below it;
-    //   - narrow: USAGE, then one combined TEAMS panel with a CAPABILITY
-    //     and an EFFICIENT column instead of two separate cards.
-    // AI TEAM/EFFICIENT TEAM are always visible, independent of task
-    // selection — separate from STATUS (task-specific), which is only
-    // reachable while a row is selected, and once any task exists in
-    // history a row is *always* selected, so it can't be tucked behind
-    // "nothing else to show" the way STATUS's own content is.
     const usagePanel = { title: `KAIRO · ${project}`, tone: CARD_TONE.INFO, lines: [theme.fg("muted", "USAGE"), ...this.compactHealthLines()] };
     const aiTeamPanel = { title: "AI TEAM", tone: CARD_TONE.SUCCESS, lines: this.fitLines() };
     const efficientTeamPanel = { title: "EFFICIENT TEAM", tone: CARD_TONE.INFO, lines: this.efficientTeamLines() };
@@ -360,7 +360,11 @@ export class CockpitView {
       lines.push(...renderPanel(usagePanel.title, usagePanel.tone, width, usagePanel.lines));
       lines.push(...renderPanel("TEAMS", CARD_TONE.SUCCESS, width, this.teamsColumnsLines()));
     }
+    return lines;
+  }
 
+  /** Contextual key hints — shown in the dashboard's fixed zone, not the scrollable conversation. */
+  renderFooterLines() {
     const row = this.selectedRow();
     const footerLines = [theme.fg("muted", "Enter send · /help · /usage · q quit")];
     if (row) {
@@ -368,6 +372,75 @@ export class CockpitView {
         ? "Plan controls: Enter open · a approve · j reject · x implement"
         : "Tab for plan controls (approve/reject/implement) — typing here just sends a message"));
     }
+    return footerLines;
+  }
+
+  /**
+   * The fixed dashboard zone for the real-scroll layout (app.js wires this
+   * as its own VStack entry, shrink: 0, above a scrollable conversation):
+   * USAGE/AI TEAM/EFFICIENT TEAM cards plus the contextual footer hints.
+   * Unlike renderConversation(), this is framed/truncated like the rest of
+   * the cockpit's cards — it never needs to preserve unbounded content the
+   * way scrollable chat history does.
+   */
+  renderDashboard(width) {
+    const lines = [...this.renderDashboardLines(width), ...this.renderFooterLines()];
+    return lines.map((line) => truncateToWidth(line, width, "…"));
+  }
+
+  /**
+   * The scrollable conversation zone for the real-scroll layout: every
+   * retained transcript entry (never sliced to a viewport-sized recent
+   * window — pi-tui's ScrollView owns which lines are actually visible),
+   * wrapped (never truncated — a long response or /models breakdown must
+   * stay fully readable by scrolling, not lose text off the right edge),
+   * with the pending confirm-execute prompt appended at the very end so it
+   * surfaces immediately once ScrollView's follow:"end" behavior is
+   * active, exactly where a real chat's newest message would land.
+   */
+  renderConversation(width) {
+    if (this.mode !== "confirm-execute" && this.transcript.length === 0 && !this.statusMessage) {
+      return [
+        theme.fg("muted", "Ask Kairo about this project, or describe work to plan."),
+        "",
+        theme.fg("muted", "Use /help to see commands.")
+      ];
+    }
+    const lines = [];
+    for (const entry of this.transcript) {
+      const isUser = entry.role === "You";
+      const label = isUser ? "> " : "Kairo ";
+      const prefixWidth = visibleWidth(label);
+      const coloredPrefix = isUser ? theme.fg("accent", label) : theme.fg("info", label);
+      const wrapped = wrapTextWithAnsi(entry.text, Math.max(1, width - prefixWidth));
+      wrapped.forEach((wrappedLine, index) => {
+        lines.push(index === 0 ? `${coloredPrefix}${wrappedLine}` : `${" ".repeat(prefixWidth)}${wrappedLine}`);
+      });
+    }
+    if (this.statusMessage) {
+      lines.push("");
+      lines.push(theme.fg("accent", this.statusMessage));
+    }
+    if (this.mode === "confirm-execute") {
+      lines.push("");
+      lines.push(...this.confirmPromptLines(this.selectedRow()));
+    }
+    return lines;
+  }
+
+  /**
+   * Conversation-first workspace, framed like the rest of the cockpit
+   * (rounded cards, per-line tone) instead of plain padded text — a compact
+   * usage card up top, the transcript/workflow card owning the rest of the
+   * screen, and key hints as a plain footer beneath both. This is the
+   * monolithic single-render fallback for test doubles and pi-tui builds
+   * without viewport/layout support — the real cockpit uses
+   * renderDashboard()/renderConversation() instead, tiled by app.js with a
+   * real scrollable ScrollView around the conversation.
+   */
+  renderWorkspace(width) {
+    const lines = [...this.renderDashboardLines(width)];
+    const footerLines = this.renderFooterLines();
 
     // The chat is plain, unframed text — it's the dominant, scrollable
     // conversation surface, not another bordered widget. How much of it
