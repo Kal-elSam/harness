@@ -27,6 +27,7 @@ import { computeProjectProfile } from "./project-profile.js";
 import { buildProjectStrategy, computeBootstrapAnalystAlternatives, isStrategyStale } from "./project-strategy.js";
 import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
 import { buildSanitizedSnapshot } from "./sanitized-snapshot.js";
+import { runCodexSandboxedBootstrap } from "./codex-sandbox.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -259,6 +260,7 @@ export function createConversationService(deps = {}) {
   const parseProjectAnalysisImpl = deps.parseProjectAnalysis ?? parseProjectAnalysis;
   const deriveRoleRequirementsImpl = deps.deriveRoleRequirements ?? deriveRoleRequirements;
   const buildSanitizedSnapshotImpl = deps.buildSanitizedSnapshot ?? buildSanitizedSnapshot;
+  const runCodexSandboxedBootstrapImpl = deps.runCodexSandboxedBootstrap ?? runCodexSandboxedBootstrap;
   const readArtificialAnalysisModelsImpl = deps.readArtificialAnalysisModels ?? readArtificialAnalysisModels;
   // Unit tests inject resolveRoot and must remain provider-call free. The real
   // cockpit opts in explicitly so a refresh performs one bounded read-only probe.
@@ -624,16 +626,20 @@ export function createConversationService(deps = {}) {
      */
     async runBootstrapAnalysis({ cwd, profile, candidates, analyst }) {
       const projectRoot = await root(cwd);
-      // SECRET-SAFE (a real, meaningful reduction — not a filesystem
-      // sandbox guarantee, see sanitized-snapshot.js's own header for
-      // why): the analyst's `cwd` points at a bounded, secret-redacted
-      // temporary copy, never the real project directory. A normal
-      // investigation never sees an unredacted secret. Verified
-      // empirically that Codex's own "read-only" sandbox does NOT confine
-      // reads to cwd (only writes) — the real remaining mitigation is
-      // that the analyst is never given the real project's absolute path
-      // (buildAnalystPrompt only passes profile.projectName) or its .git
-      // remote, so escaping requires a path it was never told.
+      // SECRET-SAFE (a real, meaningful reduction — not by itself a
+      // filesystem sandbox guarantee, see sanitized-snapshot.js's own
+      // header for why): the analyst's `cwd` points at a bounded,
+      // secret-redacted temporary copy, never the real project directory.
+      // A normal investigation never sees an unredacted secret.
+      //
+      // For Codex specifically, that redaction mitigation is now backed
+      // by a REAL OS-level boundary too (codex-sandbox.js) — Codex's own
+      // "read-only" sandbox does NOT confine reads to cwd (only writes,
+      // verified empirically), so Codex is routed through an external
+      // sandbox-exec (macOS only) confining it to `snapshot.snapshotRoot`.
+      // On a platform without that verified boundary, Codex fails closed
+      // (isolation_unavailable) rather than silently degrading to its own
+      // non-confining --sandbox read-only.
       const snapshot = await buildSanitizedSnapshotImpl(projectRoot);
       try {
         const prompt = buildAnalystPrompt(profile);
@@ -641,10 +647,15 @@ export function createConversationService(deps = {}) {
         // just answering from the prompt text) genuinely takes longer
         // than ASK mode's quick-question default — give it real room
         // instead of timing out mid-investigation.
-        const response = await askProviderImpl({
-          provider: analyst.model.adapterId, question: prompt, model: analyst.model.modelId, cwd: snapshot.snapshotRoot,
-          timeoutMs: BOOTSTRAP_ANALYST_TIMEOUT_MS
-        });
+        const response = analyst.model.adapterId === "codex"
+          ? await runCodexSandboxedBootstrapImpl({
+              question: prompt, model: analyst.model.modelId, snapshotRoot: snapshot.snapshotRoot,
+              timeoutMs: BOOTSTRAP_ANALYST_TIMEOUT_MS
+            })
+          : await askProviderImpl({
+              provider: analyst.model.adapterId, question: prompt, model: analyst.model.modelId, cwd: snapshot.snapshotRoot,
+              timeoutMs: BOOTSTRAP_ANALYST_TIMEOUT_MS
+            });
         if (response.status !== "answered") {
           throw new Error(`Bootstrap Analyst did not answer: ${response.error ?? response.status}`);
         }

@@ -18,16 +18,26 @@
 // to cwd — a real test run against a real absolute path outside the
 // snapshot successfully read that file's content. This is not a bug in
 // Codex; "read-only" there means "no writes", full-disk read access is
-// the documented default. So this module is NOT a hard filesystem
-// sandbox, and must never be described as one. The real, remaining
-// mitigation is that the analyst is never told the real project's
-// absolute path (buildAnalystPrompt only ever passes profile.projectName,
-// never a path) and .git is always excluded (no remote URL or other path
-// hints to reconstruct it from) — so escaping requires the model to
-// already know or guess a path it was never given, not merely wanting to.
-// A genuine filesystem-level sandbox (OS-level process isolation) would
-// be needed to close this completely; that's real, separate, larger
-// work, not a redaction-module fix.
+// the documented default. So THIS MODULE is not a hard filesystem
+// sandbox by itself, and must never be described as one.
+//
+// For Codex specifically, that gap is now closed by a real, empirically
+// proven OS-level boundary: see codex-sandbox.js, which wraps Bootstrap
+// Analysis's Codex invocation in an external macOS sandbox-exec (SBPL)
+// profile confined to this module's snapshotRoot. conversation/service.js's
+// runBootstrapAnalysis routes Codex through that wrapper, never through
+// plain askProvider, and fails closed (isolation_unavailable) rather than
+// silently degrading on a platform without a verified boundary.
+//
+// For every other provider (Claude today) and for Codex on a non-macOS
+// platform, the remaining mitigation is still redaction-only: the analyst
+// is never told the real project's absolute path (buildAnalystPrompt only
+// ever passes profile.projectName, never a path), and .git is always
+// excluded (no remote URL or other path hints to reconstruct it from) —
+// so escaping requires the model to already know or guess a path it was
+// never given, not merely wanting to. Closing that gap for other
+// providers/platforms needs their own verified OS-level boundary; there
+// is none today.
 
 import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

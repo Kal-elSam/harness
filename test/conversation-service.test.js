@@ -284,7 +284,7 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
         cleanup: async () => { cleanedUp = true; }
       };
     },
-    askProvider: async (args) => {
+    runCodexSandboxedBootstrap: async (args) => {
       askCalls.push(args);
       return {
         status: "answered", error: null,
@@ -312,9 +312,8 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
   const analyst = { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } };
   const result = await service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst });
 
-  assert.equal(askCalls[0].provider, "codex");
   assert.equal(askCalls[0].model, "codex-model");
-  assert.equal(askCalls[0].cwd, "/tmp/fake-snapshot", "the analyst must run against the sanitized snapshot, never the real project directory");
+  assert.equal(askCalls[0].snapshotRoot, "/tmp/fake-snapshot", "the analyst must run against the sanitized snapshot, never the real project directory");
   assert.equal(result.status, "suggested");
   assert.equal(result.bootstrapAnalyst.adapterId, "codex");
   assert.equal(result.bootstrapAnalystChoice, "quality");
@@ -333,7 +332,7 @@ test("runBootstrapAnalysis drops the analyst's recommendedRoleNeeds when none of
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 1, secretsRedacted: 0,
       copiedFiles: ["src/real.ts"], excludedPrivatePaths: [], cleanup: async () => { cleanedUp = true; }
     }),
-    askProvider: async () => ({
+    runCodexSandboxedBootstrap: async () => ({
       status: "answered", error: null,
       answer: JSON.stringify({
         architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
@@ -363,7 +362,7 @@ test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the a
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
       copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => { cleanedUp = true; }
     }),
-    askProvider: async () => ({ status: "answered", error: null, answer: "not real json at all" }),
+    runCodexSandboxedBootstrap: async () => ({ status: "answered", error: null, answer: "not real json at all" }),
     writeProjectStrategy: async () => { wrote = true; }
   });
   const profile = { projectName: "repo", stack: [], architecture: {}, quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-1", roleRequirements: [] };
@@ -378,7 +377,7 @@ test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the r
   let wrote = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
-    askProvider: async () => ({ status: "error", error: "codex -p timed out", answer: null }),
+    runCodexSandboxedBootstrap: async () => ({ status: "error", error: "codex -p timed out", answer: null }),
     writeProjectStrategy: async () => { wrote = true; }
   });
   const profile = { projectName: "repo", stack: [], architecture: {}, quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-1", roleRequirements: [] };
@@ -388,10 +387,82 @@ test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the r
   assert.equal(wrote, false);
 });
 
+test("runBootstrapAnalysis routes a Codex analyst through the real OS-level sandbox wrapper, never through plain askProvider", async () => {
+  let sandboxCalled = false;
+  let askProviderCalled = false;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    buildSanitizedSnapshot: async () => ({
+      snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
+      copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => {}
+    }),
+    runCodexSandboxedBootstrap: async () => {
+      sandboxCalled = true;
+      return { status: "answered", error: null, answer: JSON.stringify({ architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [], recommendedRoleNeeds: [], uncertainties: [], evidenceReferences: [] }) };
+    },
+    askProvider: async () => { askProviderCalled = true; return { status: "answered", error: null, answer: "should never be called for codex" }; },
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => strategy
+  });
+  const profile = { projectName: "repo", stack: [], architecture: {}, quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-1", roleRequirements: [] };
+  const candidates = await realScoredCandidates();
+  const analyst = { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } };
+  await service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst });
+  assert.equal(sandboxCalled, true);
+  assert.equal(askProviderCalled, false, "Codex Bootstrap Analysis must never fall back to the non-confining plain askProvider path");
+});
+
+test("runBootstrapAnalysis keeps a Claude analyst on the plain askProvider path — the OS sandbox wrapper is Codex-only", async () => {
+  let askProviderCalled = false;
+  let sandboxCalled = false;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    buildSanitizedSnapshot: async () => ({
+      snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
+      copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => {}
+    }),
+    askProvider: async (args) => {
+      askProviderCalled = true;
+      assert.equal(args.provider, "claude");
+      return { status: "answered", error: null, answer: JSON.stringify({ architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [], recommendedRoleNeeds: [], uncertainties: [], evidenceReferences: [] }) };
+    },
+    runCodexSandboxedBootstrap: async () => { sandboxCalled = true; return { status: "error", error: "should never be called for claude", answer: null }; },
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => strategy
+  });
+  const profile = { projectName: "repo", stack: [], architecture: {}, quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-1", roleRequirements: [] };
+  const candidates = await realScoredCandidates();
+  const analyst = { choice: "quality", model: { adapterId: "claude", modelId: "claude-model" } };
+  await service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst });
+  assert.equal(askProviderCalled, true);
+  assert.equal(sandboxCalled, false);
+});
+
+test("runBootstrapAnalysis fails closed (never a silent fallback) when Codex's OS-level sandbox is unavailable on this platform", async () => {
+  let wrote = false;
+  let cleanedUp = false;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    buildSanitizedSnapshot: async () => ({
+      snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
+      copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => { cleanedUp = true; }
+    }),
+    runCodexSandboxedBootstrap: async () => ({
+      status: "error", error: "isolation_unavailable", answer: null,
+      isolation: { available: false, platform: "linux", boundaryVerified: false, reason: "OS-level read confinement for Codex is only implemented for macOS" }
+    }),
+    writeProjectStrategy: async () => { wrote = true; }
+  });
+  const profile = { projectName: "repo", stack: [], architecture: {}, quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-1", roleRequirements: [] };
+  const candidates = await realScoredCandidates();
+  const analyst = { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } };
+  await assert.rejects(() => service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst }), /isolation_unavailable/);
+  assert.equal(wrote, false);
+  assert.equal(cleanedUp, true);
+});
+
 test("CANARY: runBootstrapAnalysis's real sanitized-snapshot pipeline (not mocked away) never lets a real secret reach what would be sent to the provider", async () => {
   // A real fixture project with a real-shaped fake secret — the exact
-  // scenario the crm live-verification exposed. Only askProvider itself
-  // is mocked (a real provider can't be called in a unit test); the
+  // scenario the crm live-verification exposed. Only the analyst call
+  // itself is mocked (a real provider can't be called in a unit test); the
   // sanitized-snapshot build is the REAL implementation, exercised
   // end-to-end, so this test would fail if that pipeline regressed.
   const CANARY = "abcd1234efgh5678ijkl9012mnop3456";
@@ -423,9 +494,9 @@ test("CANARY: runBootstrapAnalysis's real sanitized-snapshot pipeline (not mocke
     // real cleanup() runs in runBootstrapAnalysis's own `finally`, right
     // after this call returns, so the snapshot is gone by the time the
     // outer test code resumes.
-    askProvider: async (args) => {
-      seenCwd = args.cwd;
-      everythingTheProviderCouldRead = await collectFileContents(args.cwd);
+    runCodexSandboxedBootstrap: async (args) => {
+      seenCwd = args.snapshotRoot;
+      everythingTheProviderCouldRead = await collectFileContents(args.snapshotRoot);
       return {
         status: "answered", error: null,
         answer: JSON.stringify({
