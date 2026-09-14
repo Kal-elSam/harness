@@ -106,6 +106,35 @@ export function parseProjectAnalysis(rawText) {
   };
 }
 
+function normalizePath(path) {
+  return String(path ?? "").trim().replace(/^\.\//, "").replace(/\/+$/, "");
+}
+
+/**
+ * Checks which of the analyst's own evidenceReferences correspond to a
+ * real file it actually had access to (the sanitized snapshot's real
+ * copied-file list) — a citation to a path that was never even in the
+ * snapshot is a real, checkable signal the analyst may be describing
+ * exploration it didn't actually do, not evidence it observed. Matching
+ * is real-path-based but tolerant of how a model might phrase a
+ * reference (a leading "./", or citing just the tail of a longer real
+ * path) — an exact string mismatch alone never disqualifies a real match.
+ * @param {object} analysis - parseProjectAnalysis().analysis
+ * @param {string[]} realFilePaths - the sanitized snapshot's real copiedFiles
+ * @returns {{verified: string[], unverified: string[]}}
+ */
+export function validateEvidenceReferences(analysis, realFilePaths) {
+  const real = realFilePaths.map(normalizePath);
+  const verified = [];
+  const unverified = [];
+  for (const raw of analysis.evidenceReferences) {
+    const ref = normalizePath(raw);
+    const matches = ref && real.some((path) => path === ref || path.endsWith(`/${ref}`) || ref.endsWith(`/${path}`));
+    (matches ? verified : unverified).push(raw);
+  }
+  return { verified, unverified };
+}
+
 /**
  * Deterministically derives real roleRequirements from a validated
  * ProjectAnalysis, unioned with the project's own mechanical floor (real
@@ -113,13 +142,21 @@ export function parseProjectAnalysis(rawText) {
  * so a thin or low-confidence analysis can never leave a real project with
  * zero role requirements. The analyst's own role/capability tokens are
  * sanitized against the known vocabulary first — an unrecognized one is
- * dropped, never trusted as-is.
+ * dropped, never trusted as-is. And its recommendedRoleNeeds as a WHOLE
+ * are only trusted when at least one of its own evidenceReferences
+ * verified against a real file (see validateEvidenceReferences) — an
+ * analysis that cites zero real files is a real signal the exploration
+ * may be fabricated, so its proposed role needs are dropped rather than
+ * silently accepted just because the vocabulary happened to be valid.
  * @param {object} analysis - parseProjectAnalysis().analysis
  * @param {Array<{role: string, capabilities: string[], reason: string}>} mechanicalFloor - profile.roleRequirements (the pre-existing command-based detection)
+ * @param {{verified: string[], unverified: string[]}} [evidenceValidation] - validateEvidenceReferences() result; omit only when no real file list is available (falls back to trusting the analysis, matching this function's pre-sanitized-snapshot behavior)
  * @returns {Array<{role: string, capabilities: string[], reason: string}>}
  */
-export function deriveRoleRequirements(analysis, mechanicalFloor) {
+export function deriveRoleRequirements(analysis, mechanicalFloor, evidenceValidation = null) {
   const byRole = new Map(mechanicalFloor.map((requirement) => [requirement.role, { ...requirement }]));
+  const trustAnalysis = !evidenceValidation || evidenceValidation.verified.length > 0;
+  if (!trustAnalysis) return [...byRole.values()];
   for (const need of analysis.recommendedRoleNeeds) {
     if (!KNOWN_ROLES.has(need.role)) continue;
     const capabilities = need.capabilities.filter((c) => KNOWN_CAPABILITIES.has(c));

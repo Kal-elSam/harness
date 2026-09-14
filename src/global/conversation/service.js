@@ -25,7 +25,8 @@ import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transc
 import { readSession, writeSessionMode } from "./session-store.js";
 import { computeProjectProfile } from "./project-profile.js";
 import { buildProjectStrategy, computeBootstrapAnalystAlternatives, isStrategyStale } from "./project-strategy.js";
-import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
+import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, validateEvidenceReferences } from "./project-analysis.js";
+import { buildSanitizedSnapshot } from "./sanitized-snapshot.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -257,6 +258,8 @@ export function createConversationService(deps = {}) {
   const writeProjectStrategyImpl = deps.writeProjectStrategy ?? writeProjectStrategy;
   const parseProjectAnalysisImpl = deps.parseProjectAnalysis ?? parseProjectAnalysis;
   const deriveRoleRequirementsImpl = deps.deriveRoleRequirements ?? deriveRoleRequirements;
+  const validateEvidenceReferencesImpl = deps.validateEvidenceReferences ?? validateEvidenceReferences;
+  const buildSanitizedSnapshotImpl = deps.buildSanitizedSnapshot ?? buildSanitizedSnapshot;
   const readArtificialAnalysisModelsImpl = deps.readArtificialAnalysisModels ?? readArtificialAnalysisModels;
   // Unit tests inject resolveRoot and must remain provider-call free. The real
   // cockpit opts in explicitly so a refresh performs one bounded read-only probe.
@@ -622,24 +625,46 @@ export function createConversationService(deps = {}) {
      */
     async runBootstrapAnalysis({ cwd, profile, candidates, analyst }) {
       const projectRoot = await root(cwd);
-      const prompt = buildAnalystPrompt(profile);
-      // A real project investigation (the model reads real files, not
-      // just answering from the prompt text) genuinely takes longer than
-      // ASK mode's quick-question default — give it real room instead of
-      // timing out mid-investigation.
-      const response = await askProviderImpl({
-        provider: analyst.model.adapterId, question: prompt, model: analyst.model.modelId, cwd: projectRoot,
-        timeoutMs: BOOTSTRAP_ANALYST_TIMEOUT_MS
-      });
-      if (response.status !== "answered") {
-        throw new Error(`Bootstrap Analyst did not answer: ${response.error ?? response.status}`);
+      // SECRET-SAFE: the analyst never sees the real project directory.
+      // "Read-only" (Codex's sandbox) or an unrestricted permission mode
+      // (Claude, today) only ever govern WRITES — neither stops a real
+      // secret's CONTENT from reaching the model provider's own backend
+      // as part of normal inference once the model reads the file. A
+      // real, bounded, secret-redacted temporary copy is what the
+      // analyst's `cwd` actually points at; the real project is never
+      // handed to the provider directly or unrestricted.
+      const snapshot = await buildSanitizedSnapshotImpl(projectRoot);
+      try {
+        const prompt = buildAnalystPrompt(profile);
+        // A real project investigation (the model reads real files, not
+        // just answering from the prompt text) genuinely takes longer
+        // than ASK mode's quick-question default — give it real room
+        // instead of timing out mid-investigation.
+        const response = await askProviderImpl({
+          provider: analyst.model.adapterId, question: prompt, model: analyst.model.modelId, cwd: snapshot.snapshotRoot,
+          timeoutMs: BOOTSTRAP_ANALYST_TIMEOUT_MS
+        });
+        if (response.status !== "answered") {
+          throw new Error(`Bootstrap Analyst did not answer: ${response.error ?? response.status}`);
+        }
+        const parsed = parseProjectAnalysisImpl(response.answer);
+        if (!parsed.valid) throw new Error(`Bootstrap Analyst response failed validation: ${parsed.error}`);
+        // Real-evidence gate: an analysis that cites zero real files
+        // among its own evidenceReferences is a real signal its
+        // exploration may be fabricated — its recommendedRoleNeeds are
+        // dropped rather than trusted just because the role/capability
+        // vocabulary happened to be valid (see deriveRoleRequirements).
+        const evidenceValidation = validateEvidenceReferencesImpl(parsed.analysis, snapshot.copiedFiles);
+        const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, evidenceValidation);
+        const strategy = buildProjectStrategy({ ...profile, roleRequirements }, candidates, analyst);
+        await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
+        return {
+          ...strategy, projectRoot, analysis: parsed.analysis, evidenceValidation,
+          sanitization: { filesCopied: snapshot.filesCopied, secretsRedacted: snapshot.secretsRedacted, excludedPrivatePaths: snapshot.excludedPrivatePaths.length }
+        };
+      } finally {
+        await snapshot.cleanup();
       }
-      const parsed = parseProjectAnalysisImpl(response.answer);
-      if (!parsed.valid) throw new Error(`Bootstrap Analyst response failed validation: ${parsed.error}`);
-      const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements);
-      const strategy = buildProjectStrategy({ ...profile, roleRequirements }, candidates, analyst);
-      await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
-      return { ...strategy, projectRoot, analysis: parsed.analysis };
     },
     /** `/project approve`: SUGGESTED -> ACTIVE. Requires a real suggested strategy to already exist — the Bootstrap Analyst choice is already locked in by the time a strategy exists at all (see runBootstrapAnalysis), so there's nothing left to confirm here. */
     async approveProjectStrategy({ cwd }) {

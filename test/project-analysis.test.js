@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "../src/global/conversation/project-analysis.js";
+import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, validateEvidenceReferences } from "../src/global/conversation/project-analysis.js";
 
 function profile(overrides = {}) {
   return {
@@ -88,4 +88,34 @@ test("a thin analysis with no real recommendedRoleNeeds still leaves the project
   const mechanicalFloor = [{ role: "Explorer", capabilities: ["reasoning"], reason: "baseline" }];
   const requirements = deriveRoleRequirements(analysis, mechanicalFloor);
   assert.equal(requirements.length, 1);
+});
+
+test("validateEvidenceReferences matches a real cited path exactly, and honestly marks a fabricated one as unverified", () => {
+  const analysis = { evidenceReferences: ["src/app/api/chat/route.ts", "src/totally/made/up.ts"] };
+  const { verified, unverified } = validateEvidenceReferences(analysis, ["src/app/api/chat/route.ts", "package.json"]);
+  assert.deepEqual(verified, ["src/app/api/chat/route.ts"]);
+  assert.deepEqual(unverified, ["src/totally/made/up.ts"]);
+});
+
+test("validateEvidenceReferences tolerates real path-phrasing differences (leading ./, citing a shorter real suffix) without treating them as fabricated", () => {
+  const analysis = { evidenceReferences: ["./package.json", "route.ts"] };
+  const { verified, unverified } = validateEvidenceReferences(analysis, ["package.json", "src/app/api/chat/route.ts"]);
+  assert.deepEqual(verified, ["./package.json", "route.ts"]);
+  assert.deepEqual(unverified, []);
+});
+
+test("deriveRoleRequirements drops the analyst's recommendedRoleNeeds entirely when NONE of its own evidenceReferences verified against a real file — a real signal of possibly fabricated exploration", () => {
+  const analysis = { recommendedRoleNeeds: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "made up" }] };
+  const mechanicalFloor = [{ role: "Explorer", capabilities: ["reasoning"], reason: "baseline" }];
+  const noEvidence = { verified: [], unverified: ["src/made/up.ts"] };
+  const requirements = deriveRoleRequirements(analysis, mechanicalFloor, noEvidence);
+  assert.deepEqual(requirements.map((r) => r.role), ["Explorer"], "Reviewer must be dropped — nothing the analyst cited was real");
+});
+
+test("deriveRoleRequirements trusts the analyst's recommendedRoleNeeds once at least one real evidenceReference verified", () => {
+  const analysis = { recommendedRoleNeeds: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "sensitive real file found" }] };
+  const mechanicalFloor = [{ role: "Explorer", capabilities: ["reasoning"], reason: "baseline" }];
+  const someEvidence = { verified: ["src/app/api/chat/route.ts"], unverified: [] };
+  const requirements = deriveRoleRequirements(analysis, mechanicalFloor, someEvidence);
+  assert.ok(requirements.some((r) => r.role === "Reviewer"));
 });

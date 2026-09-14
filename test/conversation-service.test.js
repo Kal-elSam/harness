@@ -266,12 +266,21 @@ test("preflightProject computes a real read-only ProjectProfile and real Bootstr
   assert.equal(wrote, false, "preflight must never persist a ProjectStrategy");
 });
 
-test("runBootstrapAnalysis runs the real chosen model read-only, validates its response, and only then builds + persists a SUGGESTED ProjectStrategy genuinely re-scored per its real findings", async () => {
+test("runBootstrapAnalysis runs the real chosen model read-only against a SANITIZED SNAPSHOT (never the real cwd), validates its response, and only then builds + persists a SUGGESTED ProjectStrategy genuinely re-scored per its real, evidence-backed findings", async () => {
   let written = null;
   const askCalls = [];
+  let cleanedUp = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo",
     homeDir: "/home/test",
+    buildSanitizedSnapshot: async (projectRoot) => {
+      assert.equal(projectRoot, "/repo");
+      return {
+        snapshotRoot: "/tmp/fake-snapshot", filesCopied: 1, secretsRedacted: 0,
+        copiedFiles: ["src/app/api/chat/route.ts"], excludedPrivatePaths: [],
+        cleanup: async () => { cleanedUp = true; }
+      };
+    },
     askProvider: async (args) => {
       askCalls.push(args);
       return {
@@ -279,7 +288,7 @@ test("runBootstrapAnalysis runs the real chosen model read-only, validates its r
         answer: JSON.stringify({
           architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
           recommendedRoleNeeds: [{ role: "Architect", capabilities: ["coding"], reason: "coding-heavy area found" }],
-          uncertainties: [], evidenceReferences: []
+          uncertainties: [], evidenceReferences: ["src/app/api/chat/route.ts"]
         })
       };
     },
@@ -302,19 +311,55 @@ test("runBootstrapAnalysis runs the real chosen model read-only, validates its r
 
   assert.equal(askCalls[0].provider, "codex");
   assert.equal(askCalls[0].model, "codex-model");
+  assert.equal(askCalls[0].cwd, "/tmp/fake-snapshot", "the analyst must run against the sanitized snapshot, never the real project directory");
   assert.equal(result.status, "suggested");
   assert.equal(result.bootstrapAnalyst.adapterId, "codex");
   assert.equal(result.bootstrapAnalystChoice, "quality");
-  // Explorer (mechanical floor) + Architect (the analyst's own real finding) must both be active.
+  // Explorer (mechanical floor) + Architect (the analyst's own real, evidence-backed finding) must both be active.
   assert.ok(result.activeRoles.includes("Explorer") && result.activeRoles.includes("Architect"));
   assert.equal(result.orchestrator.adapterId, "claude", "coding-only Architect (from the analyst's real finding) must pick the real coding leader");
   assert.equal(written.status, "suggested", "the suggestion must actually be persisted, not just returned");
+  assert.equal(cleanedUp, true, "the sanitized snapshot must always be cleaned up, never left on disk");
 });
 
-test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the analyst's response fails validation", async () => {
-  let wrote = false;
+test("runBootstrapAnalysis drops the analyst's recommendedRoleNeeds when none of its evidenceReferences verify against a real file, but still cleans up the snapshot and persists the mechanical-floor strategy", async () => {
+  let cleanedUp = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
+    buildSanitizedSnapshot: async () => ({
+      snapshotRoot: "/tmp/fake-snapshot", filesCopied: 1, secretsRedacted: 0,
+      copiedFiles: ["src/real.ts"], excludedPrivatePaths: [], cleanup: async () => { cleanedUp = true; }
+    }),
+    askProvider: async () => ({
+      status: "answered", error: null,
+      answer: JSON.stringify({
+        architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
+        recommendedRoleNeeds: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "fabricated" }],
+        uncertainties: [], evidenceReferences: ["src/made/up/path.ts"]
+      })
+    }),
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => strategy
+  });
+  const profile = {
+    projectName: "repo", stack: [], architecture: {}, quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-1",
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "baseline" }]
+  };
+  const candidates = await realScoredCandidates();
+  const analyst = { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } };
+  const result = await service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst });
+  assert.ok(!result.activeRoles.includes("Reviewer"), "Reviewer must be dropped — nothing the analyst cited was a real file");
+  assert.equal(cleanedUp, true);
+});
+
+test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the analyst's response fails validation, but still cleans up the sanitized snapshot", async () => {
+  let wrote = false;
+  let cleanedUp = false;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    buildSanitizedSnapshot: async () => ({
+      snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
+      copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => { cleanedUp = true; }
+    }),
     askProvider: async () => ({ status: "answered", error: null, answer: "not real json at all" }),
     writeProjectStrategy: async () => { wrote = true; }
   });
@@ -323,6 +368,7 @@ test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the a
   const analyst = { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } };
   await assert.rejects(() => service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst }), /failed validation/);
   assert.equal(wrote, false);
+  assert.equal(cleanedUp, true, "a failed analysis must never leave the sanitized snapshot on disk");
 });
 
 test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the real provider call itself fails", async () => {
