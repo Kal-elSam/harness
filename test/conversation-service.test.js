@@ -232,7 +232,7 @@ test("getSession/setMode persist and round-trip the real WorkMode for a project"
   assert.equal(reread.mode, "agent");
 });
 
-test("analyzeProject combines a real ProjectProfile with the already-computed global teams into a SUGGESTED ProjectStrategy, and persists it", async () => {
+test("analyzeProject combines a real ProjectProfile with the real candidate pool into a SUGGESTED ProjectStrategy, genuinely re-scored per this project's own roleRequirements — and persists it", async () => {
   let written = null;
   const service = createConversationService({
     resolveRoot: async () => "/repo",
@@ -241,7 +241,14 @@ test("analyzeProject combines a real ProjectProfile with the already-computed gl
       assert.equal(cwd, "/repo");
       return {
         fingerprint: "fp-1",
-        roleRequirements: [{ role: "Explorer" }, { role: "Architect" }]
+        // Explorer asks only for reasoning (codex leads); Architect asks
+        // only for coding (claude leads) — deliberately opposite, so a
+        // fixed "aiTeam" couldn't fake this the way the old filtering
+        // design could.
+        roleRequirements: [
+          { role: "Explorer", capabilities: ["reasoning"], reason: "" },
+          { role: "Architect", capabilities: ["coding"], reason: "" }
+        ]
       };
     },
     writeProjectStrategy: async (homeDir, projectRoot, strategy) => {
@@ -251,20 +258,29 @@ test("analyzeProject combines a real ProjectProfile with the already-computed gl
       return strategy;
     }
   });
-  service.snapshot = async () => ({
-    modelIntelligence: {
-      aiTeam: [
-        { role: "Explorer", primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" }, reason: null },
-        { role: "Architect", primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, reason: null }
-      ],
-      efficientTeam: []
-    }
-  });
+  service.snapshot = async () => {
+    const { scoreAvailableModels } = await import("../src/global/intelligence/model-intelligence.js");
+    const { createCapabilityRegistry } = await import("../src/global/intelligence/model-capability-registry.js");
+    const aa = [
+      { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 40, mathIndex: null },
+      { slug: "claude-model", name: "Claude Model", intelligenceIndex: 40, codingIndex: 90, mathIndex: null }
+    ];
+    const scoredAll = scoreAvailableModels([
+      { adapterId: "codex", models: [{ id: "codex-model" }] },
+      { adapterId: "claude", models: [{ id: "claude-model" }] }
+    ], aa);
+    return {
+      modelIntelligence: {
+        scoredAll, eligibility: { codex: { ok: true }, claude: { ok: true } },
+        registry: createCapabilityRegistry(), providerCapacity: null
+      }
+    };
+  };
   const result = await service.analyzeProject({ cwd: "/repo" });
   assert.equal(result.status, "suggested");
   assert.deepEqual(result.activeRoles, ["Explorer", "Architect"]);
-  assert.equal(result.bootstrapAnalyst.adapterId, "codex");
-  assert.equal(result.orchestrator.adapterId, "claude");
+  assert.equal(result.bootstrapAnalyst.adapterId, "codex", "reasoning-only Explorer must pick the real reasoning leader");
+  assert.equal(result.orchestrator.adapterId, "claude", "coding-only Architect must pick the real coding leader");
   assert.equal(written.status, "suggested", "the suggestion must actually be persisted, not just returned");
 });
 
@@ -285,6 +301,62 @@ test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approve
     readProjectStrategy: async () => null
   });
   await assert.rejects(() => serviceNoStrategy.approveProjectStrategy({ cwd: "/repo" }));
+});
+
+test("approveProjectStrategy requires a real explicit Bootstrap Analyst choice when there were genuinely two real alternatives, but not when there was only one", async () => {
+  let stored = {
+    schema: "kairo.project-strategy/v1", status: "suggested", profileFingerprint: "fp-1",
+    bootstrapAnalystAlternatives: [
+      { choice: "quality", model: { adapterId: "codex", modelId: "gpt-6-astra" } },
+      { choice: "efficient", model: { adapterId: "claude", modelId: "claude-x" } }
+    ],
+    bootstrapAnalystChoice: null
+  };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => stored,
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
+  });
+  await assert.rejects(() => service.approveProjectStrategy({ cwd: "/repo" }), /not yet confirmed/);
+
+  stored.bootstrapAnalystChoice = "efficient";
+  const approved = await service.approveProjectStrategy({ cwd: "/repo" });
+  assert.equal(approved.status, "active");
+
+  // Only one real alternative -> nothing to choose, approval doesn't block.
+  let single = {
+    schema: "kairo.project-strategy/v1", status: "suggested", profileFingerprint: "fp-2",
+    bootstrapAnalystAlternatives: [{ choice: "quality", model: { adapterId: "codex", modelId: "gpt-6-astra" } }],
+    bootstrapAnalystChoice: null
+  };
+  const singleService = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => single,
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => { single = strategy; return strategy; }
+  });
+  const singleApproved = await singleService.approveProjectStrategy({ cwd: "/repo" });
+  assert.equal(singleApproved.status, "active");
+});
+
+test("selectBootstrapAnalyst persists the real explicit choice between quality/efficient", async () => {
+  let stored = {
+    schema: "kairo.project-strategy/v1", status: "suggested", profileFingerprint: "fp-1",
+    bootstrapAnalyst: { adapterId: "codex", modelId: "gpt-6-astra" },
+    bootstrapAnalystAlternatives: [
+      { choice: "quality", model: { adapterId: "codex", modelId: "gpt-6-astra" } },
+      { choice: "efficient", model: { adapterId: "claude", modelId: "claude-x" } }
+    ],
+    bootstrapAnalystChoice: null
+  };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => stored,
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
+  });
+  const result = await service.selectBootstrapAnalyst({ cwd: "/repo", choice: "efficient" });
+  assert.equal(result.bootstrapAnalyst.adapterId, "claude");
+  assert.equal(result.bootstrapAnalystChoice, "efficient");
+  await assert.rejects(() => service.selectBootstrapAnalyst({ cwd: "/repo", choice: "made-up" }));
 });
 
 test("refreshProjectStrategy marks an ACTIVE strategy STALE only when the real fingerprint actually changed, and preserves its previous approval/team otherwise", async () => {
@@ -318,7 +390,7 @@ test("refreshProjectStrategy behaves like analyze when there's no real approved 
     computeProjectProfile: async () => { analyzed = true; return { fingerprint: "fp-1", roleRequirements: [] }; },
     writeProjectStrategy: async (homeDir, projectRoot, strategy) => strategy
   });
-  service.snapshot = async () => ({ modelIntelligence: { aiTeam: [], efficientTeam: [] } });
+  service.snapshot = async () => ({ modelIntelligence: { scoredAll: [], eligibility: {}, registry: null, providerCapacity: null } });
   const result = await service.refreshProjectStrategy({ cwd: "/repo" });
   assert.ok(analyzed);
   assert.equal(result.status, "suggested");

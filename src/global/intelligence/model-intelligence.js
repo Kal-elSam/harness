@@ -366,13 +366,21 @@ const ROLE_CAPABILITIES = {
  * (registry AND models differ per call).
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
  * @param {Array<object>} models
+ * @param {Record<string, string[]>} [roleCapabilities] - which real
+ *   capabilities each role needs, defaulting to the generic global table
+ *   above. A caller building a PROJECT-specific team (see
+ *   conversation/project-strategy.js) passes the project's own real,
+ *   detected roleRequirements here instead — e.g. a project with no real
+ *   test command drops terminalExecution from Tester/Debugger's real
+ *   requirement entirely, which can genuinely change which model wins
+ *   that role, not just whether the role is active at all.
  * @returns {{roleDefinitions: Array<{role: string, compute: (model: object) => number|null, better: string}>, evaluationsByRole: Record<string, Map<string, import("./capability-scoring.js").RoleEvaluation>>, gapValueByRole: Record<string, Map<string, number>>}}
  */
-function buildAiTeamRoleDefinitions(registry, models) {
+function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CAPABILITIES) {
   const evaluationsByRole = {};
   const gapValueByRole = {};
   const roleDefinitions = [];
-  for (const [role, capabilities] of Object.entries(ROLE_CAPABILITIES)) {
+  for (const [role, capabilities] of Object.entries(roleCapabilities)) {
     const evaluations = computeRoleEvaluations(registry, models, role, capabilities);
     evaluationsByRole[role] = evaluations;
     // Real, scale-normalized magnitude per model — NOT the percentile
@@ -741,11 +749,16 @@ function sortByCapabilityPriority(candidates, better, modelUsage, providerTechni
  *   when given, each primary/fallback also carries `corroboration` (real
  *   Hugging Face / manufacturer-snapshot / Kairo-telemetry evidence for
  *   that exact model) — purely informational, never part of the ranking.
+ * @param {Record<string, string[]>} [roleCapabilities] - see
+ *   buildAiTeamRoleDefinitions's own doc — overrides the generic global
+ *   role->capability table with a PROJECT-specific one (project-strategy.js),
+ *   so the actual model selection responds to a real project's own
+ *   detected needs, not just which roles are active.
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
-export function buildAiTeam(models, eligibility = {}, registry = null) {
+export function buildAiTeam(models, eligibility = {}, registry = null, roleCapabilities = ROLE_CAPABILITIES) {
   const effectiveRegistry = ensureRegistry(models, registry);
-  const { roleDefinitions, evaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models);
+  const { roleDefinitions, evaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
   const roleRankings = roleDefinitions.map(({ role, compute, better }) => ({
     role, compute, better, ranked: attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role])
   }));
@@ -1011,9 +1024,9 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildEfficientTeam(models, eligibility = {}, registry = null, options = {}) {
-  const { capabilityFloor = EFFICIENT_CAPABILITY_FLOOR, providerCapacity = null } = options;
+  const { capabilityFloor = EFFICIENT_CAPABILITY_FLOOR, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES } = options;
   const effectiveRegistry = ensureRegistry(models, registry);
-  const { roleDefinitions, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models);
+  const { roleDefinitions, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
   const roleRankings = roleDefinitions.map(({ role, compute, better }) => ({
     role, compute, better, ranked: attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role])
   }));

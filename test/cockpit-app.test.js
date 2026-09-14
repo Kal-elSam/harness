@@ -530,6 +530,41 @@ test("/project analyze calls the real analyzeProject and reports the real role c
   app.stop();
 });
 
+test("/project analyst quality|efficient calls the real selectBootstrapAnalyst with the exact real choice", async () => {
+  let editor;
+  const selectCalls = [];
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    selectBootstrapAnalyst: async (args) => { selectCalls.push(args); return { bootstrapAnalyst: { adapterId: "claude", modelId: "x", displayName: "Claude X" } }; }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+  editor.setText("/project analyst efficient");
+  await editor.onSubmit(editor.getText());
+  assert.deepEqual(selectCalls, [{ cwd: "/repo", choice: "efficient" }]);
+  app.stop();
+});
+
+test("/project analyst rejects a choice that isn't quality or efficient, without calling the service", async () => {
+  let editor;
+  const selectCalls = [];
+  const service = { snapshot: async () => makeSnapshot([]), selectBootstrapAnalyst: async (args) => { selectCalls.push(args); return {}; } };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+  editor.setText("/project analyst yolo");
+  await editor.onSubmit(editor.getText());
+  assert.equal(selectCalls.length, 0);
+  const texts = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.match(texts, /Usage: \/project analyst quality\|efficient/);
+  app.stop();
+});
+
 test("/project approve calls the real approveProjectStrategy", async () => {
   let editor;
   const approveCalls = [];

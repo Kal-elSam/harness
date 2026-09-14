@@ -173,7 +173,7 @@ export async function runCockpitApp({
       // blocks with no indication of which command produced which one.
       pushTranscript("user", task);
       if (command === "/help") {
-        pushTranscript("kairo", "Shift+Tab cycles ASK/PLAN/AGENT · /project status|analyze|approve|refresh real project team · /plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
+        pushTranscript("kairo", "Shift+Tab cycles ASK/PLAN/AGENT · /project status|analyze|analyst quality|efficient|approve|refresh real project team · /plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
       } else if (command === "/usage") {
         for (const line of view.usageLines()) pushTranscript("kairo", line);
       } else if (command === "/providers") {
@@ -211,7 +211,27 @@ export async function runCockpitApp({
           editor.setText("");
           return runAction("Analyzing project (read-only)", async () => {
             const result = await service.analyzeProject({ cwd });
-            pushTranscript("kairo", `Suggested project team ready (${result.activeRoles.length} real role${result.activeRoles.length === 1 ? "" : "s"}). Use /project approve to activate.`);
+            pushTranscript("kairo", `Suggested project team ready (${result.activeRoles.length} real role${result.activeRoles.length === 1 ? "" : "s"}).`);
+            const alternatives = result.bootstrapAnalystAlternatives ?? [];
+            if (alternatives.length > 1) {
+              const lines = alternatives.map((alt) => `  ${alt.choice}: ${view.aiTeamLabel(alt.model)}`).join("\n");
+              pushTranscript("kairo", `Bootstrap Analyst — real alternatives:\n${lines}\nUse /project analyst quality|efficient to choose, then /project approve to activate.`);
+            } else {
+              pushTranscript("kairo", `Bootstrap Analyst: ${result.bootstrapAnalyst ? view.aiTeamLabel(result.bootstrapAnalyst) : "no eligible option"}. Use /project approve to activate.`);
+            }
+          }).finally(() => { editor.disableSubmit = false; });
+        } else if (sub === "analyst") {
+          const choice = task.slice(command.length).trim().split(/\s+/)[1]?.toLowerCase();
+          if (choice !== "quality" && choice !== "efficient") {
+            pushTranscript("kairo", "Usage: /project analyst quality|efficient");
+            editor.setText("");
+            return;
+          }
+          editor.disableSubmit = true;
+          editor.setText("");
+          return runAction("Selecting Bootstrap Analyst", async () => {
+            const result = await service.selectBootstrapAnalyst({ cwd, choice });
+            pushTranscript("kairo", `Bootstrap Analyst: ${result.bootstrapAnalyst ? view.aiTeamLabel(result.bootstrapAnalyst) : "no eligible option"} (${choice}). Use /project approve to activate.`);
           }).finally(() => { editor.disableSubmit = false; });
         } else if (sub === "approve") {
           editor.disableSubmit = true;
@@ -228,7 +248,7 @@ export async function runCockpitApp({
             pushTranscript("kairo", `Project strategy is now ${result.status.toUpperCase()}.`);
           }).finally(() => { editor.disableSubmit = false; });
         } else {
-          pushTranscript("kairo", "Usage: /project status|analyze|approve|refresh");
+          pushTranscript("kairo", "Usage: /project status|analyze|analyst quality|efficient|approve|refresh");
         }
       } else if (command === "/plan") {
         const planTask = task.slice(command.length).trim();

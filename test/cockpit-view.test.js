@@ -375,6 +375,8 @@ test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the requi
     projectRoot: "/repo/crm",
     projectStrategy: {
       status: "suggested",
+      bootstrapAnalyst: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" },
+      bootstrapAnalystChoice: null,
       orchestrator: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" },
       qualityTeam: [
         { role: "Architect", model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, reason: null },
@@ -385,10 +387,28 @@ test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the requi
   const { title, lines } = view.projectTeamPanel(80);
   assert.equal(title, "PROJECT TEAM · crm · SUGGESTED");
   const joined = lines.join("\n");
+  assert.match(joined, /Bootstrap Analyst\s+GPT-6 Astra/);
+  assert.match(joined, /recommended — confirm with \/project analyst/, "an unconfirmed default recommendation must say so honestly");
   assert.match(joined, /Orchestrator\s+Fable 5\.1/);
   assert.match(joined, /Architect\s+Fable 5\.1/);
   assert.match(joined, /Builder\s+GPT-6 Astra/);
   assert.match(joined, /Use \/project approve to activate\./);
+});
+
+test("projectTeamPanel drops the pending-confirmation hint once the human made a real explicit Bootstrap Analyst choice", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/crm",
+    projectStrategy: {
+      status: "suggested",
+      bootstrapAnalyst: { adapterId: "claude", modelId: "claude-x", displayName: "Claude X" },
+      bootstrapAnalystChoice: "quality",
+      orchestrator: null,
+      qualityTeam: []
+    }
+  });
+  const { lines } = view.projectTeamPanel(80);
+  assert.doesNotMatch(lines.join("\n"), /recommended — confirm/);
 });
 
 test("projectTeamPanel shows ACTIVE without a pending-approval hint, and STALE with a real refresh warning", () => {

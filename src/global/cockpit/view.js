@@ -368,9 +368,14 @@ export class CockpitView {
       };
     }
     const lines = [];
-    if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(12)} ${this.aiTeamLabel(strategy.orchestrator)}`);
+    if (strategy.bootstrapAnalyst) {
+      const pending = strategy.status === "suggested" && !strategy.bootstrapAnalystChoice;
+      const suffix = pending ? theme.fg("warning", " (recommended — confirm with /project analyst)") : "";
+      lines.push(`${"Bootstrap Analyst".padEnd(18)} ${this.aiTeamLabel(strategy.bootstrapAnalyst)}${suffix}`);
+    }
+    if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(18)} ${this.aiTeamLabel(strategy.orchestrator)}`);
     for (const entry of strategy.qualityTeam ?? []) {
-      lines.push(`${entry.role.padEnd(12)} ${entry.model ? this.aiTeamLabel(entry.model) : theme.fg("warning", "no eligible option")}`);
+      lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.aiTeamLabel(entry.model) : theme.fg("warning", "no eligible option")}`);
     }
     if (strategy.status === "suggested") lines.push(theme.fg("muted", "Use /project approve to activate."));
     if (strategy.status === "stale") lines.push(theme.fg("warning", "Real evidence changed since approval — use /project refresh."));

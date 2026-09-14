@@ -24,7 +24,7 @@ import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { readSession, writeSessionMode } from "./session-store.js";
 import { computeProjectProfile } from "./project-profile.js";
-import { buildProjectStrategy, isStrategyStale } from "./project-strategy.js";
+import { buildProjectStrategy, isStrategyStale, selectBootstrapAnalyst } from "./project-strategy.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -492,7 +492,13 @@ export function createConversationService(deps = {}) {
           models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(scored),
           eligibility, coverage, unscoredModels,
           aiTeam: buildAiTeam(scoredAll, eligibility, registry),
-          efficientTeam: buildEfficientTeam(scoredAll, eligibility, registry, { providerCapacity })
+          efficientTeam: buildEfficientTeam(scoredAll, eligibility, registry, { providerCapacity }),
+          // Raw ingredients (never rendered directly) so a caller that
+          // needs a PROJECT-specific re-scoring (see analyzeProject below)
+          // can call buildAiTeam/buildEfficientTeam again with the
+          // project's own real roleCapabilities, instead of only ever
+          // filtering the generic global team by role name.
+          scoredAll, registry, providerCapacity
         };
       }
       return result;
@@ -582,9 +588,13 @@ export function createConversationService(deps = {}) {
       const projectRoot = await root(cwd);
       const profile = await computeProjectProfileImpl({ cwd: projectRoot });
       const snap = await this.snapshot({ cwd: projectRoot });
-      const aiTeam = snap.modelIntelligence?.aiTeam ?? [];
-      const efficientTeam = snap.modelIntelligence?.efficientTeam ?? [];
-      const strategy = buildProjectStrategy(profile, aiTeam, efficientTeam);
+      // Real re-scoring, not global-team filtering: buildProjectStrategy
+      // calls buildAiTeam/buildEfficientTeam itself against THIS project's
+      // own roleRequirements, using the exact same candidate pool
+      // (scoredAll/eligibility/registry) snapshot() already assembled —
+      // never re-fetching catalogs, never inventing a new scoring path.
+      const { scoredAll = [], eligibility = {}, registry = null, providerCapacity = null } = snap.modelIntelligence ?? {};
+      const strategy = buildProjectStrategy(profile, { scoredAll, eligibility, registry, providerCapacity });
       await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
       return { ...strategy, projectRoot, profile };
     },
@@ -593,9 +603,30 @@ export function createConversationService(deps = {}) {
       const projectRoot = await root(cwd);
       const existing = await readProjectStrategyImpl(homeDir, projectRoot);
       if (!existing) throw new Error("No suggested project strategy yet — run /project analyze first.");
+      // A real choice between alternatives is required before approval —
+      // "el usuario selecciona el modelo" — unless there was genuinely
+      // only one real alternative to begin with (nothing to choose).
+      const hadRealChoice = (existing.bootstrapAnalystAlternatives ?? []).length > 1;
+      if (hadRealChoice && !existing.bootstrapAnalystChoice) {
+        throw new Error("Bootstrap Analyst not yet confirmed — run /project analyst quality|efficient first.");
+      }
       const approved = { ...existing, status: "active", approvedAt: new Date().toISOString() };
       await writeProjectStrategyImpl(homeDir, projectRoot, approved);
       return { ...approved, projectRoot };
+    },
+    /**
+     * `/project analyst quality|efficient`: explicit human choice between
+     * the two real alternatives buildProjectStrategy already computed for
+     * Bootstrap Analyst — never a value invented on the spot. Only valid
+     * while the strategy is still SUGGESTED.
+     */
+    async selectBootstrapAnalyst({ cwd, choice }) {
+      const projectRoot = await root(cwd);
+      const existing = await readProjectStrategyImpl(homeDir, projectRoot);
+      if (!existing) throw new Error("No suggested project strategy yet — run /project analyze first.");
+      const updated = selectBootstrapAnalyst(existing, choice);
+      await writeProjectStrategyImpl(homeDir, projectRoot, updated);
+      return { ...updated, projectRoot };
     },
     /**
      * `/project refresh`: recomputes the real ProjectProfile. A strategy
