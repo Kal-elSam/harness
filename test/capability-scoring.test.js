@@ -47,6 +47,20 @@ test("the same real benchmark reported under two different source key names coun
   assert.equal(scores.get("claude::claude-x").benchmarkCount, 1);
 });
 
+test("percentile ranking normalizes cross-scale evidence before comparing — a 0-1 'unit' result is never compared raw against a 0-100 'hundred' result", () => {
+  // Both are real terminal-bench aliases (terminalBenchV2: "unit",
+  // terminal-bench: "hundred") of the SAME benchmark identity. Claude's
+  // real 0.64 (64%) is actually ahead of Codex's real 57.9/100 (57.9%) —
+  // but a naive raw comparison (0.64 < 57.9) would rank Codex first.
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "terminalBenchV2", 0.64);
+  addEvidence(registry, codex, "terminal-bench", 57.9);
+
+  const scores = computeCapabilityPercentile(registry, [claude, codex], "terminalExecution");
+  assert.equal(scores.get("claude::claude-x").percentile, 1, "0.64 (64%) is the real leader, not 57.9 raw (misread as 100x too large)");
+  assert.equal(scores.get("codex::codex-x").percentile, 0);
+});
+
 test("distinct real benchmarks within a capability are never merged — GPQA and HLE stay separate contributions to the median", () => {
   const registry = createCapabilityRegistry();
   addEvidence(registry, claude, "gpqa", 0.90);

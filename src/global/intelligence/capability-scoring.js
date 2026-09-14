@@ -148,12 +148,19 @@ function percentileForBenchmark(registry, models, identity) {
   for (const model of models) {
     const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
     const best = bestAcrossAliases(registry, id, identity);
-    if (best) results.push({ model, entry: best.entry });
+    // Different models can win bestAcrossAliases via different metric
+    // aliases of the SAME real benchmark identity (e.g. one model's best
+    // evidence is a 0-1 "unit" alias, another's is a 0-100 "hundred"
+    // alias) — comparing their raw entry.value would rank 0.64 below 57.9
+    // even though 0.64 (64%) is actually ahead of 57.9/100 (57.9%).
+    // Percentile ranking is scale-invariant only WITHIN one common scale,
+    // so every result is normalized to the same 0-1 scale before sorting.
+    if (best) results.push({ model, entry: best.entry, normalizedValue: convertByScale(best.scale, best.entry.value) });
   }
   if (results.length < 2 && models.length > 1) return new Map();
   if (!results.length) return new Map();
 
-  const sorted = [...results].sort((a, b) => (direction === "higher" ? a.entry.value - b.entry.value : b.entry.value - a.entry.value));
+  const sorted = [...results].sort((a, b) => (direction === "higher" ? a.normalizedValue - b.normalizedValue : b.normalizedValue - a.normalizedValue));
   const percentiles = new Map();
   const n = sorted.length;
   sorted.forEach((entry, index) => {
@@ -161,7 +168,7 @@ function percentileForBenchmark(registry, models, identity) {
     // real dead-heat is never arbitrarily broken by array order here —
     // portfolio-level tiebreaks happen later, on the final score.
     let rankIndex = index;
-    while (rankIndex > 0 && sorted[rankIndex - 1].entry.value === entry.entry.value) rankIndex -= 1;
+    while (rankIndex > 0 && sorted[rankIndex - 1].normalizedValue === entry.normalizedValue) rankIndex -= 1;
     const percentile = n > 1 ? rankIndex / (n - 1) : 1;
     percentiles.set(modelKey(entry.model), { value: percentile, verified: entry.entry.verified });
   });
