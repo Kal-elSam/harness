@@ -445,18 +445,33 @@ test("runBootstrapAnalysis fails closed (never a silent fallback) when Codex's O
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
       copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => { cleanedUp = true; }
     }),
-    runCodexSandboxedBootstrap: async () => ({
-      status: "error", error: "isolation_unavailable", answer: null,
-      isolation: { available: false, platform: "linux", boundaryVerified: false, reason: "OS-level read confinement for Codex is only implemented for macOS" }
-    }),
+    codexIsolationDeps: { platform: "linux" },
+    runCodexSandboxedBootstrap: async () => { throw new Error("must never be called — checkEligibility must gate before analyze"); },
     writeProjectStrategy: async () => { wrote = true; }
   });
   const profile = { projectName: "repo", stack: [], architecture: {}, quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-1", roleRequirements: [] };
   const candidates = await realScoredCandidates();
   const analyst = { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } };
-  await assert.rejects(() => service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst }), /isolation_unavailable/);
+  await assert.rejects(() => service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst }), /not eligible/);
   assert.equal(wrote, false);
   assert.equal(cleanedUp, true);
+});
+
+test("runBootstrapAnalysis rejects an analyst adapterId with no real BootstrapAnalyzerAdapter implementation yet, never a silent guess", async () => {
+  let wrote = false;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    buildSanitizedSnapshot: async () => ({
+      snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
+      copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => {}
+    }),
+    writeProjectStrategy: async () => { wrote = true; }
+  });
+  const profile = { projectName: "repo", stack: [], architecture: {}, quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-1", roleRequirements: [] };
+  const candidates = await realScoredCandidates();
+  const analyst = { choice: "quality", model: { adapterId: "cursor", modelId: "some-model" } };
+  await assert.rejects(() => service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst }), /not eligible/);
+  assert.equal(wrote, false);
 });
 
 test("CANARY: runBootstrapAnalysis's real sanitized-snapshot pipeline (not mocked away) never lets a real secret reach what would be sent to the provider", async () => {
