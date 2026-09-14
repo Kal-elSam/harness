@@ -232,6 +232,113 @@ test("getSession/setMode persist and round-trip the real WorkMode for a project"
   assert.equal(reread.mode, "agent");
 });
 
+test("analyzeProject combines a real ProjectProfile with the already-computed global teams into a SUGGESTED ProjectStrategy, and persists it", async () => {
+  let written = null;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    computeProjectProfile: async ({ cwd }) => {
+      assert.equal(cwd, "/repo");
+      return {
+        fingerprint: "fp-1",
+        roleRequirements: [{ role: "Explorer" }, { role: "Architect" }]
+      };
+    },
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => {
+      assert.equal(homeDir, "/home/test");
+      assert.equal(projectRoot, "/repo");
+      written = strategy;
+      return strategy;
+    }
+  });
+  service.snapshot = async () => ({
+    modelIntelligence: {
+      aiTeam: [
+        { role: "Explorer", primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" }, reason: null },
+        { role: "Architect", primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, reason: null }
+      ],
+      efficientTeam: []
+    }
+  });
+  const result = await service.analyzeProject({ cwd: "/repo" });
+  assert.equal(result.status, "suggested");
+  assert.deepEqual(result.activeRoles, ["Explorer", "Architect"]);
+  assert.equal(result.bootstrapAnalyst.adapterId, "codex");
+  assert.equal(result.orchestrator.adapterId, "claude");
+  assert.equal(written.status, "suggested", "the suggestion must actually be persisted, not just returned");
+});
+
+test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approvedAt, but requires a real suggested strategy to exist first", async () => {
+  let stored = { schema: "kairo.project-strategy/v1", status: "suggested", profileFingerprint: "fp-1" };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    readProjectStrategy: async () => stored,
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
+  });
+  const approved = await service.approveProjectStrategy({ cwd: "/repo" });
+  assert.equal(approved.status, "active");
+  assert.ok(approved.approvedAt);
+
+  const serviceNoStrategy = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => null
+  });
+  await assert.rejects(() => serviceNoStrategy.approveProjectStrategy({ cwd: "/repo" }));
+});
+
+test("refreshProjectStrategy marks an ACTIVE strategy STALE only when the real fingerprint actually changed, and preserves its previous approval/team otherwise", async () => {
+  const activeStrategy = { schema: "kairo.project-strategy/v1", status: "active", profileFingerprint: "fp-1", activeRoles: ["Explorer"], approvedAt: "t0" };
+  let written = null;
+  const staleService = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => activeStrategy,
+    computeProjectProfile: async () => ({ fingerprint: "fp-2", roleRequirements: [] }),
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => { written = strategy; return strategy; }
+  });
+  const staleResult = await staleService.refreshProjectStrategy({ cwd: "/repo" });
+  assert.equal(staleResult.status, "stale");
+  assert.deepEqual(staleResult.activeRoles, ["Explorer"], "the previous team assignment must survive — refresh flags staleness, it never silently swaps the team");
+  assert.equal(written.status, "stale");
+
+  const freshService = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => activeStrategy,
+    computeProjectProfile: async () => ({ fingerprint: "fp-1", roleRequirements: [] })
+  });
+  const freshResult = await freshService.refreshProjectStrategy({ cwd: "/repo" });
+  assert.equal(freshResult.status, "active", "an unchanged real fingerprint must never be marked stale");
+});
+
+test("refreshProjectStrategy behaves like analyze when there's no real approved strategy yet (nothing was a real commitment to go stale)", async () => {
+  let analyzed = false;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => null,
+    computeProjectProfile: async () => { analyzed = true; return { fingerprint: "fp-1", roleRequirements: [] }; },
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => strategy
+  });
+  service.snapshot = async () => ({ modelIntelligence: { aiTeam: [], efficientTeam: [] } });
+  const result = await service.refreshProjectStrategy({ cwd: "/repo" });
+  assert.ok(analyzed);
+  assert.equal(result.status, "suggested");
+});
+
+test("snapshot exposes the real persisted ProjectStrategy (or null for NOT_ANALYZED) without ever recomputing it on a plain poll", async () => {
+  let profileComputed = false;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    readProjectStrategy: async () => ({ schema: "kairo.project-strategy/v1", status: "active", profileFingerprint: "fp-1" }),
+    computeProjectProfile: async () => { profileComputed = true; return { fingerprint: "fp-1", roleRequirements: [] }; }
+  });
+  const snap = await service.snapshot({ cwd: "/repo" });
+  assert.equal(snap.projectStrategy.status, "active");
+  assert.equal(profileComputed, false, "a plain snapshot/poll must never trigger a real ProjectProfile computation");
+});
+
 test("snapshot cross-references real model catalogs with real Artificial Analysis scores when probes are enabled", async () => {
   const service = createConversationService({
     resolveRoot: async () => "/repo",

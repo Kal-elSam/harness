@@ -495,6 +495,77 @@ test("submitting a real question answers it directly via submitTask — never cr
   app.stop();
 });
 
+test("/project status reports NOT_ANALYZED honestly when there's no real strategy yet", async () => {
+  let editor;
+  const service = { snapshot: async () => makeSnapshot([]) };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+  editor.setText("/project status");
+  await editor.onSubmit(editor.getText());
+  const texts = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.match(texts, /Project not analyzed/);
+  app.stop();
+});
+
+test("/project analyze calls the real analyzeProject and reports the real role count", async () => {
+  let editor;
+  const analyzeCalls = [];
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    analyzeProject: async (args) => { analyzeCalls.push(args); return { status: "suggested", activeRoles: ["Explorer", "Architect"] }; }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+  editor.setText("/project analyze");
+  await editor.onSubmit(editor.getText());
+  assert.deepEqual(analyzeCalls, [{ cwd: "/repo" }]);
+  const texts = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.match(texts, /Suggested project team ready \(2 real roles\)/);
+  app.stop();
+});
+
+test("/project approve calls the real approveProjectStrategy", async () => {
+  let editor;
+  const approveCalls = [];
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    approveProjectStrategy: async (args) => { approveCalls.push(args); return { status: "active" }; }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+  editor.setText("/project approve");
+  await editor.onSubmit(editor.getText());
+  assert.deepEqual(approveCalls, [{ cwd: "/repo" }]);
+  app.stop();
+});
+
+test("/project refresh calls the real refreshProjectStrategy", async () => {
+  let editor;
+  const refreshCalls = [];
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    refreshProjectStrategy: async (args) => { refreshCalls.push(args); return { status: "stale" }; }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+  editor.setText("/project refresh");
+  await editor.onSubmit(editor.getText());
+  assert.deepEqual(refreshCalls, [{ cwd: "/repo" }]);
+  app.stop();
+});
+
 test("/plan forces a plan even for question-shaped text, bypassing submitTask's classification, and switches WorkMode to PLAN", async () => {
   let editor;
   const architectCalls = [];

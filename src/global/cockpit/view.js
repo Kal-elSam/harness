@@ -341,9 +341,40 @@ export class CockpitView {
    */
   renderDashboardLines(width) {
     const lines = [...this.compactUsageLines(width)];
-    const modelTeamsLines = this.teamsColumnsLines(cardInnerWidth(width));
-    lines.push(...renderPanel("MODEL TEAMS", CARD_TONE.SUCCESS, width, modelTeamsLines));
+    const { title, lines: panelLines } = this.projectTeamPanel(cardInnerWidth(width));
+    lines.push(...renderPanel(title, CARD_TONE.SUCCESS, width, panelLines));
     return lines;
+  }
+
+  /**
+   * Before a real ProjectStrategy exists (see project-strategy.js), the
+   * panel stays honestly labeled GLOBAL MODEL GUIDE — the existing
+   * cross-project CAPABILITY/EFFICIENT recommendations are still real and
+   * useful, but they are NOT a project-specific team, and must never be
+   * presented as one. Once a real strategy exists (suggested/active/
+   * stale), the panel becomes PROJECT TEAM · <project> · <STATUS>, showing
+   * only the real roles THIS project's profile actually required
+   * (strategy.activeRoles/qualityTeam — see buildProjectStrategy), never
+   * the full global 7-role list.
+   * @param {number} [width]
+   */
+  projectTeamPanel(width = 80) {
+    const strategy = this.snapshot?.projectStrategy;
+    const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
+    if (!strategy) {
+      return {
+        title: "GLOBAL MODEL GUIDE",
+        lines: [theme.fg("warning", "Project not analyzed — use /project analyze for a real, project-specific team."), ...this.teamsColumnsLines(width)]
+      };
+    }
+    const lines = [];
+    if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(12)} ${this.aiTeamLabel(strategy.orchestrator)}`);
+    for (const entry of strategy.qualityTeam ?? []) {
+      lines.push(`${entry.role.padEnd(12)} ${entry.model ? this.aiTeamLabel(entry.model) : theme.fg("warning", "no eligible option")}`);
+    }
+    if (strategy.status === "suggested") lines.push(theme.fg("muted", "Use /project approve to activate."));
+    if (strategy.status === "stale") lines.push(theme.fg("warning", "Real evidence changed since approval — use /project refresh."));
+    return { title: `PROJECT TEAM · ${project} · ${strategy.status.toUpperCase()}`, lines };
   }
 
   /** Contextual key hints — shown in the dashboard's fixed zone, not the scrollable conversation. */

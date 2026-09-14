@@ -23,6 +23,9 @@ import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { readSession, writeSessionMode } from "./session-store.js";
+import { computeProjectProfile } from "./project-profile.js";
+import { buildProjectStrategy, isStrategyStale } from "./project-strategy.js";
+import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
@@ -242,6 +245,9 @@ export function createConversationService(deps = {}) {
   const clearTranscriptImpl = deps.clearTranscript ?? clearTranscript;
   const readSessionImpl = deps.readSession ?? readSession;
   const writeSessionModeImpl = deps.writeSessionMode ?? writeSessionMode;
+  const computeProjectProfileImpl = deps.computeProjectProfile ?? computeProjectProfile;
+  const readProjectStrategyImpl = deps.readProjectStrategy ?? readProjectStrategy;
+  const writeProjectStrategyImpl = deps.writeProjectStrategy ?? writeProjectStrategy;
   const readArtificialAnalysisModelsImpl = deps.readArtificialAnalysisModels ?? readArtificialAnalysisModels;
   // Unit tests inject resolveRoot and must remain provider-call free. The real
   // cockpit opts in explicitly so a refresh performs one bounded read-only probe.
@@ -382,6 +388,11 @@ export function createConversationService(deps = {}) {
       result.usage.codex = codexUsage;
       result.usage.claude = claudeUsage;
       result.usage.opencode = opencodeUsage;
+      // Cheap local read only — never recomputed here. Recomputing a real
+      // ProjectProfile (git log, Graphify probe) on every poll tick would
+      // make the dashboard itself expensive; that only happens on an
+      // explicit /project analyze or /project refresh.
+      result.projectStrategy = await readProjectStrategyImpl(homeDir, projectRoot);
       if (enableProviderProbes) {
         const [codexCatalog, opencodeGoCatalog, cursorCatalog, aa] = await Promise.all([
           readCodexModelsCached(projectRoot, { cwd: projectRoot }),
@@ -558,6 +569,56 @@ export function createConversationService(deps = {}) {
     async setMode({ cwd, mode }) {
       const projectRoot = await root(cwd);
       return writeSessionModeImpl(homeDir, projectRoot, mode);
+    },
+    /**
+     * `/project analyze`: computes a real, read-only ProjectProfile (no
+     * file writes, no provider calls) and combines it with the already-
+     * computed global CAPABILITY/EFFICIENT teams (via this.snapshot, so
+     * the heavy catalog/registry assembly is never duplicated here) into a
+     * "suggested" ProjectStrategy, persisted immediately — but never
+     * "active" until an explicit approveProjectStrategy.
+     */
+    async analyzeProject({ cwd }) {
+      const projectRoot = await root(cwd);
+      const profile = await computeProjectProfileImpl({ cwd: projectRoot });
+      const snap = await this.snapshot({ cwd: projectRoot });
+      const aiTeam = snap.modelIntelligence?.aiTeam ?? [];
+      const efficientTeam = snap.modelIntelligence?.efficientTeam ?? [];
+      const strategy = buildProjectStrategy(profile, aiTeam, efficientTeam);
+      await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
+      return { ...strategy, projectRoot, profile };
+    },
+    /** `/project approve`: SUGGESTED -> ACTIVE. Requires a real suggested strategy to already exist. */
+    async approveProjectStrategy({ cwd }) {
+      const projectRoot = await root(cwd);
+      const existing = await readProjectStrategyImpl(homeDir, projectRoot);
+      if (!existing) throw new Error("No suggested project strategy yet — run /project analyze first.");
+      const approved = { ...existing, status: "active", approvedAt: new Date().toISOString() };
+      await writeProjectStrategyImpl(homeDir, projectRoot, approved);
+      return { ...approved, projectRoot };
+    },
+    /**
+     * `/project refresh`: recomputes the real ProjectProfile. A strategy
+     * that was never approved (no strategy yet, or still just "suggested")
+     * simply gets a fresh suggestion (same as analyze — nothing was a real
+     * commitment yet). An ACTIVE strategy whose real fingerprint no longer
+     * matches the current evidence is marked STALE (persisted) but keeps
+     * its previous team assignments/approval intact — a stale flag, not a
+     * silent, unapproved swap.
+     */
+    async refreshProjectStrategy({ cwd }) {
+      const projectRoot = await root(cwd);
+      const existing = await readProjectStrategyImpl(homeDir, projectRoot);
+      if (!existing || existing.status !== "active") {
+        return this.analyzeProject({ cwd: projectRoot });
+      }
+      const profile = await computeProjectProfileImpl({ cwd: projectRoot });
+      if (isStrategyStale(existing, profile)) {
+        const stale = { ...existing, status: "stale" };
+        await writeProjectStrategyImpl(homeDir, projectRoot, stale);
+        return { ...stale, projectRoot, profile };
+      }
+      return { ...existing, projectRoot, profile };
     },
     /**
      * Real persisted chat history for this project, kept globally under

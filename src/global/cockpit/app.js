@@ -173,7 +173,7 @@ export async function runCockpitApp({
       // blocks with no indication of which command produced which one.
       pushTranscript("user", task);
       if (command === "/help") {
-        pushTranscript("kairo", "Shift+Tab cycles ASK/PLAN/AGENT · /plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
+        pushTranscript("kairo", "Shift+Tab cycles ASK/PLAN/AGENT · /project status|analyze|approve|refresh real project team · /plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
       } else if (command === "/usage") {
         for (const line of view.usageLines()) pushTranscript("kairo", line);
       } else if (command === "/providers") {
@@ -193,6 +193,43 @@ export async function runCockpitApp({
         // Drill-down for FIT: which providers were excluded and the exact
         // real reason (quota, availability, PAYG/manual-only policy).
         for (const line of view.fitWhyLines()) pushTranscript("kairo", line);
+      } else if (command === "/project") {
+        const sub = task.slice(command.length).trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+        if (sub === "status") {
+          const strategy = view.snapshot?.projectStrategy;
+          if (!strategy) {
+            pushTranscript("kairo", "Project not analyzed. Use /project analyze for a real, project-specific team.");
+          } else {
+            const approvedNote = strategy.approvedAt ? ` (approved ${strategy.approvedAt})` : "";
+            pushTranscript("kairo", `Status: ${strategy.status.toUpperCase()}${approvedNote}`);
+            for (const entry of strategy.qualityTeam ?? []) {
+              pushTranscript("kairo", `${entry.role}: ${entry.model ? view.aiTeamLabel(entry.model) : "no eligible option"}`);
+            }
+          }
+        } else if (sub === "analyze") {
+          editor.disableSubmit = true;
+          editor.setText("");
+          return runAction("Analyzing project (read-only)", async () => {
+            const result = await service.analyzeProject({ cwd });
+            pushTranscript("kairo", `Suggested project team ready (${result.activeRoles.length} real role${result.activeRoles.length === 1 ? "" : "s"}). Use /project approve to activate.`);
+          }).finally(() => { editor.disableSubmit = false; });
+        } else if (sub === "approve") {
+          editor.disableSubmit = true;
+          editor.setText("");
+          return runAction("Approving project strategy", async () => {
+            await service.approveProjectStrategy({ cwd });
+            pushTranscript("kairo", "Project team is now ACTIVE.");
+          }).finally(() => { editor.disableSubmit = false; });
+        } else if (sub === "refresh") {
+          editor.disableSubmit = true;
+          editor.setText("");
+          return runAction("Refreshing project strategy", async () => {
+            const result = await service.refreshProjectStrategy({ cwd });
+            pushTranscript("kairo", `Project strategy is now ${result.status.toUpperCase()}.`);
+          }).finally(() => { editor.disableSubmit = false; });
+        } else {
+          pushTranscript("kairo", "Usage: /project status|analyze|approve|refresh");
+        }
       } else if (command === "/plan") {
         const planTask = task.slice(command.length).trim();
         if (!planTask) {

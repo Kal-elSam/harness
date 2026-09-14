@@ -350,16 +350,16 @@ function aiPlusEfficientSnapshot() {
   };
 }
 
-test("USAGE is a compact one-line bar above a full-width MODEL TEAMS card — never tiled side by side, never separate AI TEAM/EFFICIENT TEAM cards", () => {
+test("USAGE is a compact one-line bar above a full-width GLOBAL MODEL GUIDE card — never tiled side by side, never separate AI TEAM/EFFICIENT TEAM cards", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot(aiPlusEfficientSnapshot());
   const lines = view.render(160);
   const topLine = lines.find((line) => line.includes("KAIRO"));
-  // USAGE's own line never shares a row with MODEL TEAMS's border — MODEL
-  // TEAMS always gets the FULL given width, on its own row below.
-  assert.ok(!topLine.includes("MODEL TEAMS"), "USAGE is a plain line, not a card tiled beside MODEL TEAMS");
-  assert.ok(lines.some((line) => line.includes("MODEL TEAMS")));
+  // USAGE's own line never shares a row with GLOBAL MODEL GUIDE's border —
+  // the panel always gets the FULL given width, on its own row below.
+  assert.ok(!topLine.includes("GLOBAL MODEL GUIDE"), "USAGE is a plain line, not a card tiled beside GLOBAL MODEL GUIDE");
+  assert.ok(lines.some((line) => line.includes("GLOBAL MODEL GUIDE")));
   assert.doesNotMatch(lines.join("\n"), /✿ AI TEAM|✿ EFFICIENT TEAM/, "the three-card layout must never come back");
   const joined = lines.join("\n");
   assert.match(joined, /CAPABILITY/);
@@ -369,25 +369,74 @@ test("USAGE is a compact one-line bar above a full-width MODEL TEAMS card — ne
   for (const line of lines) assert.ok(visibleWidth(line) <= 160, `line "${line}" exceeds width`);
 });
 
-test("MODEL TEAMS uses the full given width at every terminal size — no tiling breakpoint", () => {
+test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the required roles, orchestrator first, with a pending-approval hint", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/crm",
+    projectStrategy: {
+      status: "suggested",
+      orchestrator: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" },
+      qualityTeam: [
+        { role: "Architect", model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, reason: null },
+        { role: "Builder", model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" }, reason: null }
+      ]
+    }
+  });
+  const { title, lines } = view.projectTeamPanel(80);
+  assert.equal(title, "PROJECT TEAM · crm · SUGGESTED");
+  const joined = lines.join("\n");
+  assert.match(joined, /Orchestrator\s+Fable 5\.1/);
+  assert.match(joined, /Architect\s+Fable 5\.1/);
+  assert.match(joined, /Builder\s+GPT-6 Astra/);
+  assert.match(joined, /Use \/project approve to activate\./);
+});
+
+test("projectTeamPanel shows ACTIVE without a pending-approval hint, and STALE with a real refresh warning", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/crm",
+    projectStrategy: { status: "active", orchestrator: null, qualityTeam: [{ role: "Architect", model: { adapterId: "claude", modelId: "x", displayName: "X" }, reason: null }] }
+  });
+  const active = view.projectTeamPanel(80);
+  assert.equal(active.title, "PROJECT TEAM · crm · ACTIVE");
+  assert.doesNotMatch(active.lines.join("\n"), /approve/);
+
+  view.setSnapshot({
+    projectRoot: "/repo/crm",
+    projectStrategy: { status: "stale", orchestrator: null, qualityTeam: [{ role: "Architect", model: { adapterId: "claude", modelId: "x", displayName: "X" }, reason: null }] }
+  });
+  const stale = view.projectTeamPanel(80);
+  assert.equal(stale.title, "PROJECT TEAM · crm · STALE");
+  assert.match(stale.lines.join("\n"), /Real evidence changed since approval — use \/project refresh\./);
+});
+
+test("projectTeamPanel falls back to GLOBAL MODEL GUIDE with an honest 'not analyzed' notice before any real strategy exists", () => {
+  const { view } = makeView();
+  view.setSnapshot({ projectRoot: "/repo/crm", modelIntelligence: { status: "unknown" } });
+  const { title, lines } = view.projectTeamPanel(80);
+  assert.equal(title, "GLOBAL MODEL GUIDE");
+  assert.match(lines[0], /Project not analyzed/);
+});
+
+test("GLOBAL MODEL GUIDE uses the full given width at every terminal size — no tiling breakpoint", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot(aiPlusEfficientSnapshot());
   for (const width of [70, 100, 150, 160]) {
     const lines = view.render(width);
-    const cardTopLine = stripTerminalSequences(lines.find((line) => line.includes("MODEL TEAMS")));
-    assert.ok(visibleWidth(cardTopLine) <= width, `MODEL TEAMS card at width ${width} should reach the full given width`);
+    const cardTopLine = stripTerminalSequences(lines.find((line) => line.includes("GLOBAL MODEL GUIDE")));
+    assert.ok(visibleWidth(cardTopLine) <= width, `GLOBAL MODEL GUIDE card at width ${width} should reach the full given width`);
   }
 });
 
-test("below a narrow width, MODEL TEAMS still renders below the compact USAGE bar", () => {
+test("below a narrow width, GLOBAL MODEL GUIDE still renders below the compact USAGE bar", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot(aiPlusEfficientSnapshot());
   const lines = view.render(100);
   const topLine = lines.find((line) => line.includes("KAIRO"));
-  assert.ok(!topLine.includes("MODEL TEAMS"), "USAGE's own line shouldn't share a row with MODEL TEAMS");
-  assert.ok(lines.some((line) => line.includes("MODEL TEAMS")));
+  assert.ok(!topLine.includes("GLOBAL MODEL GUIDE"), "USAGE's own line shouldn't share a row with GLOBAL MODEL GUIDE");
+  assert.ok(lines.some((line) => line.includes("GLOBAL MODEL GUIDE")));
   const joined = lines.join("\n");
   assert.match(joined, /CAPABILITY/);
   assert.match(joined, /EFFICIENT/);
