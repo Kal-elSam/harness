@@ -45,8 +45,9 @@ test("render gives conversation priority and keeps compact usage in the header",
   const joined = view.render(120).join("\n");
   assert.match(joined, /KAIRO/);
   assert.match(joined, /demo/);
-  assert.match(joined, /USAGE/);
-  assert.match(joined, /Claude\s+Pro/);
+  // USAGE is a compact one-line bar now, not a bordered card with its own
+  // "USAGE" label — real provider status still shows inline.
+  assert.match(joined, /Claude Pro/);
   assert.match(joined, /Fix the login flow/);
   assert.match(joined, /Enter send/);
   assert.doesNotMatch(joined, /TASKS/);
@@ -84,9 +85,10 @@ test("AI TEAM's compact widget shows only Role -> effective model, never fallbac
     }
   });
   const lines = view.render(160).join("\n");
-  assert.match(lines, /Artificial Analysis, live/);
-  assert.match(lines, /Explorer\s+│ Codex · GPT-6-Astra/);
-  assert.match(lines, /Economy\s+│ Opencode-go · GPT-5\.6-Luna/);
+  assert.match(lines, /Evidence: live/);
+  // Provider is deliberately hidden in the compact widget — Role → Model only.
+  assert.match(lines, /Explorer\s+│ GPT-6-Astra/);
+  assert.match(lines, /Economy\s+│ GPT-5\.6-Luna/);
   assert.doesNotMatch(lines, /fallback/);
   assert.doesNotMatch(lines, /Near-equivalent/);
   assert.doesNotMatch(lines, /Global signals — not a project strategy/);
@@ -110,7 +112,7 @@ test("AI TEAM's compact widget shows the real fallback as the headline (not the 
     }
   });
   const lines = view.fitLines().join("\n");
-  assert.match(lines, /Tester\s+Claude · Claude Sonnet 5/);
+  assert.match(lines, /Tester\s+Claude Sonnet 5/);
   assert.doesNotMatch(lines, /not available/);
   assert.doesNotMatch(lines, /OpenCode Go Tester/);
 });
@@ -153,6 +155,47 @@ test("/models writes the full primary/fallback/reason breakdown that the compact
   assert.match(lines, /Tester\s+Opencode-go · OpenCode Go Tester \(not available\)/);
   assert.match(lines, /fallback Claude · Claude Sonnet 5/);
   assert.match(lines, /temporarily unavailable/);
+});
+
+test("/models --evidence shows real coverage and confidence per role, warning when coverage is incomplete", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [
+        {
+          role: "Debugger",
+          primary: { adapterId: "claude", modelId: "claude-x", displayName: "Fable 5.1", available: true },
+          fallback: null, reason: null, coverage: 0.5, confidence: "medium"
+        },
+        {
+          role: "Reviewer",
+          primary: { adapterId: "codex", modelId: "codex-x", displayName: "GPT-6 Astra", available: true },
+          fallback: null, reason: null, coverage: 1, confidence: "high"
+        }
+      ]
+    }
+  });
+  const lines = view.aiTeamDetailLines().join("\n");
+  assert.match(lines, /Debugger\s+Claude · Fable 5\.1/);
+  assert.match(lines, /coverage: 50% of relevant capabilities scored · confidence: medium/);
+  assert.match(lines, /coverage: 100% of relevant capabilities scored · confidence: high/);
+});
+
+test("/models --evidence lists real catalog models Kairo has access to but couldn't match to any Artificial Analysis data, honestly labeled UNSCORED — never a fabricated score", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [{ role: "Builder", primary: { adapterId: "claude", modelId: "claude-x", displayName: "Fable 5.1", available: true }, fallback: null, reason: null }],
+      unscoredModels: [{ adapterId: "codex", modelId: "gpt-6-experimental", displayName: null }]
+    }
+  });
+  const lines = view.aiTeamDetailLines().join("\n");
+  assert.match(lines, /UNSCORED/);
+  assert.match(lines, /Codex · gpt-6-experimental/);
 });
 
 test("/models separates each role's block with a blank line, so scrolling through the full breakdown stays readable", () => {
@@ -200,10 +243,11 @@ test("modelsExplainLines() gives concrete plain-language reasons, never raw metr
     }
   });
   const lines = view.modelsExplainLines().join("\n");
-  assert.match(lines, /Debugger\s+Codex · GPT-6 Astra/);
+  // Provider is deliberately hidden in the default plain-language view.
+  assert.match(lines, /Debugger\s+GPT-6 Astra/);
   assert.match(lines, /Selected for reasoning and terminal-debugging capability\./);
-  assert.match(lines, /Efficient: Claude · Fable 5\.1 — Near-equivalent capability — chosen for lower real subscription quota pressure\./);
-  assert.match(lines, /Fallback: Codex · GPT-5\.6 Sol — used if this model becomes unavailable\./);
+  assert.match(lines, /Efficient: Fable 5\.1 — Near-equivalent capability — chosen for lower real subscription quota pressure\./);
+  assert.match(lines, /Fallback: GPT-5\.6 Sol — used if this model becomes unavailable\./);
   assert.doesNotMatch(lines, /terminal-bench=/);
   assert.doesNotMatch(lines, /openai-official/);
   assert.doesNotMatch(lines, /%/);
@@ -248,9 +292,9 @@ test("modelsExplainLines() marks a currently-unavailable primary and names the r
     }
   });
   const lines = view.modelsExplainLines().join("\n");
-  assert.match(lines, /Tester\s+Opencode-go · OpenCode Go Tester \(currently unavailable\)/);
+  assert.match(lines, /Tester\s+OpenCode Go Tester \(currently unavailable\)/);
   assert.match(lines, /Real capability leader is temporarily unavailable \(rate limited\)\./);
-  assert.match(lines, /Fallback: Claude · Claude Sonnet 5 — used if this model becomes unavailable\./);
+  assert.match(lines, /Fallback: Claude Sonnet 5 — used if this model becomes unavailable\./);
 });
 
 test("modelsExplainLines() distinguishes every real portfolio outcome the plan calls for — decisive capability, concentration avoidance, minimal-sufficient alternative, forced repeat, and Reviewer independence", () => {
@@ -306,43 +350,48 @@ function aiPlusEfficientSnapshot() {
   };
 }
 
-test("USAGE and MODEL TEAMS tile side by side once the terminal is wide enough — one unified widget, never separate AI TEAM/EFFICIENT TEAM cards", () => {
+test("USAGE is a compact one-line bar above a full-width MODEL TEAMS card — never tiled side by side, never separate AI TEAM/EFFICIENT TEAM cards", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot(aiPlusEfficientSnapshot());
   const lines = view.render(160);
   const topLine = lines.find((line) => line.includes("KAIRO"));
-  assert.ok(topLine.includes("MODEL TEAMS"));
+  // USAGE's own line never shares a row with MODEL TEAMS's border — MODEL
+  // TEAMS always gets the FULL given width, on its own row below.
+  assert.ok(!topLine.includes("MODEL TEAMS"), "USAGE is a plain line, not a card tiled beside MODEL TEAMS");
+  assert.ok(lines.some((line) => line.includes("MODEL TEAMS")));
   assert.doesNotMatch(lines.join("\n"), /✿ AI TEAM|✿ EFFICIENT TEAM/, "the three-card layout must never come back");
   const joined = lines.join("\n");
   assert.match(joined, /CAPABILITY/);
   assert.match(joined, /EFFICIENT/);
-  assert.match(joined, /Builder\s+│ Claude · Claude Fable 5\.1\s+│ Opencode-go · GLM 5\.3/);
+  // Provider is deliberately hidden in the compact widget — Role → Model only.
+  assert.match(joined, /Builder\s+│ Claude Fable 5\.1\s+│ GLM 5\.3/);
   for (const line of lines) assert.ok(visibleWidth(line) <= 160, `line "${line}" exceeds width`);
 });
 
-test("USAGE takes roughly a third of the width when tiled with MODEL TEAMS", () => {
+test("MODEL TEAMS uses the full given width at every terminal size — no tiling breakpoint", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot(aiPlusEfficientSnapshot());
-  const lines = view.render(150);
-  const topLine = stripTerminalSequences(lines.find((line) => line.includes("KAIRO")));
-  const usageWidth = topLine.indexOf("MODEL TEAMS") - 3; // -3 for the gap and the right panel's own left border/space
-  assert.ok(usageWidth >= 40 && usageWidth <= 60, `USAGE panel should be roughly a third of 150 cols, got ${usageWidth}`);
+  for (const width of [70, 100, 150, 160]) {
+    const lines = view.render(width);
+    const cardTopLine = stripTerminalSequences(lines.find((line) => line.includes("MODEL TEAMS")));
+    assert.ok(visibleWidth(cardTopLine) <= width, `MODEL TEAMS card at width ${width} should reach the full given width`);
+  }
 });
 
-test("below the width threshold, USAGE stacks above the unified MODEL TEAMS panel", () => {
+test("below a narrow width, MODEL TEAMS still renders below the compact USAGE bar", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot(aiPlusEfficientSnapshot());
   const lines = view.render(100);
   const topLine = lines.find((line) => line.includes("KAIRO"));
-  assert.ok(!topLine.includes("MODEL TEAMS"), "USAGE's own top border shouldn't share a row with MODEL TEAMS below the threshold");
+  assert.ok(!topLine.includes("MODEL TEAMS"), "USAGE's own line shouldn't share a row with MODEL TEAMS");
   assert.ok(lines.some((line) => line.includes("MODEL TEAMS")));
   const joined = lines.join("\n");
   assert.match(joined, /CAPABILITY/);
   assert.match(joined, /EFFICIENT/);
-  assert.match(joined, /Builder\s+│ Claude · Claude Fable 5\.1\s+│ Opencode-go · GLM 5\.3/);
+  assert.match(joined, /Builder\s+│ Claude Fable 5\.1\s+│ GLM 5\.3/);
 });
 
 test("teamsColumnsLines() truncates each column independently — a long CAPABILITY name never bleeds into the EFFICIENT column", () => {
@@ -368,7 +417,7 @@ test("teamsColumnsLines() truncates each column independently — a long CAPABIL
   const lines = view.teamsColumnsLines(70);
   const builderLine = lines.find((line) => line.includes("Builder"));
   assert.match(builderLine, /│/, "columns must be separated by a real drawn │, not just whitespace");
-  assert.match(builderLine, /Opencode-go · GLM-5\.3\s*$/, "the EFFICIENT column must stay intact and readable, never pushed out by an overflowing CAPABILITY cell");
+  assert.match(builderLine, /GLM-5\.3\s*$/, "the EFFICIENT column must stay intact and readable, never pushed out by an overflowing CAPABILITY cell");
   assert.match(builderLine, /…/, "the long CAPABILITY name should be honestly truncated, not silently cut without a marker");
 });
 
@@ -393,8 +442,8 @@ test("teamsColumnsLines() never truncates when the real content already fits", (
   const lines = view.teamsColumnsLines(100);
   const builderLine = lines.find((line) => line.includes("Builder"));
   assert.doesNotMatch(builderLine, /…/, "short real content that already fits must never be truncated");
-  assert.match(builderLine, /Claude · Fable 5\.1/);
-  assert.match(builderLine, /Opencode-go · GLM-5\.3/);
+  assert.match(builderLine, /Fable 5\.1/);
+  assert.match(builderLine, /GLM-5\.3/);
 });
 
 test("AI TEAM reports honestly when there is no benchmark data yet", () => {
@@ -461,7 +510,7 @@ test("/why also shows real catalog coverage — separate from runtime eligibilit
   assert.match(lines, /claude: documented catalog, 8\/9 models matched to Artificial Analysis/);
 });
 
-test("narrow dashboard keeps every Go window on a separate readable row, and never shows Zen (manual/PAYG, not automatic)", () => {
+test("narrow dashboard's compact USAGE bar shows every Go window's real percentage, and never Zen (manual/PAYG, not automatic)", () => {
   const { view } = makeView();
   view.setSnapshot({
     projectRoot: "/repo/demo",
@@ -478,16 +527,19 @@ test("narrow dashboard keeps every Go window on a separate readable row, and nev
       }
     }
   });
-  const lines = view.render(70).join("\n");
-  assert.match(lines, /Go\s+roll 100%/);
-  assert.match(lines, /week 100%/);
-  assert.match(lines, /month 0% LIMITED/);
+  // The compact bar is deliberately terse (real percentages only, joined
+  // by "/", no per-window name labels) — the full per-window breakdown
+  // with names lives in /usage (usageLines()) instead. Rendered at a
+  // width wide enough for the whole bar to fit unclipped.
+  const lines = view.render(90).join("\n");
+  assert.match(lines, /Go 100% \/ 100% \/ 0% LIMITED/);
   assert.doesNotMatch(lines, /Zen/, "USAGE only shows automatic-routing resources — Zen belongs in /providers");
 });
 
-test("compactHealthLines shows every measured Go window without policy noise, and never Zen", () => {
+test("compactUsageLines renders every measured Go window's real percentage without policy noise, and never Zen", () => {
   const { view } = makeView();
   view.setSnapshot({
+    projectRoot: "/repo/demo",
     usage: {
       opencode: {
         go: { windows: [
@@ -499,12 +551,27 @@ test("compactHealthLines shows every measured Go window without policy noise, an
       }
     }
   });
-  const lines = view.compactHealthLines().join("\n");
-  assert.match(lines, /Go\s+roll 100%/);
-  assert.match(lines, /week 75%/);
-  assert.match(lines, /month 0% LIMITED/);
+  const lines = view.compactUsageLines(200).join("\n");
+  assert.match(lines, /Go 100% \/ 75% \/ 0% LIMITED/);
   assert.doesNotMatch(lines, /Zen/);
   assert.doesNotMatch(lines, /PAYG blocked/);
+});
+
+test("compactUsageLines wraps to a second line — header alone, then providers — when the real content doesn't fit the given width", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/a-genuinely-long-project-name",
+    usage: {
+      codex: { primary: { remainingPercent: 58 }, secondary: { remainingPercent: 86 } },
+      claude: { primary: { remainingPercent: 34 }, secondary: { remainingPercent: 65 } },
+      opencode: { go: { windows: [{ remainingPercent: 100 }, { remainingPercent: 100 }, { remainingPercent: 96 }] } }
+    }
+  });
+  const narrow = view.compactUsageLines(40);
+  assert.equal(narrow.length, 2, "should split into header + providers when it doesn't fit");
+  const wide = view.compactUsageLines(300);
+  assert.equal(wide.length, 1, "should stay a single line when the real content fits");
+  assert.match(stripTerminalSequences(wide[0]), /KAIRO · a-genuinely-long-project-name │ Codex 5h 58% \/ W 86% │ Claude S 34% \/ W 65% │ Go 100% \/ 100% \/ 96%/);
 });
 
 test("/usage shows only the automatic-routing providers (Codex, Claude, Go) and never Zen", () => {

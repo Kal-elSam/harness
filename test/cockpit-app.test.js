@@ -212,8 +212,8 @@ test("/models prints the AI TEAM into the chat even when a task row is selected"
   editor.setText("/models");
   await editor.onSubmit(editor.getText());
   const printed = app.view.transcript.map((entry) => entry.text).join("\n");
-  assert.match(printed, /Artificial Analysis, live/);
-  assert.match(printed, /Architect\s+Codex · GPT-6-Astra/);
+  assert.match(printed, /Evidence: live/);
+  assert.match(printed, /Architect\s+GPT-6-Astra/);
   app.stop();
 });
 
@@ -595,7 +595,7 @@ test("buildViewportLayoutRoot wires a real ScrollView around the conversation, w
 
   const [dashboardEntry, scrollEntry, composerEntry, editorEntry] = root.entries;
   assert.equal(dashboardEntry.shrink, 0);
-  assert.match(dashboardEntry.component.render(100).join("\n"), /USAGE/);
+  assert.match(dashboardEntry.component.render(100).join("\n"), /KAIRO/);
 
   assert.ok(scrollEntry.component instanceof ScrollView, "the conversation zone must be a real pi-tui ScrollView, not a plain component");
   assert.equal(scrollEntry.grow, 1);

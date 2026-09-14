@@ -136,6 +136,31 @@ export function summarizeCatalogCoverage(providerCatalogs, aaModels) {
   });
 }
 
+/**
+ * The real catalog models scoreAvailableModels() silently drops — every
+ * model a provider's own real catalog reports that couldn't be matched to
+ * any real Artificial Analysis data. Kept as a separate, explicit list
+ * (never folded into scoreAvailableModels' output, never given an
+ * invented score) so `/models --evidence` can show them honestly as
+ * UNSCORED — a real model Kairo has access to, just one it can't yet rank
+ * — instead of the model simply vanishing with no trace.
+ * @param {Array<{adapterId: string, models: Array<object|string>}>} providerCatalogs
+ * @param {Array<object>} aaModels
+ * @returns {Array<{adapterId: string, modelId: string, displayName: string|null}>}
+ */
+export function listUnscoredModels(providerCatalogs, aaModels) {
+  const unscored = [];
+  for (const { adapterId, models } of providerCatalogs) {
+    for (const entry of models ?? []) {
+      const model = typeof entry === "string" ? { id: entry, displayName: entry } : entry;
+      if (matchArtificialAnalysisScore(model.id, aaModels) == null) {
+        unscored.push({ adapterId, modelId: model.id, displayName: model.displayName ?? null });
+      }
+    }
+  }
+  return unscored;
+}
+
 // Which real, unweighted metric each model is best at among the models you
 // actually have access to right now — never a blended/invented composite
 // score. "better" says which direction wins for that metric (higher coding
@@ -743,12 +768,21 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
     const eligibleRanked = roleRankings.find((r) => r.role === role).ranked;
     const globalRanked = rankBy(models, compute, better);
     if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
+    // Real coverage/confidence for the model actually shown as primary
+    // (see RoleEvaluation) — undefined for Economy (price-ranked, no
+    // RoleEvaluation at all), surfaced honestly as null rather than
+    // fabricated. Purely informational — /models --evidence's own
+    // "UNSCORED"/incomplete-coverage detail, never part of the ranking
+    // itself, which already happened above.
+    const evalFor = (model) => evaluationsByRole[role]?.get(modelKey(model)) ?? null;
 
     if (!result) {
       const globalLeader = globalRanked[0];
+      const evaluation = evalFor(globalLeader.model);
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: null,
-        reason: "No eligible provider currently covers this role."
+        reason: "No eligible provider currently covers this role.",
+        coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null
       });
       continue;
     }
@@ -758,9 +792,11 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > chosen.value : globalLeader.value < chosen.value;
     if (!globalLeaderEligible && globalLeaderIsStrictlyBetter) {
+      const evaluation = evalFor(globalLeader.model);
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
-        reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`
+        reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`,
+        coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null
       });
       continue;
     }
@@ -781,10 +817,11 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
     } else {
       reason = null;
     }
+    const evaluation = evalFor(chosen.model);
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason
+      reason, coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null
     });
   }
   return entries;

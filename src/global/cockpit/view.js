@@ -21,43 +21,6 @@ function renderPanel(title, tone, width, contentLines, targetLineCount = content
   return lines;
 }
 
-/**
- * Tiles two independently-framed cards side by side — used for USAGE |
- * MODEL TEAMS on wide-enough terminals. `leftRatio` controls how much of
- * the total width the left panel gets (default even split); USAGE uses
- * roughly a third, leaving the rest for MODEL TEAMS' two columns.
- * @param {{title: string, tone: string, lines: string[]}} left
- * @param {{title: string, tone: string, lines: string[]}} right
- * @param {number} totalWidth
- * @param {number} [leftRatio]
- */
-const TILE_GAP = 1;
-
-/**
- * The exact left/right EXTERNAL panel widths tileTwoPanels() will use for
- * a given total width and ratio — exposed separately so a caller can know
- * a panel's real width BEFORE rendering its content (e.g. MODEL TEAMS
- * needs its own real width to size its columns), instead of guessing and
- * risking a mismatch with what tileTwoPanels() actually renders.
- * @param {number} totalWidth
- * @param {number} [leftRatio]
- */
-function splitPanelWidths(totalWidth, leftRatio = 0.5) {
-  const leftWidth = Math.max(1, Math.floor((totalWidth - TILE_GAP) * leftRatio));
-  const rightWidth = totalWidth - TILE_GAP - leftWidth;
-  return { leftWidth, rightWidth };
-}
-
-function tileTwoPanels(left, right, totalWidth, leftRatio = 0.5) {
-  const { leftWidth, rightWidth } = splitPanelWidths(totalWidth, leftRatio);
-  const targetLineCount = Math.max(left.lines.length, right.lines.length);
-  const leftBox = renderPanel(left.title, left.tone, leftWidth, left.lines, targetLineCount);
-  const rightBox = renderPanel(right.title, right.tone, rightWidth, right.lines, targetLineCount);
-  const rows = [];
-  for (let i = 0; i < leftBox.length; i += 1) rows.push(`${leftBox[i]}${" ".repeat(TILE_GAP)}${rightBox[i]}`);
-  return rows;
-}
-
 function compactNumber(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "unknown";
@@ -319,43 +282,30 @@ export class CockpitView {
   }
 
   /**
-   * The dashboard's card content — USAGE and MODEL TEAMS — without the
-   * footer or conversation. Shared by renderWorkspace() (the monolithic
-   * fallback) and renderDashboard() (the fixed dashboard zone in the
-   * real-scroll layout), so both stay in sync automatically instead of
-   * drifting apart.
+   * The dashboard's card content — the compact USAGE bar and MODEL TEAMS —
+   * without the footer or conversation. Shared by renderWorkspace() (the
+   * monolithic fallback) and renderDashboard() (the fixed dashboard zone
+   * in the real-scroll layout), so both stay in sync automatically instead
+   * of drifting apart.
    *
-   * One unified MODEL TEAMS widget (CAPABILITY/EFFICIENT columns, one row
-   * per role — see teamsColumnsLines()), never two separate AI TEAM/
-   * EFFICIENT TEAM cards: side by side with USAGE (roughly a third of the
-   * width) on medium/wide terminals, stacked below USAGE on narrow ones.
-   * There is deliberately no third, wider tier — MODEL TEAMS' own two
-   * columns already use the extra room a wider terminal provides, so a
-   * separate breakpoint would just widen the same panel, not add
-   * information. MODEL TEAMS is always visible, independent of task
-   * selection — separate from STATUS (task-specific), which is only
-   * reachable while a row is selected, and once any task exists in
-   * history a row is *always* selected, so it can't be tucked behind
-   * "nothing else to show" the way STATUS's own content is.
+   * USAGE is a plain one-line bar (two only when it genuinely doesn't fit
+   * — see compactUsageLines()), never a bordered card of its own: it's a
+   * glance-level status strip, not a widget with its own real content to
+   * frame. MODEL TEAMS is the only bordered card here and always gets the
+   * FULL real width — one unified widget (CAPABILITY/EFFICIENT columns,
+   * one row per role — see teamsColumnsLines()), never two separate AI
+   * TEAM/EFFICIENT TEAM cards, and never tiled beside USAGE (USAGE no
+   * longer has real height to tile against). MODEL TEAMS is always
+   * visible, independent of task selection — separate from STATUS
+   * (task-specific), which is only reachable while a row is selected, and
+   * once any task exists in history a row is *always* selected, so it
+   * can't be tucked behind "nothing else to show" the way STATUS's own
+   * content is.
    */
   renderDashboardLines(width) {
-    const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
-    const lines = [];
-    const usagePanel = { title: `KAIRO · ${project}`, tone: CARD_TONE.INFO, lines: [theme.fg("muted", "USAGE"), ...this.compactHealthLines()] };
-    if (width >= 140) {
-      // MODEL TEAMS needs its own real EXTERNAL panel width (not the full
-      // dashboard width) to size its CAPABILITY/EFFICIENT columns
-      // correctly — computed the same way tileTwoPanels() will actually
-      // split the row, so the columns never mismatch the frame they end
-      // up rendered inside.
-      const { rightWidth } = splitPanelWidths(width, 0.33);
-      const modelTeamsPanel = { title: "MODEL TEAMS", tone: CARD_TONE.SUCCESS, lines: this.teamsColumnsLines(cardInnerWidth(rightWidth)) };
-      lines.push(...tileTwoPanels(usagePanel, modelTeamsPanel, width, 0.33));
-    } else {
-      const modelTeamsPanel = { title: "MODEL TEAMS", tone: CARD_TONE.SUCCESS, lines: this.teamsColumnsLines(cardInnerWidth(width)) };
-      lines.push(...renderPanel(usagePanel.title, usagePanel.tone, width, usagePanel.lines));
-      lines.push(...renderPanel(modelTeamsPanel.title, modelTeamsPanel.tone, width, modelTeamsPanel.lines));
-    }
+    const lines = [...this.compactUsageLines(width)];
+    const modelTeamsLines = this.teamsColumnsLines(cardInnerWidth(width));
+    lines.push(...renderPanel("MODEL TEAMS", CARD_TONE.SUCCESS, width, modelTeamsLines));
     return lines;
   }
 
@@ -467,9 +417,23 @@ export class CockpitView {
     return null;
   }
 
+  /**
+   * A model's displayed name — deliberately WITHOUT its provider. Used by
+   * the MODEL TEAMS widget and the plain /models view: a "Perfil → Modelo"
+   * glance, provider hidden (adapterId is kept internally for every real
+   * decision — concentration limits, corroboration, execution — this only
+   * affects what's shown). `/models --evidence` shows the provider
+   * explicitly instead (see aiTeamLabelWithProvider) — that's the audit
+   * trail where it belongs.
+   */
   aiTeamLabel(model) {
+    return model.displayName ?? model.modelId;
+  }
+
+  /** Same as aiTeamLabel(), but with the provider shown — used only by the technical `/models --evidence` breakdown. */
+  aiTeamLabelWithProvider(model) {
     const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
-    return `${provider} · ${model.displayName ?? model.modelId}`;
+    return `${provider} · ${this.aiTeamLabel(model)}`;
   }
 
   /**
@@ -494,9 +458,9 @@ export class CockpitView {
       const reasons = Object.entries(intel.eligibility ?? {})
         .filter(([, check]) => !check.ok)
         .map(([adapterId, check]) => `${adapterId}: ${check.reason}`);
-      return [theme.fg("muted", `Artificial Analysis, ${freshness}`), theme.fg("warning", "No eligible model signals right now"), ...reasons.map((r) => theme.fg("muted", r))];
+      return [theme.fg("muted", `Evidence: ${freshness}`), theme.fg("warning", "No eligible model signals right now"), ...reasons.map((r) => theme.fg("muted", r))];
     }
-    const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
+    const lines = [theme.fg("muted", `Evidence: ${freshness}`)];
     for (const entry of team) {
       const effective = CockpitView.effectiveTeamModel(entry);
       const modelText = effective ? this.aiTeamLabel(effective) : theme.fg("warning", "no eligible option right now");
@@ -548,7 +512,7 @@ export class CockpitView {
     };
 
     const lines = [
-      theme.fg("muted", `Artificial Analysis, ${freshness}`),
+      theme.fg("muted", `Evidence: ${freshness}`),
       theme.fg("muted", formatRow("", "CAPABILITY", "EFFICIENT"))
     ];
     for (const entry of aiTeam) {
@@ -593,7 +557,7 @@ export class CockpitView {
     if (!aiTeam.length) return this.fitLines();
     const efficientByRole = Object.fromEntries((intel.efficientTeam ?? []).map((entry) => [entry.role, entry]));
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-    const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
+    const lines = [theme.fg("muted", `Evidence: ${freshness}`)];
     aiTeam.forEach(({ role, primary, fallback, reason }, index) => {
       // A blank string here would get silently dropped once routed through
       // the persisted chat transcript (addTranscript trims and discards
@@ -627,10 +591,13 @@ export class CockpitView {
   }
 
   /**
-   * Renders one team's full technical breakdown — primary, availability,
-   * fallback, the distribution-policy reason, and any real corroborating
-   * evidence the Model Intelligence Foundation registry has for that
-   * exact model. Shared by AI TEAM and EFFICIENT TEAM inside
+   * Renders one team's full technical breakdown — primary (with its real
+   * provider shown, unlike the default views), availability, fallback,
+   * real coverage/confidence (RoleEvaluation — how much of the role's
+   * relevant capabilities actually had evidence, and how trustworthy that
+   * evidence is), the distribution-policy reason, and any real
+   * corroborating evidence the Model Intelligence Foundation registry has
+   * for that exact model. Shared by AI TEAM and EFFICIENT TEAM inside
    * aiTeamDetailLines(); never called on its own.
    * @param {Array<object>} team
    */
@@ -639,17 +606,23 @@ export class CockpitView {
     const corroborationLine = (model) => (model.corroboration ?? [])
       .map((entry) => `${entry.metric}=${entry.value} (${entry.source})`)
       .join(" · ");
-    team.forEach(({ role, primary, fallback, reason }, index) => {
+    team.forEach(({ role, primary, fallback, reason, coverage, confidence }, index) => {
       // A blank string here would get silently dropped once this line is
       // routed through the persisted chat transcript (addTranscript trims
       // and discards empty text) — a visible divider is the only separator
       // that actually survives into the real, persisted chat history.
       if (index > 0) lines.push(theme.fg("muted", "·"));
-      const primaryText = primary.available ? this.aiTeamLabel(primary) : `${this.aiTeamLabel(primary)} (not available)`;
+      const primaryLabel = this.aiTeamLabelWithProvider(primary);
+      const primaryText = primary.available ? primaryLabel : `${primaryLabel} (not available)`;
       lines.push(`${role.padEnd(10)} ${primaryText}`);
+      if (coverage != null) {
+        const coveragePercent = Math.round(coverage * 100);
+        const coverageTone = coveragePercent < 100 ? "warning" : "muted";
+        lines.push(theme.fg(coverageTone, `  coverage: ${coveragePercent}% of relevant capabilities scored · confidence: ${confidence ?? "unknown"}`));
+      }
       const primaryEvidence = corroborationLine(primary);
       if (primaryEvidence) lines.push(theme.fg("muted", `  also: ${primaryEvidence}`));
-      if (fallback) lines.push(theme.fg("muted", `  fallback ${this.aiTeamLabel(fallback)}`));
+      if (fallback) lines.push(theme.fg("muted", `  fallback ${this.aiTeamLabelWithProvider(fallback)}`));
       else if (!primary.available) lines.push(theme.fg("warning", "  no eligible fallback right now"));
       if (reason) lines.push(theme.fg("muted", `  ${reason}`));
     });
@@ -658,14 +631,17 @@ export class CockpitView {
 
   /**
    * `/models --evidence`: the full breakdown behind both AI TEAM and
-   * EFFICIENT TEAM picks — primary, availability, fallback, the real
-   * distribution-policy reason (near-tie, independence swap,
-   * temporarily-unavailable leader, efficiency dimension), and any real
-   * corroborating evidence the Model Intelligence Foundation registry has
-   * for that exact model (Hugging Face, manufacturer snapshots, Kairo's
-   * own telemetry). Corroboration is informational only: it never changed
-   * which model was picked, so it's shown, never blended into the reason.
-   * This is the technical audit trail; modelsExplainLines() is the plain-
+   * EFFICIENT TEAM picks — real provider, primary, availability, fallback,
+   * real coverage/confidence, the real distribution-policy reason
+   * (near-tie, independence swap, temporarily-unavailable leader,
+   * efficiency dimension), and any real corroborating evidence the Model
+   * Intelligence Foundation registry has for that exact model (Hugging
+   * Face, manufacturer snapshots, Kairo's own telemetry). Corroboration is
+   * informational only: it never changed which model was picked, so it's
+   * shown, never blended into the reason. Also lists every real catalog
+   * model Kairo has access to but couldn't match to any real AA data —
+   * UNSCORED, never given an invented score, never silently dropped. This
+   * is the technical audit trail; modelsExplainLines() is the plain-
    * language default /models shows instead.
    */
   aiTeamDetailLines() {
@@ -674,13 +650,21 @@ export class CockpitView {
     const team = intel.aiTeam ?? [];
     if (!team.length) return this.fitLines();
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-    const lines = [theme.fg("muted", `Artificial Analysis, ${freshness}`)];
+    const lines = [theme.fg("muted", `Evidence: ${freshness}`)];
     lines.push(...this.teamEvidenceLines(team));
     const efficientTeam = intel.efficientTeam ?? [];
     if (efficientTeam.length) {
       lines.push(theme.fg("muted", "·"));
       lines.push(theme.fg("muted", "EFFICIENT TEAM"));
       lines.push(...this.teamEvidenceLines(efficientTeam));
+    }
+    const unscored = intel.unscoredModels ?? [];
+    if (unscored.length) {
+      lines.push(theme.fg("muted", "·"));
+      lines.push(theme.fg("muted", "UNSCORED (real catalog model, no matching Artificial Analysis data — never given an invented score):"));
+      for (const model of unscored) {
+        lines.push(theme.fg("muted", `  ${this.aiTeamLabelWithProvider({ ...model, displayName: model.displayName ?? model.modelId })}`));
+      }
     }
     return lines;
   }
@@ -750,44 +734,44 @@ export class CockpitView {
   }
 
   /**
-   * One compact line per AUTOMATIC-routing provider (Codex, Claude,
-   * OpenCode Go) — no bars, no idle "cards", just real measured numbers or
-   * the honest "usage unknown" fallback. Zen and Cursor are deliberately
-   * excluded here: both are manual/PAYG-risk, never routed to
-   * automatically, so showing their usage here would misleadingly imply
-   * they're part of the same automatic resource pool as Codex/Claude/Go.
-   * They stay in `/providers`, explicitly identified as manual/PAYG.
+   * The compact USAGE bar: one plain line — `KAIRO · project │ Codex 5h
+   * 58% / W 86% │ Claude S 34% / W 65% │ Go 100% / 100% / 96%` — never a
+   * bordered card (see renderDashboardLines()). Only AUTOMATIC-routing
+   * providers appear (Codex, Claude, OpenCode Go); Zen/Cursor are
+   * manual/PAYG-risk, never part of the same automatic resource pool, and
+   * stay in `/providers` instead. Two lines only when the real content
+   * genuinely doesn't fit the given width — the header segment alone on
+   * its own line, the three provider segments on the next — never padded
+   * to any fixed height.
+   * @param {number} [width]
+   * @returns {string[]}
    */
-  compactHealthLines() {
+  compactUsageLines(width = 80) {
+    const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
     const usage = this.snapshot?.usage ?? {};
     const providers = this.snapshot?.providers ?? {};
     const status = (name) => providers[name]?.status ?? providers[name.toLowerCase()]?.status;
 
     const codex = usage.codex;
     const codexText = codex?.primary
-      ? `5h ${codex.primary.remainingPercent}%${codex.secondary ? ` · W ${codex.secondary.remainingPercent}%` : ""}`
-      : (status("Codex") ?? "usage unknown");
+      ? `Codex 5h ${codex.primary.remainingPercent}%${codex.secondary ? ` / W ${codex.secondary.remainingPercent}%` : ""}`
+      : `Codex ${status("Codex") ?? "usage unknown"}`;
 
     const claude = usage.claude;
     const claudeText = claude?.primary
-      ? `S ${claude.primary.remainingPercent}%${claude.secondary ? ` · W ${claude.secondary.remainingPercent}%` : ""}`
-      : (status("Claude") ?? "usage unknown");
+      ? `Claude S ${claude.primary.remainingPercent}%${claude.secondary ? ` / W ${claude.secondary.remainingPercent}%` : ""}`
+      : `Claude ${status("Claude") ?? "usage unknown"}`;
 
     const go = usage.opencode?.go;
+    const goText = go?.windows?.length
+      ? `Go ${go.windows.map((window) => `${window.remainingPercent}%${window.status === "rate-limited" ? " LIMITED" : ""}`).join(" / ")}`
+      : `Go ${status("OpenCode") ?? "usage unknown"}`;
 
-    const lines = [
-      theme.fg("muted", `Codex   ${codexText}`),
-      theme.fg("muted", `Claude  ${claudeText}`)
-    ];
-    if (go?.windows?.length) {
-      go.windows.forEach((window, index) => {
-        const label = index === 0 ? "Go      " : "        ";
-        lines.push(theme.fg("muted", `${label}${shortWindowName(window.name)} ${window.remainingPercent}%${window.status === "rate-limited" ? " LIMITED" : ""}`));
-      });
-    } else {
-      lines.push(theme.fg("muted", `Go      ${status("OpenCode") ?? "usage unknown"}`));
-    }
-    return lines;
+    const header = `KAIRO · ${project}`;
+    const segments = [codexText, claudeText, goText];
+    const full = `${header} │ ${segments.join(" │ ")}`;
+    if (visibleWidth(full) <= width) return [theme.fg("muted", full)];
+    return [theme.fg("muted", header), theme.fg("muted", segments.join(" │ "))];
   }
 
   providerLines() {

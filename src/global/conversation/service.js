@@ -25,7 +25,7 @@ import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transc
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
-  annotateWithRegistryEvidence, bestModelPerRole, buildAiTeam, buildEfficientTeam, scoreAvailableModels, summarizeCatalogCoverage
+  annotateWithRegistryEvidence, bestModelPerRole, buildAiTeam, buildEfficientTeam, listUnscoredModels, scoreAvailableModels, summarizeCatalogCoverage
 } from "../intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../intelligence/model-capability-registry.js";
 import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../intelligence/model-capability-registry-sources.js";
@@ -435,6 +435,12 @@ export function createConversationService(deps = {}) {
           { adapterId: "opencode-go", catalogStatus: opencodeGoCatalog?.status ?? "unknown", models: opencodeGoCatalog?.models ?? [] },
           { adapterId: "cursor", catalogStatus: cursorCatalog?.status ?? "unknown", models: cursorCatalog?.models ?? [] }
         ], aa.models);
+        // Real catalog models that exist but couldn't be matched to any
+        // real Artificial Analysis data — shown honestly as UNSCORED in
+        // /models --evidence instead of just vanishing with no trace.
+        const unscoredModels = listUnscoredModels(
+          Object.keys(catalogsByAdapter).map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })), aa.models
+        );
 
         // The Model Intelligence Foundation registry: every source Kairo
         // has (AA, Hugging Face scoped to Go, manufacturer snapshots,
@@ -470,7 +476,7 @@ export function createConversationService(deps = {}) {
         result.modelIntelligence = {
           status: aa.status, source: aa.source, age: aa.age,
           models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(scored),
-          eligibility, coverage,
+          eligibility, coverage, unscoredModels,
           aiTeam: buildAiTeam(scoredAll, eligibility, registry),
           efficientTeam: buildEfficientTeam(scoredAll, eligibility, registry, { providerCapacity })
         };
