@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildProjectStrategy, isStrategyStale, selectBootstrapAnalyst } from "../src/global/conversation/project-strategy.js";
+import { buildProjectStrategy, computeBootstrapAnalystAlternatives, isStrategyStale } from "../src/global/conversation/project-strategy.js";
 import { scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 
@@ -33,6 +33,33 @@ function realCandidates() {
   return { scoredAll, eligibility, registry, providerCapacity: null };
 }
 
+function analystChoice(choice, model) {
+  return { choice, model };
+}
+
+test("computeBootstrapAnalystAlternatives only offers providers Kairo can actually run read-only via askProvider", () => {
+  const alternatives = computeBootstrapAnalystAlternatives(realCandidates());
+  // claude leads reasoning (Explorer's fixed baseline capability) — both
+  // claude and codex are askProvider-supported, so both real candidates
+  // should be representable across the two alternatives.
+  assert.ok(alternatives.every((alt) => ["claude", "codex"].includes(alt.model.adapterId)));
+  assert.ok(alternatives.some((alt) => alt.choice === "quality"));
+});
+
+test("computeBootstrapAnalystAlternatives never offers a real leader Kairo can't actually invoke read-only (e.g. opencode-go)", () => {
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "opencode-go", models: [{ id: "go-model" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }] }
+  ], [
+    { slug: "go-model", name: "Go Model", intelligenceIndex: 99, codingIndex: 10, mathIndex: null },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 10, codingIndex: 99, mathIndex: null }
+  ]);
+  const alternatives = computeBootstrapAnalystAlternatives({
+    scoredAll, eligibility: { "opencode-go": { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null
+  });
+  assert.ok(alternatives.every((alt) => alt.model.adapterId !== "opencode-go"), "opencode-go leads reasoning but ASK doesn't support it — must never be offered");
+});
+
 test("buildProjectStrategy only activates roles the real profile asked for AND that have a real pick", () => {
   const strategy = buildProjectStrategy(profile({
     roleRequirements: [
@@ -40,29 +67,28 @@ test("buildProjectStrategy only activates roles the real profile asked for AND t
       { role: "Architect", capabilities: ["reasoning", "coding"], reason: "" }
       // Builder was never required by this project's real evidence.
     ]
-  }), realCandidates());
+  }), realCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
   assert.deepEqual(strategy.activeRoles, ["Explorer", "Architect"]);
   assert.equal(strategy.status, "suggested");
 });
 
-test("buildProjectStrategy's bootstrapAnalyst is the real Explorer pick, and orchestrator is a SEPARATE real Architect pick — never self-appointed", () => {
+test("buildProjectStrategy attaches the ALREADY-confirmed real Bootstrap Analyst choice — it never decides the analyst itself", () => {
   const strategy = buildProjectStrategy(profile({
-    roleRequirements: [
-      { role: "Explorer", capabilities: ["reasoning"], reason: "" },
-      { role: "Architect", capabilities: ["coding"], reason: "" }
-    ]
-  }), realCandidates());
-  assert.equal(strategy.bootstrapAnalyst.adapterId, "claude", "reasoning-only Explorer must pick claude, the real reasoning leader");
-  assert.equal(strategy.orchestrator.adapterId, "codex", "coding-only Architect must pick codex, the real coding leader — a genuinely separate decision");
+    roleRequirements: [{ role: "Architect", capabilities: ["coding"], reason: "" }]
+  }), realCandidates(), analystChoice("efficient", { adapterId: "codex", modelId: "codex-model" }));
+  assert.equal(strategy.bootstrapAnalyst.adapterId, "codex");
+  assert.equal(strategy.bootstrapAnalystChoice, "efficient");
+  assert.equal(strategy.orchestrator.adapterId, "codex", "coding-only Architect must pick the real coding leader — a separate decision from the given analyst");
 });
 
 test("DECISIVE: the same real candidate pool produces a genuinely different model for the same role when two projects' real roleRequirements ask for different capabilities — this is real per-project re-scoring, not global-team filtering by role name", () => {
   const candidates = realCandidates();
+  const analyst = analystChoice("quality", { adapterId: "claude", modelId: "claude-model" });
   const reasoningHeavyProject = profile({ roleRequirements: [{ role: "Architect", capabilities: ["reasoning"], reason: "" }] });
   const codingHeavyProject = profile({ roleRequirements: [{ role: "Architect", capabilities: ["coding"], reason: "" }] });
 
-  const reasoningStrategy = buildProjectStrategy(reasoningHeavyProject, candidates);
-  const codingStrategy = buildProjectStrategy(codingHeavyProject, candidates);
+  const reasoningStrategy = buildProjectStrategy(reasoningHeavyProject, candidates, analyst);
+  const codingStrategy = buildProjectStrategy(codingHeavyProject, candidates, analyst);
 
   assert.equal(reasoningStrategy.qualityTeam[0].model.adapterId, "claude");
   assert.equal(codingStrategy.qualityTeam[0].model.adapterId, "codex");
@@ -76,38 +102,11 @@ test("DECISIVE: the same real candidate pool produces a genuinely different mode
 test("buildProjectStrategy's qualityTeam/efficientTeam only ever include real picks for active roles, real model refs, never invented ones", () => {
   const strategy = buildProjectStrategy(profile({
     roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
-  }), realCandidates());
+  }), realCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
   assert.equal(strategy.qualityTeam.length, 1);
   assert.equal(strategy.qualityTeam[0].role, "Explorer");
   assert.equal(strategy.qualityTeam[0].model.adapterId, "claude");
   assert.ok(strategy.efficientTeam.length === 1 && strategy.efficientTeam[0].role === "Explorer");
-});
-
-test("buildProjectStrategy exposes real quality/efficiency Bootstrap Analyst alternatives, defaulting to the quality pick unconfirmed", () => {
-  const strategy = buildProjectStrategy(profile({
-    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
-  }), realCandidates());
-  assert.equal(strategy.bootstrapAnalyst.adapterId, "claude");
-  assert.equal(strategy.bootstrapAnalystChoice, null, "the default recommendation is not yet a confirmed human choice");
-  const choices = strategy.bootstrapAnalystAlternatives.map((a) => a.choice);
-  assert.ok(choices.includes("quality"));
-});
-
-test("selectBootstrapAnalyst lets the human pick between the two REAL alternatives already computed, never inventing a new one", () => {
-  const strategy = buildProjectStrategy(profile({
-    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
-  }), realCandidates());
-  const updated = selectBootstrapAnalyst(strategy, "quality");
-  assert.equal(updated.bootstrapAnalystChoice, "quality");
-  assert.equal(updated.bootstrapAnalyst.adapterId, "claude");
-});
-
-test("selectBootstrapAnalyst rejects a choice that isn't a real computed alternative, and rejects changing an already-approved strategy", () => {
-  const strategy = buildProjectStrategy(profile({
-    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
-  }), realCandidates());
-  assert.throws(() => selectBootstrapAnalyst(strategy, "made-up"));
-  assert.throws(() => selectBootstrapAnalyst({ ...strategy, status: "active" }, "quality"));
 });
 
 test("isStrategyStale is false for a NOT_ANALYZED project (no strategy yet)", () => {

@@ -369,14 +369,14 @@ test("USAGE is a compact one-line bar above a full-width GLOBAL MODEL GUIDE card
   for (const line of lines) assert.ok(visibleWidth(line) <= 160, `line "${line}" exceeds width`);
 });
 
-test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the required roles, orchestrator first, with a pending-approval hint", () => {
+test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the required roles, orchestrator first, already-confirmed Bootstrap Analyst", () => {
   const { view } = makeView();
   view.setSnapshot({
     projectRoot: "/repo/crm",
     projectStrategy: {
       status: "suggested",
       bootstrapAnalyst: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" },
-      bootstrapAnalystChoice: null,
+      bootstrapAnalystChoice: "quality",
       orchestrator: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" },
       qualityTeam: [
         { role: "Architect", model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, reason: null },
@@ -388,27 +388,28 @@ test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the requi
   assert.equal(title, "PROJECT TEAM · crm · SUGGESTED");
   const joined = lines.join("\n");
   assert.match(joined, /Bootstrap Analyst\s+GPT-6 Astra/);
-  assert.match(joined, /recommended — confirm with \/project analyst/, "an unconfirmed default recommendation must say so honestly");
   assert.match(joined, /Orchestrator\s+Fable 5\.1/);
   assert.match(joined, /Architect\s+Fable 5\.1/);
   assert.match(joined, /Builder\s+GPT-6 Astra/);
-  assert.match(joined, /Use \/project approve to activate\./);
+  assert.match(joined, /Suggested from real project analysis\. Use \/project approve to activate\./);
 });
 
-test("projectTeamPanel drops the pending-confirmation hint once the human made a real explicit Bootstrap Analyst choice", () => {
+test("projectTeamPanel shows AWAITING_ANALYST — real quality/efficient alternatives — once a real LOCAL_PREFLIGHT ran but before any choice is confirmed", () => {
   const { view } = makeView();
-  view.setSnapshot({
-    projectRoot: "/repo/crm",
-    projectStrategy: {
-      status: "suggested",
-      bootstrapAnalyst: { adapterId: "claude", modelId: "claude-x", displayName: "Claude X" },
-      bootstrapAnalystChoice: "quality",
-      orchestrator: null,
-      qualityTeam: []
-    }
-  });
-  const { lines } = view.projectTeamPanel(80);
-  assert.doesNotMatch(lines.join("\n"), /recommended — confirm/);
+  view.setSnapshot({ projectRoot: "/repo/crm", modelIntelligence: { status: "unknown" } });
+  view.pendingProjectAnalysis = {
+    profile: {}, candidates: {},
+    alternatives: [
+      { choice: "quality", model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" } },
+      { choice: "efficient", model: { adapterId: "claude", modelId: "claude-x", displayName: "Claude X" } }
+    ]
+  };
+  const { title, lines } = view.projectTeamPanel(80);
+  assert.equal(title, "PROJECT ANALYSIS · crm — Select Bootstrap Analyst");
+  const joined = lines.join("\n");
+  assert.match(joined, /quality\s+GPT-6 Astra/);
+  assert.match(joined, /efficient\s+Claude X/);
+  assert.match(joined, /--confirm/);
 });
 
 test("projectTeamPanel shows ACTIVE without a pending-approval hint, and STALE with a real refresh warning", () => {
@@ -435,7 +436,7 @@ test("projectTeamPanel falls back to GLOBAL MODEL GUIDE with an honest 'not anal
   view.setSnapshot({ projectRoot: "/repo/crm", modelIntelligence: { status: "unknown" } });
   const { title, lines } = view.projectTeamPanel(80);
   assert.equal(title, "GLOBAL MODEL GUIDE");
-  assert.match(lines[0], /Project not analyzed/);
+  assert.match(lines[0], /not analyzed/);
 });
 
 test("GLOBAL MODEL GUIDE uses the full given width at every terminal size — no tiling breakpoint", () => {

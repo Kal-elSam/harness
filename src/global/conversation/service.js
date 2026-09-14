@@ -24,7 +24,8 @@ import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { readSession, writeSessionMode } from "./session-store.js";
 import { computeProjectProfile } from "./project-profile.js";
-import { buildProjectStrategy, isStrategyStale, selectBootstrapAnalyst } from "./project-strategy.js";
+import { buildProjectStrategy, computeBootstrapAnalystAlternatives, isStrategyStale } from "./project-strategy.js";
+import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -38,6 +39,12 @@ import { ingestKairoTelemetryEvidence } from "../intelligence/kairo-telemetry-so
 import { buildProviderCapacity } from "../intelligence/subscription-pressure-source.js";
 
 export const CONVERSATION_SCHEMA = "kairo.conversation/v1";
+
+// The Bootstrap Analyst investigates a real project (reads real files,
+// not just answering from the prompt text) — genuinely slower than a
+// quick ASK-mode question, so it gets real room instead of quick-ask's
+// 30s default.
+const BOOTSTRAP_ANALYST_TIMEOUT_MS = 180_000;
 
 function publicPlan(record, execution = null) {
   const status = record.status ?? record;
@@ -248,6 +255,8 @@ export function createConversationService(deps = {}) {
   const computeProjectProfileImpl = deps.computeProjectProfile ?? computeProjectProfile;
   const readProjectStrategyImpl = deps.readProjectStrategy ?? readProjectStrategy;
   const writeProjectStrategyImpl = deps.writeProjectStrategy ?? writeProjectStrategy;
+  const parseProjectAnalysisImpl = deps.parseProjectAnalysis ?? parseProjectAnalysis;
+  const deriveRoleRequirementsImpl = deps.deriveRoleRequirements ?? deriveRoleRequirements;
   const readArtificialAnalysisModelsImpl = deps.readArtificialAnalysisModels ?? readArtificialAnalysisModels;
   // Unit tests inject resolveRoot and must remain provider-call free. The real
   // cockpit opts in explicitly so a refresh performs one bounded read-only probe.
@@ -577,72 +586,84 @@ export function createConversationService(deps = {}) {
       return writeSessionModeImpl(homeDir, projectRoot, mode);
     },
     /**
-     * `/project analyze`: computes a real, read-only ProjectProfile (no
-     * file writes, no provider calls) and combines it with the already-
-     * computed global CAPABILITY/EFFICIENT teams (via this.snapshot, so
-     * the heavy catalog/registry assembly is never duplicated here) into a
-     * "suggested" ProjectStrategy, persisted immediately — but never
-     * "active" until an explicit approveProjectStrategy.
+     * `/project analyze` (LOCAL_PREFLIGHT -> AWAITING_ANALYST): computes a
+     * real, read-only ProjectProfile and real Bootstrap Analyst
+     * alternatives (quality/efficient, restricted to providers Kairo can
+     * actually run read-only — see project-strategy.js's
+     * ASK_SUPPORTED_ADAPTERS) — no provider call yet, no ProjectStrategy
+     * created yet. The human picks and confirms one of these via
+     * runBootstrapAnalysis below; nothing is persisted until that real
+     * analysis actually runs and validates.
      */
-    async analyzeProject({ cwd }) {
+    async preflightProject({ cwd }) {
       const projectRoot = await root(cwd);
       const profile = await computeProjectProfileImpl({ cwd: projectRoot });
       const snap = await this.snapshot({ cwd: projectRoot });
-      // Real re-scoring, not global-team filtering: buildProjectStrategy
-      // calls buildAiTeam/buildEfficientTeam itself against THIS project's
-      // own roleRequirements, using the exact same candidate pool
-      // (scoredAll/eligibility/registry) snapshot() already assembled —
-      // never re-fetching catalogs, never inventing a new scoring path.
       const { scoredAll = [], eligibility = {}, registry = null, providerCapacity = null } = snap.modelIntelligence ?? {};
-      const strategy = buildProjectStrategy(profile, { scoredAll, eligibility, registry, providerCapacity });
-      await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
-      return { ...strategy, projectRoot, profile };
+      const candidates = { scoredAll, eligibility, registry, providerCapacity };
+      const alternatives = computeBootstrapAnalystAlternatives(candidates);
+      return { profile, alternatives, candidates, projectRoot };
     },
-    /** `/project approve`: SUGGESTED -> ACTIVE. Requires a real suggested strategy to already exist. */
+    /**
+     * `/project analyst quality|efficient --confirm` (ANALYZING -> SUGGESTED):
+     * runs the human's already-confirmed real model read-only (askProvider
+     * — the same real, no-file-write path ASK mode uses; never a new
+     * execution surface) against the real, limited context package
+     * (project-analysis.js's buildAnalystPrompt), validates its structured
+     * response, and ONLY on a valid response deterministically derives
+     * real role requirements and builds + persists a SUGGESTED
+     * ProjectStrategy. An invalid/unparseable analyst response throws —
+     * no ProjectStrategy is ever created from it.
+     * @param {object} args
+     * @param {string} args.cwd
+     * @param {object} args.profile - from preflightProject
+     * @param {object} args.candidates - from preflightProject
+     * @param {{choice: "quality"|"efficient", model: object}} args.analyst
+     */
+    async runBootstrapAnalysis({ cwd, profile, candidates, analyst }) {
+      const projectRoot = await root(cwd);
+      const prompt = buildAnalystPrompt(profile);
+      // A real project investigation (the model reads real files, not
+      // just answering from the prompt text) genuinely takes longer than
+      // ASK mode's quick-question default — give it real room instead of
+      // timing out mid-investigation.
+      const response = await askProviderImpl({
+        provider: analyst.model.adapterId, question: prompt, model: analyst.model.modelId, cwd: projectRoot,
+        timeoutMs: BOOTSTRAP_ANALYST_TIMEOUT_MS
+      });
+      if (response.status !== "answered") {
+        throw new Error(`Bootstrap Analyst did not answer: ${response.error ?? response.status}`);
+      }
+      const parsed = parseProjectAnalysisImpl(response.answer);
+      if (!parsed.valid) throw new Error(`Bootstrap Analyst response failed validation: ${parsed.error}`);
+      const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements);
+      const strategy = buildProjectStrategy({ ...profile, roleRequirements }, candidates, analyst);
+      await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
+      return { ...strategy, projectRoot, analysis: parsed.analysis };
+    },
+    /** `/project approve`: SUGGESTED -> ACTIVE. Requires a real suggested strategy to already exist — the Bootstrap Analyst choice is already locked in by the time a strategy exists at all (see runBootstrapAnalysis), so there's nothing left to confirm here. */
     async approveProjectStrategy({ cwd }) {
       const projectRoot = await root(cwd);
       const existing = await readProjectStrategyImpl(homeDir, projectRoot);
       if (!existing) throw new Error("No suggested project strategy yet — run /project analyze first.");
-      // A real choice between alternatives is required before approval —
-      // "el usuario selecciona el modelo" — unless there was genuinely
-      // only one real alternative to begin with (nothing to choose).
-      const hadRealChoice = (existing.bootstrapAnalystAlternatives ?? []).length > 1;
-      if (hadRealChoice && !existing.bootstrapAnalystChoice) {
-        throw new Error("Bootstrap Analyst not yet confirmed — run /project analyst quality|efficient first.");
-      }
       const approved = { ...existing, status: "active", approvedAt: new Date().toISOString() };
       await writeProjectStrategyImpl(homeDir, projectRoot, approved);
       return { ...approved, projectRoot };
     },
     /**
-     * `/project analyst quality|efficient`: explicit human choice between
-     * the two real alternatives buildProjectStrategy already computed for
-     * Bootstrap Analyst — never a value invented on the spot. Only valid
-     * while the strategy is still SUGGESTED.
-     */
-    async selectBootstrapAnalyst({ cwd, choice }) {
-      const projectRoot = await root(cwd);
-      const existing = await readProjectStrategyImpl(homeDir, projectRoot);
-      if (!existing) throw new Error("No suggested project strategy yet — run /project analyze first.");
-      const updated = selectBootstrapAnalyst(existing, choice);
-      await writeProjectStrategyImpl(homeDir, projectRoot, updated);
-      return { ...updated, projectRoot };
-    },
-    /**
-     * `/project refresh`: recomputes the real ProjectProfile. A strategy
-     * that was never approved (no strategy yet, or still just "suggested")
-     * simply gets a fresh suggestion (same as analyze — nothing was a real
-     * commitment yet). An ACTIVE strategy whose real fingerprint no longer
-     * matches the current evidence is marked STALE (persisted) but keeps
-     * its previous team assignments/approval intact — a stale flag, not a
-     * silent, unapproved swap.
+     * `/project refresh`: a strategy that was never approved (no strategy
+     * yet, or still just "suggested") is left as-is — the interactive
+     * AWAITING_ANALYST/ANALYZING flow (preflightProject + a fresh
+     * /project analyze) is the only way to get a new suggestion; refresh
+     * never silently re-runs a real provider call. An ACTIVE strategy
+     * whose real fingerprint no longer matches the current evidence is
+     * marked STALE (persisted) but keeps its previous team assignments/
+     * approval intact — a stale flag, not a silent, unapproved swap.
      */
     async refreshProjectStrategy({ cwd }) {
       const projectRoot = await root(cwd);
       const existing = await readProjectStrategyImpl(homeDir, projectRoot);
-      if (!existing || existing.status !== "active") {
-        return this.analyzeProject({ cwd: projectRoot });
-      }
+      if (!existing || existing.status !== "active") return existing;
       const profile = await computeProjectProfileImpl({ cwd: projectRoot });
       if (isStrategyStale(existing, profile)) {
         const stale = { ...existing, status: "stale" };

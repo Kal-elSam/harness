@@ -77,6 +77,12 @@ export class CockpitView {
     this.snapshot = null;
     this.transcript = [];
     this.executeDecision = null;
+    // AWAITING_ANALYST: real preflightProject() output (profile,
+    // alternatives, candidates) held here between /project analyze and a
+    // confirmed /project analyst choice — deliberately in-memory only,
+    // never persisted: a restart mid-flow should just start over from
+    // NOT_ANALYZED, not resurrect a stale, unconfirmed selection.
+    this.pendingProjectAnalysis = null;
     // Real, monotonic per-entry ids (never re-derived from array index,
     // which shifts under the 500-entry cap) so each transcript entry's
     // expensive ANSI-aware wrap (wrapTextWithAnsi) can be cached by
@@ -361,23 +367,28 @@ export class CockpitView {
   projectTeamPanel(width = 80) {
     const strategy = this.snapshot?.projectStrategy;
     const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
+    if (!strategy && this.pendingProjectAnalysis) {
+      // AWAITING_ANALYST: a real preflight already ran (LOCAL_PREFLIGHT),
+      // and the human still needs to pick + confirm a real model before
+      // ANALYZING can run — see app.js's /project analyst handler.
+      const lines = this.pendingProjectAnalysis.alternatives.map((alt) =>
+        `  ${alt.choice.padEnd(10)} ${this.aiTeamLabel(alt.model)}`);
+      lines.push(theme.fg("muted", "Use /project analyst quality|efficient --confirm to run the real analysis (consumes real quota)."));
+      return { title: `PROJECT ANALYSIS · ${project} — Select Bootstrap Analyst`, lines };
+    }
     if (!strategy) {
       return {
         title: "GLOBAL MODEL GUIDE",
-        lines: [theme.fg("warning", "Project not analyzed — use /project analyze for a real, project-specific team."), ...this.teamsColumnsLines(width)]
+        lines: [theme.fg("warning", `Project ${project} not analyzed — use /project analyze for a real, project-specific team.`), ...this.teamsColumnsLines(width)]
       };
     }
     const lines = [];
-    if (strategy.bootstrapAnalyst) {
-      const pending = strategy.status === "suggested" && !strategy.bootstrapAnalystChoice;
-      const suffix = pending ? theme.fg("warning", " (recommended — confirm with /project analyst)") : "";
-      lines.push(`${"Bootstrap Analyst".padEnd(18)} ${this.aiTeamLabel(strategy.bootstrapAnalyst)}${suffix}`);
-    }
+    if (strategy.bootstrapAnalyst) lines.push(`${"Bootstrap Analyst".padEnd(18)} ${this.aiTeamLabel(strategy.bootstrapAnalyst)}`);
     if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(18)} ${this.aiTeamLabel(strategy.orchestrator)}`);
     for (const entry of strategy.qualityTeam ?? []) {
       lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.aiTeamLabel(entry.model) : theme.fg("warning", "no eligible option")}`);
     }
-    if (strategy.status === "suggested") lines.push(theme.fg("muted", "Use /project approve to activate."));
+    if (strategy.status === "suggested") lines.push(theme.fg("muted", "Suggested from real project analysis. Use /project approve to activate."));
     if (strategy.status === "stale") lines.push(theme.fg("warning", "Real evidence changed since approval — use /project refresh."));
     return { title: `PROJECT TEAM · ${project} · ${strategy.status.toUpperCase()}`, lines };
   }
