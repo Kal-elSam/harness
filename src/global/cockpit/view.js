@@ -63,18 +63,48 @@ export class CockpitView {
     this.getViewportRows = getViewportRows;
     this.rows = [];
     this.selectedIndex = 0;
-    this.mode = "list"; // "list" | "detail" | "confirm-execute"
+    this.mode = "list"; // "list" | "detail" | "confirm-execute" — UI screen, never confused with workMode below
+    // The cockpit's real WorkMode ("ask" | "plan" | "agent" — see
+    // rows.js's isActionAvailable) — deliberately a SEPARATE field from
+    // `this.mode` above, which is the UI screen state (list/detail/
+    // confirm-execute), a completely different axis. Defaults to "ask",
+    // the strictly read-only default every session (new or pre-WorkMode)
+    // starts from until app.js loads the real persisted KairoSession.
+    this.workMode = "ask";
     this.detailTaskId = null;
     this.detailText = "";
     this.statusMessage = "";
     this.snapshot = null;
     this.transcript = [];
     this.executeDecision = null;
+    // Real, monotonic per-entry ids (never re-derived from array index,
+    // which shifts under the 500-entry cap) so each transcript entry's
+    // expensive ANSI-aware wrap (wrapTextWithAnsi) can be cached by
+    // `${id}:${width}` in renderConversation() instead of re-wrapping the
+    // ENTIRE transcript on every keystroke's render — with a real
+    // conversation, that's the actual cost behind "escritura lenta". A
+    // cached entry never needs invalidating: transcript entries are
+    // immutable once pushed, so the only real cache key that matters is
+    // width (a terminal resize), which the Map key already captures.
+    this._nextEntryId = 0;
+    this._wrapCache = new Map();
     // Set by app.js's focus toggling — the "a approve · j reject ·
     // x implement" hint is only true while the list actually has focus;
     // with the composer focused those same letters just become message
     // text instead of triggering an action.
     this.hasListFocus = false;
+  }
+
+  /** @param {"ask"|"plan"|"agent"} workMode */
+  setWorkMode(workMode) {
+    this.workMode = workMode;
+    this.requestRender();
+  }
+
+  /** Cycles ASK -> PLAN -> AGENT -> ASK (Shift+Tab); Tab stays reserved for focus/autocomplete. */
+  static nextWorkMode(workMode) {
+    const order = ["ask", "plan", "agent"];
+    return order[(order.indexOf(workMode) + 1) % order.length];
   }
 
   /**
@@ -101,11 +131,16 @@ export class CockpitView {
   addTranscript(role, text) {
     const value = String(text ?? "").trim();
     if (!value) return;
-    this.transcript.push({ role: role === "user" ? "You" : "Kairo", text: value });
+    this.transcript.push({ id: this._nextEntryId++, role: role === "user" ? "You" : "Kairo", text: value });
     // A generous safety cap, not a display constraint — what actually shows
     // on screen is decided per-render by the real viewport budget
     // (see chatLines()), not by how much history this array retains.
-    if (this.transcript.length > 500) this.transcript.shift();
+    if (this.transcript.length > 500) {
+      const evicted = this.transcript.shift();
+      for (const key of this._wrapCache.keys()) {
+        if (key.startsWith(`${evicted.id}:`)) this._wrapCache.delete(key);
+      }
+    }
     this.requestRender();
   }
 
@@ -117,14 +152,16 @@ export class CockpitView {
    */
   loadTranscript(entries) {
     this.transcript = (entries ?? [])
-      .map((entry) => ({ role: entry.role === "user" ? "You" : "Kairo", text: String(entry.text ?? "").trim() }))
+      .map((entry) => ({ id: this._nextEntryId++, role: entry.role === "user" ? "You" : "Kairo", text: String(entry.text ?? "").trim() }))
       .filter((entry) => entry.text)
       .slice(-500);
+    this._wrapCache.clear();
     this.requestRender();
   }
 
   clearTranscript() {
     this.transcript = [];
+    this._wrapCache.clear();
     this.requestRender();
   }
 
@@ -237,10 +274,10 @@ export class CockpitView {
     if (data === "q") { this.actions.onQuit(); return; }
     if (data === "r") { this.actions.onRefresh(); return; }
 
-    if (data === "a" && isActionAvailable("approve", row)) { this.actions.onApprove(row.taskId); return; }
-    if (data === "j" && isActionAvailable("reject", row)) { this.actions.onReject(row.taskId); return; }
-    if (data === "c" && isActionAvailable("cancel", row)) { this.actions.onCancel(row.taskId); return; }
-    if (data === "x" && isActionAvailable("execute", row)) {
+    if (data === "a" && isActionAvailable("approve", row, this.workMode)) { this.actions.onApprove(row.taskId); return; }
+    if (data === "j" && isActionAvailable("reject", row, this.workMode)) { this.actions.onReject(row.taskId); return; }
+    if (data === "c" && isActionAvailable("cancel", row, this.workMode)) { this.actions.onCancel(row.taskId); return; }
+    if (data === "x" && isActionAvailable("execute", row, this.workMode)) {
       this.actions.onRequestExecute(row.taskId);
       return;
     }
@@ -312,11 +349,20 @@ export class CockpitView {
   /** Contextual key hints — shown in the dashboard's fixed zone, not the scrollable conversation. */
   renderFooterLines() {
     const row = this.selectedRow();
-    const footerLines = [theme.fg("muted", "Enter send · /help · /usage · q quit")];
+    const footerLines = [theme.fg("muted", "Enter send · Shift+Tab mode · /help · /usage · q quit")];
     if (row) {
+      // Only ever advertises a key the current WorkMode actually lets
+      // through (see rows.js's isActionAvailable) — ASK's list stays
+      // "Enter open" only, never a stale "a approve" that would silently
+      // do nothing if pressed.
+      const controls = ["Enter open"];
+      if (isActionAvailable("approve", row, this.workMode)) controls.push("a approve");
+      if (isActionAvailable("reject", row, this.workMode)) controls.push("j reject");
+      if (isActionAvailable("execute", row, this.workMode)) controls.push("x implement");
+      if (isActionAvailable("cancel", row, this.workMode)) controls.push("c cancel");
       footerLines.push(theme.fg("muted", this.hasListFocus
-        ? "Plan controls: Enter open · a approve · j reject · x implement"
-        : "Tab for plan controls (approve/reject/implement) — typing here just sends a message"));
+        ? `Plan controls: ${controls.join(" · ")}`
+        : `Tab for plan controls (${controls.slice(1).join("/") || "view only"}) — typing here just sends a message`));
     }
     return footerLines;
   }
@@ -354,14 +400,25 @@ export class CockpitView {
     }
     const lines = [];
     for (const entry of this.transcript) {
-      const isUser = entry.role === "You";
-      const label = isUser ? "> " : "Kairo ";
-      const prefixWidth = visibleWidth(label);
-      const coloredPrefix = isUser ? theme.fg("accent", label) : theme.fg("info", label);
-      const wrapped = wrapTextWithAnsi(entry.text, Math.max(1, width - prefixWidth));
-      wrapped.forEach((wrappedLine, index) => {
-        lines.push(index === 0 ? `${coloredPrefix}${wrappedLine}` : `${" ".repeat(prefixWidth)}${wrappedLine}`);
-      });
+      // Wrapping (wrapTextWithAnsi) is the expensive part of rendering a
+      // real conversation, and renderConversation() runs on EVERY render —
+      // including every keystroke while typing. Cached by entry id (stable,
+      // never re-derived from array index) + width, so a keystroke only
+      // ever re-wraps if the terminal itself was resized, never the whole
+      // history again. Entries are immutable once pushed, so nothing else
+      // can go stale here.
+      const cacheKey = `${entry.id}:${width}`;
+      let entryLines = this._wrapCache.get(cacheKey);
+      if (!entryLines) {
+        const isUser = entry.role === "You";
+        const label = isUser ? "> " : "Kairo ";
+        const prefixWidth = visibleWidth(label);
+        const coloredPrefix = isUser ? theme.fg("accent", label) : theme.fg("info", label);
+        const wrapped = wrapTextWithAnsi(entry.text, Math.max(1, width - prefixWidth));
+        entryLines = wrapped.map((wrappedLine, index) => (index === 0 ? `${coloredPrefix}${wrappedLine}` : `${" ".repeat(prefixWidth)}${wrappedLine}`));
+        this._wrapCache.set(cacheKey, entryLines);
+      }
+      lines.push(...entryLines);
     }
     if (this.statusMessage) {
       lines.push("");

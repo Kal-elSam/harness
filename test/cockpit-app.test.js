@@ -460,7 +460,7 @@ test("submitting a change request goes through submitTask, creates a plan, clear
 
   editor.setText("Add OAuth login");
   await editor.onSubmit(editor.getText());
-  assert.deepEqual(submitted, [{ cwd: "/repo", task: "Add OAuth login" }]);
+  assert.deepEqual(submitted, [{ cwd: "/repo", task: "Add OAuth login", mode: "ask" }]);
   assert.equal(editor.getText(), "");
   assert.equal(editor.disableSubmit, false);
 
@@ -489,19 +489,21 @@ test("submitting a real question answers it directly via submitTask — never cr
 
   editor.setText("What is this project about?");
   await editor.onSubmit(editor.getText());
-  assert.deepEqual(submitted, [{ cwd: "/repo", task: "What is this project about?" }]);
+  assert.deepEqual(submitted, [{ cwd: "/repo", task: "What is this project about?", mode: "ask" }]);
   assert.equal(app.view.transcript.some((entry) => entry.text.includes("It orchestrates Codex/Claude/OpenCode.")), true);
 
   app.stop();
 });
 
-test("/plan forces a plan even for question-shaped text, bypassing submitTask's classification", async () => {
+test("/plan forces a plan even for question-shaped text, bypassing submitTask's classification, and switches WorkMode to PLAN", async () => {
   let editor;
   const architectCalls = [];
+  const modeCalls = [];
   const service = {
     snapshot: async () => makeSnapshot([BASE_ROW]),
     submitArchitecture: async (args) => { architectCalls.push(args); return {}; },
-    submitTask: async () => { throw new Error("submitTask should not be called for /plan"); }
+    submitTask: async () => { throw new Error("submitTask should not be called for /plan"); },
+    setMode: async (args) => { modeCalls.push(args); return { mode: args.mode }; }
   };
   const app = await runCockpitApp({
     cwd: "/repo",
@@ -513,9 +515,12 @@ test("/plan forces a plan even for question-shaped text, bypassing submitTask's 
     clearIntervalImpl: () => {}
   });
 
+  assert.equal(app.view.workMode, "ask");
   editor.setText("/plan What is the best auth strategy here?");
   await editor.onSubmit(editor.getText());
   assert.deepEqual(architectCalls, [{ cwd: "/repo", task: "What is the best auth strategy here?" }]);
+  assert.equal(app.view.workMode, "plan");
+  assert.deepEqual(modeCalls, [{ cwd: "/repo", mode: "plan" }]);
 
   app.stop();
 });
@@ -557,6 +562,60 @@ test("Tab toggles focus between the task editor and the plan/run list", async ()
   tui.inputListeners[0]("\t");
   assert.equal(tui.getFocusedComponent(), editor);
 
+  app.stop();
+});
+
+test("Shift+Tab cycles WorkMode ASK -> PLAN -> AGENT -> ASK and persists it via service.setMode, never touching plain Tab's focus-toggle job", async () => {
+  let tui, editor;
+  const modeCalls = [];
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    setMode: async (args) => { modeCalls.push(args); return { mode: args.mode }; }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  assert.equal(app.view.workMode, "ask");
+  const result = tui.inputListeners[0]("\x1b[Z");
+  assert.equal(result?.consume, true);
+  assert.equal(app.view.workMode, "plan");
+  tui.inputListeners[0]("\x1b[Z");
+  assert.equal(app.view.workMode, "agent");
+  tui.inputListeners[0]("\x1b[Z");
+  assert.equal(app.view.workMode, "ask");
+  assert.deepEqual(modeCalls, [{ cwd: "/repo", mode: "plan" }, { cwd: "/repo", mode: "agent" }, { cwd: "/repo", mode: "ask" }]);
+
+  // Plain Tab is untouched — still toggles focus, never cycles mode.
+  assert.equal(tui.getFocusedComponent(), editor);
+  tui.inputListeners[0]("\t");
+  assert.equal(tui.getFocusedComponent(), app.view);
+  assert.equal(app.view.workMode, "ask");
+
+  app.stop();
+});
+
+test("the persisted KairoSession's real WorkMode is restored at startup, not reset to ASK", async () => {
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    getSession: async () => ({ mode: "agent" })
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+  assert.equal(app.view.workMode, "agent");
   app.stop();
 });
 
@@ -608,6 +667,9 @@ test("buildViewportLayoutRoot wires a real ScrollView around the conversation, w
 
   assert.equal(composerEntry.basis, 2);
   assert.equal(composerEntry.shrink, 0);
+  assert.match(composerEntry.component.render(100).join("\n"), /Message Kairo · ASK/, "the real current WorkMode shows next to the composer");
+  view.setWorkMode("agent");
+  assert.match(composerEntry.component.render(100).join("\n"), /Message Kairo · AGENT/, "the composer header reflects a WorkMode change live, not just at build time");
   assert.equal(editorEntry.component, editor);
   assert.equal(editorEntry.basis, 3);
   assert.equal(editorEntry.shrink, 0);

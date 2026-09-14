@@ -73,6 +73,31 @@ test("isActionAvailable reflects plan/execution state transitions", () => {
   assert.equal(isActionAvailable("approve", null), false);
 });
 
+test("isActionAvailable's WorkMode gate: ASK blocks approve/reject/execute outright but never cancel", () => {
+  const approvable = { planState: "awaiting_approval", execState: "not_started", execActive: false };
+  const executable = { planState: "approved", execState: "not_started", execActive: false };
+  const active = { planState: "approved", execState: "running", execActive: true };
+  assert.equal(isActionAvailable("approve", approvable, "ask"), false);
+  assert.equal(isActionAvailable("reject", approvable, "ask"), false);
+  assert.equal(isActionAvailable("execute", executable, "ask"), false);
+  assert.equal(isActionAvailable("cancel", active, "ask"), true, "cancel is a safety action, never mode-gated");
+});
+
+test("isActionAvailable's WorkMode gate: PLAN can review (approve/reject) but never execute", () => {
+  const approvable = { planState: "awaiting_approval", execState: "not_started", execActive: false };
+  const executable = { planState: "approved", execState: "not_started", execActive: false };
+  assert.equal(isActionAvailable("approve", approvable, "plan"), true);
+  assert.equal(isActionAvailable("reject", approvable, "plan"), true);
+  assert.equal(isActionAvailable("execute", executable, "plan"), false);
+});
+
+test("isActionAvailable's WorkMode gate: AGENT allows every gated action a real plan/execution state permits", () => {
+  const approvable = { planState: "awaiting_approval", execState: "not_started", execActive: false };
+  const executable = { planState: "approved", execState: "not_started", execActive: false };
+  assert.equal(isActionAvailable("approve", approvable, "agent"), true);
+  assert.equal(isActionAvailable("execute", executable, "agent"), true);
+});
+
 test("keyHintsLine only advertises actions that are actually available", () => {
   const rows = buildTaskRows(TIMELINE);
   const awaiting = keyHintsLine(rows[0]);

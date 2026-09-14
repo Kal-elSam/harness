@@ -11,8 +11,9 @@ import { CARD_TONE, cardTop } from "./card.js";
 // spacer row separates it from whatever is above (SESSION), then the title
 // sits directly on top of the editor's own rule with no gap, so the two
 // read as one continuous framed box rather than two disconnected pieces.
-function composerHeader(width) {
-  return ["", cardTop("Message Kairo", CARD_TONE.SUCCESS, theme, width)];
+function composerHeader(width, workMode) {
+  const label = workMode ? ` · ${workMode.toUpperCase()}` : "";
+  return ["", cardTop(`Message Kairo${label}`, CARD_TONE.SUCCESS, theme, width)];
 }
 
 const DEFAULT_POLL_MS = 2000;
@@ -40,7 +41,7 @@ export function buildViewportLayoutRoot(view, editor) {
   return new VStack([
     { component: dashboardComponent, shrink: 0 },
     { component: conversationScroll, grow: 1, minSize: 4 },
-    { component: { render: composerHeader }, basis: 2, shrink: 0 },
+    { component: { render: (width) => composerHeader(width, view.workMode) }, basis: 2, shrink: 0 },
     { component: editor, basis: 3, shrink: 0 }
   ], { gap: 0 });
 }
@@ -172,7 +173,7 @@ export async function runCockpitApp({
       // blocks with no indication of which command produced which one.
       pushTranscript("user", task);
       if (command === "/help") {
-        pushTranscript("kairo", "/plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
+        pushTranscript("kairo", "Shift+Tab cycles ASK/PLAN/AGENT · /plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
       } else if (command === "/usage") {
         for (const line of view.usageLines()) pushTranscript("kairo", line);
       } else if (command === "/providers") {
@@ -199,6 +200,16 @@ export async function runCockpitApp({
           editor.setText("");
           return;
         }
+        // Backward-compatible shortcut: /plan switches WorkMode to PLAN
+        // (so subsequent plain messages stay in PLAN too, never silently
+        // dropping back to whatever mode was active before) and sends the
+        // message immediately — real behavior, never just a label change.
+        if (view.workMode !== "plan") {
+          view.setWorkMode("plan");
+          service.setMode?.({ cwd, mode: "plan" })?.catch((error) => {
+            view.setStatus(`Mode change not saved: ${error.message ?? String(error)}`);
+          });
+        }
         editor.disableSubmit = true;
         editor.setText("");
         return runAction("Asking Codex for a plan", async () => {
@@ -221,8 +232,12 @@ export async function runCockpitApp({
     }
     pushTranscript("user", task);
     editor.disableSubmit = true;
+    // The real WorkMode decides outright — ASK always answers read-only,
+    // PLAN/AGENT always create a plan (see service.submitTask) — replacing
+    // the old isLikelyQuestion guess with what the user explicitly told
+    // Kairo they're doing (Shift+Tab / /plan).
     return runAction("Asking Kairo", async () => {
-      const result = await service.submitTask({ cwd, task });
+      const result = await service.submitTask({ cwd, task, mode: view.workMode });
       if (result.kind === "answer") {
         pushTranscript("kairo", `${result.provider}${result.model ? ` · ${result.model}` : ""}: ${result.answer}`);
       } else {
@@ -262,6 +277,19 @@ export async function runCockpitApp({
   // whichever component is currently focused.
   tui.addInputListener?.((data) => {
     if (matchesKey(data, "ctrl+c")) { stop(); return { consume: true }; }
+    // Shift+Tab cycles the real WorkMode (ASK -> PLAN -> AGENT -> ASK);
+    // plain Tab keeps its existing job (focus toggle) — reserved for
+    // autocomplete later, per the plan's own assumption, never repurposed
+    // here. Persisting the new mode is pure local state (no provider I/O),
+    // so this stays instant even if the write is still in flight.
+    if (matchesKey(data, "shift+tab")) {
+      const next = CockpitView.nextWorkMode(view.workMode);
+      view.setWorkMode(next);
+      service.setMode?.({ cwd, mode: next })?.catch((error) => {
+        view.setStatus(`Mode change not saved: ${error.message ?? String(error)}`);
+      });
+      return { consume: true };
+    }
     if (matchesKey(data, "tab")) {
       if (tui.getFocusedComponent?.() === editor) focusList(); else focusEditor();
       tui.requestRender();
@@ -270,12 +298,20 @@ export async function runCockpitApp({
     return undefined;
   });
 
-  // Load persisted chat history before the first render so a restart never
-  // shows an empty chat while STATUS still shows a task from before it.
+  // Load persisted chat history and the real KairoSession (currently just
+  // WorkMode) before the first render, so a restart never shows an empty
+  // chat or silently resets back to ASK while STATUS still shows a task
+  // from before it.
   try {
     view.loadTranscript(await service.loadTranscript?.({ cwd }));
   } catch (error) {
     view.setStatus(`Transcript load failed: ${error.message ?? String(error)}`);
+  }
+  try {
+    const session = await service.getSession?.({ cwd });
+    if (session?.mode) view.setWorkMode(session.mode);
+  } catch (error) {
+    view.setStatus(`Session load failed: ${error.message ?? String(error)}`);
   }
   await refresh();
   tui.start();

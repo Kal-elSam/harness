@@ -22,6 +22,7 @@ import { checkCandidate, isLikelyQuestion, selectAskProvider, selectExecutionPro
 import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
+import { readSession, writeSessionMode } from "./session-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
@@ -239,6 +240,8 @@ export function createConversationService(deps = {}) {
   const appendTranscriptImpl = deps.appendTranscriptEntry ?? appendTranscriptEntry;
   const readTranscriptImpl = deps.readTranscript ?? readTranscript;
   const clearTranscriptImpl = deps.clearTranscript ?? clearTranscript;
+  const readSessionImpl = deps.readSession ?? readSession;
+  const writeSessionModeImpl = deps.writeSessionMode ?? writeSessionMode;
   const readArtificialAnalysisModelsImpl = deps.readArtificialAnalysisModels ?? readArtificialAnalysisModels;
   // Unit tests inject resolveRoot and must remain provider-call free. The real
   // cockpit opts in explicitly so a refresh performs one bounded read-only probe.
@@ -516,18 +519,45 @@ export function createConversationService(deps = {}) {
       return { provider: decision.provider, model: decision.model, answer: result.answer, projectRoot };
     },
     /**
-     * The composer's real entry point: classifies free text as a read-only
-     * question (answered directly, no task/plan) or a change request
-     * (creates a Codex plan, same as submitArchitecture) — so a simple
-     * question no longer forces a plan + approval gate onto the user.
+     * The composer's real entry point. When the cockpit's explicit WorkMode
+     * is given, it decides outright — ASK always answers read-only, never
+     * creating a plan; PLAN/AGENT always create a plan (submitArchitecture),
+     * never answering directly — replacing the old isLikelyQuestion guess
+     * with what the user actually told Kairo they're doing. `mode` is
+     * optional only for backward compatibility with any caller that
+     * predates WorkMode; the real cockpit always passes it.
+     * @param {object} args
+     * @param {string} args.cwd
+     * @param {string} args.task
+     * @param {"ask"|"plan"|"agent"|null} [args.mode]
      */
-    async submitTask({ cwd, task }) {
-      if (isLikelyQuestion(task)) {
+    async submitTask({ cwd, task, mode = null }) {
+      const isQuestion = mode ? mode === "ask" : isLikelyQuestion(task);
+      if (isQuestion) {
         const answer = await this.askQuestion({ cwd, task });
         return { kind: "answer", ...answer };
       }
       const plan = await this.submitArchitecture({ cwd, task });
       return { kind: "plan", ...plan };
+    },
+    /**
+     * Real, persisted KairoSession for this project — right now just the
+     * current WorkMode ("ask" | "plan" | "agent"). A session that predates
+     * WorkMode (or has no file yet) reads as "ask", the strictly read-only
+     * default — see session-store.js's readSession.
+     */
+    async getSession({ cwd }) {
+      const projectRoot = await root(cwd);
+      return readSessionImpl(homeDir, projectRoot);
+    },
+    /**
+     * Persists a new WorkMode for this project — pure local state, no
+     * provider I/O, so Shift+Tab/`/plan` stay instant.
+     * @param {{cwd: string, mode: "ask"|"plan"|"agent"}} args
+     */
+    async setMode({ cwd, mode }) {
+      const projectRoot = await root(cwd);
+      return writeSessionModeImpl(homeDir, projectRoot, mode);
     },
     /**
      * Real persisted chat history for this project, kept globally under

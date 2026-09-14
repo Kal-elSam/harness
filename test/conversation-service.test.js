@@ -176,6 +176,62 @@ test("submitTask still creates a plan for an actual change request", async () =>
   assert.deepEqual(planCalls, [{ cwd: "/repo", task: "Implement pagination on the users table", model: null }]);
 });
 
+test("submitTask's explicit WorkMode overrides the isLikelyQuestion guess — ASK never creates a plan, even for a clear change request", async () => {
+  const askCalls = [];
+  const planCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: null }),
+    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "Real answer.", error: null }; },
+    createPlan: async (args) => { planCalls.push(args); return { status: {}, reused: false }; }
+  });
+  const result = await service.submitTask({ cwd: "/repo", task: "Implement pagination on the users table", mode: "ask" });
+  assert.equal(result.kind, "answer");
+  assert.equal(planCalls.length, 0);
+  assert.equal(askCalls.length, 1);
+});
+
+test("submitTask's explicit WorkMode overrides the isLikelyQuestion guess — PLAN and AGENT always create a plan, even for a plain question", async () => {
+  const status = { taskId: "task-id", state: "awaiting_approval", provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
+  const planCalls = [];
+  const askCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    createPlan: async (args) => { planCalls.push(args); return { status, reused: false }; },
+    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "should never be called", error: null }; }
+  });
+  const planResult = await service.submitTask({ cwd: "/repo", task: "What is this project about?", mode: "plan" });
+  const agentResult = await service.submitTask({ cwd: "/repo", task: "What is this project about?", mode: "agent" });
+  assert.equal(planResult.kind, "plan");
+  assert.equal(agentResult.kind, "plan");
+  assert.equal(planCalls.length, 2);
+  assert.equal(askCalls.length, 0);
+});
+
+test("getSession/setMode persist and round-trip the real WorkMode for a project", async () => {
+  let stored = null;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    readSession: async (homeDir, projectRoot) => {
+      assert.equal(homeDir, "/home/test");
+      assert.equal(projectRoot, "/repo");
+      return stored ?? { schema: "kairo.session/v1", id: "repo", mode: "ask", createdAt: "t0", updatedAt: "t0" };
+    },
+    writeSessionMode: async (homeDir, projectRoot, mode) => {
+      stored = { schema: "kairo.session/v1", id: "repo", mode, createdAt: "t0", updatedAt: "t1" };
+      return stored;
+    }
+  });
+  const initial = await service.getSession({ cwd: "/repo" });
+  assert.equal(initial.mode, "ask");
+  const updated = await service.setMode({ cwd: "/repo", mode: "agent" });
+  assert.equal(updated.mode, "agent");
+  const reread = await service.getSession({ cwd: "/repo" });
+  assert.equal(reread.mode, "agent");
+});
+
 test("snapshot cross-references real model catalogs with real Artificial Analysis scores when probes are enabled", async () => {
   const service = createConversationService({
     resolveRoot: async () => "/repo",

@@ -634,13 +634,94 @@ test("enter requests the selected plan's markdown and switches to detail mode", 
   assert.deepEqual(calls, [["onShowPlan", "task-a"]]);
 });
 
+test("CockpitView defaults to ASK — the strictly read-only WorkMode — until a real session or explicit change says otherwise", () => {
+  const { view } = makeView();
+  assert.equal(view.workMode, "ask");
+});
+
+test("CockpitView.nextWorkMode cycles ASK -> PLAN -> AGENT -> ASK", () => {
+  assert.equal(CockpitView.nextWorkMode("ask"), "plan");
+  assert.equal(CockpitView.nextWorkMode("plan"), "agent");
+  assert.equal(CockpitView.nextWorkMode("agent"), "ask");
+});
+
+test("renderConversation caches each transcript entry's wrapped lines by id+width — re-rendering at the same width never re-wraps", () => {
+  const { view } = makeView();
+  view.addTranscript("user", "A fairly long message that will actually need to wrap across more than one line of terminal width");
+  view.addTranscript("kairo", "claude: a real reply");
+
+  view.renderConversation(40);
+  assert.equal(view._wrapCache.size, 2, "one cache entry per real transcript entry at this width");
+  const firstRenderLines = view.renderConversation(40);
+  assert.equal(view._wrapCache.size, 2, "re-rendering at the same width must never grow the cache — a real cache hit, not a fresh wrap");
+
+  // A different width is a real cache miss (genuinely different wrapped
+  // output), so it correctly adds new entries rather than reusing stale ones.
+  view.renderConversation(20);
+  assert.equal(view._wrapCache.size, 4);
+
+  const secondRenderLines = view.renderConversation(40);
+  assert.deepEqual(secondRenderLines, firstRenderLines, "the cached lines must be byte-identical to what a real re-wrap would have produced");
+});
+
+test("a keystroke-shaped re-render with 500 cached entries stays fast — a coarse smoke test for the p95 < 50ms/keystroke target, not a strict benchmark", () => {
+  const { view } = makeView();
+  for (let i = 0; i < 500; i += 1) {
+    view.addTranscript(i % 2 === 0 ? "user" : "kairo", `message ${i} with some real, wrappable content in it`);
+  }
+  view.renderConversation(100); // warm the cache once, the same way a real first render would
+  const start = performance.now();
+  for (let i = 0; i < 50; i += 1) view.renderConversation(100); // simulates 50 keystrokes' worth of re-renders
+  const elapsedMs = performance.now() - start;
+  assert.ok(elapsedMs / 50 < 50, `cached re-render averaged ${(elapsedMs / 50).toFixed(2)}ms — expected well under the 50ms/keystroke target`);
+});
+
+test("the wrap cache never leaks: an evicted transcript entry (past the 500-entry cap) has its cached lines removed too", () => {
+  const { view } = makeView();
+  for (let i = 0; i < 501; i += 1) view.addTranscript("user", `message ${i}`);
+  view.renderConversation(80);
+  // Only the 500 still-retained entries can have cache entries — the
+  // evicted first message's id must not still be sitting in the cache.
+  assert.equal(view.transcript.length, 500);
+  assert.equal(view._wrapCache.size, 500);
+});
+
+test("setWorkMode changes the real state and triggers a render", () => {
+  let renders = 0;
+  const { view } = makeView();
+  view.requestRender = () => { renders += 1; };
+  view.setWorkMode("plan");
+  assert.equal(view.workMode, "plan");
+  assert.equal(renders, 1);
+});
+
+test("the footer's plan controls only ever advertise a key the current WorkMode actually lets through", () => {
+  const { view } = makeView();
+  view.hasListFocus = true;
+  const askFooter = view.renderFooterLines().join("\n");
+  assert.doesNotMatch(askFooter, /a approve/, "ASK is strictly read-only — no approve hint");
+  assert.doesNotMatch(askFooter, /x implement/, "ASK is strictly read-only — no execute hint");
+
+  view.setWorkMode("plan");
+  const planFooter = view.renderFooterLines().join("\n");
+  assert.match(planFooter, /a approve/, "PLAN can review a plan");
+  assert.doesNotMatch(planFooter, /x implement/, "PLAN never executes");
+
+  view.setWorkMode("agent");
+  view.moveSelection(1); // task-b: approved + not_started, the executable row
+  const agentFooter = view.renderFooterLines().join("\n");
+  assert.match(agentFooter, /x implement/, "AGENT allows advancing under permissions and gates");
+});
+
 test("a/j only fire approve/reject when available for the selected row", () => {
   const { view, calls } = makeView();
+  view.setWorkMode("agent"); // approve/reject/execute are gated by WorkMode — AGENT allows every real action
   view.handleInput("a"); // task-a is awaiting_approval: allowed
   view.handleInput("j");
   assert.deepEqual(calls, [["onApprove", "task-a"], ["onReject", "task-a"]]);
 
   const { view: view2, calls: calls2 } = makeView();
+  view2.setWorkMode("agent");
   view2.moveSelection(1); // select task-b (approved, not awaiting_approval)
   view2.handleInput("a");
   assert.deepEqual(calls2, []);
@@ -648,6 +729,7 @@ test("a/j only fire approve/reject when available for the selected row", () => {
 
 test("x asks for the real routing decision first; the confirm prompt only appears once app.js supplies it", () => {
   const { view, calls } = makeView();
+  view.setWorkMode("agent"); // execute is only ever available in AGENT
   view.moveSelection(1); // task-b is approved + not_started: executable
   view.handleInput("x");
   assert.equal(view.mode, "list"); // still list — awaiting the async decision from app.js

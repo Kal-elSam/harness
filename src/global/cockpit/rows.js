@@ -102,29 +102,47 @@ export function rowTone(row) {
 }
 
 /**
- * Returns whether a given action key is currently available for a row (or with no row selected).
+ * Returns whether a given action key is currently available for a row (or
+ * with no row selected). `mode` (the cockpit's WorkMode, when given) gates
+ * which actions the current mode allows advancing through — ASK is
+ * strictly read-only (blocks approve/reject/execute outright, matching
+ * "ASK: estrictamente read-only"); PLAN can review a plan (approve/reject)
+ * but never execute it ("PLAN: genera y persiste un plan, sin ejecutar");
+ * AGENT allows every gated action ("AGENT: permite avanzar bajo permisos y
+ * gates"). `cancel` is deliberately NEVER mode-gated — stopping a run that
+ * is already active is a safety action, not a way to advance the
+ * pipeline, and must stay available no matter which mode the cockpit is
+ * in when the need to cancel comes up. Omitting `mode` keeps the original,
+ * mode-unaware behavior (every real caller passes it; a few existing
+ * direct unit tests don't and must see no change).
  * @param {"approve"|"reject"|"execute"|"cancel"} action
  * @param {CockpitRow|null} row
+ * @param {"ask"|"plan"|"agent"|null} [mode]
  * @returns {boolean}
  */
-export function isActionAvailable(action, row) {
+export function isActionAvailable(action, row, mode = null) {
   if (!row) return false;
-  if (action === "approve" || action === "reject") return row.planState === "awaiting_approval";
-  if (action === "execute") return row.planState === "approved" && row.execState === "not_started";
   if (action === "cancel") return row.execActive === true;
+  if (mode === "ask") return false;
+  if (action === "approve" || action === "reject") return row.planState === "awaiting_approval";
+  if (action === "execute") {
+    if (mode === "plan") return false;
+    return row.planState === "approved" && row.execState === "not_started";
+  }
   return false;
 }
 
 /**
  * Builds the key-hint bar text for the current selection.
  * @param {CockpitRow|null} row
+ * @param {"ask"|"plan"|"agent"|null} [mode]
  * @returns {string}
  */
-export function keyHintsLine(row) {
+export function keyHintsLine(row, mode = null) {
   const hints = ["up/down select", "enter view plan", "r refresh", "q quit"];
-  if (isActionAvailable("approve", row)) hints.push("a approve");
-  if (isActionAvailable("reject", row)) hints.push("j reject");
-  if (isActionAvailable("execute", row)) hints.push("x execute");
-  if (isActionAvailable("cancel", row)) hints.push("c cancel");
+  if (isActionAvailable("approve", row, mode)) hints.push("a approve");
+  if (isActionAvailable("reject", row, mode)) hints.push("j reject");
+  if (isActionAvailable("execute", row, mode)) hints.push("x execute");
+  if (isActionAvailable("cancel", row, mode)) hints.push("c cancel");
   return hints.join("  |  ");
 }
