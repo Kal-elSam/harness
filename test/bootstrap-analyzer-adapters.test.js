@@ -12,6 +12,7 @@ test("createCodexBootstrapAnalyzerAdapter reports isolation 'verified' only when
   const eligibleResult = await available.checkEligibility();
   assert.equal(eligibleResult.eligible, true);
   assert.equal(eligibleResult.isolation, "verified");
+  assert.equal(eligibleResult.canaryTested, true);
 
   const unavailable = createCodexBootstrapAnalyzerAdapter({
     modelId: "codex-model",
@@ -20,6 +21,7 @@ test("createCodexBootstrapAnalyzerAdapter reports isolation 'verified' only when
   const ineligibleResult = await unavailable.checkEligibility();
   assert.equal(ineligibleResult.eligible, false);
   assert.equal(ineligibleResult.isolation, "unverified");
+  assert.equal(ineligibleResult.canaryTested, false);
   assert.equal(ineligibleResult.reason, "macOS only");
 });
 
@@ -38,7 +40,7 @@ test("createCodexBootstrapAnalyzerAdapter.analyze delegates to the real sandboxe
   assert.equal(seenArgs.question, "investigate");
 });
 
-test("createClaudeBootstrapAnalyzerAdapter reports isolation 'restricted' (empirically canary-tested, but application- not kernel-enforced), never 'verified' — only when auth and model are real", async () => {
+test("createClaudeBootstrapAnalyzerAdapter reports isolation 'restricted' (application-enforced, not kernel) with canaryTested true (empirically proven, that's a separate axis) — only when auth and model are real", async () => {
   const adapter = createClaudeBootstrapAnalyzerAdapter({
     modelId: "claude-sonnet-5",
     deps: {
@@ -49,6 +51,7 @@ test("createClaudeBootstrapAnalyzerAdapter reports isolation 'restricted' (empir
   const eligibility = await adapter.checkEligibility();
   assert.equal(eligibility.eligible, true);
   assert.equal(eligibility.isolation, "restricted");
+  assert.equal(eligibility.canaryTested, true);
 });
 
 test("createClaudeBootstrapAnalyzerAdapter is ineligible when the real CLI/auth check fails — never a hardcoded true", async () => {
@@ -61,6 +64,7 @@ test("createClaudeBootstrapAnalyzerAdapter is ineligible when the real CLI/auth 
   const eligibility = await adapter.checkEligibility();
   assert.equal(eligibility.eligible, false);
   assert.equal(eligibility.isolation, "unverified");
+  assert.equal(eligibility.canaryTested, false);
   assert.match(eligibility.reason, /subscription/);
 });
 
@@ -75,6 +79,7 @@ test("createClaudeBootstrapAnalyzerAdapter is ineligible when modelId isn't in C
   const eligibility = await adapter.checkEligibility();
   assert.equal(eligibility.eligible, false);
   assert.equal(eligibility.isolation, "unverified");
+  assert.equal(eligibility.canaryTested, false);
   assert.match(eligibility.reason, /claude-does-not-exist/);
 });
 
@@ -103,5 +108,6 @@ test("createBootstrapAnalyzerAdapter returns an honest, ineligible adapter for a
   assert.equal(eligibility.eligible, false);
   assert.match(eligibility.reason, /no bootstrap analyzer adapter implemented/i);
   assert.equal(eligibility.isolation, "unverified");
+  assert.equal(eligibility.canaryTested, false);
   await assert.rejects(() => adapter.analyze({ question: "q", snapshotRoot: "/tmp/x" }), /no bootstrap analyzer adapter implemented/i);
 });

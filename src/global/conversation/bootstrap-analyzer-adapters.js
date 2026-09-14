@@ -6,13 +6,22 @@
 //
 // Every adapter exposes:
 //   adapterId, modelId
-//   checkEligibility(): Promise<{ eligible, reason?, isolation }>
-//     isolation is one of "verified" | "restricted" | "unverified" —
-//     "verified" means an empirically-proven OS-level boundary (like
-//     Codex's sandbox-exec, see codex-sandbox.js); "restricted" means a
-//     real, meaningful reduction that has NOT been independently
-//     canary-tested the same way (like Claude's --restricted); never
-//     invent "verified" for a provider that hasn't actually been proven.
+//   checkEligibility(): Promise<{ eligible, reason?, isolation, canaryTested }>
+//     isolation and canaryTested are separate axes — WHO enforces the
+//     boundary is not the same question as WHETHER it's been proven:
+//       isolation: "verified" | "restricted" | "unverified" — WHO enforces
+//         it. "verified" = an OS/kernel-enforced boundary (Codex's
+//         sandbox-exec, see codex-sandbox.js) that holds even if the CLI's
+//         own logic has a bug. "restricted" = an application-enforced
+//         boundary — the provider's own CLI/tool-permission logic (Claude's
+//         --restricted). "unverified" = no real boundary available.
+//       canaryTested: boolean — WHETHER that boundary has actually been
+//         empirically proven (a real canary read outside it was attempted
+//         and denied), as opposed to merely documented/assumed from
+//         --help text or a vendor's own claim. Both Codex's and Claude's
+//         adapters are canaryTested: true today; a provider could in
+//         principle be "restricted" but NOT canaryTested if its isolation
+//         claim were never independently checked — never conflate the two.
 //   analyze({ question, snapshotRoot, timeoutMs }): Promise<{status, answer, error}>
 //     same response shape intelligence/quick-ask.js's askProvider already
 //     returns, so callers don't need to branch on adapter type downstream.
@@ -42,7 +51,13 @@ export function createCodexBootstrapAnalyzerAdapter({ modelId, deps = {} } = {})
       return {
         eligible: isolation.available,
         reason: isolation.available ? undefined : isolation.reason,
-        isolation: isolation.available ? "verified" : "unverified"
+        isolation: isolation.available ? "verified" : "unverified",
+        // The sandbox-exec mechanism itself was empirically canary-tested
+        // (a real absolute-path read outside the confined root was denied,
+        // see codex-sandbox.js's own header) — `available` reflects that
+        // the same proven mechanism is usable here (platform + binary
+        // present), not a fresh proof on every call.
+        canaryTested: isolation.available
       };
     },
     async analyze({ question, snapshotRoot, timeoutMs }) {
@@ -69,32 +84,32 @@ export function createClaudeBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
     //     that module's own header) — this catches an unknown/typo'd
     //     modelId, though it can't prove live per-account entitlement the
     //     way Codex/OpenCode's live catalogs can.
-    //  3. isolation: "restricted" — --restricted's actual confinement was
+    //  3. isolation: "restricted" (application-enforced, by the claude
+    //     CLI's own in-process tool-permission logic — not an OS kernel
+    //     sandbox like Codex's sandbox-exec, so a bug in that logic could
+    //     theoretically be bypassed, unlike a kernel boundary).
+    //     canaryTested: true — --restricted's actual confinement was
     //     empirically canary-tested (not assumed): a real absolute-path
     //     read outside cwd came back in the JSON output's own
     //     `permission_denials` array (Claude's Read tool itself refused
     //     it), while an in-bounds read succeeded with an empty
-    //     `permission_denials`. That's a real, held boundary — but
-    //     enforced by the claude CLI's own in-process tool-permission
-    //     logic, not an OS kernel sandbox like Codex's sandbox-exec (a
-    //     bug in that enforcement, unlike a kernel boundary, could
-    //     theoretically be bypassed). "verified" stays reserved for a
-    //     kernel-enforced boundary; Claude does not qualify for that
-    //     label even though its own boundary has now been proven to hold.
+    //     `permission_denials`. That proof is WHETHER it was tested, not
+    //     WHO enforces it — it does not make this "verified"; only a
+    //     kernel-enforced boundary earns that label.
     async checkEligibility() {
       try {
         await verifyAuth({});
       } catch (error) {
-        return { eligible: false, reason: error?.message ?? String(error), isolation: "unverified" };
+        return { eligible: false, reason: error?.message ?? String(error), isolation: "unverified", canaryTested: false };
       }
       if (modelId) {
         const catalog = listModels();
         const known = catalog.models.some((m) => m.id === modelId);
         if (!known) {
-          return { eligible: false, reason: `"${modelId}" is not in Claude's documented model catalog.`, isolation: "unverified" };
+          return { eligible: false, reason: `"${modelId}" is not in Claude's documented model catalog.`, isolation: "unverified", canaryTested: false };
         }
       }
-      return { eligible: true, isolation: "restricted" };
+      return { eligible: true, isolation: "restricted", canaryTested: true };
     },
     async analyze({ question, snapshotRoot, timeoutMs }) {
       return ask({ provider: "claude", question, model: modelId, cwd: snapshotRoot, timeoutMs });
@@ -118,7 +133,7 @@ export function createBootstrapAnalyzerAdapter(adapterId, { modelId, deps = {} }
     const reason = `No Bootstrap Analyzer adapter implemented for "${adapterId}" yet.`;
     return {
       adapterId, modelId,
-      checkEligibility() { return { eligible: false, reason, isolation: "unverified" }; },
+      checkEligibility() { return { eligible: false, reason, isolation: "unverified", canaryTested: false }; },
       async analyze() { throw new Error(reason); }
     };
   }
