@@ -213,6 +213,18 @@ test("buildAiTeam coordinates the whole portfolio: real capability decides first
   // Codex — decisive, no alternative qualifies); intelligence is a real
   // three-way near-tie (Codex ~1.1% behind, Go ~6.4% behind, both within
   // the 8% band).
+  //
+  // Under the multi-metric role-capability engine (capability-scoring.js),
+  // Architect's relevant capabilities are reasoning + coding + instruction
+  // following (per the role/capability table), so with only
+  // intelligenceIndex/codingIndex evidence available its real gap value
+  // collapses to the same reasoning+coding median as Debugger/Reviewer —
+  // giving Architect the same 2-candidate near-equivalence pool
+  // (Claude/Go; Codex's real ~26.5% coding gap excludes it) as
+  // Builder/Debugger/Tester/Reviewer. Roles are assigned in ascending
+  // pool-size order, and Architect ties Builder/Debugger/Tester/Reviewer
+  // on pool size (2) — so, in ROLE_CAPABILITIES declaration order,
+  // Architect is resolved before Builder and claims Claude's first slot.
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 60.0, mathIndex: null },
@@ -226,34 +238,41 @@ test("buildAiTeam coordinates the whole portfolio: real capability decides first
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
-  // Builder/Tester (real coding leader): Claude wins both — its real
-  // ~4.4% edge over Go is within the band, but Claude hasn't claimed any
-  // role yet, so real capability decides cleanly. No message needed.
+  // Architect/Builder (real coding+reasoning leader): Claude wins both —
+  // its real edge over Go is within the band, but Claude hasn't hit its
+  // 2-role limit yet for either, so real capability decides cleanly. No
+  // message needed.
+  assert.equal(byRole.Architect.primary.adapterId, "claude");
   assert.equal(byRole.Builder.primary.adapterId, "claude");
-  assert.equal(byRole.Tester.primary.adapterId, "claude");
+  assert.equal(byRole.Architect.reason, null);
   assert.equal(byRole.Builder.reason, null);
-  assert.equal(byRole.Tester.reason, null);
 
-  // Explorer/Architect (real intelligence near-tie): by now Claude has
-  // already claimed 2 roles (the portfolio limit) — with a real,
-  // near-equivalent alternative (Codex, ~1.1% behind) available, Claude
-  // cedes these roles rather than taking a 3rd.
-  assert.equal(byRole.Explorer.primary.adapterId, "codex");
-  assert.equal(byRole.Architect.primary.adapterId, "codex");
-  assert.match(byRole.Explorer.reason, /assigned to a different model\/provider to avoid concentration/);
-
-  // Debugger (same near-tie pool): both Claude AND Codex have now hit
-  // their real 2-role limit, so Go — the real third-closest option
-  // (~6.4% behind the leader, still within the band) — gets it instead.
-  // Diversity never means an incapable model: Codex's real ~26.5% coding
-  // gap kept it out of Builder/Tester the whole time.
+  // Debugger/Tester (same reasoning/coding pool as Architect/Builder): by
+  // now Claude has already claimed its 2-role portfolio limit (Architect
+  // + Builder) — with a real, near-equivalent alternative (Go) available,
+  // Claude cedes these roles rather than taking a 3rd/4th.
   assert.equal(byRole.Debugger.primary.adapterId, "opencode-go");
+  assert.equal(byRole.Tester.primary.adapterId, "opencode-go");
+  assert.match(byRole.Debugger.reason, /assigned to a different model\/provider to avoid concentration/);
+  assert.match(byRole.Tester.reason, /assigned to a different model\/provider to avoid concentration/);
 
-  // Reviewer independence still applies — Builder's provider (Claude) is
-  // excluded, and with real room left on Go, Reviewer lands there too,
-  // genuinely independent from Builder.
-  assert.notEqual(byRole.Reviewer.primary.adapterId, byRole.Builder.primary.adapterId);
-  assert.match(byRole.Reviewer.reason, /Kept independent from Builder's provider\./);
+  // Reviewer (same pool again): by now BOTH Claude and Go have hit their
+  // real 2-role limit (Claude: Architect+Builder; Go: Debugger+Tester),
+  // and Reviewer is additionally barred from Builder's own provider
+  // (Claude) for independence — leaving no real alternative that doesn't
+  // force a repeat. The real leader (Claude) is kept anyway rather than
+  // handing the role to an incapable model just to satisfy diversity.
+  assert.equal(byRole.Reviewer.primary.adapterId, "claude");
+  assert.match(byRole.Reviewer.reason, /Only adequate option — no real alternative avoids concentration without forcing a repeat\./);
+
+  // Explorer (real intelligence near-tie, resolved last since its pool
+  // is the only 3-candidate one): by now Claude has used all 3 of its
+  // assignments — with a real, near-equivalent alternative (Codex, ~1.1%
+  // behind) available, Explorer goes to Codex instead. Diversity never
+  // means an incapable model: Codex's real ~26.5% coding gap kept it out
+  // of Architect/Builder/Debugger/Tester/Reviewer the whole time.
+  assert.equal(byRole.Explorer.primary.adapterId, "codex");
+  assert.match(byRole.Explorer.reason, /assigned to a different model\/provider to avoid concentration/);
 });
 
 test("buildAiTeam caps a single provider at 3 of the 6 technical roles when a real alternative provider exists — even across two different real models under it", () => {
@@ -296,6 +315,17 @@ test("buildEfficientTeam coordinates the portfolio too: a model that already cla
   // Builder/Tester; Codex never clears the coding floor for those roles.
   // Codex is the raw intelligence leader (53.4 vs Claude's 52.8, ~1.1%
   // ahead) — Claude still clears the 80% floor there (well within it).
+  //
+  // Under the multi-metric role-capability engine, Architect/Debugger/
+  // Reviewer blend reasoning+coding (median); with only these two real
+  // metrics, both models' median collapses to their shared, near-tied
+  // reasoning score, so both stay adequate for these roles too — same
+  // 2-candidate floor-passing pool as Explorer. EFFICIENT TEAM's
+  // concentration override never invokes the tighter (8%) decisive-leader
+  // check used by CAPABILITY TEAM — its whole pool is already
+  // floor-filtered, so any member is by definition "adequate," and a
+  // concentration limit can always force a swap among floor-clearing
+  // candidates instead of repeating the raw leader.
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 52.8, codingIndex: 81.6, mathIndex: null },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 53.4, codingIndex: 60.0, mathIndex: null }
@@ -307,17 +337,25 @@ test("buildEfficientTeam coordinates the portfolio too: a model that already cla
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
   // Builder/Tester: Claude is the ONLY real candidate that clears the
-  // coding floor — Codex never even qualifies for these roles, so it
-  // never claims the portfolio's 2-role limit here.
+  // coding floor — Codex never even qualifies for these roles, claiming
+  // Claude's full 2-role concentration limit before any other role is
+  // resolved.
   assert.equal(byRole.Builder.primary.adapterId, "claude");
   assert.equal(byRole.Tester.primary.adapterId, "claude");
 
-  // Explorer/Architect: Claude has now claimed 2 roles (its limit) on the
-  // coding-floor roles; both Codex and Claude clear the intelligence
-  // floor here, so with Claude's limit already reached, Codex — the real
-  // intelligence leader and adequate alternative — gets these instead.
+  // Explorer/Architect: Claude's 2-role limit is already spent on
+  // Builder/Tester — Codex, the real adequate alternative, gets both.
   assert.equal(byRole.Explorer.primary.adapterId, "codex");
   assert.equal(byRole.Architect.primary.adapterId, "codex");
+  assert.match(byRole.Architect.reason, /assigned to a different model\/provider to avoid concentration/);
+
+  // Debugger/Reviewer: by now BOTH Claude and Codex have hit their real
+  // 2-role limit (Claude: Builder+Tester; Codex: Explorer+Architect) —
+  // with no real alternative left that avoids concentration, the leader
+  // (Claude) is kept anyway rather than forcing an incapable repeat.
+  assert.equal(byRole.Debugger.primary.adapterId, "claude");
+  assert.equal(byRole.Reviewer.primary.adapterId, "claude");
+  assert.match(byRole.Debugger.reason, /Only adequate option — no real alternative avoids concentration without forcing a repeat\./);
 });
 
 test("buildAiTeam keeps Reviewer on Builder's own provider when no independent real alternative exists, rather than forcing an incapable model", () => {
@@ -474,11 +512,20 @@ test("buildAiTeam falls back to usage-based diversity when near-equivalent alter
 });
 
 test("Debugger's real optional terminalBenchV2 signal can flip a near-equivalent pick, without requiring every model to report it", () => {
+  // Debugger's relevant capabilities are reasoning, coding,
+  // terminalExecution, softwareExecution (ROLE_CAPABILITIES). Under the
+  // multi-metric median engine, a capability only counts toward the
+  // median when a model actually has coverage for it — median resists a
+  // single outlier, but that also means it resists a single differing
+  // capability when it's outnumbered by tied ones. So to isolate
+  // terminal-bench as the real deciding signal, neither model reports
+  // codingIndex here (no coding evidence at all) — only reasoning
+  // (tied exactly) and terminalExecution (a real, meaningfully
+  // different score) are covered, letting the real terminal-bench gap
+  // actually move the 2-value median.
   const aa = [
-    // Both models tie exactly on intelligence/coding, so the bottleneck
-    // comes down to their real, meaningfully different terminal-bench score.
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.60 },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.95 }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, mathIndex: null, terminalBenchV2: 0.60 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, mathIndex: null, terminalBenchV2: 0.95 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -487,7 +534,7 @@ test("Debugger's real optional terminalBenchV2 signal can flip a near-equivalent
   assert.equal(claude.terminalBenchV2, 0.60); // confirms the field actually flows through scoreAvailableModels
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
   const debugger_ = team.find((t) => t.role === "Debugger");
-  assert.equal(debugger_.primary.adapterId, "codex", "the real terminal-bench gap should be the deciding bottleneck once intelligence/coding are this close");
+  assert.equal(debugger_.primary.adapterId, "codex", "the real terminal-bench gap should be the deciding signal once reasoning is this close");
 });
 
 test("a role's optional metric never shrinks its candidate pool for a model AA simply hasn't scored on it yet", () => {
@@ -723,9 +770,15 @@ test("provider quota is resolved per-adapter, not per-model — two models under
 // real vocabulary mismatches, not just a same-named test fixture.
 
 test("Debugger's terminalExecution requirement is satisfied by the real ingestOfficialSnapshotEvidence pipeline (metric name \"terminal-bench\", not a same-named synthetic key)", () => {
+  // Debugger's relevant capabilities (reasoning, coding, terminalExecution,
+  // softwareExecution) are aggregated via median — a single differing
+  // capability can't move it when outnumbered by tied ones (see the
+  // terminalBenchV2 test above), so codingIndex is deliberately omitted
+  // here: both models tie only on reasoning, leaving terminal-bench as
+  // the sole other covered capability, free to actually decide.
   const aa = [
-    { slug: "astra-model", name: "Astra Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
-    { slug: "fable-model", name: "Fable Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null }
+    { slug: "astra-model", name: "Astra Model", intelligenceIndex: 90, mathIndex: null },
+    { slug: "fable-model", name: "Fable Model", intelligenceIndex: 90, mathIndex: null }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "codex", models: [{ id: "astra-model" }] }, { adapterId: "claude", models: [{ id: "fable-model" }] }], aa

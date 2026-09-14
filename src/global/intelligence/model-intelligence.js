@@ -7,6 +7,7 @@
 // same fail-closed rule as everywhere else in Kairo's routing.
 
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
+import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue } from "./capability-scoring.js";
 
 // Real per-benchmark metrics worth surfacing as corroborating evidence
 // alongside a pick — never blended into the ranking itself, since
@@ -236,23 +237,6 @@ export function bestModelPerRole(models) {
   return entries;
 }
 
-// AA's composite indices (intelligenceIndex/codingIndex/mathIndex) are
-// reported on a 0-100 scale; its individual per-benchmark evaluations
-// (gpqa, hle, tauBanking, terminalBenchV2, ...) are reported as 0-1
-// fractions. Converting the 0-100 ones down to the same 0-1 scale is a
-// real, FIXED unit conversion — not a pool-relative rescaling. That
-// distinction matters: a percentile- or min-max-by-pool approach
-// degenerates to always reporting just the two extremes {0, 1} whenever
-// there are only 2 real candidates (Kairo's typical case — usually just
-// Codex vs Claude, sometimes plus Go), which would destroy the real
-// magnitude of the gap entirely. Fixed unit conversion preserves it.
-const HUNDRED_SCALE_METRICS = new Set(["intelligenceIndex", "codingIndex", "mathIndex"]);
-
-function toUnitScale(key, value) {
-  if (value == null) return null;
-  return HUNDRED_SCALE_METRICS.has(key) ? value / 100 : value;
-}
-
 // Every metric a role definition might ask for — re-ingested into a
 // throwaway registry (see ensureRegistry) when the caller doesn't pass a
 // real one, so role compute() functions always have exactly one code path
@@ -268,28 +252,32 @@ const KNOWN_MODEL_METRICS = [
  * Guarantees buildAiTeam always has a real registry to resolve role
  * requirements against — a role's compute() must have exactly one code
  * path (resolve via the registry) whether or not the caller supplied one.
- * When none is given, builds a throwaway one seeded only from the AA
- * fields already present on `models` (scoreAvailableModels' output) —
- * identical data to what compute() would have read directly before, so
- * every existing call site (most tests, and any caller not yet passing
- * the real Model Intelligence Foundation registry) behaves exactly as
- * before. A caller that DOES pass a real registry (service.js, wired to
- * AA + Hugging Face + manufacturer snapshots + Kairo's own telemetry)
- * lets every role requirement resolve against the full evidence base,
- * not just AA.
+ * Always seeds the AA fields already present on `models`
+ * (scoreAvailableModels' output) into whichever registry ends up in
+ * use — a fresh throwaway one when none is given, or the caller's own
+ * real registry (service.js, wired to AA + Hugging Face + manufacturer
+ * snapshots + Kairo's own telemetry) otherwise. This has to seed the
+ * caller's registry too, not just the throwaway one: the robust
+ * multi-metric engine (capability-scoring.js) resolves every role
+ * purely through registry evidence, with no fallback to the raw
+ * `model[metric]` field the old single-metric `resolveMetric` used —
+ * so a real registry that hasn't separately ingested AA's
+ * intelligenceIndex/codingIndex would otherwise silently lose that
+ * evidence entirely. Never overwrites evidence the registry already
+ * has for a given identity/metric pair.
  */
 function ensureRegistry(models, registry) {
-  if (registry) return registry;
-  const fallback = createCapabilityRegistry();
+  const effective = registry ?? createCapabilityRegistry();
   for (const model of models) {
-    const id = fallback.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
+    const id = effective.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
+    const existingMetrics = new Set(effective.getEvidence(id).map((entry) => entry.metric));
     for (const metric of KNOWN_MODEL_METRICS) {
       const value = model[metric];
-      if (value == null) continue;
-      fallback.addEvidence(id, { metric, value, source: "artificial-analysis-free", benchmarkVersion: null, modelConfig: null, date: null, verified: false });
+      if (value == null || existingMetrics.has(metric)) continue;
+      effective.addEvidence(id, { metric, value, source: "artificial-analysis-free", benchmarkVersion: null, modelConfig: null, date: null, verified: false });
     }
   }
-  return fallback;
+  return effective;
 }
 
 /**
@@ -305,9 +293,10 @@ function ensureRegistry(models, registry) {
  * intelligenceIndex, codingIndex, priceInputPerMTok — nothing else calls
  * them anything different yet). A metric multiple sources name
  * differently (GPQA as AA's "gpqa" vs a manufacturer table's
- * "gpqa-diamond") needs resolveCanonicalCapability instead — looking up
- * one exact key would silently miss every other source's real evidence
- * for the same real thing, which is exactly the gap found and fixed here.
+ * "gpqa-diamond") is instead resolved through the robust multi-metric
+ * percentile engine (capability-scoring.js's BENCHMARK_IDENTITIES) —
+ * looking up one exact key here would silently miss every other source's
+ * real evidence for the same real thing.
  */
 function resolveMetric(registry, model, key) {
   const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
@@ -315,148 +304,79 @@ function resolveMetric(registry, model, key) {
   return best ? best.value : (model[key] ?? null);
 }
 
-function dateOf(entry) {
-  const parsed = Date.parse(entry?.date ?? "");
-  return Number.isFinite(parsed) ? parsed : -Infinity;
-}
-
-function convertByScale(scale, value) {
-  if (value == null) return null;
-  return scale === "hundred" ? value / 100 : value;
-}
-
-// Canonical capabilities: a real thing a role cares about (reasoning,
-// terminal execution, software execution) mapped to every real metric
-// name any connected source uses to measure it, each with its own real
-// scale. Different sources name the same real benchmark differently —
-// AA's free API reports GPQA as "gpqa" (0-1); a manufacturer's own
-// published table reports the identical benchmark as "gpqa-diamond"
-// (0-100). Without this mapping, a role asking for "gpqa" would find
-// AA's own number but silently miss a manufacturer-reported or
-// Hugging-Face-reported score for the exact same real benchmark, which
-// defeats the entire point of connecting a multi-source registry.
-const CANONICAL_CAPABILITIES = {
-  // gpqa/gpqa-diamond are the same real benchmark under different source
-  // names/scales; hle (Humanity's Last Exam) is a different real
-  // reasoning benchmark, not a rename of GPQA — included because it's the
-  // one Hugging Face's leaderboard integration actually reports for Go's
-  // models in production (see model-capability-registry-sources.js), and
-  // "never average, take the single most trustworthy real evidence" still
-  // applies: whichever real reasoning score is best-evidenced wins, none
-  // of them are blended together.
-  reasoning: [
-    { metric: "gpqa", scale: "unit" },
-    { metric: "gpqa-diamond", scale: "hundred" },
-    { metric: "hle", scale: "unit" }
-  ],
-  terminalExecution: [
-    { metric: "terminalBenchV2", scale: "unit" },
-    { metric: "terminalBenchHard", scale: "unit" },
-    { metric: "terminal-bench", scale: "hundred" },
-    { metric: "terminal-bench-science", scale: "hundred" }
-  ],
-  softwareExecution: [
-    { metric: "tauBanking", scale: "unit" },
-    { metric: "cursorbench", scale: "hundred" },
-    { metric: "kairo.success", scale: "unit" }
-  ]
+// Each role's real relevant capabilities (see capability-scoring.js),
+// derived from the plan's per-role table. "Hard problem solving" folds
+// into reasoning (GPQA/HLE are themselves hard-reasoning benchmarks);
+// "scientific coding" folds into coding (SciCode is already one of
+// coding's real component benchmarks) rather than inventing a separate
+// capability neither BENCHMARK_IDENTITIES nor any real source measures
+// directly. Tester/Reviewer/Explorer rows were truncated in the source
+// plan — inferred from this codebase's own pre-existing role-definition
+// pattern (Tester: coding + terminal execution; Reviewer: independent
+// reasoning + coding review; Explorer: the same reasoning-only signal
+// Architect always had) rather than guessed from nothing.
+const ROLE_CAPABILITIES = {
+  Explorer: ["reasoning", "instructionFollowing"],
+  Architect: ["reasoning", "coding", "instructionFollowing"],
+  Builder: ["coding", "softwareExecution", "terminalExecution", "instructionFollowing"],
+  Debugger: ["reasoning", "coding", "terminalExecution", "softwareExecution"],
+  Tester: ["coding", "terminalExecution"],
+  Reviewer: ["reasoning", "coding"]
 };
 
 /**
- * Resolves a canonical capability by checking every real metric name any
- * connected source uses for it (see CANONICAL_CAPABILITIES), converting
- * each candidate to the same 0-1 scale, and keeping only the single most
- * trustworthy real result across all of them (verified first, then most
- * recent) — never averaging across different metrics, since "gpqa" and
- * "gpqa-diamond" are still not literally the identical measurement even
- * once mapped to the same real-world concept. Falls back to whichever
- * mapped AA-native field the model object itself reports directly, for
- * callers using a registry that wasn't seeded with these metrics (a
- * sparse registry passed directly in a test, for instance).
+ * Builds one role definition per team-vocabulary role (Explorer /
+ * Architect / Builder / Debugger / Tester / Reviewer / Economy), scored
+ * via the robust multi-metric percentile engine (capability-scoring.js)
+ * for every role except Economy — which stays capability-floor + real
+ * price, deliberately kept separate ("capability, efficiency, and
+ * provider capacity permanecen separados"). `compute()` per role is a
+ * real, precomputed RoleEvaluation.capabilityPercentile lookup (never
+ * recomputed per model — percentile is inherently relative to the WHOLE
+ * candidate pool, so it's computed once per role, batched, then looked
+ * up), and a model absent from that role's evaluations (zero real
+ * primary evidence for any of its relevant capabilities) never competes
+ * — same fail-closed contract `resolveMetric`-based compute() functions
+ * already had. Built fresh per buildAiTeam()/buildEfficientTeam() call
+ * (registry AND models differ per call).
+ * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
+ * @param {Array<object>} models
+ * @returns {{roleDefinitions: Array<{role: string, compute: (model: object) => number|null, better: string}>, evaluationsByRole: Record<string, Map<string, import("./capability-scoring.js").RoleEvaluation>>, gapValueByRole: Record<string, Map<string, number>>}}
  */
-function resolveCanonicalCapability(registry, model, canonicalName) {
-  const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
-  const mappings = CANONICAL_CAPABILITIES[canonicalName] ?? [];
-  let best = null;
-  for (const mapping of mappings) {
-    for (const entry of registry.getEvidence(id, mapping.metric)) {
-      const isBetter = !best
-        || (entry.verified && !best.entry.verified)
-        || (entry.verified === best.entry.verified && dateOf(entry) > dateOf(best.entry));
-      if (isBetter) best = { entry, scale: mapping.scale };
-    }
+function buildAiTeamRoleDefinitions(registry, models) {
+  const evaluationsByRole = {};
+  const gapValueByRole = {};
+  const roleDefinitions = [];
+  for (const [role, capabilities] of Object.entries(ROLE_CAPABILITIES)) {
+    const evaluations = computeRoleEvaluations(registry, models, role, capabilities);
+    evaluationsByRole[role] = evaluations;
+    // Real, scale-normalized magnitude per model — NOT the percentile
+    // above. capabilityPercentile decides ORDER (robust, scale-invariant
+    // rank position); this decides HOW CLOSE two real picks are for
+    // near-equivalence-band/capability-floor purposes, which need real
+    // granularity that percentile alone can't provide with Kairo's
+    // typical 2-3-candidate pools (see capability-scoring.js).
+    gapValueByRole[role] = computeRoleGapValue(registry, models, capabilities);
+    roleDefinitions.push({
+      role, better: "max",
+      compute: (m) => evaluations.get(modelKey(m))?.capabilityPercentile ?? null
+    });
   }
-  if (best) return convertByScale(best.scale, best.entry.value);
-  for (const mapping of mappings) {
-    if (model[mapping.metric] != null) return convertByScale(mapping.scale, model[mapping.metric]);
-  }
-  return null;
-}
-
-/**
- * Builds a compute() for a role that needs more than one real signal,
- * possibly on different scales and named differently across sources.
- * `requiredKeys` are single-name real metrics (intelligenceIndex,
- * codingIndex — no source names these differently yet) resolved via
- * resolveMetric, and form a hard capability floor: a model missing any
- * of them doesn't qualify for this role at all. `optionalCapabilities`
- * are canonical names (see CANONICAL_CAPABILITIES) resolved via
- * resolveCanonicalCapability across every real source that measures
- * them — present only tightens the bottleneck, absent never excludes or
- * penalizes a model, so a role gaining a new, sparser real signal never
- * shrinks its candidate pool for models nothing has scored on it yet.
- */
-function scaledBottleneck(registry, requiredKeys, optionalCapabilities = []) {
-  return (model) => {
-    const get = (key) => resolveMetric(registry, model, key);
-    if (requiredKeys.some((key) => get(key) == null)) return null;
-    const requiredValues = requiredKeys.map((key) => toUnitScale(key, get(key)));
-    const optionalValues = optionalCapabilities
-      .map((name) => resolveCanonicalCapability(registry, model, name))
-      .filter((v) => v != null);
-    return Math.min(...requiredValues, ...optionalValues);
-  };
-}
-
-/**
- * Same real metrics as ROLE_DEFINITIONS, relabeled to the seven-role team
- * vocabulary the user settled on for the "AI TEAM" widget (Explorer /
- * Architect / Builder / Debugger / Tester / Reviewer / Economy) — plus,
- * per explicit decision, real role-specific capabilities layered in as
- * optional tie-breakers (reasoning for reasoning-heavy roles,
- * softwareExecution for agentic/tool-use, terminalExecution for
- * terminal-involved roles), resolved as CANONICAL capabilities (see
- * CANONICAL_CAPABILITIES) — not a single exact metric name — so a
- * manufacturer snapshot's "gpqa-diamond", Hugging Face's "hle"-shaped
- * evidence for the mapped benchmark, or Kairo's own "kairo.success" can
- * all actually satisfy a role's requirement, not just AA's own
- * exact-named field. Built fresh per buildAiTeam() call (registry
- * differs per call). Kept as a separate list from ROLE_DEFINITIONS so
- * bestModelPerRole()'s existing contract and tests stay untouched.
- */
-function buildAiTeamRoleDefinitions(registry) {
-  return [
-    { role: "Explorer", compute: scaledBottleneck(registry, ["intelligenceIndex"], ["reasoning"]), better: "max" },
-    { role: "Architect", compute: scaledBottleneck(registry, ["intelligenceIndex"], ["reasoning"]), better: "max" },
-    { role: "Builder", compute: scaledBottleneck(registry, ["codingIndex"], ["softwareExecution"]), better: "max" },
-    { role: "Debugger", compute: scaledBottleneck(registry, ["intelligenceIndex", "codingIndex"], ["terminalExecution"]), better: "max" },
-    { role: "Tester", compute: scaledBottleneck(registry, ["codingIndex"], ["terminalExecution"]), better: "max" },
-    { role: "Reviewer", compute: (m) => minOfReal(resolveMetric(registry, m, "intelligenceIndex"), resolveMetric(registry, m, "codingIndex")), better: "max" },
-    // Capability floor: cheapest-wins-outright would let a model with zero
-    // known real capability (AA tracks a price for it but never scored its
-    // intelligence or coding) win Economy purely on price. Requiring at
-    // least one of the two composite indices is the same real floor every
-    // other role already has, just applied before ranking by price.
-    {
-      role: "Economy",
-      compute: (m) => {
-        const intel = resolveMetric(registry, m, "intelligenceIndex");
-        const coding = resolveMetric(registry, m, "codingIndex");
-        return intel == null && coding == null ? null : resolveMetric(registry, m, "priceInputPerMTok");
-      },
-      better: "min"
-    }
-  ];
+  // Capability floor: cheapest-wins-outright would let a model with zero
+  // known real capability (AA tracks a price for it but never scored its
+  // intelligence or coding) win Economy purely on price. Requiring at
+  // least one of the two composite indices is the same real floor every
+  // other role already has, just applied before ranking by price.
+  roleDefinitions.push({
+    role: "Economy",
+    compute: (m) => {
+      const intel = resolveMetric(registry, m, "intelligenceIndex");
+      const coding = resolveMetric(registry, m, "codingIndex");
+      return intel == null && coding == null ? null : resolveMetric(registry, m, "priceInputPerMTok");
+    },
+    better: "min"
+  });
+  return { roleDefinitions, evaluationsByRole, gapValueByRole };
 }
 
 function toTeamModel(model, available, registry = null) {
@@ -473,6 +393,20 @@ function rankBy(models, compute, better) {
 
 function rankEligible(models, eligibility, compute, better) {
   return rankBy(models.filter((m) => eligibility[m.adapterId]?.ok === true), compute, better);
+}
+
+/**
+ * Attaches each ranked entry's REAL, scale-normalized gap value (see
+ * capability-scoring.js's computeRoleGapValue) — a separate number from
+ * `.value` (the percentile compute() already produced), used only for
+ * near-equivalence-band/capability-floor magnitude comparisons (see
+ * capabilityPool/adequateCandidates/leaderAdvantage). `gapValueByModel`
+ * is undefined for Economy (price-ranked, never uses this), in which
+ * case entries are returned unchanged.
+ */
+function attachGapValues(ranked, gapValueByModel) {
+  if (!gapValueByModel) return ranked;
+  return ranked.map((entry) => ({ ...entry, gapValue: gapValueByModel.get(modelKey(entry.model)) ?? null }));
 }
 
 
@@ -511,17 +445,25 @@ function modelKey(model) {
 
 /**
  * The real capability leader's advantage over the rest of a pool, as a
- * fraction of its own value — never a fabricated percentage. A
- * single-candidate pool is trivially decisive (Infinity): there is
- * nothing to concentrate away from.
+ * fraction of its own REAL, scale-normalized gap value (see
+ * capability-scoring.js's computeRoleGapValue — never the rank-only
+ * capabilityPercentile, which is scale-invariant by construction and
+ * would report every non-leader as "100% behind" with Kairo's typical
+ * 2-3-candidate pools). A single-candidate pool is trivially decisive
+ * (Infinity): there is nothing to concentrate away from. A leader with no
+ * real gap value at all (only possible for Economy, which never calls
+ * this) is likewise treated as trivially decisive — there's no real
+ * magnitude to compare.
  */
 function leaderAdvantage(pool, better) {
   if (pool.length < 2) return Infinity;
   const leader = pool[0];
-  const scale = Math.abs(leader.value) || 1;
+  if (leader.gapValue == null) return Infinity;
+  const scale = Math.abs(leader.gapValue) || 1;
   let minDiff = Infinity;
   for (let i = 1; i < pool.length; i += 1) {
-    const diff = better === "max" ? leader.value - pool[i].value : pool[i].value - leader.value;
+    if (pool[i].gapValue == null) continue;
+    const diff = better === "max" ? leader.gapValue - pool[i].gapValue : pool[i].gapValue - leader.gapValue;
     minDiff = Math.min(minDiff, diff / scale);
   }
   return minDiff;
@@ -610,11 +552,17 @@ function assignOneRole({ role, pool, better, modelUsage, providerTechnicalUsage,
     // decisive real capability advantage never needs to short-circuit
     // that comparison when there's no actual limit to break.
     candidatePool = allowed;
-  } else if (isDecisiveLeader(pool, better)) {
+  } else if (mode === "capability" && isDecisiveLeader(pool, better)) {
     // The leader IS blocked by concentration, but its real capability
     // advantage over the rest of this pool is decisive (> NEAR_EQUIVALENCE_BAND)
     // — a portfolio limit never sacrifices a real, decisive capability
-    // gap just to spread load.
+    // gap just to spread load. Capability-team only: EFFICIENT's pool is
+    // already floor-filtered (every member already qualifies as
+    // "adequate" under the wider capabilityFloor), so re-applying the
+    // much narrower near-equivalence band here would silently override
+    // efficiency's whole point — letting a real, meaningfully cheaper
+    // floor-clearing alternative actually compete once the leader has
+    // hit its concentration limit.
     candidatePool = [leader];
     forcedReasonKind = "decisive-override";
   } else if (allowed.length) {
@@ -692,17 +640,38 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
   return { results, modelUsage, providerTechnicalUsage };
 }
 
+/**
+ * The real near-equivalence pool for a role: the percentile-ranked leader
+ * (`ranked[0]` — order comes from capabilityPercentile) plus every other
+ * candidate within NEAR_EQUIVALENCE_BAND of the leader's REAL,
+ * scale-normalized gap value (never the percentile itself — see
+ * leaderAdvantage's own comment). A candidate with no real gap value at
+ * all can't be honestly compared, so it's excluded from the pool rather
+ * than guessed into or out of it.
+ */
 function capabilityPool(ranked, better) {
   if (!ranked.length) return [];
   const leader = ranked[0];
-  const scale = Math.abs(leader.value) || 1;
-  return ranked.filter((entry) => Math.abs(leader.value - entry.value) / scale <= NEAR_EQUIVALENCE_BAND);
+  if (leader.gapValue == null) return [leader];
+  const scale = Math.abs(leader.gapValue) || 1;
+  return ranked.filter((entry) => entry.gapValue != null && Math.abs(leader.gapValue - entry.gapValue) / scale <= NEAR_EQUIVALENCE_BAND);
 }
 
-/** CAPABILITY priority: real capability value, then diversity (least-used model, then least-used provider), then a stable tiebreak. */
-function sortByCapabilityPriority(candidates, better, modelUsage, providerTechnicalUsage) {
+/**
+ * CAPABILITY priority: real capability value first, then — for a real
+ * exact tie — which real pick has more trustworthy evidence behind it
+ * (RoleEvaluation.confidence: high beats medium beats low, never the
+ * score's own magnitude), then portfolio diversity (least-used model,
+ * then least-used provider), then a stable tiebreak.
+ * `getConfidenceRank` defaults to "always tied" for callers with no
+ * confidence signal (e.g. none was computed for this role).
+ */
+function sortByCapabilityPriority(candidates, better, modelUsage, providerTechnicalUsage, getConfidenceRank = () => 0) {
   return [...candidates].sort((a, b) => {
     if (a.value !== b.value) return better === "max" ? b.value - a.value : a.value - b.value;
+    const aConfidence = getConfidenceRank(a.model);
+    const bConfidence = getConfidenceRank(b.model);
+    if (aConfidence !== bConfidence) return bConfidence - aConfidence; // higher confidence wins
     const aModelUsage = modelUsage.get(modelKey(a.model)) ?? 0;
     const bModelUsage = modelUsage.get(modelKey(b.model)) ?? 0;
     if (aModelUsage !== bModelUsage) return aModelUsage - bModelUsage;
@@ -751,9 +720,9 @@ function sortByCapabilityPriority(candidates, better, modelUsage, providerTechni
  */
 export function buildAiTeam(models, eligibility = {}, registry = null) {
   const effectiveRegistry = ensureRegistry(models, registry);
-  const roleDefinitions = buildAiTeamRoleDefinitions(effectiveRegistry);
+  const { roleDefinitions, evaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models);
   const roleRankings = roleDefinitions.map(({ role, compute, better }) => ({
-    role, compute, better, ranked: rankEligible(models, eligibility, compute, better)
+    role, compute, better, ranked: attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role])
   }));
 
   const rolePools = roleRankings.map(({ role, better, ranked }) => ({
@@ -762,7 +731,9 @@ export function buildAiTeam(models, eligibility = {}, registry = null) {
   }));
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
     const { better } = rolePools.find((r) => r.role === role);
-    return (candidates) => sortByCapabilityPriority(candidates, better, modelUsage, providerTechnicalUsage);
+    const roleEvaluations = evaluationsByRole[role];
+    const getConfidenceRank = (model) => CONFIDENCE_RANK[roleEvaluations?.get(modelKey(model))?.confidence] ?? 0;
+    return (candidates) => sortByCapabilityPriority(candidates, better, modelUsage, providerTechnicalUsage, getConfidenceRank);
   };
   const { results } = assignCoordinatedTeam(rolePools, makeSorter, "capability");
 
@@ -955,8 +926,14 @@ function describeEfficiencyChoice(chosen, leader, registry, providerCapacity, mo
 function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
   if (!eligibleRanked.length) return [];
   if (better !== "max") return eligibleRanked;
-  const floorValue = leader.value * capabilityFloor;
-  return eligibleRanked.filter((entry) => entry.value >= floorValue);
+  // The floor compares REAL, scale-normalized gap values (never the
+  // rank-only percentile — see leaderAdvantage's comment), so a genuinely
+  // 85%-capable real alternative still clears an 80% floor even with only
+  // 2 real candidates, instead of reading as a flat 0% (percentile's
+  // runner-up value with 2 candidates).
+  if (leader.gapValue == null) return [leader];
+  const floorValue = leader.gapValue * capabilityFloor;
+  return eligibleRanked.filter((entry) => entry.gapValue != null && entry.gapValue >= floorValue);
 }
 
 /**
@@ -999,9 +976,9 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
 export function buildEfficientTeam(models, eligibility = {}, registry = null, options = {}) {
   const { capabilityFloor = EFFICIENT_CAPABILITY_FLOOR, providerCapacity = null } = options;
   const effectiveRegistry = ensureRegistry(models, registry);
-  const roleDefinitions = buildAiTeamRoleDefinitions(effectiveRegistry);
+  const { roleDefinitions, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models);
   const roleRankings = roleDefinitions.map(({ role, compute, better }) => ({
-    role, compute, better, ranked: rankEligible(models, eligibility, compute, better)
+    role, compute, better, ranked: attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role])
   }));
 
   const rolePools = roleRankings.map(({ role, better, ranked }) => ({
