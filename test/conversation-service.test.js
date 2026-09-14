@@ -471,7 +471,7 @@ test("runBootstrapAnalysis rejects an analyst adapterId with no real BootstrapAn
   });
   const profile = { projectName: "repo", stack: [], architecture: {}, quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-1", roleRequirements: [] };
   const candidates = await realScoredCandidates();
-  const analyst = { choice: "quality", model: { adapterId: "cursor", modelId: "some-model" } };
+  const analyst = { choice: "quality", model: { adapterId: "opencode-go", modelId: "some-model" } };
   await assert.rejects(() => service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst }), /not eligible/);
   assert.equal(wrote, false);
 });

@@ -39,6 +39,8 @@ import {
 } from "./codex-sandbox.js";
 import { verifyClaudeSubscriptionAuth as defaultVerifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 import { readClaudeModels as defaultReadClaudeModels } from "../observability/claude-models.js";
+import { readCursorModels as defaultReadCursorModels } from "../observability/cursor-models.js";
+import { spawn as defaultSpawn } from "node:child_process";
 
 export function createCodexBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}) {
   const runSandboxed = deps.runCodexSandboxedBootstrap ?? defaultRunCodexSandboxedBootstrap;
@@ -117,9 +119,119 @@ export function createClaudeBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
   };
 }
 
+const CURSOR_AUTO_IDS = new Set(["auto", "cursor:auto", "cursor-auto"]);
+const CURSOR_ANALYZE_TIMEOUT_MS = 180_000;
+
+function unknownCursorResult(error) {
+  return { status: "error", answer: null, error: String(error) };
+}
+
+export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}) {
+  const listModels = deps.readCursorModels ?? defaultReadCursorModels;
+  const spawnFn = deps.spawn ?? defaultSpawn;
+  return {
+    adapterId: "cursor",
+    modelId,
+    // Real eligibility — currently, honestly, negative. Three real gates,
+    // all actually checked, none skipped or assumed:
+    //  1. Cursor Auto exclusion (per plan): no modelId, or an
+    //     "auto"-shaped one, is rejected outright — cursor:auto does not
+    //     guarantee which underlying model actually ran, so it can never
+    //     be attributed the way an explicit model can.
+    //  2. Real per-account model catalog (observability/cursor-models.js's
+    //     readCursorModels — a real `cursor-agent models` call). On this
+    //     machine the account genuinely has zero models enabled
+    //     ("No models available for this account.") — a real, current
+    //     blocker, not hypothetical.
+    //  3. Isolation proof: unlike Codex's sandbox-exec and Claude's
+    //     --restricted (both independently canary-tested — a real
+    //     out-of-bounds read denied, not assumed from --help text),
+    //     Cursor's --sandbox enabled has NOT been empirically proven, and
+    //     with zero models enabled on this account there is currently
+    //     nothing to canary-test against. Cursor is reported ineligible
+    //     for THAT reason alone even when auth/catalog would otherwise
+    //     pass — the same standard as every other adapter, never relaxed.
+    async checkEligibility() {
+      if (!modelId || CURSOR_AUTO_IDS.has(String(modelId).toLowerCase())) {
+        return {
+          eligible: false,
+          reason: "Cursor Auto does not guarantee model attribution and is excluded from Bootstrap Analysis — pass an explicit model.",
+          isolation: "unverified", canaryTested: false
+        };
+      }
+      const catalog = await listModels();
+      if (catalog.status !== "measured") {
+        return {
+          eligible: false, reason: `Could not read Cursor's real model catalog: ${catalog.error ?? catalog.status}`,
+          isolation: "unverified", canaryTested: false
+        };
+      }
+      if (catalog.models.length === 0) {
+        return { eligible: false, reason: "No models are enabled for this Cursor account.", isolation: "unverified", canaryTested: false };
+      }
+      if (!catalog.models.includes(modelId)) {
+        return {
+          eligible: false, reason: `"${modelId}" is not in this account's real Cursor model catalog.`,
+          isolation: "unverified", canaryTested: false
+        };
+      }
+      return {
+        eligible: false,
+        reason: "Cursor's --sandbox enabled read confinement has not been empirically canary-tested yet.",
+        isolation: "unverified", canaryTested: false
+      };
+    },
+    // NOT yet live-tested end-to-end — this account has no enabled models
+    // to invoke, so this has only been unit-tested with injected fakes.
+    // Built from the real, verified `cursor-agent --help` flags:
+    // --mode ask (read-only Q&A), --sandbox enabled, --workspace (confines
+    // the agent's own working root), --model (explicit, never auto).
+    // Uses --output-format json (a single parseable blob, like
+    // quick-ask.js's askClaude) rather than the plan's suggested
+    // stream-json — simpler to parse correctly without a real example of
+    // Cursor's stream-json shape to verify against; revisit if a real
+    // invocation later shows json insufficient.
+    async analyze({ question, snapshotRoot, timeoutMs = CURSOR_ANALYZE_TIMEOUT_MS }) {
+      const args = [
+        "-p", question, "--output-format", "json", "--mode", "ask",
+        "--sandbox", "enabled", "--workspace", snapshotRoot, "--model", modelId
+      ];
+      return new Promise((resolve) => {
+        let child;
+        try {
+          child = spawnFn("cursor-agent", args, { cwd: snapshotRoot, stdio: ["ignore", "pipe", "pipe"] });
+        } catch (error) {
+          resolve(unknownCursorResult(error?.message ?? error));
+          return;
+        }
+        let stdout = "";
+        let finished = false;
+        const timer = setTimeout(() => finish(unknownCursorResult("cursor-agent -p timed out")), timeoutMs);
+        function finish(result) {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timer);
+          try { child.kill?.(); } catch { /* best effort */ }
+          resolve(result);
+        }
+        child.stdout?.on("data", (chunk) => { stdout += chunk; });
+        child.once?.("error", (error) => finish(unknownCursorResult(error?.message ?? error)));
+        child.once?.("close", () => {
+          let parsed;
+          try { parsed = JSON.parse(stdout); } catch { return finish(unknownCursorResult("malformed JSON from cursor-agent -p")); }
+          const answer = parsed?.result ?? parsed?.text ?? parsed?.message ?? null;
+          if (typeof answer !== "string") return finish(unknownCursorResult("no result text in cursor-agent -p response"));
+          finish({ status: "answered", answer, error: null });
+        });
+      });
+    }
+  };
+}
+
 const ADAPTER_FACTORIES = Object.freeze({
   codex: createCodexBootstrapAnalyzerAdapter,
-  claude: createClaudeBootstrapAnalyzerAdapter
+  claude: createClaudeBootstrapAnalyzerAdapter,
+  cursor: createCursorBootstrapAnalyzerAdapter
 });
 
 /**
