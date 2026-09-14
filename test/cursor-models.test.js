@@ -3,14 +3,16 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { parseCursorModelsOutput, readCursorModels } from "../src/global/observability/cursor-models.js";
 
-function fakeSpawn({ stdout = "", errorEvent = null } = {}) {
+function fakeSpawn({ stdout = "", stderr = "", errorEvent = null, code = 0, signal = null } = {}) {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
   child.kill = () => {};
   setTimeout(() => {
     if (stdout) child.stdout.emit("data", stdout);
+    if (stderr) child.stderr.emit("data", stderr);
     if (errorEvent) child.emit("error", errorEvent);
-    else child.emit("close", 0);
+    else child.emit("close", code, signal);
   }, 0);
   return child;
 }
@@ -31,6 +33,25 @@ test("reads a real (possibly empty) answer as measured — empty is data, not a 
   });
   assert.equal(result.status, "measured");
   assert.deepEqual(result.models, []);
+});
+
+test("a real crash (killed by a signal) is NEVER reinterpreted as a clean empty catalog, even with no stdout", async () => {
+  const result = await readCursorModels({
+    spawn: () => fakeSpawn({ stdout: "", stderr: "SecItemCopyMatching failed -50", signal: "SIGSEGV" })
+  });
+  assert.equal(result.status, "unknown");
+  assert.deepEqual(result.models, []);
+  assert.match(result.error, /SIGSEGV/);
+  assert.match(result.error, /SecItemCopyMatching failed -50/);
+});
+
+test("a non-zero exit code is NEVER reinterpreted as a clean empty catalog", async () => {
+  const result = await readCursorModels({
+    spawn: () => fakeSpawn({ stdout: "", stderr: "some real failure", code: 1 })
+  });
+  assert.equal(result.status, "unknown");
+  assert.match(result.error, /exited with code 1/);
+  assert.match(result.error, /some real failure/);
 });
 
 test("fails closed to unknown on a spawn error or timeout", async () => {

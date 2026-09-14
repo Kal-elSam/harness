@@ -7,6 +7,13 @@ import { spawn as defaultSpawn } from "node:child_process";
 // are verified live. The parser below handles a plausible populated shape
 // (one model name per line) defensively, but treat it as unverified until
 // tested against an account that actually has models.
+//
+// A process crash (killed by a signal) or a non-zero exit is never
+// reinterpreted as a clean "no models" answer — an empty/partial stdout
+// from a crash mid-run parses identically to a genuine empty catalog, so
+// exit status is the only real signal that tells them apart. Only a clean
+// exit (code 0, no signal) is trusted; anything else yields `status:
+// "unknown"` with the real stderr, never a fabricated empty catalog.
 const DEFAULT_TIMEOUT_MS = 8_000;
 const SOURCE = "cursor-agent models";
 const ANSI_PATTERN = /\x1b\[[0-9;]*[a-zA-Z]/g;
@@ -50,6 +57,7 @@ export async function readCursorModels({
 
   return new Promise((resolve) => {
     let stdout = "";
+    let stderr = "";
     let finished = false;
     const timer = setTimeout(() => finish(unknown("cursor-agent models timed out")), timeoutMs);
 
@@ -62,8 +70,18 @@ export async function readCursorModels({
     }
 
     child.stdout?.on("data", (chunk) => { stdout += chunk; });
+    child.stderr?.on("data", (chunk) => { stderr += chunk; });
     child.once?.("error", (error) => finish(unknown(error?.message ?? error)));
-    child.once?.("close", () => {
+    child.once?.("close", (code, signal) => {
+      // A crash (killed by a signal, e.g. a real SIGSEGV) or a non-zero
+      // exit must never be silently reinterpreted as a clean, real
+      // "no models" answer — an empty/partial stdout from a crash mid-run
+      // parses identically to a genuine empty catalog, so exit status is
+      // the only real signal that tells them apart. Only a clean exit
+      // (code 0, no signal) is trusted to mean the CLI actually finished
+      // and its stdout is a real, complete answer.
+      if (signal) return finish(unknown(`cursor-agent models was killed by signal ${signal}${stderr ? `: ${stderr.trim()}` : ""}`));
+      if (code !== 0) return finish(unknown(`cursor-agent models exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`));
       finish({ status: "measured", source: SOURCE, models: parseCursorModelsOutput(stdout), error: null });
     });
   });
