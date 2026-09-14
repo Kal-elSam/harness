@@ -38,11 +38,44 @@ test("createCodexBootstrapAnalyzerAdapter.analyze delegates to the real sandboxe
   assert.equal(seenArgs.question, "investigate");
 });
 
-test("createClaudeBootstrapAnalyzerAdapter reports isolation 'restricted', never 'verified' — its boundary has not been independently canary-tested", async () => {
-  const adapter = createClaudeBootstrapAnalyzerAdapter({ modelId: "claude-model" });
+test("createClaudeBootstrapAnalyzerAdapter reports isolation 'restricted' (empirically canary-tested, but application- not kernel-enforced), never 'verified' — only when auth and model are real", async () => {
+  const adapter = createClaudeBootstrapAnalyzerAdapter({
+    modelId: "claude-sonnet-5",
+    deps: {
+      verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+      readClaudeModels: () => ({ status: "documented", source: "test", models: [{ id: "claude-sonnet-5" }], error: null })
+    }
+  });
   const eligibility = await adapter.checkEligibility();
   assert.equal(eligibility.eligible, true);
   assert.equal(eligibility.isolation, "restricted");
+});
+
+test("createClaudeBootstrapAnalyzerAdapter is ineligible when the real CLI/auth check fails — never a hardcoded true", async () => {
+  const adapter = createClaudeBootstrapAnalyzerAdapter({
+    modelId: "claude-sonnet-5",
+    deps: {
+      verifyClaudeSubscriptionAuth: async () => { throw new Error("Claude execution requires a first-party claude.ai Pro, Max, Team, or Enterprise subscription."); }
+    }
+  });
+  const eligibility = await adapter.checkEligibility();
+  assert.equal(eligibility.eligible, false);
+  assert.equal(eligibility.isolation, "unverified");
+  assert.match(eligibility.reason, /subscription/);
+});
+
+test("createClaudeBootstrapAnalyzerAdapter is ineligible when modelId isn't in Claude's real documented catalog — never a silent pass for an unknown model", async () => {
+  const adapter = createClaudeBootstrapAnalyzerAdapter({
+    modelId: "claude-does-not-exist",
+    deps: {
+      verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+      readClaudeModels: () => ({ status: "documented", source: "test", models: [{ id: "claude-sonnet-5" }], error: null })
+    }
+  });
+  const eligibility = await adapter.checkEligibility();
+  assert.equal(eligibility.eligible, false);
+  assert.equal(eligibility.isolation, "unverified");
+  assert.match(eligibility.reason, /claude-does-not-exist/);
 });
 
 test("createClaudeBootstrapAnalyzerAdapter.analyze delegates to askProvider with provider 'claude' and the snapshot as cwd", async () => {

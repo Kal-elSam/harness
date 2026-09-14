@@ -29,6 +29,7 @@ import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from
 import { buildSanitizedSnapshot } from "./sanitized-snapshot.js";
 import { runCodexSandboxedBootstrap } from "./codex-sandbox.js";
 import { createBootstrapAnalyzerAdapter } from "./bootstrap-analyzer-adapters.js";
+import { verifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -264,6 +265,7 @@ export function createConversationService(deps = {}) {
   const runCodexSandboxedBootstrapImpl = deps.runCodexSandboxedBootstrap ?? runCodexSandboxedBootstrap;
   const createBootstrapAnalyzerAdapterImpl = deps.createBootstrapAnalyzerAdapter ?? createBootstrapAnalyzerAdapter;
   const codexIsolationDeps = deps.codexIsolationDeps ?? {};
+  const verifyClaudeSubscriptionAuthImpl = deps.verifyClaudeSubscriptionAuth ?? verifyClaudeSubscriptionAuth;
   const readArtificialAnalysisModelsImpl = deps.readArtificialAnalysisModels ?? readArtificialAnalysisModels;
   // Unit tests inject resolveRoot and must remain provider-call free. The real
   // cockpit opts in explicitly so a refresh performs one bounded read-only probe.
@@ -648,7 +650,10 @@ export function createConversationService(deps = {}) {
         const prompt = buildAnalystPrompt(profile);
         const adapter = createBootstrapAnalyzerAdapterImpl(analyst.model.adapterId, {
           modelId: analyst.model.modelId,
-          deps: { askProvider: askProviderImpl, runCodexSandboxedBootstrap: runCodexSandboxedBootstrapImpl, isolationDeps: codexIsolationDeps }
+          deps: {
+            askProvider: askProviderImpl, runCodexSandboxedBootstrap: runCodexSandboxedBootstrapImpl, isolationDeps: codexIsolationDeps,
+            verifyClaudeSubscriptionAuth: verifyClaudeSubscriptionAuthImpl, readClaudeModels: readClaudeModelsImpl
+          }
         });
         const eligibility = await adapter.checkEligibility();
         if (!eligibility.eligible) {

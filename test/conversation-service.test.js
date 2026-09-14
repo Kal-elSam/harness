@@ -420,6 +420,8 @@ test("runBootstrapAnalysis keeps a Claude analyst on the plain askProvider path 
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
       copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => {}
     }),
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeModels: () => ({ status: "documented", source: "test", models: [{ id: "claude-model", displayName: "Claude Model" }], error: null }),
     askProvider: async (args) => {
       askProviderCalled = true;
       assert.equal(args.provider, "claude");

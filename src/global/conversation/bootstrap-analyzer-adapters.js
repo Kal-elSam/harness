@@ -28,6 +28,8 @@ import {
   getCodexIsolationStatus as defaultGetCodexIsolationStatus,
   runCodexSandboxedBootstrap as defaultRunCodexSandboxedBootstrap
 } from "./codex-sandbox.js";
+import { verifyClaudeSubscriptionAuth as defaultVerifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
+import { readClaudeModels as defaultReadClaudeModels } from "../observability/claude-models.js";
 
 export function createCodexBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}) {
   const runSandboxed = deps.runCodexSandboxedBootstrap ?? defaultRunCodexSandboxedBootstrap;
@@ -51,16 +53,47 @@ export function createCodexBootstrapAnalyzerAdapter({ modelId, deps = {} } = {})
 
 export function createClaudeBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}) {
   const ask = deps.askProvider ?? defaultAskProvider;
+  const verifyAuth = deps.verifyClaudeSubscriptionAuth ?? defaultVerifyClaudeSubscriptionAuth;
+  const listModels = deps.readClaudeModels ?? defaultReadClaudeModels;
   return {
     adapterId: "claude",
     modelId,
-    // Claude's --restricted (quick-ask.js's askClaude) strips
-    // Bash/code-exec/WebFetch and confines the remaining file tools to
-    // cwd — a real, meaningful reduction, but never independently
-    // canary-tested the way Codex's sandbox-exec boundary was (no test
-    // has proven a real absolute-path read outside cwd is actually
-    // denied). Reported honestly as "restricted", not "verified".
-    checkEligibility() {
+    // Real, integral eligibility — not a hardcoded claim:
+    //  1. CLI + authentication: reuses execution-adapters/claude.js's own
+    //     `claude auth status` check (the same real one gating a Claude
+    //     execution run) — an unauthenticated or missing CLI fails here,
+    //     never silently reported eligible.
+    //  2. Model availability: checked against Claude's documented model
+    //     catalog (observability/claude-models.js). Claude's CLI has no
+    //     live model-discovery command (verified via its own --help, see
+    //     that module's own header) — this catches an unknown/typo'd
+    //     modelId, though it can't prove live per-account entitlement the
+    //     way Codex/OpenCode's live catalogs can.
+    //  3. isolation: "restricted" — --restricted's actual confinement was
+    //     empirically canary-tested (not assumed): a real absolute-path
+    //     read outside cwd came back in the JSON output's own
+    //     `permission_denials` array (Claude's Read tool itself refused
+    //     it), while an in-bounds read succeeded with an empty
+    //     `permission_denials`. That's a real, held boundary — but
+    //     enforced by the claude CLI's own in-process tool-permission
+    //     logic, not an OS kernel sandbox like Codex's sandbox-exec (a
+    //     bug in that enforcement, unlike a kernel boundary, could
+    //     theoretically be bypassed). "verified" stays reserved for a
+    //     kernel-enforced boundary; Claude does not qualify for that
+    //     label even though its own boundary has now been proven to hold.
+    async checkEligibility() {
+      try {
+        await verifyAuth({});
+      } catch (error) {
+        return { eligible: false, reason: error?.message ?? String(error), isolation: "unverified" };
+      }
+      if (modelId) {
+        const catalog = listModels();
+        const known = catalog.models.some((m) => m.id === modelId);
+        if (!known) {
+          return { eligible: false, reason: `"${modelId}" is not in Claude's documented model catalog.`, isolation: "unverified" };
+        }
+      }
       return { eligible: true, isolation: "restricted" };
     },
     async analyze({ question, snapshotRoot, timeoutMs }) {
