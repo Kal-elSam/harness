@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, validateEvidenceReferences } from "../src/global/conversation/project-analysis.js";
+import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, validateReferences } from "../src/global/conversation/project-analysis.js";
 
 function profile(overrides = {}) {
   return {
@@ -31,6 +31,21 @@ test("parseProjectAnalysis accepts a real, complete, valid JSON response", () =>
   const result = parseProjectAnalysis(raw);
   assert.equal(result.valid, true);
   assert.equal(result.analysis.recommendedRoleNeeds[0].role, "Reviewer");
+});
+
+test("parseProjectAnalysis carries each recommendedRoleNeeds entry's own real evidence, defaulting to an empty array (never invented) when the analyst omits it", () => {
+  const raw = JSON.stringify({
+    architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
+    recommendedRoleNeeds: [
+      { role: "Reviewer", capabilities: ["reasoning"], reason: "sensitive", evidence: ["src/auth/route.ts"] },
+      { role: "Tester", capabilities: ["coding"], reason: "no evidence field given at all" }
+    ],
+    uncertainties: [], evidenceReferences: []
+  });
+  const result = parseProjectAnalysis(raw);
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.analysis.recommendedRoleNeeds[0].evidence, ["src/auth/route.ts"]);
+  assert.deepEqual(result.analysis.recommendedRoleNeeds[1].evidence, []);
 });
 
 test("parseProjectAnalysis extracts JSON even when the model wraps it in prose or markdown fences", () => {
@@ -90,32 +105,37 @@ test("a thin analysis with no real recommendedRoleNeeds still leaves the project
   assert.equal(requirements.length, 1);
 });
 
-test("validateEvidenceReferences matches a real cited path exactly, and honestly marks a fabricated one as unverified", () => {
-  const analysis = { evidenceReferences: ["src/app/api/chat/route.ts", "src/totally/made/up.ts"] };
-  const { verified, unverified } = validateEvidenceReferences(analysis, ["src/app/api/chat/route.ts", "package.json"]);
+test("validateReferences matches a real cited path exactly, and honestly marks a fabricated one as unverified", () => {
+  const { verified, unverified } = validateReferences(["src/app/api/chat/route.ts", "src/totally/made/up.ts"], ["src/app/api/chat/route.ts", "package.json"]);
   assert.deepEqual(verified, ["src/app/api/chat/route.ts"]);
   assert.deepEqual(unverified, ["src/totally/made/up.ts"]);
 });
 
-test("validateEvidenceReferences tolerates real path-phrasing differences (leading ./, citing a shorter real suffix) without treating them as fabricated", () => {
-  const analysis = { evidenceReferences: ["./package.json", "route.ts"] };
-  const { verified, unverified } = validateEvidenceReferences(analysis, ["package.json", "src/app/api/chat/route.ts"]);
+test("validateReferences tolerates real path-phrasing differences (leading ./, citing a shorter real suffix) without treating them as fabricated", () => {
+  const { verified, unverified } = validateReferences(["./package.json", "route.ts"], ["package.json", "src/app/api/chat/route.ts"]);
   assert.deepEqual(verified, ["./package.json", "route.ts"]);
   assert.deepEqual(unverified, []);
 });
 
-test("deriveRoleRequirements drops the analyst's recommendedRoleNeeds entirely when NONE of its own evidenceReferences verified against a real file — a real signal of possibly fabricated exploration", () => {
-  const analysis = { recommendedRoleNeeds: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "made up" }] };
+test("deriveRoleRequirements checks evidence PER recommendedRoleNeeds entry — a role need with no real evidence of ITS OWN is dropped, even when a different role need in the same response is well-evidenced", () => {
+  const analysis = {
+    recommendedRoleNeeds: [
+      { role: "Reviewer", capabilities: ["reasoning"], reason: "made up", evidence: ["src/made/up.ts"] },
+      { role: "Debugger", capabilities: ["reasoning"], reason: "real finding", evidence: ["src/app/api/chat/route.ts"] }
+    ]
+  };
   const mechanicalFloor = [{ role: "Explorer", capabilities: ["reasoning"], reason: "baseline" }];
-  const noEvidence = { verified: [], unverified: ["src/made/up.ts"] };
-  const requirements = deriveRoleRequirements(analysis, mechanicalFloor, noEvidence);
-  assert.deepEqual(requirements.map((r) => r.role), ["Explorer"], "Reviewer must be dropped — nothing the analyst cited was real");
+  const realFiles = ["src/app/api/chat/route.ts", "package.json"];
+  const requirements = deriveRoleRequirements(analysis, mechanicalFloor, realFiles);
+  const roles = requirements.map((r) => r.role);
+  assert.ok(!roles.includes("Reviewer"), "Reviewer must be dropped — nothing IT cited was real, regardless of Debugger being well-evidenced");
+  assert.ok(roles.includes("Debugger"), "Debugger must be kept — its own evidence verified against a real file");
+  assert.ok(roles.includes("Explorer"), "the mechanical floor always survives");
 });
 
-test("deriveRoleRequirements trusts the analyst's recommendedRoleNeeds once at least one real evidenceReference verified", () => {
-  const analysis = { recommendedRoleNeeds: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "sensitive real file found" }] };
+test("deriveRoleRequirements trusts a role need with no real file list available at all (pre-sanitized-snapshot fallback) — never blocks on vocabulary alone", () => {
+  const analysis = { recommendedRoleNeeds: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "no snapshot info available", evidence: [] }] };
   const mechanicalFloor = [{ role: "Explorer", capabilities: ["reasoning"], reason: "baseline" }];
-  const someEvidence = { verified: ["src/app/api/chat/route.ts"], unverified: [] };
-  const requirements = deriveRoleRequirements(analysis, mechanicalFloor, someEvidence);
+  const requirements = deriveRoleRequirements(analysis, mechanicalFloor); // no 3rd arg — real file list genuinely unavailable
   assert.ok(requirements.some((r) => r.role === "Reviewer"));
 });

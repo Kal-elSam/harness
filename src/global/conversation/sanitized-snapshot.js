@@ -9,8 +9,25 @@
 // with every real matched secret redacted (secret-scanner.js) and every
 // path context-compiler.js's own isPrivatePath already excludes from
 // context skipped outright — the analyst's `cwd` points at THIS copy,
-// so even if it reads every file it's capable of reading, there is
-// physically no unredacted secret on disk for it to read.
+// so a normal investigation (listing/reading files within its working
+// directory, which is how these agents actually explore) never sees an
+// unredacted secret.
+//
+// HONEST LIMIT, verified empirically against the real Codex CLI, not
+// assumed: `codex exec --sandbox read-only` does NOT confine file READS
+// to cwd — a real test run against a real absolute path outside the
+// snapshot successfully read that file's content. This is not a bug in
+// Codex; "read-only" there means "no writes", full-disk read access is
+// the documented default. So this module is NOT a hard filesystem
+// sandbox, and must never be described as one. The real, remaining
+// mitigation is that the analyst is never told the real project's
+// absolute path (buildAnalystPrompt only ever passes profile.projectName,
+// never a path) and .git is always excluded (no remote URL or other path
+// hints to reconstruct it from) — so escaping requires the model to
+// already know or guess a path it was never given, not merely wanting to.
+// A genuine filesystem-level sandbox (OS-level process isolation) would
+// be needed to close this completely; that's real, separate, larger
+// work, not a redaction-module fix.
 
 import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -49,10 +66,10 @@ function isTextFile(filePath) {
   return false;
 }
 
-async function walk(root, dir, budget, report) {
+async function walk(root, dir, budget, report, deps) {
   let entries;
   try {
-    entries = await readdir(dir, { withFileTypes: true });
+    entries = await deps.readdir(dir, { withFileTypes: true });
   } catch {
     return; // unreadable dir — skip, never throw and abort the whole snapshot
   }
@@ -62,7 +79,7 @@ async function walk(root, dir, budget, report) {
     const rel = relative(root, absolute).replace(/\\/g, "/");
     if (entry.isDirectory()) {
       if (EXCLUDED_DIR_NAMES.has(entry.name)) continue;
-      await walk(root, absolute, budget, report);
+      await walk(root, absolute, budget, report, deps);
       continue;
     }
     if (!entry.isFile()) continue;
@@ -73,7 +90,7 @@ async function walk(root, dir, budget, report) {
     if (!isTextFile(entry.name)) continue;
     let stats;
     try {
-      stats = await stat(absolute);
+      stats = await deps.stat(absolute);
     } catch {
       continue;
     }
@@ -83,14 +100,14 @@ async function walk(root, dir, budget, report) {
     }
     let content;
     try {
-      content = await readFile(absolute, "utf8");
+      content = await deps.readFile(absolute, "utf8");
     } catch {
       continue; // likely binary despite the extension allowlist, or unreadable — skip, never guess
     }
     const { text, redactedCount } = redactSecrets(content);
     const destination = join(budget.snapshotRoot, rel);
-    await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, text, "utf8");
+    await deps.mkdir(dirname(destination), { recursive: true });
+    await deps.writeFile(destination, text, "utf8");
     report.copiedFiles.push(rel);
     budget.filesCopied += 1;
     budget.totalBytes += Buffer.byteLength(text, "utf8");
@@ -108,10 +125,16 @@ async function walk(root, dir, budget, report) {
  * sanitized copy lying around.
  * @param {string} projectRoot
  * @param {{maxFiles?: number, maxTotalBytes?: number, maxFileBytes?: number}} [options]
+ * @param {object} [deps] - injectable real fs/promises functions, for tests only (defaults to the real ones)
  * @returns {Promise<{snapshotRoot: string, filesCopied: number, secretsRedacted: number, redactedFiles: string[], excludedPrivatePaths: string[], excludedOversized: string[], cleanup: () => Promise<void>}>}
  */
-export async function buildSanitizedSnapshot(projectRoot, options = {}) {
-  const snapshotRoot = await mkdtemp(join(tmpdir(), "kairo-analyst-snapshot-"));
+export async function buildSanitizedSnapshot(projectRoot, options = {}, deps = {}) {
+  const fsDeps = {
+    readdir: deps.readdir ?? readdir, stat: deps.stat ?? stat, readFile: deps.readFile ?? readFile,
+    mkdir: deps.mkdir ?? mkdir, writeFile: deps.writeFile ?? writeFile
+  };
+  const mkdtempImpl = deps.mkdtemp ?? mkdtemp;
+  const snapshotRoot = await mkdtempImpl(join(tmpdir(), "kairo-analyst-snapshot-"));
   const budget = {
     snapshotRoot,
     filesCopied: 0, totalBytes: 0,
@@ -120,10 +143,17 @@ export async function buildSanitizedSnapshot(projectRoot, options = {}) {
     maxFileBytes: options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES
   };
   const report = { filesCopied: 0, secretsRedacted: 0, redactedFiles: [], copiedFiles: [], excludedPrivatePaths: [], excludedOversized: [] };
-  await walk(projectRoot, projectRoot, budget, report);
-  return {
-    snapshotRoot,
-    ...report,
-    cleanup: () => rm(snapshotRoot, { recursive: true, force: true }).catch(() => {})
-  };
+  const cleanup = () => rm(snapshotRoot, { recursive: true, force: true }).catch(() => {});
+  // walk() itself only swallows per-entry errors (an unreadable dir/file
+  // is skipped, never abandons the whole snapshot) — but an unexpected
+  // failure (e.g. disk full mid-copy) can still throw. The mkdtemp'd
+  // directory must never be left behind just because building it failed
+  // partway through.
+  try {
+    await walk(projectRoot, projectRoot, budget, report, fsDeps);
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+  return { snapshotRoot, ...report, cleanup };
 }

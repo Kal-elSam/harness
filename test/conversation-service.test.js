@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createConversationService } from "../src/global/conversation/service.js";
 
 test("conversation service projects a provider-neutral durable timeline", async () => {
@@ -287,7 +290,7 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
         status: "answered", error: null,
         answer: JSON.stringify({
           architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
-          recommendedRoleNeeds: [{ role: "Architect", capabilities: ["coding"], reason: "coding-heavy area found" }],
+          recommendedRoleNeeds: [{ role: "Architect", capabilities: ["coding"], reason: "coding-heavy area found", evidence: ["src/app/api/chat/route.ts"] }],
           uncertainties: [], evidenceReferences: ["src/app/api/chat/route.ts"]
         })
       };
@@ -383,6 +386,68 @@ test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the r
   const analyst = { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } };
   await assert.rejects(() => service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst }), /did not answer/);
   assert.equal(wrote, false);
+});
+
+test("CANARY: runBootstrapAnalysis's real sanitized-snapshot pipeline (not mocked away) never lets a real secret reach what would be sent to the provider", async () => {
+  // A real fixture project with a real-shaped fake secret — the exact
+  // scenario the crm live-verification exposed. Only askProvider itself
+  // is mocked (a real provider can't be called in a unit test); the
+  // sanitized-snapshot build is the REAL implementation, exercised
+  // end-to-end, so this test would fail if that pipeline regressed.
+  const CANARY = "abcd1234efgh5678ijkl9012mnop3456";
+  const projectRoot = await mkdtemp(join(tmpdir(), "kairo-canary-project-"));
+  await mkdir(join(projectRoot, "src/app/api/chat"), { recursive: true });
+  await writeFile(
+    join(projectRoot, "src/app/api/chat/route.ts"),
+    `const AZURE_OPENAI_API_KEY = "${CANARY}";\nexport const handler = () => {};`,
+    "utf8"
+  );
+
+  async function collectFileContents(dir) {
+    const entries = await readdir(dir, { withFileTypes: true });
+    let all = "";
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) all += await collectFileContents(full);
+      else all += await readFile(full, "utf8").catch(() => "");
+    }
+    return all;
+  }
+
+  let seenCwd = null;
+  let everythingTheProviderCouldRead = null;
+  const service = createConversationService({
+    resolveRoot: async () => projectRoot,
+    homeDir: "/home/test",
+    // Inspect the real sanitized snapshot WHILE it still exists — the
+    // real cleanup() runs in runBootstrapAnalysis's own `finally`, right
+    // after this call returns, so the snapshot is gone by the time the
+    // outer test code resumes.
+    askProvider: async (args) => {
+      seenCwd = args.cwd;
+      everythingTheProviderCouldRead = await collectFileContents(args.cwd);
+      return {
+        status: "answered", error: null,
+        answer: JSON.stringify({
+          architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
+          recommendedRoleNeeds: [], uncertainties: [], evidenceReferences: []
+        })
+      };
+    },
+    writeProjectStrategy: async (homeDir, projectRootArg, strategy) => strategy
+  });
+  const profile = {
+    projectName: "canary", stack: [], architecture: {}, quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-1",
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "baseline" }]
+  };
+  const candidates = await realScoredCandidates();
+  const analyst = { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } };
+  await service.runBootstrapAnalysis({ cwd: projectRoot, profile, candidates, analyst });
+
+  assert.ok(seenCwd, "askProvider must have been called");
+  assert.notEqual(seenCwd, projectRoot, "the provider must never be pointed at the real project directory");
+  assert.doesNotMatch(everythingTheProviderCouldRead, new RegExp(CANARY), "the real secret must never exist anywhere the provider could read it");
+  assert.match(everythingTheProviderCouldRead, /\[REDACTED-SECRET\]/, "the redaction must have actually run, not just happened to omit the file");
 });
 
 test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approvedAt, but requires a real suggested strategy to exist first", async () => {

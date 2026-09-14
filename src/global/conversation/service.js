@@ -25,7 +25,7 @@ import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transc
 import { readSession, writeSessionMode } from "./session-store.js";
 import { computeProjectProfile } from "./project-profile.js";
 import { buildProjectStrategy, computeBootstrapAnalystAlternatives, isStrategyStale } from "./project-strategy.js";
-import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, validateEvidenceReferences } from "./project-analysis.js";
+import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
 import { buildSanitizedSnapshot } from "./sanitized-snapshot.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
@@ -258,7 +258,6 @@ export function createConversationService(deps = {}) {
   const writeProjectStrategyImpl = deps.writeProjectStrategy ?? writeProjectStrategy;
   const parseProjectAnalysisImpl = deps.parseProjectAnalysis ?? parseProjectAnalysis;
   const deriveRoleRequirementsImpl = deps.deriveRoleRequirements ?? deriveRoleRequirements;
-  const validateEvidenceReferencesImpl = deps.validateEvidenceReferences ?? validateEvidenceReferences;
   const buildSanitizedSnapshotImpl = deps.buildSanitizedSnapshot ?? buildSanitizedSnapshot;
   const readArtificialAnalysisModelsImpl = deps.readArtificialAnalysisModels ?? readArtificialAnalysisModels;
   // Unit tests inject resolveRoot and must remain provider-call free. The real
@@ -625,14 +624,16 @@ export function createConversationService(deps = {}) {
      */
     async runBootstrapAnalysis({ cwd, profile, candidates, analyst }) {
       const projectRoot = await root(cwd);
-      // SECRET-SAFE: the analyst never sees the real project directory.
-      // "Read-only" (Codex's sandbox) or an unrestricted permission mode
-      // (Claude, today) only ever govern WRITES — neither stops a real
-      // secret's CONTENT from reaching the model provider's own backend
-      // as part of normal inference once the model reads the file. A
-      // real, bounded, secret-redacted temporary copy is what the
-      // analyst's `cwd` actually points at; the real project is never
-      // handed to the provider directly or unrestricted.
+      // SECRET-SAFE (a real, meaningful reduction — not a filesystem
+      // sandbox guarantee, see sanitized-snapshot.js's own header for
+      // why): the analyst's `cwd` points at a bounded, secret-redacted
+      // temporary copy, never the real project directory. A normal
+      // investigation never sees an unredacted secret. Verified
+      // empirically that Codex's own "read-only" sandbox does NOT confine
+      // reads to cwd (only writes) — the real remaining mitigation is
+      // that the analyst is never given the real project's absolute path
+      // (buildAnalystPrompt only passes profile.projectName) or its .git
+      // remote, so escaping requires a path it was never told.
       const snapshot = await buildSanitizedSnapshotImpl(projectRoot);
       try {
         const prompt = buildAnalystPrompt(profile);
@@ -649,17 +650,16 @@ export function createConversationService(deps = {}) {
         }
         const parsed = parseProjectAnalysisImpl(response.answer);
         if (!parsed.valid) throw new Error(`Bootstrap Analyst response failed validation: ${parsed.error}`);
-        // Real-evidence gate: an analysis that cites zero real files
-        // among its own evidenceReferences is a real signal its
-        // exploration may be fabricated — its recommendedRoleNeeds are
-        // dropped rather than trusted just because the role/capability
-        // vocabulary happened to be valid (see deriveRoleRequirements).
-        const evidenceValidation = validateEvidenceReferencesImpl(parsed.analysis, snapshot.copiedFiles);
-        const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, evidenceValidation);
+        // Real-evidence gate, checked PER recommendedRoleNeeds entry (see
+        // deriveRoleRequirements): a role need is only trusted when its
+        // OWN evidence cites at least one real file the analyst actually
+        // had access to — one well-evidenced role need can no longer
+        // vouch for every other role need in the same response.
+        const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, snapshot.copiedFiles);
         const strategy = buildProjectStrategy({ ...profile, roleRequirements }, candidates, analyst);
         await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
         return {
-          ...strategy, projectRoot, analysis: parsed.analysis, evidenceValidation,
+          ...strategy, projectRoot, analysis: parsed.analysis,
           sanitization: { filesCopied: snapshot.filesCopied, secretsRedacted: snapshot.secretsRedacted, excludedPrivatePaths: snapshot.excludedPrivatePaths.length }
         };
       } finally {

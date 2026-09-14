@@ -101,6 +101,40 @@ test("buildSanitizedSnapshot's copiedFiles lists every real path actually copied
   }
 });
 
+test("cleanup() is idempotent — calling it more than once must never throw", async () => {
+  const root = await makeRealProject({ "src/a.js": "export const a = 1;" });
+  const snapshot = await buildSanitizedSnapshot(root);
+  await snapshot.cleanup();
+  await snapshot.cleanup();
+  assert.ok(!existsSync(snapshot.snapshotRoot));
+});
+
+test("a real failure while writing a file mid-copy still cleans up the temp directory instead of leaving it behind", async () => {
+  // Captures the real snapshotRoot directly via injected mkdtemp, rather
+  // than diffing the shared OS tmpdir's listing — scanning the shared
+  // tmpdir is racy under this test runner's cross-file concurrency
+  // (another test's own real buildSanitizedSnapshot call can create/
+  // remove a kairo-analyst-snapshot-* dir at the same moment).
+  const root = await makeRealProject({ "src/a.js": "export const a = 1;", "src/b.js": "export const b = 2;" });
+  let capturedSnapshotRoot = null;
+  const capturingMkdtemp = async (...args) => {
+    capturedSnapshotRoot = await mkdtemp(...args);
+    return capturedSnapshotRoot;
+  };
+  let calls = 0;
+  const failingWriteFile = async (...args) => {
+    calls += 1;
+    if (calls === 2) throw new Error("simulated real disk write failure");
+    return writeFile(...args);
+  };
+  await assert.rejects(
+    () => buildSanitizedSnapshot(root, {}, { writeFile: failingWriteFile, mkdtemp: capturingMkdtemp }),
+    /simulated real disk write failure/
+  );
+  assert.ok(capturedSnapshotRoot, "mkdtemp must have been called");
+  assert.ok(!existsSync(capturedSnapshotRoot), "a failed snapshot build must never leave its temp directory behind");
+});
+
 test("cleanup() actually removes the real temporary snapshot directory from disk", async () => {
   const root = await makeRealProject({ "src/a.js": "export const a = 1;" });
   const snapshot = await buildSanitizedSnapshot(root);

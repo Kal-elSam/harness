@@ -53,11 +53,16 @@ export function buildAnalystPrompt(profile) {
     JSON.stringify({
       architectureTraits: ["string"], complexitySignals: ["string"], criticalAreas: ["string"],
       contextNeeds: ["string"], workflowNeeds: ["string"],
-      recommendedRoleNeeds: [{ role: "Explorer|Architect|Builder|Debugger|Tester|Reviewer", capabilities: ["reasoning|coding|terminalExecution|softwareExecution|instructionFollowing"], reason: "string" }],
+      recommendedRoleNeeds: [{
+        role: "Explorer|Architect|Builder|Debugger|Tester|Reviewer",
+        capabilities: ["reasoning|coding|terminalExecution|softwareExecution|instructionFollowing"],
+        reason: "string", evidence: ["real file path you actually read that supports THIS role need"]
+      }],
       uncertainties: ["string"], evidenceReferences: ["string"]
     }, null, 2),
     "",
-    "Every field must reflect something you actually observed in this project — never invent a trait, risk, or role need you have no real evidence for. If you're not sure about something, put it in `uncertainties` instead of guessing."
+    "Every field must reflect something you actually observed in this project — never invent a trait, risk, or role need you have no real evidence for. If you're not sure about something, put it in `uncertainties` instead of guessing.",
+    "Each recommendedRoleNeeds entry's own `evidence` must list the real file path(s) you actually read that support THAT SPECIFIC role need — a role need with no real evidence of its own will be discarded, even if other fields in this response are well-supported."
   ];
   return lines.join("\n");
 }
@@ -97,8 +102,14 @@ export function parseProjectAnalysis(rawText) {
       criticalAreas: parsed.criticalAreas.map(String),
       contextNeeds: parsed.contextNeeds.map(String),
       workflowNeeds: parsed.workflowNeeds.map(String),
+      // `evidence` defaults to an empty array when the analyst omits it —
+      // never invented, and a role need with no evidence of its own
+      // fails the real per-entry gate in deriveRoleRequirements below,
+      // exactly as if it had cited nothing real.
       recommendedRoleNeeds: parsed.recommendedRoleNeeds.map((need) => ({
-        role: String(need.role), capabilities: need.capabilities.map(String), reason: typeof need.reason === "string" ? need.reason : null
+        role: String(need.role), capabilities: need.capabilities.map(String),
+        reason: typeof need.reason === "string" ? need.reason : null,
+        evidence: Array.isArray(need.evidence) ? need.evidence.map(String) : []
       })),
       uncertainties: parsed.uncertainties.map(String),
       evidenceReferences: parsed.evidenceReferences.map(String)
@@ -111,28 +122,46 @@ function normalizePath(path) {
 }
 
 /**
- * Checks which of the analyst's own evidenceReferences correspond to a
- * real file it actually had access to (the sanitized snapshot's real
- * copied-file list) — a citation to a path that was never even in the
- * snapshot is a real, checkable signal the analyst may be describing
- * exploration it didn't actually do, not evidence it observed. Matching
- * is real-path-based but tolerant of how a model might phrase a
- * reference (a leading "./", or citing just the tail of a longer real
- * path) — an exact string mismatch alone never disqualifies a real match.
- * @param {object} analysis - parseProjectAnalysis().analysis
+ * Whether a single cited path corresponds to a real file the analyst
+ * actually had access to (the sanitized snapshot's real copied-file
+ * list) — a citation to a path that was never even in the snapshot is a
+ * real, checkable signal the analyst may be describing exploration it
+ * didn't actually do, not evidence it observed. Matching is real-path-
+ * based but tolerant of how a model might phrase a reference (a leading
+ * "./", or citing just the tail of a longer real path) — an exact
+ * string mismatch alone never disqualifies a real match.
+ * @param {string} reference
+ * @param {string[]} realFilePaths
+ * @returns {boolean}
+ */
+function referenceMatchesRealFile(reference, realFilePaths) {
+  const ref = normalizePath(reference);
+  if (!ref) return false;
+  return realFilePaths.some((path) => path === ref || path.endsWith(`/${ref}`) || ref.endsWith(`/${path}`));
+}
+
+/**
+ * Checks which of a list of citations correspond to a real file — used
+ * both for the analysis's own top-level evidenceReferences (informational)
+ * and, per-entry, for each recommendedRoleNeeds' own `evidence` (see
+ * deriveRoleRequirements, which is the one that actually gates on this).
+ * @param {string[]} references
  * @param {string[]} realFilePaths - the sanitized snapshot's real copiedFiles
  * @returns {{verified: string[], unverified: string[]}}
  */
-export function validateEvidenceReferences(analysis, realFilePaths) {
+export function validateReferences(references, realFilePaths) {
   const real = realFilePaths.map(normalizePath);
   const verified = [];
   const unverified = [];
-  for (const raw of analysis.evidenceReferences) {
-    const ref = normalizePath(raw);
-    const matches = ref && real.some((path) => path === ref || path.endsWith(`/${ref}`) || ref.endsWith(`/${path}`));
-    (matches ? verified : unverified).push(raw);
+  for (const raw of references) {
+    (referenceMatchesRealFile(raw, real) ? verified : unverified).push(raw);
   }
   return { verified, unverified };
+}
+
+/** Back-compat alias — validates the analysis's own top-level evidenceReferences. @deprecated prefer validateReferences for the per-RoleNeed gate in deriveRoleRequirements. */
+export function validateEvidenceReferences(analysis, realFilePaths) {
+  return validateReferences(analysis.evidenceReferences, realFilePaths);
 }
 
 /**
@@ -142,25 +171,27 @@ export function validateEvidenceReferences(analysis, realFilePaths) {
  * so a thin or low-confidence analysis can never leave a real project with
  * zero role requirements. The analyst's own role/capability tokens are
  * sanitized against the known vocabulary first — an unrecognized one is
- * dropped, never trusted as-is. And its recommendedRoleNeeds as a WHOLE
- * are only trusted when at least one of its own evidenceReferences
- * verified against a real file (see validateEvidenceReferences) — an
- * analysis that cites zero real files is a real signal the exploration
- * may be fabricated, so its proposed role needs are dropped rather than
- * silently accepted just because the vocabulary happened to be valid.
+ * dropped, never trusted as-is.
+ *
+ * Evidence is checked PER role need, not once for the whole analysis: a
+ * recommendedRoleNeeds entry is only trusted when at least one of ITS OWN
+ * `evidence` citations verifies against a real file the analyst actually
+ * had access to — a single well-evidenced role need can no longer
+ * "vouch for" every other, unrelated role need in the same response.
  * @param {object} analysis - parseProjectAnalysis().analysis
  * @param {Array<{role: string, capabilities: string[], reason: string}>} mechanicalFloor - profile.roleRequirements (the pre-existing command-based detection)
- * @param {{verified: string[], unverified: string[]}} [evidenceValidation] - validateEvidenceReferences() result; omit only when no real file list is available (falls back to trusting the analysis, matching this function's pre-sanitized-snapshot behavior)
+ * @param {string[]} [realFilePaths] - the sanitized snapshot's real copiedFiles; omit only when no real file list is available (falls back to trusting each role need's vocabulary alone, matching this function's pre-sanitized-snapshot behavior)
  * @returns {Array<{role: string, capabilities: string[], reason: string}>}
  */
-export function deriveRoleRequirements(analysis, mechanicalFloor, evidenceValidation = null) {
+export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths = null) {
   const byRole = new Map(mechanicalFloor.map((requirement) => [requirement.role, { ...requirement }]));
-  const trustAnalysis = !evidenceValidation || evidenceValidation.verified.length > 0;
-  if (!trustAnalysis) return [...byRole.values()];
   for (const need of analysis.recommendedRoleNeeds) {
     if (!KNOWN_ROLES.has(need.role)) continue;
     const capabilities = need.capabilities.filter((c) => KNOWN_CAPABILITIES.has(c));
     if (!capabilities.length) continue;
+    // Real-evidence-per-recommendation gate: this specific role need is
+    // only trusted when it cites at least one real file of its own.
+    if (realFilePaths && !(need.evidence ?? []).some((ref) => referenceMatchesRealFile(ref, realFilePaths))) continue;
     const existing = byRole.get(need.role);
     if (existing) {
       existing.capabilities = [...new Set([...existing.capabilities, ...capabilities])];

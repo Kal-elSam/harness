@@ -25,7 +25,35 @@ test("claude: returns the real answer text from a successful -p call", async () 
   });
   assert.equal(answer.status, "answered");
   assert.equal(answer.answer, "4.");
-  assert.deepEqual(seenArgs[0], ["claude", ["-p", "What is 2+2?", "--output-format", "json", "--model", "claude-opus-5"]]);
+  assert.deepEqual(seenArgs[0], ["claude", ["-p", "What is 2+2?", "--output-format", "json", "--restricted", "--strict-mcp-config", "--model", "claude-opus-5"]]);
+});
+
+test("claude and codex both spawn with a real SCRUBBED env, never Kairo's own unfiltered process.env — a real secret (e.g. a provider API key) must never reach the child process", async () => {
+  let seenEnv;
+  await askProvider({
+    provider: "claude", question: "q", cwd: "/repo",
+    sourceEnv: { PATH: "/usr/bin", REAL_SECRET_TOKEN: "sk-should-never-leak", HOME: "/home/kal-el" },
+    spawn: (cmd, args, options) => { seenEnv = options.env; return fakeClaudeSpawn({ result: "ok" })(); }
+  });
+  assert.equal(seenEnv.PATH, "/usr/bin");
+  assert.equal(seenEnv.REAL_SECRET_TOKEN, undefined, "an unrelated real secret in Kairo's own env must never reach the spawned child");
+
+  let seenCodexEnv;
+  const spawn = (cmd, args, options) => {
+    seenCodexEnv = options.env;
+    const outFileIndex = args.indexOf("-o") + 1;
+    const outFile = args[outFileIndex];
+    const child = new EventEmitter();
+    child.kill = () => {};
+    setTimeout(async () => { await writeFile(outFile, "ok\n", "utf8"); child.emit("close", 0); }, 0);
+    return child;
+  };
+  await askProvider({
+    provider: "codex", question: "q", cwd: "/repo",
+    sourceEnv: { PATH: "/usr/bin", REAL_SECRET_TOKEN: "sk-should-never-leak" },
+    spawn
+  });
+  assert.equal(seenCodexEnv.REAL_SECRET_TOKEN, undefined);
 });
 
 test("claude: fails closed to error on malformed JSON or a missing result field", async () => {
@@ -61,6 +89,7 @@ test("codex: reads the real answer from --output-last-message, never combining -
   const args = seenArgs[0][1];
   assert.ok(args.includes("--sandbox"));
   assert.ok(args.includes("read-only"));
+  assert.ok(args.includes("--skip-git-repo-check"), "cwd may be a sanitized snapshot directory (deliberately not a real git repo)");
   assert.equal(args.includes("--approve-for-me"), false);
 });
 
