@@ -296,6 +296,60 @@ test("buildAiTeam coordinates the whole portfolio under per-role near-equivalenc
   assert.match(byRole.Reviewer.reason, /No near-equivalent alternative avoided concentration — widened the search/);
 });
 
+test("REGRESSION: buildAiTeam prefers a real, comparably-measured candidate over a real but provisional (thin, single-benchmark) one, even when the provisional candidate's raw score is higher — the exact real bug (DeepSeek V4.1 Flash winning Explorer on one Hugging Face HLE score) this whole comparability policy was written to fix", () => {
+  const aa = [
+    { slug: "thin-model", name: "Thin Model", intelligenceIndex: null, codingIndex: null, mathIndex: null },
+    { slug: "broad-model", name: "Broad Model", intelligenceIndex: null, codingIndex: null, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "opencode-go", models: [{ id: "thin-model" }] },
+    { adapterId: "claude", models: [{ id: "broad-model" }] }
+  ], aa);
+  const registry = createCapabilityRegistry();
+  const thinId = registry.registerIdentity("opencode-go", "thin-model");
+  const broadId = registry.registerIdentity("claude", "broad-model");
+  // Thin: a real, HIGH single HLE score — real evidence, but only 1 of
+  // reasoning's 3 real active benchmarks (provisional).
+  registry.addEvidence(thinId, { metric: "hle", value: 0.95, source: "huggingface-leaderboard", scale: "unit", date: "2026-09-15", verified: false });
+  // Broad: real evidence on 2 of 3 (gpqa + hle) — comparable, even though
+  // its own individual scores are LOWER than thin's single number.
+  registry.addEvidence(broadId, { metric: "gpqa", value: 0.55, source: "artificial-analysis-free", scale: "unit", date: "2026-09-15", verified: false });
+  registry.addEvidence(broadId, { metric: "hle", value: 0.50, source: "artificial-analysis-free", scale: "unit", date: "2026-09-15", verified: false });
+
+  const team = buildAiTeam(scored, { "opencode-go": { ok: true }, claude: { ok: true } }, registry, {
+    Explorer: { required: ["reasoning"], optional: [] }
+  });
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "claude", "the real, comparably-measured candidate must win over a thin, single-benchmark one despite its lower raw score");
+});
+
+test("REGRESSION: buildAiTeam still picks the real leader as an honest fallback, with an explicit reason, when EVERY real eligible candidate for a role is provisional", () => {
+  const aa = [
+    { slug: "thin-a", name: "Thin A", intelligenceIndex: null, codingIndex: null, mathIndex: null },
+    { slug: "thin-b", name: "Thin B", intelligenceIndex: null, codingIndex: null, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "opencode-go", models: [{ id: "thin-a" }] },
+    { adapterId: "claude", models: [{ id: "thin-b" }] }
+  ], aa);
+  const registry = createCapabilityRegistry();
+  const aId = registry.registerIdentity("opencode-go", "thin-a");
+  const bId = registry.registerIdentity("claude", "thin-b");
+  // Both candidates have real evidence on only 1 of reasoning's 3 real
+  // active benchmarks — both provisional, no comparable alternative exists.
+  registry.addEvidence(aId, { metric: "hle", value: 0.60, source: "huggingface-leaderboard", scale: "unit", date: "2026-09-15", verified: false });
+  registry.addEvidence(bId, { metric: "hle", value: 0.40, source: "artificial-analysis-free", scale: "unit", date: "2026-09-15", verified: false });
+
+  const team = buildAiTeam(scored, { "opencode-go": { ok: true }, claude: { ok: true } }, registry, {
+    Explorer: { required: ["reasoning"], optional: [] }
+  });
+  const explorer = team.find((t) => t.role === "Explorer");
+  // The real leader among the (all-provisional) pool still wins — a real
+  // fallback, never silently dropped — but with an honest reason.
+  assert.equal(explorer.primary.adapterId, "opencode-go");
+  assert.match(explorer.reason, /Only provisional evidence available/);
+});
+
 test("buildAiTeam caps a single provider at 3 of the 6 technical roles when a real alternative provider exists — even across two different real models under it", () => {
   // Two real Claude models plus one real Codex model, all real
   // near-equivalents of each other — real relative gap vs claude-a (90):
@@ -804,6 +858,33 @@ test("a role's optional metric never shrinks its candidate pool for a model AA s
   // no-tau's real ~58% coding advantage must still win decisively —
   // missing the optional metric must not disqualify or penalize it.
   assert.equal(builder.primary.adapterId, "codex");
+});
+
+test("REGRESSION: buildEfficientTeam applies its 80% capability floor WITHIN the comparable tier, never letting a cheaper provisional candidate clear the floor ahead of a genuinely comparable one", () => {
+  const aa = [
+    { slug: "thin-cheap", name: "Thin Cheap", intelligenceIndex: null, codingIndex: null, mathIndex: null, priceInputPerMTok: 0.1 },
+    { slug: "broad-pricier", name: "Broad Pricier", intelligenceIndex: null, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "opencode-go", models: [{ id: "thin-cheap" }] },
+    { adapterId: "claude", models: [{ id: "broad-pricier" }] }
+  ], aa);
+  const registry = createCapabilityRegistry();
+  const thinId = registry.registerIdentity("opencode-go", "thin-cheap");
+  const broadId = registry.registerIdentity("claude", "broad-pricier");
+  // Thin: real, high single HLE score — 1 of reasoning's 3 real active
+  // benchmarks, provisional — and much cheaper.
+  registry.addEvidence(thinId, { metric: "hle", value: 0.95, source: "huggingface-leaderboard", scale: "unit", date: "2026-09-15", verified: false });
+  // Broad: real evidence on 2 of 3 — comparable, even though pricier and
+  // individually lower-scoring.
+  registry.addEvidence(broadId, { metric: "gpqa", value: 0.55, source: "artificial-analysis-free", scale: "unit", date: "2026-09-15", verified: false });
+  registry.addEvidence(broadId, { metric: "hle", value: 0.50, source: "artificial-analysis-free", scale: "unit", date: "2026-09-15", verified: false });
+
+  const team = buildEfficientTeam(scored, { "opencode-go": { ok: true }, claude: { ok: true } }, registry, {
+    roleCapabilities: { Explorer: { required: ["reasoning"], optional: [] } }
+  });
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "claude", "the comparable candidate wins EFFICIENT's own floor-and-price chain too — never a cheaper provisional one instead");
 });
 
 test("buildEfficientTeam prefers real higher throughput as the tie-break after price", () => {

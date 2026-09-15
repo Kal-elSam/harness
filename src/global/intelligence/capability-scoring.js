@@ -78,6 +78,62 @@ export const BENCHMARK_IDENTITIES = [
 // includes them).
 export const COMPOSITE_FALLBACKS = { reasoning: "intelligenceIndex", coding: "codingIndex" };
 
+function activeBenchmarkIdentities(capability) {
+  return BENCHMARK_IDENTITIES.filter((identity) => identity.capability === capability);
+}
+
+/** How many of a capability's real, distinct benchmark identities exist at all — reasoning: 3 (gpqa/hle/mmlu-pro), coding: 2, terminalExecution/instructionFollowing: 1 each. Static reference data (never per-model) — used by /models --evidence to render "X/Y benchmarks" alongside a real model's own count. */
+export function activeBenchmarkCountForCapability(capability) {
+  return activeBenchmarkIdentities(capability).length;
+}
+
+/**
+ * How many of this capability's real, distinct benchmark identities this
+ * EXACT model has real evidence for — counting identities (AA's "hle" and
+ * Hugging Face's "hle" are the SAME real benchmark, counted once), never
+ * raw evidence entries or sources. Deliberately independent of whether a
+ * comparable cohort formed for ranking (percentileForBenchmark's own,
+ * separate concern) — this measures how much of the capability THIS
+ * candidate's own evidence actually covers, regardless of who else is in
+ * the pool.
+ * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
+ * @param {object} model
+ * @param {Capability} capability
+ * @returns {number}
+ */
+export function countModelBenchmarks(registry, model, capability) {
+  const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
+  let count = 0;
+  for (const identity of activeBenchmarkIdentities(capability)) {
+    if (bestAcrossAliases(registry, id, identity)) count += 1;
+  }
+  return count;
+}
+
+// A capability is "comparable" once real, distinct benchmark coverage
+// reaches at least half of its real active benchmarks, rounded UP —
+// reasoning (3 active) needs 2, coding (2 active) needs 1, and a
+// capability with only ever one real known benchmark (terminalExecution,
+// instructionFollowing) needs just that one — the 50% floor never
+// demands evidence the real catalog structurally can't provide. Below
+// that floor, a candidate is "provisional" for the capability: it can
+// still be scored and ranked (never excluded outright — a real single
+// data point is still real evidence), but never wins outright over a
+// real, more broadly comparable candidate — see model-intelligence.js's
+// own comparable-before-provisional selection order.
+const COMPARABILITY_THRESHOLD_RATIO = 0.5;
+
+/**
+ * @param {Capability} capability
+ * @param {number} benchmarkCount - this model's own real distinct benchmark count for the capability (see countModelBenchmarks)
+ * @returns {boolean}
+ */
+export function isCapabilityComparable(capability, benchmarkCount) {
+  const active = activeBenchmarkCountForCapability(capability);
+  if (active === 0) return true; // no known real benchmark for this capability at all — never gate on something unmeasurable
+  return benchmarkCount >= Math.ceil(active * COMPARABILITY_THRESHOLD_RATIO);
+}
+
 // Metrics where a LOWER value is the better real result. Every metric in
 // BENCHMARK_IDENTITIES today is higher-is-better; this stays a real,
 // checked table (not a hardcoded assumption baked into the ranking math)
@@ -323,6 +379,10 @@ export function computeRoleGapValue(registry, models, relevantCapabilities) {
  * @property {"high"|"medium"|"low"} confidence
  * @property {number} benchmarkCount - total real benchmark identities that contributed, across all relevant capabilities
  * @property {Record<string, number>} capabilities - per-capability percentile, only for capabilities with real evidence
+ * @property {Record<string, number>} benchmarkCountsByCapability - this model's own real, distinct benchmark-identity count per relevant capability (see countModelBenchmarks) — never a source count (AA HLE + Hugging Face HLE is one benchmark, not two).
+ * @property {Record<string, number>} benchmarkCoverage - benchmarkCountsByCapability[capability] / activeBenchmarkCountForCapability(capability), 0-1, per relevant capability.
+ * @property {string[]} provisionalCapabilities - relevant capabilities where this model's real coverage falls below the comparability floor (isCapabilityComparable) — empty when every relevant capability clears it.
+ * @property {boolean} isProvisional - true whenever provisionalCapabilities is non-empty.
  */
 
 /**
@@ -333,9 +393,14 @@ export function computeRoleGapValue(registry, models, relevantCapabilities) {
  *   medium: >=40% coverage, OR at least two distinct real benchmark
  *           identities contributed (even if coverage is thin).
  *   low:    anything short of that.
+ * A provisional candidate (real benchmark-identity coverage below the
+ * comparability floor for at least one relevant capability — see
+ * isCapabilityComparable) can never reach "high", even with a real,
+ * independently-verified single data point: one verified benchmark is
+ * real evidence, but not YET broad enough evidence to be that confident.
  */
-function confidenceFor(coverage, benchmarkCount, verifiedCount) {
-  if (coverage >= 0.7 && verifiedCount >= 1) return "high";
+function confidenceFor(coverage, benchmarkCount, verifiedCount, isProvisional = false) {
+  if (coverage >= 0.7 && verifiedCount >= 1 && !isProvisional) return "high";
   if (coverage >= 0.4 || benchmarkCount >= 2) return "medium";
   return "low";
 }
@@ -373,14 +438,39 @@ export function computeRoleEvaluations(registry, models, role, relevantCapabilit
     const scoredCapabilities = Object.keys(capabilities);
     if (!scoredCapabilities.length) continue; // no real primary evidence anywhere — doesn't compete for this role
 
+    // Benchmark-LEVEL coverage per relevant capability — independent of
+    // whether a percentile cohort formed (that's a ranking concern; this
+    // is "how much of the capability does THIS model's own evidence
+    // cover"). Counts real, distinct benchmark identities, never sources.
+    const benchmarkCountsByCapability = {};
+    const benchmarkCoverage = {};
+    const provisionalCapabilities = [];
+    for (const capability of Object.keys(capabilities)) {
+      const count = countModelBenchmarks(registry, model, capability);
+      const active = activeBenchmarkCountForCapability(capability);
+      benchmarkCountsByCapability[capability] = count;
+      benchmarkCoverage[capability] = active ? count / active : 0;
+      // A score of 0 real component-benchmark identities can only mean
+      // this capability's real score came entirely from the composite-
+      // index fallback (computeCapabilityPercentile's own pool-wide
+      // switch) — the best real signal available in that mode, coarse
+      // but not partial, so it's never "provisional" for lacking
+      // component benchmarks it structurally couldn't have used anyway.
+      // Only real, PARTIAL component-benchmark coverage (count > 0, but
+      // still below the comparability floor) is provisional.
+      if (count > 0 && !isCapabilityComparable(capability, count)) provisionalCapabilities.push(capability);
+    }
+    const isProvisional = provisionalCapabilities.length > 0;
+
     const coverage = scoredCapabilities.length / relevantCapabilities.length;
     evaluations.set(key, {
       role,
       capabilityPercentile: median(scoredCapabilities.map((c) => capabilities[c])),
       coverage,
-      confidence: confidenceFor(coverage, benchmarkCount, verifiedCount),
+      confidence: confidenceFor(coverage, benchmarkCount, verifiedCount, isProvisional),
       benchmarkCount,
-      capabilities
+      capabilities,
+      benchmarkCountsByCapability, benchmarkCoverage, provisionalCapabilities, isProvisional
     });
   }
   return evaluations;

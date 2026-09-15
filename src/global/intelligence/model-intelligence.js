@@ -455,6 +455,31 @@ function rankEligible(models, eligibility, compute, better) {
 }
 
 /**
+ * Comparable-before-provisional: real, distinct-benchmark coverage (see
+ * capability-scoring.js's isCapabilityComparable/RoleEvaluation.isProvisional)
+ * decides who's even allowed to compete BEFORE capability value does.
+ * "Provisional" means real evidence, just too thin on at least one
+ * required capability (e.g. one benchmark out of reasoning's three real
+ * active ones) to be genuinely comparable to a broadly-measured
+ * candidate — never excluded outright (a real, if thin, data point beats
+ * guessing), just never preferred. Filters `ranked` down to only
+ * comparable candidates whenever at least one exists; if EVERY real
+ * candidate is provisional, the full (all-provisional) list is kept as a
+ * real fallback — `usedProvisionalFallback` tells the caller this
+ * happened, so the eventual pick can be given an honest reason instead
+ * of looking like an ordinary capability win.
+ * @param {Array<{model: object, value: number}>} ranked
+ * @param {Map<string, import("./capability-scoring.js").RoleEvaluation>|undefined} roleEvaluations
+ * @returns {{pool: Array<{model: object, value: number}>, usedProvisionalFallback: boolean}}
+ */
+function preferComparableCandidates(ranked, roleEvaluations) {
+  if (!roleEvaluations || !ranked.length) return { pool: ranked, usedProvisionalFallback: false };
+  const comparable = ranked.filter((entry) => !roleEvaluations.get(modelKey(entry.model))?.isProvisional);
+  if (comparable.length) return { pool: comparable, usedProvisionalFallback: false };
+  return { pool: ranked, usedProvisionalFallback: true };
+}
+
+/**
  * Attaches each ranked entry's REAL, scale-normalized gap value (see
  * capability-scoring.js's computeRoleGapValue) — a separate number from
  * `.value` (the percentile compute() already produced), used only for
@@ -1002,9 +1027,16 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
 export function buildAiTeam(models, eligibility = {}, registry = null, roleCapabilities = ROLE_CAPABILITIES) {
   const effectiveRegistry = ensureRegistry(models, registry);
   const { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
-  const roleRankings = roleDefinitions.map(({ role, compute, better }) => ({
-    role, compute, better, ranked: attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role])
-  }));
+  const roleRankings = roleDefinitions.map(({ role, compute, better }) => {
+    const eligibleRanked = attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role]);
+    // Comparable-before-provisional (see preferComparableCandidates's own
+    // doc): a candidate with real evidence too thin on a required
+    // capability to be genuinely comparable never outranks a broadly-
+    // measured one, even at a higher raw capabilityPercentile — only
+    // competes at all when every real eligible candidate is provisional.
+    const { pool: ranked, usedProvisionalFallback } = preferComparableCandidates(eligibleRanked, evaluationsByRole[role]);
+    return { role, compute, better, ranked, usedProvisionalFallback };
+  });
 
   const rolePools = roleRankings.map(({ role, better, ranked }) => ({
     role, better,
@@ -1024,7 +1056,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
   const entries = [];
   for (const { role, compute, better } of roleDefinitions) {
     const result = results[role];
-    const eligibleRanked = roleRankings.find((r) => r.role === role).ranked;
+    const { ranked: eligibleRanked, usedProvisionalFallback } = roleRankings.find((r) => r.role === role);
     const globalRanked = rankBy(models, compute, better);
     if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
     // Real coverage/confidence for the model actually shown as primary
@@ -1064,7 +1096,15 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     const reviewerLeaderWasBuilderAdapter = role === "Reviewer" && pool.length
       && pool[0].model.adapterId === entries.find((e) => e.role === "Builder")?.primary.adapterId;
     let reason;
-    if (reviewerLeaderWasBuilderAdapter && chosen.model.adapterId !== pool[0].model.adapterId) {
+    if (usedProvisionalFallback) {
+      // Every real eligible candidate for this role was provisional (real
+      // evidence, just too thin on a required capability to be genuinely
+      // comparable) — this pick is a real, honest fallback among them,
+      // never presented as an ordinary capability win. Takes priority
+      // over the other reason kinds below since it explains something
+      // more fundamental about the WHOLE pool, not just this one pick.
+      reason = "Only provisional evidence available for this role — no real candidate cleared comparable benchmark coverage.";
+    } else if (reviewerLeaderWasBuilderAdapter && chosen.model.adapterId !== pool[0].model.adapterId) {
       reason = "Kept independent from Builder's provider.";
     } else if (result.reasonKind === "only-adequate-concentration") {
       reason = "Only adequate option — no real alternative avoids concentration without forcing a repeat.";
@@ -1274,10 +1314,17 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
 export function buildEfficientTeam(models, eligibility = {}, registry = null, options = {}) {
   const { capabilityFloor = EFFICIENT_CAPABILITY_FLOOR, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES } = options;
   const effectiveRegistry = ensureRegistry(models, registry);
-  const { roleDefinitions, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
-  const roleRankings = roleDefinitions.map(({ role, compute, better }) => ({
-    role, compute, better, ranked: attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role])
-  }));
+  const { roleDefinitions, evaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
+  const roleRankings = roleDefinitions.map(({ role, compute, better }) => {
+    const eligibleRanked = attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role]);
+    // Same comparable-before-provisional policy as buildAiTeam (see
+    // preferComparableCandidates's own doc) — the 80% capability floor
+    // below applies WITHIN whichever tier this produces, never across
+    // both at once, so a thin, provisional candidate's real value can't
+    // let it clear the floor ahead of a genuinely comparable one.
+    const { pool: ranked, usedProvisionalFallback } = preferComparableCandidates(eligibleRanked, evaluationsByRole[role]);
+    return { role, compute, better, ranked, usedProvisionalFallback };
+  });
 
   const rolePools = roleRankings.map(({ role, better, ranked }) => ({
     role, better,
@@ -1291,7 +1338,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
   const entries = [];
   for (const { role, compute, better } of roleDefinitions) {
     const result = results[role];
-    const eligibleRanked = roleRankings.find((r) => r.role === role).ranked;
+    const { ranked: eligibleRanked, usedProvisionalFallback } = roleRankings.find((r) => r.role === role);
     const globalRanked = rankBy(models, compute, better);
     if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
 
@@ -1322,7 +1369,9 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
 
     const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
     let reason;
-    if (result.reasonKind === "only-adequate-floor") {
+    if (usedProvisionalFallback) {
+      reason = "Only provisional evidence available for this role — no real candidate cleared comparable benchmark coverage.";
+    } else if (result.reasonKind === "only-adequate-floor") {
       reason = "Only adequate option — no real alternative clears the capability floor.";
     } else if (result.reasonKind === "only-adequate-concentration") {
       reason = "Only adequate option — no real alternative avoids concentration without forcing a repeat.";

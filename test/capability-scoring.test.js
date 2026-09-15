@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
-import { computeCapabilityPercentile, computeRoleEvaluations, computeRoleGapValue } from "../src/global/intelligence/capability-scoring.js";
+import {
+  activeBenchmarkCountForCapability, computeCapabilityPercentile, computeRoleEvaluations, computeRoleGapValue,
+  countModelBenchmarks, isCapabilityComparable
+} from "../src/global/intelligence/capability-scoring.js";
 
 function addEvidence(registry, model, metric, value, opts = {}) {
   const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
@@ -191,14 +194,33 @@ test("missing evidence for one relevant capability reduces coverage, never intro
   assert.ok(!("coding" in codexEval.capabilities), "an uncovered capability must be absent from the breakdown, never present as 0");
 });
 
-test("confidence is high only with real coverage >=70% AND at least one verified contributing benchmark", () => {
+test("confidence is high only with real coverage >=70% AND at least one verified contributing benchmark, AND real benchmark-comparable coverage (not provisional)", () => {
+  const registry = createCapabilityRegistry();
+  // reasoning needs 2 of its 3 real active benchmarks (gpqa/hle/mmlu-pro)
+  // to be comparable, not provisional — gpqa alone would cap this at
+  // "medium" even with full coverage and verified sources (see the
+  // REGRESSION test below for that exact case).
+  addEvidence(registry, claude, "gpqa", 0.90, { verified: true });
+  addEvidence(registry, codex, "gpqa", 0.50, { verified: true });
+  addEvidence(registry, claude, "hle", 0.85, { verified: true });
+  addEvidence(registry, codex, "hle", 0.45, { verified: true });
+  addEvidence(registry, claude, "liveCodeBench", 0.80, { verified: true });
+  addEvidence(registry, codex, "liveCodeBench", 0.60, { verified: true });
+  const evaluations = computeRoleEvaluations(registry, [claude, codex], "Debugger", ["reasoning", "coding"]);
+  assert.equal(evaluations.get("claude::claude-x").confidence, "high");
+});
+
+test("REGRESSION: a provisional candidate can never reach 'high' confidence, even with full coverage and a verified source — one real benchmark out of reasoning's three real active ones stays capped at 'medium'", () => {
   const registry = createCapabilityRegistry();
   addEvidence(registry, claude, "gpqa", 0.90, { verified: true });
   addEvidence(registry, codex, "gpqa", 0.50, { verified: true });
   addEvidence(registry, claude, "liveCodeBench", 0.80, { verified: true });
   addEvidence(registry, codex, "liveCodeBench", 0.60, { verified: true });
   const evaluations = computeRoleEvaluations(registry, [claude, codex], "Debugger", ["reasoning", "coding"]);
-  assert.equal(evaluations.get("claude::claude-x").confidence, "high");
+  const claudeEval = evaluations.get("claude::claude-x");
+  assert.equal(claudeEval.isProvisional, true);
+  assert.deepEqual(claudeEval.provisionalCapabilities, ["reasoning"]);
+  assert.equal(claudeEval.confidence, "medium");
 });
 
 test("confidence drops to medium without a verified source, even at full coverage", () => {
@@ -266,4 +288,57 @@ test("a lone accessible model still competes — percentile is trivially 1 when 
   assert.equal(scores.get("claude::claude-x").percentile, 1);
   const evaluations = computeRoleEvaluations(registry, [claude], "Explorer", ["reasoning"]);
   assert.ok(evaluations.has("claude::claude-x"), "the only real accessible model must still compete for the role");
+});
+
+test("activeBenchmarkCountForCapability reports the real, static number of distinct benchmark identities per capability", () => {
+  assert.equal(activeBenchmarkCountForCapability("reasoning"), 3); // gpqa, hle, mmlu-pro
+  assert.equal(activeBenchmarkCountForCapability("coding"), 2); // livecodebench, scicode
+  assert.equal(activeBenchmarkCountForCapability("terminalExecution"), 1); // terminal-bench (pooled aliases)
+  assert.equal(activeBenchmarkCountForCapability("instructionFollowing"), 1); // ifbench
+});
+
+test("isCapabilityComparable applies a real 50%-rounded-up floor per capability — reasoning needs 2/3, coding needs 1/2, a single-benchmark capability needs just 1/1", () => {
+  assert.equal(isCapabilityComparable("reasoning", 0), false);
+  assert.equal(isCapabilityComparable("reasoning", 1), false);
+  assert.equal(isCapabilityComparable("reasoning", 2), true);
+  assert.equal(isCapabilityComparable("reasoning", 3), true);
+  assert.equal(isCapabilityComparable("coding", 0), false);
+  assert.equal(isCapabilityComparable("coding", 1), true);
+  assert.equal(isCapabilityComparable("terminalExecution", 0), false);
+  assert.equal(isCapabilityComparable("terminalExecution", 1), true);
+});
+
+test("countModelBenchmarks counts real, DISTINCT benchmark identities, never sources — Artificial Analysis's HLE and Hugging Face's HLE are the same real benchmark, counted once", () => {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "hle", 0.50, { source: "artificial-analysis-free", scale: "unit" });
+  addEvidence(registry, claude, "hle", 63.9, { source: "huggingface-leaderboard", scale: "hundred" });
+  // Two real evidence entries, same benchmark identity ("hle") — one count.
+  assert.equal(countModelBenchmarks(registry, claude, "reasoning"), 1);
+
+  addEvidence(registry, claude, "gpqa", 0.80, { source: "artificial-analysis-free", scale: "unit" });
+  // A genuinely different real benchmark identity — now two.
+  assert.equal(countModelBenchmarks(registry, claude, "reasoning"), 2);
+});
+
+test("REGRESSION: computeRoleEvaluations marks a candidate provisional when a required capability's real benchmark coverage is below the comparability floor — the exact real bug (DeepSeek V4.1 Flash winning Explorer on one HLE benchmark) this whole coverage policy was written to fix", () => {
+  const registry = createCapabilityRegistry();
+  // DeepSeek: real evidence on exactly ONE of reasoning's three real
+  // active benchmarks (HLE only) — 1/3, below the 2/3 comparability
+  // floor. Sonnet: real evidence on TWO (gpqa + hle) — comparable.
+  const deepseek = { adapterId: "opencode-go", modelId: "deepseek-x" };
+  addEvidence(registry, deepseek, "hle", 0.639, { source: "huggingface-leaderboard", scale: "hundred" });
+  addEvidence(registry, claude, "gpqa", 0.55, { source: "artificial-analysis-free", scale: "unit" });
+  addEvidence(registry, claude, "hle", 0.50, { source: "artificial-analysis-free", scale: "unit" });
+
+  const evaluations = computeRoleEvaluations(registry, [deepseek, claude], "Explorer", ["reasoning"]);
+  const deepseekEval = evaluations.get("opencode-go::deepseek-x");
+  const claudeEval = evaluations.get("claude::claude-x");
+
+  assert.equal(deepseekEval.benchmarkCountsByCapability.reasoning, 1);
+  assert.equal(deepseekEval.isProvisional, true);
+  assert.deepEqual(deepseekEval.provisionalCapabilities, ["reasoning"]);
+
+  assert.equal(claudeEval.benchmarkCountsByCapability.reasoning, 2);
+  assert.equal(claudeEval.isProvisional, false);
+  assert.deepEqual(claudeEval.provisionalCapabilities, []);
 });
