@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ROLE_PROFILES, getRoleProfile } from "../src/global/intelligence/role-profiles.js";
-import { ROLE_CAPABILITIES } from "../src/global/intelligence/model-intelligence.js";
+import { ALLOWED_ACTION_IDS, ESCALATION_SIGNAL_IDS, ROLE_CAPABILITIES, ROLE_PROFILES, getRoleProfile } from "../src/global/intelligence/role-profiles.js";
+import { ROLE_CAPABILITIES as ROLE_CAPABILITIES_REEXPORTED } from "../src/global/intelligence/model-intelligence.js";
 
 const KNOWN_ROLES = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
 
@@ -14,6 +14,29 @@ test("every RoleProfile's capabilities is the SAME object as ROLE_CAPABILITIES[r
   for (const role of KNOWN_ROLES) {
     assert.equal(ROLE_PROFILES[role].capabilities, ROLE_CAPABILITIES[role]);
   }
+});
+
+test("model-intelligence.js re-exports the SAME ROLE_CAPABILITIES object role-profiles.js defines — role-profiles.js is the canonical source, never the reverse", () => {
+  assert.equal(ROLE_CAPABILITIES_REEXPORTED, ROLE_CAPABILITIES);
+});
+
+test("every allowedActionId/escalationSignalId used in ROLE_PROFILES is a real member of the stable, closed vocabulary — catches a typo a router would otherwise silently never match", () => {
+  for (const role of KNOWN_ROLES) {
+    const profile = ROLE_PROFILES[role];
+    assert.ok(Array.isArray(profile.allowedActionIds) && profile.allowedActionIds.length > 0, `${role}.allowedActionIds should be a non-empty array`);
+    assert.ok(Array.isArray(profile.escalationSignalIds) && profile.escalationSignalIds.length > 0, `${role}.escalationSignalIds should be a non-empty array`);
+    for (const id of profile.allowedActionIds) {
+      assert.ok(ALLOWED_ACTION_IDS.includes(id), `${role}'s allowedActionIds references unknown id "${id}"`);
+    }
+    for (const id of profile.escalationSignalIds) {
+      assert.ok(ESCALATION_SIGNAL_IDS.includes(id), `${role}'s escalationSignalIds references unknown id "${id}"`);
+    }
+  }
+});
+
+test("Builder and Reviewer can both write real content (repo.write / review.write), but only Builder can actually change repository files — a router must never let Reviewer's own action ids authorize a file edit", () => {
+  assert.ok(ROLE_PROFILES.Builder.allowedActionIds.includes("repo.write"));
+  assert.ok(!ROLE_PROFILES.Reviewer.allowedActionIds.includes("repo.write"));
 });
 
 test("every RoleProfile has every required field, non-empty", () => {

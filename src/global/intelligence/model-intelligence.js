@@ -8,6 +8,7 @@
 
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
 import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue } from "./capability-scoring.js";
+import { ROLE_CAPABILITIES } from "./role-profiles.js";
 
 // Real per-benchmark metrics worth surfacing as corroborating evidence
 // alongside a pick — never blended into the ranking itself, since
@@ -325,67 +326,15 @@ function resolveMetric(registry, model, key) {
   return best ? best.value : (model[key] ?? null);
 }
 
-// Each role's real relevant capabilities (see capability-scoring.js),
-// derived from the plan's per-role table. "Hard problem solving" folds
-// into reasoning (GPQA/HLE are themselves hard-reasoning benchmarks);
-// "scientific coding" folds into coding (SciCode is already one of
-// coding's real component benchmarks) rather than inventing a separate
-// capability neither BENCHMARK_IDENTITIES nor any real source measures
-// directly. Tester/Reviewer/Explorer rows were truncated in the source
-// plan — inferred from this codebase's own pre-existing role-definition
-// pattern (Tester: coding + terminal execution; Reviewer: independent
-// reasoning + coding review; Explorer: the same reasoning-only signal
-// Architect always had) rather than guessed from nothing.
-// required: a model MUST have real evidence for every one of these to
-// compete for the role at all — missing evidence on even one required
-// capability excludes it from the ranking entirely (see
-// buildAiTeamRoleDefinitions's compute()). required capabilities ALONE
-// decide both the ranking order (requiredRoleFit, i.e. RoleEvaluation.
-// capabilityPercentile computed only from `required`) and how close two
-// real picks are (gapValueByRole, computed the same way) — optional
-// capabilities never dilute either number. optional: real evidence, when
-// present, is scored completely separately (optionalEvaluationsByRole)
-// and used ONLY as a tiebreak among candidates already equally fit on
-// required capabilities — it can never move a model up in requiredRoleFit
-// order, and its absence never excludes a model. Before this split, an
-// optional capability was folded into the SAME median as required ones —
-// so a generalist's real requiredRoleFit gap on the capabilities that
-// actually define the role could be smoothed over by an unrelated
-// optional signal. Whether this alone changes a specific real pick (e.g.
-// Muse Spark 1.3 on Architect) still depends on the per-role near-
-// equivalence band below (ROLE_NEAR_EQUIVALENCE_BAND) — verify against
-// real data, never assume.
-//
-// softwareExecution is optional everywhere it appears (Builder, Debugger),
-// not required — verified against two independent real catalogs before
-// deciding this, not assumed: the full multi-provider catalog (Codex +
-// Claude + Cursor + OpenCode Go, 81 scored candidates) showed real
-// evidence for only 3 of them; crm's own real candidate pool (9 scored
-// candidates) showed only 2. Coverage is a fact about the CURRENT real
-// catalog, never a fixed constant — these specific numbers will already
-// be stale by the time this comment is read; re-measure via
-// capability-scoring.js's computeCapabilityPercentile against the real
-// scored pool in hand, never assume a ratio. Making softwareExecution
-// required at either measured ratio would have left Builder/Debugger with
-// only 2-3 real candidates system-wide, no matter how many other models
-// are genuinely capable — instructionFollowing is optional everywhere for
-// the same reason (never load-bearing enough for any role to gate on).
-// Exported (not just used internally) so role-profiles.js's RoleProfile
-// layer can reference these required/optional capability lists directly
-// instead of duplicating them — one source of truth for WHAT a role
-// needs, a separate one (RoleProfile) for the operational policy AROUND
-// it (allowed actions, deliverable, risk, escalation). Economy is
-// deliberately absent from RoleProfile (see role-profiles.js's own doc)
-// but stays here unchanged — it's still a real role for buildAiTeam/
-// buildEfficientTeam's own ranking purposes today.
-export const ROLE_CAPABILITIES = {
-  Explorer: { required: ["reasoning"], optional: ["instructionFollowing"] },
-  Architect: { required: ["reasoning", "coding"], optional: ["instructionFollowing"] },
-  Builder: { required: ["coding", "terminalExecution"], optional: ["softwareExecution", "instructionFollowing"] },
-  Debugger: { required: ["reasoning", "coding", "terminalExecution"], optional: ["softwareExecution"] },
-  Tester: { required: ["coding", "terminalExecution"], optional: [] },
-  Reviewer: { required: ["reasoning", "coding"], optional: [] }
-};
+// ROLE_CAPABILITIES's canonical home is role-profiles.js — it's the
+// capabilities half of that module's RoleProfile (objective, allowed
+// actions, risk, escalation — the OTHER half — live there too), imported
+// above and re-exported here only so every existing caller of
+// model-intelligence.js keeps working unchanged. Never edit the table
+// itself here; see role-profiles.js for the real definition and its full
+// reasoning (required-vs-optional split, softwareExecution/
+// instructionFollowing measurements, etc.).
+export { ROLE_CAPABILITIES };
 
 /**
  * Normalizes a role's capability requirement — either the legacy plain
