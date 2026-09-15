@@ -28,9 +28,9 @@ export function createAgentCapabilityAdapter({
       return managedAdapter.detect(context);
     },
 
-    inspect(context, { probeImpl = defaultProbe } = {}) {
+    inspect(context, { probeImpl = defaultProbe, isExecutableAvailableImpl = isExecutableAvailable } = {}) {
       const detected = managedAdapter.detect(context);
-      const cliAvailable = executable ? isExecutableAvailable(executable) : false;
+      const cliAvailable = executable ? isExecutableAvailableImpl(executable) : false;
 
       if (!detected && !cliAvailable) {
         return buildInspection({

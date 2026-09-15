@@ -26,26 +26,23 @@ test("capability registry inspects all supported agents", async () => {
 });
 
 test("opaque providers report unknown rather than failing", async () => {
+  // The opaqueAuth branch never calls probeImpl at all (it short-circuits
+  // before reaching that code path) — it derives state directly from
+  // detect()/isExecutableAvailable(). Real PATH state on the machine
+  // running this test must never leak in: inject isExecutableAvailableImpl
+  // so "not installed" is deterministic regardless of what's actually on
+  // this host.
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-cap-opaque-"));
   const adapter = resolveCapabilityAdapter("cursor");
 
   const inspection = adapter.inspect(
     { homeDir },
-    {
-      probeImpl: () => ({
-        id: "cursor",
-        label: "Cursor",
-        state: CAPABILITY_STATES.UNKNOWN,
-        detected: false,
-        cliAvailable: false,
-        version: null,
-        authenticated: null,
-        recommendation: "opaque"
-      })
-    }
+    { isExecutableAvailableImpl: () => false }
   );
 
   assert.equal(inspection.state, CAPABILITY_STATES.UNKNOWN);
+  assert.equal(inspection.detected, false);
+  assert.equal(inspection.cliAvailable, false);
 });
 
 test("agent CLI failures produce actionable diagnostics", () => {
