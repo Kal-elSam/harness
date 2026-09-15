@@ -527,7 +527,14 @@ export function createConversationService(deps = {}) {
         if (hle?.entries?.length) {
           ingestHuggingFaceLeaderboardEvidence(
             registry, [{ adapterId: "opencode-go", models: catalogsByAdapter["opencode-go"] ?? [] }],
-            hle.entries, { metric: "hle", fetchedAt: hle.fetchedAt }
+            // scale: "hundred" — verified live against the real HF cache
+            // (cais/hle): DeepSeek-V4.1-Flash's real reported value is
+            // 63.9, not a 0-1 fraction. AA's own "hle" field IS a real 0-1
+            // fraction, so the two sources genuinely disagree on scale
+            // despite sharing the metric name "hle" — see
+            // model-capability-registry-sources.js's own doc for the bug
+            // this fixes.
+            hle.entries, { metric: "hle", scale: "hundred", fetchedAt: hle.fetchedAt }
           );
         }
         ingestOfficialSnapshotEvidence(registry);

@@ -118,7 +118,14 @@ function bestAcrossAliases(registry, id, identity) {
       const isBetter = !best
         || (entry.verified && !best.entry.verified)
         || (entry.verified === best.entry.verified && Date.parse(entry.date ?? "") > Date.parse(best.entry.date ?? ""));
-      if (isBetter) best = { entry, scale: alias.scale };
+      // The evidence's OWN real scale (set by the ingestion source that
+      // actually knows it) always wins over the alias's metric-name-based
+      // guess — two sources can share one metric name ("hle") while
+      // genuinely reporting in different real scales (AA: 0-1 fraction;
+      // Hugging Face: 0-100, verified live — DeepSeek-V4.1-Flash's real
+      // HLE via HF is 63.9, not 0.639). The alias scale stays a fallback
+      // only for evidence that never declared its own.
+      if (isBetter) best = { entry, scale: entry.scale ?? alias.scale };
     }
   }
   return best;

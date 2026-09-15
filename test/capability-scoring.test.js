@@ -5,7 +5,10 @@ import { computeCapabilityPercentile, computeRoleEvaluations, computeRoleGapValu
 
 function addEvidence(registry, model, metric, value, opts = {}) {
   const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
-  registry.addEvidence(id, { metric, value, source: opts.source ?? "test-source", benchmarkVersion: opts.benchmarkVersion ?? null, date: opts.date ?? "2026-01-01", verified: opts.verified ?? false });
+  registry.addEvidence(id, {
+    metric, value, source: opts.source ?? "test-source", scale: opts.scale ?? null,
+    benchmarkVersion: opts.benchmarkVersion ?? null, date: opts.date ?? "2026-01-01", verified: opts.verified ?? false
+  });
 }
 
 const claude = { adapterId: "claude", modelId: "claude-x" };
@@ -59,6 +62,34 @@ test("percentile ranking normalizes cross-scale evidence before comparing — a 
   const scores = computeCapabilityPercentile(registry, [claude, codex], "terminalExecution");
   assert.equal(scores.get("claude::claude-x").percentile, 1, "0.64 (64%) is the real leader, not 57.9 raw (misread as 100x too large)");
   assert.equal(scores.get("codex::codex-x").percentile, 0);
+});
+
+test("REGRESSION: the SAME metric name from two real sources that report in genuinely different scales is normalized per-evidence, never guessed from the metric name alone — the real bug that let a Hugging Face HLE score (0-100) get compared raw against Artificial Analysis's own HLE (0-1)", () => {
+  // Live-verified real data: DeepSeek-V4.1-Flash's real HLE via Hugging
+  // Face is 63.9 (a 0-100 score), while a real AA-sourced "hle" entry for
+  // another model is a genuine 0-1 fraction (e.g. 0.50 = 50%). Without a
+  // per-evidence scale, both shared capability-scoring.js's single
+  // metric-name-based "unit" assumption — HF's 63.9 stayed 63.9,
+  // dwarfing any real 0-1 evidence and making a thinly-evidenced model
+  // look decisively ahead of a properly, broadly-measured one.
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, go, "hle", 63.9, { source: "huggingface-leaderboard", scale: "hundred" });
+  addEvidence(registry, claude, "hle", 0.50, { source: "artificial-analysis-free", scale: "unit" });
+
+  const scores = computeCapabilityPercentile(registry, [claude, go], "reasoning");
+  // Real, correctly-scaled comparison: 0.639 (63.9%) is still ahead of
+  // 0.50 (50%) — go genuinely wins here, but only after real, honest
+  // unit conversion, not because 63.9 dwarfed 0.50 by two orders of
+  // magnitude.
+  assert.equal(scores.get("opencode-go::go-x").percentile, 1);
+  assert.equal(scores.get("claude::claude-x").percentile, 0);
+
+  const gapValues = computeRoleGapValue(registry, [claude, go], ["reasoning"]);
+  // The real, scale-normalized magnitude must never exceed 1 — a raw,
+  // unconverted 63.9 would have produced a nonsensical gap value far
+  // outside any real 0-1 range.
+  assert.ok(gapValues.get("opencode-go::go-x") <= 1, `expected a real 0-1 gapValue, got ${gapValues.get("opencode-go::go-x")}`);
+  assert.ok(gapValues.get("opencode-go::go-x") > gapValues.get("claude::claude-x"));
 });
 
 test("distinct real benchmarks within a capability are never merged — GPQA and HLE stay separate contributions to the median", () => {

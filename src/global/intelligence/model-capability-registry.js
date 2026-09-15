@@ -58,6 +58,9 @@ export function createCapabilityRegistry() {
       for (const key of REQUIRED_EVIDENCE_FIELDS) {
         if (entry[key] == null) throw new Error(`capability-registry: evidence for "${id}" is missing required field "${key}"`);
       }
+      if (entry.scale != null && entry.scale !== "unit" && entry.scale !== "hundred") {
+        throw new Error(`capability-registry: evidence for "${id}" has invalid scale "${entry.scale}" — must be "unit", "hundred", or omitted`);
+      }
       const record = {
         metric: entry.metric,
         value: entry.value,
@@ -65,7 +68,20 @@ export function createCapabilityRegistry() {
         benchmarkVersion: entry.benchmarkVersion ?? null,
         modelConfig: entry.modelConfig ?? null,
         date: entry.date ?? null,
-        verified: entry.verified === true
+        verified: entry.verified === true,
+        // The REAL scale this exact value was reported on ("unit": 0-1
+        // fraction, "hundred": 0-100 percentage-like score) — set by the
+        // ingestion source that actually knows it, e.g.
+        // ingestHuggingFaceLeaderboardEvidence's own real, live-verified
+        // knowledge that HLE via Hugging Face reports 0-100 (63.9), never
+        // a 0-1 fraction. Optional (null when omitted) so capability-
+        // scoring.js's own BENCHMARK_IDENTITIES metric-name-based scale
+        // stays a valid fallback for older evidence that never declared
+        // one — see capability-scoring.js's bestAcrossAliases for the
+        // real bug this fixes: two sources sharing one metric NAME
+        // ("hle") but reporting in genuinely different real scales must
+        // never both defer to a single scale guessed from the name alone.
+        scale: entry.scale ?? null
       };
       if (!evidence.has(id)) evidence.set(id, []);
       evidence.get(id).push(record);
