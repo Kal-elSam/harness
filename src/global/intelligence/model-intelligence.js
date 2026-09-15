@@ -87,11 +87,7 @@ export function matchArtificialAnalysisScore(modelId, aaModels) {
 export function scoreAvailableModels(providerCatalogs, aaModels) {
   const results = [];
   for (const { adapterId, models } of providerCatalogs) {
-    for (const entry of models ?? []) {
-      // Cursor's real catalog is a plain array of model name strings, not
-      // {id, displayName} objects like Codex/Claude/OpenCode's — normalize
-      // both shapes rather than silently dropping every Cursor model.
-      const model = typeof entry === "string" ? { id: entry, displayName: entry } : entry;
+    for (const model of models ?? []) {
       const score = matchArtificialAnalysisScore(model.id, aaModels);
       if (!score) continue;
       results.push({

@@ -235,11 +235,13 @@ test("selectExecutionProvider surfaces the best-matching skill in why, without l
   assert.match(result.why, /matches skill "go-testing"/);
 });
 
-test("checkCandidate always excludes opencode-zen (PAYG risk) and cursor (manual-only), regardless of adapter status", () => {
+test("checkCandidate always excludes opencode-zen from real task routing (PAYG risk), regardless of adapter status", () => {
   const zen = checkCandidate("opencode-zen", { adapters: [{ id: "opencode", available: true, launchable: true }] });
   assert.equal(zen.ok, false);
   assert.match(zen.reason, /PAYG/);
+});
 
+test("checkCandidate excludes cursor from real task routing (requireLaunchable: true, the default) — manual-only, never auto-executed", () => {
   const cursor = checkCandidate("cursor", { adapters: [{ id: "cursor", available: true, launchable: true }] });
   assert.equal(cursor.ok, false);
   assert.match(cursor.reason, /manual-only/);
@@ -280,14 +282,29 @@ test("checkCandidate({requireLaunchable: false}) lets opencode-go through on ava
   assert.equal(forRecommendation.ok, true, "AI TEAM can still recommend a real, accessible Go model");
 });
 
-test("checkCandidate({requireLaunchable: false}) never loosens codex/claude/cursor/zen — the exception is opencode-go only", () => {
+test("checkCandidate({requireLaunchable: false}) never loosens codex/claude/zen — the exceptions are opencode-go and cursor only", () => {
   const adapters = [{ id: "codex", available: true, launchable: false, reason: "codex not launchable" }];
   const codex = checkCandidate("codex", { adapters }, { requireLaunchable: false });
   assert.equal(codex.ok, false);
-  const cursor = checkCandidate("cursor", { adapters }, { requireLaunchable: false });
-  assert.equal(cursor.ok, false);
   const zen = checkCandidate("opencode-zen", { adapters }, { requireLaunchable: false });
   assert.equal(zen.ok, false);
+});
+
+test("checkCandidate({requireLaunchable: false}) lets cursor through on real availability alone — a genuine AI TEAM recommendation, never an auto-execute path", () => {
+  const adapters = [{ id: "cursor", available: true, launchable: true, reason: null }];
+  const strict = checkCandidate("cursor", { adapters });
+  assert.equal(strict.ok, false, "real task routing (the default) must still refuse cursor — manual-only");
+  assert.match(strict.reason, /manual-only/);
+
+  const forRecommendation = checkCandidate("cursor", { adapters }, { requireLaunchable: false });
+  assert.equal(forRecommendation.ok, true, "AI TEAM can recommend a real Cursor model even though Kairo will never auto-execute through it");
+});
+
+test("checkCandidate({requireLaunchable: false}) still requires cursor to be genuinely available — unavailable is never silently recommended", () => {
+  const adapters = [{ id: "cursor", available: false, launchable: false, reason: "Cursor agent CLI \"cursor-agent\" is not on PATH. Install Cursor CLI." }];
+  const result = checkCandidate("cursor", { adapters }, { requireLaunchable: false });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /not on PATH/);
 });
 
 test("selectExecutionProvider sizes the model to the task's real effort too — a trivial fix doesn't get Claude's biggest model", () => {

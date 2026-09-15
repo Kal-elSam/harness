@@ -752,7 +752,39 @@ test("snapshot lets AI TEAM recommend a real, accessible opencode-go model even 
   assert.deepEqual(economy.primary.corroboration, [{ metric: "hle", value: 62.5, source: "huggingface-leaderboard" }]);
 });
 
-test("snapshot always excludes opencode-zen and cursor from FIT's automatic candidates, independent of their catalogs", async () => {
+test("snapshot always excludes opencode-zen from FIT's automatic candidates, independent of its catalog", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [
+      { id: "codex", available: true, launchable: true, reason: null },
+      { id: "claude", available: true, launchable: true, reason: null },
+      { id: "cursor", available: false, launchable: false, reason: "not on PATH" }
+    ],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [] }),
+    readClaudeModels: () => ({ status: "documented", models: [] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    readArtificialAnalysisModels: async () => ({
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [{ slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 99, codingIndex: 99, mathIndex: null }]
+    }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
+  });
+
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.equal(snapshot.modelIntelligence.eligibility["opencode-zen"].ok, false);
+  assert.match(snapshot.modelIntelligence.eligibility["opencode-zen"].reason, /PAYG/);
+});
+
+test("snapshot genuinely includes a real, available Cursor as an AI TEAM recommendation candidate — recommendable, even though never auto-executable", async () => {
   const service = createConversationService({
     resolveRoot: async () => "/repo",
     homeDir: "/home/kal-el",
@@ -770,21 +802,18 @@ test("snapshot always excludes opencode-zen and cursor from FIT's automatic cand
     readCodexModels: async () => ({ status: "measured", models: [] }),
     readClaudeModels: () => ({ status: "documented", models: [] }),
     readOpenCodeModels: async () => ({ status: "measured", models: [] }),
-    readCursorModels: async () => ({ status: "measured", models: [{ id: "claude-opus-5", displayName: "Claude Opus 5" }] }),
+    readCursorModels: async () => ({ status: "measured", models: [{ id: "composer-2.5", displayName: "Composer 2.5" }] }),
     readArtificialAnalysisModels: async () => ({
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      models: [{ slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 99, codingIndex: 99, mathIndex: null }]
+      models: [{ slug: "composer-2.5", name: "Composer 2.5", intelligenceIndex: 90, codingIndex: 95, mathIndex: null }]
     }),
     readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
     listRunRecords: async () => []
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
-  assert.deepEqual(snapshot.modelIntelligence.models, []);
-  assert.equal(snapshot.modelIntelligence.eligibility.cursor.ok, false);
-  assert.match(snapshot.modelIntelligence.eligibility.cursor.reason, /manual-only/);
-  assert.equal(snapshot.modelIntelligence.eligibility["opencode-zen"].ok, false);
-  assert.match(snapshot.modelIntelligence.eligibility["opencode-zen"].reason, /PAYG/);
+  assert.equal(snapshot.modelIntelligence.eligibility.cursor.ok, true);
+  assert.ok(snapshot.modelIntelligence.models.some((m) => m.adapterId === "cursor" && m.modelId === "composer-2.5"));
 });
 
 test("snapshot leaves modelIntelligence at its honest unknown default when probes are disabled", async () => {

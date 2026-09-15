@@ -143,22 +143,40 @@ const MIN_QUOTA_PERCENT = 5;
  *   have the model via the Go subscription — without claiming Kairo can
  *   safely auto-execute through it yet (see opencode.js's checkAvailability
  *   for why: no per-event way to prove a run didn't silently bill Zen).
+ *   It also lets Cursor be named as a real recommendation (e.g. Builder ->
+ *   Cursor Composer 2.5) even though Kairo never auto-executes through it —
+ *   the user continues that work manually inside the Cursor IDE; this is
+ *   permanent for Cursor, not a temporary safety gap like opencode-go's.
  *   Real task routing (selectExecutionProvider/selectAskProvider) always
  *   uses the default `true` — it must never pick something guaranteed to
  *   fail at launch (run-manager.js's own launchable gate would reject it).
  */
 export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage }, { requireLaunchable = true } = {}) {
   // Zen carries real PAYG/billing risk (see conversation/service.js's
-  // capabilities.openCodeExecution) and Cursor is a deliberate manual-only
-  // choice from an earlier decision — neither is ever an automatic pick,
-  // regardless of what their real catalogs/benchmarks might otherwise say.
+  // capabilities.openCodeExecution) — never an automatic pick, regardless
+  // of what its real catalog/benchmarks might otherwise say.
   if (adapterId === "opencode-zen") return { ok: false, reason: "OpenCode Zen is excluded from automatic routing (PAYG risk)" };
-  if (adapterId === "cursor") return { ok: false, reason: "Cursor is manual-only, not used for automatic recommendations" };
+  // Cursor is a deliberate manual-only destination for real task
+  // execution — recommendation and execution are different capabilities
+  // (see model-intelligence.js's role assignments): Kairo can genuinely
+  // recommend a real Cursor model for a role (Builder -> Cursor Composer
+  // 2.5, say), the same requireLaunchable:false exception opencode-go
+  // already gets below, but real task routing (requireLaunchable: true,
+  // the default) always refuses it — the user continues that work
+  // manually inside the Cursor IDE, never an automatic Kairo-launched run.
+  if (adapterId === "cursor" && requireLaunchable) {
+    return { ok: false, reason: "Cursor is manual-only — continue the work in the Cursor IDE, never auto-executed by Kairo" };
+  }
 
   const adapter = findAdapter(adapterId, adapters);
   if (!adapter) return { ok: false, reason: `${adapterId}: no adapter found` };
   if (!adapter.available) return { ok: false, reason: adapter.reason ?? `${adapterId}: not available` };
-  const launchableRequired = requireLaunchable || adapterId !== "opencode-go";
+  // "launchable" means safe for Kairo to invoke programmatically — not the
+  // bar a manual recommendation needs. Cursor gets the same exemption
+  // opencode-go already has: real availability is enough to recommend it,
+  // even though (unlike opencode-go) it's exempt from launchable for a
+  // structurally different reason — it will NEVER be launchable, by design.
+  const launchableRequired = requireLaunchable || (adapterId !== "opencode-go" && adapterId !== "cursor");
   if (launchableRequired && !adapter.launchable) return { ok: false, reason: adapter.reason ?? `${adapterId}: not launchable yet` };
 
   if (adapterId === "codex") {
