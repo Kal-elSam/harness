@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { annotateWithRegistryEvidence, bestModelPerRole, buildAiTeam, buildEfficientTeam, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage } from "../src/global/intelligence/model-intelligence.js";
+import {
+  annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam,
+  buildEfficientTeam, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage
+} from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 import { ingestHuggingFaceLeaderboardEvidence } from "../src/global/intelligence/model-capability-registry-sources.js";
 import { ingestOfficialSnapshotEvidence } from "../src/global/intelligence/official-benchmark-snapshots.js";
@@ -876,4 +879,57 @@ test("Explorer's reasoning requirement is satisfied by the real ingestHuggingFac
   const team = buildAiTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } }, registry);
   const explorer = team.find((t) => t.role === "Explorer");
   assert.equal(explorer.primary.adapterId, "opencode-go", "real hle evidence from the actual production Hugging Face ingestion pipeline must decide this, not just AA's tied intelligence");
+});
+
+test("bestModelPerRoleGlobal (BEST FIT GLOBAL) never cedes a role for portfolio diversity — Astra keeps winning every role it's the real leader for, unlike buildAiTeam's coordinated PROJECT TEAM", () => {
+  // Astra is the real capability leader across every technical role here,
+  // with Muse Spark a real NEAR-equivalent alternative (within the 8%
+  // band) — close enough that buildAiTeam's own portfolio coordination
+  // forces Astra to cede a 3rd role to Muse under its 2-role concentration
+  // limit (never a decisive-override, since the gap isn't decisive). BEST
+  // FIT GLOBAL, with no such coordination, must keep Astra everywhere.
+  const aa = [
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
+    { slug: "muse-spark", name: "Muse Spark", intelligenceIndex: 85, codingIndex: 85, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "codex", models: [{ id: "gpt-6-astra" }] },
+    { adapterId: "opencode-go", models: [{ id: "muse-spark" }] }
+  ], aa);
+  const eligibility = { codex: { ok: true }, "opencode-go": { ok: true } };
+
+  const coordinated = buildAiTeam(scored, eligibility);
+  const coordinatedByRole = Object.fromEntries(coordinated.map((t) => [t.role, t]));
+  assert.ok(Object.values(coordinatedByRole).some((t) => t.primary.adapterId === "opencode-go"), "sanity check: buildAiTeam must actually hand at least one role to Muse under real portfolio concentration");
+
+  const global = bestModelPerRoleGlobal(scored, eligibility);
+  const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
+  const globalByRole = Object.fromEntries(global.map((t) => [t.role, t]));
+  for (const role of technicalRoles) {
+    assert.equal(globalByRole[role]?.primary?.adapterId, "codex", `BEST FIT GLOBAL must keep Astra for ${role} — no portfolio coordination applies here`);
+    assert.equal(globalByRole[role]?.reason, null, "a clean, uncoordinated global leader needs no diversity/concentration explanation");
+  }
+});
+
+test("bestEfficientModelPerRoleGlobal (EFFICIENT GLOBAL) also applies no portfolio coordination — same real efficiency winner for every role it clears the capability floor for", () => {
+  const aa = [
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 95, codingIndex: 95, mathIndex: null, priceInputPerMTok: 20, outputTokensPerSecond: 50 },
+    { slug: "gpt-5-6-luna", name: "GPT-5.6 Luna", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 90 }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "codex", models: [{ id: "gpt-6-astra" }] },
+    { adapterId: "opencode-go", models: [{ id: "gpt-5-6-luna" }] }
+  ], aa);
+  const eligibility = { codex: { ok: true }, "opencode-go": { ok: true } };
+  const registry = createCapabilityRegistry();
+
+  const global = bestEfficientModelPerRoleGlobal(scored, eligibility, registry);
+  const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
+  const globalByRole = Object.fromEntries(global.map((t) => [t.role, t]));
+  // Luna clears the real 80% capability floor against Astra and is
+  // meaningfully cheaper/faster — the real efficient winner for every
+  // role, with no per-role variation forced by portfolio concentration.
+  for (const role of technicalRoles) {
+    assert.equal(globalByRole[role]?.primary?.adapterId, "opencode-go", `EFFICIENT GLOBAL must keep the real cheaper/faster winner for ${role} in every role, uncoordinated`);
+  }
 });

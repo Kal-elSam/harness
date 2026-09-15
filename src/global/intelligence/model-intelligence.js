@@ -759,6 +759,107 @@ function sortByCapabilityPriority(candidates, better, modelUsage, providerTechni
 }
 
 /**
+ * BEST FIT GLOBAL: el ganador de capability real por rol, sin ninguna
+ * coordinación de portafolio — nunca cede un rol a otro modelo por límite
+ * de familia, distribución por proveedor, o independencia Builder/
+ * Reviewer. Ese tipo de coordinación existe para PROJECT TEAM (buildAiTeam),
+ * un equipo real que se va a ejecutar en conjunto; esta función responde
+ * una pregunta distinta — "¿cuál es honestamente el mejor modelo para
+ * este rol, sin nada más en juego?" — así que Muse Spark nunca gana
+ * Architect aquí solo porque Astra ya esté "usado" en otro rol.
+ *
+ * Usa el mismo sistema de roles que buildAiTeam/buildEfficientTeam
+ * (buildAiTeamRoleDefinitions/ROLE_CAPABILITIES) — no el bestModelPerRole
+ * legado (ROLE_DEFINITIONS, con "Test Author" en vez de "Tester") — para
+ * que BEST FIT GLOBAL, EFFICIENT GLOBAL y PROJECT TEAM compartan
+ * exactamente el mismo conjunto de roles.
+ * @param {Array<object>} models - scoreAvailableModels() output
+ * @param {Record<string, {ok: boolean, reason?: string}>} [eligibility]
+ * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>|null} [registry]
+ * @param {Record<string, string[]>} [roleCapabilities]
+ * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
+ */
+export function bestModelPerRoleGlobal(models, eligibility = {}, registry = null, roleCapabilities = ROLE_CAPABILITIES) {
+  const effectiveRegistry = ensureRegistry(models, registry);
+  const { roleDefinitions } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
+  const entries = [];
+  for (const { role, compute, better } of roleDefinitions) {
+    const globalRanked = rankBy(models, compute, better);
+    if (!globalRanked.length) continue;
+    const leader = globalRanked[0];
+    if (eligibility[leader.model.adapterId]?.ok === true) {
+      entries.push({ role, primary: toTeamModel(leader.model, true, effectiveRegistry), fallback: null, reason: null });
+      continue;
+    }
+    const eligibleRanked = rankEligible(models, eligibility, compute, better);
+    const fallback = eligibleRanked[0] ?? null;
+    entries.push({
+      role, primary: toTeamModel(leader.model, false, effectiveRegistry),
+      fallback: fallback ? toTeamModel(fallback.model, true, effectiveRegistry) : null,
+      reason: fallback
+        ? `Real capability leader is temporarily unavailable (${eligibility[leader.model.adapterId]?.reason ?? "not eligible"}).`
+        : "No eligible provider currently covers this role."
+    });
+  }
+  return entries;
+}
+
+/**
+ * EFFICIENT GLOBAL: el ganador real de eficiencia por rol, con el mismo
+ * piso de capacidad (capabilityFloor) que buildEfficientTeam, pero sin
+ * ninguna coordinación de portafolio — el par natural de
+ * bestModelPerRoleGlobal. Pasa Maps de uso vacíos a sortByEfficiencyPriority
+ * a propósito: sin memoria de asignaciones previas, el desempate por
+ * "menos usado" nunca puede activarse, así que la elección cae siempre en
+ * la cadena real de eficiencia (costo/duración/precio/throughput) y,
+ * recién al final, en el desempate estable por adapterId/modelId.
+ * @param {Array<object>} models - scoreAvailableModels() output
+ * @param {Record<string, {ok: boolean, reason?: string}>} [eligibility]
+ * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>|null} [registry]
+ * @param {{capabilityFloor?: number, providerCapacity?: object|null, roleCapabilities?: Record<string,string[]>}} [options]
+ * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
+ */
+export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, registry = null, options = {}) {
+  const { capabilityFloor = EFFICIENT_CAPABILITY_FLOOR, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES } = options;
+  const effectiveRegistry = ensureRegistry(models, registry);
+  const { roleDefinitions, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
+  const noPortfolioUsage = new Map();
+  const entries = [];
+  for (const { role, compute, better } of roleDefinitions) {
+    const globalRanked = rankBy(models, compute, better);
+    if (!globalRanked.length) continue;
+    const eligibleRanked = attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role]);
+    const globalLeader = globalRanked[0];
+
+    if (!eligibleRanked.length) {
+      entries.push({ role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: null, reason: "No eligible provider currently covers this role." });
+      continue;
+    }
+
+    const pool = role === "Economy" ? eligibleRanked.slice(0, 1) : adequateCandidates(eligibleRanked, eligibleRanked[0], better, capabilityFloor);
+    const chosen = sortByEfficiencyPriority(pool, effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage)[0];
+
+    const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
+    const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > eligibleRanked[0].value : globalLeader.value < eligibleRanked[0].value;
+    if (!globalLeaderEligible && globalLeaderIsStrictlyBetter) {
+      entries.push({
+        role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
+        reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`
+      });
+      continue;
+    }
+
+    const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
+    entries.push({
+      role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
+      fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
+      reason: describeEfficiencyChoice(chosen, eligibleRanked[0], effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage)
+    });
+  }
+  return entries;
+}
+
+/**
  * The "AI TEAM" distribution policy: decides which real, eligible provider
  * actually gets reserved for each role, coordinated across the whole
  * portfolio rather than seven independent per-role decisions — seven

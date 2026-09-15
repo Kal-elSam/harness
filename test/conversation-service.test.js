@@ -816,6 +816,45 @@ test("snapshot genuinely includes a real, available Cursor as an AI TEAM recomme
   assert.ok(snapshot.modelIntelligence.models.some((m) => m.adapterId === "cursor" && m.modelId === "composer-2.5"));
 });
 
+test("snapshot exposes globalGuide.capability/efficient as the real, uncoordinated per-role winners — separate from the portfolio-coordinated aiTeam/efficientTeam", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [
+      { id: "codex", available: true, launchable: true, reason: null },
+      { id: "opencode", available: true, launchable: true, reason: null }
+    ],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [{ id: "gpt-6-astra" }] }),
+    readClaudeModels: () => ({ status: "documented", models: [] }),
+    readOpenCodeModels: async ({ provider } = {}) => (
+      provider === "opencode-go" ? { status: "measured", models: [{ id: "muse-spark" }] } : { status: "measured", models: [] }
+    ),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    readArtificialAnalysisModels: async () => ({
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [
+        { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
+        { slug: "muse-spark", name: "Muse Spark", intelligenceIndex: 85, codingIndex: 85, mathIndex: null }
+      ]
+    }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
+  });
+
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  const capability = snapshot.modelIntelligence.globalGuide.capability;
+  assert.ok(capability.length > 0, "globalGuide.capability must be populated, not just present as an empty default");
+  // Astra is the real, decisive-enough-to-matter leader — globalGuide must
+  // never cede a role to Muse for portfolio diversity the way aiTeam can.
+  assert.ok(capability.every((entry) => entry.primary.adapterId === "codex"), "globalGuide.capability must keep the real per-role leader everywhere, uncoordinated");
+});
+
 test("snapshot leaves modelIntelligence at its honest unknown default when probes are disabled", async () => {
   const service = createConversationService({
     resolveRoot: async () => "/repo",

@@ -557,7 +557,10 @@ export class CockpitView {
       return [theme.fg("muted", `No model benchmark data yet${reason}`)];
     }
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-    const team = intel.aiTeam ?? [];
+    // BEST FIT GLOBAL: the real, uncoordinated per-role winner — see
+    // teamsColumnsLines()'s own comment for why this is never aiTeam.
+    // Falls back to aiTeam for a snapshot that predates globalGuide.
+    const team = intel.globalGuide?.capability ?? intel.aiTeam ?? [];
     if (!team.length) {
       const reasons = Object.entries(intel.eligibility ?? {})
         .filter(([, check]) => !check.ok)
@@ -597,10 +600,17 @@ export class CockpitView {
   teamsColumnsLines(width = 80) {
     const intel = this.snapshot?.modelIntelligence;
     if (!intel || intel.status === "unknown") return this.fitLines();
-    const aiTeam = intel.aiTeam ?? [];
+    // BEST FIT GLOBAL / EFFICIENT GLOBAL: the real, uncoordinated per-role
+    // winner — never aiTeam/efficientTeam, which apply PROJECT TEAM's own
+    // portfolio coordination (family concentration, provider distribution,
+    // Builder/Reviewer independence). Showing that coordinated result here
+    // was the real bug: a role could show a diversity pick (e.g. Muse
+    // Spark) labeled as if it were simply "the best Architect", when it
+    // only won because the true leader was already used elsewhere.
+    const aiTeam = intel.globalGuide?.capability ?? intel.aiTeam ?? [];
     if (!aiTeam.length) return this.fitLines();
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-    const efficientByRole = Object.fromEntries((intel.efficientTeam ?? []).map((entry) => [entry.role, entry]));
+    const efficientByRole = Object.fromEntries((intel.globalGuide?.efficient ?? intel.efficientTeam ?? []).map((entry) => [entry.role, entry]));
 
     const roleWidth = 10;
     const separator = " │ ";

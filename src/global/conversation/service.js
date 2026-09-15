@@ -34,7 +34,8 @@ import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-st
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
-  annotateWithRegistryEvidence, bestModelPerRole, buildAiTeam, buildEfficientTeam, listUnscoredModels, scoreAvailableModels, summarizeCatalogCoverage
+  annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam,
+  buildEfficientTeam, listUnscoredModels, scoreAvailableModels, summarizeCatalogCoverage
 } from "../intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../intelligence/model-capability-registry.js";
 import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../intelligence/model-capability-registry-sources.js";
@@ -197,7 +198,10 @@ function snapshot(projectRoot, plans, providers = {}, integrations = {}) {
     providers,
     integrations,
     usage: { codex: null, claude: null, opencode: null },
-    modelIntelligence: { status: "unknown", source: null, age: null, models: [], roles: [], eligibility: {}, coverage: [], aiTeam: [], efficientTeam: [] },
+    modelIntelligence: {
+      status: "unknown", source: null, age: null, models: [], roles: [], eligibility: {}, coverage: [],
+      globalGuide: { capability: [], efficient: [] }, aiTeam: [], efficientTeam: []
+    },
     governance: {
       methodologyOwner: "gentle-ai",
       orchestratorOwner: "kairo",
@@ -509,6 +513,25 @@ export function createConversationService(deps = {}) {
           status: aa.status, source: aa.source, age: aa.age,
           models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(scored),
           eligibility, coverage, unscoredModels,
+          // BEST FIT GLOBAL / EFFICIENT GLOBAL: the honest, uncoordinated
+          // per-role winner — never cedes a role for portfolio diversity,
+          // family concentration, or provider distribution (see
+          // bestModelPerRoleGlobal's own header for why that coordination
+          // belongs to PROJECT TEAM alone, not a "what's genuinely best"
+          // question). This is the real fix for the reported bug: the
+          // dashboard widget was showing aiTeam/efficientTeam (coordinated,
+          // portfolio-aware) as if it were this uncoordinated global view,
+          // which could silently show a real diversity pick (e.g. Muse
+          // Spark) as "the best Architect" when it only won because Astra
+          // had already been used elsewhere.
+          globalGuide: {
+            capability: bestModelPerRoleGlobal(scoredAll, eligibility, registry),
+            efficient: bestEfficientModelPerRoleGlobal(scoredAll, eligibility, registry, { providerCapacity })
+          },
+          // Kept temporarily as compatibility aliases for existing callers
+          // — PROJECT TEAM (the real, coordinated-portfolio result) once a
+          // project has actually been analyzed; today's callers still read
+          // these as the global view until the cockpit widget migrates.
           aiTeam: buildAiTeam(scoredAll, eligibility, registry),
           efficientTeam: buildEfficientTeam(scoredAll, eligibility, registry, { providerCapacity }),
           // Raw ingredients (never rendered directly) so a caller that

@@ -135,6 +135,50 @@ test("AI TEAM's compact widget honestly says so when neither primary nor fallbac
   assert.match(lines, /Economy[\s\S]*?no eligible option right now/);
 });
 
+test("BEST FIT GLOBAL: fitLines() and teamsColumnsLines() read globalGuide, never the portfolio-coordinated aiTeam/efficientTeam, when globalGuide is present", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      // aiTeam shows Muse Spark for Architect (a real diversity pick) —
+      // globalGuide.capability must win here, showing Astra instead, since
+      // globalGuide never cedes a role for portfolio concentration.
+      aiTeam: [{
+        role: "Architect",
+        primary: { adapterId: "opencode-go", modelId: "muse-spark", displayName: "Muse Spark", available: true },
+        fallback: null, reason: "Near-equivalent alternatives — assigned to a different model/provider to avoid concentration."
+      }],
+      efficientTeam: [{
+        role: "Architect",
+        primary: { adapterId: "opencode-go", modelId: "muse-spark", displayName: "Muse Spark", available: true },
+        fallback: null, reason: null
+      }],
+      globalGuide: {
+        capability: [{
+          role: "Architect",
+          primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", available: true },
+          fallback: null, reason: null
+        }],
+        efficient: [{
+          role: "Architect",
+          primary: { adapterId: "opencode-go", modelId: "gpt-5-6-luna", displayName: "GPT-5.6 Luna", available: true },
+          fallback: null, reason: null
+        }]
+      }
+    }
+  });
+  const fit = view.fitLines().join("\n");
+  assert.match(fit, /GPT-6 Astra/);
+  assert.doesNotMatch(fit, /Muse Spark/);
+
+  const columns = view.teamsColumnsLines(80).join("\n");
+  assert.match(columns, /GPT-6 Astra/);
+  assert.match(columns, /GPT-5\.6 Luna/);
+  assert.doesNotMatch(columns, /Muse Spark/);
+});
+
 test("/models writes the full primary/fallback/reason breakdown that the compact widget leaves out", () => {
   const { view } = makeView();
   view.setSnapshot({
