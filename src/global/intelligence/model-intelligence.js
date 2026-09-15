@@ -1244,18 +1244,15 @@ function resolveResourceDimension(registry, candidates) {
 }
 
 /**
- * A real candidate's "resource pressure" on the chosen dimension,
- * normalized against the BEST real value present in the pool — 1.0 for
- * the pool's own best (cheapest, fastest, whichever direction `better`
- * means), a real multiple of that for everyone else. null when this
- * candidate has no real value on the chosen dimension at all (never
- * fabricated).
+ * A real candidate's raw value on the chosen resource dimension — just a
+ * thin resolveDimension wrapper kept separate so computeBalanceScores
+ * reads clearly. Deliberately NOT normalized against another candidate's
+ * value here (see computeBalanceScores's own doc for why a ratio against
+ * the pool's cheapest candidate is wrong, and breaks outright on a real
+ * free/zero-cost model).
  */
-function resourcePressure(dimension, registry, model, bestValue) {
-  if (!dimension || bestValue == null) return null;
-  const value = resolveDimension(dimension, registry, model);
-  if (value == null) return null;
-  return dimension.better === "min" ? value / bestValue : bestValue / value;
+function resourceValue(dimension, registry, model) {
+  return dimension ? resolveDimension(dimension, registry, model) : null;
 }
 
 /**
@@ -1264,19 +1261,26 @@ function resourcePressure(dimension, registry, model, bestValue) {
  * is inherently relative to the pool's own real extremes. For every
  * candidate with a real value on the chosen resource dimension, both real
  * retention (gapValue as a fraction of the leader's) and real resource
- * pressure (see resourcePressure) are normalized against the POOL's own
- * real min/max on each axis, then scored `retentionNorm - pressureNorm`.
+ * pressure are normalized DIRECTLY against the POOL's own real min/max on
+ * each axis — `(value - min) / (max - min)` for a "min is better"
+ * dimension (0 at the pool's own cheapest/fastest-draining, 1 at its
+ * worst), or `(max - value) / (max - min)` for a "max is better" one
+ * (e.g. throughput) — then scored `retentionNorm - pressureNorm`.
  * Maximizing this rewards the candidate closest to the "good corner" —
  * high real retention AND low real resource pressure RELATIVE TO ITS
  * PEERS — a genuine knee/balance point.
  *
- * This is deliberately NOT retention/pressure (a plain ratio): that ratio
- * always anchors its denominator at the pool's own cheapest candidate
- * (pressure 1.0), so the cheapest-adequate candidate almost always wins
- * outright regardless of how much real capability it gives up — exactly
- * the "cheapest wins" ECONOMY behavior EFFICIENT must NOT collapse into.
- * Normalizing both axes against the pool's real range instead lets a
- * genuinely mid-priced, high-retention candidate outscore both extremes.
+ * This is deliberately NOT retention/pressure (a plain ratio dividing by
+ * the pool's cheapest real value): besides always anchoring the cheapest
+ * candidate's own pressure at 1.0 (collapsing EFFICIENT into ECONOMY —
+ * see the git history for that bug), a real free/zero-cost model in the
+ * pool (Artificial Analysis's own raw dataset carries hundreds of these,
+ * even where none currently reach an eligible provider catalog) makes
+ * that division either NaN (0/0, when it's also the cheapest) or Infinity
+ * (anything/0 elsewhere), silently corrupting the whole pool's comparison
+ * and always forcing the capability leader to win by default. Direct
+ * min/max normalization has
+ * no such division and handles a real zero exactly like any other value.
  *
  * With exactly two candidates, the two extremes always score identically
  * (0 each, by construction — there is no "middle" to find with only two
@@ -1288,26 +1292,28 @@ function resourcePressure(dimension, registry, model, bestValue) {
  */
 function computeBalanceScores(candidates, leader, dimension, registry) {
   if (!leader?.gapValue || !dimension) return null;
-  const allValues = candidates.map((c) => resolveDimension(dimension, registry, c.model)).filter((v) => v != null);
-  if (!allValues.length) return null;
-  const bestResourceValue = dimension.better === "min" ? Math.min(...allValues) : Math.max(...allValues);
   const points = candidates
     .map((c) => ({
       key: modelKey(c.model),
       retention: (c.gapValue ?? 0) / leader.gapValue,
-      pressure: resourcePressure(dimension, registry, c.model, bestResourceValue)
+      value: resourceValue(dimension, registry, c.model)
     }))
-    .filter((p) => p.pressure != null);
+    .filter((p) => p.value != null && Number.isFinite(p.value));
   if (points.length < 2) return null;
   const retentions = points.map((p) => p.retention);
-  const pressures = points.map((p) => p.pressure);
-  const retRange = Math.max(...retentions) - Math.min(...retentions) || 1;
-  const presRange = Math.max(...pressures) - Math.min(...pressures) || 1;
+  const values = points.map((p) => p.value);
   const minRet = Math.min(...retentions);
-  const minPres = Math.min(...pressures);
+  const retRange = Math.max(...retentions) - minRet || 1;
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const hasValueRange = maxValue > minValue;
+  const valueRange = maxValue - minValue || 1;
   const scores = new Map();
   for (const p of points) {
-    scores.set(p.key, (p.retention - minRet) / retRange - (p.pressure - minPres) / presRange);
+    const retentionNorm = (p.retention - minRet) / retRange;
+    const pressureNorm = !hasValueRange ? 0
+      : dimension.better === "min" ? (p.value - minValue) / valueRange : (maxValue - p.value) / valueRange;
+    scores.set(p.key, retentionNorm - pressureNorm);
   }
   return scores;
 }

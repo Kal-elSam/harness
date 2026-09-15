@@ -978,6 +978,93 @@ test("EFFICIENT still lets a near-equivalent real cheap model win legitimately w
   assert.equal(explorer.primary.adapterId, "codex", "a real near-equivalent (98% retention) at 1/10 the price should still legitimately win");
 });
 
+// REGRESSION: Artificial Analysis's own raw dataset carries hundreds of
+// real $0-priced models, and any of them reaching an eligible provider
+// catalog would trigger this. computeBalanceScores used to normalize
+// resource pressure via
+// value/bestValue (a ratio against the pool's cheapest real value) —
+// with a real free candidate this is 0/0 (NaN) or x/0 (Infinity),
+// corrupting the whole pool's comparison and always forcing the
+// capability leader to win by default. Fixed by normalizing raw values
+// directly against the pool's own min/max instead of dividing by one of
+// them (see computeBalanceScores's own doc).
+
+test("REGRESSION: a real free (price $0) candidate in the pool must not corrupt the balance score or force the leader to win by default", () => {
+  const aa = [
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    // The real balance point — same as the earlier balance-point test,
+    // just with a genuinely free real candidate also present this time.
+    { slug: "middle-model", name: "Middle", intelligenceIndex: 87, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
+    { slug: "free-model", name: "Free", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "middle-model" }] },
+    { adapterId: "opencode-go", models: [{ id: "free-model" }] }
+  ], aa);
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "codex", "the real balance point must still win with a free candidate in the pool — the old ratio-based bug always defaulted to the leader here");
+});
+
+test("REGRESSION: two real free (price $0) candidates are still compared on real retention, not collapsed by a 0/0 division", () => {
+  const aa = [
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "free-high", name: "FreeHigh", intelligenceIndex: 85, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 },
+    { slug: "free-low", name: "FreeLow", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "free-high" }] },
+    { adapterId: "opencode-go", models: [{ id: "free-low" }] }
+  ], aa);
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "codex", "with two real free candidates tied on price (pressure), the one retaining more real capability must win");
+});
+
+test("REGRESSION: when every real candidate reports the same price (including all $0), the capability leader wins deterministically instead of a NaN-driven default", () => {
+  const aa = [
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 },
+    { slug: "middle-model", name: "Middle", intelligenceIndex: 87, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 },
+    { slug: "weak-model", name: "Weak", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "middle-model" }] },
+    { adapterId: "opencode-go", models: [{ id: "weak-model" }] }
+  ], aa);
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "claude", "with zero real price range to compare, retention alone must decide, and it must resolve to the real leader, never an undefined/NaN pick");
+});
+
+test("REGRESSION: the real balance-point pick does not depend on the input order of the candidate pool", () => {
+  const buildTeam = (catalogOrder) => {
+    const aa = [
+      { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+      { slug: "middle-model", name: "Middle", intelligenceIndex: 87, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
+      { slug: "free-model", name: "Free", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
+    ];
+    const scored = scoreAvailableModels(catalogOrder, aa);
+    return buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
+  };
+  const forward = buildTeam([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "middle-model" }] },
+    { adapterId: "opencode-go", models: [{ id: "free-model" }] }
+  ]);
+  const reversed = buildTeam([
+    { adapterId: "opencode-go", models: [{ id: "free-model" }] },
+    { adapterId: "codex", models: [{ id: "middle-model" }] },
+    { adapterId: "claude", models: [{ id: "leader-model" }] }
+  ]);
+  const forwardExplorer = forward.find((t) => t.role === "Explorer");
+  const reversedExplorer = reversed.find((t) => t.role === "Explorer");
+  assert.equal(forwardExplorer.primary.adapterId, "codex");
+  assert.equal(reversedExplorer.primary.adapterId, forwardExplorer.primary.adapterId, "the real balance-point winner must not depend on the order candidates were scored in");
+});
+
 test("a role's optional metric can be satisfied by real registry evidence from any connected source, not just the AA field baked onto the model", () => {
   const aa = [
     // Neither model reports gpqa via AA at all — the registry is the only
