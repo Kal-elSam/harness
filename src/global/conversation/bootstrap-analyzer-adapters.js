@@ -41,7 +41,10 @@ import { verifyClaudeSubscriptionAuth as defaultVerifyClaudeSubscriptionAuth } f
 import { readClaudeModels as defaultReadClaudeModels } from "../observability/claude-models.js";
 import { readCursorModels as defaultReadCursorModels } from "../observability/cursor-models.js";
 import { probeCursorAuth as defaultProbeCursorAuth } from "../observability/cursor-auth.js";
-import { spawn as defaultSpawn } from "node:child_process";
+import {
+  getCursorIsolationStatus as defaultGetCursorIsolationStatus,
+  runCursorSandboxedBootstrap as defaultRunCursorSandboxedBootstrap
+} from "./cursor-sandbox.js";
 
 export function createCodexBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}) {
   const runSandboxed = deps.runCodexSandboxedBootstrap ?? defaultRunCodexSandboxedBootstrap;
@@ -124,14 +127,11 @@ const CURSOR_AUTO_IDS = new Set(["auto", "cursor:auto", "cursor-auto"]);
 const CURSOR_AUTO_CANONICAL = "cursor:auto";
 const CURSOR_ANALYZE_TIMEOUT_MS = 180_000;
 
-function unknownCursorResult(error) {
-  return { status: "error", answer: null, error: String(error) };
-}
-
 export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}) {
   const listModels = deps.readCursorModels ?? defaultReadCursorModels;
   const probeAuth = deps.probeCursorAuth ?? defaultProbeCursorAuth;
-  const spawnFn = deps.spawn ?? defaultSpawn;
+  const getIsolation = deps.getCursorIsolationStatus ?? defaultGetCursorIsolationStatus;
+  const runSandboxed = deps.runCursorSandboxedBootstrap ?? defaultRunCursorSandboxedBootstrap;
   const isAuto = modelId != null && CURSOR_AUTO_IDS.has(String(modelId).toLowerCase());
   // Cursor Auto is a distinct, real candidate identity, never an implicit
   // default for a missing selection — its own outcomes are ALWAYS
@@ -160,14 +160,16 @@ export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
     //     observability/cursor-auth.js's probeCursorAuth, a real
     //     invocation-based probe, not the unreliable status/whoami claim.
     //  3. Isolation proof, for BOTH explicit models and Cursor Auto alike:
-    //     unlike Codex's sandbox-exec and Claude's --restricted (both
-    //     independently canary-tested — a real out-of-bounds read denied,
-    //     not assumed from --help text), Cursor's --sandbox enabled has
-    //     NOT been empirically proven, and with zero models enabled on
-    //     this account there is currently nothing to canary-test against.
-    //     Cursor stays ineligible for THAT reason alone even when
-    //     auth/catalog would otherwise pass — the same standard as every
-    //     other adapter, never relaxed for Auto either.
+    //     Cursor's OWN --sandbox enabled does NOT confine reads (verified
+    //     empirically — a real out-of-bounds absolute-path read under
+    //     --sandbox enabled alone succeeded and disclosed real content).
+    //     The real boundary is cursor-sandbox.js's external macOS
+    //     sandbox-exec wrapper (mirroring codex-sandbox.js), independently
+    //     canary-tested and proven to hold: an in-bounds read succeeds, an
+    //     out-of-bounds one is denied ("Permission denied"). isolation:
+    //     "verified" + canaryTested: true only when that mechanism is
+    //     actually available (macOS + sandbox-exec present) — never on
+    //     any other platform, and never via Cursor's own --sandbox flag.
     async checkEligibility() {
       if (!modelId) {
         return {
@@ -205,58 +207,20 @@ export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
           return { eligible: false, reason: auth.reason, isolation: "unverified", canaryTested: false };
         }
       }
-      return {
-        eligible: false,
-        reason: "Cursor's --sandbox enabled read confinement has not been empirically canary-tested yet.",
-        isolation: "unverified", canaryTested: false
-      };
+      const isolation = await getIsolation(deps.isolationDeps ?? {});
+      if (!isolation.available) {
+        return { eligible: false, reason: isolation.reason, isolation: "unverified", canaryTested: false };
+      }
+      return { eligible: true, isolation: "verified", canaryTested: true };
     },
-    // NOT yet live-tested end-to-end — this account has no enabled models
-    // to invoke, so this has only been unit-tested with injected fakes.
-    // Built from the real, verified `cursor-agent --help` flags:
-    // --mode ask (read-only Q&A), --sandbox enabled, --workspace (confines
-    // the agent's own working root), --model (only for an explicit
-    // model — Cursor Auto omits --model entirely, letting the CLI route
-    // internally; "cursor:auto" is never passed as --model's literal
-    // value, since Cursor wouldn't recognize it as a real model id).
-    // Uses --output-format json (a single parseable blob, like
-    // quick-ask.js's askClaude) rather than the plan's suggested
-    // stream-json — simpler to parse correctly without a real example of
-    // Cursor's stream-json shape to verify against; revisit if a real
-    // invocation later shows json insufficient.
+    // Routed through cursor-sandbox.js's external sandbox-exec wrapper —
+    // never a bare `cursor-agent` spawn, since Cursor's own --sandbox
+    // enabled does not confine reads (see that module's header for the
+    // full empirical finding). Cursor Auto omits a model id; the wrapper
+    // itself omits --model entirely for that case.
     async analyze({ question, snapshotRoot, timeoutMs = CURSOR_ANALYZE_TIMEOUT_MS }) {
-      const args = [
-        "-p", question, "--output-format", "json", "--mode", "ask",
-        "--sandbox", "enabled", "--workspace", snapshotRoot
-      ];
-      if (!isAuto) args.push("--model", modelId);
-      return new Promise((resolve) => {
-        let child;
-        try {
-          child = spawnFn("cursor-agent", args, { cwd: snapshotRoot, stdio: ["ignore", "pipe", "pipe"] });
-        } catch (error) {
-          resolve(unknownCursorResult(error?.message ?? error));
-          return;
-        }
-        let stdout = "";
-        let finished = false;
-        const timer = setTimeout(() => finish(unknownCursorResult("cursor-agent -p timed out")), timeoutMs);
-        function finish(result) {
-          if (finished) return;
-          finished = true;
-          clearTimeout(timer);
-          try { child.kill?.(); } catch { /* best effort */ }
-          resolve(result);
-        }
-        child.stdout?.on("data", (chunk) => { stdout += chunk; });
-        child.once?.("error", (error) => finish(unknownCursorResult(error?.message ?? error)));
-        child.once?.("close", () => {
-          let parsed;
-          try { parsed = JSON.parse(stdout); } catch { return finish(unknownCursorResult("malformed JSON from cursor-agent -p")); }
-          const answer = parsed?.result ?? parsed?.text ?? parsed?.message ?? null;
-          if (typeof answer !== "string") return finish(unknownCursorResult("no result text in cursor-agent -p response"));
-          finish({ status: "answered", answer, error: null });
-        });
+      return runSandboxed({
+        question, model: isAuto ? null : modelId, snapshotRoot, timeoutMs, deps: deps.isolationDeps ?? {}
       });
     }
   };

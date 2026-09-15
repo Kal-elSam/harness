@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
 import {
   createBootstrapAnalyzerAdapter, createCodexBootstrapAnalyzerAdapter, createClaudeBootstrapAnalyzerAdapter,
   createCursorBootstrapAnalyzerAdapter
@@ -124,19 +123,32 @@ test("createCursorBootstrapAnalyzerAdapter's Cursor Auto is exempt from the expl
   assert.match(eligibility.reason, /Authentication required/);
 });
 
-test("createCursorBootstrapAnalyzerAdapter's Cursor Auto, once real authentication is actually confirmed, still lands on the isolation gate — the same standard as every other candidate", async () => {
-  const adapter = createCursorBootstrapAnalyzerAdapter({
+test("createCursorBootstrapAnalyzerAdapter's Cursor Auto, once real authentication is confirmed, becomes eligible only when the real macOS sandbox-exec boundary is actually available", async () => {
+  const eligible = createCursorBootstrapAnalyzerAdapter({
     modelId: "cursor:auto",
     deps: {
       readCursorModels: async () => { throw new Error("must never be called for Cursor Auto"); },
-      probeCursorAuth: async () => ({ authenticated: true, status: "measured", source: "test", reason: null })
+      probeCursorAuth: async () => ({ authenticated: true, status: "measured", source: "test", reason: null }),
+      getCursorIsolationStatus: async () => ({ available: true, platform: "darwin", boundaryVerified: true, reason: null })
     }
   });
-  const eligibility = await adapter.checkEligibility();
-  assert.equal(eligibility.eligible, false);
-  assert.equal(eligibility.isolation, "unverified");
-  assert.equal(eligibility.canaryTested, false);
-  assert.match(eligibility.reason, /canary-tested/);
+  const eligibility = await eligible.checkEligibility();
+  assert.equal(eligibility.eligible, true);
+  assert.equal(eligibility.isolation, "verified");
+  assert.equal(eligibility.canaryTested, true);
+
+  const noBoundary = createCursorBootstrapAnalyzerAdapter({
+    modelId: "cursor:auto",
+    deps: {
+      probeCursorAuth: async () => ({ authenticated: true, status: "measured", source: "test", reason: null }),
+      getCursorIsolationStatus: async () => ({ available: false, platform: "linux", boundaryVerified: false, reason: "macOS only" })
+    }
+  });
+  const ineligible = await noBoundary.checkEligibility();
+  assert.equal(ineligible.eligible, false);
+  assert.equal(ineligible.isolation, "unverified");
+  assert.equal(ineligible.canaryTested, false);
+  assert.equal(ineligible.reason, "macOS only");
 });
 
 test("createCursorBootstrapAnalyzerAdapter's Cursor Auto is ineligible when the real auth probe itself fails — never silently treated as authenticated", async () => {
@@ -179,77 +191,55 @@ test("createCursorBootstrapAnalyzerAdapter is ineligible when modelId isn't in t
   assert.match(eligibility.reason, /not-a-real-model/);
 });
 
-test("createCursorBootstrapAnalyzerAdapter is ineligible even with real auth and a real catalog model, because --sandbox enabled has never been canary-tested — the same standard as every other adapter", async () => {
+test("createCursorBootstrapAnalyzerAdapter is ineligible with real auth and a real catalog model when the real sandbox-exec boundary isn't available on this platform", async () => {
   const adapter = createCursorBootstrapAnalyzerAdapter({
     modelId: "gpt-6",
-    deps: { readCursorModels: async () => ({ status: "measured", source: "test", models: ["gpt-6"], error: null }) }
+    deps: {
+      readCursorModels: async () => ({ status: "measured", source: "test", models: ["gpt-6"], error: null }),
+      getCursorIsolationStatus: async () => ({ available: false, platform: "linux", boundaryVerified: false, reason: "macOS only" })
+    }
   });
   const eligibility = await adapter.checkEligibility();
   assert.equal(eligibility.eligible, false);
   assert.equal(eligibility.isolation, "unverified");
   assert.equal(eligibility.canaryTested, false);
-  assert.match(eligibility.reason, /canary-tested/);
 });
 
-test("createCursorBootstrapAnalyzerAdapter.analyze spawns the real verified CLI flags with an explicit model, never auto", async () => {
-  const seenArgs = [];
-  const spawn = (cmd, args) => {
-    seenArgs.push([cmd, args]);
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.kill = () => {};
-    setTimeout(() => {
-      child.stdout.emit("data", JSON.stringify({ result: "Real answer." }));
-      child.emit("close", 0);
-    }, 0);
-    return child;
-  };
-  const adapter = createCursorBootstrapAnalyzerAdapter({ modelId: "gpt-6", deps: { spawn } });
+test("createCursorBootstrapAnalyzerAdapter is eligible with real auth, a real catalog model, and a real available sandbox boundary — verified, canary-tested", async () => {
+  const adapter = createCursorBootstrapAnalyzerAdapter({
+    modelId: "gpt-6",
+    deps: {
+      readCursorModels: async () => ({ status: "measured", source: "test", models: ["gpt-6"], error: null }),
+      getCursorIsolationStatus: async () => ({ available: true, platform: "darwin", boundaryVerified: true, reason: null })
+    }
+  });
+  const eligibility = await adapter.checkEligibility();
+  assert.equal(eligibility.eligible, true);
+  assert.equal(eligibility.isolation, "verified");
+  assert.equal(eligibility.canaryTested, true);
+});
+
+test("createCursorBootstrapAnalyzerAdapter.analyze delegates to the real sandboxed runner with an explicit model, never auto", async () => {
+  let seenArgs;
+  const adapter = createCursorBootstrapAnalyzerAdapter({
+    modelId: "gpt-6",
+    deps: { runCursorSandboxedBootstrap: async (args) => { seenArgs = args; return { status: "answered", answer: "Real answer.", error: null }; } }
+  });
   const result = await adapter.analyze({ question: "investigate", snapshotRoot: "/tmp/snap", timeoutMs: 5000 });
   assert.equal(result.status, "answered");
   assert.equal(result.answer, "Real answer.");
-  const [cmd, args] = seenArgs[0];
-  assert.equal(cmd, "cursor-agent");
-  assert.ok(args.includes("--sandbox"));
-  assert.ok(args.includes("enabled"));
-  assert.ok(args.includes("--mode"));
-  assert.ok(args.includes("ask"));
-  assert.ok(args.includes("--workspace"));
-  assert.ok(args.includes("/tmp/snap"));
-  assert.ok(args.includes("--model"));
-  assert.ok(args.includes("gpt-6"));
+  assert.equal(seenArgs.model, "gpt-6");
+  assert.equal(seenArgs.snapshotRoot, "/tmp/snap");
 });
 
-test("createCursorBootstrapAnalyzerAdapter.analyze omits --model entirely for Cursor Auto — never passes the literal 'cursor:auto' as a model id Cursor wouldn't recognize", async () => {
-  const seenArgs = [];
-  const spawn = (cmd, args) => {
-    seenArgs.push([cmd, args]);
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.kill = () => {};
-    setTimeout(() => {
-      child.stdout.emit("data", JSON.stringify({ result: "Real answer." }));
-      child.emit("close", 0);
-    }, 0);
-    return child;
-  };
-  const adapter = createCursorBootstrapAnalyzerAdapter({ modelId: "cursor:auto", deps: { spawn } });
+test("createCursorBootstrapAnalyzerAdapter.analyze passes model: null to the sandboxed runner for Cursor Auto — never the literal 'cursor:auto' string", async () => {
+  let seenArgs;
+  const adapter = createCursorBootstrapAnalyzerAdapter({
+    modelId: "cursor:auto",
+    deps: { runCursorSandboxedBootstrap: async (args) => { seenArgs = args; return { status: "answered", answer: "ok", error: null }; } }
+  });
   await adapter.analyze({ question: "investigate", snapshotRoot: "/tmp/snap", timeoutMs: 5000 });
-  const [, args] = seenArgs[0];
-  assert.equal(args.includes("--model"), false, "Cursor Auto must let the CLI route internally, never pass a fake --model value");
-});
-
-test("createCursorBootstrapAnalyzerAdapter.analyze fails closed on malformed JSON or a missing result field", async () => {
-  const malformedSpawn = () => {
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.kill = () => {};
-    setTimeout(() => { child.stdout.emit("data", "not json"); child.emit("close", 0); }, 0);
-    return child;
-  };
-  const adapter = createCursorBootstrapAnalyzerAdapter({ modelId: "gpt-6", deps: { spawn: malformedSpawn } });
-  const result = await adapter.analyze({ question: "q", snapshotRoot: "/tmp/snap", timeoutMs: 5000 });
-  assert.equal(result.status, "error");
+  assert.equal(seenArgs.model, null);
 });
 
 test("createBootstrapAnalyzerAdapter dispatches to the right real factory by adapterId", () => {

@@ -17,6 +17,12 @@ function fakeSpawn({ stdout = "", stderr = "", code = 0, signal = null, errorEve
   return child;
 }
 
+test("probeCursorAuth always passes --trust — the probe's cwd is an OS tmpdir cursor-agent has never seen, and without --trust a real invocation blocks on an interactive Workspace Trust prompt instead of running", async () => {
+  let seenArgs;
+  await probeCursorAuth({ spawn: (cmd, args) => { seenArgs = args; return fakeSpawn({ stdout: JSON.stringify({ result: "ok" }) }); } });
+  assert.ok(seenArgs.includes("--trust"));
+});
+
 test("probeCursorAuth reports authenticated: false with a concrete reason on the real 'Authentication required' failure mode — never trusts status/whoami's unreliable claim", async () => {
   const result = await probeCursorAuth({
     spawn: () => fakeSpawn({ stderr: "Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.", code: 0 })

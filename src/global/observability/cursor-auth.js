@@ -16,7 +16,16 @@ import { tmpdir } from "node:os";
 // has NOT been confirmed whether a genuinely authenticated probe call
 // itself consumes real usage, so this should only be called where a real
 // eligibility decision is actually needed, not on a hot path.
-const DEFAULT_TIMEOUT_MS = 20_000;
+//
+// --trust is required here too (verified empirically — the probe's cwd,
+// an OS tmpdir cursor-agent has never seen, otherwise triggers an
+// interactive "Workspace Trust Required" prompt that blocks non-
+// interactive use, exactly like a real Bootstrap Analysis snapshot dir
+// would without it).
+// A real -p call to a real model has been observed taking just over
+// 20s — verified empirically, not assumed — so this needs real margin,
+// not a tight bound.
+const DEFAULT_TIMEOUT_MS = 45_000;
 const SOURCE = "cursor-agent -p (probe)";
 const AUTH_REQUIRED_PATTERN = /authentication required/i;
 
@@ -37,7 +46,7 @@ export async function probeCursorAuth({
 } = {}) {
   const args = [
     "-p", "Reply with the single word: ok", "--output-format", "json",
-    "--mode", "ask", "--sandbox", "enabled", "--workspace", cwd
+    "--mode", "ask", "--sandbox", "enabled", "--workspace", cwd, "--trust"
   ];
   let child;
   try {
