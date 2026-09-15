@@ -120,6 +120,7 @@ export function createClaudeBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
 }
 
 const CURSOR_AUTO_IDS = new Set(["auto", "cursor:auto", "cursor-auto"]);
+const CURSOR_AUTO_CANONICAL = "cursor:auto";
 const CURSOR_ANALYZE_TIMEOUT_MS = 180_000;
 
 function unknownCursorResult(error) {
@@ -129,51 +130,61 @@ function unknownCursorResult(error) {
 export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}) {
   const listModels = deps.readCursorModels ?? defaultReadCursorModels;
   const spawnFn = deps.spawn ?? defaultSpawn;
+  const isAuto = modelId != null && CURSOR_AUTO_IDS.has(String(modelId).toLowerCase());
+  // Cursor Auto is a distinct, real candidate identity, never an implicit
+  // default for a missing selection — its own outcomes are ALWAYS
+  // attributed to this canonical "cursor:auto" id, never to a guessed
+  // inner model (Cursor never discloses which model actually answered in
+  // Auto mode). A caller must explicitly choose it.
+  const normalizedModelId = isAuto ? CURSOR_AUTO_CANONICAL : modelId;
   return {
     adapterId: "cursor",
-    modelId,
-    // Real eligibility — currently, honestly, negative. Three real gates,
-    // all actually checked, none skipped or assumed:
-    //  1. Cursor Auto exclusion (per plan): no modelId, or an
-    //     "auto"-shaped one, is rejected outright — cursor:auto does not
-    //     guarantee which underlying model actually ran, so it can never
-    //     be attributed the way an explicit model can.
-    //  2. Real per-account model catalog (observability/cursor-models.js's
-    //     readCursorModels — a real `cursor-agent models` call). On this
-    //     machine the account genuinely has zero models enabled
-    //     ("No models available for this account.") — a real, current
-    //     blocker, not hypothetical.
-    //  3. Isolation proof: unlike Codex's sandbox-exec and Claude's
-    //     --restricted (both independently canary-tested — a real
-    //     out-of-bounds read denied, not assumed from --help text),
-    //     Cursor's --sandbox enabled has NOT been empirically proven, and
-    //     with zero models enabled on this account there is currently
-    //     nothing to canary-test against. Cursor is reported ineligible
-    //     for THAT reason alone even when auth/catalog would otherwise
-    //     pass — the same standard as every other adapter, never relaxed.
+    modelId: normalizedModelId,
+    // Real eligibility — currently, honestly, negative. Real gates, none
+    // skipped or assumed:
+    //  1. A modelId must actually be provided — either a real explicit
+    //     model or the canonical "cursor:auto" opaque-router candidate;
+    //     an absent selection is never silently defaulted to either.
+    //  2. For an EXPLICIT model: checked against the real per-account
+    //     catalog (observability/cursor-models.js's readCursorModels — a
+    //     real `cursor-agent models` call, exit-status-checked). On this
+    //     machine the account genuinely has zero models enabled — a real,
+    //     current blocker, not hypothetical. Cursor Auto is exempt from
+    //     this check (it's a routing mode, not a listed catalog model).
+    //  3. Isolation proof, for BOTH explicit models and Cursor Auto alike:
+    //     unlike Codex's sandbox-exec and Claude's --restricted (both
+    //     independently canary-tested — a real out-of-bounds read denied,
+    //     not assumed from --help text), Cursor's --sandbox enabled has
+    //     NOT been empirically proven, and with zero models enabled on
+    //     this account there is currently nothing to canary-test against.
+    //     Cursor stays ineligible for THAT reason alone even when
+    //     auth/catalog would otherwise pass — the same standard as every
+    //     other adapter, never relaxed for Auto either.
     async checkEligibility() {
-      if (!modelId || CURSOR_AUTO_IDS.has(String(modelId).toLowerCase())) {
+      if (!modelId) {
         return {
           eligible: false,
-          reason: "Cursor Auto does not guarantee model attribution and is excluded from Bootstrap Analysis — pass an explicit model.",
+          reason: "No Cursor model selection was provided — pass an explicit model or \"cursor:auto\".",
           isolation: "unverified", canaryTested: false
         };
       }
-      const catalog = await listModels();
-      if (catalog.status !== "measured") {
-        return {
-          eligible: false, reason: `Could not read Cursor's real model catalog: ${catalog.error ?? catalog.status}`,
-          isolation: "unverified", canaryTested: false
-        };
-      }
-      if (catalog.models.length === 0) {
-        return { eligible: false, reason: "No models are enabled for this Cursor account.", isolation: "unverified", canaryTested: false };
-      }
-      if (!catalog.models.includes(modelId)) {
-        return {
-          eligible: false, reason: `"${modelId}" is not in this account's real Cursor model catalog.`,
-          isolation: "unverified", canaryTested: false
-        };
+      if (!isAuto) {
+        const catalog = await listModels();
+        if (catalog.status !== "measured") {
+          return {
+            eligible: false, reason: `Could not read Cursor's real model catalog: ${catalog.error ?? catalog.status}`,
+            isolation: "unverified", canaryTested: false
+          };
+        }
+        if (catalog.models.length === 0) {
+          return { eligible: false, reason: "No models are enabled for this Cursor account.", isolation: "unverified", canaryTested: false };
+        }
+        if (!catalog.models.includes(modelId)) {
+          return {
+            eligible: false, reason: `"${modelId}" is not in this account's real Cursor model catalog.`,
+            isolation: "unverified", canaryTested: false
+          };
+        }
       }
       return {
         eligible: false,
@@ -185,7 +196,10 @@ export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
     // to invoke, so this has only been unit-tested with injected fakes.
     // Built from the real, verified `cursor-agent --help` flags:
     // --mode ask (read-only Q&A), --sandbox enabled, --workspace (confines
-    // the agent's own working root), --model (explicit, never auto).
+    // the agent's own working root), --model (only for an explicit
+    // model — Cursor Auto omits --model entirely, letting the CLI route
+    // internally; "cursor:auto" is never passed as --model's literal
+    // value, since Cursor wouldn't recognize it as a real model id).
     // Uses --output-format json (a single parseable blob, like
     // quick-ask.js's askClaude) rather than the plan's suggested
     // stream-json — simpler to parse correctly without a real example of
@@ -194,8 +208,9 @@ export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
     async analyze({ question, snapshotRoot, timeoutMs = CURSOR_ANALYZE_TIMEOUT_MS }) {
       const args = [
         "-p", question, "--output-format", "json", "--mode", "ask",
-        "--sandbox", "enabled", "--workspace", snapshotRoot, "--model", modelId
+        "--sandbox", "enabled", "--workspace", snapshotRoot
       ];
+      if (!isAuto) args.push("--model", modelId);
       return new Promise((resolve) => {
         let child;
         try {

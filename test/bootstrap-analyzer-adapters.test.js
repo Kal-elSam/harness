@@ -97,18 +97,30 @@ test("createClaudeBootstrapAnalyzerAdapter.analyze delegates to askProvider with
   assert.equal(seenArgs.cwd, "/tmp/snap");
 });
 
-test("createCursorBootstrapAnalyzerAdapter rejects Cursor Auto outright — no modelId, or an auto-shaped one, never guarantees model attribution", async () => {
+test("createCursorBootstrapAnalyzerAdapter rejects a MISSING selection outright — Cursor Auto must be chosen explicitly, never an implicit default", async () => {
   const noModel = createCursorBootstrapAnalyzerAdapter({ modelId: null });
   const noModelResult = await noModel.checkEligibility();
   assert.equal(noModelResult.eligible, false);
-  assert.match(noModelResult.reason, /Cursor Auto/);
+  assert.match(noModelResult.reason, /No Cursor model selection/);
+});
 
+test("createCursorBootstrapAnalyzerAdapter normalizes every Cursor Auto spelling to the canonical 'cursor:auto' identity — outcomes are always attributed there, never to a guessed inner model", () => {
   for (const auto of ["auto", "Auto", "cursor:auto", "cursor-auto"]) {
     const adapter = createCursorBootstrapAnalyzerAdapter({ modelId: auto });
-    const result = await adapter.checkEligibility();
-    assert.equal(result.eligible, false, `"${auto}" must be rejected as Cursor Auto`);
-    assert.match(result.reason, /Cursor Auto/);
+    assert.equal(adapter.modelId, "cursor:auto", `"${auto}" must normalize to the canonical id`);
   }
+});
+
+test("createCursorBootstrapAnalyzerAdapter's Cursor Auto is exempt from the explicit per-account catalog check (it's a routing mode, not a listed model) but still gated on the isolation proof, the same standard as every other candidate", async () => {
+  const adapter = createCursorBootstrapAnalyzerAdapter({
+    modelId: "cursor:auto",
+    deps: { readCursorModels: async () => { throw new Error("must never be called for Cursor Auto"); } }
+  });
+  const eligibility = await adapter.checkEligibility();
+  assert.equal(eligibility.eligible, false);
+  assert.equal(eligibility.isolation, "unverified");
+  assert.equal(eligibility.canaryTested, false);
+  assert.match(eligibility.reason, /canary-tested/);
 });
 
 test("createCursorBootstrapAnalyzerAdapter is ineligible when the real per-account model catalog is empty — a real, current fact, not a stub", async () => {
@@ -180,6 +192,25 @@ test("createCursorBootstrapAnalyzerAdapter.analyze spawns the real verified CLI 
   assert.ok(args.includes("/tmp/snap"));
   assert.ok(args.includes("--model"));
   assert.ok(args.includes("gpt-6"));
+});
+
+test("createCursorBootstrapAnalyzerAdapter.analyze omits --model entirely for Cursor Auto — never passes the literal 'cursor:auto' as a model id Cursor wouldn't recognize", async () => {
+  const seenArgs = [];
+  const spawn = (cmd, args) => {
+    seenArgs.push([cmd, args]);
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.kill = () => {};
+    setTimeout(() => {
+      child.stdout.emit("data", JSON.stringify({ result: "Real answer." }));
+      child.emit("close", 0);
+    }, 0);
+    return child;
+  };
+  const adapter = createCursorBootstrapAnalyzerAdapter({ modelId: "cursor:auto", deps: { spawn } });
+  await adapter.analyze({ question: "investigate", snapshotRoot: "/tmp/snap", timeoutMs: 5000 });
+  const [, args] = seenArgs[0];
+  assert.equal(args.includes("--model"), false, "Cursor Auto must let the CLI route internally, never pass a fake --model value");
 });
 
 test("createCursorBootstrapAnalyzerAdapter.analyze fails closed on malformed JSON or a missing result field", async () => {
