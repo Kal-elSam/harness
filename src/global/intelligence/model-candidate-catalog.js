@@ -17,13 +17,15 @@
 // would mean inventing a number no provider actually gives us. Re-audit
 // before adding it, never assume it stays true forever.
 //
-// lineageKey/generation/lifecycle are always null/null/"unknown" in this
-// module — real generation-supersession detection (which family-specific
-// version schemes are comparable, which aren't) is real, undesigned work
-// deferred to its own increment. A model is NEVER excluded from this
-// catalog, or silently marked superseded, just because its lineage is
-// unknown — see the module's own accompanying plan for why that's a hard
-// requirement, not a nice-to-have.
+// lineageKey/generation are populated only for the recognized, conservative
+// families in LINEAGE_PARSERS (see its own doc) — every other candidate
+// gets null/null, never a guess. lifecycle is computed from THAT: a
+// candidate is "superseded" only when a real, strictly newer generation
+// under the exact same lineageKey is ALSO present in this same catalog
+// (i.e. genuinely accessible, not hypothetical); everything else —
+// unrecognized lineage, or the newest (or only) generation within a
+// recognized one — is "current" or "unknown", never excluded from
+// anything downstream just because its lineage couldn't be determined.
 
 import { matchArtificialAnalysisScore } from "./model-intelligence.js";
 
@@ -36,9 +38,9 @@ import { matchArtificialAnalysisScore } from "./model-intelligence.js";
  * @property {string} adapterId - "codex" | "claude" | "cursor" | "opencode-go".
  * @property {"automatic"|"manual"} accessMode - whether Kairo can actually launch this candidate itself right now, or whether it's a real, recommendable option the human runs manually (Cursor always; OpenCode Go until its own empirical automatic-execution proof lands — see this module's own doc).
  * @property {"scored"|"partial"|"unscored"} evidenceStatus - "scored": AA matched this exact model AND reports at least one of intelligenceIndex/codingIndex. "partial": AA matched it but both composite indices are null (real match, thin evidence). "unscored": no confident AA match at all. Never role-specific — see this module's own doc for why.
- * @property {string|null} lineageKey - real, recognized model family/lineage — always null in this increment (deferred).
- * @property {string|null} generation - a real, comparable version within that lineage — always null in this increment (deferred).
- * @property {"current"|"superseded"|"unknown"} lifecycle - always "unknown" in this increment (deferred) — an unknown lineage/generation NEVER excludes a candidate from anything downstream.
+ * @property {string|null} lineageKey - real, recognized model family/lineage (see LINEAGE_PARSERS) — null when the modelId doesn't match any recognized, conservative pattern. Never guessed.
+ * @property {number|null} generation - a real, comparable version number within that lineage — null whenever lineageKey is null.
+ * @property {"current"|"superseded"|"unknown"} lifecycle - "superseded" only when a real, strictly newer generation under the SAME lineageKey is also present in this catalog; "current" when it's the newest (or only) generation in a recognized lineage; "unknown" whenever lineageKey is null. An unknown lineage NEVER excludes a candidate from anything downstream.
  * @property {{inputPerMTok: number, outputPerMTok: number}|null} resourceCost - real, provider-reported cost, when the provider actually reports one (OpenCode Go today) — never estimated or carried over from a different model.
  */
 
@@ -106,6 +108,108 @@ export function stripDisplayVariant(rawDisplayName) {
   return { modelName, variant };
 }
 
+// Real, conservative lineage parsers — one per recognized, unambiguous
+// naming scheme. Each entry's `match` is deliberately STRICT (anchored
+// start and end, no wildcard trailing segments): a modelId that doesn't
+// match EXACTLY falls through to the next parser, and if none match, the
+// candidate gets lineageKey/generation null — "unknown", never a guess.
+// This strictness is itself the safety boundary: Cursor's own re-exposed
+// ids append effort-variant suffixes this session's catalog audit found
+// (e.g. "gpt-5.6-sol-high-fast", "claude-opus-5-thinking-high") — those
+// intentionally DON'T match here and stay unknown, rather than trying to
+// also parse Cursor's much larger, effort-suffixed id space in this same
+// pass (a separate, later increment, not this one).
+//
+// claude-{opus|sonnet|fable|haiku}-{version}: Claude's own catalog
+// (claude-models.js, "documented" — hand-maintained, regular naming).
+// Version "4-8" parses as generation 4.8, "5" as 5.0 — real, verified
+// against this session's live audit: opus-4-6 < opus-4-7 < opus-4-8 <
+// opus-5; sonnet-4-6 < sonnet-5; fable-5 < fable-5-1.
+//
+// glm-{version}[-tier]: OpenCode Go's GLM models. A tier suffix (e.g.
+// "-flash") produces a DIFFERENT lineageKey ("glm-flash") from the bare
+// line ("glm") — verified against real, very differently-priced siblings
+// (glm-5.3 at 1.4/4.4 vs glm-5.3-flash at 0.15/0.5 real cost): genuinely
+// different products, never comparable generations of each other.
+//
+// gpt-{version}[-name]: Codex's own catalog. Same tier-suffix-changes-
+// lineage rule as GLM — "gpt-6-astra" (lineage "gpt-astra") is never
+// compared against "gpt-5.6-sol" (lineage "gpt-sol") or bare "gpt-5.5"
+// (lineage "gpt") — verified against this session's audit finding no
+// real evidence any of Codex's five current models share a persona name
+// at two different generations yet.
+//
+// A real bug this same session's live-catalog verification caught before
+// shipping: GLM/GPT's own trailing-tier group also matched Cursor's
+// EFFORT suffixes (e.g. "gpt-5.4-low", "glm-5.2-high") — treating
+// "-low"/"-high" as if they were real product names invented fake
+// lineages ("gpt-low", "glm-high") that then wrongly compared DIFFERENT
+// base generations sharing the same effort word (gpt-5.1-low vs
+// gpt-5.2-low vs gpt-5.4-low) as if they were the same real product line,
+// marking real, unrelated older generations "superseded" for the wrong
+// reason. EFFORT_SUFFIX_WORDS excludes every real effort/mode token this
+// session's audit found (mirrors model-intelligence.js's own
+// CONCENTRATION_SUFFIX_TOKENS vocabulary, kept separate per that file's
+// own "never modify" instruction) — a trailing word matching this set is
+// treated as NOT a real tier name, falling through to unrecognized
+// (null) rather than inventing a lineage split.
+const EFFORT_SUFFIX_WORDS = new Set(["low", "medium", "high", "xhigh", "max", "none", "fast", "thinking"]);
+const LINEAGE_PARSERS = [
+  { pattern: /^claude-(opus|sonnet|fable|haiku)-(\d+(?:-\d+)?)$/, resolve: (m) => ({ lineageKey: `claude-${m[1]}`, generation: parseVersionToken(m[2]) }) },
+  { pattern: /^glm-(\d+(?:\.\d+)?)(-[a-z0-9]+)?$/, resolve: (m) => resolveTieredVersion("glm", m[1], m[2]) },
+  { pattern: /^gpt-(\d+(?:\.\d+)?)(-[a-z]+)?$/, resolve: (m) => resolveTieredVersion("gpt", m[1], m[2]) }
+];
+
+/** Shared by the glm/gpt parsers: a real tier suffix changes lineageKey; an effort-word suffix (Cursor's own re-exposed variants) is NOT a real tier — returns null (unrecognized) instead of inventing a fake lineage split. */
+function resolveTieredVersion(base, versionToken, suffix) {
+  const tier = suffix ? suffix.slice(1).toLowerCase() : null;
+  if (tier && EFFORT_SUFFIX_WORDS.has(tier)) return null;
+  return { lineageKey: tier ? `${base}-${tier}` : base, generation: parseFloat(versionToken) };
+}
+
+/** Turns Claude's real hyphenated minor-version token ("4-8") into a comparable number (4.8); a bare token ("5") becomes 5. */
+function parseVersionToken(token) {
+  return parseFloat(token.replace("-", "."));
+}
+
+/**
+ * Resolves a real modelId against the recognized, conservative lineage
+ * parsers above — null (never a guess) when nothing matches.
+ * @param {string} modelId
+ * @returns {{lineageKey: string, generation: number}|null}
+ */
+export function resolveLineage(modelId) {
+  for (const { pattern, resolve } of LINEAGE_PARSERS) {
+    const match = String(modelId ?? "").match(pattern);
+    if (match) return resolve(match);
+  }
+  return null;
+}
+
+/**
+ * Computes each candidate's real "current"/"superseded"/"unknown"
+ * lifecycle from lineageKey/generation already resolved onto it —
+ * "superseded" only when a real, strictly newer generation under the
+ * SAME lineageKey is ALSO present in `catalog` (i.e. genuinely
+ * accessible right now, not merely a known future release). Returns a
+ * NEW array (candidates are copied, never mutated in place).
+ * @param {Array<ModelCandidateIdentity>} catalog
+ * @returns {Array<ModelCandidateIdentity>}
+ */
+function applyLifecycle(catalog) {
+  const maxGenerationByLineage = new Map();
+  for (const candidate of catalog) {
+    if (candidate.lineageKey == null) continue;
+    const current = maxGenerationByLineage.get(candidate.lineageKey);
+    if (current == null || candidate.generation > current) maxGenerationByLineage.set(candidate.lineageKey, candidate.generation);
+  }
+  return catalog.map((candidate) => {
+    if (candidate.lineageKey == null) return { ...candidate, lifecycle: "unknown" };
+    const max = maxGenerationByLineage.get(candidate.lineageKey);
+    return { ...candidate, lifecycle: candidate.generation < max ? "superseded" : "current" };
+  });
+}
+
 // Whether Kairo can actually launch a candidate itself right now, per
 // adapter — real, current state (execution-adapters/index.js's own
 // `launchable` flags, intelligence/execution-router.js's checkCandidate),
@@ -159,10 +263,18 @@ function buildCandidateIdentity(adapterId, rawModel, aaModels, matcher) {
 
   const { modelName } = stripDisplayVariant(rawDisplayName);
   const matched = matcher(modelId, aaModels);
+  const lineage = resolveLineage(modelId);
   return {
     candidateKey: `${adapterId}::${modelId}`, modelId, modelName, rawDisplayName,
     adapterId, accessMode: resolveAccessMode(adapterId, modelId), evidenceStatus: resolveEvidenceStatus(matched),
-    lineageKey: null, generation: null, lifecycle: "unknown", resourceCost: resolveResourceCost(rawModel)
+    // lifecycle is resolved in a second pass (applyLifecycle, called from
+    // buildCompleteCandidateCatalog) once the WHOLE catalog is known —
+    // "superseded" is a statement about this candidate relative to its
+    // real siblings, not something a single candidate can determine
+    // alone. "unknown" here is only a placeholder for lineage == null;
+    // applyLifecycle overwrites it for every recognized lineage.
+    lineageKey: lineage?.lineageKey ?? null, generation: lineage?.generation ?? null, lifecycle: "unknown",
+    resourceCost: resolveResourceCost(rawModel)
   };
 }
 
@@ -187,5 +299,5 @@ export function buildCompleteCandidateCatalog(providerCatalogs, aaModels, deps =
       catalog.push(buildCandidateIdentity(adapterId, rawModel, aaModels, matcher));
     }
   }
-  return catalog;
+  return applyLifecycle(catalog);
 }
