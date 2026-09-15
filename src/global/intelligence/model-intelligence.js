@@ -472,6 +472,52 @@ function modelKey(model) {
   return `${model.adapterId}::${model.modelId}`;
 }
 
+// Real, enumerable reasoning-effort/execution-mode tokens providers append
+// to a model id (low/medium/high/xhigh/max/none/fast/thinking) — not part
+// of the model's real identity, just how hard/fast it's asked to think.
+// Confirmed empirically against Cursor's real ~220-model catalog (a single
+// provider surfacing the same underlying model — e.g. Claude Opus 5 or
+// Claude Fable 5.1 — under many ids like "claude-opus-5-low",
+// "claude-opus-5-thinking-high", etc.) that MAX_ROLES_PER_MODEL's identity
+// key (modelKey, exact adapterId::modelId) does NOT recognize these as the
+// same underlying model, so two different reasoning-tier variants of the
+// identical model could each separately reach the per-model role cap —
+// real evasion of a real limit, verified by reading passesConcentration's
+// own modelKey usage, not assumed.
+//
+// This does NOT mean AA scores them identically — live-tested against
+// real Artificial Analysis data, each reasoning-tier variant matches its
+// OWN distinct real AA benchmark entry (AA genuinely measures different
+// effort settings separately), so RANKING must keep using the exact
+// modelKey (capability evaluation, gapValue, confidence — all still keyed
+// by modelKey below). Only CONCENTRATION/diversity accounting should
+// collapse same-family variants — that's what familyKey is for, used
+// exclusively in passesConcentration, the modelUsage tracking Map, and
+// the diversity tiebreak in both team-builders' sort functions.
+//
+// Family grouping is also deliberately cross-adapter (no adapterId in the
+// key): the same real model reachable via two access paths (e.g. Claude
+// Fable 5.1 through the Claude subscription and through Cursor) is still
+// one real model for concentration purposes — per-adapter monoculture
+// risk is already covered separately by MAX_TECHNICAL_ROLES_PER_PROVIDER,
+// which stays keyed by adapterId alone, unaffected by this change.
+//
+// The whitelist is intentionally narrow and never strips a token outside
+// it — "mini"/"nano"/"sol"/"luna"/"terra"/"astra" etc. are real, distinct
+// models or product lines, not effort settings, and must never be
+// collapsed into the same family.
+const CONCENTRATION_SUFFIX_TOKENS = new Set(["low", "medium", "high", "xhigh", "max", "none", "fast", "thinking"]);
+
+function canonicalModelFamily(modelId) {
+  const tokens = String(modelId ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").split("-").filter(Boolean);
+  while (tokens.length > 1 && CONCENTRATION_SUFFIX_TOKENS.has(tokens[tokens.length - 1])) tokens.pop();
+  return tokens.join("-");
+}
+
+function familyKey(model) {
+  return canonicalModelFamily(model.modelId);
+}
+
 /**
  * The real capability leader's advantage over the rest of a pool, as a
  * fraction of its own REAL, scale-normalized gap value (see
@@ -607,7 +653,7 @@ function assignOneRole({ role, pool, better, modelUsage, providerTechnicalUsage,
 }
 
 function passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter) {
-  const key = modelKey(candidate.model);
+  const key = familyKey(candidate.model);
   if ((modelUsage.get(key) ?? 0) >= MAX_ROLES_PER_MODEL) return false;
   if (TECHNICAL_ROLES.includes(role) && (providerTechnicalUsage.get(candidate.model.adapterId) ?? 0) >= MAX_TECHNICAL_ROLES_PER_PROVIDER) return false;
   if (role === "Reviewer" && reviewerBuilderAdapter != null && candidate.model.adapterId === reviewerBuilderAdapter) return false;
@@ -659,7 +705,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
     if (result) {
       result.modelUsageSnapshot = modelUsageSnapshot;
       result.providerUsageSnapshot = providerUsageSnapshot;
-      const key = modelKey(result.entry.model);
+      const key = familyKey(result.entry.model);
       modelUsage.set(key, (modelUsage.get(key) ?? 0) + 1);
       providerTechnicalUsage.set(result.entry.model.adapterId, (providerTechnicalUsage.get(result.entry.model.adapterId) ?? 0) + 1);
       if (role === "Builder") builderAdapter = result.entry.model.adapterId;
@@ -701,8 +747,8 @@ function sortByCapabilityPriority(candidates, better, modelUsage, providerTechni
     const aConfidence = getConfidenceRank(a.model);
     const bConfidence = getConfidenceRank(b.model);
     if (aConfidence !== bConfidence) return bConfidence - aConfidence; // higher confidence wins
-    const aModelUsage = modelUsage.get(modelKey(a.model)) ?? 0;
-    const bModelUsage = modelUsage.get(modelKey(b.model)) ?? 0;
+    const aModelUsage = modelUsage.get(familyKey(a.model)) ?? 0;
+    const bModelUsage = modelUsage.get(familyKey(b.model)) ?? 0;
     if (aModelUsage !== bModelUsage) return aModelUsage - bModelUsage;
     const aProviderUsage = providerTechnicalUsage.get(a.model.adapterId) ?? 0;
     const bProviderUsage = providerTechnicalUsage.get(b.model.adapterId) ?? 0;
@@ -910,8 +956,8 @@ function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelU
       if (av == null || bv == null || av === bv) continue;
       return better === "max" ? bv - av : av - bv;
     }
-    const aModelUsage = modelUsage.get(modelKey(a.model)) ?? 0;
-    const bModelUsage = modelUsage.get(modelKey(b.model)) ?? 0;
+    const aModelUsage = modelUsage.get(familyKey(a.model)) ?? 0;
+    const bModelUsage = modelUsage.get(familyKey(b.model)) ?? 0;
     if (aModelUsage !== bModelUsage) return aModelUsage - bModelUsage;
     const aProviderUsage = providerTechnicalUsage.get(a.model.adapterId) ?? 0;
     const bProviderUsage = providerTechnicalUsage.get(b.model.adapterId) ?? 0;
@@ -944,8 +990,8 @@ function describeEfficiencyChoice(chosen, leader, registry, providerCapacity, mo
     if (chosenIsBetter) return `Adequate capability — chosen for ${label}.`;
     break; // this dimension didn't favor the switch; a later real signal must have — no real number to report
   }
-  const chosenModelUsage = modelUsage.get(modelKey(chosen.model)) ?? 0;
-  const leaderModelUsage = modelUsage.get(modelKey(leader.model)) ?? 0;
+  const chosenModelUsage = modelUsage.get(familyKey(chosen.model)) ?? 0;
+  const leaderModelUsage = modelUsage.get(familyKey(leader.model)) ?? 0;
   const chosenProviderUsage = providerTechnicalUsage.get(chosen.model.adapterId) ?? 0;
   const leaderProviderUsage = providerTechnicalUsage.get(leader.model.adapterId) ?? 0;
   if (chosenModelUsage < leaderModelUsage || chosenProviderUsage < leaderProviderUsage) {

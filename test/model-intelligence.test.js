@@ -309,6 +309,57 @@ test("buildAiTeam caps a single provider at 3 of the 6 technical roles when a re
   assert.match(byRole.Debugger.reason, /assigned to a different model\/provider to avoid concentration/);
 });
 
+test("REGRESSION: the same real model family under Claude, Cursor, and several Cursor reasoning-tier variants still respects the real 2-role concentration limit as ONE model, not four independent ones", () => {
+  // The exact real-world scenario a live catalog produced: "Claude Fable
+  // 5.1" reachable as a bare id via Claude AND as three separately-listed
+  // reasoning-tier ids via Cursor (low/high/thinking-xhigh) — four
+  // distinct adapterId::modelId identities for what is, for concentration
+  // purposes, one real model. Before familyKey existed, MAX_ROLES_PER_MODEL
+  // was keyed on the exact identity (modelKey), so these four could
+  // collectively cover 4 technical roles — double the real 2-role cap —
+  // simply by rotating through reasoning-tier variants and access paths.
+  // AA genuinely benchmarks each reasoning tier separately (verified
+  // against live AA data before this fix), so each variant keeps its own
+  // real, close-but-distinct score here — deliberately within the 8%
+  // near-equivalence band of each other, matching what real reasoning-tier
+  // variants of the same base model actually look like.
+  const aa = [
+    { slug: "claude-fable-5-1", name: "Claude Fable 5.1", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
+    { slug: "claude-fable-5-1-low", name: "Claude Fable 5.1 Low", intelligenceIndex: 88, codingIndex: 88, mathIndex: null },
+    { slug: "claude-fable-5-1-high", name: "Claude Fable 5.1 High", intelligenceIndex: 91, codingIndex: 91, mathIndex: null },
+    { slug: "claude-fable-5-1-thinking-xhigh", name: "Claude Fable 5.1 Thinking XHigh", intelligenceIndex: 92, codingIndex: 92, mathIndex: null },
+    { slug: "second-model", name: "Second Model", intelligenceIndex: 87, codingIndex: 87, mathIndex: null },
+    { slug: "third-model", name: "Third Model", intelligenceIndex: 86, codingIndex: 86, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "claude-fable-5-1" }] },
+    { adapterId: "cursor", models: [
+      { id: "claude-fable-5-1-low", displayName: "Claude Fable 5.1 Low" },
+      { id: "claude-fable-5-1-high", displayName: "Claude Fable 5.1 High" },
+      { id: "claude-fable-5-1-thinking-xhigh", displayName: "Claude Fable 5.1 Thinking XHigh" }
+    ] },
+    { adapterId: "opencode-go", models: [{ id: "second-model" }] },
+    { adapterId: "codex", models: [{ id: "third-model" }] }
+  ], aa);
+  const team = buildAiTeam(scored, { claude: { ok: true }, cursor: { ok: true }, "opencode-go": { ok: true }, codex: { ok: true } });
+  const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
+
+  // Every real assignment across all 6 technical roles must draw on the
+  // Fable family (any of its 4 identities) for at most 2 roles total —
+  // never 3 or more, regardless of which exact variant/access-path each
+  // individual pick used. Two genuinely different real alternatives exist
+  // (second-model, third-model), so the portfolio never needs to fall back
+  // to "no real alternative left" and re-pick Fable anyway.
+  const fableIds = new Set(["claude-fable-5-1", "claude-fable-5-1-low", "claude-fable-5-1-high", "claude-fable-5-1-thinking-xhigh"]);
+  const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
+  const fableRoleCount = technicalRoles.filter((role) => fableIds.has(byRole[role]?.primary?.modelId)).length;
+  assert.ok(fableRoleCount <= 2, `Fable family (any variant/access-path) covered ${fableRoleCount} technical roles — must never exceed the real 2-role concentration limit`);
+  // The real alternatives (genuinely different models) must pick up the
+  // roles Fable's variants can no longer take once the family limit hits.
+  assert.ok(technicalRoles.some((role) => byRole[role]?.primary?.modelId === "second-model" || byRole[role]?.primary?.modelId === "third-model"),
+    "a genuinely different model must cover at least one role once the Fable family hits its concentration limit");
+});
+
 test("buildEfficientTeam coordinates the portfolio too: a model that already claimed its 2-role limit on the coding floor cedes an adequate intelligence role to the real alternative", () => {
   // Codex's coding score (60.0) is only ~73.5% of Claude's (81.6) — below
   // the 80% floor, so Claude is the ONLY adequate candidate for
