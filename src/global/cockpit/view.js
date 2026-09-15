@@ -557,10 +557,11 @@ export class CockpitView {
       return [theme.fg("muted", `No model benchmark data yet${reason}`)];
     }
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-    // BEST FIT GLOBAL: the real, uncoordinated per-role winner — see
-    // teamsColumnsLines()'s own comment for why this is never aiTeam.
-    // Falls back to aiTeam for a snapshot that predates globalGuide.
-    const team = intel.globalGuide?.capability ?? intel.aiTeam ?? [];
+    // QUALITY TEAM: the real, portfolio-coordinated pick — not a bare
+    // per-role leaderboard. The uncoordinated individual leader
+    // (globalGuide.capability) is evidence, surfaced in /models, never the
+    // dashboard headline — see teamsColumnsLines()'s own comment for why.
+    const team = intel.aiTeam ?? [];
     if (!team.length) {
       const reasons = Object.entries(intel.eligibility ?? {})
         .filter(([, check]) => !check.ok)
@@ -579,19 +580,19 @@ export class CockpitView {
 
   /**
    * MODEL TEAMS' unified widget: one combined panel with a real, drawn "│"
-   * separator between the CAPABILITY and EFFICIENT columns, instead of
-   * two separate AI TEAM/EFFICIENT TEAM cards or a plain-space gap that
+   * separator between the QUALITY TEAM and EFFICIENT TEAM columns, instead
+   * of two separate AI TEAM/EFFICIENT TEAM cards or a plain-space gap that
    * could look like column drift. This is now the ONLY dashboard team
    * widget — used at every width, side by side with USAGE on medium/wide
    * terminals and stacked below it on narrow ones (see
    * renderDashboardLines()).
    *
    * Both column widths are computed from the real width actually
-   * available (never a fixed constant) — split evenly between CAPABILITY
-   * and EFFICIENT after reserving room for the role column and both real
-   * "│" separators — and each cell is truncated INDEPENDENTLY, so a long
-   * CAPABILITY entry can never bleed into the EFFICIENT column even under
-   * a narrow terminal; truncation only ever happens when content actually
+   * available (never a fixed constant) — split evenly between QUALITY and
+   * EFFICIENT after reserving room for the role column and both real "│"
+   * separators — and each cell is truncated INDEPENDENTLY, so a long
+   * QUALITY entry can never bleed into the EFFICIENT column even under a
+   * narrow terminal; truncation only ever happens when content actually
    * doesn't fit, never as a fixed cap.
    * @param {number} [width] - real content width available to this panel
    *   (already inside its frame — see cardInnerWidth()); defaults to a
@@ -600,17 +601,21 @@ export class CockpitView {
   teamsColumnsLines(width = 80) {
     const intel = this.snapshot?.modelIntelligence;
     if (!intel || intel.status === "unknown") return this.fitLines();
-    // BEST FIT GLOBAL / EFFICIENT GLOBAL: the real, uncoordinated per-role
-    // winner — never aiTeam/efficientTeam, which apply PROJECT TEAM's own
-    // portfolio coordination (family concentration, provider distribution,
-    // Builder/Reviewer independence). Showing that coordinated result here
-    // was the real bug: a role could show a diversity pick (e.g. Muse
-    // Spark) labeled as if it were simply "the best Architect", when it
-    // only won because the true leader was already used elsewhere.
-    const aiTeam = intel.globalGuide?.capability ?? intel.aiTeam ?? [];
+    // QUALITY TEAM / EFFICIENT TEAM: the real, portfolio-coordinated picks
+    // (aiTeam/efficientTeam — family concentration, provider distribution,
+    // Builder/Reviewer independence all apply). This widget is not a bare
+    // leaderboard: it shows a usable TEAM, correctly labeled as one. The
+    // real bug this session fixed wasn't showing coordination here — a
+    // real team needs it — it was the earlier "CAPABILITY"/"EFFICIENT"
+    // labels implying "the single best model, full stop" for what was
+    // always a coordinated pick. The uncoordinated individual leader
+    // (globalGuide.capability/efficient) is real evidence for a different
+    // question ("what's honestly best with nothing else in play?") and
+    // belongs in /models, never this dashboard headline.
+    const aiTeam = intel.aiTeam ?? [];
     if (!aiTeam.length) return this.fitLines();
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-    const efficientByRole = Object.fromEntries((intel.globalGuide?.efficient ?? intel.efficientTeam ?? []).map((entry) => [entry.role, entry]));
+    const efficientByRole = Object.fromEntries((intel.efficientTeam ?? []).map((entry) => [entry.role, entry]));
 
     const roleWidth = 10;
     const separator = " │ ";
@@ -627,7 +632,7 @@ export class CockpitView {
 
     const lines = [
       theme.fg("muted", `Evidence: ${freshness}`),
-      theme.fg("muted", formatRow("", "CAPABILITY", "EFFICIENT"))
+      theme.fg("muted", formatRow("", "QUALITY TEAM", "EFFICIENT TEAM"))
     ];
     for (const entry of aiTeam) {
       const capabilityEffective = CockpitView.effectiveTeamModel(entry);
@@ -670,6 +675,7 @@ export class CockpitView {
     const aiTeam = intel.aiTeam ?? [];
     if (!aiTeam.length) return this.fitLines();
     const efficientByRole = Object.fromEntries((intel.efficientTeam ?? []).map((entry) => [entry.role, entry]));
+    const leaderByRole = Object.fromEntries((intel.globalGuide?.capability ?? []).map((entry) => [entry.role, entry]));
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
     const lines = [theme.fg("muted", `Evidence: ${freshness}`)];
     aiTeam.forEach(({ role, primary, fallback, reason }, index) => {
@@ -682,6 +688,16 @@ export class CockpitView {
       lines.push(`${role.padEnd(10)} ${this.aiTeamLabel(primary)}${availabilityNote}`);
       const why = reason ?? `Selected for ${CockpitView.ROLE_CAPABILITY_BLURB[role] ?? "this role's capability requirement"}.`;
       lines.push(theme.fg("muted", `  ${why}`));
+
+      // The uncoordinated individual leader (globalGuide) — evidence for
+      // "what's honestly best with nothing else in play?", never the
+      // dashboard headline. Only worth a line when it actually differs
+      // from the QUALITY TEAM pick — a diversity/concentration reason
+      // above already implies it does; a null reason means they agree.
+      const leaderEntry = leaderByRole[role];
+      if (leaderEntry?.primary && (leaderEntry.primary.adapterId !== primary.adapterId || leaderEntry.primary.modelId !== primary.modelId)) {
+        lines.push(theme.fg("muted", `  Individual leader: ${this.aiTeamLabel(leaderEntry.primary)} — the raw per-role best, uncoordinated with the rest of the team.`));
+      }
 
       const efficientEntry = efficientByRole[role];
       if (efficientEntry) {

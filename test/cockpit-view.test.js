@@ -135,16 +135,18 @@ test("AI TEAM's compact widget honestly says so when neither primary nor fallbac
   assert.match(lines, /Economy[\s\S]*?no eligible option right now/);
 });
 
-test("BEST FIT GLOBAL: fitLines() and teamsColumnsLines() read globalGuide, never the portfolio-coordinated aiTeam/efficientTeam, when globalGuide is present", () => {
+test("QUALITY TEAM: fitLines() and teamsColumnsLines() read the real, portfolio-coordinated aiTeam/efficientTeam — never globalGuide, which is /models-only evidence", () => {
   const { view } = makeView();
   view.setRows([]);
   view.setSnapshot({
     projectRoot: "/repo/demo",
     modelIntelligence: {
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
-      // aiTeam shows Muse Spark for Architect (a real diversity pick) —
-      // globalGuide.capability must win here, showing Astra instead, since
-      // globalGuide never cedes a role for portfolio concentration.
+      // aiTeam hands Architect to Muse Spark — a real, coordinated
+      // diversity pick (Astra was already used elsewhere in the
+      // portfolio). The dashboard's QUALITY TEAM/EFFICIENT TEAM widget
+      // must show that real team, not the uncoordinated individual
+      // leader (globalGuide, Astra) — that belongs in /models only.
       aiTeam: [{
         role: "Architect",
         primary: { adapterId: "opencode-go", modelId: "muse-spark", displayName: "Muse Spark", available: true },
@@ -152,7 +154,7 @@ test("BEST FIT GLOBAL: fitLines() and teamsColumnsLines() read globalGuide, neve
       }],
       efficientTeam: [{
         role: "Architect",
-        primary: { adapterId: "opencode-go", modelId: "muse-spark", displayName: "Muse Spark", available: true },
+        primary: { adapterId: "opencode-go", modelId: "gpt-5-6-luna", displayName: "GPT-5.6 Luna", available: true },
         fallback: null, reason: null
       }],
       globalGuide: {
@@ -161,22 +163,54 @@ test("BEST FIT GLOBAL: fitLines() and teamsColumnsLines() read globalGuide, neve
           primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", available: true },
           fallback: null, reason: null
         }],
-        efficient: [{
-          role: "Architect",
-          primary: { adapterId: "opencode-go", modelId: "gpt-5-6-luna", displayName: "GPT-5.6 Luna", available: true },
-          fallback: null, reason: null
-        }]
+        efficient: []
       }
     }
   });
   const fit = view.fitLines().join("\n");
-  assert.match(fit, /GPT-6 Astra/);
-  assert.doesNotMatch(fit, /Muse Spark/);
+  assert.match(fit, /Muse Spark/);
+  assert.doesNotMatch(fit, /GPT-6 Astra/, "the dashboard headline must never show the uncoordinated individual leader");
 
   const columns = view.teamsColumnsLines(80).join("\n");
-  assert.match(columns, /GPT-6 Astra/);
+  assert.match(columns, /QUALITY TEAM/);
+  assert.match(columns, /EFFICIENT TEAM/);
+  assert.match(columns, /Muse Spark/);
   assert.match(columns, /GPT-5\.6 Luna/);
-  assert.doesNotMatch(columns, /Muse Spark/);
+  assert.doesNotMatch(columns, /GPT-6 Astra/);
+});
+
+test("modelsExplainLines() shows the uncoordinated individual leader (globalGuide) only when it actually differs from the QUALITY TEAM pick", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [
+        {
+          role: "Architect",
+          primary: { adapterId: "opencode-go", modelId: "muse-spark", displayName: "Muse Spark", available: true },
+          fallback: null, reason: "Near-equivalent alternatives — assigned to a different model/provider to avoid concentration."
+        },
+        {
+          role: "Builder",
+          primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", available: true },
+          fallback: null, reason: null
+        }
+      ],
+      efficientTeam: [],
+      globalGuide: {
+        capability: [
+          { role: "Architect", primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", available: true }, fallback: null, reason: null },
+          { role: "Builder", primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", available: true }, fallback: null, reason: null }
+        ],
+        efficient: []
+      }
+    }
+  });
+  const lines = view.modelsExplainLines().join("\n");
+  assert.match(lines, /Architect[\s\S]*?Individual leader: GPT-6 Astra/, "Architect's diversity pick differs from the real leader — must show it");
+  const builderSection = lines.split("·").find((section) => section.includes("Builder"));
+  assert.doesNotMatch(builderSection, /Individual leader/, "Builder's QUALITY TEAM pick already IS the real leader — no redundant line");
 });
 
 test("/models writes the full primary/fallback/reason breakdown that the compact widget leaves out", () => {
@@ -406,7 +440,7 @@ test("USAGE is a compact one-line bar above a full-width GLOBAL MODEL GUIDE card
   assert.ok(lines.some((line) => line.includes("GLOBAL MODEL GUIDE")));
   assert.doesNotMatch(lines.join("\n"), /✿ AI TEAM|✿ EFFICIENT TEAM/, "the three-card layout must never come back");
   const joined = lines.join("\n");
-  assert.match(joined, /CAPABILITY/);
+  assert.match(joined, /QUALITY TEAM/);
   assert.match(joined, /EFFICIENT/);
   // Provider is deliberately hidden in the compact widget — Role → Model only.
   assert.match(joined, /Builder\s+│ Claude Fable 5\.1\s+│ GLM 5\.3/);
@@ -503,7 +537,7 @@ test("below a narrow width, GLOBAL MODEL GUIDE still renders below the compact U
   assert.ok(!topLine.includes("GLOBAL MODEL GUIDE"), "USAGE's own line shouldn't share a row with GLOBAL MODEL GUIDE");
   assert.ok(lines.some((line) => line.includes("GLOBAL MODEL GUIDE")));
   const joined = lines.join("\n");
-  assert.match(joined, /CAPABILITY/);
+  assert.match(joined, /QUALITY TEAM/);
   assert.match(joined, /EFFICIENT/);
   assert.match(joined, /Builder\s+│ Claude Fable 5\.1\s+│ GLM 5\.3/);
 });
