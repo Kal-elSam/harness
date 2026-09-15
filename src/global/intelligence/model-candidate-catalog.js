@@ -1,10 +1,13 @@
 // The Complete Candidate Catalog: every real model Kairo's four provider
 // catalogs (Codex, Claude, Cursor, OpenCode Go) actually report, mapped
 // into one uniform ModelCandidateIdentity shape — INCLUDING models with
-// zero real Artificial Analysis evidence (UNSCORED). This is deliberately
-// a SEPARATE surface from the Automatic Team Pool (buildAiTeam/
-// buildEfficientTeam's own capability-gated ranking, model-intelligence.js):
-// a model with no real benchmark can still be offered for MANUAL selection
+// zero real Artificial Analysis evidence (UNSCORED). This module also
+// builds the two real consumer pools joined against it (see
+// buildRecommendationPool/buildAutomaticExecutionPool's own docs near
+// the bottom of this file) — deliberately SEPARATE from buildAiTeam/
+// buildEfficientTeam's own capability-gated role ranking
+// (model-intelligence.js), which this module never reimplements: a
+// model with no real benchmark can still be offered for MANUAL selection
 // here, but it must never receive an invented score — see
 // role-profiles.js's RoleProfile.capabilities for what "scored" actually
 // requires per role; this module never computes that, only whether AA
@@ -351,4 +354,89 @@ export function buildCompleteCandidateCatalog(providerCatalogs, aaModels, deps =
     }
   }
   return applyLifecycle(catalog);
+}
+
+/**
+ * @typedef {object} RecommendationPoolCandidate
+ * One real scoreAvailableModels() entry (adapterId, modelId,
+ * intelligenceIndex, codingIndex, priceInputPerMTok, etc. — completely
+ * untouched, never recomputed), spread together with: candidateKey,
+ * modelName, accessMode, evidenceStatus, lineageKey, generation,
+ * lifecycle, resourceCost from the joined ModelCandidateIdentity.
+ * `resourceCost` and `priceInputPerMTok` are DELIBERATELY separate
+ * fields — OpenCode Go's own real per-model cost is never blended into
+ * or mistaken for AA's price figure, even when both exist for the same
+ * candidate.
+ */
+
+/**
+ * The Recommendation Pool: every real, scored candidate (from
+ * scoreAvailableModels — the same real AA-matched pool buildAiTeam/
+ * buildEfficientTeam already consume) that is NOT superseded, enriched
+ * with its real ModelCandidateIdentity fields via a candidateKey join.
+ * Deliberately does NOT recompute capability/role fit itself — that
+ * stays model-intelligence.js's own job; a caller feeds this pool's
+ * output straight into buildAiTeam/buildEfficientTeam/
+ * bestModelPerRoleGlobal/etc. as their own `models` argument, in place
+ * of raw scoreAvailableModels() output, so QUALITY/EFFICIENT TEAM
+ * naturally stop considering a real, superseded old generation without
+ * either team's own ranking logic needing to know why.
+ *
+ * "current" and "unknown" lifecycle candidates are BOTH kept — an
+ * unrecognized lineage never excludes a real candidate from being
+ * recommended, only a PROVEN newer same-lineage successor does. Manual-
+ * only real candidates (Cursor, OpenCode Go today) are kept too — this
+ * pool answers "what can Kairo honestly recommend", not "what can Kairo
+ * launch by itself" (see buildAutomaticExecutionPool for that).
+ * @param {Array<object>} scoredAll - scoreAvailableModels() output, every candidate provider regardless of eligibility.
+ * @param {Array<ModelCandidateIdentity>} completeCatalog - buildCompleteCandidateCatalog() output, same provider catalogs.
+ * @returns {Array<RecommendationPoolCandidate>}
+ */
+export function buildRecommendationPool(scoredAll, completeCatalog) {
+  const identityByKey = new Map(completeCatalog.map((identity) => [identity.candidateKey, identity]));
+  const pool = [];
+  for (const scored of scoredAll) {
+    const candidateKey = `${scored.adapterId}::${scored.modelId}`;
+    const identity = identityByKey.get(candidateKey);
+    // No real catalog identity for this exact scored candidate is only
+    // possible if the caller passed mismatched provider catalogs to
+    // scoreAvailableModels vs buildCompleteCandidateCatalog — defensive,
+    // never excludes: an un-joined candidate is treated as lineage-
+    // unknown, exactly like any other real unrecognized lineage.
+    if (identity?.lifecycle === "superseded") continue;
+    pool.push({
+      ...scored,
+      candidateKey,
+      modelName: identity?.modelName ?? scored.displayName ?? scored.modelId,
+      accessMode: identity?.accessMode ?? "manual",
+      evidenceStatus: identity?.evidenceStatus ?? "scored",
+      lineageKey: identity?.lineageKey ?? null,
+      generation: identity?.generation ?? null,
+      lifecycle: identity?.lifecycle ?? "unknown",
+      resourceCost: identity?.resourceCost ?? null
+    });
+  }
+  return pool;
+}
+
+/**
+ * The Automatic Execution Pool: the subset of the Recommendation Pool
+ * Kairo can actually launch itself, right now — real routing's own
+ * candidate source, never QUALITY/EFFICIENT TEAM's. Requires BOTH a real
+ * accessMode of "automatic" (Cursor/OpenCode Go are permanently or
+ * currently manual — see ModelCandidateIdentity's own doc) AND real,
+ * current eligibility (adapter availability, quota, launchability — the
+ * exact same `eligibility` object checkCandidate/execution-router.js
+ * already compute, reused here rather than reimplemented). Never
+ * mutates or filters the Recommendation Pool itself — a manual-only real
+ * recommendation (Cursor, say) stays fully visible there; a caller that
+ * wants to actually RUN a task must separately produce a real
+ * "Continue in Cursor"-style handoff for it, never a silent fallback to
+ * a different, automatically-launchable model the human didn't ask for.
+ * @param {Array<RecommendationPoolCandidate>} recommendationPool
+ * @param {Record<string, {ok: boolean, reason?: string}>} eligibility - checkCandidate() results per adapterId.
+ * @returns {Array<RecommendationPoolCandidate>}
+ */
+export function buildAutomaticExecutionPool(recommendationPool, eligibility) {
+  return recommendationPool.filter((candidate) => candidate.accessMode === "automatic" && eligibility[candidate.adapterId]?.ok === true);
 }

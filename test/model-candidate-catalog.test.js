@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildCompleteCandidateCatalog, resolveLineage, stripDisplayVariant, stripLineageSuffixes } from "../src/global/intelligence/model-candidate-catalog.js";
+import {
+  buildAutomaticExecutionPool, buildCompleteCandidateCatalog, buildRecommendationPool,
+  resolveLineage, stripDisplayVariant, stripLineageSuffixes
+} from "../src/global/intelligence/model-candidate-catalog.js";
+import { buildAiTeam, scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 
 test("stripDisplayVariant strips real trailing effort/context tokens, never touching a model's own real name", () => {
   assert.deepEqual(stripDisplayVariant("Claude Opus 4.7 1M High Thinking Fast"), { modelName: "Claude Opus 4.7", variant: "1M High Thinking Fast" });
@@ -198,4 +202,104 @@ test("resourceCost is null when the provider reports no real cost — never esti
     [{ adapterId: "cursor", models: [{ id: "gpt-5.3-codex", displayName: "Codex 5.3" }] }], []
   );
   assert.equal(catalog[0].resourceCost, null);
+});
+
+test("buildRecommendationPool excludes only real superseded candidates — current and unknown both stay recommendable", () => {
+  const aa = [
+    { slug: "claude-opus-4-6", name: "Claude Opus 4.6", intelligenceIndex: 40, codingIndex: 40 },
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 55, codingIndex: 55 },
+    { slug: "kimi-k2.7-code", name: "Kimi K2.7 Code", intelligenceIndex: 45, codingIndex: 45 }
+  ];
+  const providerCatalogs = [
+    { adapterId: "claude", models: [{ id: "claude-opus-4-6", displayName: "Claude Opus 4.6" }, { id: "claude-opus-5", displayName: "Claude Opus 5" }] },
+    { adapterId: "opencode-go", models: [{ id: "kimi-k2.7-code", displayName: "Kimi K2.7 Code" }] }
+  ];
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
+  const pool = buildRecommendationPool(scoredAll, catalog);
+  const keys = pool.map((c) => c.candidateKey);
+  assert.ok(!keys.includes("claude::claude-opus-4-6"), "the real, strictly older opus generation must be excluded");
+  assert.ok(keys.includes("claude::claude-opus-5"), "the real current generation stays");
+  // kimi-k2.7-code has no recognized lineage (unknown) — must NOT be excluded.
+  assert.ok(keys.includes("opencode-go::kimi-k2.7-code"));
+});
+
+test("buildRecommendationPool keeps scoreAvailableModels' own real fields untouched and attaches identity fields alongside — resourceCost never blended with priceInputPerMTok", () => {
+  const aa = [{ slug: "glm-5.3-flash", name: "GLM 5.3 Flash", intelligenceIndex: 40, codingIndex: 50, priceInputPerMTok: 0.15 }];
+  const providerCatalogs = [{
+    adapterId: "opencode-go",
+    models: [{ id: "glm-5.3-flash", displayName: "GLM-5.3-Flash", costInputPerMTok: 0.15, costOutputPerMTok: 0.5 }]
+  }];
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
+  const pool = buildRecommendationPool(scoredAll, catalog);
+  const candidate = pool[0];
+  assert.equal(candidate.intelligenceIndex, 40);
+  assert.equal(candidate.codingIndex, 50);
+  assert.equal(candidate.priceInputPerMTok, 0.15);
+  assert.equal(candidate.modelName, "GLM-5.3-Flash");
+  assert.equal(candidate.accessMode, "manual");
+  assert.deepEqual(candidate.resourceCost, { inputPerMTok: 0.15, outputPerMTok: 0.5 });
+  assert.notEqual(candidate.resourceCost.inputPerMTok, undefined);
+  // The two cost signals coexist, never merged into one another.
+  assert.notEqual(candidate.priceInputPerMTok, candidate.resourceCost);
+});
+
+test("buildRecommendationPool keeps real manual-only candidates (Cursor, OpenCode Go) — a caller must never silently drop them", () => {
+  const aa = [{ slug: "gpt-5.3-codex", name: "Codex 5.3", intelligenceIndex: 50, codingIndex: 60 }];
+  const providerCatalogs = [{ adapterId: "cursor", models: [{ id: "gpt-5.3-codex", displayName: "Codex 5.3" }] }];
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
+  const pool = buildRecommendationPool(scoredAll, catalog);
+  assert.equal(pool.length, 1);
+  assert.equal(pool[0].accessMode, "manual");
+});
+
+test("buildAutomaticExecutionPool requires BOTH accessMode automatic AND real current eligibility — never alters or drops the Recommendation Pool itself", () => {
+  const aa = [
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 55, codingIndex: 70 },
+    { slug: "gpt-5.3-codex", name: "Codex 5.3", intelligenceIndex: 50, codingIndex: 60 }
+  ];
+  const providerCatalogs = [
+    { adapterId: "codex", models: [{ id: "gpt-6-astra", displayName: "GPT-6-Astra" }] },
+    { adapterId: "cursor", models: [{ id: "gpt-5.3-codex", displayName: "Codex 5.3" }] }
+  ];
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
+  const recommendationPool = buildRecommendationPool(scoredAll, catalog);
+
+  const bothEligible = { codex: { ok: true }, cursor: { ok: true } };
+  const automaticPool = buildAutomaticExecutionPool(recommendationPool, bothEligible);
+  // Cursor is manual-only by real design — never appears here even when eligible.
+  assert.deepEqual(automaticPool.map((c) => c.candidateKey), ["codex::gpt-6-astra"]);
+  // The Recommendation Pool itself is completely unaffected.
+  assert.equal(recommendationPool.length, 2);
+
+  const codexNotEligible = { codex: { ok: false, reason: "quota exhausted" }, cursor: { ok: true } };
+  assert.deepEqual(buildAutomaticExecutionPool(recommendationPool, codexNotEligible), []);
+});
+
+test("INTEGRATION: feeding the Recommendation Pool into buildAiTeam as its `models` argument keeps a real superseded generation from ever winning a role, with no change to buildAiTeam's own ranking logic", () => {
+  const aa = [
+    { slug: "claude-opus-4-6", name: "Claude Opus 4.6", intelligenceIndex: 90, codingIndex: 90 },
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 60, codingIndex: 60 }
+  ];
+  const providerCatalogs = [{
+    adapterId: "claude",
+    models: [{ id: "claude-opus-4-6", displayName: "Claude Opus 4.6" }, { id: "claude-opus-5", displayName: "Claude Opus 5" }]
+  }];
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
+  const recommendationPool = buildRecommendationPool(scoredAll, catalog);
+  const eligibility = { claude: { ok: true } };
+
+  // Raw scoredAll (no lifecycle filtering) would let the real, higher-
+  // scoring but strictly older opus-4-6 win on capability alone.
+  const teamFromRawScored = buildAiTeam(scoredAll, eligibility);
+  assert.equal(teamFromRawScored.find((t) => t.role === "Architect").primary.modelId, "claude-opus-4-6");
+
+  // The Recommendation Pool already excluded it — buildAiTeam's own
+  // ranking never needs to know why; it just never sees the option.
+  const teamFromPool = buildAiTeam(recommendationPool, eligibility);
+  assert.equal(teamFromPool.find((t) => t.role === "Architect").primary.modelId, "claude-opus-5");
 });
