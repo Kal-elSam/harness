@@ -370,7 +370,15 @@ function resolveMetric(registry, model, key) {
 // only 2-3 real candidates system-wide, no matter how many other models
 // are genuinely capable — instructionFollowing is optional everywhere for
 // the same reason (never load-bearing enough for any role to gate on).
-const ROLE_CAPABILITIES = {
+// Exported (not just used internally) so role-profiles.js's RoleProfile
+// layer can reference these required/optional capability lists directly
+// instead of duplicating them — one source of truth for WHAT a role
+// needs, a separate one (RoleProfile) for the operational policy AROUND
+// it (allowed actions, deliverable, risk, escalation). Economy is
+// deliberately absent from RoleProfile (see role-profiles.js's own doc)
+// but stays here unchanged — it's still a real role for buildAiTeam/
+// buildEfficientTeam's own ranking purposes today.
+export const ROLE_CAPABILITIES = {
   Explorer: { required: ["reasoning"], optional: ["instructionFollowing"] },
   Architect: { required: ["reasoning", "coding"], optional: ["instructionFollowing"] },
   Builder: { required: ["coding", "terminalExecution"], optional: ["softwareExecution", "instructionFollowing"] },
