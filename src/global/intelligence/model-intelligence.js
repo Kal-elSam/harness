@@ -8,7 +8,7 @@
 
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
 import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue } from "./capability-scoring.js";
-import { ROLE_CAPABILITIES } from "./role-profiles.js";
+import { ROLE_CAPABILITIES, getRoleProfile } from "./role-profiles.js";
 
 // Real per-benchmark metrics worth surfacing as corroborating evidence
 // alongside a pick — never blended into the ranking itself, since
@@ -95,7 +95,8 @@ export function scoreAvailableModels(providerCatalogs, aaModels) {
         adapterId, modelId: model.id, displayName: model.displayName ?? null,
         slug: score.slug, name: score.name,
         intelligenceIndex: score.intelligenceIndex, codingIndex: score.codingIndex, mathIndex: score.mathIndex,
-        priceInputPerMTok: score.priceInputPerMTok ?? null, outputTokensPerSecond: score.outputTokensPerSecond ?? null,
+        priceInputPerMTok: score.priceInputPerMTok ?? null, priceOutputPerMTok: score.priceOutputPerMTok ?? null,
+        outputTokensPerSecond: score.outputTokensPerSecond ?? null,
         // Real per-benchmark scores AA's free API also returns — used as
         // optional role-specific tie-breakers in AI_TEAM_ROLE_DEFINITIONS,
         // never blended into the composite indices above.
@@ -936,7 +937,7 @@ export function bestModelPerRoleGlobal(models, eligibility = {}, registry = null
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, registry = null, options = {}) {
-  const { capabilityFloor = EFFICIENT_CAPABILITY_FLOOR, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES } = options;
+  const { capabilityFloor = null, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES } = options;
   const effectiveRegistry = ensureRegistry(models, registry);
   const { roleDefinitions, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
   const noPortfolioUsage = new Map();
@@ -952,8 +953,8 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
       continue;
     }
 
-    const pool = adequateCandidates(eligibleRanked, eligibleRanked[0], better, capabilityFloor);
-    const chosen = sortByEfficiencyPriority(pool, effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage)[0];
+    const pool = adequateCandidates(eligibleRanked, eligibleRanked[0], better, resolveEfficientFloor(role, capabilityFloor));
+    const chosen = sortByEfficiencyPriority(pool, effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage, eligibleRanked[0])[0];
 
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > eligibleRanked[0].value : globalLeader.value < eligibleRanked[0].value;
@@ -1147,9 +1148,27 @@ const EFFICIENCY_DIMENSIONS = [
   { key: "kairo.totalTokens", better: "min", label: "lower real observed token consumption" },
   { key: "kairo.cost", better: "min", label: "lower real observed cost per task" },
   { key: "kairo.durationMs", better: "min", label: "lower real observed duration" },
-  { key: "priceInputPerMTok", better: "min", label: "lower real price" },
+  // The real FULL price (input + output) — a public-price fallback, never
+  // a fake stand-in for an already-paid subscription's real marginal
+  // cost (the three kairo.* dimensions above are that real cost; this is
+  // what's left when Kairo hasn't actually run the model yet). Falls
+  // back to input-only when a real output price isn't known — never
+  // invents one.
+  { key: "totalPricePerMTok", better: "min", label: "lower real full input+output price", resolve: resolveTotalPrice },
   { key: "outputTokensPerSecond", better: "max", label: "higher reported throughput" }
 ];
+
+function resolveTotalPrice(registry, model) {
+  const input = resolveMetric(registry, model, "priceInputPerMTok");
+  if (input == null) return null;
+  const output = resolveMetric(registry, model, "priceOutputPerMTok");
+  return output == null ? input : input + output;
+}
+
+/** Resolves one EFFICIENCY_DIMENSIONS entry's real value for a model — its own `resolve` when it has one (a derived value, e.g. totalPricePerMTok), otherwise the plain registry/model field lookup every other dimension already used. */
+function resolveDimension(dimension, registry, model) {
+  return dimension.resolve ? dimension.resolve(registry, model) : resolveMetric(registry, model, dimension.key);
+}
 
 /**
  * Resolves a real ProviderCapacity signal for a model's adapter — never
@@ -1164,42 +1183,168 @@ function resolveProviderCapacity(providerCapacity, model) {
 }
 
 // EFFICIENT TEAM's capability floor: a candidate must retain at least this
-// fraction of the real capability leader's score to be considered
-// "adequate" for a role — a genuinely different policy from
-// NEAR_EQUIVALENCE_BAND's "almost identical" test. NEAR_EQUIVALENCE_BAND
+// fraction of the real capability leader's score (see "retention" below)
+// to be considered "adequate" for a role — a genuinely different policy
+// from NEAR_EQUIVALENCE_BAND's "almost identical" test. NEAR_EQUIVALENCE_BAND
 // (0.08, ~8%) keeps governing maximum-capability equivalence (AI TEAM's
 // near-equivalence pool, Reviewer independence) — it no longer governs
 // EFFICIENT TEAM. This floor is intentionally much wider: EFFICIENT
 // TEAM's job is "the minimum model that's still genuinely sufficient for
 // the role," not "whichever near-identical model happens to be cheaper."
-// 0.80 is an initial, explicitly configurable starting point (see
-// buildEfficientTeam's `options.capabilityFloor`) — not calibrated
-// against measured data the way NEAR_EQUIVALENCE_BAND was, since
-// "sufficient" is a product decision, not something derivable from
-// benchmark gaps alone.
+//
+// The floor is now risk-based, sourced from role-profiles.js's own
+// RoleProfile.riskLevel (already a real, deliberate per-role judgment —
+// see role-profiles.js's own doc for why Architect/Debugger/Reviewer are
+// "high" and Explorer is "low") rather than one flat number for every
+// role: a mistake from Architect/Debugger/Reviewer compounds across the
+// whole team or hits during a live failure, so EFFICIENT can afford to
+// give up less capability there than it can for Explorer, whose mistakes
+// are cheap to catch and retry. EFFICIENT_CAPABILITY_FLOOR (0.80) stays
+// exported as the "low"-risk value and the real fallback for a role with
+// no RoleProfile (a future addition, or a project-derived role name not
+// among the canonical six) — never calibrated against measured data the
+// way NEAR_EQUIVALENCE_BAND was, since "sufficient" is a product
+// decision, not something derivable from benchmark gaps alone.
+// `options.capabilityFloor` on buildEfficientTeam/bestEfficientModelPerRoleGlobal
+// still overrides ALL of this with one explicit number when a caller
+// wants that instead — resolveEfficientFloor only applies when it wasn't given.
 export const EFFICIENT_CAPABILITY_FLOOR = 0.80;
 
+const EFFICIENT_FLOOR_BY_RISK = { high: 0.90, medium: 0.85, low: EFFICIENT_CAPABILITY_FLOOR };
+
 /**
- * Orders real adequate candidates by the EFFICIENCY_DIMENSIONS priority
- * chain (real per-model economics), then by the portfolio's own
+ * The real capability floor a role's EFFICIENT pick must clear — an
+ * explicit `options.capabilityFloor` always wins (a caller's deliberate
+ * override); otherwise resolved from the role's own real RoleProfile.riskLevel.
+ * @param {string} role
+ * @param {number|null} explicitFloor - `options.capabilityFloor`, or null/undefined when not overridden.
+ * @returns {number}
+ */
+function resolveEfficientFloor(role, explicitFloor) {
+  if (explicitFloor != null) return explicitFloor;
+  const profile = getRoleProfile(role);
+  return (profile && EFFICIENT_FLOOR_BY_RISK[profile.riskLevel]) ?? EFFICIENT_CAPABILITY_FLOOR;
+}
+
+/**
+ * Picks the single real EFFICIENCY_DIMENSIONS entry to use as the Pareto
+ * frontier's resource axis for one role's candidate pool — the
+ * HIGHEST-PRIORITY dimension that at least one real candidate actually
+ * has a value for (kairo.* real telemetry first, public price as
+ * fallback, throughput last). Deliberately a SINGLE dimension, never a
+ * blend: comparing retention against two different candidates' two
+ * different real metrics would be comparing unlike things.
+ * @returns {{key: string, better: "min"|"max", label: string, resolve?: Function}|null}
+ */
+function resolveResourceDimension(registry, candidates) {
+  for (const dimension of EFFICIENCY_DIMENSIONS) {
+    if (candidates.some((c) => resolveDimension(dimension, registry, c.model) != null)) return dimension;
+  }
+  return null;
+}
+
+/**
+ * A real candidate's "resource pressure" on the chosen dimension,
+ * normalized against the BEST real value present in the pool — 1.0 for
+ * the pool's own best (cheapest, fastest, whichever direction `better`
+ * means), a real multiple of that for everyone else. null when this
+ * candidate has no real value on the chosen dimension at all (never
+ * fabricated).
+ */
+function resourcePressure(dimension, registry, model, bestValue) {
+  if (!dimension || bestValue == null) return null;
+  const value = resolveDimension(dimension, registry, model);
+  if (value == null) return null;
+  return dimension.better === "min" ? value / bestValue : bestValue / value;
+}
+
+/**
+ * The real Pareto balance-point scores for one role's pool — computed
+ * once across the whole pool, never pairwise, because a "balance point"
+ * is inherently relative to the pool's own real extremes. For every
+ * candidate with a real value on the chosen resource dimension, both real
+ * retention (gapValue as a fraction of the leader's) and real resource
+ * pressure (see resourcePressure) are normalized against the POOL's own
+ * real min/max on each axis, then scored `retentionNorm - pressureNorm`.
+ * Maximizing this rewards the candidate closest to the "good corner" —
+ * high real retention AND low real resource pressure RELATIVE TO ITS
+ * PEERS — a genuine knee/balance point.
+ *
+ * This is deliberately NOT retention/pressure (a plain ratio): that ratio
+ * always anchors its denominator at the pool's own cheapest candidate
+ * (pressure 1.0), so the cheapest-adequate candidate almost always wins
+ * outright regardless of how much real capability it gives up — exactly
+ * the "cheapest wins" ECONOMY behavior EFFICIENT must NOT collapse into.
+ * Normalizing both axes against the pool's real range instead lets a
+ * genuinely mid-priced, high-retention candidate outscore both extremes.
+ *
+ * With exactly two candidates, the two extremes always score identically
+ * (0 each, by construction — there is no "middle" to find with only two
+ * points), so a real two-way choice correctly falls through to
+ * EFFICIENCY_DIMENSIONS' own cascade (see sortByEfficiencyPriority)
+ * instead of this function arbitrarily favoring either endpoint.
+ * @returns {Map<string, number>|null} modelKey -> balance score, or null
+ *   when there's no real leader/dimension/enough real data to compare.
+ */
+function computeBalanceScores(candidates, leader, dimension, registry) {
+  if (!leader?.gapValue || !dimension) return null;
+  const allValues = candidates.map((c) => resolveDimension(dimension, registry, c.model)).filter((v) => v != null);
+  if (!allValues.length) return null;
+  const bestResourceValue = dimension.better === "min" ? Math.min(...allValues) : Math.max(...allValues);
+  const points = candidates
+    .map((c) => ({
+      key: modelKey(c.model),
+      retention: (c.gapValue ?? 0) / leader.gapValue,
+      pressure: resourcePressure(dimension, registry, c.model, bestResourceValue)
+    }))
+    .filter((p) => p.pressure != null);
+  if (points.length < 2) return null;
+  const retentions = points.map((p) => p.retention);
+  const pressures = points.map((p) => p.pressure);
+  const retRange = Math.max(...retentions) - Math.min(...retentions) || 1;
+  const presRange = Math.max(...pressures) - Math.min(...pressures) || 1;
+  const minRet = Math.min(...retentions);
+  const minPres = Math.min(...pressures);
+  const scores = new Map();
+  for (const p of points) {
+    scores.set(p.key, (p.retention - minRet) / retRange - (p.pressure - minPres) / presRange);
+  }
+  return scores;
+}
+
+/**
+ * Orders real adequate candidates by their Pareto balance-point score
+ * first (see computeBalanceScores's own doc — a real knee/balance point
+ * relative to the pool's own extremes, never just "cheapest wins" or
+ * "closest to QUALITY wins") when a real role leader is given; the EFFICIENCY_DIMENSIONS
+ * priority chain (real per-model economics) then only ever breaks a
+ * genuine tie in that score. Falls through to the portfolio's own
  * concentration state (prefer the less-used model, then the less-used
  * provider), then a real ProviderCapacity signal (quota, resolved
  * per-adapter, never per-model), and only then a stable adapterId/modelId
  * tiebreak so the same real near-tie always resolves the same way run to
  * run.
- * @param {Array<{model: object, value: number}>} candidates
+ * @param {Array<{model: object, value: number, gapValue?: number}>} candidates
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
  * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} providerCapacity
  * @param {Map<string, number>} modelUsage
  * @param {Map<string, number>} providerTechnicalUsage
+ * @param {{model: object, gapValue?: number}|null} [leader] - the role's real QUALITY leader (retention reference); when omitted, falls back to the plain EFFICIENCY_DIMENSIONS-only ordering (no real gapValue reference to compute retention against).
  */
-function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelUsage, providerTechnicalUsage) {
+function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelUsage, providerTechnicalUsage, leader = null) {
+  const dimension = leader ? resolveResourceDimension(registry, candidates) : null;
+  const balanceScores = dimension ? computeBalanceScores(candidates, leader, dimension, registry) : null;
   return [...candidates].sort((a, b) => {
-    for (const { key, better } of EFFICIENCY_DIMENSIONS) {
-      const av = resolveMetric(registry, a.model, key);
-      const bv = resolveMetric(registry, b.model, key);
+    if (balanceScores) {
+      const aScore = balanceScores.get(modelKey(a.model));
+      const bScore = balanceScores.get(modelKey(b.model));
+      if (aScore != null && bScore != null && aScore !== bScore) return bScore - aScore; // higher real balance score wins
+    }
+    for (const dim of EFFICIENCY_DIMENSIONS) {
+      const av = resolveDimension(dim, registry, a.model);
+      const bv = resolveDimension(dim, registry, b.model);
       if (av == null || bv == null || av === bv) continue;
-      return better === "max" ? bv - av : av - bv;
+      return dim.better === "max" ? bv - av : av - bv;
     }
     const aModelUsage = modelUsage.get(familyKey(a.model)) ?? 0;
     const bModelUsage = modelUsage.get(familyKey(b.model)) ?? 0;
@@ -1227,27 +1372,36 @@ function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelU
  */
 function describeEfficiencyChoice(chosen, leader, registry, providerCapacity, modelUsage, providerTechnicalUsage) {
   if (chosen.model.adapterId === leader.model.adapterId && chosen.model.modelId === leader.model.modelId) return null;
-  for (const { key, better, label } of EFFICIENCY_DIMENSIONS) {
-    const chosenValue = resolveMetric(registry, chosen.model, key);
-    const leaderValue = resolveMetric(registry, leader.model, key);
-    if (chosenValue == null || leaderValue == null || chosenValue === leaderValue) continue;
-    const chosenIsBetter = better === "max" ? chosenValue > leaderValue : chosenValue < leaderValue;
-    if (chosenIsBetter) return `Adequate capability — chosen for ${label}.`;
-    break; // this dimension didn't favor the switch; a later real signal must have — no real number to report
+  // Real retention against the role's own QUALITY leader — "how much
+  // real capability did this Pareto balance-point pick actually keep" —
+  // prefixed onto every reason below, not just the resource-dimension
+  // one, since it's real context for ANY reason a non-leader was chosen.
+  const retentionPct = leader.gapValue ? Math.round(((chosen.gapValue ?? 0) / leader.gapValue) * 100) : null;
+  const retentionPrefix = retentionPct != null ? `Retains ~${retentionPct}% of QUALITY's real capability — ` : "Adequate capability — ";
+  const dimension = resolveResourceDimension(registry, [chosen, leader]);
+  if (dimension) {
+    const chosenValue = resolveDimension(dimension, registry, chosen.model);
+    const leaderValue = resolveDimension(dimension, registry, leader.model);
+    if (chosenValue != null && leaderValue != null && chosenValue !== leaderValue) {
+      const chosenIsBetter = dimension.better === "max" ? chosenValue > leaderValue : chosenValue < leaderValue;
+      if (chosenIsBetter) return `${retentionPrefix}chosen for ${dimension.label}.`;
+      // this dimension didn't favor the switch; a later real signal must
+      // have — no real number to report from THIS one, fall through.
+    }
   }
   const chosenModelUsage = modelUsage.get(familyKey(chosen.model)) ?? 0;
   const leaderModelUsage = modelUsage.get(familyKey(leader.model)) ?? 0;
   const chosenProviderUsage = providerTechnicalUsage.get(chosen.model.adapterId) ?? 0;
   const leaderProviderUsage = providerTechnicalUsage.get(leader.model.adapterId) ?? 0;
   if (chosenModelUsage < leaderModelUsage || chosenProviderUsage < leaderProviderUsage) {
-    return "Adequate capability — assigned to a different model/provider to avoid concentration.";
+    return `${retentionPrefix}assigned to a different model/provider to avoid concentration.`;
   }
   const chosenQuota = resolveProviderCapacity(providerCapacity, chosen.model);
   const leaderQuota = resolveProviderCapacity(providerCapacity, leader.model);
   if (chosenQuota != null && leaderQuota != null && chosenQuota > leaderQuota) {
-    return "Adequate capability — chosen for lower real provider quota pressure.";
+    return `${retentionPrefix}chosen for lower real provider quota pressure.`;
   }
-  return "Adequate capability — chosen by a stable tiebreak, no real consumption/cost/duration/price/speed/concentration/quota signal distinguished them.";
+  return `${retentionPrefix}chosen by a stable tiebreak, no real consumption/cost/duration/price/speed/concentration/quota signal distinguished them.`;
 }
 
 /**
@@ -1275,21 +1429,25 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
 }
 
 /**
- * EFFICIENT TEAM: the minimum real model that's still genuinely
- * sufficient for a role — not "whichever near-identical model happens to
- * be cheaper" — coordinated across the whole portfolio the same way
- * buildAiTeam is, so EFFICIENT TEAM doesn't just trade one monoculture
- * (always the capability leader) for another (always the single cheapest
- * real model). Among eligible candidates that retain at least
- * `options.capabilityFloor` (default EFFICIENT_CAPABILITY_FLOOR, 0.80) of
- * the real capability leader's score, prefers whichever real signal
- * actually reduces resource pressure (see EFFICIENCY_DIMENSIONS — token
- * consumption, then cost, duration, price, throughput), then the
- * portfolio's own concentration state, then a provider's real quota
- * headroom, instead of always taking the raw leader. Never invents a
- * savings percentage or a blended score — only ever orders by a real,
- * already-connected signal, and falls back to a stable tiebreak when none
- * of them distinguish the candidates.
+ * EFFICIENT TEAM: a real Pareto balance point between capability and
+ * resource cost for each role — deliberately NOT "whichever candidate is
+ * cheapest" (that's ECONOMY, a separate concept EFFICIENT must never
+ * collapse into — see computeBalanceScores's own doc for why a plain
+ * retention/pressure ratio would do exactly that). Among eligible
+ * candidates that clear the role's own risk-based capability floor (see
+ * resolveEfficientFloor — 90% for high-risk roles, 85% medium, 80% low,
+ * sourced from RoleProfile.riskLevel; `options.capabilityFloor` overrides
+ * this for every role when explicitly given), the real candidate whose
+ * capability retention and real resource pressure sit at the pool's own
+ * genuine knee/balance point wins — never the pool's cheapest-adequate
+ * extreme merely because it's cheapest, and never the raw capability
+ * leader merely because it's most capable. EFFICIENCY_DIMENSIONS (real
+ * token consumption, then cost, duration, price, throughput) only ever
+ * breaks a genuine tie in that balance score, then the portfolio's own
+ * concentration state, then a provider's real quota headroom. Never
+ * invents a savings percentage or a blended score — only ever orders by a
+ * real, already-connected signal, and falls back to a stable tiebreak
+ * when none of them distinguish the candidates.
  *
  * Astra/Fable/Opus-class leaders can still appear here — precisely when
  * no smaller real model clears the floor, EFFICIENT TEAM shows the exact
@@ -1312,27 +1470,35 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildEfficientTeam(models, eligibility = {}, registry = null, options = {}) {
-  const { capabilityFloor = EFFICIENT_CAPABILITY_FLOOR, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES } = options;
+  const { capabilityFloor = null, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES } = options;
   const effectiveRegistry = ensureRegistry(models, registry);
   const { roleDefinitions, evaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
   const roleRankings = roleDefinitions.map(({ role, compute, better }) => {
     const eligibleRanked = attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role]);
     // Same comparable-before-provisional policy as buildAiTeam (see
-    // preferComparableCandidates's own doc) — the 80% capability floor
-    // below applies WITHIN whichever tier this produces, never across
-    // both at once, so a thin, provisional candidate's real value can't
-    // let it clear the floor ahead of a genuinely comparable one.
+    // preferComparableCandidates's own doc) — the real, risk-based
+    // capability floor below applies WITHIN whichever tier this produces,
+    // never across both at once, so a thin, provisional candidate's real
+    // value can't let it clear the floor ahead of a genuinely comparable one.
     const { pool: ranked, usedProvisionalFallback } = preferComparableCandidates(eligibleRanked, evaluationsByRole[role]);
     return { role, compute, better, ranked, usedProvisionalFallback };
   });
 
   const rolePools = roleRankings.map(({ role, better, ranked }) => ({
     role, better,
-    pool: adequateCandidates(ranked, ranked[0], better, capabilityFloor)
+    pool: adequateCandidates(ranked, ranked[0], better, resolveEfficientFloor(role, capabilityFloor)),
+    // The real QUALITY leader — retention reference for the Pareto
+    // balance-point score (see sortByEfficiencyPriority's own doc). The
+    // TRUE leader of the comparable-preferred `ranked` list, not just
+    // `pool[0]` (pool is already floor-filtered, but preserves order —
+    // ranked[0] and pool[0] are the same real model as long as the
+    // leader itself clears its own floor, which it trivially always does).
+    leader: ranked[0] ?? null
   }));
-  const makeSorter = (_role, modelUsage, providerTechnicalUsage) => (candidates) => (
-    sortByEfficiencyPriority(candidates, effectiveRegistry, providerCapacity, modelUsage, providerTechnicalUsage)
-  );
+  const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
+    const { leader } = rolePools.find((r) => r.role === role);
+    return (candidates) => sortByEfficiencyPriority(candidates, effectiveRegistry, providerCapacity, modelUsage, providerTechnicalUsage, leader);
+  };
   const { results } = assignCoordinatedTeam(rolePools, makeSorter, "efficient");
 
   const entries = [];

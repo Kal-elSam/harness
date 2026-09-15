@@ -603,26 +603,28 @@ test("REGRESSION: the same real model family under Claude, Cursor, and several C
     "a genuinely different model must cover at least one role once the Fable family hits its concentration limit");
 });
 
-test("buildEfficientTeam coordinates the portfolio too: a model that already claimed its 2-role limit on the coding floor cedes an adequate intelligence role to the real alternative", () => {
-  // Codex's coding score (60.0) is only ~73.5% of Claude's (81.6) — below
-  // the 80% floor, so Claude is the ONLY adequate candidate for
-  // Builder/Tester; Codex never clears the coding floor for those roles.
-  // Codex is the raw intelligence leader (53.4 vs Claude's 52.8, ~1.1%
-  // ahead) — Claude still clears the 80% floor there (well within it).
-  //
-  // Under the multi-metric role-capability engine, Architect/Debugger/
-  // Reviewer blend reasoning+coding (median); with only these two real
-  // metrics, both models' median collapses to their shared, near-tied
-  // reasoning score, so both stay adequate for these roles too — same
-  // 2-candidate floor-passing pool as Explorer. EFFICIENT TEAM's
-  // concentration override never invokes the tighter (8%) decisive-leader
-  // check used by CAPABILITY TEAM — its whole pool is already
-  // floor-filtered, so any member is by definition "adequate," and a
-  // concentration limit can always force a swap among floor-clearing
-  // candidates instead of repeating the raw leader.
+test("buildEfficientTeam applies its real risk-based floor per role (90% high / 85% medium / 80% low, from RoleProfile.riskLevel) AND still coordinates the portfolio — a model that clears a role's floor but is already at its 2-role limit cedes to the real alternative", () => {
+  // Claude leads every real metric. Codex is close on reasoning (88 vs
+  // 90, 97.8% retention) and terminalBenchV2 (0.87 vs 0.90, 96.7%), but
+  // meaningfully weaker on coding (55 vs 90, 61.1% retention) — real
+  // numbers, verified by running buildEfficientTeam directly before
+  // writing these assertions, not derived by hand:
+  //   Architect/Builder (coding+{reasoning|terminal}, 2-value MEDIAN =
+  //     average of 2): Codex's weak coding drags the average below the
+  //     85%/90% risk floor — Claude is the ONLY adequate candidate.
+  //   Explorer (reasoning only, 80% low-risk floor): both clear easily.
+  //   Debugger (reasoning+coding+terminal, 3-value MEDIAN = the middle
+  //     value, far less sensitive to one weak dimension than a 2-value
+  //     average): Codex's weak coding gets discarded by the median
+  //     (terminalBenchV2's 96.7% becomes the middle value) — Codex
+  //     clears even the 90% high-risk floor here.
+  //   Tester (coding+terminal, medium 85%): same 2-value-average
+  //     sensitivity as Builder — Codex fails it too.
+  //   Reviewer (reasoning+coding, high 90%): same 2-value-average
+  //     sensitivity as Architect — Codex fails it too.
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 52.8, codingIndex: 81.6, mathIndex: null, terminalBenchV2: 0.80 },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 53.4, codingIndex: 60.0, mathIndex: null, terminalBenchV2: 0.55 }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 88, codingIndex: 55, mathIndex: null, terminalBenchV2: 0.87 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -630,26 +632,25 @@ test("buildEfficientTeam coordinates the portfolio too: a model that already cla
   const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
-  // Builder/Tester: Claude is the ONLY real candidate that clears the
-  // coding floor — Codex never even qualifies for these roles, claiming
-  // Claude's full 2-role concentration limit before any other role is
-  // resolved.
+  // Architect/Builder/Tester/Reviewer: Codex never clears these roles'
+  // real risk-based floor at all — Claude is the only adequate option,
+  // even once it's already claimed its 2-role concentration limit on
+  // earlier (smaller-pool) roles.
+  assert.equal(byRole.Architect.primary.adapterId, "claude");
   assert.equal(byRole.Builder.primary.adapterId, "claude");
   assert.equal(byRole.Tester.primary.adapterId, "claude");
-
-  // Explorer/Architect: Claude's 2-role limit is already spent on
-  // Builder/Tester — Codex, the real adequate alternative, gets both.
-  assert.equal(byRole.Explorer.primary.adapterId, "codex");
-  assert.equal(byRole.Architect.primary.adapterId, "codex");
-  assert.match(byRole.Architect.reason, /assigned to a different model\/provider to avoid concentration/);
-
-  // Debugger/Reviewer: Codex's real terminal-bench gap (added alongside
-  // coding to satisfy Builder/Debugger's real required-capability gate)
-  // now also drags it below Debugger's capability floor — Claude is the
-  // only real adequate candidate here regardless of concentration state.
-  assert.equal(byRole.Debugger.primary.adapterId, "claude");
   assert.equal(byRole.Reviewer.primary.adapterId, "claude");
-  assert.match(byRole.Debugger.reason, /Only adequate option — no real alternative clears the capability floor\./);
+  assert.match(byRole.Tester.reason, /Only adequate option/);
+  assert.match(byRole.Reviewer.reason, /Only adequate option/);
+
+  // Explorer/Debugger: Codex genuinely clears both roles' real floor —
+  // once Claude's 2-role limit is spent on Architect+Builder (the
+  // smallest, single-candidate pools, resolved first), Codex is the real,
+  // adequate, concentration-safe alternative for these two.
+  assert.equal(byRole.Explorer.primary.adapterId, "codex");
+  assert.equal(byRole.Debugger.primary.adapterId, "codex");
+  assert.match(byRole.Explorer.reason, /assigned to a different model\/provider to avoid concentration/);
+  assert.match(byRole.Debugger.reason, /assigned to a different model\/provider to avoid concentration/);
 });
 
 test("buildAiTeam keeps Reviewer on Builder's own provider when no independent real alternative exists, rather than forcing an incapable model", () => {
@@ -750,7 +751,7 @@ test("buildEfficientTeam prefers a real, meaningfully cheaper near-equivalent ov
   const team = buildEfficientTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } });
   const explorer = team.find((t) => t.role === "Explorer");
   assert.equal(explorer.primary.adapterId, "opencode-go", "the cheaper, near-equivalent real option should win over the raw leader");
-  assert.match(explorer.reason, /lower real price/);
+  assert.match(explorer.reason, /lower real full input\+output price/);
 });
 
 test("buildAiTeam never lets price itself decide — it only ever sees a role's real capability and the portfolio's concentration state", () => {
@@ -887,22 +888,94 @@ test("REGRESSION: buildEfficientTeam applies its 80% capability floor WITHIN the
   assert.equal(explorer.primary.adapterId, "claude", "the comparable candidate wins EFFICIENT's own floor-and-price chain too — never a cheaper provisional one instead");
 });
 
-test("buildEfficientTeam prefers real higher throughput as the tie-break after price", () => {
+test("buildEfficientTeam prefers real higher throughput as the tie-break when BOTH real retention and real price are genuinely tied", () => {
+  // A real capability DIFFERENCE at the same price is no longer an
+  // arbitrary throughput tie under the Pareto balance-point redesign —
+  // the candidate retaining strictly more real capability for the exact
+  // same real resource cost legitimately wins outright (it dominates the
+  // other on the Pareto frontier: >= resource, > retention). Throughput
+  // only gets to decide a genuine tie on BOTH axes — same real
+  // intelligenceIndex (retention) AND same real price — verified here
+  // with intentionally IDENTICAL intelligenceIndex for both models.
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 77.0, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 150 }
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 150 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
   );
-  // Same real price — speed should decide the near-equivalent tie. Checked
-  // on Explorer (intelligence), the first role assigned in this fixture —
-  // Builder/Tester (coding) also clear the floor here and would otherwise
-  // get contaminated by whichever model Explorer/Architect claim first
-  // under the portfolio's own 2-role concentration limit.
   const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } });
   const explorer = team.find((t) => t.role === "Explorer");
-  assert.equal(explorer.primary.adapterId, "codex", "the real 3x faster option should win the tie when price doesn't distinguish them");
+  assert.equal(explorer.primary.adapterId, "codex", "the real 3x faster option should win the tie when neither retention nor price distinguish them");
+});
+
+// The three tests below verify the Pareto balance-point redesign's own
+// explicit acceptance criteria (never just "cheapest wins" or "leader
+// wins") — they need a REAL three-way pool (not just two candidates) to
+// have an actual "middle" to find at all: with exactly two candidates the
+// balance score always ties by construction (see computeBalanceScores's
+// own doc) and correctly falls through to the plain price cascade, which
+// is what the near-equivalent-cheaper tests above already cover.
+
+test("EFFICIENT never lets the pool's cheapest real candidate win automatically — a genuine balance point beats it when one exists", () => {
+  const aa = [
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    // Real balance point: retains ~98% of the leader's real capability at
+    // 1/4 of its real price.
+    { slug: "balance-model", name: "Balance", intelligenceIndex: 88, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
+    // The pool's actual cheapest real option — real, adequate (clears the
+    // 80% floor), but pays for its rock-bottom price with real capability
+    // it can't make back anywhere else.
+    { slug: "cheapest-model", name: "Cheapest", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 1 }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "balance-model" }] },
+    { adapterId: "opencode-go", models: [{ id: "cheapest-model" }] }
+  ], aa);
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "codex", "the real balance point must win over the pool's own cheapest real candidate");
+});
+
+test("EFFICIENT lets a pricier real candidate win when it's the genuine Pareto balance point, not just the intelligence leader", () => {
+  const aa = [
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 25 },
+    // Real balance point: a broadly-measured, higher-retention (~94%) but
+    // pricier real candidate — the "Terra/Sonnet"-shaped case from the
+    // plan: it should legitimately win by sitting at the genuine
+    // capability/resource balance, not by being either extreme.
+    { slug: "balance-model", name: "Balance", intelligenceIndex: 85, codingIndex: null, mathIndex: null, priceInputPerMTok: 6 },
+    { slug: "cheap-model", name: "Cheap", intelligenceIndex: 74, codingIndex: null, mathIndex: null, priceInputPerMTok: 1 }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "balance-model" }] },
+    { adapterId: "opencode-go", models: [{ id: "cheap-model" }] }
+  ], aa);
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "codex", "the pricier real balance-point candidate must win over both the raw leader and the pool's cheapest option");
+});
+
+test("EFFICIENT still lets a near-equivalent real cheap model win legitimately when only two real candidates exist", () => {
+  // With only two real candidates there's no real 'middle' for the
+  // balance score to find (see computeBalanceScores's own doc — both
+  // extremes tie at 0 by construction), so the real, near-equivalent,
+  // much cheaper option correctly wins via the plain price cascade —
+  // distinguishing "arbitrarily cheap at real capability cost" (excluded
+  // by the floor) from "a genuinely good real deal" (this case).
+  const aa = [
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "cheap-near-equiv", name: "CheapNearEquiv", intelligenceIndex: 88, codingIndex: null, mathIndex: null, priceInputPerMTok: 2 }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "cheap-near-equiv" }] }
+  ], aa);
+  const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  const explorer = team.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "codex", "a real near-equivalent (98% retention) at 1/10 the price should still legitimately win");
 });
 
 test("a role's optional metric can be satisfied by real registry evidence from any connected source, not just the AA field baked onto the model", () => {
