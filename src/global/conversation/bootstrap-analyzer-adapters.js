@@ -40,6 +40,7 @@ import {
 import { verifyClaudeSubscriptionAuth as defaultVerifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 import { readClaudeModels as defaultReadClaudeModels } from "../observability/claude-models.js";
 import { readCursorModels as defaultReadCursorModels } from "../observability/cursor-models.js";
+import { probeCursorAuth as defaultProbeCursorAuth } from "../observability/cursor-auth.js";
 import { spawn as defaultSpawn } from "node:child_process";
 
 export function createCodexBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}) {
@@ -129,6 +130,7 @@ function unknownCursorResult(error) {
 
 export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}) {
   const listModels = deps.readCursorModels ?? defaultReadCursorModels;
+  const probeAuth = deps.probeCursorAuth ?? defaultProbeCursorAuth;
   const spawnFn = deps.spawn ?? defaultSpawn;
   const isAuto = modelId != null && CURSOR_AUTO_IDS.has(String(modelId).toLowerCase());
   // Cursor Auto is a distinct, real candidate identity, never an implicit
@@ -147,10 +149,16 @@ export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
     //     an absent selection is never silently defaulted to either.
     //  2. For an EXPLICIT model: checked against the real per-account
     //     catalog (observability/cursor-models.js's readCursorModels — a
-    //     real `cursor-agent models` call, exit-status-checked). On this
-    //     machine the account genuinely has zero models enabled — a real,
-    //     current blocker, not hypothetical. Cursor Auto is exempt from
-    //     this check (it's a routing mode, not a listed catalog model).
+    //     real `cursor-agent models` call, exit-status-checked). Cursor
+    //     Auto is exempt from this specific check (it's a routing mode,
+    //     not a listed catalog model) — but exempting the catalog check
+    //     must never also exempt authentication: `cursor-agent status`/
+    //     `whoami` do NOT reliably reflect whether a real invocation will
+    //     work (verified empirically — status can report "Logged in"
+    //     while a real -p call still fails with "Authentication
+    //     required"), so Auto is separately gated on
+    //     observability/cursor-auth.js's probeCursorAuth, a real
+    //     invocation-based probe, not the unreliable status/whoami claim.
     //  3. Isolation proof, for BOTH explicit models and Cursor Auto alike:
     //     unlike Codex's sandbox-exec and Claude's --restricted (both
     //     independently canary-tested — a real out-of-bounds read denied,
@@ -184,6 +192,17 @@ export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
             eligible: false, reason: `"${modelId}" is not in this account's real Cursor model catalog.`,
             isolation: "unverified", canaryTested: false
           };
+        }
+      } else {
+        const auth = await probeAuth();
+        if (auth.status !== "measured") {
+          return {
+            eligible: false, reason: `Could not determine whether Cursor Auto can actually be invoked: ${auth.reason ?? auth.status}`,
+            isolation: "unverified", canaryTested: false
+          };
+        }
+        if (!auth.authenticated) {
+          return { eligible: false, reason: auth.reason, isolation: "unverified", canaryTested: false };
         }
       }
       return {

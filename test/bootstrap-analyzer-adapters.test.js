@@ -111,16 +111,42 @@ test("createCursorBootstrapAnalyzerAdapter normalizes every Cursor Auto spelling
   }
 });
 
-test("createCursorBootstrapAnalyzerAdapter's Cursor Auto is exempt from the explicit per-account catalog check (it's a routing mode, not a listed model) but still gated on the isolation proof, the same standard as every other candidate", async () => {
+test("createCursorBootstrapAnalyzerAdapter's Cursor Auto is exempt from the explicit per-account catalog check (it's a routing mode, not a listed model), but is NOT exempt from a real authentication probe — status/whoami's claim alone is never trusted", async () => {
   const adapter = createCursorBootstrapAnalyzerAdapter({
     modelId: "cursor:auto",
-    deps: { readCursorModels: async () => { throw new Error("must never be called for Cursor Auto"); } }
+    deps: {
+      readCursorModels: async () => { throw new Error("must never be called for Cursor Auto"); },
+      probeCursorAuth: async () => ({ authenticated: false, status: "measured", source: "test", reason: "cursor-agent reports \"Authentication required\"" })
+    }
+  });
+  const eligibility = await adapter.checkEligibility();
+  assert.equal(eligibility.eligible, false);
+  assert.match(eligibility.reason, /Authentication required/);
+});
+
+test("createCursorBootstrapAnalyzerAdapter's Cursor Auto, once real authentication is actually confirmed, still lands on the isolation gate — the same standard as every other candidate", async () => {
+  const adapter = createCursorBootstrapAnalyzerAdapter({
+    modelId: "cursor:auto",
+    deps: {
+      readCursorModels: async () => { throw new Error("must never be called for Cursor Auto"); },
+      probeCursorAuth: async () => ({ authenticated: true, status: "measured", source: "test", reason: null })
+    }
   });
   const eligibility = await adapter.checkEligibility();
   assert.equal(eligibility.eligible, false);
   assert.equal(eligibility.isolation, "unverified");
   assert.equal(eligibility.canaryTested, false);
   assert.match(eligibility.reason, /canary-tested/);
+});
+
+test("createCursorBootstrapAnalyzerAdapter's Cursor Auto is ineligible when the real auth probe itself fails — never silently treated as authenticated", async () => {
+  const adapter = createCursorBootstrapAnalyzerAdapter({
+    modelId: "cursor:auto",
+    deps: { probeCursorAuth: async () => ({ authenticated: false, status: "unknown", source: "test", reason: "cursor-agent -p probe timed out" }) }
+  });
+  const eligibility = await adapter.checkEligibility();
+  assert.equal(eligibility.eligible, false);
+  assert.match(eligibility.reason, /Could not determine whether Cursor Auto/);
 });
 
 test("createCursorBootstrapAnalyzerAdapter is ineligible when the real per-account model catalog is empty — a real, current fact, not a stub", async () => {
