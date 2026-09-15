@@ -189,7 +189,7 @@ export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
         if (catalog.models.length === 0) {
           return { eligible: false, reason: "No models are enabled for this Cursor account.", isolation: "unverified", canaryTested: false };
         }
-        if (!catalog.models.includes(modelId)) {
+        if (!catalog.models.some((m) => m.id === modelId)) {
           return {
             eligible: false, reason: `"${modelId}" is not in this account's real Cursor model catalog.`,
             isolation: "unverified", canaryTested: false

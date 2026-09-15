@@ -22,9 +22,21 @@ test("parseCursorModelsOutput strips the spinner's ANSI codes and recognizes the
   assert.deepEqual(parseCursorModelsOutput(raw), []);
 });
 
-test("parseCursorModelsOutput treats remaining non-spinner lines as model names when the account has models", () => {
-  const raw = "\x1b[2K\x1b[GLoading models…\x1b[2K\x1b[1A\x1b[2K\x1b[G\ngpt-5\nsonnet-4\n";
-  assert.deepEqual(parseCursorModelsOutput(raw), ["gpt-5", "sonnet-4"]);
+test("parseCursorModelsOutput parses the real captured populated shape ('<id> - <Display Name>' lines, an 'Available models' header, a trailing 'Tip: ...' line) into real {id, displayName} entries", () => {
+  const raw = [
+    "Available models",
+    "",
+    "auto - Auto (current, default)",
+    "gpt-5.3-codex-low - Codex 5.3 Low",
+    "claude-opus-5-thinking-high - Claude Opus 5 1M Thinking",
+    "",
+    "Tip: use --model <id> (or /model <id> in interactive mode) to switch. Parameterized models also accept quoted overrides, e.g. --model 'claude-opus-4-8[context=1m,effort=high,fast=false]'."
+  ].join("\n");
+  assert.deepEqual(parseCursorModelsOutput(raw), [
+    { id: "auto", displayName: "Auto (current, default)" },
+    { id: "gpt-5.3-codex-low", displayName: "Codex 5.3 Low" },
+    { id: "claude-opus-5-thinking-high", displayName: "Claude Opus 5 1M Thinking" }
+  ]);
 });
 
 test("reads a real (possibly empty) answer as measured — empty is data, not a failure", async () => {

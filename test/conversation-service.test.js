@@ -770,7 +770,7 @@ test("snapshot always excludes opencode-zen and cursor from FIT's automatic cand
     readCodexModels: async () => ({ status: "measured", models: [] }),
     readClaudeModels: () => ({ status: "documented", models: [] }),
     readOpenCodeModels: async () => ({ status: "measured", models: [] }),
-    readCursorModels: async () => ({ status: "measured", models: ["claude-opus-5"] }),
+    readCursorModels: async () => ({ status: "measured", models: [{ id: "claude-opus-5", displayName: "Claude Opus 5" }] }),
     readArtificialAnalysisModels: async () => ({
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
       models: [{ slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 99, codingIndex: 99, mathIndex: null }]

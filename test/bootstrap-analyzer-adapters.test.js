@@ -184,7 +184,7 @@ test("createCursorBootstrapAnalyzerAdapter is ineligible when the real catalog r
 test("createCursorBootstrapAnalyzerAdapter is ineligible when modelId isn't in the real per-account catalog", async () => {
   const adapter = createCursorBootstrapAnalyzerAdapter({
     modelId: "not-a-real-model",
-    deps: { readCursorModels: async () => ({ status: "measured", source: "test", models: ["gpt-6"], error: null }) }
+    deps: { readCursorModels: async () => ({ status: "measured", source: "test", models: [{ id: "gpt-6", displayName: "GPT 6" }], error: null }) }
   });
   const eligibility = await adapter.checkEligibility();
   assert.equal(eligibility.eligible, false);
@@ -195,7 +195,7 @@ test("createCursorBootstrapAnalyzerAdapter is ineligible with real auth and a re
   const adapter = createCursorBootstrapAnalyzerAdapter({
     modelId: "gpt-6",
     deps: {
-      readCursorModels: async () => ({ status: "measured", source: "test", models: ["gpt-6"], error: null }),
+      readCursorModels: async () => ({ status: "measured", source: "test", models: [{ id: "gpt-6", displayName: "GPT 6" }], error: null }),
       getCursorIsolationStatus: async () => ({ available: false, platform: "linux", boundaryVerified: false, reason: "macOS only" })
     }
   });
@@ -209,7 +209,7 @@ test("createCursorBootstrapAnalyzerAdapter is eligible with real auth, a real ca
   const adapter = createCursorBootstrapAnalyzerAdapter({
     modelId: "gpt-6",
     deps: {
-      readCursorModels: async () => ({ status: "measured", source: "test", models: ["gpt-6"], error: null }),
+      readCursorModels: async () => ({ status: "measured", source: "test", models: [{ id: "gpt-6", displayName: "GPT 6" }], error: null }),
       getCursorIsolationStatus: async () => ({ available: true, platform: "darwin", boundaryVerified: true, reason: null })
     }
   });

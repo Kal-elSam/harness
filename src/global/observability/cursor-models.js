@@ -1,12 +1,11 @@
 import { spawn as defaultSpawn } from "node:child_process";
 
-// Real per-account model list via `cursor-agent models`. Unlike Codex/
-// OpenCode, this CLI's populated-list output shape has NOT been observed —
-// on this machine the account genuinely has zero models ("No models
-// available for this account."), so only the empty-list and error paths
-// are verified live. The parser below handles a plausible populated shape
-// (one model name per line) defensively, but treat it as unverified until
-// tested against an account that actually has models.
+// Real per-account model list via `cursor-agent models`. The populated
+// shape below was captured from the real CLI against a real authenticated
+// account with real models enabled (one `<id> - <Display Name>` entry per
+// line, plus a leading "Available models" header and a trailing "Tip: use
+// --model <id>..." line) — not assumed, not the earlier placeholder
+// parser that predated ever seeing a real populated catalog.
 //
 // A process crash (killed by a signal) or a non-zero exit is never
 // reinterpreted as a clean "no models" answer — an empty/partial stdout
@@ -19,21 +18,35 @@ const SOURCE = "cursor-agent models";
 const ANSI_PATTERN = /\x1b\[[0-9;]*[a-zA-Z]/g;
 const NO_MODELS_SENTINEL = /no models available/i;
 const LOADING_LINE = /^loading models/i;
+// Real model line shape: "<id> - <Display Name>", id has no spaces (every
+// real id observed is a bare slug like "gpt-5.3-codex-low" or "auto").
+// Header ("Available models") and the trailing "Tip: ..." line never
+// match this — no line-anchored " - " separator — so they're dropped
+// without needing to special-case their exact text.
+const MODEL_LINE_PATTERN = /^(\S+)\s-\s(.+)$/;
 
 function unknown(error = null) {
   return { status: "unknown", source: SOURCE, models: [], error: error ? String(error) : null };
 }
 
 /**
- * Strips the spinner's ANSI control codes and its own status lines,
+ * Strips the spinner's ANSI control codes and non-model lines (loading
+ * status, the "Available models" header, the trailing "Tip: ..." line),
  * returning either an empty array (the account has no models — a real,
- * confirmed answer) or the remaining non-empty lines as model names.
+ * confirmed answer) or the real `{id, displayName}` models — the same
+ * shape codex-models.js/claude-models.js already use, so callers never
+ * need to branch on catalog source.
  */
 export function parseCursorModelsOutput(raw) {
   const clean = String(raw ?? "").replace(ANSI_PATTERN, "");
   const lines = clean.split("\n").map((line) => line.trim()).filter(Boolean).filter((line) => !LOADING_LINE.test(line));
   if (lines.some((line) => NO_MODELS_SENTINEL.test(line))) return [];
-  return lines;
+  const models = [];
+  for (const line of lines) {
+    const match = line.match(MODEL_LINE_PATTERN);
+    if (match) models.push({ id: match[1], displayName: match[2].trim() });
+  }
+  return models;
 }
 
 /**
