@@ -28,8 +28,10 @@ const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude"]);
 // (real investigation, not yet informed by this project's own evidence —
 // that's exactly what running the analyst is FOR): the same baseline
 // Explorer definition model-intelligence.js's global ROLE_CAPABILITIES
-// table already uses.
-const ANALYST_CAPABILITIES = { Explorer: ["reasoning", "instructionFollowing"] };
+// table already uses — reasoning required, instructionFollowing merely
+// complementary (its absence must never exclude an otherwise-capable
+// candidate from being offered as a real analyst option).
+const ANALYST_CAPABILITIES = { Explorer: { required: ["reasoning"], optional: ["instructionFollowing"] } };
 
 function modelRef(teamModel) {
   if (!teamModel) return null;

@@ -336,14 +336,49 @@ function resolveMetric(registry, model, key) {
 // pattern (Tester: coding + terminal execution; Reviewer: independent
 // reasoning + coding review; Explorer: the same reasoning-only signal
 // Architect always had) rather than guessed from nothing.
+// required: a model MUST have real evidence for every one of these to
+// compete for the role at all — missing evidence on even one required
+// capability excludes it from the ranking entirely (see
+// buildAiTeamRoleDefinitions's compute()), regardless of how strong its
+// percentile/gapValue looks on the capabilities it does have. optional:
+// real evidence, when present, folds into the same capabilityPercentile/
+// gapValue median as required and can genuinely improve a candidate's
+// ranking — but its absence never excludes a model.
+//
+// softwareExecution is optional everywhere it appears (Builder, Debugger),
+// not required — verified against two independent real catalogs before
+// deciding this, not assumed: the full multi-provider catalog (Codex +
+// Claude + Cursor + OpenCode Go, 81 scored candidates) showed real
+// evidence for only 3 of them; crm's own real candidate pool (9 scored
+// candidates) showed only 2. Coverage is a fact about the CURRENT real
+// catalog, never a fixed constant — these specific numbers will already
+// be stale by the time this comment is read; re-measure via
+// capability-scoring.js's computeCapabilityPercentile against the real
+// scored pool in hand, never assume a ratio. Making softwareExecution
+// required at either measured ratio would have left Builder/Debugger with
+// only 2-3 real candidates system-wide, no matter how many other models
+// are genuinely capable — instructionFollowing is optional everywhere for
+// the same reason (never load-bearing enough for any role to gate on).
 const ROLE_CAPABILITIES = {
-  Explorer: ["reasoning", "instructionFollowing"],
-  Architect: ["reasoning", "coding", "instructionFollowing"],
-  Builder: ["coding", "softwareExecution", "terminalExecution", "instructionFollowing"],
-  Debugger: ["reasoning", "coding", "terminalExecution", "softwareExecution"],
-  Tester: ["coding", "terminalExecution"],
-  Reviewer: ["reasoning", "coding"]
+  Explorer: { required: ["reasoning"], optional: ["instructionFollowing"] },
+  Architect: { required: ["reasoning", "coding"], optional: ["instructionFollowing"] },
+  Builder: { required: ["coding", "terminalExecution"], optional: ["softwareExecution", "instructionFollowing"] },
+  Debugger: { required: ["reasoning", "coding", "terminalExecution"], optional: ["softwareExecution"] },
+  Tester: { required: ["coding", "terminalExecution"], optional: [] },
+  Reviewer: { required: ["reasoning", "coding"], optional: [] }
 };
+
+/**
+ * Normalizes a role's capability requirement — either the legacy plain
+ * array shape (every entry required; still used by
+ * conversation/project-strategy.js's project-derived roleCapabilities,
+ * which analyzes a real project and doesn't yet distinguish required from
+ * optional) or the {required, optional} shape above.
+ */
+function normalizeRoleCapabilities(capabilities) {
+  if (Array.isArray(capabilities)) return { required: capabilities, optional: [] };
+  return { required: capabilities.required ?? [], optional: capabilities.optional ?? [] };
+}
 
 /**
  * Builds one role definition per team-vocabulary role (Explorer /
@@ -362,11 +397,13 @@ const ROLE_CAPABILITIES = {
  * (registry AND models differ per call).
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
  * @param {Array<object>} models
- * @param {Record<string, string[]>} [roleCapabilities] - which real
- *   capabilities each role needs, defaulting to the generic global table
- *   above. A caller building a PROJECT-specific team (see
- *   conversation/project-strategy.js) passes the project's own real,
- *   detected roleRequirements here instead — e.g. a project with no real
+ * @param {Record<string, string[]|{required: string[], optional?: string[]}>} [roleCapabilities] -
+ *   which real capabilities each role needs, defaulting to the generic
+ *   global table above ({required, optional} — see normalizeRoleCapabilities
+ *   for what that distinction gates). A caller building a PROJECT-specific
+ *   team (see conversation/project-strategy.js) passes the project's own
+ *   real, detected roleRequirements here instead, as a plain array (legacy
+ *   shape — every entry treated as required) — e.g. a project with no real
  *   test command drops terminalExecution from Tester/Debugger's real
  *   requirement entirely, which can genuinely change which model wins
  *   that role, not just whether the role is active at all.
@@ -376,7 +413,9 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CA
   const evaluationsByRole = {};
   const gapValueByRole = {};
   const roleDefinitions = [];
-  for (const [role, capabilities] of Object.entries(roleCapabilities)) {
+  for (const [role, rawCapabilities] of Object.entries(roleCapabilities)) {
+    const { required, optional } = normalizeRoleCapabilities(rawCapabilities);
+    const capabilities = [...required, ...optional];
     const evaluations = computeRoleEvaluations(registry, models, role, capabilities);
     evaluationsByRole[role] = evaluations;
     // Real, scale-normalized magnitude per model — NOT the percentile
@@ -388,7 +427,22 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CA
     gapValueByRole[role] = computeRoleGapValue(registry, models, capabilities);
     roleDefinitions.push({
       role, better: "max",
-      compute: (m) => evaluations.get(modelKey(m))?.capabilityPercentile ?? null
+      // A model with real evidence on every REQUIRED capability competes
+      // on its real capabilityPercentile/gapValue as before. Missing even
+      // one required capability's evidence excludes it from the ranking
+      // entirely (null, filtered out by rankBy/rankEligible's existing
+      // `.filter((entry) => entry.value != null)`) — coverage stops being
+      // merely informational and becomes a real gate, so a model that
+      // "looks near-equivalent" on partial evidence can never quietly
+      // outrank a properly-measured generalist. Missing OPTIONAL evidence
+      // never disqualifies — when present it still folds into the same
+      // percentile/gapValue median and can genuinely improve the ranking.
+      compute: (m) => {
+        const evaluation = evaluations.get(modelKey(m));
+        if (!evaluation) return null;
+        if (required.some((capability) => evaluation.capabilities[capability] == null)) return null;
+        return evaluation.capabilityPercentile;
+      }
     });
   }
   // Capability floor: cheapest-wins-outright would let a model with zero

@@ -186,8 +186,8 @@ test("buildAiTeam names a real primary and eligible fallback for each of the sev
 
 test("buildAiTeam keeps a preferred-but-ineligible primary visible instead of dropping it, and picks an eligible fallback", () => {
   const aa = [
-    { slug: "go-model", name: "Go Model", intelligenceIndex: 40, codingIndex: 99, mathIndex: null },
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 40, codingIndex: 70, mathIndex: null }
+    { slug: "go-model", name: "Go Model", intelligenceIndex: 40, codingIndex: 99, mathIndex: null, terminalBenchV2: 0.9 },
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 40, codingIndex: 70, mathIndex: null, terminalBenchV2: 0.8 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "opencode-go", models: [{ id: "go-model" }] }, { adapterId: "claude", models: [{ id: "claude-model" }] }], aa
@@ -229,9 +229,9 @@ test("buildAiTeam coordinates the whole portfolio: real capability decides first
   // on pool size (2) — so, in ROLE_CAPABILITIES declaration order,
   // Architect is resolved before Builder and claims Claude's first slot.
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 60.0, mathIndex: null },
-    { slug: "go-model", name: "Go Model", intelligenceIndex: 50.0, codingIndex: 78.0, mathIndex: null }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, terminalBenchV2: 0.85 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 60.0, mathIndex: null, terminalBenchV2: 0.50 },
+    { slug: "go-model", name: "Go Model", intelligenceIndex: 50.0, codingIndex: 78.0, mathIndex: null, terminalBenchV2: 0.80 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "claude-model" }] },
@@ -287,9 +287,9 @@ test("buildAiTeam caps a single provider at 3 of the 6 technical roles when a re
   // covered 3 technical roles, Codex (a real, capable alternative) gets
   // the next one instead of a 3rd Claude model or a 4th Claude role.
   const aa = [
-    { slug: "claude-a", name: "Claude A", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
-    { slug: "claude-b", name: "Claude B", intelligenceIndex: 89, codingIndex: 89, mathIndex: null },
-    { slug: "codex-model", name: "Codex", intelligenceIndex: 84, codingIndex: 84, mathIndex: null }
+    { slug: "claude-a", name: "Claude A", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
+    { slug: "claude-b", name: "Claude B", intelligenceIndex: 89, codingIndex: 89, mathIndex: null, terminalBenchV2: 0.89 },
+    { slug: "codex-model", name: "Codex", intelligenceIndex: 84, codingIndex: 84, mathIndex: null, terminalBenchV2: 0.84 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "claude-a" }, { id: "claude-b" }] },
@@ -381,8 +381,8 @@ test("buildEfficientTeam coordinates the portfolio too: a model that already cla
   // concentration limit can always force a swap among floor-clearing
   // candidates instead of repeating the raw leader.
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 52.8, codingIndex: 81.6, mathIndex: null },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 53.4, codingIndex: 60.0, mathIndex: null }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 52.8, codingIndex: 81.6, mathIndex: null, terminalBenchV2: 0.80 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 53.4, codingIndex: 60.0, mathIndex: null, terminalBenchV2: 0.55 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -403,17 +403,17 @@ test("buildEfficientTeam coordinates the portfolio too: a model that already cla
   assert.equal(byRole.Architect.primary.adapterId, "codex");
   assert.match(byRole.Architect.reason, /assigned to a different model\/provider to avoid concentration/);
 
-  // Debugger/Reviewer: by now BOTH Claude and Codex have hit their real
-  // 2-role limit (Claude: Builder+Tester; Codex: Explorer+Architect) —
-  // with no real alternative left that avoids concentration, the leader
-  // (Claude) is kept anyway rather than forcing an incapable repeat.
+  // Debugger/Reviewer: Codex's real terminal-bench gap (added alongside
+  // coding to satisfy Builder/Debugger's real required-capability gate)
+  // now also drags it below Debugger's capability floor — Claude is the
+  // only real adequate candidate here regardless of concentration state.
   assert.equal(byRole.Debugger.primary.adapterId, "claude");
   assert.equal(byRole.Reviewer.primary.adapterId, "claude");
-  assert.match(byRole.Debugger.reason, /Only adequate option — no real alternative avoids concentration without forcing a repeat\./);
+  assert.match(byRole.Debugger.reason, /Only adequate option — no real alternative clears the capability floor\./);
 });
 
 test("buildAiTeam keeps Reviewer on Builder's own provider when no independent real alternative exists, rather than forcing an incapable model", () => {
-  const aa = [{ slug: "only-model", name: "Only Model", intelligenceIndex: 80, codingIndex: 80, mathIndex: null }];
+  const aa = [{ slug: "only-model", name: "Only Model", intelligenceIndex: 80, codingIndex: 80, mathIndex: null, terminalBenchV2: 0.80 }];
   const scored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "only-model" }] }], aa);
   const team = buildAiTeam(scored, { claude: { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
@@ -427,8 +427,8 @@ test("buildAiTeam never forces Reviewer onto a decisively worse independent alte
   // NEAR_EQUIVALENCE_BAND used everywhere else, so Reviewer must stay on
   // Builder's own provider rather than being forced onto a much worse model.
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 20, codingIndex: 20, mathIndex: null }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 20, codingIndex: 20, mathIndex: null, terminalBenchV2: 0.20 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -467,8 +467,8 @@ test("annotateWithRegistryEvidence returns models unchanged when no registry is 
 
 test("buildAiTeam attaches corroboration to a team pick when given a registry, without changing which model was chosen", () => {
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 20, codingIndex: 20, mathIndex: null }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 20, codingIndex: 20, mathIndex: null, terminalBenchV2: 0.20 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -483,8 +483,14 @@ test("buildAiTeam attaches corroboration to a team pick when given a registry, w
   const builderWith = withRegistry.find((t) => t.role === "Builder");
 
   assert.equal(builderWith.primary.adapterId, builderWithout.primary.adapterId, "the pick itself never changes");
-  assert.equal(builderWithout.primary.corroboration, undefined);
-  assert.deepEqual(builderWith.primary.corroboration, [{ metric: "kairo.success", value: 1, source: "kairo-telemetry" }]);
+  // terminalBenchV2 (now a real required-capability signal for Builder,
+  // not just a ranking fallback) shows up as corroboration even without
+  // an explicit registry — ensureRegistry always ingests it internally.
+  assert.deepEqual(builderWithout.primary.corroboration, [{ metric: "terminalBenchV2", value: 0.9, source: "artificial-analysis-free" }]);
+  assert.deepEqual(builderWith.primary.corroboration, [
+    { metric: "kairo.success", value: 1, source: "kairo-telemetry" },
+    { metric: "terminalBenchV2", value: 0.9, source: "artificial-analysis-free" }
+  ]);
 });
 
 test("buildEfficientTeam prefers a real, meaningfully cheaper near-equivalent over the raw leader — capability being close enough is when cost should decide", () => {
@@ -508,17 +514,18 @@ test("buildEfficientTeam prefers a real, meaningfully cheaper near-equivalent ov
 });
 
 test("buildAiTeam never lets price itself decide — it only ever sees a role's real capability and the portfolio's concentration state", () => {
-  // Fable's intelligence lead over Kimi (~18%) is decisive — Kimi never
-  // even qualifies for Explorer/Architect/Debugger, so Fable claims those
-  // 3 roles first (no alternative existed, so none of them count as
-  // "spending" a choice). By the time Builder/Tester come up (coding,
-  // only ~6.6% apart — a real near-equivalent), Fable has already hit its
-  // real 2-role portfolio limit, so Kimi — the real, capable alternative
-  // — gets them instead. Kimi never wins because it's cheaper; price
-  // never appears anywhere in this reasoning.
+  // Fable's intelligence lead over Kimi (~18%) is decisive for Explorer/
+  // Architect (reasoning-only/reasoning+coding) — Kimi never qualifies
+  // there. Debugger now also folds in terminalExecution (a real required
+  // capability, tied here at 0.78 for both) — with reasoning+coding+
+  // terminal all in the median, a tied terminal score is real evidence
+  // that dilutes reasoning's otherwise-decisive weight enough for Kimi to
+  // become a real near-equivalent for Debugger too, same as Builder/
+  // Tester. Kimi never wins because it's cheaper; price never appears
+  // anywhere in this reasoning — only real capability and concentration.
   const aa = [
-    { slug: "fable-model", name: "Fable-shaped", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10 },
-    { slug: "kimi-model", name: "Kimi-shaped", intelligenceIndex: 43.8, codingIndex: 76.2, mathIndex: null, priceInputPerMTok: 3 }
+    { slug: "fable-model", name: "Fable-shaped", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.78 },
+    { slug: "kimi-model", name: "Kimi-shaped", intelligenceIndex: 43.8, codingIndex: 76.2, mathIndex: null, priceInputPerMTok: 3, terminalBenchV2: 0.78 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "fable-model" }] }, { adapterId: "opencode-go", models: [{ id: "kimi-model" }] }], aa
@@ -528,8 +535,8 @@ test("buildAiTeam never lets price itself decide — it only ever sees a role's 
 
   assert.equal(byRole.Explorer.primary.adapterId, "claude");
   assert.equal(byRole.Architect.primary.adapterId, "claude");
-  assert.equal(byRole.Debugger.primary.adapterId, "claude");
-  assert.equal(byRole.Builder.primary.adapterId, "opencode-go", "the real coding near-equivalent gets Builder once Fable's 2-role limit is spent");
+  assert.equal(byRole.Builder.primary.adapterId, "opencode-go", "the real coding+terminal near-equivalent gets Builder once Fable's 2-role limit is spent");
+  assert.equal(byRole.Debugger.primary.adapterId, "opencode-go", "a tied terminal score is real evidence Kimi is a genuine near-equivalent here too");
   assert.match(byRole.Builder.reason, /assigned to a different model\/provider to avoid concentration/);
 
   for (const entry of team) {
@@ -539,8 +546,8 @@ test("buildAiTeam never lets price itself decide — it only ever sees a role's 
 
 test("buildAiTeam only prefers cost when a real alternative is actually near-equivalent — a genuinely large real gap still wins on capability, whatever the price", () => {
   const aa = [
-    { slug: "strong-model", name: "Strong", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10 },
-    { slug: "cheap-weak-model", name: "Cheap Weak", intelligenceIndex: 90, codingIndex: 40, mathIndex: null, priceInputPerMTok: 1 }
+    { slug: "strong-model", name: "Strong", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
+    { slug: "cheap-weak-model", name: "Cheap Weak", intelligenceIndex: 90, codingIndex: 40, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.90 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "strong-model" }] }, { adapterId: "opencode-go", models: [{ id: "cheap-weak-model" }] }], aa
@@ -552,8 +559,8 @@ test("buildAiTeam only prefers cost when a real alternative is actually near-equ
 
 test("buildAiTeam falls back to usage-based diversity when near-equivalent alternatives have no real price to compare", () => {
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 78.0, mathIndex: null }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, terminalBenchV2: 0.80 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 78.0, mathIndex: null, terminalBenchV2: 0.80 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -566,37 +573,42 @@ test("buildAiTeam falls back to usage-based diversity when near-equivalent alter
 });
 
 test("Debugger's real optional terminalBenchV2 signal can flip a near-equivalent pick, without requiring every model to report it", () => {
-  // Debugger's relevant capabilities are reasoning, coding,
-  // terminalExecution, softwareExecution (ROLE_CAPABILITIES). Under the
-  // multi-metric median engine, a capability only counts toward the
-  // median when a model actually has coverage for it — median resists a
-  // single outlier, but that also means it resists a single differing
-  // capability when it's outnumbered by tied ones. So to isolate
-  // terminal-bench as the real deciding signal, neither model reports
-  // codingIndex here (no coding evidence at all) — only reasoning
-  // (tied exactly) and terminalExecution (a real, meaningfully
-  // different score) are covered, letting the real terminal-bench gap
-  // actually move the 2-value median.
+  // Debugger's real required capabilities are reasoning, coding,
+  // terminalExecution (ROLE_CAPABILITIES) — coding can no longer be
+  // omitted to isolate terminal-bench (missing a required capability now
+  // excludes a candidate entirely, see buildAiTeamRoleDefinitions). Under
+  // the multi-metric median engine, a capability only counts toward the
+  // median when a model has coverage for it — with exactly 2 candidates
+  // tied EXACTLY on 2 of 3 capabilities, the median mathematically can
+  // never move on the third alone ([0.5, 0.5, 1]'s median is still 0.5):
+  // one of reasoning/coding must carry a small real gap of its own too,
+  // for the median to have any real room to shift — a third, decisively
+  // worse real candidate on reasoning/coding also gives the percentile
+  // engine real granularity (0/0.5/1 instead of a binary 0/1 tie).
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, mathIndex: null, terminalBenchV2: 0.60 },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, mathIndex: null, terminalBenchV2: 0.95 }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 79, mathIndex: null, terminalBenchV2: 0.60 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 81, mathIndex: null, terminalBenchV2: 0.95 },
+    { slug: "weak-model", name: "Weak Model", intelligenceIndex: 40, codingIndex: 40, mathIndex: null, terminalBenchV2: 0.40 }
   ];
   const scored = scoreAvailableModels(
-    [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
+    [
+      { adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] },
+      { adapterId: "opencode-go", models: [{ id: "weak-model" }] }
+    ], aa
   );
   const claude = scored.find((m) => m.adapterId === "claude");
   assert.equal(claude.terminalBenchV2, 0.60); // confirms the field actually flows through scoreAvailableModels
-  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
+  const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
   const debugger_ = team.find((t) => t.role === "Debugger");
-  assert.equal(debugger_.primary.adapterId, "codex", "the real terminal-bench gap should be the deciding signal once reasoning is this close");
+  assert.equal(debugger_.primary.adapterId, "codex", "the real terminal-bench gap should be the deciding signal once reasoning/coding are this close");
 });
 
 test("a role's optional metric never shrinks its candidate pool for a model AA simply hasn't scored on it yet", () => {
   const aa = [
     // Only one model reports tauBanking (Builder's optional metric) — the
     // other must still qualify for Builder using codingIndex alone.
-    { slug: "has-tau", name: "Has Tau", intelligenceIndex: 50, codingIndex: 60, mathIndex: null, tauBanking: 0.9 },
-    { slug: "no-tau", name: "No Tau", intelligenceIndex: 50, codingIndex: 95, mathIndex: null }
+    { slug: "has-tau", name: "Has Tau", intelligenceIndex: 50, codingIndex: 60, mathIndex: null, tauBanking: 0.9, terminalBenchV2: 0.7 },
+    { slug: "no-tau", name: "No Tau", intelligenceIndex: 50, codingIndex: 95, mathIndex: null, terminalBenchV2: 0.7 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "has-tau" }] }, { adapterId: "codex", models: [{ id: "no-tau" }] }], aa
@@ -693,9 +705,9 @@ test("buildEfficientTeam prefers Kairo's own observed real duration over AA's re
 
 test("a model below the 80% capability floor is excluded from EFFICIENT TEAM even if it's real and cheaper", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10 },
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
     // 65% of the leader's coding score — real, but below the 80% floor.
-    { slug: "too-weak-model", name: "Too Weak", intelligenceIndex: 90, codingIndex: 58.5, mathIndex: null, priceInputPerMTok: 1 }
+    { slug: "too-weak-model", name: "Too Weak", intelligenceIndex: 90, codingIndex: 58.5, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.585 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "leader-model" }] }, { adapterId: "codex", models: [{ id: "too-weak-model" }] }], aa
@@ -708,15 +720,15 @@ test("a model below the 80% capability floor is excluded from EFFICIENT TEAM eve
 
 test("a model at or above the 80% capability floor competes on efficiency, even with a real, meaningful capability gap", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10 },
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
     // 85% of the leader's coding score — well outside NEAR_EQUIVALENCE_BAND
     // (8%), but still within the new, wider 80% floor.
-    { slug: "adequate-model", name: "Adequate", intelligenceIndex: 20, codingIndex: 76.5, mathIndex: null, priceInputPerMTok: 1 },
+    { slug: "adequate-model", name: "Adequate", intelligenceIndex: 20, codingIndex: 76.5, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.765 },
     // A third, real distractor so Explorer/Architect/Debugger/Reviewer
     // (intelligence) claim a different model entirely, never touching
     // "adequate-model" — isolating Builder/Tester (coding) from the
     // portfolio's own 2-role concentration limit for this check.
-    { slug: "distractor-model", name: "Distractor", intelligenceIndex: 88, codingIndex: 20, mathIndex: null, priceInputPerMTok: 5 }
+    { slug: "distractor-model", name: "Distractor", intelligenceIndex: 88, codingIndex: 20, mathIndex: null, priceInputPerMTok: 5, terminalBenchV2: 0.20 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -730,8 +742,8 @@ test("a model at or above the 80% capability floor competes on efficiency, even 
 
 test("the capability floor is configurable via buildEfficientTeam's fourth argument", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10 },
-    { slug: "adequate-model", name: "Adequate", intelligenceIndex: 90, codingIndex: 76.5, mathIndex: null, priceInputPerMTok: 1 } // 85%
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
+    { slug: "adequate-model", name: "Adequate", intelligenceIndex: 90, codingIndex: 76.5, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.765 } // 85%
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "leader-model" }] }, { adapterId: "codex", models: [{ id: "adequate-model" }] }], aa
@@ -824,18 +836,25 @@ test("provider quota is resolved per-adapter, not per-model — two models under
 // real vocabulary mismatches, not just a same-named test fixture.
 
 test("Debugger's terminalExecution requirement is satisfied by the real ingestOfficialSnapshotEvidence pipeline (metric name \"terminal-bench\", not a same-named synthetic key)", () => {
-  // Debugger's relevant capabilities (reasoning, coding, terminalExecution,
-  // softwareExecution) are aggregated via median — a single differing
-  // capability can't move it when outnumbered by tied ones (see the
-  // terminalBenchV2 test above), so codingIndex is deliberately omitted
-  // here: both models tie only on reasoning, leaving terminal-bench as
-  // the sole other covered capability, free to actually decide.
+  // Debugger's real required capabilities (reasoning, coding,
+  // terminalExecution) are aggregated via median — coding can no longer
+  // be omitted to isolate terminal-bench (missing a required capability's
+  // evidence now excludes a candidate entirely, see
+  // buildAiTeamRoleDefinitions), and a median of 3 with 2 candidates tied
+  // exactly on 2 capabilities mathematically can't move on the third
+  // alone — so codingIndex carries a small real gap of its own, and a
+  // third, decisively worse real candidate gives the percentile engine
+  // real granularity (0/0.5/1 instead of a binary 0/1 tie).
   const aa = [
-    { slug: "astra-model", name: "Astra Model", intelligenceIndex: 90, mathIndex: null },
-    { slug: "fable-model", name: "Fable Model", intelligenceIndex: 90, mathIndex: null }
+    { slug: "astra-model", name: "Astra Model", intelligenceIndex: 90, codingIndex: 79, mathIndex: null },
+    { slug: "fable-model", name: "Fable Model", intelligenceIndex: 90, codingIndex: 81, mathIndex: null },
+    { slug: "weak-model", name: "Weak Model", intelligenceIndex: 40, codingIndex: 40, mathIndex: null }
   ];
   const scored = scoreAvailableModels(
-    [{ adapterId: "codex", models: [{ id: "astra-model" }] }, { adapterId: "claude", models: [{ id: "fable-model" }] }], aa
+    [
+      { adapterId: "codex", models: [{ id: "astra-model" }] }, { adapterId: "claude", models: [{ id: "fable-model" }] },
+      { adapterId: "opencode-go", models: [{ id: "weak-model" }] }
+    ], aa
   );
   const registry = createCapabilityRegistry();
   // Real production function, real integrity validation, real metric name
@@ -846,11 +865,12 @@ test("Debugger's terminalExecution requirement is satisfied by the real ingestOf
     benchmark: "terminal-bench", benchmarkVersion: "test", caveat: "test fixture, not a real published table",
     scores: [
       { adapterId: "codex", modelId: "astra-model", value: 30 },
-      { adapterId: "claude", modelId: "fable-model", value: 90 }
+      { adapterId: "claude", modelId: "fable-model", value: 90 },
+      { adapterId: "opencode-go", modelId: "weak-model", value: 20 }
     ]
   }]);
 
-  const team = buildAiTeam(scored, { codex: { ok: true }, claude: { ok: true } }, registry);
+  const team = buildAiTeam(scored, { codex: { ok: true }, claude: { ok: true }, "opencode-go": { ok: true } }, registry);
   const debugger_ = team.find((t) => t.role === "Debugger");
   assert.equal(debugger_.primary.adapterId, "claude", "real terminal-bench evidence from the actual production ingestion pipeline must decide this, not just AA's tied intelligence/coding");
 });
@@ -889,8 +909,8 @@ test("bestModelPerRoleGlobal (BEST FIT GLOBAL) never cedes a role for portfolio 
   // limit (never a decisive-override, since the gap isn't decisive). BEST
   // FIT GLOBAL, with no such coordination, must keep Astra everywhere.
   const aa = [
-    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
-    { slug: "muse-spark", name: "Muse Spark", intelligenceIndex: 85, codingIndex: 85, mathIndex: null }
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
+    { slug: "muse-spark", name: "Muse Spark", intelligenceIndex: 85, codingIndex: 85, mathIndex: null, terminalBenchV2: 0.85 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "codex", models: [{ id: "gpt-6-astra" }] },
@@ -913,8 +933,8 @@ test("bestModelPerRoleGlobal (BEST FIT GLOBAL) never cedes a role for portfolio 
 
 test("bestEfficientModelPerRoleGlobal (EFFICIENT GLOBAL) also applies no portfolio coordination — same real efficiency winner for every role it clears the capability floor for", () => {
   const aa = [
-    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 95, codingIndex: 95, mathIndex: null, priceInputPerMTok: 20, outputTokensPerSecond: 50 },
-    { slug: "gpt-5-6-luna", name: "GPT-5.6 Luna", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 90 }
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 95, codingIndex: 95, mathIndex: null, priceInputPerMTok: 20, outputTokensPerSecond: 50, terminalBenchV2: 0.95 },
+    { slug: "gpt-5-6-luna", name: "GPT-5.6 Luna", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 90, terminalBenchV2: 0.90 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "codex", models: [{ id: "gpt-6-astra" }] },
