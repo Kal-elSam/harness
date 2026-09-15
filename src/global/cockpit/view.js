@@ -530,14 +530,21 @@ export class CockpitView {
    * explicitly instead (see aiTeamLabelWithProvider) — that's the audit
    * trail where it belongs.
    */
+  // modelName (real, cleaned via model-candidate-catalog.js's
+  // stripDisplayVariant — e.g. "GPT-5.6 Sol", never "GPT-5.6 Sol 1M
+  // Extra High") is preferred everywhere a compact widget shows a model.
+  // A caller not yet routed through the Recommendation Pool (no real
+  // modelName attached) falls back to the raw displayName, then modelId
+  // — never blank.
   aiTeamLabel(model) {
-    return model.displayName ?? model.modelId;
+    return model.modelName ?? model.displayName ?? model.modelId;
   }
 
-  /** Same as aiTeamLabel(), but with the provider shown — used only by the technical `/models --evidence` breakdown. */
+  /** Same as aiTeamLabel(), but with the real provider AND the raw, unmodified display text (variant/effort/context tokens intact) — deliberately NOT the cleaned modelName, since this is the technical `/models --evidence` breakdown, which keeps the real detail modelName strips out. */
   aiTeamLabelWithProvider(model) {
     const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
-    return `${provider} · ${this.aiTeamLabel(model)}`;
+    const raw = model.displayName ?? model.modelId;
+    return `${provider} · ${raw}`;
   }
 
   /**

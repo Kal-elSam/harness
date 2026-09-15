@@ -133,30 +133,14 @@ export function summarizeCatalogCoverage(providerCatalogs, aaModels) {
   });
 }
 
-/**
- * The real catalog models scoreAvailableModels() silently drops — every
- * model a provider's own real catalog reports that couldn't be matched to
- * any real Artificial Analysis data. Kept as a separate, explicit list
- * (never folded into scoreAvailableModels' output, never given an
- * invented score) so `/models --evidence` can show them honestly as
- * UNSCORED — a real model Kairo has access to, just one it can't yet rank
- * — instead of the model simply vanishing with no trace.
- * @param {Array<{adapterId: string, models: Array<object|string>}>} providerCatalogs
- * @param {Array<object>} aaModels
- * @returns {Array<{adapterId: string, modelId: string, displayName: string|null}>}
- */
-export function listUnscoredModels(providerCatalogs, aaModels) {
-  const unscored = [];
-  for (const { adapterId, models } of providerCatalogs) {
-    for (const entry of models ?? []) {
-      const model = typeof entry === "string" ? { id: entry, displayName: entry } : entry;
-      if (matchArtificialAnalysisScore(model.id, aaModels) == null) {
-        unscored.push({ adapterId, modelId: model.id, displayName: model.displayName ?? null });
-      }
-    }
-  }
-  return unscored;
-}
+// listUnscoredModels used to live here — every real catalog model
+// scoreAvailableModels() couldn't match to AA data, kept so /models
+// --evidence could show it honestly instead of it just vanishing.
+// model-candidate-catalog.js's buildCompleteCandidateCatalog now does
+// this same real AA-match check as part of computing every candidate's
+// evidenceStatus ("unscored" when unmatched) — a caller filters that
+// catalog for evidenceStatus === "unscored" instead of calling a second,
+// parallel function that duplicated the exact same real check.
 
 // Which real, unweighted metric each model is best at among the models you
 // actually have access to right now — never a blended/invented composite
@@ -440,8 +424,22 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CA
   return { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole, gapValueByRole };
 }
 
+// modelName/candidateKey/accessMode/evidenceStatus/lineageKey/generation/
+// lifecycle/resourceCost are real fields from a Recommendation Pool
+// candidate (model-candidate-catalog.js) — passed through when present,
+// never fabricated. A caller still passing raw scoreAvailableModels()
+// output (no candidate-catalog join) simply gets null for all of them;
+// this file never imports model-candidate-catalog.js itself, it just
+// forwards whatever real identity fields the input model already
+// carries, keeping the dependency one-directional.
 function toTeamModel(model, available, registry = null) {
-  const base = { adapterId: model.adapterId, modelId: model.modelId, displayName: model.displayName, available };
+  const base = {
+    adapterId: model.adapterId, modelId: model.modelId, displayName: model.displayName, available,
+    modelName: model.modelName ?? null, candidateKey: model.candidateKey ?? null,
+    accessMode: model.accessMode ?? null, evidenceStatus: model.evidenceStatus ?? null,
+    lineageKey: model.lineageKey ?? null, generation: model.generation ?? null, lifecycle: model.lifecycle ?? null,
+    resourceCost: model.resourceCost ?? null
+  };
   return withCorroboration(base, registry);
 }
 

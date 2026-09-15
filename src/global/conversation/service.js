@@ -35,8 +35,9 @@ import { readArtificialAnalysisModels } from "../observability/artificial-analys
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
   annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam,
-  buildEfficientTeam, listUnscoredModels, scoreAvailableModels, summarizeCatalogCoverage
+  buildEfficientTeam, scoreAvailableModels, summarizeCatalogCoverage
 } from "../intelligence/model-intelligence.js";
+import { buildAutomaticExecutionPool, buildCompleteCandidateCatalog, buildRecommendationPool } from "../intelligence/model-candidate-catalog.js";
 import { createCapabilityRegistry } from "../intelligence/model-capability-registry.js";
 import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../intelligence/model-capability-registry-sources.js";
 import { ingestOfficialSnapshotEvidence } from "../intelligence/official-benchmark-snapshots.js";
@@ -456,10 +457,35 @@ export function createConversationService(deps = {}) {
         // limited) — so a preferred model never just vanishes; it's shown
         // unavailable with a real eligible fallback instead. `scored`
         // above stays eligibility-filtered for existing consumers.
-        const scoredAll = scoreAvailableModels(
+        const scoredAllRaw = scoreAvailableModels(
           Object.keys(catalogsByAdapter).map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
           aa.models
         );
+        // The Complete Candidate Catalog — every real model across every
+        // real provider catalog, mapped to ModelCandidateIdentity (clean
+        // modelName, accessMode, evidenceStatus, real lineage/lifecycle —
+        // see model-candidate-catalog.js's own doc). Built once, from the
+        // exact same real provider catalogs scoredAllRaw itself came from.
+        const completeCandidateCatalog = buildCompleteCandidateCatalog(
+          Object.keys(catalogsByAdapter).map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
+          aa.models
+        );
+        // The Recommendation Pool: scoredAllRaw joined with its real
+        // identity, with genuinely superseded generations excluded —
+        // QUALITY/EFFICIENT TEAM and ProjectStrategy consume THIS, never
+        // scoredAllRaw directly, so an old generation Cursor still
+        // re-exposes (e.g. Claude Sonnet 4) naturally stops competing
+        // without buildAiTeam/buildEfficientTeam's own ranking logic
+        // needing to know why. Manual-only real candidates (Cursor,
+        // OpenCode Go) stay in it — this is "what Kairo can honestly
+        // recommend", not "what Kairo can launch by itself".
+        const scoredAll = buildRecommendationPool(scoredAllRaw, completeCandidateCatalog);
+        // The Automatic Execution Pool: the real subset of scoredAll
+        // Kairo could actually launch itself right now (accessMode
+        // "automatic" AND real, current eligibility) — exposed for the
+        // real task router (not yet built) to consume; QUALITY/EFFICIENT
+        // TEAM never filter by this, only by capability/portfolio.
+        const automaticExecutionPool = buildAutomaticExecutionPool(scoredAll, eligibility);
         // How much of each real catalog could even be matched to AA data —
         // independent of runtime eligibility above. A provider can be fully
         // eligible right now and still have unmatched models simply because
@@ -474,9 +500,13 @@ export function createConversationService(deps = {}) {
         // Real catalog models that exist but couldn't be matched to any
         // real Artificial Analysis data — shown honestly as UNSCORED in
         // /models --evidence instead of just vanishing with no trace.
-        const unscoredModels = listUnscoredModels(
-          Object.keys(catalogsByAdapter).map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })), aa.models
-        );
+        // Derived directly from the Complete Candidate Catalog's own real
+        // evidenceStatus — model-intelligence.js's old listUnscoredModels
+        // duplicated this exact same real AA-match check separately; this
+        // catalog replaces it as the one real source of truth.
+        const unscoredModels = completeCandidateCatalog
+          .filter((candidate) => candidate.evidenceStatus === "unscored")
+          .map((candidate) => ({ adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.rawDisplayName }));
 
         // The Model Intelligence Foundation registry: every source Kairo
         // has (AA, Hugging Face scoped to Go, manufacturer snapshots,
@@ -538,8 +568,16 @@ export function createConversationService(deps = {}) {
           // needs a PROJECT-specific re-scoring (see analyzeProject below)
           // can call buildAiTeam/buildEfficientTeam again with the
           // project's own real roleCapabilities, instead of only ever
-          // filtering the generic global team by role name.
-          scoredAll, registry, providerCapacity
+          // filtering the generic global team by role name. `scoredAll`
+          // here is the Recommendation Pool (superseded generations
+          // already excluded), not the raw scoreAvailableModels() output
+          // — see scoredAllRaw/completeCandidateCatalog above.
+          scoredAll, registry, providerCapacity,
+          // The real subset Kairo can actually launch itself — exposed
+          // for the real task router (not yet built) to consume; never
+          // used by QUALITY/EFFICIENT TEAM or ProjectStrategy, which only
+          // ever filter by capability/portfolio, never by accessMode.
+          automaticExecutionPool
         };
       }
       return result;

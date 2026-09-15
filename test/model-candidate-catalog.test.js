@@ -149,6 +149,28 @@ test("stripLineageSuffixes strips real, verified variant tokens (thinking/high/f
   assert.equal(stripLineageSuffixes("claude-opus-5"), "claude-opus-5");
 });
 
+test("REGRESSION: resolveLineage also recognizes Cursor's own reordered claude-{version}-{tier} id form as the SAME lineage as claude-{tier}-{version} — a real gap this session's own live integration verification caught: Cursor re-exposes Sonnet 4/4.5/4.6 as \"claude-4-sonnet\"/\"claude-4.6-sonnet\", never \"claude-sonnet-4\"", () => {
+  assert.deepEqual(resolveLineage("claude-4-sonnet"), { lineageKey: "claude-sonnet", generation: 4 });
+  assert.deepEqual(resolveLineage("claude-4.6-sonnet"), { lineageKey: "claude-sonnet", generation: 4.6 });
+  // Same lineageKey as the tier-first form — genuinely comparable.
+  assert.equal(resolveLineage("claude-4-sonnet").lineageKey, resolveLineage("claude-sonnet-5").lineageKey);
+
+  const catalog = buildCompleteCandidateCatalog([{
+    adapterId: "cursor",
+    models: [
+      { id: "claude-4-sonnet", displayName: "Claude Sonnet 4" },
+      { id: "claude-4.6-sonnet-medium", displayName: "Claude Sonnet 4.6 1M" }
+    ]
+  }, {
+    adapterId: "claude",
+    models: [{ id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }]
+  }], []);
+  const byId = Object.fromEntries(catalog.map((c) => [c.modelId, c]));
+  assert.equal(byId["claude-4-sonnet"].lifecycle, "superseded");
+  assert.equal(byId["claude-4.6-sonnet-medium"].lifecycle, "superseded");
+  assert.equal(byId["claude-sonnet-5"].lifecycle, "current");
+});
+
 test("resolveLineage treats a GLM tier suffix as a DIFFERENT lineage, never a generation of the bare line — verified against real, differently-priced siblings", () => {
   assert.deepEqual(resolveLineage("glm-5.3"), { lineageKey: "glm", generation: 5.3 });
   assert.deepEqual(resolveLineage("glm-5.3-flash"), { lineageKey: "glm-flash", generation: 5.3 });

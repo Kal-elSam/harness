@@ -159,6 +159,20 @@ export function stripDisplayVariant(rawDisplayName) {
 const EFFORT_SUFFIX_WORDS = new Set(["low", "medium", "high", "xhigh", "max", "none", "fast", "thinking"]);
 const LINEAGE_PARSERS = [
   { pattern: /^claude-(opus|sonnet|fable|haiku)-(\d+(?:-\d+)?)$/, resolve: (m) => ({ lineageKey: `claude-${m[1]}`, generation: parseVersionToken(m[2]) }) },
+  // A real, separate id ordering this session's own live integration
+  // verification caught: Claude's documented catalog uses
+  // "claude-{tier}-{version}" (claude-sonnet-5), but Cursor's own
+  // real re-exposure of the SAME Sonnet 4/4.5/4.6 generations uses
+  // "claude-{version}-{tier}" instead (claude-4-sonnet,
+  // claude-4.6-sonnet — verified against Cursor's real catalog: no
+  // "claude-sonnet-4" id exists there at all for this specific
+  // generation, only this reordered form). Resolves to the exact same
+  // lineageKey ("claude-sonnet") as the other pattern, so a real
+  // "claude-4-sonnet" and a real "claude-sonnet-5" correctly compare
+  // as the same lineage's generations 4 and 5 — this is what actually
+  // closes the original reported bug (an old Sonnet 4 still appearing
+  // as an option once Sonnet 5 is real and accessible).
+  { pattern: /^claude-(\d+(?:\.\d+)?)-(opus|sonnet|fable|haiku)$/, resolve: (m) => ({ lineageKey: `claude-${m[2]}`, generation: parseFloat(m[1]) }) },
   { pattern: /^glm-(\d+(?:\.\d+)?)(-[a-z0-9]+)?$/, resolve: (m) => resolveTieredVersion("glm", m[1], m[2]) },
   { pattern: /^gpt-(\d+(?:\.\d+)?)(-[a-z]+)?$/, resolve: (m) => resolveTieredVersion("gpt", m[1], m[2]) }
 ];
