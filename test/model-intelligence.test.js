@@ -164,7 +164,7 @@ test("summarizeCatalogCoverage handles Cursor's plain-string catalog shape too",
   assert.deepEqual(coverage, [{ adapterId: "cursor", catalogStatus: "measured", totalModels: 2, matchedModels: 1 }]);
 });
 
-test("buildAiTeam names a real primary and eligible fallback for each of the seven team roles", () => {
+test("buildAiTeam names a real primary and eligible fallback for each of the six real roles, never Economy or Orchestrator", () => {
   const aa = [
     { slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: 60, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 },
     { slug: "model-b", name: "Model B", intelligenceIndex: 50, codingIndex: 95, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 200 }
@@ -178,9 +178,10 @@ test("buildAiTeam names a real primary and eligible fallback for each of the sev
   assert.equal(explorer.primary.adapterId, "claude");
   assert.equal(explorer.primary.available, true);
   assert.equal(explorer.fallback.adapterId, "codex");
-  const economy = team.find((t) => t.role === "Economy");
-  assert.equal(economy.primary.adapterId, "codex"); // cheapest priceInputPerMTok
-  assert.equal(economy.fallback.adapterId, "claude");
+  // Economy is no longer a 7th role competing in QUALITY TEAM — per the
+  // "PROJECT TEAM primero" plan, it becomes an execution policy the six
+  // real roles run under at task-routing time, not a ranked team slot.
+  assert.ok(!team.some((t) => t.role === "Economy"));
   assert.ok(!team.some((t) => t.role === "Orchestrator"));
 });
 
@@ -803,19 +804,6 @@ test("a role's optional metric never shrinks its candidate pool for a model AA s
   // no-tau's real ~58% coding advantage must still win decisively —
   // missing the optional metric must not disqualify or penalize it.
   assert.equal(builder.primary.adapterId, "codex");
-});
-
-test("Economy requires a real capability floor — a model AA never scored on intelligence or coding can't win purely on price", () => {
-  const aa = [
-    { slug: "unscored-cheap", name: "Unscored Cheap", intelligenceIndex: null, codingIndex: null, mathIndex: null, priceInputPerMTok: 0.01 },
-    { slug: "scored-pricier", name: "Scored Pricier", intelligenceIndex: 50, codingIndex: 60, mathIndex: null, priceInputPerMTok: 5 }
-  ];
-  const scored = scoreAvailableModels(
-    [{ adapterId: "codex", models: [{ id: "unscored-cheap" }] }, { adapterId: "claude", models: [{ id: "scored-pricier" }] }], aa
-  );
-  const team = buildAiTeam(scored, { codex: { ok: true }, claude: { ok: true } });
-  const economy = team.find((t) => t.role === "Economy");
-  assert.equal(economy.primary.adapterId, "claude", "an unscored model must never win Economy just because it's cheaper");
 });
 
 test("buildEfficientTeam prefers real higher throughput as the tie-break after price", () => {

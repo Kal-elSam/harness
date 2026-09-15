@@ -77,7 +77,7 @@ test("AI TEAM's compact widget shows only Role -> effective model, never fallbac
           reason: "Near-equivalent alternatives (~1.1%) — assigned to balance provider load."
         },
         {
-          role: "Economy",
+          role: "Builder",
           primary: { adapterId: "opencode-go", modelId: "go-luna", displayName: "GPT-5.6-Luna", available: true },
           fallback: null, reason: null
         }
@@ -88,7 +88,7 @@ test("AI TEAM's compact widget shows only Role -> effective model, never fallbac
   assert.match(lines, /Evidence: live/);
   // Provider is deliberately hidden in the compact widget — Role → Model only.
   assert.match(lines, /Explorer\s+│ GPT-6-Astra/);
-  assert.match(lines, /Economy\s+│ GPT-5\.6-Luna/);
+  assert.match(lines, /Builder\s+│ GPT-5\.6-Luna/);
   assert.doesNotMatch(lines, /fallback/);
   assert.doesNotMatch(lines, /Near-equivalent/);
   assert.doesNotMatch(lines, /Global signals — not a project strategy/);
@@ -125,14 +125,14 @@ test("AI TEAM's compact widget honestly says so when neither primary nor fallbac
     modelIntelligence: {
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
       aiTeam: [{
-        role: "Economy",
+        role: "Debugger",
         primary: { adapterId: "opencode-go", modelId: "go-hy3", displayName: "Hy3", available: false },
         fallback: null, reason: "No eligible provider currently covers this role."
       }]
     }
   });
   const lines = view.fitLines().join("\n");
-  assert.match(lines, /Economy[\s\S]*?no eligible option right now/);
+  assert.match(lines, /Debugger[\s\S]*?no eligible option right now/);
 });
 
 test("QUALITY TEAM: fitLines() and teamsColumnsLines() read the real, portfolio-coordinated aiTeam/efficientTeam — never globalGuide, which is /models-only evidence", () => {

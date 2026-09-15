@@ -350,19 +350,27 @@ function normalizeRoleCapabilities(capabilities) {
 
 /**
  * Builds one role definition per team-vocabulary role (Explorer /
- * Architect / Builder / Debugger / Tester / Reviewer / Economy), scored
- * via the robust multi-metric percentile engine (capability-scoring.js)
- * for every role except Economy — which stays capability-floor + real
- * price, deliberately kept separate ("capability, efficiency, and
- * provider capacity permanecen separados"). `compute()` per role is a
- * real, precomputed RoleEvaluation.capabilityPercentile lookup (never
- * recomputed per model — percentile is inherently relative to the WHOLE
- * candidate pool, so it's computed once per role, batched, then looked
- * up), and a model absent from that role's evaluations (zero real
- * primary evidence for any of its relevant capabilities) never competes
- * — same fail-closed contract `resolveMetric`-based compute() functions
- * already had. Built fresh per buildAiTeam()/buildEfficientTeam() call
- * (registry AND models differ per call).
+ * Architect / Builder / Debugger / Tester / Reviewer — the same six
+ * RoleProfile owns, see role-profiles.js), scored via the robust
+ * multi-metric percentile engine (capability-scoring.js). `compute()`
+ * per role is a real, precomputed RoleEvaluation.capabilityPercentile
+ * lookup (never recomputed per model — percentile is inherently relative
+ * to the WHOLE candidate pool, so it's computed once per role, batched,
+ * then looked up), and a model absent from that role's evaluations (zero
+ * real primary evidence for any of its relevant capabilities) never
+ * competes — same fail-closed contract `resolveMetric`-based compute()
+ * functions already had. Built fresh per buildAiTeam()/
+ * buildEfficientTeam() call (registry AND models differ per call).
+ *
+ * Economy is NOT one of these role definitions — it used to be a 7th
+ * role competing for its own slot here (ranked purely by real price,
+ * capability-floor-gated), but per the "PROJECT TEAM primero" plan it's
+ * an EXECUTION POLICY any of the six real roles can run under (cheapest
+ * real model that still clears that role's own requiredRoleFit),
+ * evaluated at task-routing time, never a 7th competitor in QUALITY
+ * TEAM/EFFICIENT TEAM's own rankings. Wiring that policy into real
+ * routing is a later increment; this function no longer knows Economy
+ * exists at all.
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
  * @param {Array<object>} models
  * @param {Record<string, string[]|{required: string[], optional?: string[]}>} [roleCapabilities] -
@@ -429,20 +437,6 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CA
       }
     });
   }
-  // Capability floor: cheapest-wins-outright would let a model with zero
-  // known real capability (AA tracks a price for it but never scored its
-  // intelligence or coding) win Economy purely on price. Requiring at
-  // least one of the two composite indices is the same real floor every
-  // other role already has, just applied before ranking by price.
-  roleDefinitions.push({
-    role: "Economy",
-    compute: (m) => {
-      const intel = resolveMetric(registry, m, "intelligenceIndex");
-      const coding = resolveMetric(registry, m, "codingIndex");
-      return intel == null && coding == null ? null : resolveMetric(registry, m, "priceInputPerMTok");
-    },
-    better: "min"
-  });
   return { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole, gapValueByRole };
 }
 
@@ -468,8 +462,8 @@ function rankEligible(models, eligibility, compute, better) {
  * `.value` (the percentile compute() already produced), used only for
  * near-equivalence-band/capability-floor magnitude comparisons (see
  * capabilityPool/adequateCandidates/leaderAdvantage). `gapValueByModel`
- * is undefined for Economy (price-ranked, never uses this), in which
- * case entries are returned unchanged.
+ * being undefined leaves entries unchanged — defensive, no current
+ * caller passes one without it.
  */
 function attachGapValues(ranked, gapValueByModel) {
   if (!gapValueByModel) return ranked;
@@ -510,21 +504,17 @@ const ROLE_NEAR_EQUIVALENCE_BAND = {
 };
 const DEFAULT_NEAR_EQUIVALENCE_BAND = 0.06;
 
-/** The real near-equivalence tolerance for a role — see ROLE_NEAR_EQUIVALENCE_BAND's own doc for why this isn't one flat number. A role missing from the table (e.g. a future addition, or Economy which never calls this) falls back to the Builder-tier default rather than crashing. */
+/** The real near-equivalence tolerance for a role — see ROLE_NEAR_EQUIVALENCE_BAND's own doc for why this isn't one flat number. A role missing from the table (e.g. a future addition) falls back to the Builder-tier default rather than crashing. */
 function nearEquivalenceBandFor(role) {
   return ROLE_NEAR_EQUIVALENCE_BAND[role] ?? DEFAULT_NEAR_EQUIVALENCE_BAND;
 }
 
 // Portfolio-level concentration limits — applied to BOTH teams while
-// assigning roles, not just a per-role decision. Seven independent
+// assigning roles, not just a per-role decision. Six independent
 // per-role winners don't form a team: without these, the same one or two
 // real models/providers can end up covering every technical role, which
 // is a monoculture risk (a single outage or rate-limit takes out the
 // whole portfolio) even when each individual pick was locally correct.
-// Economy is deliberately exempt from both limits — it's a distinct,
-// single-signal role (real price) with its own hard capability floor
-// already, not part of the "coordinate the technical roles" problem these
-// limits exist to solve.
 const MAX_ROLES_PER_MODEL = 2;
 const MAX_TECHNICAL_ROLES_PER_PROVIDER = 3;
 const TECHNICAL_ROLES = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
@@ -587,9 +577,8 @@ function familyKey(model) {
  * would report every non-leader as "100% behind" with Kairo's typical
  * 2-3-candidate pools). A single-candidate pool is trivially decisive
  * (Infinity): there is nothing to concentrate away from. A leader with no
- * real gap value at all (only possible for Economy, which never calls
- * this) is likewise treated as trivially decisive — there's no real
- * magnitude to compare.
+ * real gap value at all is likewise treated as trivially decisive —
+ * there's no real magnitude to compare.
  */
 function leaderAdvantage(pool, better) {
   if (pool.length < 2) return Infinity;
@@ -613,22 +602,19 @@ function isDecisiveLeader(pool, better, role) {
 /**
  * Orders roles for coordinated assignment: fewer real alternatives first,
  * so the most-constrained roles claim their pick before a more flexible
- * role could have taken it instead. Economy goes last (exempt from
- * concentration, order doesn't matter for it). Builder is always resolved
- * before Reviewer, regardless of pool-size ordering, since Reviewer's
+ * role could have taken it instead. Builder is always resolved before
+ * Reviewer, regardless of pool-size ordering, since Reviewer's
  * independence constraint depends on knowing Builder's chosen provider.
  */
 function orderRolesForAssignment(rolePools) {
-  const technical = rolePools.filter((r) => r.role !== "Economy");
-  const economy = rolePools.filter((r) => r.role === "Economy");
-  technical.sort((a, b) => a.pool.length - b.pool.length);
-  const reviewerIndex = technical.findIndex((r) => r.role === "Reviewer");
-  const builderIndex = technical.findIndex((r) => r.role === "Builder");
+  const ordered = [...rolePools].sort((a, b) => a.pool.length - b.pool.length);
+  const reviewerIndex = ordered.findIndex((r) => r.role === "Reviewer");
+  const builderIndex = ordered.findIndex((r) => r.role === "Builder");
   if (reviewerIndex !== -1 && builderIndex !== -1 && reviewerIndex < builderIndex) {
-    const [reviewerEntry] = technical.splice(reviewerIndex, 1);
-    technical.push(reviewerEntry);
+    const [reviewerEntry] = ordered.splice(reviewerIndex, 1);
+    ordered.push(reviewerEntry);
   }
-  return [...technical, ...economy].map((r) => r.role);
+  return ordered.map((r) => r.role);
 }
 
 /**
@@ -794,12 +780,6 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
     // deliberate concentration-avoidance move).
     const modelUsageSnapshot = new Map(modelUsage);
     const providerUsageSnapshot = new Map(providerTechnicalUsage);
-    if (role === "Economy") {
-      results[role] = pool.length
-        ? { entry: pool[0], reasonKind: null, modelUsageSnapshot, providerUsageSnapshot }
-        : null;
-      continue;
-    }
     const result = assignOneRole({
       role, pool, fullRanked, better, modelUsage, providerTechnicalUsage,
       reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null,
@@ -949,7 +929,7 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
       continue;
     }
 
-    const pool = role === "Economy" ? eligibleRanked.slice(0, 1) : adequateCandidates(eligibleRanked, eligibleRanked[0], better, capabilityFloor);
+    const pool = adequateCandidates(eligibleRanked, eligibleRanked[0], better, capabilityFloor);
     const chosen = sortByEfficiencyPriority(pool, effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage)[0];
 
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
@@ -1030,11 +1010,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
 
   const rolePools = roleRankings.map(({ role, better, ranked }) => ({
     role, better,
-    pool: role === "Economy" ? ranked.slice(0, 1) : capabilityPool(ranked, better, role),
-    // Economy never widens (it isn't capability-ranked, doesn't go through
-    // assignOneRole's per-role search at all — see assignCoordinatedTeam's
-    // own Economy special-case), but carrying `ranked` here anyway is
-    // harmless and keeps this map's shape uniform across roles.
+    pool: capabilityPool(ranked, better, role),
     fullRanked: ranked
   }));
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
@@ -1054,11 +1030,10 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     const globalRanked = rankBy(models, compute, better);
     if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
     // Real coverage/confidence for the model actually shown as primary
-    // (see RoleEvaluation) — undefined for Economy (price-ranked, no
-    // RoleEvaluation at all), surfaced honestly as null rather than
-    // fabricated. Purely informational — /models --evidence's own
-    // "UNSCORED"/incomplete-coverage detail, never part of the ranking
-    // itself, which already happened above.
+    // (see RoleEvaluation) — surfaced honestly as null rather than
+    // fabricated when absent. Purely informational — /models --evidence's
+    // own "UNSCORED"/incomplete-coverage detail, never part of the
+    // ranking itself, which already happened above.
     const evalFor = (model) => evaluationsByRole[role]?.get(modelKey(model)) ?? null;
 
     if (!result) {
@@ -1240,12 +1215,13 @@ function describeEfficiencyChoice(chosen, leader, registry, providerCapacity, mo
 /**
  * Which eligible, ranked candidates are "adequate" for a role under the
  * capability-floor policy — retain at least `capabilityFloor` fraction of
- * the real leader's score. Roles ranked "min" (Economy, ranked by price)
- * have no meaningful capability floor to apply here: their own compute()
- * already enforces a hard intelligence/coding floor before ranking by
- * price, so every eligible candidate already qualifies as "adequate" —
- * applying a floor to the ranked value (price) would be applying it to
- * the wrong axis entirely.
+ * the real leader's score. Every current real role is ranked "max"
+ * (higher capability wins); a defensive `better !== "max"` early return
+ * exists below for any future "min"-ranked role (lower-is-better, e.g. a
+ * real cost signal) — applying a capability floor to a value that isn't
+ * a capability score at all would be applying it to the wrong axis
+ * entirely, so such a role's every eligible candidate is treated as
+ * already "adequate" rather than floor-filtered.
  */
 function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
   if (!eligibleRanked.length) return [];
@@ -1307,7 +1283,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
 
   const rolePools = roleRankings.map(({ role, better, ranked }) => ({
     role, better,
-    pool: role === "Economy" ? ranked.slice(0, 1) : adequateCandidates(ranked, ranked[0], better, capabilityFloor)
+    pool: adequateCandidates(ranked, ranked[0], better, capabilityFloor)
   }));
   const makeSorter = (_role, modelUsage, providerTechnicalUsage) => (candidates) => (
     sortByEfficiencyPriority(candidates, effectiveRegistry, providerCapacity, modelUsage, providerTechnicalUsage)

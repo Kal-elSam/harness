@@ -542,7 +542,7 @@ export class CockpitView {
 
   /**
    * The global "AI TEAM" widget: one line per role (Explorer / Architect /
-   * Builder / Debugger / Tester / Reviewer / Economy) naming only the
+   * Builder / Debugger / Tester / Reviewer) naming only the
    * model that would actually run right now. This is the general team,
    * not a per-project portfolio: which of these roles a given repo
    * activates is a separate, later decision. Kept deliberately terse —
@@ -656,8 +656,7 @@ export class CockpitView {
     Builder: "coding capability",
     Debugger: "reasoning and terminal-debugging capability",
     Tester: "coding and terminal-execution capability",
-    Reviewer: "independent reasoning and coding review",
-    Economy: "lowest real price among models that clear the capability floor"
+    Reviewer: "independent reasoning and coding review"
   };
 
   /**

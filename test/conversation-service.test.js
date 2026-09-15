@@ -746,10 +746,14 @@ test("snapshot lets AI TEAM recommend a real, accessible opencode-go model even 
   const snapshot = await service.snapshot({ cwd: "/repo" });
   // Real, accessible via the Go subscription — AI TEAM can recommend it.
   assert.equal(snapshot.modelIntelligence.eligibility["opencode-go"].ok, true);
-  const economy = snapshot.modelIntelligence.aiTeam.find((t) => t.role === "Economy");
-  assert.equal(economy.primary.adapterId, "opencode-go");
-  assert.equal(economy.primary.available, true);
-  assert.deepEqual(economy.primary.corroboration, [{ metric: "hle", value: 62.5, source: "huggingface-leaderboard" }]);
+  // Explorer (required: reasoning only) is the only role this single
+  // candidate's real evidence (intelligenceIndex/codingIndex composite
+  // fallback, no terminalExecution) actually covers among the six real
+  // roles — Economy is no longer one of them (see role-profiles.js).
+  const explorer = snapshot.modelIntelligence.aiTeam.find((t) => t.role === "Explorer");
+  assert.equal(explorer.primary.adapterId, "opencode-go");
+  assert.equal(explorer.primary.available, true);
+  assert.deepEqual(explorer.primary.corroboration, [{ metric: "hle", value: 62.5, source: "huggingface-leaderboard" }]);
 });
 
 test("snapshot always excludes opencode-zen from FIT's automatic candidates, independent of its catalog", async () => {
