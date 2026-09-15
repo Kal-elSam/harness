@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildCompleteCandidateCatalog, resolveLineage, stripDisplayVariant } from "../src/global/intelligence/model-candidate-catalog.js";
+import { buildCompleteCandidateCatalog, resolveLineage, stripDisplayVariant, stripLineageSuffixes } from "../src/global/intelligence/model-candidate-catalog.js";
 
 test("stripDisplayVariant strips real trailing effort/context tokens, never touching a model's own real name", () => {
   assert.deepEqual(stripDisplayVariant("Claude Opus 4.7 1M High Thinking Fast"), { modelName: "Claude Opus 4.7", variant: "1M High Thinking Fast" });
@@ -93,28 +93,56 @@ test("resolveLineage recognizes Claude's own opus/sonnet/fable/haiku naming — 
   assert.deepEqual(resolveLineage("claude-opus-4-8"), { lineageKey: "claude-opus", generation: 4.8 });
   assert.deepEqual(resolveLineage("claude-fable-5-1"), { lineageKey: "claude-fable", generation: 5.1 });
   assert.deepEqual(resolveLineage("claude-fable-5"), { lineageKey: "claude-fable", generation: 5 });
-  // A Cursor-style effort-suffixed id is intentionally NOT recognized —
-  // that's a separate, larger surface this increment deliberately defers.
-  assert.equal(resolveLineage("claude-opus-5-thinking-high"), null);
+  // A real Cursor-style effort-suffixed id resolves to the SAME real
+  // lineage/generation as its bare id — a variant never changes what
+  // generation a model actually is (see stripLineageSuffixes).
+  assert.deepEqual(resolveLineage("claude-opus-5-thinking-high"), { lineageKey: "claude-opus", generation: 5 });
 });
 
-test("REGRESSION: resolveLineage never treats a real Cursor effort suffix (low/medium/high/xhigh/max/none/fast/thinking) as a real product tier — a real bug this session's live-catalog verification caught: it invented fake lineages like \"gpt-low\"/\"glm-high\" that wrongly compared unrelated base generations sharing the same effort word", () => {
+test("REGRESSION: resolveLineage never treats a real Cursor effort suffix (low/medium/high/xhigh/max/none/fast/thinking) as a DIFFERENT real product tier — a real bug this session's live-catalog verification caught: it invented fake lineages like \"gpt-low\"/\"glm-high\" that wrongly compared unrelated base generations sharing the same effort word", () => {
   for (const suffix of ["low", "medium", "high", "xhigh", "max", "none", "fast"]) {
-    assert.equal(resolveLineage(`gpt-5.4-${suffix}`), null, `gpt-5.4-${suffix} must not resolve a lineage`);
-    assert.equal(resolveLineage(`glm-5.2-${suffix}`), null, `glm-5.2-${suffix} must not resolve a lineage`);
+    assert.deepEqual(resolveLineage(`gpt-5.4-${suffix}`), { lineageKey: "gpt", generation: 5.4 }, `gpt-5.4-${suffix} should resolve to the bare gpt lineage, not a fake "gpt-${suffix}" one`);
+    assert.deepEqual(resolveLineage(`glm-5.2-${suffix}`), { lineageKey: "glm", generation: 5.2 }, `glm-5.2-${suffix} should resolve to the bare glm lineage, not a fake "glm-${suffix}" one`);
   }
   // The real regression scenario: without the fix, gpt-5.1-low and
-  // gpt-5.4-low shared a fake "gpt-low" lineage, marking gpt-5.1-low
-  // superseded by gpt-5.4-low even though they're unrelated Cursor
-  // effort-tier ids, not real comparable generations of one product.
+  // gpt-5.4-low shared a fake "gpt-low" lineage — a DIFFERENT bug from
+  // "unrelated ids sharing a real bare lineage" (which IS correct: both
+  // really are bare "gpt" generation 5.1 and 5.4, and 5.1 genuinely is
+  // older). The fix must reject the FAKE tier split, not the real
+  // lineage match itself.
   const catalog = buildCompleteCandidateCatalog([{
     adapterId: "cursor",
     models: [{ id: "gpt-5.1-low", displayName: "GPT-5.1 Low" }, { id: "gpt-5.4-low", displayName: "GPT-5.4 Low" }]
   }], []);
-  for (const candidate of catalog) {
-    assert.equal(candidate.lineageKey, null);
-    assert.equal(candidate.lifecycle, "unknown");
-  }
+  const byId = Object.fromEntries(catalog.map((c) => [c.modelId, c]));
+  assert.equal(byId["gpt-5.1-low"].lineageKey, "gpt");
+  assert.equal(byId["gpt-5.4-low"].lineageKey, "gpt");
+  assert.equal(byId["gpt-5.1-low"].lifecycle, "superseded");
+  assert.equal(byId["gpt-5.4-low"].lifecycle, "current");
+});
+
+test("REGRESSION: a variant suffix never produces a false unknown — a real, genuinely-superseded old generation's Cursor variant must still resolve its true lineage and get marked superseded, exactly like the bare id would", () => {
+  const catalog = buildCompleteCandidateCatalog([{
+    adapterId: "cursor",
+    models: [
+      { id: "claude-sonnet-4-6-thinking-high", displayName: "Claude Sonnet 4.6 1M Thinking High" },
+      { id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }
+    ]
+  }], []);
+  const byId = Object.fromEntries(catalog.map((c) => [c.modelId, c]));
+  assert.equal(byId["claude-sonnet-4-6-thinking-high"].lineageKey, "claude-sonnet");
+  assert.equal(byId["claude-sonnet-4-6-thinking-high"].lifecycle, "superseded");
+  assert.equal(byId["claude-sonnet-5"].lifecycle, "current");
+  // The real modelId used for scoring/execution/candidateKey must stay
+  // completely untouched — lineageSubjectId is internal to resolveLineage.
+  assert.equal(byId["claude-sonnet-4-6-thinking-high"].modelId, "claude-sonnet-4-6-thinking-high");
+  assert.equal(byId["claude-sonnet-4-6-thinking-high"].candidateKey, "cursor::claude-sonnet-4-6-thinking-high");
+});
+
+test("stripLineageSuffixes strips real, verified variant tokens (thinking/high/fast/1m and the two-token \"no-zdr\" privacy marker) without touching a real base id", () => {
+  assert.equal(stripLineageSuffixes("claude-fable-5-1-1m-thinking-no-zdr"), "claude-fable-5-1");
+  assert.equal(stripLineageSuffixes("gpt-5.6-sol-high-fast"), "gpt-5.6-sol");
+  assert.equal(stripLineageSuffixes("claude-opus-5"), "claude-opus-5");
 });
 
 test("resolveLineage treats a GLM tier suffix as a DIFFERENT lineage, never a generation of the bare line — verified against real, differently-priced siblings", () => {

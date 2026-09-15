@@ -172,15 +172,66 @@ function parseVersionToken(token) {
   return parseFloat(token.replace("-", "."));
 }
 
+// A real gap this session's own live-catalog verification found AFTER
+// EFFORT_SUFFIX_WORDS shipped: rejecting an effort suffix at the TOP
+// level (e.g. "claude-opus-5-thinking-high" simply failing to match the
+// claude pattern's anchored end) avoided the false lineage, but produced
+// a false UNKNOWN instead — a real, genuinely-superseded Cursor variant
+// of an old Claude generation (e.g. "claude-sonnet-4-6-thinking-high")
+// silently escaped supersession entirely, which would let it keep
+// competing as if lineage-unknown. A variant token never changes what
+// generation a model actually is — thinking/high/low/medium/xhigh/max/
+// none/fast/1m and the "no-zdr" (from "(NO ZDR)") privacy marker are
+// real, comprobados (verified against this session's own live catalog)
+// suffixes that get stripped to compute a lineageSubjectId BEFORE
+// matching against LINEAGE_PARSERS — modelId itself is never touched
+// (scoring/execution/candidateKey all still use the real, exact,
+// unmodified modelId; lineageSubjectId exists ONLY inside lineage
+// resolution). Deliberately the SAME real vocabulary as
+// EFFORT_SUFFIX_WORDS (kebab-case tokens here, not display-text words) —
+// resolveTieredVersion's own EFFORT_SUFFIX_WORDS check stays as a second,
+// defensive layer in case a future suffix token isn't in this set yet.
+const LINEAGE_SUFFIX_TOKENS = new Set(["thinking", "high", "low", "medium", "xhigh", "max", "none", "fast", "1m"]);
+
+/**
+ * Strips real, verified trailing variant tokens (see LINEAGE_SUFFIX_TOKENS's
+ * own doc) from a modelId to compute the id lineage resolution should
+ * actually match against — never the modelId used for scoring/execution
+ * itself. "no-zdr" (two kebab tokens) is peeled as one unit, matching
+ * displayName's own "(NO ZDR)" marker. Idempotent: an id with no
+ * recognized trailing tokens returns unchanged.
+ * @param {string} modelId
+ * @returns {string}
+ */
+export function stripLineageSuffixes(modelId) {
+  let tokens = String(modelId ?? "").split("-").filter(Boolean);
+  let peeling = true;
+  while (peeling && tokens.length) {
+    peeling = false;
+    if (tokens.length >= 2 && tokens[tokens.length - 2] === "no" && tokens[tokens.length - 1] === "zdr") {
+      tokens = tokens.slice(0, -2);
+      peeling = true;
+      continue;
+    }
+    if (LINEAGE_SUFFIX_TOKENS.has(tokens[tokens.length - 1])) {
+      tokens = tokens.slice(0, -1);
+      peeling = true;
+    }
+  }
+  return tokens.join("-");
+}
+
 /**
  * Resolves a real modelId against the recognized, conservative lineage
- * parsers above — null (never a guess) when nothing matches.
+ * parsers above — null (never a guess) when nothing matches, even after
+ * stripping real, verified variant suffixes via stripLineageSuffixes.
  * @param {string} modelId
  * @returns {{lineageKey: string, generation: number}|null}
  */
 export function resolveLineage(modelId) {
+  const subjectId = stripLineageSuffixes(modelId);
   for (const { pattern, resolve } of LINEAGE_PARSERS) {
-    const match = String(modelId ?? "").match(pattern);
+    const match = subjectId.match(pattern);
     if (match) return resolve(match);
   }
   return null;
