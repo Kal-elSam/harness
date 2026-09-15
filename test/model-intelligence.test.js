@@ -211,23 +211,31 @@ test("buildAiTeam reports no fallback, never a fabricated one, when no eligible 
   assert.equal(team.find((t) => t.role === "Explorer").fallback, null);
 });
 
-test("buildAiTeam coordinates the whole portfolio: real capability decides first, but a model that already claimed 2 roles cedes a near-equivalent role to a real alternative instead of taking a 3rd", () => {
-  // Three real providers. Claude clearly leads coding (26.5% ahead of
-  // Codex — decisive, no alternative qualifies); intelligence is a real
-  // three-way near-tie (Codex ~1.1% behind, Go ~6.4% behind, both within
-  // the 8% band).
+test("buildAiTeam coordinates the whole portfolio under per-role near-equivalence bands: a tighter Architect/Reviewer tolerance keeps Claude as sole leader there, while Builder/Debugger/Tester's wider tolerance lets Go compete and take concentration-avoidance roles", () => {
+  // Three real providers, verified against the actual required-only
+  // gapValue math (never guessed): reasoning (intelligenceIndex fallback)
+  // real relative gaps vs Claude — Codex 1.12%, Go 6.37%; coding
+  // (codingIndex fallback) — Codex 26.47%, Go 4.41%; terminalExecution
+  // (terminalBenchV2) — Codex 41.18%, Go 5.88%.
   //
-  // Under the multi-metric role-capability engine (capability-scoring.js),
-  // Architect's relevant capabilities are reasoning + coding + instruction
-  // following (per the role/capability table), so with only
-  // intelligenceIndex/codingIndex evidence available its real gap value
-  // collapses to the same reasoning+coding median as Debugger/Reviewer —
-  // giving Architect the same 2-candidate near-equivalence pool
-  // (Claude/Go; Codex's real ~26.5% coding gap excludes it) as
-  // Builder/Debugger/Tester/Reviewer. Roles are assigned in ascending
-  // pool-size order, and Architect ties Builder/Debugger/Tester/Reviewer
-  // on pool size (2) — so, in ROLE_CAPABILITIES declaration order,
-  // Architect is resolved before Builder and claims Claude's first slot.
+  // required-only medians (per-role, post required/optional split):
+  //   Architect/Reviewer (reasoning+coding):      Go 5.19% behind Claude
+  //   Explorer (reasoning only):                  Codex 1.12%, Go 6.37% behind
+  //   Builder/Tester (coding+terminalExecution):   Go 5.16% behind Claude
+  //   Debugger (reasoning+coding+terminalExecution): Go 4.41% behind Claude
+  //
+  // Against each role's own ROLE_NEAR_EQUIVALENCE_BAND:
+  //   Architect (3%, "muy estricta"): Go's 5.19% is OUTSIDE — Architect's
+  //     real pool is Claude ALONE, a decisive single-candidate leader.
+  //   Reviewer (5%, "alta"): same 5.19% gap, ALSO outside a 5% band — same
+  //     single-candidate pool, even though the underlying capability mix
+  //     is identical to Architect's.
+  //   Explorer (6%, "media"): Codex's 1.12% is inside, Go's 6.37% is just
+  //     outside — pool is Claude+Codex (Go excluded).
+  //   Builder/Tester (6%, "media"): Go's 5.16% is inside — pool is
+  //     Claude+Go.
+  //   Debugger (5%, "alta"): Go's 4.41% is inside a 5% band — pool is
+  //     Claude+Go.
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, terminalBenchV2: 0.85 },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 60.0, mathIndex: null, terminalBenchV2: 0.50 },
@@ -241,55 +249,63 @@ test("buildAiTeam coordinates the whole portfolio: real capability decides first
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
-  // Architect/Builder (real coding+reasoning leader): Claude wins both —
-  // its real edge over Go is within the band, but Claude hasn't hit its
-  // 2-role limit yet for either, so real capability decides cleanly. No
-  // message needed.
+  // Assignment order (ascending pool size, Reviewer always last among
+  // technical roles): Architect(1) → Explorer(2) → Builder(2) → Debugger(2)
+  // → Tester(2) → Reviewer(1, forced last regardless of size).
+
+  // Architect: sole real candidate — Claude wins outright, no message.
   assert.equal(byRole.Architect.primary.adapterId, "claude");
-  assert.equal(byRole.Builder.primary.adapterId, "claude");
   assert.equal(byRole.Architect.reason, null);
-  assert.equal(byRole.Builder.reason, null);
 
-  // Debugger/Tester (same reasoning/coding pool as Architect/Builder): by
-  // now Claude has already claimed its 2-role portfolio limit (Architect
-  // + Builder) — with a real, near-equivalent alternative (Go) available,
-  // Claude cedes these roles rather than taking a 3rd/4th.
+  // Explorer: Claude still under its 2-role limit (used once, by
+  // Architect) — real value decides cleanly between Claude and Codex,
+  // Claude wins again (now at its 2-role limit).
+  assert.equal(byRole.Explorer.primary.adapterId, "claude");
+  assert.equal(byRole.Explorer.reason, null);
+
+  // Builder: Claude has now hit its 2-role limit (Architect+Explorer) —
+  // with real, near-equivalent Go available and not decisive enough to
+  // override concentration (5.16% < Builder's own 6% band), Go gets it.
+  assert.equal(byRole.Builder.primary.adapterId, "opencode-go");
+  assert.match(byRole.Builder.reason, /assigned to a different model\/provider to avoid concentration/);
+
+  // Debugger: same story — Claude still capped, Go (used once so far,
+  // real 4.41% gap not decisive against Debugger's 5% band) takes it too.
   assert.equal(byRole.Debugger.primary.adapterId, "opencode-go");
-  assert.equal(byRole.Tester.primary.adapterId, "opencode-go");
   assert.match(byRole.Debugger.reason, /assigned to a different model\/provider to avoid concentration/);
-  assert.match(byRole.Tester.reason, /assigned to a different model\/provider to avoid concentration/);
 
-  // Reviewer (same pool again): by now BOTH Claude and Go have hit their
-  // real 2-role limit (Claude: Architect+Builder; Go: Debugger+Tester),
-  // and Reviewer is additionally barred from Builder's own provider
-  // (Claude) for independence — leaving no real alternative that doesn't
-  // force a repeat. The real leader (Claude) is kept anyway rather than
-  // handing the role to an incapable model just to satisfy diversity.
+  // Tester: BOTH Claude and Go have now hit their real 2-role limit
+  // (Claude: Architect+Explorer; Go: Builder+Debugger) — no real
+  // alternative keeps every limit intact, so the real leader (Claude) is
+  // repeated anyway rather than forcing an incapable model in.
+  assert.equal(byRole.Tester.primary.adapterId, "claude");
+  assert.match(byRole.Tester.reason, /Only adequate option — no real alternative avoids concentration without forcing a repeat\./);
+
+  // Reviewer: its own pool was ALREADY single-candidate (Claude alone,
+  // Go's 5.19% real gap falling just outside Reviewer's 5% band) — but by
+  // now Claude has been assigned 3 times (Architect+Explorer+Tester,
+  // Tester's forced repeat included), so even this lone option fails the
+  // 2-role concentration check. It's still assigned — a real single
+  // candidate is never withheld — but honestly flagged as forced.
   assert.equal(byRole.Reviewer.primary.adapterId, "claude");
   assert.match(byRole.Reviewer.reason, /Only adequate option — no real alternative avoids concentration without forcing a repeat\./);
-
-  // Explorer (real intelligence near-tie, resolved last since its pool
-  // is the only 3-candidate one): by now Claude has used all 3 of its
-  // assignments — with a real, near-equivalent alternative (Codex, ~1.1%
-  // behind) available, Explorer goes to Codex instead. Diversity never
-  // means an incapable model: Codex's real ~26.5% coding gap kept it out
-  // of Architect/Builder/Debugger/Tester/Reviewer the whole time.
-  assert.equal(byRole.Explorer.primary.adapterId, "codex");
-  assert.match(byRole.Explorer.reason, /assigned to a different model\/provider to avoid concentration/);
 });
 
 test("buildAiTeam caps a single provider at 3 of the 6 technical roles when a real alternative provider exists — even across two different real models under it", () => {
   // Two real Claude models plus one real Codex model, all real
-  // near-equivalents of each other (each within the 8% band of the
-  // leader). The 2-role-per-model limit alone wouldn't stop Claude from
-  // covering most roles (claude-a takes 2, claude-b takes 2), but the
-  // 3-per-provider limit kicks in first — once Claude (either model) has
-  // covered 3 technical roles, Codex (a real, capable alternative) gets
-  // the next one instead of a 3rd Claude model or a 4th Claude role.
+  // near-equivalents of each other — real relative gap vs claude-a (90):
+  // claude-b 1.11%, codex 3.33%, comfortably inside every applicable
+  // per-role band this test exercises (Debugger's 5% is the tightest of
+  // them; Explorer/Builder/Tester's 6% is looser still). The 2-role-per-
+  // model limit alone wouldn't stop Claude from covering most roles
+  // (claude-a takes 2, claude-b takes 2), but the 3-per-provider limit
+  // kicks in first — once Claude (either model) has covered 3 technical
+  // roles, Codex (a real, capable alternative) gets the next one instead
+  // of a 3rd Claude model or a 4th Claude role.
   const aa = [
     { slug: "claude-a", name: "Claude A", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
     { slug: "claude-b", name: "Claude B", intelligenceIndex: 89, codingIndex: 89, mathIndex: null, terminalBenchV2: 0.89 },
-    { slug: "codex-model", name: "Codex", intelligenceIndex: 84, codingIndex: 84, mathIndex: null, terminalBenchV2: 0.84 }
+    { slug: "codex-model", name: "Codex", intelligenceIndex: 87, codingIndex: 87, mathIndex: null, terminalBenchV2: 0.87 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "claude-a" }, { id: "claude-b" }] },

@@ -339,11 +339,22 @@ function resolveMetric(registry, model, key) {
 // required: a model MUST have real evidence for every one of these to
 // compete for the role at all — missing evidence on even one required
 // capability excludes it from the ranking entirely (see
-// buildAiTeamRoleDefinitions's compute()), regardless of how strong its
-// percentile/gapValue looks on the capabilities it does have. optional:
-// real evidence, when present, folds into the same capabilityPercentile/
-// gapValue median as required and can genuinely improve a candidate's
-// ranking — but its absence never excludes a model.
+// buildAiTeamRoleDefinitions's compute()). required capabilities ALONE
+// decide both the ranking order (requiredRoleFit, i.e. RoleEvaluation.
+// capabilityPercentile computed only from `required`) and how close two
+// real picks are (gapValueByRole, computed the same way) — optional
+// capabilities never dilute either number. optional: real evidence, when
+// present, is scored completely separately (optionalEvaluationsByRole)
+// and used ONLY as a tiebreak among candidates already equally fit on
+// required capabilities — it can never move a model up in requiredRoleFit
+// order, and its absence never excludes a model. Before this split, an
+// optional capability was folded into the SAME median as required ones —
+// so a generalist's real requiredRoleFit gap on the capabilities that
+// actually define the role could be smoothed over by an unrelated
+// optional signal. Whether this alone changes a specific real pick (e.g.
+// Muse Spark 1.3 on Architect) still depends on the per-role near-
+// equivalence band below (ROLE_NEAR_EQUIVALENCE_BAND) — verify against
+// real data, never assume.
 //
 // softwareExecution is optional everywhere it appears (Builder, Debugger),
 // not required — verified against two independent real catalogs before
@@ -407,36 +418,52 @@ function normalizeRoleCapabilities(capabilities) {
  *   test command drops terminalExecution from Tester/Debugger's real
  *   requirement entirely, which can genuinely change which model wins
  *   that role, not just whether the role is active at all.
- * @returns {{roleDefinitions: Array<{role: string, compute: (model: object) => number|null, better: string}>, evaluationsByRole: Record<string, Map<string, import("./capability-scoring.js").RoleEvaluation>>, gapValueByRole: Record<string, Map<string, number>>}}
+ * @returns {{roleDefinitions: Array<{role: string, compute: (model: object) => number|null, better: string}>, evaluationsByRole: Record<string, Map<string, import("./capability-scoring.js").RoleEvaluation>>, optionalEvaluationsByRole: Record<string, Map<string, import("./capability-scoring.js").RoleEvaluation>>, gapValueByRole: Record<string, Map<string, number>>}}
  */
 function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CAPABILITIES) {
   const evaluationsByRole = {};
+  const optionalEvaluationsByRole = {};
   const gapValueByRole = {};
   const roleDefinitions = [];
   for (const [role, rawCapabilities] of Object.entries(roleCapabilities)) {
     const { required, optional } = normalizeRoleCapabilities(rawCapabilities);
-    const capabilities = [...required, ...optional];
-    const evaluations = computeRoleEvaluations(registry, models, role, capabilities);
+    // requiredRoleFit: capabilityPercentile computed ONLY from `required`
+    // — this is the number that decides both ranking ORDER (compute()
+    // below) and, via gapValueByRole, how CLOSE two real picks are for
+    // near-equivalence-band purposes. optional capabilities never enter
+    // either computation, so they can't smooth over a real required-
+    // capability gap the way folding them into one shared median used to.
+    const evaluations = computeRoleEvaluations(registry, models, role, required);
     evaluationsByRole[role] = evaluations;
     // Real, scale-normalized magnitude per model — NOT the percentile
     // above. capabilityPercentile decides ORDER (robust, scale-invariant
     // rank position); this decides HOW CLOSE two real picks are for
     // near-equivalence-band/capability-floor purposes, which need real
     // granularity that percentile alone can't provide with Kairo's
-    // typical 2-3-candidate pools (see capability-scoring.js).
-    gapValueByRole[role] = computeRoleGapValue(registry, models, capabilities);
+    // typical 2-3-candidate pools (see capability-scoring.js). Same
+    // required-only capability list as evaluations above — order and
+    // closeness must agree on what "the role" actually means.
+    gapValueByRole[role] = computeRoleGapValue(registry, models, required);
+    // optionalRoleFit: a completely separate RoleEvaluation, scored only
+    // from `optional` capabilities. Never touches ranking order or
+    // gapValue — used purely as a tiebreak (sortByCapabilityPriority)
+    // among candidates already equally fit on required capabilities. A
+    // role with no optional capabilities (Tester, Reviewer) gets an empty
+    // map, never a crash — the tiebreak below treats a missing entry as
+    // "no optional signal for this model", which ranks equal to every
+    // other model with no entry (see sortByCapabilityPriority).
+    optionalEvaluationsByRole[role] = optional.length ? computeRoleEvaluations(registry, models, role, optional) : new Map();
     roleDefinitions.push({
       role, better: "max",
       // A model with real evidence on every REQUIRED capability competes
-      // on its real capabilityPercentile/gapValue as before. Missing even
-      // one required capability's evidence excludes it from the ranking
-      // entirely (null, filtered out by rankBy/rankEligible's existing
-      // `.filter((entry) => entry.value != null)`) — coverage stops being
-      // merely informational and becomes a real gate, so a model that
-      // "looks near-equivalent" on partial evidence can never quietly
-      // outrank a properly-measured generalist. Missing OPTIONAL evidence
-      // never disqualifies — when present it still folds into the same
-      // percentile/gapValue median and can genuinely improve the ranking.
+      // on its real requiredRoleFit (capabilityPercentile/gapValue).
+      // Missing even one required capability's evidence excludes it from
+      // the ranking entirely (null, filtered out by rankBy/rankEligible's
+      // existing `.filter((entry) => entry.value != null)`) — coverage
+      // stops being merely informational and becomes a real gate, so a
+      // model that "looks near-equivalent" on partial evidence can never
+      // quietly outrank a properly-measured generalist. Optional evidence
+      // never appears here at all — see optionalEvaluationsByRole above.
       compute: (m) => {
         const evaluation = evaluations.get(modelKey(m));
         if (!evaluation) return null;
@@ -459,7 +486,7 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CA
     },
     better: "min"
   });
-  return { roleDefinitions, evaluationsByRole, gapValueByRole };
+  return { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole, gapValueByRole };
 }
 
 function toTeamModel(model, available, registry = null) {
@@ -493,20 +520,43 @@ function attachGapValues(ranked, gapValueByModel) {
 }
 
 
-// Calibrated directly against real measured data, not picked arbitrarily.
-// Per explicit decision: capability alone isn't the only thing that
-// matters — a model being capable of everything doesn't mean it should
-// always be the one doing it, especially when a real, meaningfully
-// cheaper alternative is genuinely close enough. Two real data points
-// anchor this band: Claude Fable 5.1 vs OpenCode Go's Kimi K3 sit ~6.6%
-// apart on codingIndex (real GPQA scores are within 0.2 points of each
-// other — the composite index alone overstates the gap) at roughly a
-// third of the price, while Fable 5.1 vs Codex GPT-5.6 Sol on coding sit
-// ~5.2% apart with no price advantage either way. 8% includes the
-// genuinely-close, meaningfully-cheaper case without swallowing gaps
-// this codebase has already confirmed are real and decisive elsewhere
-// (e.g. the 18%+ gaps used in this file's own tests).
-const NEAR_EQUIVALENCE_BAND = 0.08;
+// Per-role near-equivalence tolerance — replaces the single flat 8% band
+// this codebase used before. Per explicit decision: capability alone
+// isn't the only thing that matters — a model being capable of everything
+// doesn't mean it should always be the one doing it, especially when a
+// real, meaningfully cheaper alternative is genuinely close enough — but
+// how close is "close enough" is NOT the same question for every role.
+// Architect decides the whole plan every other role executes against —
+// a real requiredRoleFit gap there compounds across the entire team, so
+// its tolerance is the tightest. Debugger/Reviewer sit right behind it —
+// Debugger needs real reasoning under a live failure, Reviewer is the
+// team's only independent check on Builder's own work. Builder/Explorer/
+// Tester tolerate more: Builder's real output is still checked by
+// Reviewer, Explorer/Tester's mistakes are cheap to catch and retry.
+// Two real data points anchored the old flat 8%: Claude Fable 5.1 vs
+// OpenCode Go's Kimi K3 sit ~6.6% apart on codingIndex (real GPQA scores
+// within 0.2 points of each other) at roughly a third of the price, while
+// Fable 5.1 vs Codex GPT-5.6 Sol on coding sit ~5.2% apart with no price
+// advantage. Those numbers describe Builder-tier closeness, not
+// Architect-tier — kept as this file's Builder/Explorer/Tester tier
+// value; Architect/Debugger/Reviewer are deliberately tighter than either
+// anchor point. Re-verify against real registry data before changing any
+// of these, never assume a ratio holds indefinitely (see this table's own
+// review date).
+const ROLE_NEAR_EQUIVALENCE_BAND = {
+  Architect: 0.03,
+  Debugger: 0.05,
+  Reviewer: 0.05,
+  Builder: 0.06,
+  Explorer: 0.06,
+  Tester: 0.06
+};
+const DEFAULT_NEAR_EQUIVALENCE_BAND = 0.06;
+
+/** The real near-equivalence tolerance for a role — see ROLE_NEAR_EQUIVALENCE_BAND's own doc for why this isn't one flat number. A role missing from the table (e.g. a future addition, or Economy which never calls this) falls back to the Builder-tier default rather than crashing. */
+function nearEquivalenceBandFor(role) {
+  return ROLE_NEAR_EQUIVALENCE_BAND[role] ?? DEFAULT_NEAR_EQUIVALENCE_BAND;
+}
 
 // Portfolio-level concentration limits — applied to BOTH teams while
 // assigning roles, not just a per-role decision. Seven independent
@@ -598,9 +648,9 @@ function leaderAdvantage(pool, better) {
   return minDiff;
 }
 
-/** A real decisive real-capability advantage (see NEAR_EQUIVALENCE_BAND) is allowed to break the portfolio's concentration limits — a model that dramatically outclasses every other real candidate for a role should never be sacrificed just to spread load. */
-function isDecisiveLeader(pool, better) {
-  return leaderAdvantage(pool, better) > NEAR_EQUIVALENCE_BAND;
+/** A real decisive real-capability advantage (see ROLE_NEAR_EQUIVALENCE_BAND) is allowed to break the portfolio's concentration limits — a model that dramatically outclasses every other real candidate for a role should never be sacrificed just to spread load. */
+function isDecisiveLeader(pool, better, role) {
+  return leaderAdvantage(pool, better) > nearEquivalenceBandFor(role);
 }
 
 /**
@@ -681,9 +731,10 @@ function assignOneRole({ role, pool, better, modelUsage, providerTechnicalUsage,
     // decisive real capability advantage never needs to short-circuit
     // that comparison when there's no actual limit to break.
     candidatePool = allowed;
-  } else if (mode === "capability" && isDecisiveLeader(pool, better)) {
+  } else if (mode === "capability" && isDecisiveLeader(pool, better, role)) {
     // The leader IS blocked by concentration, but its real capability
-    // advantage over the rest of this pool is decisive (> NEAR_EQUIVALENCE_BAND)
+    // advantage over the rest of this pool is decisive (> this role's own
+    // near-equivalence band, see ROLE_NEAR_EQUIVALENCE_BAND)
     // — a portfolio limit never sacrifices a real, decisive capability
     // gap just to spread load. Capability-team only: EFFICIENT's pool is
     // already floor-filtered (every member already qualifies as
@@ -771,36 +822,46 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
 
 /**
  * The real near-equivalence pool for a role: the percentile-ranked leader
- * (`ranked[0]` — order comes from capabilityPercentile) plus every other
- * candidate within NEAR_EQUIVALENCE_BAND of the leader's REAL,
- * scale-normalized gap value (never the percentile itself — see
- * leaderAdvantage's own comment). A candidate with no real gap value at
- * all can't be honestly compared, so it's excluded from the pool rather
- * than guessed into or out of it.
+ * (`ranked[0]` — order comes from requiredRoleFit/capabilityPercentile)
+ * plus every other candidate within that role's own near-equivalence band
+ * (see ROLE_NEAR_EQUIVALENCE_BAND) of the leader's REAL, scale-normalized
+ * gap value (never the percentile itself — see leaderAdvantage's own
+ * comment). A candidate with no real gap value at all can't be honestly
+ * compared, so it's excluded from the pool rather than guessed into or
+ * out of it.
  */
-function capabilityPool(ranked, better) {
+function capabilityPool(ranked, better, role) {
   if (!ranked.length) return [];
   const leader = ranked[0];
   if (leader.gapValue == null) return [leader];
   const scale = Math.abs(leader.gapValue) || 1;
-  return ranked.filter((entry) => entry.gapValue != null && Math.abs(leader.gapValue - entry.gapValue) / scale <= NEAR_EQUIVALENCE_BAND);
+  const band = nearEquivalenceBandFor(role);
+  return ranked.filter((entry) => entry.gapValue != null && Math.abs(leader.gapValue - entry.gapValue) / scale <= band);
 }
 
 /**
- * CAPABILITY priority: real capability value first, then — for a real
- * exact tie — which real pick has more trustworthy evidence behind it
- * (RoleEvaluation.confidence: high beats medium beats low, never the
- * score's own magnitude), then portfolio diversity (least-used model,
- * then least-used provider), then a stable tiebreak.
- * `getConfidenceRank` defaults to "always tied" for callers with no
- * confidence signal (e.g. none was computed for this role).
+ * CAPABILITY priority: real requiredRoleFit value first, then — for a
+ * real exact tie — which real pick has more trustworthy evidence behind
+ * it (RoleEvaluation.confidence: high beats medium beats low, never the
+ * score's own magnitude), then optionalRoleFit (a real pick with real
+ * evidence on the role's optional capabilities — e.g. instructionFollowing
+ * — beats one with none, purely as a tiebreak; never moves a model that's
+ * behind on required capabilities ahead of one that's tied or ahead —
+ * this only fires when `.value` is already an exact tie), then portfolio
+ * diversity (least-used model, then least-used provider), then a stable
+ * tiebreak.
+ * `getConfidenceRank`/`getOptionalFitRank` default to "always tied" for
+ * callers with no such signal (e.g. none was computed for this role).
  */
-function sortByCapabilityPriority(candidates, better, modelUsage, providerTechnicalUsage, getConfidenceRank = () => 0) {
+function sortByCapabilityPriority(candidates, better, modelUsage, providerTechnicalUsage, getConfidenceRank = () => 0, getOptionalFitRank = () => 0) {
   return [...candidates].sort((a, b) => {
     if (a.value !== b.value) return better === "max" ? b.value - a.value : a.value - b.value;
     const aConfidence = getConfidenceRank(a.model);
     const bConfidence = getConfidenceRank(b.model);
     if (aConfidence !== bConfidence) return bConfidence - aConfidence; // higher confidence wins
+    const aOptionalFit = getOptionalFitRank(a.model);
+    const bOptionalFit = getOptionalFitRank(b.model);
+    if (aOptionalFit !== bOptionalFit) return bOptionalFit - aOptionalFit; // higher optionalRoleFit wins
     const aModelUsage = modelUsage.get(familyKey(a.model)) ?? 0;
     const bModelUsage = modelUsage.get(familyKey(b.model)) ?? 0;
     if (aModelUsage !== bModelUsage) return aModelUsage - bModelUsage;
@@ -955,20 +1016,22 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
  */
 export function buildAiTeam(models, eligibility = {}, registry = null, roleCapabilities = ROLE_CAPABILITIES) {
   const effectiveRegistry = ensureRegistry(models, registry);
-  const { roleDefinitions, evaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
+  const { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
   const roleRankings = roleDefinitions.map(({ role, compute, better }) => ({
     role, compute, better, ranked: attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role])
   }));
 
   const rolePools = roleRankings.map(({ role, better, ranked }) => ({
     role, better,
-    pool: role === "Economy" ? ranked.slice(0, 1) : capabilityPool(ranked, better)
+    pool: role === "Economy" ? ranked.slice(0, 1) : capabilityPool(ranked, better, role)
   }));
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
     const { better } = rolePools.find((r) => r.role === role);
     const roleEvaluations = evaluationsByRole[role];
+    const roleOptionalEvaluations = optionalEvaluationsByRole[role];
     const getConfidenceRank = (model) => CONFIDENCE_RANK[roleEvaluations?.get(modelKey(model))?.confidence] ?? 0;
-    return (candidates) => sortByCapabilityPriority(candidates, better, modelUsage, providerTechnicalUsage, getConfidenceRank);
+    const getOptionalFitRank = (model) => roleOptionalEvaluations?.get(modelKey(model))?.capabilityPercentile ?? 0;
+    return (candidates) => sortByCapabilityPriority(candidates, better, modelUsage, providerTechnicalUsage, getConfidenceRank, getOptionalFitRank);
   };
   const { results } = assignCoordinatedTeam(rolePools, makeSorter, "capability");
 
