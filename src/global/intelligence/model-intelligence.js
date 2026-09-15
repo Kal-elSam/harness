@@ -675,24 +675,69 @@ function orderRolesForAssignment(rolePools) {
 }
 
 /**
+ * Stage 2 of buildAiTeam's per-role search: only reached when the narrow
+ * near-equivalence band (Stage 1) has NO real candidate that respects the
+ * portfolio's concentration limits. Before repeating the leader or
+ * invoking decisive-override, search the role's FULL real eligible pool
+ * (`fullRanked` — every candidate with real required-capability evidence,
+ * not just the ones inside the tight band) for a genuinely adequate real
+ * alternative: real requiredRoleFit gapValue still >= EFFICIENT_CAPABILITY_FLOOR
+ * (0.80) of the leader's own — the SAME real floor EFFICIENT TEAM already
+ * uses to mean "not near-identical, but still genuinely good enough",
+ * reused here rather than inventing a second threshold — AND respects
+ * concentration itself. Capability-mode only: EFFICIENT already builds
+ * its pool this wide from the very first stage (see buildEfficientTeam's
+ * own `adequateCandidates` call), so it never needs this widening and
+ * never reaches this function (guarded by the `mode === "capability"`
+ * check at both call sites below).
+ */
+function findWiderAlternative({ fullRanked, leader, better, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed }) {
+  if (!fullRanked) return null;
+  const wide = adequateCandidates(fullRanked, leader, better, EFFICIENT_CAPABILITY_FLOOR)
+    .filter((candidate) => passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter));
+  if (!wide.length) return null;
+  const chosen = sortWithinAllowed(wide)[0];
+  return { entry: chosen, reasonKind: "wider-search-diversity" };
+}
+
+/**
  * Assigns one role's real winner under the portfolio's concentration
  * limits. Never a benchmark or an invented diversity score — diversity is
  * purely a hard constraint on an already-adequate real candidate pool,
  * applied in this order:
- *   1. A decisive real leader (see isDecisiveLeader) always wins, even if
- *      it means exceeding a concentration limit.
- *   2. Otherwise, only candidates that keep every limit intact are
- *      eligible; `sortWithinAllowed` picks among those (each team's own
- *      real priority order — see buildAiTeam/buildEfficientTeam).
- *   3. If NO candidate keeps every limit intact and there's no decisive
- *      leader either, the real leader is repeated anyway — a portfolio
- *      constraint must never force an incapable model in just to satisfy
- *      diversity for its own sake.
+ *   1. Among the narrow near-equivalence band (`pool`), any real
+ *      candidate that keeps every concentration limit intact competes;
+ *      `sortWithinAllowed` picks among those (each team's own real
+ *      priority order — see buildAiTeam/buildEfficientTeam). This is the
+ *      common case — most roles have a clear leader with no real
+ *      near-equivalent competitor at all.
+ *   2. If NO candidate in that narrow band respects every limit
+ *      (capability mode only — see findWiderAlternative), widen the
+ *      search to the role's FULL real eligible pool at
+ *      EFFICIENT_CAPABILITY_FLOOR (0.80) — genuinely adequate, even if
+ *      not near-equivalent — and use the best real, concentration-safe
+ *      candidate there instead. A portfolio limit must never force an
+ *      incapable model in, or silently exceed itself, while a real
+ *      80%+-adequate alternative sits unexamined outside the tight band.
+ *   3. If even THAT wide floor-filtered pool has no real,
+ *      concentration-safe candidate, a decisive real leader (see
+ *      isDecisiveLeader) is kept anyway rather than handing the role to a
+ *      real-but-meaningfully-worse candidate from the narrow band.
+ *   4. Absolute last resort — nothing anywhere clears the floor and
+ *      respects concentration, and the leader isn't decisively ahead of
+ *      the narrow band either: the real leader is repeated anyway. A
+ *      portfolio constraint must never force an incapable model in just
+ *      to satisfy diversity for its own sake.
  * @param {object} params
  * @param {string} params.role
  * @param {Array<{model: object, value: number}>} params.pool - already
- *   filtered to this role's real candidate pool (capability-band or
- *   capability-floor, per team).
+ *   filtered to this role's near-equivalence band (capability mode) or
+ *   capability-floor pool (efficient mode, already this wide — see
+ *   buildEfficientTeam).
+ * @param {Array<{model: object, value: number}>|undefined} params.fullRanked -
+ *   the role's FULL real eligible ranking (every candidate with required-
+ *   capability evidence), used only by Stage 2's widened search.
+ *   Capability mode only; efficient mode never reads this.
  * @param {"max"|"min"} params.better
  * @param {Map<string, number>} params.modelUsage
  * @param {Map<string, number>} params.providerTechnicalUsage
@@ -702,59 +747,52 @@ function orderRolesForAssignment(rolePools) {
  * @param {"capability"|"efficient"} params.mode
  * @returns {{entry: {model: object, value: number}, reasonKind: string|null}|null}
  */
-function assignOneRole({ role, pool, better, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed, mode }) {
+function assignOneRole({ role, pool, fullRanked, better, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed, mode }) {
   if (!pool.length) return null;
+  const leader = pool[0];
+  const widen = () => (mode === "capability"
+    ? findWiderAlternative({ fullRanked, leader, better, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed })
+    : null);
 
   if (pool.length === 1) {
-    const only = pool[0];
-    const passes = passesConcentration(only, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter);
+    const passes = passesConcentration(leader, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter);
     if (passes) {
       // capability mode: a lone real winner needs no explanation — this is
-      // the common case (most roles have a clear leader well outside the
-      // much narrower 8% band). efficient mode: a lone adequate candidate
-      // means nothing smaller cleared the capability floor — worth saying.
-      return { entry: only, reasonKind: mode === "efficient" ? "only-adequate-floor" : null };
+      // the common case (most roles have a clear leader well outside their
+      // own, much narrower per-role band). efficient mode: a lone adequate
+      // candidate means nothing smaller cleared the capability floor —
+      // worth saying.
+      return { entry: leader, reasonKind: mode === "efficient" ? "only-adequate-floor" : null };
     }
-    return { entry: only, reasonKind: "only-adequate-concentration" };
+    const wide = widen();
+    if (wide) return wide;
+    if (mode === "capability" && isDecisiveLeader(pool, better, role)) return { entry: leader, reasonKind: "decisive-override" };
+    return { entry: leader, reasonKind: "only-adequate-concentration" };
   }
 
-  const leader = pool[0];
   const allowed = pool.filter((candidate) => passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter));
-
-  let candidatePool;
-  let forcedReasonKind = null;
-  if (allowed.includes(leader)) {
+  if (allowed.length) {
     // The real capability leader doesn't even hit a concentration limit
-    // here — let it compete normally against every other real candidate
-    // already known to be adequate (CAPABILITY's own diversity priority,
-    // or EFFICIENT's real cost/duration/price/throughput chain). A
-    // decisive real capability advantage never needs to short-circuit
-    // that comparison when there's no actual limit to break.
-    candidatePool = allowed;
-  } else if (mode === "capability" && isDecisiveLeader(pool, better, role)) {
-    // The leader IS blocked by concentration, but its real capability
-    // advantage over the rest of this pool is decisive (> this role's own
-    // near-equivalence band, see ROLE_NEAR_EQUIVALENCE_BAND)
-    // — a portfolio limit never sacrifices a real, decisive capability
-    // gap just to spread load. Capability-team only: EFFICIENT's pool is
-    // already floor-filtered (every member already qualifies as
-    // "adequate" under the wider capabilityFloor), so re-applying the
-    // much narrower near-equivalence band here would silently override
-    // efficiency's whole point — letting a real, meaningfully cheaper
-    // floor-clearing alternative actually compete once the leader has
-    // hit its concentration limit.
-    candidatePool = [leader];
-    forcedReasonKind = "decisive-override";
-  } else if (allowed.length) {
-    candidatePool = allowed;
-  } else {
-    candidatePool = [leader];
-    forcedReasonKind = "only-adequate-concentration";
+    // here (or a real near-equivalent alternative already does) — let the
+    // narrow band compete normally (CAPABILITY's own diversity priority,
+    // or EFFICIENT's real cost/duration/price/throughput chain), with no
+    // need to widen the search at all.
+    const chosen = sortWithinAllowed(allowed)[0];
+    return { entry: chosen, reasonKind: chosen === leader ? null : "diversity" };
   }
 
-  const chosen = sortWithinAllowed(candidatePool)[0];
-  const reasonKind = forcedReasonKind ?? (chosen === leader ? null : "diversity");
-  return { entry: chosen, reasonKind };
+  const wide = widen();
+  if (wide) return wide;
+  if (mode === "capability" && isDecisiveLeader(pool, better, role)) {
+    // The leader IS blocked by concentration, and even the wide,
+    // floor-filtered search (Stage 2) found no real concentration-safe
+    // alternative — but its real capability advantage over the narrow
+    // band is decisive (> this role's own near-equivalence band, see
+    // ROLE_NEAR_EQUIVALENCE_BAND), so it's kept over handing the role to
+    // a real-but-meaningfully-worse narrow-band candidate.
+    return { entry: leader, reasonKind: "decisive-override" };
+  }
+  return { entry: leader, reasonKind: "only-adequate-concentration" };
 }
 
 function passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter) {
@@ -771,7 +809,10 @@ function passesConcentration(candidate, role, modelUsage, providerTechnicalUsage
  * concentration state left by earlier ones. Shared by buildAiTeam and
  * buildEfficientTeam — they differ only in how each role's pool is built
  * and how candidates are ordered within it (`makeSorter`).
- * @param {Array<{role: string, better: string, pool: Array<{model: object, value: number}>}>} rolePools
+ * @param {Array<{role: string, better: string, pool: Array<{model: object, value: number}>, fullRanked?: Array<{model: object, value: number}>}>} rolePools -
+ *   `fullRanked` (buildAiTeam only — see assignOneRole's Stage 2) is the
+ *   role's full real eligible ranking, used only when `pool` (the narrow
+ *   near-equivalence band) has no concentration-safe candidate.
  * @param {(role: string, modelUsage: Map<string, number>, providerTechnicalUsage: Map<string, number>) => (candidates: Array<{model: object, value: number}>) => Array<{model: object, value: number}>} makeSorter -
  *   receives the SAME live Map instances this function mutates as it
  *   assigns roles, so a role's sort always sees the real concentration
@@ -786,7 +827,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
   let builderAdapter = null;
 
   for (const role of order) {
-    const { better, pool } = rolePools.find((r) => r.role === role);
+    const { better, pool, fullRanked } = rolePools.find((r) => r.role === role);
     // Snapshot the concentration state as it stood BEFORE this role was
     // assigned — describeEfficiencyChoice must explain a decision using
     // the state that was actually true when it was made, never the
@@ -803,7 +844,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
       continue;
     }
     const result = assignOneRole({
-      role, pool, better, modelUsage, providerTechnicalUsage,
+      role, pool, fullRanked, better, modelUsage, providerTechnicalUsage,
       reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null,
       sortWithinAllowed: makeSorter(role, modelUsage, providerTechnicalUsage), mode
     });
@@ -983,14 +1024,23 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
  * 1. Capability floor — a role only considers models that report the real
  *    metric(s) it needs (unchanged from before: `rankBy` drops nulls).
  * 2. Real capability decides — within each role's real near-equivalence
- *    pool (NEAR_EQUIVALENCE_BAND), the highest-scoring eligible model
- *    wins, UNLESS the portfolio's concentration limits (max 2 roles per
- *    model, max 3 of 6 technical roles per provider) would be exceeded
- *    and a real, near-equivalent alternative exists — then the
- *    less-concentrated alternative is preferred instead. A decisive real
- *    advantage (outside the band) always overrides the limits: capability
- *    is never sacrificed just to spread load.
- * 3. Review independence — Reviewer is additionally constrained off
+ *    pool (its own ROLE_NEAR_EQUIVALENCE_BAND — tighter for Architect/
+ *    Reviewer than for Builder/Explorer/Tester), the highest-scoring
+ *    eligible model wins, UNLESS the portfolio's concentration limits
+ *    (max 2 roles per model, max 3 of 6 technical roles per provider)
+ *    would be exceeded and a real, near-equivalent alternative exists —
+ *    then the less-concentrated alternative is preferred instead.
+ * 3. Widened search (see assignOneRole's own doc) — if NO real candidate
+ *    in that narrow band avoids concentration, the search widens to the
+ *    role's full real eligible pool at the same 80% floor EFFICIENT TEAM
+ *    uses, before ever resorting to a decisive-advantage override or
+ *    repeating the leader. A portfolio limit must never silently exceed
+ *    itself while a real, genuinely-adequate (if not near-identical)
+ *    alternative sits unexamined outside the tight band.
+ * 4. A decisive real advantage (outside even that wide search) always
+ *    overrides the limits as a last resort: capability is never
+ *    sacrificed just to spread load.
+ * 5. Review independence — Reviewer is additionally constrained off
  *    Builder's own provider whenever a real, near-equivalent alternative
  *    exists, so a model is never the sole judge of its own family's work.
  *
@@ -1023,7 +1073,12 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
 
   const rolePools = roleRankings.map(({ role, better, ranked }) => ({
     role, better,
-    pool: role === "Economy" ? ranked.slice(0, 1) : capabilityPool(ranked, better, role)
+    pool: role === "Economy" ? ranked.slice(0, 1) : capabilityPool(ranked, better, role),
+    // Economy never widens (it isn't capability-ranked, doesn't go through
+    // assignOneRole's per-role search at all — see assignCoordinatedTeam's
+    // own Economy special-case), but carrying `ranked` here anyway is
+    // harmless and keeps this map's shape uniform across roles.
+    fullRanked: ranked
   }));
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
     const { better } = rolePools.find((r) => r.role === role);
@@ -1087,6 +1142,8 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       reason = "Decisive real capability advantage — kept despite exceeding the concentration limit.";
     } else if (result.reasonKind === "diversity") {
       reason = "Near-equivalent alternatives — assigned to a different model/provider to avoid concentration.";
+    } else if (result.reasonKind === "wider-search-diversity") {
+      reason = "No near-equivalent alternative avoided concentration — widened the search to the full real catalog and assigned a genuinely adequate model/provider instead.";
     } else {
       reason = null;
     }
