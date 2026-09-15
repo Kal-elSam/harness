@@ -17,6 +17,7 @@
 // consumes. The analyst never picks the team; it only investigates.
 
 import { buildAiTeam, buildEfficientTeam } from "../intelligence/model-intelligence.js";
+import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
 
 // The Bootstrap Analyst investigates read-only via askProvider
 // (intelligence/quick-ask.js), which only actually supports these two
@@ -38,9 +39,36 @@ function modelRef(teamModel) {
   return { adapterId: teamModel.adapterId, modelId: teamModel.modelId, displayName: teamModel.displayName ?? null };
 }
 
-/** The project's own real role->capabilities map, straight from its (by now analyst-derived) roleRequirements — never the generic global table. */
+/**
+ * The project's own real role->capabilities map, straight from its (by
+ * now analyst-derived) roleRequirements — never the generic global
+ * table's OWN capability set. But whether a project-derived capability
+ * is required or merely optional still comes from the global table's own
+ * measured required/optional split (ROLE_CAPABILITIES[role].optional) —
+ * `requirement.capabilities` itself is a flat array (project-analysis.js's
+ * deriveRoleRequirements never distinguishes required from optional; the
+ * Bootstrap Analyst's own schema doesn't ask for that distinction
+ * either), and passing a flat array straight through would hit
+ * normalizeRoleCapabilities' legacy branch — "every entry required" —
+ * silently reintroducing the exact scarce-evidence problem the required/
+ * optional split fixed globally (e.g. a project need citing
+ * softwareExecution would make it a hard requirement again, per
+ * role-profiles.js's own measured ~2-3-candidates-system-wide finding).
+ * A capability the project cites that ALSO appears in the role's global
+ * optional list stays optional here; everything else (the role's own
+ * global-required capabilities, plus anything project-specific the
+ * analyst found real evidence for that isn't in the global optional
+ * list) stays required — the project's own real evidence is still
+ * trusted, just not blindly promoted past what's already known to be
+ * thin evidence system-wide.
+ */
 function projectRoleCapabilities(profile) {
-  return Object.fromEntries(profile.roleRequirements.map((requirement) => [requirement.role, requirement.capabilities]));
+  return Object.fromEntries(profile.roleRequirements.map((requirement) => {
+    const globalOptional = new Set(ROLE_CAPABILITIES[requirement.role]?.optional ?? []);
+    const required = requirement.capabilities.filter((capability) => !globalOptional.has(capability));
+    const optional = requirement.capabilities.filter((capability) => globalOptional.has(capability));
+    return [requirement.role, { required, optional }];
+  }));
 }
 
 /**

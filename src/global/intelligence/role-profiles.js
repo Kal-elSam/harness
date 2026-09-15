@@ -94,7 +94,7 @@ export const ROLE_CAPABILITIES = {
 // sets — see role-profiles.test.js's own membership check.
 export const ALLOWED_ACTION_IDS = [
   "repo.read", "repo.search", "repo.inspect_history",
-  "plan.write", "repo.write", "build.run", "test.run", "test.write", "review.write"
+  "plan.write", "repo.write", "build.run", "lint.run", "test.run", "test.write", "review.write"
 ];
 export const ESCALATION_SIGNAL_IDS = [
   "large_scope", "architectural_intent_required", "cross_subsystem", "high_reversal_cost",
@@ -166,7 +166,7 @@ export const ROLE_PROFILES = {
     responsibility: "Execute the approved plan faithfully: make the real file changes it calls for, following this codebase's own existing conventions rather than inventing new ones.",
     capabilities: ROLE_CAPABILITIES.Builder,
     allowedActions: ["read files", "write/edit files", "run build/lint commands to self-check"],
-    allowedActionIds: ["repo.read", "repo.write", "build.run"],
+    allowedActionIds: ["repo.read", "repo.write", "build.run", "lint.run"],
     deliverable: "The real code change described by the plan, in a state ready for Tester/Reviewer — not a partial or half-finished implementation.",
     riskLevel: "medium",
     completionCriteria: "Every file target in the plan is actually changed, the change builds/lints cleanly, and no acceptance criterion from the plan is left unaddressed.",
@@ -183,7 +183,15 @@ export const ROLE_PROFILES = {
     responsibility: "Reproduce the real failure, trace it to its real cause in the code, and make the minimal real change that actually fixes that cause.",
     capabilities: ROLE_CAPABILITIES.Debugger,
     allowedActions: ["read files", "write/edit files", "run tests and reproduction commands"],
-    allowedActionIds: ["repo.read", "repo.write", "test.run"],
+    // test.write, not just test.run: this role's own deliverable requires
+    // handing back a real regression test — per this project's own Zero
+    // Bugs Policy ("every bug fix requires a regression test that fails
+    // first, then passes with the fix"), the same actor that finds and
+    // fixes the real root cause writes that specific test, not a
+    // mandatory Debugger->Tester handoff for every fix. Debugger already
+    // has broad repo.write; this is a more specific, explicit grant of
+    // the same real capability, not an expansion of what it can touch.
+    allowedActionIds: ["repo.read", "repo.write", "test.write", "test.run"],
     deliverable: "A fix with a real regression test that fails before the fix and passes after it, plus a stated root cause.",
     riskLevel: "high",
     completionCriteria: "The real failure no longer reproduces, a regression test proves it, and the stated root cause is the actual cause, not a plausible-sounding guess.",

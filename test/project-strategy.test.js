@@ -99,6 +99,34 @@ test("DECISIVE: the same real candidate pool produces a genuinely different mode
   );
 });
 
+test("a project-derived capability matching the role's global-optional set stays optional — never excludes a real candidate with no evidence for it, the exact scarce-evidence regression the global required/optional split already fixed once", () => {
+  // Builder's global table: required = coding + terminalExecution,
+  // optional = softwareExecution + instructionFollowing. This project's
+  // own roleRequirements cites all three (mechanical floor + a real
+  // Bootstrap Analyst addition) — a flat array with no required/optional
+  // distinction of its own, exactly like project-analysis.js's
+  // deriveRoleRequirements always produces.
+  const softwareExecutionAa = [
+    { slug: "builder-model", name: "Builder Model", intelligenceIndex: null, codingIndex: 85, mathIndex: null, terminalBenchV2: 0.85 }
+  ];
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "builder-model" }] }
+  ], softwareExecutionAa);
+  const strategy = buildProjectStrategy(
+    profile({ roleRequirements: [{ role: "Builder", capabilities: ["coding", "terminalExecution", "softwareExecution"], reason: "" }] }),
+    { scoredAll, eligibility: { claude: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null },
+    analystChoice("quality", { adapterId: "claude", modelId: "builder-model" })
+  );
+  // If softwareExecution had wrongly stayed required (the legacy plain-
+  // array behavior projectRoleCapabilities used to fall into), this real
+  // candidate — coding+terminalExecution evidence, but no
+  // softwareExecution evidence at all — would be excluded entirely and
+  // Builder would have no real pick.
+  assert.equal(strategy.qualityTeam.length, 1);
+  assert.equal(strategy.qualityTeam[0].role, "Builder");
+  assert.equal(strategy.qualityTeam[0].model.adapterId, "claude");
+});
+
 test("buildProjectStrategy's qualityTeam/efficientTeam only ever include real picks for active roles, real model refs, never invented ones", () => {
   const strategy = buildProjectStrategy(profile({
     roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
