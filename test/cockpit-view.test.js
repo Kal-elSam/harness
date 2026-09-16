@@ -1153,3 +1153,49 @@ test("r refreshes and setStatus/setRows update state without throwing on empty r
   const lines = view.render(40).join("\n");
   assert.match(lines, /Ask Kairo about this project/);
 });
+
+test("beginAction starts a real live spinner+elapsed-time indicator; tickSpinner advances it; endAction clears it", () => {
+  const { view } = makeView();
+  assert.equal(view.actionStatusLine(), null, "nothing is running yet");
+
+  view.beginAction("Analyzing project");
+  assert.equal(view.actionLabel, "Analyzing project");
+  assert.ok(view.actionStartedAt, "a real start timestamp must be recorded");
+  const first = view.actionStatusLine();
+  assert.match(first, /Analyzing project… \(0s\)/);
+  assert.match(first, new RegExp(CockpitView.SPINNER_FRAMES[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+  view.tickSpinner();
+  const second = view.actionStatusLine();
+  assert.notEqual(first, second, "the spinner frame must actually advance");
+  assert.match(second, new RegExp(CockpitView.SPINNER_FRAMES[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+  view.endAction();
+  assert.equal(view.actionLabel, null);
+  assert.equal(view.actionStartedAt, null);
+  assert.equal(view.actionStatusLine(), null);
+});
+
+test("tickSpinner is a real no-op when no action is running — app.js's fast timer can call it unconditionally", () => {
+  const { view } = makeView();
+  const before = view.spinnerFrame;
+  view.tickSpinner();
+  assert.equal(view.spinnerFrame, before);
+  assert.equal(view.actionStatusLine(), null);
+});
+
+test("the live action indicator wins over a leftover static statusMessage in both render paths, and the welcome screen never shows while an action is running", () => {
+  const { view } = makeView();
+  view.setRows([]);
+  view.setStatus("stale leftover message");
+  view.beginAction("Approving");
+
+  const conversationLines = view.renderConversation(80).join("\n");
+  assert.match(conversationLines, /Approving…/);
+  assert.doesNotMatch(conversationLines, /stale leftover message/);
+  assert.doesNotMatch(conversationLines, /Ask Kairo about this project/, "the empty-state welcome must not show while a real action is in flight");
+
+  const chatLines = view.chatLines().join("\n");
+  assert.match(chatLines, /Approving…/);
+  assert.doesNotMatch(chatLines, /stale leftover message/);
+});

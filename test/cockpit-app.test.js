@@ -123,6 +123,72 @@ test("approve action calls decidePlan then refreshes, surfacing errors via statu
   app.stop();
 });
 
+test("a real in-flight action shows a live spinner (not a static string) while it runs, and clears it once it resolves", async () => {
+  let tui;
+  let resolveDecide;
+  const decidePromise = new Promise((resolve) => { resolveDecide = resolve; });
+  const service = {
+    snapshot: async () => makeSnapshot([BASE_ROW]),
+    decidePlan: async () => decidePromise
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  const pending = app.view.actions.onApprove("task-a");
+  assert.equal(app.view.actionLabel, "Approving");
+  assert.ok(app.view.actionStartedAt, "a real start timestamp must be recorded");
+  assert.match(app.view.actionStatusLine(), /Approving…/);
+  app.view.tickSpinner();
+  const secondFrame = app.view.actionStatusLine();
+  app.view.tickSpinner();
+  const thirdFrame = app.view.actionStatusLine();
+  assert.notEqual(secondFrame, thirdFrame, "the spinner frame must actually advance on each tick");
+
+  resolveDecide({});
+  await pending;
+  assert.equal(app.view.actionLabel, null, "the live indicator must clear once the real action resolves");
+  assert.equal(app.view.actionStatusLine(), null);
+
+  app.stop();
+});
+
+test("runCockpitApp drives the spinner from its own fast timer, independent of the poll timer", async () => {
+  let tui;
+  let resolveDecide;
+  const decidePromise = new Promise((resolve) => { resolveDecide = resolve; });
+  const service = {
+    snapshot: async () => makeSnapshot([BASE_ROW]),
+    decidePlan: async () => decidePromise
+  };
+  const intervalCallbacks = [];
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: (fn) => { intervalCallbacks.push(fn); return intervalCallbacks.length; },
+    clearIntervalImpl: () => {}
+  });
+  assert.equal(intervalCallbacks.length, 2, "must register both the poll timer and a separate, faster spinner timer");
+
+  const pending = app.view.actions.onApprove("task-a");
+  const before = app.view.spinnerFrame;
+  intervalCallbacks[1](); // the spinner timer's own tick
+  assert.notEqual(app.view.spinnerFrame, before, "the app's own spinner timer must be the thing driving tickSpinner()");
+
+  resolveDecide({});
+  await pending;
+  app.stop();
+});
+
 test("a failing action surfaces the error message on the status line instead of throwing", async () => {
   let tui;
   const service = {
@@ -905,9 +971,11 @@ test("onQuit stops the tui and resolves done exactly once", async () => {
   });
 
   app.view.actions.onQuit();
+  const clearsAfterFirstQuit = clears;
   app.view.actions.onQuit(); // idempotent
   assert.equal(tui.stopped, true);
-  assert.equal(clears, 1);
+  assert.equal(clearsAfterFirstQuit, 2, "must clear both real timers (poll + spinner) exactly once each");
+  assert.equal(clears, clearsAfterFirstQuit, "a second onQuit must never clear anything again");
   await app.done;
 });
 

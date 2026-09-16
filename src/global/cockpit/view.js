@@ -38,6 +38,9 @@ function compactNumber(value) {
  * delegated to the injected `actions` so this class stays cheap to unit test.
  */
 export class CockpitView {
+  /** Real Braille spinner frames — the same family real terminal CLIs (Claude Code, Codex) use for a live "in progress" indicator. */
+  static SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
   /**
    * @param {object} deps
    * @param {object} deps.actions
@@ -77,6 +80,12 @@ export class CockpitView {
     this.detailTaskId = null;
     this.detailText = "";
     this.statusMessage = "";
+    // Live "in progress" indicator state — see beginAction/endAction/
+    // tickSpinner/actionStatusLine's own docs. null actionLabel means no
+    // action is currently running.
+    this.actionLabel = null;
+    this.actionStartedAt = null;
+    this.spinnerFrame = 0;
     this.snapshot = null;
     this.transcript = [];
     this.executeDecision = null;
@@ -229,6 +238,50 @@ export class CockpitView {
   setStatus(message) {
     this.statusMessage = message ?? "";
     this.requestRender();
+  }
+
+  /**
+   * Starts a real, live "in progress" indicator for a real async action —
+   * a ticking spinner frame plus real elapsed seconds, refreshed by
+   * app.js's own fast timer calling tickSpinner() repeatedly, instead of
+   * a static "Label…" string that just sits there unchanged until the
+   * action resolves. Overrides statusMessage while active — see
+   * actionStatusLine()'s own doc for the render-time precedence.
+   * @param {string} label
+   */
+  beginAction(label) {
+    this.actionLabel = label;
+    this.actionStartedAt = Date.now();
+    this.spinnerFrame = 0;
+    this.requestRender();
+  }
+
+  /** Ends the current live action indicator. Callers still set their own success/failure statusMessage via setStatus() afterward — this only stops the spinner. */
+  endAction() {
+    this.actionLabel = null;
+    this.actionStartedAt = null;
+    this.requestRender();
+  }
+
+  /** Advances the spinner one frame — a no-op when no action is in flight, so app.js's fast timer can tick unconditionally without checking state itself. */
+  tickSpinner() {
+    if (!this.actionLabel) return;
+    this.spinnerFrame = (this.spinnerFrame + 1) % CockpitView.SPINNER_FRAMES.length;
+    this.requestRender();
+  }
+
+  /**
+   * The real, live status line for an in-flight action — spinner frame +
+   * label + real elapsed seconds since it started — or null when nothing
+   * is running. Render call sites prefer this over the static
+   * statusMessage whenever it's non-null, since a live action in progress
+   * is always more current/relevant than a leftover static message.
+   * @returns {string|null}
+   */
+  actionStatusLine() {
+    if (!this.actionLabel) return null;
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - this.actionStartedAt) / 1000));
+    return `${CockpitView.SPINNER_FRAMES[this.spinnerFrame]} ${this.actionLabel}… (${elapsedSeconds}s)`;
   }
 
   /**
@@ -575,7 +628,7 @@ export class CockpitView {
    * active, exactly where a real chat's newest message would land.
    */
   renderConversation(width) {
-    if (this.mode !== "confirm-execute" && this.mode !== "select-role" && this.transcript.length === 0 && !this.statusMessage) {
+    if (this.mode !== "confirm-execute" && this.mode !== "select-role" && this.transcript.length === 0 && !this.statusMessage && !this.actionLabel) {
       return [
         theme.fg("muted", "Ask Kairo about this project, or describe work to plan."),
         "",
@@ -604,7 +657,13 @@ export class CockpitView {
       }
       lines.push(...entryLines);
     }
-    if (this.statusMessage) {
+    // A live in-flight action always wins over a leftover static message —
+    // see actionStatusLine()'s own doc.
+    const liveStatus = this.actionStatusLine();
+    if (liveStatus) {
+      lines.push("");
+      lines.push(theme.fg("accent", liveStatus));
+    } else if (this.statusMessage) {
       lines.push("");
       lines.push(theme.fg("accent", this.statusMessage));
     }
@@ -1043,7 +1102,7 @@ export class CockpitView {
    *   recent-history window instead of showing everything unbounded.
    */
   chatLines(chatBudget) {
-    if (this.mode !== "confirm-execute" && this.mode !== "select-role" && this.transcript.length === 0 && !this.statusMessage) {
+    if (this.mode !== "confirm-execute" && this.mode !== "select-role" && this.transcript.length === 0 && !this.statusMessage && !this.actionLabel) {
       return [
         theme.fg("muted", "Ask Kairo about this project, or describe work to plan."),
         "",
@@ -1063,7 +1122,13 @@ export class CockpitView {
       lines.push(...this.roleSelectPromptLines());
       lines.push("");
     }
-    if (this.statusMessage) {
+    // A live in-flight action always wins over a leftover static message —
+    // see actionStatusLine()'s own doc.
+    const liveStatus = this.actionStatusLine();
+    if (liveStatus) {
+      lines.push(theme.fg("accent", liveStatus));
+      lines.push("");
+    } else if (this.statusMessage) {
       lines.push(theme.fg("accent", this.statusMessage));
       lines.push("");
     }

@@ -18,6 +18,10 @@ function composerHeader(width, workMode) {
 }
 
 const DEFAULT_POLL_MS = 2000;
+// Fast enough to read as a live "thinking" indicator (a real spinner plus
+// a ticking elapsed-time count), slow enough to never matter for CPU/
+// battery on a terminal app that's otherwise idle between actions.
+const DEFAULT_SPINNER_MS = 120;
 
 /**
  * Builds the real-scroll layout tree: dashboard (fixed) + conversation
@@ -69,6 +73,7 @@ export async function runCockpitApp({
   tuiFactory = (terminal) => new TuiAltScreen(terminal),
   editorFactory = (tui) => new Editor(tui, editorTheme),
   pollIntervalMs = DEFAULT_POLL_MS,
+  spinnerIntervalMs = DEFAULT_SPINNER_MS,
   setIntervalImpl = setInterval,
   clearIntervalImpl = clearInterval
 } = {}) {
@@ -77,6 +82,7 @@ export async function runCockpitApp({
   const editor = editorFactory(tui);
 
   let timer = null;
+  let spinnerTimer = null;
   let stopped = false;
   let resolveDone;
   const done = new Promise((resolvePromise) => { resolveDone = resolvePromise; });
@@ -85,6 +91,7 @@ export async function runCockpitApp({
     if (stopped) return;
     stopped = true;
     if (timer) clearIntervalImpl(timer);
+    if (spinnerTimer) clearIntervalImpl(spinnerTimer);
     tui.stop();
     resolveDone();
   }
@@ -100,12 +107,13 @@ export async function runCockpitApp({
   }
 
   async function runAction(label, fn) {
+    view.beginAction(label);
     try {
-      view.setStatus(`${label}…`);
       await fn();
-      view.setStatus("");
+      view.endAction();
       await refresh();
     } catch (error) {
+      view.endAction();
       view.setStatus(`${label} failed: ${error.message ?? String(error)}`);
     }
   }
@@ -121,16 +129,16 @@ export async function runCockpitApp({
     },
     actions: {
       onShowPlan: (taskId) => {
-        runAction("Loading plan", async () => {
+        return runAction("Loading plan", async () => {
           const plan = await service.showPlan({ cwd, taskId });
           view.showDetail(taskId, plan.planMarkdown || plan.taskMarkdown || "(no plan markdown yet)");
         });
       },
       onApprove: (taskId) => {
-        runAction("Approving", () => service.decidePlan({ cwd, taskId, decision: "approved" }));
+        return runAction("Approving", () => service.decidePlan({ cwd, taskId, decision: "approved" }));
       },
       onReject: (taskId) => {
-        runAction("Rejecting", () => service.decidePlan({ cwd, taskId, decision: "rejected" }));
+        return runAction("Rejecting", () => service.decidePlan({ cwd, taskId, decision: "rejected" }));
       },
       onRequestExecute: (taskId, role = null) => {
         // `role` comes from the view's own role picker (view.js's
@@ -139,7 +147,7 @@ export async function runCockpitApp({
         // never inferred here or anywhere else from the task's text.
         // Omitted entirely (no active team yet) falls back to the legacy
         // text-classification router, unchanged.
-        runAction("Asking the router who should execute this", async () => {
+        return runAction("Asking the router who should execute this", async () => {
           const decision = await service.planExecution(role ? { cwd, taskId, role } : { cwd, taskId });
           view.showExecuteConfirm(taskId, decision);
         });
@@ -154,12 +162,12 @@ export async function runCockpitApp({
         const request = decision?.confirmationTarget
           ? { cwd, taskId, confirmationTarget: decision.confirmationTarget }
           : { cwd, taskId, agentId: decision?.provider ?? null, model: decision?.model ?? null };
-        runAction(label, () => service.executePlan(request));
+        return runAction(label, () => service.executePlan(request));
       },
       onCancel: (taskId) => {
-        runAction("Cancelling run", () => service.cancelExecution({ cwd, taskId }));
+        return runAction("Cancelling run", () => service.cancelExecution({ cwd, taskId }));
       },
-      onRefresh: () => { refresh(); },
+      onRefresh: () => { return refresh(); },
       onQuit: () => { stop(); }
     }
   });
@@ -421,6 +429,7 @@ export async function runCockpitApp({
   await refresh();
   tui.start();
   timer = setIntervalImpl(() => refresh(), pollIntervalMs);
+  spinnerTimer = setIntervalImpl(() => view.tickSpinner(), spinnerIntervalMs);
 
   return { tui, view, editor, stop, done, refresh };
 }
