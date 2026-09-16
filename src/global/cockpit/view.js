@@ -729,12 +729,16 @@ export class CockpitView {
   /**
    * Renders one team's full technical breakdown — primary (with its real
    * provider shown, unlike the default views), availability, fallback,
-   * real coverage/confidence (RoleEvaluation — how much of the role's
-   * relevant capabilities actually had evidence, and how trustworthy that
-   * evidence is), the distribution-policy reason, and any real
-   * corroborating evidence the Model Intelligence Foundation registry has
-   * for that exact model. Shared by AI TEAM and EFFICIENT TEAM inside
-   * aiTeamDetailLines(); never called on its own.
+   * real per-capability benchmark coverage and confidence (decisionEvidence
+   * — see buildDecisionEvidence in model-intelligence.js; falls back to
+   * the older aggregate coverage/confidence fields for a snapshot saved
+   * before decisionEvidence existed, so it never breaks on old data),
+   * EFFICIENT's real retention/risk-floor and Pareto/tiebreak savings when
+   * present, the distribution-policy reason, and any real corroborating
+   * evidence the Model Intelligence Foundation registry has for that exact
+   * model. Never recalculates anything — every number here was already
+   * computed during real selection. Shared by AI TEAM and EFFICIENT TEAM
+   * inside aiTeamDetailLines(); never called on its own.
    * @param {Array<object>} team
    */
   teamEvidenceLines(team) {
@@ -742,7 +746,7 @@ export class CockpitView {
     const corroborationLine = (model) => (model.corroboration ?? [])
       .map((entry) => `${entry.metric}=${entry.value} (${entry.source})`)
       .join(" · ");
-    team.forEach(({ role, primary, fallback, reason, coverage, confidence }, index) => {
+    team.forEach(({ role, primary, fallback, reason, coverage, confidence, decisionEvidence }, index) => {
       // A blank string here would get silently dropped once this line is
       // routed through the persisted chat transcript (addTranscript trims
       // and discards empty text) — a visible divider is the only separator
@@ -751,11 +755,50 @@ export class CockpitView {
       const primaryLabel = this.aiTeamLabelWithProvider(primary);
       const primaryText = primary.available ? primaryLabel : `${primaryLabel} (not available)`;
       lines.push(`${role.padEnd(10)} ${primaryText}`);
-      if (coverage != null) {
+
+      const capabilityCoverage = decisionEvidence?.coverage ?? {};
+      const capabilities = Object.keys(capabilityCoverage);
+      if (capabilities.length) {
+        // Real benchmark IDENTITIES, not sources (see
+        // capability-scoring.js's activeBenchmarkCountForCapability) —
+        // "0/3" for a required capability means every real score for it
+        // came from a composite index fallback, never a component
+        // benchmark, so it's called out explicitly rather than left to
+        // look like ordinary thin coverage.
+        const parts = capabilities.map((capability) => {
+          const c = capabilityCoverage[capability];
+          const fallbackNote = c.have === 0 && c.active > 0 ? " (composite fallback)" : "";
+          return `${capability} ${c.have}/${c.active}${fallbackNote}`;
+        });
+        const allComparable = capabilities.every((capability) => capabilityCoverage[capability].comparable);
+        const tone = allComparable ? "muted" : "warning";
+        lines.push(theme.fg(tone, `  ${parts.join(" · ")} · ${allComparable ? "comparable" : "provisional"} · confidence ${decisionEvidence.confidence ?? "unknown"}`));
+      } else if (coverage != null) {
+        // A snapshot saved before decisionEvidence existed — the older,
+        // single-fraction aggregate is still real data, just coarser.
         const coveragePercent = Math.round(coverage * 100);
         const coverageTone = coveragePercent < 100 ? "warning" : "muted";
         lines.push(theme.fg(coverageTone, `  coverage: ${coveragePercent}% of relevant capabilities scored · confidence: ${confidence ?? "unknown"}`));
       }
+
+      // EFFICIENT-only: real retention against the QUALITY leader and the
+      // real risk-based floor it had to clear — never shown for QUALITY,
+      // where these concepts don't apply (decisionEvidence.retention is
+      // null there by construction).
+      if (decisionEvidence?.retention != null && decisionEvidence.requiredFloor != null) {
+        const retentionPct = Math.round(decisionEvidence.retention * 100);
+        const floorPct = Math.round(decisionEvidence.requiredFloor * 100);
+        lines.push(theme.fg("muted", `  retention ${retentionPct}% · required ${floorPct}% · ${decisionEvidence.riskLevel ?? "unknown"}-risk role`));
+      }
+      // Real savings evidence — only ever shown when a real resource
+      // dimension actually decided the pick (see describeEfficiencyDecision);
+      // never invented when the metric that would justify it is missing.
+      if (decisionEvidence?.savings) {
+        const kind = decisionEvidence.decisionType === "pareto" ? "Pareto balance" : "Tiebreak";
+        const { label, from, to } = decisionEvidence.savings;
+        lines.push(theme.fg("muted", `  ${kind} · ${label} ${from} → ${to}`));
+      }
+
       const primaryEvidence = corroborationLine(primary);
       if (primaryEvidence) lines.push(theme.fg("muted", `  also: ${primaryEvidence}`));
       if (fallback) lines.push(theme.fg("muted", `  fallback ${this.aiTeamLabelWithProvider(fallback)}`));

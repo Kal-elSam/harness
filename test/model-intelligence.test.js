@@ -1367,3 +1367,110 @@ test("bestEfficientModelPerRoleGlobal (EFFICIENT GLOBAL) also applies no portfol
     assert.equal(globalByRole[role]?.primary?.adapterId, "opencode-go", `EFFICIENT GLOBAL must keep the real cheaper/faster winner for ${role} in every role, uncoordinated`);
   }
 });
+
+// decisionEvidence: the single, real receipt behind each team entry that
+// /models --evidence will render (see buildDecisionEvidence's own doc) —
+// never recalculated by the UI, only labeled/attached here where the real
+// decision already happened.
+
+test("buildAiTeam and buildEfficientTeam attach the same real coverage/confidence contract to decisionEvidence", () => {
+  const aa = [
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "middle-model", name: "Middle", intelligenceIndex: 87, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "middle-model" }] }
+  ], aa);
+  const eligibility = { claude: { ok: true }, codex: { ok: true } };
+  const quality = buildAiTeam(scored, eligibility).find((t) => t.role === "Explorer");
+  const efficient = buildEfficientTeam(scored, eligibility).find((t) => t.role === "Explorer");
+  assert.ok(quality.decisionEvidence, "QUALITY entries must carry decisionEvidence");
+  assert.ok(efficient.decisionEvidence, "EFFICIENT entries must carry decisionEvidence");
+  // Same coverage contract shape: real benchmark identities have/active
+  // per required capability, never a made-up field name for one team and
+  // not the other.
+  assert.deepEqual(Object.keys(quality.decisionEvidence.coverage), Object.keys(efficient.decisionEvidence.coverage));
+  for (const capability of Object.keys(quality.decisionEvidence.coverage)) {
+    assert.deepEqual(Object.keys(quality.decisionEvidence.coverage[capability]), ["have", "active", "comparable"]);
+  }
+  // QUALITY never carries EFFICIENT-only concepts.
+  assert.equal(quality.decisionEvidence.retention, null);
+  assert.equal(quality.decisionEvidence.requiredFloor, null);
+  assert.equal(quality.decisionEvidence.riskLevel, null);
+});
+
+test("decisionEvidence's receipt corresponds exactly to the selected candidate — coverage/confidence describe the CHOSEN model, not the raw leader", () => {
+  const aa = [
+    // Leader has thin real reasoning coverage (only intelligenceIndex —
+    // no gpqa/hle) but wins on the raw composite; middle has broader real
+    // benchmark coverage and clears the floor comfortably.
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "middle-model", name: "Middle", intelligenceIndex: 85, codingIndex: null, mathIndex: null, priceInputPerMTok: 5, gpqa: 0.8, hle: 0.7 }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "middle-model" }] }
+  ], aa);
+  const eligibility = { claude: { ok: true }, codex: { ok: true } };
+  const efficient = buildEfficientTeam(scored, eligibility).find((t) => t.role === "Explorer");
+  // Whichever model was actually chosen, its own real benchmark count is
+  // what coverage.reasoning.have reports — never the leader's.
+  const chosenHasGpqaHle = efficient.primary.adapterId === "codex";
+  assert.equal(efficient.decisionEvidence.coverage.reasoning.have, chosenHasGpqaHle ? 2 : 0);
+});
+
+test("decisionEvidence's decisionType distinguishes leader, pareto, provisional-fallback, and tiebreak with different real values", () => {
+  // leader: a lone adequate real candidate.
+  const soleAa = [{ slug: "solo-model", name: "Solo", intelligenceIndex: 90, codingIndex: null, mathIndex: null }];
+  const soleScored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "solo-model" }] }], soleAa);
+  const soleTeam = buildEfficientTeam(soleScored, { claude: { ok: true } }).find((t) => t.role === "Explorer");
+  assert.equal(soleTeam.decisionEvidence.decisionType, "fallback");
+
+  // pareto: a genuine 3-way real balance point (see the balance-point
+  // tests above) — reused fixture shape.
+  const paretoAa = [
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "middle-model", name: "Middle", intelligenceIndex: 88, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
+    { slug: "cheapest-model", name: "Cheapest", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 1 }
+  ];
+  const paretoScored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "middle-model" }] },
+    { adapterId: "opencode-go", models: [{ id: "cheapest-model" }] }
+  ], paretoAa);
+  const paretoTeam = buildEfficientTeam(paretoScored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } }).find((t) => t.role === "Explorer");
+  assert.equal(paretoTeam.decisionEvidence.decisionType, "pareto");
+  assert.ok(paretoTeam.decisionEvidence.savings, "a real pareto decision must carry real savings evidence");
+
+  // tiebreak: exactly two real candidates (no real 'middle' to find).
+  const tieAa = [
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "cheap-model", name: "Cheap", intelligenceIndex: 88, codingIndex: null, mathIndex: null, priceInputPerMTok: 2 }
+  ];
+  const tieScored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "cheap-model" }] }
+  ], tieAa);
+  const tieTeam = buildEfficientTeam(tieScored, { claude: { ok: true }, codex: { ok: true } }).find((t) => t.role === "Explorer");
+  assert.equal(tieTeam.decisionEvidence.decisionType, "tiebreak");
+});
+
+test("decisionEvidence never fabricates NaN/Infinity or an invented savings figure when a required metric is missing", () => {
+  const aa = [
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null },
+    { slug: "cheap-model", name: "Cheap", intelligenceIndex: 88, codingIndex: null, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "leader-model" }] },
+    { adapterId: "codex", models: [{ id: "cheap-model" }] }
+  ], aa);
+  const efficient = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }).find((t) => t.role === "Explorer");
+  const evidence = efficient.decisionEvidence;
+  const json = JSON.stringify(evidence);
+  assert.doesNotMatch(json, /NaN|null,"to":null|Infinity/);
+  if (evidence.retention != null) assert.ok(Number.isFinite(evidence.retention));
+  // Neither model reports any real price/cost/duration/throughput —
+  // savings must stay honestly null, never an invented figure.
+  assert.equal(evidence.savings, null);
+});

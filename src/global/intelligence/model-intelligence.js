@@ -7,7 +7,7 @@
 // same fail-closed rule as everywhere else in Kairo's routing.
 
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
-import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue } from "./capability-scoring.js";
+import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue, activeBenchmarkCountForCapability, isCapabilityComparable } from "./capability-scoring.js";
 import { ROLE_CAPABILITIES, getRoleProfile } from "./role-profiles.js";
 
 // Real per-benchmark metrics worth surfacing as corroborating evidence
@@ -745,7 +745,7 @@ function assignOneRole({ role, pool, fullRanked, better, modelUsage, providerTec
     // or EFFICIENT's real cost/duration/price/throughput chain), with no
     // need to widen the search at all.
     const chosen = sortWithinAllowed(allowed)[0];
-    return { entry: chosen, reasonKind: chosen === leader ? null : "diversity" };
+    return { entry: chosen, reasonKind: chosen === leader ? null : "diversity", poolSize: allowed.length };
   }
 
   const wide = widen();
@@ -796,7 +796,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
   for (const role of order) {
     const { better, pool, fullRanked } = rolePools.find((r) => r.role === role);
     // Snapshot the concentration state as it stood BEFORE this role was
-    // assigned — describeEfficiencyChoice must explain a decision using
+    // assigned — describeEfficiencyDecision must explain a decision using
     // the state that was actually true when it was made, never the
     // portfolio's final state after every later role has also been
     // assigned (which would misattribute a plain capability/price/etc.
@@ -970,7 +970,7 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason: describeEfficiencyChoice(chosen, eligibleRanked[0], effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage)
+      reason: describeEfficiencyDecision(chosen, eligibleRanked[0], effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage, pool.length).reason
     });
   }
   return entries;
@@ -1067,13 +1067,16 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     // ranking itself, which already happened above.
     const evalFor = (model) => evaluationsByRole[role]?.get(modelKey(model)) ?? null;
 
+    const requiredCapabilities = roleCapabilities[role]?.required ?? [];
+
     if (!result) {
       const globalLeader = globalRanked[0];
       const evaluation = evalFor(globalLeader.model);
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: null,
         reason: "No eligible provider currently covers this role.",
-        coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null
+        coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
+        decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType: "fallback" })
       });
       continue;
     }
@@ -1087,7 +1090,8 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
         reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`,
-        coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null
+        coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
+        decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType: "fallback" })
       });
       continue;
     }
@@ -1097,6 +1101,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     const reviewerLeaderWasBuilderAdapter = role === "Reviewer" && pool.length
       && pool[0].model.adapterId === entries.find((e) => e.role === "Builder")?.primary.adapterId;
     let reason;
+    let decisionType;
     if (usedProvisionalFallback) {
       // Every real eligible candidate for this role was provisional (real
       // evidence, just too thin on a required capability to be genuinely
@@ -1105,24 +1110,32 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       // over the other reason kinds below since it explains something
       // more fundamental about the WHOLE pool, not just this one pick.
       reason = "Only provisional evidence available for this role — no real candidate cleared comparable benchmark coverage.";
+      decisionType = "fallback";
     } else if (reviewerLeaderWasBuilderAdapter && chosen.model.adapterId !== pool[0].model.adapterId) {
       reason = "Kept independent from Builder's provider.";
+      decisionType = "diversity";
     } else if (result.reasonKind === "only-adequate-concentration") {
       reason = "Only adequate option — no real alternative avoids concentration without forcing a repeat.";
+      decisionType = "fallback";
     } else if (result.reasonKind === "decisive-override") {
       reason = "Decisive real capability advantage — kept despite exceeding the concentration limit.";
+      decisionType = "leader";
     } else if (result.reasonKind === "diversity") {
       reason = "Near-equivalent alternatives — assigned to a different model/provider to avoid concentration.";
+      decisionType = "diversity";
     } else if (result.reasonKind === "wider-search-diversity") {
       reason = "No near-equivalent alternative avoided concentration — widened the search to the full real catalog and assigned a genuinely adequate model/provider instead.";
+      decisionType = "diversity";
     } else {
       reason = null;
+      decisionType = "leader";
     }
     const evaluation = evalFor(chosen.model);
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason, coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null
+      reason, coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
+      decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType })
     });
   }
   return entries;
@@ -1139,7 +1152,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
 // is deliberately NOT one of these — it isn't a per-model measurement at
 // all (every model under a provider shares the exact same real number),
 // so it's resolved separately, by adapterId, and checked only as the very
-// last tiebreak (see sortByEfficiencyPriority/describeEfficiencyChoice) —
+// last tiebreak (see sortByEfficiencyPriority/describeEfficiencyDecision) —
 // strictly after every real per-model signal AND the portfolio's own
 // concentration state have been exhausted. A provider's spare quota must
 // never, by itself, decide who wins a role over a model with genuinely
@@ -1367,17 +1380,29 @@ function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelU
 }
 
 /**
- * Names the real dimension that actually decided an EFFICIENT TEAM pick,
- * or null when it's just the unremarkable capability leader itself.
+ * Names the real dimension that actually decided an EFFICIENT TEAM pick
+ * AND classifies the decision itself (for /models --evidence's structured
+ * decisionEvidence — see buildDecisionEvidence) — never recalculated by
+ * the UI, just labeled here where the real decision already happened.
+ * Returns `{ reason: null, decisionType: "leader", savings: null }` when
+ * chosen IS the unremarkable capability leader itself.
  * @param {{model: object, value: number}} chosen
  * @param {{model: object, value: number}} leader
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
  * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} providerCapacity
  * @param {Map<string, number>} modelUsage
  * @param {Map<string, number>} providerTechnicalUsage
+ * @param {number} poolSize - how many real candidates were actually being
+ *   compared when this pick was made — a resource-dimension win over only
+ *   2 real candidates is always a "tiebreak" (two points can never have a
+ *   real Pareto "middle" — see computeBalanceScores's own doc), while 3+
+ *   real candidates is a genuine "pareto" balance-point decision.
+ * @returns {{reason: string|null, decisionType: "leader"|"pareto"|"tiebreak"|"diversity", savings: {dimension: string, label: string, from: number, to: number}|null}}
  */
-function describeEfficiencyChoice(chosen, leader, registry, providerCapacity, modelUsage, providerTechnicalUsage) {
-  if (chosen.model.adapterId === leader.model.adapterId && chosen.model.modelId === leader.model.modelId) return null;
+function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, modelUsage, providerTechnicalUsage, poolSize) {
+  if (chosen.model.adapterId === leader.model.adapterId && chosen.model.modelId === leader.model.modelId) {
+    return { reason: null, decisionType: "leader", savings: null };
+  }
   // Real retention against the role's own QUALITY leader — "how much
   // real capability did this Pareto balance-point pick actually keep" —
   // prefixed onto every reason below, not just the resource-dimension
@@ -1390,7 +1415,13 @@ function describeEfficiencyChoice(chosen, leader, registry, providerCapacity, mo
     const leaderValue = resolveDimension(dimension, registry, leader.model);
     if (chosenValue != null && leaderValue != null && chosenValue !== leaderValue) {
       const chosenIsBetter = dimension.better === "max" ? chosenValue > leaderValue : chosenValue < leaderValue;
-      if (chosenIsBetter) return `${retentionPrefix}chosen for ${dimension.label}.`;
+      if (chosenIsBetter) {
+        return {
+          reason: `${retentionPrefix}chosen for ${dimension.label}.`,
+          decisionType: poolSize >= 3 ? "pareto" : "tiebreak",
+          savings: { dimension: dimension.key, label: dimension.label, from: leaderValue, to: chosenValue }
+        };
+      }
       // this dimension didn't favor the switch; a later real signal must
       // have — no real number to report from THIS one, fall through.
     }
@@ -1400,14 +1431,49 @@ function describeEfficiencyChoice(chosen, leader, registry, providerCapacity, mo
   const chosenProviderUsage = providerTechnicalUsage.get(chosen.model.adapterId) ?? 0;
   const leaderProviderUsage = providerTechnicalUsage.get(leader.model.adapterId) ?? 0;
   if (chosenModelUsage < leaderModelUsage || chosenProviderUsage < leaderProviderUsage) {
-    return `${retentionPrefix}assigned to a different model/provider to avoid concentration.`;
+    return { reason: `${retentionPrefix}assigned to a different model/provider to avoid concentration.`, decisionType: "diversity", savings: null };
   }
   const chosenQuota = resolveProviderCapacity(providerCapacity, chosen.model);
   const leaderQuota = resolveProviderCapacity(providerCapacity, leader.model);
   if (chosenQuota != null && leaderQuota != null && chosenQuota > leaderQuota) {
-    return `${retentionPrefix}chosen for lower real provider quota pressure.`;
+    return { reason: `${retentionPrefix}chosen for lower real provider quota pressure.`, decisionType: "tiebreak", savings: null };
   }
-  return `${retentionPrefix}chosen by a stable tiebreak, no real consumption/cost/duration/price/speed/concentration/quota signal distinguished them.`;
+  return {
+    reason: `${retentionPrefix}chosen by a stable tiebreak, no real consumption/cost/duration/price/speed/concentration/quota signal distinguished them.`,
+    decisionType: "tiebreak", savings: null
+  };
+}
+
+/**
+ * The single, real decision receipt behind one team entry — real per-
+ * capability benchmark coverage (identities, not sources — see
+ * activeBenchmarkCountForCapability/isCapabilityComparable), real
+ * confidence/provisional state, and — only for EFFICIENT, where these
+ * concepts actually apply — real retention against the QUALITY leader,
+ * the real risk-based floor that had to be cleared, and the real
+ * decisionType/savings a Pareto/tiebreak/diversity pick actually used.
+ * Computed once here, during selection, so /models --evidence only ever
+ * RENDERS this — it never recalculates coverage, retention, or savings
+ * itself.
+ * @param {{evaluation: import("./capability-scoring.js").RoleEvaluation|null, requiredCapabilities: string[], decisionType: "leader"|"pareto"|"tiebreak"|"diversity"|"fallback", retention?: number|null, requiredFloor?: number|null, riskLevel?: string|null, savings?: object|null}} params
+ */
+function buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType, retention = null, requiredFloor = null, riskLevel = null, savings = null }) {
+  const coverage = {};
+  for (const capability of requiredCapabilities ?? []) {
+    const have = evaluation?.benchmarkCountsByCapability?.[capability] ?? 0;
+    const active = activeBenchmarkCountForCapability(capability);
+    coverage[capability] = { have, active, comparable: active > 0 ? isCapabilityComparable(capability, have) : true };
+  }
+  return {
+    coverage,
+    confidence: evaluation?.confidence ?? null,
+    isProvisional: evaluation?.isProvisional ?? false,
+    decisionType,
+    retention,
+    requiredFloor,
+    riskLevel,
+    savings
+  };
 }
 
 /**
@@ -1514,17 +1580,24 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     const globalRanked = rankBy(models, compute, better);
     if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
 
+    const requiredCapabilities = roleCapabilities[role]?.required ?? [];
+    const requiredFloor = resolveEfficientFloor(role, capabilityFloor);
+    const riskLevel = getRoleProfile(role)?.riskLevel ?? null;
+
     if (!eligibleRanked.length) {
       const globalLeader = globalRanked[0];
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: null,
-        reason: "No eligible provider currently covers this role."
+        reason: "No eligible provider currently covers this role.",
+        decisionEvidence: buildDecisionEvidence({ evaluation: null, requiredCapabilities, decisionType: "fallback", requiredFloor, riskLevel })
       });
       continue;
     }
 
     const leader = eligibleRanked[0];
     const chosen = result.entry;
+    const evalFor = (model) => evaluationsByRole[role]?.get(modelKey(model)) ?? null;
+    const retention = leader.gapValue ? (chosen.gapValue ?? 0) / leader.gapValue : null;
 
     const globalLeader = globalRanked[0];
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
@@ -1534,28 +1607,39 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       // hidden, with the efficient real pick among the rest as fallback.
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
-        reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`
+        reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`,
+        decisionEvidence: buildDecisionEvidence({ evaluation: evalFor(chosen.model), requiredCapabilities, decisionType: "fallback", retention, requiredFloor, riskLevel })
       });
       continue;
     }
 
     const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
     let reason;
+    let decisionType;
+    let savings = null;
     if (usedProvisionalFallback) {
       reason = "Only provisional evidence available for this role — no real candidate cleared comparable benchmark coverage.";
+      decisionType = "fallback";
     } else if (result.reasonKind === "only-adequate-floor") {
       reason = "Only adequate option — no real alternative clears the capability floor.";
+      decisionType = "fallback";
     } else if (result.reasonKind === "only-adequate-concentration") {
       reason = "Only adequate option — no real alternative avoids concentration without forcing a repeat.";
+      decisionType = "fallback";
     } else if (result.reasonKind === "decisive-override") {
       reason = "Decisive real capability advantage — kept despite exceeding the concentration limit.";
+      decisionType = "leader";
     } else {
-      reason = describeEfficiencyChoice(chosen, leader, effectiveRegistry, providerCapacity, result.modelUsageSnapshot, result.providerUsageSnapshot);
+      const decision = describeEfficiencyDecision(chosen, leader, effectiveRegistry, providerCapacity, result.modelUsageSnapshot, result.providerUsageSnapshot, result.poolSize ?? 1);
+      reason = decision.reason;
+      decisionType = decision.decisionType;
+      savings = decision.savings;
     }
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason
+      reason,
+      decisionEvidence: buildDecisionEvidence({ evaluation: evalFor(chosen.model), requiredCapabilities, decisionType, retention, requiredFloor, riskLevel, savings })
     });
   }
   return entries;

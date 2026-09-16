@@ -261,6 +261,44 @@ test("/models --evidence shows real coverage and confidence per role, warning wh
   assert.match(lines, /coverage: 100% of relevant capabilities scored · confidence: high/);
 });
 
+test("/models --evidence renders decisionEvidence's real per-capability coverage, EFFICIENT's retention/floor, and Pareto/tiebreak savings — never recalculating any of it", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [
+        {
+          role: "Architect",
+          primary: { adapterId: "claude", modelId: "claude-sonnet-5", displayName: "Claude Sonnet 5", available: true },
+          fallback: null, reason: null,
+          decisionEvidence: {
+            coverage: { reasoning: { have: 2, active: 3, comparable: true }, coding: { have: 1, active: 2, comparable: true } },
+            confidence: "medium", isProvisional: false, decisionType: "leader", retention: null, requiredFloor: null, riskLevel: null, savings: null
+          }
+        }
+      ],
+      efficientTeam: [
+        {
+          role: "Architect",
+          primary: { adapterId: "codex", modelId: "gpt-5-6-terra", displayName: "GPT-5.6 Terra", available: true },
+          fallback: null, reason: "Retains ~93% of QUALITY's real capability — chosen for lower real full input+output price.",
+          decisionEvidence: {
+            coverage: { reasoning: { have: 2, active: 3, comparable: true }, coding: { have: 0, active: 2, comparable: false } },
+            confidence: "medium", isProvisional: false, decisionType: "pareto", retention: 0.93, requiredFloor: 0.9, riskLevel: "high",
+            savings: { dimension: "totalPricePerMTok", label: "lower real full input+output price", from: 60, to: 12 }
+          }
+        }
+      ]
+    }
+  });
+  const lines = view.aiTeamDetailLines().join("\n");
+  assert.match(lines, /reasoning 2\/3 · coding 1\/2 · comparable · confidence medium/);
+  assert.match(lines, /reasoning 2\/3 · coding 0\/2 \(composite fallback\) · provisional · confidence medium/);
+  assert.match(lines, /retention 93% · required 90% · high-risk role/);
+  assert.match(lines, /Pareto balance · lower real full input\+output price 60 → 12/);
+});
+
 test("/models --evidence lists real catalog models Kairo has access to but couldn't match to any Artificial Analysis data, honestly labeled UNSCORED — never a fabricated score", () => {
   const { view } = makeView();
   view.setSnapshot({
