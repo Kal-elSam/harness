@@ -170,11 +170,22 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
   // delegates to. `assignmentSource` is always "recommended" here — a
   // human override (per-role, never touching this computed ranking) is a
   // separate, later cockpit action that sets it to "override".
+  //
+  // `fallback` persists the SAME real next-best candidate
+  // buildEfficientTeam already computed for this role (its own `fallback`
+  // field — the next real eligible candidate under a different adapter,
+  // see model-intelligence.js) — never a new alternative-ranking formula.
+  // The router uses this, PERSISTED here at analysis time, as its own
+  // real `suggestedAlternative` when the primary assignment's eligibility
+  // is lost later — alternative selection is domain policy, computed
+  // once here, never re-derived independently by the UI/CLI/router (which
+  // would risk drifting to different answers for the same real state).
   const projectTeam = activeRoles.map((role) => {
     const entry = byRoleEfficient.get(role);
     return {
       role,
       model: entry ? projectModelRef(entry.primary) : null,
+      fallback: entry?.fallback ? projectModelRef(entry.fallback) : null,
       assignmentSource: "recommended",
       decisionEvidence: entry?.decisionEvidence ?? null
     };

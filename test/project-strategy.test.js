@@ -169,6 +169,17 @@ test("buildProjectStrategy's projectTeam only includes roles the project actuall
   for (const entry of strategy.projectTeam) assert.notEqual(entry.model, undefined);
 });
 
+test("buildProjectStrategy's projectTeam persists the same real fallback buildEfficientTeam already computed — the router's future suggestedAlternative source, never a new alternative formula", () => {
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), realCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
+  const [entry] = strategy.projectTeam;
+  // Two real candidates (claude, codex) — codex is the real fallback for
+  // Explorer once claude wins it.
+  assert.equal(entry.fallback.adapterId, "codex");
+  assert.deepEqual(Object.keys(entry.fallback), ["candidateKey", "adapterId", "modelId", "displayName", "accessMode"]);
+});
+
 test("isStrategyStale is false for a NOT_ANALYZED project (no strategy yet)", () => {
   assert.equal(isStrategyStale(null, profile()), false);
 });
