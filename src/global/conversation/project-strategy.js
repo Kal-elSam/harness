@@ -139,7 +139,12 @@ export function computeBootstrapAnalystCatalog({ scoredAll, eligibility, registr
   // after the fact would silently lose a genuinely real 2nd/3rd-place
   // candidate whenever the unsupported provider happened to rank #1.
   const askSupportedScored = scoredAll.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
-  const askSupportedUnscored = unscoredModels.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
+  // scoredAll (the Recommendation Pool) already excludes superseded
+  // candidates (buildRecommendationPool); unscoredModels doesn't go
+  // through that pool, so the same real "not superseded" rule is applied
+  // here too — defense in depth, never trusting the caller alone to have
+  // already filtered a real, proven-stale candidate out.
+  const askSupportedUnscored = unscoredModels.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId) && model.lifecycle !== "superseded");
 
   const roleCapabilities = { Explorer: BOOTSTRAP_ANALYST_PROFILE.capabilities };
   const aiTeam = buildAiTeam(askSupportedScored, eligibility, registry, roleCapabilities);
@@ -366,7 +371,10 @@ export function computeProjectTeamEditCatalog(role, { scoredAll = [], eligibilit
   if (!capabilities) return { role, models: [] };
 
   const teamScored = scoredAll.filter((model) => TEAM_EDIT_ADAPTERS.has(model.adapterId));
-  const teamUnscored = unscoredModels.filter((model) => TEAM_EDIT_ADAPTERS.has(model.adapterId));
+  // Same "not superseded" real rule the Recommendation Pool applies to
+  // scoredAll — unscoredModels doesn't go through that pool, so it's
+  // applied here too, defense in depth, never trusting the caller alone.
+  const teamUnscored = unscoredModels.filter((model) => TEAM_EDIT_ADAPTERS.has(model.adapterId) && model.lifecycle !== "superseded");
   // Same real registry-seeding every other role computation relies on
   // (buildAiTeam/buildEfficientTeam's own ensureRegistry) — a caller's
   // real registry might already have richer evidence (Hugging Face,
@@ -451,6 +459,14 @@ export function applyProjectTeamOverride(strategy, role, candidate) {
       candidateKey: candidate.candidateKey ?? null, adapterId: candidate.adapterId, modelId: candidate.modelId,
       displayName: candidate.displayName ?? null, accessMode: candidate.accessMode ?? null
     },
+    // The real recommendation's own fallback/decisionEvidence describe
+    // THAT candidate's Pareto selection, never a human override's — an
+    // override has no real computed fallback or decision receipt of its
+    // own (it wasn't chosen by the ranking at all), so both are honestly
+    // cleared rather than left pointing at evidence for a different
+    // model, which would misrepresent it as if it applied here.
+    fallback: null,
+    decisionEvidence: null,
     assignmentSource: "override",
     overrideEvidence: {
       accessMode: candidate.accessMode ?? null, available: candidate.available ?? null,

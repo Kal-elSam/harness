@@ -341,6 +341,30 @@ test("computeProjectTeamEditCatalog includes real unscored candidates, honestly 
   assert.equal(unscored.roleEvaluation, null);
 });
 
+test("REGRESSION: computeProjectTeamEditCatalog preserves a real unscored candidate's own candidateKey/accessMode, never defaulting them to null when the real identity data is present", () => {
+  const candidates = {
+    ...editCandidates(),
+    unscoredModels: [{ adapterId: "cursor", modelId: "cursor-unscored", displayName: "Cursor Unscored", candidateKey: "cursor::cursor-unscored", accessMode: "manual", lifecycle: "current" }]
+  };
+  const catalog = computeProjectTeamEditCatalog("Explorer", candidates);
+  const unscored = catalog.models.find((m) => m.modelId === "cursor-unscored");
+  assert.equal(unscored.candidateKey, "cursor::cursor-unscored");
+  assert.equal(unscored.accessMode, "manual", "a real unscored Cursor candidate's real manual accessMode must survive, never default to null");
+});
+
+test("REGRESSION: computeProjectTeamEditCatalog filters out a real superseded unscored candidate — it must never appear in the picker as if it were still current", () => {
+  const candidates = {
+    ...editCandidates(),
+    unscoredModels: [
+      { adapterId: "cursor", modelId: "cursor-old", displayName: "Cursor Old", candidateKey: "cursor::cursor-old", accessMode: "manual", lifecycle: "superseded" },
+      { adapterId: "cursor", modelId: "cursor-current", displayName: "Cursor Current", candidateKey: "cursor::cursor-current", accessMode: "manual", lifecycle: "current" }
+    ]
+  };
+  const catalog = computeProjectTeamEditCatalog("Explorer", candidates);
+  assert.ok(!catalog.models.some((m) => m.modelId === "cursor-old"), "a real superseded unscored candidate must never appear in the edit catalog");
+  assert.ok(catalog.models.some((m) => m.modelId === "cursor-current"), "a real current unscored candidate must still appear");
+});
+
 test("applyProjectTeamOverride preserves the real original recommendedAssignment untouched while the operational model changes", () => {
   const strategy = suggestedStrategyWithProjectTeam();
   const original = strategy.projectTeam.find((e) => e.role === "Explorer").recommendedAssignment;
@@ -362,6 +386,18 @@ test("applyProjectTeamOverride records real overrideEvidence (access, availabili
   assert.equal(entry.overrideEvidence.accessMode, cursorCandidate.accessMode);
   assert.equal(entry.overrideEvidence.available, cursorCandidate.available);
   assert.equal(entry.overrideEvidence.evidenceStatus, cursorCandidate.evidenceStatus);
+});
+
+test("REGRESSION: applyProjectTeamOverride clears the real operational fallback/decisionEvidence instead of leaving the ORIGINAL recommendation's — those describe a different model, and left in place would misrepresent evidence for the override", () => {
+  const strategy = suggestedStrategyWithProjectTeam();
+  const originalEntry = strategy.projectTeam.find((e) => e.role === "Explorer");
+  assert.ok(originalEntry.decisionEvidence, "the fixture's real recommendation must actually have decisionEvidence, or this regression can't be checked");
+  const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
+  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
+  const updated = applyProjectTeamOverride(strategy, "Explorer", cursorCandidate);
+  const entry = updated.projectTeam.find((e) => e.role === "Explorer");
+  assert.equal(entry.fallback, null, "an override has no real computed fallback of its own — must never keep the recommendation's");
+  assert.equal(entry.decisionEvidence, null, "an override has no real decision receipt of its own — must never keep the recommendation's");
 });
 
 test("choosing the real recommended model again removes the override and restores the original assignment — never stays flagged as an override", () => {

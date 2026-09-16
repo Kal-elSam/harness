@@ -756,6 +756,45 @@ test("snapshot cross-references real model catalogs with real Artificial Analysi
   assert.deepEqual(claudeCoverage, { adapterId: "claude", catalogStatus: "documented", totalModels: 1, matchedModels: 1 });
 });
 
+test("REGRESSION: snapshot's real unscoredModels preserves candidateKey/accessMode/lifecycle (never defaulting a real Cursor model's accessMode to null) and excludes a real superseded generation", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [] }),
+    // None of these three real ids have an AA match below — all unscored.
+    // opus-4-6/4-8 are a real, recognized older generation once opus-5 is
+    // also present (see model-candidate-catalog.test.js's own fixture).
+    readClaudeModels: () => ({
+      status: "documented",
+      models: [
+        { id: "claude-opus-4-6", displayName: "Claude Opus 4.6" },
+        { id: "claude-opus-4-8", displayName: "Claude Opus 4.8" },
+        { id: "claude-opus-5", displayName: "Claude Opus 5" }
+      ]
+    }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    readArtificialAnalysisModels: async () => ({ status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h", models: [] }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
+  });
+
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  const byId = Object.fromEntries(snapshot.modelIntelligence.unscoredModels.map((m) => [m.modelId, m]));
+  assert.ok(byId["claude-opus-5"], "the real current generation must appear as unscored");
+  assert.equal(byId["claude-opus-5"].accessMode, "automatic", "a real Claude model's real accessMode must survive, never default to null");
+  assert.equal(byId["claude-opus-5"].candidateKey, "claude::claude-opus-5");
+  assert.equal(byId["claude-opus-4-6"], undefined, "a real superseded generation must never appear in unscoredModels");
+  assert.equal(byId["claude-opus-4-8"], undefined, "a real superseded generation must never appear in unscoredModels");
+});
+
 test("snapshot excludes a provider from FIT once its real quota is exhausted, even though it would otherwise win on capability", async () => {
   const service = createConversationService({
     resolveRoot: async () => "/repo",

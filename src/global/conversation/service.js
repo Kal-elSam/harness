@@ -508,8 +508,17 @@ export function createConversationService(deps = {}) {
         // duplicated this exact same real AA-match check separately; this
         // catalog replaces it as the one real source of truth.
         const unscoredModels = completeCandidateCatalog
-          .filter((candidate) => candidate.evidenceStatus === "unscored")
-          .map((candidate) => ({ adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.rawDisplayName }));
+          // Same "not superseded" real rule the Recommendation Pool
+          // applies to SCORED candidates (buildRecommendationPool) — an
+          // unscored candidate with a real, proven newer same-lineage
+          // successor is exactly as stale as a scored one would be, and
+          // must never surface in /models --evidence's UNSCORED list or
+          // the projectTeam edit catalog as if it were still current.
+          .filter((candidate) => candidate.evidenceStatus === "unscored" && candidate.lifecycle !== "superseded")
+          .map((candidate) => ({
+            adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.rawDisplayName,
+            candidateKey: candidate.candidateKey, accessMode: candidate.accessMode, lifecycle: candidate.lifecycle
+          }));
 
         // The Model Intelligence Foundation registry: every source Kairo
         // has (AA, Hugging Face scoped to Go, manufacturer snapshots,
