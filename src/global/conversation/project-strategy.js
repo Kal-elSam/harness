@@ -16,8 +16,9 @@
 // and that model has already produced the real analysis this module
 // consumes. The analyst never picks the team; it only investigates.
 
-import { buildAiTeam, buildEfficientTeam } from "../intelligence/model-intelligence.js";
+import { buildAiTeam, buildEfficientTeam, ensureRegistry } from "../intelligence/model-intelligence.js";
 import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
+import { computeRoleEvaluations } from "../intelligence/capability-scoring.js";
 
 // The Bootstrap Analyst investigates read-only via askProvider
 // (intelligence/quick-ask.js), which only actually supports these two
@@ -280,14 +281,25 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
   // is lost later — alternative selection is domain policy, computed
   // once here, never re-derived independently by the UI/CLI/router (which
   // would risk drifting to different answers for the same real state).
+  // recommendedAssignment freezes the real original pick (model, fallback,
+  // decisionEvidence) — immutable, never touched by a later override. The
+  // top-level model/fallback/decisionEvidence fields are the CURRENT
+  // OPERATIONAL assignment (what project-router.js actually resolves
+  // against) — identical to recommendedAssignment until a human overrides
+  // this role (see applyProjectTeamOverride), at which point they diverge
+  // and overrideEvidence records the real access/evidence state behind
+  // that specific override, never reusing the original recommendation's
+  // own evidence as if it justified a different model.
   const projectTeam = activeRoles.map((role) => {
     const entry = byRoleEfficient.get(role);
+    const model = entry ? projectModelRef(entry.primary) : null;
+    const fallback = entry?.fallback ? projectModelRef(entry.fallback) : null;
+    const decisionEvidence = entry?.decisionEvidence ?? null;
     return {
-      role,
-      model: entry ? projectModelRef(entry.primary) : null,
-      fallback: entry?.fallback ? projectModelRef(entry.fallback) : null,
+      role, model, fallback, decisionEvidence,
       assignmentSource: "recommended",
-      decisionEvidence: entry?.decisionEvidence ?? null
+      recommendedAssignment: { model, fallback, decisionEvidence },
+      overrideEvidence: null
     };
   });
 
@@ -319,4 +331,158 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
 export function isStrategyStale(strategy, currentProfile) {
   if (!strategy || strategy.status !== "active") return false;
   return strategy.profileFingerprint !== currentProfile.fingerprint;
+}
+
+// projectTeam editing (section 4 — "Edición persistida del PROJECT TEAM").
+// A SUGGESTED strategy only, never active/stale (see applyProjectTeamOverride/
+// resetProjectTeamAssignment's own guards) — the review-before-approval
+// window, not a way to silently mutate an already-running team.
+
+// Every real adapter a projectTeam role can be assigned to for EXECUTION,
+// not just the two askProvider-supported ones the Bootstrap Analyst
+// catalog uses (computeBootstrapAnalystCatalog) — Cursor/OpenCode Go are
+// real, selectable manual-handoff options here.
+const TEAM_EDIT_ADAPTERS = new Set(["codex", "claude", "cursor", "opencode-go"]);
+
+/**
+ * The real edit catalog for one role — every real, non-superseded
+ * candidate (scored AND unscored) from all four real adapters, each with
+ * its own real accessMode/availability/evidenceStatus and (when the
+ * registry has real evidence for it) a real RoleEvaluation for this
+ * SPECIFIC role — reused via capability-scoring.js's own
+ * computeRoleEvaluations, never a new scoring formula. The role's
+ * required capabilities come from the GLOBAL role-profiles.js table
+ * (ROLE_CAPABILITIES), not the project's own analyst-derived
+ * requirements — the persisted ProjectStrategy doesn't carry the full
+ * ProjectProfile forward, only its fingerprint, so the project-specific
+ * capability mix isn't available again at edit time; the global table is
+ * real, existing data, not an invented substitute.
+ * @param {string} role
+ * @param {object} candidates - `scoredAll`, `eligibility`, `registry`, `unscoredModels`
+ * @returns {{role: string, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, accessMode: string|null, evidenceStatus: string, available: boolean, roleEvaluation: object|null}>}}
+ */
+export function computeProjectTeamEditCatalog(role, { scoredAll = [], eligibility = {}, registry = null, unscoredModels = [] }) {
+  const capabilities = ROLE_CAPABILITIES[role];
+  if (!capabilities) return { role, models: [] };
+
+  const teamScored = scoredAll.filter((model) => TEAM_EDIT_ADAPTERS.has(model.adapterId));
+  const teamUnscored = unscoredModels.filter((model) => TEAM_EDIT_ADAPTERS.has(model.adapterId));
+  // Same real registry-seeding every other role computation relies on
+  // (buildAiTeam/buildEfficientTeam's own ensureRegistry) — a caller's
+  // real registry might already have richer evidence (Hugging Face,
+  // manufacturer snapshots, Kairo's own telemetry); a bare/empty one gets
+  // scoreAvailableModels' own AA fields seeded in, never left empty.
+  const effectiveRegistry = ensureRegistry(teamScored, registry);
+  const evaluations = computeRoleEvaluations(effectiveRegistry, teamScored, role, capabilities.required);
+
+  const scoredEntries = teamScored.map((model) => {
+    const key = candidateKeyOf(model);
+    return {
+      candidateKey: key, adapterId: model.adapterId, modelId: model.modelId,
+      displayName: model.modelName ?? model.displayName ?? model.modelId,
+      accessMode: model.accessMode ?? null, evidenceStatus: model.evidenceStatus ?? "scored",
+      available: eligibility[model.adapterId]?.ok === true,
+      roleEvaluation: evaluations.get(`${model.adapterId}::${model.modelId}`) ?? null
+    };
+  });
+  const unscoredEntries = teamUnscored.map((model) => ({
+    candidateKey: candidateKeyOf(model), adapterId: model.adapterId, modelId: model.modelId,
+    displayName: model.displayName ?? model.modelId,
+    accessMode: model.accessMode ?? null, evidenceStatus: "unscored",
+    available: eligibility[model.adapterId]?.ok === true,
+    roleEvaluation: null
+  }));
+
+  return { role, models: [...scoredEntries, ...unscoredEntries] };
+}
+
+/**
+ * Whether two real model references identify the SAME real candidate —
+ * prefers candidateKey (the real identity/scoring join key), but falls
+ * back to adapterId+modelId when either side lacks one, so "is this the
+ * same real model as the recommendation" stays correct even for a real
+ * model reference that predates the candidateKey join.
+ */
+function sameModel(a, b) {
+  if (!a || !b) return false;
+  if (a.candidateKey && b.candidateKey) return a.candidateKey === b.candidateKey;
+  return a.adapterId === b.adapterId && a.modelId === b.modelId;
+}
+
+function findProjectTeamEntry(strategy, role) {
+  if (!strategy) throw new Error("No project strategy to edit — run /project analyze first.");
+  if (strategy.status !== "suggested") throw new Error(`Cannot edit a ${strategy.status?.toUpperCase() ?? "UNKNOWN"} project strategy — only a SUGGESTED one is editable.`);
+  if (!Array.isArray(strategy.projectTeam)) throw new Error("This project strategy was approved before projectTeam existed — re-analyze and approve to enable editing.");
+  const index = strategy.projectTeam.findIndex((entry) => entry.role === role);
+  if (index === -1) throw new Error(`"${role}" is not part of this project's team.`);
+  return index;
+}
+
+/**
+ * Applies a manual override to one role — the real, edit-catalog-sourced
+ * `candidate` becomes the role's real operational model. Picking the same
+ * candidate as the role's own real recommendation is treated as a reset
+ * (see resetProjectTeamAssignment), not a redundant override — the plan's
+ * own "choosing the recommended model again removes the override" rule.
+ * recommendedAssignment is NEVER touched; a legacy entry that predates
+ * this field (recommendedAssignment undefined) has its own current real
+ * model/fallback/decisionEvidence captured as the recommendation here,
+ * lazily, since that WAS this project's real original recommendation
+ * before any override existed — never lost, never guessed.
+ * @param {object} strategy - the persisted SUGGESTED ProjectStrategy
+ * @param {string} role
+ * @param {{candidateKey: string, adapterId: string, modelId: string, displayName: string, accessMode?: string|null, available?: boolean, evidenceStatus?: string, roleEvaluation?: object|null}} candidate -
+ *   one real entry from computeProjectTeamEditCatalog's own output.
+ * @returns {object} the updated ProjectStrategy (still status: "suggested")
+ */
+export function applyProjectTeamOverride(strategy, role, candidate) {
+  const index = findProjectTeamEntry(strategy, role);
+  const entry = strategy.projectTeam[index];
+  const recommendedAssignment = entry.recommendedAssignment ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null };
+
+  if (sameModel(recommendedAssignment.model, candidate)) {
+    return resetProjectTeamAssignment(strategy, role);
+  }
+
+  const updatedEntry = {
+    ...entry,
+    recommendedAssignment,
+    model: {
+      candidateKey: candidate.candidateKey ?? null, adapterId: candidate.adapterId, modelId: candidate.modelId,
+      displayName: candidate.displayName ?? null, accessMode: candidate.accessMode ?? null
+    },
+    assignmentSource: "override",
+    overrideEvidence: {
+      accessMode: candidate.accessMode ?? null, available: candidate.available ?? null,
+      evidenceStatus: candidate.evidenceStatus ?? null, roleEvaluation: candidate.roleEvaluation ?? null
+    }
+  };
+  const projectTeam = [...strategy.projectTeam];
+  projectTeam[index] = updatedEntry;
+  return { ...strategy, projectTeam };
+}
+
+/**
+ * Removes a role's override (if any) and restores its real original
+ * recommendation — model, fallback, and decisionEvidence exactly as
+ * recommendedAssignment froze them. A no-op-shaped call on a role that
+ * was never overridden just re-confirms the same real recommendation.
+ * @param {object} strategy - the persisted SUGGESTED ProjectStrategy
+ * @param {string} role
+ * @returns {object} the updated ProjectStrategy (still status: "suggested")
+ */
+export function resetProjectTeamAssignment(strategy, role) {
+  const index = findProjectTeamEntry(strategy, role);
+  const entry = strategy.projectTeam[index];
+  const recommendedAssignment = entry.recommendedAssignment ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null };
+  const updatedEntry = {
+    ...entry,
+    recommendedAssignment,
+    model: recommendedAssignment.model, fallback: recommendedAssignment.fallback, decisionEvidence: recommendedAssignment.decisionEvidence,
+    assignmentSource: "recommended",
+    overrideEvidence: null
+  };
+  const projectTeam = [...strategy.projectTeam];
+  projectTeam[index] = updatedEntry;
+  return { ...strategy, projectTeam };
 }

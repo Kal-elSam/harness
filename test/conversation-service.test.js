@@ -607,6 +607,98 @@ test("refreshProjectStrategy never silently re-runs a real provider call for a p
   assert.equal(profileComputed, false);
 });
 
+async function realTeamEditCandidates() {
+  const { scoreAvailableModels } = await import("../src/global/intelligence/model-intelligence.js");
+  const { createCapabilityRegistry } = await import("../src/global/intelligence/model-capability-registry.js");
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "codex", models: [{ id: "codex-model" }] },
+    { adapterId: "claude", models: [{ id: "claude-model" }] },
+    { adapterId: "cursor", models: [{ id: "cursor-model" }] }
+  ], [
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 40, mathIndex: null },
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 40, codingIndex: 90, mathIndex: null },
+    { slug: "cursor-model", name: "Cursor Model", intelligenceIndex: 70, codingIndex: 70, mathIndex: null }
+  ]);
+  return { scoredAll, eligibility: { codex: { ok: true }, claude: { ok: true }, cursor: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null, unscoredModels: [] };
+}
+
+function suggestedStrategyWithExplorer(model) {
+  return {
+    schema: "kairo.project-strategy/v1", status: "suggested", profileFingerprint: "fp-1", activeRoles: ["Explorer"],
+    projectTeam: [{
+      role: "Explorer", model, fallback: null, decisionEvidence: null, assignmentSource: "recommended",
+      recommendedAssignment: { model, fallback: null, decisionEvidence: null }, overrideEvidence: null
+    }]
+  };
+}
+
+test("getProjectTeamEditCatalog reads the real modelIntelligence pool and includes every real team-executable adapter (Codex/Claude/Cursor/OpenCode Go), read-only, no quota consumed", async () => {
+  const service = createConversationService({ resolveRoot: async () => "/repo", homeDir: "/home/test" });
+  service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
+  const catalog = await service.getProjectTeamEditCatalog({ cwd: "/repo", role: "Explorer" });
+  assert.deepEqual(new Set(catalog.models.map((m) => m.adapterId)), new Set(["codex", "claude", "cursor"]));
+});
+
+test("setProjectTeamAssignment persists a real override that survives a store round-trip", async () => {
+  const recommendedModel = { candidateKey: "codex::codex-model", adapterId: "codex", modelId: "codex-model", displayName: "Codex Model", accessMode: "automatic" };
+  let stored = suggestedStrategyWithExplorer(recommendedModel);
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => stored,
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
+  });
+  service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
+  const updated = await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "cursor::cursor-model" });
+  const entry = updated.projectTeam.find((e) => e.role === "Explorer");
+  assert.equal(entry.model.adapterId, "cursor");
+  assert.equal(entry.assignmentSource, "override");
+  assert.deepEqual(entry.recommendedAssignment.model, recommendedModel, "the real original recommendation must survive the override");
+  assert.equal(stored.projectTeam.find((e) => e.role === "Explorer").assignmentSource, "override", "the override must actually be persisted, not just returned");
+});
+
+test("setProjectTeamAssignment rejects a candidateKey that is no longer a real, current candidate (superseded or disappeared)", async () => {
+  const recommendedModel = { candidateKey: "codex::codex-model", adapterId: "codex", modelId: "codex-model", displayName: "Codex Model", accessMode: "automatic" };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => suggestedStrategyWithExplorer(recommendedModel)
+  });
+  service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
+  await assert.rejects(
+    () => service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "codex::gpt-long-gone" }),
+    /not a real, current candidate/
+  );
+});
+
+test("setProjectTeamAssignment refuses to edit an ACTIVE or STALE project strategy", async () => {
+  const recommendedModel = { candidateKey: "codex::codex-model", adapterId: "codex", modelId: "codex-model", displayName: "Codex Model", accessMode: "automatic" };
+  const activeStrategy = { ...suggestedStrategyWithExplorer(recommendedModel), status: "active" };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => activeStrategy
+  });
+  service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
+  await assert.rejects(
+    () => service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "cursor::cursor-model" }),
+    /ACTIVE/
+  );
+});
+
+test("setProjectTeamAssignment choosing the real recommended candidateKey again implicitly resets the override", async () => {
+  const recommendedModel = { candidateKey: "codex::codex-model", adapterId: "codex", modelId: "codex-model", displayName: "Codex Model", accessMode: "automatic" };
+  let stored = suggestedStrategyWithExplorer(recommendedModel);
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => stored,
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
+  });
+  service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
+  await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "cursor::cursor-model" });
+  const restored = await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "codex::codex-model" });
+  const entry = restored.projectTeam.find((e) => e.role === "Explorer");
+  assert.equal(entry.assignmentSource, "recommended");
+  assert.equal(entry.overrideEvidence, null);
+});
+
 test("snapshot exposes the real persisted ProjectStrategy (or null for NOT_ANALYZED) without ever recomputing it on a plain poll", async () => {
   let profileComputed = false;
   const service = createConversationService({

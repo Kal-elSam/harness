@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildProjectStrategy, computeBootstrapAnalystAlternatives, computeBootstrapAnalystCatalog, BOOTSTRAP_ANALYST_PROFILE, isStrategyStale } from "../src/global/conversation/project-strategy.js";
+import {
+  buildProjectStrategy, computeBootstrapAnalystAlternatives, computeBootstrapAnalystCatalog, BOOTSTRAP_ANALYST_PROFILE, isStrategyStale,
+  computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
+} from "../src/global/conversation/project-strategy.js";
 import { scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 
@@ -295,4 +298,121 @@ test("isStrategyStale is true only when an ACTIVE strategy's real fingerprint no
   const strategy = { status: "active", profileFingerprint: "old-fp" };
   assert.equal(isStrategyStale(strategy, profile({ fingerprint: "old-fp" })), false);
   assert.equal(isStrategyStale(strategy, profile({ fingerprint: "new-fp" })), true);
+});
+
+// Section 4: persisted projectTeam editing.
+
+function editCandidates() {
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "claude-model" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }] },
+    { adapterId: "cursor", models: [{ id: "cursor-model" }] }
+  ], [
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 40, mathIndex: null },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 40, codingIndex: 90, mathIndex: null },
+    { slug: "cursor-model", name: "Cursor Model", intelligenceIndex: 70, codingIndex: 70, mathIndex: null }
+  ]);
+  const eligibility = { claude: { ok: true }, codex: { ok: true }, cursor: { ok: true } };
+  return { scoredAll, eligibility, registry: createCapabilityRegistry(), unscoredModels: [] };
+}
+
+function suggestedStrategyWithProjectTeam() {
+  return buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), editCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
+}
+
+test("computeProjectTeamEditCatalog includes every real candidate from all four team-executable adapters (Codex/Claude/Cursor/OpenCode Go), unlike the Bootstrap Analyst's ask-only catalog", () => {
+  const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
+  assert.deepEqual(new Set(catalog.models.map((m) => m.adapterId)), new Set(["claude", "codex", "cursor"]));
+});
+
+test("computeProjectTeamEditCatalog attaches a real per-role evaluation (reused from capability-scoring.js, never a new formula) when the registry has real evidence", () => {
+  const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
+  const claude = catalog.models.find((m) => m.adapterId === "claude");
+  assert.ok(claude.roleEvaluation, "claude has real intelligenceIndex evidence for Explorer's reasoning capability");
+});
+
+test("computeProjectTeamEditCatalog includes real unscored candidates, honestly marked, from any of the four team adapters", () => {
+  const candidates = { ...editCandidates(), unscoredModels: [{ adapterId: "cursor", modelId: "cursor-unscored", displayName: "Cursor Unscored" }] };
+  const catalog = computeProjectTeamEditCatalog("Explorer", candidates);
+  const unscored = catalog.models.find((m) => m.modelId === "cursor-unscored");
+  assert.equal(unscored.evidenceStatus, "unscored");
+  assert.equal(unscored.roleEvaluation, null);
+});
+
+test("applyProjectTeamOverride preserves the real original recommendedAssignment untouched while the operational model changes", () => {
+  const strategy = suggestedStrategyWithProjectTeam();
+  const original = strategy.projectTeam.find((e) => e.role === "Explorer").recommendedAssignment;
+  const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
+  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
+  const updated = applyProjectTeamOverride(strategy, "Explorer", cursorCandidate);
+  const entry = updated.projectTeam.find((e) => e.role === "Explorer");
+  assert.equal(entry.model.adapterId, "cursor");
+  assert.equal(entry.assignmentSource, "override");
+  assert.deepEqual(entry.recommendedAssignment, original, "the real original recommendation must survive an override completely unchanged");
+});
+
+test("applyProjectTeamOverride records real overrideEvidence (access, availability, evidenceStatus, role evaluation) for the override — never reusing the recommendation's own evidence", () => {
+  const strategy = suggestedStrategyWithProjectTeam();
+  const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
+  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
+  const updated = applyProjectTeamOverride(strategy, "Explorer", cursorCandidate);
+  const entry = updated.projectTeam.find((e) => e.role === "Explorer");
+  assert.equal(entry.overrideEvidence.accessMode, cursorCandidate.accessMode);
+  assert.equal(entry.overrideEvidence.available, cursorCandidate.available);
+  assert.equal(entry.overrideEvidence.evidenceStatus, cursorCandidate.evidenceStatus);
+});
+
+test("choosing the real recommended model again removes the override and restores the original assignment — never stays flagged as an override", () => {
+  const strategy = suggestedStrategyWithProjectTeam();
+  const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
+  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
+  const overridden = applyProjectTeamOverride(strategy, "Explorer", cursorCandidate);
+  const recommendedModel = strategy.projectTeam.find((e) => e.role === "Explorer").recommendedAssignment.model;
+  const recommendedCandidate = catalog.models.find((m) => m.adapterId === recommendedModel.adapterId && m.modelId === recommendedModel.modelId);
+  const restored = applyProjectTeamOverride(overridden, "Explorer", recommendedCandidate);
+  const entry = restored.projectTeam.find((e) => e.role === "Explorer");
+  assert.equal(entry.assignmentSource, "recommended");
+  assert.equal(entry.overrideEvidence, null);
+  assert.deepEqual(entry.model, entry.recommendedAssignment.model);
+});
+
+test("resetProjectTeamAssignment explicitly restores model/fallback/decisionEvidence to the real original recommendation", () => {
+  const strategy = suggestedStrategyWithProjectTeam();
+  const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
+  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
+  const overridden = applyProjectTeamOverride(strategy, "Explorer", cursorCandidate);
+  const reset = resetProjectTeamAssignment(overridden, "Explorer");
+  const entry = reset.projectTeam.find((e) => e.role === "Explorer");
+  assert.equal(entry.assignmentSource, "recommended");
+  assert.equal(entry.overrideEvidence, null);
+  assert.deepEqual(entry.model, entry.recommendedAssignment.model);
+  assert.deepEqual(entry.fallback, entry.recommendedAssignment.fallback);
+});
+
+test("applyProjectTeamOverride/resetProjectTeamAssignment reject a role not part of this project's team", () => {
+  const strategy = suggestedStrategyWithProjectTeam();
+  assert.throws(() => applyProjectTeamOverride(strategy, "Debugger", { candidateKey: "codex::codex-model", adapterId: "codex", modelId: "codex-model" }), /not part of this project's team/);
+  assert.throws(() => resetProjectTeamAssignment(strategy, "Debugger"), /not part of this project's team/);
+});
+
+test("applyProjectTeamOverride/resetProjectTeamAssignment refuse to edit an ACTIVE or STALE strategy", () => {
+  const strategy = { ...suggestedStrategyWithProjectTeam(), status: "active" };
+  assert.throws(() => applyProjectTeamOverride(strategy, "Explorer", { candidateKey: "codex::codex-model", adapterId: "codex", modelId: "codex-model" }), /ACTIVE/);
+  const staleStrategy = { ...suggestedStrategyWithProjectTeam(), status: "stale" };
+  assert.throws(() => resetProjectTeamAssignment(staleStrategy, "Explorer"), /STALE/);
+});
+
+test("applyProjectTeamOverride on a legacy entry with no recommendedAssignment field lazily captures its own real current model as the recommendation, never losing it", () => {
+  const strategy = suggestedStrategyWithProjectTeam();
+  const legacyEntry = { ...strategy.projectTeam.find((e) => e.role === "Explorer") };
+  delete legacyEntry.recommendedAssignment;
+  const legacyStrategy = { ...strategy, projectTeam: [legacyEntry] };
+  const originalModel = legacyEntry.model;
+  const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
+  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
+  const updated = applyProjectTeamOverride(legacyStrategy, "Explorer", cursorCandidate);
+  const entry = updated.projectTeam.find((e) => e.role === "Explorer");
+  assert.deepEqual(entry.recommendedAssignment.model, originalModel, "the legacy entry's own current model was its real recommendation — must be captured, not lost");
 });

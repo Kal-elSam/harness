@@ -24,7 +24,10 @@ import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { readSession, writeSessionMode } from "./session-store.js";
 import { computeProjectProfile } from "./project-profile.js";
-import { buildProjectStrategy, computeBootstrapAnalystAlternatives, computeBootstrapAnalystCatalog, isStrategyStale } from "./project-strategy.js";
+import {
+  buildProjectStrategy, computeBootstrapAnalystAlternatives, computeBootstrapAnalystCatalog, isStrategyStale,
+  computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
+} from "./project-strategy.js";
 import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
 import { buildSanitizedSnapshot } from "./sanitized-snapshot.js";
 import { runCodexSandboxedBootstrap } from "./codex-sandbox.js";
@@ -793,6 +796,49 @@ export function createConversationService(deps = {}) {
         return { ...stale, projectRoot, profile };
       }
       return { ...existing, projectRoot, profile };
+    },
+    /**
+     * The real projectTeam edit catalog for one role (section 4 —
+     * "Edición persistida del PROJECT TEAM") — every real, non-superseded
+     * candidate from all four real adapters, with its own real
+     * availability/evidenceStatus/role evaluation. Read-only; never
+     * writes anything, never consumes quota.
+     */
+    async getProjectTeamEditCatalog({ cwd, role }) {
+      const projectRoot = await root(cwd);
+      const snap = await this.snapshot({ cwd: projectRoot });
+      const { scoredAll = [], eligibility = {}, registry = null, unscoredModels = [] } = snap.modelIntelligence ?? {};
+      return computeProjectTeamEditCatalog(role, { scoredAll, eligibility, registry, unscoredModels });
+    },
+    /**
+     * Persists a real, human-confirmed assignment for one role of a
+     * SUGGESTED project strategy — either a manual override (a real,
+     * currently-listed edit-catalog candidate) or an implicit reset (the
+     * role's own real recommended candidate chosen again). Rejects a role
+     * outside this project's team, a candidate no longer in the real
+     * current catalog (superseded/disappeared), or any strategy that
+     * isn't SUGGESTED (active/stale stay read-only in this increment).
+     * Never runs anything, never consumes quota — this only ever changes
+     * what a LATER approved run would delegate to.
+     * @param {object} args
+     * @param {string} args.cwd
+     * @param {string} args.role
+     * @param {string} args.candidateKey - one real candidateKey from
+     *   getProjectTeamEditCatalog's own output for this exact role.
+     */
+    async setProjectTeamAssignment({ cwd, role, candidateKey }) {
+      const projectRoot = await root(cwd);
+      const existing = await readProjectStrategyImpl(homeDir, projectRoot);
+      if (!existing) throw new Error("No project strategy to edit — run /project analyze first.");
+      if (existing.status !== "suggested") {
+        throw new Error(`Cannot edit a ${existing.status.toUpperCase()} project strategy — only a SUGGESTED one is editable.`);
+      }
+      const catalog = await this.getProjectTeamEditCatalog({ cwd, role });
+      const candidate = catalog.models.find((model) => model.candidateKey === candidateKey);
+      if (!candidate) throw new Error(`"${candidateKey}" is not a real, current candidate for ${role} — it may be superseded or no longer available.`);
+      const updated = applyProjectTeamOverride(existing, role, candidate);
+      await writeProjectStrategyImpl(homeDir, projectRoot, updated);
+      return updated;
     },
     /**
      * Real persisted chat history for this project, kept globally under

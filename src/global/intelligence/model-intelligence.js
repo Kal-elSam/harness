@@ -273,7 +273,7 @@ const KNOWN_MODEL_METRICS = [
  * evidence entirely. Never overwrites evidence the registry already
  * has for a given identity/metric pair.
  */
-function ensureRegistry(models, registry) {
+export function ensureRegistry(models, registry) {
   const effective = registry ?? createCapabilityRegistry();
   for (const model of models) {
     const id = effective.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
