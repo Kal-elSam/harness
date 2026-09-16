@@ -137,6 +137,38 @@ test("buildProjectStrategy's qualityTeam/efficientTeam only ever include real pi
   assert.ok(strategy.efficientTeam.length === 1 && strategy.efficientTeam[0].role === "Explorer");
 });
 
+test("buildProjectStrategy's projectTeam reuses the exact same real Pareto/risk-floor pick as efficientTeam, never a third formula", () => {
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), realCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
+  assert.equal(strategy.projectTeam.length, 1);
+  const [entry] = strategy.projectTeam;
+  assert.equal(entry.role, "Explorer");
+  assert.equal(entry.model.adapterId, strategy.efficientTeam[0].model.adapterId, "projectTeam must pick the same real model efficientTeam already computed for this role");
+  assert.equal(entry.model.modelId, strategy.efficientTeam[0].model.modelId);
+});
+
+test("buildProjectStrategy's projectTeam carries the richer model reference (candidateKey, accessMode) plus assignmentSource and decisionEvidence", () => {
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), realCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
+  const [entry] = strategy.projectTeam;
+  assert.deepEqual(Object.keys(entry.model), ["candidateKey", "adapterId", "modelId", "displayName", "accessMode"]);
+  assert.equal(entry.assignmentSource, "recommended", "nothing overrides yet — every real pick starts as the recommended one");
+  assert.ok(entry.decisionEvidence, "the real decision receipt from EFFICIENT's selection must carry through to projectTeam");
+});
+
+test("buildProjectStrategy's projectTeam only includes roles the project actually requires, honestly null when no real candidate covers one", () => {
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [
+      { role: "Explorer", capabilities: ["reasoning"], reason: "" },
+      { role: "Architect", capabilities: ["reasoning", "coding"], reason: "" }
+    ]
+  }), realCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
+  assert.deepEqual(strategy.projectTeam.map((e) => e.role), strategy.activeRoles);
+  for (const entry of strategy.projectTeam) assert.notEqual(entry.model, undefined);
+});
+
 test("isStrategyStale is false for a NOT_ANALYZED project (no strategy yet)", () => {
   assert.equal(isStrategyStale(null, profile()), false);
 });

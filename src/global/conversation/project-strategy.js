@@ -40,6 +40,22 @@ function modelRef(teamModel) {
 }
 
 /**
+ * The richer model reference `projectTeam` entries carry — adds
+ * `candidateKey` (the identity/scoring join key) and `accessMode`
+ * (subscription/API/manual — see model-candidate-catalog.js) on top of
+ * `modelRef`'s plain adapterId/modelId/displayName, since projectTeam is
+ * the OPERATIONAL team a real router resolves against, not just
+ * comparative evidence — it needs enough to actually route and launch.
+ */
+function projectModelRef(teamModel) {
+  if (!teamModel) return null;
+  return {
+    candidateKey: teamModel.candidateKey ?? null, adapterId: teamModel.adapterId, modelId: teamModel.modelId,
+    displayName: teamModel.displayName ?? null, accessMode: teamModel.accessMode ?? null
+  };
+}
+
+/**
  * The project's own real role->capabilities map, straight from its (by
  * now analyst-derived) roleRequirements — never the generic global
  * table's OWN capability set. But whether a project-derived capability
@@ -146,6 +162,24 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
     return entry ? { role, model: modelRef(entry.primary), reason: entry.reason ?? null } : { role, model: null, reason: null };
   });
 
+  // The OPERATIONAL team a real router resolves against (see
+  // project-router.js) — reuses the exact same real Pareto/risk-floor
+  // balance already computed above for efficientTeam (byRoleEfficient),
+  // never a third selection formula. qualityTeam/efficientTeam remain
+  // comparative evidence only; projectTeam is what Kairo actually
+  // delegates to. `assignmentSource` is always "recommended" here — a
+  // human override (per-role, never touching this computed ranking) is a
+  // separate, later cockpit action that sets it to "override".
+  const projectTeam = activeRoles.map((role) => {
+    const entry = byRoleEfficient.get(role);
+    return {
+      role,
+      model: entry ? projectModelRef(entry.primary) : null,
+      assignmentSource: "recommended",
+      decisionEvidence: entry?.decisionEvidence ?? null
+    };
+  });
+
   return {
     status: "suggested",
     bootstrapAnalyst: bootstrapAnalyst.model,
@@ -154,6 +188,7 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
     activeRoles,
     qualityTeam,
     efficientTeam: efficientRoles,
+    projectTeam,
     profileFingerprint: profile.fingerprint,
     approvedAt: null
   };
