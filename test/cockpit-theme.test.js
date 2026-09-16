@@ -37,6 +37,16 @@ test("every real palette color used as text meets at least the 4.5:1 real contra
   }
 });
 
+test("REGRESSION: 'selection' (the picker's highlighted-row background) is visibly distinct from a plain black terminal background — the old [35,42,64] measured ~1.48:1, why a real screenshot of the analyst/model picker showed the selected row as indistinguishable from the unselected background", () => {
+  const ratio = contrastRatio(PALETTE.selection, BLACK);
+  assert.ok(ratio >= 2, `selection's real contrast against black is ${ratio.toFixed(2)}:1, below the 2:1 floor for a visibly distinct background`);
+});
+
+test("'text' on top of the real 'selection' background still meets the 4.5:1 floor — a more visible selection bar must never come at the cost of illegible selected-row text", () => {
+  const ratio = contrastRatio(PALETTE.text, PALETTE.selection);
+  assert.ok(ratio >= 4.5, `text-on-selection real contrast is ${ratio.toFixed(2)}:1, below the 4.5:1 floor`);
+});
+
 test("theme.bgFg combines bold+fg+bg in a single escape with one trailing reset — never a nested inner reset that would cut the outer styling short", () => {
   const styled = theme.bgFg("selection", "text", "hello");
   const resetCount = (styled.match(/\x1b\[0m/g) ?? []).length;

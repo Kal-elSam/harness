@@ -215,7 +215,7 @@ export async function runCockpitApp({
           // driven by the exact same service calls as the subcommands
           // below. The subcommands themselves stay untouched for scripted/
           // non-interactive use.
-          openProjectOverlay({ tui, service, view, cwd });
+          openProjectOverlay({ tui, service, view, cwd, onNarrate: (text) => pushTranscript("kairo", text) });
           editor.setText("");
           return;
         }

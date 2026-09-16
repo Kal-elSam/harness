@@ -198,6 +198,57 @@ test("pressing 'a' on the RESULT view calls the real approveProjectStrategy once
   assert.equal(overlay.activeStrategy.status, "active");
 });
 
+test("onNarrate mirrors the real analysis milestones (starting, result ready) into the conversation transcript — the interactive overlay's own process shown in chat, like a real CLI narrates its steps", async () => {
+  const service = makePreflightService();
+  const narrated = [];
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {}, onNarrate: (text) => narrated.push(text) });
+  await flush();
+  assert.deepEqual(narrated, [], "narration only starts once a real action runs, never for opening the picker");
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  assert.equal(narrated.length, 1);
+  assert.match(narrated[0], /is investigating this project \(read-only\)/);
+  await flush();
+  assert.equal(narrated.length, 2);
+  assert.match(narrated[1], /Suggested project team ready \(\d+ real role/);
+});
+
+test("onNarrate reports approval and refresh milestones, and real failures, never silently", async () => {
+  const service = makePreflightService();
+  const narrated = [];
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {}, onNarrate: (text) => narrated.push(text) });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput("a");
+  await flush();
+  assert.match(narrated.at(-1), /Project team is now ACTIVE\./);
+
+  const failingService = makePreflightService();
+  failingService.approveProjectStrategy = async () => { throw new Error("real approval error"); };
+  const failingNarrated = [];
+  const failingOverlay = new ProjectOverlay({ service: failingService, view: makeFakeView(), cwd: "/repo", onClose: () => {}, onNarrate: (text) => failingNarrated.push(text) });
+  await flush();
+  selectByKey(failingOverlay, QUALITY_MODEL.candidateKey);
+  failingOverlay.handleInput(ENTER);
+  await flush();
+  failingOverlay.handleInput("a");
+  await flush();
+  assert.match(failingNarrated.at(-1), /Approval failed: real approval error/);
+});
+
+test("onNarrate reports a STALE->refresh transition's real resulting status", async () => {
+  const service = makePreflightService();
+  const view = makeFakeView({ projectStrategy: { status: "stale", qualityTeam: [] } });
+  const narrated = [];
+  const overlay = new ProjectOverlay({ service, view, cwd: "/repo", onClose: () => {}, onNarrate: (text) => narrated.push(text) });
+  await flush();
+  overlay.handleInput(ENTER);
+  await flush();
+  assert.match(narrated.at(-1), /Project strategy is now (ACTIVE|STALE)\./);
+});
+
 test("Escape on the RESULT view closes without approving — the strategy stays suggested, never silently approved", async () => {
   const service = makePreflightService();
   let closed = false;

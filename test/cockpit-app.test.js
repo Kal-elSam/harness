@@ -581,6 +581,30 @@ test("bare /project (no subcommand) opens the real interactive overlay on the tu
   app.stop();
 });
 
+test("the interactive /project overlay's own real milestones (analysis started/ready, approved, etc.) are mirrored into the conversation transcript, not just shown on the overlay itself", async () => {
+  let editor;
+  let tui;
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    preflightProject: async () => ({ profile: {}, candidates: {}, alternatives: [] })
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+  editor.setText("/project");
+  await editor.onSubmit(editor.getText());
+  const overlay = tui.overlays[0].component;
+  // The overlay's own real onNarrate hook — exercised directly rather than
+  // driving the full picker flow, since that's already covered by
+  // project-overlay.test.js's own dedicated narration regressions.
+  overlay.onNarrate("Suggested project team ready (1 real role). Open /project to review, edit, or approve it.");
+  const texts = app.view.transcript.map((entry) => entry.text);
+  assert.ok(texts.some((t) => t === "Suggested project team ready (1 real role). Open /project to review, edit, or approve it."));
+  app.stop();
+});
+
 test("/project status reports NOT_ANALYZED honestly when there's no real strategy yet", async () => {
   let editor;
   const service = { snapshot: async () => makeSnapshot([]) };

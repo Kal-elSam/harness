@@ -59,13 +59,23 @@ export class ProjectOverlay {
    * @param {string} deps.cwd
    * @param {() => void} deps.onClose - called when the overlay should close and focus should return to the editor
    * @param {() => void} [deps.requestRender]
+   * @param {(text: string) => void} [deps.onNarrate] - mirrors real milestones
+   *   (analysis started, result ready, approved, refreshed, errors) into the
+   *   main conversation transcript, the same way the plain-text /project
+   *   subcommands already narrate their own steps there — the interactive
+   *   overlay is the rich detail view, but the chat history should still
+   *   show that an analysis happened and what it decided, matching how a
+   *   real CLI (Claude, Codex) narrates its own process. Never called for
+   *   pure navigation (opening a picker, moving a selection) — only for a
+   *   real state change the overlay's own service calls produced.
    */
-  constructor({ service, view, cwd, onClose, requestRender = () => {} }) {
+  constructor({ service, view, cwd, onClose, requestRender = () => {}, onNarrate = () => {} }) {
     this.service = service;
     this.view = view;
     this.cwd = cwd;
     this.onClose = onClose;
     this.requestRender = requestRender;
+    this.onNarrate = onNarrate;
 
     this.state = S.LOADING_PREFLIGHT;
     this.preflight = null;
@@ -192,6 +202,7 @@ export class ProjectOverlay {
   async confirmAnalyst() {
     this.state = S.ANALYZING;
     this.requestRender();
+    this.onNarrate(`${this.view.aiTeamLabelWithProvider(this.selectedAnalyst.model)} is investigating this project (read-only)…`);
     try {
       const result = await this.service.runBootstrapAnalysis({
         cwd: this.cwd, profile: this.preflight.profile, candidates: this.preflight.candidates, analyst: this.selectedAnalyst
@@ -199,9 +210,12 @@ export class ProjectOverlay {
       this.suggestedStrategy = result;
       this.buildResultRoleList();
       this.state = S.RESULT;
+      const roleCount = result.activeRoles?.length ?? 0;
+      this.onNarrate(`Suggested project team ready (${roleCount} real role${roleCount === 1 ? "" : "s"}). Open /project to review, edit, or approve it.`);
     } catch (error) {
       this.errorMessage = error.message ?? String(error);
       this.state = S.ERROR;
+      this.onNarrate(`Project analysis failed: ${this.errorMessage}`);
     }
     this.requestRender();
   }
@@ -346,9 +360,11 @@ export class ProjectOverlay {
     try {
       this.activeStrategy = await this.service.approveProjectStrategy({ cwd: this.cwd });
       this.state = S.ACTIVE;
+      this.onNarrate("Project team is now ACTIVE.");
     } catch (error) {
       this.errorMessage = error.message ?? String(error);
       this.state = S.ERROR;
+      this.onNarrate(`Approval failed: ${this.errorMessage}`);
     }
     this.requestRender();
   }
@@ -360,9 +376,11 @@ export class ProjectOverlay {
       const result = await this.service.refreshProjectStrategy({ cwd: this.cwd });
       this.activeStrategy = result;
       this.state = result?.status === "stale" ? S.STALE : S.ACTIVE;
+      this.onNarrate(result ? `Project strategy is now ${result.status.toUpperCase()}.` : "Nothing to refresh yet.");
     } catch (error) {
       this.errorMessage = error.message ?? String(error);
       this.state = S.ERROR;
+      this.onNarrate(`Refresh failed: ${this.errorMessage}`);
     }
     this.requestRender();
   }
@@ -580,11 +598,12 @@ export class ProjectOverlay {
  * @param {object} args.service
  * @param {import("./view.js").CockpitView} args.view
  * @param {string} args.cwd
+ * @param {(text: string) => void} [args.onNarrate] - see ProjectOverlay's own doc
  */
-export function openProjectOverlay({ tui, service, view, cwd }) {
+export function openProjectOverlay({ tui, service, view, cwd, onNarrate }) {
   let handle;
   const overlay = new ProjectOverlay({
-    service, view, cwd,
+    service, view, cwd, onNarrate,
     onClose: () => handle?.hide(),
     requestRender: () => tui.requestRender()
   });

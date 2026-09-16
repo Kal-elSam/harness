@@ -21,7 +21,14 @@ export const PALETTE = {
   error: [203, 124, 148],
   success: [183, 204, 133],
   info: [127, 180, 202],
-  selection: [35, 42, 64]
+  // Bumped from [35,42,64] (real measured contrast against a plain black
+  // terminal background: ~1.48:1 — nearly indistinguishable, which is why
+  // a real screenshot of the analyst/model picker showed the selected row
+  // and the unselected background as "both black"). [50,80,140] measures
+  // ~2.66:1 against black — a real, clearly visible steel-blue bar — while
+  // still keeping `text` on top of it at ~7.27:1, comfortably above the
+  // 4.5:1 floor for normal text.
+  selection: [50, 80, 140]
 };
 
 /**
