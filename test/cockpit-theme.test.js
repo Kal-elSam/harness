@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PALETTE, theme } from "../src/global/cockpit/theme.js";
+import { SelectList } from "@earendil-works/pi-tui";
+import { PALETTE, theme, editorTheme } from "../src/global/cockpit/theme.js";
 
 // Real WCAG 2.x relative-luminance contrast ratio — the same formula a
 // real accessibility audit uses, not an approximation. Verifies the
@@ -43,4 +44,39 @@ test("theme.bgFg combines bold+fg+bg in a single escape with one trailing reset 
   assert.match(styled, /\x1b\[1m/, "must include bold");
   assert.match(styled, /\x1b\[38;2;/, "must include an explicit foreground color");
   assert.match(styled, /\x1b\[48;2;/, "must include an explicit background color");
+});
+
+test("REGRESSION: theme.bgFg strips ANSI ALREADY embedded in the incoming text (a real pre-colored SelectList label) before re-wrapping — a plain-text-only test of bgFg missed this real bug", () => {
+  // Exactly what project-overlay.js actually hands selectedText: a label
+  // pre-wrapped in theme.fg("text", ...) for legibility on unselected
+  // rows (see the earlier round's own fix), which embeds its own reset.
+  const preStyledLabel = theme.fg("text", "Claude Fable 5.1    claude");
+  const styled = theme.bgFg("selection", "text", preStyledLabel);
+  const resetCount = (styled.match(/\x1b\[0m/g) ?? []).length;
+  assert.equal(resetCount, 1, "a pre-styled label's own inner reset must be stripped, never left to cut the outer background short");
+  assert.doesNotMatch(styled, /\x1b\[0m.*\x1b\[0m/s, "only one reset in the whole string");
+});
+
+test("REGRESSION: a real SelectList's selected row renders ONE continuous background — the description ('Quality fit') is never left unhighlighted by a premature inner reset", () => {
+  // The exact real shape project-overlay.js builds: label pre-colored
+  // with theme.fg("text", ...) (item 2 of the contrast fix), description
+  // left plain (SelectList applies editorTheme.selectList.description to
+  // it separately for UNSELECTED rows only — for the selected row, the
+  // whole concatenated string, including the raw description, goes
+  // through selectedText as one piece).
+  const items = [
+    { value: "a", label: theme.fg("text", "Claude Fable 5.1    claude"), description: "Quality fit" },
+    { value: "b", label: theme.fg("text", "Claude Opus 5    claude"), description: "" }
+  ];
+  const list = new SelectList(items, 8, editorTheme.selectList);
+  const lines = list.render(76);
+  const selectedLine = lines.find((line) => line.includes("Quality fit"));
+  assert.ok(selectedLine, "the selected row's real rendered line must contain its own description");
+  const resetCount = (selectedLine.match(/\x1b\[0m/g) ?? []).length;
+  assert.equal(resetCount, 1, "the real rendered selected row must carry exactly one reset — a second, premature one means the background was cut short before the description");
+  const firstBg = selectedLine.indexOf("\x1b[48;2;");
+  const firstReset = selectedLine.indexOf("\x1b[0m");
+  const qualityFitIndex = selectedLine.indexOf("Quality fit");
+  assert.ok(firstBg >= 0 && firstBg < qualityFitIndex, "the background escape must open before the description text");
+  assert.ok(firstReset > qualityFitIndex, "the single reset must come AFTER the description — the background must still be active when 'Quality fit' renders, not already cut off");
 });

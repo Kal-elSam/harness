@@ -65,7 +65,24 @@ function bg(role, text) {
 function bgFg(bgRole, fgRole, text) {
   const bgRgb = PALETTE[bgRole] ?? PALETTE.text;
   const fgRgb = PALETTE[fgRole] ?? PALETTE.text;
-  return `\x1b[1m\x1b[38;2;${fgRgb[0]};${fgRgb[1]};${fgRgb[2]}m\x1b[48;2;${bgRgb[0]};${bgRgb[1]};${bgRgb[2]}m${text}\x1b[0m`;
+  // Strip any ANSI already embedded in `text` first — a real SelectList
+  // row can arrive here already carrying its own fg()-wrapped label
+  // (project-overlay.js explicitly colors model+provider text) and/or a
+  // theme.fg("muted", ...)-wrapped description; a caller can't be trusted
+  // to hand back plain text just because it usually does. Each of those
+  // inner wrappers ends with its own `\x1b[0m`, which — left in place —
+  // cuts the outer background short partway through the row (verified:
+  // the real bug this fixes, caught only by rendering a real SelectList
+  // row, never by testing bgFg against plain text alone). One combined
+  // escape with a single trailing reset is the only composition that's
+  // actually safe here.
+  return `\x1b[1m\x1b[38;2;${fgRgb[0]};${fgRgb[1]};${fgRgb[2]}m\x1b[48;2;${bgRgb[0]};${bgRgb[1]};${bgRgb[2]}m${stripAnsi(text)}\x1b[0m`;
+}
+
+/** Removes any ANSI SGR escape sequences already embedded in `text` — see bgFg's own doc for why this must happen before re-wrapping. */
+function stripAnsi(text) {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 export const theme = { fg, bold, bg, bgFg };

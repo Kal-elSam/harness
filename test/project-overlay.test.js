@@ -434,7 +434,11 @@ test("REGRESSION: the picker's model+provider row is explicitly colored with the
   const lines = overlay.render(76).join("\n");
   // theme.text's real RGB (243,246,249) — an explicit fg escape right
   // before the model's own display name confirms it's not left plain.
-  assert.match(lines, /\x1b\[38;2;243;246;249m[^\x1b]*GPT-6 Astra/);
+  // Checked on a real UNSELECTED row (Claude Opus 5, not the pre-selected
+  // recommendation) — the selected row's own composition (which combines
+  // this same label with bold+bg into one escape) is covered separately
+  // in cockpit-theme.test.js.
+  assert.match(lines, /\x1b\[38;2;243;246;249m[^\x1b]*Claude Opus 5/);
 });
 
 test("the overlay's own Box never applies a full-panel background — only SelectList's own active-row highlight does", async () => {
