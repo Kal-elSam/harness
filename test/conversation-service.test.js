@@ -1199,3 +1199,228 @@ test("snapshot deduplicates in-flight Codex usage probes and honors its TTL", as
   await service.snapshot({ cwd: "/repo" });
   assert.equal(calls, 2);
 });
+
+// --- PROJECT TEAM execution routing: planExecution/executePlan wired to
+// resolveProjectRoute, replacing the legacy classifier for the role-based
+// path. `service.snapshot` is overridden directly (same trick the
+// getProjectTeamEditCatalog tests above use) so these tests control
+// `modelIntelligence.eligibility` without driving the real provider-probe
+// pipeline.
+
+const AUTOMATIC_MODEL = { candidateKey: "codex::gpt-6-astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
+const MANUAL_MODEL = { candidateKey: "cursor::cursor-model", adapterId: "cursor", modelId: "cursor-model", displayName: "Cursor Model", accessMode: "manual" };
+const ALTERNATIVE_MODEL = { candidateKey: "claude::claude-opus-5", adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", accessMode: "automatic" };
+
+function activeStrategyWithBuilder({ model, fallback = null, assignmentSource = "recommended", fingerprint = "fp-1" } = {}) {
+  return {
+    schema: "kairo.project-strategy/v1", status: "active", profileFingerprint: fingerprint, activeRoles: ["Builder"],
+    projectTeam: [{
+      role: "Builder", model, fallback, decisionEvidence: null, assignmentSource,
+      recommendedAssignment: { model, fallback, decisionEvidence: null }, overrideEvidence: null
+    }]
+  };
+}
+
+function refusingLegacyRouter() {
+  return () => { throw new Error("the legacy text-classification router must never be called on the role-based path"); };
+}
+
+function serviceWithEligibility(overrides, eligibility) {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    selectExecutionProvider: refusingLegacyRouter(),
+    ...overrides
+  });
+  const realSnapshot = service.snapshot.bind(service);
+  service.snapshot = async (args) => {
+    const snap = await realSnapshot(args);
+    return { ...snap, modelIntelligence: { ...snap.modelIntelligence, eligibility } };
+  };
+  return service;
+}
+
+test("planExecution({role}) calls resolveProjectRoute and never the legacy classifier, returning a ROUTED ProjectExecutionPreview with a confirmable target", async () => {
+  const record = { status: {}, taskMarkdown: "irrelevant text — role decides, never text", planMarkdown: "# Plan" };
+  const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL });
+  const service = serviceWithEligibility({
+    readPlan: async () => record,
+    readProjectStrategy: async () => strategy
+  }, { codex: { ok: true } });
+
+  const preview = await service.planExecution({ cwd: "/repo", taskId: "task-id", role: "Builder" });
+  assert.equal(preview.decision, "ROUTED");
+  assert.equal(preview.role, "Builder");
+  assert.equal(preview.provider, "codex");
+  assert.equal(preview.model, "gpt-6-astra");
+  assert.equal(preview.modelRef, AUTOMATIC_MODEL);
+  assert.equal(preview.strategyFingerprint, "fp-1");
+  assert.deepEqual(preview.confirmationTarget, {
+    role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "codex::gpt-6-astra"
+  });
+});
+
+test("planExecution({role}) returns WAIT_FOR_PROJECT_TEAM with no confirmationTarget when there is no active strategy", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Plan" };
+  const service = serviceWithEligibility({
+    readPlan: async () => record,
+    readProjectStrategy: async () => null
+  }, {});
+  const preview = await service.planExecution({ cwd: "/repo", taskId: "task-id", role: "Builder" });
+  assert.equal(preview.decision, "WAIT_FOR_PROJECT_TEAM");
+  assert.equal(preview.confirmationTarget, null);
+  assert.match(preview.why, /No project strategy/);
+});
+
+test("planExecution({role}) returns WAIT_FOR_PROJECT_TEAM for a merely SUGGESTED (not yet approved) strategy", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Plan" };
+  const strategy = { ...activeStrategyWithBuilder({ model: AUTOMATIC_MODEL }), status: "suggested" };
+  const service = serviceWithEligibility({
+    readPlan: async () => record,
+    readProjectStrategy: async () => strategy
+  }, { codex: { ok: true } });
+  const preview = await service.planExecution({ cwd: "/repo", taskId: "task-id", role: "Builder" });
+  assert.equal(preview.decision, "WAIT_FOR_PROJECT_TEAM");
+  assert.equal(preview.confirmationTarget, null);
+  assert.match(preview.why, /SUGGESTED/);
+});
+
+test("planExecution({role}) returns WAIT_FOR_PROJECT_TEAM for a STALE strategy", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Plan" };
+  const strategy = { ...activeStrategyWithBuilder({ model: AUTOMATIC_MODEL }), status: "stale" };
+  const service = serviceWithEligibility({
+    readPlan: async () => record,
+    readProjectStrategy: async () => strategy
+  }, { codex: { ok: true } });
+  const preview = await service.planExecution({ cwd: "/repo", taskId: "task-id", role: "Builder" });
+  assert.equal(preview.decision, "WAIT_FOR_PROJECT_TEAM");
+  assert.equal(preview.confirmationTarget, null);
+  assert.match(preview.why, /STALE/);
+});
+
+test("planExecution({role}) returns MANUAL_HANDOFF for a Cursor/OpenCode assignment, with no confirmationTarget — never auto-executable", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Plan" };
+  const strategy = activeStrategyWithBuilder({ model: MANUAL_MODEL });
+  const service = serviceWithEligibility({
+    readPlan: async () => record,
+    readProjectStrategy: async () => strategy
+  }, { cursor: { ok: true } });
+  const preview = await service.planExecution({ cwd: "/repo", taskId: "task-id", role: "Builder" });
+  assert.equal(preview.decision, "MANUAL_HANDOFF");
+  assert.equal(preview.provider, "cursor");
+  assert.equal(preview.confirmationTarget, null);
+  assert.match(preview.why, /continue manually/);
+});
+
+test("planExecution({role}) shows a persisted, currently-eligible fallback as suggestedAlternative when the assigned candidate lost eligibility — offered for confirmation, never auto-executed by the preview itself", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Plan" };
+  const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL, fallback: ALTERNATIVE_MODEL });
+  let reserved = false;
+  let launched = false;
+  const service = serviceWithEligibility({
+    readPlan: async () => record,
+    readProjectStrategy: async () => strategy,
+    writeExecution: async () => { reserved = true; },
+    startRun: async () => { launched = true; return { metadata: {} }; }
+  }, { codex: { ok: false, reason: "quota exhausted" }, claude: { ok: true } });
+
+  const preview = await service.planExecution({ cwd: "/repo", taskId: "task-id", role: "Builder" });
+  assert.equal(preview.decision, "WAIT_FOR_PROJECT_TEAM");
+  assert.equal(preview.blockedAssignment.provider, "codex");
+  assert.equal(preview.suggestedAlternative.provider, "claude");
+  assert.deepEqual(preview.confirmationTarget, {
+    role: "Builder", selection: "suggested-alternative", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5"
+  });
+  assert.equal(reserved, false, "a preview must never reserve quota");
+  assert.equal(launched, false, "a preview must never start a run — a suggested alternative is never equivalent to authorization to run it");
+});
+
+test("executePlan rejects a confirmationTarget whose candidate no longer matches the freshly recomputed route (eligibility changed since preview) — never silently substitutes", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Plan" };
+  const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL });
+  let launched = false;
+  const service = serviceWithEligibility({
+    verifyExecution: async () => record,
+    readExecution: async () => null,
+    readProjectStrategy: async () => strategy,
+    startRun: async () => { launched = true; return { metadata: {} }; }
+  }, { codex: { ok: false, reason: "quota exhausted since the preview was shown" } });
+
+  await assert.rejects(
+    () => service.executePlan({
+      cwd: "/repo", taskId: "task-id",
+      confirmationTarget: { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "codex::gpt-6-astra" }
+    }),
+    /project team state changed/
+  );
+  assert.equal(launched, false);
+});
+
+test("executePlan rejects a confirmationTarget whose strategyFingerprint is stale — re-approving the strategy must force a new preview", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Plan" };
+  const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL, fingerprint: "fp-2" });
+  let launched = false;
+  const service = serviceWithEligibility({
+    verifyExecution: async () => record,
+    readExecution: async () => null,
+    readProjectStrategy: async () => strategy,
+    startRun: async () => { launched = true; return { metadata: {} }; }
+  }, { codex: { ok: true } });
+
+  await assert.rejects(
+    () => service.executePlan({
+      cwd: "/repo", taskId: "task-id",
+      confirmationTarget: { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "codex::gpt-6-astra" }
+    }),
+    /project team state changed/
+  );
+  assert.equal(launched, false);
+});
+
+test("executePlan with a matching confirmationTarget revalidates, reserves, and launches exactly once against the resolved candidate", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Approved plan" };
+  const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL });
+  let link = null;
+  const service = serviceWithEligibility({
+    verifyExecution: async () => record,
+    createRunId: () => "run_fixed",
+    readExecution: async () => link,
+    writeExecution: async (_root, _id, value) => { link = value; },
+    updateExecution: async (_root, _id, value) => { link = value; },
+    readProjectStrategy: async () => strategy,
+    startRun: async (input) => {
+      assert.equal(input.agentId, "codex");
+      assert.equal(input.model, "gpt-6-astra");
+      return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
+    }
+  }, { codex: { ok: true } });
+
+  const confirmationTarget = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "codex::gpt-6-astra" };
+  const first = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
+  const retry = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
+  assert.equal(first.execution.provider, "codex");
+  assert.equal(first.execution.state, "starting");
+  assert.equal(retry.reused, true, "the same confirmed target must only ever start one run");
+});
+
+test("executePlan with a confirmationTarget selecting the suggested alternative launches on the alternative, never the blocked assignment", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Approved plan" };
+  const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL, fallback: ALTERNATIVE_MODEL });
+  let link = null;
+  const service = serviceWithEligibility({
+    verifyExecution: async () => record,
+    createRunId: () => "run_fixed",
+    readExecution: async () => link,
+    writeExecution: async (_root, _id, value) => { link = value; },
+    updateExecution: async (_root, _id, value) => { link = value; },
+    readProjectStrategy: async () => strategy,
+    startRun: async (input) => {
+      assert.equal(input.agentId, "claude");
+      assert.equal(input.model, "claude-opus-5");
+      return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
+    }
+  }, { codex: { ok: false, reason: "quota exhausted" }, claude: { ok: true } });
+
+  const confirmationTarget = { role: "Builder", selection: "suggested-alternative", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5" };
+  const result = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
+  assert.equal(result.execution.provider, "claude");
+});

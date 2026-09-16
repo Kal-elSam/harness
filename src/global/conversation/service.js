@@ -34,6 +34,7 @@ import { runCodexSandboxedBootstrap } from "./codex-sandbox.js";
 import { createBootstrapAnalyzerAdapter } from "./bootstrap-analyzer-adapters.js";
 import { verifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
+import { resolveProjectRoute } from "./project-router.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
@@ -384,6 +385,36 @@ export function createConversationService(deps = {}) {
   }
 
   async function root(cwd) { return resolveRoot(cwd); }
+
+  /**
+   * Projects a real project-router decision into the public
+   * ProjectExecutionPreview shape — never recalculates anything the
+   * router already decided, only reshapes it (plain `model` id string for
+   * launchRun's own contract, alongside the full `modelRef`) and derives
+   * `confirmationTarget` — the one real thing left to explicitly confirm,
+   * present ONLY when there's something genuinely confirmable:
+   * - ROUTED: the real assigned candidate.
+   * - WAIT_FOR_PROJECT_TEAM with a real suggestedAlternative: that
+   *   alternative, never the blocked assignment itself.
+   * - Everything else (MANUAL_HANDOFF, or WAIT_FOR_PROJECT_TEAM with no
+   *   real alternative): null — nothing to confirm into an automatic run.
+   * @param {ReturnType<typeof resolveProjectRoute>} route
+   */
+  function toExecutionPreview(route) {
+    let confirmationTarget = null;
+    if (route.decision === "ROUTED" && route.model) {
+      confirmationTarget = { role: route.role, selection: "assigned", strategyFingerprint: route.strategyFingerprint, candidateKey: route.model.candidateKey ?? null };
+    } else if (route.decision === "WAIT_FOR_PROJECT_TEAM" && route.suggestedAlternative?.model) {
+      confirmationTarget = { role: route.role, selection: "suggested-alternative", strategyFingerprint: route.strategyFingerprint, candidateKey: route.suggestedAlternative.model.candidateKey ?? null };
+    }
+    return {
+      decision: route.decision, role: route.role,
+      provider: route.provider, model: route.model?.modelId ?? null, modelRef: route.model,
+      assignmentSource: route.assignmentSource, strategyFingerprint: route.strategyFingerprint, why: route.why,
+      blockedAssignment: route.blockedAssignment, suggestedAlternative: route.suggestedAlternative,
+      confirmationTarget
+    };
+  }
 
   return {
     async snapshot({ cwd }) {
@@ -890,17 +921,45 @@ export function createConversationService(deps = {}) {
       return { ...publicPlan(record, await executionFor(projectRoot, taskId)), projectRoot };
     },
     /**
-     * Read-only preview of what executePlan would do right now: runs the
-     * real router against the plan's real task text and returns its
-     * decision (provider/model/why/fallback), without reserving or
-     * launching anything. The cockpit shows this before asking for
-     * confirmation, and passes the same provider/model back to executePlan
-     * so the preview and the actual launch never disagree.
+     * The real PROJECT TEAM route for one role, right now — reloads the
+     * persisted ProjectStrategy and CURRENT eligibility fresh on every
+     * call (never cached/reused across preview and confirm; executePlan's
+     * own revalidation calls this exact same method again before ever
+     * reserving quota — see its own doc).
+     * @param {string} role
+     * @param {string} projectRoot
      */
-    async planExecution({ cwd, taskId }) {
+    async routeProjectExecution(role, projectRoot) {
+      const strategy = await readProjectStrategyImpl(homeDir, projectRoot);
+      const snap = await this.snapshot({ cwd: projectRoot });
+      const eligibility = snap.modelIntelligence?.eligibility ?? {};
+      return resolveProjectRoute({ role, strategy, eligibility });
+    },
+    /**
+     * Read-only preview of what executePlan would do right now.
+     *
+     * With a real `role` (the PROJECT TEAM path — role always comes from
+     * the caller, NEVER inferred from task text): resolves the role
+     * against the approved ProjectStrategy via resolveProjectRoute and
+     * returns a ProjectExecutionPreview (decision/provider/model/modelRef/
+     * assignmentSource/strategyFingerprint/why/blockedAssignment/
+     * suggestedAlternative/confirmationTarget — see toExecutionPreview's
+     * own doc). Never touches the legacy text-classification router.
+     *
+     * Without `role` (unchanged, existing behavior): runs the legacy
+     * keyword router against the plan's real task text — kept only for
+     * the pre-PROJECT-TEAM `/plan` architecture-approval flow until the
+     * cockpit/CLI/browser are wired to always supply a real role; that
+     * cutover removes this branch entirely, never leaves it silently.
+     */
+    async planExecution({ cwd, taskId, role = null }) {
       const projectRoot = await root(cwd);
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
+      if (role) {
+        const route = await this.routeProjectExecution(role, projectRoot);
+        return { ...toExecutionPreview(route), projectRoot, taskId };
+      }
       const decision = await routeExecution(projectRoot, record.taskMarkdown ?? record.planMarkdown ?? "");
       return { ...decision, projectRoot, taskId };
     },
@@ -908,11 +967,25 @@ export function createConversationService(deps = {}) {
      * @param {object} args
      * @param {string} args.cwd
      * @param {string} args.taskId
-     * @param {string|null} [args.model] - explicit model override
-     * @param {string|null} [args.agentId] - explicit provider override (e.g. from the cockpit's
-     *   manual confirm-execute choice); when omitted, the real router decides.
+     * @param {{role: string, selection: "assigned"|"suggested-alternative", strategyFingerprint: string|null, candidateKey: string|null}|null} [args.confirmationTarget] -
+     *   the EXACT confirmationTarget a prior planExecution({role}) preview
+     *   returned. Before reserving any real quota or launching anything,
+     *   the real project route is recomputed from scratch (fresh strategy
+     *   + fresh eligibility) and compared field-for-field against this —
+     *   strategyFingerprint, role, and the resolved candidateKey must all
+     *   still match exactly. Any drift (strategy re-approved, quota lost,
+     *   override changed) rejects outright and asks for a new preview;
+     *   never silently re-routes to something else. Never accepts a
+     *   MANUAL_HANDOFF candidate — that's never something Kairo launches.
+     * @param {string|null} [args.model] - explicit model override — legacy
+     *   path only, ignored/unused whenever `confirmationTarget` is given.
+     * @param {string|null} [args.agentId] - explicit provider override
+     *   (e.g. the cockpit's older manual confirm-execute choice) — same
+     *   legacy-only caveat as `model`. Kept only until the cockpit/CLI/
+     *   browser are wired to always pass a real confirmationTarget instead;
+     *   that cutover removes free agentId/model overrides entirely.
      */
-    async executePlan({ cwd, taskId, model = null, agentId = null }) {
+    async executePlan({ cwd, taskId, model = null, agentId = null, confirmationTarget = null }) {
       const projectRoot = await root(cwd);
       const existing = await executionFor(projectRoot, taskId);
       const record = await verifyExecution(projectRoot, taskId, { checkWorkingTree: !existing });
@@ -920,7 +993,20 @@ export function createConversationService(deps = {}) {
 
       let resolvedAgentId = agentId;
       let resolvedModel = model;
-      if (!resolvedAgentId) {
+      if (confirmationTarget) {
+        const route = await this.routeProjectExecution(confirmationTarget.role, projectRoot);
+        const resolvedCandidate = confirmationTarget.selection === "assigned"
+          ? (route.decision === "ROUTED" ? route.model : null)
+          : (route.decision === "WAIT_FOR_PROJECT_TEAM" ? route.suggestedAlternative?.model ?? null : null);
+        const candidateStillMatches = resolvedCandidate
+          && route.strategyFingerprint === confirmationTarget.strategyFingerprint
+          && resolvedCandidate.candidateKey === confirmationTarget.candidateKey;
+        if (!candidateStillMatches) {
+          throw new Error(`Cannot execute "${taskId}": the real project team state changed since this was confirmed (strategy, eligibility, or override) — request a new preview and confirm again.`);
+        }
+        resolvedAgentId = resolvedCandidate.adapterId;
+        resolvedModel = resolvedCandidate.modelId;
+      } else if (!resolvedAgentId) {
         const decision = await routeExecution(projectRoot, record.taskMarkdown ?? record.planMarkdown ?? "");
         if (decision.decision !== "ROUTED") {
           throw new Error(`Cannot auto-execute "${taskId}": ${decision.why}`);
