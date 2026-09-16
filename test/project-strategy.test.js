@@ -152,6 +152,37 @@ test("buildProjectStrategy attaches the ALREADY-confirmed real Bootstrap Analyst
   assert.equal(strategy.orchestrator.adapterId, "codex", "coding-only Architect must pick the real coding leader — a separate decision from the given analyst");
 });
 
+test("buildProjectStrategy defaults selectionSource/recommendationTags for the legacy {choice, model} shape — backward-compatible, never breaking the plain-text subcommand", () => {
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), realCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
+  assert.equal(strategy.bootstrapAnalystSelectionSource, "recommended");
+  assert.deepEqual(strategy.bootstrapAnalystRecommendationTags, ["quality"]);
+});
+
+test("buildProjectStrategy honestly persists a manual, untagged catalog pick — real selectionSource/recommendationTags, no fabricated quality/efficient choice", () => {
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), realCandidates(), {
+    model: { adapterId: "codex", modelId: "codex-model" }, choice: null, selectionSource: "manual", recommendationTags: []
+  });
+  assert.equal(strategy.bootstrapAnalystChoice, null);
+  assert.equal(strategy.bootstrapAnalystSelectionSource, "manual");
+  assert.deepEqual(strategy.bootstrapAnalystRecommendationTags, []);
+});
+
+test("computeBootstrapAnalystAlternatives' entries already carry selectionSource:\"recommended\" and their own real recommendationTags — the same analyst shape the overlay's richer catalog picker uses", () => {
+  const alternatives = computeBootstrapAnalystAlternatives(realCandidates());
+  for (const alt of alternatives) {
+    assert.equal(alt.selectionSource, "recommended");
+    // The same real candidate can legitimately win BOTH quality and
+    // efficient (a small pool, or one clear leader on every real axis) —
+    // recommendationTags reflects every real tag that candidate earned,
+    // never forced down to exactly this one alternative's own choice.
+    assert.ok(alt.recommendationTags.includes(alt.choice));
+  }
+});
+
 test("DECISIVE: the same real candidate pool produces a genuinely different model for the same role when two projects' real roleRequirements ask for different capabilities — this is real per-project re-scoring, not global-team filtering by role name", () => {
   const candidates = realCandidates();
   const analyst = analystChoice("quality", { adapterId: "claude", modelId: "claude-model" });

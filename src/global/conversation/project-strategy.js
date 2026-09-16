@@ -184,10 +184,18 @@ export function computeBootstrapAnalystCatalog({ scoredAll, eligibility, registr
  * (e.g. opencode-go today) is honestly excluded here, never offered as a
  * choice Kairo can't follow through on. A thin projection of
  * computeBootstrapAnalystCatalog's own real ranking — never a second,
- * independent ranking computation — kept in this plain `{choice, model}`
- * shape for the existing preflight/overlay/analyst-run callers.
+ * independent ranking computation.
+ *
+ * Kept in this plain `{choice, model}` shape ONLY for the existing plain-
+ * text `/project analyst quality|efficient --confirm` subcommand, which
+ * predates the full catalog and can only ever offer these two picks. Each
+ * entry also carries the real `selectionSource`/`recommendationTags` the
+ * richer picker (the interactive overlay's analyst catalog step) needs —
+ * both a recommended catalog pick, by construction — so both callers can
+ * pass the exact same `analyst` shape into runBootstrapAnalysis/
+ * buildProjectStrategy.
  * @param {object} candidates - `scoredAll`, `eligibility`, `registry`, `providerCapacity`
- * @returns {Array<{choice: "quality"|"efficient", model: object}>}
+ * @returns {Array<{choice: "quality"|"efficient", model: object, selectionSource: "recommended", recommendationTags: string[]}>}
  */
 export function computeBootstrapAnalystAlternatives(candidates) {
   const { models } = computeBootstrapAnalystCatalog(candidates);
@@ -195,8 +203,8 @@ export function computeBootstrapAnalystAlternatives(candidates) {
   const efficient = models.find((model) => model.recommendationTags.includes("efficient"));
   const toAlternativeModel = (model) => (model ? { adapterId: model.adapterId, modelId: model.modelId, displayName: model.displayName } : null);
   return [
-    quality ? { choice: "quality", model: toAlternativeModel(quality) } : null,
-    efficient ? { choice: "efficient", model: toAlternativeModel(efficient) } : null
+    quality ? { choice: "quality", model: toAlternativeModel(quality), selectionSource: "recommended", recommendationTags: quality.recommendationTags } : null,
+    efficient ? { choice: "efficient", model: toAlternativeModel(efficient), selectionSource: "recommended", recommendationTags: efficient.recommendationTags } : null
   ].filter(Boolean);
 }
 
@@ -218,8 +226,15 @@ export function computeBootstrapAnalystAlternatives(candidates) {
  *   Foundation registry), `providerCapacity` (optional, for EFFICIENT's
  *   quota tiebreak) — exactly what conversation/service.js's snapshot()
  *   already attaches to modelIntelligence for this purpose.
- * @param {{model: object, choice: "quality"|"efficient"}} bootstrapAnalyst -
- *   the real model the human already chose, confirmed, and ran.
+ * @param {{model: object, choice?: "quality"|"efficient"|null, selectionSource?: "recommended"|"manual", recommendationTags?: string[]}} bootstrapAnalyst -
+ *   the real model the human already chose, confirmed, and ran. `choice`
+ *   is legacy — only the plain-text `/project analyst quality|efficient`
+ *   subcommand still relies on it (see computeBootstrapAnalystAlternatives);
+ *   any real catalog pick (including a manual/unscored one that fits
+ *   neither bucket) is honestly `choice: null`, never forced into one.
+ *   `selectionSource`/`recommendationTags` are the real, current contract —
+ *   defaulted to "recommended"/`[bootstrapAnalyst.choice]` when a caller
+ *   doesn't supply them, for the legacy path's own backward compatibility.
  * @returns {object} ProjectStrategy (status: "suggested")
  */
 export function buildProjectStrategy(profile, { scoredAll, eligibility, registry, providerCapacity = null }, bootstrapAnalyst) {
@@ -279,7 +294,9 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
   return {
     status: "suggested",
     bootstrapAnalyst: bootstrapAnalyst.model,
-    bootstrapAnalystChoice: bootstrapAnalyst.choice,
+    bootstrapAnalystChoice: bootstrapAnalyst.choice ?? null,
+    bootstrapAnalystSelectionSource: bootstrapAnalyst.selectionSource ?? "recommended",
+    bootstrapAnalystRecommendationTags: bootstrapAnalyst.recommendationTags ?? (bootstrapAnalyst.choice ? [bootstrapAnalyst.choice] : []),
     orchestrator: modelRef(byRoleCapability.get("Architect")?.primary),
     activeRoles,
     qualityTeam,

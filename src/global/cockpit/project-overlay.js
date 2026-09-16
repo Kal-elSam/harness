@@ -94,7 +94,8 @@ export class ProjectOverlay {
   async loadPreflight() {
     try {
       this.preflight = await this.service.preflightProject({ cwd: this.cwd });
-      if (!this.preflight.alternatives.length) {
+      const models = this.preflight.analystCatalog?.models ?? [];
+      if (!models.length) {
         this.state = S.NO_ANALYST;
       } else {
         this.buildSelectList();
@@ -107,16 +108,59 @@ export class ProjectOverlay {
     this.requestRender();
   }
 
+  /** A short, honest label for a catalog entry's own real recommendationTags/evidenceStatus — never a fabricated "Quality"/"Efficient" claim for a model that doesn't actually carry that tag. */
+  static tagLabel(model) {
+    if (model.evidenceStatus === "unscored") return "Unscored";
+    const tags = [];
+    if (model.recommendationTags.includes("quality")) tags.push("Quality fit");
+    if (model.recommendationTags.includes("efficient")) tags.push("Efficient fit");
+    return tags.join(" · ");
+  }
+
+  /**
+   * Builds the real, full analyst catalog picker — every real ask-
+   * supported model (scored AND unscored), the real recommended one
+   * listed first and pre-selected (index 0), matching every OTHER real
+   * candidate's own real tag/evidence state honestly instead of
+   * collapsing the catalog back down to just two picks.
+   */
   buildSelectList() {
-    const items = this.preflight.alternatives.map((alt) => ({
-      value: alt.choice,
-      label: `${alt.choice === "quality" ? "Quality" : "Efficient"} Bootstrap Analyst`,
-      description: this.view.aiTeamLabelWithProvider(alt.model)
+    const catalog = this.preflight.analystCatalog;
+    const models = catalog.models ?? [];
+    const recommendedKey = catalog.recommendedModel?.candidateKey ?? null;
+    const ordered = recommendedKey
+      ? [...models.filter((m) => m.candidateKey === recommendedKey), ...models.filter((m) => m.candidateKey !== recommendedKey)]
+      : models;
+    // Model-first rows: "<display name>    <provider>    <real tag>" —
+    // never provider-first, matching the plan's own mockup.
+    const items = ordered.map((model) => ({
+      value: model.candidateKey,
+      label: `${model.displayName}    ${model.adapterId}`,
+      description: ProjectOverlay.tagLabel(model)
     }));
-    this.selectList = new SelectList(items, 6, editorTheme.selectList);
+    this.selectList = new SelectList(items, 8, editorTheme.selectList);
     this.selectList.onSelect = (item) => {
-      this.selectedAnalyst = this.preflight.alternatives.find((alt) => alt.choice === item.value) ?? null;
-      if (this.selectedAnalyst) this.state = S.CONFIRM_ANALYST;
+      const picked = models.find((model) => model.candidateKey === item.value);
+      if (!picked) return;
+      const selectionSource = picked.candidateKey === recommendedKey ? "recommended" : "manual";
+      const recommendationTags = picked.recommendationTags ?? [];
+      this.selectedAnalyst = {
+        // A clean modelRef shape — no UI-only fields leak into what
+        // eventually gets persisted verbatim as ProjectStrategy's own
+        // bootstrapAnalyst (see buildProjectStrategy). available/
+        // evidenceStatus below are UI-only, read by this overlay's own
+        // CONFIRM_ANALYST render, never sent to the service or persisted.
+        model: { adapterId: picked.adapterId, modelId: picked.modelId, displayName: picked.displayName },
+        selectionSource,
+        recommendationTags,
+        // choice stays ONLY for the legacy plain-text subcommand's own
+        // persisted field — never fabricated for a real manual/unscored
+        // pick that fits neither bucket.
+        choice: recommendationTags.includes("quality") ? "quality" : recommendationTags.includes("efficient") ? "efficient" : null,
+        available: picked.available,
+        evidenceStatus: picked.evidenceStatus
+      };
+      this.state = S.CONFIRM_ANALYST;
       this.requestRender();
     };
     this.selectList.onCancel = () => this.close();
@@ -195,30 +239,38 @@ export class ProjectOverlay {
   }
 
   render(width) {
-    const box = new Box(2, 1, (text) => theme.bg("selection", text));
+    // No background applied to the whole box — only the SelectList's own
+    // active row gets a highlight (editorTheme.selectList's own
+    // selectedPrefix/selectedText), so the overlay reads as a real modal
+    // over the dashboard, not a solid color block.
+    const box = new Box(2, 1);
     const aiTeamLabel = (model) => this.view.aiTeamLabel(model);
     const push = (text) => box.addChild(new Text(text));
 
     switch (this.state) {
       case S.LOADING_PREFLIGHT:
-        push(theme.bold("Project Analysis"));
+        push(theme.bold("Analyze Project"));
         push(theme.fg("muted", "Reading project evidence locally — no provider call, no quota consumed…"));
         break;
       case S.NO_ANALYST:
-        push(theme.bold("Project Analysis"));
+        push(theme.bold("Analyze Project"));
         push(theme.fg("warning", "No real Bootstrap Analyst candidate is available right now (ASK only supports Codex/Claude today)."));
         push(theme.fg("muted", "Esc / Enter to close."));
         break;
       case S.SELECT_ANALYST:
-        push(theme.bold("Select Bootstrap Analyst"));
+        push(theme.bold("Analyze Project"));
         push(theme.fg("muted", "Real, read-only preflight complete. Pick which real model investigates this project."));
         box.addChild(this.selectList);
-        push(theme.fg("muted", "↑/↓ navigate · Enter select · Esc cancel"));
+        push(theme.fg("muted", "Enter Select · Esc Cancel"));
         break;
       case S.CONFIRM_ANALYST: {
-        const model = this.selectedAnalyst.model;
+        const { model, selectionSource, available, evidenceStatus } = this.selectedAnalyst;
         push(theme.bold("Confirm Bootstrap Analyst"));
-        push(`  ${this.view.aiTeamLabelWithProvider(model)}${model.available === false ? theme.fg("warning", " (not available)") : ""}`);
+        const sourceNote = selectionSource === "manual" ? theme.fg("muted", " (manual selection)") : "";
+        push(`  ${this.view.aiTeamLabelWithProvider(model)}${sourceNote}${available === false ? theme.fg("warning", " (not available)") : ""}`);
+        if (evidenceStatus === "unscored") {
+          push(theme.fg("warning", "This model has no real benchmark evidence — Kairo isn't recommending it, you're choosing it manually."));
+        }
         push(theme.fg("warning", "This will run a real, read-only investigation against your project and consume real quota from this provider."));
         push(theme.fg("muted", "Enter confirm and run · Esc back"));
         break;
@@ -230,7 +282,8 @@ export class ProjectOverlay {
       case S.RESULT: {
         const strategy = this.suggestedStrategy;
         push(theme.bold("Suggested Project Team"));
-        push(theme.fg("muted", `Bootstrap Analyst: ${strategy.bootstrapAnalystChoice} — ${this.view.aiTeamLabelWithProvider(strategy.bootstrapAnalyst)}`));
+        const choiceNote = strategy.bootstrapAnalystChoice ?? (strategy.bootstrapAnalystSelectionSource === "manual" ? "manual pick" : "recommended");
+        push(theme.fg("muted", `Bootstrap Analyst: ${choiceNote} — ${this.view.aiTeamLabelWithProvider(strategy.bootstrapAnalyst)}`));
         for (const line of teamLines("PROJECT TEAM — Quality", strategy.qualityTeam, aiTeamLabel)) push(line);
         for (const line of teamLines("PROJECT TEAM — Efficient (alternative)", strategy.efficientTeam, aiTeamLabel)) push(line);
         push(theme.fg("muted", "Enter approve and activate · Esc close without approving (strategy stays suggested)"));
@@ -289,6 +342,6 @@ export function openProjectOverlay({ tui, service, view, cwd }) {
     onClose: () => handle?.hide(),
     requestRender: () => tui.requestRender()
   });
-  handle = tui.showOverlay(overlay, { width: "80%", maxHeight: "80%", anchor: "center" });
+  handle = tui.showOverlay(overlay, { width: 76, maxHeight: "70%", anchor: "center" });
   return handle;
 }
