@@ -530,7 +530,7 @@ test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the requi
   const { title, lines } = view.projectTeamPanel(80);
   assert.equal(title, "PROJECT TEAM · crm · SUGGESTED");
   const joined = lines.join("\n");
-  assert.match(joined, /Bootstrap Analyst\s+GPT-6 Astra/);
+  assert.match(joined, /Project Analyst\s+GPT-6 Astra/);
   assert.match(joined, /Orchestrator\s+Fable 5\.1/);
   assert.match(joined, /Architect\s+Fable 5\.1/);
   assert.match(joined, /Builder\s+GPT-6 Astra/);
@@ -548,7 +548,7 @@ test("projectTeamPanel shows AWAITING_ANALYST — real quality/efficient alterna
     ]
   };
   const { title, lines } = view.projectTeamPanel(80);
-  assert.equal(title, "PROJECT ANALYSIS · crm — Select Bootstrap Analyst");
+  assert.equal(title, "PROJECT ANALYSIS · crm — Select Project Analyst");
   const joined = lines.join("\n");
   assert.match(joined, /quality\s+GPT-6 Astra/);
   assert.match(joined, /efficient\s+Claude X/);

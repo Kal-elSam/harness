@@ -211,7 +211,7 @@ export async function runCockpitApp({
           const strategy = view.snapshot?.projectStrategy;
           if (!strategy) {
             pushTranscript("kairo", view.pendingProjectAnalysis
-              ? "AWAITING_ANALYST — pick a real Bootstrap Analyst with /project analyst quality|efficient --confirm."
+              ? "AWAITING_ANALYST — pick a real Project Analyst with /project analyst quality|efficient --confirm."
               : "Project not analyzed. Use /project analyze for a real, project-specific team.");
           } else {
             const approvedNote = strategy.approvedAt ? ` (approved ${strategy.approvedAt})` : "";
@@ -221,7 +221,7 @@ export async function runCockpitApp({
             }
           }
         } else if (sub === "analyze") {
-          // LOCAL_PREFLIGHT: real, read-only evidence + real Bootstrap
+          // LOCAL_PREFLIGHT: real, read-only evidence + real Project
           // Analyst alternatives — no provider call yet, no ProjectStrategy
           // created yet (AWAITING_ANALYST). The human still has to pick
           // and confirm before anything runs.
@@ -231,11 +231,11 @@ export async function runCockpitApp({
             const preflight = await service.preflightProject({ cwd });
             view.pendingProjectAnalysis = preflight;
             if (!preflight.alternatives.length) {
-              pushTranscript("kairo", "No real Bootstrap Analyst candidate is available right now (ASK only supports Codex/Claude today).");
+              pushTranscript("kairo", "No real Project Analyst candidate is available right now (ASK only supports Codex/Claude today).");
               return;
             }
             const lines = preflight.alternatives.map((alt) => `  ${alt.choice}: ${view.aiTeamLabel(alt.model)}`).join("\n");
-            pushTranscript("kairo", `Select Bootstrap Analyst — real alternatives:\n${lines}\nUse /project analyst quality|efficient --confirm to run it (consumes real quota).`);
+            pushTranscript("kairo", `Select Project Analyst — real alternatives:\n${lines}\nUse /project analyst quality|efficient --confirm to run it (consumes real quota).`);
           }).finally(() => { editor.disableSubmit = false; });
         } else if (sub === "analyst") {
           const choice = args[1]?.toLowerCase();
@@ -246,7 +246,7 @@ export async function runCockpitApp({
             return;
           }
           if (!view.pendingProjectAnalysis) {
-            pushTranscript("kairo", "Nothing awaiting a Bootstrap Analyst choice. Run /project analyze first.");
+            pushTranscript("kairo", "Nothing awaiting a Project Analyst choice. Run /project analyze first.");
             editor.setText("");
             return;
           }

@@ -427,6 +427,16 @@ test("the picker's own rows are model-first (display name before provider), neve
   assert.ok(nameIndex >= 0 && providerIndex > nameIndex, "the model's own display name must render before its provider on the same row");
 });
 
+test("REGRESSION: the picker's model+provider row is explicitly colored with the real, readable 'text' role — never left to a terminal's own default or to muted", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  const lines = overlay.render(76).join("\n");
+  // theme.text's real RGB (243,246,249) — an explicit fg escape right
+  // before the model's own display name confirms it's not left plain.
+  assert.match(lines, /\x1b\[38;2;243;246;249m[^\x1b]*GPT-6 Astra/);
+});
+
 test("the overlay's own Box never applies a full-panel background — only SelectList's own active-row highlight does", async () => {
   const service = makePreflightService();
   const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });

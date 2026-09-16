@@ -572,7 +572,7 @@ test("/project analyze runs a real LOCAL_PREFLIGHT (no strategy yet) and lists r
   assert.deepEqual(preflightCalls, [{ cwd: "/repo" }]);
   assert.ok(app.view.pendingProjectAnalysis, "AWAITING_ANALYST state must be held until a real choice is confirmed");
   const texts = app.view.transcript.map((entry) => entry.text).join("\n");
-  assert.match(texts, /Select Bootstrap Analyst — real alternatives/);
+  assert.match(texts, /Select Project Analyst — real alternatives/);
   assert.match(texts, /GPT-6 Astra/);
   assert.match(texts, /Claude X/);
   app.stop();

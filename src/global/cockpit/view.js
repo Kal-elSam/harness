@@ -374,7 +374,7 @@ export class CockpitView {
       const lines = this.pendingProjectAnalysis.alternatives.map((alt) =>
         `  ${alt.choice.padEnd(10)} ${this.aiTeamLabel(alt.model)}`);
       lines.push(theme.fg("muted", "Use /project analyst quality|efficient --confirm to run the real analysis (consumes real quota)."));
-      return { title: `PROJECT ANALYSIS · ${project} — Select Bootstrap Analyst`, lines };
+      return { title: `PROJECT ANALYSIS · ${project} — Select Project Analyst`, lines };
     }
     if (!strategy) {
       return {
@@ -383,7 +383,7 @@ export class CockpitView {
       };
     }
     const lines = [];
-    if (strategy.bootstrapAnalyst) lines.push(`${"Bootstrap Analyst".padEnd(18)} ${this.aiTeamLabel(strategy.bootstrapAnalyst)}`);
+    if (strategy.bootstrapAnalyst) lines.push(`${"Project Analyst".padEnd(18)} ${this.aiTeamLabel(strategy.bootstrapAnalyst)}`);
     if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(18)} ${this.aiTeamLabel(strategy.orchestrator)}`);
     for (const entry of strategy.qualityTeam ?? []) {
       lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.aiTeamLabel(entry.model) : theme.fg("warning", "no eligible option")}`);

@@ -151,10 +151,14 @@ export class ProjectOverlay {
       ? [...models.filter((m) => m.candidateKey === recommendedKey), ...models.filter((m) => m.candidateKey !== recommendedKey)]
       : models;
     // Model-first rows: "<display name>    <provider>    <real tag>" —
-    // never provider-first, matching the plan's own mockup.
+    // never provider-first, matching the plan's own mockup. The primary
+    // column (model + provider) is explicitly the real, bright `text`
+    // color — never left to the terminal's own default or muted, so it
+    // stays legible regardless of terminal theme; muted stays reserved
+    // for the real secondary tag in `description`.
     const items = ordered.map((model) => ({
       value: model.candidateKey,
-      label: `${model.displayName}    ${model.adapterId}`,
+      label: theme.fg("text", `${model.displayName}    ${model.adapterId}`),
       description: ProjectOverlay.tagLabel(model)
     }));
     this.selectList = new SelectList(items, 8, editorTheme.selectList);
@@ -215,7 +219,9 @@ export class ProjectOverlay {
     const items = team.map((entry) => {
       const modelText = entry.model ? this.view.aiTeamLabel(entry.model) : "no eligible option";
       const overrideNote = entry.assignmentSource === "override" ? theme.fg("accent", " (override)") : "";
-      return { value: entry.role, label: `${entry.role.padEnd(10)} ${modelText}${overrideNote}`, description: "" };
+      // Role + model are the real primary information here — explicit
+      // `text` color, never left to default/muted.
+      return { value: entry.role, label: theme.fg("text", `${entry.role.padEnd(10)} ${modelText}`) + overrideNote, description: "" };
     });
     this.resultSelectList = new SelectList(items, 6, editorTheme.selectList);
     this.resultSelectList.onSelect = (item) => void this.openRolePicker(item.value);
@@ -304,7 +310,7 @@ export class ProjectOverlay {
       : this.editModels;
     const items = filtered.map((model) => ({
       value: model.candidateKey,
-      label: `${model.displayName}    ${model.adapterId}`,
+      label: theme.fg("text", `${model.displayName}    ${model.adapterId}`),
       description: this.editItemTag(model, currentKey, recommendedKey)
     }));
     this.editSelectList = new SelectList(items, 8, editorTheme.selectList);
@@ -448,19 +454,25 @@ export class ProjectOverlay {
         push(theme.fg("muted", "Reading project evidence locally — no provider call, no quota consumed…"));
         break;
       case S.NO_ANALYST:
-        push(theme.bold("Analyze Project"));
-        push(theme.fg("warning", "No real Bootstrap Analyst candidate is available right now (ASK only supports Codex/Claude today)."));
+        push(theme.bold("Select Project Analyst"));
+        push(theme.fg("warning", "No real Project Analyst candidate is available right now (ASK only supports Codex/Claude today)."));
         push(theme.fg("muted", "Esc / Enter to close."));
         break;
       case S.SELECT_ANALYST:
-        push(theme.bold("Analyze Project"));
-        push(theme.fg("muted", "Real, read-only preflight complete. Pick which real model investigates this project."));
+        push(theme.bold("Select Project Analyst"));
+        // The Project Analyst investigates and reports on this project's
+        // real architecture and risks — it never joins the team it
+        // recommends (see BOOTSTRAP_ANALYST_PROFILE), so it's shown
+        // distinctly from Architect and every other role, and only ever
+        // as one of the two real models Kairo can actually invoke,
+        // isolated, read-only (Codex/Claude today).
+        push(theme.fg("muted", "Architecture & systems analysis — read-only, no quota consumed until you confirm."));
         box.addChild(this.selectList);
         push(theme.fg("muted", "Enter Select · Esc Cancel"));
         break;
       case S.CONFIRM_ANALYST: {
         const { model, selectionSource, available, evidenceStatus } = this.selectedAnalyst;
-        push(theme.bold("Confirm Bootstrap Analyst"));
+        push(theme.bold("Confirm Project Analyst"));
         const sourceNote = selectionSource === "manual" ? theme.fg("muted", " (manual selection)") : "";
         push(`  ${this.view.aiTeamLabelWithProvider(model)}${sourceNote}${available === false ? theme.fg("warning", " (not available)") : ""}`);
         if (evidenceStatus === "unscored") {
@@ -478,7 +490,7 @@ export class ProjectOverlay {
         const strategy = this.suggestedStrategy;
         push(theme.bold("Suggested Project Team"));
         const choiceNote = strategy.bootstrapAnalystChoice ?? (strategy.bootstrapAnalystSelectionSource === "manual" ? "manual pick" : "recommended");
-        push(theme.fg("muted", `Bootstrap Analyst: ${choiceNote} — ${this.view.aiTeamLabelWithProvider(strategy.bootstrapAnalyst)}`));
+        push(theme.fg("muted", `Project Analyst: ${choiceNote} — ${this.view.aiTeamLabelWithProvider(strategy.bootstrapAnalyst)}`));
         push(theme.bold("PROJECT TEAM"));
         box.addChild(this.resultSelectList);
         // Quality/Efficient stay real, comparative REFERENCE — muted, and
