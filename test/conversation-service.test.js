@@ -135,6 +135,7 @@ test("approved plan execution reserves one detached Claude run and reuses it", a
       assert.equal(input.allowUnsafePermissions, false);
       assert.equal(input.permissionSource, "cockpit");
       assert.equal(input.wait, false);
+      assert.equal(input.captureTranscript, true, "real assistant/result content must flow into the run's own event log, since the cockpit tails it live via readRunTranscript");
       assert.match(input.task, /# Approved plan/);
       return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
     }
@@ -1423,4 +1424,45 @@ test("executePlan with a confirmationTarget selecting the suggested alternative 
   const confirmationTarget = { role: "Builder", selection: "suggested-alternative", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5" };
   const result = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
   assert.equal(result.execution.provider, "claude");
+});
+
+// --- readRunTranscript: tailing a real run's own "run.transcript" events
+// for the cockpit's live streaming display.
+
+test("readRunTranscript returns only new real transcript entries since sinceIndex, with each real provider attributed from the event itself", async () => {
+  const events = [
+    { type: "run.started", source: "kairo", timestamp: "t0", data: {} },
+    { type: "run.transcript", source: "codex", timestamp: "t1", data: { text: "Reading the failing test…" } },
+    { type: "agent.tool_call", source: "codex", timestamp: "t2", data: {} },
+    { type: "run.transcript", source: "codex", timestamp: "t3", data: { content: [{ type: "text", text: "Found it — fixing now." }] } }
+  ];
+  const service = createConversationService({ readRunEvents: async () => events });
+
+  const first = await service.readRunTranscript({ runId: "run_1" });
+  assert.equal(first.nextIndex, 2, "two real run.transcript events exist so far");
+  assert.deepEqual(first.entries, [
+    { provider: "codex", timestamp: "t1", text: "Reading the failing test…" },
+    { provider: "codex", timestamp: "t3", text: "Found it — fixing now." }
+  ]);
+
+  events.push({ type: "run.transcript", source: "codex", timestamp: "t4", data: { text: "Tests pass." } });
+  const second = await service.readRunTranscript({ runId: "run_1", sinceIndex: first.nextIndex });
+  assert.equal(second.nextIndex, 3);
+  assert.deepEqual(second.entries, [{ provider: "codex", timestamp: "t4", text: "Tests pass." }]);
+});
+
+test("readRunTranscript attributes each real event to its own real provider — multiple providers/runs never collapse into one label", async () => {
+  const events = [
+    { type: "run.transcript", source: "codex", timestamp: "t1", data: { text: "Codex output" } },
+    { type: "run.transcript", source: "claude", timestamp: "t2", data: { text: "Claude output" } }
+  ];
+  const service = createConversationService({ readRunEvents: async () => events });
+  const result = await service.readRunTranscript({ runId: "run_multi" });
+  assert.deepEqual(result.entries.map((e) => e.provider), ["codex", "claude"]);
+});
+
+test("readRunTranscript returns an empty entries list for a run with no real transcript events yet, without throwing", async () => {
+  const service = createConversationService({ readRunEvents: async () => [{ type: "run.started", source: "kairo", data: {} }] });
+  const result = await service.readRunTranscript({ runId: "run_quiet" });
+  assert.deepEqual(result, { runId: "run_quiet", nextIndex: 0, entries: [] });
 });

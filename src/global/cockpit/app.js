@@ -96,11 +96,50 @@ export async function runCockpitApp({
     resolveDone();
   }
 
+  // The real nextIndex already shown per active runId (see
+  // service.readRunTranscript's own doc) — in-memory only, never
+  // persisted: a restart just starts tailing from 0 again, which is fine
+  // since the run's own real event log still has everything.
+  const runTranscriptState = new Map();
+
+  /**
+   * Tails every real active run's own transcript for new lines since the
+   * last poll and pushes them into the chat, each one tagged with its own
+   * real provider (never a generic "Kairo" label) — Kairo can have
+   * multiple real runs active across different real providers (Codex,
+   * Claude, OpenCode) at once, and each line must stay attributed to
+   * whichever one actually produced it. Runs one final tail pass after a
+   * run stops being active (to catch its last lines), then stops tracking
+   * it. Best-effort: a single run's tail failing must never break the
+   * rest of the poll loop.
+   * @param {Array<object>} timeline
+   */
+  async function tailActiveRunTranscripts(timeline) {
+    for (const entry of timeline ?? []) {
+      const runId = entry.execution?.runId;
+      if (!runId) continue;
+      if (!entry.execution.active && !runTranscriptState.has(runId)) continue;
+      const sinceIndex = runTranscriptState.get(runId) ?? 0;
+      try {
+        const result = await service.readRunTranscript({ runId, sinceIndex });
+        for (const line of result.entries) {
+          const tag = line.provider ? `${theme.fg("muted", `[${line.provider}]`)} ` : "";
+          pushTranscript("kairo", `${tag}${line.text}`);
+        }
+        runTranscriptState.set(runId, result.nextIndex);
+      } catch {
+        // Best-effort — see this function's own doc.
+      }
+      if (!entry.execution.active) runTranscriptState.delete(runId);
+    }
+  }
+
   async function refresh() {
     try {
       const snapshot = await service.snapshot({ cwd });
       view.setSnapshot(snapshot);
       view.setRowsFromTimeline(snapshot.timeline);
+      await tailActiveRunTranscripts(snapshot.timeline);
     } catch (error) {
       view.setStatus(`Refresh failed: ${error.message ?? String(error)}`);
     }

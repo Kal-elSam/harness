@@ -99,6 +99,33 @@ test("startRun supervises process, normalizes events, and completes", async () =
   });
 });
 
+test("REGRESSION: a real run.transcript event carries the real originating provider (adapter id) as its source — never the generic default \"kairo\"", async () => {
+  await withStubExecutables(["codex"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-transcript-source-"));
+    const lines = [
+      JSON.stringify({ type: "assistant", content: [{ type: "text", text: "Reading the failing test…" }] })
+    ];
+
+    const { runId, completion } = await startRun({
+      homeDir,
+      agentId: "codex",
+      resolveAdapterImpl: resolveAdapterWithNoopPreflight,
+      task: "run tests",
+      cwd: homeDir,
+      cliVersion: "0.2.1",
+      captureTranscript: true,
+      spawnImpl: createFakeSpawn(lines)
+    });
+
+    await completion;
+    const events = await readRunEvents(homeDir, runId);
+    const transcriptEvent = events.find((event) => event.type === "run.transcript");
+    assert.ok(transcriptEvent, "a real run.transcript event must have been persisted");
+    assert.equal(transcriptEvent.source, "codex");
+    assert.deepEqual(transcriptEvent.data.content, [{ type: "text", text: "Reading the failing test…" }]);
+  });
+});
+
 test("startRun marks failure on non-zero exit", async () => {
   await withStubExecutables(["codex"], async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-fail-"));

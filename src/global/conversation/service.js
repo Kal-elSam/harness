@@ -5,9 +5,10 @@ import {
 } from "../architect/architect-store.js";
 import { PLAN_STATES } from "../architect/architect-types.js";
 import { resolveHomeDir } from "../paths.js";
-import { listRunRecords, readRunState } from "../runtime/run-store.js";
+import { listRunRecords, readRunEvents, readRunState } from "../runtime/run-store.js";
 import { recoverRuns, startRun, stopRun } from "../runtime/run-manager.js";
 import { createRunId, isActiveRunState } from "../runtime/run-types.js";
+import { formatTranscriptEventText } from "../runtime/run-events.js";
 import { inspectExecutionAdapters } from "../runtime/execution-adapters/index.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
 import { hasFiniteUsage } from "../ink/cockpit-usage.js";
@@ -245,6 +246,7 @@ export function createConversationService(deps = {}) {
   const inspectAdapters = deps.inspectExecutionAdapters ?? inspectExecutionAdapters;
   const inspectEngram = deps.inspectEngramIntegration ?? inspectEngramIntegration;
   const listRuns = deps.listRunRecords ?? listRunRecords;
+  const readRunEventsImpl = deps.readRunEvents ?? readRunEvents;
   const readCodexUsageImpl = deps.readCodexUsage ?? readCodexUsage;
   const readClaudeUsageImpl = deps.readClaudeUsage ?? readClaudeUsage;
   const readOpenCodeUsageImpl = deps.readOpenCodeUsage
@@ -1036,7 +1038,14 @@ export function createConversationService(deps = {}) {
         const started = await launchRun({
           homeDir, runId, agentId: resolvedAgentId, task, cwd: projectRoot, model: resolvedModel,
           permissions: [], allowUnsafePermissions: false, permissionSource: "cockpit",
-          captureTranscript: false, strategy: "direct", wait: false
+          // Real, un-redacted assistant/result content flows into this
+          // real run's own event log only when this is true (see
+          // run-redact.js's own allowTranscript gate) — the cockpit is a
+          // local, interactive session where the human launching the run
+          // is the one reading it back live (readRunTranscript below),
+          // never a background/unattended context, so showing the run's
+          // own real output where it's already displayed makes sense.
+          captureTranscript: true, strategy: "direct", wait: false
         });
         await updateExecution(projectRoot, taskId, {
           runId, agentId: resolvedAgentId, state: started.metadata.state, createdAt, updatedAt: new Date().toISOString()
@@ -1065,6 +1074,34 @@ export function createConversationService(deps = {}) {
       await cancelRun(homeDir, link.runId);
       const record = await readPlan(projectRoot, taskId);
       return { ...publicPlan(record, await executionFor(projectRoot, taskId)), projectRoot };
+    },
+    /**
+     * Tails a real run's own event log for new "run.transcript" entries —
+     * the real, un-redacted assistant/result content a run emits when it
+     * was launched with captureTranscript:true (see executePlan's own
+     * comment). `sinceIndex` is the transcript-relative index (not the
+     * event log's own) the caller has already shown — the cockpit polls
+     * this repeatedly while a run stays active, passing back the real
+     * `nextIndex` each time so it never re-shows a line twice or misses
+     * one. `entries[].provider` is the real adapter id that produced it
+     * (`event.source`), read straight off the real event — never guessed
+     * or defaulted to a single provider, since multiple runs across
+     * different real providers (Codex/Claude/OpenCode) can be active at
+     * once.
+     * @param {object} args
+     * @param {string} args.runId
+     * @param {number} [args.sinceIndex]
+     * @returns {Promise<{runId: string, nextIndex: number, entries: Array<{provider: string|null, timestamp: string|null, text: string}>}>}
+     */
+    async readRunTranscript({ runId, sinceIndex = 0 }) {
+      const events = await readRunEventsImpl(homeDir, runId);
+      const transcriptEvents = events.filter((event) => event?.type === "run.transcript");
+      const entries = transcriptEvents.slice(sinceIndex).map((event) => ({
+        provider: event.source ?? null,
+        timestamp: event.timestamp ?? null,
+        text: formatTranscriptEventText(event.data)
+      }));
+      return { runId, nextIndex: transcriptEvents.length, entries };
     }
   };
 }

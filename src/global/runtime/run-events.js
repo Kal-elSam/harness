@@ -131,6 +131,44 @@ export function applyEventToMetadata(metadata, event) {
   return next;
 }
 
+/**
+ * Best-effort real human-readable text out of a real "run.transcript"
+ * event's own `data` — the shape varies by adapter (Codex/Claude each pass
+ * their own CLI's raw JSON event through mostly as-is, see each adapter's
+ * own parseEventLine), so this tries the common real shapes in order
+ * (flat string, `text`, `content` as a string or an Anthropic-style
+ * content-block array, a nested `message`, `result`) and only ever falls
+ * back to a raw JSON dump when none of those match — it never silently
+ * drops a real event's content just because its exact shape wasn't
+ * anticipated.
+ * @param {unknown} data
+ * @returns {string}
+ */
+export function formatTranscriptEventText(data) {
+  if (data == null) return "";
+  if (typeof data === "string") return data;
+  if (typeof data !== "object") return String(data);
+  if (typeof data.text === "string") return data.text;
+  if (typeof data.content === "string") return data.content;
+  if (Array.isArray(data.content)) {
+    const text = data.content
+      .filter((block) => block && typeof block === "object" && typeof block.text === "string")
+      .map((block) => block.text)
+      .join("");
+    if (text) return text;
+  }
+  if (data.message && typeof data.message === "object") {
+    const nested = formatTranscriptEventText(data.message);
+    if (nested) return nested;
+  }
+  if (typeof data.result === "string") return data.result;
+  try {
+    return JSON.stringify(data);
+  } catch {
+    return String(data);
+  }
+}
+
 export function transitionRunState(metadata, nextState, { exitCode = null, error = null } = {}) {
   const now = new Date().toISOString();
   return {

@@ -1054,3 +1054,77 @@ test("renderConversation puts the pending confirm-execute prompt at the very end
   const confirmIndex = lines.findIndex((line) => line.includes("Execute"));
   assert.ok(historyIndex >= 0 && confirmIndex > historyIndex, "the confirm prompt must come after the transcript history");
 });
+
+test("a real active run's new transcript lines are pushed into the chat on refresh, tagged with their own real provider", async () => {
+  let tui;
+  const readCalls = [];
+  const row = { taskId: "task-a", state: "approved", approval: "approved", execution: { state: "running", active: true, runId: "run_1", message: "codex run is running." } };
+  const service = {
+    snapshot: async () => makeSnapshot([row]),
+    readRunTranscript: async (args) => {
+      readCalls.push(args);
+      return { runId: args.runId, nextIndex: 2, entries: [
+        { provider: "codex", timestamp: "t1", text: "Reading the failing test…" },
+        { provider: "codex", timestamp: "t2", text: "Found it." }
+      ] };
+    }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo", service,
+    terminalFactory: () => ({}), tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => makeFakeEditor(), setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+  assert.deepEqual(readCalls, [{ runId: "run_1", sinceIndex: 0 }]);
+  const texts = app.view.transcript.map((e) => e.text);
+  assert.ok(texts.some((t) => t.includes("[codex]") && t.includes("Reading the failing test…")));
+  assert.ok(texts.some((t) => t.includes("[codex]") && t.includes("Found it.")));
+  app.stop();
+});
+
+test("a live-tailed run never shows the same real line twice across two polls, and stops being tailed once it's no longer active", async () => {
+  let tui;
+  const readCalls = [];
+  let active = true;
+  const snapshots = [
+    makeSnapshot([{ taskId: "task-a", state: "approved", approval: "approved", execution: { state: "running", active: true, runId: "run_1", message: "running" } }]),
+    makeSnapshot([{ taskId: "task-a", state: "approved", approval: "approved", execution: { state: "completed", active: false, runId: "run_1", message: "done" } }])
+  ];
+  let call = 0;
+  const service = {
+    snapshot: async () => snapshots[Math.min(call++, snapshots.length - 1)],
+    readRunTranscript: async (args) => {
+      readCalls.push(args);
+      if (args.sinceIndex === 0) return { runId: "run_1", nextIndex: 1, entries: [{ provider: "claude", timestamp: "t1", text: "First line." }] };
+      return { runId: "run_1", nextIndex: 2, entries: [{ provider: "claude", timestamp: "t2", text: "Final line." }] };
+    }
+  };
+  const intervalCallbacks = [];
+  const app = await runCockpitApp({
+    cwd: "/repo", service,
+    terminalFactory: () => ({}), tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: (fn) => { intervalCallbacks.push(fn); return intervalCallbacks.length; }, clearIntervalImpl: () => {}
+  });
+  await intervalCallbacks[0](); // poll tick 2: run now inactive, one final tail
+  await intervalCallbacks[0](); // poll tick 3: run no longer tracked — must not call readRunTranscript again
+  assert.deepEqual(readCalls, [{ runId: "run_1", sinceIndex: 0 }, { runId: "run_1", sinceIndex: 1 }]);
+  const texts = app.view.transcript.map((e) => e.text);
+  assert.equal(texts.filter((t) => t.includes("First line.")).length, 1);
+  assert.equal(texts.filter((t) => t.includes("Final line.")).length, 1);
+  app.stop();
+});
+
+test("a readRunTranscript failure for one run never breaks the rest of the poll loop", async () => {
+  let tui;
+  const service = {
+    snapshot: async () => makeSnapshot([{ taskId: "task-a", state: "approved", approval: "approved", execution: { state: "running", active: true, runId: "run_1", message: "running" } }]),
+    readRunTranscript: async () => { throw new Error("boom"); }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo", service,
+    terminalFactory: () => ({}), tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => makeFakeEditor(), setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+  assert.equal(app.view.rows[0].taskId, "task-a", "the rest of refresh() must still have applied despite the tail failure");
+  app.stop();
+});

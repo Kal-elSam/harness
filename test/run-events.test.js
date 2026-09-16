@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   applyEventToMetadata,
   createRunEvent,
+  formatTranscriptEventText,
   normalizeAdapterEvent,
   transitionRunState
 } from "../src/global/runtime/run-events.js";
@@ -93,4 +94,33 @@ test("createRunEvent never stores secrets in data", () => {
   });
 
   assert.equal(event.data.apiKey, "[REDACTED]");
+});
+
+test("formatTranscriptEventText extracts a flat text/content string", () => {
+  assert.equal(formatTranscriptEventText({ text: "Reading src/index.js…" }), "Reading src/index.js…");
+  assert.equal(formatTranscriptEventText({ content: "Done." }), "Done.");
+  assert.equal(formatTranscriptEventText("already a string"), "already a string");
+});
+
+test("formatTranscriptEventText joins a real Anthropic-style content-block array", () => {
+  const data = { content: [{ type: "text", text: "I'll check the " }, { type: "text", text: "test suite first." }] };
+  assert.equal(formatTranscriptEventText(data), "I'll check the test suite first.");
+});
+
+test("formatTranscriptEventText recurses into a nested message object", () => {
+  const data = { message: { content: [{ type: "text", text: "Looking at the diff." }] } };
+  assert.equal(formatTranscriptEventText(data), "Looking at the diff.");
+});
+
+test("formatTranscriptEventText falls back to result, then to a raw JSON dump — never silently drops real content", () => {
+  assert.equal(formatTranscriptEventText({ result: "All tests passed." }), "All tests passed.");
+  const unrecognized = { rawType: "weird_event", payload: { foo: "bar" } };
+  const fallback = formatTranscriptEventText(unrecognized);
+  assert.equal(fallback, JSON.stringify(unrecognized));
+});
+
+test("formatTranscriptEventText never throws on null/empty/non-string content-block text", () => {
+  assert.equal(formatTranscriptEventText(null), "");
+  assert.equal(formatTranscriptEventText({}), "{}");
+  assert.equal(formatTranscriptEventText({ content: [{ type: "image", url: "x" }] }), JSON.stringify({ content: [{ type: "image", url: "x" }] }));
 });

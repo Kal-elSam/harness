@@ -180,6 +180,13 @@ export async function supervisePreparedRun({
           captureTranscript: true
         }),
         runId,
+        // createRunEvent defaults source to "kairo" — the real event this
+        // is mirrored from already carries the real adapter id (see
+        // normalizeAdapterEvent's own `source: adapterId`), so this must
+        // be explicitly propagated, or every provider's transcript would
+        // collapse to a generic "kairo" label with no way to tell whether
+        // a given line came from Codex, Claude, or another real provider.
+        source: event.source ?? adapter.id,
         timestamp: event.timestamp
       });
     }
