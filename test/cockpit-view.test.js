@@ -299,6 +299,33 @@ test("/models --evidence renders decisionEvidence's real per-capability coverage
   assert.match(lines, /Pareto balance · lower real full input\+output price 60 → 12/);
 });
 
+test("/models --evidence reports a real retention ratio above 100% as 'exceeds QUALITY reference', never a nonsensical 'retention 117%'", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      aiTeam: [
+        { role: "Architect", primary: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", available: true }, fallback: null, reason: null }
+      ],
+      efficientTeam: [
+        {
+          role: "Architect",
+          primary: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", available: true },
+          fallback: null, reason: "Only adequate option — no real alternative clears the capability floor.",
+          decisionEvidence: {
+            coverage: { reasoning: { have: 3, active: 3, comparable: true }, coding: { have: 1, active: 2, comparable: true } },
+            confidence: "medium", isProvisional: false, decisionType: "fallback", retention: 1.1748813435560423, requiredFloor: 0.9, riskLevel: "high", savings: null
+          }
+        }
+      ]
+    }
+  });
+  const lines = view.aiTeamDetailLines().join("\n");
+  assert.match(lines, /exceeds QUALITY reference by 17% · required 90% · high-risk role/);
+  assert.doesNotMatch(lines, /retention 117%/);
+});
+
 test("/models --evidence lists real catalog models Kairo has access to but couldn't match to any Artificial Analysis data, honestly labeled UNSCORED — never a fabricated score", () => {
   const { view } = makeView();
   view.setSnapshot({

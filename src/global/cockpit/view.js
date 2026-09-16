@@ -785,10 +785,27 @@ export class CockpitView {
       // real risk-based floor it had to clear — never shown for QUALITY,
       // where these concepts don't apply (decisionEvidence.retention is
       // null there by construction).
+      //
+      // The raw ratio (chosen.gapValue / leader.gapValue) can genuinely
+      // exceed 1 — the two gapValues come from different candidate-ranking
+      // tiers (leader is eligibleRanked[0], the raw top-by-value; chosen
+      // can come from the comparable-preferred pool once a provisional
+      // raw leader is demoted — see preferComparableCandidates) — so a
+      // value above 100% is real, not a bug, but "retention 117%" reads as
+      // nonsensical: you can't retain more than the whole of something.
+      // Reported instead as "exceeds QUALITY reference by N%", keeping the
+      // word "retention" reserved for its own real 0-100% meaning; the raw
+      // ratio itself is untouched in decisionEvidence.retention for audit.
       if (decisionEvidence?.retention != null && decisionEvidence.requiredFloor != null) {
-        const retentionPct = Math.round(decisionEvidence.retention * 100);
         const floorPct = Math.round(decisionEvidence.requiredFloor * 100);
-        lines.push(theme.fg("muted", `  retention ${retentionPct}% · required ${floorPct}% · ${decisionEvidence.riskLevel ?? "unknown"}-risk role`));
+        const riskNote = `${decisionEvidence.riskLevel ?? "unknown"}-risk role`;
+        if (decisionEvidence.retention > 1) {
+          const excessPct = Math.round((decisionEvidence.retention - 1) * 100);
+          lines.push(theme.fg("muted", `  exceeds QUALITY reference by ${excessPct}% · required ${floorPct}% · ${riskNote}`));
+        } else {
+          const retentionPct = Math.round(decisionEvidence.retention * 100);
+          lines.push(theme.fg("muted", `  retention ${retentionPct}% · required ${floorPct}% · ${riskNote}`));
+        }
       }
       // Real savings evidence — only ever shown when a real resource
       // dimension actually decided the pick (see describeEfficiencyDecision);
