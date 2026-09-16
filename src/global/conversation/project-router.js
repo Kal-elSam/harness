@@ -19,11 +19,19 @@
 // persisted, not recomputed) — this module only checks whether that
 // persisted candidate is STILL real-eligible right now.
 
-// Providers Kairo can't launch an automatic run against today (see
-// execution-adapters/index.js) — a real model assigned to one of these
-// is honestly reported as a manual handoff, never silently substituted or
-// silently executed anyway.
-const MANUAL_ONLY_ADAPTERS = new Set(["cursor", "opencode-go"]);
+/**
+ * Whether Kairo can launch an automatic run against this real candidate
+ * right now — reads model-candidate-catalog.js's own `accessMode`
+ * ("automatic"|"manual"), the canonical source, never a hardcoded
+ * adapterId list. Cursor/OpenCode Go are "manual" today because
+ * resolveAccessMode says so, not because this module knows their names —
+ * if OpenCode Go ever gets real, proven automatic execution, that change
+ * lands once in resolveAccessMode and this router picks it up for free,
+ * with no adapter-list edit needed here.
+ */
+function isAutomatic(model) {
+  return model?.accessMode === "automatic";
+}
 
 export const PROJECT_ROUTE_DECISION = {
   ROUTED: "ROUTED",
@@ -39,7 +47,7 @@ function assignmentRef(model, assignmentSource) {
 /** A real candidate is only ever offered as `suggestedAlternative` when it's currently automatically-executable — the same bar ROUTED itself requires. Never suggests another manual-only or currently-ineligible provider; honestly null instead. */
 function routableAlternative(model, eligibility) {
   if (!model) return null;
-  if (MANUAL_ONLY_ADAPTERS.has(model.adapterId)) return null;
+  if (!isAutomatic(model)) return null;
   if (eligibility[model.adapterId]?.ok !== true) return null;
   return { provider: model.adapterId, model };
 }
@@ -67,11 +75,11 @@ function blocked(role, strategyFingerprint, why, { blockedAssignment = null, sug
  * 2. The role has no real projectTeam entry, or that entry's model is
  *    null (no real eligible candidate was ever found for it) ->
  *    WAIT_FOR_PROJECT_TEAM, same as above.
- * 3. The assigned model's provider can't run an automatic Kairo execution
- *    (Cursor, OpenCode today — see MANUAL_ONLY_ADAPTERS) -> MANUAL_HANDOFF,
- *    still naming the real model/provider so the caller can show a
- *    concrete handoff ("Continue in Cursor with <model>"), never a bare
- *    "not supported".
+ * 3. The assigned model's own real `accessMode` isn't "automatic" (Cursor/
+ *    OpenCode Go today, per resolveAccessMode — see isAutomatic) ->
+ *    MANUAL_HANDOFF, still naming the real model/provider so the caller
+ *    can show a concrete handoff ("Continue in Cursor with <model>"),
+ *    never a bare "not supported".
  * 4. The assigned provider isn't currently eligible (quota/availability
  *    changed since the strategy was approved) -> WAIT_FOR_PROJECT_TEAM,
  *    with `blockedAssignment` naming the real unavailable model/reason and
@@ -113,7 +121,7 @@ export function resolveProjectRoute({ role, strategy, eligibility = {} }) {
 
   const { model, assignmentSource, fallback = null } = entry;
 
-  if (MANUAL_ONLY_ADAPTERS.has(model.adapterId)) {
+  if (!isAutomatic(model)) {
     return {
       decision: PROJECT_ROUTE_DECISION.MANUAL_HANDOFF, role, provider: model.adapterId, model, assignmentSource, strategyFingerprint,
       blockedAssignment: null, suggestedAlternative: null,
@@ -124,7 +132,10 @@ export function resolveProjectRoute({ role, strategy, eligibility = {} }) {
   if (eligibility[model.adapterId]?.ok !== true) {
     const reason = eligibility[model.adapterId]?.reason ?? "unknown reason";
     const suggestedAlternative = routableAlternative(fallback, eligibility);
-    return blocked(role, strategyFingerprint, `${model.adapterId} is not currently eligible (${reason}) — no automatic substitution; confirm the suggested alternative for ${role} before proceeding.`, {
+    const why = suggestedAlternative
+      ? `${model.adapterId} is not currently eligible (${reason}) — no automatic substitution; confirm the suggested alternative for ${role} before proceeding.`
+      : `${model.adapterId} is not currently eligible (${reason}) — no automatic alternative is available for ${role} right now.`;
+    return blocked(role, strategyFingerprint, why, {
       blockedAssignment: assignmentRef(model, assignmentSource),
       suggestedAlternative
     });

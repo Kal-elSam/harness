@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { resolveProjectRoute, PROJECT_ROUTE_DECISION } from "../src/global/conversation/project-router.js";
 
 function claudeModel(overrides = {}) {
-  return { candidateKey: "claude::builder-model", adapterId: "claude", modelId: "builder-model", displayName: "Builder Model", accessMode: "subscription", ...overrides };
+  return { candidateKey: "claude::builder-model", adapterId: "claude", modelId: "builder-model", displayName: "Builder Model", accessMode: "automatic", ...overrides };
 }
 
 function activeStrategy(projectTeam) {
@@ -54,7 +54,7 @@ test("a role whose real entry has a null model (no real candidate ever covered i
 });
 
 test("Cursor assigned to a role is a real MANUAL_HANDOFF, never a silent fallback or a fake automatic run", () => {
-  const model = { candidateKey: "cursor::sol", adapterId: "cursor", modelId: "sol", displayName: "GPT-5.6 Sol", accessMode: "subscription" };
+  const model = { candidateKey: "cursor::sol", adapterId: "cursor", modelId: "sol", displayName: "GPT-5.6 Sol", accessMode: "manual" };
   const strategy = activeStrategy([{ role: "Builder", model, assignmentSource: "recommended" }]);
   const route = resolveProjectRoute({ role: "Builder", strategy, eligibility: { cursor: { ok: true } } });
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.MANUAL_HANDOFF);
@@ -64,7 +64,7 @@ test("Cursor assigned to a role is a real MANUAL_HANDOFF, never a silent fallbac
 });
 
 test("OpenCode Go assigned to a role is also MANUAL_HANDOFF (launchable:false today)", () => {
-  const model = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "subscription" };
+  const model = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "manual" };
   const strategy = activeStrategy([{ role: "Tester", model, assignmentSource: "recommended" }]);
   const route = resolveProjectRoute({ role: "Tester", strategy, eligibility: { "opencode-go": { ok: true } } });
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.MANUAL_HANDOFF);
@@ -93,7 +93,7 @@ test("lost quota/availability on the assigned provider blocks execution instead 
 });
 
 test("lost quota with a real, currently-eligible persisted fallback surfaces it as suggestedAlternative — computed by the router, never by the caller", () => {
-  const codexFallback = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "subscription" };
+  const codexFallback = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
   const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), fallback: codexFallback, assignmentSource: "recommended" }]);
   const route = resolveProjectRoute({
     role: "Builder", strategy,
@@ -104,7 +104,7 @@ test("lost quota with a real, currently-eligible persisted fallback surfaces it 
 });
 
 test("a persisted fallback that is itself currently ineligible is never suggested — no fabricated alternative", () => {
-  const codexFallback = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "subscription" };
+  const codexFallback = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
   const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), fallback: codexFallback, assignmentSource: "recommended" }]);
   const route = resolveProjectRoute({
     role: "Builder", strategy,
@@ -114,7 +114,7 @@ test("a persisted fallback that is itself currently ineligible is never suggeste
 });
 
 test("a persisted fallback assigned to a manual-only provider (Cursor/OpenCode) is never suggested as an automatic alternative", () => {
-  const cursorFallback = { candidateKey: "cursor::sol", adapterId: "cursor", modelId: "sol", displayName: "GPT-5.6 Sol", accessMode: "subscription" };
+  const cursorFallback = { candidateKey: "cursor::sol", adapterId: "cursor", modelId: "sol", displayName: "GPT-5.6 Sol", accessMode: "manual" };
   const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), fallback: cursorFallback, assignmentSource: "recommended" }]);
   const route = resolveProjectRoute({ role: "Builder", strategy, eligibility: { claude: { ok: false, reason: "quota" }, cursor: { ok: true } } });
   assert.equal(route.suggestedAlternative, null, "a manual-only fallback would just trade one blocked automatic run for another — never suggested as if it were automatic");
@@ -131,10 +131,40 @@ test("ROUTED and MANUAL_HANDOFF results never carry a blockedAssignment or sugge
   assert.equal(routed.blockedAssignment, null);
   assert.equal(routed.suggestedAlternative, null);
 
-  const cursorModel = { candidateKey: "cursor::sol", adapterId: "cursor", modelId: "sol", displayName: "GPT-5.6 Sol", accessMode: "subscription" };
+  const cursorModel = { candidateKey: "cursor::sol", adapterId: "cursor", modelId: "sol", displayName: "GPT-5.6 Sol", accessMode: "manual" };
   const manual = resolveProjectRoute({ role: "Builder", strategy: activeStrategy([{ role: "Builder", model: cursorModel, assignmentSource: "recommended" }]), eligibility: { cursor: { ok: true } } });
   assert.equal(manual.blockedAssignment, null);
   assert.equal(manual.suggestedAlternative, null);
+});
+
+test("REGRESSION: routing depends on the real model.accessMode, never a hardcoded adapterId list — a manual-mode Claude/Codex model is MANUAL_HANDOFF too", () => {
+  const model = claudeModel({ accessMode: "manual" });
+  const strategy = activeStrategy([{ role: "Builder", model, assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({ role: "Builder", strategy, eligibility: { claude: { ok: true } } });
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.MANUAL_HANDOFF, "accessMode says manual, so this must be a handoff even though claude isn't in any hardcoded manual-only list");
+});
+
+test("REGRESSION: an opencode-go model with a real accessMode of 'automatic' would be ROUTED, not MANUAL_HANDOFF — proving the check reads accessMode, not the adapter's name", () => {
+  const model = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "automatic" };
+  const strategy = activeStrategy([{ role: "Tester", model, assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({ role: "Tester", strategy, eligibility: { "opencode-go": { ok: true } } });
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED, "once resolveAccessMode ever marks opencode-go automatic, the router must pick that up with no code change here");
+});
+
+test("REGRESSION: with no real automatic alternative available, the why message says so honestly instead of promising a confirmation step that doesn't exist", () => {
+  const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), fallback: null, assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({ role: "Builder", strategy, eligibility: { claude: { ok: false, reason: "quota" } } });
+  assert.equal(route.suggestedAlternative, null);
+  assert.match(route.why, /no automatic alternative is available/);
+  assert.doesNotMatch(route.why, /confirm the suggested alternative/, "must never promise a confirmation step when there is nothing to confirm");
+});
+
+test("REGRESSION: with a real automatic alternative available, the why message still invites confirmation", () => {
+  const codexFallback = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
+  const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), fallback: codexFallback, assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({ role: "Builder", strategy, eligibility: { claude: { ok: false, reason: "quota" }, codex: { ok: true } } });
+  assert.ok(route.suggestedAlternative);
+  assert.match(route.why, /confirm the suggested alternative/);
 });
 
 test("an override assignmentSource passes through untouched — the router never rewrites who decided the pick", () => {
