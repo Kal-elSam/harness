@@ -196,6 +196,57 @@ test("onExecute passes the exact decision shown as the confirm-execute agentId/m
   app.stop();
 });
 
+test("onRequestExecute(taskId, role) threads the user's explicit role choice through to planExecution", async () => {
+  let tui;
+  const planCalls = [];
+  const service = {
+    snapshot: async () => makeSnapshot([BASE_ROW]),
+    planExecution: async (args) => {
+      planCalls.push(args);
+      return { decision: "ROUTED", role: "Builder", provider: "codex", model: "gpt-6-astra", why: "Builder delegates to GPT-6 Astra per the approved project team.", confirmationTarget: { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "codex::gpt-6-astra" } };
+    }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  await app.view.actions.onRequestExecute("task-a", "Builder");
+  assert.deepEqual(planCalls, [{ cwd: "/repo", taskId: "task-a", role: "Builder" }]);
+  assert.equal(app.view.executeDecision.confirmationTarget.role, "Builder");
+
+  app.stop();
+});
+
+test("onExecute forwards a real ProjectExecutionPreview's confirmationTarget instead of the legacy agentId/model override", async () => {
+  let tui;
+  const executeCalls = [];
+  const service = {
+    snapshot: async () => makeSnapshot([BASE_ROW]),
+    executePlan: async (args) => { executeCalls.push(args); return {}; }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  const confirmationTarget = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "codex::gpt-6-astra" };
+  await app.view.actions.onExecute("task-a", { decision: "ROUTED", role: "Builder", provider: "codex", model: "gpt-6-astra", confirmationTarget });
+  assert.deepEqual(executeCalls, [{ cwd: "/repo", taskId: "task-a", confirmationTarget }]);
+
+  app.stop();
+});
+
 test("/models prints the AI TEAM into the chat even when a task row is selected", async () => {
   let editor;
   const service = {

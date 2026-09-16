@@ -132,17 +132,29 @@ export async function runCockpitApp({
       onReject: (taskId) => {
         runAction("Rejecting", () => service.decidePlan({ cwd, taskId, decision: "rejected" }));
       },
-      onRequestExecute: (taskId) => {
+      onRequestExecute: (taskId, role = null) => {
+        // `role` comes from the view's own role picker (view.js's
+        // projectTeamRoles()/showRoleSelect) whenever the active
+        // ProjectStrategy has a real team — the user's explicit choice,
+        // never inferred here or anywhere else from the task's text.
+        // Omitted entirely (no active team yet) falls back to the legacy
+        // text-classification router, unchanged.
         runAction("Asking the router who should execute this", async () => {
-          const decision = await service.planExecution({ cwd, taskId });
+          const decision = await service.planExecution(role ? { cwd, taskId, role } : { cwd, taskId });
           view.showExecuteConfirm(taskId, decision);
         });
       },
       onExecute: (taskId, decision) => {
         const label = decision?.provider ? `Executing with ${decision.provider}` : "Executing";
-        runAction(label, () => service.executePlan({
-          cwd, taskId, agentId: decision?.provider ?? null, model: decision?.model ?? null
-        }));
+        // A real ProjectExecutionPreview carries `confirmationTarget` —
+        // executePlan revalidates it against a freshly recomputed route
+        // before ever reserving quota or launching (see service.js's own
+        // doc). A legacy (no-role) decision has no such key at all, and
+        // keeps using the old free-form agentId/model override.
+        const request = decision?.confirmationTarget
+          ? { cwd, taskId, confirmationTarget: decision.confirmationTarget }
+          : { cwd, taskId, agentId: decision?.provider ?? null, model: decision?.model ?? null };
+        runAction(label, () => service.executePlan(request));
       },
       onCancel: (taskId) => {
         runAction("Cancelling run", () => service.cancelExecution({ cwd, taskId }));

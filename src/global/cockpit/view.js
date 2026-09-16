@@ -44,8 +44,11 @@ export class CockpitView {
    * @param {(taskId: string) => void} deps.actions.onShowPlan
    * @param {(taskId: string) => void} deps.actions.onApprove
    * @param {(taskId: string) => void} deps.actions.onReject
-   * @param {(taskId: string) => void} deps.actions.onRequestExecute - asks for the real routing
-   *   decision (via service.planExecution) before showing the confirm prompt
+   * @param {(taskId: string, role?: string|null) => void} deps.actions.onRequestExecute - asks for the
+   *   real routing decision (via service.planExecution) before showing the confirm prompt. `role` is
+   *   given explicitly by the user (via the role picker below) whenever the active ProjectStrategy has
+   *   a real project team — never inferred from task text; omitted entirely falls back to the legacy
+   *   text-classification router for a project with no active team yet.
    * @param {(taskId: string, decision: object) => void} deps.actions.onExecute - confirmed; decision
    *   is the same one shown in the prompt, so the cockpit and the actual launch never disagree
    * @param {(taskId: string) => void} deps.actions.onCancel
@@ -63,7 +66,7 @@ export class CockpitView {
     this.getViewportRows = getViewportRows;
     this.rows = [];
     this.selectedIndex = 0;
-    this.mode = "list"; // "list" | "detail" | "confirm-execute" — UI screen, never confused with workMode below
+    this.mode = "list"; // "list" | "detail" | "select-role" | "confirm-execute" — UI screen, never confused with workMode below
     // The cockpit's real WorkMode ("ask" | "plan" | "agent" — see
     // rows.js's isActionAvailable) — deliberately a SEPARATE field from
     // `this.mode` above, which is the UI screen state (list/detail/
@@ -77,6 +80,15 @@ export class CockpitView {
     this.snapshot = null;
     this.transcript = [];
     this.executeDecision = null;
+    // Pending role picker state (mode "select-role") — the real project
+    // team's roles for THIS task's project, held only in memory between
+    // pressing 'x' and the user's explicit role choice. Never persisted
+    // and never defaulted to a role the user didn't pick: role selection
+    // is skipped entirely (falls straight to the legacy no-role
+    // onRequestExecute) whenever the project has no active team yet.
+    this.roleSelectTaskId = null;
+    this.roleOptions = [];
+    this.roleSelectedIndex = 0;
     // AWAITING_ANALYST: real preflightProject() output (profile,
     // alternatives, candidates) held here between /project analyze and a
     // confirmed /project analyst choice — deliberately in-memory only,
@@ -124,6 +136,36 @@ export class CockpitView {
   showExecuteConfirm(taskId, decision) {
     this.mode = "confirm-execute";
     this.executeDecision = decision;
+    this.requestRender();
+  }
+
+  /**
+   * The real, project-specific roles execution can be requested for right
+   * now — read straight off the active ProjectStrategy's own projectTeam
+   * (never a fixed global role list: a project only ever offers the roles
+   * its own analysis actually required). Empty whenever there's no active
+   * strategy yet, which is exactly when 'x' should skip role selection
+   * entirely and fall back to the legacy no-role routing.
+   * @returns {string[]}
+   */
+  projectTeamRoles() {
+    const strategy = this.snapshot?.projectStrategy;
+    if (!strategy || strategy.status !== "active" || !Array.isArray(strategy.projectTeam)) return [];
+    return strategy.projectTeam.map((entry) => entry.role);
+  }
+
+  /**
+   * Opens the role picker for a pending execute request — the user's own
+   * explicit choice of which real project-team role this task falls
+   * under, never inferred from the task's text.
+   * @param {string} taskId
+   * @param {string[]} roles
+   */
+  showRoleSelect(taskId, roles) {
+    this.mode = "select-role";
+    this.roleSelectTaskId = taskId;
+    this.roleOptions = roles;
+    this.roleSelectedIndex = 0;
     this.requestRender();
   }
 
@@ -230,6 +272,11 @@ export class CockpitView {
       return;
     }
 
+    if (this.mode === "select-role") {
+      this.handleRoleSelectInput(data);
+      return;
+    }
+
     if (this.mode === "detail") {
       this.handleDetailInput(data);
       return;
@@ -241,12 +288,18 @@ export class CockpitView {
   handleConfirmInput(data) {
     const row = this.selectedRow();
     if (data === "y" || data === "Y") {
-      // Only a real ROUTED decision (or none fetched yet — the plain
-      // fallback prompt) can be confirmed; a WAIT_FOR_APPROVAL/
-      // NO_PROVIDER_AVAILABLE decision blocks 'y' rather than launching
-      // something the router itself said not to.
-      if (this.executeDecision && this.executeDecision.decision !== "ROUTED") return;
       const decision = this.executeDecision;
+      // A real ProjectExecutionPreview (planExecution({role})) always
+      // carries a `confirmationTarget` key — present only when something
+      // is genuinely confirmable (the assigned candidate on ROUTED, or a
+      // persisted, currently-eligible fallback on WAIT_FOR_PROJECT_TEAM).
+      // MANUAL_HANDOFF and a blocked role with no eligible alternative
+      // both carry `confirmationTarget: null` and must never launch here.
+      // A legacy (no-role) decision has no `confirmationTarget` key at
+      // all — same old rule for that path: only ROUTED can be confirmed.
+      const isProjectTeamPreview = decision && Object.prototype.hasOwnProperty.call(decision, "confirmationTarget");
+      const canConfirm = !decision || (isProjectTeamPreview ? Boolean(decision.confirmationTarget) : decision.decision === "ROUTED");
+      if (!canConfirm) return;
       this.mode = "list";
       this.executeDecision = null;
       this.requestRender();
@@ -256,6 +309,39 @@ export class CockpitView {
     if (data === "n" || data === "N" || matchesKey(data, Key.escape)) {
       this.mode = "list";
       this.executeDecision = null;
+      this.statusMessage = "Execution cancelled.";
+      this.requestRender();
+    }
+  }
+
+  /**
+   * Up/down to move the role picker's selection, Enter to confirm it (and
+   * only then ask app.js for the real preview for that exact role),
+   * Esc/q to cancel back to the list without ever requesting a preview.
+   */
+  handleRoleSelectInput(data) {
+    if (matchesKey(data, Key.up)) {
+      this.roleSelectedIndex = Math.max(0, this.roleSelectedIndex - 1);
+      this.requestRender();
+      return;
+    }
+    if (matchesKey(data, Key.down)) {
+      this.roleSelectedIndex = Math.min(this.roleOptions.length - 1, this.roleSelectedIndex + 1);
+      this.requestRender();
+      return;
+    }
+    if (matchesKey(data, Key.enter)) {
+      const role = this.roleOptions[this.roleSelectedIndex];
+      const taskId = this.roleSelectTaskId;
+      this.mode = "list";
+      this.roleSelectTaskId = null;
+      this.requestRender();
+      if (taskId && role) this.actions.onRequestExecute(taskId, role);
+      return;
+    }
+    if (data === "n" || data === "N" || matchesKey(data, Key.escape) || data === "q") {
+      this.mode = "list";
+      this.roleSelectTaskId = null;
       this.statusMessage = "Execution cancelled.";
       this.requestRender();
     }
@@ -284,7 +370,12 @@ export class CockpitView {
     if (data === "j" && isActionAvailable("reject", row, this.workMode)) { this.actions.onReject(row.taskId); return; }
     if (data === "c" && isActionAvailable("cancel", row, this.workMode)) { this.actions.onCancel(row.taskId); return; }
     if (data === "x" && isActionAvailable("execute", row, this.workMode)) {
-      this.actions.onRequestExecute(row.taskId);
+      const roles = this.projectTeamRoles();
+      if (roles.length > 0) {
+        this.showRoleSelect(row.taskId, roles);
+      } else {
+        this.actions.onRequestExecute(row.taskId);
+      }
       return;
     }
   }
@@ -301,18 +392,64 @@ export class CockpitView {
   confirmPromptLines(row) {
     const decision = this.executeDecision;
     if (!decision) return [theme.fg("warning", `Execute plan "${row?.taskId ?? ""}"? (y/n)`)];
-    if (decision.decision !== "ROUTED") {
+
+    if (decision.decision === "ROUTED") {
+      const model = decision.model ?? "default";
       return [
-        theme.fg("error", `Cannot auto-execute "${row?.taskId ?? ""}"`),
-        theme.fg("muted", decision.why ?? "no provider available"),
+        theme.fg("warning", `Execute "${row?.taskId ?? ""}" with ${decision.provider} · ${model}? (y/n)`),
+        theme.fg("muted", `Why: ${decision.why}`)
+      ];
+    }
+
+    // A real ProjectExecutionPreview — see handleConfirmInput's own doc for
+    // why `confirmationTarget` (present or not) is the field that decides
+    // this, never `decision.decision` alone.
+    const isProjectTeamPreview = Object.prototype.hasOwnProperty.call(decision, "confirmationTarget");
+
+    if (isProjectTeamPreview && decision.decision === "MANUAL_HANDOFF") {
+      const modelLabel = decision.modelRef?.displayName ?? decision.model ?? "the assigned model";
+      return [
+        theme.fg("error", `${decision.role} is manual-only`),
+        theme.fg("muted", `Continue in ${decision.provider} with ${modelLabel} — Kairo can't launch this automatically.`),
         theme.fg("muted", "(n/esc to go back)")
       ];
     }
-    const model = decision.model ?? "default";
+
+    if (isProjectTeamPreview && decision.confirmationTarget) {
+      // WAIT_FOR_PROJECT_TEAM with a real, currently-eligible suggested
+      // alternative — offered for explicit confirmation, never a silent
+      // substitution for the blocked assignment.
+      const alt = decision.suggestedAlternative;
+      const altLabel = alt?.model?.displayName ?? alt?.model?.modelId ?? "unknown model";
+      return [
+        theme.fg("warning", `Assigned model unavailable for ${decision.role}`),
+        theme.fg("muted", `Suggested alternative: ${alt?.provider} · ${altLabel}`),
+        theme.fg("warning", "Confirm this alternative? (y/n)")
+      ];
+    }
+
     return [
-      theme.fg("warning", `Execute "${row?.taskId ?? ""}" with ${decision.provider} · ${model}? (y/n)`),
-      theme.fg("muted", `Why: ${decision.why}`)
+      theme.fg("error", `Cannot auto-execute "${row?.taskId ?? ""}"`),
+      theme.fg("muted", decision.why ?? "no provider available"),
+      theme.fg("muted", "(n/esc to go back)")
     ];
+  }
+
+  /**
+   * Renders the pending role picker — one line per real project-team role,
+   * the currently-selected one marked, plus a hint line. No routing
+   * decision has been fetched yet at this point; that only happens once
+   * Enter confirms a specific role.
+   * @returns {string[]}
+   */
+  roleSelectPromptLines() {
+    const lines = [theme.fg("warning", "Which role is this task for?")];
+    this.roleOptions.forEach((role, index) => {
+      const marker = index === this.roleSelectedIndex ? theme.fg("accent", "> ") : "  ";
+      lines.push(`${marker}${role}`);
+    });
+    lines.push(theme.fg("muted", "Enter confirm · n/esc cancel"));
+    return lines;
   }
 
   /**
@@ -438,7 +575,7 @@ export class CockpitView {
    * active, exactly where a real chat's newest message would land.
    */
   renderConversation(width) {
-    if (this.mode !== "confirm-execute" && this.transcript.length === 0 && !this.statusMessage) {
+    if (this.mode !== "confirm-execute" && this.mode !== "select-role" && this.transcript.length === 0 && !this.statusMessage) {
       return [
         theme.fg("muted", "Ask Kairo about this project, or describe work to plan."),
         "",
@@ -474,6 +611,10 @@ export class CockpitView {
     if (this.mode === "confirm-execute") {
       lines.push("");
       lines.push(...this.confirmPromptLines(this.selectedRow()));
+    }
+    if (this.mode === "select-role") {
+      lines.push("");
+      lines.push(...this.roleSelectPromptLines());
     }
     return lines;
   }
@@ -902,7 +1043,7 @@ export class CockpitView {
    *   recent-history window instead of showing everything unbounded.
    */
   chatLines(chatBudget) {
-    if (this.mode !== "confirm-execute" && this.transcript.length === 0 && !this.statusMessage) {
+    if (this.mode !== "confirm-execute" && this.mode !== "select-role" && this.transcript.length === 0 && !this.statusMessage) {
       return [
         theme.fg("muted", "Ask Kairo about this project, or describe work to plan."),
         "",
@@ -912,9 +1053,14 @@ export class CockpitView {
     const lines = [];
     // The execute confirmation (y/n) is a real pending decision, not status
     // chrome — it belongs in the dominant chat surface, not a separate
-    // widget that could be scrolled past or removed.
+    // widget that could be scrolled past or removed. Same for the role
+    // picker that can precede it.
     if (this.mode === "confirm-execute") {
       lines.push(...this.confirmPromptLines(this.selectedRow()));
+      lines.push("");
+    }
+    if (this.mode === "select-role") {
+      lines.push(...this.roleSelectPromptLines());
       lines.push("");
     }
     if (this.statusMessage) {

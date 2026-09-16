@@ -987,6 +987,125 @@ test("a WAIT_FOR_APPROVAL decision shows the real reason and blocks 'y' from lau
   assert.equal(view.mode, "list");
 });
 
+test("x opens the role picker instead of requesting execution directly when the project has an active, real team", () => {
+  const { view, calls } = makeView();
+  view.setWorkMode("agent");
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    projectStrategy: {
+      status: "active",
+      projectTeam: [{ role: "Builder" }, { role: "Debugger" }]
+    }
+  });
+  view.moveSelection(1); // task-b: approved + not_started, executable
+  view.handleInput("x");
+  assert.equal(view.mode, "select-role");
+  assert.deepEqual(calls, [], "no onRequestExecute yet — the user hasn't picked a role");
+  const lines = view.render(120).join("\n");
+  assert.match(lines, /Which role is this task for\?/);
+  assert.match(lines, /Builder/);
+  assert.match(lines, /Debugger/);
+});
+
+test("role picker: down moves the selection, Enter confirms the selected role and requests execution for it", () => {
+  const { view, calls } = makeView();
+  view.setWorkMode("agent");
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    projectStrategy: { status: "active", projectTeam: [{ role: "Builder" }, { role: "Debugger" }] }
+  });
+  view.moveSelection(1);
+  view.handleInput("x");
+  view.handleInput("\x1b[B"); // down
+  view.handleInput("\r"); // enter
+  assert.equal(view.mode, "list");
+  assert.deepEqual(calls, [["onRequestExecute", "task-b", "Debugger"]]);
+});
+
+test("role picker: n/esc cancels without ever requesting execution", () => {
+  const { view, calls } = makeView();
+  view.setWorkMode("agent");
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    projectStrategy: { status: "active", projectTeam: [{ role: "Builder" }] }
+  });
+  view.moveSelection(1);
+  view.handleInput("x");
+  view.handleInput("n");
+  assert.equal(view.mode, "list");
+  assert.deepEqual(calls, []);
+});
+
+test("x still falls back to the legacy no-role request when there's no active project team", () => {
+  const { view, calls } = makeView();
+  view.setWorkMode("agent");
+  view.setSnapshot({ projectRoot: "/repo/demo", projectStrategy: { status: "suggested", projectTeam: [{ role: "Builder" }] } });
+  view.moveSelection(1);
+  view.handleInput("x");
+  assert.equal(view.mode, "list"); // no picker, no confirm — straight to the async request
+  assert.deepEqual(calls, [["onRequestExecute", "task-b"]]);
+});
+
+test("a real ProjectExecutionPreview's MANUAL_HANDOFF decision shows the manual continuation, never lets 'y' launch anything", () => {
+  const { view, calls } = makeView();
+  view.moveSelection(1);
+  const decision = {
+    decision: "MANUAL_HANDOFF", role: "Builder", provider: "cursor",
+    modelRef: { displayName: "Cursor Model" }, model: "cursor-model",
+    why: "cursor isn't executable by Kairo automatically — continue manually with Cursor Model.",
+    confirmationTarget: null
+  };
+  view.showExecuteConfirm("task-b", decision);
+  const lines = view.render(120).join("\n");
+  assert.match(lines, /Builder is manual-only/);
+  assert.match(lines, /Continue in cursor with Cursor Model/);
+
+  view.handleInput("y");
+  assert.equal(view.mode, "confirm-execute"); // never confirmable — no confirmationTarget
+  assert.deepEqual(calls, []);
+});
+
+test("a real ProjectExecutionPreview's WAIT_FOR_PROJECT_TEAM with a suggested alternative can be explicitly confirmed", () => {
+  const { view, calls } = makeView();
+  view.moveSelection(1);
+  const confirmationTarget = { role: "Builder", selection: "suggested-alternative", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5" };
+  const decision = {
+    decision: "WAIT_FOR_PROJECT_TEAM", role: "Builder", provider: null, model: null,
+    blockedAssignment: { provider: "codex", model: { modelId: "gpt-6-astra" } },
+    suggestedAlternative: { provider: "claude", model: { modelId: "claude-opus-5", displayName: "Claude Opus 5" } },
+    why: "codex is not currently eligible — confirm the suggested alternative for Builder before proceeding.",
+    confirmationTarget
+  };
+  view.showExecuteConfirm("task-b", decision);
+  const lines = view.render(120).join("\n");
+  assert.match(lines, /Assigned model unavailable for Builder/);
+  assert.match(lines, /Suggested alternative: claude · Claude Opus 5/);
+
+  view.handleInput("y");
+  assert.equal(view.mode, "list");
+  assert.deepEqual(calls, [["onExecute", "task-b", decision]]);
+});
+
+test("a real ProjectExecutionPreview's WAIT_FOR_PROJECT_TEAM with no eligible alternative blocks 'y' — no silent substitution", () => {
+  const { view, calls } = makeView();
+  view.moveSelection(1);
+  const decision = {
+    decision: "WAIT_FOR_PROJECT_TEAM", role: "Builder", provider: null, model: null,
+    blockedAssignment: { provider: "codex", model: { modelId: "gpt-6-astra" } },
+    suggestedAlternative: null,
+    why: "codex is not currently eligible — no automatic alternative is available for Builder right now.",
+    confirmationTarget: null
+  };
+  view.showExecuteConfirm("task-b", decision);
+  const lines = view.render(120).join("\n");
+  assert.match(lines, /Cannot auto-execute/);
+  assert.match(lines, /no automatic alternative/);
+
+  view.handleInput("y");
+  assert.equal(view.mode, "confirm-execute");
+  assert.deepEqual(calls, []);
+});
+
 test("c cancels only when the row has an active execution", () => {
   const { view, calls } = makeView();
   view.handleInput("c"); // task-a has no active execution
