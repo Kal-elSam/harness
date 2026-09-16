@@ -25,14 +25,29 @@ import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
 // here would be a menu item Kairo can't actually run.
 const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude"]);
 
-// The Bootstrap Analyst's own required capability, fixed and generic
-// (real investigation, not yet informed by this project's own evidence —
-// that's exactly what running the analyst is FOR): the same baseline
-// Explorer definition model-intelligence.js's global ROLE_CAPABILITIES
-// table already uses — reasoning required, instructionFollowing merely
-// complementary (its absence must never exclude an otherwise-capable
-// candidate from being offered as a real analyst option).
-const ANALYST_CAPABILITIES = { Explorer: { required: ["reasoning"], optional: ["instructionFollowing"] } };
+/**
+ * The Bootstrap Analyst as a temporary, read-only WORKFLOW — deliberately
+ * NOT a RoleProfile (see role-profiles.js's ROLE_PROFILES/ROLE_CAPABILITIES,
+ * the six real team roles): the analyst never joins the team, never
+ * writes anything, and only exists for the duration of one real /project
+ * analyze run. Shaped like a RoleProfile (same fields) purely so this
+ * codebase's one established "what does doing this job actually mean"
+ * shape gets reused instead of inventing a second one — capabilities is
+ * the SAME required-reasoning/optional-instructionFollowing baseline the
+ * old ANALYST_CAPABILITIES constant hardcoded, now declared once here and
+ * consumed everywhere the analyst's own capability floor matters.
+ * @type {{role: string, objective: string, responsibility: string, capabilities: {required: string[], optional: string[]}, allowedActions: string[], allowedActionIds: string[], deliverable: string, completionCriteria: string}}
+ */
+export const BOOTSTRAP_ANALYST_PROFILE = {
+  role: "BootstrapAnalyst",
+  objective: "Investigate a real, not-yet-analyzed project read-only and return a structured, evidence-backed ProjectAnalysis Kairo can trust to derive this project's real role requirements from.",
+  responsibility: "Read the real project (files, history, workflow docs already collected by project-profile.js, plus anything else it reads on its own) and report real architecture traits, real risks, and which of Kairo's six roles this specific project actually needs — never a boilerplate or generic answer.",
+  capabilities: { required: ["reasoning"], optional: ["instructionFollowing"] },
+  allowedActions: ["read files", "search/grep the repository", "run read-only inspection commands (e.g. git log, git blame)"],
+  allowedActionIds: ["repo.read", "repo.search", "repo.inspect_history"],
+  deliverable: "A valid ProjectAnalysis (see project-analysis.js's PROJECT_ANALYSIS_SCHEMA) — every field backed by a real file the analyst actually read, never an invented finding.",
+  completionCriteria: "The analysis identifies this project's real architecture, its real risks, and which roles it actually needs, each with real supporting evidence — not just a subset copied from a generic checklist."
+};
 
 function modelRef(teamModel) {
   if (!teamModel) return null;
@@ -87,17 +102,35 @@ function projectRoleCapabilities(profile) {
   }));
 }
 
+function candidateKeyOf(model) {
+  return model.candidateKey ?? `${model.adapterId}::${model.modelId}`;
+}
+
+function quotaFor(providerCapacity, adapterId) {
+  return providerCapacity?.[adapterId]?.quotaRemainingPercent ?? null;
+}
+
 /**
- * Real quality/efficiency Bootstrap Analyst alternatives — computed BEFORE
- * any analysis runs (LOCAL_PREFLIGHT/AWAITING_ANALYST), restricted to
- * providers Kairo can actually invoke read-only (see ASK_SUPPORTED_ADAPTERS).
- * A provider that would otherwise win Explorer but can't actually run ASK
- * (e.g. opencode-go today) is honestly excluded here, never offered as a
- * choice Kairo can't follow through on.
- * @param {object} candidates - `scoredAll`, `eligibility`, `registry`, `providerCapacity`
- * @returns {Array<{choice: "quality"|"efficient", model: object}>}
+ * The full real Bootstrap Analyst catalog — every real, ask-supported
+ * (see ASK_SUPPORTED_ADAPTERS) Codex/Claude candidate askProvider could
+ * actually run, scored AND unscored, not just the top Quality/Efficient
+ * picks. A real, unscored model (no Artificial Analysis match) is still
+ * included — honestly marked `evidenceStatus: "unscored"` — so a human
+ * can still pick it manually; Kairo just never recommends one on its own.
+ * Ranking itself is the SAME real Pareto/risk-floor machinery every other
+ * role uses (BOOTSTRAP_ANALYST_PROFILE.capabilities, under the "Explorer"
+ * role bucket — see this module's own history for why that bucket name
+ * is reused rather than a new one) — this function never invents a
+ * second ranking formula, it only projects the real result into a richer
+ * catalog shape and tags each real candidate that happens to be the
+ * Quality and/or Efficient winner.
+ * @param {object} args - `scoredAll`, `eligibility`, `registry`,
+ *   `providerCapacity` (as computeBootstrapAnalystAlternatives), plus
+ *   `unscoredModels` (real catalog models with no AA match — see
+ *   conversation/service.js's own `unscoredModels`).
+ * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, quota: number|null, recommendationTags: string[]}>}}
  */
-export function computeBootstrapAnalystAlternatives({ scoredAll, eligibility, registry, providerCapacity = null }) {
+export function computeBootstrapAnalystCatalog({ scoredAll, eligibility, registry, providerCapacity = null, unscoredModels = [] }) {
   // Restrict the CANDIDATE POOL itself to ask-supported adapters before
   // ranking — not a post-hoc check on the winner — so the real portfolio
   // logic picks the best real candidate among what Kairo can actually
@@ -105,14 +138,66 @@ export function computeBootstrapAnalystAlternatives({ scoredAll, eligibility, re
   // after the fact would silently lose a genuinely real 2nd/3rd-place
   // candidate whenever the unsupported provider happened to rank #1.
   const askSupportedScored = scoredAll.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
-  const aiTeam = buildAiTeam(askSupportedScored, eligibility, registry, ANALYST_CAPABILITIES);
-  const efficientTeam = buildEfficientTeam(askSupportedScored, eligibility, registry, { providerCapacity, roleCapabilities: ANALYST_CAPABILITIES });
-  const quality = aiTeam.find((entry) => entry.role === "Explorer");
-  const efficient = efficientTeam.find((entry) => entry.role === "Explorer");
+  const askSupportedUnscored = unscoredModels.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
+
+  const roleCapabilities = { Explorer: BOOTSTRAP_ANALYST_PROFILE.capabilities };
+  const aiTeam = buildAiTeam(askSupportedScored, eligibility, registry, roleCapabilities);
+  const efficientTeam = buildEfficientTeam(askSupportedScored, eligibility, registry, { providerCapacity, roleCapabilities });
+  const quality = aiTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
+  const efficient = efficientTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
+  const qualityKey = quality ? candidateKeyOf(quality) : null;
+  const efficientKey = efficient ? candidateKeyOf(efficient) : null;
+
+  const scoredEntries = askSupportedScored.map((model) => {
+    const key = candidateKeyOf(model);
+    const recommendationTags = [];
+    if (key === qualityKey) recommendationTags.push("quality");
+    if (key === efficientKey) recommendationTags.push("efficient");
+    return {
+      candidateKey: key, adapterId: model.adapterId, modelId: model.modelId,
+      displayName: model.modelName ?? model.displayName ?? model.modelId,
+      evidenceStatus: model.evidenceStatus ?? "scored",
+      available: eligibility[model.adapterId]?.ok === true,
+      quota: quotaFor(providerCapacity, model.adapterId),
+      recommendationTags
+    };
+  });
+  const unscoredEntries = askSupportedUnscored.map((model) => ({
+    candidateKey: candidateKeyOf(model), adapterId: model.adapterId, modelId: model.modelId,
+    displayName: model.displayName ?? model.modelId,
+    evidenceStatus: "unscored",
+    available: eligibility[model.adapterId]?.ok === true,
+    quota: quotaFor(providerCapacity, model.adapterId),
+    recommendationTags: []
+  }));
+
+  const models = [...scoredEntries, ...unscoredEntries];
+  const recommendedModel = models.find((model) => model.recommendationTags.includes("quality")) ?? null;
+  return { recommendedModel, models };
+}
+
+/**
+ * Real quality/efficiency Bootstrap Analyst alternatives — computed BEFORE
+ * any analysis runs (LOCAL_PREFLIGHT/AWAITING_ANALYST), restricted to
+ * providers Kairo can actually invoke read-only (see ASK_SUPPORTED_ADAPTERS).
+ * A provider that would otherwise win Explorer but can't actually run ASK
+ * (e.g. opencode-go today) is honestly excluded here, never offered as a
+ * choice Kairo can't follow through on. A thin projection of
+ * computeBootstrapAnalystCatalog's own real ranking — never a second,
+ * independent ranking computation — kept in this plain `{choice, model}`
+ * shape for the existing preflight/overlay/analyst-run callers.
+ * @param {object} candidates - `scoredAll`, `eligibility`, `registry`, `providerCapacity`
+ * @returns {Array<{choice: "quality"|"efficient", model: object}>}
+ */
+export function computeBootstrapAnalystAlternatives(candidates) {
+  const { models } = computeBootstrapAnalystCatalog(candidates);
+  const quality = models.find((model) => model.recommendationTags.includes("quality"));
+  const efficient = models.find((model) => model.recommendationTags.includes("efficient"));
+  const toAlternativeModel = (model) => (model ? { adapterId: model.adapterId, modelId: model.modelId, displayName: model.displayName } : null);
   return [
-    { choice: "quality", model: modelRef(quality?.primary) },
-    { choice: "efficient", model: modelRef(efficient?.primary) }
-  ].filter((alt) => alt.model);
+    quality ? { choice: "quality", model: toAlternativeModel(quality) } : null,
+    efficient ? { choice: "efficient", model: toAlternativeModel(efficient) } : null
+  ].filter(Boolean);
 }
 
 /**

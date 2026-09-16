@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildProjectStrategy, computeBootstrapAnalystAlternatives, isStrategyStale } from "../src/global/conversation/project-strategy.js";
+import { buildProjectStrategy, computeBootstrapAnalystAlternatives, computeBootstrapAnalystCatalog, BOOTSTRAP_ANALYST_PROFILE, isStrategyStale } from "../src/global/conversation/project-strategy.js";
 import { scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 
@@ -58,6 +58,77 @@ test("computeBootstrapAnalystAlternatives never offers a real leader Kairo can't
     scoredAll, eligibility: { "opencode-go": { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null
   });
   assert.ok(alternatives.every((alt) => alt.model.adapterId !== "opencode-go"), "opencode-go leads reasoning but ASK doesn't support it — must never be offered");
+});
+
+test("BOOTSTRAP_ANALYST_PROFILE is a workflow shape, not a registered team role — reasoning required, instructionFollowing optional", () => {
+  assert.equal(BOOTSTRAP_ANALYST_PROFILE.role, "BootstrapAnalyst");
+  assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.capabilities, { required: ["reasoning"], optional: ["instructionFollowing"] });
+  assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.allowedActionIds, ["repo.read", "repo.search", "repo.inspect_history"]);
+});
+
+test("computeBootstrapAnalystCatalog includes every real ask-supported scored candidate, not just the Quality/Efficient winners", () => {
+  const catalog = computeBootstrapAnalystCatalog(realCandidates());
+  assert.equal(catalog.models.length, 2, "both real claude and codex candidates must appear in the full catalog");
+  assert.ok(catalog.models.every((model) => ["claude", "codex"].includes(model.adapterId)));
+});
+
+test("computeBootstrapAnalystCatalog's recommendedModel is the real Quality pick, tagged; Efficient is a separate comparative tag on whichever real candidate wins it", () => {
+  const catalog = computeBootstrapAnalystCatalog(realCandidates());
+  assert.ok(catalog.recommendedModel);
+  assert.ok(catalog.recommendedModel.recommendationTags.includes("quality"));
+  const qualityEntry = catalog.models.find((model) => model.recommendationTags.includes("quality"));
+  assert.equal(catalog.recommendedModel.candidateKey, qualityEntry.candidateKey);
+});
+
+test("computeBootstrapAnalystCatalog includes real unscored candidates (no AA match), honestly marked, never silently dropped", () => {
+  const candidates = realCandidates();
+  const catalog = computeBootstrapAnalystCatalog({
+    ...candidates,
+    unscoredModels: [
+      { adapterId: "codex", modelId: "gpt-6-experimental", displayName: "GPT-6 Experimental" },
+      { adapterId: "cursor", modelId: "some-cursor-model", displayName: "Should Be Excluded" }
+    ]
+  });
+  const unscored = catalog.models.filter((model) => model.evidenceStatus === "unscored");
+  assert.equal(unscored.length, 1, "only the real ask-supported unscored model belongs in the analyst catalog");
+  assert.equal(unscored[0].modelId, "gpt-6-experimental");
+  assert.deepEqual(unscored[0].recommendationTags, []);
+});
+
+test("computeBootstrapAnalystCatalog never offers Cursor/OpenCode as automatic analyst candidates, scored or unscored", () => {
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "opencode-go", models: [{ id: "go-model" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }] }
+  ], [
+    { slug: "go-model", name: "Go Model", intelligenceIndex: 99, codingIndex: 10, mathIndex: null },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 10, codingIndex: 99, mathIndex: null }
+  ]);
+  const catalog = computeBootstrapAnalystCatalog({
+    scoredAll, eligibility: { "opencode-go": { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null,
+    unscoredModels: [{ adapterId: "opencode-go", modelId: "another-go-model", displayName: "Another Go Model" }]
+  });
+  assert.ok(catalog.models.every((model) => model.adapterId !== "opencode-go"), "opencode-go must never appear, scored or unscored — ASK doesn't support it");
+});
+
+test("computeBootstrapAnalystCatalog reports real availability and quota per candidate, never fabricated", () => {
+  const providerCapacity = { claude: { adapterId: "claude", quotaRemainingPercent: 42 } };
+  const catalog = computeBootstrapAnalystCatalog({ ...realCandidates(), eligibility: { claude: { ok: true }, codex: { ok: false, reason: "quota" } }, providerCapacity });
+  const claude = catalog.models.find((model) => model.adapterId === "claude");
+  const codex = catalog.models.find((model) => model.adapterId === "codex");
+  assert.equal(claude.available, true);
+  assert.equal(claude.quota, 42);
+  assert.equal(codex.available, false);
+  assert.equal(codex.quota, null, "no real quota data for codex here — must stay honestly null, never invented");
+});
+
+test("computeBootstrapAnalystAlternatives is a thin projection of computeBootstrapAnalystCatalog — same real winners, never a second ranking", () => {
+  const candidates = realCandidates();
+  const alternatives = computeBootstrapAnalystAlternatives(candidates);
+  const catalog = computeBootstrapAnalystCatalog(candidates);
+  const qualityAlt = alternatives.find((alt) => alt.choice === "quality");
+  const qualityCatalogEntry = catalog.models.find((model) => model.recommendationTags.includes("quality"));
+  assert.equal(qualityAlt.model.adapterId, qualityCatalogEntry.adapterId);
+  assert.equal(qualityAlt.model.modelId, qualityCatalogEntry.modelId);
 });
 
 test("buildProjectStrategy only activates roles the real profile asked for AND that have a real pick", () => {

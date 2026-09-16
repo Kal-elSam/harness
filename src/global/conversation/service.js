@@ -24,7 +24,7 @@ import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { readSession, writeSessionMode } from "./session-store.js";
 import { computeProjectProfile } from "./project-profile.js";
-import { buildProjectStrategy, computeBootstrapAnalystAlternatives, isStrategyStale } from "./project-strategy.js";
+import { buildProjectStrategy, computeBootstrapAnalystAlternatives, computeBootstrapAnalystCatalog, isStrategyStale } from "./project-strategy.js";
 import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
 import { buildSanitizedSnapshot } from "./sanitized-snapshot.js";
 import { runCodexSandboxedBootstrap } from "./codex-sandbox.js";
@@ -671,15 +671,23 @@ export function createConversationService(deps = {}) {
      * created yet. The human picks and confirms one of these via
      * runBootstrapAnalysis below; nothing is persisted until that real
      * analysis actually runs and validates.
+     *
+     * `analystCatalog` is the full real analyst catalog (every real
+     * scored AND unscored ask-supported candidate, see
+     * project-strategy.js's computeBootstrapAnalystCatalog) — additive,
+     * for a future richer analyst picker; `alternatives` (the existing
+     * plain quality/efficient pair) stays unchanged for today's overlay
+     * and analyst-run callers, which don't consume the fuller catalog yet.
      */
     async preflightProject({ cwd }) {
       const projectRoot = await root(cwd);
       const profile = await computeProjectProfileImpl({ cwd: projectRoot });
       const snap = await this.snapshot({ cwd: projectRoot });
-      const { scoredAll = [], eligibility = {}, registry = null, providerCapacity = null } = snap.modelIntelligence ?? {};
+      const { scoredAll = [], eligibility = {}, registry = null, providerCapacity = null, unscoredModels = [] } = snap.modelIntelligence ?? {};
       const candidates = { scoredAll, eligibility, registry, providerCapacity };
       const alternatives = computeBootstrapAnalystAlternatives(candidates);
-      return { profile, alternatives, candidates, projectRoot };
+      const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, unscoredModels });
+      return { profile, alternatives, candidates, analystCatalog, projectRoot };
     },
     /**
      * `/project analyst quality|efficient --confirm` (ANALYZING -> SUGGESTED):

@@ -267,6 +267,11 @@ test("preflightProject computes a real read-only ProjectProfile and real Bootstr
   assert.equal(result.profile.fingerprint, "fp-1");
   assert.ok(result.alternatives.length >= 1);
   assert.equal(wrote, false, "preflight must never persist a ProjectStrategy");
+  // analystCatalog: the fuller real catalog (additive — existing
+  // alternatives stays unchanged for today's overlay/analyst-run callers).
+  assert.ok(result.analystCatalog, "preflight must also expose the full real analyst catalog");
+  assert.ok(result.analystCatalog.recommendedModel);
+  assert.equal(result.analystCatalog.models.length, 2, "both real ask-supported candidates from realScoredCandidates() must appear");
 });
 
 test("runBootstrapAnalysis runs the real chosen model read-only against a SANITIZED SNAPSHOT (never the real cwd), validates its response, and only then builds + persists a SUGGESTED ProjectStrategy genuinely re-scored per its real, evidence-backed findings", async () => {
