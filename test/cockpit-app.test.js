@@ -11,13 +11,27 @@ function makeFakeTui() {
     stopped: false,
     inputListeners: [],
     focused: null,
+    overlays: [],
     addChild(child) { this.children.push(child); },
     setFocus(component) { this.focused = component; },
     getFocusedComponent() { return this.focused; },
     addInputListener(fn) { this.inputListeners.push(fn); },
     requestRender() {},
     start() { this.started = true; },
-    stop() { this.stopped = true; }
+    stop() { this.stopped = true; },
+    showOverlay(component, options) {
+      const entry = { component, options, hidden: false };
+      this.overlays.push(entry);
+      return {
+        hide: () => { entry.hidden = true; },
+        setHidden: (h) => { entry.hidden = h; },
+        isHidden: () => entry.hidden,
+        focus: () => {},
+        unfocus: () => {},
+        isFocused: () => !entry.hidden,
+        getBounds: () => undefined
+      };
+    }
   };
 }
 
@@ -492,6 +506,27 @@ test("submitting a real question answers it directly via submitTask — never cr
   assert.deepEqual(submitted, [{ cwd: "/repo", task: "What is this project about?", mode: "ask" }]);
   assert.equal(app.view.transcript.some((entry) => entry.text.includes("It orchestrates Codex/Claude/OpenCode.")), true);
 
+  app.stop();
+});
+
+test("bare /project (no subcommand) opens the real interactive overlay on the tui, never printing the old usage text", async () => {
+  let editor;
+  let tui;
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    preflightProject: async () => ({ profile: {}, candidates: {}, alternatives: [] })
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
+  });
+  editor.setText("/project");
+  await editor.onSubmit(editor.getText());
+  assert.equal(tui.overlays.length, 1, "bare /project must open the interactive overlay");
+  assert.equal(tui.overlays[0].hidden, false);
+  const texts = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.doesNotMatch(texts, /Usage: \/project status\|analyze/, "must not fall through to the old text-usage message");
   app.stop();
 });
 

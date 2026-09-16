@@ -3,6 +3,7 @@ import { createConversationService } from "../conversation/service.js";
 import { CockpitView } from "./view.js";
 import { editorTheme, theme } from "./theme.js";
 import { CARD_TONE, cardTop } from "./card.js";
+import { openProjectOverlay } from "./project-overlay.js";
 
 // The composer is otherwise just two flat, muted rules from pi-tui's Editor
 // (no title, no corners) — easy to miss right under the cockpit's colorful
@@ -173,7 +174,7 @@ export async function runCockpitApp({
       // blocks with no indication of which command produced which one.
       pushTranscript("user", task);
       if (command === "/help") {
-        pushTranscript("kairo", "Shift+Tab cycles ASK/PLAN/AGENT · /project analyze then analyst quality|efficient --confirm then approve|refresh|status real project team · /plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
+        pushTranscript("kairo", "Shift+Tab cycles ASK/PLAN/AGENT · /project interactive overlay (or analyze/analyst/approve/refresh/status subcommands for scripted use) · /plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
       } else if (command === "/usage") {
         for (const line of view.usageLines()) pushTranscript("kairo", line);
       } else if (command === "/providers") {
@@ -196,6 +197,16 @@ export async function runCockpitApp({
       } else if (command === "/project") {
         const args = task.slice(command.length).trim().split(/\s+/).filter(Boolean);
         const sub = args[0]?.toLowerCase() ?? "";
+        if (!sub) {
+          // Bare `/project`: the interactive overlay — real preflight ->
+          // select analyst -> confirm -> analyze -> result -> approve,
+          // driven by the exact same service calls as the subcommands
+          // below. The subcommands themselves stay untouched for scripted/
+          // non-interactive use.
+          openProjectOverlay({ tui, service, view, cwd });
+          editor.setText("");
+          return;
+        }
         if (sub === "status") {
           const strategy = view.snapshot?.projectStrategy;
           if (!strategy) {
