@@ -30,6 +30,12 @@ test("conversation and local UI CLI parse bounded actions", () => {
   const execute = parseArgs(["conversation", "execute", "task-id"]);
   assert.equal(execute.options.conversationAction, "execute");
   assert.equal(execute.options.taskId, "task-id");
+
+  const executeWithRole = parseArgs(["conversation", "execute", "task-id", "--role", "Builder", "--confirm"]);
+  assert.equal(executeWithRole.options.role, "Builder");
+  assert.equal(executeWithRole.options.confirm, true);
+  const executeWithRoleEq = parseArgs(["conversation", "execute", "task-id", "--role=Builder"]);
+  assert.equal(executeWithRoleEq.options.role, "Builder");
 });
 
 test("architect CLI exposes when an existing plan was reused", async () => {

@@ -74,7 +74,8 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} plans list|show|approve|reject [<taskId>] [--cwd <dir>] [--json]
   ${cli} start [--cwd <dir>]             Interactive cockpit TUI (approve/execute/cancel plans)
   ${cli} ui [--cwd <dir>] [--port <n>]       Local loopback conversation UI
-  ${cli} conversation snapshot|architect|show|approve|reject|execute|cancel ... [--json]
+  ${cli} conversation snapshot|architect|show|approve|reject|cancel ... [--json]
+  ${cli} conversation execute <taskId> [--role <role>] [--confirm] [--model <name>] [--json]  No --confirm: preview only. --confirm: revalidate and execute the shown target.
   ${cli} run --agent <id> --task "..." [--strategy direct|orchestrated] [--model <name>] [--cwd <dir>] [--permissions force|yolo|read-only] [--allow-unsafe-permissions] [--capture-transcript] [--follow] [--no-wait] [--json]
   ${cli} runs list [--json] [--limit <n>] [--active-only]
   ${cli} runs show <runId> [--json] [--limit <n>] [--follow]

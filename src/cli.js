@@ -736,6 +736,8 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--agent=")) options.agent = arg.slice("--agent=".length);
     else if (arg === "--model") options.model = args[++index];
     else if (arg.startsWith("--model=")) options.model = arg.slice("--model=".length);
+    else if (arg === "--role") options.role = args[++index];
+    else if (arg.startsWith("--role=")) options.role = arg.slice("--role=".length);
     else if (arg === "--strategy") {
       options.strategy = normalizeRunStrategy(requireFlagValue("--strategy", args[++index]));
     } else if (arg.startsWith("--strategy=")) {
