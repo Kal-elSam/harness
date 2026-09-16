@@ -1,15 +1,16 @@
-import { Box, SelectList, Text, Key, matchesKey } from "@earendil-works/pi-tui";
+import { Box, SelectList, Text, Input, Key, matchesKey, fuzzyFilter } from "@earendil-works/pi-tui";
 import { editorTheme, theme } from "./theme.js";
 
 // /project's interactive overlay — the real preflight -> select analyst ->
 // confirm -> analyze -> result -> approve loop, reusing the exact same
 // service functions the plain-text /project subcommands already use
 // (preflightProject, runBootstrapAnalysis, approveProjectStrategy,
-// refreshProjectStrategy). No new persistence, no new ProjectStrategy
-// schema — this is a different way to drive the same real state machine,
-// never a parallel one. The plain-text subcommands (/project status|
-// analyze|analyst|approve|refresh) keep working unchanged; this overlay is
-// what bare `/project` (no subcommand) now opens.
+// refreshProjectStrategy, getProjectTeamEditCatalog, setProjectTeamAssignment).
+// No new persistence, no new ProjectStrategy schema — this is a different
+// way to drive the same real state machine, never a parallel one. The
+// plain-text subcommands (/project status|analyze|analyst|approve|refresh)
+// keep working unchanged; this overlay is what bare `/project` (no
+// subcommand) now opens.
 
 export const PROJECT_OVERLAY_STATE = {
   LOADING_PREFLIGHT: "loading-preflight",
@@ -18,6 +19,10 @@ export const PROJECT_OVERLAY_STATE = {
   CONFIRM_ANALYST: "confirm-analyst",
   ANALYZING: "analyzing",
   RESULT: "result",
+  EDIT_LOADING: "edit-loading",
+  EDIT_MODEL_SEARCH: "edit-model-search",
+  EDIT_CONFIRM: "edit-confirm",
+  EDIT_SAVING: "edit-saving",
   APPROVING: "approving",
   REFRESHING: "refreshing",
   ACTIVE: "active",
@@ -27,15 +32,15 @@ export const PROJECT_OVERLAY_STATE = {
 
 const S = PROJECT_OVERLAY_STATE;
 
-function teamLines(label, team, aiTeamLabel) {
-  const lines = [theme.bold(label)];
+function teamLines(label, team, aiTeamLabel, tone = "bold") {
+  const lines = [tone === "bold" ? theme.bold(label) : theme.fg("muted", label)];
   if (!team?.length) {
     lines.push(theme.fg("muted", "  (no active roles)"));
     return lines;
   }
   for (const entry of team) {
     const modelText = entry.model ? aiTeamLabel(entry.model) : theme.fg("warning", "no eligible option");
-    lines.push(`  ${entry.role.padEnd(10)} ${modelText}`);
+    lines.push(theme.fg("muted", `  ${entry.role.padEnd(10)} ${modelText}`));
   }
   return lines;
 }
@@ -49,7 +54,7 @@ function teamLines(label, team, aiTeamLabel) {
 export class ProjectOverlay {
   /**
    * @param {object} deps
-   * @param {object} deps.service - conversation service (preflightProject, runBootstrapAnalysis, approveProjectStrategy, refreshProjectStrategy)
+   * @param {object} deps.service - conversation service (preflightProject, runBootstrapAnalysis, approveProjectStrategy, refreshProjectStrategy, getProjectTeamEditCatalog, setProjectTeamAssignment)
    * @param {import("./view.js").CockpitView} deps.view
    * @param {string} deps.cwd
    * @param {() => void} deps.onClose - called when the overlay should close and focus should return to the editor
@@ -70,6 +75,16 @@ export class ProjectOverlay {
     this.activeStrategy = null;
     this.errorMessage = null;
 
+    // projectTeam editing (section 4).
+    this.resultSelectList = null;
+    this.editingRole = null;
+    this.editCatalog = null;
+    this.editModels = [];
+    this.editQuery = "";
+    this.editInput = null;
+    this.editSelectList = null;
+    this.pendingEditCandidate = null;
+
     const existing = view.snapshot?.projectStrategy ?? null;
     if (existing?.status === "active") {
       this.state = S.ACTIVE;
@@ -80,6 +95,7 @@ export class ProjectOverlay {
     } else if (existing?.status === "suggested") {
       this.state = S.RESULT;
       this.suggestedStrategy = existing;
+      this.buildResultRoleList();
     } else {
       // LOCAL_PREFLIGHT: real, read-only evidence — no provider call, no
       // quota consumed, nothing persisted yet.
@@ -89,6 +105,9 @@ export class ProjectOverlay {
 
   invalidate() {
     this.selectList?.invalidate();
+    this.resultSelectList?.invalidate();
+    this.editSelectList?.invalidate();
+    this.editInput?.invalidate();
   }
 
   async loadPreflight() {
@@ -174,6 +193,139 @@ export class ProjectOverlay {
         cwd: this.cwd, profile: this.preflight.profile, candidates: this.preflight.candidates, analyst: this.selectedAnalyst
       });
       this.suggestedStrategy = result;
+      this.buildResultRoleList();
+      this.state = S.RESULT;
+    } catch (error) {
+      this.errorMessage = error.message ?? String(error);
+      this.state = S.ERROR;
+    }
+    this.requestRender();
+  }
+
+  /**
+   * The RESULT screen's own real, interactive PROJECT TEAM list — one row
+   * per real role in strategy.projectTeam, showing its real current
+   * model and whether it's a real override. Enter on a row opens that
+   * role's real edit picker (see openRolePicker); Esc closes the overlay
+   * without approving (unchanged). Approval is a separate, explicit key
+   * ("a") — Enter here edits, it never silently approves.
+   */
+  buildResultRoleList() {
+    const team = this.suggestedStrategy?.projectTeam ?? [];
+    const items = team.map((entry) => {
+      const modelText = entry.model ? this.view.aiTeamLabel(entry.model) : "no eligible option";
+      const overrideNote = entry.assignmentSource === "override" ? theme.fg("accent", " (override)") : "";
+      return { value: entry.role, label: `${entry.role.padEnd(10)} ${modelText}${overrideNote}`, description: "" };
+    });
+    this.resultSelectList = new SelectList(items, 6, editorTheme.selectList);
+    this.resultSelectList.onSelect = (item) => void this.openRolePicker(item.value);
+    this.resultSelectList.onCancel = () => this.close();
+  }
+
+  /**
+   * Opens the real edit picker for one projectTeam role — a real, read-
+   * only catalog fetch (getProjectTeamEditCatalog), no quota, no write.
+   */
+  async openRolePicker(role) {
+    this.editingRole = role;
+    this.editCatalog = null;
+    this.state = S.EDIT_LOADING;
+    this.requestRender();
+    try {
+      this.editCatalog = await this.service.getProjectTeamEditCatalog({ cwd: this.cwd, role });
+      this.buildEditPicker();
+      this.state = S.EDIT_MODEL_SEARCH;
+    } catch (error) {
+      this.errorMessage = error.message ?? String(error);
+      this.state = S.ERROR;
+    }
+    this.requestRender();
+  }
+
+  /**
+   * Orders the real edit catalog per the plan's own contract: 1) the
+   * role's real current operational model, 2) its real original
+   * recommendation (when different from the current), 3) the rest of the
+   * real scored candidates, 4) the real unscored ones — never re-ranking
+   * anything, just ordering what the catalog already returned.
+   */
+  orderedEditModels() {
+    const entry = this.suggestedStrategy?.projectTeam?.find((e) => e.role === this.editingRole);
+    const currentKey = entry?.model?.candidateKey ?? null;
+    const recommendedKey = entry?.recommendedAssignment?.model?.candidateKey ?? currentKey;
+    const models = this.editCatalog?.models ?? [];
+    const byKey = new Map(models.map((m) => [m.candidateKey, m]));
+    const seen = new Set();
+    const ordered = [];
+    const pushIfPresent = (key) => {
+      if (key && byKey.has(key) && !seen.has(key)) {
+        ordered.push(byKey.get(key));
+        seen.add(key);
+      }
+    };
+    pushIfPresent(currentKey);
+    pushIfPresent(recommendedKey);
+    for (const model of models) {
+      if (seen.has(model.candidateKey) || model.evidenceStatus === "unscored") continue;
+      ordered.push(model);
+      seen.add(model.candidateKey);
+    }
+    for (const model of models) {
+      if (seen.has(model.candidateKey)) continue;
+      ordered.push(model);
+      seen.add(model.candidateKey);
+    }
+    return ordered;
+  }
+
+  editItemTag(model, currentKey, recommendedKey) {
+    const tags = [];
+    if (model.candidateKey === currentKey) tags.push("current");
+    if (model.candidateKey === recommendedKey) tags.push("recommended");
+    if (model.evidenceStatus === "unscored") tags.push("unscored");
+    if (model.accessMode === "manual") tags.push("manual");
+    return tags.join(" · ");
+  }
+
+  buildEditPicker() {
+    this.editQuery = "";
+    this.editInput = new Input({ placeholder: "type to search…" });
+    this.editModels = this.orderedEditModels();
+    this.rebuildEditSelectList();
+  }
+
+  /** Real fuzzy filtering (pi-tui's own fuzzyFilter) against each real candidate's own display name + provider — never SelectList's built-in setFilter, which only prefix-matches a plain `value` (here, candidateKey), not what a human actually types. */
+  rebuildEditSelectList() {
+    const entry = this.suggestedStrategy?.projectTeam?.find((e) => e.role === this.editingRole);
+    const currentKey = entry?.model?.candidateKey ?? null;
+    const recommendedKey = entry?.recommendedAssignment?.model?.candidateKey ?? currentKey;
+    const filtered = this.editQuery
+      ? fuzzyFilter(this.editModels, this.editQuery, (model) => `${model.displayName} ${model.adapterId}`)
+      : this.editModels;
+    const items = filtered.map((model) => ({
+      value: model.candidateKey,
+      label: `${model.displayName}    ${model.adapterId}`,
+      description: this.editItemTag(model, currentKey, recommendedKey)
+    }));
+    this.editSelectList = new SelectList(items, 8, editorTheme.selectList);
+  }
+
+  beginConfirmEdit(candidateKey) {
+    const candidate = this.editCatalog?.models?.find((m) => m.candidateKey === candidateKey);
+    if (!candidate) return;
+    this.pendingEditCandidate = candidate;
+    this.state = S.EDIT_CONFIRM;
+    this.requestRender();
+  }
+
+  async commitEdit() {
+    this.state = S.EDIT_SAVING;
+    this.requestRender();
+    try {
+      this.suggestedStrategy = await this.service.setProjectTeamAssignment({
+        cwd: this.cwd, role: this.editingRole, candidateKey: this.pendingEditCandidate.candidateKey
+      });
+      this.buildResultRoleList();
       this.state = S.RESULT;
     } catch (error) {
       this.errorMessage = error.message ?? String(error);
@@ -219,6 +371,50 @@ export class ProjectOverlay {
       this.requestRender();
       return;
     }
+
+    if (this.state === S.RESULT && this.resultSelectList) {
+      // "a" approves and activates — a distinct key from Enter, which
+      // edits the highlighted role instead. Enter must never silently
+      // approve just because a role row happens to be focused.
+      if (data === "a" || data === "A") return void this.approve();
+      this.resultSelectList.handleInput(data);
+      this.requestRender();
+      return;
+    }
+
+    if (this.state === S.EDIT_MODEL_SEARCH) {
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.esc)) {
+        this.state = S.RESULT;
+        this.requestRender();
+        return;
+      }
+      if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
+        const item = this.editSelectList?.getSelectedItem?.();
+        if (item) this.beginConfirmEdit(item.value);
+        return;
+      }
+      if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
+        this.editSelectList?.handleInput(data);
+        this.requestRender();
+        return;
+      }
+      this.editInput.handleInput(data);
+      this.editQuery = this.editInput.getValue();
+      this.rebuildEditSelectList();
+      this.requestRender();
+      return;
+    }
+
+    if (this.state === S.EDIT_CONFIRM) {
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.esc)) {
+        this.state = S.EDIT_MODEL_SEARCH;
+        this.requestRender();
+        return;
+      }
+      if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) return void this.commitEdit();
+      return;
+    }
+
     if (matchesKey(data, Key.escape) || matchesKey(data, Key.esc)) {
       if (this.state === S.CONFIRM_ANALYST) {
         this.state = S.SELECT_ANALYST;
@@ -230,7 +426,6 @@ export class ProjectOverlay {
     }
     if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
       if (this.state === S.CONFIRM_ANALYST) return void this.confirmAnalyst();
-      if (this.state === S.RESULT) return void this.approve();
       if (this.state === S.STALE) return void this.refresh();
       if (this.state === S.NO_ANALYST || this.state === S.ERROR || this.state === S.ACTIVE) {
         this.close();
@@ -284,11 +479,50 @@ export class ProjectOverlay {
         push(theme.bold("Suggested Project Team"));
         const choiceNote = strategy.bootstrapAnalystChoice ?? (strategy.bootstrapAnalystSelectionSource === "manual" ? "manual pick" : "recommended");
         push(theme.fg("muted", `Bootstrap Analyst: ${choiceNote} — ${this.view.aiTeamLabelWithProvider(strategy.bootstrapAnalyst)}`));
-        for (const line of teamLines("PROJECT TEAM — Quality", strategy.qualityTeam, aiTeamLabel)) push(line);
-        for (const line of teamLines("PROJECT TEAM — Efficient (alternative)", strategy.efficientTeam, aiTeamLabel)) push(line);
-        push(theme.fg("muted", "Enter approve and activate · Esc close without approving (strategy stays suggested)"));
+        push(theme.bold("PROJECT TEAM"));
+        box.addChild(this.resultSelectList);
+        // Quality/Efficient stay real, comparative REFERENCE — muted, and
+        // rendered strictly below the real operational PROJECT TEAM list
+        // above, never replacing it visually.
+        for (const line of teamLines("Quality (reference)", strategy.qualityTeam, aiTeamLabel, "muted")) push(line);
+        for (const line of teamLines("Efficient (reference)", strategy.efficientTeam, aiTeamLabel, "muted")) push(line);
+        push(theme.fg("muted", "Enter edit role · a approve & activate · Esc close without approving"));
         break;
       }
+      case S.EDIT_LOADING:
+        push(theme.bold(`Edit ${this.editingRole}`));
+        push(theme.fg("muted", "Reading the real current catalog for this role — no quota consumed…"));
+        break;
+      case S.EDIT_MODEL_SEARCH:
+        push(theme.bold(`Edit ${this.editingRole}`));
+        push(theme.fg("muted", "current · recommended · manual · unscored — real state, never fabricated."));
+        box.addChild(this.editInput);
+        box.addChild(this.editSelectList);
+        push(theme.fg("muted", "Enter select · Esc cancel"));
+        break;
+      case S.EDIT_CONFIRM: {
+        const entry = this.suggestedStrategy.projectTeam.find((e) => e.role === this.editingRole);
+        const candidate = this.pendingEditCandidate;
+        const oldLabel = entry?.model ? this.view.aiTeamLabelWithProvider(entry.model) : "(none)";
+        const newLabel = this.view.aiTeamLabelWithProvider({ adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.displayName });
+        const recommendedKey = entry?.recommendedAssignment?.model?.candidateKey ?? entry?.model?.candidateKey ?? null;
+        const isRecommended = candidate.candidateKey === recommendedKey;
+        push(theme.bold(`Confirm ${this.editingRole}`));
+        push(`  ${oldLabel} → ${newLabel}`);
+        push(theme.fg("muted", isRecommended ? "restores the real recommendation" : "manual override"));
+        if (candidate.evidenceStatus === "unscored") {
+          push(theme.fg("warning", "This model has no real benchmark evidence for this role."));
+        }
+        if (candidate.accessMode === "manual") {
+          push(theme.fg("warning", `${candidate.adapterId} isn't executable by Kairo automatically — this role will need a manual handoff.`));
+        }
+        push(theme.fg("muted", "Enter confirm and save (still suggested, not yet approved) · Esc back"));
+        break;
+      }
+      case S.EDIT_SAVING:
+        push(theme.bold(`Edit ${this.editingRole}`));
+        push(theme.fg("muted", "Saving the real assignment…"));
+        break;
       case S.APPROVING:
         push(theme.bold("Approving"));
         push(theme.fg("muted", "Activating the project team…"));
@@ -301,7 +535,7 @@ export class ProjectOverlay {
         const strategy = this.activeStrategy;
         push(theme.fg("success", "ACTIVE"));
         push(theme.fg("muted", `Approved ${strategy.approvedAt ?? "?"}`));
-        for (const line of teamLines("PROJECT TEAM", strategy.qualityTeam, aiTeamLabel)) push(line);
+        for (const line of teamLines("PROJECT TEAM", strategy.projectTeam ?? strategy.qualityTeam, aiTeamLabel)) push(line);
         push(theme.fg("muted", "Esc close"));
         break;
       }
@@ -309,7 +543,7 @@ export class ProjectOverlay {
         const strategy = this.activeStrategy;
         push(theme.fg("warning", "STALE"));
         push(theme.fg("muted", "The real project evidence has changed since this team was approved — previous assignments are kept until refreshed."));
-        for (const line of teamLines("PROJECT TEAM (previous)", strategy.qualityTeam, aiTeamLabel)) push(line);
+        for (const line of teamLines("PROJECT TEAM (previous)", strategy.projectTeam ?? strategy.qualityTeam, aiTeamLabel)) push(line);
         push(theme.fg("muted", "Enter refresh · Esc close"));
         break;
       }

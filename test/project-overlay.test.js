@@ -21,8 +21,24 @@ function makeAnalystCatalog(models = [QUALITY_MODEL, EFFICIENT_MODEL, UNSCORED_M
   return { recommendedModel: models.find((m) => m.recommendationTags.includes("quality")) ?? null, models };
 }
 
-function makePreflightService({ analystCatalog = makeAnalystCatalog(), preflightError = null } = {}) {
-  const calls = { preflight: [], runBootstrap: [], approve: [], refresh: [] };
+const EXPLORER_RECOMMENDED = { candidateKey: "codex::gpt-6-astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
+const EXPLORER_ALTERNATIVE = { candidateKey: "claude::claude-opus-5", adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", evidenceStatus: "scored", available: true, accessMode: "automatic", roleEvaluation: null };
+const EXPLORER_UNSCORED = { candidateKey: "cursor::cursor-x", adapterId: "cursor", modelId: "cursor-x", displayName: "Cursor X", evidenceStatus: "unscored", available: true, accessMode: "manual", roleEvaluation: null };
+
+function makeProjectTeam() {
+  return [{
+    role: "Explorer", model: EXPLORER_RECOMMENDED, fallback: null, decisionEvidence: { decisionType: "leader" }, assignmentSource: "recommended",
+    recommendedAssignment: { model: EXPLORER_RECOMMENDED, fallback: null, decisionEvidence: { decisionType: "leader" } }, overrideEvidence: null
+  }];
+}
+
+function makeEditCatalog() {
+  return { role: "Explorer", models: [{ ...EXPLORER_RECOMMENDED, evidenceStatus: "scored", available: true, roleEvaluation: null }, EXPLORER_ALTERNATIVE, EXPLORER_UNSCORED] };
+}
+
+function makePreflightService({ analystCatalog = makeAnalystCatalog(), preflightError = null, editCatalog = makeEditCatalog() } = {}) {
+  const calls = { preflight: [], runBootstrap: [], approve: [], refresh: [], editCatalog: [], setAssignment: [] };
+  let strategy = null;
   return {
     calls,
     async preflightProject(args) {
@@ -32,20 +48,42 @@ function makePreflightService({ analystCatalog = makeAnalystCatalog(), preflight
     },
     async runBootstrapAnalysis(args) {
       calls.runBootstrap.push(args);
-      return {
+      strategy = {
         status: "suggested", bootstrapAnalystChoice: args.analyst.choice, bootstrapAnalyst: args.analyst.model,
         bootstrapAnalystSelectionSource: args.analyst.selectionSource, bootstrapAnalystRecommendationTags: args.analyst.recommendationTags,
         qualityTeam: [{ role: "Explorer", model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" }, reason: null }],
-        efficientTeam: [{ role: "Explorer", model: { adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5" }, reason: null }]
+        efficientTeam: [{ role: "Explorer", model: { adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5" }, reason: null }],
+        projectTeam: makeProjectTeam()
       };
+      return strategy;
     },
     async approveProjectStrategy(args) {
       calls.approve.push(args);
-      return { status: "active", approvedAt: "2026-09-16T00:00:00.000Z", qualityTeam: [] };
+      return { status: "active", approvedAt: "2026-09-16T00:00:00.000Z", qualityTeam: [], projectTeam: strategy?.projectTeam ?? [] };
     },
     async refreshProjectStrategy(args) {
       calls.refresh.push(args);
       return { status: "stale", qualityTeam: [] };
+    },
+    async getProjectTeamEditCatalog(args) {
+      calls.editCatalog.push(args);
+      return editCatalog;
+    },
+    async setProjectTeamAssignment(args) {
+      calls.setAssignment.push(args);
+      const candidate = editCatalog.models.find((m) => m.candidateKey === args.candidateKey);
+      const entry = strategy.projectTeam.find((e) => e.role === args.role);
+      const isRecommended = candidate.candidateKey === entry.recommendedAssignment.model.candidateKey;
+      const updatedEntry = isRecommended
+        ? { ...entry, model: entry.recommendedAssignment.model, fallback: entry.recommendedAssignment.fallback, decisionEvidence: entry.recommendedAssignment.decisionEvidence, assignmentSource: "recommended", overrideEvidence: null }
+        : {
+          ...entry,
+          model: { candidateKey: candidate.candidateKey, adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.displayName, accessMode: candidate.accessMode },
+          fallback: null, decisionEvidence: null, assignmentSource: "override",
+          overrideEvidence: { accessMode: candidate.accessMode, available: candidate.available, evidenceStatus: candidate.evidenceStatus, roleEvaluation: candidate.roleEvaluation }
+        };
+      strategy = { ...strategy, projectTeam: strategy.projectTeam.map((e) => (e.role === args.role ? updatedEntry : e)) };
+      return strategy;
     }
   };
 }
@@ -145,14 +183,14 @@ test("confirming with Enter runs the real analyst exactly once, passing the real
   assert.equal(overlay.suggestedStrategy.efficientTeam[0].model.displayName, "Claude Opus 5");
 });
 
-test("approving with Enter on the RESULT view calls the real approveProjectStrategy once and moves to ACTIVE", async () => {
+test("pressing 'a' on the RESULT view calls the real approveProjectStrategy once and moves to ACTIVE — Enter on a role row edits it instead, never silently approves", async () => {
   const service = makePreflightService();
   const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
   await flush();
   selectByKey(overlay, QUALITY_MODEL.candidateKey);
   overlay.handleInput(ENTER);
   await flush();
-  overlay.handleInput(ENTER);
+  overlay.handleInput("a");
   assert.equal(overlay.state, S.APPROVING);
   await flush();
   assert.equal(service.calls.approve.length, 1);
@@ -171,6 +209,134 @@ test("Escape on the RESULT view closes without approving — the strategy stays 
   overlay.handleInput(ESCAPE);
   assert.equal(closed, true);
   assert.equal(service.calls.approve.length, 0);
+});
+
+test("Enter on the RESULT view's PROJECT TEAM opens the real, read-only edit catalog for the highlighted role, consuming no quota", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  assert.equal(overlay.state, S.RESULT);
+  overlay.handleInput(ENTER);
+  await flush();
+  assert.equal(overlay.state, S.EDIT_MODEL_SEARCH);
+  assert.equal(overlay.editingRole, "Explorer");
+  assert.deepEqual(service.calls.editCatalog, [{ cwd: "/repo", role: "Explorer" }]);
+  assert.equal(service.calls.setAssignment.length, 0, "opening the picker must never write anything");
+});
+
+test("the edit picker orders the real catalog current -> recommended -> other scored -> unscored", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput(ENTER);
+  await flush();
+  const ordered = overlay.orderedEditModels();
+  assert.deepEqual(ordered.map((m) => m.candidateKey), [EXPLORER_RECOMMENDED.candidateKey, EXPLORER_ALTERNATIVE.candidateKey, EXPLORER_UNSCORED.candidateKey]);
+});
+
+test("picking a real different scored candidate and confirming persists a real override, clearing fallback/decisionEvidence", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.beginConfirmEdit(EXPLORER_ALTERNATIVE.candidateKey);
+  assert.equal(overlay.state, S.EDIT_CONFIRM);
+  const lines = overlay.render(76).join("\n");
+  assert.match(lines, /manual override/);
+  overlay.handleInput(ENTER);
+  await flush();
+  assert.deepEqual(service.calls.setAssignment, [{ cwd: "/repo", role: "Explorer", candidateKey: EXPLORER_ALTERNATIVE.candidateKey }]);
+  assert.equal(overlay.state, S.RESULT);
+  const entry = overlay.suggestedStrategy.projectTeam.find((e) => e.role === "Explorer");
+  assert.equal(entry.assignmentSource, "override");
+  assert.equal(entry.model.adapterId, "claude");
+  assert.equal(entry.fallback, null);
+  assert.equal(entry.decisionEvidence, null);
+});
+
+test("picking a real unscored/manual candidate shows both honest warnings before confirming", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.beginConfirmEdit(EXPLORER_UNSCORED.candidateKey);
+  const lines = overlay.render(76).join("\n");
+  assert.match(lines, /no real benchmark evidence/);
+  assert.match(lines, /manual handoff/);
+});
+
+test("choosing the real recommended candidate again in the picker is honestly labeled a restore, not an override", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.beginConfirmEdit(EXPLORER_RECOMMENDED.candidateKey);
+  const lines = overlay.render(76).join("\n");
+  assert.match(lines, /restores the real recommendation/);
+  assert.doesNotMatch(lines, /manual override/);
+});
+
+test("Escape from EDIT_MODEL_SEARCH cancels without writing, returning to RESULT", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput(ESCAPE);
+  assert.equal(overlay.state, S.RESULT);
+  assert.equal(service.calls.setAssignment.length, 0);
+});
+
+test("Escape from EDIT_CONFIRM cancels without writing, returning to the search picker", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.beginConfirmEdit(EXPLORER_ALTERNATIVE.candidateKey);
+  overlay.handleInput(ESCAPE);
+  assert.equal(overlay.state, S.EDIT_MODEL_SEARCH);
+  assert.equal(service.calls.setAssignment.length, 0);
+});
+
+test("typing in the edit picker filters via real fuzzy matching on display name/provider, never SelectList's own value-prefix filter", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput(ENTER);
+  await flush();
+  for (const ch of "opus") overlay.handleInput(ch);
+  assert.equal(overlay.editQuery, "opus");
+  const lines = overlay.render(76).join("\n");
+  assert.match(lines, /Claude Opus 5/);
+  assert.doesNotMatch(lines, /GPT-6 Astra/, "a real fuzzy filter for \"opus\" must exclude a non-matching real candidate");
 });
 
 test("an existing ACTIVE strategy renders directly, with no real preflight/quota call at all", async () => {
@@ -237,10 +403,18 @@ test("render() never throws across every state, including a narrow terminal widt
   selectByKey(overlay, QUALITY_MODEL.candidateKey);
   overlay.handleInput(ENTER);
   await flush();
-  assert.ok(overlay.render(76).length > 0);
+  assert.ok(overlay.render(76).length > 0, "RESULT");
   overlay.handleInput(ENTER);
   await flush();
-  assert.ok(overlay.render(76).length > 0);
+  assert.ok(overlay.render(76).length > 0, "EDIT_MODEL_SEARCH");
+  overlay.beginConfirmEdit(EXPLORER_ALTERNATIVE.candidateKey);
+  assert.ok(overlay.render(76).length > 0, "EDIT_CONFIRM");
+  overlay.handleInput(ENTER);
+  await flush();
+  assert.ok(overlay.render(76).length > 0, "back to RESULT after saving");
+  overlay.handleInput("a");
+  await flush();
+  assert.ok(overlay.render(76).length > 0, "ACTIVE");
 });
 
 test("the picker's own rows are model-first (display name before provider), never provider-first", async () => {
