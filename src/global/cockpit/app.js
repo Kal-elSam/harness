@@ -272,7 +272,11 @@ export async function runCockpitApp({
           } else {
             const approvedNote = strategy.approvedAt ? ` (approved ${strategy.approvedAt})` : "";
             pushTranscript("kairo", `Status: ${strategy.status.toUpperCase()}${approvedNote}`);
-            for (const entry of strategy.qualityTeam ?? []) {
+            // The real operational team, same as the dashboard panel and
+            // the /project overlay — never qualityTeam (comparative
+            // reference only), so /project status never disagrees with
+            // what's actually running.
+            for (const entry of strategy.projectTeam ?? strategy.qualityTeam ?? []) {
               pushTranscript("kairo", `${entry.role}: ${entry.model ? view.aiTeamLabel(entry.model) : "no eligible option"}`);
             }
           }

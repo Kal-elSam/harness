@@ -1,24 +1,11 @@
 import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { buildTaskRows, clampSelection, isActionAvailable } from "./rows.js";
-import { CARD_TONE, cardBottom, cardInnerWidth, cardLine, cardTop } from "./card.js";
+import { CARD_TONE, cardBottom, cardInnerWidth, cardLine, cardTop, renderPanel as renderPanelWithTheme } from "./card.js";
 import { theme } from "./theme.js";
 
-/**
- * Frames raw content lines into one bordered card. Content is padded to
- * `targetLineCount` (when given) *before* framing, so two panels tiled
- * side by side reach the same row and their borders stay a clean line.
- * @param {string} title
- * @param {string} tone
- * @param {number} width
- * @param {string[]} contentLines
- * @param {number} [targetLineCount]
- */
+/** view.js's own local binding for card.js's real renderPanel, fixed to this module's theme. */
 function renderPanel(title, tone, width, contentLines, targetLineCount = contentLines.length) {
-  const padded = Array.from({ length: targetLineCount }, (_, i) => contentLines[i] ?? "");
-  const lines = [cardTop(title, tone, theme, width)];
-  for (const line of padded) lines.push(cardLine(line, tone, theme, width));
-  lines.push(cardBottom(tone, theme, width));
-  return lines;
+  return renderPanelWithTheme(title, tone, theme, width, contentLines, targetLineCount);
 }
 
 function compactNumber(value) {
@@ -550,8 +537,8 @@ export class CockpitView {
    * presented as one. Once a real strategy exists (suggested/active/
    * stale), the panel becomes PROJECT TEAM · <project> · <STATUS>, showing
    * only the real roles THIS project's profile actually required
-   * (strategy.activeRoles/qualityTeam — see buildProjectStrategy), never
-   * the full global 7-role list.
+   * (strategy.activeRoles/projectTeam — the real operational assignments,
+   * see buildProjectStrategy), never the full global 7-role list.
    * @param {number} [width]
    */
   projectTeamPanel(width = 80) {
@@ -575,7 +562,14 @@ export class CockpitView {
     const lines = [];
     if (strategy.bootstrapAnalyst) lines.push(`${"Project Analyst".padEnd(18)} ${this.aiTeamLabel(strategy.bootstrapAnalyst)}`);
     if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(18)} ${this.aiTeamLabel(strategy.orchestrator)}`);
-    for (const entry of strategy.qualityTeam ?? []) {
+    // The real OPERATIONAL team (see buildProjectStrategy's own doc) —
+    // never qualityTeam, which is comparative reference only. The overlay
+    // (project-overlay.js) already shows projectTeam under this exact
+    // same "PROJECT TEAM" title; showing something else here under the
+    // same label was the real, reported mismatch. qualityTeam only
+    // remains as a fallback for a strategy persisted before projectTeam
+    // existed (see applyProjectTeamOverride's own legacy-entry comment).
+    for (const entry of strategy.projectTeam ?? strategy.qualityTeam ?? []) {
       lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.aiTeamLabel(entry.model) : theme.fg("warning", "no eligible option")}`);
     }
     if (strategy.status === "suggested") lines.push(theme.fg("muted", "Suggested from real project analysis. Use /project approve to activate."));

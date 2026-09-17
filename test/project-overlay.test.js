@@ -5,11 +5,16 @@ import { ProjectOverlay, PROJECT_OVERLAY_STATE as S, openProjectOverlay } from "
 const ENTER = "\r";
 const ESCAPE = "\x1b";
 
+/** Mirrors CockpitView's own real beginAction/endAction/actionStatusLine contract (view.js) — a minimal real implementation, not a stub that just records calls, so overlay tests exercise the exact same live-indicator behavior the real cockpit does. */
 function makeFakeView(snapshot = {}) {
   return {
     snapshot,
     aiTeamLabel: (model) => model.displayName ?? model.modelId,
-    aiTeamLabelWithProvider: (model) => `${model.adapterId} · ${model.displayName ?? model.modelId}`
+    aiTeamLabelWithProvider: (model) => `${model.adapterId} · ${model.displayName ?? model.modelId}`,
+    actionLabel: null,
+    beginAction(label) { this.actionLabel = label; },
+    endAction() { this.actionLabel = null; },
+    actionStatusLine() { return this.actionLabel ? `⠋ ${this.actionLabel}… (0s)` : null; }
   };
 }
 
@@ -27,8 +32,10 @@ const EXPLORER_UNSCORED = { candidateKey: "cursor::cursor-x", adapterId: "cursor
 
 function makeProjectTeam() {
   return [{
-    role: "Explorer", model: EXPLORER_RECOMMENDED, fallback: null, decisionEvidence: { decisionType: "leader" }, assignmentSource: "recommended",
-    recommendedAssignment: { model: EXPLORER_RECOMMENDED, fallback: null, decisionEvidence: { decisionType: "leader" } }, overrideEvidence: null
+    role: "Explorer", model: EXPLORER_RECOMMENDED, fallback: null, decisionEvidence: { decisionType: "leader" },
+    reason: "Real capability leader for this role.", assignmentSource: "recommended",
+    recommendedAssignment: { model: EXPLORER_RECOMMENDED, fallback: null, decisionEvidence: { decisionType: "leader" }, reason: "Real capability leader for this role." },
+    overrideEvidence: null
   }];
 }
 
@@ -524,4 +531,104 @@ test("openProjectOverlay shows the overlay on the real tui, sized ~76 columns / 
   shown.component.handleInput(ESCAPE);
   assert.equal(hidden, true, "closing the overlay must hide it, letting pi-tui restore focus to whatever had it before (the editor)");
   handle.hide();
+});
+
+// --- Four real reported UX bugs: missing decision evidence, no visible
+// modal boundary, no live progress indicator, and mouse clicks never
+// reaching the real SelectList.
+
+test("REGRESSION: the RESULT view's own PROJECT TEAM row shows the real decision reason, not just role and model", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  const lines = overlay.render(76).join("\n");
+  // The panel's own real width leaves the description column narrower
+  // than the raw sentence — this checks the real reason text actually
+  // made it into the row at all, not an exact full-sentence match.
+  assert.match(lines, /Real capability leader/, "the real decisionEvidence/reason already computed for this role must actually be shown, not just role+model");
+});
+
+test("REGRESSION: an overridden role shows an honest 'manual override' explanation, never the stale reason for a different model", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.resultSelectList.onSelect({ value: "Explorer" });
+  await flush();
+  overlay.beginConfirmEdit(EXPLORER_ALTERNATIVE.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  const lines = overlay.render(76).join("\n");
+  assert.match(lines, /Manual override/);
+  assert.doesNotMatch(lines, /Real capability leader/, "the old recommendation's reason must never be shown for a role that's now overridden");
+});
+
+test("REGRESSION: render() output is a real bordered panel — never loses itself against the dashboard behind it", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  const lines = overlay.render(76);
+  assert.match(lines[0], /╭/, "a real top border must open the panel");
+  assert.match(lines.at(-1), /╯/, "a real bottom border must close the panel");
+  const contentLines = lines.slice(1, -1);
+  assert.ok(contentLines.length > 0);
+  assert.ok(contentLines.every((line) => /│/.test(line)), "every real content line (between the top/bottom rule) must carry the panel's own left/right border");
+});
+
+test("REGRESSION: a real in-flight action (analyzing, saving, approving, refreshing) shows the cockpit's own live ticking spinner, not a static string", async () => {
+  const service = makePreflightService();
+  const view = makeFakeView();
+  const overlay = new ProjectOverlay({ service, view, cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  const confirmPromise = overlay.confirmAnalyst();
+  assert.equal(overlay.state, S.ANALYZING);
+  assert.equal(view.actionLabel, "codex · GPT-6 Astra is investigating this project", "beginAction must have been called with a real label before the async call even resolves");
+  const lines = overlay.render(76).join("\n");
+  assert.match(lines, /⠋ .*is investigating this project… \(0s\)/, "must render the real live spinner+elapsed-time line, not a static string");
+  await confirmPromise;
+  assert.equal(view.actionLabel, null, "endAction must run once the real analysis settles, live or not");
+});
+
+test("REGRESSION: a real mouse click on a PROJECT TEAM row reaches the real SelectList and opens that role's edit picker — ProjectOverlay now forwards handleMouse", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  const width = 76;
+  overlay.render(width);
+  // The RESULT screen's real layout: title, analyst line, blank, "PROJECT
+  // TEAM" heading, then the real resultSelectList's own first row —
+  // exactly where the earlier render() calls (see buildResultRoleList's
+  // own box.addChild order) place it inside the Box.
+  const rows = overlay.box.mouseLayout.children;
+  let rowY = 0;
+  for (const { component, height } of rows) {
+    if (component === overlay.resultSelectList) break;
+    rowY += height;
+  }
+  // Two real layers of offset stack between the panel's own absolute
+  // (0,0) and a child row inside the Box: the real frame's own top
+  // border row + left border/padding column (see ProjectOverlay's own
+  // handleMouse), THEN the Box's own paddingY/paddingX (2,1) on top of
+  // that — both real, both have to be crossed to land inside a child.
+  const clickEvent = {
+    type: "click", button: "left", x: 4, y: rowY + 2, screenX: 4, screenY: rowY + 2,
+    width, height: 1, shift: false, alt: false, ctrl: false
+  };
+  const result = overlay.handleMouse(clickEvent);
+  assert.ok(result?.handled, "a real click on the real PROJECT TEAM row must be handled, not silently dropped");
+  assert.equal(overlay.state, S.EDIT_LOADING, "the real click must have triggered resultSelectList's onSelect, exactly like pressing Enter on that row would");
+});
+
+test("ProjectOverlay.handleMouse returns undefined harmlessly before any real render() has happened", () => {
+  const overlay = new ProjectOverlay({ service: makePreflightService(), view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  assert.equal(overlay.handleMouse({ type: "click", button: "left", x: 4, y: 4, screenX: 4, screenY: 4, width: 76, height: 1, shift: false, alt: false, ctrl: false }), undefined);
 });

@@ -1,5 +1,6 @@
 import { Box, SelectList, Text, Input, Key, matchesKey, fuzzyFilter } from "@earendil-works/pi-tui";
 import { editorTheme, theme } from "./theme.js";
+import { CARD_TONE, cardInnerWidth, renderPanel } from "./card.js";
 
 // /project's interactive overlay — the real preflight -> select analyst ->
 // confirm -> analyze -> result -> approve loop, reusing the exact same
@@ -78,6 +79,12 @@ export class ProjectOverlay {
     this.onNarrate = onNarrate;
 
     this.state = S.LOADING_PREFLIGHT;
+    // The real Box render() builds each frame, kept here (not local to
+    // render()) so handleMouse can forward a real click into it — pi-tui
+    // dispatches mouse events against whatever the component's own last
+    // render() actually laid out, never a freshly-built one.
+    this.box = null;
+    this.lastWidth = 76;
     this.preflight = null;
     this.selectedAnalyst = null;
     this.selectList = null;
@@ -118,9 +125,31 @@ export class ProjectOverlay {
     this.resultSelectList?.invalidate();
     this.editSelectList?.invalidate();
     this.editInput?.invalidate();
+    this.box?.invalidate();
+  }
+
+  /**
+   * Forwards a real mouse event into the real Box render() built — the
+   * missing half of the real contract: SelectList/Box already implement
+   * handleMouse (a click can select an analyst or a PROJECT TEAM role
+   * row), but nothing here ever called it, so those real clicks never
+   * reached the list at all. Coordinates are translated from this real
+   * bordered panel's own frame (render()'s renderPanel border + padding)
+   * back into the Box's own render(cardInnerWidth(width)) coordinate
+   * space — the exact inverse of how render() below lays the frame out.
+   * @param {import("@earendil-works/pi-tui").TuiMouseEvent} event
+   */
+  handleMouse(event) {
+    if (!this.box) return undefined;
+    const innerWidth = cardInnerWidth(this.lastWidth);
+    const x = event.x - 2; // real frame's own left border + one padding column (see card.js's cardLine)
+    const y = event.y - 1; // real frame's own top border row (see card.js's cardTop)
+    if (x < 0 || y < 0 || x >= innerWidth) return undefined;
+    return this.box.handleMouse({ ...event, x, y, width: innerWidth });
   }
 
   async loadPreflight() {
+    this.view.beginAction("Reading project evidence locally");
     try {
       this.preflight = await this.service.preflightProject({ cwd: this.cwd });
       const models = this.preflight.analystCatalog?.models ?? [];
@@ -134,6 +163,7 @@ export class ProjectOverlay {
       this.errorMessage = error.message ?? String(error);
       this.state = S.ERROR;
     }
+    this.view.endAction();
     this.requestRender();
   }
 
@@ -201,6 +231,7 @@ export class ProjectOverlay {
 
   async confirmAnalyst() {
     this.state = S.ANALYZING;
+    this.view.beginAction(`${this.view.aiTeamLabelWithProvider(this.selectedAnalyst.model)} is investigating this project`);
     this.requestRender();
     this.onNarrate(`${this.view.aiTeamLabelWithProvider(this.selectedAnalyst.model)} is investigating this project (read-only)…`);
     try {
@@ -217,6 +248,7 @@ export class ProjectOverlay {
       this.state = S.ERROR;
       this.onNarrate(`Project analysis failed: ${this.errorMessage}`);
     }
+    this.view.endAction();
     this.requestRender();
   }
 
@@ -235,7 +267,17 @@ export class ProjectOverlay {
       const overrideNote = entry.assignmentSource === "override" ? theme.fg("accent", " (override)") : "";
       // Role + model are the real primary information here — explicit
       // `text` color, never left to default/muted.
-      return { value: entry.role, label: theme.fg("text", `${entry.role.padEnd(10)} ${modelText}`) + overrideNote, description: "" };
+      // WHY this model was picked — the real, human-readable evidence
+      // buildProjectStrategy already carries (entry.reason, sourced from
+      // efficientTeam's own describeEfficiencyDecision), never a
+      // fabricated justification. An override has no ranking reason of
+      // its own (see applyProjectTeamOverride) — honestly say so instead
+      // of silently reusing the old recommendation's reason for a
+      // different model.
+      const description = entry.assignmentSource === "override"
+        ? "Manual override — not the automatic ranking's own pick."
+        : (entry.reason ?? "");
+      return { value: entry.role, label: theme.fg("text", `${entry.role.padEnd(10)} ${modelText}`) + overrideNote, description };
     });
     this.resultSelectList = new SelectList(items, 6, editorTheme.selectList);
     this.resultSelectList.onSelect = (item) => void this.openRolePicker(item.value);
@@ -250,6 +292,7 @@ export class ProjectOverlay {
     this.editingRole = role;
     this.editCatalog = null;
     this.state = S.EDIT_LOADING;
+    this.view.beginAction(`Reading the real current catalog for ${role}`);
     this.requestRender();
     try {
       this.editCatalog = await this.service.getProjectTeamEditCatalog({ cwd: this.cwd, role });
@@ -259,6 +302,7 @@ export class ProjectOverlay {
       this.errorMessage = error.message ?? String(error);
       this.state = S.ERROR;
     }
+    this.view.endAction();
     this.requestRender();
   }
 
@@ -340,6 +384,7 @@ export class ProjectOverlay {
 
   async commitEdit() {
     this.state = S.EDIT_SAVING;
+    this.view.beginAction("Saving the real assignment");
     this.requestRender();
     try {
       this.suggestedStrategy = await this.service.setProjectTeamAssignment({
@@ -351,11 +396,13 @@ export class ProjectOverlay {
       this.errorMessage = error.message ?? String(error);
       this.state = S.ERROR;
     }
+    this.view.endAction();
     this.requestRender();
   }
 
   async approve() {
     this.state = S.APPROVING;
+    this.view.beginAction("Activating the project team");
     this.requestRender();
     try {
       this.activeStrategy = await this.service.approveProjectStrategy({ cwd: this.cwd });
@@ -366,11 +413,13 @@ export class ProjectOverlay {
       this.state = S.ERROR;
       this.onNarrate(`Approval failed: ${this.errorMessage}`);
     }
+    this.view.endAction();
     this.requestRender();
   }
 
   async refresh() {
     this.state = S.REFRESHING;
+    this.view.beginAction("Re-checking the real project evidence");
     this.requestRender();
     try {
       const result = await this.service.refreshProjectStrategy({ cwd: this.cwd });
@@ -382,6 +431,7 @@ export class ProjectOverlay {
       this.state = S.ERROR;
       this.onNarrate(`Refresh failed: ${this.errorMessage}`);
     }
+    this.view.endAction();
     this.requestRender();
   }
 
@@ -457,19 +507,39 @@ export class ProjectOverlay {
     }
   }
 
+  /** Real border tone per state — never a fixed color, so ERROR/WARNING states read as visually distinct as their own content already claims to be. */
+  panelTone() {
+    if (this.state === S.ERROR) return CARD_TONE.ERROR;
+    if (this.state === S.NO_ANALYST || this.state === S.STALE) return CARD_TONE.WARNING;
+    if (this.state === S.RESULT || this.state === S.ACTIVE) return CARD_TONE.SUCCESS;
+    return CARD_TONE.INFO;
+  }
+
   render(width) {
+    this.lastWidth = width;
     // No background applied to the whole box — only the SelectList's own
     // active row gets a highlight (editorTheme.selectList's own
     // selectedPrefix/selectedText), so the overlay reads as a real modal
-    // over the dashboard, not a solid color block.
+    // over the dashboard, not a solid color block. The real bordered
+    // frame below (renderPanel) is what actually keeps this from getting
+    // visually lost against the dashboard behind it — a background alone
+    // isn't a modal boundary a human eye reliably notices.
     const box = new Box(2, 1);
+    this.box = box;
     const aiTeamLabel = (model) => this.view.aiTeamLabel(model);
     const push = (text) => box.addChild(new Text(text));
+    // The real, ticking spinner+elapsed-time line every other in-flight
+    // action in the cockpit already uses (view.beginAction/tickSpinner/
+    // actionStatusLine — app.js's own fast timer keeps it live) — never a
+    // static "…" string that just sits there unchanged. Falls back to the
+    // static text only if no real action happens to be running yet (the
+    // render right before beginAction's own first call).
+    const spinnerLine = (fallback) => theme.fg("muted", this.view.actionStatusLine() ?? fallback);
 
     switch (this.state) {
       case S.LOADING_PREFLIGHT:
         push(theme.bold("Analyze Project"));
-        push(theme.fg("muted", "Reading project evidence locally — no provider call, no quota consumed…"));
+        push(spinnerLine("Reading project evidence locally — no provider call, no quota consumed…"));
         break;
       case S.NO_ANALYST:
         push(theme.bold("Select Project Analyst"));
@@ -502,7 +572,7 @@ export class ProjectOverlay {
       }
       case S.ANALYZING:
         push(theme.bold("ANALYZING"));
-        push(theme.fg("muted", `${this.view.aiTeamLabelWithProvider(this.selectedAnalyst.model)} is investigating this project (read-only)…`));
+        push(spinnerLine(`${this.view.aiTeamLabelWithProvider(this.selectedAnalyst.model)} is investigating this project (read-only)…`));
         break;
       case S.RESULT: {
         const strategy = this.suggestedStrategy;
@@ -521,7 +591,7 @@ export class ProjectOverlay {
       }
       case S.EDIT_LOADING:
         push(theme.bold(`Edit ${this.editingRole}`));
-        push(theme.fg("muted", "Reading the real current catalog for this role — no quota consumed…"));
+        push(spinnerLine("Reading the real current catalog for this role — no quota consumed…"));
         break;
       case S.EDIT_MODEL_SEARCH:
         push(theme.bold(`Edit ${this.editingRole}`));
@@ -551,15 +621,15 @@ export class ProjectOverlay {
       }
       case S.EDIT_SAVING:
         push(theme.bold(`Edit ${this.editingRole}`));
-        push(theme.fg("muted", "Saving the real assignment…"));
+        push(spinnerLine("Saving the real assignment…"));
         break;
       case S.APPROVING:
         push(theme.bold("Approving"));
-        push(theme.fg("muted", "Activating the project team…"));
+        push(spinnerLine("Activating the project team…"));
         break;
       case S.REFRESHING:
         push(theme.bold("Refreshing"));
-        push(theme.fg("muted", "Re-checking whether the active project team still matches the real evidence…"));
+        push(spinnerLine("Re-checking whether the active project team still matches the real evidence…"));
         break;
       case S.ACTIVE: {
         const strategy = this.activeStrategy;
@@ -584,7 +654,8 @@ export class ProjectOverlay {
         push(theme.fg("muted", "Esc / Enter to close."));
         break;
     }
-    return box.render(width);
+    const innerWidth = cardInnerWidth(width);
+    return renderPanel("Project", this.panelTone(), theme, width, box.render(innerWidth));
   }
 }
 

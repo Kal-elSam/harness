@@ -263,6 +263,27 @@ test("buildProjectStrategy's projectTeam carries the richer model reference (can
   assert.ok(entry.decisionEvidence, "the real decision receipt from EFFICIENT's selection must carry through to projectTeam");
 });
 
+test("REGRESSION: buildProjectStrategy's projectTeam carries the same real human-readable reason efficientTeam already computed — the overlay's own missing-explanation gap", () => {
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), realCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
+  const [entry] = strategy.projectTeam;
+  assert.equal(entry.reason, strategy.efficientTeam[0].reason, "projectTeam must expose the exact same real decision reason efficientTeam already computed for this role, never a fabricated one");
+  assert.equal(entry.recommendedAssignment.reason, entry.reason, "the frozen original recommendation must carry its own real reason too");
+});
+
+test("REGRESSION: applyProjectTeamOverride clears the operational reason (it describes a different model now) but recommendedAssignment keeps the real original one", () => {
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), realCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
+  const originalReason = strategy.projectTeam[0].reason;
+  const candidate = { candidateKey: "manual::pick", adapterId: "manual", modelId: "manual-model", displayName: "Manual Pick", accessMode: "automatic", available: true, evidenceStatus: "scored" };
+  const updated = applyProjectTeamOverride(strategy, "Explorer", candidate);
+  const entry = updated.projectTeam.find((e) => e.role === "Explorer");
+  assert.equal(entry.reason, null, "an override was never chosen by the ranking — it has no real reason of its own, and must never keep the old model's reason");
+  assert.equal(entry.recommendedAssignment.reason, originalReason, "the real original recommendation's reason must survive an override completely unchanged");
+});
+
 test("buildProjectStrategy's projectTeam only includes roles the project actually requires, honestly null when no real candidate covers one", () => {
   const strategy = buildProjectStrategy(profile({
     roleRequirements: [

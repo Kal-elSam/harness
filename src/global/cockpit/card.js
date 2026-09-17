@@ -87,3 +87,25 @@ export function cardBottom(tone, theme, width) {
 export function cardInnerWidth(width) {
   return Math.max(1, width - FRAME_COLUMNS);
 }
+
+/**
+ * A complete rounded-frame panel — top rule, one framed line per content
+ * line (padded to `targetLineCount` when given), bottom rule. The one real
+ * bordered-panel primitive every cockpit surface (the dashboard's cards,
+ * the /project overlay) should build on, rather than each screen inventing
+ * its own frame or going borderless.
+ * @param {string} title
+ * @param {string} tone - a CARD_TONE value
+ * @param {{fg(role:string,text:string):string}} theme
+ * @param {number} width
+ * @param {string[]} contentLines - lines already sized to cardInnerWidth(width)
+ * @param {number} [targetLineCount]
+ * @returns {string[]}
+ */
+export function renderPanel(title, tone, theme, width, contentLines, targetLineCount = contentLines.length) {
+  const padded = Array.from({ length: targetLineCount }, (_, i) => contentLines[i] ?? "");
+  const lines = [cardTop(title, tone, theme, width)];
+  for (const line of padded) lines.push(cardLine(line, tone, theme, width));
+  lines.push(cardBottom(tone, theme, width));
+  return lines;
+}

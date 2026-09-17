@@ -537,6 +537,34 @@ test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the requi
   assert.match(joined, /Suggested from real project analysis\. Use \/project approve to activate\./);
 });
 
+test("REGRESSION: projectTeamPanel shows the real OPERATIONAL projectTeam, never qualityTeam, when the two genuinely diverge (e.g. after a manual override)", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/crm",
+    projectStrategy: {
+      status: "suggested",
+      bootstrapAnalyst: null,
+      orchestrator: null,
+      // A real override diverged projectTeam from qualityTeam — the exact
+      // reported bug: the dashboard's own "PROJECT TEAM" title must
+      // reflect the same real operational assignment the /project
+      // overlay itself shows under that identical title, never the
+      // comparative-reference qualityTeam.
+      qualityTeam: [{ role: "Architect", model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, reason: null }],
+      projectTeam: [{
+        role: "Architect", model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" },
+        assignmentSource: "override", decisionEvidence: null, fallback: null, reason: null,
+        recommendedAssignment: { model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, fallback: null, decisionEvidence: null, reason: null },
+        overrideEvidence: null
+      }]
+    }
+  });
+  const { lines } = view.projectTeamPanel(80);
+  const joined = lines.join("\n");
+  assert.match(joined, /Architect\s+GPT-6 Astra/, "must show the real operational (overridden) model");
+  assert.doesNotMatch(joined, /Fable 5\.1/, "must never show qualityTeam's comparative-reference model under the operational PROJECT TEAM title");
+});
+
 test("projectTeamPanel shows AWAITING_ANALYST — real quality/efficient alternatives — once a real LOCAL_PREFLIGHT ran but before any choice is confirmed", () => {
   const { view } = makeView();
   view.setSnapshot({ projectRoot: "/repo/crm", modelIntelligence: { status: "unknown" } });

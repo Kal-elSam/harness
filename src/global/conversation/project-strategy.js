@@ -300,10 +300,15 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
     const model = entry ? projectModelRef(entry.primary) : null;
     const fallback = entry?.fallback ? projectModelRef(entry.fallback) : null;
     const decisionEvidence = entry?.decisionEvidence ?? null;
+    // The same real, human-readable string efficientTeam's own entries
+    // already carry (see buildEfficientTeam/describeEfficiencyDecision) —
+    // never a new explanation formula, just surfaced here too so the
+    // overlay can show WHY this role got this model, not only which one.
+    const reason = entry?.reason ?? null;
     return {
-      role, model, fallback, decisionEvidence,
+      role, model, fallback, decisionEvidence, reason,
       assignmentSource: "recommended",
-      recommendedAssignment: { model, fallback, decisionEvidence },
+      recommendedAssignment: { model, fallback, decisionEvidence, reason },
       overrideEvidence: null
     };
   });
@@ -446,7 +451,8 @@ function findProjectTeamEntry(strategy, role) {
 export function applyProjectTeamOverride(strategy, role, candidate) {
   const index = findProjectTeamEntry(strategy, role);
   const entry = strategy.projectTeam[index];
-  const recommendedAssignment = entry.recommendedAssignment ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null };
+  const recommendedAssignment = entry.recommendedAssignment
+    ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null, reason: entry.reason ?? null };
 
   if (sameModel(recommendedAssignment.model, candidate)) {
     return resetProjectTeamAssignment(strategy, role);
@@ -459,14 +465,16 @@ export function applyProjectTeamOverride(strategy, role, candidate) {
       candidateKey: candidate.candidateKey ?? null, adapterId: candidate.adapterId, modelId: candidate.modelId,
       displayName: candidate.displayName ?? null, accessMode: candidate.accessMode ?? null
     },
-    // The real recommendation's own fallback/decisionEvidence describe
-    // THAT candidate's Pareto selection, never a human override's — an
-    // override has no real computed fallback or decision receipt of its
-    // own (it wasn't chosen by the ranking at all), so both are honestly
-    // cleared rather than left pointing at evidence for a different
-    // model, which would misrepresent it as if it applied here.
+    // The real recommendation's own fallback/decisionEvidence/reason
+    // describe THAT candidate's Pareto selection, never a human
+    // override's — an override has no real computed fallback, decision
+    // receipt, or ranking reason of its own (it wasn't chosen by the
+    // ranking at all), so all three are honestly cleared rather than left
+    // pointing at evidence for a different model, which would
+    // misrepresent it as if it applied here.
     fallback: null,
     decisionEvidence: null,
+    reason: null,
     assignmentSource: "override",
     overrideEvidence: {
       accessMode: candidate.accessMode ?? null, available: candidate.available ?? null,
@@ -490,11 +498,13 @@ export function applyProjectTeamOverride(strategy, role, candidate) {
 export function resetProjectTeamAssignment(strategy, role) {
   const index = findProjectTeamEntry(strategy, role);
   const entry = strategy.projectTeam[index];
-  const recommendedAssignment = entry.recommendedAssignment ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null };
+  const recommendedAssignment = entry.recommendedAssignment
+    ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null, reason: entry.reason ?? null };
   const updatedEntry = {
     ...entry,
     recommendedAssignment,
-    model: recommendedAssignment.model, fallback: recommendedAssignment.fallback, decisionEvidence: recommendedAssignment.decisionEvidence,
+    model: recommendedAssignment.model, fallback: recommendedAssignment.fallback,
+    decisionEvidence: recommendedAssignment.decisionEvidence, reason: recommendedAssignment.reason ?? null,
     assignmentSource: "recommended",
     overrideEvidence: null
   };
