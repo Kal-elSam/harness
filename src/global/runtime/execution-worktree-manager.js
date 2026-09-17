@@ -126,7 +126,15 @@ export async function createExecutionWorktree({ projectRoot, taskId, homeDir, ex
     status: WORKTREE_STATES.PENDING,
     activeRole: null,
     activeRunId: null,
-    activeRoleBaseHead: null,
+    // The last HEAD Kairo itself legitimately produced or verified —
+    // never null, initialized to baseSha since that's the one HEAD Kairo
+    // has actually verified so far (via verifyPlanForExecution above).
+    // Every later state-changing boundary (beginRoleRun, completeRoleRun,
+    // markReadyForReview) checks the worktree's real current HEAD against
+    // this exact value before trusting anything about it — a commit
+    // landing at ANY point outside a legitimate completeRoleRun, PENDING
+    // included, is a rogue commit, not a clean worktree.
+    controlledHeadSha: currentHead,
     readyHeadSha: null,
     createdAt: now,
     updatedAt: now,
@@ -165,10 +173,27 @@ async function requireWorktree(homeDir, worktreeId) {
 async function markInterrupted(homeDir, worktree, reason) {
   const next = {
     ...worktree, status: WORKTREE_STATES.INTERRUPTED, activeRole: null, activeRunId: null,
-    activeRoleBaseHead: null, updatedAt: new Date().toISOString(), error: reason
+    updatedAt: new Date().toISOString(), error: reason
   };
   await writeWorktreeState(homeDir, next).catch(() => {});
   return next;
+}
+
+/**
+ * The real, systemic guard every state-changing boundary below applies:
+ * a clean worktree only proves everything is committed, never that Kairo
+ * authorized those commits. PENDING is a real trust boundary exactly like
+ * ACTIVE is — a rogue commit made while nothing is "running" would
+ * otherwise get silently laundered into legitimacy the moment the next
+ * role begins, or the moment the worktree is marked ready for review.
+ */
+function assertHeadIsControlled(worktree, currentHead, action) {
+  if (currentHead !== worktree.controlledHeadSha) {
+    throw new Error(
+      `Execution worktree HEAD is "${currentHead}", but Kairo's last controlled HEAD is `
+      + `"${worktree.controlledHeadSha}" — a commit landed outside Kairo's control. Refusing to ${action}.`
+    );
+  }
 }
 
 /**
@@ -186,12 +211,12 @@ async function markInterrupted(homeDir, worktree, reason) {
  * creation, or the state completeRoleRun leaves it in after a prior
  * role) — never lets two roles run concurrently in the same worktree.
  * Also requires the worktree itself to be completely clean right now
- * (assertExecutionWorktreeClean) — this is what lets completeRoleRun
- * later trust the "before" HEAD as a real precondition instead of just
- * an audit fact. Records a real "before" checkpoint (the worktree's own
- * real HEAD + working-tree fingerprint right now, also persisted onto
- * the worktree record itself as activeRoleBaseHead) before flipping
- * PENDING -> ACTIVE.
+ * (assertExecutionWorktreeClean) AND its real current HEAD to still equal
+ * controlledHeadSha (assertHeadIsControlled) — a worktree can sit in
+ * PENDING indefinitely between roles, and nothing stops a rogue commit
+ * from landing there; a clean tree alone would let it through silently.
+ * Records a real "before" checkpoint (the worktree's own real HEAD +
+ * working-tree fingerprint right now) before flipping PENDING -> ACTIVE.
  * @param {object} args
  * @param {string} args.worktreeId
  * @param {string} args.role
@@ -213,14 +238,14 @@ export async function beginRoleRun({ worktreeId, role, runId, homeDir, exec = ex
 
   const now = new Date().toISOString();
   const headSha = resolveHead(worktree.treePath, { exec });
+  assertHeadIsControlled(worktree, headSha, "begin a new role run");
   const fingerprint = resolveWorkingTreeFingerprint(worktree.treePath, { exec });
   await appendCheckpoint(homeDir, worktreeId, {
     worktreeId, role, runId, phase: "before", headSha, fingerprint, timestamp: now
   });
 
   const next = {
-    ...worktree, status: WORKTREE_STATES.ACTIVE, activeRole: role, activeRunId: runId,
-    activeRoleBaseHead: headSha, updatedAt: now
+    ...worktree, status: WORKTREE_STATES.ACTIVE, activeRole: role, activeRunId: runId, updatedAt: now
   };
   await writeWorktreeState(homeDir, next);
   return next;
@@ -246,10 +271,11 @@ export async function beginRoleRun({ worktreeId, role, runId, homeDir, exec = ex
  *   INTERRUPTED.
  * - COMPLETED, from the right cwd: the real success path, guarded end to
  *   end so what's validated is provably what's committed:
- *   1. The worktree's real current HEAD must still equal the "before"
- *      checkpoint's HEAD (`activeRoleBaseHead`) — if it moved at all,
- *      the agent ran `git commit` itself instead of only editing files,
- *      and that's rejected outright (INTERRUPTED, no further commit).
+ *   1. The worktree's real current HEAD must still equal
+ *      `controlledHeadSha` (the same value beginRoleRun itself verified)
+ *      — if it moved at all, the agent ran `git commit` itself instead
+ *      of only editing files, and that's rejected outright (INTERRUPTED,
+ *      no further commit).
  *   2. The real, current uncommitted working-tree diff is validated via
  *      resolveReviewSnapshot (real path safety, real size/line/file
  *      limits, real symlink/binary/non-regular handling). ANY excluded
@@ -326,10 +352,10 @@ export async function completeRoleRun({
   // instead of only editing files, and Kairo can no longer be sure what
   // it's about to stage is exactly and only this role's own work.
   const headBeforeStaging = resolveHead(worktree.treePath, { exec });
-  if (headBeforeStaging !== worktree.activeRoleBaseHead) {
+  if (headBeforeStaging !== worktree.controlledHeadSha) {
     await markInterrupted(
       homeDir, worktree,
-      `Execution worktree HEAD moved from "${worktree.activeRoleBaseHead}" to "${headBeforeStaging}" `
+      `Execution worktree HEAD moved from "${worktree.controlledHeadSha}" to "${headBeforeStaging}" `
       + `outside Kairo's control during role "${role}" — the agent committed directly.`
     );
     throw new Error(
@@ -367,7 +393,7 @@ export async function completeRoleRun({
     });
     const next = {
       ...worktree, status: WORKTREE_STATES.PENDING, activeRole: null, activeRunId: null,
-      activeRoleBaseHead: null, updatedAt: now
+      controlledHeadSha: headBeforeStaging, updatedAt: now
     };
     await writeWorktreeState(homeDir, next);
     return next;
@@ -467,7 +493,7 @@ export async function completeRoleRun({
 
   const next = {
     ...worktree, status: WORKTREE_STATES.PENDING, activeRole: null, activeRunId: null,
-    activeRoleBaseHead: null, updatedAt: now
+    controlledHeadSha: headSha, updatedAt: now
   };
   await writeWorktreeState(homeDir, next);
   return next;
@@ -486,9 +512,14 @@ export async function completeRoleRun({
  * role completed. READY_FOR_REVIEW is a claim that everything reviewable
  * is already contained in real commits, so that claim is verified here
  * too (assertExecutionWorktreeClean), not just assumed from the status
- * name. A dirty worktree is rejected outright with zero state change —
- * this is a caller usage error, not a worktree failure, so it stays
- * PENDING rather than moving to INTERRUPTED.
+ * name. But a clean tree alone only proves everything is committed, never
+ * that Kairo authorized those commits — a rogue commit made while the
+ * worktree sat idle in PENDING (nothing "running" to catch it) would
+ * otherwise be laundered into legitimacy right here, so the real current
+ * HEAD must also still equal controlledHeadSha (assertHeadIsControlled).
+ * Either rejection is a caller/environment usage error, not a worktree
+ * failure — zero state change, stays PENDING rather than moving to
+ * INTERRUPTED.
  * @param {object} args
  * @param {string} args.worktreeId
  * @param {string} args.homeDir
@@ -505,8 +536,10 @@ export async function markReadyForReview({ worktreeId, homeDir, exec = execFileS
   // value, so any commit landing after this point (however that happened)
   // invalidates the preview instead of silently riding along.
   const readyHeadSha = resolveHead(worktree.treePath, { exec });
+  assertHeadIsControlled(worktree, readyHeadSha, "mark ready for review");
   const next = {
-    ...worktree, status: WORKTREE_STATES.READY_FOR_REVIEW, readyHeadSha, updatedAt: new Date().toISOString()
+    ...worktree, status: WORKTREE_STATES.READY_FOR_REVIEW, readyHeadSha,
+    controlledHeadSha: readyHeadSha, updatedAt: new Date().toISOString()
   };
   await writeWorktreeState(homeDir, next);
   return next;

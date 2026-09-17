@@ -761,3 +761,57 @@ test("applyWorktreeMerge with no real changes at all is a deterministic no-op �
   assert.equal(mergeInvoked, false, "a no-op apply must never call `git merge` at all");
   assert.equal(resolveHead(root), originalHead, "nothing real to merge means the real project's HEAD must not move");
 });
+
+// --- controlledHeadSha: PENDING is a real trust boundary too. A clean
+// worktree only proves everything is committed, never that Kairo
+// authorized those commits — a rogue commit made while nothing is
+// "running" must never get laundered into legitimacy by the next
+// beginRoleRun or by markReadyForReview.
+
+test("REGRESSION: a rogue commit made directly in a PENDING worktree (before ever running a role) blocks markReadyForReview", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await freshWorktree(root);
+
+  // Nothing is running — the worktree is still PENDING from creation —
+  // yet a commit lands directly inside it.
+  await writeFile(join(worktree.treePath, "rogue.txt"), "committed while nothing was running\n");
+  execFileSync("git", ["add", "rogue.txt"], { cwd: worktree.treePath });
+  execFileSync("git", ["commit", "-qm", "rogue commit while PENDING"], { cwd: worktree.treePath });
+
+  await assert.rejects(
+    () => markReadyForReview({ worktreeId: worktree.worktreeId, homeDir }),
+    /outside Kairo's control/
+  );
+
+  const stillPending = await readWorktreeState(homeDir, worktree.worktreeId);
+  assert.equal(stillPending.status, WORKTREE_STATES.PENDING, "a rogue PENDING-stage commit must never reach READY_FOR_REVIEW");
+  assert.equal(stillPending.controlledHeadSha, worktree.baseSha, "controlledHeadSha must never silently adopt an unauthorized commit");
+});
+
+test("REGRESSION: a rogue commit made directly in a PENDING worktree between two roles blocks the next beginRoleRun", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await freshWorktree(root);
+
+  await beginRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir });
+  await writeFile(join(worktree.treePath, "feature.txt"), "real implementation\n");
+  const afterBuilder = await completeRoleRun({
+    worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir,
+    readRun: fakeReadRun(RUN_STATES.COMPLETED, worktree.treePath)
+  });
+  assert.equal(afterBuilder.status, WORKTREE_STATES.PENDING);
+
+  // The worktree is legitimately PENDING between two roles — a real gap
+  // where nothing is "running" — and a commit lands directly inside it.
+  await writeFile(join(worktree.treePath, "rogue.txt"), "committed between two roles\n");
+  execFileSync("git", ["add", "rogue.txt"], { cwd: worktree.treePath });
+  execFileSync("git", ["commit", "-qm", "rogue commit between roles"], { cwd: worktree.treePath });
+
+  await assert.rejects(
+    () => beginRoleRun({ worktreeId: worktree.worktreeId, role: "Debugger", runId: "run_2", homeDir }),
+    /outside Kairo's control/
+  );
+
+  const stillPending = await readWorktreeState(homeDir, worktree.worktreeId);
+  assert.equal(stillPending.status, WORKTREE_STATES.PENDING, "a rejected beginRoleRun must never start ACTIVE on top of a rogue commit");
+  assert.equal(stillPending.controlledHeadSha, afterBuilder.controlledHeadSha, "controlledHeadSha must still be Builder's own legitimate commit, not the rogue one");
+});
