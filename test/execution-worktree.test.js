@@ -6,13 +6,13 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createArchitecturePlan } from "../src/global/architect/architect-manager.js";
-import { transitionTask, resolveHead } from "../src/global/architect/architect-store.js";
+import { transitionTask, resolveHead, taskPaths } from "../src/global/architect/architect-store.js";
 import { createExecutionWorktree } from "../src/global/runtime/execution-worktree-manager.js";
 import {
   appendCheckpoint, listWorktreeRecords, readCheckpoints, readWorktreeState
 } from "../src/global/runtime/execution-worktree-store.js";
 import { EXECUTION_WORKTREE_SCHEMA, WORKTREE_STATES } from "../src/global/runtime/execution-worktree-types.js";
-import { worktreePaths } from "../src/global/paths.js";
+import { assertWorktreeId, worktreePaths } from "../src/global/paths.js";
 
 async function repo() {
   const root = await mkdtemp(join(tmpdir(), "kairo-worktree-repo-"));
@@ -40,11 +40,24 @@ async function approvedPlan(root, task = "Design safe payments") {
 }
 
 test("worktreePaths scopes every real path for one worktree under a single removable directory", () => {
-  const paths = worktreePaths("/home/kairo", "wt_abc123");
-  assert.equal(paths.worktreeDir, "/home/kairo/.harness/worktrees/wt_abc123");
-  assert.equal(paths.treePath, "/home/kairo/.harness/worktrees/wt_abc123/tree");
-  assert.equal(paths.statePath, "/home/kairo/.harness/worktrees/wt_abc123/state.json");
-  assert.equal(paths.checkpointsPath, "/home/kairo/.harness/worktrees/wt_abc123/checkpoints.jsonl");
+  const paths = worktreePaths("/home/kairo", "wt_abc_123");
+  assert.equal(paths.worktreeDir, "/home/kairo/.harness/worktrees/wt_abc_123");
+  assert.equal(paths.treePath, "/home/kairo/.harness/worktrees/wt_abc_123/tree");
+  assert.equal(paths.statePath, "/home/kairo/.harness/worktrees/wt_abc_123/state.json");
+  assert.equal(paths.checkpointsPath, "/home/kairo/.harness/worktrees/wt_abc_123/checkpoints.jsonl");
+});
+
+test("REGRESSION: assertWorktreeId rejects a traversal id at the one real boundary worktree paths are built from — never resolves outside worktreesDir", () => {
+  assert.throws(() => assertWorktreeId("../../escape"), /Invalid worktree id/);
+  assert.throws(() => assertWorktreeId("wt_../../escape"), /Invalid worktree id/);
+  assert.throws(() => assertWorktreeId(""), /Invalid worktree id/);
+  assert.throws(() => assertWorktreeId(null), /Invalid worktree id/);
+  assert.throws(
+    () => worktreePaths("/tmp/home", "../../escape"),
+    /Invalid worktree id/,
+    "the real bug: worktreePaths('/tmp/home', '../../escape') used to silently resolve to /tmp/home/escape"
+  );
+  assert.equal(worktreePaths("/tmp/home", "wt_ok_1").treePath, "/tmp/home/.harness/worktrees/wt_ok_1/tree");
 });
 
 test("createExecutionWorktree creates a real, verified detached worktree at baseSha and persists PENDING state", async () => {
@@ -86,6 +99,31 @@ test("createExecutionWorktree rejects a plan that isn't approved yet, and never 
     () => createExecutionWorktree({ projectRoot: root, taskId: created.status.taskId, homeDir }),
     /explicit approval is required/
   );
+});
+
+test("REGRESSION: createExecutionWorktree rejects a plan.md tampered with after approval — reuses verifyPlanForExecution's real digest check, never a bare state+HEAD check that would miss this", async () => {
+  const root = await repo();
+  const homeDir = await harnessHome();
+  const { taskId } = await approvedPlan(root);
+
+  // The real approved plan record's own on-disk artifact, edited directly
+  // after approval — state is still APPROVED and HEAD hasn't moved, so a
+  // check that only looks at those two things would wrongly let this
+  // through.
+  const paths = taskPaths(root, taskId);
+  await writeFile(paths.planPath, "## Plan\nSomething the human never actually approved.\n");
+
+  await assert.rejects(
+    () => createExecutionWorktree({ projectRoot: root, taskId, homeDir }),
+    /Plan artifact changed after planning/
+  );
+
+  const worktreesDir = join(homeDir, ".harness", "worktrees");
+  const remaining = existsSync(worktreesDir) ? await readdir(worktreesDir) : [];
+  assert.deepEqual(remaining, [], "a tampered plan must never produce a real worktree");
+
+  const listed = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: root, encoding: "utf8" });
+  assert.equal((listed.match(/^worktree /gm) ?? []).length, 1, "no real git worktree registration for a rejected tampered plan");
 });
 
 test("createExecutionWorktree rejects a stale plan whose approved baseSha no longer matches the real project HEAD", async () => {
@@ -221,16 +259,16 @@ test("createExecutionWorktree verifies the real worktree HEAD matches baseSha an
 
 test("readCheckpoints returns an empty list for a worktree with no real checkpoints yet, without throwing", async () => {
   const homeDir = await harnessHome();
-  assert.deepEqual(await readCheckpoints(homeDir, "wt_none"), []);
+  assert.deepEqual(await readCheckpoints(homeDir, "wt_none_1"), []);
 });
 
 test("appendCheckpoint persists real checkpoints append-only, in order, readable back exactly", async () => {
   const homeDir = await harnessHome();
-  const first = { worktreeId: "wt_x", role: "Builder", phase: "before", headSha: "a".repeat(40), fingerprint: "fp-1", timestamp: "t0" };
-  const second = { worktreeId: "wt_x", role: "Builder", phase: "after", headSha: "b".repeat(40), fingerprint: "fp-2", timestamp: "t1" };
-  await appendCheckpoint(homeDir, "wt_x", first);
-  await appendCheckpoint(homeDir, "wt_x", second);
-  assert.deepEqual(await readCheckpoints(homeDir, "wt_x"), [first, second]);
+  const first = { worktreeId: "wt_x_1", role: "Builder", phase: "before", headSha: "a".repeat(40), fingerprint: "fp-1", timestamp: "t0" };
+  const second = { worktreeId: "wt_x_1", role: "Builder", phase: "after", headSha: "b".repeat(40), fingerprint: "fp-2", timestamp: "t1" };
+  await appendCheckpoint(homeDir, "wt_x_1", first);
+  await appendCheckpoint(homeDir, "wt_x_1", second);
+  assert.deepEqual(await readCheckpoints(homeDir, "wt_x_1"), [first, second]);
 });
 
 test("listWorktreeRecords returns every real persisted worktree, newest first, skipping nothing that failed to parse", async () => {

@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { rm } from "node:fs/promises";
-import { readTaskRecord, resolveHead, resolveWorkingTreeFingerprint } from "../architect/architect-store.js";
-import { PLAN_STATES } from "../architect/architect-types.js";
+import { resolveHead, resolveWorkingTreeFingerprint, verifyPlanForExecution } from "../architect/architect-store.js";
 import { worktreePaths } from "../paths.js";
 import { createWorktreeId, EXECUTION_WORKTREE_SCHEMA, WORKTREE_STATES } from "./execution-worktree-types.js";
 import { createWorktreeRecord } from "./execution-worktree-store.js";
@@ -47,10 +46,15 @@ async function rollbackWorktree({ projectRoot, treePath, worktreeDir, exec }) {
  * Creates one real, isolated execution worktree for an approved
  * architecture plan — the real boundary every future role's run will be
  * launched inside, never the project's own directory. Verifies the plan
- * is still APPROVED and its baseSha still matches the project's real
- * current HEAD (the same staleness check verifyPlanForExecution already
- * performs, reused here rather than re-derived), and that the project's
- * own working tree is clean, before ever touching git. Any failure after
+ * via the real verifyPlanForExecution (APPROVED state, real artifact
+ * digests — catches a plan.md/task.md tampered with after approval, which
+ * a bare state+HEAD check would silently miss — and baseSha staleness),
+ * the exact same gate executePlan itself goes through, never a
+ * hand-rolled duplicate of it. checkWorkingTree:false here on purpose:
+ * that flag checks the project's fingerprint is byte-identical to
+ * whatever it was AT approval time, which is a different, weaker
+ * question than "is it clean right now" — assertWorkingTreeClean below
+ * is the real precondition a worktree creation needs. Any failure after
  * the state record is written rolls back completely — see
  * rollbackWorktree's own doc; a real orphaned worktree is never left
  * behind.
@@ -61,15 +65,11 @@ async function rollbackWorktree({ projectRoot, treePath, worktreeDir, exec }) {
  * @param {(command: string, args: string[], options: object) => Buffer|string} [args.exec]
  */
 export async function createExecutionWorktree({ projectRoot, taskId, homeDir, exec = execFileSync }) {
-  const record = await readTaskRecord(projectRoot, taskId);
-  if (!record) throw new Error(`Plan "${taskId}" not found.`);
-  if (record.status.state !== PLAN_STATES.APPROVED) {
-    throw new Error(`Plan "${taskId}" is ${record.status.state}; explicit approval is required before creating an execution worktree.`);
-  }
-  const currentHead = resolveHead(projectRoot, { exec });
-  if (currentHead !== record.status.baseHead) {
-    throw new Error(`Plan "${taskId}" is stale: repository HEAD changed since approval.`);
-  }
+  const record = await verifyPlanForExecution(projectRoot, taskId, { exec, checkWorkingTree: false });
+  // verifyPlanForExecution already proved the project's real current HEAD
+  // equals this — reusing it instead of resolving HEAD again avoids a
+  // redundant git call for a value already established.
+  const currentHead = record.status.baseHead;
   assertWorkingTreeClean(projectRoot, { exec });
 
   const worktreeId = createWorktreeId();
