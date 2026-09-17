@@ -305,6 +305,13 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
   const service = createConversationService({
     resolveRoot: async () => "/repo",
     homeDir: "/home/test",
+    // The real OS-level sandbox check (codex-sandbox.js) only reports
+    // Codex eligible on real macOS with a real sandbox-exec binary — this
+    // test exercises runBootstrapAnalysis's own logic, not platform
+    // detection, so it simulates a macOS host with sandbox-exec present
+    // rather than depending on whatever OS actually runs this suite (CI
+    // runs on Linux).
+    codexIsolationDeps: { platform: "darwin", access: async () => {} },
     buildSanitizedSnapshot: async (projectRoot) => {
       assert.equal(projectRoot, "/repo");
       return {
@@ -357,6 +364,7 @@ test("runBootstrapAnalysis drops the analyst's recommendedRoleNeeds when none of
   let cleanedUp = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
+    codexIsolationDeps: { platform: "darwin", access: async () => {} },
     buildSanitizedSnapshot: async () => ({
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 1, secretsRedacted: 0,
       copiedFiles: ["src/real.ts"], excludedPrivatePaths: [], cleanup: async () => { cleanedUp = true; }
@@ -387,6 +395,7 @@ test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the a
   let cleanedUp = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
+    codexIsolationDeps: { platform: "darwin", access: async () => {} },
     buildSanitizedSnapshot: async () => ({
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
       copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => { cleanedUp = true; }
@@ -406,6 +415,7 @@ test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the r
   let wrote = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
+    codexIsolationDeps: { platform: "darwin", access: async () => {} },
     runCodexSandboxedBootstrap: async () => ({ status: "error", error: "codex -p timed out", answer: null }),
     writeProjectStrategy: async () => { wrote = true; }
   });
@@ -421,6 +431,7 @@ test("runBootstrapAnalysis routes a Codex analyst through the real OS-level sand
   let askProviderCalled = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
+    codexIsolationDeps: { platform: "darwin", access: async () => {} },
     buildSanitizedSnapshot: async () => ({
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
       copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => {}
@@ -536,6 +547,7 @@ test("CANARY: runBootstrapAnalysis's real sanitized-snapshot pipeline (not mocke
   const service = createConversationService({
     resolveRoot: async () => projectRoot,
     homeDir: "/home/test",
+    codexIsolationDeps: { platform: "darwin", access: async () => {} },
     // Inspect the real sanitized snapshot WHILE it still exists — the
     // real cleanup() runs in runBootstrapAnalysis's own `finally`, right
     // after this call returns, so the snapshot is gone by the time the
