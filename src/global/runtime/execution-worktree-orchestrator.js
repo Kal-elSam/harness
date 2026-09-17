@@ -9,6 +9,8 @@ import {
 import { readWorktreeState } from "./execution-worktree-store.js";
 import { WORKTREE_STATES } from "./execution-worktree-types.js";
 import { readTaskRecord } from "../architect/architect-store.js";
+import { readSkillCatalog } from "../intelligence/skill-catalog.js";
+import { matchSkills } from "../intelligence/execution-router.js";
 
 /**
  * Strict order — never parallel, never reordered. Debugger's real work
@@ -36,8 +38,30 @@ const ROLE_INSTRUCTIONS = Object.freeze({
     + "commit` yourself."
 });
 
-function buildRoleTask(role, planMarkdown) {
-  return `${ROLE_INSTRUCTIONS[role]}\n\n${planMarkdown}`;
+/**
+ * Appends the real, project-local skills (docs/skills, .claude/skills, etc
+ * — see skill-catalog.js) whose own real description actually overlaps
+ * this plan's text — the exact same word-overlap matcher execution-
+ * router.js already uses for ASK-mode routing, never a new heuristic.
+ * Only the real name + real file path are ever included; the skill's own
+ * content is never duplicated into the prompt — the role's real agent run
+ * has real filesystem access inside this same worktree and can read the
+ * real SKILL.md itself if it decides the match is relevant. An empty
+ * catalog or zero matches changes nothing: the plan text is untouched.
+ */
+function buildRoleTask(role, planMarkdown, skills = []) {
+  const matches = matchSkills(planMarkdown, skills);
+  const skillsByName = new Map(skills.map((skill) => [skill.name, skill]));
+  const skillLines = matches
+    .map((match) => skillsByName.get(match.name))
+    .filter(Boolean)
+    .map((skill) => `- ${skill.name} (${skill.path}): ${skill.description}`);
+
+  const skillsSection = skillLines.length > 0
+    ? `\n\n## Relevant project skills\nThese real project skills may apply — read the file at its own path if useful, never assume its content:\n${skillLines.join("\n")}`
+    : "";
+
+  return `${ROLE_INSTRUCTIONS[role]}\n\n${planMarkdown}${skillsSection}`;
 }
 
 /**
@@ -119,6 +143,11 @@ export async function runOrchestratedChain({
     throw new Error(`Execution worktree "${worktreeId}" has no real approved plan text to orchestrate roles from.`);
   }
 
+  // Read once, from the worktree's own real checkout — exactly what each
+  // role's real agent run will itself see, not the main project's
+  // possibly-different working tree.
+  const skills = await readSkillCatalog(initial.treePath);
+
   const completedRoles = [];
 
   for (const role of ROLE_CHAIN) {
@@ -130,7 +159,7 @@ export async function runOrchestratedChain({
         homeDir,
         runId,
         agentId: roleAgents[role] ?? agentId,
-        task: buildRoleTask(role, record.planMarkdown),
+        task: buildRoleTask(role, record.planMarkdown, skills),
         cwd: initial.treePath,
         model,
         permissions,

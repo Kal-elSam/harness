@@ -31,7 +31,7 @@ function createStepSpawn(steps) {
   const invocations = [];
   const spawnImpl = (_command, _args, options) => {
     const step = steps[index] ?? { exitCode: 0 };
-    invocations.push({ cwd: options.cwd });
+    invocations.push({ cwd: options.cwd, args: _args });
     index += 1;
 
     const child = new EventEmitter();
@@ -209,4 +209,64 @@ test("runOrchestratedChain uses a per-role provider override from roleAgents", a
   // here is the real sequence of providers used, not the exact call count.
   const collapsed = usedAdapterIds.filter((id, i) => id !== usedAdapterIds[i - 1]);
   assert.deepEqual(collapsed, ["codex", "claude"], "only Tester's explicit override changes its provider — Builder/Debugger keep the default agentId");
+});
+
+test("REGRESSION: runOrchestratedChain injects a matching real project skill's name/path into every role's real task text, never the skill's own content", async () => {
+  const root = await repo();
+
+  // A real, committed skill the worktree's own checkout will contain —
+  // the exact same real catalog readSkillCatalog/matchSkills already read
+  // for ASK-mode routing, reused here rather than reinvented.
+  execFileSync("mkdir", ["-p", join(root, "docs", "skills", "payment-reconciliation")]);
+  await writeFile(
+    join(root, "docs", "skills", "payment-reconciliation", "SKILL.md"),
+    "---\nname: payment-reconciliation\ndescription: Reconciliation rules for payments refunds and settlement ledgers.\n---\nFull skill body — must never be injected verbatim.\n"
+  );
+  execFileSync("git", ["add", "docs"], { cwd: root });
+  execFileSync("git", ["commit", "-qm", "add skill"], { cwd: root });
+
+  const homeDir = await harnessHome();
+  const created = await createArchitecturePlan({
+    task: "Fix refunds reconciliation", cwd: root,
+    runCodex: async () => ({ plan: "## Plan\nReconcile payments refunds against the settlement ledger.", usage: null })
+  });
+  await transitionTask(root, created.status.taskId, "approved");
+  const worktree = await createExecutionWorktree({ projectRoot: root, taskId: created.status.taskId, homeDir });
+
+  const { spawnImpl, invocations } = createStepSpawn([
+    { writeFile: { name: "builder.txt", content: "b\n" } },
+    { writeFile: { name: "debugger.txt", content: "d\n" } },
+    { writeFile: { name: "tester.txt", content: "t\n" } }
+  ]);
+
+  await runOrchestratedChain({
+    worktreeId: worktree.worktreeId, homeDir, agentId: "codex", cliVersion: "0.16.0",
+    spawnImpl, resolveAdapterImpl: resolveAdapterWithNoopPreflight
+  });
+
+  assert.equal(invocations.length, 3);
+  for (const invocation of invocations) {
+    const task = invocation.args.at(-1);
+    assert.match(task, /payment-reconciliation \(docs\/skills\/payment-reconciliation\/SKILL\.md\)/, "each role's real task must reference the real matched skill's name and real file path");
+    assert.doesNotMatch(task, /Full skill body/, "the skill's own real content must never be duplicated into the prompt — only its name/path/description");
+  }
+});
+
+test("runOrchestratedChain leaves the task text untouched when no real project skill matches", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyToOrchestrate(root);
+  const { spawnImpl, invocations } = createStepSpawn([
+    { writeFile: { name: "builder.txt", content: "b\n" } },
+    { writeFile: { name: "debugger.txt", content: "d\n" } },
+    { writeFile: { name: "tester.txt", content: "t\n" } }
+  ]);
+
+  await runOrchestratedChain({
+    worktreeId: worktree.worktreeId, homeDir, agentId: "codex", cliVersion: "0.16.0",
+    spawnImpl, resolveAdapterImpl: resolveAdapterWithNoopPreflight
+  });
+
+  for (const invocation of invocations) {
+    assert.doesNotMatch(invocation.args.at(-1), /Relevant project skills/, "no real skill catalog exists for this project — nothing to inject");
+  }
 });
