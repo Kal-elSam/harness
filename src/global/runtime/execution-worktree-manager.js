@@ -49,6 +49,35 @@ async function rollbackWorktree({ projectRoot, treePath, worktreeDir, exec }) {
 }
 
 /**
+ * The execution worktree itself (not the real project) must have zero
+ * uncommitted changes — tracked or untracked — before a role starts and
+ * again right before a commit is made. This is what makes the "before"
+ * checkpoint and the staged-diff validation trustworthy preconditions
+ * instead of just an audit trail: a role can never inherit stray state
+ * left over from a previous role or from outside interference, and
+ * completeRoleRun can trust that whatever it stages is exactly and only
+ * what this role's run produced.
+ */
+function assertExecutionWorktreeClean(treePath, { exec }) {
+  const diff = exec("git", ["diff", "--binary", "HEAD"], {
+    cwd: treePath, encoding: null, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024
+  });
+  const untracked = exec("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
+    cwd: treePath, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"]
+  });
+  if (diff.length > 0 || String(untracked).trim().length > 0) {
+    throw new Error(`Execution worktree at "${treePath}" is not clean.`);
+  }
+}
+
+/** Unstages everything without touching the working tree — used to back out a rejected staging attempt. */
+function unstageAll(treePath, exec) {
+  try {
+    exec("git", ["reset"], { cwd: treePath, stdio: "ignore" });
+  } catch { /* best-effort — the completion is already being rejected */ }
+}
+
+/**
  * Creates one real, isolated execution worktree for an approved
  * architecture plan — the real boundary every future role's run will be
  * launched inside, never the project's own directory. Verifies the plan
@@ -94,6 +123,7 @@ export async function createExecutionWorktree({ projectRoot, taskId, homeDir, ex
     status: WORKTREE_STATES.PENDING,
     activeRole: null,
     activeRunId: null,
+    activeRoleBaseHead: null,
     createdAt: now,
     updatedAt: now,
     error: null
@@ -131,7 +161,7 @@ async function requireWorktree(homeDir, worktreeId) {
 async function markInterrupted(homeDir, worktree, reason) {
   const next = {
     ...worktree, status: WORKTREE_STATES.INTERRUPTED, activeRole: null, activeRunId: null,
-    updatedAt: new Date().toISOString(), error: reason
+    activeRoleBaseHead: null, updatedAt: new Date().toISOString(), error: reason
   };
   await writeWorktreeState(homeDir, next).catch(() => {});
   return next;
@@ -151,8 +181,13 @@ async function markInterrupted(homeDir, worktree, reason) {
  * explicit sign-off. Requires the worktree to be PENDING (a fresh
  * creation, or the state completeRoleRun leaves it in after a prior
  * role) — never lets two roles run concurrently in the same worktree.
- * Records a real "before" checkpoint (the worktree's own real HEAD +
- * working-tree fingerprint right now) before flipping PENDING -> ACTIVE.
+ * Also requires the worktree itself to be completely clean right now
+ * (assertExecutionWorktreeClean) — this is what lets completeRoleRun
+ * later trust the "before" HEAD as a real precondition instead of just
+ * an audit fact. Records a real "before" checkpoint (the worktree's own
+ * real HEAD + working-tree fingerprint right now, also persisted onto
+ * the worktree record itself as activeRoleBaseHead) before flipping
+ * PENDING -> ACTIVE.
  * @param {object} args
  * @param {string} args.worktreeId
  * @param {string} args.role
@@ -170,6 +205,7 @@ export async function beginRoleRun({ worktreeId, role, runId, homeDir, exec = ex
   if (worktree.status !== WORKTREE_STATES.PENDING) {
     throw new Error(`Execution worktree "${worktreeId}" is ${worktree.status}; expected PENDING to begin a new role run.`);
   }
+  assertExecutionWorktreeClean(worktree.treePath, { exec });
 
   const now = new Date().toISOString();
   const headSha = resolveHead(worktree.treePath, { exec });
@@ -179,7 +215,8 @@ export async function beginRoleRun({ worktreeId, role, runId, homeDir, exec = ex
   });
 
   const next = {
-    ...worktree, status: WORKTREE_STATES.ACTIVE, activeRole: role, activeRunId: runId, updatedAt: now
+    ...worktree, status: WORKTREE_STATES.ACTIVE, activeRole: role, activeRunId: runId,
+    activeRoleBaseHead: headSha, updatedAt: now
   };
   await writeWorktreeState(homeDir, next);
   return next;
@@ -195,23 +232,41 @@ export async function beginRoleRun({ worktreeId, role, runId, homeDir, exec = ex
  * - Not yet terminal (still PENDING/STARTING/RUNNING): rejected outright,
  *   no state change at all — this is a caller usage error (completing too
  *   early), not a real worktree failure.
- * - Terminal but not COMPLETED (FAILED/CANCELLED/INTERRUPTED): the role's
- *   real attempt failed — no commit is ever created for it, and the
- *   worktree moves straight to INTERRUPTED.
- * - COMPLETED: the real success path. The real, current uncommitted
- *   worktree diff is validated exactly like a review snapshot would be
- *   (resolveReviewSnapshot — real path safety, real size/line/file
- *   limits, real symlink/binary/non-regular handling) with one stricter
- *   rule on top: since there is no consent/cockpit surface yet at this
- *   increment to ask a human about a private path, ANY private path
- *   touched here fails the completion outright (INTERRUPTED, no commit)
- *   rather than silently excluding it from what Kairo commits. When
- *   there are real changes, Kairo itself stages and commits them — the
- *   agent never runs `git commit` itself, only ever edits real files.
- *   When there are no real changes at all, no commit is fabricated; the
- *   real "after" checkpoint records the exact same real HEAD as
- *   "before". Either way, the worktree returns to PENDING afterward,
- *   ready for the next role or for markReadyForReview.
+ * The real run also has to prove it actually ran inside this exact
+ * worktree (`runState.cwd === worktree.treePath`) — a COMPLETED state
+ * alone is never enough, since nothing stops a run claiming completion
+ * from a wholly different directory.
+ * - Terminal but not COMPLETED (FAILED/CANCELLED/INTERRUPTED), or
+ *   COMPLETED from the wrong cwd: the role's real attempt failed — no
+ *   commit is ever created for it, and the worktree moves straight to
+ *   INTERRUPTED.
+ * - COMPLETED, from the right cwd: the real success path, guarded end to
+ *   end so what's validated is provably what's committed:
+ *   1. The worktree's real current HEAD must still equal the "before"
+ *      checkpoint's HEAD (`activeRoleBaseHead`) — if it moved at all,
+ *      the agent ran `git commit` itself instead of only editing files,
+ *      and that's rejected outright (INTERRUPTED, no further commit).
+ *   2. The real, current uncommitted working-tree diff is validated via
+ *      resolveReviewSnapshot (real path safety, real size/line/file
+ *      limits, real symlink/binary/non-regular handling). ANY excluded
+ *      entry at all — not just private paths — fails the completion
+ *      outright, since there is no consent/cockpit surface yet at this
+ *      increment and a validated file riding alongside an excluded one
+ *      must never let the excluded one through.
+ *   3. When there are real changes, Kairo stages exactly the validated
+ *      paths (never `git add -A`), then re-validates the real STAGED
+ *      content (not the pre-staging view) — the staged path set must
+ *      match what was validated, staged modes must be regular files
+ *      only (no submodule gitlinks), and zero unstaged/untracked
+ *      changes may remain. HEAD is re-checked immediately before the
+ *      commit itself as a final race guard, and the worktree is
+ *      re-verified clean immediately after committing.
+ *   4. When there are no real changes at all, no commit is fabricated;
+ *      the real "after" checkpoint records the exact same real HEAD as
+ *      "before".
+ *   Either way, the worktree returns to PENDING afterward, ready for the
+ *   next role or for markReadyForReview. The agent never runs
+ *   `git commit`/`git add` itself at any point — only ever edits files.
  * @param {object} args
  * @param {string} args.worktreeId
  * @param {string} args.role
@@ -239,6 +294,21 @@ export async function completeRoleRun({
   if (!runState || !isTerminalRunState(runState.state)) {
     throw new Error(`Cannot complete role run: run "${runId}" has not finished yet (state: ${runState?.state ?? "unknown"}).`);
   }
+
+  // A COMPLETED state alone proves nothing about *where* the run actually
+  // executed — a run claiming completion from a different cwd never really
+  // touched this worktree, so it can never be trusted to close it out.
+  if (runState.cwd !== worktree.treePath) {
+    await markInterrupted(
+      homeDir, worktree,
+      `Role "${role}" run "${runId}" ran in "${runState.cwd ?? "unknown"}", not the execution worktree "${worktree.treePath}".`
+    );
+    throw new Error(
+      `Cannot complete role run: run "${runId}" executed outside its execution worktree — `
+      + `execution worktree "${worktreeId}" moved to INTERRUPTED, no commit created.`
+    );
+  }
+
   if (runState.state !== RUN_STATES.COMPLETED) {
     await markInterrupted(homeDir, worktree, `Role "${role}" run "${runId}" ended in state ${runState.state}.`);
     throw new Error(
@@ -247,34 +317,153 @@ export async function completeRoleRun({
     );
   }
 
-  let snapshot;
+  // The "before" HEAD is a precondition, not just an audit fact: if it
+  // moved at all, the agent (or anything else) ran `git commit` itself
+  // instead of only editing files, and Kairo can no longer be sure what
+  // it's about to stage is exactly and only this role's own work.
+  const headBeforeStaging = resolveHead(worktree.treePath, { exec });
+  if (headBeforeStaging !== worktree.activeRoleBaseHead) {
+    await markInterrupted(
+      homeDir, worktree,
+      `Execution worktree HEAD moved from "${worktree.activeRoleBaseHead}" to "${headBeforeStaging}" `
+      + `outside Kairo's control during role "${role}" — the agent committed directly.`
+    );
+    throw new Error(
+      `Cannot complete role run: HEAD changed unexpectedly during role "${role}" — the agent committed `
+      + `directly instead of only editing files. Execution worktree "${worktreeId}" moved to INTERRUPTED, no commit created.`
+    );
+  }
+
+  let workingSnapshot;
   try {
-    snapshot = await resolveReviewSnapshot({ cwd: worktree.treePath, execFileImpl });
+    workingSnapshot = await resolveReviewSnapshot({ cwd: worktree.treePath, execFileImpl });
   } catch (error) {
     await markInterrupted(homeDir, worktree, error.message ?? String(error));
     throw error;
   }
-  const privateTouched = snapshot.excluded.filter((entry) => entry.reason === "private");
-  if (privateTouched.length > 0) {
-    const reason = `Role "${role}" touched private path(s): ${privateTouched.map((e) => e.path).join(", ")}.`;
+
+  // ANY excluded entry — private, binary, symlink, non-regular — blocks
+  // the whole completion. There is no consent/cockpit surface yet at this
+  // increment to ask a human about any of them, and silently committing
+  // only the admitted subset is exactly the bypass this guards against:
+  // an unrelated excluded file must never ride along just because some
+  // other, validated file was also touched.
+  if (workingSnapshot.excluded.length > 0) {
+    const reason = `Role "${role}" touched path(s) Kairo refuses to commit: `
+      + workingSnapshot.excluded.map((e) => `${e.path} (${e.reason})`).join(", ") + ".";
     await markInterrupted(homeDir, worktree, reason);
     throw new Error(`Cannot complete role run: ${reason} Execution worktree "${worktreeId}" moved to INTERRUPTED, no commit created.`);
   }
 
-  if (snapshot.files.length > 0) {
-    exec("git", ["add", "-A"], { cwd: worktree.treePath, stdio: "ignore" });
-    exec("git", ["commit", "-qm", `checkpoint(${role}): run ${runId}`], { cwd: worktree.treePath, stdio: "ignore" });
+  if (workingSnapshot.files.length === 0) {
+    const now = new Date().toISOString();
+    const fingerprint = resolveWorkingTreeFingerprint(worktree.treePath, { exec });
+    await appendCheckpoint(homeDir, worktreeId, {
+      worktreeId, role, runId, phase: "after", headSha: headBeforeStaging, fingerprint, timestamp: now
+    });
+    const next = {
+      ...worktree, status: WORKTREE_STATES.PENDING, activeRole: null, activeRunId: null,
+      activeRoleBaseHead: null, updatedAt: now
+    };
+    await writeWorktreeState(homeDir, next);
+    return next;
   }
+
+  // Stage exactly the validated paths — never `git add -A`, which would
+  // sweep in anything else sitting in the worktree regardless of what was
+  // actually validated above.
+  const validatedPaths = workingSnapshot.files.map((f) => f.path);
+  exec("git", ["add", "--", ...validatedPaths], { cwd: worktree.treePath, stdio: "ignore" });
+
+  // What's validated must match what's actually staged and about to be
+  // committed — re-run the same review snapshot logic against the real
+  // staged content, not the pre-staging working-tree view of it.
+  let stagedSnapshot;
+  try {
+    stagedSnapshot = await resolveReviewSnapshot({ cwd: worktree.treePath, staged: true, execFileImpl });
+  } catch (error) {
+    unstageAll(worktree.treePath, exec);
+    await markInterrupted(homeDir, worktree, error.message ?? String(error));
+    throw error;
+  }
+
+  if (stagedSnapshot.excluded.length > 0) {
+    unstageAll(worktree.treePath, exec);
+    const reason = `Staged content includes excluded path(s): `
+      + stagedSnapshot.excluded.map((e) => `${e.path} (${e.reason})`).join(", ") + ".";
+    await markInterrupted(homeDir, worktree, reason);
+    throw new Error(`Cannot complete role run: ${reason} Execution worktree "${worktreeId}" moved to INTERRUPTED, no commit created.`);
+  }
+
+  const stagedPaths = new Set(stagedSnapshot.files.map((f) => f.path));
+  const workingPaths = new Set(workingSnapshot.files.map((f) => f.path));
+  const pathSetsMatch = stagedPaths.size === workingPaths.size && [...stagedPaths].every((p) => workingPaths.has(p));
+  if (!pathSetsMatch) {
+    unstageAll(worktree.treePath, exec);
+    const reason = "Staged path set does not match the validated working-tree snapshot.";
+    await markInterrupted(homeDir, worktree, reason);
+    throw new Error(`Cannot complete role run: ${reason} Execution worktree "${worktreeId}" moved to INTERRUPTED, no commit created.`);
+  }
+
+  // Symlinks/binaries are already excluded above; this additionally
+  // catches submodule gitlinks (mode 160000) and any other non-regular
+  // mode git itself is willing to stage.
+  const badMode = stagedSnapshot.files.find((f) => f.mode != null && f.mode !== "100644" && f.mode !== "100755");
+  if (badMode) {
+    unstageAll(worktree.treePath, exec);
+    const reason = `Staged path "${badMode.path}" has a non-regular file mode (${badMode.mode}).`;
+    await markInterrupted(homeDir, worktree, reason);
+    throw new Error(`Cannot complete role run: ${reason} Execution worktree "${worktreeId}" moved to INTERRUPTED, no commit created.`);
+  }
+
+  const unstagedDiff = exec("git", ["diff", "--name-only"], {
+    cwd: worktree.treePath, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"]
+  });
+  const untrackedFiles = exec("git", ["ls-files", "--others", "--exclude-standard"], {
+    cwd: worktree.treePath, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"]
+  });
+  if (String(unstagedDiff).trim().length > 0 || String(untrackedFiles).trim().length > 0) {
+    unstageAll(worktree.treePath, exec);
+    const reason = "Unstaged or untracked changes remain after staging the validated diff.";
+    await markInterrupted(homeDir, worktree, reason);
+    throw new Error(`Cannot complete role run: ${reason} Execution worktree "${worktreeId}" moved to INTERRUPTED, no commit created.`);
+  }
+
+  // Final race guard: re-check HEAD immediately before the real commit,
+  // not just once at the top of this function.
+  const headBeforeCommit = resolveHead(worktree.treePath, { exec });
+  if (headBeforeCommit !== headBeforeStaging) {
+    unstageAll(worktree.treePath, exec);
+    const reason = `Execution worktree HEAD moved from "${headBeforeStaging}" to "${headBeforeCommit}" while staging.`;
+    await markInterrupted(homeDir, worktree, reason);
+    throw new Error(`Cannot complete role run: ${reason} Execution worktree "${worktreeId}" moved to INTERRUPTED, no commit created.`);
+  }
+
+  exec("git", ["commit", "-qm", `checkpoint(${role}): run ${runId}`], { cwd: worktree.treePath, stdio: "ignore" });
 
   const now = new Date().toISOString();
   const headSha = resolveHead(worktree.treePath, { exec });
   const fingerprint = resolveWorkingTreeFingerprint(worktree.treePath, { exec });
+
+  // Cleanliness after the commit is itself verified, not assumed — an
+  // execution worktree only ever hands back to PENDING in a state the
+  // next role (or markReadyForReview) can trust as a real precondition.
+  // The commit already happened at this point, so a failure here goes to
+  // INTERRUPTED rather than unstaging anything.
+  try {
+    assertExecutionWorktreeClean(worktree.treePath, { exec });
+  } catch (error) {
+    await markInterrupted(homeDir, worktree, `Execution worktree left dirty after committing role "${role}": ${error.message}`);
+    throw error;
+  }
+
   await appendCheckpoint(homeDir, worktreeId, {
     worktreeId, role, runId, phase: "after", headSha, fingerprint, timestamp: now
   });
 
   const next = {
-    ...worktree, status: WORKTREE_STATES.PENDING, activeRole: null, activeRunId: null, updatedAt: now
+    ...worktree, status: WORKTREE_STATES.PENDING, activeRole: null, activeRunId: null,
+    activeRoleBaseHead: null, updatedAt: now
   };
   await writeWorktreeState(homeDir, next);
   return next;

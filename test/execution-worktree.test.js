@@ -294,8 +294,8 @@ test("listWorktreeRecords returns every real persisted worktree, newest first, s
 // execution worktree. Still no automatic Builder->Debugger->Tester
 // chaining, and no routing — every call here is explicit.
 
-function fakeReadRun(state) {
-  return async () => (state == null ? null : { state });
+function fakeReadRun(state, cwd) {
+  return async () => (state == null ? null : { state, cwd });
 }
 
 async function freshWorktree(root, task = "Design safe payments") {
@@ -347,7 +347,7 @@ test("completeRoleRun rejects a runId that doesn't match the real active run", a
   const { homeDir, worktree } = await freshWorktree(root);
   await beginRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir });
   await assert.rejects(
-    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_WRONG", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED) }),
+    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_WRONG", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED, worktree.treePath) }),
     /Role run mismatch/
   );
 });
@@ -358,7 +358,7 @@ test("completeRoleRun rejects completion while the real run hasn't reached a ter
   await beginRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir });
 
   await assert.rejects(
-    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.RUNNING) }),
+    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.RUNNING, worktree.treePath) }),
     /has not finished yet/
   );
   const stillActive = await readWorktreeState(homeDir, worktree.worktreeId);
@@ -372,7 +372,7 @@ test("completeRoleRun on a real FAILED run creates no commit and moves the workt
   await writeFile(join(worktree.treePath, "unfinished.txt"), "partial work\n");
 
   await assert.rejects(
-    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.FAILED) }),
+    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.FAILED, worktree.treePath) }),
     /did not complete successfully/
   );
 
@@ -391,7 +391,7 @@ test("completeRoleRun with no real changes creates no commit — the 'after' che
   await beginRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir });
   const beforeSha = resolveHead(worktree.treePath);
 
-  const pending = await completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED) });
+  const pending = await completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED, worktree.treePath) });
   assert.equal(pending.status, WORKTREE_STATES.PENDING);
   assert.equal(pending.activeRole, null);
   assert.equal(pending.activeRunId, null);
@@ -411,7 +411,7 @@ test("completeRoleRun with real changes lets Kairo itself create the real commit
   const beforeSha = resolveHead(worktree.treePath);
   await writeFile(join(worktree.treePath, "feature.txt"), "real implementation\n");
 
-  const pending = await completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED) });
+  const pending = await completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED, worktree.treePath) });
   assert.equal(pending.status, WORKTREE_STATES.PENDING);
 
   const afterSha = resolveHead(worktree.treePath);
@@ -432,8 +432,8 @@ test("completeRoleRun rejects a real private path touched by the role, with no c
   await writeFile(join(worktree.treePath, ".env"), "SECRET=1\n");
 
   await assert.rejects(
-    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED) }),
-    /private path/
+    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED, worktree.treePath) }),
+    /\.env \(private\)/
   );
 
   const interrupted = await readWorktreeState(homeDir, worktree.worktreeId);
@@ -450,7 +450,7 @@ test("completeRoleRun rejects a real diff that exceeds the real review size limi
   await writeFile(join(worktree.treePath, "huge.txt"), `${tooManyLines}\n`);
 
   await assert.rejects(
-    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED) })
+    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED, worktree.treePath) })
   );
   const interrupted = await readWorktreeState(homeDir, worktree.worktreeId);
   assert.equal(interrupted.status, WORKTREE_STATES.INTERRUPTED);
@@ -468,7 +468,78 @@ test("markReadyForReview requires no active role run, and moves PENDING -> READY
     /expected PENDING/
   );
 
-  await completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED) });
+  await completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED, worktree.treePath) });
   const ready = await markReadyForReview({ worktreeId: worktree.worktreeId, homeDir });
   assert.equal(ready.status, WORKTREE_STATES.READY_FOR_REVIEW);
+});
+
+// --- Real bypasses reproduced against the increment-2 implementation:
+// what's validated didn't necessarily match what got committed. All three
+// are closed by: (a) the "before" HEAD is a verified precondition, not
+// just an audit fact; (b) runState.cwd must match the worktree's own
+// treePath; (c) ANY snapshot.excluded entry blocks the whole completion,
+// and only the exact validated paths are ever staged.
+
+test("REGRESSION: completeRoleRun rejects a commit the agent made directly, instead of accepting it and returning to PENDING", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await freshWorktree(root);
+  await beginRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir });
+  const beforeSha = resolveHead(worktree.treePath);
+
+  // The agent bypasses Kairo and commits inside the worktree itself.
+  await writeFile(join(worktree.treePath, "rogue.txt"), "agent-authored commit\n");
+  execFileSync("git", ["add", "rogue.txt"], { cwd: worktree.treePath });
+  execFileSync("git", ["commit", "-qm", "agent committed this directly"], { cwd: worktree.treePath });
+
+  await assert.rejects(
+    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED, worktree.treePath) }),
+    /agent committed directly/
+  );
+
+  const interrupted = await readWorktreeState(homeDir, worktree.worktreeId);
+  assert.equal(interrupted.status, WORKTREE_STATES.INTERRUPTED, "must never silently accept the agent's own commit and return to PENDING");
+  const afterSha = resolveHead(worktree.treePath);
+  assert.notEqual(afterSha, beforeSha, "the rogue commit itself still exists — Kairo refuses to build on top of it, but never rewrites history either");
+});
+
+test("REGRESSION: completeRoleRun rejects a run whose real cwd doesn't match the execution worktree, even when it claims COMPLETED", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await freshWorktree(root);
+  await beginRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir });
+  await writeFile(join(worktree.treePath, "feature.txt"), "should never be committed\n");
+
+  await assert.rejects(
+    () => completeRoleRun({
+      worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir,
+      readRun: fakeReadRun(RUN_STATES.COMPLETED, "/wrong/project")
+    }),
+    /executed outside its execution worktree/
+  );
+
+  const interrupted = await readWorktreeState(homeDir, worktree.worktreeId);
+  assert.equal(interrupted.status, WORKTREE_STATES.INTERRUPTED);
+  const log = execFileSync("git", ["-C", worktree.treePath, "log", "--oneline"], { encoding: "utf8" });
+  assert.equal(log.trim().split("\n").length, 1, "a run claiming completion from the wrong directory must never produce a real commit");
+});
+
+test("REGRESSION: completeRoleRun never lets an excluded file ride along with an admitted one — no 'git add -A' fallback", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await freshWorktree(root);
+  await beginRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir });
+
+  await writeFile(join(worktree.treePath, "ok.txt"), "admitted real change\n");
+  await writeFile(join(worktree.treePath, "secret.bin"), Buffer.from([0x00, 0x01, 0x02, 0xff]));
+
+  await assert.rejects(
+    () => completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED, worktree.treePath) }),
+    /path\(s\) Kairo refuses to commit/
+  );
+
+  const interrupted = await readWorktreeState(homeDir, worktree.worktreeId);
+  assert.equal(interrupted.status, WORKTREE_STATES.INTERRUPTED);
+  const log = execFileSync("git", ["-C", worktree.treePath, "log", "--oneline"], { encoding: "utf8" });
+  assert.equal(log.trim().split("\n").length, 1, "neither ok.txt nor secret.bin may be committed — the excluded file must never drag the admitted one in with it");
+  const status = execFileSync("git", ["-C", worktree.treePath, "status", "--porcelain"], { encoding: "utf8" });
+  assert.match(status, /ok\.txt/);
+  assert.match(status, /secret\.bin/);
 });
