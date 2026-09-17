@@ -154,6 +154,7 @@ test("normalizeProfileKey converts camelCase secret names", () => {
   assert.equal(normalizeProfileKey("privateKey"), "private_key");
   assert.equal(normalizeProfileKey("apiKeyEnv"), "api_key_env");
   assert.equal(normalizeProfileKey("tokenBudget"), "token_budget");
+  assert.equal(normalizeProfileKey("providerTokenBudgets"), "provider_token_budgets");
 });
 
 test("camelCase credential keys are forbidden except apiKeyEnv", () => {
@@ -164,6 +165,41 @@ test("camelCase credential keys are forbidden except apiKeyEnv", () => {
   assert.equal(isForbiddenSecretKey("apiKey"), true);
   assert.equal(isForbiddenSecretKey("apiKeyEnv"), false);
   assert.equal(isForbiddenSecretKey("tokenBudget"), false);
+  assert.equal(isForbiddenSecretKey("providerTokenBudgets"), false);
+});
+
+test("REGRESSION: providerTokenBudgets is not flagged as a credential — the same trap tokenBudget itself already needed an allowlist entry for", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-profile-provider-budgets-"));
+  await saveGlobalProfile(homeDir, {
+    coordinator: null,
+    defaultAgents: "detected",
+    defaultComponents: null,
+    applyMode: "prompt",
+    providerTokenBudgets: { codex: 100000, claude: 50000 }
+  });
+
+  const resolved = await resolveProfile({ homeDir, workspaceRoot: homeDir });
+  assert.deepEqual(resolved.profile.providerTokenBudgets, { codex: 100000, claude: 50000 });
+  const json = buildProfileJson(resolved);
+  assert.deepEqual(json.providerTokenBudgets, { codex: 100000, claude: 50000 });
+});
+
+test("providerTokenBudgets rejects an unknown provider id and a non-positive budget", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-profile-provider-budgets-invalid-"));
+  await assert.rejects(
+    () => saveGlobalProfile(homeDir, {
+      coordinator: null, defaultAgents: "detected", defaultComponents: null, applyMode: "prompt",
+      providerTokenBudgets: { "not-a-real-provider": 1000 }
+    }),
+    /Unknown provider/
+  );
+  await assert.rejects(
+    () => saveGlobalProfile(homeDir, {
+      coordinator: null, defaultAgents: "detected", defaultComponents: null, applyMode: "prompt",
+      providerTokenBudgets: { codex: 0 }
+    }),
+    /must be a positive number/
+  );
 });
 
 test("profile rejects camelCase and nested secret keys", async () => {

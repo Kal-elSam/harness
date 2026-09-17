@@ -5,6 +5,7 @@ import { harnessHomePaths } from "./paths.js";
 import { AGENT_CAPABILITY_IDS } from "./agent-capabilities/index.js";
 import { classifyCustomBaseUrl, isValidEnvironmentName } from "./intelligence/custom-url.js";
 import { validateRuntimeProfile, RUNTIME_PROFILE_KEYS } from "./runtime/run-profile.js";
+import { EXECUTION_ADAPTER_IDS } from "./runtime/execution-adapters/index.js";
 
 export const PROFILE_KEYS = new Set([
   "coordinator",
@@ -17,6 +18,7 @@ export const PROFILE_KEYS = new Set([
   "tokenBudget",
   "stableContextBudget",
   "requestContextBudget",
+  "providerTokenBudgets",
   "customProviders",
   ...RUNTIME_PROFILE_KEYS
 ]);
@@ -32,6 +34,7 @@ export const DEFAULT_PROFILE = {
   tokenBudget: null,
   stableContextBudget: null,
   requestContextBudget: null,
+  providerTokenBudgets: {},
   customProviders: [],
   agentAliases: {},
   modelAliases: {},
@@ -112,6 +115,7 @@ export function buildProfileJson(resolved) {
     tokenBudget: profile.tokenBudget,
     stableContextBudget: profile.stableContextBudget,
     requestContextBudget: profile.requestContextBudget,
+    providerTokenBudgets: profile.providerTokenBudgets ?? {},
     customProviders: sanitizeCustomProviders(profile.customProviders),
     agentAliases: profile.agentAliases ?? {},
     modelAliases: profile.modelAliases ?? {},
@@ -191,6 +195,8 @@ function validateProfile(profile) {
     }
   }
 
+  validateProviderTokenBudgets(profile.providerTokenBudgets);
+
   if (profile.preferredBackend != null && typeof profile.preferredBackend !== "string") {
     throw new Error("Profile preferredBackend must be a string or null.");
   }
@@ -213,7 +219,8 @@ const SECRET_KEY_ALLOWLIST = new Set([
   "api_key_env",
   "token_budget",
   "stable_context_budget",
-  "request_context_budget"
+  "request_context_budget",
+  "provider_token_budgets"
 ]);
 const SECRET_VALUE_PATTERN = /^(sk-[A-Za-z0-9]|sk-or-|gh[pousr]_|xox[baprs]-|AKIA[0-9A-Z]{16}\b|Bearer\s+\S+|eyJ[A-Za-z0-9_-]+\.)|-----BEGIN [A-Z ]*PRIVATE KEY-----/i;
 
@@ -262,6 +269,21 @@ function walkForSecrets(value) {
       throw new Error("Profile must not store credential-like values. Use environment variables.");
     }
     walkForSecrets(nested);
+  }
+}
+
+function validateProviderTokenBudgets(budgets) {
+  if (budgets == null) return;
+  if (typeof budgets !== "object" || Array.isArray(budgets)) {
+    throw new Error("Profile providerTokenBudgets must be an object mapping provider id to a positive number.");
+  }
+  for (const [provider, budget] of Object.entries(budgets)) {
+    if (!EXECUTION_ADAPTER_IDS.includes(provider)) {
+      throw new Error(`Unknown provider "${provider}" in providerTokenBudgets. Use ${EXECUTION_ADAPTER_IDS.join(", ")}.`);
+    }
+    if (!Number.isFinite(budget) || budget < 1) {
+      throw new Error(`Profile providerTokenBudgets.${provider} must be a positive number.`);
+    }
   }
 }
 

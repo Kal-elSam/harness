@@ -11,6 +11,7 @@ import {
   writeRunState
 } from "./run-store.js";
 import { resolveExecutionAdapter } from "./execution-adapters/index.js";
+import { assertProviderNotExhausted } from "./usage-manager.js";
 import { resolveProfileAgents } from "../profile.js";
 import { resolveRuntimeOptions } from "./run-profile.js";
 import { authorizeRunPermissions } from "./run-permissions.js";
@@ -120,6 +121,12 @@ async function prepareRun({
   }
 
   await adapter.preflight({ cwd });
+  // The one real, enforced budget gate this increment adds — refuses only
+  // a provider whose real, cumulative consumption already reached its own
+  // configured budget (usage-manager.js). No configured
+  // profile.providerTokenBudgets.<agentId> means no gate: this never
+  // blocks a provider nobody set a budget for.
+  await assertProviderNotExhausted({ homeDir, provider: agentId, profile: profile?.profile ?? null });
 
   const authorized = authorizeRunPermissions({
     permissions,

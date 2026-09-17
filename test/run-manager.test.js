@@ -25,6 +25,8 @@ import {
 import { writeSupervisorLock } from "../src/global/runtime/run-supervisor-lock.js";
 import { withStubExecutables } from "./helpers/stub-executables.js";
 import { resolveExecutionAdapter } from "../src/global/runtime/execution-adapters/index.js";
+import { readProviderUsage } from "../src/global/runtime/usage-store.js";
+import { recordProviderUsage } from "../src/global/runtime/usage-manager.js";
 
 // These tests exercise generic run-supervision mechanics (spawn/complete/
 // cancel/detach), not any provider's real auth — so the adapter's real
@@ -123,6 +125,52 @@ test("REGRESSION: a real run.transcript event carries the real originating provi
     assert.ok(transcriptEvent, "a real run.transcript event must have been persisted");
     assert.equal(transcriptEvent.source, "codex");
     assert.deepEqual(transcriptEvent.data.content, [{ type: "text", text: "Reading the failing test…" }]);
+  });
+});
+
+test("REGRESSION: a real completed run records its real usage onto the provider's own cumulative total — exactly once, never per streamed event", async () => {
+  await withStubExecutables(["codex"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-usage-record-"));
+    const lines = [
+      JSON.stringify({ type: "result", usage: { input_tokens: 30, output_tokens: 20, total_tokens: 50 } })
+    ];
+
+    const { completion } = await startRun({
+      homeDir,
+      agentId: "codex",
+      resolveAdapterImpl: resolveAdapterWithNoopPreflight,
+      task: "run tests",
+      cwd: homeDir,
+      cliVersion: "0.2.1",
+      spawnImpl: createFakeSpawn(lines)
+    });
+
+    await completion;
+    const record = await readProviderUsage(homeDir, "codex");
+    assert.ok(record, "a real completed run with real usage must produce a real persisted provider usage record");
+    assert.equal(record.totalTokens, 50);
+    assert.equal(record.runCount, 1);
+  });
+});
+
+test("REGRESSION: startRun refuses a provider whose real cumulative consumption already reached its own configured budget — no run is ever created", async () => {
+  await withStubExecutables(["codex"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-usage-gate-"));
+    await recordProviderUsage(homeDir, "codex", { total: 1000, cost: null });
+
+    await assert.rejects(
+      () => startRun({
+        homeDir,
+        agentId: "codex",
+        resolveAdapterImpl: resolveAdapterWithNoopPreflight,
+        task: "run tests",
+        cwd: homeDir,
+        cliVersion: "0.2.1",
+        profile: { profile: { providerTokenBudgets: { codex: 1000 } }, sources: null },
+        spawnImpl: createFakeSpawn([])
+      }),
+      /exhausted its configured token budget/
+    );
   });
 });
 

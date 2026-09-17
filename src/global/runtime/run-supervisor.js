@@ -14,6 +14,7 @@ import {
   writeRunState
 } from "./run-store.js";
 import { resolveExecutionAdapter } from "./execution-adapters/index.js";
+import { recordProviderUsage } from "./usage-manager.js";
 import { consumeRunHandoff } from "./run-handoff.js";
 import { isRunCancelRequested } from "./run-cancel-signal.js";
 import { readSupervisorLock, touchSupervisorLock, writeSupervisorLock } from "./run-supervisor-lock.js";
@@ -319,6 +320,16 @@ export async function supervisePreparedRun({
             type: failed ? "run.failed" : "run.completed",
             data: { exitCode }
           }), { captureTranscript: shouldPersistTranscript(captureTranscript) });
+          // Recorded exactly once, here, at the real terminal state — never
+          // on intermediate streamed usage events, which would double-count
+          // as they arrive. A run whose adapter never reported real usage
+          // (tokenUsage.total stays null) records nothing.
+          await recordProviderUsage(homeDir, adapter.id, {
+            input: metadata.tokenUsage?.input,
+            output: metadata.tokenUsage?.output,
+            total: metadata.tokenUsage?.total,
+            cost: metadata.cost
+          });
           if (!failed && strategy === RUN_STRATEGIES.ORCHESTRATED) {
             await finalizeOrchState(runId, { homeDir, recovered: false });
           }
