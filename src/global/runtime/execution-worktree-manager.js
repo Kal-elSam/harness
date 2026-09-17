@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { closeSync, openSync, unlinkSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import { resolveHead, resolveWorkingTreeFingerprint, verifyPlanForExecution } from "../architect/architect-store.js";
 import { worktreePaths } from "../paths.js";
 import { createWorktreeId, EXECUTION_WORKTREE_SCHEMA, WORKTREE_STATES } from "./execution-worktree-types.js";
@@ -124,6 +127,7 @@ export async function createExecutionWorktree({ projectRoot, taskId, homeDir, ex
     activeRole: null,
     activeRunId: null,
     activeRoleBaseHead: null,
+    readyHeadSha: null,
     createdAt: now,
     updatedAt: now,
     error: null
@@ -496,7 +500,246 @@ export async function markReadyForReview({ worktreeId, homeDir, exec = execFileS
     throw new Error(`Execution worktree "${worktreeId}" is ${worktree.status}; expected PENDING (no active role run) to mark ready for review.`);
   }
   assertExecutionWorktreeClean(worktree.treePath, { exec });
-  const next = { ...worktree, status: WORKTREE_STATES.READY_FOR_REVIEW, updatedAt: new Date().toISOString() };
+  // The real HEAD is frozen here, not just cleanliness — previewWorktreeMerge
+  // later requires the worktree's current HEAD to still equal this exact
+  // value, so any commit landing after this point (however that happened)
+  // invalidates the preview instead of silently riding along.
+  const readyHeadSha = resolveHead(worktree.treePath, { exec });
+  const next = {
+    ...worktree, status: WORKTREE_STATES.READY_FOR_REVIEW, readyHeadSha, updatedAt: new Date().toISOString()
+  };
   await writeWorktreeState(homeDir, next);
   return next;
+}
+
+/**
+ * Computes one real, deterministic merge preview for an execution worktree
+ * already in READY_FOR_REVIEW — shared by previewWorktreeMerge (the public
+ * read-only preview) and applyWorktreeMerge (which recomputes this exact
+ * same preview fresh, right before applying, and refuses to trust a stale
+ * one). Never mutates anything and never reserves any resource.
+ *
+ * - The worktree's own current HEAD must still equal readyHeadSha —
+ *   anything else means a commit landed after markReadyForReview (however
+ *   that happened), and the caller must mark ready again before previewing.
+ * - finalHeadSha (the worktree's current HEAD) must actually descend from
+ *   baseSha (`git merge-base --is-ancestor`) — refuses to preview history
+ *   that was rewritten or diverged out from under the worktree.
+ * - The accumulated diff baseSha..finalHeadSha is validated exactly like a
+ *   review snapshot (resolveReviewSnapshot — real path safety, real
+ *   accumulated size/line/file limits across every role's commits
+ *   combined, real symlink/binary/non-regular handling). ANY excluded
+ *   entry blocks the preview outright, same as completeRoleRun's own rule.
+ * - The fingerprint binds baseSha, finalHeadSha, and a real digest of the
+ *   exact binary diff bytes between them — applyWorktreeMerge's
+ *   confirmationTarget must match all three exactly, not just the SHAs.
+ * @param {object} worktree
+ * @param {object} deps
+ * @param {(command: string, args: string[], options: object) => Buffer|string} deps.exec
+ * @param {(command: string, args: string[], options: object) => Promise<{stdout: string}>} [deps.execFileImpl]
+ */
+async function computeMergePreview(worktree, { exec, execFileImpl }) {
+  assertExecutionWorktreeClean(worktree.treePath, { exec });
+
+  const currentHead = resolveHead(worktree.treePath, { exec });
+  if (currentHead !== worktree.readyHeadSha) {
+    throw new Error(
+      `Execution worktree HEAD moved from "${worktree.readyHeadSha}" to "${currentHead}" after it was marked `
+      + "ready for review — a fresh markReadyForReview is required before previewing again."
+    );
+  }
+
+  const baseSha = worktree.baseSha;
+  const finalHeadSha = currentHead;
+
+  try {
+    exec("git", ["merge-base", "--is-ancestor", baseSha, finalHeadSha], { cwd: worktree.treePath, stdio: "ignore" });
+  } catch {
+    throw new Error(`Execution worktree HEAD "${finalHeadSha}" does not descend from its own baseSha "${baseSha}" — refusing to preview.`);
+  }
+
+  const snapshot = await resolveReviewSnapshot({ cwd: worktree.treePath, base: baseSha, execFileImpl });
+  if (snapshot.excluded.length > 0) {
+    const reason = `Execution worktree's accumulated diff touches path(s) Kairo refuses to merge: `
+      + snapshot.excluded.map((e) => `${e.path} (${e.reason})`).join(", ") + ".";
+    throw new Error(reason);
+  }
+
+  const rawDiff = exec("git", ["diff", "--binary", `${baseSha}..${finalHeadSha}`], {
+    cwd: worktree.treePath, encoding: null, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024
+  });
+  const diffDigest = createHash("sha256").update(rawDiff).digest("hex");
+  const fingerprint = createHash("sha256").update(JSON.stringify({ baseSha, finalHeadSha, diffDigest })).digest("hex");
+
+  return {
+    baseSha,
+    finalHeadSha,
+    fingerprint,
+    diffText: rawDiff.toString("utf8"),
+    stats: {
+      fileCount: snapshot.totals.fileCount,
+      changedLines: snapshot.totals.changedLines,
+      diffBytes: snapshot.totals.diffBytes
+    },
+    noChanges: baseSha === finalHeadSha
+  };
+}
+
+/**
+ * Read-only preview of what applyWorktreeMerge would apply — real diff,
+ * real stats, real fingerprint, computed fresh every call. Never changes
+ * the worktree's state and never reserves anything; see computeMergePreview
+ * for the real validation this performs.
+ * @param {object} args
+ * @param {string} args.worktreeId
+ * @param {string} args.homeDir
+ * @param {(command: string, args: string[], options: object) => Buffer|string} [args.exec]
+ * @param {(command: string, args: string[], options: object) => Promise<{stdout: string}>} [args.execFileImpl]
+ */
+export async function previewWorktreeMerge({ worktreeId, homeDir, exec = execFileSync, execFileImpl }) {
+  const worktree = await requireWorktree(homeDir, worktreeId);
+  if (worktree.status !== WORKTREE_STATES.READY_FOR_REVIEW) {
+    throw new Error(`Execution worktree "${worktreeId}" is ${worktree.status}; expected READY_FOR_REVIEW to preview a merge.`);
+  }
+  return computeMergePreview(worktree, { exec, execFileImpl });
+}
+
+/**
+ * Real, exclusive, file-based lock per worktree — the git mutation
+ * applyWorktreeMerge performs against the real project needs actual
+ * exclusion, not just serialized state writes. writeWorktreeState's own
+ * per-worktreeId in-memory queue only serializes the write itself; it does
+ * nothing to stop two concurrent applyWorktreeMerge calls from both
+ * reading READY_FOR_REVIEW and both passing every check before either one
+ * writes APPLYING. An exclusive `wx` file create is atomic at the
+ * filesystem level and closes that whole window, not just the write.
+ */
+function acquireApplyLock(worktreeDir) {
+  const lockPath = join(worktreeDir, "apply.lock");
+  let fd;
+  try {
+    fd = openSync(lockPath, "wx");
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      throw new Error("Another apply is already in progress for this execution worktree.");
+    }
+    throw error;
+  }
+  closeSync(fd);
+  return lockPath;
+}
+
+function releaseApplyLock(lockPath) {
+  try {
+    unlinkSync(lockPath);
+  } catch { /* best-effort — recovery of a stale lock is increment 4's own scope */ }
+}
+
+/**
+ * Applies one real, previously previewed merge — the only place a
+ * confirmed, reviewed commit chain ever reaches the real project, and
+ * only ever via `git merge --ff-only`: never cherry-pick, never a partial
+ * patch, never automatic conflict resolution.
+ *
+ * Every check runs BEFORE anything is mutated, and every one of them
+ * rejects with zero state change (the worktree stays READY_FOR_REVIEW):
+ * a stale or hand-built confirmationTarget that doesn't match a freshly
+ * recomputed preview, a worktree whose HEAD moved since the preview, or
+ * a real project that no longer has the exact HEAD, working-tree
+ * fingerprint, and cleanliness it had when this worktree was created.
+ * Drift is never resolved automatically — the caller must get a fresh
+ * preview and confirm again.
+ *
+ * Only once every one of those has passed does this persist APPLYING and
+ * actually run `git merge --ff-only` against the real project. Any
+ * failure from this point on — the merge itself failing (e.g. the real
+ * project stopped being fast-forwardable in the tiny window since the
+ * last check), or the post-merge verification (real HEAD must equal
+ * finalHeadSha, real project tree must be clean) — moves the worktree to
+ * INTERRUPTED. `git merge --ff-only` itself guarantees no partial merge
+ * on failure; this never attempts to rewrite history to recover.
+ *
+ * A no-op preview (baseSha === finalHeadSha, nothing was ever committed
+ * across any role) skips the real git mutation entirely and goes
+ * straight to APPLIED — there is nothing to merge.
+ * @param {object} args
+ * @param {string} args.worktreeId
+ * @param {{baseSha: string, finalHeadSha: string, fingerprint: string}} args.confirmationTarget - a preview's own exact output, never hand-built by a caller
+ * @param {string} args.homeDir
+ * @param {(command: string, args: string[], options: object) => Buffer|string} [args.exec]
+ * @param {(command: string, args: string[], options: object) => Promise<{stdout: string}>} [args.execFileImpl]
+ */
+export async function applyWorktreeMerge({ worktreeId, confirmationTarget, homeDir, exec = execFileSync, execFileImpl }) {
+  const worktree = await requireWorktree(homeDir, worktreeId);
+  if (worktree.status !== WORKTREE_STATES.READY_FOR_REVIEW) {
+    throw new Error(`Execution worktree "${worktreeId}" is ${worktree.status}; expected READY_FOR_REVIEW to apply a merge.`);
+  }
+
+  const { worktreeDir } = worktreePaths(homeDir, worktreeId);
+  const lockPath = acquireApplyLock(worktreeDir);
+
+  try {
+    // Re-read fresh now that the lock is actually held — another apply
+    // may have already moved this worktree while this call was blocked
+    // acquiring the lock (or, absent a real lock, would have raced here).
+    const fresh = await requireWorktree(homeDir, worktreeId);
+    if (fresh.status !== WORKTREE_STATES.READY_FOR_REVIEW) {
+      throw new Error(`Execution worktree "${worktreeId}" is ${fresh.status}; expected READY_FOR_REVIEW to apply a merge.`);
+    }
+
+    const preview = await computeMergePreview(fresh, { exec, execFileImpl });
+    const matches = confirmationTarget
+      && confirmationTarget.baseSha === preview.baseSha
+      && confirmationTarget.finalHeadSha === preview.finalHeadSha
+      && confirmationTarget.fingerprint === preview.fingerprint;
+    if (!matches) {
+      throw new Error(
+        "Cannot apply: confirmationTarget does not match a fresh preview of this execution worktree — "
+        + "request a new preview and confirm again."
+      );
+    }
+
+    const projectHead = resolveHead(fresh.projectRoot, { exec });
+    if (projectHead !== fresh.baseSha) {
+      throw new Error(
+        `Cannot apply: the real project's HEAD is "${projectHead}", not the execution worktree's own baseSha `
+        + `"${fresh.baseSha}" — the project moved since this worktree was created.`
+      );
+    }
+    const projectFingerprint = resolveWorkingTreeFingerprint(fresh.projectRoot, { exec });
+    if (projectFingerprint !== fresh.originalWorkingTreeFingerprint) {
+      throw new Error("Cannot apply: the real project's working tree no longer matches its original fingerprint.");
+    }
+    assertWorkingTreeClean(fresh.projectRoot, { exec });
+
+    if (preview.noChanges) {
+      const next = { ...fresh, status: WORKTREE_STATES.APPLIED, updatedAt: new Date().toISOString() };
+      await writeWorktreeState(homeDir, next);
+      return next;
+    }
+
+    const applying = { ...fresh, status: WORKTREE_STATES.APPLYING, updatedAt: new Date().toISOString() };
+    await writeWorktreeState(homeDir, applying);
+
+    try {
+      exec("git", ["merge", "--ff-only", preview.finalHeadSha], {
+        cwd: fresh.projectRoot, stdio: ["ignore", "ignore", "pipe"]
+      });
+
+      const mergedHead = resolveHead(fresh.projectRoot, { exec });
+      if (mergedHead !== preview.finalHeadSha) {
+        throw new Error(`Real project HEAD is "${mergedHead}" after the merge, expected "${preview.finalHeadSha}".`);
+      }
+      assertWorkingTreeClean(fresh.projectRoot, { exec });
+
+      const applied = { ...applying, status: WORKTREE_STATES.APPLIED, updatedAt: new Date().toISOString() };
+      await writeWorktreeState(homeDir, applied);
+      return applied;
+    } catch (error) {
+      await markInterrupted(homeDir, applying, `Merge into the real project failed or left it in an unexpected state: ${error.message}`);
+      throw error;
+    }
+  } finally {
+    releaseApplyLock(lockPath);
+  }
 }

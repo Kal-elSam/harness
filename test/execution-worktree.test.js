@@ -8,7 +8,8 @@ import { execFileSync } from "node:child_process";
 import { createArchitecturePlan } from "../src/global/architect/architect-manager.js";
 import { transitionTask, resolveHead, taskPaths } from "../src/global/architect/architect-store.js";
 import {
-  beginRoleRun, completeRoleRun, createExecutionWorktree, markReadyForReview
+  applyWorktreeMerge, beginRoleRun, completeRoleRun, createExecutionWorktree,
+  markReadyForReview, previewWorktreeMerge
 } from "../src/global/runtime/execution-worktree-manager.js";
 import {
   appendCheckpoint, listWorktreeRecords, readCheckpoints, readWorktreeState
@@ -305,6 +306,21 @@ async function freshWorktree(root, task = "Design safe payments") {
   return { homeDir, worktree };
 }
 
+/** A real worktree taken all the way to READY_FOR_REVIEW, with one real Builder commit unless withChange is false. */
+async function readyWorktree(root, { withChange = true, task = "Design safe payments" } = {}) {
+  const { homeDir, worktree } = await freshWorktree(root, task);
+  if (withChange) {
+    await beginRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_ready", homeDir });
+    await writeFile(join(worktree.treePath, "feature.txt"), "real implementation\n");
+    await completeRoleRun({
+      worktreeId: worktree.worktreeId, role: "Builder", runId: "run_ready", homeDir,
+      readRun: fakeReadRun(RUN_STATES.COMPLETED, worktree.treePath)
+    });
+  }
+  const ready = await markReadyForReview({ worktreeId: worktree.worktreeId, homeDir });
+  return { homeDir, worktree: ready };
+}
+
 test("beginRoleRun rejects a role that isn't Builder/Debugger/Tester", async () => {
   const root = await repo();
   const { homeDir, worktree } = await freshWorktree(root);
@@ -566,4 +582,182 @@ test("REGRESSION: markReadyForReview rejects a worktree dirtied after the last r
 
   const status = execFileSync("git", ["-C", worktree.treePath, "status", "--porcelain"], { encoding: "utf8" });
   assert.match(status, /feature\.txt/, "the real uncommitted edit must still be there — nothing silently discarded or committed on its behalf");
+});
+
+// --- previewWorktreeMerge / applyWorktreeMerge: increment 3, real
+// commits only, confirmation bound to {baseSha, finalHeadSha, fingerprint},
+// applied exclusively via `git merge --ff-only`. Never cherry-pick, never
+// a partial patch, never automatic conflict resolution.
+
+test("previewWorktreeMerge is deterministic — the same real worktree previewed twice yields the exact same fingerprint", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+
+  const first = await previewWorktreeMerge({ worktreeId: worktree.worktreeId, homeDir });
+  const second = await previewWorktreeMerge({ worktreeId: worktree.worktreeId, homeDir });
+
+  assert.equal(first.baseSha, worktree.baseSha);
+  assert.equal(first.finalHeadSha, worktree.readyHeadSha);
+  assert.equal(first.noChanges, false);
+  assert.match(first.diffText, /feature\.txt/);
+  assert.equal(first.stats.fileCount, 1);
+  assert.deepEqual(second, first, "the same real worktree, unchanged, must preview identically every time");
+
+  const stillReady = await readWorktreeState(homeDir, worktree.worktreeId);
+  assert.equal(stillReady.status, WORKTREE_STATES.READY_FOR_REVIEW, "previewing must never mutate the worktree's own state");
+});
+
+test("applyWorktreeMerge with a valid confirmationTarget applies exactly the reviewed commit via a real fast-forward merge", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+  const preview = await previewWorktreeMerge({ worktreeId: worktree.worktreeId, homeDir });
+
+  const applied = await applyWorktreeMerge({
+    worktreeId: worktree.worktreeId, confirmationTarget: preview, homeDir
+  });
+
+  assert.equal(applied.status, WORKTREE_STATES.APPLIED);
+  assert.equal(resolveHead(root), preview.finalHeadSha, "the real project's own HEAD must now be exactly the reviewed commit");
+  const projectStatus = execFileSync("git", ["status", "--porcelain", "--", ".", ":(exclude).ai/tasks/**"], { cwd: root, encoding: "utf8" });
+  assert.equal(projectStatus.trim(), "", "the real project's working tree must stay clean after a fast-forward merge");
+  const content = execFileSync("git", ["show", "HEAD:feature.txt"], { cwd: root, encoding: "utf8" });
+  assert.equal(content, "real implementation\n", "the real project must now contain exactly the reviewed content");
+});
+
+test("applyWorktreeMerge rejects a confirmationTarget that doesn't match a fresh preview — no mutation, stays READY_FOR_REVIEW", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+  const preview = await previewWorktreeMerge({ worktreeId: worktree.worktreeId, homeDir });
+
+  await assert.rejects(
+    () => applyWorktreeMerge({
+      worktreeId: worktree.worktreeId,
+      confirmationTarget: { ...preview, fingerprint: "f".repeat(64) },
+      homeDir
+    }),
+    /does not match a fresh preview/
+  );
+
+  const stillReady = await readWorktreeState(homeDir, worktree.worktreeId);
+  assert.equal(stillReady.status, WORKTREE_STATES.READY_FOR_REVIEW);
+  assert.equal(resolveHead(root), worktree.baseSha, "a rejected confirmation must never touch the real project");
+});
+
+test("REGRESSION: a commit landing in the worktree after READY_FOR_REVIEW invalidates the preview and blocks apply", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+  const preview = await previewWorktreeMerge({ worktreeId: worktree.worktreeId, homeDir });
+
+  // Something committed inside the worktree after it was marked ready —
+  // the same "agent committed directly" shape as completeRoleRun's own
+  // bypass, but at the READY_FOR_REVIEW boundary instead.
+  await writeFile(join(worktree.treePath, "sneaky.txt"), "landed after ready_for_review\n");
+  execFileSync("git", ["add", "sneaky.txt"], { cwd: worktree.treePath });
+  execFileSync("git", ["commit", "-qm", "sneaked in after ready"], { cwd: worktree.treePath });
+
+  await assert.rejects(
+    () => previewWorktreeMerge({ worktreeId: worktree.worktreeId, homeDir }),
+    /HEAD moved.*after it was marked/
+  );
+  await assert.rejects(
+    () => applyWorktreeMerge({ worktreeId: worktree.worktreeId, confirmationTarget: preview, homeDir }),
+    /HEAD moved.*after it was marked/
+  );
+
+  const stillReady = await readWorktreeState(homeDir, worktree.worktreeId);
+  assert.equal(stillReady.status, WORKTREE_STATES.READY_FOR_REVIEW, "must reject, never silently apply or move to INTERRUPTED");
+  assert.equal(resolveHead(root), worktree.baseSha, "the real project must never be touched by a rejected apply");
+});
+
+test("REGRESSION: a real project that drifted since the preview blocks apply — the drift is never resolved automatically", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+  const preview = await previewWorktreeMerge({ worktreeId: worktree.worktreeId, homeDir });
+
+  // The real project itself moved — a completely unrelated commit landed
+  // in it after this worktree's preview was computed.
+  await writeFile(join(root, "unrelated.txt"), "someone else's real change\n");
+  execFileSync("git", ["add", "unrelated.txt"], { cwd: root });
+  execFileSync("git", ["commit", "-qm", "unrelated real project commit"], { cwd: root });
+  const driftedHead = resolveHead(root);
+
+  await assert.rejects(
+    () => applyWorktreeMerge({ worktreeId: worktree.worktreeId, confirmationTarget: preview, homeDir }),
+    /the project moved since this worktree was created/
+  );
+
+  const stillReady = await readWorktreeState(homeDir, worktree.worktreeId);
+  assert.equal(stillReady.status, WORKTREE_STATES.READY_FOR_REVIEW);
+  assert.equal(resolveHead(root), driftedHead, "the real project's own unrelated commit must be left exactly as it was — never rewritten or merged over");
+});
+
+test("REGRESSION: two concurrent applyWorktreeMerge calls on the same worktree — only one crosses the boundary", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+  const preview = await previewWorktreeMerge({ worktreeId: worktree.worktreeId, homeDir });
+
+  const [first, second] = await Promise.allSettled([
+    applyWorktreeMerge({ worktreeId: worktree.worktreeId, confirmationTarget: preview, homeDir }),
+    applyWorktreeMerge({ worktreeId: worktree.worktreeId, confirmationTarget: preview, homeDir })
+  ]);
+
+  const outcomes = [first, second];
+  const fulfilled = outcomes.filter((o) => o.status === "fulfilled");
+  const rejected = outcomes.filter((o) => o.status === "rejected");
+  assert.equal(fulfilled.length, 1, "exactly one concurrent apply must succeed");
+  assert.equal(rejected.length, 1, "the other concurrent apply must be rejected, never silently double-applied");
+  assert.equal(fulfilled[0].value.status, WORKTREE_STATES.APPLIED);
+
+  assert.equal(resolveHead(root), preview.finalHeadSha, "the real project must reflect exactly one real merge, not two");
+});
+
+test("REGRESSION: a real project that stops being fast-forwardable in the window before the merge moves the worktree to INTERRUPTED, with zero partial merge", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+  const preview = await previewWorktreeMerge({ worktreeId: worktree.worktreeId, homeDir });
+
+  const racingExec = (command, args, options) => {
+    if (command === "git" && args[0] === "merge" && args[1] === "--ff-only") {
+      // A real external commit lands in the real project in the tiny
+      // window between applyWorktreeMerge's own pre-merge checks and the
+      // real merge attempt — simulated here, not a hypothetical.
+      execFileSync("git", ["commit", "--allow-empty", "-qm", "external racer"], { cwd: options.cwd });
+    }
+    return execFileSync(command, args, options);
+  };
+
+  await assert.rejects(
+    () => applyWorktreeMerge({ worktreeId: worktree.worktreeId, confirmationTarget: preview, homeDir, exec: racingExec })
+  );
+
+  const interrupted = await readWorktreeState(homeDir, worktree.worktreeId);
+  assert.equal(interrupted.status, WORKTREE_STATES.INTERRUPTED);
+
+  const log = execFileSync("git", ["log", "--oneline"], { cwd: root, encoding: "utf8" });
+  assert.doesNotMatch(log, /Builder/, "the reviewed commit must never land through a failed fast-forward — zero partial merge");
+  const projectStatus = execFileSync("git", ["status", "--porcelain", "--", ".", ":(exclude).ai/tasks/**"], { cwd: root, encoding: "utf8" });
+  assert.equal(projectStatus.trim(), "", "a failed --ff-only must never leave the real project's working tree dirty");
+});
+
+test("applyWorktreeMerge with no real changes at all is a deterministic no-op — never invokes a real git merge", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root, { withChange: false });
+  const preview = await previewWorktreeMerge({ worktreeId: worktree.worktreeId, homeDir });
+  assert.equal(preview.noChanges, true);
+  assert.equal(preview.baseSha, preview.finalHeadSha);
+
+  const originalHead = resolveHead(root);
+  let mergeInvoked = false;
+  const trackingExec = (command, args, options) => {
+    if (command === "git" && args[0] === "merge") mergeInvoked = true;
+    return execFileSync(command, args, options);
+  };
+
+  const applied = await applyWorktreeMerge({
+    worktreeId: worktree.worktreeId, confirmationTarget: preview, homeDir, exec: trackingExec
+  });
+
+  assert.equal(applied.status, WORKTREE_STATES.APPLIED);
+  assert.equal(mergeInvoked, false, "a no-op apply must never call `git merge` at all");
+  assert.equal(resolveHead(root), originalHead, "nothing real to merge means the real project's HEAD must not move");
 });
