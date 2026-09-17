@@ -5,8 +5,50 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
-### Changed
+## 0.17.0 — 2026-09-17 (Kairo Runtime)
 
+Minor release. Execution-worktree isolation (real git worktrees, per-role
+commit transactions, preview + `git merge --ff-only` apply, cancellation
+and crash recovery), a per-provider budget/usage state machine, automatic
+Builder→Debugger→Tester orchestration, and several real `/project`
+cockpit UX fixes.
+
+### Added
+
+- Execution-worktree isolation (`execution-worktree-manager.js`): real
+  `git worktree add`-backed isolation per task, a per-role commit
+  transaction (`beginRoleRun`/`completeRoleRun`) that only ever commits
+  a role's own validated diff (Kairo owns every real commit, never the
+  agent), `previewWorktreeMerge`/`applyWorktreeMerge` (confirmation
+  bound to an exact `{baseSha, finalHeadSha, fingerprint}`, applied only
+  via `git merge --ff-only`), and `cancelWorktree`/`reconcileWorktrees`/
+  `discardWorktree` for cancellation and crash recovery.
+- `controlledHeadSha`: every state-changing boundary (not just ACTIVE)
+  verifies the worktree's real HEAD against the last commit Kairo itself
+  produced, closing a rogue-commit bypass reachable while a worktree sat
+  idle in PENDING.
+- Per-provider budget/usage state machine (`usage-manager.js`):
+  cumulative token/cost tracking per provider, a
+  HEALTHY/MODERATE/CONSERVE/CRITICAL/EXHAUSTED classification against a
+  configurable `profile.providerTokenBudgets`, and one real enforcement
+  point — a new run is refused once its provider is EXHAUSTED.
+- `runOrchestratedChain` (`execution-worktree-orchestrator.js`):
+  automatic Builder→Debugger→Tester chaining inside one execution
+  worktree, stopping immediately on any real failure. Injects matching
+  real project skills (`docs/skills`, `.claude/skills`, etc. — the same
+  catalog ASK-mode routing already reads) into each role's task by
+  name/path, never their body content.
+- `/project` cockpit overlay: the PROJECT TEAM panel now shows the real
+  decision reason behind each role's model, a real bordered panel, the
+  cockpit's own live spinner during every in-flight action, and real
+  mouse support (clicks now reach the analyst/role picker lists).
+
+### Fixed
+
+- Dashboard and `/project status` showed `qualityTeam` (comparative
+  reference) under a "PROJECT TEAM" title while the interactive overlay
+  showed the real operational `projectTeam` — both now read the same
+  real operational team.
 - MCP snapshot writes require `--workspace-bound` plus an absolute `--cwd`
   that matches `process.cwd()` or the unique `WORKSPACE_FOLDER_PATHS` folder.
   Bound servers expose only `kairo_publish_work_snapshot`; the Cursor
