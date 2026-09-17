@@ -170,11 +170,14 @@ async function requireWorktree(homeDir, worktreeId) {
 /**
  * Best-effort transition to INTERRUPTED with a real, honest reason — used
  * by completeRoleRun's own failure branches (a run that didn't succeed, an
- * unsafe/private/oversized real diff). Never throws itself; the caller
+ * unsafe/private/oversized real diff) and reused directly by
+ * execution-worktree-orchestrator.js for its own failure branch (a role's
+ * real run couldn't even be started — no run ever existed for
+ * completeRoleRun's own checks to find). Never throws itself; the caller
  * still throws its own real error right after calling this, so a
  * persistence failure here never masks the original real reason.
  */
-async function markInterrupted(homeDir, worktree, reason) {
+export async function markInterrupted(homeDir, worktree, reason) {
   const next = {
     ...worktree, status: WORKTREE_STATES.INTERRUPTED, activeRole: null, activeRunId: null,
     updatedAt: new Date().toISOString(), error: reason
