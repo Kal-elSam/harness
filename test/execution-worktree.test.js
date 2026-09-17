@@ -8,11 +8,11 @@ import { execFileSync } from "node:child_process";
 import { createArchitecturePlan } from "../src/global/architect/architect-manager.js";
 import { transitionTask, resolveHead, taskPaths } from "../src/global/architect/architect-store.js";
 import {
-  applyWorktreeMerge, beginRoleRun, completeRoleRun, createExecutionWorktree,
-  markReadyForReview, previewWorktreeMerge
+  applyWorktreeMerge, beginRoleRun, cancelWorktree, completeRoleRun, createExecutionWorktree,
+  discardWorktree, markReadyForReview, previewWorktreeMerge, reconcileWorktrees
 } from "../src/global/runtime/execution-worktree-manager.js";
 import {
-  appendCheckpoint, listWorktreeRecords, readCheckpoints, readWorktreeState
+  appendCheckpoint, listWorktreeRecords, readCheckpoints, readWorktreeState, writeWorktreeState
 } from "../src/global/runtime/execution-worktree-store.js";
 import { EXECUTION_WORKTREE_SCHEMA, WORKTREE_STATES } from "../src/global/runtime/execution-worktree-types.js";
 import { assertWorktreeId, worktreePaths } from "../src/global/paths.js";
@@ -814,4 +814,190 @@ test("REGRESSION: a rogue commit made directly in a PENDING worktree between two
   const stillPending = await readWorktreeState(homeDir, worktree.worktreeId);
   assert.equal(stillPending.status, WORKTREE_STATES.PENDING, "a rejected beginRoleRun must never start ACTIVE on top of a rogue commit");
   assert.equal(stillPending.controlledHeadSha, afterBuilder.controlledHeadSha, "controlledHeadSha must still be Builder's own legitimate commit, not the rogue one");
+});
+
+// --- cancelWorktree / reconcileWorktrees / discardWorktree: increment 4,
+// cancellation, crash recovery, and real cleanup. Still no cockpit
+// surface — that's its own later increment.
+
+test("cancelWorktree moves a PENDING worktree straight to DISCARDED, no commit attempted", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await freshWorktree(root);
+
+  const cancelled = await cancelWorktree({ worktreeId: worktree.worktreeId, homeDir });
+  assert.equal(cancelled.status, WORKTREE_STATES.DISCARDED);
+
+  const log = execFileSync("git", ["-C", worktree.treePath, "log", "--oneline"], { encoding: "utf8" });
+  assert.equal(log.trim().split("\n").length, 1, "cancelling must never create a real commit");
+});
+
+test("cancelWorktree from ACTIVE closes the worktree's own bookkeeping without touching the real run", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await freshWorktree(root);
+  await beginRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir });
+  await writeFile(join(worktree.treePath, "partial.txt"), "abandoned mid-role\n");
+
+  const cancelled = await cancelWorktree({ worktreeId: worktree.worktreeId, homeDir });
+  assert.equal(cancelled.status, WORKTREE_STATES.DISCARDED);
+  assert.equal(cancelled.activeRole, null);
+  assert.equal(cancelled.activeRunId, null);
+
+  const status = execFileSync("git", ["-C", worktree.treePath, "status", "--porcelain"], { encoding: "utf8" });
+  assert.match(status, /partial\.txt/, "the real uncommitted partial work stays exactly as it was — nothing silently discarded from disk");
+});
+
+test("cancelWorktree from READY_FOR_REVIEW moves to DISCARDED", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+  const cancelled = await cancelWorktree({ worktreeId: worktree.worktreeId, homeDir });
+  assert.equal(cancelled.status, WORKTREE_STATES.DISCARDED);
+});
+
+test("cancelWorktree rejects APPLYING — cancelling mid-merge is never supported", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+  const applying = { ...worktree, status: WORKTREE_STATES.APPLYING, updatedAt: new Date().toISOString() };
+  await writeWorktreeState(homeDir, applying);
+
+  await assert.rejects(
+    () => cancelWorktree({ worktreeId: worktree.worktreeId, homeDir }),
+    /APPLYING/
+  );
+});
+
+test("cancelWorktree rejects an already-terminal worktree", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await freshWorktree(root);
+  await cancelWorktree({ worktreeId: worktree.worktreeId, homeDir });
+
+  await assert.rejects(
+    () => cancelWorktree({ worktreeId: worktree.worktreeId, homeDir }),
+    /already discarded/
+  );
+});
+
+test("reconcileWorktrees moves ACTIVE to INTERRUPTED when the real run is no longer alive, and leaves a still-running one alone", async () => {
+  const root = await repo();
+  const { homeDir, worktree: deadRunWorktree } = await freshWorktree(root, "Dead run");
+  await beginRoleRun({ worktreeId: deadRunWorktree.worktreeId, role: "Builder", runId: "run_dead", homeDir });
+
+  const { worktree: aliveRunWorktree } = await (async () => {
+    const created = await approvedPlan(root, "Alive run");
+    const wt = await createExecutionWorktree({ projectRoot: root, taskId: created.taskId, homeDir });
+    await beginRoleRun({ worktreeId: wt.worktreeId, role: "Builder", runId: "run_alive", homeDir });
+    return { worktree: wt };
+  })();
+
+  const readRun = async (_homeDir, runId) => {
+    if (runId === "run_dead") return null; // the run never even got recorded, or vanished
+    if (runId === "run_alive") return { state: RUN_STATES.RUNNING };
+    return null;
+  };
+
+  const reconciled = await reconcileWorktrees({ homeDir, readRun });
+  assert.equal(reconciled.length, 1);
+  assert.equal(reconciled[0].worktreeId, deadRunWorktree.worktreeId);
+  assert.equal(reconciled[0].status, WORKTREE_STATES.INTERRUPTED);
+
+  const stillDead = await readWorktreeState(homeDir, deadRunWorktree.worktreeId);
+  assert.equal(stillDead.status, WORKTREE_STATES.INTERRUPTED);
+  const stillAlive = await readWorktreeState(homeDir, aliveRunWorktree.worktreeId);
+  assert.equal(stillAlive.status, WORKTREE_STATES.ACTIVE, "a real, still-running role must never be interrupted just because Kairo restarted");
+});
+
+test("reconcileWorktrees recovers a crashed APPLYING as APPLIED when the real project's merge had already succeeded", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+  const preview = await previewWorktreeMerge({ worktreeId: worktree.worktreeId, homeDir });
+
+  // Simulate: the real merge actually completed, then Kairo crashed
+  // before it could persist APPLIED.
+  execFileSync("git", ["merge", "--ff-only", preview.finalHeadSha], { cwd: root });
+  const crashed = { ...worktree, status: WORKTREE_STATES.APPLYING, updatedAt: new Date().toISOString() };
+  await writeWorktreeState(homeDir, crashed);
+
+  const reconciled = await reconcileWorktrees({ homeDir });
+  assert.equal(reconciled.length, 1);
+  assert.equal(reconciled[0].status, WORKTREE_STATES.APPLIED, "the real, already-successful merge must be recovered, not lost or retried");
+});
+
+test("reconcileWorktrees recovers a crashed APPLYING as READY_FOR_REVIEW when the real merge never actually ran", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+
+  // Simulate: Kairo persisted APPLYING but crashed before the real
+  // `git merge` call ever touched the real project.
+  const crashed = { ...worktree, status: WORKTREE_STATES.APPLYING, updatedAt: new Date().toISOString() };
+  await writeWorktreeState(homeDir, crashed);
+
+  const reconciled = await reconcileWorktrees({ homeDir });
+  assert.equal(reconciled.length, 1);
+  assert.equal(reconciled[0].status, WORKTREE_STATES.READY_FOR_REVIEW, "nothing real happened yet — a fresh preview must be required before retrying");
+  assert.equal(resolveHead(root), worktree.baseSha, "the real project must be untouched");
+});
+
+test("reconcileWorktrees moves a crashed APPLYING to INTERRUPTED when the real project ended up in an ambiguous state", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await readyWorktree(root);
+
+  // Simulate: something else entirely happened to the real project while
+  // Kairo was mid-merge — neither the pre-merge nor the post-merge state.
+  await writeFile(join(root, "unrelated.txt"), "unrelated real change\n");
+  execFileSync("git", ["add", "unrelated.txt"], { cwd: root });
+  execFileSync("git", ["commit", "-qm", "unrelated"], { cwd: root });
+  const crashed = { ...worktree, status: WORKTREE_STATES.APPLYING, updatedAt: new Date().toISOString() };
+  await writeWorktreeState(homeDir, crashed);
+
+  const reconciled = await reconcileWorktrees({ homeDir });
+  assert.equal(reconciled.length, 1);
+  assert.equal(reconciled[0].status, WORKTREE_STATES.INTERRUPTED, "an ambiguous real project state must never be guessed at or auto-repaired");
+});
+
+test("reconcileWorktrees leaves PENDING and READY_FOR_REVIEW worktrees untouched", async () => {
+  const root = await repo();
+  const { homeDir, worktree: pending } = await freshWorktree(root, "Idle pending");
+
+  // Same real homeDir as `pending` — reconcileWorktrees scans one homeDir's
+  // worth of worktrees at once, so both must live under it for this to be
+  // a real test of "leaves the other ones alone".
+  const { taskId } = await approvedPlan(root, "Idle ready");
+  const readyBase = await createExecutionWorktree({ projectRoot: root, taskId, homeDir });
+  await beginRoleRun({ worktreeId: readyBase.worktreeId, role: "Builder", runId: "run_ready", homeDir });
+  await writeFile(join(readyBase.treePath, "feature.txt"), "real implementation\n");
+  await completeRoleRun({
+    worktreeId: readyBase.worktreeId, role: "Builder", runId: "run_ready", homeDir,
+    readRun: fakeReadRun(RUN_STATES.COMPLETED, readyBase.treePath)
+  });
+  const ready = await markReadyForReview({ worktreeId: readyBase.worktreeId, homeDir });
+
+  const reconciled = await reconcileWorktrees({ homeDir });
+  assert.equal(reconciled.length, 0);
+
+  assert.equal((await readWorktreeState(homeDir, pending.worktreeId)).status, WORKTREE_STATES.PENDING);
+  assert.equal((await readWorktreeState(homeDir, ready.worktreeId)).status, WORKTREE_STATES.READY_FOR_REVIEW);
+});
+
+test("discardWorktree removes the real git worktree and its own directory entirely, only from a terminal state", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await freshWorktree(root);
+  const cancelled = await cancelWorktree({ worktreeId: worktree.worktreeId, homeDir });
+  assert.equal(cancelled.status, WORKTREE_STATES.DISCARDED);
+
+  await discardWorktree({ worktreeId: worktree.worktreeId, homeDir });
+
+  assert.equal(existsSync(worktree.treePath), false, "the real checked-out worktree directory must be gone");
+  assert.equal(await readWorktreeState(homeDir, worktree.worktreeId), null, "the worktree's own record must be gone too");
+  const listed = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: root, encoding: "utf8" });
+  assert.equal((listed.match(/^worktree /gm) ?? []).length, 1, "git itself must no longer know about the removed worktree");
+});
+
+test("discardWorktree rejects a non-terminal worktree — cancel it first", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await freshWorktree(root);
+
+  await assert.rejects(
+    () => discardWorktree({ worktreeId: worktree.worktreeId, homeDir }),
+    /only a terminal worktree/
+  );
+  assert.ok(existsSync(worktree.treePath), "a rejected discard must never remove real, still-relevant state");
 });

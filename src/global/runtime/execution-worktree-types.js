@@ -27,6 +27,16 @@ export function isActiveWorktreeState(state) {
   return ACTIVE_WORKTREE_STATES.has(state);
 }
 
+export const TERMINAL_WORKTREE_STATES = new Set([
+  WORKTREE_STATES.APPLIED,
+  WORKTREE_STATES.DISCARDED,
+  WORKTREE_STATES.INTERRUPTED
+]);
+
+export function isTerminalWorktreeState(state) {
+  return TERMINAL_WORKTREE_STATES.has(state);
+}
+
 /** Same shape as run-types.js's own createRunId — an opaque, sortable-enough, collision-resistant local id, never a real git ref name. */
 export function createWorktreeId() {
   const timestamp = Date.now().toString(36);

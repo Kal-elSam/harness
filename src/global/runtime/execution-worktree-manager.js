@@ -5,8 +5,12 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { resolveHead, resolveWorkingTreeFingerprint, verifyPlanForExecution } from "../architect/architect-store.js";
 import { worktreePaths } from "../paths.js";
-import { createWorktreeId, EXECUTION_WORKTREE_SCHEMA, WORKTREE_STATES } from "./execution-worktree-types.js";
-import { appendCheckpoint, createWorktreeRecord, readWorktreeState, writeWorktreeState } from "./execution-worktree-store.js";
+import {
+  createWorktreeId, EXECUTION_WORKTREE_SCHEMA, WORKTREE_STATES, isTerminalWorktreeState
+} from "./execution-worktree-types.js";
+import {
+  appendCheckpoint, createWorktreeRecord, listWorktreeRecords, readWorktreeState, writeWorktreeState
+} from "./execution-worktree-store.js";
 import { readRunState } from "./run-store.js";
 import { RUN_STATES, isTerminalRunState } from "./run-types.js";
 import { resolveReviewSnapshot } from "./review/review-git.js";
@@ -775,4 +779,143 @@ export async function applyWorktreeMerge({ worktreeId, confirmationTarget, homeD
   } finally {
     releaseApplyLock(lockPath);
   }
+}
+
+/**
+ * Explicit human/orchestrator cancellation — valid from any state where
+ * nothing real is being mutated right now (PENDING, ACTIVE,
+ * READY_FOR_REVIEW), never from APPLYING: a real git mutation against the
+ * real project may be in flight there, and cancelling mid-mutation is
+ * undefined, not "safe to abandon". Never commits anything on the way
+ * out — any real, uncommitted work sitting in the worktree is simply left
+ * behind for discardWorktree to eventually remove. If a role was ACTIVE,
+ * this only closes the worktree's own bookkeeping; stopping the real
+ * underlying agent run (if it's still alive) is run-manager.js's own
+ * responsibility, never this file's.
+ * @param {object} args
+ * @param {string} args.worktreeId
+ * @param {string} args.homeDir
+ * @param {string} [args.reason]
+ */
+export async function cancelWorktree({ worktreeId, homeDir, reason = "Cancelled." }) {
+  const worktree = await requireWorktree(homeDir, worktreeId);
+  if (worktree.status === WORKTREE_STATES.APPLYING) {
+    throw new Error(`Execution worktree "${worktreeId}" is APPLYING; cancelling mid-merge is not supported.`);
+  }
+  if (isTerminalWorktreeState(worktree.status)) {
+    throw new Error(`Execution worktree "${worktreeId}" is already ${worktree.status}; nothing to cancel.`);
+  }
+  const next = {
+    ...worktree, status: WORKTREE_STATES.DISCARDED, activeRole: null, activeRunId: null,
+    updatedAt: new Date().toISOString(), error: reason
+  };
+  await writeWorktreeState(homeDir, next);
+  return next;
+}
+
+/**
+ * Reconciles every real, currently-active execution worktree against the
+ * real world — meant to run once when Kairo itself starts, mirroring
+ * run-store.js's own reconcileActiveRuns for exactly the same reason: a
+ * previous process may have died mid-operation, and nothing here ever
+ * guesses what should have happened.
+ *
+ * - ACTIVE, whose real run is no longer alive (isTerminalRunState says
+ *   so, or the run doesn't exist at all): the role's own attempt is
+ *   abandoned — INTERRUPTED, no commit is ever fabricated on its behalf.
+ * - APPLYING, the one case where a real git mutation may have been
+ *   mid-flight when Kairo died:
+ *   - the real project's HEAD already equals this worktree's own
+ *     controlledHeadSha (the commit that was being merged) AND the real
+ *     project tree is clean: the merge had actually already succeeded
+ *     before the crash — recovered as APPLIED, the real outcome is never
+ *     lost just because Kairo wasn't there to see it finish.
+ *   - the real project's HEAD is still exactly baseSha AND clean: the
+ *     merge never touched anything — back to READY_FOR_REVIEW; a fresh
+ *     preview is required before retrying, never a resumed one.
+ *   - anything else (an unexpected HEAD, or a dirty tree): ambiguous —
+ *     INTERRUPTED, never guessed at or auto-repaired.
+ * - PENDING / READY_FOR_REVIEW are left untouched here: nothing
+ *   supervises them while idle, and the real drift checks already built
+ *   into beginRoleRun / markReadyForReview / previewWorktreeMerge /
+ *   applyWorktreeMerge catch anything wrong with them the moment they're
+ *   used again.
+ * @param {object} args
+ * @param {string} args.homeDir
+ * @param {(command: string, args: string[], options: object) => Buffer|string} [args.exec]
+ * @param {(homeDir: string, runId: string) => Promise<object|null>} [args.readRun]
+ */
+export async function reconcileWorktrees({ homeDir, exec = execFileSync, readRun = readRunState }) {
+  const records = await listWorktreeRecords(homeDir);
+  const reconciled = [];
+
+  for (const worktree of records) {
+    if (worktree.status === WORKTREE_STATES.ACTIVE) {
+      const runState = worktree.activeRunId ? await readRun(homeDir, worktree.activeRunId) : null;
+      if (!runState || isTerminalRunState(runState.state)) {
+        const next = await markInterrupted(
+          homeDir, worktree,
+          `Execution worktree recovered on restart: role "${worktree.activeRole}" run `
+          + `"${worktree.activeRunId}" is no longer active.`
+        );
+        reconciled.push(next);
+      }
+      continue;
+    }
+
+    if (worktree.status === WORKTREE_STATES.APPLYING) {
+      let projectHead = null;
+      let projectClean = false;
+      try {
+        projectHead = resolveHead(worktree.projectRoot, { exec });
+        assertWorkingTreeClean(worktree.projectRoot, { exec });
+        projectClean = true;
+      } catch { /* an unreadable or dirty real project falls through to the ambiguous, INTERRUPTED branch below */ }
+
+      let next;
+      if (projectClean && projectHead === worktree.controlledHeadSha) {
+        next = { ...worktree, status: WORKTREE_STATES.APPLIED, updatedAt: new Date().toISOString() };
+        await writeWorktreeState(homeDir, next);
+      } else if (projectClean && projectHead === worktree.baseSha) {
+        next = { ...worktree, status: WORKTREE_STATES.READY_FOR_REVIEW, updatedAt: new Date().toISOString() };
+        await writeWorktreeState(homeDir, next);
+      } else {
+        next = await markInterrupted(
+          homeDir, worktree,
+          "Execution worktree recovered on restart: the real project was left in an ambiguous state "
+          + "mid-merge — neither the original baseSha nor the expected merged HEAD, or a dirty tree."
+        );
+      }
+      reconciled.push(next);
+    }
+  }
+
+  return reconciled;
+}
+
+/**
+ * Removes the real, checked-out git worktree and its own local
+ * ~/.harness/worktrees/<id>/ directory entirely — only ever from a
+ * terminal state (APPLIED, DISCARDED, INTERRUPTED). A non-terminal
+ * worktree still represents real, potentially unreviewed work; abandoning
+ * it is cancelWorktree's own job first — this function only ever cleans
+ * up what's already been decided. Reuses rollbackWorktree, the same
+ * best-effort, idempotent real cleanup createExecutionWorktree's own
+ * failure path already relies on.
+ * @param {object} args
+ * @param {string} args.worktreeId
+ * @param {string} args.homeDir
+ * @param {(command: string, args: string[], options: object) => Buffer|string} [args.exec]
+ */
+export async function discardWorktree({ worktreeId, homeDir, exec = execFileSync }) {
+  const worktree = await requireWorktree(homeDir, worktreeId);
+  if (!isTerminalWorktreeState(worktree.status)) {
+    throw new Error(
+      `Execution worktree "${worktreeId}" is ${worktree.status}; only a terminal worktree `
+      + "(applied, discarded, interrupted) can be cleaned up — cancel it first."
+    );
+  }
+  const { worktreeDir } = worktreePaths(homeDir, worktreeId);
+  await rollbackWorktree({ projectRoot: worktree.projectRoot, treePath: worktree.treePath, worktreeDir, exec });
+  return worktree;
 }
