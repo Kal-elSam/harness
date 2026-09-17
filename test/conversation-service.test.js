@@ -112,22 +112,24 @@ test("snapshot surfaces real Claude session/weekly usage percentages via /usage,
   assert.equal(snapshot.usage.claude.primary.remainingPercent, 66);
 });
 
-test("approved plan execution reserves one detached Claude run and reuses it", async () => {
+test("approved plan execution reserves one detached run for the PROJECT TEAM-confirmed candidate and reuses it", async () => {
   const status = {
     taskId: "task-id", state: "approved", provider: "codex", model: null,
     baseHead: "a".repeat(40), artifacts: { task: ".ai/tasks/task-id/task.md", plan: ".ai/tasks/task-id/plan.md" }
   };
   const record = { status, planMarkdown: "# Approved plan" };
+  const claudeModel = { candidateKey: "claude::claude-opus-5", adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", accessMode: "automatic" };
+  const strategy = activeStrategyWithBuilder({ model: claudeModel });
   let link = null;
   let launches = 0;
-  const service = createConversationService({
-    resolveRoot: async () => "/repo", homeDir: "/home/test",
+  const service = serviceWithEligibility({
     verifyExecution: async () => record,
     createRunId: () => "run_fixed",
     readExecution: async () => link,
     readRun: async () => link ? { state: "starting", startedAt: "now", updatedAt: "now" } : null,
     writeExecution: async (_root, _id, value) => { link = value; },
     updateExecution: async (_root, _id, value) => { link = value; },
+    readProjectStrategy: async () => strategy,
     startRun: async (input) => {
       launches += 1;
       assert.equal(input.agentId, "claude");
@@ -139,12 +141,33 @@ test("approved plan execution reserves one detached Claude run and reuses it", a
       assert.match(input.task, /# Approved plan/);
       return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
     }
-  });
-  const first = await service.executePlan({ cwd: "/repo", taskId: "task-id", agentId: "claude" });
-  const retry = await service.executePlan({ cwd: "/repo", taskId: "task-id", agentId: "claude" });
+  }, { claude: { ok: true } });
+  const confirmationTarget = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5" };
+  const first = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
+  const retry = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
   assert.equal(first.execution.state, "starting");
   assert.equal(retry.reused, true);
   assert.equal(launches, 1);
+});
+
+test("planExecution rejects a missing role outright — PROJECT TEAM is the sole authority, role is never optional or inferred", async () => {
+  const service = createConversationService({ resolveRoot: async () => "/repo", homeDir: "/home/test" });
+  await assert.rejects(() => service.planExecution({ cwd: "/repo", taskId: "task-id" }), /requires an explicit role/);
+  await assert.rejects(() => service.planExecution({ cwd: "/repo", taskId: "task-id", role: null }), /requires an explicit role/);
+});
+
+test("executePlan rejects a missing confirmationTarget outright — no free-form agentId/model bypass exists anymore", async () => {
+  const record = { status: {}, planMarkdown: "# Plan" };
+  const service = createConversationService({ resolveRoot: async () => "/repo", homeDir: "/home/test", verifyExecution: async () => record, readExecution: async () => null });
+  await assert.rejects(
+    () => service.executePlan({ cwd: "/repo", taskId: "task-id" }),
+    /confirmationTarget from a fresh planExecution/
+  );
+  // Legacy free-form fields — intentionally ignored now, not honored as an override.
+  await assert.rejects(
+    () => service.executePlan({ cwd: "/repo", taskId: "task-id", agentId: "claude", model: "claude-opus-5" }),
+    /confirmationTarget from a fresh planExecution/
+  );
 });
 
 test("submitTask answers a real question directly — no plan, no task, no approval gate", async () => {
@@ -1073,101 +1096,15 @@ test("askQuestion threads the real question text through to the router, so effor
   assert.deepEqual(routeCalls, ["what is this project about?"]);
 });
 
-test("planExecution previews the real router's decision without reserving or launching anything", async () => {
-  const status = {
-    taskId: "task-id", state: "approved", provider: "codex", model: null,
-    baseHead: "a".repeat(40), artifacts: { task: ".ai/tasks/task-id/task.md", plan: ".ai/tasks/task-id/plan.md" }
-  };
-  const record = { status, taskMarkdown: "Investigate the root cause of this race condition", planMarkdown: "# Plan" };
-  let reserved = false;
-  let launched = false;
-  const service = createConversationService({
-    resolveRoot: async () => "/repo", homeDir: "/home/test",
-    readPlan: async () => record,
-    inspectExecutionAdapters: () => [{ id: "codex", available: true, launchable: true, reason: null }],
-    writeExecution: async () => { reserved = true; },
-    startRun: async () => { launched = true; return { metadata: {} }; }
-  });
-  const preview = await service.planExecution({ cwd: "/repo", taskId: "task-id" });
-  assert.equal(preview.decision, "ROUTED");
-  assert.equal(preview.provider, "codex");
-  assert.match(preview.why, /root cause/);
-  assert.equal(reserved, false);
-  assert.equal(launched, false);
-});
-
-test("executePlan auto-routes to the real decision's provider when no agentId is given, and threads its model through the launch", async () => {
-  const status = {
-    taskId: "task-id", state: "approved", provider: "codex", model: null,
-    baseHead: "a".repeat(40), artifacts: { task: ".ai/tasks/task-id/task.md", plan: ".ai/tasks/task-id/plan.md" }
-  };
-  const record = { status, taskMarkdown: "Investigate the root cause of this bug", planMarkdown: "# Approved plan" };
-  let link = null;
-  const service = createConversationService({
-    resolveRoot: async () => "/repo", homeDir: "/home/test",
-    verifyExecution: async () => record,
-    createRunId: () => "run_fixed",
-    readExecution: async () => link,
-    readRun: async () => (link ? { state: "starting", startedAt: "now", updatedAt: "now", agentId: link.agentId } : null),
-    writeExecution: async (_root, _id, value) => { link = value; },
-    updateExecution: async (_root, _id, value) => { link = value; },
-    inspectExecutionAdapters: () => [{ id: "codex", available: true, launchable: true, reason: null }],
-    selectExecutionProvider: () => ({ decision: "ROUTED", provider: "codex", model: "gpt-6-astra", why: "reasoning task" }),
-    startRun: async (input) => {
-      assert.equal(input.agentId, "codex");
-      assert.equal(input.model, "gpt-6-astra");
-      return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
-    }
-  });
-  const result = await service.executePlan({ cwd: "/repo", taskId: "task-id" });
-  assert.equal(result.execution.provider, "codex");
-  assert.match(result.execution.message, /codex run is starting/);
-});
-
-test("executePlan refuses to auto-launch and reports why when the router says the task needs human approval", async () => {
-  const status = {
-    taskId: "task-id", state: "approved", provider: "codex", model: null,
-    baseHead: "a".repeat(40), artifacts: { task: ".ai/tasks/task-id/task.md", plan: ".ai/tasks/task-id/plan.md" }
-  };
-  const record = { status, taskMarkdown: "Migrate the production auth database", planMarkdown: "# Plan" };
-  let launched = false;
-  const service = createConversationService({
-    resolveRoot: async () => "/repo", homeDir: "/home/test",
-    verifyExecution: async () => record,
-    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
-    selectExecutionProvider: () => ({ decision: "WAIT_FOR_APPROVAL", provider: null, model: null, why: "high risk auth task" }),
-    startRun: async () => { launched = true; return { metadata: {} }; }
-  });
-  await assert.rejects(
-    () => service.executePlan({ cwd: "/repo", taskId: "task-id" }),
-    /high risk auth task/
-  );
-  assert.equal(launched, false);
-});
-
-test("an explicit agentId override skips the router entirely (manual confirm-execute choice)", async () => {
-  const status = {
-    taskId: "task-id", state: "approved", provider: "codex", model: null,
-    baseHead: "a".repeat(40), artifacts: { task: ".ai/tasks/task-id/task.md", plan: ".ai/tasks/task-id/plan.md" }
-  };
-  const record = { status, taskMarkdown: "Anything", planMarkdown: "# Plan" };
-  let routerCalled = false;
-  const service = createConversationService({
-    resolveRoot: async () => "/repo", homeDir: "/home/test",
-    verifyExecution: async () => record,
-    createRunId: () => "run_fixed",
-    readExecution: async () => null,
-    writeExecution: async () => {},
-    updateExecution: async () => {},
-    selectExecutionProvider: () => { routerCalled = true; return { decision: "WAIT_FOR_APPROVAL" }; },
-    startRun: async (input) => {
-      assert.equal(input.agentId, "claude");
-      return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
-    }
-  });
-  await service.executePlan({ cwd: "/repo", taskId: "task-id", agentId: "claude" });
-  assert.equal(routerCalled, false);
-});
+// The four legacy no-role/free-agentId execution tests that used to live
+// here (planExecution previewing the keyword router, executePlan auto-
+// routing via selectExecutionProvider, refusing a WAIT_FOR_APPROVAL
+// decision, and an explicit agentId bypassing the router) were removed —
+// that whole path no longer exists. PROJECT TEAM (resolveProjectRoute) is
+// now the sole authority; see "planExecution rejects a missing role
+// outright" and "executePlan rejects a missing confirmationTarget
+// outright" above, and the planExecution({role})/executePlan({confirmationTarget})
+// regressions below, for the real replacement coverage.
 
 test("snapshot deduplicates in-flight Codex usage probes and honors its TTL", async () => {
   let calls = 0;

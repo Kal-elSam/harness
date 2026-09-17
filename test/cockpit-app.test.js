@@ -211,56 +211,10 @@ test("a failing action surfaces the error message on the status line instead of 
   app.stop();
 });
 
-test("onRequestExecute fetches the real routing decision and shows the confirm prompt with it", async () => {
-  let tui;
-  const planCalls = [];
-  const service = {
-    snapshot: async () => makeSnapshot([BASE_ROW]),
-    planExecution: async (args) => {
-      planCalls.push(args);
-      return { decision: "ROUTED", provider: "codex", model: "gpt-6-astra", why: "reasoning task" };
-    }
-  };
-  const app = await runCockpitApp({
-    cwd: "/repo",
-    service,
-    terminalFactory: () => ({}),
-    tuiFactory: () => { tui = makeFakeTui(); return tui; },
-    editorFactory: () => makeFakeEditor(),
-    setIntervalImpl: () => 1,
-    clearIntervalImpl: () => {}
-  });
-
-  await app.view.actions.onRequestExecute("task-a");
-  assert.deepEqual(planCalls, [{ cwd: "/repo", taskId: "task-a" }]);
-  assert.equal(app.view.mode, "confirm-execute");
-  assert.equal(app.view.executeDecision.provider, "codex");
-
-  app.stop();
-});
-
-test("onExecute passes the exact decision shown as the confirm-execute agentId/model — never a re-decided one", async () => {
-  let tui;
-  const executeCalls = [];
-  const service = {
-    snapshot: async () => makeSnapshot([BASE_ROW]),
-    executePlan: async (args) => { executeCalls.push(args); return {}; }
-  };
-  const app = await runCockpitApp({
-    cwd: "/repo",
-    service,
-    terminalFactory: () => ({}),
-    tuiFactory: () => { tui = makeFakeTui(); return tui; },
-    editorFactory: () => makeFakeEditor(),
-    setIntervalImpl: () => 1,
-    clearIntervalImpl: () => {}
-  });
-
-  await app.view.actions.onExecute("task-a", { decision: "ROUTED", provider: "opencode-go", model: "glm-5.3" });
-  assert.deepEqual(executeCalls, [{ cwd: "/repo", taskId: "task-a", agentId: "opencode-go", model: "glm-5.3" }]);
-
-  app.stop();
-});
+// The two legacy no-role/free-agentId app-level tests that used to live
+// here were removed — that path no longer exists (PROJECT TEAM is the
+// sole execution authority). The role-based/confirmationTarget-based
+// regressions below cover the real replacement behavior.
 
 test("onRequestExecute(taskId, role) threads the user's explicit role choice through to planExecution", async () => {
   let tui;

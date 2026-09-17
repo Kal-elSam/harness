@@ -940,15 +940,18 @@ test("a/j only fire approve/reject when available for the selected row", () => {
   assert.deepEqual(calls2, []);
 });
 
-test("x asks for the real routing decision first; the confirm prompt only appears once app.js supplies it", () => {
+test("x with a real active project team opens the role picker; picking a role asks for the real routing decision, and the confirm prompt only appears once app.js supplies it", () => {
   const { view, calls } = makeView();
   view.setWorkMode("agent"); // execute is only ever available in AGENT
+  view.setSnapshot({ projectRoot: "/repo/demo", projectStrategy: { status: "active", projectTeam: [{ role: "Builder" }] } });
   view.moveSelection(1); // task-b is approved + not_started: executable
   view.handleInput("x");
+  assert.equal(view.mode, "select-role");
+  view.handleInput("\r");
   assert.equal(view.mode, "list"); // still list — awaiting the async decision from app.js
-  assert.deepEqual(calls, [["onRequestExecute", "task-b"]]);
+  assert.deepEqual(calls, [["onRequestExecute", "task-b", "Builder"]]);
 
-  const decision = { decision: "ROUTED", provider: "codex", model: "gpt-6-astra", why: "reasoning task" };
+  const decision = { decision: "ROUTED", role: "Builder", provider: "codex", model: "gpt-6-astra", why: "reasoning task", confirmationTarget: { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "codex::gpt-6-astra" } };
   view.showExecuteConfirm("task-b", decision);
   assert.equal(view.mode, "confirm-execute");
   const lines = view.render(120).join("\n");
@@ -957,13 +960,13 @@ test("x asks for the real routing decision first; the confirm prompt only appear
 
   view.handleInput("n");
   assert.equal(view.mode, "list");
-  assert.deepEqual(calls, [["onRequestExecute", "task-b"]]);
+  assert.deepEqual(calls, [["onRequestExecute", "task-b", "Builder"]]);
 });
 
 test("y confirms and forwards the exact decision shown, so the preview and the real launch never disagree", () => {
   const { view, calls } = makeView();
   view.moveSelection(1);
-  const decision = { decision: "ROUTED", provider: "claude", model: null, why: "default implementation provider" };
+  const decision = { decision: "ROUTED", role: "Builder", provider: "claude", model: null, why: "default implementation provider", confirmationTarget: { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "claude::claude-fable" } };
   view.showExecuteConfirm("task-b", decision);
   view.handleInput("y");
   assert.equal(view.mode, "list");
@@ -1036,14 +1039,15 @@ test("role picker: n/esc cancels without ever requesting execution", () => {
   assert.deepEqual(calls, []);
 });
 
-test("x still falls back to the legacy no-role request when there's no active project team", () => {
+test("x with no active project team blocks execution outright — PROJECT TEAM is the sole authority, there is no legacy fallback to request", () => {
   const { view, calls } = makeView();
   view.setWorkMode("agent");
   view.setSnapshot({ projectRoot: "/repo/demo", projectStrategy: { status: "suggested", projectTeam: [{ role: "Builder" }] } });
   view.moveSelection(1);
   view.handleInput("x");
-  assert.equal(view.mode, "list"); // no picker, no confirm — straight to the async request
-  assert.deepEqual(calls, [["onRequestExecute", "task-b"]]);
+  assert.equal(view.mode, "list"); // no picker, no confirm-execute — nothing to execute yet
+  assert.deepEqual(calls, [], "onRequestExecute must never be called without a real role");
+  assert.match(view.statusMessage, /No active project team/);
 });
 
 test("a real ProjectExecutionPreview's MANUAL_HANDOFF decision shows the manual continuation, never lets 'y' launch anything", () => {

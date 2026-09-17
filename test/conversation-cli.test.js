@@ -9,16 +9,27 @@ function silenceConsole(fn) {
   return fn(writes).finally(() => { console.log = original; });
 }
 
-test("conversation execute without --confirm only previews — never reserves quota or launches a run", async () => {
+test("conversation execute without --role fails fast with a clear message, before ever calling the service — PROJECT TEAM is the sole authority, role is never optional", async () => {
+  const service = {
+    planExecution: async () => { throw new Error("must never be called without --role"); },
+    executePlan: async () => { throw new Error("must never be called without --role"); }
+  };
+  await assert.rejects(
+    () => silenceConsole(() => runConversationCli({ conversationAction: "execute", cwd: "/repo", taskId: "task-id", json: true }, { service })),
+    /Missing --role/
+  );
+});
+
+test("conversation execute --role <role> without --confirm only previews — never reserves quota or launches a run", async () => {
   const calls = [];
   const service = {
     planExecution: async (args) => { calls.push(["preview", args]); return { decision: "ROUTED", role: "Builder", provider: "codex", model: "gpt-6-astra", why: "reasoning task", confirmationTarget: { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "codex::gpt-6-astra" } }; },
     executePlan: async () => { throw new Error("must never be called without --confirm"); }
   };
   await silenceConsole(async () => {
-    const result = await runConversationCli({ conversationAction: "execute", cwd: "/repo", taskId: "task-id", json: true }, { service });
+    const result = await runConversationCli({ conversationAction: "execute", cwd: "/repo", taskId: "task-id", role: "Builder", json: true }, { service });
     assert.equal(result.decision, "ROUTED");
-    assert.deepEqual(calls, [["preview", { cwd: "/repo", taskId: "task-id", role: null }]]);
+    assert.deepEqual(calls, [["preview", { cwd: "/repo", taskId: "task-id", role: "Builder" }]]);
   });
 });
 
@@ -49,28 +60,13 @@ test("conversation execute --role <role> --confirm rejects when the fresh previe
   );
 });
 
-test("conversation execute without --role, --confirm executes the legacy text-classification decision, --model overrides only the chosen model string", async () => {
-  const calls = [];
+test("conversation execute --role <role> --confirm rejects a WAIT_FOR_PROJECT_TEAM preview with no eligible alternative", async () => {
   const service = {
-    planExecution: async (args) => { calls.push(["preview", args]); return { decision: "ROUTED", provider: "codex", model: "gpt-6-astra", why: "reasoning task", projectRoot: "/repo", taskId: "task-id" }; },
-    executePlan: async (args) => { calls.push(["execute", args]); return { taskId: "task-id", execution: { state: "starting" } }; }
-  };
-  await silenceConsole(async () => {
-    await runConversationCli({ conversationAction: "execute", cwd: "/repo", taskId: "task-id", confirm: true, model: "custom-model", json: true }, { service });
-  });
-  assert.deepEqual(calls, [
-    ["preview", { cwd: "/repo", taskId: "task-id", role: null }],
-    ["execute", { cwd: "/repo", taskId: "task-id", agentId: "codex", model: "custom-model" }]
-  ]);
-});
-
-test("conversation execute without --role, --confirm rejects a non-ROUTED legacy decision", async () => {
-  const service = {
-    planExecution: async () => ({ decision: "WAIT_FOR_APPROVAL", provider: null, model: null, why: "high risk auth task" }),
+    planExecution: async () => ({ decision: "WAIT_FOR_PROJECT_TEAM", role: "Builder", provider: null, model: null, why: "no automatic alternative is available for Builder right now", confirmationTarget: null }),
     executePlan: async () => { throw new Error("must never be called"); }
   };
   await assert.rejects(
-    () => silenceConsole(() => runConversationCli({ conversationAction: "execute", cwd: "/repo", taskId: "task-id", confirm: true, json: true }, { service })),
-    /high risk auth task/
+    () => silenceConsole(() => runConversationCli({ conversationAction: "execute", cwd: "/repo", taskId: "task-id", role: "Builder", confirm: true, json: true }, { service })),
+    /no automatic alternative/
   );
 });

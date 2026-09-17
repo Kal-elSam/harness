@@ -47,11 +47,12 @@ export class CockpitView {
    * @param {(taskId: string) => void} deps.actions.onShowPlan
    * @param {(taskId: string) => void} deps.actions.onApprove
    * @param {(taskId: string) => void} deps.actions.onReject
-   * @param {(taskId: string, role?: string|null) => void} deps.actions.onRequestExecute - asks for the
+   * @param {(taskId: string, role: string) => void} deps.actions.onRequestExecute - asks for the
    *   real routing decision (via service.planExecution) before showing the confirm prompt. `role` is
-   *   given explicitly by the user (via the role picker below) whenever the active ProjectStrategy has
-   *   a real project team — never inferred from task text; omitted entirely falls back to the legacy
-   *   text-classification router for a project with no active team yet.
+   *   always the user's own explicit choice from the role picker below — PROJECT TEAM is the sole
+   *   authority for execution, so this is only ever called once a real role has been picked; a
+   *   project with no active team has no roles to pick and 'x' never calls this at all (see
+   *   handleListInput's own doc).
    * @param {(taskId: string, decision: object) => void} deps.actions.onExecute - confirmed; decision
    *   is the same one shown in the prompt, so the cockpit and the actual launch never disagree
    * @param {(taskId: string) => void} deps.actions.onCancel
@@ -342,16 +343,15 @@ export class CockpitView {
     const row = this.selectedRow();
     if (data === "y" || data === "Y") {
       const decision = this.executeDecision;
-      // A real ProjectExecutionPreview (planExecution({role})) always
-      // carries a `confirmationTarget` key — present only when something
-      // is genuinely confirmable (the assigned candidate on ROUTED, or a
-      // persisted, currently-eligible fallback on WAIT_FOR_PROJECT_TEAM).
-      // MANUAL_HANDOFF and a blocked role with no eligible alternative
-      // both carry `confirmationTarget: null` and must never launch here.
-      // A legacy (no-role) decision has no `confirmationTarget` key at
-      // all — same old rule for that path: only ROUTED can be confirmed.
-      const isProjectTeamPreview = decision && Object.prototype.hasOwnProperty.call(decision, "confirmationTarget");
-      const canConfirm = !decision || (isProjectTeamPreview ? Boolean(decision.confirmationTarget) : decision.decision === "ROUTED");
+      // A real ProjectExecutionPreview (planExecution({role}) — PROJECT
+      // TEAM is the sole authority for execution, there is no other
+      // shape) always carries a `confirmationTarget` key, present only
+      // when something is genuinely confirmable: the assigned candidate
+      // on ROUTED, or a persisted, currently-eligible fallback on
+      // WAIT_FOR_PROJECT_TEAM. MANUAL_HANDOFF and a blocked role with no
+      // eligible alternative both carry `confirmationTarget: null` and
+      // must never launch here.
+      const canConfirm = !decision || Boolean(decision.confirmationTarget);
       if (!canConfirm) return;
       this.mode = "list";
       this.executeDecision = null;
@@ -427,7 +427,12 @@ export class CockpitView {
       if (roles.length > 0) {
         this.showRoleSelect(row.taskId, roles);
       } else {
-        this.actions.onRequestExecute(row.taskId);
+        // PROJECT TEAM is the sole authority for execution — with no real
+        // active team, there is no role to pick and nothing left to
+        // preview automatically. Never falls back to guessing from the
+        // task's text; the only way forward is a real /project analysis.
+        this.statusMessage = "No active project team — run /project to analyze and approve one before executing.";
+        this.requestRender();
       }
       return;
     }
@@ -454,12 +459,7 @@ export class CockpitView {
       ];
     }
 
-    // A real ProjectExecutionPreview — see handleConfirmInput's own doc for
-    // why `confirmationTarget` (present or not) is the field that decides
-    // this, never `decision.decision` alone.
-    const isProjectTeamPreview = Object.prototype.hasOwnProperty.call(decision, "confirmationTarget");
-
-    if (isProjectTeamPreview && decision.decision === "MANUAL_HANDOFF") {
+    if (decision.decision === "MANUAL_HANDOFF") {
       const modelLabel = decision.modelRef?.displayName ?? decision.model ?? "the assigned model";
       return [
         theme.fg("error", `${decision.role} is manual-only`),
@@ -468,7 +468,7 @@ export class CockpitView {
       ];
     }
 
-    if (isProjectTeamPreview && decision.confirmationTarget) {
+    if (decision.confirmationTarget) {
       // WAIT_FOR_PROJECT_TEAM with a real, currently-eligible suggested
       // alternative — offered for explicit confirmation, never a silent
       // substitution for the blocked assignment.

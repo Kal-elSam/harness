@@ -58,31 +58,20 @@ async function api(path,options={}){const response=await fetch(path,{...options,
 function activeTeamRoles(){const strategy=latestSnapshot.projectStrategy;if(!strategy||strategy.status!=='active'||!Array.isArray(strategy.projectTeam))return[];return strategy.projectTeam.map(e=>e.role)}
 async function handleExecute(id){
   const roles=activeTeamRoles();
-  let role=null;
-  if(roles.length>0){
-    role=window.prompt('Which role is this task for?\\n'+roles.join(', '),roles[0]);
-    if(!role||!roles.includes(role)){statusEl.textContent='Execution cancelled.';return}
-  }
-  statusEl.textContent='Asking the router who should execute this…';
+  if(roles.length===0){statusEl.textContent='No active project team — run /project (or the conversation CLI) to analyze and approve one before executing.';statusEl.className='error';return}
+  const role=window.prompt('Which role is this task for?\\n'+roles.join(', '),roles[0]);
+  if(!role||!roles.includes(role)){statusEl.textContent='Execution cancelled.';return}
+  statusEl.textContent='Asking PROJECT TEAM who should execute this…';
   let decision;
-  try{decision=await api('/api/plans/'+encodeURIComponent(id)+'/preview'+(role?('?role='+encodeURIComponent(role)):''))}
+  try{decision=await api('/api/plans/'+encodeURIComponent(id)+'/preview?role='+encodeURIComponent(role))}
   catch(e){statusEl.textContent=e.message;statusEl.className='error';return}
-  const isProjectTeamPreview='confirmationTarget'in decision;
-  let confirmText, execBody;
-  if(isProjectTeamPreview){
-    if(!decision.confirmationTarget){statusEl.textContent=decision.why||'Cannot auto-execute this plan.';statusEl.className='error';return}
-    confirmText=decision.decision==='ROUTED'
-      ? ('Execute "'+id+'" with '+decision.provider+' · '+(decision.model||'default')+'? '+decision.why)
-      : ('Assigned model unavailable for '+decision.role+'. Suggested alternative: '+(decision.suggestedAlternative&&decision.suggestedAlternative.provider)+' · '+(decision.suggestedAlternative&&decision.suggestedAlternative.model&&(decision.suggestedAlternative.model.displayName||decision.suggestedAlternative.model.modelId))+'. Confirm this alternative?');
-    execBody={confirmationTarget:decision.confirmationTarget};
-  }else{
-    if(decision.decision!=='ROUTED'){statusEl.textContent=decision.why||'Cannot auto-execute this plan.';statusEl.className='error';return}
-    confirmText='Execute "'+id+'" with '+decision.provider+' · '+(decision.model||'default')+'? '+decision.why;
-    execBody={};
-  }
+  if(!decision.confirmationTarget){statusEl.textContent=decision.why||'Cannot auto-execute this plan.';statusEl.className='error';return}
+  const confirmText=decision.decision==='ROUTED'
+    ? ('Execute "'+id+'" with '+decision.provider+' · '+(decision.model||'default')+'? '+decision.why)
+    : ('Assigned model unavailable for '+decision.role+'. Suggested alternative: '+(decision.suggestedAlternative&&decision.suggestedAlternative.provider)+' · '+(decision.suggestedAlternative&&decision.suggestedAlternative.model&&(decision.suggestedAlternative.model.displayName||decision.suggestedAlternative.model.modelId))+'. Confirm this alternative?');
   if(!window.confirm(confirmText)){statusEl.textContent='Execution cancelled.';return}
   statusEl.textContent='Executing…';
-  await api('/api/plans/'+encodeURIComponent(id)+'/execute',{method:'POST',body:JSON.stringify(execBody)});
+  await api('/api/plans/'+encodeURIComponent(id)+'/execute',{method:'POST',body:JSON.stringify({confirmationTarget:decision.confirmationTarget})});
 }
 function button(label,action,id){const b=document.createElement('button');b.textContent=label;b.onclick=async()=>{
   try{
@@ -150,12 +139,15 @@ export async function startLocalConversationUi({ cwd, port = 0, token, service }
         sendJson(response, 200, await app.submitArchitecture({ cwd, task: body.task, model: body.model ?? null }));
       } else if (route.action === "show") sendJson(response, 200, await app.showPlan({ cwd, taskId: route.taskId }));
       else if (route.action === "preview") {
-        // A real ProjectExecutionPreview (role given) or the legacy
-        // decision shape (role omitted) — read-only either way, same as
+        // A real ProjectExecutionPreview — read-only, same as
         // service.planExecution() itself: never reserves quota or starts
         // a run. The browser fetches this before ever asking to confirm.
+        // PROJECT TEAM is the sole authority for execution — role is
+        // required; an omitted/empty one surfaces service.js's own clear
+        // "requires an explicit role" error as a 400, never silently
+        // falls back to guessing from the task's text.
         const role = url.searchParams.get("role");
-        sendJson(response, 200, await app.planExecution({ cwd, taskId: route.taskId, role: role || null }));
+        sendJson(response, 200, await app.planExecution({ cwd, taskId: route.taskId, role }));
       } else if (route.action === "approve" || route.action === "reject") {
         sendJson(response, 200, await app.decidePlan({
           cwd, taskId: route.taskId, decision: route.action === "approve" ? "approved" : "rejected"
@@ -164,22 +156,13 @@ export async function startLocalConversationUi({ cwd, port = 0, token, service }
         // The browser only ever sends a `confirmationTarget` it just
         // fetched from /preview — never a free-form provider/model choice.
         // executePlan revalidates that target against a freshly recomputed
-        // route before reserving anything (see service.js's own doc).
-        // Whether the field was sent AT ALL decides the path — omitting it
-        // entirely is the legacy no-role path, unchanged, for a project
-        // with no active team yet; a present-but-falsy value (a caller
-        // hand-crafting the request instead of going through the real
-        // client, e.g. forwarding a blocked preview's null target) is
-        // rejected outright, never silently downgraded to the legacy path.
+        // route before reserving anything, and now requires it outright
+        // (see service.js's own doc) — a missing or falsy confirmationTarget
+        // (e.g. a caller hand-crafting the request, or forwarding a
+        // blocked preview's null target) surfaces service.js's own clear
+        // error as a 400, never silently substitutes anything.
         const body = await readJson(request);
-        const hasConfirmationTarget = Boolean(body) && Object.prototype.hasOwnProperty.call(body, "confirmationTarget");
-        if (hasConfirmationTarget && !body.confirmationTarget) {
-          return sendJson(response, 400, { error: "confirmationTarget must be a real target from a fresh /preview call — it was blocked or missing." });
-        }
-        const args = hasConfirmationTarget
-          ? { cwd, taskId: route.taskId, confirmationTarget: body.confirmationTarget }
-          : { cwd, taskId: route.taskId };
-        sendJson(response, 202, await app.executePlan(args));
+        sendJson(response, 202, await app.executePlan({ cwd, taskId: route.taskId, confirmationTarget: body?.confirmationTarget }));
       } else sendJson(response, 200, await app.cancelExecution({ cwd, taskId: route.taskId }));
     } catch (error) {
       if (!response.headersSent) sendJson(response, error.statusCode ?? 400, { error: error.message ?? String(error) });

@@ -6,33 +6,25 @@ import { printJson } from "../json-output.js";
  * and browser local UI exactly: no `--confirm` is always a read-only
  * preview (service.planExecution — never reserves quota or starts a run);
  * `--confirm` re-fetches that same preview fresh, right before executing,
- * and executes exactly what it shows — `--model` can no longer bypass
- * PROJECT TEAM routing when `--role` is given (only a confirmed
- * `confirmationTarget` reaches executePlan on that path). Without `--role`
- * (no active project team yet), the legacy text-classification path stays
- * exactly as it always was, just gated behind the same explicit --confirm
- * step instead of firing immediately.
+ * and executes exactly what it shows. PROJECT TEAM is the sole authority
+ * for execution — `--role` is required (never inferred from task text),
+ * and there is no `--model`/`--agent` override left to bypass it; only a
+ * confirmed `confirmationTarget` from the fresh preview ever reaches
+ * executePlan.
  * @param {ReturnType<typeof createConversationService>} service
  * @param {object} options
  */
 async function runExecuteAction(service, options) {
-  const preview = await service.planExecution({ cwd: options.cwd, taskId: options.taskId, role: options.role ?? null });
+  if (!options.role) {
+    throw new Error(`Missing --role. PROJECT TEAM is the sole authority for execution — pick the real role this task is for (see /project or 'conversation snapshot' for the active team's roles).`);
+  }
+  const preview = await service.planExecution({ cwd: options.cwd, taskId: options.taskId, role: options.role });
   if (!options.confirm) return preview;
 
-  const isProjectTeamPreview = Object.prototype.hasOwnProperty.call(preview, "confirmationTarget");
-  if (isProjectTeamPreview) {
-    if (!preview.confirmationTarget) {
-      throw new Error(`Cannot execute "${options.taskId}": ${preview.why}`);
-    }
-    return service.executePlan({ cwd: options.cwd, taskId: options.taskId, confirmationTarget: preview.confirmationTarget });
-  }
-
-  if (preview.decision !== "ROUTED") {
+  if (!preview.confirmationTarget) {
     throw new Error(`Cannot execute "${options.taskId}": ${preview.why}`);
   }
-  return service.executePlan({
-    cwd: options.cwd, taskId: options.taskId, agentId: preview.provider, model: options.model ?? preview.model
-  });
+  return service.executePlan({ cwd: options.cwd, taskId: options.taskId, confirmationTarget: preview.confirmationTarget });
 }
 
 export async function runConversationCli(options, deps = {}) {
