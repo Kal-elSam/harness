@@ -476,15 +476,26 @@ export async function completeRoleRun({
  * chain (Builder -> Debugger -> Tester) may still have more roles left to
  * run. That automatic chaining itself is still out of scope here — this
  * is only the explicit, single-worktree "I'm done, this is ready" signal.
+ * PENDING alone only proves no role is running right now — it says
+ * nothing about whether the worktree is still clean, since nothing stops
+ * a stray edit (or leftover excluded file) from landing after the last
+ * role completed. READY_FOR_REVIEW is a claim that everything reviewable
+ * is already contained in real commits, so that claim is verified here
+ * too (assertExecutionWorktreeClean), not just assumed from the status
+ * name. A dirty worktree is rejected outright with zero state change —
+ * this is a caller usage error, not a worktree failure, so it stays
+ * PENDING rather than moving to INTERRUPTED.
  * @param {object} args
  * @param {string} args.worktreeId
  * @param {string} args.homeDir
+ * @param {(command: string, args: string[], options: object) => Buffer|string} [args.exec]
  */
-export async function markReadyForReview({ worktreeId, homeDir }) {
+export async function markReadyForReview({ worktreeId, homeDir, exec = execFileSync }) {
   const worktree = await requireWorktree(homeDir, worktreeId);
   if (worktree.status !== WORKTREE_STATES.PENDING) {
     throw new Error(`Execution worktree "${worktreeId}" is ${worktree.status}; expected PENDING (no active role run) to mark ready for review.`);
   }
+  assertExecutionWorktreeClean(worktree.treePath, { exec });
   const next = { ...worktree, status: WORKTREE_STATES.READY_FOR_REVIEW, updatedAt: new Date().toISOString() };
   await writeWorktreeState(homeDir, next);
   return next;

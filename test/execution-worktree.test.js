@@ -543,3 +543,27 @@ test("REGRESSION: completeRoleRun never lets an excluded file ride along with an
   assert.match(status, /ok\.txt/);
   assert.match(status, /secret\.bin/);
 });
+
+test("REGRESSION: markReadyForReview rejects a worktree dirtied after the last role completed, and stays PENDING", async () => {
+  const root = await repo();
+  const { homeDir, worktree } = await freshWorktree(root);
+
+  await beginRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir });
+  await writeFile(join(worktree.treePath, "feature.txt"), "real implementation\n");
+  await completeRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir, readRun: fakeReadRun(RUN_STATES.COMPLETED, worktree.treePath) });
+
+  // A stray edit lands after the role's own commit — PENDING alone says
+  // nothing about this, only a real cleanliness check does.
+  await writeFile(join(worktree.treePath, "feature.txt"), "modified after the role finished, never committed\n");
+
+  await assert.rejects(
+    () => markReadyForReview({ worktreeId: worktree.worktreeId, homeDir }),
+    /is not clean/
+  );
+
+  const stillPending = await readWorktreeState(homeDir, worktree.worktreeId);
+  assert.equal(stillPending.status, WORKTREE_STATES.PENDING, "a dirty worktree must never reach READY_FOR_REVIEW, and must not be silently marked INTERRUPTED either");
+
+  const status = execFileSync("git", ["-C", worktree.treePath, "status", "--porcelain"], { encoding: "utf8" });
+  assert.match(status, /feature\.txt/, "the real uncommitted edit must still be there — nothing silently discarded or committed on its behalf");
+});
