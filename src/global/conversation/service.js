@@ -368,6 +368,24 @@ export function createConversationService(deps = {}) {
   async function root(cwd) { return resolveRoot(cwd); }
 
   /**
+   * The exact real task text an automatic run gets launched with (see
+   * executePlan) — the ONE real formula, never a second one invented for
+   * display purposes. Reused by toExecutionPreview so a MANUAL_HANDOFF
+   * preview can hand the human this same text, ready to paste into the
+   * manual-only provider's own chat, instead of just naming the model.
+   * @param {string} planMarkdown
+   */
+  function buildExecutionTaskPrompt(planMarkdown) {
+    return [
+      "Implement the explicitly approved architecture plan below.",
+      "Follow repository AGENTS.md and Gentle governance. Do not treat plan approval as any additional governance receipt.",
+      "Use safe, non-bypassed permissions for this session.",
+      "",
+      planMarkdown
+    ].join("\n");
+  }
+
+  /**
    * Projects a real project-router decision into the public
    * ProjectExecutionPreview shape — never recalculates anything the
    * router already decided, only reshapes it (plain `model` id string for
@@ -380,20 +398,28 @@ export function createConversationService(deps = {}) {
    * - Everything else (MANUAL_HANDOFF, or WAIT_FOR_PROJECT_TEAM with no
    *   real alternative): null — nothing to confirm into an automatic run.
    * @param {ReturnType<typeof resolveProjectRoute>} route
+   * @param {{planMarkdown: string}|null} [record] - present only from
+   *   planExecution (which already read the real plan record); used to
+   *   attach `taskPrompt` for a MANUAL_HANDOFF decision only — a ROUTED/
+   *   WAIT_FOR_PROJECT_TEAM preview never needs it, since executePlan
+   *   builds the real task text itself from the SAME buildExecutionTaskPrompt.
    */
-  function toExecutionPreview(route) {
+  function toExecutionPreview(route, record = null) {
     let confirmationTarget = null;
     if (route.decision === "ROUTED" && route.model) {
       confirmationTarget = { role: route.role, selection: "assigned", strategyFingerprint: route.strategyFingerprint, candidateKey: route.model.candidateKey ?? null };
     } else if (route.decision === "WAIT_FOR_PROJECT_TEAM" && route.suggestedAlternative?.model) {
       confirmationTarget = { role: route.role, selection: "suggested-alternative", strategyFingerprint: route.strategyFingerprint, candidateKey: route.suggestedAlternative.model.candidateKey ?? null };
     }
+    const taskPrompt = route.decision === "MANUAL_HANDOFF" && record?.planMarkdown
+      ? buildExecutionTaskPrompt(record.planMarkdown)
+      : null;
     return {
       decision: route.decision, role: route.role,
       provider: route.provider, model: route.model?.modelId ?? null, modelRef: route.model,
       assignmentSource: route.assignmentSource, strategyFingerprint: route.strategyFingerprint, why: route.why,
       blockedAssignment: route.blockedAssignment, suggestedAlternative: route.suggestedAlternative,
-      confirmationTarget
+      confirmationTarget, taskPrompt
     };
   }
 
@@ -961,7 +987,7 @@ export function createConversationService(deps = {}) {
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
       const route = await this.routeProjectExecution(role, projectRoot);
-      return { ...toExecutionPreview(route), projectRoot, taskId };
+      return { ...toExecutionPreview(route, record), projectRoot, taskId };
     },
     /**
      * @param {object} args
@@ -1010,13 +1036,7 @@ export function createConversationService(deps = {}) {
         if (!raced) throw error;
         return { ...publicPlan(record, raced), projectRoot, reused: true };
       }
-      const task = [
-        "Implement the explicitly approved architecture plan below.",
-        "Follow repository AGENTS.md and Gentle governance. Do not treat plan approval as any additional governance receipt.",
-        "Use safe, non-bypassed permissions for this session.",
-        "",
-        record.planMarkdown
-      ].join("\n");
+      const task = buildExecutionTaskPrompt(record.planMarkdown);
       try {
         const started = await launchRun({
           homeDir, runId, agentId: resolvedAgentId, task, cwd: projectRoot, model: resolvedModel,

@@ -190,6 +190,16 @@ export async function runCockpitApp({
         return runAction("Asking PROJECT TEAM who should execute this", async () => {
           const decision = await service.planExecution({ cwd, taskId, role });
           view.showExecuteConfirm(taskId, decision);
+          // MANUAL_HANDOFF: Kairo can't launch this itself, so the real
+          // task text (the exact same one an automatic run would get —
+          // see service.js's buildExecutionTaskPrompt) goes into the
+          // transcript, ready to paste into the assigned provider's own
+          // chat — never just naming the model and leaving the human to
+          // reconstruct the prompt themselves.
+          if (decision.decision === "MANUAL_HANDOFF" && decision.taskPrompt) {
+            const modelLabel = decision.modelRef?.displayName ?? decision.model ?? "the assigned model";
+            pushTranscript("kairo", `${decision.provider} · ${modelLabel} can't be launched automatically — paste this into its chat:\n\n${decision.taskPrompt}`);
+          }
         });
       },
       onExecute: (taskId, decision) => {
