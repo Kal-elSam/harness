@@ -643,6 +643,23 @@ test("refreshProjectStrategy never silently re-runs a real provider call for a p
   assert.equal(profileComputed, false);
 });
 
+test("setCursorManualQuota persists the human's real report as an ordinary provider usage record — the only way Cursor's quota state ever changes", async () => {
+  let stored = null;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    writeProviderUsage: async (homeDir, provider, record) => { assert.equal(homeDir, "/home/test"); assert.equal(provider, "cursor"); stored = record; return record; }
+  });
+
+  const exhausted = await service.setCursorManualQuota({ exhausted: true });
+  assert.equal(exhausted.manualExhausted, true);
+  assert.match(exhausted.reason, /out of credits/);
+  assert.equal(stored, exhausted, "the exact record returned must be the exact record persisted — never a second, drifting shape");
+
+  const available = await service.setCursorManualQuota({ exhausted: false });
+  assert.equal(available.manualExhausted, false);
+  assert.equal(available.reason, null, "clearing the flag must honestly clear the reason too, never leave a stale exhausted reason behind");
+});
+
 async function realTeamEditCandidates() {
   const { scoreAvailableModels } = await import("../src/global/intelligence/model-intelligence.js");
   const { createCapabilityRegistry } = await import("../src/global/intelligence/model-capability-registry.js");

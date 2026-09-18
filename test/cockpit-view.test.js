@@ -815,6 +815,38 @@ test("compactUsageLines wraps to a second line — header alone, then providers 
   assert.match(stripTerminalSequences(wide[0]), /KAIRO · a-genuinely-long-project-name │ Codex 5h 58% \/ W 86% │ Claude S 34% \/ W 65% │ Go 100% \/ 100% \/ 96%/);
 });
 
+test("compactUsageLines flags a provider window as LOW once it drops below the shared early-warning threshold, but never at/above it", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    usage: {
+      codex: { primary: { remainingPercent: 99 }, secondary: { remainingPercent: 10 } },
+      claude: { primary: { remainingPercent: 100 }, secondary: { remainingPercent: 31 } },
+      opencode: { go: { windows: [{ remainingPercent: 100, status: "ok" }, { remainingPercent: 0, status: "rate-limited" }] } }
+    }
+  });
+  const lines = stripTerminalSequences(view.compactUsageLines(200).join("\n"));
+  assert.match(lines, /Codex 5h 99% \/ W 10% LOW/, "10% left is below the warning threshold — must be flagged before it's ever excluded");
+  assert.match(lines, /Claude S 100% \/ W 31%(?! LOW)/, "31% left is above the warning threshold — must never be flagged");
+  assert.match(lines, /Go 100% \/ 0% LIMITED/, "an already rate-limited window keeps its own LIMITED tag, never a redundant LOW alongside it");
+});
+
+test("/usage flags a low window the same way the compact bar does, without duplicating an already rate-limited tag", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    usage: {
+      codex: { windows: [{ name: "5h", remainingPercent: 99 }, { name: "weekly", remainingPercent: 10 }], source: "codex app-server" },
+      claude: { windows: [{ label: "S", remainingPercent: 100 }, { label: "W", remainingPercent: 31 }], source: "claude -p usage" },
+      opencode: { go: { windows: [{ name: "rolling", remainingPercent: 100, status: "ok" }, { name: "weekly", remainingPercent: 0, status: "rate-limited" }], source: "opencode go" } }
+    }
+  });
+  const lines = view.usageLines().join("\n");
+  assert.match(lines, /weekly 10% left LOW/);
+  assert.doesNotMatch(lines, /100% left LOW/, "31%\/100% must never be flagged — only genuinely low windows are");
+  assert.match(lines, /week 0%.*RATE LIMITED/);
+  assert.doesNotMatch(lines, /RATE LIMITED LOW/, "an already rate-limited window never gets a redundant LOW tag too");
+});
+
 test("/usage shows only the automatic-routing providers (Codex, Claude, Go) and never Zen", () => {
   const { view } = makeView();
   view.setSnapshot({

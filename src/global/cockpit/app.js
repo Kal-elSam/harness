@@ -230,7 +230,7 @@ export async function runCockpitApp({
       // blocks with no indication of which command produced which one.
       pushTranscript("user", task);
       if (command === "/help") {
-        pushTranscript("kairo", "Shift+Tab cycles ASK/PLAN/AGENT · /project interactive overlay (or analyze/analyst/approve/refresh/status subcommands for scripted use) · /plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
+        pushTranscript("kairo", "Shift+Tab cycles ASK/PLAN/AGENT · /project interactive overlay (or analyze/analyst/approve/refresh/status/cursor exhausted|available subcommands for scripted use) · /plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
       } else if (command === "/usage") {
         for (const line of view.usageLines()) pushTranscript("kairo", line);
       } else if (command === "/providers") {
@@ -343,8 +343,26 @@ export async function runCockpitApp({
             const result = await service.refreshProjectStrategy({ cwd });
             pushTranscript("kairo", result ? `Project strategy is now ${result.status.toUpperCase()}.` : "Nothing to refresh yet — use /project analyze first.");
           }).finally(() => { editor.disableSubmit = false; });
+        } else if (sub === "cursor") {
+          // Cursor exposes no real, zero-cost local usage read (see
+          // execution-router.js's checkCandidate doc) — this manual toggle
+          // is the only way Kairo learns its quota state, ever. Never
+          // auto-detected, never inferred from a failed run.
+          const state = args[1]?.toLowerCase();
+          if (state !== "exhausted" && state !== "available") {
+            pushTranscript("kairo", "Usage: /project cursor exhausted|available");
+            editor.setText("");
+            return;
+          }
+          editor.setText("");
+          return runAction(`Marking Cursor ${state}`, async () => {
+            await service.setCursorManualQuota({ exhausted: state === "exhausted" });
+            pushTranscript("kairo", state === "exhausted"
+              ? "Cursor marked out of credits — excluded from team suggestions until you run /project cursor available."
+              : "Cursor marked available again — back in team suggestions.");
+          });
         } else {
-          pushTranscript("kairo", "Usage: /project status|analyze|analyst quality|efficient [--confirm]|approve|refresh");
+          pushTranscript("kairo", "Usage: /project status|analyze|analyst quality|efficient [--confirm]|approve|refresh|cursor exhausted|available");
         }
       } else if (command === "/plan") {
         const planTask = task.slice(command.length).trim();

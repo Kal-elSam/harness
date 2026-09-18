@@ -35,6 +35,7 @@ import { runCodexSandboxedBootstrap } from "./codex-sandbox.js";
 import { createBootstrapAnalyzerAdapter } from "./bootstrap-analyzer-adapters.js";
 import { verifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
+import { readProviderUsage, writeProviderUsage } from "../runtime/usage-store.js";
 import { resolveProjectRoute } from "./project-router.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -269,6 +270,8 @@ export function createConversationService(deps = {}) {
   const computeProjectProfileImpl = deps.computeProjectProfile ?? computeProjectProfile;
   const readProjectStrategyImpl = deps.readProjectStrategy ?? readProjectStrategy;
   const writeProjectStrategyImpl = deps.writeProjectStrategy ?? writeProjectStrategy;
+  const readProviderUsageImpl = deps.readProviderUsage ?? readProviderUsage;
+  const writeProviderUsageImpl = deps.writeProviderUsage ?? writeProviderUsage;
   const parseProjectAnalysisImpl = deps.parseProjectAnalysis ?? parseProjectAnalysis;
   const deriveRoleRequirementsImpl = deps.deriveRoleRequirements ?? deriveRoleRequirements;
   const buildSanitizedSnapshotImpl = deps.buildSanitizedSnapshot ?? buildSanitizedSnapshot;
@@ -446,10 +449,15 @@ export function createConversationService(deps = {}) {
         // launchable), so Kairo never actually picks Go for a real run
         // it's guaranteed to reject at launch. Zen and Cursor stay
         // excluded here regardless (PAYG risk / manual-only).
+        // Cursor's own real usage/billing data is never auto-detected (see
+        // execution-router.js's checkCandidate doc) — this is only ever
+        // the human's last word via /project cursor exhausted|available,
+        // persisted as an ordinary provider usage record.
+        const cursorManualQuota = await readProviderUsageImpl(homeDir, "cursor");
         const eligibility = {};
         const candidates = [];
         for (const adapterId of ["codex", "claude", "opencode-go", "opencode-zen", "cursor"]) {
-          const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage: opencodeUsage?.go }, { requireLaunchable: false });
+          const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage: opencodeUsage?.go, cursorManualQuota }, { requireLaunchable: false });
           eligibility[adapterId] = check;
           if (check.ok) candidates.push(adapterId);
         }
@@ -814,6 +822,25 @@ export function createConversationService(deps = {}) {
         return { ...stale, projectRoot, profile };
       }
       return { ...existing, projectRoot, profile };
+    },
+    /**
+     * `/project cursor exhausted|available`: the ONLY way Cursor's quota
+     * state ever changes (see execution-router.js's checkCandidate doc —
+     * Cursor exposes no real, zero-cost local usage read, so this is never
+     * auto-detected). Persisted as an ordinary provider usage record
+     * (runtime/usage-store.js), read back by snapshot()'s own eligibility
+     * computation on every poll — never held only in memory, so it
+     * survives a restart the same way a real detected quota state would.
+     * @param {{exhausted: boolean, reason?: string|null}} args
+     */
+    async setCursorManualQuota({ exhausted, reason = null }) {
+      const record = {
+        provider: "cursor", manualExhausted: !!exhausted,
+        reason: exhausted ? (reason ?? "Cursor marked out of credits (manual, via /project cursor exhausted)") : null,
+        setAt: new Date().toISOString()
+      };
+      await writeProviderUsageImpl(homeDir, "cursor", record);
+      return record;
     },
     /**
      * The real projectTeam edit catalog for one role (section 4 —

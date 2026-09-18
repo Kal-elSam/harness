@@ -2,6 +2,22 @@ import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi } from
 import { buildTaskRows, clampSelection, isActionAvailable } from "./rows.js";
 import { CARD_TONE, cardBottom, cardInnerWidth, cardLine, cardTop, renderPanel as renderPanelWithTheme } from "./card.js";
 import { theme } from "./theme.js";
+import { LOW_QUOTA_WARN_PERCENT } from "../intelligence/execution-router.js";
+
+/**
+ * A real, early heads-up — never fabricated, never re-deriving its own
+ * threshold (see execution-router.js's LOW_QUOTA_WARN_PERCENT, the same
+ * canonical policy checkCandidate itself uses for its harder exclusion
+ * cutoff). `alreadyFlagged` skips this for a window a caller already
+ * tagged some other way (e.g. Go's own "RATE LIMITED"), so a single
+ * window is never double-tagged.
+ * @param {number|null|undefined} remainingPercent
+ * @param {boolean} [alreadyFlagged]
+ */
+function quotaWarnSuffix(remainingPercent, alreadyFlagged = false) {
+  if (alreadyFlagged || remainingPercent == null) return "";
+  return remainingPercent < LOW_QUOTA_WARN_PERCENT ? " LOW" : "";
+}
 
 /** view.js's own local binding for card.js's real renderPanel, fixed to this module's theme. */
 function renderPanel(title, tone, width, contentLines, targetLineCount = contentLines.length) {
@@ -560,8 +576,8 @@ export class CockpitView {
       };
     }
     const lines = [];
-    if (strategy.bootstrapAnalyst) lines.push(`${"Project Analyst".padEnd(18)} ${this.aiTeamLabel(strategy.bootstrapAnalyst)}`);
-    if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(18)} ${this.aiTeamLabel(strategy.orchestrator)}`);
+    if (strategy.bootstrapAnalyst) lines.push(`${"Project Analyst".padEnd(18)} ${this.teamRoleLabel(strategy.bootstrapAnalyst)}`);
+    if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(18)} ${this.teamRoleLabel(strategy.orchestrator)}`);
     // The real OPERATIONAL team (see buildProjectStrategy's own doc) —
     // never qualityTeam, which is comparative reference only. The overlay
     // (project-overlay.js) already shows projectTeam under this exact
@@ -570,7 +586,7 @@ export class CockpitView {
     // remains as a fallback for a strategy persisted before projectTeam
     // existed (see applyProjectTeamOverride's own legacy-entry comment).
     for (const entry of strategy.projectTeam ?? strategy.qualityTeam ?? []) {
-      lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.aiTeamLabel(entry.model) : theme.fg("warning", "no eligible option")}`);
+      lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.teamRoleLabel(entry.model) : theme.fg("warning", "no eligible option")}`);
     }
     if (strategy.status === "suggested") lines.push(theme.fg("muted", "Suggested from real project analysis. Use /project approve to activate."));
     if (strategy.status === "stale") lines.push(theme.fg("warning", "Real evidence changed since approval — use /project refresh."));
@@ -739,6 +755,19 @@ export class CockpitView {
     const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
     const raw = model.displayName ?? model.modelId;
     return `${provider} · ${raw}`;
+  }
+
+  /**
+   * Role -> model -> provider, for the PROJECT TEAM listing specifically:
+   * keeps aiTeamLabel()'s cleaned modelName (unlike aiTeamLabelWithProvider's
+   * raw/technical variant) but still names the real adapter each role would
+   * actually run against — two roles can land on visually similar model
+   * names from different providers, and knowing which subscription a role
+   * draws from is exactly what a real, provider-aware team review needs.
+   */
+  teamRoleLabel(model) {
+    const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
+    return `${this.aiTeamLabel(model)}  ·  ${provider}`;
   }
 
   /**
@@ -1155,17 +1184,20 @@ export class CockpitView {
 
     const codex = usage.codex;
     const codexText = codex?.primary
-      ? `Codex 5h ${codex.primary.remainingPercent}%${codex.secondary ? ` / W ${codex.secondary.remainingPercent}%` : ""}`
+      ? `Codex 5h ${codex.primary.remainingPercent}%${quotaWarnSuffix(codex.primary.remainingPercent)}${codex.secondary ? ` / W ${codex.secondary.remainingPercent}%${quotaWarnSuffix(codex.secondary.remainingPercent)}` : ""}`
       : `Codex ${status("Codex") ?? "usage unknown"}`;
 
     const claude = usage.claude;
     const claudeText = claude?.primary
-      ? `Claude S ${claude.primary.remainingPercent}%${claude.secondary ? ` / W ${claude.secondary.remainingPercent}%` : ""}`
+      ? `Claude S ${claude.primary.remainingPercent}%${quotaWarnSuffix(claude.primary.remainingPercent)}${claude.secondary ? ` / W ${claude.secondary.remainingPercent}%${quotaWarnSuffix(claude.secondary.remainingPercent)}` : ""}`
       : `Claude ${status("Claude") ?? "usage unknown"}`;
 
     const go = usage.opencode?.go;
     const goText = go?.windows?.length
-      ? `Go ${go.windows.map((window) => `${window.remainingPercent}%${window.status === "rate-limited" ? " LIMITED" : ""}`).join(" / ")}`
+      ? `Go ${go.windows.map((window) => {
+        const limited = window.status === "rate-limited";
+        return `${window.remainingPercent}%${limited ? " LIMITED" : quotaWarnSuffix(window.remainingPercent)}`;
+      }).join(" / ")}`
       : `Go ${status("OpenCode") ?? "usage unknown"}`;
 
     const header = `KAIRO · ${project}`;
@@ -1232,15 +1264,18 @@ export class CockpitView {
     const lines = [];
     const codex = usage.codex;
     lines.push(codex?.windows?.length
-      ? `Codex ${codex.windows.map((window) => `${window.name} ${window.remainingPercent}% left${window.resetsAtIso ? ` reset ${window.resetsAtIso}` : ""}`).join(" · ")} · source: ${codex.source ?? "measured"}`
+      ? `Codex ${codex.windows.map((window) => `${window.name} ${window.remainingPercent}% left${quotaWarnSuffix(window.remainingPercent)}${window.resetsAtIso ? ` reset ${window.resetsAtIso}` : ""}`).join(" · ")} · source: ${codex.source ?? "measured"}`
       : "Codex usage unknown · source: Codex app-server · no quota fabricated");
     const claude = usage.claude;
     lines.push(claude?.windows?.length
-      ? `Claude ${claude.windows.map((window) => `${window.label ?? window.name} ${window.remainingPercent}% left`).join(" · ")} · source: ${claude.source ?? "measured"}`
+      ? `Claude ${claude.windows.map((window) => `${window.label ?? window.name} ${window.remainingPercent}% left${quotaWarnSuffix(window.remainingPercent)}`).join(" · ")} · source: ${claude.source ?? "measured"}`
       : "Claude usage unknown · no quota fabricated");
     const go = usage.opencode?.go;
     lines.push(go?.windows?.length
-      ? `Go ${go.windows.map((window) => `${shortWindowName(window.name)} ${window.remainingPercent}%${window.status === "rate-limited" ? " RATE LIMITED" : ""}`).join(" · ")} · source: ${go.source ?? "measured"}`
+      ? `Go ${go.windows.map((window) => {
+        const limited = window.status === "rate-limited";
+        return `${shortWindowName(window.name)} ${window.remainingPercent}%${limited ? " RATE LIMITED" : quotaWarnSuffix(window.remainingPercent)}`;
+      }).join(" · ")} · source: ${go.source ?? "measured"}`
       : "Go usage unknown · source unavailable");
     return lines;
   }

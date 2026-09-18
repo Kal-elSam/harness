@@ -11,6 +11,7 @@ function makeFakeView(snapshot = {}) {
     snapshot,
     aiTeamLabel: (model) => model.displayName ?? model.modelId,
     aiTeamLabelWithProvider: (model) => `${model.adapterId} · ${model.displayName ?? model.modelId}`,
+    teamRoleLabel: (model) => `${model.displayName ?? model.modelId}  ·  ${model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1)}`,
     actionLabel: null,
     beginAction(label) { this.actionLabel = label; },
     endAction() { this.actionLabel = null; },
@@ -575,9 +576,37 @@ test("REGRESSION: render() output is a real bordered panel — never loses itsel
   const lines = overlay.render(76);
   assert.match(lines[0], /╭/, "a real top border must open the panel");
   assert.match(lines.at(-1), /╯/, "a real bottom border must close the panel");
+  assert.match(lines[0], /\x1b\[38;2;127;180;202m/, "the modal outline must use the high-contrast info color, not the shared low-contrast dashboard border");
+  assert.match(lines.at(-1), /\x1b\[38;2;127;180;202m/, "the bottom outline must use the same distinct modal color");
   const contentLines = lines.slice(1, -1);
   assert.ok(contentLines.length > 0);
   assert.ok(contentLines.every((line) => /│/.test(line)), "every real content line (between the top/bottom rule) must carry the panel's own left/right border");
+});
+
+test("REGRESSION: compact modal spacing keeps the bottom frame visible for a full six-role team", async () => {
+  const team = ["Explorer", "Architect", "Builder", "Tester", "Debugger", "Reviewer"].map((role) => ({
+    role,
+    model: { adapterId: "codex", modelId: `model-${role.toLowerCase()}`, displayName: `Model ${role}` },
+    reason: `Evidence-backed ${role} recommendation.`
+  }));
+  const strategy = {
+    status: "suggested",
+    bootstrapAnalystChoice: "efficient",
+    bootstrapAnalystSelectionSource: "recommended",
+    bootstrapAnalyst: { adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5" },
+    projectTeam: team,
+    qualityTeam: team,
+    efficientTeam: team
+  };
+  const overlay = new ProjectOverlay({
+    service: makePreflightService(),
+    view: makeFakeView({ projectStrategy: strategy }),
+    cwd: "/repo",
+    onClose: () => {}
+  });
+  const lines = overlay.render(76);
+  assert.ok(lines.length <= 32, `the six-role result should stay compact enough for the overlay height budget; got ${lines.length} rows`);
+  assert.match(lines.at(-1), /╯/, "the rendered result must retain its bottom frame after compaction");
 });
 
 test("REGRESSION: a real in-flight action (analyzing, saving, approving, refreshing) shows the cockpit's own live ticking spinner, not a static string", async () => {
