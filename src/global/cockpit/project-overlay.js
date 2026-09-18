@@ -175,6 +175,23 @@ export class ProjectOverlay {
     this.requestRender();
   }
 
+  /**
+   * Forces a genuinely fresh analysis — the ONLY way back to the real
+   * interactive analyst-picker (SELECT_ANALYST) once a SUGGESTED/ACTIVE/
+   * STALE strategy already exists (the constructor's own existing-strategy
+   * shortcut otherwise always wins). Discards the held suggested/active
+   * strategy in memory only — nothing persisted is touched until a new
+   * choice is confirmed and a new /project approve happens; the previous
+   * real strategy stays exactly as persisted if the human backs out
+   * (Esc from SELECT_ANALYST) before confirming anything.
+   */
+  reanalyze() {
+    this.suggestedStrategy = null;
+    this.activeStrategy = null;
+    this.resultSelectList = null;
+    void this.loadPreflight();
+  }
+
   /** A short, honest label for a catalog entry's own real recommendationTags/evidenceStatus — never a fabricated "Quality"/"Efficient" claim for a model that doesn't actually carry that tag. */
   static tagLabel(model) {
     if (model.evidenceStatus === "unscored") return "Unscored";
@@ -460,9 +477,17 @@ export class ProjectOverlay {
       // edits the highlighted role instead. Enter must never silently
       // approve just because a role row happens to be focused.
       if (data === "a" || data === "A") return void this.approve();
+      // "r" forces a genuinely fresh analysis (re-picks the analyst from
+      // scratch) — distinct from editing one role's model (Enter) or
+      // approving the current suggestion (a) — see reanalyze()'s own doc.
+      if (data === "r" || data === "R") return void this.reanalyze();
       this.resultSelectList.handleInput(data);
       this.requestRender();
       return;
+    }
+
+    if ((this.state === S.ACTIVE || this.state === S.STALE) && (data === "r" || data === "R")) {
+      return void this.reanalyze();
     }
 
     if (this.state === S.EDIT_MODEL_SEARCH) {
@@ -597,7 +622,7 @@ export class ProjectOverlay {
         // above, never replacing it visually.
         for (const line of teamLines("Quality (reference)", strategy.qualityTeam, this.view, "muted")) push(line);
         for (const line of teamLines("Efficient (reference)", strategy.efficientTeam, this.view, "muted")) push(line);
-        push(theme.fg("muted", "Enter edit role · a approve & activate · Esc close without approving"));
+        push(theme.fg("muted", "Enter edit role · a approve & activate · r re-analyze from scratch · Esc close without approving"));
         break;
       }
       case S.EDIT_LOADING:
@@ -647,7 +672,7 @@ export class ProjectOverlay {
         push(theme.fg("success", "ACTIVE"));
         push(theme.fg("muted", `Approved ${strategy.approvedAt ?? "?"}`));
         for (const line of teamLines("PROJECT TEAM", strategy.projectTeam ?? strategy.qualityTeam, this.view)) push(line);
-        push(theme.fg("muted", "Esc close"));
+        push(theme.fg("muted", "r re-analyze from scratch · Esc close"));
         break;
       }
       case S.STALE: {
@@ -655,7 +680,7 @@ export class ProjectOverlay {
         push(theme.fg("warning", "STALE"));
         push(theme.fg("muted", "The real project evidence has changed since this team was approved — previous assignments are kept until refreshed."));
         for (const line of teamLines("PROJECT TEAM (previous)", strategy.projectTeam ?? strategy.qualityTeam, this.view)) push(line);
-        push(theme.fg("muted", "Enter refresh · Esc close"));
+        push(theme.fg("muted", "Enter refresh · r re-analyze from scratch · Esc close"));
         break;
       }
       case S.ERROR:
