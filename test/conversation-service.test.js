@@ -896,7 +896,7 @@ test("snapshot excludes a provider from FIT once its real quota is exhausted, ev
   assert.equal(explorer.fallback.available, true);
 });
 
-test("snapshot lets AI TEAM recommend a real, accessible opencode-go model even though it isn't launchable yet", async () => {
+test("snapshot lets AI TEAM recommend a real, accessible, launchable opencode-go model — Go is a real automatic candidate now", async () => {
   const service = createConversationService({
     resolveRoot: async () => "/repo",
     homeDir: "/home/kal-el",
@@ -907,9 +907,9 @@ test("snapshot lets AI TEAM recommend a real, accessible opencode-go model even 
       { id: "codex", available: true, launchable: true, reason: null },
       { id: "claude", available: true, launchable: true, reason: null },
       // Real, verified state: OpenCode is available (CLI on PATH, real
-      // structured events) but not launchable — blocked pending
-      // provider-isolation proof between Go and Zen.
-      { id: "opencode", available: true, launchable: false, reason: "blocked pending provider-isolation proof" }
+      // structured events) and launchable — its own idle timeout (see
+      // execution-adapters/opencode.js) covers the real hang risk.
+      { id: "opencode", available: true, launchable: true, reason: null }
     ],
     inspectEngramIntegration: () => ({ status: "configured" }),
     readCodexUsage: async () => null,
@@ -1394,6 +1394,31 @@ test("REGRESSION: executePlan actually launches a real Cursor run — Cursor is 
   const confirmationTarget = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "cursor::gpt-5.6-sol" };
   const result = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
   assert.equal(result.execution.provider, "cursor");
+  assert.equal(result.execution.state, "starting");
+});
+
+test("REGRESSION: executePlan launches OpenCode Go with the real, fully-qualified 'opencode-go/<id>' model ref — the real catalog only ever stores the bare id, and a bare id is exactly the Go/Zen routing ambiguity Kairo must never risk", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Approved plan" };
+  const goModel = { candidateKey: "opencode-go::deepseek-v4-flash", adapterId: "opencode-go", modelId: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash", accessMode: "automatic" };
+  const strategy = activeStrategyWithBuilder({ model: goModel });
+  let link = null;
+  const service = serviceWithEligibility({
+    verifyExecution: async () => record,
+    createRunId: () => "run_fixed",
+    readExecution: async () => link,
+    writeExecution: async (_root, _id, value) => { link = value; },
+    updateExecution: async (_root, _id, value) => { link = value; },
+    readProjectStrategy: async () => strategy,
+    startRun: async (input) => {
+      assert.equal(input.agentId, "opencode-go");
+      assert.equal(input.model, "opencode-go/deepseek-v4-flash", "the bare catalog id must be prefixed before it ever reaches the CLI");
+      return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
+    }
+  }, { "opencode-go": { ok: true } });
+
+  const confirmationTarget = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "opencode-go::deepseek-v4-flash" };
+  const result = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
+  assert.equal(result.execution.provider, "opencode-go");
   assert.equal(result.execution.state, "starting");
 });
 

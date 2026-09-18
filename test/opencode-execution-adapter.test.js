@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import opencodeAdapter, { parseOpencodeEventLine } from "../src/global/runtime/execution-adapters/opencode.js";
+import opencodeAdapter, { OPENCODE_IDLE_TIMEOUT_MS, parseOpencodeEventLine } from "../src/global/runtime/execution-adapters/opencode.js";
+
+test("REGRESSION: the opencode adapter declares a real idle timeout — genuine 2026-09-18 hangs against a live account confirmed a real silent-hang failure mode for opencode-go", () => {
+  assert.equal(opencodeAdapter.idleTimeoutMs, OPENCODE_IDLE_TIMEOUT_MS);
+  assert.ok(OPENCODE_IDLE_TIMEOUT_MS > 0);
+});
 
 // Every fixture below is copied verbatim from a real `opencode run --format
 // json` invocation against a live account (captured while investigating why
@@ -92,7 +97,7 @@ test("buildLaunch adds --auto only for yolo/force/all permissions, the real flag
   assert.ok(launch.args.includes("--auto"));
 });
 
-test("opencode adapter stays not-launchable even though it now honestly reports structured-event support", () => {
+test("REGRESSION: opencode adapter is launchable when the real CLI is on PATH — Go's real hang risk is covered by its own idle timeout, not a launchable:false gate", () => {
   const availability = opencodeAdapter.availability();
-  assert.equal(availability.launchable, false);
+  assert.equal(availability.launchable, availability.available);
 });

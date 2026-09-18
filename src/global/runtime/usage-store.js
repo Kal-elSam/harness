@@ -7,6 +7,17 @@ import { writeAtomicJson } from "./write-atomic-json.js";
 
 const writeLocks = new Map();
 
+// OpenCode Go and Zen share a single real execution adapter object (one
+// executable, one launch/parse contract — see
+// execution-adapters/index.js's own resolveExecutionAdapter doc), but
+// they are NOT the same thing for usage/budget tracking: Go is a flat
+// $10/mo subscription with its own weekly/monthly quota, Zen is pay-per-
+// token with its own real balance — genuinely separate budgets that must
+// never share one usage record. So this whitelist is deliberately wider
+// than EXECUTION_ADAPTER_IDS, not a mirror of it.
+const EXTRA_USAGE_PROVIDER_IDS = ["opencode-go", "opencode-zen"];
+const VALID_USAGE_PROVIDER_IDS = [...EXECUTION_ADAPTER_IDS, ...EXTRA_USAGE_PROVIDER_IDS];
+
 export function getUsageDir(homeDir) {
   return harnessHomePaths(homeDir).usageDir;
 }
@@ -15,13 +26,12 @@ export function getUsageDir(homeDir) {
  * The one real boundary a provider id gets validated at before it's ever
  * used to build a path — the same defense-in-depth role
  * assertWorktreeId/assertTaskId already play elsewhere. Provider ids are a
- * real, closed list (the same one execution-adapters/index.js resolves
- * against), never a free-form string, so an unknown one is always a bug
- * to surface loudly rather than a path to silently sanitize.
+ * real, closed list, never a free-form string, so an unknown one is
+ * always a bug to surface loudly rather than a path to silently sanitize.
  */
 function usagePath(homeDir, provider) {
-  if (!EXECUTION_ADAPTER_IDS.includes(provider)) {
-    throw new Error(`Unknown provider "${provider}" for usage tracking. Use ${EXECUTION_ADAPTER_IDS.join(", ")}.`);
+  if (!VALID_USAGE_PROVIDER_IDS.includes(provider)) {
+    throw new Error(`Unknown provider "${provider}" for usage tracking. Use ${VALID_USAGE_PROVIDER_IDS.join(", ")}.`);
   }
   return join(getUsageDir(homeDir), `${provider}.json`);
 }
@@ -60,7 +70,7 @@ export async function listProviderUsage(homeDir) {
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     const provider = entry.name.slice(0, -".json".length);
-    if (!EXECUTION_ADAPTER_IDS.includes(provider)) continue;
+    if (!VALID_USAGE_PROVIDER_IDS.includes(provider)) continue;
     const record = await readProviderUsage(homeDir, provider);
     if (record) records.push(record);
   }

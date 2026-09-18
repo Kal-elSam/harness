@@ -39,7 +39,7 @@ import { matchArtificialAnalysisScore } from "./model-intelligence.js";
  * @property {string} modelName - human-readable clean name, with real effort/context/privacy variant tokens stripped (see stripDisplayVariant). Never invented — always derived from the provider's own real displayName.
  * @property {string} rawDisplayName - the provider's own displayName, completely unmodified — the real evidence modelName was derived from. Whatever stripDisplayVariant peeled off (effort/context/privacy tokens) to produce modelName is still visible here, never a separate field: /models --evidence's own "technical detail" is just this string.
  * @property {string} adapterId - "codex" | "claude" | "cursor" | "opencode-go".
- * @property {"automatic"|"manual"} accessMode - whether Kairo can actually launch this candidate itself right now, or whether it's a real, recommendable option the human runs manually (Cursor's own "auto" router model always; OpenCode Go until its own empirical automatic-execution proof lands — see this module's own doc). Named Cursor models are automatic.
+ * @property {"automatic"|"manual"} accessMode - whether Kairo can actually launch this candidate itself right now, or whether it's a real, recommendable option the human runs manually (Cursor's own "auto" router model always; OpenCode Zen always, pending its own Go/Zen billing-attribution proof — see this module's own doc). Named Cursor and OpenCode Go models are automatic.
  * @property {"scored"|"partial"|"unscored"} evidenceStatus - "scored": AA matched this exact model AND reports at least one of intelligenceIndex/codingIndex. "partial": AA matched it but both composite indices are null (real match, thin evidence). "unscored": no confident AA match at all. Never role-specific — see this module's own doc for why.
  * @property {string|null} lineageKey - real, recognized model family/lineage (see LINEAGE_PARSERS) — null when the modelId doesn't match any recognized, conservative pattern. Never guessed.
  * @property {number|null} generation - a real, comparable version number within that lineage — null whenever lineageKey is null.
@@ -281,20 +281,27 @@ function applyLifecycle(catalog) {
 // Whether Kairo can actually launch a candidate itself right now, per
 // adapter — real, current state (execution-adapters/index.js's own
 // `launchable` flags, intelligence/execution-router.js's checkCandidate),
-// not a guess. OpenCode Go stays "manual" until the real empirical
-// automatic-execution proof this session's plan calls for
-// (`opencode run -m opencode-go/<model>`, verifying real provider
-// attribution and Go-only consumption) actually runs and passes — see
-// this module's own doc. Cursor is "automatic": its own execution
-// adapter (execution-adapters/cursor.js) already builds a real,
-// auditable non-interactive launch (`cursor-agent -p --output-format
-// stream-json`) and parses its structured event stream, the exact same
-// shape as Codex/Claude — Cursor's own docs explicitly support this
-// (headless/CI use is an intended, documented capability, not a hack).
-// The earlier "permanent manual" policy predated this adapter being
-// finished and had no technical or billing reason behind it (unlike
-// OpenCode Go's real, confirmed Go/Zen billing-attribution gap above).
-const ACCESS_MODE_BY_ADAPTER = { codex: "automatic", claude: "automatic", cursor: "automatic", "opencode-go": "manual" };
+// not a guess. Cursor is "automatic": its own execution adapter
+// (execution-adapters/cursor.js) already builds a real, auditable
+// non-interactive launch (`cursor-agent -p --output-format stream-json`)
+// and parses its structured event stream, the exact same shape as
+// Codex/Claude — Cursor's own docs explicitly support this (headless/CI
+// use is an intended, documented capability, not a hack).
+//
+// OpenCode Go is "automatic" too now, but with a real, confirmed caveat:
+// a live reproduction (2026-09-18, against a real account) found the
+// `opencode` CLI genuinely hangs with zero output for some real Go
+// models — not a stale finding. What makes this safe to flip anyway is
+// the real idle timeout the execution adapter itself now declares
+// (execution-adapters/opencode.js's OPENCODE_IDLE_TIMEOUT_MS,
+// run-supervisor.js resets it on every real chunk) — a genuine hang gets
+// converted into a real FAILED run within a bounded, known time instead
+// of hanging forever, which is exactly what the human's own explicit
+// decision requires: try Go, and if it's not OK, automatically move to
+// the next real available model. OpenCode Zen stays "manual" — the
+// real, confirmed Go/Zen billing-attribution gap (see this module's own
+// doc above) is unrelated to this and still unresolved.
+const ACCESS_MODE_BY_ADAPTER = { codex: "automatic", claude: "automatic", cursor: "automatic", "opencode-go": "automatic" };
 
 function resolveAccessMode(adapterId, modelId) {
   // Cursor's own "auto" router picks whichever underlying model it wants
@@ -447,7 +454,7 @@ export function buildRecommendationPool(scoredAll, completeCatalog) {
  * The Automatic Execution Pool: the subset of the Recommendation Pool
  * Kairo can actually launch itself, right now — real routing's own
  * candidate source, never QUALITY/EFFICIENT TEAM's. Requires BOTH a real
- * accessMode of "automatic" (OpenCode Go is currently manual, and
+ * accessMode of "automatic" (OpenCode Zen is currently manual, and
  * Cursor's own "auto" router model stays manual — see
  * ModelCandidateIdentity's own doc) AND real,
  * current eligibility (adapter availability, quota, launchability — the

@@ -278,16 +278,17 @@ test("checkCandidate still applies the real codex/claude quota floor unchanged",
   assert.match(low.reason, /nearly exhausted/);
 });
 
-test("checkCandidate({requireLaunchable: false}) lets opencode-go through on availability alone — for AI TEAM's recommendation surface only", () => {
-  const adapters = [{ id: "opencode", available: true, launchable: false, reason: "blocked pending provider-isolation proof" }];
+test("REGRESSION: checkCandidate treats opencode-go as a real automatic candidate — same launchable gate for both recommendation and real task routing now, no more leniency", () => {
+  const adapters = [{ id: "opencode", available: true, launchable: true, reason: null }];
   const strict = checkCandidate("opencode-go", { adapters });
-  assert.equal(strict.ok, false, "real task routing (the default) must still require launchable");
+  assert.equal(strict.ok, true, "a genuinely available and launchable Go candidate must be real task-routable too");
 
-  const forRecommendation = checkCandidate("opencode-go", { adapters }, { requireLaunchable: false });
-  assert.equal(forRecommendation.ok, true, "AI TEAM can still recommend a real, accessible Go model");
+  const notLaunchable = [{ id: "opencode", available: true, launchable: false, reason: "opencode not launchable yet" }];
+  const forRecommendation = checkCandidate("opencode-go", { adapters: notLaunchable }, { requireLaunchable: false });
+  assert.equal(forRecommendation.ok, false, "opencode-go no longer gets a pass on launchability just because this is the recommendation surface");
 });
 
-test("checkCandidate({requireLaunchable: false}) never loosens codex/claude/zen — the only exception is opencode-go", () => {
+test("checkCandidate({requireLaunchable: false}) never loosens codex/claude/zen — there are no exceptions left", () => {
   const adapters = [{ id: "codex", available: true, launchable: false, reason: "codex not launchable" }];
   const codex = checkCandidate("codex", { adapters }, { requireLaunchable: false });
   assert.equal(codex.ok, false);

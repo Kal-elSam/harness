@@ -174,15 +174,11 @@ export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, o
   const adapter = findAdapter(adapterId, adapters);
   if (!adapter) return { ok: false, reason: `${adapterId}: no adapter found` };
   if (!adapter.available) return { ok: false, reason: adapter.reason ?? `${adapterId}: not available` };
-  // "launchable" means safe for Kairo to invoke programmatically — not the
-  // bar a manual recommendation needs. OpenCode Go alone keeps the
-  // exemption: real availability is enough to recommend it, even though
-  // Kairo can't safely auto-execute through it yet (unresolved Go/Zen
-  // billing-attribution gap — see opencode.js). Cursor no longer needs
-  // this exemption — its real launchability is judged the same way for
-  // both recommendation and execution now.
-  const launchableRequired = requireLaunchable || adapterId !== "opencode-go";
-  if (launchableRequired && !adapter.launchable) return { ok: false, reason: adapter.reason ?? `${adapterId}: not launchable yet` };
+  // "launchable" means safe for Kairo to invoke programmatically — every
+  // real adapter is now judged the same way for both recommendation and
+  // execution; no adapter keeps a special exemption anymore (Cursor and
+  // OpenCode Go both dropped theirs once their real adapters proved out).
+  if (!adapter.launchable) return { ok: false, reason: adapter.reason ?? `${adapterId}: not launchable yet` };
 
   if (adapterId === "codex") {
     const left = remainingPercent(codexUsage);

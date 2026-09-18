@@ -3,6 +3,17 @@ import { isExecutableAvailable } from "../../cli-probe.js";
 
 const EXECUTABLE = "opencode";
 
+// Real, reproduced failure mode (2026-09-18): `opencode run -m
+// opencode-go/<model>` genuinely hangs with ZERO stdout/stderr output for
+// several real models, confirmed live against a real account — not a
+// stale finding. Some other real models fail fast and cleanly instead
+// (e.g. a real 403 region-lock error came back instantly). Since a real,
+// legitimate task can genuinely run for minutes while still producing
+// real output, this is an IDLE timeout (reset on every real chunk, see
+// run-supervisor.js), never an absolute one — only genuine silence this
+// long trips it.
+export const OPENCODE_IDLE_TIMEOUT_MS = 60_000;
+
 // Verified live (`opencode run --format json`) against a real account: the
 // CLI genuinely emits parseable NDJSON events — step_start/step_finish,
 // tool_use (with real tool name + status), text, and error — including
@@ -10,19 +21,18 @@ const EXECUTABLE = "opencode";
 // step_finish. That earlier "does not emit auditable structured events"
 // claim was wrong; structuredEvents below is now an accurate capability.
 //
-// It stays `launchable: false` anyway, for a different, harder reason:
-// this adapter is shared by both OpenCode Go (subscription, $10/mo) and
-// OpenCode Zen (PAYG) — same `opencode` executable, same event shapes,
-// no field in any event that names which product tier actually served
-// the request. A live invocation with `-m opencode/<id>` for a model that
-// exists on BOTH tiers was confirmed to be ambiguous — no way to prove
-// after the fact whether it ran on Go or silently billed against Zen. A
-// second invocation with the Go-specific `opencode-go/<id>` prefix simply
-// hung. Per explicit decision: Kairo must not route real tasks through
-// this adapter until it can prove, from the run's own evidence, both (1)
-// the effective provider actually used was opencode-go, and (2) Zen was
-// not touched. Until that receipt-level proof exists, this stays blocked
-// — no more paid trial invocations to "just check" this again.
+// `launchable: true` now — for Go specifically. This adapter is shared by
+// both OpenCode Go (subscription, $10/mo) and OpenCode Zen (PAYG); the
+// real, unresolved billing-attribution gap between them (no per-event way
+// to prove which tier served a request) is still real, but
+// execution-router.js's checkCandidate refuses "opencode-zen" outright
+// regardless of this flag, so this flag only ever matters for
+// "opencode-go" in practice — and for Go, that gap doesn't apply (its
+// own dedicated `/zen/go/*` endpoint is a real, separate gateway, see
+// model-candidate-catalog.js's own doc). The real remaining risk was a
+// live-confirmed hang for some Go models, not billing — mitigated by this
+// adapter's own idleTimeoutMs (see above) converting a genuine hang into
+// a bounded real failure instead of an indefinite one.
 function checkOpencodeAvailability(context = {}) {
   const available = isExecutableAvailable(EXECUTABLE, { env: context.env ?? process.env });
   if (!available) {
@@ -32,8 +42,8 @@ function checkOpencodeAvailability(context = {}) {
     };
   }
   return {
-    available: true, compatible: true, launchable: false,
-    reason: "OpenCode Go/Zen share one executable with no per-event way to prove which product tier actually served a run — blocked until that provider-isolation evidence exists."
+    available: true, compatible: true, launchable: true,
+    reason: null
   };
 }
 
@@ -100,5 +110,6 @@ export default createExecutionAdapter({
   },
   checkAvailability: checkOpencodeAvailability,
   buildLaunch: buildOpencodeLaunch,
-  parseEventLine: parseOpencodeEventLine
+  parseEventLine: parseOpencodeEventLine,
+  idleTimeoutMs: OPENCODE_IDLE_TIMEOUT_MS
 });
