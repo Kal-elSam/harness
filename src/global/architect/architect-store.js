@@ -307,23 +307,41 @@ export async function readExecutionLink(projectRoot, taskId) {
   const stat = await statOrNull(paths.executionPath);
   if (!stat) return null;
   const link = JSON.parse(await readFile(paths.executionPath, "utf8"));
+  // `provider` is real, structural validation only (a non-empty real
+  // string) — never a single hardcoded value. PROJECT TEAM can route a
+  // real task to any real adapter (Codex, Claude, Cursor, OpenCode Go),
+  // and a legacy artifact from before that existed still carries "claude"
+  // for real, so this must accept every real one honestly, never lie
+  // by forcing them all to read back as "claude".
   if (link?.schema !== EXECUTION_SCHEMA || link?.taskId !== taskId
-    || !/^run_[a-z0-9_]+$/.test(link?.runId ?? "") || link?.provider !== "claude") {
+    || !/^run_[a-z0-9_]+$/.test(link?.runId ?? "") || typeof link?.provider !== "string" || link.provider.length === 0) {
     throw new Error(`Invalid execution artifact: ${taskId}`);
   }
   return link;
 }
 
+/**
+ * `provider` always mirrors the link's own real `agentId` — the field a
+ * real caller (executePlan) actually sets, and the one PROJECT TEAM's own
+ * routing decision already named. Never a fabricated or hardcoded value;
+ * a legacy caller that never set agentId falls back to "claude" only
+ * because that's genuinely what every execution WAS before PROJECT TEAM's
+ * multi-provider routing existed — never a guess for real, current data.
+ */
+function resolveExecutionProvider(link) {
+  return link?.agentId ?? link?.provider ?? "claude";
+}
+
 export async function writeExecutionLink(projectRoot, taskId, link) {
   const paths = await prepareTaskDirectory(projectRoot, taskId);
-  const value = { ...link, schema: EXECUTION_SCHEMA, taskId, provider: "claude" };
+  const value = { ...link, schema: EXECUTION_SCHEMA, taskId, provider: resolveExecutionProvider(link) };
   await writeAtomicJson(paths.executionPath, value, { createExclusive: true });
   return value;
 }
 
 export async function updateExecutionLink(projectRoot, taskId, link) {
   const paths = await prepareTaskDirectory(projectRoot, taskId);
-  const value = { ...link, schema: EXECUTION_SCHEMA, taskId, provider: "claude" };
+  const value = { ...link, schema: EXECUTION_SCHEMA, taskId, provider: resolveExecutionProvider(link) };
   await writeAtomicJson(paths.executionPath, value);
   return value;
 }
