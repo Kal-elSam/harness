@@ -135,7 +135,14 @@ const MIN_QUOTA_PERCENT = 5;
  * Real availability/launchability/quota only; never a capability judgment
  * (that's scoreAvailableModels' job, applied only to survivors of this).
  * @param {string} adapterId - "codex" | "claude" | "opencode-go" | "opencode-zen" | "cursor"
- * @param {{adapters: object[], codexUsage?: object|null, claudeUsage?: object|null, opencodeGoUsage?: object|null}} context
+ * @param {{adapters: object[], codexUsage?: object|null, claudeUsage?: object|null, opencodeGoUsage?: object|null, cursorManualQuota?: {manualExhausted: boolean, reason?: string|null}|null}} context -
+ *   `cursorManualQuota` is the human-reported override (see
+ *   runtime/usage-store.js's `cursor.json` record, set via
+ *   `/project cursor exhausted|available`) — Cursor exposes no real,
+ *   zero-cost local quota read (its CLI has no usage/billing subcommand
+ *   and a successful `-p` call only reports per-request token counts, not
+ *   remaining account balance), so unlike Codex/Claude/OpenCode Go this is
+ *   never auto-detected, only ever what the human last told Kairo.
  * @returns {{ok: boolean, reason: string|null}}
  * @param {{requireLaunchable?: boolean}} [options] - `requireLaunchable: false`
  *   is for AI TEAM's recommendation surface only (service.js's snapshot()):
@@ -151,7 +158,7 @@ const MIN_QUOTA_PERCENT = 5;
  *   uses the default `true` — it must never pick something guaranteed to
  *   fail at launch (run-manager.js's own launchable gate would reject it).
  */
-export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage }, { requireLaunchable = true } = {}) {
+export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage, cursorManualQuota }, { requireLaunchable = true } = {}) {
   // Zen carries real PAYG/billing risk (see conversation/service.js's
   // capabilities.openCodeExecution) — never an automatic pick, regardless
   // of what its real catalog/benchmarks might otherwise say.
@@ -194,6 +201,15 @@ export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, o
     // so it's the conservative (fail-closed) reading, not a guess.
     const limited = windows.find((window) => window.status === "rate-limited");
     if (limited) return { ok: false, reason: `OpenCode Go ${limited.name} window is rate-limited` };
+  }
+  // Cursor: only ever the human's own last word (see this function's own
+  // doc) — never fabricated from a guess. Checked here, after the
+  // requireLaunchable-gated manual-only return above, so it only ever
+  // takes effect on the recommendation path (requireLaunchable: false) —
+  // real task routing already refuses Cursor unconditionally regardless
+  // of quota.
+  if (adapterId === "cursor" && cursorManualQuota?.manualExhausted) {
+    return { ok: false, reason: cursorManualQuota.reason ?? "Cursor marked out of credits (manual, via /project cursor exhausted)" };
   }
   return { ok: true, reason: null };
 }

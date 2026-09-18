@@ -307,6 +307,31 @@ test("checkCandidate({requireLaunchable: false}) still requires cursor to be gen
   assert.match(result.reason, /not on PATH/);
 });
 
+test("checkCandidate({requireLaunchable: false}) excludes cursor when the human manually marked it out of credits", () => {
+  const adapters = [{ id: "cursor", available: true, launchable: true, reason: null }];
+  const result = checkCandidate(
+    "cursor", { adapters, cursorManualQuota: { manualExhausted: true, reason: "Cursor marked out of credits (manual, via /project cursor exhausted)" } },
+    { requireLaunchable: false }
+  );
+  assert.equal(result.ok, false, "a real, human-reported exhausted Cursor must never still be recommended");
+  assert.match(result.reason, /out of credits/);
+});
+
+test("checkCandidate({requireLaunchable: false}) recommends cursor again once the human clears the manual quota flag", () => {
+  const adapters = [{ id: "cursor", available: true, launchable: true, reason: null }];
+  const result = checkCandidate(
+    "cursor", { adapters, cursorManualQuota: { manualExhausted: false, reason: null } },
+    { requireLaunchable: false }
+  );
+  assert.equal(result.ok, true, "clearing the manual flag must restore cursor as a real recommendation");
+});
+
+test("checkCandidate never fabricates a cursor quota state — no cursorManualQuota data means no quota-based exclusion", () => {
+  const adapters = [{ id: "cursor", available: true, launchable: true, reason: null }];
+  const result = checkCandidate("cursor", { adapters }, { requireLaunchable: false });
+  assert.equal(result.ok, true, "absent real, human-reported data, cursor is judged on availability alone — never guessed exhausted");
+});
+
 test("selectExecutionProvider sizes the model to the task's real effort too — a trivial fix doesn't get Claude's biggest model", () => {
   const trivial = selectExecutionProvider({
     task: "Fix the button color", adapters: ADAPTERS, catalogs: CLAUDE_CATALOG
