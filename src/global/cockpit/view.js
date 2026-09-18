@@ -560,8 +560,8 @@ export class CockpitView {
       };
     }
     const lines = [];
-    if (strategy.bootstrapAnalyst) lines.push(`${"Project Analyst".padEnd(18)} ${this.aiTeamLabel(strategy.bootstrapAnalyst)}`);
-    if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(18)} ${this.aiTeamLabel(strategy.orchestrator)}`);
+    if (strategy.bootstrapAnalyst) lines.push(`${"Project Analyst".padEnd(18)} ${this.teamRoleLabel(strategy.bootstrapAnalyst)}`);
+    if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(18)} ${this.teamRoleLabel(strategy.orchestrator)}`);
     // The real OPERATIONAL team (see buildProjectStrategy's own doc) —
     // never qualityTeam, which is comparative reference only. The overlay
     // (project-overlay.js) already shows projectTeam under this exact
@@ -570,7 +570,7 @@ export class CockpitView {
     // remains as a fallback for a strategy persisted before projectTeam
     // existed (see applyProjectTeamOverride's own legacy-entry comment).
     for (const entry of strategy.projectTeam ?? strategy.qualityTeam ?? []) {
-      lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.aiTeamLabel(entry.model) : theme.fg("warning", "no eligible option")}`);
+      lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.teamRoleLabel(entry.model) : theme.fg("warning", "no eligible option")}`);
     }
     if (strategy.status === "suggested") lines.push(theme.fg("muted", "Suggested from real project analysis. Use /project approve to activate."));
     if (strategy.status === "stale") lines.push(theme.fg("warning", "Real evidence changed since approval — use /project refresh."));
@@ -739,6 +739,19 @@ export class CockpitView {
     const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
     const raw = model.displayName ?? model.modelId;
     return `${provider} · ${raw}`;
+  }
+
+  /**
+   * Role -> model -> provider, for the PROJECT TEAM listing specifically:
+   * keeps aiTeamLabel()'s cleaned modelName (unlike aiTeamLabelWithProvider's
+   * raw/technical variant) but still names the real adapter each role would
+   * actually run against — two roles can land on visually similar model
+   * names from different providers, and knowing which subscription a role
+   * draws from is exactly what a real, provider-aware team review needs.
+   */
+  teamRoleLabel(model) {
+    const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
+    return `${this.aiTeamLabel(model)}  ·  ${provider}`;
   }
 
   /**

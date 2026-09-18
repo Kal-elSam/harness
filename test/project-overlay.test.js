@@ -11,6 +11,7 @@ function makeFakeView(snapshot = {}) {
     snapshot,
     aiTeamLabel: (model) => model.displayName ?? model.modelId,
     aiTeamLabelWithProvider: (model) => `${model.adapterId} · ${model.displayName ?? model.modelId}`,
+    teamRoleLabel: (model) => `${model.displayName ?? model.modelId}  ·  ${model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1)}`,
     actionLabel: null,
     beginAction(label) { this.actionLabel = label; },
     endAction() { this.actionLabel = null; },

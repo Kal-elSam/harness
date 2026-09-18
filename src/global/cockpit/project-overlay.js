@@ -270,7 +270,7 @@ export class ProjectOverlay {
   buildResultRoleList() {
     const team = this.suggestedStrategy?.projectTeam ?? [];
     const items = team.map((entry) => {
-      const modelText = entry.model ? this.view.aiTeamLabel(entry.model) : "no eligible option";
+      const modelText = entry.model ? this.view.teamRoleLabel(entry.model) : "no eligible option";
       const overrideNote = entry.assignmentSource === "override" ? theme.fg("accent", " (override)") : "";
       // Role + model are the real primary information here — explicit
       // `text` color, never left to default/muted.
@@ -533,7 +533,7 @@ export class ProjectOverlay {
     // isn't a modal boundary a human eye reliably notices.
     const box = new Box(2, 1);
     this.box = box;
-    const aiTeamLabel = (model) => this.view.aiTeamLabel(model);
+    const aiTeamLabel = (model) => this.view.teamRoleLabel(model);
     // Text defaults to one blank row above and below every child; inside
     // a framed modal that inflated the height until pi-tui clipped the
     // bottom border. Keep spacing explicit and compact instead.
