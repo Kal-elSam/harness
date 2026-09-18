@@ -5,6 +5,21 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.22.1 — 2026-09-18 (Kairo Runtime)
+
+Patch release.
+
+### Fixed
+
+- Execution links no longer hardcode `provider: "claude"` on every
+  write regardless of which real adapter (Codex, Cursor, OpenCode Go,
+  Claude) actually executed the task. `provider` now mirrors the
+  link's own real `agentId`, matching what `service.js`'s
+  `executionFor` already treated as ground truth at read time. The
+  cockpit reads this field directly for its provider display, so every
+  task's shown execution provider had always silently said "claude"
+  regardless of what actually ran it.
+
 ## 0.22.0 — 2026-09-18 (Kairo Runtime)
 
 Minor release. Promotes OpenCode Go to a real automatic execution
