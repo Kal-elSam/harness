@@ -5,6 +5,29 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.23.2 — 2026-09-18 (Kairo Runtime)
+
+Patch release.
+
+### Fixed
+
+- Routing eligibility (`checkCandidate`, shared by real execution
+  routing, ASK routing, and the FIT widget) and ASK's own ordering
+  only ever read the primary (5h) quota window — a provider whose
+  weekly window was nearly exhausted still got picked first and was
+  never excluded, as long as its 5h window looked healthy. Now takes
+  the worse of the two windows everywhere, fail-closed, matching the
+  same principle already applied to OpenCode Go's own windows.
+- `askCodex`/`askClaude` (the ASK-mode question path) used a fixed 30s
+  deadline from process start. Codex's ASK path always uses the
+  provider's single default model regardless of question complexity
+  (no effort-based tiering for Codex today), so a heavier default
+  model plus a cold sandboxed `codex exec` start can genuinely exceed
+  30s with real quota to spare — a real, slow answer, not a hang. Both
+  ask calls now reset their timeout on every real stdout/stderr chunk
+  instead, never an absolute one, so only a genuine hang still times
+  out.
+
 ## 0.23.1 — 2026-09-18 (Kairo Runtime)
 
 Patch release.
