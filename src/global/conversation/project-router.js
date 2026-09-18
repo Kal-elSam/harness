@@ -86,9 +86,13 @@ function blocked(role, strategyFingerprint, why, { blockedAssignment = null, sug
  *    `suggestedAlternative` set to the strategy's own PERSISTED fallback
  *    for this role (see project-strategy.js) when that fallback is
  *    itself currently real-eligible and automatically executable —
- *    otherwise honestly null. Never a silent automatic substitution: the
- *    caller must still explicitly confirm before anything runs on the
- *    suggested alternative.
+ *    otherwise honestly null. This module never launches anything itself
+ *    — it only ever decides what WOULD run — but by explicit, deliberate
+ *    product decision the cockpit caller (app.js's onRequestExecute) does
+ *    treat a real suggestedAlternative as automatically executable once
+ *    the human has already asked for this task to run, narrating the
+ *    substitution into the transcript instead of gating it behind an
+ *    extra y/n prompt.
  * 5. Otherwise -> ROUTED, with the real provider/model/assignmentSource
  *    this role delegates to.
  * @param {object} args
