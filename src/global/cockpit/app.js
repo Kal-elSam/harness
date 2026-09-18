@@ -189,6 +189,24 @@ export async function runCockpitApp({
         // handleListInput — 'x' never calls this without one).
         return runAction("Asking PROJECT TEAM who should execute this", async () => {
           const decision = await service.planExecution({ cwd, taskId, role });
+          // WAIT_FOR_PROJECT_TEAM with a real suggested alternative: the
+          // human already explicitly asked for this task to execute now
+          // (picked the role, pressed execute) — the assigned model just
+          // isn't the one that got them there. Kairo runs the real,
+          // currently-eligible fallback automatically, with zero extra
+          // y/n gate, and narrates the substitution into the transcript
+          // so it stays visible even without a confirm prompt. Every
+          // other decision (ROUTED, MANUAL_HANDOFF, or WAIT_FOR_PROJECT_TEAM
+          // with no real alternative) is unchanged — still an explicit
+          // confirm step.
+          if (decision.decision === "WAIT_FOR_PROJECT_TEAM" && decision.confirmationTarget?.selection === "suggested-alternative") {
+            const blockedLabel = decision.blockedAssignment?.model?.displayName ?? decision.blockedAssignment?.model?.modelId ?? decision.blockedAssignment?.provider ?? "the assigned model";
+            const alt = decision.suggestedAlternative;
+            const altLabel = alt?.model?.displayName ?? alt?.model?.modelId ?? "unknown model";
+            pushTranscript("kairo", `${blockedLabel} is unavailable for ${decision.role} — automatically falling back to ${alt?.provider} · ${altLabel}.`);
+            await service.executePlan({ cwd, taskId, confirmationTarget: decision.confirmationTarget });
+            return;
+          }
           view.showExecuteConfirm(taskId, decision);
           // MANUAL_HANDOFF: Kairo can't launch this itself, so the real
           // task text (the exact same one an automatic run would get —

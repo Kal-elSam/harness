@@ -243,6 +243,44 @@ test("onRequestExecute(taskId, role) threads the user's explicit role choice thr
   app.stop();
 });
 
+test("a WAIT_FOR_PROJECT_TEAM decision with a real suggested alternative auto-executes with zero confirmation, narrating the substitution", async () => {
+  let tui;
+  const executeCalls = [];
+  const confirmationTarget = { role: "Builder", selection: "suggested-alternative", strategyFingerprint: "fp-1", candidateKey: "codex::gpt-6-astra" };
+  const service = {
+    snapshot: async () => makeSnapshot([BASE_ROW]),
+    planExecution: async () => ({
+      decision: "WAIT_FOR_PROJECT_TEAM", role: "Builder",
+      provider: null, model: null, modelRef: null, assignmentSource: null, strategyFingerprint: "fp-1",
+      blockedAssignment: { provider: "claude", model: { displayName: "Fable 5.1" }, assignmentSource: "recommended" },
+      suggestedAlternative: { provider: "codex", model: { displayName: "GPT-6 Astra", candidateKey: "codex::gpt-6-astra" } },
+      why: "claude is not currently eligible (quota exhausted) — no automatic substitution; confirm the suggested alternative for Builder before proceeding.",
+      confirmationTarget, taskPrompt: null
+    }),
+    executePlan: async (args) => { executeCalls.push(args); return { decision: "ROUTED", provider: "codex", model: "gpt-6-astra" }; }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  await app.view.actions.onRequestExecute("task-a", "Builder");
+
+  assert.deepEqual(executeCalls, [{ cwd: "/repo", taskId: "task-a", confirmationTarget }]);
+  assert.equal(app.view.executeDecision, null, "never opens the y/n confirm prompt for an automatic fallback substitution");
+  const texts = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.match(texts, /Fable 5\.1/);
+  assert.match(texts, /codex/);
+  assert.match(texts, /GPT-6 Astra/);
+
+  app.stop();
+});
+
 test("REGRESSION: a MANUAL_HANDOFF decision pushes the real, ready-to-paste task text into the transcript — never leaves the human to reconstruct the prompt themselves", async () => {
   let tui;
   const service = {
