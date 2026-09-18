@@ -5,6 +5,31 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.24.0 — 2026-09-18 (Kairo Runtime)
+
+Minor release. ASK mode joins PROJECT TEAM.
+
+### Changed
+
+- ASK mode now checks PROJECT TEAM's Explorer role first (read-only
+  investigation is exactly Explorer's job), via the same routing real
+  execution already uses — instead of always going through a fully
+  separate, generic quota/effort heuristic. Falls back to that
+  heuristic only when there's no active team yet, or Explorer's real
+  assignment isn't one ASK can actually invoke (Cursor/OpenCode
+  Go/Zen aren't ask-capable yet). Role is always Explorer, never
+  inferred from the question's text.
+
+### Fixed
+
+- A flaky timing test in `quick-ask.test.js` (from 0.23.2) used
+  margins too tight to reliably survive full-suite load; widened them.
+
+Not yet in this release: PLAN mode routing through the Orchestrator
+role (plan creation is currently structurally Codex-only, a bigger
+change than a routing choice), and AGENT mode (an open product
+question on whether it should skip the plan→approve gate).
+
 ## 0.23.2 — 2026-09-18 (Kairo Runtime)
 
 Patch release.
