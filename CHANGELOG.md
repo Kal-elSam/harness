@@ -5,6 +5,22 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.23.1 — 2026-09-18 (Kairo Runtime)
+
+Patch release.
+
+### Fixed
+
+- A plain chat question's action label and any failure message said
+  generic "Asking Kairo" throughout the wait, even though one specific
+  real adapter (Codex or Claude) is what's actually being asked and
+  can actually fail — Kairo is the system, never the one answering.
+  Adds `service.planAsk`, a read-only preview of ASK mode's routing
+  decision (reusing the same cached probes `submitTask` already uses),
+  so the cockpit now names the real provider/model from the start of
+  the wait instead of only leaking it incidentally through a raw error
+  message on failure.
+
 ## 0.23.0 — 2026-09-18 (Kairo Runtime)
 
 Minor release. First slice of PROJECT TEAM's automatic model-fallback
