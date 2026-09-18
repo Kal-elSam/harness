@@ -5,6 +5,26 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.20.0 — 2026-09-18 (Kairo Runtime)
+
+Minor release. Promotes Cursor to a real automatic execution provider.
+
+### Changed
+
+- Cursor's accessMode flips from "manual" to "automatic"
+  (`model-candidate-catalog.js`). Its own execution adapter already
+  builds a real, auditable non-interactive launch (`cursor-agent -p
+  --output-format stream-json`) and parses its structured event stream
+  — the same shape as Codex/Claude, and an officially documented,
+  supported use of the Cursor CLI. Real task routing now judges Cursor
+  by the exact same launchable/eligibility gate as Codex/Claude, for
+  both execution and recommendations — no more special-cased
+  manual-only rejection in `execution-router.js`'s `checkCandidate`.
+- Cursor's own opaque "auto" router model still stays manual (its
+  identity is non-deterministic, unlike a named model). OpenCode Go is
+  unaffected — it remains manual for its own, real, already-confirmed
+  Go/Zen billing-attribution ambiguity.
+
 ## 0.19.0 — 2026-09-18 (Kairo Runtime)
 
 Patch-level polish on top of 0.18.0's PROJECT TEAM work: fixes the
