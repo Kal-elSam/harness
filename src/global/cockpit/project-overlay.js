@@ -33,6 +33,13 @@ export const PROJECT_OVERLAY_STATE = {
 
 const S = PROJECT_OVERLAY_STATE;
 
+// Give the modal frame a distinct, high-contrast outline without changing
+// the shared dashboard-card palette or the semantic state color of its rail.
+const overlayFrameTheme = {
+  ...theme,
+  fg: (role, text) => theme.fg(role === "border" ? "info" : role, text)
+};
+
 function teamLines(label, team, aiTeamLabel, tone = "bold") {
   const lines = [tone === "bold" ? theme.bold(label) : theme.fg("muted", label)];
   if (!team?.length) {
@@ -527,7 +534,10 @@ export class ProjectOverlay {
     const box = new Box(2, 1);
     this.box = box;
     const aiTeamLabel = (model) => this.view.aiTeamLabel(model);
-    const push = (text) => box.addChild(new Text(text));
+    // Text defaults to one blank row above and below every child; inside
+    // a framed modal that inflated the height until pi-tui clipped the
+    // bottom border. Keep spacing explicit and compact instead.
+    const push = (text) => box.addChild(new Text(text, 0, 0));
     // The real, ticking spinner+elapsed-time line every other in-flight
     // action in the cockpit already uses (view.beginAction/tickSpinner/
     // actionStatusLine — app.js's own fast timer keeps it live) — never a
@@ -655,7 +665,7 @@ export class ProjectOverlay {
         break;
     }
     const innerWidth = cardInnerWidth(width);
-    return renderPanel("Project", this.panelTone(), theme, width, box.render(innerWidth));
+    return renderPanel("Project", this.panelTone(), overlayFrameTheme, width, box.render(innerWidth));
   }
 }
 
