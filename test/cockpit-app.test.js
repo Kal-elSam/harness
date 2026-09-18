@@ -648,6 +648,54 @@ test("submitting a real question answers it directly via submitTask — never cr
   app.stop();
 });
 
+test("REGRESSION: asking a real question shows the real provider in the action label, not a generic 'Asking Kairo' — and on failure, names the real provider that failed", async () => {
+  let editor;
+  const service = {
+    snapshot: async () => makeSnapshot([BASE_ROW]),
+    planAsk: async () => ({ decision: { decision: "ROUTED", provider: "codex", model: "gpt-5-codex" } }),
+    submitTask: async () => { throw new Error("sandboxed codex exec timed out"); }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  editor.setText("donde estamos parados?");
+  await editor.onSubmit(editor.getText());
+  assert.match(app.view.statusMessage, /^Asking Codex/, "the failure label must name the real provider, never the generic 'Asking Kairo'");
+  assert.match(app.view.statusMessage, /sandboxed codex exec timed out/);
+
+  app.stop();
+});
+
+test("a submitTask call without a real planAsk preview falls back to the generic label — never throws", async () => {
+  let editor;
+  const service = {
+    snapshot: async () => makeSnapshot([BASE_ROW]),
+    submitTask: async () => ({ kind: "answer", provider: "claude", answer: "ok" })
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => { editor = makeFakeEditor(); return editor; },
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  editor.setText("hola");
+  await editor.onSubmit(editor.getText());
+  assert.equal(app.view.statusMessage, "");
+
+  app.stop();
+});
+
 test("bare /project (no subcommand) opens the real interactive overlay on the tui, never printing the old usage text", async () => {
   let editor;
   let tui;

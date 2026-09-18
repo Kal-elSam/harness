@@ -248,7 +248,7 @@ export async function runCockpitApp({
     });
   }
 
-  editor.onSubmit = (text) => {
+  editor.onSubmit = async (text) => {
     const task = text.trim();
     if (!task) return;
     if (task.startsWith("/")) {
@@ -435,7 +435,38 @@ export async function runCockpitApp({
     // PLAN/AGENT always create a plan (see service.submitTask) — replacing
     // the old isLikelyQuestion guess with what the user explicitly told
     // Kairo they're doing (Shift+Tab / /plan).
-    return runAction("Asking Kairo", async () => {
+    //
+    // Kairo is the system, never the thing actually answering — a real
+    // adapter (Codex, Claude, …) always is, and that real name should be
+    // visible from the moment the wait starts, not just in a successful
+    // result or leaked incidentally through an error message. PLAN/AGENT
+    // is deterministically Codex (see submitArchitecture/createPlan), so
+    // that label needs no extra call; ASK's real provider depends on
+    // current quota/eligibility, so a cheap planAsk preview (the same
+    // routing submitTask itself will use, its probes cached — see
+    // service.js's planAsk doc) resolves it first. A caller that predates
+    // planAsk (or a preview that itself fails) falls back to the old
+    // generic label rather than ever blocking the real submit on it.
+    const mode = view.workMode;
+    let askLabel = "Asking Kairo";
+    if (mode === "plan" || mode === "agent") {
+      askLabel = "Asking Codex to plan";
+    } else {
+      try {
+        const preview = await service.planAsk?.({ cwd, task });
+        if (preview?.decision?.decision === "ROUTED") {
+          const provider = preview.decision.provider;
+          const providerLabel = provider ? provider.charAt(0).toUpperCase() + provider.slice(1) : null;
+          if (providerLabel) {
+            askLabel = `Asking ${providerLabel}${preview.decision.model ? ` · ${preview.decision.model}` : ""}`;
+          }
+        }
+      } catch {
+        // Best-effort label only — a real routing failure still surfaces
+        // through submitTask itself below, never swallowed here.
+      }
+    }
+    return runAction(askLabel, async () => {
       const result = await service.submitTask({ cwd, task, mode: view.workMode });
       if (result.kind === "answer") {
         pushTranscript("kairo", `${result.provider}${result.model ? ` · ${result.model}` : ""}: ${result.answer}`);
