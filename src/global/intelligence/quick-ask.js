@@ -37,6 +37,32 @@ function unknown(error) {
   return { status: "error", answer: null, error: String(error) };
 }
 
+/**
+ * Resets on every real stdout/stderr chunk from the child, never an
+ * absolute deadline from process start — the same real distinction
+ * execution-adapters/opencode.js's own idle timeout draws: a real, live
+ * answer that's just taking a while (a heavier reasoning model, a cold
+ * sandbox start) must never be killed for merely being slow, only a
+ * process that's produced nothing at all for `timeoutMs` really looks
+ * hung. A single-shot ask call, so this stays local rather than reusing
+ * run-supervisor.js's own detached-run mechanism.
+ * @param {import("node:child_process").ChildProcess} child
+ * @param {number} timeoutMs
+ * @param {() => void} onIdle
+ * @returns {() => void} call to clear the timer once the call finishes
+ */
+function armIdleTimeout(child, timeoutMs, onIdle) {
+  let handle = null;
+  const reset = () => {
+    if (handle) clearTimeout(handle);
+    handle = setTimeout(onIdle, timeoutMs);
+  };
+  child.stdout?.on("data", reset);
+  child.stderr?.on("data", reset);
+  reset();
+  return () => { if (handle) clearTimeout(handle); };
+}
+
 /** @param {{question:string, model:string|null, cwd:string, spawn:Function, timeoutMs:number, env:object}} args */
 function askClaude({ question, model, cwd, spawn, timeoutMs, env }) {
   // --restricted: removes Bash/code-execution tools and WebFetch, ignores
@@ -57,11 +83,11 @@ function askClaude({ question, model, cwd, spawn, timeoutMs, env }) {
     }
     let stdout = "";
     let finished = false;
-    const timer = setTimeout(() => finish(unknown("claude -p timed out")), timeoutMs);
+    const clearIdleTimer = armIdleTimeout(child, timeoutMs, () => finish(unknown(`claude -p idle-timed out after ${timeoutMs}ms with no output`)));
     function finish(result) {
       if (finished) return;
       finished = true;
-      clearTimeout(timer);
+      clearIdleTimer();
       try { child.kill?.(); } catch { /* best effort */ }
       resolve(result);
     }
@@ -106,11 +132,11 @@ async function askCodex({ question, model, cwd, spawn, timeoutMs, env }) {
         return;
       }
       let finished = false;
-      const timer = setTimeout(() => finish(unknown("codex exec timed out")), timeoutMs);
+      const clearIdleTimer = armIdleTimeout(child, timeoutMs, () => finish(unknown(`codex exec idle-timed out after ${timeoutMs}ms with no output`)));
       function finish(result) {
         if (finished) return;
         finished = true;
-        clearTimeout(timer);
+        clearIdleTimer();
         try { child.kill?.(); } catch { /* best effort */ }
         resolve(result);
       }

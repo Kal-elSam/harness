@@ -118,9 +118,21 @@ function findAdapter(adapterId, adapters) {
   return adapters.find((adapter) => adapter.id === baseId) ?? null;
 }
 
-/** @param {object|null} usageEntry - a codex/claude usage-probe result (primary/secondary windows) */
+/**
+ * The WORST remaining headroom across both real windows (5h "primary" and
+ * weekly "secondary") — never just the primary one. A provider whose
+ * weekly quota is nearly gone must be treated that way everywhere
+ * (exclusion AND ordering) even while its 5h window still looks healthy;
+ * otherwise Kairo keeps routing to it, burning through the one budget
+ * that's actually about to run out. Mirrors the same fail-closed
+ * principle checkCandidate already applies to OpenCode Go's windows (any
+ * one window being real trouble is real trouble, full stop).
+ * @param {object|null} usageEntry - a codex/claude usage-probe result (primary/secondary windows)
+ */
 function remainingPercent(usageEntry) {
-  return usageEntry?.primary?.remainingPercent ?? null;
+  const known = [usageEntry?.primary?.remainingPercent, usageEntry?.secondary?.remainingPercent]
+    .filter((value) => typeof value === "number");
+  return known.length > 0 ? Math.min(...known) : null;
 }
 
 // Below this real remaining-quota percentage, a provider is treated as

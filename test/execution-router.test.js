@@ -101,6 +101,30 @@ test("falls back away from a provider whose real quota is nearly exhausted", () 
   assert.equal(result.rejectedCandidates[0].reason, "Codex quota nearly exhausted (2% left)");
 });
 
+test("REGRESSION: a provider whose secondary (weekly) window is nearly exhausted is excluded, even when its primary (5h) window looks healthy", () => {
+  const result = checkCandidate("codex", {
+    adapters: ADAPTERS,
+    codexUsage: { primary: { remainingPercent: 97 }, secondary: { remainingPercent: 2 } }
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "Codex quota nearly exhausted (2% left)");
+});
+
+test("REGRESSION: ASK order prefers the provider whose WORST window (5h or weekly) has more headroom, not just its primary window", () => {
+  const result = selectAskProvider({
+    adapters: ADAPTERS,
+    // Codex's 5h looks great but its weekly is nearly gone; Claude's 5h
+    // is worse but its weekly has real headroom — Claude should go
+    // first since its worst window still beats Codex's worst window.
+    codexUsage: { primary: { remainingPercent: 97 }, secondary: { remainingPercent: 9 } },
+    claudeUsage: { primary: { remainingPercent: 66 }, secondary: { remainingPercent: 21 } },
+    catalogs: CLAUDE_CATALOG,
+    taskText: "donde estamos parados?"
+  });
+  assert.equal(result.decision, "ROUTED");
+  assert.equal(result.provider, "claude");
+});
+
 test("never invents a model id — returns null when the provider's real catalog has no default", () => {
   const result = selectExecutionProvider({ task: "Investigate this bug", adapters: ADAPTERS, catalogs: {} });
   assert.equal(result.provider, "codex");

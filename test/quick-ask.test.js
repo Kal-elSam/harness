@@ -93,6 +93,42 @@ test("codex: reads the real answer from --output-last-message, never combining -
   assert.equal(args.includes("--approve-for-me"), false);
 });
 
+test("REGRESSION: codex's timeout resets on real output, so a genuinely slow-but-alive call isn't killed just for taking a while", async () => {
+  const spawn = (_cmd, args) => {
+    const outFileIndex = args.indexOf("-o") + 1;
+    const outFile = args[outFileIndex];
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.kill = () => {};
+    // A real chunk arrives BEFORE the original timeoutMs elapses, then the
+    // real answer arrives well AFTER it — an absolute deadline would have
+    // killed this; an idle-reset one must not, since real output kept
+    // arriving.
+    setTimeout(() => child.stdout.emit("data", "thinking...\n"), 10);
+    setTimeout(async () => {
+      await writeFile(outFile, "still alive.\n", "utf8");
+      child.emit("close", 0);
+    }, 22);
+    return child;
+  };
+  const answer = await askProvider({ provider: "codex", question: "q", cwd: "/repo", timeoutMs: 15, spawn });
+  assert.equal(answer.status, "answered");
+  assert.equal(answer.answer, "still alive.");
+});
+
+test("REGRESSION: codex's timeout still fires when NOTHING real is ever produced", async () => {
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.kill = () => {};
+    // Never emits data, never closes — a real hang.
+    return child;
+  };
+  const answer = await askProvider({ provider: "codex", question: "q", cwd: "/repo", timeoutMs: 5, spawn });
+  assert.equal(answer.status, "error");
+  assert.match(answer.error, /idle-timed out/);
+});
+
 test("codex: fails closed to error when the output file is never written", async () => {
   const spawn = () => {
     const child = new EventEmitter();
