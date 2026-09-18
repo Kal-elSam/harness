@@ -126,7 +126,13 @@ function remainingPercent(usageEntry) {
 // Below this real remaining-quota percentage, a provider is treated as
 // exhausted for automatic routing — conserved for the tests explicitly
 // listed as this increment's scope, not a newly-invented number.
-const MIN_QUOTA_PERCENT = 5;
+export const MIN_QUOTA_PERCENT = 5;
+
+// A softer, earlier heads-up threshold — strictly above MIN_QUOTA_PERCENT,
+// so the human sees a warning before a provider actually gets excluded,
+// never after. Display-only: it never affects checkCandidate's own
+// eligibility verdict (see CockpitView's own status-bar consumer).
+export const LOW_QUOTA_WARN_PERCENT = 20;
 
 /**
  * The single eligibility policy shared by execution routing, ask routing,
