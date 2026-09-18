@@ -243,6 +243,36 @@ test("onRequestExecute(taskId, role) threads the user's explicit role choice thr
   app.stop();
 });
 
+test("REGRESSION: a MANUAL_HANDOFF decision pushes the real, ready-to-paste task text into the transcript — never leaves the human to reconstruct the prompt themselves", async () => {
+  let tui;
+  const service = {
+    snapshot: async () => makeSnapshot([BASE_ROW]),
+    planExecution: async () => ({
+      decision: "MANUAL_HANDOFF", role: "Builder", provider: "opencode-go",
+      model: "glm-5-3", modelRef: { displayName: "GLM-5.3" },
+      why: "opencode-go isn't executable by Kairo automatically — continue manually with GLM-5.3.",
+      confirmationTarget: null, taskPrompt: "Implement the explicitly approved architecture plan below.\n\n# Real Plan"
+    })
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  await app.view.actions.onRequestExecute("task-a", "Builder");
+  const texts = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.match(texts, /GLM-5\.3/);
+  assert.match(texts, /paste this into its chat/);
+  assert.match(texts, /# Real Plan/, "the real task text must actually reach the transcript, not just a mention that one exists");
+
+  app.stop();
+});
+
 test("onExecute forwards a real ProjectExecutionPreview's confirmationTarget instead of the legacy agentId/model override", async () => {
   let tui;
   const executeCalls = [];

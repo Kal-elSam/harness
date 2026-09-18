@@ -1224,6 +1224,7 @@ test("planExecution({role}) calls resolveProjectRoute and never the legacy class
   assert.deepEqual(preview.confirmationTarget, {
     role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "codex::gpt-6-astra"
   });
+  assert.equal(preview.taskPrompt, null, "a ROUTED preview never needs a copy-paste task prompt — executePlan builds the real task text itself when it actually launches");
 });
 
 test("planExecution({role}) returns WAIT_FOR_PROJECT_TEAM with no confirmationTarget when there is no active strategy", async () => {
@@ -1276,6 +1277,8 @@ test("planExecution({role}) returns MANUAL_HANDOFF for an OpenCode Go assignment
   assert.equal(preview.provider, "opencode-go");
   assert.equal(preview.confirmationTarget, null);
   assert.match(preview.why, /continue manually/);
+  assert.match(preview.taskPrompt, /# Plan/, "a MANUAL_HANDOFF preview must include the real, ready-to-paste task text — never just the model name");
+  assert.match(preview.taskPrompt, /Implement the explicitly approved architecture plan/, "must be the exact same real task text executePlan would have used for a real automatic run — never a second, invented formula");
 });
 
 test("planExecution({role}) shows a persisted, currently-eligible fallback as suggestedAlternative when the assigned candidate lost eligibility — offered for confirmation, never auto-executed by the preview itself", async () => {
