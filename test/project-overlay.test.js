@@ -11,7 +11,8 @@ function makeFakeView(snapshot = {}) {
     snapshot,
     aiTeamLabel: (model) => model.displayName ?? model.modelId,
     aiTeamLabelWithProvider: (model) => `${model.adapterId} · ${model.displayName ?? model.modelId}`,
-    teamRoleLabel: (model) => `${model.displayName ?? model.modelId}  ·  ${model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1)}`,
+    teamRoleLabel: (model, modelColumnWidth = 0) => `${(model.displayName ?? model.modelId).padEnd(modelColumnWidth)}  ·  ${model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1)}`,
+    teamModelColumnWidth: (models) => models.reduce((max, model) => (model ? Math.max(max, (model.displayName ?? model.modelId).length) : max), 0),
     actionLabel: null,
     beginAction(label) { this.actionLabel = label; },
     endAction() { this.actionLabel = null; },
@@ -431,6 +432,44 @@ test("an existing SUGGESTED strategy renders the RESULT view directly, with no r
   await flush();
   assert.equal(overlay.state, S.RESULT);
   assert.equal(service.calls.preflight.length, 0);
+});
+
+test("REGRESSION: pressing 'r' on an existing RESULT/ACTIVE/STALE strategy forces a genuinely fresh preflight — the only way back to the real interactive analyst picker once a strategy already exists", async () => {
+  const service = makePreflightService();
+  const suggested = {
+    status: "suggested", bootstrapAnalystChoice: "quality", bootstrapAnalystSelectionSource: "recommended", bootstrapAnalystRecommendationTags: ["quality"],
+    bootstrapAnalyst: { adapterId: "codex", modelId: "gpt-6-astra" }, qualityTeam: [], efficientTeam: []
+  };
+  const overlay = new ProjectOverlay({ service, view: makeFakeView({ projectStrategy: suggested }), cwd: "/repo", onClose: () => {} });
+  await flush();
+  assert.equal(overlay.state, S.RESULT);
+  assert.equal(service.calls.preflight.length, 0, "no real preflight call yet — the existing suggestion is shown as-is");
+
+  overlay.handleInput("r");
+  await flush();
+  assert.equal(service.calls.preflight.length, 1, "'r' must trigger a genuinely fresh, real preflight call");
+  assert.equal(overlay.state, S.SELECT_ANALYST, "must land back on the real interactive analyst picker, not a text dump");
+  assert.equal(overlay.suggestedStrategy, null, "the stale in-memory suggestion must be cleared, never shown alongside the fresh picker");
+});
+
+test("REGRESSION: 'r' also forces a fresh preflight from ACTIVE and STALE, not only RESULT", async () => {
+  const service = makePreflightService();
+  const active = { status: "active", approvedAt: "t0", projectTeam: [] };
+  const stale = { status: "stale", approvedAt: "t0", projectTeam: [] };
+
+  const overlayActive = new ProjectOverlay({ service, view: makeFakeView({ projectStrategy: active }), cwd: "/repo", onClose: () => {} });
+  await flush();
+  assert.equal(overlayActive.state, S.ACTIVE);
+  overlayActive.handleInput("r");
+  await flush();
+  assert.equal(overlayActive.state, S.SELECT_ANALYST);
+
+  const overlayStale = new ProjectOverlay({ service, view: makeFakeView({ projectStrategy: stale }), cwd: "/repo", onClose: () => {} });
+  await flush();
+  assert.equal(overlayStale.state, S.STALE);
+  overlayStale.handleInput("r");
+  await flush();
+  assert.equal(overlayStale.state, S.SELECT_ANALYST, "'r' (fresh re-analysis) must work from STALE too, distinct from Enter's own refresh()");
 });
 
 test("no real Bootstrap Analyst candidate available shows an honest NO_ANALYST state, and Enter/Esc close it", async () => {

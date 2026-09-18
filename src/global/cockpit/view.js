@@ -576,8 +576,12 @@ export class CockpitView {
       };
     }
     const lines = [];
-    if (strategy.bootstrapAnalyst) lines.push(`${"Project Analyst".padEnd(18)} ${this.teamRoleLabel(strategy.bootstrapAnalyst)}`);
-    if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(18)} ${this.teamRoleLabel(strategy.orchestrator)}`);
+    const projectTeam = strategy.projectTeam ?? strategy.qualityTeam ?? [];
+    const modelColumnWidth = this.teamModelColumnWidth([
+      strategy.bootstrapAnalyst, strategy.orchestrator, ...projectTeam.map((entry) => entry.model)
+    ]);
+    if (strategy.bootstrapAnalyst) lines.push(`${"Project Analyst".padEnd(18)} ${this.teamRoleLabel(strategy.bootstrapAnalyst, modelColumnWidth)}`);
+    if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(18)} ${this.teamRoleLabel(strategy.orchestrator, modelColumnWidth)}`);
     // The real OPERATIONAL team (see buildProjectStrategy's own doc) —
     // never qualityTeam, which is comparative reference only. The overlay
     // (project-overlay.js) already shows projectTeam under this exact
@@ -585,8 +589,8 @@ export class CockpitView {
     // same label was the real, reported mismatch. qualityTeam only
     // remains as a fallback for a strategy persisted before projectTeam
     // existed (see applyProjectTeamOverride's own legacy-entry comment).
-    for (const entry of strategy.projectTeam ?? strategy.qualityTeam ?? []) {
-      lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.teamRoleLabel(entry.model) : theme.fg("warning", "no eligible option")}`);
+    for (const entry of projectTeam) {
+      lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.teamRoleLabel(entry.model, modelColumnWidth) : theme.fg("warning", "no eligible option")}`);
     }
     if (strategy.status === "suggested") lines.push(theme.fg("muted", "Suggested from real project analysis. Use /project approve to activate."));
     if (strategy.status === "stale") lines.push(theme.fg("warning", "Real evidence changed since approval — use /project refresh."));
@@ -764,10 +768,29 @@ export class CockpitView {
    * actually run against — two roles can land on visually similar model
    * names from different providers, and knowing which subscription a role
    * draws from is exactly what a real, provider-aware team review needs.
+   *
+   * `modelColumnWidth` left-pads the model name so every row's " · Provider"
+   * lines up in its own column instead of drifting with each model name's
+   * own length — see `CockpitView.teamModelColumnWidth()`, which a caller
+   * computes once across the real rows it's about to render and passes
+   * here for every row in that same list.
+   * @param {object} model
+   * @param {number} [modelColumnWidth]
    */
-  teamRoleLabel(model) {
+  teamRoleLabel(model, modelColumnWidth = 0) {
     const provider = model.adapterId.charAt(0).toUpperCase() + model.adapterId.slice(1);
-    return `${this.aiTeamLabel(model)}  ·  ${provider}`;
+    return `${this.aiTeamLabel(model).padEnd(modelColumnWidth)}  ·  ${provider}`;
+  }
+
+  /**
+   * The real model-name column width for a set of rows about to be
+   * rendered with `teamRoleLabel()` — the longest real, cleaned model
+   * name among them, never a fixed guess (model names vary wildly in
+   * length, e.g. "GPT-5.6-Terra" vs "Muse Spark 1.3 1M Extra High").
+   * @param {Array<object|null|undefined>} models
+   */
+  teamModelColumnWidth(models) {
+    return models.reduce((max, model) => (model ? Math.max(max, this.aiTeamLabel(model).length) : max), 0);
   }
 
   /**
