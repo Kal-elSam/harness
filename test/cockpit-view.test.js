@@ -537,6 +537,27 @@ test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the requi
   assert.match(joined, /Suggested from real project analysis\. Use \/project approve to activate\./);
 });
 
+test("REGRESSION: projectTeamPanel aligns every row's ' · Provider' to the same column, regardless of how much each model name's own length varies", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/crm",
+    projectStrategy: {
+      status: "suggested",
+      bootstrapAnalyst: { adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5" },
+      orchestrator: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" },
+      projectTeam: [
+        { role: "Builder", model: { adapterId: "cursor", modelId: "muse-spark", displayName: "Muse Spark 1.3 1M Extra High" }, reason: null },
+        { role: "Tester", model: { adapterId: "codex", modelId: "gpt-terra", displayName: "GPT-5.6-Terra" }, reason: null }
+      ]
+    }
+  });
+  const lines = view.projectTeamPanel(120).lines;
+  const dotColumns = new Set(lines
+    .filter((line) => line.includes("·"))
+    .map((line) => stripTerminalSequences(line).indexOf("·")));
+  assert.equal(dotColumns.size, 1, `every row must place its provider separator at the same column; got positions ${[...dotColumns].join(", ")} in:\n${lines.join("\n")}`);
+});
+
 test("REGRESSION: projectTeamPanel shows the real OPERATIONAL projectTeam, never qualityTeam, when the two genuinely diverge (e.g. after a manual override)", () => {
   const { view } = makeView();
   view.setSnapshot({
