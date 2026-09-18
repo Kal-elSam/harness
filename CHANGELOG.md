@@ -5,6 +5,28 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.23.0 — 2026-09-18 (Kairo Runtime)
+
+Minor release. First slice of PROJECT TEAM's automatic model-fallback
+cascade.
+
+### Changed
+
+- When a role's assigned model is unavailable but a real, currently-
+  eligible fallback exists, the cockpit no longer stops for an extra
+  y/n confirm on the substitution. The human already asked for this
+  task to execute now (picked the role, pressed execute) — Kairo runs
+  the real fallback automatically and narrates the substitution into
+  the transcript, so it stays visible without a confirmation prompt.
+  ROUTED, MANUAL_HANDOFF, and WAIT_FOR_PROJECT_TEAM with no real
+  alternative are all unchanged — still explicit confirm steps.
+
+Not yet in this release: showing which model is currently running for
+a role directly in the PROJECT TEAM view, auto-reverting to the
+originally-assigned model once it becomes eligible again, and
+retrying a run that starts on the assigned model and then fails or
+hangs mid-execution.
+
 ## 0.22.1 — 2026-09-18 (Kairo Runtime)
 
 Patch release.
