@@ -26,8 +26,8 @@ import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transc
 import { readSession, writeSessionMode } from "./session-store.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
-  buildProjectStrategy, computeBootstrapAnalystAlternatives, computeBootstrapAnalystCatalog, isStrategyStale,
-  computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
+  ASK_SUPPORTED_ADAPTERS, buildProjectStrategy, computeBootstrapAnalystAlternatives, computeBootstrapAnalystCatalog,
+  isStrategyStale, computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "./project-strategy.js";
 import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
 import { buildSanitizedSnapshot } from "./sanitized-snapshot.js";
@@ -662,6 +662,34 @@ export function createConversationService(deps = {}) {
      */
     async planAsk({ cwd, task }) {
       const projectRoot = await root(cwd);
+      // PROJECT TEAM's own Explorer role first — a real, approved,
+      // project-specific assignment beats the generic heuristic below,
+      // same principle as real execution routing. Explorer, never a
+      // guess from the question's text: resolveProjectRoute's whole
+      // design is that a role is always the caller's own explicit fixed
+      // choice, never inferred per-call — ASK questions are read-only
+      // investigation, which is exactly Explorer's job.
+      const teamRoute = await this.routeProjectExecution("Explorer", projectRoot);
+      const teamModel = teamRoute.decision === "ROUTED" ? teamRoute.model
+        : teamRoute.decision === "WAIT_FOR_PROJECT_TEAM" ? teamRoute.suggestedAlternative?.model ?? null
+        : null;
+      // Only when that real assignment is one askProvider can actually
+      // call (see ASK_SUPPORTED_ADAPTERS's own doc) — a role can be
+      // validly assigned to Cursor/OpenCode Go/Zen, which ASK simply
+      // can't invoke yet, so that's a real reason to fall through below,
+      // never an error.
+      if (teamModel && ASK_SUPPORTED_ADAPTERS.has(teamModel.adapterId)) {
+        return {
+          decision: {
+            decision: "ROUTED", provider: teamModel.adapterId, model: teamModel.modelId,
+            why: `Explorer (PROJECT TEAM): ${teamRoute.why}`
+          },
+          projectRoot
+        };
+      }
+      // No active team, or Explorer's real assignment isn't ask-capable —
+      // fall back to the generic quota/capability heuristic so ASK stays
+      // useful even before a team is approved.
       const adapters = inspectAdapters({ cwd: projectRoot });
       let codexUsage = null;
       let claudeUsage = null;

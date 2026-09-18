@@ -1110,6 +1110,44 @@ test("askQuestion refuses to fabricate an answer when no ask-capable provider is
   await assert.rejects(() => service.askQuestion({ cwd: "/repo", task: "What is this?" }), /no ask-capable provider/);
 });
 
+test("REGRESSION: askQuestion routes through PROJECT TEAM's Explorer role when it's assigned to an ask-capable provider, never the generic heuristic", async () => {
+  const explorerModel = { candidateKey: "claude::claude-opus-5", adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", accessMode: "automatic" };
+  const activeStrategy = { ...suggestedStrategyWithExplorer(explorerModel), status: "active" };
+  const askCalls = [];
+  const heuristicCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => activeStrategy,
+    selectAskProvider: (args) => { heuristicCalls.push(args); return { decision: "NO_PROVIDER_AVAILABLE", provider: null, model: null, why: "should never be reached" }; },
+    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "PROJECT TEAM answered." }; }
+  });
+  service.snapshot = async () => ({ modelIntelligence: { eligibility: { claude: { ok: true } } } });
+
+  const answer = await service.askQuestion({ cwd: "/repo", task: "donde estamos parados?" });
+  assert.equal(answer.provider, "claude");
+  assert.equal(answer.model, "claude-opus-5");
+  assert.equal(heuristicCalls.length, 0, "the generic heuristic must never run when PROJECT TEAM's Explorer is real and ask-capable");
+  assert.deepEqual(askCalls[0].provider, "claude");
+});
+
+test("REGRESSION: askQuestion falls back to the generic heuristic when Explorer is assigned to a provider ASK can't call (e.g. opencode-go)", async () => {
+  const explorerModel = { candidateKey: "opencode-go::deepseek", adapterId: "opencode-go", modelId: "deepseek-v4-1-flash", displayName: "DeepSeek V4.1 Flash", accessMode: "automatic" };
+  const activeStrategy = { ...suggestedStrategyWithExplorer(explorerModel), status: "active" };
+  const askCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => activeStrategy,
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-haiku-4-5", why: "read-only question (light effort)" }),
+    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "Heuristic answered." }; }
+  });
+  service.snapshot = async () => ({ modelIntelligence: { eligibility: { "opencode-go": { ok: true } } } });
+
+  const answer = await service.askQuestion({ cwd: "/repo", task: "donde estamos parados?" });
+  assert.equal(answer.provider, "claude");
+  assert.equal(askCalls[0].provider, "claude", "Explorer's real assignment (opencode-go) isn't ask-capable, so the heuristic's pick must be used instead");
+});
+
 test("askQuestion threads the real question text through to the router, so effort-tier model selection sees the actual complexity", async () => {
   const routeCalls = [];
   const service = createConversationService({

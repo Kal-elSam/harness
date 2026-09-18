@@ -23,8 +23,12 @@ import { computeRoleEvaluations } from "../intelligence/capability-scoring.js";
 // The Bootstrap Analyst investigates read-only via askProvider
 // (intelligence/quick-ask.js), which only actually supports these two
 // providers today — offering any other real candidate as an "alternative"
-// here would be a menu item Kairo can't actually run.
-const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude"]);
+// here would be a menu item Kairo can't actually run. Exported: ASK mode's
+// own real-time routing (service.js's planAsk) needs this exact same real
+// constraint when it tries to route a plain question through a PROJECT
+// TEAM role — a role assigned to, say, opencode-go is a real, valid team
+// assignment, just not one askProvider can call.
+export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude"]);
 
 /**
  * The Bootstrap Analyst as a temporary, read-only WORKFLOW — deliberately
