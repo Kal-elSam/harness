@@ -496,8 +496,8 @@ export function createConversationService(deps = {}) {
         // scoredAllRaw directly, so an old generation Cursor still
         // re-exposes (e.g. Claude Sonnet 4) naturally stops competing
         // without buildAiTeam/buildEfficientTeam's own ranking logic
-        // needing to know why. Manual-only real candidates (Cursor,
-        // OpenCode Go) stay in it — this is "what Kairo can honestly
+        // needing to know why. Manual-only real candidates (OpenCode Go,
+        // and Cursor's own opaque "auto" router model) stay in it — this is "what Kairo can honestly
         // recommend", not "what Kairo can launch by itself".
         const scoredAll = buildRecommendationPool(scoredAllRaw, completeCandidateCatalog);
         // The Automatic Execution Pool: the real subset of scoredAll
