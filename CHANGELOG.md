@@ -5,6 +5,27 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.19.0 — 2026-09-18 (Kairo Runtime)
+
+Patch-level polish on top of 0.18.0's PROJECT TEAM work: fixes the
+provider column's alignment and adds a way back to the interactive
+analyst picker once a strategy already exists.
+
+### Added
+
+- `r` key inside the `/project` overlay (RESULT/ACTIVE/STALE states)
+  forces a genuinely fresh analysis, landing back on the real
+  interactive analyst picker — previously only reachable on a
+  project's very first `/project` run.
+
+### Fixed
+
+- The PROJECT TEAM view's provider column (`CockpitView.teamRoleLabel()`)
+  now pads every row's model name to a shared width
+  (`teamModelColumnWidth()`), so the " · Provider" separator lines up
+  across rows regardless of how much individual model names vary in
+  length.
+
 ## 0.18.0 — 2026-09-18 (Kairo Runtime)
 
 Minor release. Provider visibility and quota-aware improvements to the
