@@ -5,6 +5,34 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.22.0 — 2026-09-18 (Kairo Runtime)
+
+Minor release. Promotes OpenCode Go to a real automatic execution
+provider.
+
+### Changed
+
+- OpenCode Go's accessMode flips from "manual" to "automatic" — its own
+  dedicated `/zen/go/*` gateway is a real, separate endpoint from Zen's,
+  resolving the earlier billing-attribution concern for Go specifically.
+  OpenCode Zen keeps its own real, unresolved Go/Zen billing-attribution
+  gap and stays manual.
+- Adds an adapter-declared idle timeout (60s for OpenCode, reset on
+  every real output chunk — never an absolute one, so a real
+  long-running task is never killed just for taking a while) as the
+  safety net for a live-reproduced CLI hang: a genuine hang now becomes
+  a bounded, detectable failure instead of an indefinite one.
+
+### Fixed
+
+- Three previously-latent bugs, never exercised since Go was never
+  launchable before: `resolveExecutionAdapter` threw for
+  "opencode-go"/"opencode-zen"; real task execution launched with the
+  catalog's bare model id instead of the real "opencode-go/&lt;id&gt;"
+  form the CLI needs to route deterministically; the usage/quota
+  tracking store rejected "opencode-go"/"opencode-zen" as valid
+  providers despite their genuinely separate budgets.
+
 ## 0.21.0 — 2026-09-18 (Kairo Runtime)
 
 Patch-level polish. When a role resolves to a manual-only provider
