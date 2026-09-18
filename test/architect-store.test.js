@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createArchitecturePlan } from "../src/global/architect/architect-manager.js";
 import {
-  acquireRequestLock, listTaskRecords, readTaskRecord, resolveProjectRoot, transitionTask,
-  verifyPlanForExecution, writeExecutionLink
+  acquireRequestLock, listTaskRecords, readExecutionLink, readTaskRecord, resolveProjectRoot,
+  transitionTask, updateExecutionLink, verifyPlanForExecution, writeExecutionLink
 } from "../src/global/architect/architect-store.js";
 import {
   ARCHITECT_SCHEMA, createArchitectureRequestKey, createTaskId, sha256
@@ -228,6 +228,27 @@ test("automatic execution requires the exact working tree captured at approval",
   await verifyPlanForExecution(root, created.status.taskId);
   await writeFile(join(root, "work.txt"), "changed after approval\n");
   await assert.rejects(() => verifyPlanForExecution(root, created.status.taskId), /working tree changed/);
+});
+
+test("execution link provider mirrors the real agentId, not a hardcoded value", async () => {
+  const root = await repo();
+  const created = await createArchitecturePlan({
+    task: "Route to codex", cwd: root,
+    runCodex: async () => ({ plan: "Plan", usage: null })
+  });
+  await transitionTask(root, created.status.taskId, "approved");
+  const written = await writeExecutionLink(created.status.projectRoot, created.status.taskId, {
+    runId: "run_codex1", agentId: "codex", state: "reserved", createdAt: "now", updatedAt: "now"
+  });
+  assert.equal(written.provider, "codex");
+  const readBack = await readExecutionLink(created.status.projectRoot, created.status.taskId);
+  assert.equal(readBack.provider, "codex");
+
+  const updated = await updateExecutionLink(created.status.projectRoot, created.status.taskId, {
+    ...readBack, agentId: "cursor", state: "running"
+  });
+  assert.equal(updated.provider, "cursor");
+  assert.equal((await readExecutionLink(created.status.projectRoot, created.status.taskId)).provider, "cursor");
 });
 
 test("legacy approvals without a working-tree fingerprint fail closed", async () => {
