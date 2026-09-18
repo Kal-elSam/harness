@@ -104,14 +104,17 @@ test("REGRESSION: codex's timeout resets on real output, so a genuinely slow-but
     // real answer arrives well AFTER it — an absolute deadline would have
     // killed this; an idle-reset one must not, since real output kept
     // arriving.
-    setTimeout(() => child.stdout.emit("data", "thinking...\n"), 10);
+    // Generous margins: under full-suite load, timer callbacks can slip by
+    // several ms, and a tight margin here made this test genuinely flaky —
+    // this only needs to prove the reset happens, not measure exact timing.
+    setTimeout(() => child.stdout.emit("data", "thinking...\n"), 60);
     setTimeout(async () => {
       await writeFile(outFile, "still alive.\n", "utf8");
       child.emit("close", 0);
-    }, 22);
+    }, 120);
     return child;
   };
-  const answer = await askProvider({ provider: "codex", question: "q", cwd: "/repo", timeoutMs: 15, spawn });
+  const answer = await askProvider({ provider: "codex", question: "q", cwd: "/repo", timeoutMs: 80, spawn });
   assert.equal(answer.status, "answered");
   assert.equal(answer.answer, "still alive.");
 });
