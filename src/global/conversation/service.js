@@ -651,12 +651,16 @@ export function createConversationService(deps = {}) {
       return { ...publicPlan(result.status), reused: result.reused === true, projectRoot };
     },
     /**
-     * Real read-only question -> real answer, via whichever provider is
-     * actually available/quota-healthy — no task, no plan, no approval
-     * gate. Throws (never returns a fabricated answer) if no provider can
-     * answer or the call itself fails.
+     * Read-only preview of who ASK mode would actually ask right now —
+     * never calls a provider. Lets a caller (the cockpit's action label)
+     * show the real provider/model BEFORE the potentially slow real call
+     * starts, instead of a generic "Asking Kairo" that stays true no
+     * matter which real provider ends up answering (or timing out).
+     * Cheap to call again right after: the same underlying usage/catalog
+     * probes askQuestion itself uses are cached (see readCodexUsageCached
+     * etc.), so there's no real duplicate provider I/O.
      */
-    async askQuestion({ cwd, task }) {
+    async planAsk({ cwd, task }) {
       const projectRoot = await root(cwd);
       const adapters = inspectAdapters({ cwd: projectRoot });
       let codexUsage = null;
@@ -672,6 +676,16 @@ export function createConversationService(deps = {}) {
         claudeCatalog = readClaudeModelsImpl();
       }
       const decision = routeAsk({ adapters, codexUsage, claudeUsage, catalogs: { codex: codexCatalog, claude: claudeCatalog }, taskText: task });
+      return { decision, projectRoot };
+    },
+    /**
+     * Real read-only question -> real answer, via whichever provider is
+     * actually available/quota-healthy — no task, no plan, no approval
+     * gate. Throws (never returns a fabricated answer) if no provider can
+     * answer or the call itself fails.
+     */
+    async askQuestion({ cwd, task }) {
+      const { decision, projectRoot } = await this.planAsk({ cwd, task });
       if (decision.decision !== "ROUTED") throw new Error(`Cannot answer: ${decision.why}`);
       const result = await askProviderImpl({ provider: decision.provider, question: task, model: decision.model, cwd: projectRoot });
       if (result.status !== "answered") throw new Error(result.error ?? `${decision.provider} gave no answer.`);
