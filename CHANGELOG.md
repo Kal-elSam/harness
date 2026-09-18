@@ -5,6 +5,35 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.18.0 — 2026-09-18 (Kairo Runtime)
+
+Minor release. Provider visibility and quota-aware improvements to the
+`/project` PROJECT TEAM view.
+
+### Added
+
+- The PROJECT TEAM view (dashboard panel and `/project` overlay) now
+  shows the real provider alongside each role's model
+  (`CockpitView.teamRoleLabel()`), so it's clear which subscription
+  actually serves each role.
+- `/project cursor exhausted|available` — a manual, human-reported
+  toggle for Cursor's quota state, persisted through the same
+  per-provider usage store Codex/Claude/OpenCode Go already use. Cursor
+  exposes no real, zero-cost local usage/billing read, so this is the
+  one honest signal Kairo can act on; an exhausted Cursor is excluded
+  from team recommendations until cleared.
+- An early "LOW" warning tag (`LOW_QUOTA_WARN_PERCENT`, 20% remaining)
+  for Codex/Claude/OpenCode Go quota windows, shown in the compact usage
+  bar and `/usage`, strictly before the existing 5% hard-exclusion
+  threshold takes effect.
+
+### Fixed
+
+- The `/project` overlay's modal frame now uses a distinct,
+  high-contrast border instead of sharing the dashboard card's
+  low-contrast outline, and compacted its per-line spacing so a full
+  six-role team stays within the overlay's height budget.
+
 ## 0.17.0 — 2026-09-17 (Kairo Runtime)
 
 Minor release. Execution-worktree isolation (real git worktrees, per-role
