@@ -5,6 +5,20 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.21.0 — 2026-09-18 (Kairo Runtime)
+
+Patch-level polish. When a role resolves to a manual-only provider
+(OpenCode Go), the `planExecution` preview now carries the exact
+real task text an automatic run would use, and the cockpit pushes it
+into the transcript ready to paste into that provider's own chat —
+instead of only naming the assigned model.
+
+### Added
+
+- `buildExecutionTaskPrompt` (service.js) is the one real formula for a
+  task's launch text, shared by `executePlan` (real automatic runs)
+  and `planExecution`'s `MANUAL_HANDOFF` preview (`taskPrompt`).
+
 ## 0.20.0 — 2026-09-18 (Kairo Runtime)
 
 Minor release. Promotes Cursor to a real automatic execution provider.
