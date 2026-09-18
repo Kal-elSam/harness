@@ -12,8 +12,19 @@ export function listExecutionAdapters() {
   return [...EXECUTION_ADAPTERS];
 }
 
+/**
+ * Resolves the real adapter object for an id — "opencode-go"/"opencode-zen"
+ * both share the single real "opencode" adapter object (one executable,
+ * one launch/parse contract; the Go/Zen split is a routing/eligibility
+ * distinction, decided by execution-router.js's checkCandidate, never a
+ * separate adapter object), the same prefix rule execution-router.js's own
+ * findAdapter already uses. Never silently falls through for an unrelated
+ * unknown id — only an id that is exactly "opencode" or starts with
+ * "opencode-" maps this way.
+ */
 export function resolveExecutionAdapter(id) {
-  const adapter = EXECUTION_ADAPTERS.find((candidate) => candidate.id === id);
+  const baseId = id === "opencode" || id.startsWith("opencode-") ? "opencode" : id;
+  const adapter = EXECUTION_ADAPTERS.find((candidate) => candidate.id === baseId);
   if (!adapter) {
     throw new Error(`Unknown execution adapter "${id}". Use ${EXECUTION_ADAPTER_IDS.join(", ")}.`);
   }

@@ -78,6 +78,13 @@ export async function supervisePreparedRun({
 }) {
   const handoff = await consumeRunHandoff(homeDir, runId);
   const adapter = resolveAdapterImpl(handoff.agentId);
+  // A caller-supplied timeoutMs always wins; otherwise the adapter's own
+  // declared idleTimeoutMs applies automatically — this is the ONLY path
+  // real detached runs (the production `wait: false` case) ever take,
+  // since the handoff itself never carries a caller timeoutMs (see
+  // run-manager.js's writeRunHandoff), so an adapter-level default is the
+  // only way a real detached opencode-go run ever gets one at all.
+  const effectiveTimeoutMs = timeoutMs ?? adapter.idleTimeoutMs ?? null;
   let metadata = await readRunState(homeDir, runId);
 
   if (!metadata) {
@@ -310,9 +317,12 @@ export async function supervisePreparedRun({
 
           const failed = exitCode !== 0;
           const nextState = failed ? RUN_STATES.FAILED : RUN_STATES.COMPLETED;
+          const failureReason = timedOutByIdle
+            ? `No real output for ${effectiveTimeoutMs}ms (idle timeout) — likely hung, not a normal completion`
+            : `Process exited with code ${exitCode}`;
           metadata = transitionRunState(metadata, nextState, {
             exitCode,
-            error: failed ? `Process exited with code ${exitCode}` : null
+            error: failed ? failureReason : null
           });
           await writeRunState(homeDir, metadata);
           await appendRunEvent(homeDir, createRunEvent({
@@ -341,7 +351,23 @@ export async function supervisePreparedRun({
     });
   });
 
+  // An IDLE timeout, never an absolute one: a real, legitimate task can run
+  // for many minutes while still producing real output, so the timer is
+  // rearmed on every real stdout/stderr chunk (see opencode.js's own
+  // idleTimeoutMs doc — this only ever exists to catch genuine silence,
+  // like the real hang confirmed there, not to cap a working run's length).
+  let timedOutByIdle = false;
+  const armIdleTimeout = () => {
+    if (effectiveTimeoutMs == null || effectiveTimeoutMs <= 0) return;
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    timeoutHandle = setTimeout(() => {
+      timedOutByIdle = true;
+      child.kill("SIGTERM");
+    }, effectiveTimeoutMs);
+  };
+
   child.stdout.on("data", (chunk) => {
+    armIdleTimeout();
     enqueue(async () => {
       stdoutBuffer += chunk.toString();
       stdoutBuffer = await flushBuffer(stdoutBuffer, "stdout");
@@ -349,17 +375,14 @@ export async function supervisePreparedRun({
   });
 
   child.stderr.on("data", (chunk) => {
+    armIdleTimeout();
     enqueue(async () => {
       stderrBuffer += chunk.toString();
       stderrBuffer = await flushBuffer(stderrBuffer, "stderr");
     });
   });
 
-  if (timeoutMs != null && timeoutMs > 0) {
-    timeoutHandle = setTimeout(() => {
-      child.kill("SIGTERM");
-    }, timeoutMs);
-  }
+  armIdleTimeout();
 
   void serializeStateWrite(async () => {
     metadata = {

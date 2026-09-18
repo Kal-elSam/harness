@@ -101,6 +101,112 @@ test("startRun supervises process, normalizes events, and completes", async () =
   });
 });
 
+function createHangingFakeSpawn() {
+  return (_command, _args, _options) => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.pid = 4243;
+    // A real SIGTERM kill: no exit code, not a normal 0/non-zero close —
+    // matches how Node reports a process killed by signal.
+    child.kill = () => { child.emit("close", null); };
+    // Never emits data, never closes on its own — a genuine, indefinite hang.
+    return child;
+  };
+}
+
+function createSlowButActiveFakeSpawn(lines, { chunkDelayMs, exitCode = 0 } = {}) {
+  return (_command, _args, _options) => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.pid = 4244;
+    child.kill = () => { child.emit("close", null); };
+    (async () => {
+      for (const line of lines) {
+        await new Promise((resolve) => setTimeout(resolve, chunkDelayMs));
+        child.stdout.emit("data", `${line}\n`);
+      }
+      child.emit("close", exitCode);
+    })();
+    return child;
+  };
+}
+
+function resolveAdapterWithIdleTimeout(agentId, idleTimeoutMs) {
+  const adapter = resolveExecutionAdapter(agentId);
+  return { ...adapter, preflight: async () => ({ ok: true }), idleTimeoutMs };
+}
+
+test("REGRESSION: an adapter's own idleTimeoutMs kills a genuinely silent run and marks it FAILED with a clear idle-timeout reason — this is the real detached-run path (no caller timeoutMs), the only one real production runs ever take", async () => {
+  await withStubExecutables(["codex"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-idle-timeout-"));
+    const { completion } = await startRun({
+      homeDir,
+      agentId: "codex",
+      resolveAdapterImpl: (id) => resolveAdapterWithIdleTimeout(id, 50),
+      task: "run tests",
+      cwd: homeDir,
+      cliVersion: "0.2.1",
+      spawnImpl: createHangingFakeSpawn()
+      // No timeoutMs passed — must fall back to the adapter's own idleTimeoutMs.
+    });
+
+    const final = await completion;
+    assert.equal(final.state, RUN_STATES.FAILED);
+    assert.match(final.error, /idle timeout/);
+    assert.match(final.error, /likely hung/);
+  });
+});
+
+test("REGRESSION: the idle timer resets on every real output chunk, so an active-but-slow run is never killed just for taking a while", async () => {
+  await withStubExecutables(["codex"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-idle-active-"));
+    const lines = [
+      JSON.stringify({ type: "tool_call", tool_name: "read_file", subtype: "started" }),
+      JSON.stringify({ type: "tool_call", tool_name: "read_file", subtype: "completed" }),
+      JSON.stringify({ type: "result", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } })
+    ];
+    // Each individual gap (40ms) stays under the 60ms idle timeout, but the
+    // real total run time (~120ms) exceeds it — proving the timer genuinely
+    // resets per chunk rather than just being a longer absolute timeout.
+    const { completion } = await startRun({
+      homeDir,
+      agentId: "codex",
+      resolveAdapterImpl: (id) => resolveAdapterWithIdleTimeout(id, 60),
+      task: "run tests",
+      cwd: homeDir,
+      cliVersion: "0.2.1",
+      spawnImpl: createSlowButActiveFakeSpawn(lines, { chunkDelayMs: 40 })
+    });
+
+    const final = await completion;
+    assert.equal(final.state, RUN_STATES.COMPLETED, "a run that keeps producing real output must never be killed as idle");
+  });
+});
+
+test("REGRESSION: an explicit caller timeoutMs overrides the adapter's own idleTimeoutMs default", async () => {
+  await withStubExecutables(["codex"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-idle-override-"));
+    const { completion } = await startRun({
+      homeDir,
+      agentId: "codex",
+      // The adapter itself declares a long default (5 real minutes) — the
+      // caller's short override must win, proving it isn't ignored.
+      resolveAdapterImpl: (id) => resolveAdapterWithIdleTimeout(id, 5 * 60_000),
+      task: "run tests",
+      cwd: homeDir,
+      cliVersion: "0.2.1",
+      timeoutMs: 50,
+      spawnImpl: createHangingFakeSpawn()
+    });
+
+    const final = await completion;
+    assert.equal(final.state, RUN_STATES.FAILED);
+    assert.match(final.error, /idle timeout/);
+  });
+});
+
 test("REGRESSION: a real run.transcript event carries the real originating provider (adapter id) as its source — never the generic default \"kairo\"", async () => {
   await withStubExecutables(["codex"], async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-transcript-source-"));
@@ -266,21 +372,22 @@ test("recoverRuns marks orphaned active runs interrupted", async () => {
   assert.equal(state.state, RUN_STATES.INTERRUPTED);
 });
 
-test("opencode is rejected for auditable runs", async () => {
+test("REGRESSION: opencode-go is accepted for auditable runs now — real hangs are covered by the adapter's own idle timeout, not a launchable:false gate", async () => {
   await withStubExecutables(["opencode"], async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-opencode-"));
+    const lines = [JSON.stringify({ type: "result", usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 } })];
 
-    await assert.rejects(
-      () => startRun({
-        homeDir,
-        agentId: "opencode",
-        task: "task",
-        cwd: homeDir,
-        cliVersion: "0.2.1",
-        spawnImpl: createFakeSpawn([])
-      }),
-      /launchable|structured events|auditable|compatible|provider-isolation/i
-    );
+    const { completion } = await startRun({
+      homeDir,
+      agentId: "opencode-go",
+      task: "task",
+      cwd: homeDir,
+      cliVersion: "0.2.1",
+      spawnImpl: createFakeSpawn(lines)
+    });
+
+    const final = await completion;
+    assert.equal(final.state, RUN_STATES.COMPLETED);
   });
 });
 

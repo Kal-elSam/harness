@@ -22,6 +22,19 @@ test("execution adapters expose required contract fields", () => {
   }
 });
 
+test("REGRESSION: resolveExecutionAdapter maps opencode-go/opencode-zen to the single real shared opencode adapter, never throwing 'unknown adapter'", () => {
+  const go = resolveExecutionAdapter("opencode-go");
+  const zen = resolveExecutionAdapter("opencode-zen");
+  const bare = resolveExecutionAdapter("opencode");
+  assert.equal(go.id, "opencode");
+  assert.equal(zen.id, "opencode");
+  assert.equal(go, bare, "must be the exact same real adapter object, not a copy");
+});
+
+test("REGRESSION: resolveExecutionAdapter still rejects a genuinely unknown id, never silently falling through", () => {
+  assert.throws(() => resolveExecutionAdapter("not-a-real-adapter"), /Unknown execution adapter/);
+});
+
 test("cursor adapter builds auditable launch command", () => {
   const launch = cursorAdapter.buildLaunch({
     task: "Review code",
@@ -86,24 +99,25 @@ test("codex adapter uses real yolo flag for bypass approvals", () => {
   assert.ok(!launch.args.includes("--force"));
 });
 
-test("opencode adapter reports real structured-event compatibility but stays blocked pending Go/Zen provider-isolation proof", () => {
+test("REGRESSION: opencode adapter reports real structured-event compatibility AND is launchable now — Go's real hang risk is covered by its own idle timeout, not a launchable:false gate", () => {
   const availability = opencodeAdapter.availability();
-  assert.equal(availability.launchable, false);
   if (availability.available) {
-    // Verified live: the CLI genuinely emits parseable structured events
-    // now, so compatible is honestly true — the block is a separate,
-    // deliberate safety gate (see opencode.js), not a capability gap.
+    // Verified live: the CLI genuinely emits parseable structured events,
+    // and is now launchable — checkCandidate's own "opencode-zen" early
+    // return is what keeps Zen blocked, never this adapter-level flag.
     assert.equal(availability.compatible, true);
-    assert.match(availability.reason ?? "", /provider tier|provider-isolation|opencode-go/i);
+    assert.equal(availability.launchable, true);
+    assert.equal(availability.reason, null);
   } else {
     assert.equal(availability.compatible, false);
+    assert.equal(availability.launchable, false);
   }
 });
 
-test("listLaunchableAdapterIds excludes opencode", () => {
+test("REGRESSION: listLaunchableAdapterIds includes opencode when its real CLI is on PATH — Go is a real automatic candidate now", () => {
   const launchable = listLaunchableAdapterIds();
-  assert.ok(launchable.includes("cursor") || launchable.includes("codex") || launchable.includes("claude") || launchable.length === 0);
-  assert.ok(!launchable.includes("opencode"));
+  const availability = opencodeAdapter.availability();
+  assert.equal(launchable.includes("opencode"), availability.available, "opencode's own real availability must be the only thing deciding this now");
 });
 
 test("inspectExecutionAdapters returns availability for all providers", () => {

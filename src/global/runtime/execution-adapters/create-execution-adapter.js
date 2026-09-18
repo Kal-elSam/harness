@@ -12,12 +12,20 @@ export function createExecutionAdapter({
   parseEventLine = null,
   checkAvailability = null,
   launchable = null,
-  preflight = null
+  preflight = null,
+  idleTimeoutMs = null
 }) {
   return {
     id,
     label,
     executable,
+    // The real, adapter-declared "no output for this long means genuinely
+    // hung, not just working" threshold (run-supervisor.js resets this on
+    // every stdout/stderr chunk, so a real long-running task is never
+    // killed just for taking a while — only real silence trips it). null
+    // (the default) means this adapter is trusted not to hang; only an
+    // adapter with a real, observed hanging failure mode declares one.
+    idleTimeoutMs,
     capabilities: {
       structuredEvents: false,
       tokens: false,

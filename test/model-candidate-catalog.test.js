@@ -60,7 +60,7 @@ test("buildCompleteCandidateCatalog includes every real model from every provide
 
   const glmFlash = catalog.find((c) => c.candidateKey === "opencode-go::glm-5.3-flash");
   assert.equal(glmFlash.modelName, "GLM-5.3-Flash");
-  assert.equal(glmFlash.accessMode, "manual");
+  assert.equal(glmFlash.accessMode, "automatic", "a real, named OpenCode Go model is a real automatic candidate now");
   assert.deepEqual(glmFlash.resourceCost, { inputPerMTok: 0.15, outputPerMTok: 0.5 });
 });
 
@@ -263,16 +263,16 @@ test("buildRecommendationPool keeps scoreAvailableModels' own real fields untouc
   assert.equal(candidate.codingIndex, 50);
   assert.equal(candidate.priceInputPerMTok, 0.15);
   assert.equal(candidate.modelName, "GLM-5.3-Flash");
-  assert.equal(candidate.accessMode, "manual");
+  assert.equal(candidate.accessMode, "automatic", "a real, named OpenCode Go model is a real automatic candidate now");
   assert.deepEqual(candidate.resourceCost, { inputPerMTok: 0.15, outputPerMTok: 0.5 });
   assert.notEqual(candidate.resourceCost.inputPerMTok, undefined);
   // The two cost signals coexist, never merged into one another.
   assert.notEqual(candidate.priceInputPerMTok, candidate.resourceCost);
 });
 
-test("buildRecommendationPool keeps real manual-only candidates (OpenCode Go, Cursor's own opaque 'auto') — a caller must never silently drop them", () => {
+test("buildRecommendationPool keeps real manual-only candidates (OpenCode Zen, Cursor's own opaque 'auto') — a caller must never silently drop them", () => {
   const aa = [{ slug: "glm-5.3-flash", name: "GLM 5.3 Flash", intelligenceIndex: 50, codingIndex: 60 }];
-  const providerCatalogs = [{ adapterId: "opencode-go", models: [{ id: "glm-5.3-flash", displayName: "GLM-5.3-Flash" }] }];
+  const providerCatalogs = [{ adapterId: "opencode-zen", models: [{ id: "glm-5.3-flash", displayName: "GLM-5.3-Flash" }] }];
   const scoredAll = scoreAvailableModels(providerCatalogs, aa);
   const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
   const pool = buildRecommendationPool(scoredAll, catalog);
@@ -287,21 +287,31 @@ test("buildAutomaticExecutionPool requires BOTH accessMode automatic AND real cu
   ];
   const providerCatalogs = [
     { adapterId: "codex", models: [{ id: "gpt-6-astra", displayName: "GPT-6-Astra" }] },
-    { adapterId: "opencode-go", models: [{ id: "glm-5.3-flash", displayName: "GLM-5.3-Flash" }] }
+    { adapterId: "opencode-zen", models: [{ id: "glm-5.3-flash", displayName: "GLM-5.3-Flash" }] }
   ];
   const scoredAll = scoreAvailableModels(providerCatalogs, aa);
   const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
   const recommendationPool = buildRecommendationPool(scoredAll, catalog);
 
-  const bothEligible = { codex: { ok: true }, "opencode-go": { ok: true } };
+  const bothEligible = { codex: { ok: true }, "opencode-zen": { ok: true } };
   const automaticPool = buildAutomaticExecutionPool(recommendationPool, bothEligible);
-  // OpenCode Go is manual-only until its own Go/Zen billing-attribution proof lands — never appears here even when eligible.
+  // OpenCode Zen is manual-only until its own Go/Zen billing-attribution proof lands — never appears here even when eligible.
   assert.deepEqual(automaticPool.map((c) => c.candidateKey), ["codex::gpt-6-astra"]);
   // The Recommendation Pool itself is completely unaffected.
   assert.equal(recommendationPool.length, 2);
 
-  const codexNotEligible = { codex: { ok: false, reason: "quota exhausted" }, "opencode-go": { ok: true } };
+  const codexNotEligible = { codex: { ok: false, reason: "quota exhausted" }, "opencode-zen": { ok: true } };
   assert.deepEqual(buildAutomaticExecutionPool(recommendationPool, codexNotEligible), []);
+});
+
+test("buildAutomaticExecutionPool includes a real, named OpenCode Go model once eligible — Go is a real automatic candidate now, same as Codex/Claude/Cursor", () => {
+  const aa = [{ slug: "kimi-k2.7-code", name: "Kimi K2.7 Code", intelligenceIndex: 50, codingIndex: 60 }];
+  const providerCatalogs = [{ adapterId: "opencode-go", models: [{ id: "kimi-k2.7-code", displayName: "Kimi K2.7 Code" }] }];
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
+  const recommendationPool = buildRecommendationPool(scoredAll, catalog);
+  const automaticPool = buildAutomaticExecutionPool(recommendationPool, { "opencode-go": { ok: true } });
+  assert.deepEqual(automaticPool.map((c) => c.candidateKey), ["opencode-go::kimi-k2.7-code"]);
 });
 
 test("buildAutomaticExecutionPool includes a real, named Cursor model once eligible — Cursor is a real automatic candidate now, same as Codex/Claude", () => {

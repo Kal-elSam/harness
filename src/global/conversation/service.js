@@ -44,6 +44,7 @@ import {
   buildEfficientTeam, scoreAvailableModels, summarizeCatalogCoverage
 } from "../intelligence/model-intelligence.js";
 import { buildAutomaticExecutionPool, buildCompleteCandidateCatalog, buildRecommendationPool } from "../intelligence/model-candidate-catalog.js";
+import { toRuntimeModelRef } from "../intelligence/transport-registry.js";
 import { createCapabilityRegistry } from "../intelligence/model-capability-registry.js";
 import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../intelligence/model-capability-registry-sources.js";
 import { ingestOfficialSnapshotEvidence } from "../intelligence/official-benchmark-snapshots.js";
@@ -1024,7 +1025,15 @@ export function createConversationService(deps = {}) {
         throw new Error(`Cannot execute "${taskId}": the real project team state changed since this was confirmed (strategy, eligibility, or override) — request a new preview and confirm again.`);
       }
       const resolvedAgentId = resolvedCandidate.adapterId;
-      const resolvedModel = resolvedCandidate.modelId;
+      // OpenCode Go/Zen's real catalog stores bare model ids (see
+      // opencode-models.js's normalizeModel) — the CLI needs the real,
+      // fully-qualified "opencode-go/<id>" (or "opencode/<id>" for Zen)
+      // ref to deterministically route to the intended product; a bare id
+      // is exactly the ambiguity Kairo must never risk. Every other
+      // adapter's modelId is already launch-ready as-is.
+      const resolvedModel = resolvedAgentId === "opencode-go" || resolvedAgentId === "opencode-zen"
+        ? toRuntimeModelRef(resolvedAgentId === "opencode-go" ? "go" : "zen", resolvedCandidate.modelId)
+        : resolvedCandidate.modelId;
 
       const runId = newRunId();
       const createdAt = new Date().toISOString();

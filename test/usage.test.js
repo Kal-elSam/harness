@@ -59,6 +59,16 @@ test("usage-store: rejects an unknown provider id — the same closed-list defen
   await assert.rejects(() => writeProviderUsage(homeDir, "not-a-real-provider", {}), /Unknown provider/);
 });
 
+test("REGRESSION: usage-store accepts opencode-go and opencode-zen as real, distinct usage-tracking providers — they share one real execution adapter object but have genuinely separate budgets (Go subscription vs Zen pay-per-token), so real task runs (which use these ids, never bare 'opencode') must never be rejected here", async () => {
+  const homeDir = await harnessHome();
+  await writeProviderUsage(homeDir, "opencode-go", { ...createProviderUsageRecord("opencode-go"), totalTokens: 5 });
+  await writeProviderUsage(homeDir, "opencode-zen", { ...createProviderUsageRecord("opencode-zen"), totalTokens: 7 });
+  assert.equal((await readProviderUsage(homeDir, "opencode-go")).totalTokens, 5);
+  assert.equal((await readProviderUsage(homeDir, "opencode-zen")).totalTokens, 7);
+  const listed = await listProviderUsage(homeDir);
+  assert.deepEqual(new Set(listed.map((r) => r.provider)), new Set(["opencode-go", "opencode-zen"]));
+});
+
 test("usage-store: listProviderUsage returns every real persisted provider record", async () => {
   const homeDir = await harnessHome();
   await writeProviderUsage(homeDir, "codex", { ...createProviderUsageRecord("codex"), totalTokens: 10 });
