@@ -53,14 +53,13 @@ test("a role whose real entry has a null model (no real candidate ever covered i
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);
 });
 
-test("Cursor assigned to a role is a real MANUAL_HANDOFF, never a silent fallback or a fake automatic run", () => {
-  const model = { candidateKey: "cursor::sol", adapterId: "cursor", modelId: "sol", displayName: "GPT-5.6 Sol", accessMode: "manual" };
+test("Cursor assigned to a role is ROUTED, not a manual handoff — Cursor's own execution adapter makes it a real automatic candidate now", () => {
+  const model = { candidateKey: "cursor::sol", adapterId: "cursor", modelId: "sol", displayName: "GPT-5.6 Sol", accessMode: "automatic" };
   const strategy = activeStrategy([{ role: "Builder", model, assignmentSource: "recommended" }]);
   const route = resolveProjectRoute({ role: "Builder", strategy, eligibility: { cursor: { ok: true } } });
-  assert.equal(route.decision, PROJECT_ROUTE_DECISION.MANUAL_HANDOFF);
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED);
   assert.equal(route.provider, "cursor");
   assert.equal(route.model.displayName, "GPT-5.6 Sol");
-  assert.match(route.why, /continue manually/);
 });
 
 test("OpenCode Go assigned to a role is also MANUAL_HANDOFF (launchable:false today)", () => {
@@ -113,10 +112,10 @@ test("a persisted fallback that is itself currently ineligible is never suggeste
   assert.equal(route.suggestedAlternative, null);
 });
 
-test("a persisted fallback assigned to a manual-only provider (Cursor/OpenCode) is never suggested as an automatic alternative", () => {
-  const cursorFallback = { candidateKey: "cursor::sol", adapterId: "cursor", modelId: "sol", displayName: "GPT-5.6 Sol", accessMode: "manual" };
-  const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), fallback: cursorFallback, assignmentSource: "recommended" }]);
-  const route = resolveProjectRoute({ role: "Builder", strategy, eligibility: { claude: { ok: false, reason: "quota" }, cursor: { ok: true } } });
+test("a persisted fallback assigned to a manual-only provider (OpenCode Go) is never suggested as an automatic alternative", () => {
+  const goFallback = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "manual" };
+  const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), fallback: goFallback, assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({ role: "Builder", strategy, eligibility: { claude: { ok: false, reason: "quota" }, "opencode-go": { ok: true } } });
   assert.equal(route.suggestedAlternative, null, "a manual-only fallback would just trade one blocked automatic run for another — never suggested as if it were automatic");
 });
 
@@ -131,8 +130,8 @@ test("ROUTED and MANUAL_HANDOFF results never carry a blockedAssignment or sugge
   assert.equal(routed.blockedAssignment, null);
   assert.equal(routed.suggestedAlternative, null);
 
-  const cursorModel = { candidateKey: "cursor::sol", adapterId: "cursor", modelId: "sol", displayName: "GPT-5.6 Sol", accessMode: "manual" };
-  const manual = resolveProjectRoute({ role: "Builder", strategy: activeStrategy([{ role: "Builder", model: cursorModel, assignmentSource: "recommended" }]), eligibility: { cursor: { ok: true } } });
+  const goModel = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "manual" };
+  const manual = resolveProjectRoute({ role: "Builder", strategy: activeStrategy([{ role: "Builder", model: goModel, assignmentSource: "recommended" }]), eligibility: { "opencode-go": { ok: true } } });
   assert.equal(manual.blockedAssignment, null);
   assert.equal(manual.suggestedAlternative, null);
 });

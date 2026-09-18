@@ -39,7 +39,7 @@ import { matchArtificialAnalysisScore } from "./model-intelligence.js";
  * @property {string} modelName - human-readable clean name, with real effort/context/privacy variant tokens stripped (see stripDisplayVariant). Never invented — always derived from the provider's own real displayName.
  * @property {string} rawDisplayName - the provider's own displayName, completely unmodified — the real evidence modelName was derived from. Whatever stripDisplayVariant peeled off (effort/context/privacy tokens) to produce modelName is still visible here, never a separate field: /models --evidence's own "technical detail" is just this string.
  * @property {string} adapterId - "codex" | "claude" | "cursor" | "opencode-go".
- * @property {"automatic"|"manual"} accessMode - whether Kairo can actually launch this candidate itself right now, or whether it's a real, recommendable option the human runs manually (Cursor always; OpenCode Go until its own empirical automatic-execution proof lands — see this module's own doc).
+ * @property {"automatic"|"manual"} accessMode - whether Kairo can actually launch this candidate itself right now, or whether it's a real, recommendable option the human runs manually (Cursor's own "auto" router model always; OpenCode Go until its own empirical automatic-execution proof lands — see this module's own doc). Named Cursor models are automatic.
  * @property {"scored"|"partial"|"unscored"} evidenceStatus - "scored": AA matched this exact model AND reports at least one of intelligenceIndex/codingIndex. "partial": AA matched it but both composite indices are null (real match, thin evidence). "unscored": no confident AA match at all. Never role-specific — see this module's own doc for why.
  * @property {string|null} lineageKey - real, recognized model family/lineage (see LINEAGE_PARSERS) — null when the modelId doesn't match any recognized, conservative pattern. Never guessed.
  * @property {number|null} generation - a real, comparable version number within that lineage — null whenever lineageKey is null.
@@ -285,12 +285,22 @@ function applyLifecycle(catalog) {
 // automatic-execution proof this session's plan calls for
 // (`opencode run -m opencode-go/<model>`, verifying real provider
 // attribution and Go-only consumption) actually runs and passes — see
-// this module's own doc. Cursor is permanently "manual" by design (see
-// execution-router.js's own checkCandidate: real task execution always
-// refuses it, recommendation never does).
-const ACCESS_MODE_BY_ADAPTER = { codex: "automatic", claude: "automatic", cursor: "manual", "opencode-go": "manual" };
+// this module's own doc. Cursor is "automatic": its own execution
+// adapter (execution-adapters/cursor.js) already builds a real,
+// auditable non-interactive launch (`cursor-agent -p --output-format
+// stream-json`) and parses its structured event stream, the exact same
+// shape as Codex/Claude — Cursor's own docs explicitly support this
+// (headless/CI use is an intended, documented capability, not a hack).
+// The earlier "permanent manual" policy predated this adapter being
+// finished and had no technical or billing reason behind it (unlike
+// OpenCode Go's real, confirmed Go/Zen billing-attribution gap above).
+const ACCESS_MODE_BY_ADAPTER = { codex: "automatic", claude: "automatic", cursor: "automatic", "opencode-go": "manual" };
 
 function resolveAccessMode(adapterId, modelId) {
+  // Cursor's own "auto" router picks whichever underlying model it wants
+  // per request — an opaque, non-deterministic identity Kairo can't
+  // attribute to a real scored model, so THIS one candidate stays manual
+  // even though named Cursor models are now real automatic candidates.
   if (adapterId === "cursor" && modelId === "auto") return "manual";
   return ACCESS_MODE_BY_ADAPTER[adapterId] ?? "manual";
 }
@@ -437,8 +447,9 @@ export function buildRecommendationPool(scoredAll, completeCatalog) {
  * The Automatic Execution Pool: the subset of the Recommendation Pool
  * Kairo can actually launch itself, right now — real routing's own
  * candidate source, never QUALITY/EFFICIENT TEAM's. Requires BOTH a real
- * accessMode of "automatic" (Cursor/OpenCode Go are permanently or
- * currently manual — see ModelCandidateIdentity's own doc) AND real,
+ * accessMode of "automatic" (OpenCode Go is currently manual, and
+ * Cursor's own "auto" router model stays manual — see
+ * ModelCandidateIdentity's own doc) AND real,
  * current eligibility (adapter availability, quota, launchability — the
  * exact same `eligibility` object checkCandidate/execution-router.js
  * already compute, reused here rather than reimplemented). Never

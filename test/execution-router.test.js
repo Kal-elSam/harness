@@ -241,10 +241,15 @@ test("checkCandidate always excludes opencode-zen from real task routing (PAYG r
   assert.match(zen.reason, /PAYG/);
 });
 
-test("checkCandidate excludes cursor from real task routing (requireLaunchable: true, the default) — manual-only, never auto-executed", () => {
+test("checkCandidate treats cursor as a real automatic candidate for real task routing (requireLaunchable: true, the default) — Cursor's own execution adapter builds a real, auditable non-interactive launch", () => {
   const cursor = checkCandidate("cursor", { adapters: [{ id: "cursor", available: true, launchable: true }] });
+  assert.equal(cursor.ok, true, "a genuinely available and launchable Cursor candidate must be real task-routable, exactly like Codex/Claude");
+});
+
+test("checkCandidate rejects cursor for real task routing when it genuinely isn't launchable yet — same launchable gate as codex/claude, no special case", () => {
+  const cursor = checkCandidate("cursor", { adapters: [{ id: "cursor", available: true, launchable: false, reason: "Cursor agent CLI busy" }] });
   assert.equal(cursor.ok, false);
-  assert.match(cursor.reason, /manual-only/);
+  assert.match(cursor.reason, /Cursor agent CLI busy/);
 });
 
 test("checkCandidate rejects opencode-go when any real window is rate-limited, even with other windows healthy", () => {
@@ -282,7 +287,7 @@ test("checkCandidate({requireLaunchable: false}) lets opencode-go through on ava
   assert.equal(forRecommendation.ok, true, "AI TEAM can still recommend a real, accessible Go model");
 });
 
-test("checkCandidate({requireLaunchable: false}) never loosens codex/claude/zen — the exceptions are opencode-go and cursor only", () => {
+test("checkCandidate({requireLaunchable: false}) never loosens codex/claude/zen — the only exception is opencode-go", () => {
   const adapters = [{ id: "codex", available: true, launchable: false, reason: "codex not launchable" }];
   const codex = checkCandidate("codex", { adapters }, { requireLaunchable: false });
   assert.equal(codex.ok, false);
@@ -290,14 +295,10 @@ test("checkCandidate({requireLaunchable: false}) never loosens codex/claude/zen 
   assert.equal(zen.ok, false);
 });
 
-test("checkCandidate({requireLaunchable: false}) lets cursor through on real availability alone — a genuine AI TEAM recommendation, never an auto-execute path", () => {
-  const adapters = [{ id: "cursor", available: true, launchable: true, reason: null }];
-  const strict = checkCandidate("cursor", { adapters });
-  assert.equal(strict.ok, false, "real task routing (the default) must still refuse cursor — manual-only");
-  assert.match(strict.reason, /manual-only/);
-
+test("checkCandidate({requireLaunchable: false}) judges cursor exactly the same way as real task routing now — no more special recommendation-only leniency", () => {
+  const adapters = [{ id: "cursor", available: true, launchable: false, reason: "not launchable yet" }];
   const forRecommendation = checkCandidate("cursor", { adapters }, { requireLaunchable: false });
-  assert.equal(forRecommendation.ok, true, "AI TEAM can recommend a real Cursor model even though Kairo will never auto-execute through it");
+  assert.equal(forRecommendation.ok, false, "cursor no longer gets a pass on launchability just because this is the recommendation surface — it's a real automatic candidate now, judged like codex/claude");
 });
 
 test("checkCandidate({requireLaunchable: false}) still requires cursor to be genuinely available — unavailable is never silently recommended", () => {

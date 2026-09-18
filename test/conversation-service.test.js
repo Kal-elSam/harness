@@ -1175,7 +1175,7 @@ test("snapshot deduplicates in-flight Codex usage probes and honors its TTL", as
 // pipeline.
 
 const AUTOMATIC_MODEL = { candidateKey: "codex::gpt-6-astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
-const MANUAL_MODEL = { candidateKey: "cursor::cursor-model", adapterId: "cursor", modelId: "cursor-model", displayName: "Cursor Model", accessMode: "manual" };
+const MANUAL_MODEL = { candidateKey: "opencode-go::go-model", adapterId: "opencode-go", modelId: "go-model", displayName: "GLM Go Model", accessMode: "manual" };
 const ALTERNATIVE_MODEL = { candidateKey: "claude::claude-opus-5", adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", accessMode: "automatic" };
 
 function activeStrategyWithBuilder({ model, fallback = null, assignmentSource = "recommended", fingerprint = "fp-1" } = {}) {
@@ -1264,16 +1264,16 @@ test("planExecution({role}) returns WAIT_FOR_PROJECT_TEAM for a STALE strategy",
   assert.match(preview.why, /STALE/);
 });
 
-test("planExecution({role}) returns MANUAL_HANDOFF for a Cursor/OpenCode assignment, with no confirmationTarget — never auto-executable", async () => {
+test("planExecution({role}) returns MANUAL_HANDOFF for an OpenCode Go assignment, with no confirmationTarget — never auto-executable", async () => {
   const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Plan" };
   const strategy = activeStrategyWithBuilder({ model: MANUAL_MODEL });
   const service = serviceWithEligibility({
     readPlan: async () => record,
     readProjectStrategy: async () => strategy
-  }, { cursor: { ok: true } });
+  }, { "opencode-go": { ok: true } });
   const preview = await service.planExecution({ cwd: "/repo", taskId: "task-id", role: "Builder" });
   assert.equal(preview.decision, "MANUAL_HANDOFF");
-  assert.equal(preview.provider, "cursor");
+  assert.equal(preview.provider, "opencode-go");
   assert.equal(preview.confirmationTarget, null);
   assert.match(preview.why, /continue manually/);
 });
@@ -1367,6 +1367,31 @@ test("executePlan with a matching confirmationTarget revalidates, reserves, and 
   assert.equal(first.execution.provider, "codex");
   assert.equal(first.execution.state, "starting");
   assert.equal(retry.reused, true, "the same confirmed target must only ever start one run");
+});
+
+test("REGRESSION: executePlan actually launches a real Cursor run — Cursor is a real automatic candidate now, not manual-only", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Approved plan" };
+  const cursorAutomaticModel = { candidateKey: "cursor::gpt-5.6-sol", adapterId: "cursor", modelId: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", accessMode: "automatic" };
+  const strategy = activeStrategyWithBuilder({ model: cursorAutomaticModel });
+  let link = null;
+  const service = serviceWithEligibility({
+    verifyExecution: async () => record,
+    createRunId: () => "run_fixed",
+    readExecution: async () => link,
+    writeExecution: async (_root, _id, value) => { link = value; },
+    updateExecution: async (_root, _id, value) => { link = value; },
+    readProjectStrategy: async () => strategy,
+    startRun: async (input) => {
+      assert.equal(input.agentId, "cursor");
+      assert.equal(input.model, "gpt-5.6-sol");
+      return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
+    }
+  }, { cursor: { ok: true } });
+
+  const confirmationTarget = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "cursor::gpt-5.6-sol" };
+  const result = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
+  assert.equal(result.execution.provider, "cursor");
+  assert.equal(result.execution.state, "starting");
 });
 
 test("executePlan with a confirmationTarget selecting the suggested alternative launches on the alternative, never the blocked assignment", async () => {

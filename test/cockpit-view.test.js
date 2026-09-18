@@ -729,7 +729,7 @@ test("AI TEAM shows real rejection reasons when no provider is eligible", () => 
         claude: { ok: false, reason: "Claude quota nearly exhausted (1% left)" },
         "opencode-go": { ok: false, reason: "opencode-go: not available" },
         "opencode-zen": { ok: false, reason: "OpenCode Zen is excluded from automatic routing (PAYG risk)" },
-        cursor: { ok: false, reason: "Cursor is manual-only, not used for automatic recommendations" }
+        cursor: { ok: false, reason: "Cursor agent CLI \"cursor-agent\" is not on PATH. Install Cursor CLI." }
       }
     }
   });

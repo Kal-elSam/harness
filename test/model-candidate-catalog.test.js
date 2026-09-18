@@ -51,7 +51,10 @@ test("buildCompleteCandidateCatalog includes every real model from every provide
   const codexLow = catalog.find((c) => c.candidateKey === "cursor::gpt-5.3-codex-low");
   assert.equal(codexLow.modelName, "Codex 5.3");
   assert.equal(codexLow.rawDisplayName, "Codex 5.3 Low");
-  assert.equal(codexLow.accessMode, "manual");
+  assert.equal(codexLow.accessMode, "automatic", "a real, named Cursor model is a real automatic candidate now — same as Codex/Claude");
+
+  const cursorAuto = catalog.find((c) => c.candidateKey === "cursor::auto");
+  assert.equal(cursorAuto.accessMode, "manual", "Cursor's own opaque 'auto' router model stays manual — Kairo can't attribute it to a real scored model");
   // No real AA match for this exact id in this fixture — UNSCORED, never guessed.
   assert.equal(codexLow.evidenceStatus, "unscored");
 
@@ -267,9 +270,9 @@ test("buildRecommendationPool keeps scoreAvailableModels' own real fields untouc
   assert.notEqual(candidate.priceInputPerMTok, candidate.resourceCost);
 });
 
-test("buildRecommendationPool keeps real manual-only candidates (Cursor, OpenCode Go) — a caller must never silently drop them", () => {
-  const aa = [{ slug: "gpt-5.3-codex", name: "Codex 5.3", intelligenceIndex: 50, codingIndex: 60 }];
-  const providerCatalogs = [{ adapterId: "cursor", models: [{ id: "gpt-5.3-codex", displayName: "Codex 5.3" }] }];
+test("buildRecommendationPool keeps real manual-only candidates (OpenCode Go, Cursor's own opaque 'auto') — a caller must never silently drop them", () => {
+  const aa = [{ slug: "glm-5.3-flash", name: "GLM 5.3 Flash", intelligenceIndex: 50, codingIndex: 60 }];
+  const providerCatalogs = [{ adapterId: "opencode-go", models: [{ id: "glm-5.3-flash", displayName: "GLM-5.3-Flash" }] }];
   const scoredAll = scoreAvailableModels(providerCatalogs, aa);
   const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
   const pool = buildRecommendationPool(scoredAll, catalog);
@@ -280,25 +283,35 @@ test("buildRecommendationPool keeps real manual-only candidates (Cursor, OpenCod
 test("buildAutomaticExecutionPool requires BOTH accessMode automatic AND real current eligibility — never alters or drops the Recommendation Pool itself", () => {
   const aa = [
     { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 55, codingIndex: 70 },
-    { slug: "gpt-5.3-codex", name: "Codex 5.3", intelligenceIndex: 50, codingIndex: 60 }
+    { slug: "glm-5.3-flash", name: "GLM 5.3 Flash", intelligenceIndex: 50, codingIndex: 60 }
   ];
   const providerCatalogs = [
     { adapterId: "codex", models: [{ id: "gpt-6-astra", displayName: "GPT-6-Astra" }] },
-    { adapterId: "cursor", models: [{ id: "gpt-5.3-codex", displayName: "Codex 5.3" }] }
+    { adapterId: "opencode-go", models: [{ id: "glm-5.3-flash", displayName: "GLM-5.3-Flash" }] }
   ];
   const scoredAll = scoreAvailableModels(providerCatalogs, aa);
   const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
   const recommendationPool = buildRecommendationPool(scoredAll, catalog);
 
-  const bothEligible = { codex: { ok: true }, cursor: { ok: true } };
+  const bothEligible = { codex: { ok: true }, "opencode-go": { ok: true } };
   const automaticPool = buildAutomaticExecutionPool(recommendationPool, bothEligible);
-  // Cursor is manual-only by real design — never appears here even when eligible.
+  // OpenCode Go is manual-only until its own Go/Zen billing-attribution proof lands — never appears here even when eligible.
   assert.deepEqual(automaticPool.map((c) => c.candidateKey), ["codex::gpt-6-astra"]);
   // The Recommendation Pool itself is completely unaffected.
   assert.equal(recommendationPool.length, 2);
 
-  const codexNotEligible = { codex: { ok: false, reason: "quota exhausted" }, cursor: { ok: true } };
+  const codexNotEligible = { codex: { ok: false, reason: "quota exhausted" }, "opencode-go": { ok: true } };
   assert.deepEqual(buildAutomaticExecutionPool(recommendationPool, codexNotEligible), []);
+});
+
+test("buildAutomaticExecutionPool includes a real, named Cursor model once eligible — Cursor is a real automatic candidate now, same as Codex/Claude", () => {
+  const aa = [{ slug: "gpt-5.3-codex", name: "Codex 5.3", intelligenceIndex: 50, codingIndex: 60 }];
+  const providerCatalogs = [{ adapterId: "cursor", models: [{ id: "gpt-5.3-codex", displayName: "Codex 5.3" }] }];
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
+  const recommendationPool = buildRecommendationPool(scoredAll, catalog);
+  const automaticPool = buildAutomaticExecutionPool(recommendationPool, { cursor: { ok: true } });
+  assert.deepEqual(automaticPool.map((c) => c.candidateKey), ["cursor::gpt-5.3-codex"]);
 });
 
 test("INTEGRATION: feeding the Recommendation Pool into buildAiTeam as its `models` argument keeps a real superseded generation from ever winning a role, with no change to buildAiTeam's own ranking logic", () => {

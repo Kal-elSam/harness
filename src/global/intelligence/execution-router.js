@@ -156,40 +156,32 @@ export const LOW_QUOTA_WARN_PERCENT = 20;
  *   have the model via the Go subscription — without claiming Kairo can
  *   safely auto-execute through it yet (see opencode.js's checkAvailability
  *   for why: no per-event way to prove a run didn't silently bill Zen).
- *   It also lets Cursor be named as a real recommendation (e.g. Builder ->
- *   Cursor Composer 2.5) even though Kairo never auto-executes through it —
- *   the user continues that work manually inside the Cursor IDE; this is
- *   permanent for Cursor, not a temporary safety gap like opencode-go's.
- *   Real task routing (selectExecutionProvider/selectAskProvider) always
- *   uses the default `true` — it must never pick something guaranteed to
- *   fail at launch (run-manager.js's own launchable gate would reject it).
+ *   Cursor no longer needs this exemption: its own execution adapter
+ *   (execution-adapters/cursor.js) builds a real, auditable non-interactive
+ *   launch and Cursor's own docs support headless/CI use, so real task
+ *   routing now judges it exactly like Codex/Claude — same launchable gate,
+ *   no special case. Real task routing (selectExecutionProvider/
+ *   selectAskProvider) always uses the default `true` — it must never pick
+ *   something guaranteed to fail at launch (run-manager.js's own
+ *   launchable gate would reject it).
  */
 export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage, cursorManualQuota }, { requireLaunchable = true } = {}) {
   // Zen carries real PAYG/billing risk (see conversation/service.js's
   // capabilities.openCodeExecution) — never an automatic pick, regardless
   // of what its real catalog/benchmarks might otherwise say.
   if (adapterId === "opencode-zen") return { ok: false, reason: "OpenCode Zen is excluded from automatic routing (PAYG risk)" };
-  // Cursor is a deliberate manual-only destination for real task
-  // execution — recommendation and execution are different capabilities
-  // (see model-intelligence.js's role assignments): Kairo can genuinely
-  // recommend a real Cursor model for a role (Builder -> Cursor Composer
-  // 2.5, say), the same requireLaunchable:false exception opencode-go
-  // already gets below, but real task routing (requireLaunchable: true,
-  // the default) always refuses it — the user continues that work
-  // manually inside the Cursor IDE, never an automatic Kairo-launched run.
-  if (adapterId === "cursor" && requireLaunchable) {
-    return { ok: false, reason: "Cursor is manual-only — continue the work in the Cursor IDE, never auto-executed by Kairo" };
-  }
 
   const adapter = findAdapter(adapterId, adapters);
   if (!adapter) return { ok: false, reason: `${adapterId}: no adapter found` };
   if (!adapter.available) return { ok: false, reason: adapter.reason ?? `${adapterId}: not available` };
   // "launchable" means safe for Kairo to invoke programmatically — not the
-  // bar a manual recommendation needs. Cursor gets the same exemption
-  // opencode-go already has: real availability is enough to recommend it,
-  // even though (unlike opencode-go) it's exempt from launchable for a
-  // structurally different reason — it will NEVER be launchable, by design.
-  const launchableRequired = requireLaunchable || (adapterId !== "opencode-go" && adapterId !== "cursor");
+  // bar a manual recommendation needs. OpenCode Go alone keeps the
+  // exemption: real availability is enough to recommend it, even though
+  // Kairo can't safely auto-execute through it yet (unresolved Go/Zen
+  // billing-attribution gap — see opencode.js). Cursor no longer needs
+  // this exemption — its real launchability is judged the same way for
+  // both recommendation and execution now.
+  const launchableRequired = requireLaunchable || adapterId !== "opencode-go";
   if (launchableRequired && !adapter.launchable) return { ok: false, reason: adapter.reason ?? `${adapterId}: not launchable yet` };
 
   if (adapterId === "codex") {
@@ -209,11 +201,10 @@ export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, o
     if (limited) return { ok: false, reason: `OpenCode Go ${limited.name} window is rate-limited` };
   }
   // Cursor: only ever the human's own last word (see this function's own
-  // doc) — never fabricated from a guess. Checked here, after the
-  // requireLaunchable-gated manual-only return above, so it only ever
-  // takes effect on the recommendation path (requireLaunchable: false) —
-  // real task routing already refuses Cursor unconditionally regardless
-  // of quota.
+  // doc) — never fabricated from a guess. Applies to BOTH the
+  // recommendation path AND real task routing now that Cursor is a real
+  // automatic candidate — a human-reported "out of credits" must block
+  // an actual launch, not just a suggestion.
   if (adapterId === "cursor" && cursorManualQuota?.manualExhausted) {
     return { ok: false, reason: cursorManualQuota.reason ?? "Cursor marked out of credits (manual, via /project cursor exhausted)" };
   }

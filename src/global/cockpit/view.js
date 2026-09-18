@@ -1258,7 +1258,7 @@ export class CockpitView {
       `Claude   ${claudeText}`,
       `Go       ${goText}`,
       `Zen      ${zenText}`,
-      `Cursor   ${entry("Cursor", "MANUAL · usage unknown")}`
+      `Cursor   ${entry("Cursor", "READY · usage unknown")}`
     ];
   }
 
