@@ -26,10 +26,18 @@ import { computeRoleEvaluations } from "../intelligence/capability-scoring.js";
 // here would be a menu item Kairo can't actually run. Exported: ASK mode's
 // own real-time routing (service.js's planAsk) needs this exact same real
 // constraint when it tries to route a plain question through a PROJECT
-// TEAM role — a role assigned to, say, opencode-go is a real, valid team
-// assignment, just not one askProvider can call (its real CLI has no
-// portable read-only mode — see quick-ask.js's own askProvider doc).
-export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor"]);
+// TEAM role.
+//
+// Pure CAPABILITY (can askProvider invoke this adapter's CLI at all?),
+// never a cost-risk judgment — OpenCode Zen's real PAYG billing risk is
+// deliberately NOT re-litigated here; that's checkCandidate's own job
+// (it hard-excludes opencode-zen unconditionally), and the real
+// eligibility this module receives already reflects that exclusion. Both
+// opencode-go and opencode-zen genuinely run through the same real
+// askOpencode call (Kairo's own read-only agent — see
+// intelligence/opencode-ask-agent.js), same as real execution routing
+// already treats capability and cost-risk as two separate layers.
+export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor", "opencode-go", "opencode-zen"]);
 
 /**
  * The Bootstrap Analyst as a temporary, read-only WORKFLOW — deliberately

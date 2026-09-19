@@ -3,6 +3,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildClaudeExecutionEnv } from "../runtime/execution-adapters/claude.js";
+import { ensureKairoAskAgent, KAIRO_ASK_AGENT_NAME } from "./opencode-ask-agent.js";
+import { toRuntimeModelRef } from "./transport-registry.js";
 
 // A real, read-only question -> answer call — no task, no plan, no
 // approval gate. This spends real provider usage (unlike the zero-cost
@@ -166,6 +168,98 @@ function askCursor({ question, model, cwd, spawn, timeoutMs, env }) {
   });
 }
 
+// Same real scrubbing principle as the others — OPENCODE_API_KEY is
+// opencode's own documented real auth env var (types.js's
+// OPENCODE_API_KEY_ENV).
+const OPENCODE_SAFE_ENV_KEYS = Object.freeze([
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
+  "TMPDIR", "TERM", "OPENCODE_API_KEY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+  "http_proxy", "https_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS"
+]);
+function buildOpencodeExecutionEnv(sourceEnv = process.env) {
+  const env = Object.create(null);
+  for (const key of OPENCODE_SAFE_ENV_KEYS) {
+    if (sourceEnv[key] != null && sourceEnv[key] !== "") env[key] = sourceEnv[key];
+  }
+  return env;
+}
+
+/**
+ * OpenCode's real CLI has no flag-driven read-only mode (verified via
+ * `opencode run --help`) — its permission model lives only in
+ * opencode.json, so this always runs against Kairo's own real, verified
+ * read-only agent (see opencode-ask-agent.js's own doc — live-verified
+ * both that it genuinely blocks a real write attempt and that
+ * `--agent`/`--model` compose correctly), ensured to exist in the user's
+ * global config before every call (cheap idempotent check — no real
+ * write unless actually missing or drifted).
+ *
+ * Verified live (`opencode run --agent kairo-ask --format json`): the
+ * real NDJSON stream emits `type: "text"` events carrying the real
+ * answer in `part.text` (possibly across multiple steps — accumulated in
+ * order) and a real `type: "error"` event on failure, both handled
+ * per-line as chunks arrive, mirroring the same idle-reset principle as
+ * every other ask call here.
+ * @param {{question:string, model:string|null, cwd:string, spawn:Function, timeoutMs:number, env:object}} args
+ */
+async function askOpencode({ question, model, cwd, spawn, timeoutMs, env, ensureAgent = ensureKairoAskAgent }) {
+  try {
+    await ensureAgent();
+  } catch (error) {
+    return unknown(`could not ensure Kairo's read-only OpenCode agent: ${error?.message ?? error}`);
+  }
+  const args = ["run", "--agent", KAIRO_ASK_AGENT_NAME, "--format", "json"];
+  if (model) args.push("--model", model);
+  args.push(question);
+
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn("opencode", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    } catch (error) {
+      resolve(unknown(error?.message ?? error));
+      return;
+    }
+    let buffer = "";
+    const answerParts = [];
+    let realError = null;
+    let stderr = "";
+    let finished = false;
+    const clearIdleTimer = armIdleTimeout(child, timeoutMs, () => finish(unknown(`opencode run idle-timed out after ${timeoutMs}ms with no output`)));
+    function finish(result) {
+      if (finished) return;
+      finished = true;
+      clearIdleTimer();
+      try { child.kill?.(); } catch { /* best effort */ }
+      resolve(result);
+    }
+    function handleLine(line) {
+      let parsed;
+      try { parsed = JSON.parse(line); } catch { return; }
+      if (parsed?.type === "text" && typeof parsed?.part?.text === "string") {
+        answerParts.push(parsed.part.text);
+      } else if (parsed?.type === "error") {
+        realError = parsed.error?.data?.message ?? parsed.error?.name ?? "opencode run returned a real error event";
+      }
+    }
+    child.stdout?.on("data", (chunk) => {
+      buffer += String(chunk);
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) if (line.trim()) handleLine(line.trim());
+    });
+    child.stderr?.on("data", (chunk) => { stderr += chunk; });
+    child.once?.("error", (error) => finish(unknown(error?.message ?? error)));
+    child.once?.("close", (code) => {
+      if (buffer.trim()) handleLine(buffer.trim());
+      if (realError) return finish(unknown(realError));
+      const answer = answerParts.join("").trim();
+      if (!answer) return finish(unknown(stderr.trim() || `opencode run exited ${code} with no real text output`));
+      finish({ status: "answered", answer, error: null });
+    });
+  });
+}
+
 /** @param {{question:string, model:string|null, cwd:string, spawn:Function, timeoutMs:number, env:object}} args */
 async function askCodex({ question, model, cwd, spawn, timeoutMs, env }) {
   let outDir;
@@ -222,24 +316,39 @@ async function askCodex({ question, model, cwd, spawn, timeoutMs, env }) {
 
 /**
  * Asks the given provider a real, read-only question and returns its real
- * answer text. Supports Codex, Claude, and Cursor today; any other
- * provider yields an honest "unsupported" result rather than a guess.
- * OpenCode (Go/Zen) is deliberately excluded — its real CLI has no
- * portable, CLI-flag-driven read-only mode (verified via `opencode run
- * --help`: `--auto` only ever loosens permissions further, never
- * restricts them), so a real read-only call can't be guaranteed safe
- * across different users' local opencode.json permission configs.
+ * answer text — every real automatic PROJECT TEAM adapter today (Codex,
+ * Claude, Cursor, OpenCode Go, OpenCode Zen); any other provider yields
+ * an honest "unsupported" result rather than a guess. OpenCode's real CLI
+ * has no flag-driven read-only mode (verified via `opencode run --help`:
+ * `--auto` only ever loosens permissions further, never restricts them),
+ * so it always runs against Kairo's own real, verified read-only agent
+ * instead (see opencode-ask-agent.js) — a project/user-config-independent
+ * guarantee, never relying on whatever the local opencode.json happens to
+ * already allow.
  * @param {object} args
- * @param {"codex"|"claude"|"cursor"} args.provider
+ * @param {"codex"|"claude"|"cursor"|"opencode-go"|"opencode-zen"} args.provider
  * @param {string} args.question
  * @param {string|null} [args.model]
  * @param {string} args.cwd
  */
 export async function askProvider({
-  provider, question, model = null, cwd, spawn = defaultSpawn, timeoutMs = DEFAULT_TIMEOUT_MS, sourceEnv = process.env
+  provider, question, model = null, cwd, spawn = defaultSpawn, timeoutMs = DEFAULT_TIMEOUT_MS, sourceEnv = process.env,
+  ensureOpencodeAskAgent = ensureKairoAskAgent
 }) {
   if (provider === "claude") return askClaude({ question, model, cwd, spawn, timeoutMs, env: buildClaudeExecutionEnv(sourceEnv) });
   if (provider === "codex") return askCodex({ question, model, cwd, spawn, timeoutMs, env: buildCodexExecutionEnv(sourceEnv) });
   if (provider === "cursor") return askCursor({ question, model, cwd, spawn, timeoutMs, env: buildCursorExecutionEnv(sourceEnv) });
+  if (provider === "opencode-go" || provider === "opencode-zen") {
+    // The real catalog stores bare model ids (see opencode-models.js's
+    // normalizeModel) — the CLI needs the real, fully-qualified
+    // "opencode-go/<id>" (or "opencode/<id>" for Zen) ref to
+    // deterministically route to the intended product, exactly like
+    // service.js's executePlan already does for real task execution.
+    const runtimeModel = model ? toRuntimeModelRef(provider === "opencode-go" ? "go" : "zen", model) : null;
+    return askOpencode({
+      question, model: runtimeModel, cwd, spawn, timeoutMs, env: buildOpencodeExecutionEnv(sourceEnv),
+      ensureAgent: ensureOpencodeAskAgent
+    });
+  }
   return { status: "unsupported", answer: null, error: `ASK is not supported for provider "${provider}" yet.` };
 }
