@@ -5,6 +5,19 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.28.0 — 2026-09-19 (Kairo Runtime)
+
+Minor release. `/models --verify-access` verifies Claude model entitlement on demand.
+
+### Added
+
+- `/models --verify-access [--refresh]` — sequential, human-triggered Claude
+  entitlement probes with a real cost statement before any spawn. Without
+  `--refresh`, only unverified or TTL-expired models are probed; an all-
+  unverified sweep does not persist evidence.
+- One-line Spanish preflight notice when Claude models still have unverified
+  access (recommendable, never auto-launched).
+
 ## 0.27.0 — 2026-09-19 (Kairo Runtime)
 
 Minor release. Claude model entitlement now gates PROJECT TEAM pools and routes.
