@@ -5,6 +5,20 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.27.0 — 2026-09-19 (Kairo Runtime)
+
+Minor release. Claude model entitlement now gates PROJECT TEAM pools and routes.
+
+### Changed
+
+- Denied Claude models (e.g. Fable 5.1 on Pro with `credits_required`) are
+  excluded from both the recommendation and automatic execution pools —
+  orthogonal to `accessMode`, so a denied model is never mislabeled "manual".
+- Unverified Claude models stay recommendable but are never auto-launchable.
+- Live entitlement also blocks a persisted project-team assignment whose
+  account access is denied or unverified; `snapshot()` still only reads the
+  disk cache (never probes).
+
 ## 0.26.1 — 2026-09-19 (Kairo Runtime)
 
 Patch release. Claude model entitlement probe + cache (no routing change yet).
