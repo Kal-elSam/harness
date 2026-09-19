@@ -52,9 +52,9 @@ Denied models (e.g. Fable 5.1 on Pro) must never enter automatic pools. Humans n
 - [x] INC2-02 `resolveProjectRoute` live entitlement gate (step 3.5)
 - [x] INC2-03 Service plumbing (cache read only; no probe on snapshot)
 - [x] INC2-04 Bootstrap analyzer denied sibling check
-- [ ] INC2-05 Regression tests RED→GREEN + PR/release
-- [ ] INC3-01 `verifyClaudeEntitlements` + `/models --verify-access [--refresh]`
-- [ ] INC3-02 Preflight one-line unverified notice
+- [x] INC2-05 Regression tests RED→GREEN + PR/release
+- [x] INC3-01 `verifyClaudeEntitlements` + `/models --verify-access [--refresh]`
+- [x] INC3-02 Preflight one-line unverified notice
 - [ ] INC3-03 Tests RED→GREEN + PR/release
 - [ ] INC4-01 `explainTeamDecision` + refactor `modelsExplainLines`
 - [ ] INC4-02 `projectTeamEvidenceLines` + availability helper
@@ -73,5 +73,6 @@ Denied models (e.g. Fable 5.1 on Pro) must never enter automatic pools. Humans n
 
 - Created: 2026-09-19
 - INC1-01…05 done (released 0.26.1)
-- INC2-01…04 done on `feat/claude-model-entitlement-inc2` (pools + route gate + service cache-only + bootstrap denied)
-- Next: INC2-05 PR/release, then Increment 3 (verify-access CLI)
+- INC2-01…05 done (released 0.27.0)
+- INC3-01…02 done on `feat/claude-model-entitlement-inc3` (verify-access CLI + preflight notice; tests green locally)
+- Next: INC3-03 PR/release, then Increment 4 (selection explanations + quality leader visibility)

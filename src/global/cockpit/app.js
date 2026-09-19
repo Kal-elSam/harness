@@ -258,7 +258,7 @@ export async function runCockpitApp({
       // blocks with no indication of which command produced which one.
       pushTranscript("user", task);
       if (command === "/help") {
-        pushTranscript("kairo", "Shift+Tab cycles ASK/PLAN/AGENT · /project interactive overlay (or analyze/analyst/approve/refresh/status/cursor exhausted|available subcommands for scripted use) · /plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics) · /why eligibility detail · /clear · /quit");
+        pushTranscript("kairo", "Shift+Tab cycles ASK/PLAN/AGENT · /project interactive overlay (or analyze/analyst/approve/refresh/status/cursor exhausted|available subcommands for scripted use) · /plan <task> force a plan · /usage automatic-provider status (Codex/Claude/Go) · /providers all connections incl. Zen/Cursor (manual) · /models CAPABILITY + EFFICIENT picks (--evidence for raw metrics; --verify-access [--refresh] for Claude entitlement) · /why eligibility detail · /clear · /quit");
       } else if (command === "/usage") {
         for (const line of view.usageLines()) pushTranscript("kairo", line);
       } else if (command === "/providers") {
@@ -271,8 +271,38 @@ export async function runCockpitApp({
         // the plain-language why (capability, efficient alternative,
         // fallback), never raw metrics/percentages/ids/sources. Those
         // stay behind the explicit --evidence flag for technical audit.
-        const flag = task.slice(command.length).trim();
-        const explainLines = flag === "--evidence" ? view.aiTeamDetailLines() : view.modelsExplainLines();
+        // --verify-access [--refresh] is the only path that spawns Claude
+        // entitlement probes (never on snapshot / first poll).
+        const flags = new Set(task.slice(command.length).trim().split(/\s+/).filter(Boolean));
+        if (flags.has("--verify-access")) {
+          const refresh = flags.has("--refresh");
+          editor.disableSubmit = true;
+          editor.setText("");
+          return runAction("Verifying Claude model access", async () => {
+            const summary = await service.verifyClaudeEntitlements({
+              cwd,
+              refresh,
+              beforeProbe: ({ costStatement }) => {
+                pushTranscript("kairo", costStatement);
+              },
+              onProgress: ({ modelId, index, total }) => {
+                view.beginAction(`Verifying Claude access (${index + 1}/${total}): ${modelId}`);
+              }
+            });
+            const allowed = summary.results.filter((r) => r.status === "allowed").length;
+            const denied = summary.results.filter((r) => r.status === "denied").length;
+            const unverified = summary.results.filter((r) => r.status === "unverified").length;
+            if (summary.probed.length === 0) {
+              pushTranscript("kairo", "Claude access already verified for the current catalog (use --refresh to re-probe).");
+            } else {
+              pushTranscript(
+                "kairo",
+                `Claude access check: ${summary.probed.length} probed · ${allowed} allowed · ${denied} denied · ${unverified} unverified${summary.persisted ? " · cache updated" : " · cache unchanged"}.`
+              );
+            }
+          }).finally(() => { editor.disableSubmit = false; });
+        }
+        const explainLines = flags.has("--evidence") ? view.aiTeamDetailLines() : view.modelsExplainLines();
         for (const line of explainLines) pushTranscript("kairo", line);
       } else if (command === "/why") {
         // Drill-down for FIT: which providers were excluded and the exact
@@ -318,6 +348,9 @@ export async function runCockpitApp({
           return runAction("Analyzing project locally (read-only)", async () => {
             const preflight = await service.preflightProject({ cwd });
             view.pendingProjectAnalysis = preflight;
+            if (preflight.unverifiedClaudeNotice) {
+              pushTranscript("kairo", preflight.unverifiedClaudeNotice);
+            }
             if (!preflight.alternatives.length) {
               pushTranscript("kairo", "No real Project Analyst candidate is available right now (ASK only supports Codex/Claude today).");
               return;

@@ -160,6 +160,9 @@ export class ProjectOverlay {
     this.view.beginAction("Reading project evidence locally");
     try {
       this.preflight = await this.service.preflightProject({ cwd: this.cwd });
+      if (this.preflight.unverifiedClaudeNotice) {
+        this.onNarrate?.(this.preflight.unverifiedClaudeNotice);
+      }
       const models = this.preflight.analystCatalog?.models ?? [];
       if (!models.length) {
         this.state = S.NO_ANALYST;
