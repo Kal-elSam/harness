@@ -5,6 +5,23 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.26.0 — 2026-09-19 (Kairo Runtime)
+
+Minor release. ASK is now ready for every real automatic adapter.
+
+### Changed
+
+- ASK can now call OpenCode Go/Zen too — via Kairo's own real,
+  verified read-only agent ("kairo-ask"), idempotently ensured in the
+  user's global `opencode.json` (merged non-destructively). OpenCode's
+  real CLI has no flag-driven read-only mode, so this is what makes a
+  genuinely portable, config-independent guarantee possible. Live-
+  verified: it answers correctly and genuinely refuses to write a file
+  when asked directly.
+- Every real automatic PROJECT TEAM adapter (Codex, Claude, Cursor,
+  OpenCode Go, OpenCode Zen) is now ASK-capable — a role's real
+  assignment routes to ASK regardless of which one it lands on.
+
 ## 0.25.0 — 2026-09-19 (Kairo Runtime)
 
 Minor release. Cursor joins ASK.
