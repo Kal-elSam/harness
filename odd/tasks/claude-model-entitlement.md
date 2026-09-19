@@ -46,11 +46,12 @@ Denied models (e.g. Fable 5.1 on Pro) must never enter automatic pools. Humans n
 - [x] INC1-02 Implement `claude-model-entitlement.js` (classify + probe + sequential batch)
 - [x] INC1-03 Implement `claude-entitlement-store.js` (read/write/resolve/merge + TTL + subscription invalidation)
 - [x] INC1-04 Fixtures + unit tests RED→GREEN for probe and store
-- [ ] INC1-05 PR Increment 1 → CI → merge → release
-- [ ] INC2-01 Catalog identity: `entitlement` + `entitlementReason`; filter pools
-- [ ] INC2-02 `resolveProjectRoute` live entitlement gate (step 3.5)
-- [ ] INC2-03 Service plumbing (cache read only; no probe on snapshot)
-- [ ] INC2-04 Bootstrap analyzer denied sibling check
+- [x] INC1-05 PR Increment 1 → CI → merge → release
+  - PR: https://github.com/Kal-elSam/harness/pull/307 (awaiting CI)
+- [x] INC2-01 Catalog identity: `entitlement` + `entitlementReason`; filter pools
+- [x] INC2-02 `resolveProjectRoute` live entitlement gate (step 3.5)
+- [x] INC2-03 Service plumbing (cache read only; no probe on snapshot)
+- [x] INC2-04 Bootstrap analyzer denied sibling check
 - [ ] INC2-05 Regression tests RED→GREEN + PR/release
 - [ ] INC3-01 `verifyClaudeEntitlements` + `/models --verify-access [--refresh]`
 - [ ] INC3-02 Preflight one-line unverified notice
@@ -71,5 +72,6 @@ Denied models (e.g. Fable 5.1 on Pro) must never enter automatic pools. Humans n
 ## Progress
 
 - Created: 2026-09-19
-- INC1-01…04 done on `feat/claude-model-entitlement-inc1` (1883 tests green)
-- Next: INC1-05 PR/release, then Increment 2
+- INC1-01…05 done (released 0.26.1)
+- INC2-01…04 done on `feat/claude-model-entitlement-inc2` (pools + route gate + service cache-only + bootstrap denied)
+- Next: INC2-05 PR/release, then Increment 3 (verify-access CLI)

@@ -40,6 +40,11 @@ import { resolveProjectRoute } from "./project-router.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
+  DEFAULT_ENTITLEMENT_TTL_MS,
+  readClaudeEntitlementCache,
+  resolveClaudeEntitlements
+} from "../observability/claude-entitlement-store.js";
+import {
   annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam,
   buildEfficientTeam, scoreAvailableModels, summarizeCatalogCoverage
 } from "../intelligence/model-intelligence.js";
@@ -299,6 +304,11 @@ export function createConversationService(deps = {}) {
   // disk (no network call) but still shouldn't re-scan on every 2s poll.
   const huggingFaceLeaderboardTtlMs = deps.huggingFaceLeaderboardTtlMs ?? 6 * 60 * 60_000;
   const telemetryTtlMs = deps.telemetryTtlMs ?? 30_000;
+  // Claude entitlement disk cache is stable for days; subscription auth is
+  // a real CLI spawn (~10s) — cache both so snapshot() polls never re-probe
+  // per-model entitlement (that lives behind /models --verify-access).
+  const claudeEntitlementCacheTtlMs = deps.claudeEntitlementCacheTtlMs ?? 600_000;
+  const claudeSubscriptionAuthTtlMs = deps.claudeSubscriptionAuthTtlMs ?? 10_000;
   const now = deps.now ?? (() => Date.now());
 
   // Shared TTL + in-flight-dedupe cache for both provider usage probes:
@@ -341,6 +351,19 @@ export function createConversationService(deps = {}) {
   const readOpenCodeUsageCached = createCachedProbe(readOpenCodeUsageImpl, opencodeUsageTtlMs);
   const readOpenCodeGoCached = createCachedProbe(readOpenCodeGoImpl, opencodeGoUsageTtlMs);
   const readOpenCodeStatsCached = createCachedProbe(readOpenCodeStatsImpl, opencodeUsageTtlMs);
+  const readClaudeEntitlementCacheImpl = deps.readClaudeEntitlementCache ?? readClaudeEntitlementCache;
+  const readClaudeEntitlementCacheCached = createCachedProbe(
+    () => readClaudeEntitlementCacheImpl(homeDir), claudeEntitlementCacheTtlMs
+  );
+  // Auth spawn is slow; never re-run on every poll. Failures cache as null
+  // so resolveClaudeEntitlements treats subscription as mismatched/absent.
+  const verifyClaudeSubscriptionAuthCached = createCachedProbe(async () => {
+    try {
+      return await verifyClaudeSubscriptionAuthImpl({});
+    } catch {
+      return null;
+    }
+  }, claudeSubscriptionAuthTtlMs);
 
   async function executionFor(projectRoot, taskId) {
     const link = await readExecution(projectRoot, taskId);
@@ -459,11 +482,13 @@ export function createConversationService(deps = {}) {
       // explicit /project analyze or /project refresh.
       result.projectStrategy = await readProjectStrategyImpl(homeDir, projectRoot);
       if (enableProviderProbes) {
-        const [codexCatalog, opencodeGoCatalog, cursorCatalog, aa] = await Promise.all([
+        const [codexCatalog, opencodeGoCatalog, cursorCatalog, aa, entitlementCache, claudeAuth] = await Promise.all([
           readCodexModelsCached(projectRoot, { cwd: projectRoot }),
           readOpenCodeGoModelsCached("global", {}),
           readCursorModelsCached(projectRoot, { cwd: projectRoot }),
-          readArtificialAnalysisModelsCached("global", {})
+          readArtificialAnalysisModelsCached("global", {}),
+          readClaudeEntitlementCacheCached("global", {}),
+          verifyClaudeSubscriptionAuthCached("global", {})
         ]);
         // Same eligibility policy the execution/ask router uses, with one
         // deliberate exception: opencode-go is allowed here even without
@@ -489,6 +514,14 @@ export function createConversationService(deps = {}) {
           if (check.ok) candidates.push(adapterId);
         }
         const claudeCatalog = readClaudeModelsImpl();
+        // Cache-only resolve — never probeClaudeModelEntitlement* from snapshot().
+        const claudeEntitlement = resolveClaudeEntitlements({
+          cache: entitlementCache,
+          subscriptionType: claudeAuth?.subscriptionType ?? null,
+          catalogIds: (claudeCatalog.models ?? []).map((m) => m.id),
+          now: now(),
+          ttlMs: deps.claudeEntitlementTtlMs ?? DEFAULT_ENTITLEMENT_TTL_MS
+        });
         const catalogsByAdapter = {
           codex: codexCatalog?.models ?? [],
           claude: claudeCatalog.models,
@@ -515,7 +548,8 @@ export function createConversationService(deps = {}) {
         // exact same real provider catalogs scoredAllRaw itself came from.
         const completeCandidateCatalog = buildCompleteCandidateCatalog(
           Object.keys(catalogsByAdapter).map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
-          aa.models
+          aa.models,
+          { modelEntitlement: claudeEntitlement }
         );
         // The Recommendation Pool: scoredAllRaw joined with its real
         // identity, with genuinely superseded generations excluded —
@@ -606,6 +640,8 @@ export function createConversationService(deps = {}) {
           status: aa.status, source: aa.source, age: aa.age,
           models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(scored),
           eligibility, coverage, unscoredModels,
+          // Resolved Claude per-model entitlement (cache-only; never probed here).
+          claudeEntitlement,
           // BEST FIT GLOBAL / EFFICIENT GLOBAL: the honest, uncoordinated
           // per-role winner — never cedes a role for portfolio diversity,
           // family concentration, or provider distribution (see
@@ -781,8 +817,8 @@ export function createConversationService(deps = {}) {
       const projectRoot = await root(cwd);
       const profile = await computeProjectProfileImpl({ cwd: projectRoot });
       const snap = await this.snapshot({ cwd: projectRoot });
-      const { scoredAll = [], eligibility = {}, registry = null, providerCapacity = null, unscoredModels = [] } = snap.modelIntelligence ?? {};
-      const candidates = { scoredAll, eligibility, registry, providerCapacity };
+      const { scoredAll = [], eligibility = {}, registry = null, providerCapacity = null, unscoredModels = [], claudeEntitlement = {} } = snap.modelIntelligence ?? {};
+      const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement };
       const alternatives = computeBootstrapAnalystAlternatives(candidates);
       const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, unscoredModels });
       return { profile, alternatives, candidates, analystCatalog, projectRoot };
@@ -826,7 +862,8 @@ export function createConversationService(deps = {}) {
           modelId: analyst.model.modelId,
           deps: {
             askProvider: askProviderImpl, runCodexSandboxedBootstrap: runCodexSandboxedBootstrapImpl, isolationDeps: codexIsolationDeps,
-            verifyClaudeSubscriptionAuth: verifyClaudeSubscriptionAuthImpl, readClaudeModels: readClaudeModelsImpl
+            verifyClaudeSubscriptionAuth: verifyClaudeSubscriptionAuthImpl, readClaudeModels: readClaudeModelsImpl,
+            modelEntitlement: candidates?.claudeEntitlement ?? {}
           }
         });
         const eligibility = await adapter.checkEligibility();
@@ -1007,7 +1044,8 @@ export function createConversationService(deps = {}) {
       const strategy = await readProjectStrategyImpl(homeDir, projectRoot);
       const snap = await this.snapshot({ cwd: projectRoot });
       const eligibility = snap.modelIntelligence?.eligibility ?? {};
-      return resolveProjectRoute({ role, strategy, eligibility });
+      const modelEntitlement = snap.modelIntelligence?.claudeEntitlement ?? {};
+      return resolveProjectRoute({ role, strategy, eligibility, modelEntitlement });
     },
     /**
      * Read-only preview of what executePlan would do right now.

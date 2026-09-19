@@ -179,3 +179,79 @@ test("missing eligibility argument defaults to blocking every provider, never as
   const route = resolveProjectRoute({ role: "Builder", strategy });
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);
 });
+
+test("REGRESSION: resolveProjectRoute blocks ACTIVE strategy when live modelEntitlement says denied, naming the real CLI reason", () => {
+  const strategy = activeStrategy([{ role: "Builder", model: claudeModel({ modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" }), assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({
+    role: "Builder",
+    strategy,
+    eligibility: { claude: { ok: true } },
+    modelEntitlement: {
+      "claude-fable-5-1": {
+        status: "denied",
+        reason: "Credits required to use this model — upgrade your plan"
+      }
+    }
+  });
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);
+  assert.equal(route.blockedAssignment.model.modelId, "claude-fable-5-1");
+  assert.match(route.why, /Credits required to use this model/);
+  assert.match(route.why, /not currently entitled/);
+});
+
+test("REGRESSION: resolveProjectRoute also blocks when live modelEntitlement says unverified, even if provider eligibility is ok", () => {
+  const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({
+    role: "Builder",
+    strategy,
+    eligibility: { claude: { ok: true } },
+    modelEntitlement: { "builder-model": { status: "unverified", reason: null } }
+  });
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);
+  assert.match(route.why, /not currently entitled/);
+});
+
+test("empty modelEntitlement {} does not gate — keeps pre-entitlement callers green", () => {
+  const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({
+    role: "Builder", strategy, eligibility: { claude: { ok: true } }, modelEntitlement: {}
+  });
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED);
+});
+
+test("suggestedAlternative under entitlement block also requires fallback entitlement allowed/not_applicable (or missing key)", () => {
+  const codexFallback = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
+  const deniedClaudeFallback = claudeModel({ modelId: "claude-haiku-4-5", displayName: "Haiku" });
+  const strategyDeniedFallback = activeStrategy([{
+    role: "Builder",
+    model: claudeModel({ modelId: "claude-fable-5-1", displayName: "Fable" }),
+    fallback: deniedClaudeFallback,
+    assignmentSource: "recommended"
+  }]);
+  const blockedFallback = resolveProjectRoute({
+    role: "Builder",
+    strategy: strategyDeniedFallback,
+    eligibility: { claude: { ok: true } },
+    modelEntitlement: {
+      "claude-fable-5-1": { status: "denied", reason: "Credits required" },
+      "claude-haiku-4-5": { status: "denied", reason: "also denied" }
+    }
+  });
+  assert.equal(blockedFallback.suggestedAlternative, null);
+
+  const strategyCodexFallback = activeStrategy([{
+    role: "Builder",
+    model: claudeModel({ modelId: "claude-fable-5-1", displayName: "Fable" }),
+    fallback: codexFallback,
+    assignmentSource: "recommended"
+  }]);
+  const withCodex = resolveProjectRoute({
+    role: "Builder",
+    strategy: strategyCodexFallback,
+    eligibility: { claude: { ok: true }, codex: { ok: true } },
+    modelEntitlement: {
+      "claude-fable-5-1": { status: "denied", reason: "Credits required" }
+    }
+  });
+  assert.equal(withCodex.suggestedAlternative?.model.modelId, "gpt-6-astra");
+});

@@ -10,7 +10,9 @@ import { buildClaudeExecutionEnv } from "../runtime/execution-adapters/claude.js
 export const ENTITLEMENT = Object.freeze({
   ALLOWED: "allowed",
   DENIED: "denied",
-  UNVERIFIED: "unverified"
+  UNVERIFIED: "unverified",
+  // Non-Claude providers: their live/documented catalog IS access proof.
+  NOT_APPLICABLE: "not_applicable"
 });
 
 const DENIED_ERROR_CODES = new Set(["credits_required"]);

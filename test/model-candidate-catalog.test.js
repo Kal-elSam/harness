@@ -5,6 +5,7 @@ import {
   resolveLineage, stripDisplayVariant, stripLineageSuffixes
 } from "../src/global/intelligence/model-candidate-catalog.js";
 import { buildAiTeam, scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
+import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 
 test("stripDisplayVariant strips real trailing effort/context tokens, never touching a model's own real name", () => {
   assert.deepEqual(stripDisplayVariant("Claude Opus 4.7 1M High Thinking Fast"), { modelName: "Claude Opus 4.7", variant: "1M High Thinking Fast" });
@@ -347,4 +348,83 @@ test("INTEGRATION: feeding the Recommendation Pool into buildAiTeam as its `mode
   // ranking never needs to know why; it just never sees the option.
   const teamFromPool = buildAiTeam(recommendationPool, eligibility);
   assert.equal(teamFromPool.find((t) => t.role === "Architect").primary.modelId, "claude-opus-5");
+});
+
+test("Codex/Cursor/OpenCode-Go get entitlement not_applicable and stay in automatic when eligible", () => {
+  const aa = [
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 55, codingIndex: 70 },
+    { slug: "gpt-5.3-codex", name: "Codex 5.3", intelligenceIndex: 50, codingIndex: 60 },
+    { slug: "kimi-k2.7-code", name: "Kimi K2.7 Code", intelligenceIndex: 45, codingIndex: 45 }
+  ];
+  const providerCatalogs = [
+    { adapterId: "codex", models: [{ id: "gpt-6-astra", displayName: "GPT-6-Astra" }] },
+    { adapterId: "cursor", models: [{ id: "gpt-5.3-codex", displayName: "Codex 5.3" }] },
+    { adapterId: "opencode-go", models: [{ id: "kimi-k2.7-code", displayName: "Kimi K2.7 Code" }] }
+  ];
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
+  for (const candidate of catalog) {
+    assert.equal(candidate.entitlement, ENTITLEMENT.NOT_APPLICABLE);
+    assert.equal(candidate.entitlementReason, null);
+  }
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const recommendationPool = buildRecommendationPool(scoredAll, catalog);
+  const automaticPool = buildAutomaticExecutionPool(recommendationPool, {
+    codex: { ok: true }, cursor: { ok: true }, "opencode-go": { ok: true }
+  });
+  assert.deepEqual(
+    automaticPool.map((c) => c.candidateKey).sort(),
+    ["codex::gpt-6-astra", "cursor::gpt-5.3-codex", "opencode-go::kimi-k2.7-code"].sort()
+  );
+});
+
+test("REGRESSION: claude-fable-5-1 with entitlement denied + eligibility.claude={ok:true} appears in NEITHER recommendation nor automatic pool", () => {
+  const aa = [
+    { slug: "claude-fable-5-1", name: "Claude Fable 5.1", intelligenceIndex: 90, codingIndex: 90 },
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 60, codingIndex: 60 }
+  ];
+  const providerCatalogs = [{
+    adapterId: "claude",
+    models: [
+      { id: "claude-fable-5-1", displayName: "Claude Fable 5.1" },
+      { id: "claude-opus-5", displayName: "Claude Opus 5" }
+    ]
+  }];
+  const modelEntitlement = {
+    "claude-fable-5-1": { status: ENTITLEMENT.DENIED, reason: "Credits required to use this model" },
+    "claude-opus-5": { status: ENTITLEMENT.ALLOWED, reason: null }
+  };
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, { modelEntitlement });
+  assert.equal(catalog.find((c) => c.modelId === "claude-fable-5-1").entitlement, ENTITLEMENT.DENIED);
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const recommendationPool = buildRecommendationPool(scoredAll, catalog);
+  const keys = recommendationPool.map((c) => c.candidateKey);
+  assert.ok(!keys.includes("claude::claude-fable-5-1"), "denied Fable must leave recommendation");
+  assert.ok(keys.includes("claude::claude-opus-5"), "allowed sibling stays recommendable");
+  const automaticPool = buildAutomaticExecutionPool(recommendationPool, { claude: { ok: true } });
+  assert.ok(!automaticPool.some((c) => c.modelId === "claude-fable-5-1"));
+  assert.ok(automaticPool.some((c) => c.modelId === "claude-opus-5"), "allowed Claude may auto-launch when eligible");
+});
+
+test("REGRESSION: without entitlement data, all Claude are unverified — in recommendation, none in automatic", () => {
+  const aa = [
+    { slug: "claude-fable-5-1", name: "Claude Fable 5.1", intelligenceIndex: 90, codingIndex: 90 },
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 60, codingIndex: 60 }
+  ];
+  const providerCatalogs = [{
+    adapterId: "claude",
+    models: [
+      { id: "claude-fable-5-1", displayName: "Claude Fable 5.1" },
+      { id: "claude-opus-5", displayName: "Claude Opus 5" }
+    ]
+  }];
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
+  for (const candidate of catalog) {
+    assert.equal(candidate.entitlement, ENTITLEMENT.UNVERIFIED);
+  }
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const recommendationPool = buildRecommendationPool(scoredAll, catalog);
+  assert.equal(recommendationPool.length, 2);
+  assert.ok(recommendationPool.every((c) => c.entitlement === ENTITLEMENT.UNVERIFIED));
+  const automaticPool = buildAutomaticExecutionPool(recommendationPool, { claude: { ok: true } });
+  assert.deepEqual(automaticPool, [], "unverified Claude must never auto-launch even when provider-eligible");
 });

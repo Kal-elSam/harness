@@ -31,8 +31,11 @@
 // anything downstream just because its lineage couldn't be determined.
 
 import { matchArtificialAnalysisScore } from "./model-intelligence.js";
+import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
 
 /**
+ * @typedef {"allowed"|"denied"|"unverified"|"not_applicable"} ModelEntitlementStatus
+ *
  * @typedef {object} ModelCandidateIdentity
  * @property {string} candidateKey - `${adapterId}::${modelId}`, this catalog's stable identity key.
  * @property {string} modelId - the exact provider-reported id — what scoring/execution actually use, never the cleaned name.
@@ -40,12 +43,47 @@ import { matchArtificialAnalysisScore } from "./model-intelligence.js";
  * @property {string} rawDisplayName - the provider's own displayName, completely unmodified — the real evidence modelName was derived from. Whatever stripDisplayVariant peeled off (effort/context/privacy tokens) to produce modelName is still visible here, never a separate field: /models --evidence's own "technical detail" is just this string.
  * @property {string} adapterId - "codex" | "claude" | "cursor" | "opencode-go".
  * @property {"automatic"|"manual"} accessMode - whether Kairo can actually launch this candidate itself right now, or whether it's a real, recommendable option the human runs manually (Cursor's own "auto" router model always; OpenCode Zen always, pending its own Go/Zen billing-attribution proof — see this module's own doc). Named Cursor and OpenCode Go models are automatic.
+ * @property {ModelEntitlementStatus} entitlement - orthogonal to accessMode. Codex/Cursor/OpenCode Go/Zen are `not_applicable` (their catalog IS access proof). Claude comes from the live entitlement map, or `unverified` when that map has no entry.
+ * @property {string|null} entitlementReason - real CLI/reason string when entitlement is denied/unverified with a message; otherwise null.
  * @property {"scored"|"partial"|"unscored"} evidenceStatus - "scored": AA matched this exact model AND reports at least one of intelligenceIndex/codingIndex. "partial": AA matched it but both composite indices are null (real match, thin evidence). "unscored": no confident AA match at all. Never role-specific — see this module's own doc for why.
  * @property {string|null} lineageKey - real, recognized model family/lineage (see LINEAGE_PARSERS) — null when the modelId doesn't match any recognized, conservative pattern. Never guessed.
  * @property {number|null} generation - a real, comparable version number within that lineage — null whenever lineageKey is null.
  * @property {"current"|"superseded"|"unknown"} lifecycle - "superseded" only when a real, strictly newer generation under the SAME lineageKey is also present in this catalog; "current" when it's the newest (or only) generation in a recognized lineage; "unknown" whenever lineageKey is null. An unknown lineage NEVER excludes a candidate from anything downstream.
  * @property {{inputPerMTok: number, outputPerMTok: number}|null} resourceCost - real, provider-reported cost, when the provider actually reports one (OpenCode Go today) — never estimated or carried over from a different model.
  */
+
+const AUTOMATIC_ENTITLEMENTS = new Set([ENTITLEMENT.ALLOWED, ENTITLEMENT.NOT_APPLICABLE]);
+
+/**
+ * Resolves per-model entitlement orthogonal to accessMode.
+ * Non-Claude adapters: not_applicable (catalog presence is access proof).
+ * Claude: from deps.modelEntitlement[modelId], or unverified when missing.
+ * @param {string} adapterId
+ * @param {string} modelId
+ * @param {Record<string, {status?: string, reason?: string|null}>} [modelEntitlement]
+ * @returns {{entitlement: ModelEntitlementStatus, entitlementReason: string|null}}
+ */
+function resolveEntitlement(adapterId, modelId, modelEntitlement = {}) {
+  if (adapterId !== "claude") {
+    return { entitlement: ENTITLEMENT.NOT_APPLICABLE, entitlementReason: null };
+  }
+  const entry = modelEntitlement[modelId];
+  if (!entry || typeof entry !== "object") {
+    return { entitlement: ENTITLEMENT.UNVERIFIED, entitlementReason: null };
+  }
+  const status = entry.status;
+  if (
+    status === ENTITLEMENT.ALLOWED
+    || status === ENTITLEMENT.DENIED
+    || status === ENTITLEMENT.UNVERIFIED
+  ) {
+    return {
+      entitlement: status,
+      entitlementReason: entry.reason == null ? null : String(entry.reason)
+    };
+  }
+  return { entitlement: ENTITLEMENT.UNVERIFIED, entitlementReason: null };
+}
 
 // Real variant tokens observed across the four live provider catalogs
 // this session audited (Cursor's 223-model catalog especially — the only
@@ -332,16 +370,18 @@ function resolveResourceCost(rawModel) {
  * @param {{id: string, displayName?: string}} rawModel
  * @param {Array<object>} aaModels
  * @param {(modelId: string, aaModels: Array<object>) => object|null} matcher
+ * @param {Record<string, {status?: string, reason?: string|null}>} [modelEntitlement]
  * @returns {ModelCandidateIdentity}
  */
-function buildCandidateIdentity(adapterId, rawModel, aaModels, matcher) {
+function buildCandidateIdentity(adapterId, rawModel, aaModels, matcher, modelEntitlement = {}) {
   const modelId = rawModel.id;
   const rawDisplayName = rawModel.displayName ?? modelId;
+  const { entitlement, entitlementReason } = resolveEntitlement(adapterId, modelId, modelEntitlement);
 
   if (adapterId === "cursor" && modelId === "auto") {
     return {
       candidateKey: `${adapterId}::${modelId}`, modelId, modelName: "Cursor Auto", rawDisplayName,
-      adapterId, accessMode: "manual", evidenceStatus: "unscored",
+      adapterId, accessMode: "manual", entitlement, entitlementReason, evidenceStatus: "unscored",
       lineageKey: null, generation: null, lifecycle: "unknown", resourceCost: null
     };
   }
@@ -351,7 +391,8 @@ function buildCandidateIdentity(adapterId, rawModel, aaModels, matcher) {
   const lineage = resolveLineage(modelId);
   return {
     candidateKey: `${adapterId}::${modelId}`, modelId, modelName, rawDisplayName,
-    adapterId, accessMode: resolveAccessMode(adapterId, modelId), evidenceStatus: resolveEvidenceStatus(matched),
+    adapterId, accessMode: resolveAccessMode(adapterId, modelId), entitlement, entitlementReason,
+    evidenceStatus: resolveEvidenceStatus(matched),
     // lifecycle is resolved in a second pass (applyLifecycle, called from
     // buildCompleteCandidateCatalog) once the WHOLE catalog is known —
     // "superseded" is a statement about this candidate relative to its
@@ -372,16 +413,22 @@ function buildCandidateIdentity(adapterId, rawModel, aaModels, matcher) {
  *   same shape model-intelligence.js's scoreAvailableModels takes, e.g.
  *   `[{ adapterId: "codex", models: readCodexModels().models }, ...]`.
  * @param {Array<object>} aaModels - readArtificialAnalysisModels().models
- * @param {{matchArtificialAnalysisScore?: (modelId: string, aaModels: Array<object>) => object|null}} [deps] -
+ * @param {{
+ *   matchArtificialAnalysisScore?: (modelId: string, aaModels: Array<object>) => object|null,
+ *   modelEntitlement?: Record<string, {status?: string, reason?: string|null}>
+ * }} [deps] -
  *   injectable for tests; defaults to model-intelligence.js's real export.
+ *   `modelEntitlement` is Claude-only live entitlement (allowed/denied/unverified);
+ *   missing keys leave Claude as unverified. Non-Claude adapters ignore it.
  * @returns {Array<ModelCandidateIdentity>}
  */
 export function buildCompleteCandidateCatalog(providerCatalogs, aaModels, deps = {}) {
   const matcher = deps.matchArtificialAnalysisScore ?? matchArtificialAnalysisScore;
+  const modelEntitlement = deps.modelEntitlement ?? {};
   const catalog = [];
   for (const { adapterId, models } of providerCatalogs) {
     for (const rawModel of models ?? []) {
-      catalog.push(buildCandidateIdentity(adapterId, rawModel, aaModels, matcher));
+      catalog.push(buildCandidateIdentity(adapterId, rawModel, aaModels, matcher, modelEntitlement));
     }
   }
   return applyLifecycle(catalog);
@@ -435,11 +482,20 @@ export function buildRecommendationPool(scoredAll, completeCatalog) {
     // never excludes: an un-joined candidate is treated as lineage-
     // unknown, exactly like any other real unrecognized lineage.
     if (identity?.lifecycle === "superseded") continue;
+    // Denied entitlement is the same class as superseded: never recommend.
+    // Unverified Claude stays recommendable (human can still pick it);
+    // only automatic launch excludes it (see buildAutomaticExecutionPool).
+    if (identity?.entitlement === ENTITLEMENT.DENIED) continue;
+    const fallbackEntitlement = scored.adapterId === "claude"
+      ? ENTITLEMENT.UNVERIFIED
+      : ENTITLEMENT.NOT_APPLICABLE;
     pool.push({
       ...scored,
       candidateKey,
       modelName: identity?.modelName ?? scored.displayName ?? scored.modelId,
       accessMode: identity?.accessMode ?? "manual",
+      entitlement: identity?.entitlement ?? fallbackEntitlement,
+      entitlementReason: identity?.entitlementReason ?? null,
       evidenceStatus: identity?.evidenceStatus ?? "scored",
       lineageKey: identity?.lineageKey ?? null,
       generation: identity?.generation ?? null,
@@ -459,16 +515,22 @@ export function buildRecommendationPool(scoredAll, completeCatalog) {
  * ModelCandidateIdentity's own doc) AND real,
  * current eligibility (adapter availability, quota, launchability — the
  * exact same `eligibility` object checkCandidate/execution-router.js
- * already compute, reused here rather than reimplemented). Never
- * mutates or filters the Recommendation Pool itself — a manual-only real
- * recommendation (Cursor, say) stays fully visible there; a caller that
- * wants to actually RUN a task must separately produce a real
- * "Continue in Cursor"-style handoff for it, never a silent fallback to
- * a different, automatically-launchable model the human didn't ask for.
+ * already compute, reused here rather than reimplemented) AND entitlement
+ * in {allowed, not_applicable} — denied and unverified Claude never
+ * auto-launch. Never mutates or filters the Recommendation Pool itself —
+ * a manual-only real recommendation (Cursor, say) stays fully visible
+ * there; a caller that wants to actually RUN a task must separately
+ * produce a real "Continue in Cursor"-style handoff for it, never a
+ * silent fallback to a different, automatically-launchable model the
+ * human didn't ask for.
  * @param {Array<RecommendationPoolCandidate>} recommendationPool
  * @param {Record<string, {ok: boolean, reason?: string}>} eligibility - checkCandidate() results per adapterId.
  * @returns {Array<RecommendationPoolCandidate>}
  */
 export function buildAutomaticExecutionPool(recommendationPool, eligibility) {
-  return recommendationPool.filter((candidate) => candidate.accessMode === "automatic" && eligibility[candidate.adapterId]?.ok === true);
+  return recommendationPool.filter((candidate) => (
+    candidate.accessMode === "automatic"
+    && eligibility[candidate.adapterId]?.ok === true
+    && AUTOMATIC_ENTITLEMENTS.has(candidate.entitlement)
+  ));
 }
