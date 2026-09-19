@@ -33,6 +33,22 @@ function buildCodexExecutionEnv(sourceEnv = process.env) {
   return env;
 }
 
+// Same real scrubbing principle as Codex/Claude above — CURSOR_API_KEY/
+// CURSOR_API_ENDPOINT are cursor-agent's own documented real auth env
+// vars (verified via `cursor-agent -p --help`), never a guess.
+const CURSOR_SAFE_ENV_KEYS = Object.freeze([
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
+  "TMPDIR", "TERM", "CURSOR_API_KEY", "CURSOR_API_ENDPOINT", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+  "http_proxy", "https_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS"
+]);
+function buildCursorExecutionEnv(sourceEnv = process.env) {
+  const env = Object.create(null);
+  for (const key of CURSOR_SAFE_ENV_KEYS) {
+    if (sourceEnv[key] != null && sourceEnv[key] !== "") env[key] = sourceEnv[key];
+  }
+  return env;
+}
+
 function unknown(error) {
   return { status: "error", answer: null, error: String(error) };
 }
@@ -102,6 +118,54 @@ function askClaude({ question, model, cwd, spawn, timeoutMs, env }) {
   });
 }
 
+/**
+ * cursor-agent's own real, documented read-only mode (verified via
+ * `cursor-agent -p --help`): "ask: Q&A style for explanations and
+ * questions (read-only)" — never combined with --force/--yolo, which
+ * would grant real write/shell access. A real invalid-model failure
+ * (verified live) exits non-zero with a plain-text error on stderr, no
+ * JSON at all — unlike Claude's/Codex's own failure shapes, so a failed
+ * JSON parse here reports the real stderr text, never a generic guess.
+ * @param {{question:string, model:string|null, cwd:string, spawn:Function, timeoutMs:number, env:object}} args
+ */
+function askCursor({ question, model, cwd, spawn, timeoutMs, env }) {
+  const args = ["-p", question, "--mode", "ask", "--output-format", "json"];
+  if (model) args.push("--model", model);
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn("cursor-agent", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    } catch (error) {
+      resolve(unknown(error?.message ?? error));
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    let finished = false;
+    const clearIdleTimer = armIdleTimeout(child, timeoutMs, () => finish(unknown(`cursor-agent idle-timed out after ${timeoutMs}ms with no output`)));
+    function finish(result) {
+      if (finished) return;
+      finished = true;
+      clearIdleTimer();
+      try { child.kill?.(); } catch { /* best effort */ }
+      resolve(result);
+    }
+    child.stdout?.on("data", (chunk) => { stdout += chunk; });
+    child.stderr?.on("data", (chunk) => { stderr += chunk; });
+    child.once?.("error", (error) => finish(unknown(error?.message ?? error)));
+    child.once?.("close", (code) => {
+      let parsed;
+      try { parsed = JSON.parse(stdout); } catch {
+        return finish(unknown(stderr.trim() || `cursor-agent exited ${code} with no parseable output`));
+      }
+      if (parsed?.is_error === true || typeof parsed?.result !== "string") {
+        return finish(unknown(parsed?.result ?? stderr.trim() ?? "cursor-agent returned no answer"));
+      }
+      finish({ status: "answered", answer: parsed.result, error: null });
+    });
+  });
+}
+
 /** @param {{question:string, model:string|null, cwd:string, spawn:Function, timeoutMs:number, env:object}} args */
 async function askCodex({ question, model, cwd, spawn, timeoutMs, env }) {
   let outDir;
@@ -158,10 +222,15 @@ async function askCodex({ question, model, cwd, spawn, timeoutMs, env }) {
 
 /**
  * Asks the given provider a real, read-only question and returns its real
- * answer text. Supports Codex and Claude today; any other provider yields
- * an honest "unsupported" result rather than a guess.
+ * answer text. Supports Codex, Claude, and Cursor today; any other
+ * provider yields an honest "unsupported" result rather than a guess.
+ * OpenCode (Go/Zen) is deliberately excluded — its real CLI has no
+ * portable, CLI-flag-driven read-only mode (verified via `opencode run
+ * --help`: `--auto` only ever loosens permissions further, never
+ * restricts them), so a real read-only call can't be guaranteed safe
+ * across different users' local opencode.json permission configs.
  * @param {object} args
- * @param {"codex"|"claude"} args.provider
+ * @param {"codex"|"claude"|"cursor"} args.provider
  * @param {string} args.question
  * @param {string|null} [args.model]
  * @param {string} args.cwd
@@ -171,5 +240,6 @@ export async function askProvider({
 }) {
   if (provider === "claude") return askClaude({ question, model, cwd, spawn, timeoutMs, env: buildClaudeExecutionEnv(sourceEnv) });
   if (provider === "codex") return askCodex({ question, model, cwd, spawn, timeoutMs, env: buildCodexExecutionEnv(sourceEnv) });
+  if (provider === "cursor") return askCursor({ question, model, cwd, spawn, timeoutMs, env: buildCursorExecutionEnv(sourceEnv) });
   return { status: "unsupported", answer: null, error: `ASK is not supported for provider "${provider}" yet.` };
 }

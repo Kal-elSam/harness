@@ -28,7 +28,46 @@ test("claude: returns the real answer text from a successful -p call", async () 
   assert.deepEqual(seenArgs[0], ["claude", ["-p", "What is 2+2?", "--output-format", "json", "--restricted", "--strict-mcp-config", "--model", "claude-opus-5"]]);
 });
 
-test("claude and codex both spawn with a real SCRUBBED env, never Kairo's own unfiltered process.env — a real secret (e.g. a provider API key) must never reach the child process", async () => {
+test("cursor: uses the real read-only --mode ask, never combined with --force/--yolo, and returns the real answer text", async () => {
+  const seenArgs = [];
+  const spawn = (cmd, args) => {
+    seenArgs.push([cmd, args]);
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    setTimeout(() => {
+      child.stdout.emit("data", JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "cuatro" }));
+      child.emit("close", 0);
+    }, 0);
+    return child;
+  };
+  const answer = await askProvider({ provider: "cursor", question: "What is 2+2?", model: "gpt-6-astra", cwd: "/repo", spawn });
+  assert.equal(answer.status, "answered");
+  assert.equal(answer.answer, "cuatro");
+  assert.deepEqual(seenArgs[0], ["cursor-agent", ["-p", "What is 2+2?", "--mode", "ask", "--output-format", "json", "--model", "gpt-6-astra"]]);
+  assert.equal(seenArgs[0][1].includes("--force"), false);
+  assert.equal(seenArgs[0][1].includes("--yolo"), false);
+});
+
+test("REGRESSION: cursor's real invalid-model failure (plain stderr text, non-zero exit, no JSON at all) is reported honestly, never as a generic malformed-JSON guess", async () => {
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    setTimeout(() => {
+      child.stderr.emit("data", "Cannot use this model: not-a-real-model. Available models: ...");
+      child.emit("close", 1);
+    }, 0);
+    return child;
+  };
+  const answer = await askProvider({ provider: "cursor", question: "q", model: "not-a-real-model", cwd: "/repo", spawn });
+  assert.equal(answer.status, "error");
+  assert.match(answer.error, /Cannot use this model/);
+});
+
+test("claude, codex, and cursor all spawn with a real SCRUBBED env, never Kairo's own unfiltered process.env — a real secret (e.g. a provider API key) must never reach the child process", async () => {
   let seenEnv;
   await askProvider({
     provider: "claude", question: "q", cwd: "/repo",
@@ -54,6 +93,26 @@ test("claude and codex both spawn with a real SCRUBBED env, never Kairo's own un
     spawn
   });
   assert.equal(seenCodexEnv.REAL_SECRET_TOKEN, undefined);
+
+  let seenCursorEnv;
+  const cursorSpawn = (cmd, args, options) => {
+    seenCursorEnv = options.env;
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    setTimeout(() => {
+      child.stdout.emit("data", JSON.stringify({ result: "ok", is_error: false }));
+      child.emit("close", 0);
+    }, 0);
+    return child;
+  };
+  await askProvider({
+    provider: "cursor", question: "q", cwd: "/repo",
+    sourceEnv: { PATH: "/usr/bin", REAL_SECRET_TOKEN: "sk-should-never-leak" },
+    spawn: cursorSpawn
+  });
+  assert.equal(seenCursorEnv.REAL_SECRET_TOKEN, undefined);
 });
 
 test("claude: fails closed to error on malformed JSON or a missing result field", async () => {
