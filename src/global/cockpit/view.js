@@ -3,6 +3,85 @@ import { buildTaskRows, clampSelection, isActionAvailable } from "./rows.js";
 import { CARD_TONE, cardBottom, cardInnerWidth, cardLine, cardTop, renderPanel as renderPanelWithTheme } from "./card.js";
 import { theme } from "./theme.js";
 import { LOW_QUOTA_WARN_PERCENT } from "../intelligence/execution-router.js";
+import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
+
+/** Plain-language description of what each role optimizes for — mirrors
+ * buildAiTeamRoleDefinitions()'s real compute functions in
+ * model-intelligence.js, never a per-model claim, so it never needs
+ * updating when the underlying models change. */
+export const ROLE_CAPABILITY_BLURB = {
+  Explorer: "general reasoning capability",
+  Architect: "general reasoning capability",
+  Builder: "coding capability",
+  Debugger: "reasoning and terminal-debugging capability",
+  Tester: "coding and terminal-execution capability",
+  Reviewer: "independent reasoning and coding review"
+};
+
+const OVERRIDE_DECISION_TEXT = "Manual override — not the automatic ranking's own pick.";
+
+/**
+ * Pure, human-readable why for one team assignment — from real
+ * `reason` / `decisionEvidence` only, never invented metrics.
+ * Existing `entry.reason` always wins; overrides use a single formulation.
+ * @param {{role?: string, reason?: string|null, assignmentSource?: string|null, decisionEvidence?: object|null}} entry
+ * @returns {string}
+ */
+export function explainTeamDecision(entry) {
+  if (!entry) return `Selected for ${ROLE_CAPABILITY_BLURB.Explorer ?? "this role's capability requirement"}.`;
+  if (entry.assignmentSource === "override") return OVERRIDE_DECISION_TEXT;
+  if (entry.reason) return entry.reason;
+
+  const blurb = ROLE_CAPABILITY_BLURB[entry.role] ?? "this role's capability requirement";
+  const decisionType = entry.decisionEvidence?.decisionType ?? null;
+  if (decisionType === "leader") {
+    const floor = entry.decisionEvidence?.requiredFloor;
+    const risk = entry.decisionEvidence?.riskLevel;
+    if (floor != null && risk != null) {
+      const floorPct = Math.round(floor * 100);
+      return `Ranked first for ${blurb} among eligible candidates — nothing cheaper or faster displaced it at the ${floorPct}% capability floor (${risk}-risk role).`;
+    }
+    return `Ranked first for ${blurb} among eligible candidates.`;
+  }
+  return `Selected for ${blurb}.`;
+}
+
+/**
+ * Live availability for a projectTeam model ref (which has no
+ * `available` flag). Entitlement beats adapter quota/eligibility.
+ * @param {object|null|undefined} model
+ * @param {{eligibility?: Record<string, {ok: boolean, reason?: string}>, claudeEntitlement?: Record<string, {status: string, reason?: string|null}>}} [opts]
+ * @returns {{available: boolean, warning: string|null}}
+ */
+export function resolveAssignmentAvailability(model, { eligibility = {}, claudeEntitlement = {} } = {}) {
+  if (!model) return { available: false, warning: null };
+
+  if (model.adapterId === "claude") {
+    const entitlement = claudeEntitlement[model.modelId];
+    if (entitlement?.status === ENTITLEMENT.DENIED) {
+      const reason = entitlement.reason ?? "denied";
+      return {
+        available: false,
+        warning: `Unavailable — your Claude plan denies this model (${reason})`
+      };
+    }
+    if (entitlement?.status === ENTITLEMENT.UNVERIFIED) {
+      return {
+        available: false,
+        warning: "Unavailable — model entitlement not verified (run /models --verify-access)"
+      };
+    }
+  }
+
+  const check = eligibility[model.adapterId];
+  if (check && check.ok === false) {
+    return {
+      available: false,
+      warning: `Unavailable — ${check.reason ?? "not eligible"}`
+    };
+  }
+  return { available: true, warning: null };
+}
 
 /**
  * A real, early heads-up — never fabricated, never re-deriving its own
@@ -580,8 +659,12 @@ export class CockpitView {
     const modelColumnWidth = this.teamModelColumnWidth([
       strategy.bootstrapAnalyst, strategy.orchestrator, ...projectTeam.map((entry) => entry.model)
     ]);
+    lines.push(theme.fg("muted", "Operational picks: the efficient model among eligible candidates for each role (quality leader shown when it differs)."));
     if (strategy.bootstrapAnalyst) lines.push(`${"Project Analyst".padEnd(18)} ${this.teamRoleLabel(strategy.bootstrapAnalyst, modelColumnWidth)}`);
-    if (strategy.orchestrator) lines.push(`${"Orchestrator".padEnd(18)} ${this.teamRoleLabel(strategy.orchestrator, modelColumnWidth)}`);
+    if (strategy.orchestrator) {
+      lines.push(`${"Orchestrator*".padEnd(18)} ${this.teamRoleLabel(strategy.orchestrator, modelColumnWidth)}`);
+      lines.push(theme.fg("muted", "  * Architect's quality pick — Kairo has no separate orchestrator capability profile yet."));
+    }
     // The real OPERATIONAL team (see buildProjectStrategy's own doc) —
     // never qualityTeam, which is comparative reference only. The overlay
     // (project-overlay.js) already shows projectTeam under this exact
@@ -589,12 +672,40 @@ export class CockpitView {
     // same label was the real, reported mismatch. qualityTeam only
     // remains as a fallback for a strategy persisted before projectTeam
     // existed (see applyProjectTeamOverride's own legacy-entry comment).
+    const eligibility = this.snapshot?.modelIntelligence?.eligibility ?? {};
+    const claudeEntitlement = this.snapshot?.modelIntelligence?.claudeEntitlement ?? {};
     for (const entry of projectTeam) {
       lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.teamRoleLabel(entry.model, modelColumnWidth) : theme.fg("warning", "no eligible option")}`);
+      const extra = this.projectTeamCompactExtraLine(entry, strategy, { eligibility, claudeEntitlement });
+      if (extra) lines.push(theme.fg("muted", `  ${extra}`));
     }
     if (strategy.status === "suggested") lines.push(theme.fg("muted", "Suggested from real project analysis. Use /project approve to activate."));
     if (strategy.status === "stale") lines.push(theme.fg("warning", "Real evidence changed since approval — use /project refresh."));
     return { title: `PROJECT TEAM · ${project} · ${strategy.status.toUpperCase()}`, lines };
+  }
+
+  /**
+   * At most one muted extra line for the compact PROJECT TEAM panel —
+   * only when it adds something the role row itself doesn't already say
+   * (quality leader differs, or a real availability warning). Same pick
+   * + available → null.
+   */
+  projectTeamCompactExtraLine(entry, strategy, { eligibility = {}, claudeEntitlement = {} } = {}) {
+    const availability = resolveAssignmentAvailability(entry?.model, { eligibility, claudeEntitlement });
+    if (availability.warning) return availability.warning;
+    if (!strategy?.qualityTeam || !entry?.model) return null;
+    const qualityEntry = strategy.qualityTeam.find((row) => row.role === entry.role);
+    if (!qualityEntry?.model) return null;
+    const samePick = qualityEntry.model.adapterId === entry.model.adapterId
+      && qualityEntry.model.modelId === entry.model.modelId;
+    if (samePick) return null;
+    const retention = entry.decisionEvidence?.retention;
+    const retentionPct = retention != null ? Math.round(retention * 100) : null;
+    const leaderLabel = this.aiTeamLabel(qualityEntry.model);
+    if (retentionPct != null) {
+      return `Quality leader: ${leaderLabel} — operational pick retains ${retentionPct}%`;
+    }
+    return `Quality leader: ${leaderLabel}`;
   }
 
   /** Contextual key hints — shown in the dashboard's fixed zone, not the scrollable conversation. */
@@ -899,27 +1010,15 @@ export class CockpitView {
     return lines;
   }
 
-/** Plain-language description of what each role optimizes for — mirrors
-   * buildAiTeamRoleDefinitions()'s real compute functions in
-   * model-intelligence.js, never a per-model claim, so it never needs
-   * updating when the underlying models change. */
-  static ROLE_CAPABILITY_BLURB = {
-    Explorer: "general reasoning capability",
-    Architect: "general reasoning capability",
-    Builder: "coding capability",
-    Debugger: "reasoning and terminal-debugging capability",
-    Tester: "coding and terminal-execution capability",
-    Reviewer: "independent reasoning and coding review"
-  };
+  static ROLE_CAPABILITY_BLURB = ROLE_CAPABILITY_BLURB;
 
   /**
    * The default, human-readable `/models` output: per role, the selected
-   * model, why (the real distribution-policy reason when there is one,
-   * else the role's plain-language capability requirement), the
-   * EFFICIENT TEAM alternative when it actually differs, and the real
-   * fallback used if the selection becomes unavailable. Deliberately no
-   * raw metrics, percentages, internal ids, or source names — that detail
-   * moves to /models --evidence (aiTeamDetailLines()) instead.
+   * model, why (via explainTeamDecision — real reason or leader/blurb
+   * formulation), the EFFICIENT TEAM alternative when it actually differs,
+   * and the real fallback used if the selection becomes unavailable.
+   * Deliberately no raw metrics, percentages, internal ids, or source
+   * names — that detail moves to /models --evidence (aiTeamDetailLines()).
    */
   modelsExplainLines() {
     const intel = this.snapshot?.modelIntelligence;
@@ -930,7 +1029,8 @@ export class CockpitView {
     const leaderByRole = Object.fromEntries((intel.globalGuide?.capability ?? []).map((entry) => [entry.role, entry]));
     const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
     const lines = [theme.fg("muted", `Evidence: ${freshness}`)];
-    aiTeam.forEach(({ role, primary, fallback, reason }, index) => {
+    aiTeam.forEach((entry, index) => {
+      const { role, primary, fallback } = entry;
       // A blank string here would get silently dropped once routed through
       // the persisted chat transcript (addTranscript trims and discards
       // empty text) — a visible divider is the only separator that
@@ -938,8 +1038,7 @@ export class CockpitView {
       if (index > 0) lines.push(theme.fg("muted", "·"));
       const availabilityNote = primary.available ? "" : " (currently unavailable)";
       lines.push(`${role.padEnd(10)} ${this.aiTeamLabel(primary)}${availabilityNote}`);
-      const why = reason ?? `Selected for ${CockpitView.ROLE_CAPABILITY_BLURB[role] ?? "this role's capability requirement"}.`;
-      lines.push(theme.fg("muted", `  ${why}`));
+      lines.push(theme.fg("muted", `  ${explainTeamDecision(entry)}`));
 
       // The uncoordinated individual leader (globalGuide) — evidence for
       // "what's honestly best with nothing else in play?", never the
@@ -984,15 +1083,18 @@ export class CockpitView {
    * evidence the Model Intelligence Foundation registry has for that exact
    * model. Never recalculates anything — every number here was already
    * computed during real selection. Shared by AI TEAM and EFFICIENT TEAM
-   * inside aiTeamDetailLines(); never called on its own.
+   * inside aiTeamDetailLines(); also reused by projectTeamEvidenceLines
+   * via the optional `extraLinesFor` hook (never forked).
    * @param {Array<object>} team
+   * @param {{extraLinesFor?: (entry: object) => string[]|null|undefined}} [options]
    */
-  teamEvidenceLines(team) {
+  teamEvidenceLines(team, { extraLinesFor } = {}) {
     const lines = [];
     const corroborationLine = (model) => (model.corroboration ?? [])
       .map((entry) => `${entry.metric}=${entry.value} (${entry.source})`)
       .join(" · ");
-    team.forEach(({ role, primary, fallback, reason, coverage, confidence, decisionEvidence }, index) => {
+    team.forEach((entry, index) => {
+      const { role, primary, fallback, reason, coverage, confidence, decisionEvidence } = entry;
       // A blank string here would get silently dropped once this line is
       // routed through the persisted chat transcript (addTranscript trims
       // and discards empty text) — a visible divider is the only separator
@@ -1067,8 +1169,74 @@ export class CockpitView {
       if (fallback) lines.push(theme.fg("muted", `  fallback ${this.aiTeamLabelWithProvider(fallback)}`));
       else if (!primary.available) lines.push(theme.fg("warning", "  no eligible fallback right now"));
       if (reason) lines.push(theme.fg("muted", `  ${reason}`));
+      if (extraLinesFor) {
+        for (const line of extraLinesFor(entry) ?? []) lines.push(line);
+      }
     });
     return lines;
+  }
+
+  /**
+   * Thin adapter: maps strategy.projectTeam entries onto teamEvidenceLines'
+   * primary/fallback shape, resolving availability explicitly (projectModelRef
+   * has no `available`), and injecting quality-leader + entitlement warnings
+   * via extraLinesFor — never a forked evidence renderer.
+   * @param {object} strategy
+   * @param {{eligibility?: object, claudeEntitlement?: object}} [opts]
+   */
+  projectTeamEvidenceLines(strategy, { eligibility = {}, claudeEntitlement = {} } = {}) {
+    const projectTeam = strategy?.projectTeam ?? [];
+    const hasQualityTeam = Array.isArray(strategy?.qualityTeam);
+    const qualityByRole = new Map((strategy?.qualityTeam ?? []).map((row) => [row.role, row]));
+
+    const team = projectTeam.map((entry) => {
+      const primaryAvailability = resolveAssignmentAvailability(entry.model, { eligibility, claudeEntitlement });
+      const fallbackAvailability = entry.fallback
+        ? resolveAssignmentAvailability(entry.fallback, { eligibility, claudeEntitlement })
+        : null;
+      return {
+        role: entry.role,
+        primary: entry.model
+          ? { ...entry.model, available: primaryAvailability.available }
+          : { adapterId: "?", modelId: "?", displayName: "no eligible option", available: false },
+        fallback: entry.fallback
+          ? { ...entry.fallback, available: fallbackAvailability.available }
+          : null,
+        reason: entry.reason ?? null,
+        decisionEvidence: entry.decisionEvidence ?? null,
+        coverage: entry.coverage,
+        confidence: entry.confidence,
+        _availabilityWarning: primaryAvailability.warning,
+        _qualityEntry: qualityByRole.get(entry.role) ?? null
+      };
+    });
+
+    return this.teamEvidenceLines(team, {
+      extraLinesFor: (mapped) => {
+        const extra = [];
+        if (mapped._availabilityWarning) {
+          extra.push(theme.fg("warning", `  ${mapped._availabilityWarning}`));
+        }
+        if (!hasQualityTeam) return extra;
+        const qualityEntry = mapped._qualityEntry;
+        if (!qualityEntry?.model || !mapped.primary?.modelId) return extra;
+        const samePick = qualityEntry.model.adapterId === mapped.primary.adapterId
+          && qualityEntry.model.modelId === mapped.primary.modelId;
+        if (samePick) {
+          extra.push(theme.fg("muted", "  Also the quality leader for this role."));
+          return extra;
+        }
+        const retention = mapped.decisionEvidence?.retention;
+        const retentionPct = retention != null ? Math.round(retention * 100) : null;
+        const leaderLabel = this.aiTeamLabel(qualityEntry.model);
+        if (retentionPct != null) {
+          extra.push(theme.fg("muted", `  Quality leader: ${leaderLabel} — operational pick retains ${retentionPct}%`));
+        } else {
+          extra.push(theme.fg("muted", `  Quality leader: ${leaderLabel}`));
+        }
+        return extra;
+      }
+    });
   }
 
   /**
