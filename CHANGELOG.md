@@ -5,6 +5,22 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.25.0 — 2026-09-19 (Kairo Runtime)
+
+Minor release. Cursor joins ASK.
+
+### Changed
+
+- ASK can now call Cursor, via its real, documented read-only mode
+  (`cursor-agent --mode ask`, verified live) — never combined with
+  `--force`/`--yolo`. PROJECT TEAM roles assigned to Cursor (Architect/
+  Builder/Debugger in this project's own team) are now real ASK
+  candidates, not just execution candidates.
+- OpenCode (Go/Zen) stays excluded from ASK: verified its CLI has no
+  portable, flag-driven read-only mode — its permission model is
+  project/user-config-driven, so a read-only call can't be guaranteed
+  safe across different installs.
+
 ## 0.24.0 — 2026-09-18 (Kairo Runtime)
 
 Minor release. ASK mode joins PROJECT TEAM.

@@ -151,7 +151,7 @@ export async function readCodexUsage({
     child.once?.("close", () => { if (!finished) finish(unknown("codex app-server closed before rate limits")); });
 
     writeRequest(child, 1, "initialize", {
-      clientInfo: { name: "kairo", title: "Kairo", version: "0.24.0" },
+      clientInfo: { name: "kairo", title: "Kairo", version: "0.25.0" },
       capabilities: {}
     });
   });
