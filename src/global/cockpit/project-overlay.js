@@ -1,6 +1,7 @@
 import { Box, SelectList, Text, Input, Key, matchesKey, fuzzyFilter } from "@earendil-works/pi-tui";
 import { editorTheme, theme } from "./theme.js";
 import { CARD_TONE, cardInnerWidth, renderPanel } from "./card.js";
+import { explainTeamDecision } from "./view.js";
 
 // /project's interactive overlay — the real preflight -> select analyst ->
 // confirm -> analyze -> result -> approve loop, reusing the exact same
@@ -109,6 +110,7 @@ export class ProjectOverlay {
     this.editInput = null;
     this.editSelectList = null;
     this.pendingEditCandidate = null;
+    this.showTeamEvidence = false;
 
     const existing = view.snapshot?.projectStrategy ?? null;
     if (existing?.status === "active") {
@@ -296,16 +298,9 @@ export class ProjectOverlay {
       const overrideNote = entry.assignmentSource === "override" ? theme.fg("accent", " (override)") : "";
       // Role + model are the real primary information here — explicit
       // `text` color, never left to default/muted.
-      // WHY this model was picked — the real, human-readable evidence
-      // buildProjectStrategy already carries (entry.reason, sourced from
-      // efficientTeam's own describeEfficiencyDecision), never a
-      // fabricated justification. An override has no ranking reason of
-      // its own (see applyProjectTeamOverride) — honestly say so instead
-      // of silently reusing the old recommendation's reason for a
-      // different model.
-      const description = entry.assignmentSource === "override"
-        ? "Manual override — not the automatic ranking's own pick."
-        : (entry.reason ?? "");
+      // WHY this model was picked — explainTeamDecision (real reason,
+      // leader formulation, or override text), never an empty row.
+      const description = explainTeamDecision(entry);
       return { value: entry.role, label: theme.fg("text", `${entry.role.padEnd(10)} ${modelText}`) + overrideNote, description };
     });
     this.resultSelectList = new SelectList(items, 6, editorTheme.selectList);
@@ -484,6 +479,13 @@ export class ProjectOverlay {
       // scratch) — distinct from editing one role's model (Enter) or
       // approving the current suggestion (a) — see reanalyze()'s own doc.
       if (data === "r" || data === "R") return void this.reanalyze();
+      // "e" toggles the technical evidence section (kept off by default
+      // so the modal stays short).
+      if (data === "e" || data === "E") {
+        this.showTeamEvidence = !this.showTeamEvidence;
+        this.requestRender();
+        return;
+      }
       this.resultSelectList.handleInput(data);
       this.requestRender();
       return;
@@ -616,16 +618,25 @@ export class ProjectOverlay {
       case S.RESULT: {
         const strategy = this.suggestedStrategy;
         push(theme.bold("Suggested Project Team"));
+        push(theme.fg("muted", "Operational picks: the efficient model among eligible candidates for each role (quality leader shown when it differs)."));
         const choiceNote = strategy.bootstrapAnalystChoice ?? (strategy.bootstrapAnalystSelectionSource === "manual" ? "manual pick" : "recommended");
         push(theme.fg("muted", `Project Analyst: ${choiceNote} — ${this.view.aiTeamLabelWithProvider(strategy.bootstrapAnalyst)}`));
         push(theme.bold("PROJECT TEAM"));
         box.addChild(this.resultSelectList);
+        if (this.showTeamEvidence && typeof this.view.projectTeamEvidenceLines === "function") {
+          const eligibility = this.view.snapshot?.modelIntelligence?.eligibility ?? {};
+          const claudeEntitlement = this.view.snapshot?.modelIntelligence?.claudeEntitlement ?? {};
+          push(theme.fg("muted", "Evidence"));
+          for (const line of this.view.projectTeamEvidenceLines(strategy, { eligibility, claudeEntitlement })) {
+            push(line);
+          }
+        }
         // Quality/Efficient stay real, comparative REFERENCE — muted, and
         // rendered strictly below the real operational PROJECT TEAM list
         // above, never replacing it visually.
         for (const line of teamLines("Quality (reference)", strategy.qualityTeam, this.view, "muted")) push(line);
         for (const line of teamLines("Efficient (reference)", strategy.efficientTeam, this.view, "muted")) push(line);
-        push(theme.fg("muted", "Enter edit role · a approve & activate · r re-analyze from scratch · Esc close without approving"));
+        push(theme.fg("muted", "Enter edit role · a approve & activate · e evidence · r re-analyze from scratch · Esc close without approving"));
         break;
       }
       case S.EDIT_LOADING:

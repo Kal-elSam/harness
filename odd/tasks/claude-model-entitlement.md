@@ -55,11 +55,11 @@ Denied models (e.g. Fable 5.1 on Pro) must never enter automatic pools. Humans n
 - [x] INC2-05 Regression tests RED→GREEN + PR/release
 - [x] INC3-01 `verifyClaudeEntitlements` + `/models --verify-access [--refresh]`
 - [x] INC3-02 Preflight one-line unverified notice
-- [ ] INC3-03 Tests RED→GREEN + PR/release
-- [ ] INC4-01 `explainTeamDecision` + refactor `modelsExplainLines`
-- [ ] INC4-02 `projectTeamEvidenceLines` + availability helper
-- [ ] INC4-03 Overlay / compact panel / honest subtitle / Orchestrator footnote
-- [ ] INC4-04 Tests RED→GREEN + PR/release
+- [x] INC3-03 Tests RED→GREEN + PR/release
+- [x] INC4-01 `explainTeamDecision` + refactor `modelsExplainLines`
+- [x] INC4-02 `projectTeamEvidenceLines` + availability helper
+- [x] INC4-03 Overlay / compact panel / honest subtitle / Orchestrator footnote
+- [x] INC4-04 Tests RED→GREEN + PR/release
 
 ## Acceptance
 
@@ -72,7 +72,6 @@ Denied models (e.g. Fable 5.1 on Pro) must never enter automatic pools. Humans n
 ## Progress
 
 - Created: 2026-09-19
-- INC1-01…05 done (released 0.26.1)
-- INC2-01…05 done (released 0.27.0)
-- INC3-01…02 done on `feat/claude-model-entitlement-inc3` (verify-access CLI + preflight notice; tests green locally)
-- Next: INC3-03 PR/release, then Increment 4 (selection explanations + quality leader visibility)
+- INC1–3 released (0.26.1 / 0.27.0 / 0.28.0)
+- INC4-01…03 done on `feat/claude-model-entitlement-inc4` (1912 tests ×3 green)
+- Next: INC4-04 PR/release 0.29.0

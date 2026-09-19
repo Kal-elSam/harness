@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { CockpitView } from "../src/global/cockpit/view.js";
+import { CockpitView, explainTeamDecision, resolveAssignmentAvailability } from "../src/global/cockpit/view.js";
 
 const ROWS = [
   { taskId: "task-a", planState: "awaiting_approval", approval: "not_decided", execState: "not_started", execActive: false, execMessage: null },
@@ -531,7 +531,8 @@ test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the requi
   assert.equal(title, "PROJECT TEAM · crm · SUGGESTED");
   const joined = lines.join("\n");
   assert.match(joined, /Project Analyst\s+GPT-6 Astra/);
-  assert.match(joined, /Orchestrator\s+Fable 5\.1/);
+  assert.match(joined, /Orchestrator\*\s+Fable 5\.1/);
+  assert.match(joined, /Architect's quality pick — Kairo has no separate orchestrator capability profile yet/);
   assert.match(joined, /Architect\s+Fable 5\.1/);
   assert.match(joined, /Builder\s+GPT-6 Astra/);
   assert.match(joined, /Suggested from real project analysis\. Use \/project approve to activate\./);
@@ -583,7 +584,12 @@ test("REGRESSION: projectTeamPanel shows the real OPERATIONAL projectTeam, never
   const { lines } = view.projectTeamPanel(80);
   const joined = lines.join("\n");
   assert.match(joined, /Architect\s+GPT-6 Astra/, "must show the real operational (overridden) model");
-  assert.doesNotMatch(joined, /Fable 5\.1/, "must never show qualityTeam's comparative-reference model under the operational PROJECT TEAM title");
+  // INC4: when operational ≠ quality, the muted extra line names the quality
+  // leader — that's comparative context, not replacing the role assignment.
+  assert.match(joined, /Quality leader: Fable 5\.1/);
+  const roleAssignmentLine = lines.find((line) => /Architect\s+GPT-6 Astra/.test(stripTerminalSequences(line)));
+  assert.ok(roleAssignmentLine);
+  assert.doesNotMatch(stripTerminalSequences(roleAssignmentLine), /Fable 5\.1/, "the role row itself must still be the operational pick, never qualityTeam's model");
 });
 
 test("projectTeamPanel shows AWAITING_ANALYST — real quality/efficient alternatives — once a real LOCAL_PREFLIGHT ran but before any choice is confirmed", () => {
@@ -1283,4 +1289,188 @@ test("the live action indicator wins over a leftover static statusMessage in bot
   const chatLines = view.chatLines().join("\n");
   assert.match(chatLines, /Approving…/);
   assert.doesNotMatch(chatLines, /stale leftover message/);
+});
+
+// --- Increment 4: selection explanations + quality leader visibility ---
+
+test("INC4: explainTeamDecision for reason:null + decisionType:leader yields a non-empty role-specific description", () => {
+  const text = explainTeamDecision({
+    role: "Builder",
+    reason: null,
+    assignmentSource: "recommended",
+    decisionEvidence: { decisionType: "leader", requiredFloor: 0.8, riskLevel: "medium", retention: 1 }
+  });
+  assert.ok(text && text.trim().length > 0, "leader with null reason must never render an empty description");
+  assert.match(text, /Ranked first for coding capability/);
+  assert.match(text, /80% capability floor/);
+  assert.match(text, /medium-risk role/);
+  assert.doesNotMatch(text, /no cheaper alternative existed/i);
+});
+
+test("INC4: explainTeamDecision degrades when requiredFloor/riskLevel are null", () => {
+  const text = explainTeamDecision({
+    role: "Architect",
+    reason: null,
+    decisionEvidence: { decisionType: "leader", requiredFloor: null, riskLevel: null }
+  });
+  assert.match(text, /Ranked first for general reasoning capability among eligible candidates/);
+  assert.doesNotMatch(text, /capability floor/);
+});
+
+test("INC4: explainTeamDecision prefers existing reason and keeps override text", () => {
+  assert.equal(
+    explainTeamDecision({ role: "Builder", reason: "Chosen for lower real price.", decisionEvidence: { decisionType: "pareto" } }),
+    "Chosen for lower real price."
+  );
+  assert.equal(
+    explainTeamDecision({ role: "Builder", reason: null, assignmentSource: "override", decisionEvidence: null }),
+    "Manual override — not the automatic ranking's own pick."
+  );
+});
+
+test("INC4: when operational pick differs from quality leader, compact panel names the leader and real retention%", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/crm",
+    modelIntelligence: { status: "live", eligibility: { claude: { ok: true }, codex: { ok: true } }, claudeEntitlement: {} },
+    projectStrategy: {
+      status: "suggested",
+      bootstrapAnalyst: null,
+      orchestrator: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" },
+      qualityTeam: [{ role: "Builder", model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, reason: null }],
+      projectTeam: [{
+        role: "Builder",
+        model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" },
+        fallback: null,
+        reason: null,
+        assignmentSource: "recommended",
+        decisionEvidence: { decisionType: "pareto", retention: 0.93, requiredFloor: 0.8, riskLevel: "medium", savings: null }
+      }]
+    }
+  });
+  const { lines } = view.projectTeamPanel(80);
+  const joined = lines.join("\n");
+  assert.match(joined, /Builder\s+GPT-6 Astra/);
+  assert.match(joined, /Quality leader: Fable 5\.1/);
+  assert.match(joined, /retains 93%/);
+  assert.match(joined, /Orchestrator\*/);
+  assert.match(joined, /Architect's quality pick — Kairo has no separate orchestrator capability profile yet/);
+  assert.match(joined, /Operational picks: the efficient model among eligible candidates for each role \(quality leader shown when it differs\)/);
+});
+
+test("INC4: same pick + available yields no muted extra line on the compact panel", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/crm",
+    modelIntelligence: { status: "live", eligibility: { claude: { ok: true } }, claudeEntitlement: { "claude-fable-5-1": { status: "allowed", reason: null } } },
+    projectStrategy: {
+      status: "active",
+      bootstrapAnalyst: null,
+      orchestrator: null,
+      qualityTeam: [{ role: "Builder", model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, reason: null }],
+      projectTeam: [{
+        role: "Builder",
+        model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1", accessMode: "automatic" },
+        reason: null,
+        assignmentSource: "recommended",
+        decisionEvidence: { decisionType: "leader", retention: 1, requiredFloor: 0.8, riskLevel: "medium" }
+      }]
+    }
+  });
+  const roleLines = view.projectTeamPanel(80).lines.filter((line) => /Builder/.test(stripTerminalSequences(line)));
+  assert.equal(roleLines.length, 1, "same pick + available must not add a muted extra line under the role");
+});
+
+test("INC4: unverified entitlement shows its availability warning on the compact panel", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/crm",
+    modelIntelligence: {
+      status: "live",
+      eligibility: { claude: { ok: true } },
+      claudeEntitlement: { "claude-fable-5-1": { status: "unverified", reason: null } }
+    },
+    projectStrategy: {
+      status: "active",
+      bootstrapAnalyst: null,
+      orchestrator: null,
+      qualityTeam: [{ role: "Builder", model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, reason: null }],
+      projectTeam: [{
+        role: "Builder",
+        model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1", accessMode: "automatic" },
+        reason: null,
+        assignmentSource: "recommended",
+        decisionEvidence: { decisionType: "leader", retention: 1, requiredFloor: 0.8, riskLevel: "medium" }
+      }]
+    }
+  });
+  const joined = view.projectTeamPanel(80).lines.join("\n");
+  assert.match(joined, /Unavailable — model entitlement not verified \(run \/models --verify-access\)/);
+});
+
+test("INC4: legacy strategy without qualityTeam does not break the compact panel", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/crm",
+    modelIntelligence: { status: "live", eligibility: {}, claudeEntitlement: {} },
+    projectStrategy: {
+      status: "suggested",
+      bootstrapAnalyst: null,
+      orchestrator: null,
+      projectTeam: [{
+        role: "Architect",
+        model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" },
+        reason: null,
+        assignmentSource: "recommended",
+        decisionEvidence: { decisionType: "leader", requiredFloor: null, riskLevel: null }
+      }]
+    }
+  });
+  const { title, lines } = view.projectTeamPanel(80);
+  assert.equal(title, "PROJECT TEAM · crm · SUGGESTED");
+  const joined = lines.join("\n");
+  assert.match(joined, /Architect\s+GPT-6 Astra/);
+  assert.doesNotMatch(joined, /Quality leader/);
+  assert.doesNotThrow(() => view.projectTeamEvidenceLines(view.snapshot.projectStrategy, {}));
+});
+
+test("INC4: resolveAssignmentAvailability — entitlement beats adapter ineligibility; denied uses real reason", () => {
+  const model = { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" };
+  const denied = resolveAssignmentAvailability(model, {
+    eligibility: { claude: { ok: false, reason: "quota exhausted" } },
+    claudeEntitlement: { "claude-fable-5-1": { status: "denied", reason: "credits_required" } }
+  });
+  assert.equal(denied.available, false);
+  assert.match(denied.warning, /your Claude plan denies this model \(credits_required\)/);
+  assert.doesNotMatch(denied.warning, /quota exhausted/);
+
+  const ineligible = resolveAssignmentAvailability(
+    { adapterId: "codex", modelId: "gpt-6-astra" },
+    { eligibility: { codex: { ok: false, reason: "rate limited" } }, claudeEntitlement: {} }
+  );
+  assert.equal(ineligible.available, false);
+  assert.equal(ineligible.warning, "Unavailable — rate limited");
+});
+
+test("INC4: projectTeamEvidenceLines names quality leader when it differs and retains real retention%", () => {
+  const { view } = makeView();
+  const strategy = {
+    qualityTeam: [{ role: "Builder", model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, reason: null }],
+    projectTeam: [{
+      role: "Builder",
+      model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" },
+      fallback: null,
+      reason: "Retains ~93% of QUALITY's real capability — chosen for lower real price.",
+      decisionEvidence: {
+        decisionType: "pareto", retention: 0.93, requiredFloor: 0.8, riskLevel: "medium",
+        coverage: {}, confidence: "medium", isProvisional: false, savings: null
+      }
+    }]
+  };
+  const lines = view.projectTeamEvidenceLines(strategy, {
+    eligibility: { claude: { ok: true }, codex: { ok: true } },
+    claudeEntitlement: {}
+  }).join("\n");
+  assert.match(lines, /Quality leader: Fable 5\.1 — operational pick retains 93%/);
+  assert.match(lines, /retention 93%/);
 });

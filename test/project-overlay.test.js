@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ProjectOverlay, PROJECT_OVERLAY_STATE as S, openProjectOverlay } from "../src/global/cockpit/project-overlay.js";
+import { CockpitView, explainTeamDecision } from "../src/global/cockpit/view.js";
 
 const ENTER = "\r";
 const ESCAPE = "\x1b";
@@ -699,4 +700,149 @@ test("REGRESSION: a real mouse click on a PROJECT TEAM row reaches the real Sele
 test("ProjectOverlay.handleMouse returns undefined harmlessly before any real render() has happened", () => {
   const overlay = new ProjectOverlay({ service: makePreflightService(), view: makeFakeView(), cwd: "/repo", onClose: () => {} });
   assert.equal(overlay.handleMouse({ type: "click", button: "left", x: 4, y: 4, screenX: 4, screenY: 4, width: 76, height: 1, shift: false, alt: false, ctrl: false }), undefined);
+});
+
+// --- Increment 4: non-empty descriptions + quality leader + evidence toggle ---
+
+function makeInc4View(snapshot = {}) {
+  const view = new CockpitView({
+    actions: {
+      onShowPlan() {}, onApprove() {}, onReject() {}, onRequestExecute() {},
+      onExecute() {}, onCancel() {}, onRefresh() {}, onQuit() {}
+    },
+    requestRender: () => {}
+  });
+  view.setSnapshot(snapshot);
+  return view;
+}
+
+test("INC4: RESULT row with reason:null + decisionType:leader shows a non-empty role-specific description", async () => {
+  const projectTeam = [{
+    role: "Builder",
+    model: { candidateKey: "codex::gpt-6-astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" },
+    fallback: null,
+    reason: null,
+    assignmentSource: "recommended",
+    decisionEvidence: { decisionType: "leader", requiredFloor: 0.8, riskLevel: "medium", retention: 1 },
+    recommendedAssignment: { model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" }, fallback: null, decisionEvidence: { decisionType: "leader" }, reason: null },
+    overrideEvidence: null
+  }];
+  const service = makePreflightService();
+  const originalRun = service.runBootstrapAnalysis.bind(service);
+  service.runBootstrapAnalysis = async (args) => {
+    const strategy = await originalRun(args);
+    strategy.projectTeam = projectTeam;
+    strategy.qualityTeam = [{ role: "Builder", model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" }, reason: null }];
+    return strategy;
+  };
+  const overlay = new ProjectOverlay({ service, view: makeInc4View(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  const description = explainTeamDecision(projectTeam[0]);
+  assert.ok(description.trim().length > 0);
+  assert.match(description, /Ranked first for coding capability/);
+  const lines = overlay.render(76).join("\n");
+  // SelectList descriptions are width-clipped in the modal — match the
+  // distinctive prefix that still proves explainTeamDecision was wired in.
+  assert.match(lines, /Ranked first for coding/);
+});
+
+test("INC4: when pick differs from quality leader, overlay names the leader and real retention%", async () => {
+  const qualityModel = { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" };
+  const operationalModel = { candidateKey: "codex::gpt-6-astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
+  const projectTeam = [{
+    role: "Builder",
+    model: operationalModel,
+    fallback: null,
+    reason: "Retains ~93% of QUALITY's real capability — chosen for lower real price.",
+    assignmentSource: "recommended",
+    decisionEvidence: { decisionType: "pareto", retention: 0.93, requiredFloor: 0.8, riskLevel: "medium", coverage: {}, confidence: "medium", isProvisional: false, savings: null },
+    recommendedAssignment: { model: operationalModel, fallback: null, decisionEvidence: { decisionType: "pareto", retention: 0.93 }, reason: "Retains ~93% of QUALITY's real capability — chosen for lower real price." },
+    overrideEvidence: null
+  }];
+  const service = makePreflightService();
+  const originalRun = service.runBootstrapAnalysis.bind(service);
+  service.runBootstrapAnalysis = async (args) => {
+    const strategy = await originalRun(args);
+    strategy.projectTeam = projectTeam;
+    strategy.qualityTeam = [{ role: "Builder", model: qualityModel, reason: null }];
+    return strategy;
+  };
+  const view = makeInc4View({
+    modelIntelligence: { status: "live", eligibility: { claude: { ok: true }, codex: { ok: true } }, claudeEntitlement: {} }
+  });
+  const overlay = new ProjectOverlay({ service, view, cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput("e");
+  const lines = overlay.render(76).join("\n");
+  assert.match(lines, /Quality leader: Fable 5\.1/);
+  assert.match(lines, /retains 93%/);
+  assert.match(lines, /Operational picks: the efficient model among eligible candidates/);
+});
+
+test("INC4: unverified projectTeam entry shows its availability warning in evidence", async () => {
+  const model = { candidateKey: "claude::claude-fable-5-1", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1", accessMode: "automatic" };
+  const projectTeam = [{
+    role: "Builder", model, fallback: null, reason: null, assignmentSource: "recommended",
+    decisionEvidence: { decisionType: "leader", requiredFloor: 0.8, riskLevel: "medium", retention: 1 },
+    recommendedAssignment: { model, fallback: null, decisionEvidence: { decisionType: "leader" }, reason: null },
+    overrideEvidence: null
+  }];
+  const service = makePreflightService();
+  const originalRun = service.runBootstrapAnalysis.bind(service);
+  service.runBootstrapAnalysis = async (args) => {
+    const strategy = await originalRun(args);
+    strategy.projectTeam = projectTeam;
+    strategy.qualityTeam = [{ role: "Builder", model, reason: null }];
+    return strategy;
+  };
+  const view = makeInc4View({
+    modelIntelligence: {
+      status: "live",
+      eligibility: { claude: { ok: true } },
+      claudeEntitlement: { "claude-fable-5-1": { status: "unverified", reason: null } }
+    }
+  });
+  const overlay = new ProjectOverlay({ service, view, cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput("e");
+  const lines = overlay.render(76).join("\n");
+  // Modal width wraps the warning across lines — match the distinctive parts.
+  assert.match(lines, /model entitlement not verified/);
+  assert.match(lines, /verify-access/);
+});
+
+test("INC4: legacy strategy without qualityTeam does not break RESULT evidence toggle", async () => {
+  const model = { candidateKey: "codex::gpt-6-astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
+  const projectTeam = [{
+    role: "Architect", model, fallback: null, reason: null, assignmentSource: "recommended",
+    decisionEvidence: { decisionType: "leader", requiredFloor: null, riskLevel: null },
+    recommendedAssignment: { model, fallback: null, decisionEvidence: { decisionType: "leader" }, reason: null },
+    overrideEvidence: null
+  }];
+  const service = makePreflightService();
+  const originalRun = service.runBootstrapAnalysis.bind(service);
+  service.runBootstrapAnalysis = async (args) => {
+    const strategy = await originalRun(args);
+    strategy.projectTeam = projectTeam;
+    delete strategy.qualityTeam;
+    return strategy;
+  };
+  const overlay = new ProjectOverlay({ service, view: makeInc4View(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  assert.doesNotThrow(() => overlay.handleInput("e"));
+  const lines = overlay.render(76).join("\n");
+  assert.match(lines, /Architect/);
+  assert.doesNotMatch(lines, /Quality leader/);
 });
