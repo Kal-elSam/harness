@@ -202,8 +202,79 @@ test("codex: fails closed to error when the output file is never written", async
   assert.equal(answer.status, "error");
 });
 
+function fakeOpencodeSpawn(ndjsonLines) {
+  return () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    setTimeout(() => {
+      child.stdout.emit("data", ndjsonLines.map((line) => JSON.stringify(line)).join("\n") + "\n");
+      child.emit("close", 0);
+    }, 0);
+    return child;
+  };
+}
+
+test("opencode-go: ensures the real read-only agent first, then runs --agent kairo-ask with the real fully-qualified model ref, accumulating real text events into the answer", async () => {
+  const ensureCalls = [];
+  const seenArgs = [];
+  const answer = await askProvider({
+    provider: "opencode-go", question: "What is this project about?", model: "kimi-k3", cwd: "/repo",
+    ensureOpencodeAskAgent: async () => { ensureCalls.push(true); },
+    spawn: (cmd, args) => {
+      seenArgs.push([cmd, args]);
+      return fakeOpencodeSpawn([
+        { type: "step_start" },
+        { type: "text", part: { type: "text", text: "It orchestrates " } },
+        { type: "text", part: { type: "text", text: "Codex/Claude/OpenCode." } },
+        { type: "step_finish" }
+      ])();
+    }
+  });
+  assert.equal(ensureCalls.length, 1, "the real read-only agent must be ensured before every real opencode call");
+  assert.equal(answer.status, "answered");
+  assert.equal(answer.answer, "It orchestrates Codex/Claude/OpenCode.");
+  assert.deepEqual(seenArgs[0], ["opencode", ["run", "--agent", "kairo-ask", "--format", "json", "--model", "opencode-go/kimi-k3", "What is this project about?"]]);
+});
+
+test("opencode-zen: the real fully-qualified model ref uses the 'opencode/' prefix, never 'opencode-go/'", async () => {
+  const seenArgs = [];
+  await askProvider({
+    provider: "opencode-zen", question: "q", model: "kimi-k3", cwd: "/repo",
+    ensureOpencodeAskAgent: async () => {},
+    spawn: (cmd, args) => { seenArgs.push([cmd, args]); return fakeOpencodeSpawn([{ type: "text", part: { type: "text", text: "ok" } }])(); }
+  });
+  assert.ok(seenArgs[0][1].includes("opencode/kimi-k3"));
+  assert.equal(seenArgs[0][1].includes("opencode-go/kimi-k3"), false);
+});
+
+test("REGRESSION: a real opencode error event is reported honestly, never silently dropped in favor of whatever partial text arrived first", async () => {
+  const answer = await askProvider({
+    provider: "opencode-go", question: "q", model: "kimi-k3", cwd: "/repo",
+    ensureOpencodeAskAgent: async () => {},
+    spawn: () => fakeOpencodeSpawn([
+      { type: "error", error: { name: "APIError", data: { message: "Upstream request failed: quota exceeded" } } }
+    ])()
+  });
+  assert.equal(answer.status, "error");
+  assert.match(answer.error, /quota exceeded/);
+});
+
+test("REGRESSION: if ensuring the real read-only agent itself fails, opencode is never spawned at all", async () => {
+  let spawnCalled = false;
+  const answer = await askProvider({
+    provider: "opencode-go", question: "q", model: "kimi-k3", cwd: "/repo",
+    ensureOpencodeAskAgent: async () => { throw new Error("disk full"); },
+    spawn: () => { spawnCalled = true; return fakeOpencodeSpawn([{ type: "text", part: { type: "text", text: "ok" } }])(); }
+  });
+  assert.equal(answer.status, "error");
+  assert.match(answer.error, /disk full/);
+  assert.equal(spawnCalled, false, "never spawn a real opencode process if Kairo can't first guarantee it's read-only");
+});
+
 test("an unsupported provider yields an honest 'unsupported' result, never a guess", async () => {
-  const result = await askProvider({ provider: "opencode-go", question: "q", cwd: "/repo" });
+  const result = await askProvider({ provider: "some-future-provider", question: "q", cwd: "/repo" });
   assert.equal(result.status, "unsupported");
   assert.match(result.error, /not supported/);
 });

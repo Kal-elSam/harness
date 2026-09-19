@@ -49,18 +49,18 @@ test("computeBootstrapAnalystAlternatives only offers providers Kairo can actual
   assert.ok(alternatives.some((alt) => alt.choice === "quality"));
 });
 
-test("computeBootstrapAnalystAlternatives never offers a real leader Kairo can't actually invoke read-only (e.g. opencode-go)", () => {
+test("computeBootstrapAnalystAlternatives never offers a real leader Kairo can't actually invoke read-only", () => {
   const scoredAll = scoreAvailableModels([
-    { adapterId: "opencode-go", models: [{ id: "go-model" }] },
+    { adapterId: "future-adapter", models: [{ id: "future-model" }] },
     { adapterId: "codex", models: [{ id: "codex-model" }] }
   ], [
-    { slug: "go-model", name: "Go Model", intelligenceIndex: 99, codingIndex: 10, mathIndex: null },
+    { slug: "future-model", name: "Future Model", intelligenceIndex: 99, codingIndex: 10, mathIndex: null },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 10, codingIndex: 99, mathIndex: null }
   ]);
   const alternatives = computeBootstrapAnalystAlternatives({
-    scoredAll, eligibility: { "opencode-go": { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null
+    scoredAll, eligibility: { "future-adapter": { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null
   });
-  assert.ok(alternatives.every((alt) => alt.model.adapterId !== "opencode-go"), "opencode-go leads reasoning but ASK doesn't support it — must never be offered");
+  assert.ok(alternatives.every((alt) => alt.model.adapterId !== "future-adapter"), "future-adapter leads reasoning but ASK doesn't support it — must never be offered");
 });
 
 test("BOOTSTRAP_ANALYST_PROFILE is a workflow shape, not a registered team role — reasoning required, instructionFollowing optional", () => {
@@ -89,7 +89,7 @@ test("computeBootstrapAnalystCatalog includes real unscored candidates (no AA ma
     ...candidates,
     unscoredModels: [
       { adapterId: "codex", modelId: "gpt-6-experimental", displayName: "GPT-6 Experimental" },
-      { adapterId: "opencode-go", modelId: "some-go-model", displayName: "Should Be Excluded" }
+      { adapterId: "future-adapter", modelId: "some-future-model", displayName: "Should Be Excluded" }
     ]
   });
   const unscored = catalog.models.filter((model) => model.evidenceStatus === "unscored");
@@ -98,19 +98,24 @@ test("computeBootstrapAnalystCatalog includes real unscored candidates (no AA ma
   assert.deepEqual(unscored[0].recommendationTags, []);
 });
 
-test("computeBootstrapAnalystCatalog never offers Cursor/OpenCode as automatic analyst candidates, scored or unscored", () => {
+test("computeBootstrapAnalystCatalog never offers a real adapter askProvider can't actually invoke, scored or unscored", () => {
+  // "future-adapter" stands in for whatever real adapter Kairo might add
+  // next but hasn't wired into askProvider yet — every adapter Kairo can
+  // actually launch automatically today (Codex, Claude, Cursor, OpenCode
+  // Go, OpenCode Zen) is already ask-capable (ASK_SUPPORTED_ADAPTERS), so
+  // this proves the real filter logic itself, not a specific exclusion.
   const scoredAll = scoreAvailableModels([
-    { adapterId: "opencode-go", models: [{ id: "go-model" }] },
+    { adapterId: "future-adapter", models: [{ id: "future-model" }] },
     { adapterId: "codex", models: [{ id: "codex-model" }] }
   ], [
-    { slug: "go-model", name: "Go Model", intelligenceIndex: 99, codingIndex: 10, mathIndex: null },
+    { slug: "future-model", name: "Future Model", intelligenceIndex: 99, codingIndex: 10, mathIndex: null },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 10, codingIndex: 99, mathIndex: null }
   ]);
   const catalog = computeBootstrapAnalystCatalog({
-    scoredAll, eligibility: { "opencode-go": { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null,
-    unscoredModels: [{ adapterId: "opencode-go", modelId: "another-go-model", displayName: "Another Go Model" }]
+    scoredAll, eligibility: { "future-adapter": { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null,
+    unscoredModels: [{ adapterId: "future-adapter", modelId: "another-future-model", displayName: "Another Future Model" }]
   });
-  assert.ok(catalog.models.every((model) => model.adapterId !== "opencode-go"), "opencode-go must never appear, scored or unscored — ASK doesn't support it");
+  assert.ok(catalog.models.every((model) => model.adapterId !== "future-adapter"), "an unsupported adapter must never appear, scored or unscored — ASK doesn't support it");
 });
 
 test("computeBootstrapAnalystCatalog reports real availability and quota per candidate, never fabricated", () => {

@@ -1147,8 +1147,8 @@ test("REGRESSION: askQuestion routes through PROJECT TEAM's Explorer role when i
   assert.equal(askCalls[0].provider, "cursor");
 });
 
-test("REGRESSION: askQuestion falls back to the generic heuristic when Explorer is assigned to a provider ASK can't call (e.g. opencode-go)", async () => {
-  const explorerModel = { candidateKey: "opencode-go::deepseek", adapterId: "opencode-go", modelId: "deepseek-v4-1-flash", displayName: "DeepSeek V4.1 Flash", accessMode: "automatic" };
+test("REGRESSION: askQuestion falls back to the generic heuristic when Explorer is assigned to a provider ASK can't call", async () => {
+  const explorerModel = { candidateKey: "future-adapter::future-model", adapterId: "future-adapter", modelId: "future-model", displayName: "Future Model", accessMode: "automatic" };
   const activeStrategy = { ...suggestedStrategyWithExplorer(explorerModel), status: "active" };
   const askCalls = [];
   const service = createConversationService({
@@ -1158,11 +1158,28 @@ test("REGRESSION: askQuestion falls back to the generic heuristic when Explorer 
     selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-haiku-4-5", why: "read-only question (light effort)" }),
     askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "Heuristic answered." }; }
   });
-  service.snapshot = async () => ({ modelIntelligence: { eligibility: { "opencode-go": { ok: true } } } });
+  service.snapshot = async () => ({ modelIntelligence: { eligibility: { "future-adapter": { ok: true } } } });
 
   const answer = await service.askQuestion({ cwd: "/repo", task: "donde estamos parados?" });
   assert.equal(answer.provider, "claude");
-  assert.equal(askCalls[0].provider, "claude", "Explorer's real assignment (opencode-go) isn't ask-capable, so the heuristic's pick must be used instead");
+  assert.equal(askCalls[0].provider, "claude", "Explorer's real assignment isn't ask-capable, so the heuristic's pick must be used instead");
+});
+
+test("REGRESSION: askQuestion routes through PROJECT TEAM's Explorer role when it's assigned to OpenCode Go — Kairo's own real, verified read-only agent handles it", async () => {
+  const explorerModel = { candidateKey: "opencode-go::kimi-k3", adapterId: "opencode-go", modelId: "kimi-k3", displayName: "Kimi K3", accessMode: "automatic" };
+  const activeStrategy = { ...suggestedStrategyWithExplorer(explorerModel), status: "active" };
+  const askCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => activeStrategy,
+    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "OpenCode Go answered." }; }
+  });
+  service.snapshot = async () => ({ modelIntelligence: { eligibility: { "opencode-go": { ok: true } } } });
+
+  const answer = await service.askQuestion({ cwd: "/repo", task: "donde estamos parados?" });
+  assert.equal(answer.provider, "opencode-go");
+  assert.equal(answer.model, "kimi-k3");
+  assert.equal(askCalls[0].provider, "opencode-go");
 });
 
 test("askQuestion threads the real question text through to the router, so effort-tier model selection sees the actual complexity", async () => {
