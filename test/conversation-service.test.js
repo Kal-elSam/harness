@@ -1130,6 +1130,23 @@ test("REGRESSION: askQuestion routes through PROJECT TEAM's Explorer role when i
   assert.deepEqual(askCalls[0].provider, "claude");
 });
 
+test("REGRESSION: askQuestion routes through PROJECT TEAM's Explorer role when it's assigned to Cursor — Cursor is now ask-capable via its real --mode ask", async () => {
+  const explorerModel = { candidateKey: "cursor::gemini-3-flash-high", adapterId: "cursor", modelId: "gemini-3-flash-high", displayName: "Gemini 3 Flash", accessMode: "automatic" };
+  const activeStrategy = { ...suggestedStrategyWithExplorer(explorerModel), status: "active" };
+  const askCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readProjectStrategy: async () => activeStrategy,
+    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "Cursor answered." }; }
+  });
+  service.snapshot = async () => ({ modelIntelligence: { eligibility: { cursor: { ok: true } } } });
+
+  const answer = await service.askQuestion({ cwd: "/repo", task: "donde estamos parados?" });
+  assert.equal(answer.provider, "cursor");
+  assert.equal(answer.model, "gemini-3-flash-high");
+  assert.equal(askCalls[0].provider, "cursor");
+});
+
 test("REGRESSION: askQuestion falls back to the generic heuristic when Explorer is assigned to a provider ASK can't call (e.g. opencode-go)", async () => {
   const explorerModel = { candidateKey: "opencode-go::deepseek", adapterId: "opencode-go", modelId: "deepseek-v4-1-flash", displayName: "DeepSeek V4.1 Flash", accessMode: "automatic" };
   const activeStrategy = { ...suggestedStrategyWithExplorer(explorerModel), status: "active" };

@@ -89,7 +89,7 @@ test("computeBootstrapAnalystCatalog includes real unscored candidates (no AA ma
     ...candidates,
     unscoredModels: [
       { adapterId: "codex", modelId: "gpt-6-experimental", displayName: "GPT-6 Experimental" },
-      { adapterId: "cursor", modelId: "some-cursor-model", displayName: "Should Be Excluded" }
+      { adapterId: "opencode-go", modelId: "some-go-model", displayName: "Should Be Excluded" }
     ]
   });
   const unscored = catalog.models.filter((model) => model.evidenceStatus === "unscored");
