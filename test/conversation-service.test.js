@@ -809,6 +809,54 @@ test("snapshot cross-references real model catalogs with real Artificial Analysi
   assert.deepEqual(claudeCoverage, { adapterId: "claude", catalogStatus: "documented", totalModels: 1, matchedModels: 1 });
 });
 
+test("REGRESSION: snapshot resolves Claude entitlement from cache only — never calls a per-model probe dep", async () => {
+  let probeCalls = 0;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [
+      { id: "claude", available: true, launchable: true, reason: null }
+    ],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [] }),
+    readClaudeModels: () => ({ status: "documented", models: [{ id: "claude-opus-5" }] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    readArtificialAnalysisModels: async () => ({
+      status: "live", source: "test", age: "<1h", models: []
+    }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => [],
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => ({
+      subscriptionType: "pro",
+      fetchedAt: new Date().toISOString(),
+      models: {
+        "claude-opus-5": {
+          status: "allowed",
+          reason: null,
+          probedAt: new Date().toISOString()
+        }
+      }
+    }),
+    // If snapshot ever imported/called a probe, tests wiring this would still
+    // fail closed here — there is no probeClaude* dep on the service.
+    probeClaudeModelEntitlement: async () => {
+      probeCalls += 1;
+      throw new Error("snapshot must never probe entitlement");
+    }
+  });
+
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.equal(probeCalls, 0);
+  assert.equal(snapshot.modelIntelligence.claudeEntitlement["claude-opus-5"].status, "allowed");
+});
+
 test("REGRESSION: snapshot's real unscoredModels preserves candidateKey/accessMode/lifecycle (never defaulting a real Cursor model's accessMode to null) and excludes a real superseded generation", async () => {
   const service = createConversationService({
     resolveRoot: async () => "/repo",

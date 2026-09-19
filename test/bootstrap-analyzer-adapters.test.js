@@ -84,6 +84,32 @@ test("createClaudeBootstrapAnalyzerAdapter is ineligible when modelId isn't in C
   assert.match(eligibility.reason, /claude-does-not-exist/);
 });
 
+test("createClaudeBootstrapAnalyzerAdapter is ineligible when deps say the documented sibling is entitlement-denied — surfaces the real CLI reason", async () => {
+  const adapter = createClaudeBootstrapAnalyzerAdapter({
+    modelId: "claude-fable-5-1",
+    deps: {
+      verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+      readClaudeModels: () => ({
+        status: "documented",
+        source: "test",
+        models: [{ id: "claude-fable-5-1" }, { id: "claude-sonnet-5" }],
+        error: null
+      }),
+      modelEntitlement: {
+        "claude-fable-5-1": {
+          status: "denied",
+          reason: "Credits required to use this model — upgrade your plan"
+        }
+      }
+    }
+  });
+  const eligibility = await adapter.checkEligibility();
+  assert.equal(eligibility.eligible, false);
+  assert.equal(eligibility.isolation, "unverified");
+  assert.equal(eligibility.canaryTested, false);
+  assert.match(eligibility.reason, /Credits required to use this model/);
+});
+
 test("createClaudeBootstrapAnalyzerAdapter.analyze delegates to askProvider with provider 'claude' and the snapshot as cwd", async () => {
   let seenArgs;
   const adapter = createClaudeBootstrapAnalyzerAdapter({

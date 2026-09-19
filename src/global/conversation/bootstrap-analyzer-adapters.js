@@ -39,6 +39,7 @@ import {
 } from "./codex-sandbox.js";
 import { verifyClaudeSubscriptionAuth as defaultVerifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 import { readClaudeModels as defaultReadClaudeModels } from "../observability/claude-models.js";
+import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
 import { readCursorModels as defaultReadCursorModels } from "../observability/cursor-models.js";
 import { probeCursorAuth as defaultProbeCursorAuth } from "../observability/cursor-auth.js";
 import {
@@ -113,6 +114,18 @@ export function createClaudeBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
         const known = catalog.models.some((m) => m.id === modelId);
         if (!known) {
           return { eligible: false, reason: `"${modelId}" is not in Claude's documented model catalog.`, isolation: "unverified", canaryTested: false };
+        }
+        // Live per-model entitlement (when the caller supplies it) — denied
+        // siblings fail with the real CLI reason, never a silent pass after
+        // the documented-catalog check. Missing map/key does not invent denial.
+        const entitlement = deps.modelEntitlement?.[modelId];
+        if (entitlement?.status === ENTITLEMENT.DENIED) {
+          return {
+            eligible: false,
+            reason: entitlement.reason ?? `"${modelId}" is denied by Claude account entitlement.`,
+            isolation: "unverified",
+            canaryTested: false
+          };
         }
       }
       return { eligible: true, isolation: "restricted", canaryTested: true };

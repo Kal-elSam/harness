@@ -19,6 +19,8 @@
 // persisted, not recomputed) — this module only checks whether that
 // persisted candidate is STILL real-eligible right now.
 
+import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
+
 /**
  * Whether Kairo can launch an automatic run against this real candidate
  * right now — reads model-candidate-catalog.js's own `accessMode`
@@ -39,16 +41,46 @@ export const PROJECT_ROUTE_DECISION = {
   WAIT_FOR_PROJECT_TEAM: "WAIT_FOR_PROJECT_TEAM"
 };
 
+const ROUTABLE_ENTITLEMENTS = new Set([ENTITLEMENT.ALLOWED, ENTITLEMENT.NOT_APPLICABLE]);
+
 function assignmentRef(model, assignmentSource) {
   if (!model) return null;
   return { provider: model.adapterId, model, assignmentSource };
 }
 
-/** A real candidate is only ever offered as `suggestedAlternative` when it's currently automatically-executable — the same bar ROUTED itself requires. Never suggests another manual-only or currently-ineligible provider; honestly null instead. */
-function routableAlternative(model, eligibility) {
+/**
+ * Live entitlement gate: only when `modelEntitlement[modelId]` is PRESENT
+ * and status is denied or unverified. Missing key (empty `{}`) keeps
+ * existing callers/tests green — no gate.
+ * @param {object} model
+ * @param {Record<string, {status?: string, reason?: string|null}>} modelEntitlement
+ * @returns {{status: string, reason: string|null}|null}
+ */
+function blockingEntitlement(model, modelEntitlement) {
+  const entry = modelEntitlement?.[model?.modelId];
+  if (!entry || typeof entry !== "object") return null;
+  if (entry.status === ENTITLEMENT.DENIED || entry.status === ENTITLEMENT.UNVERIFIED) {
+    return {
+      status: entry.status,
+      reason: entry.reason == null ? null : String(entry.reason)
+    };
+  }
+  return null;
+}
+
+/**
+ * Fallback may only be suggested when it is currently automatically
+ * executable AND its entitlement is allowed/not_applicable — or the key
+ * is missing (default ok). Denied/unverified fallbacks stay null.
+ */
+function routableAlternative(model, eligibility, modelEntitlement = {}) {
   if (!model) return null;
   if (!isAutomatic(model)) return null;
   if (eligibility[model.adapterId]?.ok !== true) return null;
+  const entry = modelEntitlement?.[model.modelId];
+  if (entry && typeof entry === "object" && !ROUTABLE_ENTITLEMENTS.has(entry.status)) {
+    return null;
+  }
   return { provider: model.adapterId, model };
 }
 
@@ -80,6 +112,10 @@ function blocked(role, strategyFingerprint, why, { blockedAssignment = null, sug
  *    MANUAL_HANDOFF, still naming the real model/provider so the caller
  *    can show a concrete handoff ("Continue in Cursor with <model>"),
  *    never a bare "not supported".
+ * 3.5 Live model entitlement (when `modelEntitlement[modelId]` is present
+ *    and status is denied or unverified) -> WAIT_FOR_PROJECT_TEAM with
+ *    blockedAssignment naming the real CLI reason when available.
+ *    Empty `{}` skips this gate.
  * 4. The assigned provider isn't currently eligible (quota/availability
  *    changed since the strategy was approved) -> WAIT_FOR_PROJECT_TEAM,
  *    with `blockedAssignment` naming the real unavailable model/reason and
@@ -103,9 +139,12 @@ function blocked(role, strategyFingerprint, why, { blockedAssignment = null, sug
  * @param {Record<string, {ok: boolean, reason?: string}>} [args.eligibility] -
  *   CURRENT provider eligibility — may have changed since the strategy was
  *   built/approved.
+ * @param {Record<string, {status?: string, reason?: string|null}>} [args.modelEntitlement] -
+ *   live per-model Claude entitlement map (modelId → {status, reason}).
+ *   Empty `{}` (default) does not gate — keeps pre-entitlement callers green.
  * @returns {{decision: "ROUTED"|"MANUAL_HANDOFF"|"WAIT_FOR_PROJECT_TEAM", role: string, provider: string|null, model: object|null, assignmentSource: string|null, strategyFingerprint: string|null, blockedAssignment: {provider: string, model: object, assignmentSource: string}|null, suggestedAlternative: {provider: string, model: object}|null, why: string}}
  */
-export function resolveProjectRoute({ role, strategy, eligibility = {} }) {
+export function resolveProjectRoute({ role, strategy, eligibility = {}, modelEntitlement = {} }) {
   const strategyFingerprint = strategy?.profileFingerprint ?? null;
 
   if (!strategy) {
@@ -133,9 +172,25 @@ export function resolveProjectRoute({ role, strategy, eligibility = {} }) {
     };
   }
 
+  const entitlementBlock = blockingEntitlement(model, modelEntitlement);
+  if (entitlementBlock) {
+    const reason = entitlementBlock.reason
+      ?? (entitlementBlock.status === ENTITLEMENT.DENIED
+        ? "account entitlement denied"
+        : "account entitlement unverified");
+    const suggestedAlternative = routableAlternative(fallback, eligibility, modelEntitlement);
+    const why = suggestedAlternative
+      ? `${model.displayName ?? model.modelId} is not currently entitled (${reason}) — no automatic substitution; confirm the suggested alternative for ${role} before proceeding.`
+      : `${model.displayName ?? model.modelId} is not currently entitled (${reason}) — no automatic alternative is available for ${role} right now.`;
+    return blocked(role, strategyFingerprint, why, {
+      blockedAssignment: assignmentRef(model, assignmentSource),
+      suggestedAlternative
+    });
+  }
+
   if (eligibility[model.adapterId]?.ok !== true) {
     const reason = eligibility[model.adapterId]?.reason ?? "unknown reason";
-    const suggestedAlternative = routableAlternative(fallback, eligibility);
+    const suggestedAlternative = routableAlternative(fallback, eligibility, modelEntitlement);
     const why = suggestedAlternative
       ? `${model.adapterId} is not currently eligible (${reason}) — no automatic substitution; confirm the suggested alternative for ${role} before proceeding.`
       : `${model.adapterId} is not currently eligible (${reason}) — no automatic alternative is available for ${role} right now.`;
