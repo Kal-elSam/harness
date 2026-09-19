@@ -5,6 +5,23 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.29.0 — 2026-09-19 (Kairo Runtime)
+
+Minor release. PROJECT TEAM selections explain themselves.
+
+### Changed
+
+- Every PROJECT TEAM row now has a non-empty explanation — ordinary
+  leaders no longer render blank (`explainTeamDecision` from real
+  `decisionEvidence`, never invented metrics).
+- Compact panel and `/project` overlay show the quality leader and real
+  retention% when the operational (efficient) pick differs; evidence
+  toggle (`e`) reuses `teamEvidenceLines`.
+- Honest subtitle: operational picks are the efficient model among
+  eligible candidates. Orchestrator* footnote: Architect's quality pick
+  — Kairo has no separate orchestrator capability profile yet.
+- Availability warnings for denied/unverified Claude entitlement.
+
 ## 0.28.0 — 2026-09-19 (Kairo Runtime)
 
 Minor release. `/models --verify-access` verifies Claude model entitlement on demand.

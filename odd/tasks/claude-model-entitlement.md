@@ -72,6 +72,5 @@ Denied models (e.g. Fable 5.1 on Pro) must never enter automatic pools. Humans n
 ## Progress
 
 - Created: 2026-09-19
-- INC1–3 released (0.26.1 / 0.27.0 / 0.28.0)
-- INC4-01…03 done on `feat/claude-model-entitlement-inc4` (1912 tests ×3 green)
-- Next: INC4-04 PR/release 0.29.0
+- INC1–4 complete and released (0.26.1 / 0.27.0 / 0.28.0 / 0.29.0)
+- Feature closed
