@@ -5,6 +5,18 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.26.1 — 2026-09-19 (Kairo Runtime)
+
+Patch release. Claude model entitlement probe + cache (no routing change yet).
+
+### Added
+
+- Live Claude per-model entitlement probe (`claude -p hi --model … --output-format
+  json`) with fail-closed classification (allowed / denied / unverified) and a
+  `~/.harness/claude-entitlement.json` cache invalidated by subscription type
+  change or a 7-day per-entry TTL. Pure additive — recommendation and automatic
+  pools are unchanged until the next increment wires entitlement into the catalog.
+
 ## 0.26.0 — 2026-09-19 (Kairo Runtime)
 
 Minor release. ASK is now ready for every real automatic adapter.
