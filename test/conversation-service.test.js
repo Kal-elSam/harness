@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConversationService } from "../src/global/conversation/service.js";
+import {
+  buildClaudeEntitlementVerifyCostStatement,
+  buildUnverifiedClaudePreflightNotice,
+  createConversationService
+} from "../src/global/conversation/service.js";
+import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
+import { DEFAULT_ENTITLEMENT_TTL_MS } from "../src/global/observability/claude-entitlement-store.js";
 
 test("conversation service projects a provider-neutral durable timeline", async () => {
   const calls = [];
@@ -1604,4 +1610,169 @@ test("readRunTranscript returns an empty entries list for a run with no real tra
   const service = createConversationService({ readRunEvents: async () => [{ type: "run.started", source: "kairo", data: {} }] });
   const result = await service.readRunTranscript({ runId: "run_quiet" });
   assert.deepEqual(result, { runId: "run_quiet", nextIndex: 0, entries: [] });
+});
+
+test("buildClaudeEntitlementVerifyCostStatement names the measured economy before any spawn", () => {
+  const statement = buildClaudeEntitlementVerifyCostStatement({ pendingCount: 3 });
+  assert.match(statement, /3/);
+  assert.match(statement, /\$0/);
+  assert.match(statement, /cent/i);
+});
+
+test("buildUnverifiedClaudePreflightNotice is the measured one-line Spanish notice", () => {
+  const notice = buildUnverifiedClaudePreflightNotice(2);
+  assert.match(notice, /^2 modelos de Claude tienen acceso sin verificar/);
+  assert.match(notice, /\/models --verify-access/);
+  assert.match(notice, /\$0/);
+  assert.match(notice, /centavo/);
+});
+
+test("verifyClaudeEntitlements without refresh only probes unverified or TTL-expired ids", async () => {
+  const probed = [];
+  const nowMs = Date.parse("2026-09-19T12:00:00.000Z");
+  const freshProbedAt = new Date(nowMs - 60_000).toISOString();
+  const expiredProbedAt = new Date(nowMs - DEFAULT_ENTITLEMENT_TTL_MS - 1).toISOString();
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    now: () => nowMs,
+    readClaudeModels: () => ({
+      status: "documented",
+      models: [
+        { id: "claude-allowed-fresh" },
+        { id: "claude-expired" },
+        { id: "claude-never-probed" },
+        { id: "claude-denied-fresh" }
+      ]
+    }),
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => ({
+      subscriptionType: "pro",
+      fetchedAt: freshProbedAt,
+      models: {
+        "claude-allowed-fresh": { status: ENTITLEMENT.ALLOWED, reason: null, probedAt: freshProbedAt },
+        "claude-expired": { status: ENTITLEMENT.ALLOWED, reason: null, probedAt: expiredProbedAt },
+        "claude-denied-fresh": { status: ENTITLEMENT.DENIED, reason: "credits_required", probedAt: freshProbedAt }
+      }
+    }),
+    probeClaudeModelEntitlements: async ({ modelIds }) => {
+      probed.push(...modelIds);
+      return modelIds.map((modelId) => ({
+        modelId,
+        status: ENTITLEMENT.ALLOWED,
+        reason: null,
+        probedAt: new Date(nowMs).toISOString()
+      }));
+    },
+    writeClaudeEntitlementCache: async () => {}
+  });
+
+  const summary = await service.verifyClaudeEntitlements({ cwd: "/repo", refresh: false });
+  assert.deepEqual(probed.sort(), ["claude-expired", "claude-never-probed"]);
+  assert.equal(summary.probed.length, 2);
+  assert.equal(probed.length, 2, "fresh allowed/denied must not be re-probed without --refresh");
+});
+
+test("verifyClaudeEntitlements with refresh probes all catalog ids (capped at maxProbes=12)", async () => {
+  const probed = [];
+  const catalog = Array.from({ length: 15 }, (_, i) => ({ id: `claude-model-${i}` }));
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    readClaudeModels: () => ({ status: "documented", models: catalog }),
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => null,
+    probeClaudeModelEntitlements: async ({ modelIds, maxProbes }) => {
+      assert.equal(maxProbes, 12);
+      probed.push(...modelIds);
+      return modelIds.map((modelId) => ({
+        modelId,
+        status: ENTITLEMENT.DENIED,
+        reason: "credits_required",
+        probedAt: new Date().toISOString()
+      }));
+    },
+    writeClaudeEntitlementCache: async () => {}
+  });
+
+  await service.verifyClaudeEntitlements({ cwd: "/repo", refresh: true });
+  assert.equal(probed.length, 12, "refresh still respects maxProbes=12");
+  assert.deepEqual(probed, catalog.slice(0, 12).map((m) => m.id));
+});
+
+test("verifyClaudeEntitlements cost-statement contract: beforeProbe runs before any probe spawn", async () => {
+  const order = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    readClaudeModels: () => ({ status: "documented", models: [{ id: "claude-haiku-4-5" }] }),
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => null,
+    probeClaudeModelEntitlements: async ({ modelIds }) => {
+      order.push("probe");
+      return modelIds.map((modelId) => ({
+        modelId,
+        status: ENTITLEMENT.ALLOWED,
+        reason: null,
+        probedAt: new Date().toISOString()
+      }));
+    },
+    writeClaudeEntitlementCache: async () => {}
+  });
+
+  const statement = buildClaudeEntitlementVerifyCostStatement({ pendingCount: 1 });
+  const summary = await service.verifyClaudeEntitlements({
+    cwd: "/repo",
+    refresh: false,
+    beforeProbe: ({ costStatement, pendingCount }) => {
+      order.push("cost");
+      assert.equal(pendingCount, 1);
+      assert.equal(costStatement, statement);
+    }
+  });
+  assert.deepEqual(order, ["cost", "probe"]);
+  assert.equal(summary.costStatement, statement);
+});
+
+test("verifyClaudeEntitlements does not persist evidence when every probe result is unverified", async () => {
+  let writeCalls = 0;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    readClaudeModels: () => ({ status: "documented", models: [{ id: "a" }, { id: "b" }] }),
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => null,
+    probeClaudeModelEntitlements: async ({ modelIds }) => modelIds.map((modelId) => ({
+      modelId,
+      status: ENTITLEMENT.UNVERIFIED,
+      reason: "529 overloaded",
+      probedAt: new Date().toISOString()
+    })),
+    writeClaudeEntitlementCache: async () => { writeCalls += 1; }
+  });
+
+  const summary = await service.verifyClaudeEntitlements({ cwd: "/repo", refresh: false });
+  assert.equal(writeCalls, 0, "all-unverified sweep must not write the entitlement cache");
+  assert.equal(summary.persisted, false);
+});
+
+test("preflightProject surfaces the unverified Claude notice when live entitlement has unverified models", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    computeProjectProfile: async () => ({ fingerprint: "fp-1", roleRequirements: [] }),
+    writeProjectStrategy: async () => {}
+  });
+  service.snapshot = async () => ({
+    modelIntelligence: {
+      ...(await realScoredCandidates()),
+      claudeEntitlement: {
+        "claude-a": { status: ENTITLEMENT.UNVERIFIED, reason: null },
+        "claude-b": { status: ENTITLEMENT.ALLOWED, reason: null },
+        "claude-c": { status: ENTITLEMENT.UNVERIFIED, reason: null }
+      }
+    }
+  });
+  const result = await service.preflightProject({ cwd: "/repo" });
+  assert.equal(result.unverifiedClaudeNotice, buildUnverifiedClaudePreflightNotice(2));
 });

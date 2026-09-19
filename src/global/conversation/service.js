@@ -41,9 +41,15 @@ import { readArtificialAnalysisModels } from "../observability/artificial-analys
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
   DEFAULT_ENTITLEMENT_TTL_MS,
+  mergeEntitlementResults,
   readClaudeEntitlementCache,
-  resolveClaudeEntitlements
+  resolveClaudeEntitlements,
+  writeClaudeEntitlementCache
 } from "../observability/claude-entitlement-store.js";
+import {
+  ENTITLEMENT,
+  probeClaudeModelEntitlements
+} from "../observability/claude-model-entitlement.js";
 import {
   annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam,
   buildEfficientTeam, scoreAvailableModels, summarizeCatalogCoverage
@@ -63,6 +69,35 @@ export const CONVERSATION_SCHEMA = "kairo.conversation/v1";
 // quick ASK-mode question, so it gets real room instead of quick-ask's
 // 30s default.
 const BOOTSTRAP_ANALYST_TIMEOUT_MS = 180_000;
+
+/** Max Claude entitlement probes per `/models --verify-access` sweep. */
+const CLAUDE_ENTITLEMENT_MAX_PROBES = 12;
+
+/**
+ * Cost statement printed before any Claude entitlement spawn. Economy is
+ * measured: denied probes cost $0; allowed ones about one cent each.
+ * @param {{ pendingCount?: number }} [options]
+ */
+export function buildClaudeEntitlementVerifyCostStatement({ pendingCount = 0 } = {}) {
+  const n = Math.max(0, Number(pendingCount) || 0);
+  if (n <= 0) {
+    return "No Claude models need access verification right now (denied probes cost $0; allowed ones about one cent each).";
+  }
+  return `About to verify ${n} Claude model${n === 1 ? "" : "s"}: models your plan denies cost $0; allowed ones cost about one cent each.`;
+}
+
+/**
+ * One-line preflight notice when unverified Claude models exist.
+ * @param {number} count
+ */
+export function buildUnverifiedClaudePreflightNotice(count) {
+  const n = Math.max(0, Number(count) || 0);
+  return `${n} modelos de Claude tienen acceso sin verificar — se pueden recomendar pero nunca lanzar automáticamente. Corré /models --verify-access para verificar (los que tu plan deniega cuestan $0; los permitidos, alrededor de un centavo cada uno).`;
+}
+
+function isPersistableEntitlementStatus(status) {
+  return status === ENTITLEMENT.ALLOWED || status === ENTITLEMENT.DENIED;
+}
 
 function publicPlan(record, execution = null) {
   const status = record.status ?? record;
@@ -352,6 +387,9 @@ export function createConversationService(deps = {}) {
   const readOpenCodeGoCached = createCachedProbe(readOpenCodeGoImpl, opencodeGoUsageTtlMs);
   const readOpenCodeStatsCached = createCachedProbe(readOpenCodeStatsImpl, opencodeUsageTtlMs);
   const readClaudeEntitlementCacheImpl = deps.readClaudeEntitlementCache ?? readClaudeEntitlementCache;
+  const writeClaudeEntitlementCacheImpl = deps.writeClaudeEntitlementCache ?? writeClaudeEntitlementCache;
+  const mergeEntitlementResultsImpl = deps.mergeEntitlementResults ?? mergeEntitlementResults;
+  const probeClaudeModelEntitlementsImpl = deps.probeClaudeModelEntitlements ?? probeClaudeModelEntitlements;
   const readClaudeEntitlementCacheCached = createCachedProbe(
     () => readClaudeEntitlementCacheImpl(homeDir), claudeEntitlementCacheTtlMs
   );
@@ -821,7 +859,92 @@ export function createConversationService(deps = {}) {
       const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement };
       const alternatives = computeBootstrapAnalystAlternatives(candidates);
       const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, unscoredModels });
-      return { profile, alternatives, candidates, analystCatalog, projectRoot };
+      const unverifiedCount = Object.values(claudeEntitlement).filter(
+        (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
+      ).length;
+      const unverifiedClaudeNotice = unverifiedCount > 0
+        ? buildUnverifiedClaudePreflightNotice(unverifiedCount)
+        : null;
+      return { profile, alternatives, candidates, analystCatalog, projectRoot, unverifiedClaudeNotice };
+    },
+    /**
+     * `/models --verify-access [--refresh]`: the only service path that
+     * spawns `probeClaudeModelEntitlements`. Without refresh, only
+     * unverified / TTL-expired catalog ids are probed; with refresh, every
+     * catalog id is probed (still capped at maxProbes=12). Persist only when
+     * at least one allowed/denied result exists — an all-unverified sweep
+     * never invents evidence on disk.
+     *
+     * @param {object} args
+     * @param {string} args.cwd
+     * @param {boolean} [args.refresh]
+     * @param {(info: { pendingCount: number, pendingIds: string[], costStatement: string }) => (void|Promise<void>)} [args.beforeProbe]
+     *   Called after the probe set is known and BEFORE any spawn — app.js
+     *   prints the cost statement here.
+     * @param {(info: { modelId: string, index: number, total: number, result: object }) => void} [args.onProgress]
+     */
+    async verifyClaudeEntitlements({ cwd, refresh = false, beforeProbe = null, onProgress = null } = {}) {
+      const projectRoot = cwd ? await root(cwd) : null;
+      const catalog = readClaudeModelsImpl();
+      const catalogIds = (catalog.models ?? []).map((m) => m.id).filter(Boolean);
+      let auth = null;
+      try {
+        auth = await verifyClaudeSubscriptionAuthImpl({});
+      } catch {
+        auth = null;
+      }
+      const subscriptionType = auth?.subscriptionType ?? null;
+      const cache = await readClaudeEntitlementCacheImpl(homeDir);
+      const nowMs = now();
+      const ttlMs = deps.claudeEntitlementTtlMs ?? DEFAULT_ENTITLEMENT_TTL_MS;
+      const resolved = resolveClaudeEntitlements({
+        cache,
+        subscriptionType,
+        catalogIds,
+        now: nowMs,
+        ttlMs
+      });
+      const pendingIds = (refresh
+        ? catalogIds
+        : catalogIds.filter((id) => resolved[id]?.status === ENTITLEMENT.UNVERIFIED)
+      ).slice(0, CLAUDE_ENTITLEMENT_MAX_PROBES);
+      const costStatement = buildClaudeEntitlementVerifyCostStatement({ pendingCount: pendingIds.length });
+      if (typeof beforeProbe === "function") {
+        await beforeProbe({ pendingCount: pendingIds.length, pendingIds, costStatement });
+      }
+      if (pendingIds.length === 0) {
+        return {
+          probed: [],
+          results: [],
+          costStatement,
+          persisted: false,
+          pendingCount: 0,
+          refresh: Boolean(refresh),
+          subscriptionType
+        };
+      }
+      const results = await probeClaudeModelEntitlementsImpl({
+        modelIds: pendingIds,
+        maxProbes: CLAUDE_ENTITLEMENT_MAX_PROBES,
+        cwd: projectRoot ?? process.cwd(),
+        onProgress
+      });
+      const hasPersistable = results.some((result) => isPersistableEntitlementStatus(result?.status));
+      let persisted = false;
+      if (hasPersistable) {
+        const merged = mergeEntitlementResultsImpl(cache, { subscriptionType, results });
+        await writeClaudeEntitlementCacheImpl(homeDir, merged);
+        persisted = true;
+      }
+      return {
+        probed: pendingIds,
+        results,
+        costStatement,
+        persisted,
+        pendingCount: pendingIds.length,
+        refresh: Boolean(refresh),
+        subscriptionType
+      };
     },
     /**
      * `/project analyst quality|efficient --confirm` (ANALYZING -> SUGGESTED):
