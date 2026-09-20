@@ -644,11 +644,9 @@ export class CockpitView {
     const modelColumnWidth = this.teamModelColumnWidth([
       strategy.bootstrapAnalyst, strategy.orchestrator, ...projectTeam.map((entry) => entry.model)
     ]);
-    lines.push(theme.fg("muted", "Operational picks: the efficient model among eligible candidates for each role (quality leader shown when it differs)."));
     if (strategy.bootstrapAnalyst) lines.push(`${"Project Analyst".padEnd(18)} ${this.teamRoleLabel(strategy.bootstrapAnalyst, modelColumnWidth)}`);
     if (strategy.orchestrator) {
-      lines.push(`${"Orchestrator*".padEnd(18)} ${this.teamRoleLabel(strategy.orchestrator, modelColumnWidth)}`);
-      lines.push(theme.fg("muted", "  * Architect's quality pick — Kairo has no separate orchestrator capability profile yet."));
+      lines.push(`${"Orchestrator".padEnd(18)} ${this.teamRoleLabel(strategy.orchestrator, modelColumnWidth)}`);
     }
     // The real OPERATIONAL team (see buildProjectStrategy's own doc) —
     // never qualityTeam, which is comparative reference only. The overlay
@@ -657,40 +655,12 @@ export class CockpitView {
     // same label was the real, reported mismatch. qualityTeam only
     // remains as a fallback for a strategy persisted before projectTeam
     // existed (see applyProjectTeamOverride's own legacy-entry comment).
-    const eligibility = this.snapshot?.modelIntelligence?.eligibility ?? {};
-    const claudeEntitlement = this.snapshot?.modelIntelligence?.claudeEntitlement ?? {};
     for (const entry of projectTeam) {
       lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.teamRoleLabel(entry.model, modelColumnWidth) : theme.fg("warning", "no eligible option")}`);
-      const extra = this.projectTeamCompactExtraLine(entry, strategy, { eligibility, claudeEntitlement });
-      if (extra) lines.push(theme.fg("muted", `  ${extra}`));
     }
     if (strategy.status === "suggested") lines.push(theme.fg("muted", "Suggested from real project analysis. Use /project approve to activate."));
     if (strategy.status === "stale") lines.push(theme.fg("warning", "Real evidence changed since approval — use /project refresh."));
     return { title: `PROJECT TEAM · ${project} · ${strategy.status.toUpperCase()}`, lines };
-  }
-
-  /**
-   * At most one muted extra line for the compact PROJECT TEAM panel —
-   * only when it adds something the role row itself doesn't already say
-   * (quality leader differs, or a real availability warning). Same pick
-   * + available → null.
-   */
-  projectTeamCompactExtraLine(entry, strategy, { eligibility = {}, claudeEntitlement = {} } = {}) {
-    const availability = resolveAssignmentAvailability(entry?.model, { eligibility, claudeEntitlement });
-    if (availability.warning) return availability.warning;
-    if (!strategy?.qualityTeam || !entry?.model) return null;
-    const qualityEntry = strategy.qualityTeam.find((row) => row.role === entry.role);
-    if (!qualityEntry?.model) return null;
-    const samePick = qualityEntry.model.adapterId === entry.model.adapterId
-      && qualityEntry.model.modelId === entry.model.modelId;
-    if (samePick) return null;
-    const retention = entry.decisionEvidence?.retention;
-    const retentionPct = retention != null ? Math.round(retention * 100) : null;
-    const leaderLabel = this.aiTeamLabel(qualityEntry.model);
-    if (retentionPct != null) {
-      return `Quality leader: ${leaderLabel} — operational pick retains ${retentionPct}%`;
-    }
-    return `Quality leader: ${leaderLabel}`;
   }
 
   /** Contextual key hints — shown in the dashboard's fixed zone, not the scrollable conversation. */

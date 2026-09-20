@@ -531,8 +531,8 @@ test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the requi
   assert.equal(title, "PROJECT TEAM · crm · SUGGESTED");
   const joined = lines.join("\n");
   assert.match(joined, /Project Analyst\s+GPT-6 Astra/);
-  assert.match(joined, /Orchestrator\*\s+Fable 5\.1/);
-  assert.match(joined, /Architect's quality pick — Kairo has no separate orchestrator capability profile yet/);
+  assert.match(joined, /Orchestrator\s+Fable 5\.1/);
+  assert.doesNotMatch(joined, /Architect's quality pick/);
   assert.match(joined, /Architect\s+Fable 5\.1/);
   assert.match(joined, /Builder\s+GPT-6 Astra/);
   assert.match(joined, /Suggested from real project analysis\. Use \/project approve to activate\./);
@@ -584,9 +584,7 @@ test("REGRESSION: projectTeamPanel shows the real OPERATIONAL projectTeam, never
   const { lines } = view.projectTeamPanel(80);
   const joined = lines.join("\n");
   assert.match(joined, /Architect\s+GPT-6 Astra/, "must show the real operational (overridden) model");
-  // INC4: when operational ≠ quality, the muted extra line names the quality
-  // leader — that's comparative context, not replacing the role assignment.
-  assert.match(joined, /Quality leader: Fable 5\.1/);
+  assert.doesNotMatch(joined, /Quality leader:/, "comparative evidence belongs in the overlay's explicit evidence view");
   const roleAssignmentLine = lines.find((line) => /Architect\s+GPT-6 Astra/.test(stripTerminalSequences(line)));
   assert.ok(roleAssignmentLine);
   assert.doesNotMatch(stripTerminalSequences(roleAssignmentLine), /Fable 5\.1/, "the role row itself must still be the operational pick, never qualityTeam's model");
@@ -1310,7 +1308,7 @@ test("INC4: explainTeamDecision prefers existing reason and keeps override text"
   );
 });
 
-test("INC4: when operational pick differs from quality leader, compact panel names the leader and real retention%", () => {
+test("INC5: compact PROJECT TEAM panel keeps only primary assignments and concise strategy status", () => {
   const { view } = makeView();
   view.setSnapshot({
     projectRoot: "/repo/crm",
@@ -1333,11 +1331,12 @@ test("INC4: when operational pick differs from quality leader, compact panel nam
   const { lines } = view.projectTeamPanel(80);
   const joined = lines.join("\n");
   assert.match(joined, /Builder\s+GPT-6 Astra/);
-  assert.match(joined, /Quality leader: Fable 5\.1/);
-  assert.match(joined, /retains 93%/);
-  assert.match(joined, /Orchestrator\*/);
-  assert.match(joined, /Architect's quality pick — Kairo has no separate orchestrator capability profile yet/);
-  assert.match(joined, /Operational picks: the efficient model among eligible candidates for each role \(quality leader shown when it differs\)/);
+  assert.match(joined, /Orchestrator\s+Fable 5\.1/);
+  assert.match(joined, /Suggested from real project analysis\. Use \/project approve to activate\./);
+  assert.doesNotMatch(joined, /Quality leader:/);
+  assert.doesNotMatch(joined, /retains 93%/);
+  assert.doesNotMatch(joined, /Architect's quality pick/);
+  assert.doesNotMatch(joined, /Operational picks:/);
 });
 
 test("INC4: same pick + available yields no muted extra line on the compact panel", () => {
@@ -1363,7 +1362,7 @@ test("INC4: same pick + available yields no muted extra line on the compact pane
   assert.equal(roleLines.length, 1, "same pick + available must not add a muted extra line under the role");
 });
 
-test("INC4: unverified entitlement shows its availability warning on the compact panel", () => {
+test("INC5: compact panel omits per-role availability detail while explicit evidence retains it", () => {
   const { view } = makeView();
   view.setSnapshot({
     projectRoot: "/repo/crm",
@@ -1386,8 +1385,13 @@ test("INC4: unverified entitlement shows its availability warning on the compact
       }]
     }
   });
-  const joined = view.projectTeamPanel(80).lines.join("\n");
-  assert.match(joined, /Unavailable — model entitlement not verified \(run \/models --verify-access\)/);
+  const compact = view.projectTeamPanel(80).lines.join("\n");
+  const evidence = view.projectTeamEvidenceLines(view.snapshot.projectStrategy, {
+    eligibility: view.snapshot.modelIntelligence.eligibility,
+    claudeEntitlement: view.snapshot.modelIntelligence.claudeEntitlement
+  }).join("\n");
+  assert.doesNotMatch(compact, /Unavailable — model entitlement not verified/);
+  assert.match(evidence, /Unavailable — model entitlement not verified \(run \/models --verify-access\)/);
 });
 
 test("INC4: legacy strategy without qualityTeam does not break the compact panel", () => {
