@@ -11,8 +11,8 @@
 //
 // bootstrapAnalyst is NOT decided in this module — by the time
 // buildProjectStrategy runs, the human has already chosen and confirmed a
-// real model (see computeBootstrapAnalystAlternatives + the
-// LOCAL_PREFLIGHT/AWAITING_ANALYST/ANALYZING flow in conversation/service.js),
+// real model (see computeBootstrapAnalystCatalog + ProjectOverlay's
+// preflight/select/confirm/analyze flow),
 // and that model has already produced the real analysis this module
 // consumes. The analyst never picks the team; it only investigates.
 
@@ -140,7 +140,7 @@ function quotaFor(providerCapacity, adapterId) {
  * catalog shape and tags each real candidate that happens to be the
  * Quality and/or Efficient winner.
  * @param {object} args - `scoredAll`, `eligibility`, `registry`,
- *   `providerCapacity` (as computeBootstrapAnalystAlternatives), plus
+ *   `providerCapacity`, plus
  *   `unscoredModels` (real catalog models with no AA match — see
  *   conversation/service.js's own `unscoredModels`).
  * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, quota: number|null, recommendationTags: string[]}>}}
@@ -211,38 +211,6 @@ export function computeBootstrapAnalystCatalog({
 }
 
 /**
- * Real quality/efficiency Bootstrap Analyst alternatives — computed BEFORE
- * any analysis runs (LOCAL_PREFLIGHT/AWAITING_ANALYST), restricted to
- * providers Kairo can actually invoke read-only (see ASK_SUPPORTED_ADAPTERS).
- * A provider that would otherwise win Explorer but can't actually run ASK
- * (e.g. opencode-go today) is honestly excluded here, never offered as a
- * choice Kairo can't follow through on. A thin projection of
- * computeBootstrapAnalystCatalog's own real ranking — never a second,
- * independent ranking computation.
- *
- * Kept in this plain `{choice, model}` shape ONLY for the existing plain-
- * text `/project analyst quality|efficient --confirm` subcommand, which
- * predates the full catalog and can only ever offer these two picks. Each
- * entry also carries the real `selectionSource`/`recommendationTags` the
- * richer picker (the interactive overlay's analyst catalog step) needs —
- * both a recommended catalog pick, by construction — so both callers can
- * pass the exact same `analyst` shape into runBootstrapAnalysis/
- * buildProjectStrategy.
- * @param {object} candidates - `scoredAll`, `eligibility`, `registry`, `providerCapacity`
- * @returns {Array<{choice: "quality"|"efficient", model: object, selectionSource: "recommended", recommendationTags: string[]}>}
- */
-export function computeBootstrapAnalystAlternatives(candidates) {
-  const { models } = computeBootstrapAnalystCatalog(candidates);
-  const quality = models.find((model) => model.recommendationTags.includes("quality"));
-  const efficient = models.find((model) => model.recommendationTags.includes("efficient"));
-  const toAlternativeModel = (model) => (model ? { adapterId: model.adapterId, modelId: model.modelId, displayName: model.displayName } : null);
-  return [
-    quality ? { choice: "quality", model: toAlternativeModel(quality), selectionSource: "recommended", recommendationTags: quality.recommendationTags } : null,
-    efficient ? { choice: "efficient", model: toAlternativeModel(efficient), selectionSource: "recommended", recommendationTags: efficient.recommendationTags } : null
-  ].filter(Boolean);
-}
-
-/**
  * Builds a "suggested" ProjectStrategy — never "active" (that only happens
  * via explicit human approval, see project-strategy-store.js +
  * conversation/service.js's approveProjectStrategy).
@@ -262,8 +230,7 @@ export function computeBootstrapAnalystAlternatives(candidates) {
  *   already attaches to modelIntelligence for this purpose.
  * @param {{model: object, choice?: "quality"|"efficient"|null, selectionSource?: "recommended"|"manual", recommendationTags?: string[]}} bootstrapAnalyst -
  *   the real model the human already chose, confirmed, and ran. `choice`
- *   is legacy — only the plain-text `/project analyst quality|efficient`
- *   subcommand still relies on it (see computeBootstrapAnalystAlternatives);
+ *   remains persisted for backward compatibility with existing strategies;
  *   any real catalog pick (including a manual/unscored one that fits
  *   neither bucket) is honestly `choice: null`, never forced into one.
  *   `selectionSource`/`recommendationTags` are the real, current contract —

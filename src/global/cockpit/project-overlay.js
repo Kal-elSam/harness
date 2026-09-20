@@ -3,16 +3,9 @@ import { editorTheme, theme } from "./theme.js";
 import { CARD_TONE, cardInnerWidth, renderPanel } from "./card.js";
 import { explainTeamDecision } from "./view.js";
 
-// /project's interactive overlay — the real preflight -> select analyst ->
-// confirm -> analyze -> result -> approve loop, reusing the exact same
-// service functions the plain-text /project subcommands already use
-// (preflightProject, runBootstrapAnalysis, approveProjectStrategy,
-// refreshProjectStrategy, getProjectTeamEditCatalog, setProjectTeamAssignment).
-// No new persistence, no new ProjectStrategy schema — this is a different
-// way to drive the same real state machine, never a parallel one. The
-// plain-text subcommands (/project status|analyze|analyst|approve|refresh)
-// keep working unchanged; this overlay is what bare `/project` (no
-// subcommand) now opens.
+// /project's single interactive analysis flow: real preflight -> select
+// analyst -> confirm -> analyze -> result -> approve. Both first analysis
+// and explicit re-analysis enter here; there is no parallel text state.
 
 export const PROJECT_OVERLAY_STATE = {
   LOADING_PREFLIGHT: "loading-preflight",
@@ -79,7 +72,7 @@ export class ProjectOverlay {
    *   pure navigation (opening a picker, moving a selection) — only for a
    *   real state change the overlay's own service calls produced.
    */
-  constructor({ service, view, cwd, onClose, requestRender = () => {}, onNarrate = () => {} }) {
+  constructor({ service, view, cwd, onClose, requestRender = () => {}, onNarrate = () => {}, forceReanalyze = false }) {
     this.service = service;
     this.view = view;
     this.cwd = cwd;
@@ -112,7 +105,11 @@ export class ProjectOverlay {
     this.pendingEditCandidate = null;
     this.showTeamEvidence = false;
 
-    const existing = view.snapshot?.projectStrategy ?? null;
+    // `/project analyze` deliberately bypasses any suggested/active/stale
+    // strategy. Decide that before initialization so exactly one preflight
+    // runs; constructing from the strategy and then calling reanalyze()
+    // would create two competing startup paths.
+    const existing = forceReanalyze ? null : (view.snapshot?.projectStrategy ?? null);
     if (existing?.status === "active") {
       this.state = S.ACTIVE;
       this.activeStrategy = existing;
@@ -199,8 +196,9 @@ export class ProjectOverlay {
 
   /** A short, honest label for a catalog entry's own real recommendationTags/evidenceStatus — never a fabricated "Quality"/"Efficient" claim for a model that doesn't actually carry that tag. */
   static tagLabel(model) {
-    if (model.evidenceStatus === "unscored") return "Unscored";
     const tags = [];
+    if (model.entitlement === "unverified") tags.push("Unverified · extra credits");
+    if (model.evidenceStatus === "unscored") tags.push("Unscored");
     if (model.recommendationTags.includes("quality")) tags.push("Quality fit");
     if (model.recommendationTags.includes("efficient")) tags.push("Efficient fit");
     return tags.join(" · ");
@@ -240,18 +238,20 @@ export class ProjectOverlay {
       this.selectedAnalyst = {
         // A clean modelRef shape — no UI-only fields leak into what
         // eventually gets persisted verbatim as ProjectStrategy's own
-        // bootstrapAnalyst (see buildProjectStrategy). available/
-        // evidenceStatus below are UI-only, read by this overlay's own
-        // CONFIRM_ANALYST render, never sent to the service or persisted.
+        // bootstrapAnalyst (see buildProjectStrategy). Availability,
+        // evidence, and entitlement below are overlay metadata only;
+        // buildProjectStrategy persists the explicit model/selection fields.
         model: { adapterId: picked.adapterId, modelId: picked.modelId, displayName: picked.displayName },
         selectionSource,
         recommendationTags,
-        // choice stays ONLY for the legacy plain-text subcommand's own
-        // persisted field — never fabricated for a real manual/unscored
-        // pick that fits neither bucket.
+        // Keep the persisted compatibility field when the selected model
+        // has a real quality/efficient tag; never fabricate one for a
+        // manual/unscored pick that fits neither bucket.
         choice: recommendationTags.includes("quality") ? "quality" : recommendationTags.includes("efficient") ? "efficient" : null,
         available: picked.available,
-        evidenceStatus: picked.evidenceStatus
+        evidenceStatus: picked.evidenceStatus,
+        entitlement: picked.entitlement,
+        entitlementReason: picked.entitlementReason
       };
       this.state = S.CONFIRM_ANALYST;
       this.requestRender();
@@ -372,6 +372,7 @@ export class ProjectOverlay {
     if (model.candidateKey === recommendedKey) tags.push("recommended");
     if (model.evidenceStatus === "unscored") tags.push("unscored");
     if (model.accessMode === "manual") tags.push("manual");
+    if (model.entitlement === "unverified") tags.push("unverified · extra credits");
     return tags.join(" · ");
   }
 
@@ -600,12 +601,15 @@ export class ProjectOverlay {
         push(theme.fg("muted", "Enter Select · Esc Cancel"));
         break;
       case S.CONFIRM_ANALYST: {
-        const { model, selectionSource, available, evidenceStatus } = this.selectedAnalyst;
+        const { model, selectionSource, available, evidenceStatus, entitlement } = this.selectedAnalyst;
         push(theme.bold("Confirm Project Analyst"));
         const sourceNote = selectionSource === "manual" ? theme.fg("muted", " (manual selection)") : "";
         push(`  ${this.view.aiTeamLabelWithProvider(model)}${sourceNote}${available === false ? theme.fg("warning", " (not available)") : ""}`);
         if (evidenceStatus === "unscored") {
           push(theme.fg("warning", "This model has no real benchmark evidence — Kairo isn't recommending it, you're choosing it manually."));
+        }
+        if (entitlement === "unverified") {
+          push(theme.fg("warning", "This model's access is unverified and may require extra credits. Continue only if you explicitly want to try it."));
         }
         push(theme.fg("warning", "This will run a real, read-only investigation against your project and consume real quota from this provider."));
         push(theme.fg("muted", "Enter confirm and run · Esc back"));
@@ -666,6 +670,9 @@ export class ProjectOverlay {
         if (candidate.accessMode === "manual") {
           push(theme.fg("warning", `${candidate.adapterId} isn't executable by Kairo automatically — this role will need a manual handoff.`));
         }
+        if (candidate.entitlement === "unverified") {
+          push(theme.fg("warning", "This model's access is unverified and may require extra credits. This is an explicit manual override."));
+        }
         push(theme.fg("muted", "Enter confirm and save (still suggested, not yet approved) · Esc back"));
         break;
       }
@@ -721,10 +728,10 @@ export class ProjectOverlay {
  * @param {string} args.cwd
  * @param {(text: string) => void} [args.onNarrate] - see ProjectOverlay's own doc
  */
-export function openProjectOverlay({ tui, service, view, cwd, onNarrate }) {
+export function openProjectOverlay({ tui, service, view, cwd, onNarrate, forceReanalyze = false }) {
   let handle;
   const overlay = new ProjectOverlay({
-    service, view, cwd, onNarrate,
+    service, view, cwd, onNarrate, forceReanalyze,
     onClose: () => handle?.hide(),
     requestRender: () => tui.requestRender()
   });

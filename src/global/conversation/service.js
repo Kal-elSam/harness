@@ -26,7 +26,7 @@ import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transc
 import { readSession, writeSessionMode } from "./session-store.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
-  ASK_SUPPORTED_ADAPTERS, buildProjectStrategy, computeBootstrapAnalystAlternatives, computeBootstrapAnalystCatalog,
+  ASK_SUPPORTED_ADAPTERS, buildProjectStrategy, computeBootstrapAnalystCatalog,
   isStrategyStale, computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "./project-strategy.js";
 import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
@@ -845,21 +845,9 @@ export function createConversationService(deps = {}) {
       return writeSessionModeImpl(homeDir, projectRoot, mode);
     },
     /**
-     * `/project analyze` (LOCAL_PREFLIGHT -> AWAITING_ANALYST): computes a
-     * real, read-only ProjectProfile and real Bootstrap Analyst
-     * alternatives (quality/efficient, restricted to providers Kairo can
-     * actually run read-only — see project-strategy.js's
-     * ASK_SUPPORTED_ADAPTERS) — no provider call yet, no ProjectStrategy
-     * created yet. The human picks and confirms one of these via
-     * runBootstrapAnalysis below; nothing is persisted until that real
-     * analysis actually runs and validates.
-     *
-     * `analystCatalog` is the full real analyst catalog (every real
-     * scored AND unscored ask-supported candidate, see
-     * project-strategy.js's computeBootstrapAnalystCatalog) — additive,
-     * for a future richer analyst picker; `alternatives` (the existing
-     * plain quality/efficient pair) stays unchanged for today's overlay
-     * and analyst-run callers, which don't consume the fuller catalog yet.
+     * ProjectOverlay preflight: computes a real, read-only ProjectProfile
+     * and the full analyst catalog. No provider call or persistence occurs;
+     * the human selects and confirms a catalog entry before analysis runs.
      */
     async preflightProject({ cwd }) {
       const projectRoot = await root(cwd);
@@ -870,7 +858,6 @@ export function createConversationService(deps = {}) {
         providerCapacity = null, unscoredModels = [], claudeEntitlement = {}
       } = snap.modelIntelligence ?? {};
       const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement };
-      const alternatives = computeBootstrapAnalystAlternatives(candidates);
       const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, unscoredModels });
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
@@ -878,7 +865,7 @@ export function createConversationService(deps = {}) {
       const unverifiedClaudeNotice = unverifiedCount > 0
         ? buildUnverifiedClaudePreflightNotice(unverifiedCount)
         : null;
-      return { profile, alternatives, candidates, analystCatalog, projectRoot, unverifiedClaudeNotice };
+      return { profile, candidates, analystCatalog, projectRoot, unverifiedClaudeNotice };
     },
     /**
      * `/models --verify-access [--refresh]`: the only service path that
@@ -960,7 +947,7 @@ export function createConversationService(deps = {}) {
       };
     },
     /**
-     * `/project analyst quality|efficient --confirm` (ANALYZING -> SUGGESTED):
+     * ProjectOverlay's confirmed analyst step (ANALYZING -> SUGGESTED):
      * runs the human's already-confirmed real model read-only (askProvider
      * — the same real, no-file-write path ASK mode uses; never a new
      * execution surface) against the real, limited context package
@@ -973,7 +960,7 @@ export function createConversationService(deps = {}) {
      * @param {string} args.cwd
      * @param {object} args.profile - from preflightProject
      * @param {object} args.candidates - from preflightProject
-     * @param {{choice: "quality"|"efficient", model: object}} args.analyst
+     * @param {{choice?: "quality"|"efficient"|null, model: object, selectionSource?: "recommended"|"manual", recommendationTags?: string[]}} args.analyst
      */
     async runBootstrapAnalysis({ cwd, profile, candidates, analyst }) {
       const projectRoot = await root(cwd);
@@ -1046,8 +1033,7 @@ export function createConversationService(deps = {}) {
     /**
      * `/project refresh`: a strategy that was never approved (no strategy
      * yet, or still just "suggested") is left as-is — the interactive
-     * AWAITING_ANALYST/ANALYZING flow (preflightProject + a fresh
-     * /project analyze) is the only way to get a new suggestion; refresh
+     * overlay analysis flow is the only way to get a new suggestion; refresh
      * never silently re-runs a real provider call. An ACTIVE strategy
      * whose real fingerprint no longer matches the current evidence is
      * marked STALE (persisted) but keeps its previous team assignments/

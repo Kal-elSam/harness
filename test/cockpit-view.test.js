@@ -592,24 +592,6 @@ test("REGRESSION: projectTeamPanel shows the real OPERATIONAL projectTeam, never
   assert.doesNotMatch(stripTerminalSequences(roleAssignmentLine), /Fable 5\.1/, "the role row itself must still be the operational pick, never qualityTeam's model");
 });
 
-test("projectTeamPanel shows AWAITING_ANALYST — real quality/efficient alternatives — once a real LOCAL_PREFLIGHT ran but before any choice is confirmed", () => {
-  const { view } = makeView();
-  view.setSnapshot({ projectRoot: "/repo/crm", modelIntelligence: { status: "unknown" } });
-  view.pendingProjectAnalysis = {
-    profile: {}, candidates: {},
-    alternatives: [
-      { choice: "quality", model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" } },
-      { choice: "efficient", model: { adapterId: "claude", modelId: "claude-x", displayName: "Claude X" } }
-    ]
-  };
-  const { title, lines } = view.projectTeamPanel(80);
-  assert.equal(title, "PROJECT ANALYSIS · crm — Select Project Analyst");
-  const joined = lines.join("\n");
-  assert.match(joined, /quality\s+GPT-6 Astra/);
-  assert.match(joined, /efficient\s+Claude X/);
-  assert.match(joined, /--confirm/);
-});
-
 test("projectTeamPanel shows ACTIVE without a pending-approval hint, and STALE with a real refresh warning", () => {
   const { view } = makeView();
   view.setSnapshot({

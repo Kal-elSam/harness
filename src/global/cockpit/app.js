@@ -324,9 +324,7 @@ export async function runCockpitApp({
         if (sub === "status") {
           const strategy = view.snapshot?.projectStrategy;
           if (!strategy) {
-            pushTranscript("kairo", view.pendingProjectAnalysis
-              ? "AWAITING_ANALYST — pick a real Project Analyst with /project analyst quality|efficient --confirm."
-              : "Project not analyzed. Use /project analyze for a real, project-specific team.");
+            pushTranscript("kairo", "Project not analyzed. Use /project analyze for a real, project-specific team.");
           } else {
             const approvedNote = strategy.approvedAt ? ` (approved ${strategy.approvedAt})` : "";
             pushTranscript("kairo", `Status: ${strategy.status.toUpperCase()}${approvedNote}`);
@@ -339,57 +337,15 @@ export async function runCockpitApp({
             }
           }
         } else if (sub === "analyze") {
-          // LOCAL_PREFLIGHT: real, read-only evidence + real Project
-          // Analyst alternatives — no provider call yet, no ProjectStrategy
-          // created yet (AWAITING_ANALYST). The human still has to pick
-          // and confirm before anything runs.
-          editor.disableSubmit = true;
+          // The SAME overlay used for first analysis and in-overlay
+          // re-analysis. `forceReanalyze` bypasses an existing strategy at
+          // construction time, so startup performs exactly one preflight.
+          openProjectOverlay({
+            tui, service, view, cwd, forceReanalyze: true,
+            onNarrate: (text) => pushTranscript("kairo", text)
+          });
           editor.setText("");
-          return runAction("Analyzing project locally (read-only)", async () => {
-            const preflight = await service.preflightProject({ cwd });
-            view.pendingProjectAnalysis = preflight;
-            if (preflight.unverifiedClaudeNotice) {
-              pushTranscript("kairo", preflight.unverifiedClaudeNotice);
-            }
-            if (!preflight.alternatives.length) {
-              pushTranscript("kairo", "No real Project Analyst candidate is available right now (ASK only supports Codex/Claude today).");
-              return;
-            }
-            const lines = preflight.alternatives.map((alt) => `  ${alt.choice}: ${view.aiTeamLabel(alt.model)}`).join("\n");
-            pushTranscript("kairo", `Select Project Analyst — real alternatives:\n${lines}\nUse /project analyst quality|efficient --confirm to run it (consumes real quota).`);
-          }).finally(() => { editor.disableSubmit = false; });
-        } else if (sub === "analyst") {
-          const choice = args[1]?.toLowerCase();
-          const confirmed = args.includes("--confirm");
-          if (choice !== "quality" && choice !== "efficient") {
-            pushTranscript("kairo", "Usage: /project analyst quality|efficient [--confirm]");
-            editor.setText("");
-            return;
-          }
-          if (!view.pendingProjectAnalysis) {
-            pushTranscript("kairo", "Nothing awaiting a Project Analyst choice. Run /project analyze first.");
-            editor.setText("");
-            return;
-          }
-          const alternative = view.pendingProjectAnalysis.alternatives.find((alt) => alt.choice === choice);
-          if (!alternative) {
-            pushTranscript("kairo", `"${choice}" is not one of the real available alternatives right now.`);
-            editor.setText("");
-            return;
-          }
-          if (!confirmed) {
-            pushTranscript("kairo", `This will run ${view.aiTeamLabel(alternative.model)} read-only against your project and consume real quota from that provider. Run again with --confirm to proceed: /project analyst ${choice} --confirm`);
-            editor.setText("");
-            return;
-          }
-          editor.disableSubmit = true;
-          editor.setText("");
-          return runAction(`Analyzing with ${view.aiTeamLabel(alternative.model)} (read-only)`, async () => {
-            const { profile, candidates } = view.pendingProjectAnalysis;
-            const result = await service.runBootstrapAnalysis({ cwd, profile, candidates, analyst: alternative });
-            view.pendingProjectAnalysis = null;
-            pushTranscript("kairo", `Suggested project team ready (${result.activeRoles.length} real role${result.activeRoles.length === 1 ? "" : "s"}). Use /project approve to activate.`);
-          }).finally(() => { editor.disableSubmit = false; });
+          return;
         } else if (sub === "approve") {
           editor.disableSubmit = true;
           editor.setText("");
@@ -423,7 +379,7 @@ export async function runCockpitApp({
               : "Cursor marked available again — back in team suggestions.");
           });
         } else {
-          pushTranscript("kairo", "Usage: /project status|analyze|analyst quality|efficient [--confirm]|approve|refresh|cursor exhausted|available");
+          pushTranscript("kairo", "Usage: /project status|analyze|approve|refresh|cursor exhausted|available");
         }
       } else if (command === "/plan") {
         const planTask = task.slice(command.length).trim();

@@ -74,8 +74,11 @@ Denied models (e.g. Fable 5.1 on Pro) must never enter automatic pools. Humans n
 User feedback invalidated the previous `unverified recommendable` contract and the always-expanded dashboard evidence. The feature is reopened with these coordinated corrections:
 
 - [x] INC5-01 Make unverified Claude candidates manual-only while preserving them in the explicit role-edit catalog with a credit/access warning
+  - Commit: `962a558` (`fix(project-team): fail closed on access`)
   - Evidence: `buildScoredCandidatePools` derives entitlement-safe recommendations and explicit manual selections from one hydration pass; service/project catalogs preserve `entitlement` + `entitlementReason`; focused suite passed 143/143 (`node --test test/model-candidate-catalog.test.js test/project-strategy.test.js test/conversation-service.test.js`).
-- [ ] INC5-02 Route `/project analyze` through the same interactive overlay flow used by first analysis and overlay re-analysis
+- [x] INC5-02 Route `/project analyze` through the same interactive overlay flow used by first analysis and overlay re-analysis
+  - Evidence: `/project analyze` opens `ProjectOverlay` with `forceReanalyze`, bypassing suggested/active/stale strategies before initialization so exactly one preflight runs. The parallel `pendingProjectAnalysis` + `/project analyst` text state machine and its dead dashboard state were removed. Explicit unverified Claude choices now carry a visible picker tag and confirmation warning that extra credits may be required; denied candidates remain excluded by the catalog contract from INC5-01.
+  - Check: focused cockpit/strategy/service suite passed 278/278 (`node --test test/project-overlay.test.js test/cockpit-app.test.js test/cockpit-view.test.js test/project-strategy.test.js test/conversation-service.test.js`).
 - [ ] INC5-03 Reduce the persistent PROJECT TEAM panel to role/model/provider plus concise strategy status; keep selection evidence in the overlay's explicit evidence view
 - [ ] INC5-04 Run targeted tests and full `npm test`; record observed evidence
 - [ ] INC5-05 Commit each verified work unit and record commit identities
@@ -87,7 +90,7 @@ User feedback invalidated the previous `unverified recommendable` contract and t
 - Delivery strategy: `ask-on-risk`; forecast is below the ~400-line chaining threshold, so one feature branch and one PR slice
 - RDD: disabled/unmanaged (`gentle-ai review mode status`, default source)
 - TDD: ordinary functional checks; source remains project convention; runner `npm test`
-- Next step: implement INC5-02 to unify the analysis flow, then simplify the panel
+- Next step: implement INC5-03 to simplify the persistent panel without removing evidence from the overlay
 
 ## Progress
 
