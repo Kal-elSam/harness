@@ -64,13 +64,34 @@ Denied models (e.g. Fable 5.1 on Pro) must never enter automatic pools. Humans n
 ## Acceptance
 
 - Denied Claude models excluded from recommendation + automatic pools
-- Unverified recommendable but never auto-launchable
+- Unverified Claude models are manual-only: excluded from Project Analyst and PROJECT TEAM recommendations, quality leaders, orchestrators, and fallbacks
 - `/models --verify-access` cost statement before any spawn; no re-probe without `--refresh`
 - Every projectTeam row has a non-empty explanation; quality leader + retention when they differ
 - Full `node --test` green after each increment
+
+## Increment 5 — PROJECT TEAM trust flow
+
+User feedback invalidated the previous `unverified recommendable` contract and the always-expanded dashboard evidence. The feature is reopened with these coordinated corrections:
+
+- [x] INC5-01 Make unverified Claude candidates manual-only while preserving them in the explicit role-edit catalog with a credit/access warning
+  - Evidence: `buildScoredCandidatePools` derives entitlement-safe recommendations and explicit manual selections from one hydration pass; service/project catalogs preserve `entitlement` + `entitlementReason`; focused suite passed 143/143 (`node --test test/model-candidate-catalog.test.js test/project-strategy.test.js test/conversation-service.test.js`).
+- [ ] INC5-02 Route `/project analyze` through the same interactive overlay flow used by first analysis and overlay re-analysis
+- [ ] INC5-03 Reduce the persistent PROJECT TEAM panel to role/model/provider plus concise strategy status; keep selection evidence in the overlay's explicit evidence view
+- [ ] INC5-04 Run targeted tests and full `npm test`; record observed evidence
+- [ ] INC5-05 Commit each verified work unit and record commit identities
+
+### Increment 5 delivery
+
+- Authorized scope: the three user-confirmed corrections above; no access-path/provider/environment refactor
+- Forecast: 180–300 authored changed lines, generated files excluded
+- Delivery strategy: `ask-on-risk`; forecast is below the ~400-line chaining threshold, so one feature branch and one PR slice
+- RDD: disabled/unmanaged (`gentle-ai review mode status`, default source)
+- TDD: ordinary functional checks; source remains project convention; runner `npm test`
+- Next step: implement INC5-02 to unify the analysis flow, then simplify the panel
 
 ## Progress
 
 - Created: 2026-09-19
 - INC1–4 complete and released (0.26.1 / 0.27.0 / 0.28.0 / 0.29.0)
-- Feature closed
+- Reopened: 2026-09-19 after verified 0.29.0 user feedback
+- Current branch: `fix/project-team-trust-flow`

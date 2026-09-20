@@ -6,6 +6,7 @@ import {
 } from "../src/global/conversation/project-strategy.js";
 import { scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
+import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 
 function profile(overrides = {}) {
   return {
@@ -137,6 +138,26 @@ test("computeBootstrapAnalystAlternatives is a thin projection of computeBootstr
   const qualityCatalogEntry = catalog.models.find((model) => model.recommendationTags.includes("quality"));
   assert.equal(qualityAlt.model.adapterId, qualityCatalogEntry.adapterId);
   assert.equal(qualityAlt.model.modelId, qualityCatalogEntry.modelId);
+});
+
+test("unverified Claude is visible only in the explicit analyst catalog, with entitlement metadata and no recommendation tag", () => {
+  const candidates = realCandidates();
+  const unverifiedClaude = {
+    ...candidates.scoredAll.find((model) => model.adapterId === "claude"),
+    candidateKey: "claude::claude-model", entitlement: ENTITLEMENT.UNVERIFIED,
+    entitlementReason: "Access has not been verified"
+  };
+  const safeCodex = candidates.scoredAll.find((model) => model.adapterId === "codex");
+  const input = {
+    ...candidates, scoredAll: [safeCodex],
+    manualSelectionScoredPool: [safeCodex, unverifiedClaude]
+  };
+  const catalog = computeBootstrapAnalystCatalog(input);
+  const claude = catalog.models.find((model) => model.adapterId === "claude");
+  assert.equal(claude.entitlement, ENTITLEMENT.UNVERIFIED);
+  assert.equal(claude.entitlementReason, "Access has not been verified");
+  assert.deepEqual(claude.recommendationTags, []);
+  assert.ok(computeBootstrapAnalystAlternatives(input).every((alternative) => alternative.model.adapterId !== "claude"));
 });
 
 test("buildProjectStrategy only activates roles the real profile asked for AND that have a real pick", () => {
@@ -351,6 +372,27 @@ function suggestedStrategyWithProjectTeam() {
 test("computeProjectTeamEditCatalog includes every real candidate from all four team-executable adapters (Codex/Claude/Cursor/OpenCode Go), unlike the Bootstrap Analyst's ask-only catalog", () => {
   const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
   assert.deepEqual(new Set(catalog.models.map((m) => m.adapterId)), new Set(["claude", "codex", "cursor"]));
+});
+
+test("project role editing retains unverified Claude with access metadata while denied Claude stays excluded", () => {
+  const candidates = editCandidates();
+  const claude = candidates.scoredAll.find((model) => model.adapterId === "claude");
+  const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
+  const unverified = {
+    ...claude, candidateKey: "claude::claude-model", entitlement: ENTITLEMENT.UNVERIFIED,
+    entitlementReason: "May require credits"
+  };
+  const denied = {
+    ...claude, modelId: "claude-denied", candidateKey: "claude::claude-denied",
+    entitlement: ENTITLEMENT.DENIED, entitlementReason: "Credits required"
+  };
+  const catalog = computeProjectTeamEditCatalog("Explorer", {
+    ...candidates, scoredAll: [codex], manualSelectionScoredPool: [codex, unverified, denied]
+  });
+  const manualClaude = catalog.models.find((model) => model.candidateKey === "claude::claude-model");
+  assert.equal(manualClaude.entitlement, ENTITLEMENT.UNVERIFIED);
+  assert.equal(manualClaude.entitlementReason, "May require credits");
+  assert.ok(!catalog.models.some((model) => model.candidateKey === "claude::claude-denied"));
 });
 
 test("computeProjectTeamEditCatalog attaches a real per-role evaluation (reused from capability-scoring.js, never a new formula) when the registry has real evidence", () => {
