@@ -77,9 +77,12 @@ User feedback invalidated the previous `unverified recommendable` contract and t
   - Commit: `962a558` (`fix(project-team): fail closed on access`)
   - Evidence: `buildScoredCandidatePools` derives entitlement-safe recommendations and explicit manual selections from one hydration pass; service/project catalogs preserve `entitlement` + `entitlementReason`; focused suite passed 143/143 (`node --test test/model-candidate-catalog.test.js test/project-strategy.test.js test/conversation-service.test.js`).
 - [x] INC5-02 Route `/project analyze` through the same interactive overlay flow used by first analysis and overlay re-analysis
+  - Commit: `4d0b0b3` (`fix(project-team): unify analysis flow`)
   - Evidence: `/project analyze` opens `ProjectOverlay` with `forceReanalyze`, bypassing suggested/active/stale strategies before initialization so exactly one preflight runs. The parallel `pendingProjectAnalysis` + `/project analyst` text state machine and its dead dashboard state were removed. Explicit unverified Claude choices now carry a visible picker tag and confirmation warning that extra credits may be required; denied candidates remain excluded by the catalog contract from INC5-01.
   - Check: focused cockpit/strategy/service suite passed 278/278 (`node --test test/project-overlay.test.js test/cockpit-app.test.js test/cockpit-view.test.js test/project-strategy.test.js test/conversation-service.test.js`).
-- [ ] INC5-03 Reduce the persistent PROJECT TEAM panel to role/model/provider plus concise strategy status; keep selection evidence in the overlay's explicit evidence view
+- [x] INC5-03 Reduce the persistent PROJECT TEAM panel to role/model/provider plus concise strategy status; keep selection evidence in the overlay's explicit evidence view
+  - Evidence: the dashboard now renders only Project Analyst, Orchestrator, and required operational role assignments with aligned model/provider columns plus the existing suggested/stale status line. The always-visible operational-picks introduction, Orchestrator footnote, quality-leader/retention lines, and per-role availability warnings were removed. `projectTeamEvidenceLines` remains unchanged and retains quality, retention, fallback, decision, and availability evidence behind the overlay's explicit `e evidence` control.
+  - Check: focused view/overlay suite passed 123/123 (`node --test test/cockpit-view.test.js test/project-overlay.test.js`).
 - [ ] INC5-04 Run targeted tests and full `npm test`; record observed evidence
 - [ ] INC5-05 Commit each verified work unit and record commit identities
 
@@ -90,7 +93,7 @@ User feedback invalidated the previous `unverified recommendable` contract and t
 - Delivery strategy: `ask-on-risk`; forecast is below the ~400-line chaining threshold, so one feature branch and one PR slice
 - RDD: disabled/unmanaged (`gentle-ai review mode status`, default source)
 - TDD: ordinary functional checks; source remains project convention; runner `npm test`
-- Next step: implement INC5-03 to simplify the persistent panel without removing evidence from the overlay
+- Next step: run INC5-04 targeted and full-suite verification
 
 ## Progress
 
