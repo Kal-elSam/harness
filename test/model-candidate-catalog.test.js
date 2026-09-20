@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildAutomaticExecutionPool, buildCompleteCandidateCatalog, buildRecommendationPool,
+  buildAutomaticExecutionPool, buildCompleteCandidateCatalog, buildRecommendationPool, buildScoredCandidatePools,
   resolveLineage, stripDisplayVariant, stripLineageSuffixes
 } from "../src/global/intelligence/model-candidate-catalog.js";
 import { buildAiTeam, scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
@@ -241,7 +241,12 @@ test("buildRecommendationPool excludes only real superseded candidates — curre
     { adapterId: "opencode-go", models: [{ id: "kimi-k2.7-code", displayName: "Kimi K2.7 Code" }] }
   ];
   const scoredAll = scoreAvailableModels(providerCatalogs, aa);
-  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, {
+    modelEntitlement: {
+      "claude-opus-4-6": { status: ENTITLEMENT.ALLOWED },
+      "claude-opus-5": { status: ENTITLEMENT.ALLOWED }
+    }
+  });
   const pool = buildRecommendationPool(scoredAll, catalog);
   const keys = pool.map((c) => c.candidateKey);
   assert.ok(!keys.includes("claude::claude-opus-4-6"), "the real, strictly older opus generation must be excluded");
@@ -335,7 +340,12 @@ test("INTEGRATION: feeding the Recommendation Pool into buildAiTeam as its `mode
     models: [{ id: "claude-opus-4-6", displayName: "Claude Opus 4.6" }, { id: "claude-opus-5", displayName: "Claude Opus 5" }]
   }];
   const scoredAll = scoreAvailableModels(providerCatalogs, aa);
-  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa);
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, {
+    modelEntitlement: {
+      "claude-opus-4-6": { status: ENTITLEMENT.ALLOWED },
+      "claude-opus-5": { status: ENTITLEMENT.ALLOWED }
+    }
+  });
   const recommendationPool = buildRecommendationPool(scoredAll, catalog);
   const eligibility = { claude: { ok: true } };
 
@@ -405,7 +415,7 @@ test("REGRESSION: claude-fable-5-1 with entitlement denied + eligibility.claude=
   assert.ok(automaticPool.some((c) => c.modelId === "claude-opus-5"), "allowed Claude may auto-launch when eligible");
 });
 
-test("REGRESSION: without entitlement data, all Claude are unverified — in recommendation, none in automatic", () => {
+test("REGRESSION: without entitlement data, Claude is manual-only — absent from recommendations but retained with metadata for explicit selection", () => {
   const aa = [
     { slug: "claude-fable-5-1", name: "Claude Fable 5.1", intelligenceIndex: 90, codingIndex: 90 },
     { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 60, codingIndex: 60 }
@@ -422,9 +432,21 @@ test("REGRESSION: without entitlement data, all Claude are unverified — in rec
     assert.equal(candidate.entitlement, ENTITLEMENT.UNVERIFIED);
   }
   const scoredAll = scoreAvailableModels(providerCatalogs, aa);
-  const recommendationPool = buildRecommendationPool(scoredAll, catalog);
-  assert.equal(recommendationPool.length, 2);
-  assert.ok(recommendationPool.every((c) => c.entitlement === ENTITLEMENT.UNVERIFIED));
+  const { recommendationPool, manualSelectionPool } = buildScoredCandidatePools(scoredAll, catalog);
+  assert.deepEqual(recommendationPool, [], "unverified Claude must never become a quality leader, orchestrator, fallback, or analyst recommendation");
+  assert.equal(manualSelectionPool.length, 2);
+  assert.ok(manualSelectionPool.every((c) => c.entitlement === ENTITLEMENT.UNVERIFIED));
   const automaticPool = buildAutomaticExecutionPool(recommendationPool, { claude: { ok: true } });
   assert.deepEqual(automaticPool, [], "unverified Claude must never auto-launch even when provider-eligible");
+});
+
+test("buildScoredCandidatePools excludes denied Claude from both recommendation and explicit manual selection", () => {
+  const aa = [{ slug: "claude-fable-5-1", name: "Claude Fable 5.1", intelligenceIndex: 99, codingIndex: 99 }];
+  const providerCatalogs = [{ adapterId: "claude", models: [{ id: "claude-fable-5-1", displayName: "Claude Fable 5.1" }] }];
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, {
+    modelEntitlement: { "claude-fable-5-1": { status: ENTITLEMENT.DENIED, reason: "Credits required" } }
+  });
+  const pools = buildScoredCandidatePools(scoreAvailableModels(providerCatalogs, aa), catalog);
+  assert.deepEqual(pools.recommendationPool, []);
+  assert.deepEqual(pools.manualSelectionPool, []);
 });

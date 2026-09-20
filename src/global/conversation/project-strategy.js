@@ -19,6 +19,7 @@
 import { buildAiTeam, buildEfficientTeam, ensureRegistry } from "../intelligence/model-intelligence.js";
 import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
 import { computeRoleEvaluations } from "../intelligence/capability-scoring.js";
+import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
 
 // The Bootstrap Analyst investigates read-only via askProvider
 // (intelligence/quick-ask.js), which only actually supports these
@@ -144,24 +145,34 @@ function quotaFor(providerCapacity, adapterId) {
  *   conversation/service.js's own `unscoredModels`).
  * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, quota: number|null, recommendationTags: string[]}>}}
  */
-export function computeBootstrapAnalystCatalog({ scoredAll, eligibility, registry, providerCapacity = null, unscoredModels = [] }) {
+export function computeBootstrapAnalystCatalog({
+  scoredAll, manualSelectionScoredPool = scoredAll, eligibility, registry,
+  providerCapacity = null, unscoredModels = []
+}) {
   // Restrict the CANDIDATE POOL itself to ask-supported adapters before
   // ranking — not a post-hoc check on the winner — so the real portfolio
   // logic picks the best real candidate among what Kairo can actually
   // invoke, the same way it would for any other real role. Filtering
   // after the fact would silently lose a genuinely real 2nd/3rd-place
   // candidate whenever the unsupported provider happened to rank #1.
-  const askSupportedScored = scoredAll.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
+  const askSupportedRecommended = scoredAll.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
+  const askSupportedScored = manualSelectionScoredPool.filter((model) => (
+    ASK_SUPPORTED_ADAPTERS.has(model.adapterId) && model.entitlement !== ENTITLEMENT.DENIED
+  ));
   // scoredAll (the Recommendation Pool) already excludes superseded
   // candidates (buildRecommendationPool); unscoredModels doesn't go
   // through that pool, so the same real "not superseded" rule is applied
   // here too — defense in depth, never trusting the caller alone to have
   // already filtered a real, proven-stale candidate out.
-  const askSupportedUnscored = unscoredModels.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId) && model.lifecycle !== "superseded");
+  const askSupportedUnscored = unscoredModels.filter((model) => (
+    ASK_SUPPORTED_ADAPTERS.has(model.adapterId)
+    && model.lifecycle !== "superseded"
+    && model.entitlement !== ENTITLEMENT.DENIED
+  ));
 
   const roleCapabilities = { Explorer: BOOTSTRAP_ANALYST_PROFILE.capabilities };
-  const aiTeam = buildAiTeam(askSupportedScored, eligibility, registry, roleCapabilities);
-  const efficientTeam = buildEfficientTeam(askSupportedScored, eligibility, registry, { providerCapacity, roleCapabilities });
+  const aiTeam = buildAiTeam(askSupportedRecommended, eligibility, registry, roleCapabilities);
+  const efficientTeam = buildEfficientTeam(askSupportedRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
   const quality = aiTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
   const efficient = efficientTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
   const qualityKey = quality ? candidateKeyOf(quality) : null;
@@ -176,6 +187,8 @@ export function computeBootstrapAnalystCatalog({ scoredAll, eligibility, registr
       candidateKey: key, adapterId: model.adapterId, modelId: model.modelId,
       displayName: model.modelName ?? model.displayName ?? model.modelId,
       evidenceStatus: model.evidenceStatus ?? "scored",
+      entitlement: model.entitlement ?? null,
+      entitlementReason: model.entitlementReason ?? null,
       available: eligibility[model.adapterId]?.ok === true,
       quota: quotaFor(providerCapacity, model.adapterId),
       recommendationTags
@@ -185,6 +198,8 @@ export function computeBootstrapAnalystCatalog({ scoredAll, eligibility, registr
     candidateKey: candidateKeyOf(model), adapterId: model.adapterId, modelId: model.modelId,
     displayName: model.displayName ?? model.modelId,
     evidenceStatus: "unscored",
+    entitlement: model.entitlement ?? null,
+    entitlementReason: model.entitlementReason ?? null,
     available: eligibility[model.adapterId]?.ok === true,
     quota: quotaFor(providerCapacity, model.adapterId),
     recommendationTags: []
@@ -384,15 +399,23 @@ const TEAM_EDIT_ADAPTERS = new Set(["codex", "claude", "cursor", "opencode-go"])
  * @param {object} candidates - `scoredAll`, `eligibility`, `registry`, `unscoredModels`
  * @returns {{role: string, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, accessMode: string|null, evidenceStatus: string, available: boolean, roleEvaluation: object|null}>}}
  */
-export function computeProjectTeamEditCatalog(role, { scoredAll = [], eligibility = {}, registry = null, unscoredModels = [] }) {
+export function computeProjectTeamEditCatalog(role, {
+  scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null, unscoredModels = []
+}) {
   const capabilities = ROLE_CAPABILITIES[role];
   if (!capabilities) return { role, models: [] };
 
-  const teamScored = scoredAll.filter((model) => TEAM_EDIT_ADAPTERS.has(model.adapterId));
+  const teamScored = manualSelectionScoredPool.filter((model) => (
+    TEAM_EDIT_ADAPTERS.has(model.adapterId) && model.entitlement !== ENTITLEMENT.DENIED
+  ));
   // Same "not superseded" real rule the Recommendation Pool applies to
   // scoredAll — unscoredModels doesn't go through that pool, so it's
   // applied here too, defense in depth, never trusting the caller alone.
-  const teamUnscored = unscoredModels.filter((model) => TEAM_EDIT_ADAPTERS.has(model.adapterId) && model.lifecycle !== "superseded");
+  const teamUnscored = unscoredModels.filter((model) => (
+    TEAM_EDIT_ADAPTERS.has(model.adapterId)
+    && model.lifecycle !== "superseded"
+    && model.entitlement !== ENTITLEMENT.DENIED
+  ));
   // Same real registry-seeding every other role computation relies on
   // (buildAiTeam/buildEfficientTeam's own ensureRegistry) — a caller's
   // real registry might already have richer evidence (Hugging Face,
@@ -407,6 +430,7 @@ export function computeProjectTeamEditCatalog(role, { scoredAll = [], eligibilit
       candidateKey: key, adapterId: model.adapterId, modelId: model.modelId,
       displayName: model.modelName ?? model.displayName ?? model.modelId,
       accessMode: model.accessMode ?? null, evidenceStatus: model.evidenceStatus ?? "scored",
+      entitlement: model.entitlement ?? null, entitlementReason: model.entitlementReason ?? null,
       available: eligibility[model.adapterId]?.ok === true,
       roleEvaluation: evaluations.get(`${model.adapterId}::${model.modelId}`) ?? null
     };
@@ -415,6 +439,7 @@ export function computeProjectTeamEditCatalog(role, { scoredAll = [], eligibilit
     candidateKey: candidateKeyOf(model), adapterId: model.adapterId, modelId: model.modelId,
     displayName: model.displayName ?? model.modelId,
     accessMode: model.accessMode ?? null, evidenceStatus: "unscored",
+    entitlement: model.entitlement ?? null, entitlementReason: model.entitlementReason ?? null,
     available: eligibility[model.adapterId]?.ok === true,
     roleEvaluation: null
   }));
@@ -491,7 +516,8 @@ export function applyProjectTeamOverride(strategy, role, candidate) {
     assignmentSource: "override",
     overrideEvidence: {
       accessMode: candidate.accessMode ?? null, available: candidate.available ?? null,
-      evidenceStatus: candidate.evidenceStatus ?? null, roleEvaluation: candidate.roleEvaluation ?? null
+      evidenceStatus: candidate.evidenceStatus ?? null, roleEvaluation: candidate.roleEvaluation ?? null,
+      entitlement: candidate.entitlement ?? null, entitlementReason: candidate.entitlementReason ?? null
     }
   };
   const projectTeam = [...strategy.projectTeam];

@@ -448,7 +448,7 @@ export function buildCompleteCandidateCatalog(providerCatalogs, aaModels, deps =
  */
 
 /**
- * The Recommendation Pool: every real, scored candidate (from
+ * Shared hydration for every real, scored selection candidate (from
  * scoreAvailableModels — the same real AA-matched pool buildAiTeam/
  * buildEfficientTeam already consume) that is NOT superseded, enriched
  * with its real ModelCandidateIdentity fields via a candidateKey join.
@@ -464,13 +464,14 @@ export function buildCompleteCandidateCatalog(providerCatalogs, aaModels, deps =
  * unrecognized lineage never excludes a real candidate from being
  * recommended, only a PROVEN newer same-lineage successor does. Manual-
  * only real candidates (Cursor, OpenCode Go today) are kept too — this
- * pool answers "what can Kairo honestly recommend", not "what can Kairo
- * launch by itself" (see buildAutomaticExecutionPool for that).
+ * The hydrated result is split afterward: recommendations fail closed on
+ * entitlement, while an explicit human picker may additionally show an
+ * unverified candidate with its access warning.
  * @param {Array<object>} scoredAll - scoreAvailableModels() output, every candidate provider regardless of eligibility.
  * @param {Array<ModelCandidateIdentity>} completeCatalog - buildCompleteCandidateCatalog() output, same provider catalogs.
  * @returns {Array<RecommendationPoolCandidate>}
  */
-export function buildRecommendationPool(scoredAll, completeCatalog) {
+function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
   const identityByKey = new Map(completeCatalog.map((identity) => [identity.candidateKey, identity]));
   const pool = [];
   for (const scored of scoredAll) {
@@ -482,9 +483,10 @@ export function buildRecommendationPool(scoredAll, completeCatalog) {
     // never excludes: an un-joined candidate is treated as lineage-
     // unknown, exactly like any other real unrecognized lineage.
     if (identity?.lifecycle === "superseded") continue;
-    // Denied entitlement is the same class as superseded: never recommend.
-    // Unverified Claude stays recommendable (human can still pick it);
-    // only automatic launch excludes it (see buildAutomaticExecutionPool).
+    // Denied entitlement is the same class as superseded: it is not a
+    // selectable candidate anywhere. Unverified access is retained here so
+    // the explicit manual catalogs can still offer it with an honest warning;
+    // recommendation-safe filtering happens in buildScoredCandidatePools.
     if (identity?.entitlement === ENTITLEMENT.DENIED) continue;
     const fallbackEntitlement = scored.adapterId === "claude"
       ? ENTITLEMENT.UNVERIFIED
@@ -507,6 +509,26 @@ export function buildRecommendationPool(scoredAll, completeCatalog) {
 }
 
 /**
+ * Builds the two scored selection surfaces from one identity hydration pass.
+ * `recommendationPool` is fail-closed for per-model entitlement; the manual
+ * pool additionally retains unverified Claude models for explicit human
+ * selection. Denied and superseded candidates enter neither pool.
+ * @param {Array<object>} scoredAll
+ * @param {Array<ModelCandidateIdentity>} completeCatalog
+ * @returns {{recommendationPool: Array<RecommendationPoolCandidate>, manualSelectionPool: Array<RecommendationPoolCandidate>}}
+ */
+export function buildScoredCandidatePools(scoredAll, completeCatalog) {
+  const manualSelectionPool = hydrateScoredCandidatePool(scoredAll, completeCatalog);
+  const recommendationPool = manualSelectionPool.filter((candidate) => AUTOMATIC_ENTITLEMENTS.has(candidate.entitlement));
+  return { recommendationPool, manualSelectionPool };
+}
+
+/** Backward-compatible projection for callers that only need safe recommendations. */
+export function buildRecommendationPool(scoredAll, completeCatalog) {
+  return buildScoredCandidatePools(scoredAll, completeCatalog).recommendationPool;
+}
+
+/**
  * The Automatic Execution Pool: the subset of the Recommendation Pool
  * Kairo can actually launch itself, right now — real routing's own
  * candidate source, never QUALITY/EFFICIENT TEAM's. Requires BOTH a real
@@ -518,7 +540,7 @@ export function buildRecommendationPool(scoredAll, completeCatalog) {
  * already compute, reused here rather than reimplemented) AND entitlement
  * in {allowed, not_applicable} — denied and unverified Claude never
  * auto-launch. Never mutates or filters the Recommendation Pool itself —
- * a manual-only real recommendation (Cursor, say) stays fully visible
+ * an access-mode-manual recommendation stays fully visible
  * there; a caller that wants to actually RUN a task must separately
  * produce a real "Continue in Cursor"-style handoff for it, never a
  * silent fallback to a different, automatically-launchable model the

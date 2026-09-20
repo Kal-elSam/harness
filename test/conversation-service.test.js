@@ -304,6 +304,33 @@ test("preflightProject computes a real read-only ProjectProfile and real Bootstr
   assert.equal(result.analystCatalog.models.length, 2, "both real ask-supported candidates from realScoredCandidates() must appear");
 });
 
+test("preflightProject recommends only entitlement-safe models while retaining unverified Claude for explicit manual analyst selection", async () => {
+  const candidates = await realScoredCandidates();
+  const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
+  const claude = {
+    ...candidates.scoredAll.find((model) => model.adapterId === "claude"),
+    candidateKey: "claude::claude-model", entitlement: ENTITLEMENT.UNVERIFIED,
+    entitlementReason: "Access has not been verified"
+  };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    computeProjectProfile: async () => ({ fingerprint: "fp-1", roleRequirements: [] })
+  });
+  service.snapshot = async () => ({
+    modelIntelligence: {
+      ...candidates, scoredAll: [codex], manualSelectionScoredPool: [codex, claude],
+      unscoredModels: [], claudeEntitlement: { "claude-model": { status: ENTITLEMENT.UNVERIFIED } }
+    }
+  });
+
+  const result = await service.preflightProject({ cwd: "/repo" });
+  assert.ok(result.alternatives.every((alternative) => alternative.model.adapterId !== "claude"));
+  const manualClaude = result.analystCatalog.models.find((model) => model.adapterId === "claude");
+  assert.equal(manualClaude.entitlement, ENTITLEMENT.UNVERIFIED);
+  assert.equal(manualClaude.entitlementReason, "Access has not been verified");
+  assert.deepEqual(manualClaude.recommendationTags, []);
+});
+
 test("runBootstrapAnalysis runs the real chosen model read-only against a SANITIZED SNAPSHOT (never the real cwd), validates its response, and only then builds + persists a SUGGESTED ProjectStrategy genuinely re-scored per its real, evidence-backed findings", async () => {
   let written = null;
   const askCalls = [];
@@ -806,6 +833,16 @@ test("snapshot cross-references real model catalogs with real Artificial Analysi
   assert.equal(snapshot.modelIntelligence.status, "live");
   assert.equal(snapshot.modelIntelligence.models.length, 2);
   assert.deepEqual(snapshot.modelIntelligence.models.map((m) => m.modelId), ["gpt-6-astra", "claude-opus-5"]);
+  assert.deepEqual(snapshot.modelIntelligence.scoredAll.map((m) => m.modelId), ["gpt-6-astra"], "unverified Claude must be absent from automatic recommendations");
+  assert.deepEqual(
+    new Set(snapshot.modelIntelligence.manualSelectionScoredPool.map((m) => m.modelId)),
+    new Set(["gpt-6-astra", "claude-opus-5"]),
+    "the explicit manual catalog keeps unverified Claude"
+  );
+  assert.equal(
+    snapshot.modelIntelligence.manualSelectionScoredPool.find((m) => m.modelId === "claude-opus-5").entitlement,
+    ENTITLEMENT.UNVERIFIED
+  );
   // Coverage/confidence: real catalog status + how much of it matched AA,
   // independent of runtime eligibility — Claude stays "documented" (no
   // live per-account discovery exists), Codex is "measured".
@@ -929,7 +966,12 @@ test("snapshot excludes a provider from FIT once its real quota is exhausted, ev
       ]
     }),
     readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
-    listRunRecords: async () => []
+    listRunRecords: async () => [],
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => ({
+      subscriptionType: "pro", fetchedAt: new Date().toISOString(),
+      models: { "claude-opus-5": { status: ENTITLEMENT.ALLOWED, reason: null, probedAt: new Date().toISOString() } }
+    })
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });

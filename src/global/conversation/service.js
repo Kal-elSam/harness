@@ -54,7 +54,7 @@ import {
   annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam,
   buildEfficientTeam, scoreAvailableModels, summarizeCatalogCoverage
 } from "../intelligence/model-intelligence.js";
-import { buildAutomaticExecutionPool, buildCompleteCandidateCatalog, buildRecommendationPool } from "../intelligence/model-candidate-catalog.js";
+import { buildAutomaticExecutionPool, buildCompleteCandidateCatalog, buildScoredCandidatePools } from "../intelligence/model-candidate-catalog.js";
 import { toRuntimeModelRef } from "../intelligence/transport-registry.js";
 import { createCapabilityRegistry } from "../intelligence/model-capability-registry.js";
 import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../intelligence/model-capability-registry-sources.js";
@@ -92,7 +92,7 @@ export function buildClaudeEntitlementVerifyCostStatement({ pendingCount = 0 } =
  */
 export function buildUnverifiedClaudePreflightNotice(count) {
   const n = Math.max(0, Number(count) || 0);
-  return `${n} modelos de Claude tienen acceso sin verificar — se pueden recomendar pero nunca lanzar automáticamente. Corré /models --verify-access para verificar (los que tu plan deniega cuestan $0; los permitidos, alrededor de un centavo cada uno).`;
+  return `${n} modelos de Claude tienen acceso sin verificar — solo están disponibles para selección manual y pueden requerir créditos extra. Corré /models --verify-access para verificar (los que tu plan deniega cuestan $0; los permitidos, alrededor de un centavo cada uno).`;
 }
 
 function isPersistableEntitlementStatus(status) {
@@ -595,10 +595,14 @@ export function createConversationService(deps = {}) {
         // scoredAllRaw directly, so an old generation Cursor still
         // re-exposes (e.g. Claude Sonnet 4) naturally stops competing
         // without buildAiTeam/buildEfficientTeam's own ranking logic
-        // needing to know why. Manual-only real candidates (OpenCode Go,
-        // and Cursor's own opaque "auto" router model) stay in it — this is "what Kairo can honestly
-        // recommend", not "what Kairo can launch by itself".
-        const scoredAll = buildRecommendationPool(scoredAllRaw, completeCandidateCatalog);
+        // needing to know why. Access-mode-manual candidates may stay in
+        // it, but per-model entitlement fails closed: unverified Claude is
+        // reserved for the separate explicit manual-selection pool below.
+        const { recommendationPool: scoredAll, manualSelectionPool: manualSelectionScoredPool } = buildScoredCandidatePools(
+          scoredAllRaw,
+          completeCandidateCatalog
+        );
+        const eligibleRecommendations = scoredAll.filter((candidate) => eligibility[candidate.adapterId]?.ok === true);
         // The Automatic Execution Pool: the real subset of scoredAll
         // Kairo could actually launch itself right now (accessMode
         // "automatic" AND real, current eligibility) — exposed for the
@@ -630,10 +634,15 @@ export function createConversationService(deps = {}) {
           // successor is exactly as stale as a scored one would be, and
           // must never surface in /models --evidence's UNSCORED list or
           // the projectTeam edit catalog as if it were still current.
-          .filter((candidate) => candidate.evidenceStatus === "unscored" && candidate.lifecycle !== "superseded")
+          .filter((candidate) => (
+            candidate.evidenceStatus === "unscored"
+            && candidate.lifecycle !== "superseded"
+            && candidate.entitlement !== ENTITLEMENT.DENIED
+          ))
           .map((candidate) => ({
             adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.rawDisplayName,
-            candidateKey: candidate.candidateKey, accessMode: candidate.accessMode, lifecycle: candidate.lifecycle
+            candidateKey: candidate.candidateKey, accessMode: candidate.accessMode, lifecycle: candidate.lifecycle,
+            entitlement: candidate.entitlement, entitlementReason: candidate.entitlementReason
           }));
 
         // The Model Intelligence Foundation registry: every source Kairo
@@ -676,7 +685,7 @@ export function createConversationService(deps = {}) {
 
         result.modelIntelligence = {
           status: aa.status, source: aa.source, age: aa.age,
-          models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(scored),
+          models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(eligibleRecommendations),
           eligibility, coverage, unscoredModels,
           // Resolved Claude per-model entitlement (cache-only; never probed here).
           claudeEntitlement,
@@ -706,10 +715,11 @@ export function createConversationService(deps = {}) {
           // can call buildAiTeam/buildEfficientTeam again with the
           // project's own real roleCapabilities, instead of only ever
           // filtering the generic global team by role name. `scoredAll`
-          // here is the Recommendation Pool (superseded generations
-          // already excluded), not the raw scoreAvailableModels() output
+          // here is the entitlement-safe Recommendation Pool (superseded,
+          // denied, and unverified Claude already excluded), not the raw
+          // scoreAvailableModels() output
           // — see scoredAllRaw/completeCandidateCatalog above.
-          scoredAll, registry, providerCapacity,
+          scoredAll, manualSelectionScoredPool, registry, providerCapacity,
           // The real subset Kairo can actually launch itself — exposed
           // for the real task router (not yet built) to consume; never
           // used by QUALITY/EFFICIENT TEAM or ProjectStrategy, which only
@@ -855,10 +865,13 @@ export function createConversationService(deps = {}) {
       const projectRoot = await root(cwd);
       const profile = await computeProjectProfileImpl({ cwd: projectRoot });
       const snap = await this.snapshot({ cwd: projectRoot });
-      const { scoredAll = [], eligibility = {}, registry = null, providerCapacity = null, unscoredModels = [], claudeEntitlement = {} } = snap.modelIntelligence ?? {};
+      const {
+        scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null,
+        providerCapacity = null, unscoredModels = [], claudeEntitlement = {}
+      } = snap.modelIntelligence ?? {};
       const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement };
       const alternatives = computeBootstrapAnalystAlternatives(candidates);
-      const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, unscoredModels });
+      const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, unscoredModels });
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
       ).length;
@@ -1081,8 +1094,8 @@ export function createConversationService(deps = {}) {
     async getProjectTeamEditCatalog({ cwd, role }) {
       const projectRoot = await root(cwd);
       const snap = await this.snapshot({ cwd: projectRoot });
-      const { scoredAll = [], eligibility = {}, registry = null, unscoredModels = [] } = snap.modelIntelligence ?? {};
-      return computeProjectTeamEditCatalog(role, { scoredAll, eligibility, registry, unscoredModels });
+      const { scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null, unscoredModels = [] } = snap.modelIntelligence ?? {};
+      return computeProjectTeamEditCatalog(role, { scoredAll, manualSelectionScoredPool, eligibility, registry, unscoredModels });
     },
     /**
      * Persists a real, human-confirmed assignment for one role of a
