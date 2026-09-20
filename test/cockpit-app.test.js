@@ -756,8 +756,9 @@ test("/project status reports NOT_ANALYZED honestly when there's no real strateg
   app.stop();
 });
 
-test("/project analyze runs a real LOCAL_PREFLIGHT (no strategy yet) and lists real Bootstrap Analyst alternatives, awaiting an explicit choice", async () => {
+test("/project analyze opens the same interactive analyst overlay and runs exactly one local preflight", async () => {
   let editor;
+  let tui;
   const preflightCalls = [];
   const service = {
     snapshot: async () => makeSnapshot([]),
@@ -766,103 +767,55 @@ test("/project analyze runs a real LOCAL_PREFLIGHT (no strategy yet) and lists r
       return {
         profile: { fingerprint: "fp-1" },
         candidates: {},
-        alternatives: [
-          { choice: "quality", model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" } },
-          { choice: "efficient", model: { adapterId: "claude", modelId: "claude-x", displayName: "Claude X" } }
-        ]
+        analystCatalog: { recommendedModel: null, models: [] }
       };
     }
   };
   const app = await runCockpitApp({
-    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => { tui = makeFakeTui(); return tui; },
     editorFactory: () => { editor = makeFakeEditor(); return editor; },
     setIntervalImpl: () => 1, clearIntervalImpl: () => {}
   });
   editor.setText("/project analyze");
   await editor.onSubmit(editor.getText());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(tui.overlays.length, 1);
   assert.deepEqual(preflightCalls, [{ cwd: "/repo" }]);
-  assert.ok(app.view.pendingProjectAnalysis, "AWAITING_ANALYST state must be held until a real choice is confirmed");
-  const texts = app.view.transcript.map((entry) => entry.text).join("\n");
-  assert.match(texts, /Select Project Analyst — real alternatives/);
-  assert.match(texts, /GPT-6 Astra/);
-  assert.match(texts, /Claude X/);
+  assert.equal(tui.overlays[0].component.state, "no-analyst");
   app.stop();
 });
 
-test("/project analyst quality|efficient WITHOUT --confirm warns about real quota consumption and never runs the analyst", async () => {
+test("/project analyze bypasses an existing suggested strategy and starts the same fresh picker flow without double preflight", async () => {
   let editor;
-  const runCalls = [];
+  let tui;
+  const preflightCalls = [];
   const service = {
-    snapshot: async () => makeSnapshot([]),
-    preflightProject: async () => ({
-      profile: {}, candidates: {},
-      alternatives: [{ choice: "quality", model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" } }]
+    snapshot: async () => ({
+      ...makeSnapshot([]),
+      projectStrategy: { status: "suggested", bootstrapAnalyst: { adapterId: "codex", modelId: "old" }, projectTeam: [] }
     }),
-    runBootstrapAnalysis: async (args) => { runCalls.push(args); return { status: "suggested", activeRoles: [] }; }
+    preflightProject: async (args) => {
+      preflightCalls.push(args);
+      return {
+        profile: {}, candidates: {},
+        analystCatalog: {
+          recommendedModel: { candidateKey: "codex::new", recommendationTags: ["quality"] },
+          models: [{ candidateKey: "codex::new", adapterId: "codex", modelId: "new", displayName: "New Analyst", evidenceStatus: "scored", available: true, recommendationTags: ["quality"] }]
+        }
+      };
+    }
   };
   const app = await runCockpitApp({
-    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
+    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => { tui = makeFakeTui(); return tui; },
     editorFactory: () => { editor = makeFakeEditor(); return editor; },
     setIntervalImpl: () => 1, clearIntervalImpl: () => {}
   });
   editor.setText("/project analyze");
   await editor.onSubmit(editor.getText());
-  editor.setText("/project analyst quality");
-  await editor.onSubmit(editor.getText());
-  assert.equal(runCalls.length, 0, "the real analyst must never run without an explicit --confirm");
-  assert.ok(app.view.pendingProjectAnalysis, "the pending choice stays open, awaiting confirmation");
-  const texts = app.view.transcript.map((entry) => entry.text).join("\n");
-  assert.match(texts, /consume real quota/);
-  app.stop();
-});
-
-test("/project analyst quality|efficient --confirm runs the real Bootstrap Analyst and reports the real resulting SUGGESTED team", async () => {
-  let editor;
-  const runCalls = [];
-  const service = {
-    snapshot: async () => makeSnapshot([]),
-    preflightProject: async () => ({
-      profile: { fingerprint: "fp-1" }, candidates: { scoredAll: [] },
-      alternatives: [{ choice: "quality", model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" } }]
-    }),
-    runBootstrapAnalysis: async (args) => { runCalls.push(args); return { status: "suggested", activeRoles: ["Explorer", "Architect"] }; }
-  };
-  const app = await runCockpitApp({
-    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
-    editorFactory: () => { editor = makeFakeEditor(); return editor; },
-    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
-  });
-  editor.setText("/project analyze");
-  await editor.onSubmit(editor.getText());
-  editor.setText("/project analyst quality --confirm");
-  await editor.onSubmit(editor.getText());
-  assert.equal(runCalls.length, 1);
-  assert.equal(runCalls[0].cwd, "/repo");
-  assert.equal(runCalls[0].analyst.choice, "quality");
-  assert.equal(runCalls[0].analyst.model.adapterId, "codex");
-  assert.equal(app.view.pendingProjectAnalysis, null, "AWAITING_ANALYST clears once the real analysis actually ran");
-  const texts = app.view.transcript.map((entry) => entry.text).join("\n");
-  assert.match(texts, /Suggested project team ready \(2 real roles\)/);
-  app.stop();
-});
-
-test("/project analyst rejects a choice that isn't quality or efficient, and rejects a real choice with nothing pending, without ever calling the service", async () => {
-  let editor;
-  const runCalls = [];
-  const service = { snapshot: async () => makeSnapshot([]), runBootstrapAnalysis: async (args) => { runCalls.push(args); return {}; } };
-  const app = await runCockpitApp({
-    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
-    editorFactory: () => { editor = makeFakeEditor(); return editor; },
-    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
-  });
-  editor.setText("/project analyst yolo");
-  await editor.onSubmit(editor.getText());
-  editor.setText("/project analyst quality --confirm");
-  await editor.onSubmit(editor.getText());
-  assert.equal(runCalls.length, 0);
-  const texts = app.view.transcript.map((entry) => entry.text).join("\n");
-  assert.match(texts, /Usage: \/project analyst quality\|efficient/);
-  assert.match(texts, /Run \/project analyze first/);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(tui.overlays.length, 1);
+  assert.equal(tui.overlays[0].component.state, "select-analyst");
+  assert.deepEqual(preflightCalls, [{ cwd: "/repo" }], "must not initialize from the old strategy and then launch a second preflight");
   app.stop();
 });
 

@@ -284,7 +284,7 @@ async function realScoredCandidates() {
   return { scoredAll, eligibility: { codex: { ok: true }, claude: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null };
 }
 
-test("preflightProject computes a real read-only ProjectProfile and real Bootstrap Analyst alternatives, never touching persistence", async () => {
+test("preflightProject computes a real read-only ProjectProfile and full analyst catalog, never touching persistence", async () => {
   let wrote = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo",
@@ -295,11 +295,8 @@ test("preflightProject computes a real read-only ProjectProfile and real Bootstr
   service.snapshot = async () => ({ modelIntelligence: await realScoredCandidates() });
   const result = await service.preflightProject({ cwd: "/repo" });
   assert.equal(result.profile.fingerprint, "fp-1");
-  assert.ok(result.alternatives.length >= 1);
   assert.equal(wrote, false, "preflight must never persist a ProjectStrategy");
-  // analystCatalog: the fuller real catalog (additive — existing
-  // alternatives stays unchanged for today's overlay/analyst-run callers).
-  assert.ok(result.analystCatalog, "preflight must also expose the full real analyst catalog");
+  assert.ok(result.analystCatalog, "preflight must expose the full real analyst catalog");
   assert.ok(result.analystCatalog.recommendedModel);
   assert.equal(result.analystCatalog.models.length, 2, "both real ask-supported candidates from realScoredCandidates() must appear");
 });
@@ -324,7 +321,7 @@ test("preflightProject recommends only entitlement-safe models while retaining u
   });
 
   const result = await service.preflightProject({ cwd: "/repo" });
-  assert.ok(result.alternatives.every((alternative) => alternative.model.adapterId !== "claude"));
+  assert.equal(result.analystCatalog.recommendedModel.adapterId, "codex");
   const manualClaude = result.analystCatalog.models.find((model) => model.adapterId === "claude");
   assert.equal(manualClaude.entitlement, ENTITLEMENT.UNVERIFIED);
   assert.equal(manualClaude.entitlementReason, "Access has not been verified");

@@ -24,6 +24,11 @@ function makeFakeView(snapshot = {}) {
 const QUALITY_MODEL = { candidateKey: "codex::gpt-6-astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", evidenceStatus: "scored", available: true, quota: 40, recommendationTags: ["quality"] };
 const EFFICIENT_MODEL = { candidateKey: "claude::claude-opus-5", adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", evidenceStatus: "scored", available: true, quota: 60, recommendationTags: ["efficient"] };
 const UNSCORED_MODEL = { candidateKey: "codex::gpt-6-experimental", adapterId: "codex", modelId: "gpt-6-experimental", displayName: "GPT-6 Experimental", evidenceStatus: "unscored", available: true, quota: 40, recommendationTags: [] };
+const UNVERIFIED_CLAUDE_MODEL = {
+  candidateKey: "claude::claude-fable-5-1", adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1",
+  evidenceStatus: "scored", available: true, quota: 60, recommendationTags: [], entitlement: "unverified",
+  entitlementReason: "Access has not been verified and may require extra credits"
+};
 
 function makeAnalystCatalog(models = [QUALITY_MODEL, EFFICIENT_MODEL, UNSCORED_MODEL]) {
   return { recommendedModel: models.find((m) => m.recommendationTags.includes("quality")) ?? null, models };
@@ -32,6 +37,7 @@ function makeAnalystCatalog(models = [QUALITY_MODEL, EFFICIENT_MODEL, UNSCORED_M
 const EXPLORER_RECOMMENDED = { candidateKey: "codex::gpt-6-astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
 const EXPLORER_ALTERNATIVE = { candidateKey: "claude::claude-opus-5", adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", evidenceStatus: "scored", available: true, accessMode: "automatic", roleEvaluation: null };
 const EXPLORER_UNSCORED = { candidateKey: "cursor::cursor-x", adapterId: "cursor", modelId: "cursor-x", displayName: "Cursor X", evidenceStatus: "unscored", available: true, accessMode: "manual", roleEvaluation: null };
+const EXPLORER_UNVERIFIED_CLAUDE = { ...UNVERIFIED_CLAUDE_MODEL, accessMode: "automatic", roleEvaluation: null };
 
 function makeProjectTeam() {
   return [{
@@ -43,7 +49,7 @@ function makeProjectTeam() {
 }
 
 function makeEditCatalog() {
-  return { role: "Explorer", models: [{ ...EXPLORER_RECOMMENDED, evidenceStatus: "scored", available: true, roleEvaluation: null }, EXPLORER_ALTERNATIVE, EXPLORER_UNSCORED] };
+  return { role: "Explorer", models: [{ ...EXPLORER_RECOMMENDED, evidenceStatus: "scored", available: true, roleEvaluation: null }, EXPLORER_ALTERNATIVE, EXPLORER_UNVERIFIED_CLAUDE, EXPLORER_UNSCORED] };
 }
 
 function makePreflightService({ analystCatalog = makeAnalystCatalog(), preflightError = null, editCatalog = makeEditCatalog() } = {}) {
@@ -156,6 +162,19 @@ test("manually picking a real UNSCORED model is honestly selectionSource:\"manua
   assert.equal(overlay.selectedAnalyst.evidenceStatus, "unscored");
   const lines = overlay.render(76).join("\n");
   assert.match(lines, /no real benchmark evidence/, "the confirm screen must honestly warn about the real unscored state");
+});
+
+test("unverified Claude stays explicitly selectable but is tagged and warned as possible extra-credit access", async () => {
+  const service = makePreflightService({ analystCatalog: makeAnalystCatalog([QUALITY_MODEL, UNVERIFIED_CLAUDE_MODEL]) });
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  const pickerLines = overlay.render(76).join("\n");
+  assert.match(pickerLines, /Unverified · extra credits/);
+
+  selectByKey(overlay, UNVERIFIED_CLAUDE_MODEL.candidateKey);
+  const confirmLines = overlay.render(76).join("\n");
+  assert.match(confirmLines, /access is unverified and may require extra credits/i);
+  assert.equal(overlay.selectedAnalyst.entitlement, "unverified");
 });
 
 test("Escape from the confirm step goes back to selection instead of closing the overlay", async () => {
@@ -298,7 +317,10 @@ test("the edit picker orders the real catalog current -> recommended -> other sc
   overlay.handleInput(ENTER);
   await flush();
   const ordered = overlay.orderedEditModels();
-  assert.deepEqual(ordered.map((m) => m.candidateKey), [EXPLORER_RECOMMENDED.candidateKey, EXPLORER_ALTERNATIVE.candidateKey, EXPLORER_UNSCORED.candidateKey]);
+  assert.deepEqual(ordered.map((m) => m.candidateKey), [
+    EXPLORER_RECOMMENDED.candidateKey, EXPLORER_ALTERNATIVE.candidateKey,
+    EXPLORER_UNVERIFIED_CLAUDE.candidateKey, EXPLORER_UNSCORED.candidateKey
+  ]);
 });
 
 test("picking a real different scored candidate and confirming persists a real override, clearing fallback/decisionEvidence", async () => {
@@ -338,6 +360,22 @@ test("picking a real unscored/manual candidate shows both honest warnings before
   const lines = overlay.render(76).join("\n");
   assert.match(lines, /no real benchmark evidence/);
   assert.match(lines, /manual handoff/);
+});
+
+test("an unverified Claude role override is tagged in the picker and warned before saving", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  overlay.handleInput(ENTER);
+  await flush();
+  const pickerLines = overlay.render(76).join("\n");
+  assert.match(pickerLines, /unverified · extra credits/i);
+  overlay.beginConfirmEdit(EXPLORER_UNVERIFIED_CLAUDE.candidateKey);
+  const confirmLines = overlay.render(76).join("\n");
+  assert.match(confirmLines, /access is unverified and may require extra credits/i);
 });
 
 test("choosing the real recommended candidate again in the picker is honestly labeled a restore, not an override", async () => {
@@ -572,6 +610,23 @@ test("openProjectOverlay shows the overlay on the real tui, sized ~76 columns / 
   shown.component.handleInput(ESCAPE);
   assert.equal(hidden, true, "closing the overlay must hide it, letting pi-tui restore focus to whatever had it before (the editor)");
   handle.hide();
+});
+
+test("openProjectOverlay forceReanalyze bypasses an existing strategy and runs exactly one fresh preflight", async () => {
+  let shown = null;
+  const tui = {
+    requestRender() {},
+    showOverlay(component) {
+      shown = component;
+      return { hide() {}, setHidden() {}, isHidden: () => false, focus() {}, unfocus() {}, isFocused: () => true, getBounds: () => undefined };
+    }
+  };
+  const service = makePreflightService();
+  const view = makeFakeView({ projectStrategy: { status: "active", approvedAt: "t0", projectTeam: [] } });
+  openProjectOverlay({ tui, service, view, cwd: "/repo", forceReanalyze: true });
+  await flush();
+  assert.equal(shown.state, S.SELECT_ANALYST);
+  assert.deepEqual(service.calls.preflight, [{ cwd: "/repo" }], "forced analysis must run one preflight, never constructor + reanalyze twice");
 });
 
 // --- Four real reported UX bugs: missing decision evidence, no visible

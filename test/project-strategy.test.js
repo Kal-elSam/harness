@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildProjectStrategy, computeBootstrapAnalystAlternatives, computeBootstrapAnalystCatalog, BOOTSTRAP_ANALYST_PROFILE, isStrategyStale,
+  buildProjectStrategy, computeBootstrapAnalystCatalog, BOOTSTRAP_ANALYST_PROFILE, isStrategyStale,
   computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "../src/global/conversation/project-strategy.js";
 import { scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
@@ -40,29 +40,6 @@ function realCandidates() {
 function analystChoice(choice, model) {
   return { choice, model };
 }
-
-test("computeBootstrapAnalystAlternatives only offers providers Kairo can actually run read-only via askProvider", () => {
-  const alternatives = computeBootstrapAnalystAlternatives(realCandidates());
-  // claude leads reasoning (Explorer's fixed baseline capability) — both
-  // claude and codex are askProvider-supported, so both real candidates
-  // should be representable across the two alternatives.
-  assert.ok(alternatives.every((alt) => ["claude", "codex"].includes(alt.model.adapterId)));
-  assert.ok(alternatives.some((alt) => alt.choice === "quality"));
-});
-
-test("computeBootstrapAnalystAlternatives never offers a real leader Kairo can't actually invoke read-only", () => {
-  const scoredAll = scoreAvailableModels([
-    { adapterId: "future-adapter", models: [{ id: "future-model" }] },
-    { adapterId: "codex", models: [{ id: "codex-model" }] }
-  ], [
-    { slug: "future-model", name: "Future Model", intelligenceIndex: 99, codingIndex: 10, mathIndex: null },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 10, codingIndex: 99, mathIndex: null }
-  ]);
-  const alternatives = computeBootstrapAnalystAlternatives({
-    scoredAll, eligibility: { "future-adapter": { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null
-  });
-  assert.ok(alternatives.every((alt) => alt.model.adapterId !== "future-adapter"), "future-adapter leads reasoning but ASK doesn't support it — must never be offered");
-});
 
 test("BOOTSTRAP_ANALYST_PROFILE is a workflow shape, not a registered team role — reasoning required, instructionFollowing optional", () => {
   assert.equal(BOOTSTRAP_ANALYST_PROFILE.role, "BootstrapAnalyst");
@@ -130,16 +107,6 @@ test("computeBootstrapAnalystCatalog reports real availability and quota per can
   assert.equal(codex.quota, null, "no real quota data for codex here — must stay honestly null, never invented");
 });
 
-test("computeBootstrapAnalystAlternatives is a thin projection of computeBootstrapAnalystCatalog — same real winners, never a second ranking", () => {
-  const candidates = realCandidates();
-  const alternatives = computeBootstrapAnalystAlternatives(candidates);
-  const catalog = computeBootstrapAnalystCatalog(candidates);
-  const qualityAlt = alternatives.find((alt) => alt.choice === "quality");
-  const qualityCatalogEntry = catalog.models.find((model) => model.recommendationTags.includes("quality"));
-  assert.equal(qualityAlt.model.adapterId, qualityCatalogEntry.adapterId);
-  assert.equal(qualityAlt.model.modelId, qualityCatalogEntry.modelId);
-});
-
 test("unverified Claude is visible only in the explicit analyst catalog, with entitlement metadata and no recommendation tag", () => {
   const candidates = realCandidates();
   const unverifiedClaude = {
@@ -157,7 +124,7 @@ test("unverified Claude is visible only in the explicit analyst catalog, with en
   assert.equal(claude.entitlement, ENTITLEMENT.UNVERIFIED);
   assert.equal(claude.entitlementReason, "Access has not been verified");
   assert.deepEqual(claude.recommendationTags, []);
-  assert.ok(computeBootstrapAnalystAlternatives(input).every((alternative) => alternative.model.adapterId !== "claude"));
+  assert.equal(catalog.recommendedModel.adapterId, "codex");
 });
 
 test("buildProjectStrategy only activates roles the real profile asked for AND that have a real pick", () => {
@@ -198,18 +165,6 @@ test("buildProjectStrategy honestly persists a manual, untagged catalog pick —
   assert.equal(strategy.bootstrapAnalystChoice, null);
   assert.equal(strategy.bootstrapAnalystSelectionSource, "manual");
   assert.deepEqual(strategy.bootstrapAnalystRecommendationTags, []);
-});
-
-test("computeBootstrapAnalystAlternatives' entries already carry selectionSource:\"recommended\" and their own real recommendationTags — the same analyst shape the overlay's richer catalog picker uses", () => {
-  const alternatives = computeBootstrapAnalystAlternatives(realCandidates());
-  for (const alt of alternatives) {
-    assert.equal(alt.selectionSource, "recommended");
-    // The same real candidate can legitimately win BOTH quality and
-    // efficient (a small pool, or one clear leader on every real axis) —
-    // recommendationTags reflects every real tag that candidate earned,
-    // never forced down to exactly this one alternative's own choice.
-    assert.ok(alt.recommendationTags.includes(alt.choice));
-  }
 });
 
 test("DECISIVE: the same real candidate pool produces a genuinely different model for the same role when two projects' real roleRequirements ask for different capabilities — this is real per-project re-scoring, not global-team filtering by role name", () => {

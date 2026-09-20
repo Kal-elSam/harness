@@ -181,12 +181,6 @@ export class CockpitView {
     this.roleSelectTaskId = null;
     this.roleOptions = [];
     this.roleSelectedIndex = 0;
-    // AWAITING_ANALYST: real preflightProject() output (profile,
-    // alternatives, candidates) held here between /project analyze and a
-    // confirmed /project analyst choice — deliberately in-memory only,
-    // never persisted: a restart mid-flow should just start over from
-    // NOT_ANALYZED, not resurrect a stale, unconfirmed selection.
-    this.pendingProjectAnalysis = null;
     // Real, monotonic per-entry ids (never re-derived from array index,
     // which shifts under the 500-entry cap) so each transcript entry's
     // expensive ANSI-aware wrap (wrapTextWithAnsi) can be cached by
@@ -639,15 +633,6 @@ export class CockpitView {
   projectTeamPanel(width = 80) {
     const strategy = this.snapshot?.projectStrategy;
     const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
-    if (!strategy && this.pendingProjectAnalysis) {
-      // AWAITING_ANALYST: a real preflight already ran (LOCAL_PREFLIGHT),
-      // and the human still needs to pick + confirm a real model before
-      // ANALYZING can run — see app.js's /project analyst handler.
-      const lines = this.pendingProjectAnalysis.alternatives.map((alt) =>
-        `  ${alt.choice.padEnd(10)} ${this.aiTeamLabel(alt.model)}`);
-      lines.push(theme.fg("muted", "Use /project analyst quality|efficient --confirm to run the real analysis (consumes real quota)."));
-      return { title: `PROJECT ANALYSIS · ${project} — Select Project Analyst`, lines };
-    }
     if (!strategy) {
       return {
         title: "GLOBAL MODEL GUIDE",
