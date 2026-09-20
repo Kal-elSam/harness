@@ -5,6 +5,36 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.29.1 — 2026-09-20 (Kairo Runtime)
+
+Patch release. Corrects three defective behaviors introduced in 0.29.0's
+Claude entitlement work, after real usage exposed them.
+
+### Fixed
+
+- An `unverified` Claude model (never actually probed against the
+  account) was still treated as an automatic recommendation, only
+  excluded from automatic *execution* — meaning it could still surface
+  as a quality leader, an orchestrator, or a fallback, quietly implying
+  access that was never confirmed. It's now manual-only: excluded from
+  Project Analyst and PROJECT TEAM recommendations entirely, and only
+  offered through the explicit role-edit catalog, with a visible
+  credit/access warning attached.
+- `/project analyze` ran through a separate, parallel code path from
+  first analysis and overlay-driven re-analysis, with its own dead
+  dashboard state (`pendingProjectAnalysis`) that could disagree with
+  the real overlay flow. It now opens the exact same interactive
+  overlay every time, via a single `forceReanalyze` bypass — one real
+  flow instead of two that could drift apart.
+- The compact PROJECT TEAM dashboard panel had grown an always-expanded
+  evidence view (operational-picks intro, Orchestrator footnote,
+  quality-leader/retention lines, per-role availability warnings) that
+  made it noisy on every render. The panel is back to role/model/
+  provider plus a concise strategy status line; all of that evidence
+  (quality, retention, fallback, decision, availability) is still there
+  in full, behind the overlay's explicit `e` evidence toggle — it moved
+  to where a human actually asks for it, nothing was deleted.
+
 ## 0.29.0 — 2026-09-19 (Kairo Runtime)
 
 Minor release. PROJECT TEAM selections explain themselves.
