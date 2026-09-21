@@ -644,10 +644,20 @@ export class CockpitView {
     const modelColumnWidth = this.teamModelColumnWidth([
       strategy.bootstrapAnalyst, strategy.orchestrator, ...projectTeam.map((entry) => entry.model)
     ]);
-    if (strategy.bootstrapAnalyst) lines.push(`${"Project Analyst".padEnd(18)} ${this.teamRoleLabel(strategy.bootstrapAnalyst, modelColumnWidth)}`);
-    if (strategy.orchestrator) {
-      lines.push(`${"Orchestrator".padEnd(18)} ${this.teamRoleLabel(strategy.orchestrator, modelColumnWidth)}`);
-    }
+    // A persisted assignment is only ever checked against CURRENT real
+    // eligibility/entitlement here — never against whatever was true when
+    // the strategy was approved. A strategy doesn't go stale just because
+    // a model's real access changed; this panel must still never show a
+    // now-blocked model as if it were fine (see resolveAssignmentAvailability).
+    const eligibility = this.snapshot?.modelIntelligence?.eligibility ?? {};
+    const claudeEntitlement = this.snapshot?.modelIntelligence?.claudeEntitlement ?? {};
+    const roleLine = (label, model) => {
+      const base = `${label.padEnd(18)} ${this.teamRoleLabel(model, modelColumnWidth)}`;
+      const { available, warning } = resolveAssignmentAvailability(model, { eligibility, claudeEntitlement });
+      return available || !warning ? base : `${base}  ${theme.fg("warning", warning)}`;
+    };
+    if (strategy.bootstrapAnalyst) lines.push(roleLine("Project Analyst", strategy.bootstrapAnalyst));
+    if (strategy.orchestrator) lines.push(roleLine("Orchestrator", strategy.orchestrator));
     // The real OPERATIONAL team (see buildProjectStrategy's own doc) —
     // never qualityTeam, which is comparative reference only. The overlay
     // (project-overlay.js) already shows projectTeam under this exact
@@ -656,7 +666,7 @@ export class CockpitView {
     // remains as a fallback for a strategy persisted before projectTeam
     // existed (see applyProjectTeamOverride's own legacy-entry comment).
     for (const entry of projectTeam) {
-      lines.push(`${entry.role.padEnd(18)} ${entry.model ? this.teamRoleLabel(entry.model, modelColumnWidth) : theme.fg("warning", "no eligible option")}`);
+      lines.push(entry.model ? roleLine(entry.role, entry.model) : `${entry.role.padEnd(18)} ${theme.fg("warning", "no eligible option")}`);
     }
     if (strategy.status === "suggested") lines.push(theme.fg("muted", "Suggested from real project analysis. Use /project approve to activate."));
     if (strategy.status === "stale") lines.push(theme.fg("warning", "Real evidence changed since approval — use /project refresh."));

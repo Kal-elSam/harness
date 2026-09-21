@@ -538,6 +538,35 @@ test("projectTeamPanel shows a real SUGGESTED ProjectStrategy — only the requi
   assert.match(joined, /Suggested from real project analysis\. Use \/project approve to activate\./);
 });
 
+test("REGRESSION: projectTeamPanel warns inline when a persisted role assignment is actually blocked right now (denied/unverified entitlement or ineligible adapter) — never silently shows a model as if it were fine", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/crm",
+    projectStrategy: {
+      status: "active",
+      bootstrapAnalyst: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" },
+      orchestrator: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" },
+      projectTeam: [
+        { role: "Architect", model: { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" }, reason: null },
+        { role: "Builder", model: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" }, reason: null }
+      ]
+    },
+    modelIntelligence: {
+      eligibility: { codex: { ok: true }, claude: { ok: true } },
+      claudeEntitlement: { "claude-fable-5-1": { status: "denied", reason: "requires usage credits" } }
+    }
+  });
+  const lines = view.projectTeamPanel(100).lines;
+  const joined = lines.map((line) => stripTerminalSequences(line)).join("\n");
+  assert.match(joined, /Orchestrator.*Fable 5\.1.*Unavailable — your Claude plan denies this model \(requires usage credits\)/);
+  assert.match(joined, /Architect.*Fable 5\.1.*Unavailable — your Claude plan denies this model \(requires usage credits\)/);
+  assert.doesNotMatch(
+    lines.find((line) => /Builder/.test(stripTerminalSequences(line))),
+    /Unavailable/,
+    "an entitled/eligible model must never show a warning"
+  );
+});
+
 test("REGRESSION: projectTeamPanel aligns every row's ' · Provider' to the same column, regardless of how much each model name's own length varies", () => {
   const { view } = makeView();
   view.setSnapshot({
@@ -1362,7 +1391,7 @@ test("INC4: same pick + available yields no muted extra line on the compact pane
   assert.equal(roleLines.length, 1, "same pick + available must not add a muted extra line under the role");
 });
 
-test("INC5: compact panel omits per-role availability detail while explicit evidence retains it", () => {
+test("INC5→walked back: the compact panel DOES warn inline when a role's real assignment is actually blocked right now — silently showing a blocked model as if it were fine is worse than the extra text. Full evidence (quality leader, retention%, decision reasoning) still stays overlay-only.", () => {
   const { view } = makeView();
   view.setSnapshot({
     projectRoot: "/repo/crm",
@@ -1390,7 +1419,12 @@ test("INC5: compact panel omits per-role availability detail while explicit evid
     eligibility: view.snapshot.modelIntelligence.eligibility,
     claudeEntitlement: view.snapshot.modelIntelligence.claudeEntitlement
   }).join("\n");
-  assert.doesNotMatch(compact, /Unavailable — model entitlement not verified/);
+  assert.match(compact, /Unavailable — model entitlement not verified \(run \/models --verify-access\)/);
+  // The compact panel's warning is a one-line availability flag only —
+  // never the fuller decision evidence (quality leader, retention%,
+  // capability-floor reasoning), which stays exclusively in the overlay.
+  assert.doesNotMatch(compact, /Quality leader/);
+  assert.doesNotMatch(compact, /retains \d/);
   assert.match(evidence, /Unavailable — model entitlement not verified \(run \/models --verify-access\)/);
 });
 
