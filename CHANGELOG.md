@@ -5,6 +5,31 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.31.0 — 2026-09-21 (Kairo Runtime)
+
+Minor release. Increment 2 of multi-session support: `kairo start`'s chat
+transcript, ASK history, and WorkMode now persist through a real
+per-session store instead of the legacy project-wide files.
+
+### Added
+
+- `session-registry.js`: `getSession` (a real v2 session document, or
+  `null`) and `updateSessionMode` (persists WorkMode onto that session's
+  own document).
+- `transcript-store.js` / `ask-history-store.js`: an optional `sessionId`
+  scopes the file under `conversations/<sessionId>/`; omitted, keeps
+  today's project-wide file — headless/API callers that predate sessions
+  are unaffected.
+- `service.js`: `askQuestion`, `submitTask`, `getSession`, `setMode`,
+  `loadTranscript`, `appendTranscript`, and `clearTranscript` accept an
+  optional `sessionId`; new `resolveActiveSession({cwd})` resolves the
+  most recently updated real session, or creates one when none exists.
+- `runCockpitApp` resolves the active session once at startup and threads
+  it through every relevant call — no user-visible change yet, since
+  explicit `start`/`resume`/`list` selection is a later increment; today
+  "the project's session" still means "pick up where the last one left
+  off".
+
 ## 0.30.3 — 2026-09-21 (Kairo Runtime)
 
 Patch release. Hardens the Increment 1 multi-session store against
