@@ -89,7 +89,7 @@ Four real bugs, each independently reproduced against the actual v0.30.2 code be
 - [x] `/clear` clearing only the current session's transcript + ASK history was already verified true in Increment 2 (both calls are `sessionId`-scoped)
 - [x] Tests RED→GREEN: new `test/session-cli.test.js` (10 tests: parseArgs coverage, all 3 CLI functions with mocked deps, one real end-to-end test against the actual session-registry storage — no mocks), 2 new regression tests (`cockpit-cli.test.js`: sessionId forwarded to the app factory; `cockpit-app.test.js`: an explicit sessionId is never overridden by `resolveActiveSession`)
 - [x] Full suite green: 1974/1974 on a clean run (1962 + 12 new); one run showed 1 failure in `test/quick-ask.test.js` (a pre-existing, unrelated real-timer flake under full-suite CPU load — confirmed by re-running that file alone, 15/15 twice), stress-tested 3x, zero real-disk leakage
-- [ ] Ship: branch → commit → PR → CI → merge → release → publish → global install verified
+- [x] PR #321 → CI green (Node 20/22/24) → merged (`--merge`, real merge commit `776b9bf`) → released as **v0.32.0**, published, global install verified (`gitHead` matches `559f5bf`)
 
 ## Progress
 
@@ -99,4 +99,5 @@ Four real bugs, each independently reproduced against the actual v0.30.2 code be
 - Increment 1b shipped as v0.30.3 (PR #318, merge `171c515`, release `ea9ab4e`), global install verified: 2026-09-21
 - Increment 2 shipped as v0.31.0 (PR #319, merge `dc5581d`, release `6343e7a`), global install verified: 2026-09-21
 - Increment 3 shipped as v0.31.1 (PR #320, merge `b5f7fc3`, release `d25e051`), global install verified: 2026-09-21
-- Next: Increment 4 (`start`/`resume`/`list` CLI surface, selector UI, docs)
+- Increment 4 shipped as v0.32.0 (PR #321, merge `776b9bf`, release `559f5bf`), global install verified: 2026-09-21
+- **All 4 planned increments shipped. Feature complete for v1** (session rename/delete/fork and `--all` cross-project view remain explicitly out of scope, per the original plan).
