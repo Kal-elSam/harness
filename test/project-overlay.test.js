@@ -511,6 +511,28 @@ test("REGRESSION: 'r' also forces a fresh preflight from ACTIVE and STALE, not o
   assert.equal(overlayStale.state, S.SELECT_ANALYST, "'r' (fresh re-analysis) must work from STALE too, distinct from Enter's own refresh()");
 });
 
+test("REGRESSION: a persisted ACTIVE strategy naming an unverified Cursor model shows BLOCKED in the overlay — the fail-closed Cursor eligibility fix flows through the existing check with no new wiring needed", async () => {
+  const fable = { adapterId: "cursor", modelId: "fable", displayName: "Fable" };
+  const active = {
+    status: "active", approvedAt: "t0",
+    projectTeam: [{ role: "Builder", model: fable, fallback: null, reason: null, assignmentSource: "recommended" }]
+  };
+  // resolveAssignmentAvailability reads eligibility.cursor.ok exactly the
+  // way checkCandidate now computes it (fail-closed, unverified by
+  // default) — this proves the fix propagates without any new overlay code.
+  const view = makeFakeView({
+    projectStrategy: active,
+    modelIntelligence: { eligibility: { cursor: { ok: false, reason: "Cursor access unverified — run /project cursor available once you've confirmed real quota, or /project cursor exhausted if you don't have any." } }, claudeEntitlement: {} }
+  });
+  const overlay = new ProjectOverlay({ service: makePreflightService(), view, cwd: "/repo", onClose: () => {} });
+  await flush();
+  assert.equal(overlay.state, S.ACTIVE);
+
+  const lines = overlay.render(100).join("\n");
+  assert.match(lines, /BLOCKED/);
+  assert.match(lines, /Fable/);
+});
+
 test("REGRESSION: a persisted suggestion whose bootstrap analyst is no longer entitled shows NEEDS REANALYSIS — never presented as if it were still a clean, current recommendation", async () => {
   const fable = { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" };
   const suggested = {

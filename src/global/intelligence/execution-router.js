@@ -212,9 +212,21 @@ export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, o
   // doc) — never fabricated from a guess. Applies to BOTH the
   // recommendation path AND real task routing now that Cursor is a real
   // automatic candidate — a human-reported "out of credits" must block
-  // an actual launch, not just a suggestion.
-  if (adapterId === "cursor" && cursorManualQuota?.manualExhausted) {
-    return { ok: false, reason: cursorManualQuota.reason ?? "Cursor marked out of credits (manual, via /project cursor exhausted)" };
+  // an actual launch, not just a suggestion. Fail-closed by default: that
+  // Cursor LISTS a named model proves nothing about whether this
+  // account's current quota can actually run it — only an explicit
+  // `/project cursor available` (manualExhausted: false, a real record)
+  // clears named models for automatic use. No record at all (never
+  // toggled either way) is UNVERIFIED, not silently available — the
+  // opposite of the old behavior, which treated "never checked" the same
+  // as "confirmed fine".
+  if (adapterId === "cursor") {
+    if (cursorManualQuota?.manualExhausted === true) {
+      return { ok: false, reason: cursorManualQuota.reason ?? "Cursor marked out of credits (manual, via /project cursor exhausted)" };
+    }
+    if (cursorManualQuota?.manualExhausted !== false) {
+      return { ok: false, reason: "Cursor access unverified — run /project cursor available once you've confirmed real quota, or /project cursor exhausted if you don't have any." };
+    }
   }
   return { ok: true, reason: null };
 }

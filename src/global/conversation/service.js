@@ -18,7 +18,7 @@ import { readOpenCodeUsage, readOpenCodeGoUsage, readOpenCodeStats } from "../ob
 import { readCodexModels } from "../observability/codex-models.js";
 import { readOpenCodeModels } from "../observability/opencode-models.js";
 import { readClaudeModels } from "../observability/claude-models.js";
-import { readCursorModels } from "../observability/cursor-models.js";
+import { isCursorAutoModel, readCursorModels } from "../observability/cursor-models.js";
 import { checkCandidate, isLikelyQuestion, selectAskProvider } from "../intelligence/execution-router.js";
 import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
@@ -645,7 +645,10 @@ export function createConversationService(deps = {}) {
           codex: codexCatalog?.models ?? [],
           claude: claudeCatalog.models,
           "opencode-go": opencodeGoCatalog?.models ?? [],
-          cursor: cursorCatalog?.models ?? []
+          // "auto" is a real, opaque, manual-only fallback — never scored,
+          // recommended, or auto-selected as if it were a real, checkable
+          // named model (see cursor-models.js's own doc).
+          cursor: (cursorCatalog?.models ?? []).filter((model) => !isCursorAutoModel(model.id))
         };
         const scored = scoreAvailableModels(
           candidates.map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
