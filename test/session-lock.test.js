@@ -65,6 +65,17 @@ test("REGRESSION: release() is token-gated — it must never clobber a fresher h
   assert.equal(lease.token, "someone-elses-token", "an old release() must never remove a lease it doesn't own");
 });
 
+test("REGRESSION: a corrupt (malformed JSON) lease.json is treated as stale and recovered, never left permanently blocking the lock with a raw parse error", async () => {
+  const sessionDir = await freshSessionDir();
+  const lockDir = join(sessionDir, "active.lock");
+  await mkdir(lockDir);
+  await writeFile(join(lockDir, "lease.json"), "not valid json {{{");
+  const lock = await acquireSessionLock(sessionDir);
+  const lease = JSON.parse(await readFile(join(lockDir, "lease.json"), "utf8"));
+  assert.equal(lease.pid, process.pid, "the real current process must now hold the lock");
+  await lock.release();
+});
+
 test("a lock dir with no real lease inside is treated as stale and recovered", async () => {
   const sessionDir = await freshSessionDir();
   await mkdir(join(sessionDir, "active.lock"));

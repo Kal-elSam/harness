@@ -46,7 +46,19 @@ Verified this session: real ASK conversation continuity (v0.30.0/0.30.1) only ma
 - [x] INC1-06 Full suite green: 1945/1945, stress-tested 3x, confirmed zero real-disk side effects from any test
 - [x] INC1-07 PR #317 → CI green (Node 20/22/24) → merged (real merge commit) → released as **v0.30.2**, published, global install verified (`gitHead` matches `9cd1cd0`)
 
-### Increment 2 — Context/session plumbing (not started)
+### Increment 1b — Corrective slice: hostile-input hardening (found by independent audit against v0.30.2)
+
+Four real bugs, each independently reproduced against the actual v0.30.2 code before fixing — none were caught by the original 87 focused tests because none exercised partial/interrupted state or hostile persisted data.
+
+- [x] BUG-1 `migrateLegacySessionIfNeeded`'s guard was "conversations/ isn't empty", so an interrupted prior migration attempt (junk dir, no real session.json) permanently blocked every retry. Fixed: guard now checks for a real, schema-valid v2 session (`readValidSession`), not mere directory presence.
+- [x] BUG-2 No session-id format validation before path-joining — `listSessions`/future CLI wiring could reach `sessionDirFor` with something like `../../etc`. Fixed: `SESSION_ID_PATTERN` (UUID or `legacy-<16hex>`) enforced at `sessionDirFor`, the single choke point every session path goes through; throws `Invalid session id "…"` instead of building the path.
+- [x] BUG-3 `createSession` persisted any `mode` string, including invalid ones (e.g. `"yolo"`), with no validation against `WORK_MODES`. Fixed: rejects with `Unknown work mode "…"` before touching disk.
+- [x] BUG-4 A corrupt (malformed JSON) `lease.json` threw an uncaught `SyntaxError` out of `readLease`, permanently blocking the session lock instead of being treated as stale/recoverable. Fixed: JSON.parse failure in `readLease` now returns `null`, same as a missing lease — recovered exactly like any other stale lock.
+- [x] Tests RED→GREEN: 5 new regression tests (4 bugs + BUG-2's `listSessions` path via a real invalid-named directory), one pre-existing test (`listSessions skips a corrupt individual session directory…`) adjusted — its fixture used the invalid-shaped name `"corrupt-session"` to simulate corrupt *content*, which the new BUG-2 validation now rejects for the (correct, separate) reason of *invalid name*; renamed the fixture to a real UUID shape so it again tests corrupt content specifically.
+- [x] Full suite green: 1950/1950 (1945 + 5 new), stress-tested 3x, zero real-disk leakage confirmed (`~/.harness/sessions/*/conversations` never created for a real project key)
+- [ ] PR → CI green (Node 20/22/24) → merge (`--merge`, matching this stream's convention) → release (likely v0.30.3, patch — pure bugfixes to code still unwired from any production path) → publish → global install verified
+
+### Increment 2 — Context/session plumbing (blocked on Increment 1b shipping)
 
 - [ ] Thread `sessionId` through `runCockpitApp` and conversation service methods (ASK, transcript, WorkMode) — these stop implicitly meaning "the project", start meaning "this one session"
 - [ ] Headless/API callers with no `sessionId` keep today's project-wide behavior (backward compat)
@@ -67,4 +79,5 @@ Verified this session: real ASK conversation continuity (v0.30.0/0.30.1) only ma
 
 - Created: 2026-09-21
 - Increment 1 code complete, tests green, real dry-run verified, shipped as v0.30.2: 2026-09-21
-- Next: Increment 2 (thread `sessionId` through `runCockpitApp` + conversation service methods)
+- Independent audit of v0.30.2 found 4 real hostile-input/partial-state bugs; all 4 reproduced and fixed, full suite 1950/1950, stress-tested 3x: 2026-09-21
+- Next: ship Increment 1b (PR → CI → merge → release, likely v0.30.3), then Increment 2 (thread `sessionId` through `runCockpitApp` + conversation service methods)
