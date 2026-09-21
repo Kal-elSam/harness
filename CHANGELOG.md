@@ -5,6 +5,23 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.30.2 — 2026-09-21 (Kairo Runtime)
+
+Patch release. Multiple-session store, migration, and locking (no
+behavior change yet).
+
+### Added
+
+- `session-registry.js`: multi-session storage (`createSession`,
+  `listSessions`, `resolveSessionRef`) and a lazy, idempotent migration
+  of the existing single-session files into a real `legacy-<projectKey>`
+  session, never deleting or moving the originals.
+- `session-lock.js`: an exclusive per-session lock (mkdir-atomicity +
+  PID-liveness recovery + token-gated release), so a second process
+  opening the same session gets a real, clear error.
+- Pure additive — nothing existing is wired to this yet; today's
+  single-session behavior is unchanged until the next increment.
+
 ## 0.30.1 — 2026-09-21 (Kairo Runtime)
 
 Patch release.
