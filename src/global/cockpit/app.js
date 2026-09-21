@@ -91,6 +91,12 @@ export async function runCockpitApp({
   // Every transcript/ASK-history/WorkMode call below is scoped to it once
   // it's set; null only for the brief window before that resolution runs.
   let sessionId = explicitSessionId;
+  // The real cross-process lock for `sessionId` once acquired below — null
+  // until then, and whenever no real sessionId was ever resolved. stop()
+  // only resolves `done` once this real release() (a no-op when null)
+  // actually settles, so a second process's own acquire attempt can never
+  // race a still-in-progress release from this one.
+  let sessionLock = null;
   let resolveDone;
   const done = new Promise((resolvePromise) => { resolveDone = resolvePromise; });
 
@@ -100,7 +106,7 @@ export async function runCockpitApp({
     if (timer) clearIntervalImpl(timer);
     if (spinnerTimer) clearIntervalImpl(spinnerTimer);
     tui.stop();
-    resolveDone();
+    Promise.resolve(sessionLock?.release()).catch(() => {}).finally(resolveDone);
   }
 
   // The real nextIndex already shown per active runId (see
@@ -568,6 +574,17 @@ export async function runCockpitApp({
     }
   }
   view.setSessionId(sessionId);
+  // Exclusive cross-process lock for this real session — a genuine
+  // conflict (another real process already has this exact session open)
+  // is a real, unambiguous failure: refuse to start rather than let two
+  // processes silently race each other's writes. Acquired here (fast,
+  // local-only — before tui.start()) so a conflict is reported before the
+  // TUI ever launches, with nothing half-started to tear down. Skipped
+  // entirely when no real sessionId exists (legacy/headless fallback) —
+  // there's no real per-session directory to lock in that case.
+  if (sessionId) {
+    sessionLock = await service.acquireSessionLock?.({ cwd, sessionId });
+  }
   // Load persisted chat history and the real KairoSession (currently just
   // WorkMode) before the first render, so a restart never shows an empty
   // chat or silently resets back to ASK while STATUS still shows a task

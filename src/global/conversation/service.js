@@ -25,7 +25,8 @@ import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { appendAskHistoryEntry, clearAskHistory, readAskHistory } from "./ask-history-store.js";
 import { readSession, writeSessionMode } from "./session-store.js";
-import { createSession, getSession, listSessions, updateSessionMode } from "./session-registry.js";
+import { createSession, getSession, listSessions, sessionDirFor, updateSessionMode } from "./session-registry.js";
+import { acquireSessionLock } from "./session-lock.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
   ASK_SUPPORTED_ADAPTERS, buildProjectStrategy, computeBootstrapAnalystCatalog,
@@ -335,6 +336,8 @@ export function createConversationService(deps = {}) {
   const updateSessionModeImpl = deps.updateSessionMode ?? updateSessionMode;
   const listSessionsImpl = deps.listSessions ?? listSessions;
   const createSessionImpl = deps.createSession ?? createSession;
+  const sessionDirForImpl = deps.sessionDirFor ?? sessionDirFor;
+  const acquireSessionLockImpl = deps.acquireSessionLock ?? acquireSessionLock;
   const computeProjectProfileImpl = deps.computeProjectProfile ?? computeProjectProfile;
   const readProjectStrategyImpl = deps.readProjectStrategy ?? readProjectStrategy;
   const writeProjectStrategyImpl = deps.writeProjectStrategy ?? writeProjectStrategy;
@@ -957,6 +960,24 @@ export function createConversationService(deps = {}) {
       const sessions = await listSessionsImpl(homeDir, projectRoot);
       if (sessions.length > 0) return sessions[0];
       return createSessionImpl(homeDir, projectRoot, {});
+    },
+    /**
+     * Exclusive cross-process lock for one real session — a second real
+     * `kairo start`/`resume` process opening the SAME session gets a real,
+     * clear thrown error (see session-lock.js's own contract), never a
+     * silent double-open. This is the one real productive consumer of
+     * session-lock.js's `acquireSessionLock` (built in Increment 1 of
+     * multi-session support but never actually wired into a caller until
+     * now) — in-process write serialization (transcript-store.js's own
+     * per-path queue) protects against races WITHIN one process; this is
+     * the cross-process guard neither that queue nor anything else covers.
+     * @param {{cwd: string, sessionId: string}} args
+     * @returns {Promise<{release: () => Promise<void>}>}
+     */
+    async acquireSessionLock({ cwd, sessionId }) {
+      const projectRoot = await root(cwd);
+      const dir = sessionDirForImpl(homeDir, projectRoot, sessionId);
+      return acquireSessionLockImpl(dir, { sessionId });
     },
     /**
      * ProjectOverlay preflight: computes a real, read-only ProjectProfile

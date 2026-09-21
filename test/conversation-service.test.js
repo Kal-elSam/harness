@@ -378,6 +378,25 @@ test("REGRESSION: resolveActiveSession returns the most recently updated real se
   assert.equal(created, true);
 });
 
+test("REGRESSION: acquireSessionLock against real storage refuses a second real process opening the same session, but releases cleanly so a later real attempt succeeds", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-service-lock-home-"));
+  const projectRoot = await mkdtemp(join(tmpdir(), "kairo-service-lock-project-"));
+  const service = createConversationService({ resolveRoot: async () => projectRoot, homeDir });
+
+  const session = await service.resolveActiveSession({ cwd: projectRoot });
+  const first = await service.acquireSessionLock({ cwd: projectRoot, sessionId: session.id });
+
+  await assert.rejects(
+    () => service.acquireSessionLock({ cwd: projectRoot, sessionId: session.id }),
+    /already open in another process/,
+    "a second real process must get a real, clear error — never silently open the same session"
+  );
+
+  await first.release();
+  const second = await service.acquireSessionLock({ cwd: projectRoot, sessionId: session.id });
+  await second.release();
+});
+
 function fakeCandidates() {
   const aa = [
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 40, mathIndex: null },

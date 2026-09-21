@@ -50,18 +50,22 @@ function isCurrentlyUnavailable(model, view) {
 
 /**
  * A suggested (not yet approved) strategy needs a genuinely fresh
- * analysis when the bootstrap analyst or any projectTeam pick it
- * recommends is no longer available right now — this can only diverge
- * from what was true when the suggestion was computed (recommendation
- * pools already exclude denied/unverified entitlement at analysis time —
- * see buildScoredCandidatePools) for a PERSISTED suggestion re-displayed
- * later, after real access changed. Display-time only: never mutates or
- * re-persists the suggestion itself.
+ * analysis when the bootstrap analyst, the Orchestrator, or any
+ * projectTeam pick it recommends is no longer available right now — this
+ * can only diverge from what was true when the suggestion was computed
+ * (recommendation pools already exclude denied/unverified entitlement at
+ * analysis time — see buildScoredCandidatePools) for a PERSISTED
+ * suggestion re-displayed later, after real access changed. Orchestrator
+ * lives OUTSIDE projectTeam (a separate top-level field — see
+ * buildProjectStrategy) and is checked explicitly here for that reason,
+ * never assumed covered by the projectTeam scan. Display-time only:
+ * never mutates or re-persists the suggestion itself.
  * @param {object} strategy
  * @param {import("./view.js").CockpitView} view
  */
 function suggestionNeedsReanalysis(strategy, view) {
   if (isCurrentlyUnavailable(strategy?.bootstrapAnalyst, view)) return true;
+  if (isCurrentlyUnavailable(strategy?.orchestrator, view)) return true;
   return (strategy?.projectTeam ?? []).some((entry) => isCurrentlyUnavailable(entry.model, view));
 }
 

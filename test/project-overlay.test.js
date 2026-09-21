@@ -531,6 +531,25 @@ test("REGRESSION: a persisted suggestion whose bootstrap analyst is no longer en
   assert.match(lines, /needs reanalysis/);
 });
 
+test("REGRESSION: a persisted suggestion where ONLY the Orchestrator (not the analyst or any projectTeam role) is blocked still shows NEEDS REANALYSIS — Orchestrator lives outside projectTeam and is never assumed covered by scanning it alone", async () => {
+  const fable = { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" };
+  const availableAnalyst = { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" };
+  const suggested = {
+    status: "suggested", bootstrapAnalystChoice: "quality", bootstrapAnalystSelectionSource: "recommended",
+    bootstrapAnalyst: availableAnalyst, orchestrator: fable, qualityTeam: [], efficientTeam: [], projectTeam: []
+  };
+  const view = makeFakeView({
+    projectStrategy: suggested,
+    modelIntelligence: { eligibility: { claude: { ok: true }, codex: { ok: true } }, claudeEntitlement: { "claude-fable-5-1": { status: "unverified", reason: null } } }
+  });
+  const overlay = new ProjectOverlay({ service: makePreflightService(), view, cwd: "/repo", onClose: () => {} });
+  await flush();
+  assert.equal(overlay.state, S.RESULT);
+
+  const lines = overlay.render(100).join("\n");
+  assert.match(lines, /NEEDS REANALYSIS/, "a blocked Orchestrator alone must still trigger NEEDS REANALYSIS — it lives outside projectTeam and is easy to miss");
+});
+
 test("REGRESSION: a persisted suggestion whose picks are all still available shows the ordinary 'Suggested Project Team' header, never a false NEEDS REANALYSIS", async () => {
   const suggested = {
     status: "suggested", bootstrapAnalystChoice: "quality", bootstrapAnalystSelectionSource: "recommended",

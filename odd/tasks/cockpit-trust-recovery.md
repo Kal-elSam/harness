@@ -89,4 +89,19 @@ External audit's claims were independently re-verified against the real code bef
 - Increment 2 (non-blocking startup) complete: tui.start() no longer blocks on the snapshot probe, background hydration + coalesced refresh() + ready promise. Full suite 1981/1981: 2026-09-21
 - Increment 3 (compact overlay and safe reanalysis) complete: 'r' shows real loading state immediately and can't be double-triggered; Quality/Efficient hidden behind 'e' by default. Full suite 1984/1984: 2026-09-21
 - Increment 4 (persisted PROJECT TEAM validity) complete: verified the real root cause first (overlay never re-checked live availability, unlike the dashboard panel), then fixed both the RESULT (NEEDS REANALYSIS) and ACTIVE/STALE (BLOCKED) overlay views. Full suite 1987/1987. **All 4 increments of cockpit-trust-recovery shipped locally.**: 2026-09-21
-- Ready to ship (branch → PR → CI → merge → release → publish → global install) — awaiting explicit go-ahead, per the plan's "no auto-publish between increments" (now that all 4 are done, this is the delivery decision, not another increment).
+- Independent audit of the 4-increment slice (still unpushed, local only) found 3 real gaps before shipping; all 3 independently re-verified against real code before fixing (see Increment 4b below).
+- Ready to ship (branch → PR → CI → merge → release → publish → global install) — awaiting explicit go-ahead.
+
+### Increment 4b — Corrective slice: 3 real gaps found by independent audit before shipping
+
+Each verified against the real code before fixing, not assumed:
+
+- [x] BUG-1 `clearTranscript` did not join `appendTranscriptEntry`'s per-path write queue — reproduced with a gated write: an append already in flight when `/clear` fires could complete AFTER the clear and silently resurrect the just-cleared content. Fixed: `clearTranscript` now goes through the same `serializeByPath` queue.
+- [x] BUG-2 `suggestionNeedsReanalysis()` checked the bootstrap analyst and `projectTeam`, but never `strategy.orchestrator` — a real, separate top-level field (see `buildProjectStrategy`), not part of `projectTeam`. A blocked/unverified Orchestrator alone (e.g. Fable) could still look like a clean, current recommendation. Fixed: the check now also covers `strategy.orchestrator`.
+- [x] BUG-3 `acquireSessionLock` (built in Increment 1 of multi-session support) had zero real callers anywhere — the exclusive lock existed but protected nothing. In-process write serialization (the transcript queue) only ever covered races WITHIN one process; two real processes running `kairo resume` on the same session could still race. Fixed: `service.acquireSessionLock({cwd, sessionId})` (new method) is now called by `runCockpitApp` right after session resolution (before `tui.start()` — fast, local-only), and `stop()` releases it, with `done` only resolving once that release actually settles.
+- [x] Tests RED→GREEN: 5 new regression tests — append-vs-clear race (confirmed RED without the fix via a deliberately gated write), Orchestrator-only-blocked triggers NEEDS REANALYSIS, a real lock conflict refuses to start (never reaches `tui.start()`), `stop()`/`done` wait for the real release, and one full real-storage integration test (`service.acquireSessionLock` against real temp files, no mocks) proving a second real attempt is refused and a later one succeeds after release.
+- [x] Full suite green: 1992/1992 on clean runs (1987 + 5 new), stress-tested 3x (2 of 3 hit the same pre-existing, unrelated `quick-ask.test.js` timing flake), zero real-disk leakage.
+
+## Progress (continued)
+
+- Increment 4b complete: 2026-09-21. All corrective gaps closed; ready to ship for real this time.

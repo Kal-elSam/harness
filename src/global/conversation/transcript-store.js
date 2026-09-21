@@ -27,12 +27,15 @@ const MAX_STORED_ENTRIES = 500;
 // appendTranscriptEntry is read-modify-write — two concurrent calls for the
 // SAME real file (e.g. a fast double-submit, or a background run's tailed
 // output landing at the same instant as the human's own message) can
-// otherwise interleave and silently drop one entry. This in-process queue,
-// keyed by the exact resolved path, serializes only calls that target the
-// same file; different sessions/projects never wait on each other. A
-// failed append still runs and its error still propagates to its own
+// otherwise interleave and silently drop one entry; clearTranscript joins
+// the SAME queue for the same reason — an append already in flight when
+// /clear fires must never complete afterward and silently resurrect the
+// content /clear just removed. This in-process queue, keyed by the exact
+// resolved path, serializes only calls that target the same file;
+// different sessions/projects never wait on each other. A failed
+// append/clear still runs and its error still propagates to its own
 // caller — only the QUEUE's chain is swallowed so one failure can never
-// permanently wedge every later append to the same file.
+// permanently wedge every later write to the same file.
 const appendQueues = new Map();
 
 function serializeByPath(path, run) {
@@ -99,11 +102,20 @@ export async function appendTranscriptEntry(homeDir, projectRoot, entry, session
   });
 }
 
-/** Persists an empty transcript — used by `/clear`, so a cleared chat stays cleared across a restart. */
+/**
+ * Persists an empty transcript — used by `/clear`, so a cleared chat stays
+ * cleared across a restart. Joins the SAME per-path queue appendTranscriptEntry
+ * uses — without this, a pending append racing a clear can land AFTER it and
+ * silently resurrect the just-cleared content (a real, reproduced bug: an
+ * append already in flight when `/clear` fires completes after the clear
+ * and restores the stale entry).
+ */
 export async function clearTranscript(homeDir, projectRoot, sessionId = null, deps = {}) {
-  const mkdirImpl = deps.mkdir ?? mkdir;
-  const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
   const path = transcriptPath(homeDir, projectRoot, sessionId);
-  await mkdirImpl(dirname(path), { recursive: true });
-  await writeJson(path, { schema: TRANSCRIPT_SCHEMA, entries: [] });
+  return serializeByPath(path, async () => {
+    const mkdirImpl = deps.mkdir ?? mkdir;
+    const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
+    await mkdirImpl(dirname(path), { recursive: true });
+    await writeJson(path, { schema: TRANSCRIPT_SCHEMA, entries: [] });
+  });
 }

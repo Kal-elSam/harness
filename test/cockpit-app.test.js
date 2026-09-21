@@ -620,6 +620,61 @@ test("REGRESSION: the resolved sessionId is shown in the dashboard header via vi
   app.stop();
 });
 
+test("REGRESSION: a real session-lock conflict (another process already has this session open) refuses to start — never reaches tui.start(), never silently launches", async () => {
+  let tui;
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    acquireSessionLock: async () => { throw new Error("Session is already open in another process (pid 4242). Close it there first, or resume a different session."); }
+  };
+  await assert.rejects(
+    () => runCockpitApp({
+      cwd: "/repo",
+      sessionId: "already-open-elsewhere",
+      service,
+      terminalFactory: () => ({}),
+      tuiFactory: () => { tui = makeFakeTui(); return tui; },
+      editorFactory: () => makeFakeEditor(),
+      setIntervalImpl: () => 1,
+      clearIntervalImpl: () => {}
+    }),
+    /already open in another process/
+  );
+  assert.equal(tui.started, false, "a real lock conflict must be reported before the TUI ever actually starts — nothing half-started to tear down");
+});
+
+test("REGRESSION: stop() releases the real session lock, and done only resolves once that release actually settles", async () => {
+  let released = false;
+  let resolveRelease;
+  const releaseGate = new Promise((resolve) => { resolveRelease = resolve; });
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    acquireSessionLock: async () => ({
+      release: async () => { await releaseGate; released = true; }
+    })
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    sessionId: "real-session",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  app.stop();
+  let doneResolved = false;
+  app.done.then(() => { doneResolved = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(doneResolved, false, "done must not resolve while the real lock release is still in flight");
+  assert.equal(released, false);
+
+  resolveRelease();
+  await app.done;
+  assert.equal(released, true, "the real lock must actually be released by the time done resolves");
+});
+
 test("REGRESSION: an explicit sessionId (from kairo start/resume) is used as-is and never overridden by resolveActiveSession", async () => {
   let resolveActiveSessionCalled = false;
   const calls = [];
