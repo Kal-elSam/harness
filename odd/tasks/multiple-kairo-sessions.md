@@ -44,7 +44,7 @@ Verified this session: real ASK conversation continuity (v0.30.0/0.30.1) only ma
 - [x] INC1-04 Tests RED→GREEN: `test/session-lock.test.js` (6 tests), `test/session-registry.test.js` (13 tests)
 - [x] INC1-05 Real dry-run: copied this actual project's real `~/.harness/sessions/<key>/` directory to an isolated temp home, ran the real migration against the copy, verified originals byte-identical and untouched, migrated content byte-identical to source. Cleaned up the scratch copy afterward; real `~/.harness` never touched.
 - [x] INC1-06 Full suite green: 1945/1945, stress-tested 3x, confirmed zero real-disk side effects from any test
-- [ ] INC1-07 PR + CI + merge + release (this increment does not change any existing behavior — new, unwired modules only — so it should ship as a patch with no user-visible CHANGELOG entry beyond noting the new internal modules, same precedent as the entitlement probe's Increment 1)
+- [x] INC1-07 PR #317 → CI green (Node 20/22/24) → merged (real merge commit) → released as **v0.30.2**, published, global install verified (`gitHead` matches `9cd1cd0`)
 
 ### Increment 2 — Context/session plumbing (not started)
 
@@ -66,5 +66,5 @@ Verified this session: real ASK conversation continuity (v0.30.0/0.30.1) only ma
 ## Progress
 
 - Created: 2026-09-21
-- Increment 1 code complete, tests green, real dry-run verified: 2026-09-21
-- Next: INC1-07 (ship), then Increment 2
+- Increment 1 code complete, tests green, real dry-run verified, shipped as v0.30.2: 2026-09-21
+- Next: Increment 2 (thread `sessionId` through `runCockpitApp` + conversation service methods)
