@@ -5,6 +5,28 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.29.2 — 2026-09-21 (Kairo Runtime)
+
+Patch release.
+
+### Fixed
+
+- The compact PROJECT TEAM dashboard panel could show a persisted
+  role's model name with no indication it's actually blocked right
+  now (denied/unverified Claude entitlement, or an ineligible
+  adapter) — silently implying access that route-time execution would
+  already refuse. The panel now appends a one-line inline warning for
+  exactly the role(s) currently blocked; every other row is unchanged.
+  Full decision evidence (quality leader, retention%, capability-floor
+  reasoning) stays exclusively behind the `/project` overlay's
+  explicit evidence toggle, as decided in 0.29.1.
+- Verified separately: a persisted strategy's model was never actually
+  launchable past its real access changing, regardless of strategy
+  age — `resolveProjectRoute`'s live entitlement gate already re-checks
+  every real assignment on every route, independent of when the
+  strategy was approved. This release is a display fix, not an
+  execution-safety fix.
+
 ## 0.29.1 — 2026-09-20 (Kairo Runtime)
 
 Patch release. Corrects three defective behaviors introduced in 0.29.0's
