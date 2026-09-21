@@ -5,6 +5,41 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.33.0 — 2026-09-21 (Kairo Runtime)
+
+Minor release. Cockpit trust recovery: fixes four independently verified
+problems in `kairo start` and PROJECT TEAM.
+
+### Added
+
+- `runCockpitApp()` gains `ready: Promise<void>`, resolving once the
+  first background snapshot (usage/model-intelligence) lands.
+
+### Changed
+
+- `kairo start`/`resume` now show the cockpit immediately — `tui.start()`
+  no longer waits on `service.snapshot()` first (previously up to ~20s).
+  The snapshot hydrates in the background with a compact loading
+  indicator; `refresh()` calls coalesce instead of overlapping.
+- The dashboard header shows the active session's short id.
+- Pressing `r` to re-analyze the project team shows real loading progress
+  immediately and can't be double-triggered.
+- `Quality (reference)`/`Efficient (reference)` are hidden by default on
+  the PROJECT TEAM result screen, shown only via `e` (same as Evidence).
+- A persisted PROJECT TEAM suggestion or active strategy, re-displayed
+  later after real access changed, now shows `NEEDS REANALYSIS` or
+  `BLOCKED` instead of silently looking current — covers the Orchestrator
+  assignment too, not just the analyst and project-team roles.
+- A session can no longer be opened simultaneously by two processes —
+  `kairo start`/`resume` now acquire the session's exclusive lock and
+  release it on exit.
+
+### Fixed
+
+- `appendTranscriptEntry`'s read-modify-write is serialized per session
+  file, so two concurrent appends (or an append racing `/clear`) can no
+  longer drop or resurrect content.
+
 ## 0.32.0 — 2026-09-21 (Kairo Runtime)
 
 Minor release. Increment 4 (final) of multi-session support: `kairo
