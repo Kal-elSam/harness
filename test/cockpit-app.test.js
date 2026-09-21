@@ -519,6 +519,34 @@ test("REGRESSION: boot resolves the real active session first and scopes transcr
   app.stop();
 });
 
+test("REGRESSION: an explicit sessionId (from kairo start/resume) is used as-is and never overridden by resolveActiveSession", async () => {
+  let resolveActiveSessionCalled = false;
+  const calls = [];
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    resolveActiveSession: async () => { resolveActiveSessionCalled = true; return { id: "auto-picked" }; },
+    loadTranscript: async (args) => { calls.push(["loadTranscript", args]); return []; },
+    getSession: async (args) => { calls.push(["getSession", args]); return { mode: "ask" }; }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    sessionId: "explicit-session",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  assert.equal(resolveActiveSessionCalled, false, "an explicit sessionId must never be second-guessed by auto-resolution");
+  assert.deepEqual(calls, [
+    ["loadTranscript", { cwd: "/repo", sessionId: "explicit-session" }],
+    ["getSession", { cwd: "/repo", sessionId: "explicit-session" }]
+  ]);
+  app.stop();
+});
+
 test("boot loads real persisted transcript history before the first render", async () => {
   const service = {
     snapshot: async () => makeSnapshot([]),

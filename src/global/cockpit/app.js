@@ -68,6 +68,7 @@ export function buildViewportLayoutRoot(view, editor) {
  */
 export async function runCockpitApp({
   cwd,
+  sessionId: explicitSessionId = null,
   service = createConversationService({ enableProviderProbes: true }),
   terminalFactory = () => new ProcessTerminal(),
   tuiFactory = (terminal) => new TuiAltScreen(terminal),
@@ -89,7 +90,7 @@ export async function runCockpitApp({
   // (today: "pick up the most recently updated real session, or create one").
   // Every transcript/ASK-history/WorkMode call below is scoped to it once
   // it's set; null only for the brief window before that resolution runs.
-  let sessionId = null;
+  let sessionId = explicitSessionId;
   let resolveDone;
   const done = new Promise((resolvePromise) => { resolveDone = resolvePromise; });
 
@@ -523,16 +524,22 @@ export async function runCockpitApp({
     return undefined;
   });
 
-  // Resolve the real, active session for this project first — everything
-  // below (transcript, ASK history, WorkMode) is scoped to it. A resolution
-  // failure leaves sessionId null, which every service call above already
-  // treats as "fall back to the legacy project-wide files" — never a hard
-  // crash on startup.
-  try {
-    const active = await service.resolveActiveSession?.({ cwd });
-    if (active?.id) sessionId = active.id;
-  } catch (error) {
-    view.setStatus(`Session resolution failed: ${error.message ?? String(error)}`);
+  // A real, already-resolved sessionId (from `kairo start`/`resume`) is used
+  // as-is — no auto-resolution needed or wanted, since the caller already
+  // made the real choice (always-new for start, explicit/picked for
+  // resume). Only when none was given (any embedder that predates explicit
+  // session selection) does this fall back to resolveActiveSession's own
+  // "most recently updated, or create one" policy. A resolution failure
+  // leaves sessionId null, which every service call above already treats
+  // as "fall back to the legacy project-wide files" — never a hard crash
+  // on startup.
+  if (!sessionId) {
+    try {
+      const active = await service.resolveActiveSession?.({ cwd });
+      if (active?.id) sessionId = active.id;
+    } catch (error) {
+      view.setStatus(`Session resolution failed: ${error.message ?? String(error)}`);
+    }
   }
   // Load persisted chat history and the real KairoSession (currently just
   // WorkMode) before the first render, so a restart never shows an empty

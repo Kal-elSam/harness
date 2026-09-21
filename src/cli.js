@@ -44,7 +44,7 @@ import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runArchitectCli, runPlansCli } from "./global/architect/architect-cli.js";
 import { runConversationCli } from "./global/conversation/cli.js";
 import { runUiCli } from "./global/conversation/ui.js";
-import { runCockpitCli } from "./global/cockpit/cli.js";
+import { runKairoResume, runKairoSessionsList, runKairoStart } from "./global/conversation/session-cli.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
 import { runGlobalAlerts } from "./global/runtime/alerts/alert-cli.js";
@@ -133,7 +133,13 @@ export async function runCli(argv) {
       await runUiCli(optionsWithPolicy);
       return;
     case "start":
-      await runCockpitCli(optionsWithPolicy);
+      await runKairoStart(optionsWithPolicy);
+      return;
+    case "resume":
+      await runKairoResume(optionsWithPolicy);
+      return;
+    case "list":
+      await runKairoSessionsList(optionsWithPolicy);
       return;
     case "review":
       await runGlobalReview(optionsWithPolicy, packageManifest);
@@ -542,6 +548,7 @@ export function parseArgs(argv) {
     runId: null,
     plansAction: null,
     conversationAction: null,
+    sessionRef: null,
     taskId: null,
     reviewId: null,
     lineage: null,
@@ -607,6 +614,8 @@ export function parseArgs(argv) {
   }
 
   if (command === "conversation") parseConversationAction(args, options);
+
+  if (command === "resume") parseResumeAction(args, options);
 
   if (command === "reviews") {
     parseReviewsAction(args, options);
@@ -817,6 +826,14 @@ function parseConversationAction(args, options) {
     const taskId = args.shift();
     if (!taskId || taskId.startsWith("-")) throw new Error(`Missing task id for conversation ${action}.`);
     options.taskId = taskId;
+  }
+}
+
+function parseResumeAction(args, options) {
+  const ref = args[0];
+  if (ref && !ref.startsWith("-")) {
+    options.sessionRef = ref;
+    args.shift();
   }
 }
 
@@ -1138,6 +1155,8 @@ function normalizeCommand(command) {
   if (command === "conversation") return "conversation";
   if (command === "ui") return "ui";
   if (command === "start") return "start";
+  if (command === "resume") return "resume";
+  if (command === "list") return "list";
   if (command === "review") return "review";
   if (command === "reviews") return "reviews";
   if (command === "monitor") return "monitor";

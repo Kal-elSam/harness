@@ -27,3 +27,13 @@ test("kairo start boots the cockpit app and waits for it to finish", async () =>
   assert.equal(receivedCwd, "/repo");
   assert.equal(stopped, true);
 });
+
+test("REGRESSION: a real sessionId (from kairo start/resume) is forwarded to the cockpit app factory", async () => {
+  let received = null;
+  const app = { stop: () => {}, done: Promise.resolve() };
+  const runCockpitApp = async (args) => { received = args; return app; };
+
+  await runCockpitCli({ cwd: "/repo", sessionId: "real-session-id" }, { interactive: true, runCockpitApp });
+
+  assert.deepEqual(received, { cwd: "/repo", sessionId: "real-session-id" });
+});
