@@ -5,6 +5,26 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.31.1 — 2026-09-21 (Kairo Runtime)
+
+Patch release. Increment 3 of multi-session support: architecture
+tasks/plans now carry an optional `sessionId` and the cockpit's
+timeline/actions respect it. For today's single-session-per-project
+usage this is inert plumbing — no observable behavior change yet.
+
+### Added
+
+- `createArchitectureRequestKey` folds `sessionId` into the request key,
+  so two different real sessions asking the identical task text each get
+  their own task instead of silently reusing each other's.
+- `createArchitecturePlan` records `sessionId` on the draft/status
+  document; old task records are unaffected (`readTaskRecord`'s
+  validation is an allow-list, not exact-match).
+- `snapshot({cwd, sessionId})` shows only that session's own tasks plus
+  any task that predates sessions; `showPlan`/`decidePlan`/
+  `planExecution`/`executePlan` throw when a real `sessionId` doesn't own
+  the task, but never block a legacy task or an omitted `sessionId`.
+
 ## 0.31.0 — 2026-09-21 (Kairo Runtime)
 
 Minor release. Increment 2 of multi-session support: `kairo start`'s chat
