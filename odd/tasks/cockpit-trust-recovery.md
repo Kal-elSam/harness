@@ -64,12 +64,22 @@ External audit's claims were independently re-verified against the real code bef
 - [x] Tests RED→GREEN: 3 new regression tests (`project-overlay.test.js`) — synchronous LOADING_PREFLIGHT transition, reentrancy guard (1 real call from 3 presses), Quality/Efficient hidden by default and revealed only via `'e'`.
 - [x] Full suite green: 1984/1984 on clean runs (1981 + 3 new), stress-tested 3x (one run hit the same pre-existing, unrelated `quick-ask.test.js` flake), zero real-disk leakage.
 
-### Increment 4 — Persisted PROJECT TEAM validity (not started)
+### Increment 4 — Persisted PROJECT TEAM validity
 
-- [ ] Verify routing/fallback and suggested/active strategy behavior first (Fable-as-persisted-suggestion claim, NEEDS REANALYSIS claim) before writing any fix.
-- [ ] A suggestion with currently-blocked/unverified picks displays as NEEDS REANALYSIS — display-time only, persisted schema unchanged.
-- [ ] An unverified model (e.g. Fable) is never shown as a recommendation.
-- [ ] An active strategy keeps showing its blocked assignment, marked BLOCKED, with execution routing still prevented — hiding it would misrepresent the approved configuration.
+**Verification before coding, per the plan's own Key Learning:**
+
+- Confirmed `resolveProjectRoute` (project-router.js) already correctly refuses to route to a blocked/unverified assignment for an ACTIVE strategy (`blockingEntitlement`/`eligibility` checks return `WAIT_FOR_PROJECT_TEAM`, never `ROUTED`) — execution-blocking was never actually broken.
+- Confirmed the dashboard panel (`view.js`'s `projectTeamPanel`) already re-validates every role (any status) against CURRENT `eligibility`/`claudeEntitlement` on every render via `resolveAssignmentAvailability` — this side was never broken either.
+- Confirmed `scoredAll`/the Recommendation Pool (`buildScoredCandidatePools` in `model-candidate-catalog.js`) already excludes `DENIED`/`UNVERIFIED` entitlement at the SOURCE (`AUTOMATIC_ENTITLEMENTS = {ALLOWED, NOT_APPLICABLE}`) — a **freshly computed** suggestion cannot recommend an unverified model like Fable.
+- Found the REAL, narrow gap by reading the code: `project-overlay.js`'s own `buildResultRoleList()` (RESULT state) and `teamLines()` (ACTIVE/STALE state) never applied this same live-availability check the dashboard panel already does — so a **persisted** suggestion or active strategy, re-displayed later after real access changed (e.g. Fable recommended weeks ago, now unverified), showed its picks in the overlay as if nothing changed. This is the actual bug behind both the "Fable" and "NEEDS REANALYSIS" claims — the same root cause, not two separate issues.
+
+**Fix:**
+
+- [x] New `suggestionNeedsReanalysis()`/`isCurrentlyUnavailable()` helpers reuse `resolveAssignmentAvailability` (imported from `view.js`) against the live snapshot's `modelIntelligence.eligibility`/`claudeEntitlement` — the exact same real-time source the dashboard panel already checks. Display-time only; never mutates or re-persists the strategy.
+- [x] RESULT state: header becomes `"NEEDS REANALYSIS"` (instead of `"Suggested Project Team"`) when the bootstrap analyst or any projectTeam pick is currently unavailable; a warning line points at `r` to re-analyze; the analyst line and each affected role row get a `"needs reanalysis"` note.
+- [x] ACTIVE/STALE state: `teamLines()` gained an opt-in `checkAvailability` flag (only the real operational team list uses it — Quality/Efficient reference lines stay pure comparison, never gated); a currently-blocked assignment now shows `"BLOCKED"` in the overlay itself, not only the dashboard panel — the real model name stays visible (hiding it would misrepresent the approved configuration), matching `resolveProjectRoute`'s own execution-blocking, which was already correct.
+- [x] Tests RED→GREEN: 3 new regression tests — persisted suggestion with an unverified analyst shows NEEDS REANALYSIS; an available suggestion shows the ordinary header (no false positive); an ACTIVE strategy with a blocked pick shows BLOCKED in the overlay.
+- [x] Full suite green: 1987/1987 on clean runs (1984 + 3 new), stress-tested 3x (2 of 3 hit the same pre-existing, unrelated `quick-ask.test.js` flake), zero real-disk leakage.
 
 ## Progress
 
@@ -78,4 +88,5 @@ External audit's claims were independently re-verified against the real code bef
 - Increment 1 (session and transcript integrity) complete: transcript writes serialized per path, header shows short session id, real-storage isolation confirmed, unreproduced disk-leak anomaly investigated and documented (see Increment 1's own notes above). Full suite 1978/1978, committed locally on `feat/cockpit-trust-recovery` (not pushed/PR'd/released — no auto-publish between increments, per plan): 2026-09-21
 - Increment 2 (non-blocking startup) complete: tui.start() no longer blocks on the snapshot probe, background hydration + coalesced refresh() + ready promise. Full suite 1981/1981: 2026-09-21
 - Increment 3 (compact overlay and safe reanalysis) complete: 'r' shows real loading state immediately and can't be double-triggered; Quality/Efficient hidden behind 'e' by default. Full suite 1984/1984: 2026-09-21
-- Next: Increment 4 (persisted PROJECT TEAM validity)
+- Increment 4 (persisted PROJECT TEAM validity) complete: verified the real root cause first (overlay never re-checked live availability, unlike the dashboard panel), then fixed both the RESULT (NEEDS REANALYSIS) and ACTIVE/STALE (BLOCKED) overlay views. Full suite 1987/1987. **All 4 increments of cockpit-trust-recovery shipped locally.**: 2026-09-21
+- Ready to ship (branch → PR → CI → merge → release → publish → global install) — awaiting explicit go-ahead, per the plan's "no auto-publish between increments" (now that all 4 are done, this is the delivery decision, not another increment).

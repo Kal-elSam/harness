@@ -1,7 +1,7 @@
 import { Box, SelectList, Text, Input, Key, matchesKey, fuzzyFilter } from "@earendil-works/pi-tui";
 import { editorTheme, theme } from "./theme.js";
 import { CARD_TONE, cardInnerWidth, renderPanel } from "./card.js";
-import { explainTeamDecision } from "./view.js";
+import { explainTeamDecision, resolveAssignmentAvailability } from "./view.js";
 
 // /project's single interactive analysis flow: real preflight -> select
 // analyst -> confirm -> analyze -> result -> approve. Both first analysis
@@ -34,7 +34,46 @@ const overlayFrameTheme = {
   fg: (role, text) => theme.fg(role === "border" ? "info" : role, text)
 };
 
-function teamLines(label, team, view, tone = "bold") {
+/** Current eligibility/entitlement from the live snapshot — the exact same real-time source view.js's own dashboard panel (projectTeamPanel) already checks every render, applied here too so a persisted suggestion re-displayed later never silently shows a now-blocked pick as if it were still fine. */
+function currentAvailability(view) {
+  return {
+    eligibility: view.snapshot?.modelIntelligence?.eligibility ?? {},
+    claudeEntitlement: view.snapshot?.modelIntelligence?.claudeEntitlement ?? {}
+  };
+}
+
+/** Whether the given model is currently unavailable (blocked/unverified) per live eligibility/entitlement — never null-model, which reads as "no eligible option", already its own honest state. */
+function isCurrentlyUnavailable(model, view) {
+  if (!model) return false;
+  return !resolveAssignmentAvailability(model, currentAvailability(view)).available;
+}
+
+/**
+ * A suggested (not yet approved) strategy needs a genuinely fresh
+ * analysis when the bootstrap analyst or any projectTeam pick it
+ * recommends is no longer available right now — this can only diverge
+ * from what was true when the suggestion was computed (recommendation
+ * pools already exclude denied/unverified entitlement at analysis time —
+ * see buildScoredCandidatePools) for a PERSISTED suggestion re-displayed
+ * later, after real access changed. Display-time only: never mutates or
+ * re-persists the suggestion itself.
+ * @param {object} strategy
+ * @param {import("./view.js").CockpitView} view
+ */
+function suggestionNeedsReanalysis(strategy, view) {
+  if (isCurrentlyUnavailable(strategy?.bootstrapAnalyst, view)) return true;
+  return (strategy?.projectTeam ?? []).some((entry) => isCurrentlyUnavailable(entry.model, view));
+}
+
+/**
+ * `checkAvailability`: only the real OPERATIONAL team (ACTIVE/STALE) needs
+ * this — real execution routes against exactly this list (project-router.js),
+ * and hiding a now-blocked assignment there would misrepresent the approved
+ * configuration, the same principle the dashboard panel (projectTeamPanel)
+ * already applies. Quality/Efficient reference lines stay pure comparison
+ * text, never gated on live availability — they were never routable.
+ */
+function teamLines(label, team, view, tone = "bold", checkAvailability = false) {
   const lines = [tone === "bold" ? theme.bold(label) : theme.fg("muted", label)];
   if (!team?.length) {
     lines.push(theme.fg("muted", "  (no active roles)"));
@@ -43,7 +82,9 @@ function teamLines(label, team, view, tone = "bold") {
   const modelColumnWidth = view.teamModelColumnWidth(team.map((entry) => entry.model));
   for (const entry of team) {
     const modelText = entry.model ? view.teamRoleLabel(entry.model, modelColumnWidth) : theme.fg("warning", "no eligible option");
-    lines.push(theme.fg("muted", `  ${entry.role.padEnd(10)} ${modelText}`));
+    const warningNote = checkAvailability && isCurrentlyUnavailable(entry.model, view)
+      ? theme.fg("warning", "  BLOCKED") : "";
+    lines.push(theme.fg("muted", `  ${entry.role.padEnd(10)} ${modelText}`) + warningNote);
   }
   return lines;
 }
@@ -303,12 +344,19 @@ export class ProjectOverlay {
     const items = team.map((entry) => {
       const modelText = entry.model ? this.view.teamRoleLabel(entry.model, modelColumnWidth) : "no eligible option";
       const overrideNote = entry.assignmentSource === "override" ? theme.fg("accent", " (override)") : "";
+      // A persisted suggestion re-displayed later can name a pick that's
+      // no longer really available (access revoked, entitlement lost
+      // since it was computed) — checked against the exact same live
+      // eligibility/entitlement the dashboard panel already uses, never
+      // silently shown as if it were still a clean recommendation.
+      const unavailableNote = isCurrentlyUnavailable(entry.model, this.view)
+        ? theme.fg("warning", "  needs reanalysis") : "";
       // Role + model are the real primary information here — explicit
       // `text` color, never left to default/muted.
       // WHY this model was picked — explainTeamDecision (real reason,
       // leader formulation, or override text), never an empty row.
       const description = explainTeamDecision(entry);
-      return { value: entry.role, label: theme.fg("text", `${entry.role.padEnd(10)} ${modelText}`) + overrideNote, description };
+      return { value: entry.role, label: theme.fg("text", `${entry.role.padEnd(10)} ${modelText}`) + overrideNote + unavailableNote, description };
     });
     this.resultSelectList = new SelectList(items, 6, editorTheme.selectList);
     this.resultSelectList.onSelect = (item) => void this.openRolePicker(item.value);
@@ -628,10 +676,20 @@ export class ProjectOverlay {
         break;
       case S.RESULT: {
         const strategy = this.suggestedStrategy;
-        push(theme.bold("Suggested Project Team"));
+        // A PERSISTED suggestion re-displayed later can recommend a pick
+        // that's no longer really available (access changed since it was
+        // computed) — checked live, never assumed still valid just because
+        // it was valid when this suggestion was first analyzed.
+        const needsReanalysis = suggestionNeedsReanalysis(strategy, this.view);
+        push(theme.bold(needsReanalysis ? "NEEDS REANALYSIS" : "Suggested Project Team"));
+        if (needsReanalysis) {
+          push(theme.fg("warning", "One or more real picks below are no longer available — press r to re-analyze from scratch."));
+        }
         push(theme.fg("muted", "Operational picks: the efficient model among eligible candidates for each role (quality leader shown when it differs)."));
         const choiceNote = strategy.bootstrapAnalystChoice ?? (strategy.bootstrapAnalystSelectionSource === "manual" ? "manual pick" : "recommended");
-        push(theme.fg("muted", `Project Analyst: ${choiceNote} — ${this.view.aiTeamLabelWithProvider(strategy.bootstrapAnalyst)}`));
+        const analystUnavailable = isCurrentlyUnavailable(strategy.bootstrapAnalyst, this.view)
+          ? theme.fg("warning", "  needs reanalysis") : "";
+        push(theme.fg("muted", `Project Analyst: ${choiceNote} — ${this.view.aiTeamLabelWithProvider(strategy.bootstrapAnalyst)}`) + analystUnavailable);
         push(theme.bold("PROJECT TEAM"));
         box.addChild(this.resultSelectList);
         // Quality/Efficient/Evidence are all optional DETAIL, not the
@@ -707,7 +765,7 @@ export class ProjectOverlay {
         const strategy = this.activeStrategy;
         push(theme.fg("success", "ACTIVE"));
         push(theme.fg("muted", `Approved ${strategy.approvedAt ?? "?"}`));
-        for (const line of teamLines("PROJECT TEAM", strategy.projectTeam ?? strategy.qualityTeam, this.view)) push(line);
+        for (const line of teamLines("PROJECT TEAM", strategy.projectTeam ?? strategy.qualityTeam, this.view, "bold", true)) push(line);
         push(theme.fg("muted", "r re-analyze from scratch · Esc close"));
         break;
       }
@@ -715,7 +773,7 @@ export class ProjectOverlay {
         const strategy = this.activeStrategy;
         push(theme.fg("warning", "STALE"));
         push(theme.fg("muted", "The real project evidence has changed since this team was approved — previous assignments are kept until refreshed."));
-        for (const line of teamLines("PROJECT TEAM (previous)", strategy.projectTeam ?? strategy.qualityTeam, this.view)) push(line);
+        for (const line of teamLines("PROJECT TEAM (previous)", strategy.projectTeam ?? strategy.qualityTeam, this.view, "bold", true)) push(line);
         push(theme.fg("muted", "Enter refresh · r re-analyze from scratch · Esc close"));
         break;
       }

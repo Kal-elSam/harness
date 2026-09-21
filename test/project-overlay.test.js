@@ -511,6 +511,62 @@ test("REGRESSION: 'r' also forces a fresh preflight from ACTIVE and STALE, not o
   assert.equal(overlayStale.state, S.SELECT_ANALYST, "'r' (fresh re-analysis) must work from STALE too, distinct from Enter's own refresh()");
 });
 
+test("REGRESSION: a persisted suggestion whose bootstrap analyst is no longer entitled shows NEEDS REANALYSIS — never presented as if it were still a clean, current recommendation", async () => {
+  const fable = { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" };
+  const suggested = {
+    status: "suggested", bootstrapAnalystChoice: "quality", bootstrapAnalystSelectionSource: "recommended",
+    bootstrapAnalyst: fable, qualityTeam: [], efficientTeam: [], projectTeam: []
+  };
+  const view = makeFakeView({
+    projectStrategy: suggested,
+    modelIntelligence: { eligibility: { claude: { ok: true } }, claudeEntitlement: { "claude-fable-5-1": { status: "unverified", reason: null } } }
+  });
+  const overlay = new ProjectOverlay({ service: makePreflightService(), view, cwd: "/repo", onClose: () => {} });
+  await flush();
+  assert.equal(overlay.state, S.RESULT);
+
+  const lines = overlay.render(100).join("\n");
+  assert.match(lines, /NEEDS REANALYSIS/);
+  assert.doesNotMatch(lines, /Suggested Project Team/);
+  assert.match(lines, /needs reanalysis/);
+});
+
+test("REGRESSION: a persisted suggestion whose picks are all still available shows the ordinary 'Suggested Project Team' header, never a false NEEDS REANALYSIS", async () => {
+  const suggested = {
+    status: "suggested", bootstrapAnalystChoice: "quality", bootstrapAnalystSelectionSource: "recommended",
+    bootstrapAnalyst: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" },
+    qualityTeam: [], efficientTeam: [], projectTeam: []
+  };
+  const view = makeFakeView({ projectStrategy: suggested, modelIntelligence: { eligibility: {}, claudeEntitlement: {} } });
+  const overlay = new ProjectOverlay({ service: makePreflightService(), view, cwd: "/repo", onClose: () => {} });
+  await flush();
+  assert.equal(overlay.state, S.RESULT);
+
+  const lines = overlay.render(100).join("\n");
+  assert.match(lines, /Suggested Project Team/);
+  assert.doesNotMatch(lines, /NEEDS REANALYSIS/);
+  assert.doesNotMatch(lines, /needs reanalysis/);
+});
+
+test("REGRESSION: an ACTIVE strategy's overlay view shows a currently-blocked assignment as BLOCKED — the same live check the dashboard panel already applies, now also in the overlay itself", async () => {
+  const fable = { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Fable 5.1" };
+  const active = {
+    status: "active", approvedAt: "t0",
+    projectTeam: [{ role: "Builder", model: fable, fallback: null, reason: null, assignmentSource: "recommended" }]
+  };
+  const view = makeFakeView({
+    projectStrategy: active,
+    modelIntelligence: { eligibility: { claude: { ok: true } }, claudeEntitlement: { "claude-fable-5-1": { status: "unverified", reason: null } } }
+  });
+  const overlay = new ProjectOverlay({ service: makePreflightService(), view, cwd: "/repo", onClose: () => {} });
+  await flush();
+  assert.equal(overlay.state, S.ACTIVE);
+
+  const lines = overlay.render(100).join("\n");
+  assert.match(lines, /BLOCKED/);
+  assert.match(lines, /Fable 5\.1/, "the blocked assignment's real model name stays visible — hiding it would misrepresent the approved configuration");
+});
+
 test("REGRESSION: pressing 'r' transitions to LOADING_PREFLIGHT synchronously, before the async preflight call even starts — never leaves the modal looking dead while it's actually working", async () => {
   const service = makePreflightService();
   const suggested = {
