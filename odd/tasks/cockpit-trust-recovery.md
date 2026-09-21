@@ -46,13 +46,15 @@ External audit's claims were independently re-verified against the real code bef
 
 **Investigated, non-reproducing anomaly (documented, not silently dropped):** two of the very first stress runs for this increment left two real session directories under this actual project's real `~/.harness/sessions/dfd01812152434aa/conversations/` (found via the routine leak check). Traced every code path that can call `createSession`/`resolveActiveSession` for real; none of the tests that exercise them (`session-cli.test.js`, `conversation-service.test.js`, `cockpit-app.test.js`) omit the mocks needed to stay isolated. Added temporary instrumentation to `createSession` to fail loudly on any non-temp `homeDir`, then ran the full suite 6 more consecutive times (3 plain, 3 instrumented) — all 6 came back completely clean, zero hits, zero leakage. Removed the instrumentation. Given a genuine bug in this deterministic, fully-mocked-in-tests code would reproduce close to 100% of the time, not twice-then-never-again across 6 targeted attempts, this is most likely an external/coincidental event from outside the test run, not a defect in this increment's code — but it's recorded here rather than silently dismissed, in case it recurs.
 
-### Increment 2 — Non-blocking startup (not started)
+### Increment 2 — Non-blocking startup
 
-- [ ] Start `tui.start()` before any snapshot/probe call; load session + transcript locally first.
-- [ ] Hydrate usage/model-intelligence in the background after the TUI is already visible.
-- [ ] Show a compact loading state while hydration is in flight.
-- [ ] Add `ready: Promise<void>` to `runCockpitApp`'s return value without breaking existing consumers.
-- [ ] Serialize `refresh()` calls so concurrent snapshots can't overlap.
+- [x] `tui.start()` now runs right after the fast, local-only phase (session resolution, transcript, WorkMode) — never waits on `service.snapshot()` (the potentially ~20s usage/model-intelligence probes) first.
+- [x] The real snapshot hydrates in the background, right after `tui.start()`: kicked off via `refresh()` and exposed as `ready`, never blocking the return of `runCockpitApp` itself.
+- [x] Compact loading state: reuses the existing `beginAction`/spinner mechanism (`"Loading usage and model intelligence"`), cleared once `ready` resolves — no new UI primitive needed.
+- [x] `ready: Promise<void>` added to `runCockpitApp`'s return value; existing consumers that only destructure `{tui, view, stop, done, refresh}` are unaffected (pure addition).
+- [x] `refresh()` calls are now serialized: an in-flight `service.snapshot()` call is never joined by a second overlapping one — a `refresh()` requested while one is running coalesces into exactly one queued follow-up cycle (never an unbounded backlog), so every caller still eventually gets a real refresh.
+- [x] Tests RED→GREEN: 3 new regression tests (tui starts before snapshot resolves; loading indicator shown/cleared around `ready`; concurrent `refresh()` calls coalesce to one queued follow-up, never overlapping `snapshot()` calls) + 1 pre-existing test updated to `await app.ready` before asserting on hydrated state (an honest, correct behavior change — the whole point of this increment).
+- [x] Full suite green: 1981/1981 (1978 + 3 new), stress-tested 3x (one run hit the same pre-existing, already-confirmed-unrelated `quick-ask.test.js` timing flake), zero real-disk leakage.
 
 ### Increment 3 — Compact overlay and safe reanalysis (not started)
 
@@ -73,4 +75,5 @@ External audit's claims were independently re-verified against the real code bef
 - Created: 2026-09-21
 - Plan approved by user: one ODD doc, 4 increments, no auto-publish between them.
 - Increment 1 (session and transcript integrity) complete: transcript writes serialized per path, header shows short session id, real-storage isolation confirmed, unreproduced disk-leak anomaly investigated and documented (see Increment 1's own notes above). Full suite 1978/1978, committed locally on `feat/cockpit-trust-recovery` (not pushed/PR'd/released — no auto-publish between increments, per plan): 2026-09-21
-- Next: Increment 2 (non-blocking startup)
+- Increment 2 (non-blocking startup) complete: tui.start() no longer blocks on the snapshot probe, background hydration + coalesced refresh() + ready promise. Full suite 1981/1981: 2026-09-21
+- Next: Increment 3 (compact overlay and safe reanalysis)

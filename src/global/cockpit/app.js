@@ -64,7 +64,7 @@ export function buildViewportLayoutRoot(view, editor) {
  * @param {number} [options.pollIntervalMs]
  * @param {(fn: () => void, ms: number) => any} [options.setIntervalImpl]
  * @param {(handle: any) => void} [options.clearIntervalImpl]
- * @returns {Promise<{ tui: object, view: CockpitView, stop: () => void, done: Promise<void>, refresh: () => Promise<void> }>}
+ * @returns {Promise<{ tui: object, view: CockpitView, stop: () => void, done: Promise<void>, ready: Promise<void>, refresh: () => Promise<void> }>}
  */
 export async function runCockpitApp({
   cwd,
@@ -141,7 +141,7 @@ export async function runCockpitApp({
     }
   }
 
-  async function refresh() {
+  async function performRefresh() {
     try {
       const snapshot = await service.snapshot({ cwd, sessionId });
       view.setSnapshot(snapshot);
@@ -150,6 +150,32 @@ export async function runCockpitApp({
     } catch (error) {
       view.setStatus(`Refresh failed: ${error.message ?? String(error)}`);
     }
+  }
+
+  // Serializes real snapshot() calls — the interval timer, every runAction,
+  // the onRefresh key, and the initial background hydration below can all
+  // request a refresh at once, and two concurrent service.snapshot() calls
+  // racing would let an older, slower one overwrite the view with stale
+  // data after a newer one already rendered. At most one real cycle runs
+  // at a time; any refresh() requested while one is in flight coalesces
+  // into a single queued follow-up (never an unbounded backlog) that starts
+  // right after the current cycle finishes, so every caller still
+  // eventually gets a real refresh covering their request.
+  let inFlight = null;
+  let pending = null;
+
+  function startRefreshCycle() {
+    pending = null;
+    inFlight = performRefresh().finally(() => { inFlight = null; });
+    return inFlight;
+  }
+
+  function refresh() {
+    if (inFlight) {
+      if (!pending) pending = inFlight.then(startRefreshCycle, startRefreshCycle);
+      return pending;
+    }
+    return startRefreshCycle();
   }
 
   async function runAction(label, fn) {
@@ -557,10 +583,25 @@ export async function runCockpitApp({
   } catch (error) {
     view.setStatus(`Session load failed: ${error.message ?? String(error)}`);
   }
-  await refresh();
+
+  // Everything above this point is local, filesystem-only I/O (session
+  // resolution, transcript, WorkMode) — fast and already resolved by here.
+  // The real snapshot (usage/model-intelligence probes, which can
+  // legitimately take up to ~20s — see service.snapshot's own provider TTLs)
+  // hydrates in the BACKGROUND, after the TUI is already visible and
+  // interactive, never before: a human should never stare at a blank
+  // terminal waiting on quota probes just to start typing. The existing
+  // beginAction/spinner mechanism (the same one every other in-flight
+  // action already uses) covers this window with a compact, real "loading"
+  // indicator instead of a static screen. `ready` lets a test or consumer
+  // that genuinely needs the first real snapshot wait for it explicitly,
+  // without that wait ever blocking startup itself.
   tui.start();
   timer = setIntervalImpl(() => refresh(), pollIntervalMs);
   spinnerTimer = setIntervalImpl(() => view.tickSpinner(), spinnerIntervalMs);
 
-  return { tui, view, editor, stop, done, refresh };
+  view.beginAction("Loading usage and model intelligence");
+  const ready = refresh().finally(() => view.endAction());
+
+  return { tui, view, editor, stop, done, ready, refresh };
 }
