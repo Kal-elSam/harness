@@ -5,6 +5,27 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.30.3 — 2026-09-21 (Kairo Runtime)
+
+Patch release. Hardens the Increment 1 multi-session store against
+hostile/partial state — 4 bugs found by independent audit, no behavior
+change (this code is still unwired from any production path).
+
+### Fixed
+
+- `migrateLegacySessionIfNeeded` no longer blocks forever when
+  `conversations/` contains a non-session junk directory (e.g. from an
+  interrupted prior attempt) — the guard now checks for a real,
+  schema-valid v2 session instead of mere directory non-emptiness.
+- `sessionDirFor` now validates every session id against a strict
+  UUID/`legacy-<16hex>` pattern before joining it into a path, closing a
+  path-traversal risk once session ids are wired to user input.
+- `createSession` rejects an invalid `mode` (e.g. `"yolo"`) instead of
+  silently persisting it.
+- A corrupt (malformed JSON) `lease.json` is now treated as stale and
+  recovered, instead of throwing an uncaught `SyntaxError` that
+  permanently blocked the session lock.
+
 ## 0.30.2 — 2026-09-21 (Kairo Runtime)
 
 Patch release. Multiple-session store, migration, and locking (no
