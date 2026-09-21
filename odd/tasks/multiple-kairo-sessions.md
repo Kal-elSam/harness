@@ -76,7 +76,7 @@ Four real bugs, each independently reproduced against the actual v0.30.2 code be
 - [x] `runCockpitApp` threads the resolved `sessionId` into every plan/task call site (snapshot/refresh, `/plan`, approve, reject, request-execute, execute, show-plan)
 - [x] Tests RED→GREEN: 3 new regression tests (`architect-store.test.js`: two sessions asking the identical task never collide; `conversation-service.test.js`: snapshot scoping + ownership guard on all four actions); 6 pre-existing tests updated for the new `sessionId: null` field on mocked calls
 - [x] Full suite green: 1962/1962 (1959 + 3 new), stress-tested 3x, zero real-disk leakage
-- [ ] Ship: branch → commit → PR → CI → merge → release → publish → global install verified
+- [x] PR #320 → CI green (Node 20/22/24) → merged (`--merge`, real merge commit `b5f7fc3`) → released as **v0.31.1**, published, global install verified (`gitHead` matches `d25e051`)
 
 ### Increment 4 — CLI surface + UI (not started)
 
@@ -92,4 +92,5 @@ Four real bugs, each independently reproduced against the actual v0.30.2 code be
 - Independent audit of v0.30.2 found 4 real hostile-input/partial-state bugs; all 4 reproduced and fixed, full suite 1950/1950, stress-tested 3x: 2026-09-21
 - Increment 1b shipped as v0.30.3 (PR #318, merge `171c515`, release `ea9ab4e`), global install verified: 2026-09-21
 - Increment 2 shipped as v0.31.0 (PR #319, merge `dc5581d`, release `6343e7a`), global install verified: 2026-09-21
-- Next: Increment 3 (task/plan attribution and isolation per session)
+- Increment 3 shipped as v0.31.1 (PR #320, merge `b5f7fc3`, release `d25e051`), global install verified: 2026-09-21
+- Next: Increment 4 (`start`/`resume`/`list` CLI surface, selector UI, docs)
