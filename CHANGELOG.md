@@ -5,6 +5,24 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.34.0 — 2026-09-21 (Kairo Runtime)
+
+Minor release. Fail-closed Cursor eligibility: Kairo no longer confuses
+"Cursor's CLI lists this model" with "this account can actually run it
+right now."
+
+### Changed
+
+- Cursor is now fail-closed: only an explicit, real `/project cursor
+  available` record makes it eligible for recommendations/automatic
+  execution. An account that never ran `/project cursor available` or
+  `/project cursor exhausted` is now treated as unverified (excluded),
+  not silently available — a real behavior change for any account that
+  never explicitly confirmed quota.
+- Cursor's `"auto"` entry (an opaque, human-only fallback) is excluded
+  from scoring entirely — it can never be recommended or auto-selected
+  as if it were a real, checkable named model.
+
 ## 0.33.0 — 2026-09-21 (Kairo Runtime)
 
 Minor release. Cockpit trust recovery: fixes four independently verified
