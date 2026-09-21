@@ -1238,11 +1238,15 @@ test("REGRESSION: a single most-recent ASK exchange that alone exceeds the 6000-
     appendAskHistoryEntry: async () => {}
   });
   await service.askQuestion({ cwd: "/repo", task: "and then what?" });
-  // The real prompt sent to the provider must stay bounded even when the
-  // single most recent real exchange alone would blow past the budget —
-  // never an unbounded pass-through just because it's the only candidate.
-  assert.ok(askCalls[0].question.length < hugeAnswer.length, "the huge prior answer must be truncated, not included whole");
-  assert.match(askCalls[0].question, /Now: and then what\?/);
+  // Pin the EXACT 6000-char budget invariant, not just "smaller than the
+  // huge original" — a looser bound would pass even if the real cap
+  // silently drifted to some other number.
+  const parts = askCalls[0].question.split("\n\n");
+  assert.equal(parts.length, 3, `expected header/block/Now — got:\n${askCalls[0].question}`);
+  assert.equal(parts[1].length, 6000, "the truncated block must be exactly the 6000-char budget");
+  assert.ok(parts[1].startsWith("Q: explain the whole architecture\nA: "));
+  assert.ok(parts[1].endsWith("…"));
+  assert.equal(parts[2], "Now: and then what?");
 });
 
 test("askQuestion with no prior ASK history sends the plain question, unwrapped", async () => {
