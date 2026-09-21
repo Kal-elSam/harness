@@ -56,12 +56,13 @@ External audit's claims were independently re-verified against the real code bef
 - [x] Tests RED→GREEN: 3 new regression tests (tui starts before snapshot resolves; loading indicator shown/cleared around `ready`; concurrent `refresh()` calls coalesce to one queued follow-up, never overlapping `snapshot()` calls) + 1 pre-existing test updated to `await app.ready` before asserting on hydrated state (an honest, correct behavior change — the whole point of this increment).
 - [x] Full suite green: 1981/1981 (1978 + 3 new), stress-tested 3x (one run hit the same pre-existing, already-confirmed-unrelated `quick-ask.test.js` timing flake), zero real-disk leakage.
 
-### Increment 3 — Compact overlay and safe reanalysis (not started)
+### Increment 3 — Compact overlay and safe reanalysis
 
-- [ ] `r` transitions immediately to `LOADING_PREFLIGHT` (real state change before the async preflight call starts).
-- [ ] Block reentrancy while a preflight is already in flight (a second `r` press is a no-op, not a second concurrent call).
-- [ ] Move `Quality (reference)`/`Efficient (reference)` behind the same `showTeamEvidence`/`e` gate the `Evidence` block already uses.
-- [ ] Default view shows only Analyst + operational team.
+- [x] `reanalyze()` now sets `this.state = S.LOADING_PREFLIGHT` synchronously, before the async `loadPreflight()` call even starts — the modal shows real progress immediately instead of looking dead.
+- [x] Reentrancy is blocked implicitly and correctly: once state leaves RESULT/ACTIVE/STALE, `handleInput`'s own `'r'` branches for those states no longer match, so a second (or third) `'r'` press while a preflight is in flight is a real no-op — confirmed via a test with a manually-gated preflight call and 3 rapid `'r'` presses, exactly 1 real call.
+- [x] `Quality (reference)`/`Efficient (reference)` moved behind the exact same `showTeamEvidence`/`'e'` gate the `Evidence` block already used — the default RESULT view now shows only Analyst + the real operational PROJECT TEAM, matching the plan's own intent.
+- [x] Tests RED→GREEN: 3 new regression tests (`project-overlay.test.js`) — synchronous LOADING_PREFLIGHT transition, reentrancy guard (1 real call from 3 presses), Quality/Efficient hidden by default and revealed only via `'e'`.
+- [x] Full suite green: 1984/1984 on clean runs (1981 + 3 new), stress-tested 3x (one run hit the same pre-existing, unrelated `quick-ask.test.js` flake), zero real-disk leakage.
 
 ### Increment 4 — Persisted PROJECT TEAM validity (not started)
 
@@ -76,4 +77,5 @@ External audit's claims were independently re-verified against the real code bef
 - Plan approved by user: one ODD doc, 4 increments, no auto-publish between them.
 - Increment 1 (session and transcript integrity) complete: transcript writes serialized per path, header shows short session id, real-storage isolation confirmed, unreproduced disk-leak anomaly investigated and documented (see Increment 1's own notes above). Full suite 1978/1978, committed locally on `feat/cockpit-trust-recovery` (not pushed/PR'd/released — no auto-publish between increments, per plan): 2026-09-21
 - Increment 2 (non-blocking startup) complete: tui.start() no longer blocks on the snapshot probe, background hydration + coalesced refresh() + ready promise. Full suite 1981/1981: 2026-09-21
-- Next: Increment 3 (compact overlay and safe reanalysis)
+- Increment 3 (compact overlay and safe reanalysis) complete: 'r' shows real loading state immediately and can't be double-triggered; Quality/Efficient hidden behind 'e' by default. Full suite 1984/1984: 2026-09-21
+- Next: Increment 4 (persisted PROJECT TEAM validity)

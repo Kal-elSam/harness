@@ -511,6 +511,69 @@ test("REGRESSION: 'r' also forces a fresh preflight from ACTIVE and STALE, not o
   assert.equal(overlayStale.state, S.SELECT_ANALYST, "'r' (fresh re-analysis) must work from STALE too, distinct from Enter's own refresh()");
 });
 
+test("REGRESSION: pressing 'r' transitions to LOADING_PREFLIGHT synchronously, before the async preflight call even starts — never leaves the modal looking dead while it's actually working", async () => {
+  const service = makePreflightService();
+  const suggested = {
+    status: "suggested", bootstrapAnalystChoice: "quality", bootstrapAnalystSelectionSource: "recommended", bootstrapAnalystRecommendationTags: ["quality"],
+    bootstrapAnalyst: { adapterId: "codex", modelId: "gpt-6-astra" }, qualityTeam: [], efficientTeam: []
+  };
+  const overlay = new ProjectOverlay({ service, view: makeFakeView({ projectStrategy: suggested }), cwd: "/repo", onClose: () => {} });
+  await flush();
+  assert.equal(overlay.state, S.RESULT);
+
+  overlay.handleInput("r");
+  // Synchronously, before any await — the real preflight call hasn't even
+  // resolved yet.
+  assert.equal(overlay.state, S.LOADING_PREFLIGHT);
+  await flush();
+  assert.equal(overlay.state, S.SELECT_ANALYST);
+});
+
+test("REGRESSION: a second 'r' press while a preflight is already in flight is a real no-op, never a second concurrent preflight call", async () => {
+  let resolvePreflight;
+  const gate = new Promise((resolve) => { resolvePreflight = resolve; });
+  const calls = [];
+  const service = {
+    async preflightProject(args) {
+      calls.push(args);
+      await gate;
+      return { profile: {}, candidates: {}, analystCatalog: makeAnalystCatalog(), projectRoot: "/repo" };
+    }
+  };
+  const suggested = { status: "suggested", bootstrapAnalyst: { adapterId: "codex", modelId: "gpt-6-astra" }, qualityTeam: [], efficientTeam: [] };
+  const overlay = new ProjectOverlay({ service, view: makeFakeView({ projectStrategy: suggested }), cwd: "/repo", onClose: () => {} });
+  await flush();
+  assert.equal(overlay.state, S.RESULT);
+
+  overlay.handleInput("r");
+  assert.equal(overlay.state, S.LOADING_PREFLIGHT);
+  overlay.handleInput("r");
+  overlay.handleInput("r");
+  resolvePreflight();
+  await flush();
+
+  assert.equal(calls.length, 1, "three 'r' presses while one preflight is in flight must trigger exactly one real call, never three");
+});
+
+test("REGRESSION: Quality/Efficient reference teams are hidden by default on the RESULT screen and only appear via the same 'e' toggle as Evidence", async () => {
+  const service = makePreflightService();
+  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  await flush();
+  selectByKey(overlay, QUALITY_MODEL.candidateKey);
+  overlay.handleInput(ENTER);
+  await flush();
+  assert.equal(overlay.state, S.RESULT);
+
+  const defaultLines = overlay.render(100).join("\n");
+  assert.doesNotMatch(defaultLines, /Quality \(reference\)/);
+  assert.doesNotMatch(defaultLines, /Efficient \(reference\)/);
+
+  overlay.handleInput("e");
+  const withEvidence = overlay.render(100).join("\n");
+  assert.match(withEvidence, /Quality \(reference\)/);
+  assert.match(withEvidence, /Efficient \(reference\)/);
+});
+
 test("no real Bootstrap Analyst candidate available shows an honest NO_ANALYST state, and Enter/Esc close it", async () => {
   const service = makePreflightService({ analystCatalog: makeAnalystCatalog([]) });
   let closed = false;

@@ -188,9 +188,16 @@ export class ProjectOverlay {
    * (Esc from SELECT_ANALYST) before confirming anything.
    */
   reanalyze() {
+    // Transition to LOADING_PREFLIGHT synchronously, before the async
+    // preflight call even starts — this is also the real reentrancy guard:
+    // once state leaves RESULT/ACTIVE/STALE, handleInput's own 'r' branches
+    // for those states no longer match, so a second 'r' press while this is
+    // in flight is a real no-op, never a second concurrent preflight call.
+    this.state = S.LOADING_PREFLIGHT;
     this.suggestedStrategy = null;
     this.activeStrategy = null;
     this.resultSelectList = null;
+    this.requestRender();
     void this.loadPreflight();
   }
 
@@ -627,19 +634,27 @@ export class ProjectOverlay {
         push(theme.fg("muted", `Project Analyst: ${choiceNote} — ${this.view.aiTeamLabelWithProvider(strategy.bootstrapAnalyst)}`));
         push(theme.bold("PROJECT TEAM"));
         box.addChild(this.resultSelectList);
-        if (this.showTeamEvidence && typeof this.view.projectTeamEvidenceLines === "function") {
-          const eligibility = this.view.snapshot?.modelIntelligence?.eligibility ?? {};
-          const claudeEntitlement = this.view.snapshot?.modelIntelligence?.claudeEntitlement ?? {};
-          push(theme.fg("muted", "Evidence"));
-          for (const line of this.view.projectTeamEvidenceLines(strategy, { eligibility, claudeEntitlement })) {
-            push(line);
+        // Quality/Efficient/Evidence are all optional DETAIL, not the
+        // default view — the default result screen shows only Analyst +
+        // the real operational PROJECT TEAM. All three share the exact
+        // same 'e' toggle: pressing 'e' once reveals evidence AND the
+        // quality/efficient reference teams together, never one without
+        // the other.
+        if (this.showTeamEvidence) {
+          if (typeof this.view.projectTeamEvidenceLines === "function") {
+            const eligibility = this.view.snapshot?.modelIntelligence?.eligibility ?? {};
+            const claudeEntitlement = this.view.snapshot?.modelIntelligence?.claudeEntitlement ?? {};
+            push(theme.fg("muted", "Evidence"));
+            for (const line of this.view.projectTeamEvidenceLines(strategy, { eligibility, claudeEntitlement })) {
+              push(line);
+            }
           }
+          // Quality/Efficient stay real, comparative REFERENCE — muted, and
+          // rendered strictly below the real operational PROJECT TEAM list
+          // above, never replacing it visually.
+          for (const line of teamLines("Quality (reference)", strategy.qualityTeam, this.view, "muted")) push(line);
+          for (const line of teamLines("Efficient (reference)", strategy.efficientTeam, this.view, "muted")) push(line);
         }
-        // Quality/Efficient stay real, comparative REFERENCE — muted, and
-        // rendered strictly below the real operational PROJECT TEAM list
-        // above, never replacing it visually.
-        for (const line of teamLines("Quality (reference)", strategy.qualityTeam, this.view, "muted")) push(line);
-        for (const line of teamLines("Efficient (reference)", strategy.efficientTeam, this.view, "muted")) push(line);
         push(theme.fg("muted", "Enter edit role · a approve & activate · e evidence · r re-analyze from scratch · Esc close without approving"));
         break;
       }
