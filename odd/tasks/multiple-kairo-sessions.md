@@ -68,10 +68,15 @@ Four real bugs, each independently reproduced against the actual v0.30.2 code be
 - [x] Full suite green: 1959/1959 (1950 + 9 new), stress-tested 3x, zero real-disk leakage
 - [x] PR #319 → CI green (Node 20/22/24) → merged (`--merge`, real merge commit `dc5581d`) → released as **v0.31.0**, published, global install verified (`gitHead` matches `6343e7a`)
 
-### Increment 3 — Task/plan attribution (not started)
+### Increment 3 — Task/plan attribution
 
-- [ ] New tasks/plans persist an optional `sessionId` (safe: `readTaskRecord`'s validation is an allow-list, not exact-match — confirmed old records unaffected)
-- [ ] Timeline shows only the current session's tasks; approve/reject/execute validate task→session ownership
+- [x] `architect-types.js`: `createArchitectureRequestKey` folds `sessionId` into the request key, so two different real sessions asking the identical task text each get their own task, never silently reusing each other's (a caller with no sessionId keeps today's exact key)
+- [x] `architect-manager.js`: `createArchitecturePlan` accepts `sessionId`, records it on the draft/status document; safe per the standing constraint — `readTaskRecord`'s validation is an allow-list, not exact-match, so the new field never breaks old records
+- [x] `service.js`: `publicPlan` exposes `sessionId`; `snapshot({cwd, sessionId})` shows only that session's own tasks plus any task that predates sessions (no recorded `sessionId`) — an omitted `sessionId` still shows everything, unchanged; `showPlan`/`decidePlan`/`planExecution`/`executePlan` all accept an optional `sessionId` and throw `"...belongs to a different session"` only when BOTH sides are real and disagree — never blocks a legacy task or a caller that omits `sessionId`
+- [x] `runCockpitApp` threads the resolved `sessionId` into every plan/task call site (snapshot/refresh, `/plan`, approve, reject, request-execute, execute, show-plan)
+- [x] Tests RED→GREEN: 3 new regression tests (`architect-store.test.js`: two sessions asking the identical task never collide; `conversation-service.test.js`: snapshot scoping + ownership guard on all four actions); 6 pre-existing tests updated for the new `sessionId: null` field on mocked calls
+- [x] Full suite green: 1962/1962 (1959 + 3 new), stress-tested 3x, zero real-disk leakage
+- [ ] Ship: branch → commit → PR → CI → merge → release → publish → global install verified
 
 ### Increment 4 — CLI surface + UI (not started)
 

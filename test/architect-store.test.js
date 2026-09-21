@@ -54,6 +54,31 @@ test("architecture plan persists project artifacts and explicit approval", async
   assert.equal(approved.status.decisionHead, result.status.baseHead);
 });
 
+test("REGRESSION: two different real sessions asking the identical task text each get their own task, never silently reusing each other's", async () => {
+  const root = await repo();
+  const first = await createArchitecturePlan({
+    task: "Design safe payments", cwd: root, now: new Date("2026-01-02T03:04:05Z"), sessionId: "session-a",
+    runCodex: async () => ({ plan: "## Design A", usage: null })
+  });
+  assert.equal(first.status.sessionId, "session-a");
+  assert.equal(first.reused, false);
+
+  const second = await createArchitecturePlan({
+    task: "Design safe payments", cwd: root, now: new Date("2026-01-02T03:04:05Z"), sessionId: "session-b",
+    runCodex: async () => ({ plan: "## Design B", usage: null })
+  });
+  assert.equal(second.status.sessionId, "session-b");
+  assert.equal(second.reused, false, "a different real session must never reuse another session's task, even for the identical task text");
+  assert.notEqual(second.status.taskId, first.status.taskId);
+
+  const sameSessionAgain = await createArchitecturePlan({
+    task: "Design safe payments", cwd: root, now: new Date("2026-01-02T03:04:05Z"), sessionId: "session-a",
+    runCodex: async () => ({ plan: "should not run", usage: null })
+  });
+  assert.equal(sameSessionAgain.reused, true);
+  assert.equal(sameSessionAgain.status.taskId, first.status.taskId);
+});
+
 test("duplicate concurrent and retried requests reuse one durable active plan", async () => {
   const root = await repo();
   let releaseCodex;
