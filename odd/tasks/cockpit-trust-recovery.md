@@ -13,12 +13,14 @@ External audit's claims were independently re-verified against the real code bef
 - `Quality (reference)`/`Efficient (reference)` render unconditionally in `case S.RESULT`, unlike the `Evidence` block which is already gated by `showTeamEvidence`/`e` — confirmed by reading the render switch.
 - The Fable/persisted-suggestion claim and the NEEDS REANALYSIS/blocked-active-strategy claims were NOT independently re-derived this session (product-policy shaped, not pure bugs) — verify each before coding, per the plan's own Key Learning.
 
-## Scope (4 increments, single ODD doc, no auto-publish between increments)
+## Scope (single ODD doc, no auto-publish between increments)
 
 1. Session and transcript integrity
 2. Non-blocking startup
 3. Compact overlay and safe reanalysis
 4. Persisted PROJECT TEAM validity
+4b. Corrective slice (3 gaps found by independent audit before shipping)
+5. Cursor eligibility (this doc reopened for a related, systemic problem — same root cause class as Increment 4: Kairo trusting stale/unverified state as if it were confirmed) — PROJECT TEAM readable-block redesign from the same external plan is deliberately NOT part of this increment; a separate, later increment if pursued.
 
 ## Constraints
 
@@ -105,4 +107,28 @@ Each verified against the real code before fixing, not assumed:
 
 - Increment 4b complete: 2026-09-21. All corrective gaps closed.
 - Second independent audit confirmed ready to ship (focused regressions 201/201; full suite 1990/1992 locally, the 2 remaining failures attributed to known sandbox limits — `listen EPERM`, `npm pack` — unrelated to this change, CI as the definitive gate).
+- Shipped as v0.33.0: 2026-09-21 (see closing note below the release, further down).
+- New external plan reopened this doc for a related, systemic problem: Kairo confuses "Cursor's CLI lists this model" with "this account can actually run it right now." Verified before starting.
+
+### Increment 5 — Cursor eligibility (fail-closed, Auto never scored)
+
+**Verification before coding:**
+
+- Confirmed `readCursorModels()` (`cursor-models.js`) is a faithful, raw parse of `cursor-agent models` — it returns whatever the CLI lists, including a literal `"auto"` entry, with zero live quota signal.
+- Confirmed `checkCandidate`'s old cursor branch only checked `cursorManualQuota?.manualExhausted` — a **missing** record (never touched `/project cursor available|exhausted`) evaluated to `undefined` (falsy) and was silently treated as **available**. Fail-OPEN by default — the real bug.
+- Confirmed `catalogsByAdapter.cursor` (`service.js`) fed the raw Cursor catalog — including `"auto"` — straight into `scoreAvailableModels`/`buildCompleteCandidateCatalog`, meaning Auto could be scored and recommended like any real, checkable named model.
+- Confirmed `checkCandidate` is already the SINGLE real chokepoint used by `selectAskProvider`, `selectExecutionProvider`, and `service.js`'s own `snapshot()` eligibility loop — "centralize the check" required no new plumbing, only fixing the one existing function.
+- Confirmed NEEDS REANALYSIS/BLOCKED (Increment 4) already re-validates any model's `eligibility[adapterId].ok` live on every render — a persisted Cursor assignment automatically inherits the fix with zero new overlay code, verified with a dedicated test.
+
+**Fix:**
+
+- [x] `execution-router.js`'s `checkCandidate`: Cursor is now fail-closed. `manualExhausted === true` → blocked (unchanged, "out of credits"). `manualExhausted === false` (an explicit, real `/project cursor available` record) → the only way to be `ok: true`. Anything else (no record at all) → blocked, `"Cursor access unverified — run /project cursor available…"`.
+- [x] `cursor-models.js`: new `CURSOR_AUTO_MODEL_ID`/`isCursorAutoModel()`. `service.js`'s `catalogsByAdapter.cursor` filters `"auto"` out before it ever reaches scoring — Auto can never be recommended or auto-selected as if it were a real, checkable candidate.
+- [x] No destructive migration needed: `manualExhausted` was already always a real boolean in every persisted record (`!!exhausted`) — verified, not assumed; old records remain readable as-is.
+- [x] "Centralize the check": no new plumbing needed — `checkCandidate` was already the single chokepoint; fixing it there was enough for dashboard, analysis, edit, reanalysis, and execution to all agree.
+- [x] NEEDS REANALYSIS/BLOCKED for a persisted Cursor assignment: confirmed, not assumed, via a dedicated test — the existing Increment 4 mechanism (`resolveAssignmentAvailability` against live `eligibility`) picks this up automatically.
+- [x] Tests RED→GREEN: fail-closed default (`execution-router.test.js`, 2 new + 1 existing test's expectation flipped from fail-open to require an explicit confirmed record); Auto excluded from scoring (`conversation-service.test.js`, 1 existing test extended + 1 new "untouched account is unverified" test); `isCursorAutoModel` unit coverage (`cursor-models.test.js`); Cursor BLOCKED propagation through the existing overlay mechanism (`project-overlay.test.js`).
+- [x] Full suite green: 1996/1996 (1992 + 4 new), stress-tested 3x. One real session directory briefly appeared under this project's actual `~/.harness` during stress run 1 — the **third** occurrence of this unexplained, previously-investigated anomaly this session (6 dedicated targeted reproduction attempts in Increment 1 found nothing; today's changes touch zero session/registry code). Cleaned up; not chased further, reported honestly rather than silently dismissed. Runs 2-3 clean.
+- [ ] PROJECT TEAM readable-block redesign (rows + wide detail block, Analyst/Orchestrator as non-editable assignments) from the same external plan — deliberately NOT part of this increment; a separate decision if pursued.
+- [ ] Ship: branch → commit → PR → CI → merge → release → publish → global install verified.
 - Shipped as **v0.33.0**: PR #322 → CI green (Node 20/22/24, confirming the real 1992/1992) → merged (`--merge`, real merge commit `35cc6dd`) → released, published, global install verified (`gitHead` matches `a7fff80`). **Feature complete.** 2026-09-21

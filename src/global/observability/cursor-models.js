@@ -15,6 +15,20 @@ import { spawn as defaultSpawn } from "node:child_process";
 // "unknown"` with the real stderr, never a fabricated empty catalog.
 const DEFAULT_TIMEOUT_MS = 8_000;
 const SOURCE = "cursor-agent models";
+
+// Cursor's own "auto" entry is a real, opaque, human-only fallback — it
+// picks whichever underlying model Cursor decides at call time, which
+// Kairo never learns and can never verify has real quota. It must never
+// be scored, recommended, or auto-selected as if it were a real, checkable
+// candidate the way a named model (e.g. "gpt-5.3-codex-low") is —
+// callers building a scoreable catalog from readCursorModels()'s own
+// output filter it out using this.
+export const CURSOR_AUTO_MODEL_ID = "auto";
+
+/** @param {string} modelId */
+export function isCursorAutoModel(modelId) {
+  return modelId === CURSOR_AUTO_MODEL_ID;
+}
 const ANSI_PATTERN = /\x1b\[[0-9;]*[a-zA-Z]/g;
 const NO_MODELS_SENTINEL = /no models available/i;
 const LOADING_LINE = /^loading models/i;

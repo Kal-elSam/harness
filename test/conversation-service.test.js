@@ -1220,7 +1220,11 @@ test("snapshot genuinely includes a real, available Cursor as an AI TEAM recomme
     readCodexModels: async () => ({ status: "measured", models: [] }),
     readClaudeModels: () => ({ status: "documented", models: [] }),
     readOpenCodeModels: async () => ({ status: "measured", models: [] }),
-    readCursorModels: async () => ({ status: "measured", models: [{ id: "composer-2.5", displayName: "Composer 2.5" }] }),
+    readCursorModels: async () => ({ status: "measured", models: [{ id: "composer-2.5", displayName: "Composer 2.5" }, { id: "auto", displayName: "Auto (current, default)" }] }),
+    // Fail-closed by default (see execution-router.js's checkCandidate) —
+    // a real, explicit "confirmed available" record is required for a
+    // named Cursor model to be a real recommendation candidate at all.
+    readProviderUsage: async () => ({ provider: "cursor", manualExhausted: false, reason: null }),
     readArtificialAnalysisModels: async () => ({
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
       models: [{ slug: "composer-2.5", name: "Composer 2.5", intelligenceIndex: 90, codingIndex: 95, mathIndex: null }]
@@ -1232,6 +1236,40 @@ test("snapshot genuinely includes a real, available Cursor as an AI TEAM recomme
   const snapshot = await service.snapshot({ cwd: "/repo" });
   assert.equal(snapshot.modelIntelligence.eligibility.cursor.ok, true);
   assert.ok(snapshot.modelIntelligence.models.some((m) => m.adapterId === "cursor" && m.modelId === "composer-2.5"));
+  assert.ok(!snapshot.modelIntelligence.models.some((m) => m.adapterId === "cursor" && m.modelId === "auto"), "Cursor's opaque 'auto' fallback must never be scored or recommended as if it were a real, checkable named model");
+});
+
+test("REGRESSION: an untouched Cursor account (no /project cursor available|exhausted ever run) is unverified, not silently recommended — that a model is LISTED proves nothing about real quota", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [
+      { id: "codex", available: true, launchable: true, reason: null },
+      { id: "claude", available: true, launchable: true, reason: null },
+      { id: "cursor", available: true, launchable: true, reason: null }
+    ],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [] }),
+    readClaudeModels: () => ({ status: "documented", models: [] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [{ id: "composer-2.5", displayName: "Composer 2.5" }] }),
+    readProviderUsage: async () => null,
+    readArtificialAnalysisModels: async () => ({
+      status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
+      models: [{ slug: "composer-2.5", name: "Composer 2.5", intelligenceIndex: 90, codingIndex: 95, mathIndex: null }]
+    }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
+  });
+
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.equal(snapshot.modelIntelligence.eligibility.cursor.ok, false);
+  assert.match(snapshot.modelIntelligence.eligibility.cursor.reason, /unverified/);
 });
 
 test("snapshot exposes globalGuide.capability/efficient as the real, uncoordinated per-role winners — separate from the portfolio-coordinated aiTeam/efficientTeam", async () => {

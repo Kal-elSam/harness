@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { parseCursorModelsOutput, readCursorModels } from "../src/global/observability/cursor-models.js";
+import { isCursorAutoModel, parseCursorModelsOutput, readCursorModels } from "../src/global/observability/cursor-models.js";
 
 function fakeSpawn({ stdout = "", stderr = "", errorEvent = null, code = 0, signal = null } = {}) {
   const child = new EventEmitter();
@@ -79,4 +79,10 @@ test("fails closed to unknown on a spawn error or timeout", async () => {
   });
   assert.equal(timeout.status, "unknown");
   assert.match(timeout.error, /timed out/);
+});
+
+test("REGRESSION: isCursorAutoModel identifies only the real 'auto' id, never a named model", () => {
+  assert.equal(isCursorAutoModel("auto"), true);
+  assert.equal(isCursorAutoModel("composer-2.5"), false);
+  assert.equal(isCursorAutoModel("gpt-5.3-codex-low"), false);
 });
