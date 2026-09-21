@@ -5,6 +5,18 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.30.1 — 2026-09-21 (Kairo Runtime)
+
+Patch release.
+
+### Fixed
+
+- ASK's history budget (0.30.0) wasn't actually enforced: the single
+  most-recent exchange always passed through regardless of size, so a
+  genuinely long real prior answer was sent whole and unbounded on
+  every subsequent turn, contradicting the documented 6000-char cap.
+  Now truncated too when it alone exceeds the budget.
+
 ## 0.30.0 — 2026-09-21 (Kairo Runtime)
 
 Minor release. ASK now has real conversation continuity.
