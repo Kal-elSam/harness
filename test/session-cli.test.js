@@ -1,11 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { parseArgs } from "../src/cli.js";
 import { runKairoResume, runKairoSessionsList, runKairoStart } from "../src/global/conversation/session-cli.js";
+import { readTranscript } from "../src/global/conversation/transcript-store.js";
+import { harnessHomePaths } from "../src/global/paths.js";
+import { projectKeyForPath } from "../src/global/next/project-key.js";
 
 async function realRepo() {
   const root = await mkdtemp(join(tmpdir(), "kairo-session-cli-"));
@@ -142,6 +146,26 @@ test("REGRESSION: start then resume against the real session-registry (no mocked
 
   const listed = await runKairoSessionsList({ cwd: root, json: true }, { homeDir });
   assert.deepEqual(listed.map((s) => s.id), [createdId]);
+});
+
+test("REGRESSION: kairo start always opens a brand new session with an empty transcript, even when the legacy project-wide transcript already has real content", async () => {
+  const root = await realRepo();
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-session-cli-home-"));
+  const legacyDir = join(harnessHomePaths(homeDir).sessionsDir, projectKeyForPath(root));
+  await mkdir(legacyDir, { recursive: true });
+  await writeFile(join(legacyDir, "transcript.json"), JSON.stringify({
+    schema: "kairo.transcript/v1",
+    entries: [{ role: "user", text: "old content from before multi-session", at: "2026-01-01T00:00:00.000Z" }]
+  }));
+
+  let launchedSessionId = null;
+  await runKairoStart({ cwd: root }, {
+    homeDir,
+    runCockpitCli: async (options) => { launchedSessionId = options.sessionId; return {}; }
+  });
+
+  const entries = await readTranscript(homeDir, root, launchedSessionId);
+  assert.deepEqual(entries, [], "a brand new session must never inherit legacy or another session's transcript content");
 });
 
 test("REGRESSION: kairo list returns every real session for the project, non-interactively", async () => {

@@ -27,6 +27,16 @@ function makeView(overrideActions = {}) {
   return { view, calls };
 }
 
+test("REGRESSION: setSessionId shows the short (8-char) session id in the dashboard header, and no line at all when unset", () => {
+  const { view } = makeView();
+  assert.doesNotMatch(view.renderDashboardLines(80).join("\n"), /SESSION/, "no session id yet, no SESSION line");
+
+  view.setSessionId("aaaaaaaa-0000-0000-0000-000000000000");
+  const withSession = view.renderDashboardLines(80).join("\n");
+  assert.match(withSession, /SESSION aaaaaaaa/);
+  assert.doesNotMatch(withSession, /aaaaaaaa-0000/, "only the short 8-char id is shown, never the full real id");
+});
+
 test("conversation render never exceeds the requested width", () => {
   const { view } = makeView();
   const lines = view.render(60);

@@ -34,6 +34,20 @@ test("REGRESSION: with a real sessionId, the transcript is stored under that ses
   assert.equal(onDisk.entries[0].text, "in session A");
 });
 
+test("REGRESSION: two concurrent appendTranscriptEntry calls for the same file never race — both entries survive, in call order", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  // Deliberately calling both without awaiting the first — a real race
+  // trigger, since without serialization both would read the same
+  // pre-append state and the second write would silently clobber the
+  // first's.
+  await Promise.all([
+    appendTranscriptEntry(homeDir, projectRoot, { role: "user", text: "first" }),
+    appendTranscriptEntry(homeDir, projectRoot, { role: "user", text: "second" })
+  ]);
+  const entries = await readTranscript(homeDir, projectRoot);
+  assert.deepEqual(entries.map((e) => e.text), ["first", "second"]);
+});
+
 test("readTranscript returns an empty list when nothing has been persisted yet", async () => {
   const { homeDir, projectRoot } = await tempHomeAndProject();
   assert.deepEqual(await readTranscript(homeDir, projectRoot), []);

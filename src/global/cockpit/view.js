@@ -170,6 +170,7 @@ export class CockpitView {
     this.actionStartedAt = null;
     this.spinnerFrame = 0;
     this.snapshot = null;
+    this.sessionId = null;
     this.transcript = [];
     this.executeDecision = null;
     // Pending role picker state (mode "select-role") — the real project
@@ -308,6 +309,12 @@ export class CockpitView {
   setRows(rows) {
     this.rows = rows;
     this.selectedIndex = clampSelection(this.selectedIndex, rows.length);
+    this.requestRender();
+  }
+
+  /** Sets the real, active session id (from app.js's own resolved sessionId) — shown in the dashboard header so a human can tell which real session this run is bound to, and confirm they never see another session's content. */
+  setSessionId(sessionId) {
+    this.sessionId = sessionId ?? null;
     this.requestRender();
   }
 
@@ -612,7 +619,8 @@ export class CockpitView {
    * content is.
    */
   renderDashboardLines(width) {
-    const lines = [...this.compactUsageLines(width)];
+    const lines = this.sessionId ? [theme.fg("muted", `SESSION ${this.sessionId.slice(0, 8)}`)] : [];
+    lines.push(...this.compactUsageLines(width));
     const { title, lines: panelLines } = this.projectTeamPanel(cardInnerWidth(width));
     lines.push(...renderPanel(title, CARD_TONE.SUCCESS, width, panelLines));
     return lines;

@@ -519,6 +519,22 @@ test("REGRESSION: boot resolves the real active session first and scopes transcr
   app.stop();
 });
 
+test("REGRESSION: the resolved sessionId is shown in the dashboard header via view.setSessionId", async () => {
+  const service = { snapshot: async () => makeSnapshot([]) };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    sessionId: "header-session-id",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+  assert.equal(app.view.sessionId, "header-session-id");
+  app.stop();
+});
+
 test("REGRESSION: an explicit sessionId (from kairo start/resume) is used as-is and never overridden by resolveActiveSession", async () => {
   let resolveActiveSessionCalled = false;
   const calls = [];

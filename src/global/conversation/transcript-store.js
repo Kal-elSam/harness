@@ -24,6 +24,24 @@ export const TRANSCRIPT_SCHEMA = "kairo.transcript/v1";
 // keeping far more real history than the old fixed on-screen cap of 8.
 const MAX_STORED_ENTRIES = 500;
 
+// appendTranscriptEntry is read-modify-write — two concurrent calls for the
+// SAME real file (e.g. a fast double-submit, or a background run's tailed
+// output landing at the same instant as the human's own message) can
+// otherwise interleave and silently drop one entry. This in-process queue,
+// keyed by the exact resolved path, serializes only calls that target the
+// same file; different sessions/projects never wait on each other. A
+// failed append still runs and its error still propagates to its own
+// caller — only the QUEUE's chain is swallowed so one failure can never
+// permanently wedge every later append to the same file.
+const appendQueues = new Map();
+
+function serializeByPath(path, run) {
+  const previous = appendQueues.get(path) ?? Promise.resolve();
+  const settled = previous.then(run, run);
+  appendQueues.set(path, settled.then(() => {}, () => {}));
+  return settled;
+}
+
 // `sessionId` is optional and always the real session's own directory
 // (never a raw string joined by hand) — a headless/API caller that passes
 // none keeps exactly today's project-wide file, unchanged.
@@ -59,22 +77,26 @@ export async function readTranscript(homeDir, projectRoot, sessionId = null, dep
 /**
  * Appends one entry and persists the whole (bounded) transcript. Read-
  * modify-write is fine here: this is interactive human typing speed, not a
- * high-frequency log. A write failure never throws into the chat flow —
- * the caller decides whether/how to surface it.
+ * high-frequency log — but two concurrent appends for the SAME file are
+ * real (see appendQueues's own doc above), so this whole read-modify-write
+ * unit is serialized per resolved path. A write failure never throws into
+ * the chat flow — the caller decides whether/how to surface it.
  * @param {string} homeDir
  * @param {string} projectRoot
  * @param {{role: "user"|"kairo", text: string}} entry
  * @param {string|null} [sessionId]
  */
 export async function appendTranscriptEntry(homeDir, projectRoot, entry, sessionId = null, deps = {}) {
-  const mkdirImpl = deps.mkdir ?? mkdir;
-  const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
   const path = transcriptPath(homeDir, projectRoot, sessionId);
-  const existing = await readTranscript(homeDir, projectRoot, sessionId, deps);
-  const entries = [...existing, { role: entry.role, text: entry.text, at: new Date().toISOString() }]
-    .slice(-MAX_STORED_ENTRIES);
-  await mkdirImpl(dirname(path), { recursive: true });
-  await writeJson(path, { schema: TRANSCRIPT_SCHEMA, entries });
+  return serializeByPath(path, async () => {
+    const mkdirImpl = deps.mkdir ?? mkdir;
+    const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
+    const existing = await readTranscript(homeDir, projectRoot, sessionId, deps);
+    const entries = [...existing, { role: entry.role, text: entry.text, at: new Date().toISOString() }]
+      .slice(-MAX_STORED_ENTRIES);
+    await mkdirImpl(dirname(path), { recursive: true });
+    await writeJson(path, { schema: TRANSCRIPT_SCHEMA, entries });
+  });
 }
 
 /** Persists an empty transcript — used by `/clear`, so a cleared chat stays cleared across a restart. */

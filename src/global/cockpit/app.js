@@ -541,6 +541,7 @@ export async function runCockpitApp({
       view.setStatus(`Session resolution failed: ${error.message ?? String(error)}`);
     }
   }
+  view.setSessionId(sessionId);
   // Load persisted chat history and the real KairoSession (currently just
   // WorkMode) before the first render, so a restart never shows an empty
   // chat or silently resets back to ASK while STATUS still shows a task
