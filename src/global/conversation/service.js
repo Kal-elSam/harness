@@ -467,8 +467,17 @@ export function createConversationService(deps = {}) {
     const kept = [];
     let used = 0;
     for (let i = recent.length - 1; i >= 0; i -= 1) {
-      const block = `Q: ${recent[i].question}\nA: ${recent[i].answer}`;
-      if (used + block.length > MAX_ASK_HISTORY_CHARS && kept.length > 0) break;
+      let block = `Q: ${recent[i].question}\nA: ${recent[i].answer}`;
+      if (kept.length === 0 && block.length > MAX_ASK_HISTORY_CHARS) {
+        // The single most recent real exchange can legitimately be larger
+        // than the whole budget on its own (e.g. a genuinely long real
+        // answer) — truncate IT too rather than either sending it whole
+        // and unbounded, or dropping the most recent exchange entirely
+        // (worse: zero real history at all).
+        block = `${block.slice(0, MAX_ASK_HISTORY_CHARS - 1)}…`;
+      } else if (used + block.length > MAX_ASK_HISTORY_CHARS) {
+        break;
+      }
       kept.unshift(block);
       used += block.length;
     }
