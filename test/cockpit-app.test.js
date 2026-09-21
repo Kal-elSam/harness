@@ -64,6 +64,91 @@ const BASE_ROW = {
   execution: { state: "not_started", active: false, message: "Approval is required." }
 };
 
+test("REGRESSION: tui.start() happens before snapshot() resolves — a human is never blocked staring at a blank terminal waiting on usage/model probes", async () => {
+  let tui;
+  let releaseSnapshot;
+  const snapshotGate = new Promise((resolve) => { releaseSnapshot = resolve; });
+  const service = { snapshot: async () => { await snapshotGate; return makeSnapshot([]); } };
+
+  const appPromise = runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => { tui = makeFakeTui(); return tui; },
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  // runCockpitApp's own returned promise resolves once tui.start() has
+  // already run — never waits on the still-pending snapshot.
+  const app = await appPromise;
+  assert.equal(tui.started, true);
+  releaseSnapshot();
+  await app.ready;
+  app.stop();
+});
+
+test("REGRESSION: a slow snapshot() shows a compact loading indicator while it's in flight, cleared once ready resolves", async () => {
+  let releaseSnapshot;
+  const snapshotGate = new Promise((resolve) => { releaseSnapshot = resolve; });
+  const service = { snapshot: async () => { await snapshotGate; return makeSnapshot([]); } };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  assert.match(app.view.actionStatusLine() ?? "", /Loading usage and model intelligence/);
+  releaseSnapshot();
+  await app.ready;
+  assert.equal(app.view.actionLabel, null, "the loading indicator clears once the first real snapshot lands");
+  app.stop();
+});
+
+test("REGRESSION: concurrent refresh() calls coalesce into a single queued follow-up — never overlapping real snapshot() calls", async () => {
+  let snapshotCalls = 0;
+  const gates = [];
+  const service = {
+    snapshot: async () => {
+      snapshotCalls += 1;
+      const gate = new Promise((resolve) => { gates.push(resolve); });
+      await gate;
+      return makeSnapshot([]);
+    }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  // The background hydration's own snapshot() call is already in flight —
+  // two more refresh() calls arrive while it's pending.
+  assert.equal(snapshotCalls, 1);
+  const second = app.refresh();
+  const third = app.refresh();
+  assert.equal(second, third, "both coalesce into the exact same queued promise, never a second overlapping call");
+  assert.equal(snapshotCalls, 1, "no new real snapshot() call starts while one is still in flight");
+
+  gates[0]();
+  while (gates.length < 2) await new Promise((resolve) => setImmediate(resolve));
+  // Exactly one queued follow-up ran after the first — never one per
+  // coalesced caller.
+  assert.equal(snapshotCalls, 2);
+  gates[1]();
+  await second;
+  app.stop();
+});
+
 test("runCockpitApp boots the tui, loads an initial snapshot, and polls on an interval", async () => {
   let tui;
   const snapshots = [makeSnapshot([BASE_ROW]), makeSnapshot([{ ...BASE_ROW, state: "approved" }])];
@@ -517,6 +602,77 @@ test("REGRESSION: boot resolves the real active session first and scopes transcr
     ["getSession", { cwd: "/repo", sessionId: "session-42" }]
   ]);
   app.stop();
+});
+
+test("REGRESSION: the resolved sessionId is shown in the dashboard header via view.setSessionId", async () => {
+  const service = { snapshot: async () => makeSnapshot([]) };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    sessionId: "header-session-id",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+  assert.equal(app.view.sessionId, "header-session-id");
+  app.stop();
+});
+
+test("REGRESSION: a real session-lock conflict (another process already has this session open) refuses to start — never reaches tui.start(), never silently launches", async () => {
+  let tui;
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    acquireSessionLock: async () => { throw new Error("Session is already open in another process (pid 4242). Close it there first, or resume a different session."); }
+  };
+  await assert.rejects(
+    () => runCockpitApp({
+      cwd: "/repo",
+      sessionId: "already-open-elsewhere",
+      service,
+      terminalFactory: () => ({}),
+      tuiFactory: () => { tui = makeFakeTui(); return tui; },
+      editorFactory: () => makeFakeEditor(),
+      setIntervalImpl: () => 1,
+      clearIntervalImpl: () => {}
+    }),
+    /already open in another process/
+  );
+  assert.equal(tui.started, false, "a real lock conflict must be reported before the TUI ever actually starts — nothing half-started to tear down");
+});
+
+test("REGRESSION: stop() releases the real session lock, and done only resolves once that release actually settles", async () => {
+  let released = false;
+  let resolveRelease;
+  const releaseGate = new Promise((resolve) => { resolveRelease = resolve; });
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    acquireSessionLock: async () => ({
+      release: async () => { await releaseGate; released = true; }
+    })
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    sessionId: "real-session",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  app.stop();
+  let doneResolved = false;
+  app.done.then(() => { doneResolved = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(doneResolved, false, "done must not resolve while the real lock release is still in flight");
+  assert.equal(released, false);
+
+  resolveRelease();
+  await app.done;
+  assert.equal(released, true, "the real lock must actually be released by the time done resolves");
 });
 
 test("REGRESSION: an explicit sessionId (from kairo start/resume) is used as-is and never overridden by resolveActiveSession", async () => {
@@ -1192,6 +1348,10 @@ test("a real active run's new transcript lines are pushed into the chat on refre
     terminalFactory: () => ({}), tuiFactory: () => { tui = makeFakeTui(); return tui; },
     editorFactory: () => makeFakeEditor(), setIntervalImpl: () => 1, clearIntervalImpl: () => {}
   });
+  // The real snapshot hydrates in the background now (Increment 2 of
+  // cockpit trust recovery — see runCockpitApp's own doc); the tailed run
+  // lines only land once that first background refresh actually completes.
+  await app.ready;
   assert.deepEqual(readCalls, [{ runId: "run_1", sinceIndex: 0 }]);
   const texts = app.view.transcript.map((e) => e.text);
   assert.ok(texts.some((t) => t.includes("[codex]") && t.includes("Reading the failing test…")));

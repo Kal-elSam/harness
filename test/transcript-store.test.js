@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendTranscriptEntry, clearTranscript, readTranscript, TRANSCRIPT_SCHEMA } from "../src/global/conversation/transcript-store.js";
 import { createSession, sessionDirFor } from "../src/global/conversation/session-registry.js";
+import { writeAtomicJson } from "../src/global/runtime/write-atomic-json.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
 
@@ -32,6 +33,45 @@ test("REGRESSION: with a real sessionId, the transcript is stored under that ses
 
   const onDisk = JSON.parse(await readFile(join(sessionDirFor(homeDir, projectRoot, sessionA.id), "transcript.json"), "utf8"));
   assert.equal(onDisk.entries[0].text, "in session A");
+});
+
+test("REGRESSION: two concurrent appendTranscriptEntry calls for the same file never race — both entries survive, in call order", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  // Deliberately calling both without awaiting the first — a real race
+  // trigger, since without serialization both would read the same
+  // pre-append state and the second write would silently clobber the
+  // first's.
+  await Promise.all([
+    appendTranscriptEntry(homeDir, projectRoot, { role: "user", text: "first" }),
+    appendTranscriptEntry(homeDir, projectRoot, { role: "user", text: "second" })
+  ]);
+  const entries = await readTranscript(homeDir, projectRoot);
+  assert.deepEqual(entries.map((e) => e.text), ["first", "second"]);
+});
+
+test("REGRESSION: a clearTranscript call joins the same queue as a pending appendTranscriptEntry — the append's own write, deliberately held mid-flight, can never land after the clear and resurrect stale content", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  await appendTranscriptEntry(homeDir, projectRoot, { role: "user", text: "existing" });
+
+  // Deliberately holds the append's own write open — the real scenario:
+  // an append already in flight (past its read of the pre-clear state)
+  // when /clear fires.
+  let releaseAppendWrite;
+  const gate = new Promise((resolve) => { releaseAppendWrite = resolve; });
+  const appendPromise = appendTranscriptEntry(
+    homeDir, projectRoot, { role: "user", text: "should not survive /clear" }, null,
+    { writeAtomicJson: async (path, doc) => { await gate; return writeAtomicJson(path, doc); } }
+  );
+  // Let the append's own read (of "existing") actually happen before
+  // /clear starts — otherwise this wouldn't be testing "already pending",
+  // just two independent calls.
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const clearPromise = clearTranscript(homeDir, projectRoot);
+  releaseAppendWrite();
+  await Promise.all([appendPromise, clearPromise]);
+
+  assert.deepEqual(await readTranscript(homeDir, projectRoot), [], "clearTranscript must be the real final state — the held-open append's write must land BEFORE it, not resurrect stale content after it");
 });
 
 test("readTranscript returns an empty list when nothing has been persisted yet", async () => {
