@@ -28,8 +28,11 @@ function processIsAlive(pid) {
 
 async function readLease(leasePath, deps) {
   const read = deps.readFile ?? readFile;
-  try { return JSON.parse(await read(leasePath, "utf8")); }
+  let raw;
+  try { raw = await read(leasePath, "utf8"); }
   catch (error) { if (error.code === "ENOENT") return null; throw error; }
+  try { return JSON.parse(raw); }
+  catch { return null; } // a corrupt lease (e.g. truncated by a crash mid-write) is never a real live holder — treat exactly like a missing one, never an uncaught parse error blocking recovery forever.
 }
 
 async function isStale(leasePath, { nowMs, staleAfterMs }, deps) {

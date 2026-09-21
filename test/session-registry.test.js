@@ -55,7 +55,7 @@ test("listSessions returns real sessions ordered by most recently updated first"
 test("listSessions skips a corrupt individual session directory instead of hiding every other real one", async () => {
   const { homeDir, projectRoot } = await tempHomeAndProject();
   const good = await createSession(homeDir, projectRoot, { title: "Good" });
-  const corruptDir = sessionDirFor(homeDir, projectRoot, "corrupt-session");
+  const corruptDir = sessionDirFor(homeDir, projectRoot, "aaaaaaaa-0000-0000-0000-00000000dead");
   await mkdir(corruptDir, { recursive: true });
   await writeFile(join(corruptDir, "session.json"), "not json");
   const sessions = await listSessions(homeDir, projectRoot);
@@ -119,6 +119,39 @@ test("migrateLegacySessionIfNeeded is a no-op when no legacy files exist", async
   const { homeDir, projectRoot } = await tempHomeAndProject();
   assert.equal(await migrateLegacySessionIfNeeded(homeDir, projectRoot), null);
   assert.deepEqual(await listSessions(homeDir, projectRoot), []);
+});
+
+test("REGRESSION: an interrupted/junk entry in conversations/ (no real valid session inside it) never permanently blocks the migration retry", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const root = legacyRoot(homeDir, projectRoot);
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, "transcript.json"), JSON.stringify({ schema: "kairo.transcript/v1", entries: [{ role: "user", text: "real message", at: "2026-01-01T00:00:00.000Z" }] }));
+  // Simulate a crashed prior migration attempt or unrelated filesystem
+  // noise — a directory under conversations/ with no real session.json.
+  await mkdir(join(conversationsDir(homeDir, projectRoot), "some-leftover-junk"), { recursive: true });
+
+  const legacyId = await migrateLegacySessionIfNeeded(homeDir, projectRoot);
+  assert.notEqual(legacyId, null, "migration must still run — no real valid session exists yet");
+  const sessions = await listSessions(homeDir, projectRoot);
+  assert.ok(sessions.some((s) => s.id === legacyId));
+});
+
+test("REGRESSION: createSession rejects an invalid WorkMode instead of silently persisting it", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  await assert.rejects(() => createSession(homeDir, projectRoot, { mode: "yolo" }), /Unknown work mode/);
+});
+
+test("REGRESSION: sessionDirFor refuses a session id that isn't a real UUID or legacy id — never builds a path that could escape conversations/", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  assert.throws(() => sessionDirFor(homeDir, projectRoot, "../../../../../../etc"), /Invalid session id/);
+});
+
+test("REGRESSION: listSessions skips a directory whose name isn't a real session id, instead of reading it as one", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const good = await createSession(homeDir, projectRoot, { title: "Good" });
+  await mkdir(join(conversationsDir(homeDir, projectRoot), "..evil..name"), { recursive: true });
+  const sessions = await listSessions(homeDir, projectRoot);
+  assert.deepEqual(sessions.map((s) => s.id), [good.id]);
 });
 
 test("REGRESSION: migrateLegacySessionIfNeeded never re-runs once a real session already exists — idempotent, not just harmless to call twice", async () => {

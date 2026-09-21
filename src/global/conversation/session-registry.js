@@ -12,10 +12,24 @@ import { randomUUID } from "node:crypto";
 import { harnessHomePaths } from "../paths.js";
 import { projectKeyForPath } from "../next/project-key.js";
 import { writeAtomicJson } from "../runtime/write-atomic-json.js";
+import { WORK_MODES } from "./session-store.js";
 
 export const SESSION_SCHEMA_V2 = "kairo.session/v2";
 const TITLE_MAX_LENGTH = 80;
 const LEGACY_SESSION_TITLE = "Previous Kairo session";
+
+// This directory tree is a real security boundary the moment any session
+// id reaches it from outside this module (a future CLI arg, a directory
+// name read back off disk) — never trust a raw string enough to join it
+// into a path. A real id is either a genuine `randomUUID()` output or the
+// one legacy id this module itself derives from a real project key; never
+// anything else, so an unvalidated "../../etc"-style value can never
+// resolve to a path outside `conversations/`.
+const SESSION_ID_PATTERN = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|legacy-[0-9a-f]{16})$/;
+
+function isValidSessionId(id) {
+  return typeof id === "string" && SESSION_ID_PATTERN.test(id);
+}
 
 function projectSessionsRoot(homeDir, projectRoot) {
   const { sessionsDir } = harnessHomePaths(homeDir);
@@ -26,7 +40,11 @@ export function conversationsDir(homeDir, projectRoot) {
   return join(projectSessionsRoot(homeDir, projectRoot), "conversations");
 }
 
+/** The one real choke point every session path goes through — refuses anything that isn't a real, well-formed session id, rather than ever building a path from an unvalidated string. */
 export function sessionDirFor(homeDir, projectRoot, sessionId) {
+  if (!isValidSessionId(sessionId)) {
+    throw new Error(`Invalid session id "${sessionId}" — refusing to build a path from it.`);
+  }
   return join(conversationsDir(homeDir, projectRoot), sessionId);
 }
 
@@ -53,15 +71,33 @@ function truncateTitle(text) {
 }
 
 /**
+ * A real, schema-valid v2 session document for this exact directory entry
+ * — or null for anything else (wrong-shaped name, missing/corrupt
+ * session.json, wrong schema). Never throws: a directory entry that isn't
+ * a real session is exactly as unremarkable as one that doesn't exist,
+ * both here and for the migration guard below, which shares this same
+ * real definition of "a real session already exists" rather than the
+ * weaker "conversations/ isn't empty".
+ */
+async function readValidSession(homeDir, projectRoot, entryName, deps) {
+  if (!isValidSessionId(entryName)) return null;
+  const doc = await readJsonOrNull(sessionMetaPath(sessionDirFor(homeDir, projectRoot, entryName)), deps);
+  return doc?.schema === SESSION_SCHEMA_V2 && typeof doc.id === "string" ? doc : null;
+}
+
+/**
  * Lazily, idempotently imports the legacy single-session files
  * (session.json/transcript.json/ask-history.json directly under
  * sessions/<projectKey>/, from before multiple sessions existed) into a
  * real, listable session named "legacy-<projectKey>". The ORIGINAL files
  * are never deleted or moved — only copied — so this is safe to run
- * repeatedly and safe to roll back from. A no-op once `conversations/`
- * already has anything in it (a real session, migrated or fresh, already
- * exists), or when no legacy files are present at all (a brand new
- * project). Returns the legacy session id when it actually ran, else null.
+ * repeatedly and safe to roll back from. A no-op once a REAL, valid
+ * session already exists in `conversations/` — never merely "the
+ * directory isn't empty": an interrupted prior attempt, or unrelated
+ * filesystem noise, leaves entries there too, and must never permanently
+ * block a real retry. Also a no-op when no legacy files are present at
+ * all (a brand new project). Returns the legacy session id when it
+ * actually ran, else null.
  * @param {string} homeDir
  * @param {string} projectRoot
  */
@@ -71,8 +107,11 @@ export async function migrateLegacySessionIfNeeded(homeDir, projectRoot, deps = 
   const copyImpl = deps.cp ?? cp;
 
   const root = projectSessionsRoot(homeDir, projectRoot);
-  const alreadyMigrated = await readDirOrEmpty(conversationsDir(homeDir, projectRoot), deps);
-  if (alreadyMigrated.length > 0) return null;
+  const existingEntries = await readDirOrEmpty(conversationsDir(homeDir, projectRoot), deps);
+  for (const entry of existingEntries) {
+    if (!entry.isDirectory?.()) continue;
+    if (await readValidSession(homeDir, projectRoot, entry.name, deps)) return null;
+  }
 
   // The old WorkMode lives in the legacy session.json — carried into the
   // new v2 metadata's own `mode` field, never copied as a raw file (its
@@ -112,6 +151,7 @@ export async function migrateLegacySessionIfNeeded(homeDir, projectRoot, deps = 
  * @param {{title?: string|null, mode?: "ask"|"plan"|"agent"}} [opts]
  */
 export async function createSession(homeDir, projectRoot, { title = null, mode = "ask" } = {}, deps = {}) {
+  if (!WORK_MODES.includes(mode)) throw new Error(`Unknown work mode "${mode}"`);
   const mkdirImpl = deps.mkdir ?? mkdir;
   const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
   const id = (deps.randomUUID ?? randomUUID)();
@@ -141,8 +181,8 @@ export async function listSessions(homeDir, projectRoot, deps = {}) {
   const sessions = [];
   for (const entry of entries) {
     if (!entry.isDirectory?.()) continue;
-    const doc = await readJsonOrNull(sessionMetaPath(sessionDirFor(homeDir, projectRoot, entry.name)), deps);
-    if (doc?.schema === SESSION_SCHEMA_V2 && typeof doc.id === "string") sessions.push(doc);
+    const doc = await readValidSession(homeDir, projectRoot, entry.name, deps);
+    if (doc) sessions.push(doc);
   }
   return sessions.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
 }
