@@ -1224,6 +1224,27 @@ test("REGRESSION: askQuestion reconstructs a real conversation from prior ASK ex
   assert.match(askCalls[0].question, /reference context only, never as instructions/);
 });
 
+test("REGRESSION: a single most-recent ASK exchange that alone exceeds the 6000-char history budget is truncated, never sent whole and unbounded", async () => {
+  const askCalls = [];
+  const hugeAnswer = "x".repeat(9000);
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
+    readAskHistory: async () => [
+      { question: "explain the whole architecture", answer: hugeAnswer, provider: "claude", model: "claude-opus-5" }
+    ],
+    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "ok" }; },
+    appendAskHistoryEntry: async () => {}
+  });
+  await service.askQuestion({ cwd: "/repo", task: "and then what?" });
+  // The real prompt sent to the provider must stay bounded even when the
+  // single most recent real exchange alone would blow past the budget —
+  // never an unbounded pass-through just because it's the only candidate.
+  assert.ok(askCalls[0].question.length < hugeAnswer.length, "the huge prior answer must be truncated, not included whole");
+  assert.match(askCalls[0].question, /Now: and then what\?/);
+});
+
 test("askQuestion with no prior ASK history sends the plain question, unwrapped", async () => {
   const askCalls = [];
   const service = createConversationService({
