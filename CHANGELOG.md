@@ -5,6 +5,29 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.32.0 — 2026-09-21 (Kairo Runtime)
+
+Minor release. Increment 4 (final) of multi-session support: `kairo
+start`/`resume`/`list` are now the real CLI surface for multiple,
+independent sessions per project.
+
+### Added
+
+- `kairo start` always creates a brand new real session (previously it
+  implicitly resumed the most recently updated one — that placeholder
+  policy is now `kairo resume`'s job).
+- `kairo resume [sessionId]`: an exact id or unique prefix resumes that
+  session; with no id and exactly one session, resumes it directly; with
+  no id and several, shows a real numbered picker.
+- `kairo list [--json]`: every real session for the current project, most
+  recently updated first.
+
+### Changed
+
+- `kairo start`'s behavior changes as described above — anyone relying on
+  it silently resuming the last session should use `kairo resume`
+  instead.
+
 ## 0.31.1 — 2026-09-21 (Kairo Runtime)
 
 Patch release. Increment 3 of multi-session support: architecture
