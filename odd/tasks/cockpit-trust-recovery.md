@@ -90,7 +90,6 @@ External audit's claims were independently re-verified against the real code bef
 - Increment 3 (compact overlay and safe reanalysis) complete: 'r' shows real loading state immediately and can't be double-triggered; Quality/Efficient hidden behind 'e' by default. Full suite 1984/1984: 2026-09-21
 - Increment 4 (persisted PROJECT TEAM validity) complete: verified the real root cause first (overlay never re-checked live availability, unlike the dashboard panel), then fixed both the RESULT (NEEDS REANALYSIS) and ACTIVE/STALE (BLOCKED) overlay views. Full suite 1987/1987. **All 4 increments of cockpit-trust-recovery shipped locally.**: 2026-09-21
 - Independent audit of the 4-increment slice (still unpushed, local only) found 3 real gaps before shipping; all 3 independently re-verified against real code before fixing (see Increment 4b below).
-- Ready to ship (branch → PR → CI → merge → release → publish → global install) — awaiting explicit go-ahead.
 
 ### Increment 4b — Corrective slice: 3 real gaps found by independent audit before shipping
 
@@ -104,4 +103,6 @@ Each verified against the real code before fixing, not assumed:
 
 ## Progress (continued)
 
-- Increment 4b complete: 2026-09-21. All corrective gaps closed; ready to ship for real this time.
+- Increment 4b complete: 2026-09-21. All corrective gaps closed.
+- Second independent audit confirmed ready to ship (focused regressions 201/201; full suite 1990/1992 locally, the 2 remaining failures attributed to known sandbox limits — `listen EPERM`, `npm pack` — unrelated to this change, CI as the definitive gate).
+- Shipped as **v0.33.0**: PR #322 → CI green (Node 20/22/24, confirming the real 1992/1992) → merged (`--merge`, real merge commit `35cc6dd`) → released, published, global install verified (`gitHead` matches `a7fff80`). **Feature complete.** 2026-09-21
