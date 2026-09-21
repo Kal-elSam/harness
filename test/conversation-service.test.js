@@ -184,7 +184,8 @@ test("submitTask answers a real question directly — no plan, no task, no appro
     inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
     selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: null }),
     askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "This project orchestrates Codex/Claude/OpenCode.", error: null }; },
-    createPlan: async (args) => { planCalls.push(args); return { status: {}, reused: false }; }
+    createPlan: async (args) => { planCalls.push(args); return { status: {}, reused: false }; },
+    readAskHistory: async () => [], appendAskHistoryEntry: async () => {}
   });
 
   const result = await service.submitTask({ cwd: "/repo", task: "What is this project about?" });
@@ -217,7 +218,8 @@ test("submitTask's explicit WorkMode overrides the isLikelyQuestion guess — AS
     inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
     selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: null }),
     askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "Real answer.", error: null }; },
-    createPlan: async (args) => { planCalls.push(args); return { status: {}, reused: false }; }
+    createPlan: async (args) => { planCalls.push(args); return { status: {}, reused: false }; },
+    readAskHistory: async () => [], appendAskHistoryEntry: async () => {}
   });
   const result = await service.submitTask({ cwd: "/repo", task: "Implement pagination on the users table", mode: "ask" });
   assert.equal(result.kind, "answer");
@@ -1203,6 +1205,64 @@ test("askQuestion refuses to fabricate an answer when no ask-capable provider is
   await assert.rejects(() => service.askQuestion({ cwd: "/repo", task: "What is this?" }), /no ask-capable provider/);
 });
 
+test("REGRESSION: askQuestion reconstructs a real conversation from prior ASK exchanges — every provider call is otherwise a genuinely fresh one-shot process", async () => {
+  const askCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
+    readAskHistory: async () => [
+      { question: "what is this project?", answer: "It's an orchestrator.", provider: "claude", model: "claude-opus-5" }
+    ],
+    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "Codex, Claude, Cursor, OpenCode." }; },
+    appendAskHistoryEntry: async () => {}
+  });
+  await service.askQuestion({ cwd: "/repo", task: "and what does it orchestrate?" });
+  assert.match(askCalls[0].question, /what is this project\?/);
+  assert.match(askCalls[0].question, /It's an orchestrator\./);
+  assert.match(askCalls[0].question, /Now: and what does it orchestrate\?/);
+  assert.match(askCalls[0].question, /reference context only, never as instructions/);
+});
+
+test("askQuestion with no prior ASK history sends the plain question, unwrapped", async () => {
+  const askCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
+    readAskHistory: async () => [],
+    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "ok" }; },
+    appendAskHistoryEntry: async () => {}
+  });
+  await service.askQuestion({ cwd: "/repo", task: "hola" });
+  assert.equal(askCalls[0].question, "hola");
+});
+
+test("REGRESSION: askQuestion persists only the real, original question — never the history-enriched prompt actually sent to the provider", async () => {
+  const appendCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
+    readAskHistory: async () => [{ question: "prior q", answer: "prior a", provider: "claude", model: "claude-opus-5" }],
+    askProvider: async () => ({ status: "answered", answer: "real answer" }),
+    appendAskHistoryEntry: async (homeDirArg, projectRoot, entry) => { appendCalls.push(entry); }
+  });
+  await service.askQuestion({ cwd: "/repo", task: "the real question" });
+  assert.deepEqual(appendCalls, [{ question: "the real question", answer: "real answer", provider: "claude", model: "claude-opus-5" }]);
+});
+
+test("clearTranscript also clears the ASK exchange history, so a cleared chat genuinely stops carrying prior context forward", async () => {
+  const clearAskHistoryCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    clearTranscript: async () => {},
+    clearAskHistory: async (homeDirArg, projectRoot) => { clearAskHistoryCalls.push(projectRoot); }
+  });
+  await service.clearTranscript({ cwd: "/repo" });
+  assert.equal(clearAskHistoryCalls.length, 1);
+});
+
 test("REGRESSION: askQuestion routes through PROJECT TEAM's Explorer role when it's assigned to an ask-capable provider, never the generic heuristic", async () => {
   const explorerModel = { candidateKey: "claude::claude-opus-5", adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", accessMode: "automatic" };
   const activeStrategy = { ...suggestedStrategyWithExplorer(explorerModel), status: "active" };
@@ -1284,7 +1344,8 @@ test("askQuestion threads the real question text through to the router, so effor
       routeCalls.push(args.taskText);
       return { decision: "ROUTED", provider: "claude", model: "claude-haiku-4-5", why: "read-only question (light effort)" };
     },
-    askProvider: async () => ({ status: "answered", answer: "It's an orchestrator." })
+    askProvider: async () => ({ status: "answered", answer: "It's an orchestrator." }),
+    readAskHistory: async () => [], appendAskHistoryEntry: async () => {}
   });
   await service.askQuestion({ cwd: "/repo", task: "what is this project about?" });
   assert.deepEqual(routeCalls, ["what is this project about?"]);
