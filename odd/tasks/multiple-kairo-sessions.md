@@ -56,7 +56,7 @@ Four real bugs, each independently reproduced against the actual v0.30.2 code be
 - [x] BUG-4 A corrupt (malformed JSON) `lease.json` threw an uncaught `SyntaxError` out of `readLease`, permanently blocking the session lock instead of being treated as stale/recoverable. Fixed: JSON.parse failure in `readLease` now returns `null`, same as a missing lease — recovered exactly like any other stale lock.
 - [x] Tests RED→GREEN: 5 new regression tests (4 bugs + BUG-2's `listSessions` path via a real invalid-named directory), one pre-existing test (`listSessions skips a corrupt individual session directory…`) adjusted — its fixture used the invalid-shaped name `"corrupt-session"` to simulate corrupt *content*, which the new BUG-2 validation now rejects for the (correct, separate) reason of *invalid name*; renamed the fixture to a real UUID shape so it again tests corrupt content specifically.
 - [x] Full suite green: 1950/1950 (1945 + 5 new), stress-tested 3x, zero real-disk leakage confirmed (`~/.harness/sessions/*/conversations` never created for a real project key)
-- [ ] PR → CI green (Node 20/22/24) → merge (`--merge`, matching this stream's convention) → release (likely v0.30.3, patch — pure bugfixes to code still unwired from any production path) → publish → global install verified
+- [x] PR #318 → CI green (Node 20/22/24) → merged (`--merge`, real merge commit `171c515`) → released as **v0.30.3**, published, global install verified (`gitHead` matches `ea9ab4e`)
 
 ### Increment 2 — Context/session plumbing (blocked on Increment 1b shipping)
 
@@ -80,4 +80,5 @@ Four real bugs, each independently reproduced against the actual v0.30.2 code be
 - Created: 2026-09-21
 - Increment 1 code complete, tests green, real dry-run verified, shipped as v0.30.2: 2026-09-21
 - Independent audit of v0.30.2 found 4 real hostile-input/partial-state bugs; all 4 reproduced and fixed, full suite 1950/1950, stress-tested 3x: 2026-09-21
-- Next: ship Increment 1b (PR → CI → merge → release, likely v0.30.3), then Increment 2 (thread `sessionId` through `runCockpitApp` + conversation service methods)
+- Increment 1b shipped as v0.30.3 (PR #318, merge `171c515`, release `ea9ab4e`), global install verified: 2026-09-21
+- Next: Increment 2 (thread `sessionId` through `runCockpitApp` + conversation service methods)
