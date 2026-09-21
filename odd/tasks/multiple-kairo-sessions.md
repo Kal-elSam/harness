@@ -66,7 +66,7 @@ Four real bugs, each independently reproduced against the actual v0.30.2 code be
 - [x] `runCockpitApp` resolves the active session once at startup and threads it through every relevant call site (transcript load/append/clear, ASK, WorkMode read/write)
 - [x] Tests RED→GREEN: 9 new regression tests across `transcript-store.test.js`, `ask-history-store.test.js`, `session-registry.test.js`, `conversation-service.test.js`, `cockpit-app.test.js`; 7 pre-existing `cockpit-app.test.js` assertions updated to expect the new `sessionId: null` field on mocked service calls (an intentional, correct shape change, not a regression)
 - [x] Full suite green: 1959/1959 (1950 + 9 new), stress-tested 3x, zero real-disk leakage
-- [ ] Ship: branch → commit → PR → CI → merge → release → publish → global install verified
+- [x] PR #319 → CI green (Node 20/22/24) → merged (`--merge`, real merge commit `dc5581d`) → released as **v0.31.0**, published, global install verified (`gitHead` matches `6343e7a`)
 
 ### Increment 3 — Task/plan attribution (not started)
 
@@ -86,4 +86,5 @@ Four real bugs, each independently reproduced against the actual v0.30.2 code be
 - Increment 1 code complete, tests green, real dry-run verified, shipped as v0.30.2: 2026-09-21
 - Independent audit of v0.30.2 found 4 real hostile-input/partial-state bugs; all 4 reproduced and fixed, full suite 1950/1950, stress-tested 3x: 2026-09-21
 - Increment 1b shipped as v0.30.3 (PR #318, merge `171c515`, release `ea9ab4e`), global install verified: 2026-09-21
-- Next: Increment 2 (thread `sessionId` through `runCockpitApp` + conversation service methods)
+- Increment 2 shipped as v0.31.0 (PR #319, merge `dc5581d`, release `6343e7a`), global install verified: 2026-09-21
+- Next: Increment 3 (task/plan attribution and isolation per session)
