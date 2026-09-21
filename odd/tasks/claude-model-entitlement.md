@@ -87,25 +87,27 @@ User feedback invalidated the previous `unverified recommendable` contract and t
 - [x] INC5-04 Run targeted tests and full `npm test`; record observed evidence
   - Full suite: 1912/1912 passing (`node --test`), verified independently after all three commits.
 - [x] INC5-05 Commit each verified work unit and record commit identities
-  - `962a558` fix(project-team): fail closed on access — 7 files, +231/-43
-  - `4d0b0b3` fix(project-team): unify analysis flow — 11 files, +147/-301
-  - `dfcd73a` fix(cockpit): simplify project team panel — 3 files, +24/-47
+  - `962a558` fix(project-team): fail closed on access — 7 files, +231/-43 — PR #311, merged to `main` (merge commit `ac8e212`)
+  - `4d0b0b3` fix(project-team): unify analysis flow — 11 files, +147/-301 — PR #312, merged to `main` (merge commit `dea7689`)
+  - `dfcd73a` fix(cockpit): simplify project team panel — 3 files, +24/-47, plus one administrative commit (`b955b49`, task-doc closure — this replaces an earlier attempt, `084add6`, which carried an AI-attribution trailer this repo's `attribution-guard.mjs` hard-rejects; amended via `git commit --amend` + `git push --force-with-lease` before merge, never after) — PR #313, merged to `main` (merge commit `baad1e8`)
   - Total: 13 unique files, +393/-382 = 775 authored changed lines
-  - Delivery: `feature-branch-chain` — three PR slices, each preserving its own commit, retargeted to `main` as the prior slice merges (merge commits, not squash, matching this stream's own #307-#310 pattern)
+  - Delivery: `feature-branch-chain` — three PR slices, each preserving its own commit, retargeted to `main` as the prior slice merged (real merge commits, not squash, matching this stream's own #307-#310 pattern)
 
 ### Increment 5 delivery
 
 - Authorized scope: the three user-confirmed corrections above; no access-path/provider/environment refactor
 - Actual: 775 authored changed lines across 13 files (additions + deletions) — over the ~400-line planning heuristic once all three commits were counted together
-- Delivery strategy: `feature-branch-chain` — each of the three real commits ships as its own PR slice, chained onto the previous, merged with a real merge commit (not squash); only the last slice retargets to `main`
+- Delivery strategy: `feature-branch-chain` — each of the three real commits shipped as its own PR slice (#311, #312, #313), chained onto the previous, merged with a real merge commit (not squash); the last slice retargeted to `main`
 - RDD: disabled/unmanaged (`gentle-ai review mode status`, default source)
 - TDD: ordinary functional checks; source remains project convention; runner `npm test`
-- Next step: open the three chained PRs, get Node 20/22/24 CI green on each, merge in order, then release 0.29.1
+- Released: **v0.29.1** — `main` at `778a52c`, tag `kairo-runtime-v0.29.1`, published to npm (`gitHead` on the registry matches `778a52c` exactly), global install verified (`kairo --version` → `0.29.1`)
+- Status: **CLOSED** — no further steps for Increment 5
 
 ## Progress
 
 - Created: 2026-09-19
 - INC1–4 complete and released (0.26.1 / 0.27.0 / 0.28.0 / 0.29.0)
 - Reopened: 2026-09-19 after verified 0.29.0 user feedback
-- Increment 5 code complete, full suite green (1912/1912), task doc closed: 2026-09-20
-- Current branch: `fix/project-team-trust-flow` — pending PR chain + 0.29.1 release
+- Increment 5 code complete, full suite green (1912/1912): 2026-09-20
+- PR chain (#311/#312/#313) merged to `main`, released as v0.29.1, global install verified, task doc fully closed: 2026-09-20
+- `fix/project-team-trust-flow` was the original scratch branch this work was drafted on; superseded by the three chained slice branches actually merged (`fix/entitlement-fail-closed-access`, `fix/entitlement-unify-analysis`, `fix/entitlement-simplify-panel`) — its own tip commit (`084add6`) was never merged as-is (replaced by the amended `b955b49` on the last slice); `git cherry` confirms the two are content-equivalent, only the attribution trailer differs. No further action needed on it.
