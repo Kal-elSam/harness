@@ -5,6 +5,28 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.30.0 — 2026-09-21 (Kairo Runtime)
+
+Minor release. ASK now has real conversation continuity.
+
+### Changed
+
+- Every real ASK provider call was a genuinely fresh one-shot process —
+  the chat transcript persisted visually, but the model never actually
+  saw more than the current message. Verified: no history reconstruction
+  and no provider CLI's own native `--continue`/`--resume` flag was ever
+  in use. ASK now reconstructs a bounded window (last 6 exchanges,
+  capped at 6000 chars) of real prior question/answer turns into the
+  actual prompt sent to the provider, explicitly marked as reference
+  context, never as instructions.
+- `/clear` now also clears this exchange history, so a cleared chat
+  genuinely stops carrying prior context forward, not just visually.
+
+Not yet in this release: multiple sessions (`kairo start`/`resume`/
+`list` — the single-session-per-project model is unchanged), and a real
+per-call signal for whether Engram/MCP context actually got used (the
+status line still only reports installed/configured).
+
 ## 0.29.2 — 2026-09-21 (Kairo Runtime)
 
 Patch release.
