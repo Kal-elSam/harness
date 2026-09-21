@@ -494,11 +494,36 @@ test("/usage and /providers stay scoped to their own data — only /status also 
   app.stop();
 });
 
+test("REGRESSION: boot resolves the real active session first and scopes transcript/session load to it", async () => {
+  const calls = [];
+  const service = {
+    snapshot: async () => makeSnapshot([]),
+    resolveActiveSession: async () => ({ id: "session-42" }),
+    loadTranscript: async (args) => { calls.push(["loadTranscript", args]); return []; },
+    getSession: async (args) => { calls.push(["getSession", args]); return { mode: "ask" }; }
+  };
+  const app = await runCockpitApp({
+    cwd: "/repo",
+    service,
+    terminalFactory: () => ({}),
+    tuiFactory: () => makeFakeTui(),
+    editorFactory: () => makeFakeEditor(),
+    setIntervalImpl: () => 1,
+    clearIntervalImpl: () => {}
+  });
+
+  assert.deepEqual(calls, [
+    ["loadTranscript", { cwd: "/repo", sessionId: "session-42" }],
+    ["getSession", { cwd: "/repo", sessionId: "session-42" }]
+  ]);
+  app.stop();
+});
+
 test("boot loads real persisted transcript history before the first render", async () => {
   const service = {
     snapshot: async () => makeSnapshot([]),
     loadTranscript: async (args) => {
-      assert.deepEqual(args, { cwd: "/repo" });
+      assert.deepEqual(args, { cwd: "/repo", sessionId: null });
       return [{ role: "user", text: "what is this project?" }, { role: "kairo", text: "claude: an orchestrator." }];
     }
   };
@@ -538,8 +563,8 @@ test("a message the user sends is persisted via service.appendTranscript, not ju
   editor.setText("What is this project about?");
   await editor.onSubmit(editor.getText());
   assert.deepEqual(appended, [
-    { cwd: "/repo", role: "user", text: "What is this project about?" },
-    { cwd: "/repo", role: "kairo", text: "claude: It orchestrates providers." }
+    { cwd: "/repo", role: "user", text: "What is this project about?", sessionId: null },
+    { cwd: "/repo", role: "kairo", text: "claude: It orchestrates providers.", sessionId: null }
   ]);
   app.stop();
 });
@@ -590,7 +615,7 @@ test("/clear wipes the persisted transcript too, so a cleared chat stays cleared
   editor.setText("/clear");
   await editor.onSubmit(editor.getText());
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(cleared, [{ cwd: "/repo" }]);
+  assert.deepEqual(cleared, [{ cwd: "/repo", sessionId: null }]);
   app.stop();
 });
 
@@ -613,7 +638,7 @@ test("submitting a change request goes through submitTask, creates a plan, clear
 
   editor.setText("Add OAuth login");
   await editor.onSubmit(editor.getText());
-  assert.deepEqual(submitted, [{ cwd: "/repo", task: "Add OAuth login", mode: "ask" }]);
+  assert.deepEqual(submitted, [{ cwd: "/repo", task: "Add OAuth login", mode: "ask", sessionId: null }]);
   assert.equal(editor.getText(), "");
   assert.equal(editor.disableSubmit, false);
 
@@ -642,7 +667,7 @@ test("submitting a real question answers it directly via submitTask — never cr
 
   editor.setText("What is this project about?");
   await editor.onSubmit(editor.getText());
-  assert.deepEqual(submitted, [{ cwd: "/repo", task: "What is this project about?", mode: "ask" }]);
+  assert.deepEqual(submitted, [{ cwd: "/repo", task: "What is this project about?", mode: "ask", sessionId: null }]);
   assert.equal(app.view.transcript.some((entry) => entry.text.includes("It orchestrates Codex/Claude/OpenCode.")), true);
 
   app.stop();
@@ -918,7 +943,7 @@ test("/plan forces a plan even for question-shaped text, bypassing submitTask's 
   await editor.onSubmit(editor.getText());
   assert.deepEqual(architectCalls, [{ cwd: "/repo", task: "What is the best auth strategy here?" }]);
   assert.equal(app.view.workMode, "plan");
-  assert.deepEqual(modeCalls, [{ cwd: "/repo", mode: "plan" }]);
+  assert.deepEqual(modeCalls, [{ cwd: "/repo", mode: "plan", sessionId: null }]);
 
   app.stop();
 });
@@ -988,7 +1013,11 @@ test("Shift+Tab cycles WorkMode ASK -> PLAN -> AGENT -> ASK and persists it via 
   assert.equal(app.view.workMode, "agent");
   tui.inputListeners[0]("\x1b[Z");
   assert.equal(app.view.workMode, "ask");
-  assert.deepEqual(modeCalls, [{ cwd: "/repo", mode: "plan" }, { cwd: "/repo", mode: "agent" }, { cwd: "/repo", mode: "ask" }]);
+  assert.deepEqual(modeCalls, [
+    { cwd: "/repo", mode: "plan", sessionId: null },
+    { cwd: "/repo", mode: "agent", sessionId: null },
+    { cwd: "/repo", mode: "ask", sessionId: null }
+  ]);
 
   // Plain Tab is untouched — still toggles focus, never cycles mode.
   assert.equal(tui.getFocusedComponent(), editor);

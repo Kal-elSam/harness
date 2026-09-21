@@ -84,6 +84,12 @@ export async function runCockpitApp({
   let timer = null;
   let spinnerTimer = null;
   let stopped = false;
+  // The real, active session id for this run — resolved once, right before
+  // the transcript/session load below, via service.resolveActiveSession
+  // (today: "pick up the most recently updated real session, or create one").
+  // Every transcript/ASK-history/WorkMode call below is scoped to it once
+  // it's set; null only for the brief window before that resolution runs.
+  let sessionId = null;
   let resolveDone;
   const done = new Promise((resolvePromise) => { resolveDone = resolvePromise; });
 
@@ -243,7 +249,7 @@ export async function runCockpitApp({
   // the status line rather than silently losing the message.
   function pushTranscript(role, text) {
     view.addTranscript(role, text);
-    service.appendTranscript?.({ cwd, role, text })?.catch((error) => {
+    service.appendTranscript?.({ cwd, role, text, sessionId })?.catch((error) => {
       view.setStatus(`Transcript save failed: ${error.message ?? String(error)}`);
     });
   }
@@ -394,7 +400,7 @@ export async function runCockpitApp({
         // message immediately — real behavior, never just a label change.
         if (view.workMode !== "plan") {
           view.setWorkMode("plan");
-          service.setMode?.({ cwd, mode: "plan" })?.catch((error) => {
+          service.setMode?.({ cwd, mode: "plan", sessionId })?.catch((error) => {
             view.setStatus(`Mode change not saved: ${error.message ?? String(error)}`);
           });
         }
@@ -407,7 +413,7 @@ export async function runCockpitApp({
         }).finally(() => { editor.disableSubmit = false; });
       } else if (command === "/clear") {
         view.clearTranscript();
-        service.clearTranscript?.({ cwd })?.catch((error) => {
+        service.clearTranscript?.({ cwd, sessionId })?.catch((error) => {
           view.setStatus(`Transcript clear failed: ${error.message ?? String(error)}`);
         });
       } else if (command === "/quit" || command === "/exit") {
@@ -456,7 +462,7 @@ export async function runCockpitApp({
       }
     }
     return runAction(askLabel, async () => {
-      const result = await service.submitTask({ cwd, task, mode: view.workMode });
+      const result = await service.submitTask({ cwd, task, mode: view.workMode, sessionId });
       if (result.kind === "answer") {
         pushTranscript("kairo", `${result.provider}${result.model ? ` · ${result.model}` : ""}: ${result.answer}`);
       } else {
@@ -504,7 +510,7 @@ export async function runCockpitApp({
     if (matchesKey(data, "shift+tab")) {
       const next = CockpitView.nextWorkMode(view.workMode);
       view.setWorkMode(next);
-      service.setMode?.({ cwd, mode: next })?.catch((error) => {
+      service.setMode?.({ cwd, mode: next, sessionId })?.catch((error) => {
         view.setStatus(`Mode change not saved: ${error.message ?? String(error)}`);
       });
       return { consume: true };
@@ -517,17 +523,28 @@ export async function runCockpitApp({
     return undefined;
   });
 
+  // Resolve the real, active session for this project first — everything
+  // below (transcript, ASK history, WorkMode) is scoped to it. A resolution
+  // failure leaves sessionId null, which every service call above already
+  // treats as "fall back to the legacy project-wide files" — never a hard
+  // crash on startup.
+  try {
+    const active = await service.resolveActiveSession?.({ cwd });
+    if (active?.id) sessionId = active.id;
+  } catch (error) {
+    view.setStatus(`Session resolution failed: ${error.message ?? String(error)}`);
+  }
   // Load persisted chat history and the real KairoSession (currently just
   // WorkMode) before the first render, so a restart never shows an empty
   // chat or silently resets back to ASK while STATUS still shows a task
   // from before it.
   try {
-    view.loadTranscript(await service.loadTranscript?.({ cwd }));
+    view.loadTranscript(await service.loadTranscript?.({ cwd, sessionId }));
   } catch (error) {
     view.setStatus(`Transcript load failed: ${error.message ?? String(error)}`);
   }
   try {
-    const session = await service.getSession?.({ cwd });
+    const session = await service.getSession?.({ cwd, sessionId });
     if (session?.mode) view.setWorkMode(session.mode);
   } catch (error) {
     view.setStatus(`Session load failed: ${error.message ?? String(error)}`);

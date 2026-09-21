@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { harnessHomePaths } from "../paths.js";
 import { projectKeyForPath } from "../next/project-key.js";
 import { writeAtomicJson } from "../runtime/write-atomic-json.js";
+import { sessionDirFor } from "./session-registry.js";
 
 export const ASK_HISTORY_SCHEMA = "kairo.ask-history/v1";
 
@@ -24,23 +25,29 @@ export const ASK_HISTORY_SCHEMA = "kairo.ask-history/v1";
 // per-call window into it.
 const MAX_STORED_ENTRIES = 200;
 
-function askHistoryPath(homeDir, projectRoot) {
+// `sessionId` is optional and always the real session's own directory
+// (never a raw string joined by hand) — a headless/API caller that passes
+// none keeps exactly today's project-wide file, unchanged.
+function askHistoryPath(homeDir, projectRoot, sessionId) {
+  if (sessionId) return join(sessionDirFor(homeDir, projectRoot, sessionId), "ask-history.json");
   const { sessionsDir } = harnessHomePaths(homeDir);
   return join(sessionsDir, projectKeyForPath(projectRoot), "ask-history.json");
 }
 
 /**
- * Reads the persisted ASK exchange history for a project. Fails closed to
- * an empty list on a missing or malformed file — a corrupt history file
- * must never block a real question from being answered.
+ * Reads the persisted ASK exchange history for a project, or one real
+ * session within it when `sessionId` is given. Fails closed to an empty
+ * list on a missing or malformed file — a corrupt history file must never
+ * block a real question from being answered.
  * @param {string} homeDir
  * @param {string} projectRoot
+ * @param {string|null} [sessionId]
  * @returns {Promise<Array<{question: string, answer: string, provider: string, model: string|null, at: string}>>}
  */
-export async function readAskHistory(homeDir, projectRoot, deps = {}) {
+export async function readAskHistory(homeDir, projectRoot, sessionId = null, deps = {}) {
   const read = deps.readFile ?? readFile;
   try {
-    const raw = await read(askHistoryPath(homeDir, projectRoot), "utf8");
+    const raw = await read(askHistoryPath(homeDir, projectRoot, sessionId), "utf8");
     const doc = JSON.parse(raw);
     if (doc?.schema !== ASK_HISTORY_SCHEMA || !Array.isArray(doc.entries)) return [];
     return doc.entries.filter((entry) => entry
@@ -59,12 +66,13 @@ export async function readAskHistory(homeDir, projectRoot, deps = {}) {
  * @param {string} homeDir
  * @param {string} projectRoot
  * @param {{question: string, answer: string, provider: string, model?: string|null}} entry
+ * @param {string|null} [sessionId]
  */
-export async function appendAskHistoryEntry(homeDir, projectRoot, entry, deps = {}) {
+export async function appendAskHistoryEntry(homeDir, projectRoot, entry, sessionId = null, deps = {}) {
   const mkdirImpl = deps.mkdir ?? mkdir;
   const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
-  const path = askHistoryPath(homeDir, projectRoot);
-  const existing = await readAskHistory(homeDir, projectRoot, deps);
+  const path = askHistoryPath(homeDir, projectRoot, sessionId);
+  const existing = await readAskHistory(homeDir, projectRoot, sessionId, deps);
   const entries = [...existing, {
     question: entry.question, answer: entry.answer, provider: entry.provider,
     model: entry.model ?? null, at: new Date().toISOString()
@@ -74,10 +82,10 @@ export async function appendAskHistoryEntry(homeDir, projectRoot, entry, deps = 
 }
 
 /** Persists an empty history — used by `/clear`, so a cleared chat genuinely stops carrying prior ASK context forward, not just visually. */
-export async function clearAskHistory(homeDir, projectRoot, deps = {}) {
+export async function clearAskHistory(homeDir, projectRoot, sessionId = null, deps = {}) {
   const mkdirImpl = deps.mkdir ?? mkdir;
   const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
-  const path = askHistoryPath(homeDir, projectRoot);
+  const path = askHistoryPath(homeDir, projectRoot, sessionId);
   await mkdirImpl(dirname(path), { recursive: true });
   await writeJson(path, { schema: ASK_HISTORY_SCHEMA, entries: [] });
 }

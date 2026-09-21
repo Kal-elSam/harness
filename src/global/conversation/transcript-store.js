@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 import { harnessHomePaths } from "../paths.js";
 import { projectKeyForPath } from "../next/project-key.js";
 import { writeAtomicJson } from "../runtime/write-atomic-json.js";
+import { sessionDirFor } from "./session-registry.js";
 
 export const TRANSCRIPT_SCHEMA = "kairo.transcript/v1";
 
@@ -23,23 +24,29 @@ export const TRANSCRIPT_SCHEMA = "kairo.transcript/v1";
 // keeping far more real history than the old fixed on-screen cap of 8.
 const MAX_STORED_ENTRIES = 500;
 
-function transcriptPath(homeDir, projectRoot) {
+// `sessionId` is optional and always the real session's own directory
+// (never a raw string joined by hand) — a headless/API caller that passes
+// none keeps exactly today's project-wide file, unchanged.
+function transcriptPath(homeDir, projectRoot, sessionId) {
+  if (sessionId) return join(sessionDirFor(homeDir, projectRoot, sessionId), "transcript.json");
   const { sessionsDir } = harnessHomePaths(homeDir);
   return join(sessionsDir, projectKeyForPath(projectRoot), "transcript.json");
 }
 
 /**
- * Reads the persisted transcript for a project. Fails closed to an empty
- * list on a missing or malformed file — a corrupt history file must never
- * block the chat from starting.
+ * Reads the persisted transcript for a project, or one real session within
+ * it when `sessionId` is given. Fails closed to an empty list on a missing
+ * or malformed file — a corrupt history file must never block the chat
+ * from starting.
  * @param {string} homeDir
  * @param {string} projectRoot
+ * @param {string|null} [sessionId]
  * @returns {Promise<Array<{role: "user"|"kairo", text: string, at: string}>>}
  */
-export async function readTranscript(homeDir, projectRoot, deps = {}) {
+export async function readTranscript(homeDir, projectRoot, sessionId = null, deps = {}) {
   const read = deps.readFile ?? readFile;
   try {
-    const raw = await read(transcriptPath(homeDir, projectRoot), "utf8");
+    const raw = await read(transcriptPath(homeDir, projectRoot, sessionId), "utf8");
     const doc = JSON.parse(raw);
     if (doc?.schema !== TRANSCRIPT_SCHEMA || !Array.isArray(doc.entries)) return [];
     return doc.entries.filter((entry) => entry && typeof entry.text === "string"
@@ -57,12 +64,13 @@ export async function readTranscript(homeDir, projectRoot, deps = {}) {
  * @param {string} homeDir
  * @param {string} projectRoot
  * @param {{role: "user"|"kairo", text: string}} entry
+ * @param {string|null} [sessionId]
  */
-export async function appendTranscriptEntry(homeDir, projectRoot, entry, deps = {}) {
+export async function appendTranscriptEntry(homeDir, projectRoot, entry, sessionId = null, deps = {}) {
   const mkdirImpl = deps.mkdir ?? mkdir;
   const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
-  const path = transcriptPath(homeDir, projectRoot);
-  const existing = await readTranscript(homeDir, projectRoot, deps);
+  const path = transcriptPath(homeDir, projectRoot, sessionId);
+  const existing = await readTranscript(homeDir, projectRoot, sessionId, deps);
   const entries = [...existing, { role: entry.role, text: entry.text, at: new Date().toISOString() }]
     .slice(-MAX_STORED_ENTRIES);
   await mkdirImpl(dirname(path), { recursive: true });
@@ -70,10 +78,10 @@ export async function appendTranscriptEntry(homeDir, projectRoot, entry, deps = 
 }
 
 /** Persists an empty transcript — used by `/clear`, so a cleared chat stays cleared across a restart. */
-export async function clearTranscript(homeDir, projectRoot, deps = {}) {
+export async function clearTranscript(homeDir, projectRoot, sessionId = null, deps = {}) {
   const mkdirImpl = deps.mkdir ?? mkdir;
   const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
-  const path = transcriptPath(homeDir, projectRoot);
+  const path = transcriptPath(homeDir, projectRoot, sessionId);
   await mkdirImpl(dirname(path), { recursive: true });
   await writeJson(path, { schema: TRANSCRIPT_SCHEMA, entries: [] });
 }

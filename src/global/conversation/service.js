@@ -25,6 +25,7 @@ import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { appendAskHistoryEntry, clearAskHistory, readAskHistory } from "./ask-history-store.js";
 import { readSession, writeSessionMode } from "./session-store.js";
+import { createSession, getSession, listSessions, updateSessionMode } from "./session-registry.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
   ASK_SUPPORTED_ADAPTERS, buildProjectStrategy, computeBootstrapAnalystCatalog,
@@ -312,6 +313,10 @@ export function createConversationService(deps = {}) {
   const clearAskHistoryImpl = deps.clearAskHistory ?? clearAskHistory;
   const readSessionImpl = deps.readSession ?? readSession;
   const writeSessionModeImpl = deps.writeSessionMode ?? writeSessionMode;
+  const getSessionImpl = deps.getSession ?? getSession;
+  const updateSessionModeImpl = deps.updateSessionMode ?? updateSessionMode;
+  const listSessionsImpl = deps.listSessions ?? listSessions;
+  const createSessionImpl = deps.createSession ?? createSession;
   const computeProjectProfileImpl = deps.computeProjectProfile ?? computeProjectProfile;
   const readProjectStrategyImpl = deps.readProjectStrategy ?? readProjectStrategy;
   const writeProjectStrategyImpl = deps.writeProjectStrategy ?? writeProjectStrategy;
@@ -839,8 +844,9 @@ export function createConversationService(deps = {}) {
      * actually available/quota-healthy — no task, no plan, no approval
      * gate. Throws (never returns a fabricated answer) if no provider can
      * answer or the call itself fails.
+     * @param {{cwd: string, task: string, sessionId?: string|null}} args
      */
-    async askQuestion({ cwd, task }) {
+    async askQuestion({ cwd, task, sessionId = null }) {
       const { decision, projectRoot } = await this.planAsk({ cwd, task });
       if (decision.decision !== "ROUTED") throw new Error(`Cannot answer: ${decision.why}`);
       // Real conversation continuity: every provider call here is otherwise
@@ -848,13 +854,13 @@ export function createConversationService(deps = {}) {
       // real exchanges is reconstructed into the prompt itself — the
       // PERSISTED question always stays the real, original human text
       // below, never this enriched version (so it never compounds).
-      const history = await readAskHistoryImpl(homeDir, projectRoot).catch(() => []);
+      const history = await readAskHistoryImpl(homeDir, projectRoot, sessionId).catch(() => []);
       const question = buildAskPromptWithHistory(history, task);
       const result = await askProviderImpl({ provider: decision.provider, question, model: decision.model, cwd: projectRoot });
       if (result.status !== "answered") throw new Error(result.error ?? `${decision.provider} gave no answer.`);
       await appendAskHistoryImpl(homeDir, projectRoot, {
         question: task, answer: result.answer, provider: decision.provider, model: decision.model
-      }).catch(() => {});
+      }, sessionId).catch(() => {});
       return { provider: decision.provider, model: decision.model, answer: result.answer, projectRoot };
     },
     /**
@@ -869,34 +875,59 @@ export function createConversationService(deps = {}) {
      * @param {string} args.cwd
      * @param {string} args.task
      * @param {"ask"|"plan"|"agent"|null} [args.mode]
+     * @param {string|null} [args.sessionId]
      */
-    async submitTask({ cwd, task, mode = null }) {
+    async submitTask({ cwd, task, mode = null, sessionId = null }) {
       const isQuestion = mode ? mode === "ask" : isLikelyQuestion(task);
       if (isQuestion) {
-        const answer = await this.askQuestion({ cwd, task });
+        const answer = await this.askQuestion({ cwd, task, sessionId });
         return { kind: "answer", ...answer };
       }
       const plan = await this.submitArchitecture({ cwd, task });
       return { kind: "plan", ...plan };
     },
     /**
-     * Real, persisted KairoSession for this project — right now just the
-     * current WorkMode ("ask" | "plan" | "agent"). A session that predates
+     * Real, persisted KairoSession. With `sessionId`, reads that specific
+     * real session's own v2 document (session-registry.js) — WorkMode means
+     * "this one session", not "the project". Without it (backward
+     * compatibility for any caller that predates multi-session), falls back
+     * to the legacy project-wide session.json; a session that predates
      * WorkMode (or has no file yet) reads as "ask", the strictly read-only
      * default — see session-store.js's readSession.
+     * @param {{cwd: string, sessionId?: string|null}} args
      */
-    async getSession({ cwd }) {
+    async getSession({ cwd, sessionId = null }) {
       const projectRoot = await root(cwd);
+      if (sessionId) return getSessionImpl(homeDir, projectRoot, sessionId);
       return readSessionImpl(homeDir, projectRoot);
     },
     /**
-     * Persists a new WorkMode for this project — pure local state, no
-     * provider I/O, so Shift+Tab/`/plan` stay instant.
-     * @param {{cwd: string, mode: "ask"|"plan"|"agent"}} args
+     * Persists a new WorkMode — onto the real session's own v2 document when
+     * `sessionId` is given, else the legacy project-wide session.json for
+     * backward-compatible callers. Pure local state, no provider I/O, so
+     * Shift+Tab/`/plan` stay instant.
+     * @param {{cwd: string, mode: "ask"|"plan"|"agent", sessionId?: string|null}} args
      */
-    async setMode({ cwd, mode }) {
+    async setMode({ cwd, mode, sessionId = null }) {
       const projectRoot = await root(cwd);
+      if (sessionId) return updateSessionModeImpl(homeDir, projectRoot, sessionId, mode);
       return writeSessionModeImpl(homeDir, projectRoot, mode);
+    },
+    /**
+     * The real, active session for `kairo start` today: the most recently
+     * updated real session for this project (migrating the old single-
+     * session files into one first, if needed), or a brand new one when
+     * none exists yet. This is deliberately the ONLY session-selection
+     * policy right now — explicit `start`/`resume`/`list` CLI selection is
+     * a later increment; until then, "the project's session" simply means
+     * "pick up where the last one left off".
+     * @param {{cwd: string}} args
+     */
+    async resolveActiveSession({ cwd }) {
+      const projectRoot = await root(cwd);
+      const sessions = await listSessionsImpl(homeDir, projectRoot);
+      if (sessions.length > 0) return sessions[0];
+      return createSessionImpl(homeDir, projectRoot, {});
     },
     /**
      * ProjectOverlay preflight: computes a real, read-only ProjectProfile
@@ -1174,24 +1205,24 @@ export function createConversationService(deps = {}) {
      * once at cockpit startup so a restart never silently drops the
      * conversation, the way plan/task state already survives restarts.
      */
-    async loadTranscript({ cwd }) {
+    async loadTranscript({ cwd, sessionId = null }) {
       const projectRoot = await root(cwd);
-      return readTranscriptImpl(homeDir, projectRoot);
+      return readTranscriptImpl(homeDir, projectRoot, sessionId);
     },
     /** Persists one chat entry; a write failure throws so the caller can surface it. */
-    async appendTranscript({ cwd, role, text }) {
+    async appendTranscript({ cwd, role, text, sessionId = null }) {
       const projectRoot = await root(cwd);
-      await appendTranscriptImpl(homeDir, projectRoot, { role, text });
+      await appendTranscriptImpl(homeDir, projectRoot, { role, text }, sessionId);
     },
     /** Persists an empty transcript so `/clear` stays cleared across a restart. */
-    async clearTranscript({ cwd }) {
+    async clearTranscript({ cwd, sessionId = null }) {
       const projectRoot = await root(cwd);
-      await clearTranscriptImpl(homeDir, projectRoot);
+      await clearTranscriptImpl(homeDir, projectRoot, sessionId);
       // A cleared chat must genuinely stop carrying prior ASK exchanges
       // forward, not just visually — otherwise /clear would look like a
       // fresh start while still silently feeding old context into the
       // next real provider call.
-      await clearAskHistoryImpl(homeDir, projectRoot).catch(() => {});
+      await clearAskHistoryImpl(homeDir, projectRoot, sessionId).catch(() => {});
     },
     async showPlan({ cwd, taskId }) {
       const projectRoot = await root(cwd);

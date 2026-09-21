@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  conversationsDir, createSession, listSessions, migrateLegacySessionIfNeeded, resolveSessionRef, SESSION_SCHEMA_V2, sessionDirFor
+  conversationsDir, createSession, getSession, listSessions, migrateLegacySessionIfNeeded, resolveSessionRef,
+  SESSION_SCHEMA_V2, sessionDirFor, updateSessionMode
 } from "../src/global/conversation/session-registry.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
@@ -60,6 +61,33 @@ test("listSessions skips a corrupt individual session directory instead of hidin
   await writeFile(join(corruptDir, "session.json"), "not json");
   const sessions = await listSessions(homeDir, projectRoot);
   assert.deepEqual(sessions.map((s) => s.id), [good.id]);
+});
+
+test("REGRESSION: getSession returns the real, current v2 document for one specific session, and null for an unknown or invalid id — never throws", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const session = await createSession(homeDir, projectRoot, { title: "Real one" });
+  assert.deepEqual(await getSession(homeDir, projectRoot, session.id), session);
+  assert.equal(await getSession(homeDir, projectRoot, "aaaaaaaa-0000-0000-0000-000000000000"), null);
+  assert.equal(await getSession(homeDir, projectRoot, "../../etc"), null);
+});
+
+test("REGRESSION: updateSessionMode persists a new WorkMode onto that session's own v2 document, never the legacy project-wide session.json", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const session = await createSession(homeDir, projectRoot, { title: "Real one" });
+  const updated = await updateSessionMode(homeDir, projectRoot, session.id, "agent");
+  assert.equal(updated.mode, "agent");
+  assert.equal(updated.title, "Real one");
+  assert.deepEqual(await getSession(homeDir, projectRoot, session.id), updated);
+});
+
+test("REGRESSION: updateSessionMode rejects an invalid WorkMode and an unknown session id, instead of silently persisting or creating one", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const session = await createSession(homeDir, projectRoot, {});
+  await assert.rejects(() => updateSessionMode(homeDir, projectRoot, session.id, "yolo"), /Unknown work mode/);
+  await assert.rejects(
+    () => updateSessionMode(homeDir, projectRoot, "aaaaaaaa-0000-0000-0000-000000000000", "plan"),
+    /not found/
+  );
 });
 
 test("resolveSessionRef matches the exact real id", async () => {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   appendAskHistoryEntry, ASK_HISTORY_SCHEMA, clearAskHistory, readAskHistory
 } from "../src/global/conversation/ask-history-store.js";
+import { createSession } from "../src/global/conversation/session-registry.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
 
@@ -18,6 +19,19 @@ async function tempHomeAndProject() {
 function askHistoryFilePath(homeDir, projectRoot) {
   return join(harnessHomePaths(homeDir).sessionsDir, projectKeyForPath(projectRoot), "ask-history.json");
 }
+
+test("REGRESSION: with a real sessionId, ASK history is stored under that session's own directory, isolated from another session and from the legacy project-wide file", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const sessionA = await createSession(homeDir, projectRoot, {});
+  const sessionB = await createSession(homeDir, projectRoot, {});
+
+  await appendAskHistoryEntry(homeDir, projectRoot, { question: "in A", answer: "a", provider: "claude" }, sessionA.id);
+  await appendAskHistoryEntry(homeDir, projectRoot, { question: "no session", answer: "a", provider: "claude" });
+
+  assert.deepEqual((await readAskHistory(homeDir, projectRoot, sessionA.id)).map((e) => e.question), ["in A"]);
+  assert.deepEqual(await readAskHistory(homeDir, projectRoot, sessionB.id), []);
+  assert.deepEqual((await readAskHistory(homeDir, projectRoot)).map((e) => e.question), ["no session"]);
+});
 
 test("readAskHistory returns an empty list when nothing has been persisted yet", async () => {
   const { homeDir, projectRoot } = await tempHomeAndProject();

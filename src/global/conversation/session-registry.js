@@ -188,6 +188,38 @@ export async function listSessions(homeDir, projectRoot, deps = {}) {
 }
 
 /**
+ * The real, schema-valid v2 session document for one specific real session
+ * id — or null when it doesn't exist (never throws, mirroring
+ * `resolveSessionRef`'s own "unknown is null, not an error" contract).
+ * @param {string} homeDir
+ * @param {string} projectRoot
+ * @param {string} sessionId
+ */
+export async function getSession(homeDir, projectRoot, sessionId, deps = {}) {
+  return readValidSession(homeDir, projectRoot, sessionId, deps);
+}
+
+/**
+ * Persists a new WorkMode onto one specific real session's own v2 document
+ * — never the legacy project-wide session.json (session-store.js), which
+ * this function has nothing to do with. Read-modify-write so `title`/
+ * `createdAt` survive a mode change untouched.
+ * @param {string} homeDir
+ * @param {string} projectRoot
+ * @param {string} sessionId
+ * @param {"ask"|"plan"|"agent"} mode
+ */
+export async function updateSessionMode(homeDir, projectRoot, sessionId, mode, deps = {}) {
+  if (!WORK_MODES.includes(mode)) throw new Error(`Unknown work mode "${mode}"`);
+  const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
+  const existing = await readValidSession(homeDir, projectRoot, sessionId, deps);
+  if (!existing) throw new Error(`Session "${sessionId}" not found.`);
+  const updated = { ...existing, mode, updatedAt: new Date().toISOString() };
+  await writeJson(sessionMetaPath(sessionDirFor(homeDir, projectRoot, sessionId)), updated);
+  return updated;
+}
+
+/**
  * Resolves a user-supplied session reference — the exact real id, or a
  * prefix unique among this project's real sessions. Returns null (never
  * throws) when nothing matches; throws only on a genuinely ambiguous

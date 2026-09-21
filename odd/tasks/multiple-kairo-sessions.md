@@ -58,10 +58,15 @@ Four real bugs, each independently reproduced against the actual v0.30.2 code be
 - [x] Full suite green: 1950/1950 (1945 + 5 new), stress-tested 3x, zero real-disk leakage confirmed (`~/.harness/sessions/*/conversations` never created for a real project key)
 - [x] PR #318 → CI green (Node 20/22/24) → merged (`--merge`, real merge commit `171c515`) → released as **v0.30.3**, published, global install verified (`gitHead` matches `ea9ab4e`)
 
-### Increment 2 — Context/session plumbing (blocked on Increment 1b shipping)
+### Increment 2 — Context/session plumbing
 
-- [ ] Thread `sessionId` through `runCockpitApp` and conversation service methods (ASK, transcript, WorkMode) — these stop implicitly meaning "the project", start meaning "this one session"
-- [ ] Headless/API callers with no `sessionId` keep today's project-wide behavior (backward compat)
+- [x] `session-registry.js`: `getSession` (real v2 doc for one session id, or null) and `updateSessionMode` (persists WorkMode onto that session's own v2 document, never the legacy `session.json`)
+- [x] `transcript-store.js`/`ask-history-store.js`: optional `sessionId` param — given, scopes the file under `conversations/<sessionId>/` (via `sessionDirFor`'s existing choke-point validation); omitted, keeps exactly today's project-wide file (backward compat for headless/API callers)
+- [x] `service.js`: `askQuestion`, `submitTask`, `getSession`, `setMode`, `loadTranscript`, `appendTranscript`, `clearTranscript` all accept an optional `sessionId` and route accordingly; new `resolveActiveSession({cwd})` — most-recently-updated real session, or a new one when none exists yet (today's only session-selection policy; explicit `start`/`resume`/`list` is Increment 4)
+- [x] `runCockpitApp` resolves the active session once at startup and threads it through every relevant call site (transcript load/append/clear, ASK, WorkMode read/write)
+- [x] Tests RED→GREEN: 9 new regression tests across `transcript-store.test.js`, `ask-history-store.test.js`, `session-registry.test.js`, `conversation-service.test.js`, `cockpit-app.test.js`; 7 pre-existing `cockpit-app.test.js` assertions updated to expect the new `sessionId: null` field on mocked service calls (an intentional, correct shape change, not a regression)
+- [x] Full suite green: 1959/1959 (1950 + 9 new), stress-tested 3x, zero real-disk leakage
+- [ ] Ship: branch → commit → PR → CI → merge → release → publish → global install verified
 
 ### Increment 3 — Task/plan attribution (not started)
 
