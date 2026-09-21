@@ -267,6 +267,74 @@ test("getSession/setMode persist and round-trip the real WorkMode for a project"
   assert.equal(reread.mode, "agent");
 });
 
+test("REGRESSION: getSession/setMode with a real sessionId route to the session's own v2 document, never the legacy project-wide session.json", async () => {
+  let legacyTouched = false;
+  let v2Session = { schema: "kairo.session/v2", id: "s1", projectKey: "pk", title: null, mode: "ask", createdAt: "t0", updatedAt: "t0" };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    readSession: async () => { legacyTouched = true; return { schema: "kairo.session/v1", id: "repo", mode: "ask", createdAt: "t0", updatedAt: "t0" }; },
+    writeSessionMode: async () => { legacyTouched = true; },
+    getSession: async (homeDir, projectRoot, sessionId) => {
+      assert.equal(sessionId, "s1");
+      return v2Session;
+    },
+    updateSessionMode: async (homeDir, projectRoot, sessionId, mode) => {
+      assert.equal(sessionId, "s1");
+      v2Session = { ...v2Session, mode, updatedAt: "t1" };
+      return v2Session;
+    }
+  });
+  const initial = await service.getSession({ cwd: "/repo", sessionId: "s1" });
+  assert.equal(initial.mode, "ask");
+  const updated = await service.setMode({ cwd: "/repo", mode: "agent", sessionId: "s1" });
+  assert.equal(updated.mode, "agent");
+  const reread = await service.getSession({ cwd: "/repo", sessionId: "s1" });
+  assert.equal(reread.mode, "agent");
+  assert.equal(legacyTouched, false, "the legacy project-wide session.json must never be touched once a real sessionId is given");
+});
+
+test("REGRESSION: loadTranscript/appendTranscript/clearTranscript forward sessionId to the underlying stores", async () => {
+  const transcriptCalls = [];
+  const askHistoryClearCalls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    readTranscript: async (homeDir, projectRoot, sessionId) => { transcriptCalls.push(["read", sessionId]); return []; },
+    appendTranscriptEntry: async (homeDir, projectRoot, entry, sessionId) => { transcriptCalls.push(["append", sessionId]); },
+    clearTranscript: async (homeDir, projectRoot, sessionId) => { transcriptCalls.push(["clear", sessionId]); },
+    clearAskHistory: async (homeDir, projectRoot, sessionId) => { askHistoryClearCalls.push(sessionId); }
+  });
+  await service.loadTranscript({ cwd: "/repo", sessionId: "s1" });
+  await service.appendTranscript({ cwd: "/repo", role: "user", text: "hi", sessionId: "s1" });
+  await service.clearTranscript({ cwd: "/repo", sessionId: "s1" });
+  assert.deepEqual(transcriptCalls, [["read", "s1"], ["append", "s1"], ["clear", "s1"]]);
+  assert.deepEqual(askHistoryClearCalls, ["s1"]);
+});
+
+test("REGRESSION: resolveActiveSession returns the most recently updated real session, or creates one when none exists yet", async () => {
+  let created = null;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    listSessions: async () => [{ id: "most-recent" }, { id: "older" }],
+    createSession: async () => { created = true; return { id: "brand-new" }; }
+  });
+  const active = await service.resolveActiveSession({ cwd: "/repo" });
+  assert.equal(active.id, "most-recent");
+  assert.equal(created, null);
+
+  const emptyService = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    listSessions: async () => [],
+    createSession: async () => { created = true; return { id: "brand-new" }; }
+  });
+  const fresh = await emptyService.resolveActiveSession({ cwd: "/repo" });
+  assert.equal(fresh.id, "brand-new");
+  assert.equal(created, true);
+});
+
 function fakeCandidates() {
   const aa = [
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 40, mathIndex: null },

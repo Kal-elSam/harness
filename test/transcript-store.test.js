@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendTranscriptEntry, clearTranscript, readTranscript, TRANSCRIPT_SCHEMA } from "../src/global/conversation/transcript-store.js";
+import { createSession, sessionDirFor } from "../src/global/conversation/session-registry.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
 
@@ -16,6 +17,22 @@ async function tempHomeAndProject() {
 function transcriptFilePath(homeDir, projectRoot) {
   return join(harnessHomePaths(homeDir).sessionsDir, projectKeyForPath(projectRoot), "transcript.json");
 }
+
+test("REGRESSION: with a real sessionId, the transcript is stored under that session's own directory, isolated from another session and from the legacy project-wide file", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const sessionA = await createSession(homeDir, projectRoot, {});
+  const sessionB = await createSession(homeDir, projectRoot, {});
+
+  await appendTranscriptEntry(homeDir, projectRoot, { role: "user", text: "in session A" }, sessionA.id);
+  await appendTranscriptEntry(homeDir, projectRoot, { role: "user", text: "no session at all" });
+
+  assert.deepEqual((await readTranscript(homeDir, projectRoot, sessionA.id)).map((e) => e.text), ["in session A"]);
+  assert.deepEqual(await readTranscript(homeDir, projectRoot, sessionB.id), []);
+  assert.deepEqual((await readTranscript(homeDir, projectRoot)).map((e) => e.text), ["no session at all"]);
+
+  const onDisk = JSON.parse(await readFile(join(sessionDirFor(homeDir, projectRoot, sessionA.id), "transcript.json"), "utf8"));
+  assert.equal(onDisk.entries[0].text, "in session A");
+});
 
 test("readTranscript returns an empty list when nothing has been persisted yet", async () => {
   const { homeDir, projectRoot } = await tempHomeAndProject();
