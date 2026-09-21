@@ -109,6 +109,7 @@ Each verified against the real code before fixing, not assumed:
 - Second independent audit confirmed ready to ship (focused regressions 201/201; full suite 1990/1992 locally, the 2 remaining failures attributed to known sandbox limits — `listen EPERM`, `npm pack` — unrelated to this change, CI as the definitive gate).
 - Shipped as v0.33.0: 2026-09-21 (see closing note below the release, further down).
 - New external plan reopened this doc for a related, systemic problem: Kairo confuses "Cursor's CLI lists this model" with "this account can actually run it right now." Verified before starting.
+- Increment 5 (Cursor eligibility) shipped as **v0.34.0** (PR #323, merge `fb6a224`, release `f61d90d`), global install verified: 2026-09-21
 
 ### Increment 5 — Cursor eligibility (fail-closed, Auto never scored)
 
@@ -130,5 +131,5 @@ Each verified against the real code before fixing, not assumed:
 - [x] Tests RED→GREEN: fail-closed default (`execution-router.test.js`, 2 new + 1 existing test's expectation flipped from fail-open to require an explicit confirmed record); Auto excluded from scoring (`conversation-service.test.js`, 1 existing test extended + 1 new "untouched account is unverified" test); `isCursorAutoModel` unit coverage (`cursor-models.test.js`); Cursor BLOCKED propagation through the existing overlay mechanism (`project-overlay.test.js`).
 - [x] Full suite green: 1996/1996 (1992 + 4 new), stress-tested 3x. One real session directory briefly appeared under this project's actual `~/.harness` during stress run 1 — the **third** occurrence of this unexplained, previously-investigated anomaly this session (6 dedicated targeted reproduction attempts in Increment 1 found nothing; today's changes touch zero session/registry code). Cleaned up; not chased further, reported honestly rather than silently dismissed. Runs 2-3 clean.
 - [ ] PROJECT TEAM readable-block redesign (rows + wide detail block, Analyst/Orchestrator as non-editable assignments) from the same external plan — deliberately NOT part of this increment; a separate decision if pursued.
-- [ ] Ship: branch → commit → PR → CI → merge → release → publish → global install verified.
+- [x] PR #323 → CI green (Node 20/22/24) → merged (`--merge`, real merge commit `fb6a224`) → released as **v0.34.0**, published, global install verified (`gitHead` matches `f61d90d`).
 - Shipped as **v0.33.0**: PR #322 → CI green (Node 20/22/24, confirming the real 1992/1992) → merged (`--merge`, real merge commit `35cc6dd`) → released, published, global install verified (`gitHead` matches `a7fff80`). **Feature complete.** 2026-09-21
