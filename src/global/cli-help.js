@@ -72,7 +72,9 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} shell                          Operations cockpit (TTY)
   ${cli} architect --task "..." [--model <name>] [--cwd <dir>] [--json]
   ${cli} plans list|show|approve|reject [<taskId>] [--cwd <dir>] [--json]
-  ${cli} start [--cwd <dir>]             Interactive cockpit TUI (approve/execute/cancel plans)
+  ${cli} start [--cwd <dir>]             Interactive cockpit TUI, always a brand new real session
+  ${cli} resume [sessionId] [--cwd <dir>]    Resume a real session (picker if more than one and no id given)
+  ${cli} list [--cwd <dir>] [--json]         Real sessions for this project, most recently updated first
   ${cli} ui [--cwd <dir>] [--port <n>]       Local loopback conversation UI
   ${cli} conversation snapshot|architect|show|approve|reject|cancel ... [--json]
   ${cli} conversation execute <taskId> [--role <role>] [--confirm] [--model <name>] [--json]  No --confirm: preview only. --confirm: revalidate and execute the shown target.

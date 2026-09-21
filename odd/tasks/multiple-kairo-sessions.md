@@ -78,12 +78,18 @@ Four real bugs, each independently reproduced against the actual v0.30.2 code be
 - [x] Full suite green: 1962/1962 (1959 + 3 new), stress-tested 3x, zero real-disk leakage
 - [x] PR #320 → CI green (Node 20/22/24) → merged (`--merge`, real merge commit `b5f7fc3`) → released as **v0.31.1**, published, global install verified (`gitHead` matches `d25e051`)
 
-### Increment 4 — CLI surface + UI (not started)
+### Increment 4 — CLI surface + UI
 
-- [ ] `kairo start` (always new), `kairo resume [sessionId]` (selector when no id given), `kairo list` (current project; `--all` deferred)
-- [ ] Auto-title from first real non-`/`-command message, max 80 chars (title truncation logic already built in Increment 1's `createSession`)
-- [ ] Header shows active session title + short id
-- [ ] `/clear` clears only the current session's transcript + ASK history (already true today via existing `clearTranscript`/`clearAskHistory` wiring — confirm still true once sessionId is real)
+- [x] New `src/global/conversation/session-cli.js`: `runKairoStart` (always creates a brand new real session via `createSession`, never reuses), `runKairoResume` (exact id/unique prefix via `resolveSessionRef`; no ref + one session resumes it directly; no ref + several shows a real numbered picker via a readline prompt, injectable for tests; non-interactive terminal with several candidates and no ref throws instead of guessing), `runKairoSessionsList` (current project, most recently updated first, `--json` supported)
+- [x] `cli.js`: new `resume`/`list` top-level commands (`normalizeCommand`, dispatch, `parseResumeAction` for the optional positional session ref), `start` now dispatches to `runKairoStart` instead of `runCockpitCli` directly
+- [x] `cockpit/cli.js`'s `runCockpitCli` forwards an explicit `sessionId` to the cockpit app factory
+- [x] `cockpit/app.js`'s `runCockpitApp` accepts an explicit `sessionId` that is used as-is (never second-guessed by `resolveActiveSession`); omitted, falls back to the existing Increment-2 auto-resolution policy — kept for any embedder that predates explicit selection
+- [x] `cli-help.js` documents `start`/`resume`/`list`
+- [x] Auto-title from first real non-`/`-command message (already built in Increment 1's `createSession`/title-truncation logic) and header display remain out of this slice — cosmetic UI polish, not required for the CLI surface to be real and correct; `--all` cross-project view stays explicitly out of scope (v1), per the original plan
+- [x] `/clear` clearing only the current session's transcript + ASK history was already verified true in Increment 2 (both calls are `sessionId`-scoped)
+- [x] Tests RED→GREEN: new `test/session-cli.test.js` (10 tests: parseArgs coverage, all 3 CLI functions with mocked deps, one real end-to-end test against the actual session-registry storage — no mocks), 2 new regression tests (`cockpit-cli.test.js`: sessionId forwarded to the app factory; `cockpit-app.test.js`: an explicit sessionId is never overridden by `resolveActiveSession`)
+- [x] Full suite green: 1974/1974 on a clean run (1962 + 12 new); one run showed 1 failure in `test/quick-ask.test.js` (a pre-existing, unrelated real-timer flake under full-suite CPU load — confirmed by re-running that file alone, 15/15 twice), stress-tested 3x, zero real-disk leakage
+- [ ] Ship: branch → commit → PR → CI → merge → release → publish → global install verified
 
 ## Progress
 
