@@ -40,7 +40,7 @@ async function prepareUniqueTask(projectRoot, task, now) {
 }
 
 export async function createArchitecturePlan({
-  task, cwd = process.cwd(), model = null, now = new Date(), runCodex = runArchitectCodex,
+  task, cwd = process.cwd(), model = null, sessionId = null, now = new Date(), runCodex = runArchitectCodex,
   resolveRoot = resolveProjectRoot, resolveGitHead = resolveHead,
   compileContext = compileContextPack, acquireLock = acquireRequestLock
 } = {}) {
@@ -50,7 +50,7 @@ export async function createArchitecturePlan({
   const normalizedTask = normalizeArchitectTask(task);
   const normalizedModel = model == null ? null : String(model).trim() || null;
   const requestKey = createArchitectureRequestKey({
-    projectRoot, baseHead, task: normalizedTask, model: normalizedModel
+    projectRoot, baseHead, task: normalizedTask, model: normalizedModel, sessionId
   });
   const reusable = await findReusableRequest(projectRoot, requestKey);
   if (reusable) return { status: reusable.status, paths: reusable.paths, reused: true };
@@ -85,7 +85,7 @@ export async function createArchitecturePlan({
     const createdAt = now.toISOString();
     const draft = {
       schema: ARCHITECT_SCHEMA, taskId, state: PLAN_STATES.DRAFT,
-      requestKey, provider: "codex", model: normalizedModel, projectRoot, baseHead,
+      requestKey, provider: "codex", model: normalizedModel, sessionId, projectRoot, baseHead,
       taskDigest: sha256(normalizedTask), taskArtifactDigest: sha256(taskMarkdown),
       planArtifactDigest: null, usage: null,
       createdAt, updatedAt: createdAt, decisionAt: null, decisionHead: null,

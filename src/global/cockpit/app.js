@@ -142,7 +142,7 @@ export async function runCockpitApp({
 
   async function refresh() {
     try {
-      const snapshot = await service.snapshot({ cwd });
+      const snapshot = await service.snapshot({ cwd, sessionId });
       view.setSnapshot(snapshot);
       view.setRowsFromTimeline(snapshot.timeline);
       await tailActiveRunTranscripts(snapshot.timeline);
@@ -175,15 +175,15 @@ export async function runCockpitApp({
     actions: {
       onShowPlan: (taskId) => {
         return runAction("Loading plan", async () => {
-          const plan = await service.showPlan({ cwd, taskId });
+          const plan = await service.showPlan({ cwd, taskId, sessionId });
           view.showDetail(taskId, plan.planMarkdown || plan.taskMarkdown || "(no plan markdown yet)");
         });
       },
       onApprove: (taskId) => {
-        return runAction("Approving", () => service.decidePlan({ cwd, taskId, decision: "approved" }));
+        return runAction("Approving", () => service.decidePlan({ cwd, taskId, decision: "approved", sessionId }));
       },
       onReject: (taskId) => {
-        return runAction("Rejecting", () => service.decidePlan({ cwd, taskId, decision: "rejected" }));
+        return runAction("Rejecting", () => service.decidePlan({ cwd, taskId, decision: "rejected", sessionId }));
       },
       onRequestExecute: (taskId, role) => {
         // `role` comes from the view's own role picker (view.js's
@@ -194,7 +194,7 @@ export async function runCockpitApp({
         // ever called once a real role has been picked (see view.js's
         // handleListInput — 'x' never calls this without one).
         return runAction("Asking PROJECT TEAM who should execute this", async () => {
-          const decision = await service.planExecution({ cwd, taskId, role });
+          const decision = await service.planExecution({ cwd, taskId, role, sessionId });
           // WAIT_FOR_PROJECT_TEAM with a real suggested alternative: the
           // human already explicitly asked for this task to execute now
           // (picked the role, pressed execute) — the assigned model just
@@ -210,7 +210,7 @@ export async function runCockpitApp({
             const alt = decision.suggestedAlternative;
             const altLabel = alt?.model?.displayName ?? alt?.model?.modelId ?? "unknown model";
             pushTranscript("kairo", `${blockedLabel} is unavailable for ${decision.role} — automatically falling back to ${alt?.provider} · ${altLabel}.`);
-            await service.executePlan({ cwd, taskId, confirmationTarget: decision.confirmationTarget });
+            await service.executePlan({ cwd, taskId, confirmationTarget: decision.confirmationTarget, sessionId });
             return;
           }
           view.showExecuteConfirm(taskId, decision);
@@ -232,7 +232,7 @@ export async function runCockpitApp({
         // freshly recomputed route before ever reserving quota or
         // launching (see service.js's own doc) — there is no free-form
         // agentId/model override anymore.
-        return runAction(label, () => service.executePlan({ cwd, taskId, confirmationTarget: decision?.confirmationTarget }));
+        return runAction(label, () => service.executePlan({ cwd, taskId, confirmationTarget: decision?.confirmationTarget, sessionId }));
       },
       onCancel: (taskId) => {
         return runAction("Cancelling run", () => service.cancelExecution({ cwd, taskId }));
@@ -407,7 +407,7 @@ export async function runCockpitApp({
         editor.disableSubmit = true;
         editor.setText("");
         return runAction("Asking Codex for a plan", async () => {
-          await service.submitArchitecture({ cwd, task: planTask });
+          await service.submitArchitecture({ cwd, task: planTask, sessionId });
           pushTranscript("kairo", "Plan requested from Codex. Review it below, then press a to approve.");
           editor.addToHistory(task);
         }).finally(() => { editor.disableSubmit = false; });

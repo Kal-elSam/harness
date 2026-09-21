@@ -207,7 +207,7 @@ test("submitTask still creates a plan for an actual change request", async () =>
   const result = await service.submitTask({ cwd: "/repo", task: "Implement pagination on the users table" });
   assert.equal(result.kind, "plan");
   assert.equal(result.taskId, "task-id");
-  assert.deepEqual(planCalls, [{ cwd: "/repo", task: "Implement pagination on the users table", model: null }]);
+  assert.deepEqual(planCalls, [{ cwd: "/repo", task: "Implement pagination on the users table", model: null, sessionId: null }]);
 });
 
 test("submitTask's explicit WorkMode overrides the isLikelyQuestion guess — ASK never creates a plan, even for a clear change request", async () => {
@@ -265,6 +265,49 @@ test("getSession/setMode persist and round-trip the real WorkMode for a project"
   assert.equal(updated.mode, "agent");
   const reread = await service.getSession({ cwd: "/repo" });
   assert.equal(reread.mode, "agent");
+});
+
+test("REGRESSION: snapshot with a real sessionId shows only that session's own tasks plus any task that predates sessions (no recorded sessionId)", async () => {
+  const own = { taskId: "own", state: "awaiting_approval", sessionId: "s1", provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
+  const other = { taskId: "other", state: "awaiting_approval", sessionId: "s2", provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
+  const legacy = { taskId: "legacy", state: "awaiting_approval", sessionId: null, provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    listPlans: async () => [own, other, legacy],
+    readExecution: async () => null, recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [], inspectEngramIntegration: () => ({ status: "unconfigured" })
+  });
+  const scoped = await service.snapshot({ cwd: "/repo", sessionId: "s1" });
+  assert.deepEqual(scoped.timeline.map((t) => t.taskId).sort(), ["legacy", "own"]);
+
+  const unscoped = await service.snapshot({ cwd: "/repo" });
+  assert.deepEqual(unscoped.timeline.map((t) => t.taskId).sort(), ["legacy", "other", "own"]);
+});
+
+test("REGRESSION: decidePlan/planExecution/executePlan/showPlan throw when a real sessionId doesn't own the task, but never block a caller or task with no sessionId", async () => {
+  const owned = { taskId: "task-1", sessionId: "s1", state: "awaiting_approval", provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    readPlan: async () => ({ status: owned, taskMarkdown: "# Task", planMarkdown: "# Plan" }),
+    transition: async () => ({ status: { ...owned, state: "approved" } }),
+    verifyExecution: async () => ({ status: owned }),
+    readExecution: async () => null,
+    routeProjectExecution: async () => ({ decision: "WAIT_FOR_PROJECT_TEAM", role: "Builder" })
+  });
+
+  await assert.rejects(() => service.showPlan({ cwd: "/repo", taskId: "task-1", sessionId: "s2" }), /different session/);
+  await assert.rejects(() => service.decidePlan({ cwd: "/repo", taskId: "task-1", decision: "approved", sessionId: "s2" }), /different session/);
+  await assert.rejects(() => service.planExecution({ cwd: "/repo", taskId: "task-1", role: "Builder", sessionId: "s2" }), /different session/);
+  await assert.rejects(
+    () => service.executePlan({ cwd: "/repo", taskId: "task-1", confirmationTarget: { role: "Builder" }, sessionId: "s2" }),
+    /different session/
+  );
+
+  // The owning session, or no sessionId at all, is never blocked.
+  const owner = await service.showPlan({ cwd: "/repo", taskId: "task-1", sessionId: "s1" });
+  assert.equal(owner.taskId, "task-1");
+  const noSession = await service.showPlan({ cwd: "/repo", taskId: "task-1" });
+  assert.equal(noSession.taskId, "task-1");
 });
 
 test("REGRESSION: getSession/setMode with a real sessionId route to the session's own v2 document, never the legacy project-wide session.json", async () => {

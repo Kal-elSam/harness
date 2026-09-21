@@ -117,7 +117,7 @@ test("approve action calls decidePlan then refreshes, surfacing errors via statu
   });
 
   await app.view.actions.onApprove("task-a");
-  assert.deepEqual(decideCalls, [{ cwd: "/repo", taskId: "task-a", decision: "approved" }]);
+  assert.deepEqual(decideCalls, [{ cwd: "/repo", taskId: "task-a", decision: "approved", sessionId: null }]);
   assert.equal(app.view.statusMessage, "");
 
   app.stop();
@@ -237,7 +237,7 @@ test("onRequestExecute(taskId, role) threads the user's explicit role choice thr
   });
 
   await app.view.actions.onRequestExecute("task-a", "Builder");
-  assert.deepEqual(planCalls, [{ cwd: "/repo", taskId: "task-a", role: "Builder" }]);
+  assert.deepEqual(planCalls, [{ cwd: "/repo", taskId: "task-a", role: "Builder", sessionId: null }]);
   assert.equal(app.view.executeDecision.confirmationTarget.role, "Builder");
 
   app.stop();
@@ -271,7 +271,7 @@ test("a WAIT_FOR_PROJECT_TEAM decision with a real suggested alternative auto-ex
 
   await app.view.actions.onRequestExecute("task-a", "Builder");
 
-  assert.deepEqual(executeCalls, [{ cwd: "/repo", taskId: "task-a", confirmationTarget }]);
+  assert.deepEqual(executeCalls, [{ cwd: "/repo", taskId: "task-a", confirmationTarget, sessionId: null }]);
   assert.equal(app.view.executeDecision, null, "never opens the y/n confirm prompt for an automatic fallback substitution");
   const texts = app.view.transcript.map((entry) => entry.text).join("\n");
   assert.match(texts, /Fable 5\.1/);
@@ -330,7 +330,7 @@ test("onExecute forwards a real ProjectExecutionPreview's confirmationTarget ins
 
   const confirmationTarget = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "codex::gpt-6-astra" };
   await app.view.actions.onExecute("task-a", { decision: "ROUTED", role: "Builder", provider: "codex", model: "gpt-6-astra", confirmationTarget });
-  assert.deepEqual(executeCalls, [{ cwd: "/repo", taskId: "task-a", confirmationTarget }]);
+  assert.deepEqual(executeCalls, [{ cwd: "/repo", taskId: "task-a", confirmationTarget, sessionId: null }]);
 
   app.stop();
 });
@@ -941,7 +941,7 @@ test("/plan forces a plan even for question-shaped text, bypassing submitTask's 
   assert.equal(app.view.workMode, "ask");
   editor.setText("/plan What is the best auth strategy here?");
   await editor.onSubmit(editor.getText());
-  assert.deepEqual(architectCalls, [{ cwd: "/repo", task: "What is the best auth strategy here?" }]);
+  assert.deepEqual(architectCalls, [{ cwd: "/repo", task: "What is the best auth strategy here?", sessionId: null }]);
   assert.equal(app.view.workMode, "plan");
   assert.deepEqual(modeCalls, [{ cwd: "/repo", mode: "plan", sessionId: null }]);
 

@@ -18,12 +18,18 @@ export function normalizeArchitectTask(task) {
   return String(task ?? "").normalize("NFKC").trim().replace(/\s+/g, " ");
 }
 
-export function createArchitectureRequestKey({ projectRoot, baseHead, task, model = null }) {
+export function createArchitectureRequestKey({ projectRoot, baseHead, task, model = null, sessionId = null }) {
   return sha256(JSON.stringify([
     String(projectRoot),
     String(baseHead),
     normalizeArchitectTask(task),
-    model == null ? "" : String(model).trim()
+    model == null ? "" : String(model).trim(),
+    // Two different real sessions asking the identical task text must
+    // never be silently collapsed into reusing each other's task — that
+    // would hand session B a taskId it never created, defeating
+    // session ownership before it even starts. A caller with no real
+    // sessionId (headless/backward-compat) keeps today's exact key.
+    sessionId == null ? "" : String(sessionId)
   ]));
 }
 

@@ -101,6 +101,23 @@ function isPersistableEntitlementStatus(status) {
   return status === ENTITLEMENT.ALLOWED || status === ENTITLEMENT.DENIED;
 }
 
+/**
+ * Enforces task->session ownership: throws only when BOTH sides are real
+ * (a real sessionId was given to act with, AND the task actually recorded
+ * one) and they disagree. A task created before Increment 3 (no recorded
+ * sessionId) or a caller that doesn't pass one (headless/backward
+ * compatibility) is never blocked — this is an added safety rail for the
+ * multi-session case, never a new restriction on data/callers that
+ * predate it.
+ * @param {object} status - a task record's own `.status`
+ * @param {string|null} sessionId
+ */
+function assertTaskOwnedBySession(status, sessionId) {
+  if (sessionId && status.sessionId && status.sessionId !== sessionId) {
+    throw new Error(`Task "${status.taskId}" belongs to a different session.`);
+  }
+}
+
 function publicPlan(record, execution = null) {
   const status = record.status ?? record;
   return {
@@ -109,6 +126,7 @@ function publicPlan(record, execution = null) {
     state: status.state,
     provider: status.provider,
     model: status.model ?? null,
+    sessionId: status.sessionId ?? null,
     baseHead: status.baseHead,
     createdAt: status.createdAt,
     updatedAt: status.updatedAt,
@@ -535,10 +553,21 @@ export function createConversationService(deps = {}) {
   }
 
   return {
-    async snapshot({ cwd }) {
+    /**
+     * With a real `sessionId`, the timeline shows only that session's own
+     * tasks, plus any task that predates Increment 3 (no recorded
+     * sessionId) — that older data stays visible rather than silently
+     * disappearing behind a filter it was created before. Without
+     * `sessionId` (backward compat for any caller that predates
+     * multi-session), every task is shown, exactly as today.
+     */
+    async snapshot({ cwd, sessionId = null }) {
       const projectRoot = await root(cwd);
       await recover(homeDir);
-      const plans = await listPlans(projectRoot);
+      const allPlans = await listPlans(projectRoot);
+      const plans = sessionId
+        ? allPlans.filter((plan) => !plan.sessionId || plan.sessionId === sessionId)
+        : allPlans;
       const projected = await Promise.all(plans.map(async (plan) => publicPlan(
         plan, await executionFor(projectRoot, plan.taskId)
       )));
@@ -778,9 +807,9 @@ export function createConversationService(deps = {}) {
       }
       return result;
     },
-    async submitArchitecture({ cwd, task, model = null }) {
+    async submitArchitecture({ cwd, task, model = null, sessionId = null }) {
       const projectRoot = await root(cwd);
-      const result = await createPlan({ cwd: projectRoot, task, model });
+      const result = await createPlan({ cwd: projectRoot, task, model, sessionId });
       return { ...publicPlan(result.status), reused: result.reused === true, projectRoot };
     },
     /**
@@ -883,7 +912,7 @@ export function createConversationService(deps = {}) {
         const answer = await this.askQuestion({ cwd, task, sessionId });
         return { kind: "answer", ...answer };
       }
-      const plan = await this.submitArchitecture({ cwd, task });
+      const plan = await this.submitArchitecture({ cwd, task, sessionId });
       return { kind: "plan", ...plan };
     },
     /**
@@ -1224,10 +1253,11 @@ export function createConversationService(deps = {}) {
       // next real provider call.
       await clearAskHistoryImpl(homeDir, projectRoot, sessionId).catch(() => {});
     },
-    async showPlan({ cwd, taskId }) {
+    async showPlan({ cwd, taskId, sessionId = null }) {
       const projectRoot = await root(cwd);
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
+      assertTaskOwnedBySession(record.status, sessionId);
       return {
         ...publicPlan(record, await executionFor(projectRoot, taskId)),
         projectRoot,
@@ -1235,11 +1265,14 @@ export function createConversationService(deps = {}) {
         planMarkdown: record.planMarkdown
       };
     },
-    async decidePlan({ cwd, taskId, decision }) {
+    async decidePlan({ cwd, taskId, decision, sessionId = null }) {
       if (![PLAN_STATES.APPROVED, PLAN_STATES.REJECTED].includes(decision)) {
         throw new Error("Decision must be approved or rejected.");
       }
       const projectRoot = await root(cwd);
+      const existing = await readPlan(projectRoot, taskId);
+      if (!existing) throw new Error(`Plan "${taskId}" not found.`);
+      assertTaskOwnedBySession(existing.status, sessionId);
       const record = await transition(projectRoot, taskId, decision);
       return { ...publicPlan(record, await executionFor(projectRoot, taskId)), projectRoot };
     },
@@ -1274,11 +1307,12 @@ export function createConversationService(deps = {}) {
      * no active team simply returns WAIT_FOR_PROJECT_TEAM, the router's
      * own honest answer, never a silent fallback to guessing from text.
      */
-    async planExecution({ cwd, taskId, role }) {
+    async planExecution({ cwd, taskId, role, sessionId = null }) {
       if (!role) throw new Error("planExecution requires an explicit role — it is never inferred from the task's text.");
       const projectRoot = await root(cwd);
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
+      assertTaskOwnedBySession(record.status, sessionId);
       const route = await this.routeProjectExecution(role, projectRoot);
       return { ...toExecutionPreview(route, record), projectRoot, taskId };
     },
@@ -1299,11 +1333,12 @@ export function createConversationService(deps = {}) {
      *   never silently re-routes to something else. Never accepts a
      *   MANUAL_HANDOFF candidate — that's never something Kairo launches.
      */
-    async executePlan({ cwd, taskId, confirmationTarget }) {
+    async executePlan({ cwd, taskId, confirmationTarget, sessionId = null }) {
       if (!confirmationTarget) throw new Error(`Cannot execute "${taskId}": a confirmationTarget from a fresh planExecution({role}) preview is required — PROJECT TEAM is the sole authority for execution.`);
       const projectRoot = await root(cwd);
       const existing = await executionFor(projectRoot, taskId);
       const record = await verifyExecution(projectRoot, taskId, { checkWorkingTree: !existing });
+      assertTaskOwnedBySession(record.status, sessionId);
       if (existing) return { ...publicPlan(record, existing), projectRoot, reused: true };
 
       const route = await this.routeProjectExecution(confirmationTarget.role, projectRoot);
