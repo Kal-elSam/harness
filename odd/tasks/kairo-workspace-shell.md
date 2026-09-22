@@ -29,8 +29,11 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   still passed `--link`. GREEN: isolated, discovery-disabled Pi host with the
   explicit Kairo extension; 13/13 focused tests and real `gentle-shell` 0.87.1
   isolated launch completed successfully.
-- [ ] KWS-04 Add a Pi provider/model bridge that exposes only Kairo-verified,
-  launchable routed choices; never invent subscription access.
+- [x] KWS-04 Add a Pi provider/model bridge that exposes only active,
+  automatic, launchable routed choices; never invent subscription access. RED:
+  provider module absent. GREEN: 17/17 focused host/provider tests and a real
+  isolated `gentle-shell --list-models kairo` run listed only the current
+  Kairo-routed Codex/OpenCode models.
 - [ ] KWS-05 Provide an honest unavailable/blocked state when no verified route
   exists, with the next Kairo action rather than Pi's generic warning.
 - [ ] KWS-06 Exercise the real temporary Gentle Shell/Pi harness and full
@@ -82,3 +85,8 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   resources`). Kairo now isolates the host and disables discovered extensions,
   skills, prompts, and themes; its own explicit extension remains the only
   product resource in the normal workspace launch.
+- KWS-04 completed locally in `6747c49` (`feat(host): bridge Pi models through
+  Kairo routes`). Pi now receives a `kairo` provider only after the Kairo
+  strategy yields active, automatic and locally launchable assignments. The
+  provider executes the existing native CLI adapter; it does not copy or
+  synthesize API credentials.
