@@ -26,7 +26,7 @@ export function formatHelpShort() {
 ${BRAND.tagline}. Coordinates agents you already have — never installs AI apps.
 
 Usage:
-  ${cli}                 Open the cockpit (setup on first run)
+  ${cli}                 Open the unified workspace
   ${cli} status          See how your setup is doing
   ${cli} sync            Repair what drifted
   ${cli} update          Update Kairo itself (npm)
@@ -52,8 +52,8 @@ sections, components, backups, and drift repair under ~/.harness.
 Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_NAME}).
 
 ## Configuration & health
-  ${cli}                              First run: onboarding → setup → cockpit (TTY).
-                                      Later: full-screen cockpit (wide/compact/minimal).
+  ${cli}                              Unified Gentle Shell workspace (TTY).
+                                      Requires gentle-shell + Pi on PATH; use --legacy-cockpit as fallback.
   ${cli} --dry-run                      Setup dry-run (scriptable)
   ${cli} --version
   ${cli} setup [--dry-run] [--yes] [--confirm] [--simple] [--no-preflight] [--agents <list|all>] [--components <list>]
@@ -72,10 +72,11 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} shell                          Operations cockpit (TTY)
   ${cli} architect --task "..." [--model <name>] [--cwd <dir>] [--json]
   ${cli} plans list|show|approve|reject [<taskId>] [--cwd <dir>] [--json]
-  ${cli} start [--cwd <dir>]             Interactive cockpit TUI, always a brand new real session
-  ${cli} resume [sessionId] [--cwd <dir>]    Resume a real session (picker if more than one and no id given)
+  ${cli} start [--cwd <dir>]             Start a new unified workspace session
+  ${cli} resume [sessionId] [--cwd <dir>]    Resume a unified workspace session (picker if more than one and no id given)
   ${cli} list [--cwd <dir>] [--json]         Real sessions for this project, most recently updated first
-  ${cli} ui [--cwd <dir>] [--port <n>]       Local loopback conversation UI
+  ${cli} ui [--cwd <dir>] [--port <n>]       Unified workspace; --legacy-cockpit opens the legacy browser UI
+  ${cli} conversation                     Unified workspace
   ${cli} conversation snapshot|architect|show|approve|reject|cancel ... [--json]
   ${cli} conversation execute <taskId> [--role <role>] [--confirm] [--model <name>] [--json]  No --confirm: preview only. --confirm: revalidate and execute the shown target.
   ${cli} run --agent <id> --task "..." [--strategy direct|orchestrated] [--model <name>] [--cwd <dir>] [--permissions force|yolo|read-only] [--allow-unsafe-permissions] [--capture-transcript] [--follow] [--no-wait] [--json]
@@ -144,8 +145,8 @@ Scopes:
 Commands:
   architect  Run subscription-authenticated Codex in bounded read-only planning mode.
   plans      Inspect and explicitly approve or reject project-local architecture plans.
-  shell      Operations cockpit (TTY). Bare ${cli} opens onboarding when ~/.harness/state.json
-             is missing, otherwise the cockpit. Explicit ${cli} shell always opens the cockpit.
+  shell      Operations cockpit (TTY). Bare ${cli} opens the Unified Gentle Shell workspace;
+             explicit ${cli} shell keeps the legacy operations cockpit available.
              Keys: ↑↓ · Enter · Esc back/exit · R refresh · C cancel · ? help.
              Tab switches region only when content is interactive (runs/launch).
   run        Launch a managed agent run with local audit trail.

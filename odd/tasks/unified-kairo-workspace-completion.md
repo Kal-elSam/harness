@@ -16,6 +16,7 @@ The change was archived with 23/23 implementation checkboxes, but no `sdd-verify
 - [x] UWS-04 Route `kairo conversation` and `kairo ui` through the new host by default, retaining `--legacy-cockpit` as the explicit compatibility escape hatch. New regression tests were RED then GREEN.
 - [x] UWS-05 Produce a manual verification report equivalent to the unavailable `sdd-verify` phase, then re-archive OpenSpec only if all required checks pass or are explicitly deferred with evidence. `verify-report.md` records manual evidence and explicitly does not claim `sdd-verify` ran.
 - [x] UWS-06 Commit the completed local work on this feature branch; do not push, create a PR, merge, or publish. Commit: `0968661` (`feat(host): unify kairo interactive workspace`).
+- [x] UWS-07 Correct stale CLI help that still described bare `kairo` as a cockpit; regression tests were RED then GREEN.
 
 ## Constraints
 
@@ -38,3 +39,4 @@ The change was archived with 23/23 implementation checkboxes, but no `sdd-verify
 - Created on branch `feat/unified-kairo-workspace-completion` after auditing the prematurely archived change.
 - OpenSpec was re-archived with `verify-report.md` after the final passing suite.
 - The inherited implementation had existed uncommitted on `main`; it was preserved in one recovery commit rather than falsely inventing the five historical PR slices described by the archived task plan.
+- Help correction pending its own local documentation commit.
