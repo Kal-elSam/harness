@@ -35,12 +35,12 @@ function fakePi() {
   };
 }
 
-test("workspace lines are compact Kairo facts, not host resource inventory", () => {
+test("workspace opening surface is compact and leaves detail behind Kairo commands", () => {
   assert.deepEqual(formatKairoWorkspaceLines(snapshot), [
-    "KAIRO · agentic-harness · session 11111111 · agent",
-    "TEAM · Builder: GPT-6 Terra via codex · Reviewer: MiniMax-M3 via opencode-go",
-    "USAGE · codex 2400 tokens · MEMORY · configured",
-    "Commands: /kairo /kairo-team /kairo-sessions /kairo-usage /kairo-route /kairo-memory"
+    "KAIRO WORKSPACE · agentic-harness",
+    "SESSION · session 11111111 · agent",
+    "TEAM · active · 2 routed roles",
+    "Details: /kairo-team · /kairo-route · /kairo-usage · /kairo-memory"
   ]);
 });
 

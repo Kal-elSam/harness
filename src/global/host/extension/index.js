@@ -32,12 +32,18 @@ function teamLabel(assignments = []) {
   return assignments.map((entry) => `${entry.role}: ${entry.model} via ${entry.via}`).join(" · ");
 }
 
+function teamSummary(team) {
+  if (team?.state !== "active") return team?.state ?? "not analyzed";
+  const count = Array.isArray(team.assignments) ? team.assignments.length : 0;
+  return `${count} routed role${count === 1 ? "" : "s"}`;
+}
+
 export function formatKairoWorkspaceLines(snapshot) {
   return [
-    `KAIRO · ${snapshot.project.label} · ${sessionLabel(snapshot.session)}`,
-    `TEAM · ${teamLabel(snapshot.team.assignments)}`,
-    `USAGE · ${usageLabel(snapshot.usage)} · MEMORY · ${snapshot.memory.status}`,
-    "Commands: /kairo /kairo-team /kairo-sessions /kairo-usage /kairo-route /kairo-memory"
+    `KAIRO WORKSPACE · ${snapshot.project.label}`,
+    `SESSION · ${sessionLabel(snapshot.session)}`,
+    `TEAM · ${snapshot.team.state} · ${teamSummary(snapshot.team)}`,
+    "Details: /kairo-team · /kairo-route · /kairo-usage · /kairo-memory"
   ];
 }
 
