@@ -73,4 +73,7 @@ Discovered during implementation: enabling real per-model gating while leaving t
 
 - Created: 2026-09-22
 - Scope 1 (core probe primitive + classification + cache) complete: full suite 2008/2008, stress-tested 3x. Not yet wired into `checkCandidate`/eligibility or the UI — that's Scopes 2-3, and remains fully backward compatible (Increment 5's manual toggle still governs real eligibility until Scope 2 lands): 2026-09-22
-- Next: Scope 2 (wire the real probe into `checkCandidate`/eligibility)
+- Scope 2 + 3 (real wiring + manual-toggle retirement, shipped together) complete: full suite 2006/2006, stress-tested 3x, zero real-disk leakage: 2026-09-22
+- Shipped as v0.35.0: PR #324 merged to main with a real merge commit (d3b9f3c), release commit a10b709, tagged `kairo-runtime-v0.35.0`, published to npm (CI green on Node 20/22/24), global install verified (`kairo --version` → 0.35.0, gitHead matches a10b709): 2026-09-22
+- Deferred, not a blocker: wiring a real execution-adapter limit-hit to call `invalidateCursorPoolAccess` immediately (the primitive already exists and is tested).
+- Next: Scope 4 (PROJECT TEAM readable detail block) remains fully unstarted — separate, explicitly deferred decision, not started without a new go-ahead.
