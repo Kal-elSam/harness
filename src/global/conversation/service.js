@@ -774,10 +774,13 @@ export function createConversationService(deps = {}) {
         // AA doesn't track them, or (Claude, today) Kairo only has a
         // documented catalog rather than a live per-account discovery.
         const coverage = summarizeCatalogCoverage([
-          { adapterId: "codex", catalogStatus: codexCatalog?.status ?? "unknown", models: codexCatalog?.models ?? [] },
-          { adapterId: "claude", catalogStatus: claudeCatalog.status, models: claudeCatalog.models },
-          { adapterId: "opencode-go", catalogStatus: opencodeGoCatalog?.status ?? "unknown", models: opencodeGoCatalog?.models ?? [] },
-          { adapterId: "cursor", catalogStatus: cursorCatalog?.status ?? "unknown", models: cursorCatalog?.models ?? [] }
+          { adapterId: "codex", catalogStatus: codexCatalog?.status ?? "unknown", models: codexCatalog?.models ?? [], error: codexCatalog?.error ?? null },
+          { adapterId: "claude", catalogStatus: claudeCatalog.status, models: claudeCatalog.models, error: claudeCatalog.error ?? null },
+          { adapterId: "opencode-go", catalogStatus: opencodeGoCatalog?.status ?? "unknown", models: opencodeGoCatalog?.models ?? [], error: opencodeGoCatalog?.error ?? null },
+          // Real catalog read failure surfaces here — e.g. "Authentication
+          // required" when Cursor isn't authenticated, never a generic
+          // "unknown" status with no explanation (see fitWhyLines()).
+          { adapterId: "cursor", catalogStatus: cursorCatalog?.status ?? "unknown", models: cursorCatalog?.models ?? [], error: cursorCatalog?.error ?? null }
         ], aa.models);
         // Real catalog models that exist but couldn't be matched to any
         // real Artificial Analysis data — shown honestly as UNSCORED in
