@@ -265,12 +265,9 @@ test("checkCandidate always excludes opencode-zen from real task routing (PAYG r
   assert.match(zen.reason, /PAYG/);
 });
 
-test("checkCandidate treats cursor as a real automatic candidate for real task routing (requireLaunchable: true, the default) — Cursor's own execution adapter builds a real, auditable non-interactive launch, once quota is explicitly confirmed", () => {
-  const cursor = checkCandidate("cursor", {
-    adapters: [{ id: "cursor", available: true, launchable: true }],
-    cursorManualQuota: { manualExhausted: false, reason: null }
-  });
-  assert.equal(cursor.ok, true, "a genuinely available, launchable, and explicitly quota-confirmed Cursor candidate must be real task-routable, exactly like Codex/Claude");
+test("checkCandidate treats cursor as a real automatic candidate for real task routing (requireLaunchable: true, the default) — Cursor's own execution adapter builds a real, auditable non-interactive launch", () => {
+  const cursor = checkCandidate("cursor", { adapters: [{ id: "cursor", available: true, launchable: true }] });
+  assert.equal(cursor.ok, true, "a genuinely available and launchable Cursor candidate must be real task-routable, exactly like Codex/Claude — real per-model quota is judged separately (see cursor-entitlement.js), never here");
 });
 
 test("checkCandidate rejects cursor for real task routing when it genuinely isn't launchable yet — same launchable gate as codex/claude, no special case", () => {
@@ -336,42 +333,10 @@ test("checkCandidate({requireLaunchable: false}) still requires cursor to be gen
   assert.match(result.reason, /not on PATH/);
 });
 
-test("checkCandidate({requireLaunchable: false}) excludes cursor when the human manually marked it out of credits", () => {
-  const adapters = [{ id: "cursor", available: true, launchable: true, reason: null }];
-  const result = checkCandidate(
-    "cursor", { adapters, cursorManualQuota: { manualExhausted: true, reason: "Cursor marked out of credits (manual, via /project cursor exhausted)" } },
-    { requireLaunchable: false }
-  );
-  assert.equal(result.ok, false, "a real, human-reported exhausted Cursor must never still be recommended");
-  assert.match(result.reason, /out of credits/);
-});
-
-test("checkCandidate({requireLaunchable: false}) recommends cursor again once the human clears the manual quota flag", () => {
-  const adapters = [{ id: "cursor", available: true, launchable: true, reason: null }];
-  const result = checkCandidate(
-    "cursor", { adapters, cursorManualQuota: { manualExhausted: false, reason: null } },
-    { requireLaunchable: false }
-  );
-  assert.equal(result.ok, true, "clearing the manual flag must restore cursor as a real recommendation");
-});
-
-test("REGRESSION: checkCandidate is fail-closed on Cursor by default — no cursorManualQuota record at all means unverified, never silently available", () => {
+test("REGRESSION: checkCandidate no longer gates Cursor on any manual quota flag — real per-model quota moved to cursor-entitlement.js/resolveProjectRoute's per-model entitlement check", () => {
   const adapters = [{ id: "cursor", available: true, launchable: true, reason: null }];
   const result = checkCandidate("cursor", { adapters }, { requireLaunchable: false });
-  assert.equal(result.ok, false, "that Cursor is available/launchable proves nothing about real account quota — an untouched record must never be treated as confirmed");
-  assert.match(result.reason, /unverified/);
-});
-
-test("REGRESSION: checkCandidate distinguishes 'never confirmed' (unverified) from 'explicitly exhausted' — both block, but with their own real reason", () => {
-  const adapters = [{ id: "cursor", available: true, launchable: true, reason: null }];
-  const unverified = checkCandidate("cursor", { adapters }, { requireLaunchable: false });
-  assert.match(unverified.reason, /unverified/);
-
-  const exhausted = checkCandidate(
-    "cursor", { adapters, cursorManualQuota: { manualExhausted: true, reason: null } },
-    { requireLaunchable: false }
-  );
-  assert.match(exhausted.reason, /out of credits/);
+  assert.equal(result.ok, true, "adapter-level availability/launchability only — identical treatment to codex/claude/opencode-go now");
 });
 
 test("selectExecutionProvider sizes the model to the task's real effort too — a trivial fix doesn't get Claude's biggest model", () => {

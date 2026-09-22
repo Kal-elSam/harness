@@ -1064,13 +1064,9 @@ test("/project refresh calls the real refreshProjectStrategy", async () => {
   app.stop();
 });
 
-test("/project cursor exhausted|available calls the real setCursorManualQuota with the real intent — the only way Cursor's quota state ever changes", async () => {
+test("REGRESSION: /project cursor no longer toggles a manual flag — real access is detected automatically, and the command says so", async () => {
   let editor;
-  const quotaCalls = [];
-  const service = {
-    snapshot: async () => makeSnapshot([]),
-    setCursorManualQuota: async (args) => { quotaCalls.push(args); return { manualExhausted: args.exhausted }; }
-  };
+  const service = { snapshot: async () => makeSnapshot([]) };
   const app = await runCockpitApp({
     cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
     editorFactory: () => { editor = makeFakeEditor(); return editor; },
@@ -1078,27 +1074,8 @@ test("/project cursor exhausted|available calls the real setCursorManualQuota wi
   });
   editor.setText("/project cursor exhausted");
   await editor.onSubmit(editor.getText());
-  editor.setText("/project cursor available");
-  await editor.onSubmit(editor.getText());
-  assert.deepEqual(quotaCalls, [{ exhausted: true }, { exhausted: false }]);
-  app.stop();
-});
-
-test("/project cursor with no real exhausted|available argument never calls setCursorManualQuota — an ambiguous toggle must never guess", async () => {
-  let editor;
-  let called = false;
-  const service = {
-    snapshot: async () => makeSnapshot([]),
-    setCursorManualQuota: async () => { called = true; return {}; }
-  };
-  const app = await runCockpitApp({
-    cwd: "/repo", service, terminalFactory: () => ({}), tuiFactory: () => makeFakeTui(),
-    editorFactory: () => { editor = makeFakeEditor(); return editor; },
-    setIntervalImpl: () => 1, clearIntervalImpl: () => {}
-  });
-  editor.setText("/project cursor");
-  await editor.onSubmit(editor.getText());
-  assert.equal(called, false);
+  const texts = app.view.transcript.map((entry) => entry.text).join("\n");
+  assert.match(texts, /detected automatically/);
   app.stop();
 });
 

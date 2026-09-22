@@ -29,6 +29,7 @@ export function harnessHomePaths(homeDir) {
     usageDir: join(root, "usage"),
     modelIntelligencePath: join(root, "model-intelligence.json"),
     claudeEntitlementPath: join(root, "claude-entitlement.json"),
+    cursorAccessPath: join(root, "cursor-access.json"),
     huggingfaceLeaderboardPath: join(root, "huggingface-leaderboard.json")
   };
 }
