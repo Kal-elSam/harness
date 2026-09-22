@@ -480,10 +480,17 @@ export function buildCompleteCandidateCatalog(providerCatalogs, aaModels, deps =
  * "current" and "unknown" lifecycle candidates are BOTH kept — an
  * unrecognized lineage never excludes a real candidate from being
  * recommended, only a PROVEN newer same-lineage successor does. Manual-
- * only real candidates (Cursor, OpenCode Go today) are kept too — this
- * The hydrated result is split afterward: recommendations fail closed on
- * entitlement, while an explicit human picker may additionally show an
- * unverified candidate with its access warning.
+ * only real candidates (Cursor, OpenCode Go today) are kept too.
+ *
+ * This is an internal, unfiltered-on-unverified building block — not a
+ * UI-facing selection surface itself. `manualSelectionPool` (below) still
+ * retains an unverified candidate for lower-level audit/evidence use
+ * (e.g. snapshot.modelIntelligence, `/models --evidence`'s AI TEAM/
+ * EFFICIENT TEAM detail lines, which read `aiTeam`/`efficientTeam`, not
+ * this pool). Every real human-facing SELECTION catalog built on top of
+ * it (computeBootstrapAnalystCatalog, computeProjectTeamEditCatalog) does
+ * its own additional entitlement filtering that also excludes unverified
+ * — a human can no longer explicitly pick an unverified model anywhere.
  * @param {Array<object>} scoredAll - scoreAvailableModels() output, every candidate provider regardless of eligibility.
  * @param {Array<ModelCandidateIdentity>} completeCatalog - buildCompleteCandidateCatalog() output, same provider catalogs.
  * @returns {Array<RecommendationPoolCandidate>}
@@ -501,9 +508,10 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
     // unknown, exactly like any other real unrecognized lineage.
     if (identity?.lifecycle === "superseded") continue;
     // Denied entitlement is the same class as superseded: it is not a
-    // selectable candidate anywhere. Unverified access is retained here so
-    // the explicit manual catalogs can still offer it with an honest warning;
-    // recommendation-safe filtering happens in buildScoredCandidatePools.
+    // selectable candidate anywhere. Unverified access IS still retained
+    // in this internal pool (see this function's own doc above) —
+    // recommendation-safe filtering happens in buildScoredCandidatePools,
+    // and every real UI selection catalog filters unverified out too.
     if (identity?.entitlement === ENTITLEMENT.DENIED) continue;
     const fallbackEntitlement = scored.adapterId === "claude"
       ? ENTITLEMENT.UNVERIFIED
@@ -526,10 +534,14 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
 }
 
 /**
- * Builds the two scored selection surfaces from one identity hydration pass.
- * `recommendationPool` is fail-closed for per-model entitlement; the manual
- * pool additionally retains unverified Claude models for explicit human
- * selection. Denied and superseded candidates enter neither pool.
+ * Builds two candidate pools from one identity hydration pass.
+ * `recommendationPool` is fail-closed for per-model entitlement (denied
+ * AND unverified excluded). `manualSelectionPool` is the internal,
+ * unfiltered-on-unverified pool `hydrateScoredCandidatePool` returns —
+ * an audit/evidence-only structure, never offered as a real human
+ * selection surface itself (see that function's own doc for exactly
+ * which UI catalogs filter it further before any human ever sees a
+ * candidate from it). Denied and superseded candidates enter neither pool.
  * @param {Array<object>} scoredAll
  * @param {Array<ModelCandidateIdentity>} completeCatalog
  * @returns {{recommendationPool: Array<RecommendationPoolCandidate>, manualSelectionPool: Array<RecommendationPoolCandidate>}}

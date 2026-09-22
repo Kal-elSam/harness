@@ -47,7 +47,7 @@ export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor", "ope
 // Bootstrap Analyst catalog or the project team role editor, scored or
 // unscored. A model reappears only once a real check reports allowed or
 // not_applicable.
-const BLOCKED_ENTITLEMENTS = new Set([ENTITLEMENT.DENIED, ENTITLEMENT.UNVERIFIED]);
+export const BLOCKED_ENTITLEMENTS = new Set([ENTITLEMENT.DENIED, ENTITLEMENT.UNVERIFIED]);
 
 /**
  * The Bootstrap Analyst as a temporary, read-only WORKFLOW — deliberately

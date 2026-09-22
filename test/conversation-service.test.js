@@ -1025,6 +1025,18 @@ test("REGRESSION: snapshot's real unscoredModels preserves candidateKey/accessMo
     inspectEngramIntegration: () => ({ status: "configured" }),
     readCodexUsage: async () => null,
     readClaudeUsage: async () => null,
+    // claude-opus-5 must be entitlement-ALLOWED here — this test is about
+    // real field preservation (candidateKey/accessMode/lifecycle) and
+    // supersession, orthogonal to entitlement; an UNVERIFIED default
+    // (the real behavior with no cache) would now correctly exclude it.
+    // subscriptionType must match resolveClaudeEntitlements' own real
+    // cache-invalidation check, or the mocked cache is silently ignored.
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => ({
+      subscriptionType: "pro",
+      fetchedAt: new Date().toISOString(),
+      models: { "claude-opus-5": { status: "allowed", probedAt: new Date().toISOString() } }
+    }),
     readCodexModels: async () => ({ status: "measured", models: [] }),
     // None of these three real ids have an AA match below — all unscored.
     // opus-4-6/4-8 are a real, recognized older generation once opus-5 is
@@ -1051,6 +1063,38 @@ test("REGRESSION: snapshot's real unscoredModels preserves candidateKey/accessMo
   assert.equal(byId["claude-opus-5"].candidateKey, "claude::claude-opus-5");
   assert.equal(byId["claude-opus-4-6"], undefined, "a real superseded generation must never appear in unscoredModels");
   assert.equal(byId["claude-opus-4-8"], undefined, "a real superseded generation must never appear in unscoredModels");
+});
+
+test("REGRESSION: snapshot's real unscoredModels — the exact list /models --evidence renders — excludes an UNVERIFIED unscored Claude model, not just a DENIED one", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    // Never spawn the real Claude CLI in a test — mocked deterministic,
+    // not this machine's own real auth state.
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    // No real entitlement cache at all — the exact real-world default,
+    // per resolveClaudeEntitlements — resolves to UNVERIFIED.
+    readClaudeEntitlementCache: async () => null,
+    readClaudeModels: () => ({ status: "documented", models: [{ id: "claude-unscored-model", displayName: "Claude Unscored Model" }] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    readArtificialAnalysisModels: async () => ({ status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h", models: [] }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
+  });
+
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.ok(
+    !snapshot.modelIntelligence.unscoredModels.some((m) => m.modelId === "claude-unscored-model"),
+    "an UNVERIFIED unscored Claude model must never appear in /models --evidence's UNSCORED list — 'unavailable' means absent, never visible with a warning"
+  );
 });
 
 test("snapshot excludes a provider from FIT once its real quota is exhausted, even though it would otherwise win on capability", async () => {

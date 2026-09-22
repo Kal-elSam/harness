@@ -29,7 +29,7 @@ import { createSession, getSession, listSessions, sessionDirFor, updateSessionMo
 import { acquireSessionLock } from "./session-lock.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
-  ASK_SUPPORTED_ADAPTERS, buildProjectStrategy, computeBootstrapAnalystCatalog,
+  ASK_SUPPORTED_ADAPTERS, BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog,
   isStrategyStale, computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "./project-strategy.js";
 import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
@@ -793,10 +793,13 @@ export function createConversationService(deps = {}) {
           // successor is exactly as stale as a scored one would be, and
           // must never surface in /models --evidence's UNSCORED list or
           // the projectTeam edit catalog as if it were still current.
+          // "Unavailable" (denied OR unverified) means absent here too —
+          // this exact array is what aiTeamDetailLines() (/models
+          // --evidence) renders directly, unfiltered by anything else.
           .filter((candidate) => (
             candidate.evidenceStatus === "unscored"
             && candidate.lifecycle !== "superseded"
-            && candidate.entitlement !== ENTITLEMENT.DENIED
+            && !BLOCKED_ENTITLEMENTS.has(candidate.entitlement)
           ))
           .map((candidate) => ({
             adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.rawDisplayName,
