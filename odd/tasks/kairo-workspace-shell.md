@@ -34,8 +34,10 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   provider module absent. GREEN: 17/17 focused host/provider tests and a real
   isolated `gentle-shell --list-models kairo` run listed only the current
   Kairo-routed Codex/OpenCode models.
-- [ ] KWS-05 Provide an honest unavailable/blocked state when no verified route
-  exists, with the next Kairo action rather than Pi's generic warning.
+- [x] KWS-05 Provide an honest unavailable/blocked state when no verified route
+  exists, with the next Kairo action rather than Pi's generic warning. RED:
+  missing routes still rendered the ordinary workspace. GREEN: focused host
+  tests show the Kairo-owned unavailable state and its recovery action.
 - [ ] KWS-06 Exercise the real temporary Gentle Shell/Pi harness and full
   regression suite; document any host API/version constraints.
 
@@ -90,3 +92,7 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   strategy yields active, automatic and locally launchable assignments. The
   provider executes the existing native CLI adapter; it does not copy or
   synthesize API credentials.
+- KWS-05 completed locally in `a3f5a4c` (`fix(host): explain unavailable Kairo
+  routes`). If no verified automatic route exists, the workspace now replaces
+  the ordinary widget with an explicit unavailable state and the real recovery
+  action instead of implying that Pi's model setup is the fix.
