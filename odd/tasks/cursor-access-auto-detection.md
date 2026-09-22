@@ -63,11 +63,19 @@ Discovered during implementation: enabling real per-model gating while leaving t
 - [x] Tests RED→GREEN: `execution-router.test.js` (checkCandidate simplified — 4 stale manual-quota tests replaced with 1); `conversation-service.test.js` (`setCursorManualQuota` removal confirmed; real probe wiring with explicit mocks, never relying on an unmocked real spawn; per-model UNVERIFIED-by-default confirmed); `cockpit-view.test.js` (`resolveAssignmentAvailability`'s Cursor branch — available/exhausted/unverified/auto-exempt); `project-router.test.js` (real execution blocking for an exhausted Cursor assignment, reusing the existing generic `blockingEntitlement` mechanism); `cockpit-app.test.js` (`/project cursor` now says access is automatic).
 - [x] Full suite green: 2006/2006 (1996 + 10 net new/changed), stress-tested 3x, zero real-disk leakage.
 
-### Scope 4 — PROJECT TEAM readable detail block (not started, carried over)
+### Scope 4 — PROJECT TEAM readable detail block
 
-- [ ] Compact rows (role + model only); a wide, readable detail block below the selection for role/model/access-path/access-status/multi-line why.
-- [ ] Analyst and Orchestrator shown with the same clarity as editable roles.
-- [ ] Technical evidence stays behind `e`.
+Branch: `fix/project-team-readable-detail`. Pure UI — no ranking, routing, quota, or ProjectStrategy change. `invalidateCursorPoolAccess`'s real-execution call site remains its own separate, still-deferred follow-up, not touched here.
+
+- [x] `buildResultRoleList()` (project-overlay.js): compact rows are role + model only now — no inline `description`, no provider (`this.view.aiTeamLabel(entry.model)` replaces `teamRoleLabel`). The old inline WHY sentence and provider suffix, cramped into the picker's fixed-width column, were the real, reported clipping cause.
+- [x] New `pushAssignmentDetail(role, model, { entry, note })` closure inside `render()`'s `S.RESULT` case: renders `Model:` / `Via:` / `Access:` (+ `Why:` when a real `entry` is passed), reusing `resolveAssignmentAvailability()` and `explainTeamDecision()` directly — no second availability/explanation formula.
+- [x] Project Analyst and Orchestrator now render as full, non-editable context blocks above `PROJECT TEAM` (Orchestrator was a real, confirmed gap — it lived in `strategy.orchestrator` but was never shown in the overlay at all before this).
+- [x] The selected role's own detail block renders below the compact list, resolved fresh every render via `resultSelectList.getSelectedItem()` — keyboard and mouse navigation both flow through the same `selectedIndex`, so no separate selection-tracking state was added.
+- [x] Evidence/Quality/Efficient stay behind `e`, unchanged. Enter/`a`/`e`/`r`/Esc behavior unchanged (all 55 pre-existing regression tests pass with zero modification).
+- [x] Real word-wrapping (pi-tui's `Text` component) confirmed via a dedicated test with a long WHY sentence — never truncated. One layout bug found and fixed along the way: concatenating a warning string with a literal `"  needs reanalysis"` suffix could get that literal phrase split mid-wrap; moved to its own short, never-wrapping line.
+- [x] Tests: 7 new regression tests in `test/project-overlay.test.js` (compact-row content, default selection, keyboard/mouse-equivalent selection change, Cursor-exhausted/Claude-unverified/available Access text, Analyst/Orchestrator non-editability, long-reason wrapping, narrow-width border/footer).
+- [x] Full suite green: 2013/2013 (2006 + 7 new), stress-tested 3x, zero real-disk leakage.
+- [ ] Committed locally on `fix/project-team-readable-detail`; push/PR/CI/merge/publish deliberately NOT run yet — the plan itself scopes those as a separate remote authorization.
 
 ## Progress
 
