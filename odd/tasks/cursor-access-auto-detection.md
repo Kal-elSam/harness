@@ -82,7 +82,7 @@ Branch: `fix/project-team-readable-detail`. Pure UI — no ranking, routing, quo
 - [x] `resultSelectList.onSelect` removed entirely — pi-tui's `SelectList` already moves `selectedIndex` on both a keyboard confirm and a real mouse click before calling `onSelect`, so leaving it unset makes selecting a row (either way) a real no-op beyond updating the selection.
 - [x] `handleInput`'s `S.RESULT` branch now intercepts Enter explicitly, before it reaches `resultSelectList.handleInput` — Enter is the one, explicit way to open the selected role's edit picker; arrow keys and Esc are unaffected (still routed through `resultSelectList.handleInput` as before).
 - [x] Tests: the old "click opens the picker" test was replaced with one asserting a click only moves selection/updates the detail block and never touches the edit catalog, followed by an explicit Enter that does; the one test that poked `resultSelectList.onSelect` directly now drives a real Enter keypress instead; one new test confirms available/blocked/overridden rows are all still strictly role + model, with override/reanalysis status confirmed present only in the detail block.
-- [x] Committed locally: `fix(cockpit): separate project team selection from editing` — full suite 2014/2014 (2013 + 1 new), stress-tested 3x, zero real-disk leakage.
+- [x] Committed locally: `336a6a5` (`fix(cockpit): separate project team selection from editing`) — full suite 2014/2014 (2013 + 1 new), stress-tested 3x, zero real-disk leakage.
 - [ ] push/PR/CI/merge/publish deliberately NOT run yet — the plan itself scopes those as a separate remote authorization (planned as v0.35.1).
 
 ## Progress
@@ -92,4 +92,5 @@ Branch: `fix/project-team-readable-detail`. Pure UI — no ranking, routing, quo
 - Scope 2 + 3 (real wiring + manual-toggle retirement, shipped together) complete: full suite 2006/2006, stress-tested 3x, zero real-disk leakage: 2026-09-22
 - Shipped as v0.35.0: PR #324 merged to main with a real merge commit (d3b9f3c), release commit a10b709, tagged `kairo-runtime-v0.35.0`, published to npm (CI green on Node 20/22/24), global install verified (`kairo --version` → 0.35.0, gitHead matches a10b709): 2026-09-22
 - Deferred, not a blocker: wiring a real execution-adapter limit-hit to call `invalidateCursorPoolAccess` immediately (the primitive already exists and is tested).
-- Next: Scope 4 (PROJECT TEAM readable detail block) remains fully unstarted — separate, explicitly deferred decision, not started without a new go-ahead.
+- Scope 4 (PROJECT TEAM readable detail block) complete: `af9b01e` (initial readable detail block) + `336a6a5` (pre-ship correction — strictly role+model rows, click-selects/Enter-edits) on branch `fix/project-team-readable-detail`. Full suite 2014/2014, stress-tested 3x, zero real-disk leakage: 2026-09-22
+- Next: request remote authorization to push/PR/CI/merge/publish `fix/project-team-readable-detail` as v0.35.1.
