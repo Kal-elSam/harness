@@ -116,3 +116,28 @@ export function invalidateCursorPoolAccess(cache, pool) {
   delete pools[pool];
   return { fetchedAt: cache.fetchedAt, pools };
 }
+
+/**
+ * Persistent wrapper around the pure invalidateCursorPoolAccess above — for
+ * a real execution that just reported a real limit hit, so a stale
+ * AVAILABLE on disk never outlives the TTL after real evidence already
+ * contradicted it. Best-effort: a read/write failure here must never
+ * surface as (or replace) the real run's own state/error — see this
+ * file's own header doc for why reads already fail closed to null.
+ * @param {string} homeDir
+ * @param {string} pool
+ * @param {object} [deps]
+ */
+export async function invalidateStoredCursorPoolAccess(homeDir, pool, deps = {}) {
+  const readCache = deps.readCursorAccessCache ?? readCursorAccessCache;
+  const writeCache = deps.writeCursorAccessCache ?? writeCursorAccessCache;
+  try {
+    const cache = await readCache(homeDir);
+    if (!cache) return;
+    const updated = invalidateCursorPoolAccess(cache, pool);
+    if (updated === cache) return;
+    await writeCache(homeDir, updated);
+  } catch {
+    // best-effort — never throw, never affect the real run's own result
+  }
+}

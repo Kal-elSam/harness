@@ -58,6 +58,11 @@ const PROBE_PROMPT = "hi";
 // stays UNVERIFIED, never guessed EXHAUSTED.
 const LIMIT_TEXT_PATTERN = /(usage limit|rate limit|quota|out of credits|insufficient credits|monthly limit|spending limit)/i;
 
+/** Shared with detectCursorLimitFromOutput below — one real classifier, never two separate heuristics for the same wording. */
+function isLimitMessage(text) {
+  return typeof text === "string" && LIMIT_TEXT_PATTERN.test(text);
+}
+
 function unverifiedResult(pool, reason = null) {
   return { pool, status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: reason == null ? null : String(reason), probedAt: new Date().toISOString() };
 }
@@ -118,7 +123,7 @@ export async function probeCursorPoolAccess({
       }
       if (parsed?.is_error === true) {
         const message = typeof parsed.result === "string" ? parsed.result : (stderr.trim() || null);
-        if (message && LIMIT_TEXT_PATTERN.test(message)) {
+        if (isLimitMessage(message)) {
           return finish({ pool, status: CURSOR_ACCESS_STATUS.EXHAUSTED, reason: message, probedAt: new Date().toISOString() });
         }
         return finish(unverifiedResult(pool, message ?? "cursor-agent returned an unrecognized error"));
@@ -129,4 +134,32 @@ export async function probeCursorPoolAccess({
       finish({ pool, status: CURSOR_ACCESS_STATUS.AVAILABLE, reason: null, probedAt: new Date().toISOString() });
     });
   });
+}
+
+/**
+ * Real, reactive limit detection for one real output line from an actual
+ * (non-probe) Cursor execution — reuses the exact same isLimitMessage
+ * classifier the probe itself uses, never a second heuristic. Deliberately
+ * narrow: a stdout line is only ever trusted when it parses as real JSON
+ * with `is_error: true` and a real `result` message matching the
+ * classifier — arbitrary assistant text can legitimately mention "usage
+ * limit" without representing a real failure, so plain stdout text is
+ * never scanned. A stderr line has no such structured shape to lean on, so
+ * an explicit matching message there is accepted directly.
+ * @param {{line: string, stream: "stdout"|"stderr"}} args
+ * @returns {{reason: string}|null}
+ */
+export function detectCursorLimitFromOutput({ line, stream }) {
+  const trimmed = typeof line === "string" ? line.trim() : "";
+  if (!trimmed) return null;
+
+  if (stream === "stderr") {
+    return isLimitMessage(trimmed) ? { reason: trimmed } : null;
+  }
+
+  let parsed;
+  try { parsed = JSON.parse(trimmed); } catch { return null; }
+  if (parsed?.is_error !== true) return null;
+  const message = typeof parsed.result === "string" ? parsed.result : null;
+  return isLimitMessage(message) ? { reason: message } : null;
 }

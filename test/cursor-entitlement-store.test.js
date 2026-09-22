@@ -9,6 +9,7 @@ import {
   resolveCursorPoolAccess,
   mergeCursorAccessResult,
   invalidateCursorPoolAccess,
+  invalidateStoredCursorPoolAccess,
   DEFAULT_CURSOR_ACCESS_TTL_MS
 } from "../src/global/observability/cursor-entitlement-store.js";
 import { harnessHomePaths } from "../src/global/paths.js";
@@ -87,4 +88,59 @@ test("REGRESSION: invalidateCursorPoolAccess immediately clears one pool's cache
   const invalidated = invalidateCursorPoolAccess(cache, CURSOR_POOL.OTHER_MODELS);
   assert.equal(resolveCursorPoolAccess({ cache: invalidated, pool: CURSOR_POOL.OTHER_MODELS }).status, CURSOR_ACCESS_STATUS.UNVERIFIED);
   assert.equal(resolveCursorPoolAccess({ cache: invalidated, pool: CURSOR_POOL.CURSOR_MODELS, now: Date.parse("2026-09-22T10:05:00.000Z") }).status, CURSOR_ACCESS_STATUS.AVAILABLE, "invalidating one pool must never touch the other");
+});
+
+// --- invalidateStoredCursorPoolAccess: the real, persistent, best-effort
+// wrapper a real execution's limit hit actually calls.
+
+test("REGRESSION: invalidateStoredCursorPoolAccess clears the real persisted pool on disk — a fresh read after invalidation is UNVERIFIED, the untouched pool stays AVAILABLE", async () => {
+  const homeDir = await tempHome();
+  await writeCursorAccessCache(homeDir, {
+    fetchedAt: "2026-09-22T10:00:00.000Z",
+    pools: {
+      [CURSOR_POOL.OTHER_MODELS]: { status: CURSOR_ACCESS_STATUS.AVAILABLE, reason: null, probedAt: "2026-09-22T10:00:00.000Z" },
+      [CURSOR_POOL.CURSOR_MODELS]: { status: CURSOR_ACCESS_STATUS.AVAILABLE, reason: null, probedAt: "2026-09-22T10:00:00.000Z" }
+    }
+  });
+
+  await invalidateStoredCursorPoolAccess(homeDir, CURSOR_POOL.OTHER_MODELS);
+
+  const reread = await readCursorAccessCache(homeDir);
+  const now = Date.parse("2026-09-22T10:05:00.000Z");
+  assert.equal(resolveCursorPoolAccess({ cache: reread, pool: CURSOR_POOL.OTHER_MODELS, now }).status, CURSOR_ACCESS_STATUS.UNVERIFIED, "the next evaluation must re-probe the invalidated pool, never trust the stale AVAILABLE");
+  assert.equal(resolveCursorPoolAccess({ cache: reread, pool: CURSOR_POOL.CURSOR_MODELS, now }).status, CURSOR_ACCESS_STATUS.AVAILABLE, "invalidating one pool must never touch the other, even through the persistent wrapper");
+});
+
+test("invalidateStoredCursorPoolAccess is a real no-op when nothing was ever cached — never writes a fabricated doc", async () => {
+  const homeDir = await tempHome();
+  let wrote = false;
+  await invalidateStoredCursorPoolAccess(homeDir, CURSOR_POOL.OTHER_MODELS, {
+    readCursorAccessCache: async () => null,
+    writeCursorAccessCache: async () => { wrote = true; }
+  });
+  assert.equal(wrote, false);
+});
+
+test("invalidateStoredCursorPoolAccess is a real no-op when the pool wasn't cached at all — never writes when there's nothing to invalidate", async () => {
+  const homeDir = await tempHome();
+  await writeCursorAccessCache(homeDir, {
+    fetchedAt: "2026-09-22T10:00:00.000Z",
+    pools: { [CURSOR_POOL.CURSOR_MODELS]: { status: CURSOR_ACCESS_STATUS.AVAILABLE, reason: null, probedAt: "2026-09-22T10:00:00.000Z" } }
+  });
+  let wrote = false;
+  await invalidateStoredCursorPoolAccess(homeDir, CURSOR_POOL.OTHER_MODELS, {
+    writeCursorAccessCache: async (...args) => { wrote = true; return writeCursorAccessCache(...args); }
+  });
+  assert.equal(wrote, false);
+});
+
+test("REGRESSION: invalidateStoredCursorPoolAccess is best-effort — a real read or write failure never throws, and never fabricates a doc", async () => {
+  const homeDir = await tempHome();
+  await assert.doesNotReject(() => invalidateStoredCursorPoolAccess(homeDir, CURSOR_POOL.OTHER_MODELS, {
+    readCursorAccessCache: async () => { throw new Error("disk read boom"); }
+  }));
+  await assert.doesNotReject(() => invalidateStoredCursorPoolAccess(homeDir, CURSOR_POOL.OTHER_MODELS, {
+    readCursorAccessCache: async () => ({ fetchedAt: "2026-09-22T10:00:00.000Z", pools: { [CURSOR_POOL.OTHER_MODELS]: { status: CURSOR_ACCESS_STATUS.AVAILABLE, reason: null, probedAt: "2026-09-22T10:00:00.000Z" } } }),
+    writeCursorAccessCache: async () => { throw new Error("disk write boom"); }
+  }));
 });

@@ -13,7 +13,8 @@ export function createExecutionAdapter({
   checkAvailability = null,
   launchable = null,
   preflight = null,
-  idleTimeoutMs = null
+  idleTimeoutMs = null,
+  detectQuotaExhaustion = null
 }) {
   return {
     id,
@@ -79,6 +80,16 @@ export function createExecutionAdapter({
     parseEventLine(line, context = {}) {
       if (!parseEventLine) return null;
       return parseEventLine(line, context);
+    },
+
+    // A real, adapter-declared reactive limit detector — most adapters
+    // (Codex/Claude/OpenCode Go) already gate on their own real usage
+    // readers elsewhere and have nothing to add here; only an adapter with
+    // no other way to know (Cursor) declares one. Null (the default) is a
+    // real no-op, never a fabricated "never exhausted" signal.
+    detectQuotaExhaustion(context = {}) {
+      if (!detectQuotaExhaustion) return null;
+      return detectQuotaExhaustion(context);
     }
   };
 }

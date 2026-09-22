@@ -147,6 +147,10 @@ export async function supervisePreparedRun({
   let timeoutHandle = null;
   let processing = Promise.resolve();
   let stateWrites = Promise.resolve();
+  // Real limit-hit signals dedupe per run, never per line — a run that
+  // repeats the same real error many times must still only invalidate
+  // (and write) once per real pool.
+  const invalidatedQuotaKeys = new Set();
 
   const enqueue = (work) => {
     processing = processing.then(work);
@@ -166,6 +170,17 @@ export async function supervisePreparedRun({
   };
 
   const handleLine = async (line, stream) => {
+    // Real, reactive limit detection — adapter-declared, adapter-agnostic
+    // here (see create-execution-adapter.js's own doc): only Cursor
+    // defines this today. Best-effort and fire-and-forget on purpose — a
+    // cache-invalidation failure must never affect this real run's own
+    // outcome or block processing the next line.
+    const quotaHit = adapter.detectQuotaExhaustion({ line, stream, model: handoff.model });
+    if (quotaHit && !invalidatedQuotaKeys.has(quotaHit.dedupeKey)) {
+      invalidatedQuotaKeys.add(quotaHit.dedupeKey);
+      Promise.resolve(quotaHit.invalidate(homeDir)).catch(() => {});
+    }
+
     const structured = adapter.parseEventLine(line, { runId, cwd: handoff.cwd });
     const normalized = structured
       ? normalizeAdapterEvent(adapter.id, structured, { captureTranscript })

@@ -1,5 +1,8 @@
 import { createExecutionAdapter, parseNdjsonLine, buildPermissionsArgs } from "./create-execution-adapter.js";
 import { isExecutableAvailable } from "../../cli-probe.js";
+import { classifyCursorPool, detectCursorLimitFromOutput } from "../../observability/cursor-entitlement.js";
+import { isCursorAutoModel } from "../../observability/cursor-models.js";
+import { invalidateStoredCursorPoolAccess } from "../../observability/cursor-entitlement-store.js";
 
 const EXECUTABLE = "cursor-agent";
 
@@ -87,6 +90,29 @@ function parseCursorEventLine(line) {
   return parsed;
 }
 
+/**
+ * Real, reactive limit detection for one real execution's own output
+ * line — Cursor keeps all its own pool-classification/auto-exemption
+ * knowledge here; run-supervisor.js only ever sees the opaque
+ * `{ dedupeKey, invalidate(homeDir) }` shape this returns, never any
+ * Cursor-specific concept of its own. `model` is the real, plain modelId
+ * string the run was launched with (see buildCursorLaunch above) — never
+ * probed/invalidated for `auto`, the opaque manual-only fallback with no
+ * real pool of its own.
+ * @param {{line: string, stream: "stdout"|"stderr", model?: string|null}} args
+ */
+function detectCursorQuotaExhaustion({ line, stream, model }) {
+  if (!model || isCursorAutoModel(model)) return null;
+  const hit = detectCursorLimitFromOutput({ line, stream });
+  if (!hit) return null;
+  const pool = classifyCursorPool({ id: model });
+  return {
+    dedupeKey: pool,
+    reason: hit.reason,
+    invalidate: (homeDir) => invalidateStoredCursorPoolAccess(homeDir, pool)
+  };
+}
+
 export default createExecutionAdapter({
   id: "cursor",
   label: "Cursor",
@@ -101,5 +127,6 @@ export default createExecutionAdapter({
   },
   checkAvailability: checkCursorAvailability,
   buildLaunch: buildCursorLaunch,
-  parseEventLine: parseCursorEventLine
+  parseEventLine: parseCursorEventLine,
+  detectQuotaExhaustion: detectCursorQuotaExhaustion
 });
