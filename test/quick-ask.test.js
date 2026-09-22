@@ -202,6 +202,23 @@ test("codex: fails closed to error when the output file is never written", async
   assert.equal(answer.status, "error");
 });
 
+test("REGRESSION: codex's real stderr surfaces when it fails without writing its output file — never a bare ENOENT that hides why it actually failed", async () => {
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    setTimeout(() => {
+      child.stderr.emit("data", "Error: rate limit exceeded, retry after 60s\n");
+      child.emit("close", 1);
+    }, 0);
+    return child;
+  };
+  const answer = await askProvider({ provider: "codex", question: "q", cwd: "/repo", spawn });
+  assert.equal(answer.status, "error");
+  assert.match(answer.error, /rate limit exceeded/, "the real codex failure reason must surface — a raw ENOENT about the missing output file explains nothing to the user");
+});
+
 function fakeOpencodeSpawn(ndjsonLines) {
   return () => {
     const child = new EventEmitter();

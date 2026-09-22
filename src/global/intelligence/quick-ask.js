@@ -290,6 +290,12 @@ async function askCodex({ question, model, cwd, spawn, timeoutMs, env }) {
         return;
       }
       let finished = false;
+      // Real codex stderr — captured so a missing output file (below)
+      // reports WHY codex actually failed (rate limit, auth, a real model
+      // error), never just the raw filesystem ENOENT for a file that's
+      // missing BECAUSE codex failed, not the other way around.
+      let stderr = "";
+      child.stderr?.on("data", (chunk) => { stderr += chunk; });
       const clearIdleTimer = armIdleTimeout(child, timeoutMs, () => finish(unknown(`codex exec idle-timed out after ${timeoutMs}ms with no output`)));
       function finish(result) {
         if (finished) return;
@@ -299,13 +305,13 @@ async function askCodex({ question, model, cwd, spawn, timeoutMs, env }) {
         resolve(result);
       }
       child.once?.("error", (error) => finish(unknown(error?.message ?? error)));
-      child.once?.("close", async () => {
+      child.once?.("close", async (code) => {
         try {
           const text = (await readFile(outFile, "utf8")).trim();
-          if (!text) return finish(unknown("codex exec produced no final message"));
+          if (!text) return finish(unknown(stderr.trim() || "codex exec produced no final message"));
           finish({ status: "answered", answer: text, error: null });
-        } catch (error) {
-          finish(unknown(error?.message ?? error));
+        } catch {
+          finish(unknown(stderr.trim() || `codex exec exited ${code} without writing its output file`));
         }
       });
     });
