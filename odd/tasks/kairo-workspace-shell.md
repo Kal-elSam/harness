@@ -71,6 +71,7 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
 - KWS-01 completed locally in `fde214c` (`feat(host): add workspace snapshot
   contract`). It intentionally does not select a "latest" session when the
   host has no explicit session binding.
-- KWS-02 completed locally; commit pending. Pi now renders a compact Kairo
-  widget and exposes `/kairo`, `/kairo-team`, `/kairo-sessions`,
+- KWS-02 completed locally in `3c2c525` (`feat(host): render Kairo workspace
+  shell`). Pi now renders a compact Kairo widget and exposes `/kairo`,
+  `/kairo-team`, `/kairo-sessions`,
   `/kairo-usage`, `/kairo-route`, and `/kairo-memory`.
