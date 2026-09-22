@@ -57,12 +57,12 @@ export async function launchGentleShell({
   // remains loaded even with discovery disabled.
   const args = [
     "--isolated",
+    "--",
+    "-e", extensionDir,
     "--no-extensions",
     "--no-skills",
     "--no-prompt-templates",
-    "--no-themes",
-    "-e", extensionDir,
-    "--"
+    "--no-themes"
   ];
   const hostEnv = sessionId == null ? env : { ...env, KAIRO_SESSION_ID: sessionId };
   const result = await spawnImpl(binary, args, { cwd, env: hostEnv, shell: false, stdio: "inherit" });
