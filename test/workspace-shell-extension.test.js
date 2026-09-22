@@ -57,7 +57,30 @@ test("extension registers only Kairo-routed provider models", async () => {
   assert.equal(await extension.registerRoutes("/repo"), true);
   assert.deepEqual([...providers.keys()], ["kairo"]);
   assert.deepEqual(providers.get("kairo").models.map((model) => model.id), ["codex::gpt-6-astra"]);
-  assert.equal(await extension.registerRoutes("/other"), false);
+  assert.equal(await extension.registerRoutes("/other"), true);
+});
+
+test("extension replaces a missing Pi route with an actionable Kairo state", async () => {
+  const { pi, events } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    loadRouteModels: async () => []
+  });
+
+  const calls = [];
+  await events.get("session_start")({}, {
+    cwd: "/repo",
+    ui: {
+      setStatus: () => {},
+      setWidget: (...args) => calls.push(args)
+    }
+  });
+
+  assert.deepEqual(calls.at(-1), ["kairo-workspace", [
+    "KAIRO ROUTES · unavailable",
+    "No verified automatic route is available for this project.",
+    "Next: run kairo --legacy-cockpit, then /project analyze."
+  ]]);
 });
 
 test("extension renders a Kairo status/widget on session start using the explicit host session", async () => {
@@ -69,7 +92,8 @@ test("extension renders a Kairo status/widget on session start using the explici
       assert.equal(input.cwd, "/repo");
       assert.equal(input.sessionId, "11111111-1111-4111-8111-111111111111");
       return snapshot;
-    }
+    },
+    loadRouteModels: async () => [{ id: "codex::gpt-6-astra", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }]
   });
 
   await events.get("session_start")({}, {
