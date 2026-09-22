@@ -63,11 +63,27 @@ Discovered during implementation: enabling real per-model gating while leaving t
 - [x] Tests RED→GREEN: `execution-router.test.js` (checkCandidate simplified — 4 stale manual-quota tests replaced with 1); `conversation-service.test.js` (`setCursorManualQuota` removal confirmed; real probe wiring with explicit mocks, never relying on an unmocked real spawn; per-model UNVERIFIED-by-default confirmed); `cockpit-view.test.js` (`resolveAssignmentAvailability`'s Cursor branch — available/exhausted/unverified/auto-exempt); `project-router.test.js` (real execution blocking for an exhausted Cursor assignment, reusing the existing generic `blockingEntitlement` mechanism); `cockpit-app.test.js` (`/project cursor` now says access is automatic).
 - [x] Full suite green: 2006/2006 (1996 + 10 net new/changed), stress-tested 3x, zero real-disk leakage.
 
-### Scope 4 — PROJECT TEAM readable detail block (not started, carried over)
+### Scope 4 — PROJECT TEAM readable detail block
 
-- [ ] Compact rows (role + model only); a wide, readable detail block below the selection for role/model/access-path/access-status/multi-line why.
-- [ ] Analyst and Orchestrator shown with the same clarity as editable roles.
-- [ ] Technical evidence stays behind `e`.
+Branch: `fix/project-team-readable-detail`. Pure UI — no ranking, routing, quota, or ProjectStrategy change. `invalidateCursorPoolAccess`'s real-execution call site remains its own separate, still-deferred follow-up, not touched here.
+
+- [x] `buildResultRoleList()` (project-overlay.js): compact rows are role + model only now — no inline `description`, no provider (`this.view.aiTeamLabel(entry.model)` replaces `teamRoleLabel`). The old inline WHY sentence and provider suffix, cramped into the picker's fixed-width column, were the real, reported clipping cause.
+- [x] New `pushAssignmentDetail(role, model, { entry, note })` closure inside `render()`'s `S.RESULT` case: renders `Model:` / `Via:` / `Access:` (+ `Why:` when a real `entry` is passed), reusing `resolveAssignmentAvailability()` and `explainTeamDecision()` directly — no second availability/explanation formula.
+- [x] Project Analyst and Orchestrator now render as full, non-editable context blocks above `PROJECT TEAM` (Orchestrator was a real, confirmed gap — it lived in `strategy.orchestrator` but was never shown in the overlay at all before this).
+- [x] The selected role's own detail block renders below the compact list, resolved fresh every render via `resultSelectList.getSelectedItem()` — keyboard and mouse navigation both flow through the same `selectedIndex`, so no separate selection-tracking state was added.
+- [x] Evidence/Quality/Efficient stay behind `e`, unchanged. Enter/`a`/`e`/`r`/Esc behavior unchanged (all 55 pre-existing regression tests pass with zero modification).
+- [x] Real word-wrapping (pi-tui's `Text` component) confirmed via a dedicated test with a long WHY sentence — never truncated. One layout bug found and fixed along the way: concatenating a warning string with a literal `"  needs reanalysis"` suffix could get that literal phrase split mid-wrap; moved to its own short, never-wrapping line.
+- [x] Tests: 7 new regression tests in `test/project-overlay.test.js` (compact-row content, default selection, keyboard/mouse-equivalent selection change, Cursor-exhausted/Claude-unverified/available Access text, Analyst/Orchestrator non-editability, long-reason wrapping, narrow-width border/footer).
+- [x] Committed locally: `af9b01e` (`fix(cockpit): make PROJECT TEAM details readable`) — full suite 2013/2013, stress-tested 3x, zero real-disk leakage.
+
+**Pre-ship correction** (caught before shipping, own real bug in the first pass): the compact rows still carried `(override)` and `needs reanalysis` markers, and a plain mouse click on a row silently opened that role's edit picker — indistinguishable from just browsing, and inconsistent with arrow-key navigation (which only ever moved selection). Fixed in a second commit:
+
+- [x] `buildResultRoleList()`: rows are now STRICTLY role + model — `(override)`/`needs reanalysis` markers removed from the row entirely. Both now live only in the detail block (via `pushAssignmentDetail`'s `note` param for override, and its existing `needs reanalysis` marker for a blocked pick) and, for a strategy-wide problem, the existing top NEEDS REANALYSIS banner — never a third place.
+- [x] `resultSelectList.onSelect` removed entirely — pi-tui's `SelectList` already moves `selectedIndex` on both a keyboard confirm and a real mouse click before calling `onSelect`, so leaving it unset makes selecting a row (either way) a real no-op beyond updating the selection.
+- [x] `handleInput`'s `S.RESULT` branch now intercepts Enter explicitly, before it reaches `resultSelectList.handleInput` — Enter is the one, explicit way to open the selected role's edit picker; arrow keys and Esc are unaffected (still routed through `resultSelectList.handleInput` as before).
+- [x] Tests: the old "click opens the picker" test was replaced with one asserting a click only moves selection/updates the detail block and never touches the edit catalog, followed by an explicit Enter that does; the one test that poked `resultSelectList.onSelect` directly now drives a real Enter keypress instead; one new test confirms available/blocked/overridden rows are all still strictly role + model, with override/reanalysis status confirmed present only in the detail block.
+- [x] Committed locally: `336a6a5` (`fix(cockpit): separate project team selection from editing`) — full suite 2014/2014 (2013 + 1 new), stress-tested 3x, zero real-disk leakage.
+- [ ] push/PR/CI/merge/publish deliberately NOT run yet — the plan itself scopes those as a separate remote authorization (planned as v0.35.1).
 
 ## Progress
 
@@ -76,4 +92,5 @@ Discovered during implementation: enabling real per-model gating while leaving t
 - Scope 2 + 3 (real wiring + manual-toggle retirement, shipped together) complete: full suite 2006/2006, stress-tested 3x, zero real-disk leakage: 2026-09-22
 - Shipped as v0.35.0: PR #324 merged to main with a real merge commit (d3b9f3c), release commit a10b709, tagged `kairo-runtime-v0.35.0`, published to npm (CI green on Node 20/22/24), global install verified (`kairo --version` → 0.35.0, gitHead matches a10b709): 2026-09-22
 - Deferred, not a blocker: wiring a real execution-adapter limit-hit to call `invalidateCursorPoolAccess` immediately (the primitive already exists and is tested).
-- Next: Scope 4 (PROJECT TEAM readable detail block) remains fully unstarted — separate, explicitly deferred decision, not started without a new go-ahead.
+- Scope 4 (PROJECT TEAM readable detail block) complete: `af9b01e` (initial readable detail block) + `336a6a5` (pre-ship correction — strictly role+model rows, click-selects/Enter-edits) on branch `fix/project-team-readable-detail`. Full suite 2014/2014, stress-tested 3x, zero real-disk leakage: 2026-09-22
+- Next: request remote authorization to push/PR/CI/merge/publish `fix/project-team-readable-detail` as v0.35.1.
