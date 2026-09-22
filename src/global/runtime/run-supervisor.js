@@ -172,13 +172,15 @@ export async function supervisePreparedRun({
   const handleLine = async (line, stream) => {
     // Real, reactive limit detection — adapter-declared, adapter-agnostic
     // here (see create-execution-adapter.js's own doc): only Cursor
-    // defines this today. Best-effort and fire-and-forget on purpose — a
-    // cache-invalidation failure must never affect this real run's own
-    // outcome or block processing the next line.
+    // defines this today. Best-effort, not fire-and-forget: awaited here
+    // (inside the same `processing` chain the "close" handler drains) so
+    // the run can never complete before its own invalidation has settled,
+    // while a real failure is absorbed and never affects this run's own
+    // outcome.
     const quotaHit = adapter.detectQuotaExhaustion({ line, stream, model: handoff.model });
     if (quotaHit && !invalidatedQuotaKeys.has(quotaHit.dedupeKey)) {
       invalidatedQuotaKeys.add(quotaHit.dedupeKey);
-      Promise.resolve(quotaHit.invalidate(homeDir)).catch(() => {});
+      await Promise.resolve(quotaHit.invalidate(homeDir)).catch(() => {});
     }
 
     const structured = adapter.parseEventLine(line, { runId, cwd: handoff.cwd });

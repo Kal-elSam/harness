@@ -142,6 +142,51 @@ test("REGRESSION: repeated matching limit lines in the same run invalidate (and 
   });
 });
 
+test("REGRESSION: the run only completes after a slow invalidate has actually finished — never before", async () => {
+  await withStubExecutables(["cursor-agent"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-cursor-invalidation-"));
+    await seedAvailable(homeDir, CURSOR_POOL.CURSOR_MODELS);
+
+    let invalidateSettled = false;
+
+    function resolveAdapterWithSlowInvalidate() {
+      const adapter = resolveExecutionAdapter("cursor");
+      return {
+        ...adapter,
+        preflight: async () => ({ ok: true }),
+        detectQuotaExhaustion(args) {
+          const hit = adapter.detectQuotaExhaustion(args);
+          if (!hit) return null;
+          return {
+            ...hit,
+            invalidate: async (dir) => {
+              await new Promise((resolve) => setTimeout(resolve, 20));
+              const result = await hit.invalidate(dir);
+              invalidateSettled = true;
+              return result;
+            }
+          };
+        }
+      };
+    }
+
+    const limitLine = JSON.stringify({ type: "result", is_error: true, result: "You have hit your monthly limit for Composer." });
+    const { completion } = await startRun({
+      homeDir,
+      agentId: "cursor",
+      model: "composer-2.5",
+      resolveAdapterImpl: resolveAdapterWithSlowInvalidate,
+      task: "run tests",
+      cwd: homeDir,
+      cliVersion: "0.2.1",
+      spawnImpl: createFakeSpawn([limitLine])
+    });
+
+    await completion;
+    assert.equal(invalidateSettled, true, "the run must not complete before its own reactive invalidation has settled");
+  });
+});
+
 test("REGRESSION: a real cache-invalidation failure never fails or alters the run's own outcome — best-effort, fire-and-forget", async () => {
   await withStubExecutables(["cursor-agent"], async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "kairo-cursor-invalidation-"));
