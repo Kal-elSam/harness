@@ -51,7 +51,19 @@ export async function launchGentleShell({
     );
   }
 
-  const args = ["--link", "-e", extensionDir, "--"];
+  // Kairo owns its interactive surface. An isolated, minimal Pi resource set
+  // prevents a user's unrelated Gentle package inventory, collisions, and
+  // changelog from becoming Kairo's first screen. The explicit Kairo extension
+  // remains loaded even with discovery disabled.
+  const args = [
+    "--isolated",
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "-e", extensionDir,
+    "--"
+  ];
   const hostEnv = sessionId == null ? env : { ...env, KAIRO_SESSION_ID: sessionId };
   const result = await spawnImpl(binary, args, { cwd, env: hostEnv, shell: false, stdio: "inherit" });
   if (result && Number.isInteger(result.status) && result.status !== 0) {

@@ -34,7 +34,10 @@ test("cwd with metacharacters still spawns argv array with shell false", async (
   assert.equal(typeof calls[0].command, "string");
   assert.ok(Array.isArray(calls[0].args));
   assert.ok(!String(calls[0].command).includes(";"));
-  assert.deepEqual(calls[0].args.slice(0, 4), ["--link", "-e", extensionDir, "--"]);
+  assert.deepEqual(calls[0].args.slice(0, 8), [
+    "--isolated", "--no-extensions", "--no-skills", "--no-prompt-templates",
+    "--no-themes", "-e", extensionDir, "--"
+  ]);
 });
 
 test("invalid session id is never passed to spawn", async () => {
@@ -93,7 +96,7 @@ test("unresolvable gentle-shell fails closed and names --legacy-cockpit", async 
 
 const gentleShellPath = spawnSync("which", ["gentle-shell"], { encoding: "utf8" }).stdout.trim();
 
-test("live gentle-shell version gate and launch argv include --link and -e", { skip: !gentleShellPath.startsWith("/") }, async () => {
+test("live gentle-shell version gate and launch argv isolate Kairo resources", { skip: !gentleShellPath.startsWith("/") }, async () => {
   const calls = [];
   await launchGentleShell({
     cwd: process.cwd(),
@@ -106,7 +109,8 @@ test("live gentle-shell version gate and launch argv include --link and -e", { s
     }
   });
   assert.equal(calls[0].command, gentleShellPath);
-  assert.ok(calls[0].args.includes("--link"));
+  assert.ok(calls[0].args.includes("--isolated"));
+  assert.ok(calls[0].args.includes("--no-extensions"));
   assert.ok(calls[0].args.includes("-e"));
 });
 
