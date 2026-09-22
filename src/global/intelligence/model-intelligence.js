@@ -124,13 +124,20 @@ export function scoreAvailableModels(providerCatalogs, aaModels) {
  * @returns {Array<{adapterId: string, catalogStatus: string, totalModels: number, matchedModels: number}>}
  */
 export function summarizeCatalogCoverage(providerCatalogs, aaModels) {
-  return providerCatalogs.map(({ adapterId, catalogStatus, models }) => {
+  return providerCatalogs.map(({ adapterId, catalogStatus, models, error = null }) => {
     const list = models ?? [];
     const matched = list.filter((entry) => {
       const id = typeof entry === "string" ? entry : entry.id;
       return matchArtificialAnalysisScore(id, aaModels) != null;
     });
-    return { adapterId, catalogStatus, totalModels: list.length, matchedModels: matched.length };
+    return {
+      adapterId, catalogStatus, totalModels: list.length, matchedModels: matched.length,
+      // The real captured reason a catalog read failed (e.g. "Authentication
+      // required") — never dropped in favor of a generic "unknown" status
+      // with no explanation. Kairo can detect the real cause but can't fix
+      // it (e.g. can't authenticate Cursor itself), so it must say so.
+      ...(error ? { error } : {})
+    };
   });
 }
 

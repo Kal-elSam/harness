@@ -797,6 +797,21 @@ test("/why also shows real catalog coverage — separate from runtime eligibilit
   assert.match(lines, /claude: documented catalog, 8\/9 models matched to Artificial Analysis/);
 });
 
+test("REGRESSION: /why surfaces the real Cursor catalog error instead of an unexplained 'unknown catalog, 0/0 matched' line", () => {
+  const { view } = makeView();
+  view.setSnapshot({
+    projectRoot: "/repo/demo",
+    modelIntelligence: {
+      eligibility: { cursor: { ok: true, reason: null } },
+      coverage: [
+        { adapterId: "cursor", catalogStatus: "unknown", totalModels: 0, matchedModels: 0, error: "cursor-agent models exited with code 1: Authentication required" }
+      ]
+    }
+  });
+  const lines = view.fitWhyLines().join("\n");
+  assert.match(lines, /cursor: unknown catalog, 0\/0 models matched to Artificial Analysis — cursor-agent models exited with code 1: Authentication required/);
+});
+
 test("narrow dashboard's compact USAGE bar shows every Go window's real percentage, and never Zen (manual/PAYG, not automatic)", () => {
   const { view } = makeView();
   view.setSnapshot({
@@ -1509,6 +1524,24 @@ test("REGRESSION: resolveAssignmentAvailability's real Cursor branch — availab
 
   const autoStaysAvailable = resolveAssignmentAvailability(auto, { eligibility: { cursor: { ok: true } }, cursorAccess: {} });
   assert.equal(autoStaysAvailable.available, true, "auto is never probed/scored — it must never be blocked by a pool it was never part of");
+});
+
+test("REGRESSION: resolveAssignmentAvailability surfaces the real Cursor probe error (e.g. 'Authentication required') instead of a generic 'could not be verified' message", () => {
+  const composer = { adapterId: "cursor", modelId: "composer-2.5", displayName: "Composer 2.5" };
+  const unverifiedWithRealReason = resolveAssignmentAvailability(composer, {
+    eligibility: { cursor: { ok: true } },
+    cursorAccess: { cursor_models: { status: "unverified", reason: "cursor-agent exited 1: Authentication required" } }
+  });
+  assert.equal(unverifiedWithRealReason.available, false);
+  assert.match(unverifiedWithRealReason.warning, /Authentication required/, "the real probe error must surface — Kairo can detect Cursor isn't authenticated but can't fix it automatically, so it must say so honestly");
+
+  // No real reason was ever captured (e.g. no pool entry at all) — the
+  // honest generic fallback stays, never a fabricated one.
+  const unverifiedNoReason = resolveAssignmentAvailability(composer, {
+    eligibility: { cursor: { ok: true } },
+    cursorAccess: {}
+  });
+  assert.match(unverifiedNoReason.warning, /could not be verified automatically/);
 });
 
 test("INC4: projectTeamEvidenceLines names quality leader when it differs and retains real retention%", () => {

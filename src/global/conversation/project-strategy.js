@@ -40,6 +40,15 @@ import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
 // already treats capability and cost-risk as two separate layers.
 export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor", "opencode-go", "opencode-zen"]);
 
+// "Unavailable" means absent from every real selector entirely — never
+// merely flagged with a warning tag. Denied and unverified are the two
+// real per-model blocking statuses (see model-candidate-catalog.js's own
+// resolveEntitlement); a candidate with either must never appear in the
+// Bootstrap Analyst catalog or the project team role editor, scored or
+// unscored. A model reappears only once a real check reports allowed or
+// not_applicable.
+export const BLOCKED_ENTITLEMENTS = new Set([ENTITLEMENT.DENIED, ENTITLEMENT.UNVERIFIED]);
+
 /**
  * The Bootstrap Analyst as a temporary, read-only WORKFLOW — deliberately
  * NOT a RoleProfile (see role-profiles.js's ROLE_PROFILES/ROLE_CAPABILITIES,
@@ -157,7 +166,7 @@ export function computeBootstrapAnalystCatalog({
   // candidate whenever the unsupported provider happened to rank #1.
   const askSupportedRecommended = scoredAll.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
   const askSupportedScored = manualSelectionScoredPool.filter((model) => (
-    ASK_SUPPORTED_ADAPTERS.has(model.adapterId) && model.entitlement !== ENTITLEMENT.DENIED
+    ASK_SUPPORTED_ADAPTERS.has(model.adapterId) && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
   ));
   // scoredAll (the Recommendation Pool) already excludes superseded
   // candidates (buildRecommendationPool); unscoredModels doesn't go
@@ -167,7 +176,7 @@ export function computeBootstrapAnalystCatalog({
   const askSupportedUnscored = unscoredModels.filter((model) => (
     ASK_SUPPORTED_ADAPTERS.has(model.adapterId)
     && model.lifecycle !== "superseded"
-    && model.entitlement !== ENTITLEMENT.DENIED
+    && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
   ));
 
   const roleCapabilities = { Explorer: BOOTSTRAP_ANALYST_PROFILE.capabilities };
@@ -373,7 +382,7 @@ export function computeProjectTeamEditCatalog(role, {
   if (!capabilities) return { role, models: [] };
 
   const teamScored = manualSelectionScoredPool.filter((model) => (
-    TEAM_EDIT_ADAPTERS.has(model.adapterId) && model.entitlement !== ENTITLEMENT.DENIED
+    TEAM_EDIT_ADAPTERS.has(model.adapterId) && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
   ));
   // Same "not superseded" real rule the Recommendation Pool applies to
   // scoredAll — unscoredModels doesn't go through that pool, so it's
@@ -381,7 +390,7 @@ export function computeProjectTeamEditCatalog(role, {
   const teamUnscored = unscoredModels.filter((model) => (
     TEAM_EDIT_ADAPTERS.has(model.adapterId)
     && model.lifecycle !== "superseded"
-    && model.entitlement !== ENTITLEMENT.DENIED
+    && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
   ));
   // Same real registry-seeding every other role computation relies on
   // (buildAiTeam/buildEfficientTeam's own ensureRegistry) — a caller's

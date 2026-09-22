@@ -156,6 +156,15 @@ test("summarizeCatalogCoverage reports real total/matched counts per provider, i
   ]);
 });
 
+test("REGRESSION: summarizeCatalogCoverage propagates the real catalog read error (e.g. 'Authentication required') instead of silently dropping it", () => {
+  const coverage = summarizeCatalogCoverage([
+    { adapterId: "cursor", catalogStatus: "unknown", models: [], error: "cursor-agent models exited with code 1: Authentication required" },
+    { adapterId: "codex", catalogStatus: "measured", models: [] }
+  ], []);
+  assert.equal(coverage[0].error, "cursor-agent models exited with code 1: Authentication required");
+  assert.equal(coverage[1].error, undefined, "a provider with no real error must never carry a fabricated one");
+});
+
 test("summarizeCatalogCoverage handles Cursor's plain-string catalog shape too", () => {
   const aa = [{ slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 50.7, codingIndex: 78, mathIndex: null }];
   const coverage = summarizeCatalogCoverage(
