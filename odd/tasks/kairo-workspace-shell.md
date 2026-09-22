@@ -65,5 +65,6 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
 - Created after live validation demonstrated that the host launch technically
   works but is visually and product-wise incomplete.
 - User chose small stacked PRs to `main` for eventual delivery.
-- KWS-01 completed locally; commit pending. It intentionally does not select a
-  "latest" session when the host has no explicit session binding.
+- KWS-01 completed locally in `fde214c` (`feat(host): add workspace snapshot
+  contract`). It intentionally does not select a "latest" session when the
+  host has no explicit session binding.
