@@ -50,7 +50,7 @@ test("bare harness non-TTY fails without consent and writes nothing", async () =
 
   const cli = runHarness([], { homeDir });
   assert.notEqual(cli.status, 0, cli.stderr);
-  assert.match(cli.stderr, /Non-interactive shell requires/);
+  assert.match(cli.stderr, /legacy-cockpit/);
   assert.equal(existsSync(statePath), false);
 });
 
@@ -77,4 +77,14 @@ test("kairo install --dry-run keeps technical install flow", async () => {
   assert.match(cli.stdout, /Kairo Runtime global install plan/);
   assert.match(cli.stdout, /Dry run: nothing was written/);
   assert.equal(existsSync(statePath), false);
+});
+
+test("bare conversation and ui converge on the host when no legacy flag is supplied", async () => {
+  const homeDir = await createFakeHome();
+  for (const command of ["conversation", "ui"]) {
+    const cli = runHarness([command], { homeDir });
+    assert.notEqual(cli.status, 0, cli.stderr);
+    assert.match(cli.stderr, /gentle-shell.*not on PATH/i);
+    assert.match(cli.stderr, /legacy-cockpit/i);
+  }
 });

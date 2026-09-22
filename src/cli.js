@@ -45,6 +45,8 @@ import { runArchitectCli, runPlansCli } from "./global/architect/architect-cli.j
 import { runConversationCli } from "./global/conversation/cli.js";
 import { runUiCli } from "./global/conversation/ui.js";
 import { runKairoResume, runKairoSessionsList, runKairoStart } from "./global/conversation/session-cli.js";
+import { runCockpitCli } from "./global/cockpit/cli.js";
+import { launchGentleShell, routeInteractiveHost } from "./global/host/launch-gentle-shell.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
 import { runGlobalAlerts } from "./global/runtime/alerts/alert-cli.js";
@@ -88,6 +90,18 @@ export async function runCli(argv) {
   const invoke = resolveSuggestedInvocation(packageManifest.name);
 
   switch (command) {
+    case "host": {
+      const hostRoute = routeInteractiveHost({ command: "host", options: optionsWithPolicy });
+      if (hostRoute === "cockpit") {
+        await runCockpitCli(optionsWithPolicy);
+        return;
+      }
+      await launchGentleShell({
+        cwd: optionsWithPolicy.cwd,
+        extensionDir: resolve(__dirname, "global/host/extension")
+      });
+      return;
+    }
     case "shell": {
       const homeDir = resolveHomeDir();
       const resolvedMode = resolveInitialExperience({
@@ -127,9 +141,27 @@ export async function runCli(argv) {
       await runPlansCli(optionsWithPolicy);
       return;
     case "conversation":
+      if (!optionsWithPolicy.conversationActionExplicit) {
+        if (optionsWithPolicy.legacyCockpit) {
+          await runCockpitCli(optionsWithPolicy);
+          return;
+        }
+        await launchGentleShell({
+          cwd: optionsWithPolicy.cwd,
+          extensionDir: resolve(__dirname, "global/host/extension")
+        });
+        return;
+      }
       await runConversationCli(optionsWithPolicy);
       return;
     case "ui":
+      if (!optionsWithPolicy.legacyCockpit) {
+        await launchGentleShell({
+          cwd: optionsWithPolicy.cwd,
+          extensionDir: resolve(__dirname, "global/host/extension")
+        });
+        return;
+      }
       await runUiCli(optionsWithPolicy);
       return;
     case "start":
@@ -437,7 +469,7 @@ function resolveImplicitCommand(args) {
   if (hasImplicitSetupFlags(args)) {
     return "setup";
   }
-  return "shell";
+  return "host";
 }
 
 function hasImplicitSetupFlags(args) {
@@ -548,6 +580,7 @@ export function parseArgs(argv) {
     runId: null,
     plansAction: null,
     conversationAction: null,
+    conversationActionExplicit: false,
     sessionRef: null,
     taskId: null,
     reviewId: null,
@@ -590,7 +623,8 @@ export function parseArgs(argv) {
     timeoutMs: null,
     includePrivate: false,
     cloudConsent: false,
-    port: null
+    port: null,
+    legacyCockpit: false
   };
 
   if (command === "components") {
@@ -788,6 +822,7 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--fail-on=")) {
       options.failOn = requireFlagValue("--fail-on", arg.slice("--fail-on=".length));
     }
+    else if (arg === "--legacy-cockpit") options.legacyCockpit = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--all") options.helpAll = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
@@ -822,6 +857,7 @@ function parseConversationAction(args, options) {
   }
   args.shift();
   options.conversationAction = action;
+  options.conversationActionExplicit = true;
   if (["show", "approve", "reject", "execute", "cancel"].includes(action)) {
     const taskId = args.shift();
     if (!taskId || taskId.startsWith("-")) throw new Error(`Missing task id for conversation ${action}.`);
@@ -1146,6 +1182,7 @@ function normalizeCommand(command) {
   if (!command) return "install";
 
   if (command === "install" || command === "i") return "install";
+  if (command === "host") return "host";
   if (command === "shell") return "shell";
   if (command === "orchestrator") return "orchestrator";
   if (command === "run") return "run";

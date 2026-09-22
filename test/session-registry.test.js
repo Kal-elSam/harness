@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  conversationsDir, createSession, getSession, listSessions, migrateLegacySessionIfNeeded, resolveSessionRef,
+  conversationsDir, createSession, ensureHostMetadata, getSession, listSessions, migrateLegacySessionIfNeeded, resolveSessionRef,
   SESSION_SCHEMA_V2, sessionDirFor, updateSessionMode
 } from "../src/global/conversation/session-registry.js";
 import { harnessHomePaths } from "../src/global/paths.js";
@@ -191,6 +191,25 @@ test("REGRESSION: migrateLegacySessionIfNeeded never re-runs once a real session
   const sessions = await listSessions(homeDir, projectRoot);
   assert.equal(sessions.length, 1);
   assert.equal(sessions[0].title, "A fresh real session, no legacy involved");
+});
+
+test("ensureHostMetadata writes host.json without changing session.json or transcript.json", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const session = await createSession(homeDir, projectRoot, { title: "Keep me" });
+  const dir = sessionDirFor(homeDir, projectRoot, session.id);
+  const transcriptPath = join(dir, "transcript.json");
+  await writeFile(transcriptPath, JSON.stringify({ schema: "kairo.transcript/v1", entries: [{ role: "user", text: "keep", at: "2026-01-01T00:00:00.000Z" }] }));
+  const sessionBytes = await readFile(join(dir, "session.json"));
+  const transcriptBytes = await readFile(transcriptPath);
+
+  await ensureHostMetadata(homeDir, projectRoot, session.id);
+
+  assert.deepEqual(await readFile(join(dir, "session.json")), sessionBytes);
+  assert.deepEqual(await readFile(transcriptPath), transcriptBytes);
+  const host = JSON.parse(await readFile(join(dir, "host.json"), "utf8"));
+  assert.equal(host.schema, "kairo.host-binding/v1");
+  assert.equal(host.host, "gentle-shell");
+  assert.equal(host.sessionId, session.id);
 });
 
 test("conversationsDir nests cleanly under the existing per-project sessions path, never colliding with project-strategy.json", async () => {

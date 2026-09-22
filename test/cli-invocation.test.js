@@ -5,9 +5,9 @@ import { formatSuggestedCliCommand } from "../src/global/brand/cli.js";
 
 const packageName = "@kal-elsam/kairo-runtime";
 
-test("bare harness defaults to shell for interactive entry", () => {
+test("bare harness defaults to host for interactive entry", () => {
   const { command } = parseArgs([]);
-  assert.equal(command, "shell");
+  assert.equal(command, "host");
 });
 
 test("bare harness flags route to setup when setup flags are present", () => {
@@ -24,6 +24,16 @@ test("bare harness with workspace scope keeps legacy init entry", () => {
 test("explicit install is unchanged", () => {
   const { command } = parseArgs(["install", "--agents", "cursor"]);
   assert.equal(command, "install");
+});
+
+test("bare conversation opens the interactive host while explicit snapshot remains scripted", () => {
+  const bare = parseArgs(["conversation"]);
+  assert.equal(bare.options.conversationAction, "snapshot");
+  assert.equal(bare.options.conversationActionExplicit, false);
+
+  const snapshot = parseArgs(["conversation", "snapshot"]);
+  assert.equal(snapshot.options.conversationAction, "snapshot");
+  assert.equal(snapshot.options.conversationActionExplicit, true);
 });
 
 test("formatSuggestedCliCommand uses global bin when invoked from PATH", () => {

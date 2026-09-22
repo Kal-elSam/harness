@@ -31,16 +31,41 @@ test("resume and list parse their dedicated options", () => {
   assert.equal(list.options.json, true);
 });
 
+test("kairo start launches the host with a session binding and does not write a second transcript", async () => {
+  const launches = [];
+  await runKairoStart({ cwd: "/repo" }, {
+    resolveProjectRoot: async () => "/repo",
+    createSession: async () => ({ id: "aaaaaaaa-0000-4000-8000-000000000001" }),
+    launchGentleShell: async (opts) => { launches.push(opts); return {}; },
+    ensureHostMetadata: async () => ({})
+  });
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].sessionId, "aaaaaaaa-0000-4000-8000-000000000001");
+  assert.equal(launches[0].cwd, "/repo");
+});
+
+test("kairo resume launches the host bound to the resolved session", async () => {
+  const launches = [];
+  await runKairoResume({ cwd: "/repo", sessionRef: "abc" }, {
+    resolveProjectRoot: async () => "/repo",
+    resolveSessionRef: async () => ({ id: "aaaaaaaa-0000-4000-8000-000000000002" }),
+    launchGentleShell: async (opts) => { launches.push(opts); return {}; },
+    ensureHostMetadata: async () => ({})
+  });
+  assert.equal(launches[0].sessionId, "aaaaaaaa-0000-4000-8000-000000000002");
+});
+
 test("REGRESSION: kairo start always creates a brand new real session, never resuming an existing one", async () => {
   let createdWithMode = null;
   let launchedWith = null;
   await runKairoStart({ cwd: "/repo" }, {
     resolveProjectRoot: async () => "/repo",
-    createSession: async (homeDir, projectRoot, opts) => { createdWithMode = opts; return { id: "new-session-id" }; },
-    runCockpitCli: async (options) => { launchedWith = options; return {}; }
+    createSession: async (homeDir, projectRoot, opts) => { createdWithMode = opts; return { id: "aaaaaaaa-0000-4000-8000-000000000099" }; },
+    launchGentleShell: async (options) => { launchedWith = options; return {}; },
+    ensureHostMetadata: async () => ({})
   });
   assert.deepEqual(createdWithMode, {});
-  assert.equal(launchedWith.sessionId, "new-session-id");
+  assert.equal(launchedWith.sessionId, "aaaaaaaa-0000-4000-8000-000000000099");
 });
 
 test("REGRESSION: kairo resume <ref> resolves the exact real session and launches bound to it, throwing on an unknown reference", async () => {
@@ -48,7 +73,7 @@ test("REGRESSION: kairo resume <ref> resolves the exact real session and launche
   await runKairoResume({ cwd: "/repo", sessionRef: "abc" }, {
     resolveProjectRoot: async () => "/repo",
     resolveSessionRef: async (homeDir, projectRoot, ref) => (ref === "abc" ? { id: "real-session" } : null),
-    runCockpitCli: async (options) => { launchedWith = options; return {}; }
+    launchGentleShell: async (options) => { launchedWith = options; return {}; }
   });
   assert.equal(launchedWith.sessionId, "real-session");
 
@@ -56,7 +81,7 @@ test("REGRESSION: kairo resume <ref> resolves the exact real session and launche
     () => runKairoResume({ cwd: "/repo", sessionRef: "nope" }, {
       resolveProjectRoot: async () => "/repo",
       resolveSessionRef: async () => null,
-      runCockpitCli: async () => ({})
+      launchGentleShell: async () => ({})
     }),
     /No session matches/
   );
@@ -67,7 +92,7 @@ test("REGRESSION: kairo resume with no ref and exactly one real session resumes 
   await runKairoResume({ cwd: "/repo" }, {
     resolveProjectRoot: async () => "/repo",
     listSessions: async () => [{ id: "only-one" }],
-    runCockpitCli: async (options) => { launchedWith = options; return {}; }
+    launchGentleShell: async (options) => { launchedWith = options; return {}; }
   });
   assert.equal(launchedWith.sessionId, "only-one");
 });
@@ -77,7 +102,7 @@ test("REGRESSION: kairo resume with no ref and no real sessions yet throws, tell
     () => runKairoResume({ cwd: "/repo" }, {
       resolveProjectRoot: async () => "/repo",
       listSessions: async () => [],
-      runCockpitCli: async () => ({})
+      launchGentleShell: async () => ({})
     }),
     /No sessions yet/
   );
@@ -89,7 +114,7 @@ test("REGRESSION: kairo resume with no ref and multiple real sessions shows a re
   await runKairoResume({ cwd: "/repo" }, {
     resolveProjectRoot: async () => "/repo",
     listSessions: async () => [{ id: "session-a" }, { id: "session-b" }],
-    runCockpitCli: async (options) => { launchedWith = options; return {}; },
+    launchGentleShell: async (options) => { launchedWith = options; return {}; },
     interactive: true,
     createPrompt: () => {
       const prompt = async (question) => { prompts.push(question); return "2"; };
@@ -106,7 +131,7 @@ test("REGRESSION: kairo resume with no ref, multiple sessions, and a non-interac
     () => runKairoResume({ cwd: "/repo" }, {
       resolveProjectRoot: async () => "/repo",
       listSessions: async () => [{ id: "session-a" }, { id: "session-b" }],
-      runCockpitCli: async () => ({}),
+      launchGentleShell: async () => ({}),
       interactive: false
     }),
     /non-interactive terminal needs an explicit id/
@@ -118,7 +143,7 @@ test("REGRESSION: kairo resume rejects an invalid picker answer instead of silen
     () => runKairoResume({ cwd: "/repo" }, {
       resolveProjectRoot: async () => "/repo",
       listSessions: async () => [{ id: "session-a" }, { id: "session-b" }],
-      runCockpitCli: async () => ({}),
+      launchGentleShell: async () => ({}),
       interactive: true,
       createPrompt: () => {
         const prompt = async () => "not a number";
@@ -134,14 +159,14 @@ test("REGRESSION: start then resume against the real session-registry (no mocked
   const root = await realRepo();
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-session-cli-home-"));
   let launchedSessionId = null;
-  const runCockpitCli = async (options) => { launchedSessionId = options.sessionId; return {}; };
+  const launchGentleShell = async (options) => { launchedSessionId = options.sessionId; return {}; };
 
-  await runKairoStart({ cwd: root }, { homeDir, runCockpitCli });
+  await runKairoStart({ cwd: root }, { homeDir, launchGentleShell });
   const createdId = launchedSessionId;
   assert.match(createdId, /^[0-9a-f-]{36}$/);
 
   launchedSessionId = null;
-  await runKairoResume({ cwd: root, sessionRef: createdId.slice(0, 8) }, { homeDir, runCockpitCli });
+  await runKairoResume({ cwd: root, sessionRef: createdId.slice(0, 8) }, { homeDir, launchGentleShell });
   assert.equal(launchedSessionId, createdId);
 
   const listed = await runKairoSessionsList({ cwd: root, json: true }, { homeDir });
@@ -161,7 +186,7 @@ test("REGRESSION: kairo start always opens a brand new session with an empty tra
   let launchedSessionId = null;
   await runKairoStart({ cwd: root }, {
     homeDir,
-    runCockpitCli: async (options) => { launchedSessionId = options.sessionId; return {}; }
+    launchGentleShell: async (options) => { launchedSessionId = options.sessionId; return {}; }
   });
 
   const entries = await readTranscript(homeDir, root, launchedSessionId);

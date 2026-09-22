@@ -28,9 +28,9 @@ function runKairo(args, { homeDir = null, cwd = packageRoot } = {}) {
   });
 }
 
-test("bare kairo defaults to shell command", () => {
+test("bare kairo defaults to host command", () => {
   const { command } = parseArgs([]);
-  assert.equal(command, "shell");
+  assert.equal(command, "host");
 });
 
 test("bare kairo with setup flags still routes to setup", () => {
@@ -75,7 +75,7 @@ test("non-interactive bare kairo preserves scriptable error behavior", async () 
 
   const cli = runKairo([], { homeDir });
   assert.notEqual(cli.status, 0, cli.stderr);
-  assert.match(cli.stderr, /Non-interactive shell requires/);
+  assert.match(cli.stderr, /legacy-cockpit/);
   assert.equal(existsSync(statePath), false);
 });
 

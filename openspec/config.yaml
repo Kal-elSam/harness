@@ -1,0 +1,33 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Node.js ESM (`@kal-elsam/kairo-runtime`), Ink + `@earendil-works/pi-tui` cockpit.
+  Architecture: CLI composition root in `src/cli.js`; conversation, routing, and execution adapters under `src/global/`.
+  Testing: `node --test` via `npm test`.
+  Style: existing module patterns; no new comments unless requested.
+
+strict_tdd: true
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    guidelines:
+      - Follow existing code patterns
+    tdd: true
+    test_command: "npm test"
+  verify:
+    test_command: "npm test"
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
