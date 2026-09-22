@@ -437,7 +437,7 @@ export function createConversationService(deps = {}) {
   function createCachedProbe(readFn, ttlMs) {
     let cache = null;
     let inFlight = null;
-    return async function readCached(key, args) {
+    const readCached = async function readCached(key, args) {
       if (!enableProviderProbes) return null;
       const currentTime = now();
       if (cache && cache.key === key && currentTime - cache.readAt < ttlMs) return cache.value;
@@ -450,6 +450,13 @@ export function createConversationService(deps = {}) {
         .finally(() => { inFlight = null; });
       return inFlight;
     };
+    // Explicit bust for a caller that just wrote fresh data behind this
+    // same read (e.g. verifyClaudeEntitlements persisting a real probe
+    // result to disk) — without it, this TTL cache would keep serving the
+    // pre-write read for up to ttlMs even though the real source changed
+    // moments ago, in the same long-running session.
+    readCached.invalidate = () => { cache = null; };
+    return readCached;
   }
   const readCodexUsageCached = createCachedProbe(readCodexUsageImpl, codexUsageTtlMs);
   const readClaudeUsageCached = createCachedProbe(readClaudeUsageImpl, claudeUsageTtlMs);
@@ -1152,6 +1159,10 @@ export function createConversationService(deps = {}) {
         const merged = mergeEntitlementResultsImpl(cache, { subscriptionType, results });
         await writeClaudeEntitlementCacheImpl(homeDir, merged);
         persisted = true;
+        // The very next snapshot() in this same session must see this real
+        // result immediately, never the pre-verification read cached for
+        // up to claudeEntitlementCacheTtlMs (10 minutes by default).
+        readClaudeEntitlementCacheCached.invalidate();
       }
       return {
         probed: pendingIds,
