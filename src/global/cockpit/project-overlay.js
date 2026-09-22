@@ -337,35 +337,38 @@ export class ProjectOverlay {
 
   /**
    * The RESULT screen's own real, interactive PROJECT TEAM list — one row
-   * per real role in strategy.projectTeam, ROLE + MODEL ONLY (no inline
-   * description, no provider) — the fixed-width picker column was the
-   * real, reported cause of truncated/clipped WHY text; the full reason,
-   * provider, and access status now live in the readable detail block
-   * rendered below the list for whichever role is currently selected (see
-   * the S.RESULT case in render() and pushAssignmentDetail). Enter on a
-   * row still opens that role's real edit picker (see openRolePicker);
-   * Esc closes the overlay without approving (unchanged). Approval is a
-   * separate, explicit key ("a") — Enter here edits, it never silently
-   * approves.
+   * per real role in strategy.projectTeam, STRICTLY ROLE + MODEL (no
+   * inline description, no provider, no override/availability marker) —
+   * the fixed-width picker column was the real, reported cause of
+   * truncated/clipped WHY text, and cramming override/reanalysis markers
+   * onto the same row fought the same fixed width. Override, access, and
+   * "needs reanalysis" all live in the readable detail block below (see
+   * pushAssignmentDetail) and, for a strategy-wide problem, in the
+   * NEEDS REANALYSIS banner above — never invented a third place.
+   * Selecting a row (arrow keys or a real mouse click — see
+   * ProjectOverlay.handleInput/handleMouse) only ever moves the
+   * selection and updates that detail block; it is a real, reported bug
+   * that a click used to silently open the edit picker, indistinguishable
+   * from just browsing. Enter is now the one explicit way to open a
+   * role's real edit picker (see openRolePicker); Esc still closes the
+   * overlay without approving (unchanged, via onCancel below). Approval
+   * stays a separate, explicit key ("a").
    */
   buildResultRoleList() {
     const team = this.suggestedStrategy?.projectTeam ?? [];
     const items = team.map((entry) => {
       const modelText = entry.model ? this.view.aiTeamLabel(entry.model) : "no eligible option";
-      const overrideNote = entry.assignmentSource === "override" ? theme.fg("accent", " (override)") : "";
-      // A persisted suggestion re-displayed later can name a pick that's
-      // no longer really available (access revoked, entitlement lost
-      // since it was computed) — checked against the exact same live
-      // eligibility/entitlement the dashboard panel already uses, never
-      // silently shown as if it were still a clean recommendation.
-      const unavailableNote = isCurrentlyUnavailable(entry.model, this.view)
-        ? theme.fg("warning", "  needs reanalysis") : "";
       // Role + model are the real primary information here — explicit
       // `text` color, never left to default/muted.
-      return { value: entry.role, label: theme.fg("text", `${entry.role.padEnd(10)} ${modelText}`) + overrideNote + unavailableNote };
+      return { value: entry.role, label: theme.fg("text", `${entry.role.padEnd(10)} ${modelText}`) };
     });
     this.resultSelectList = new SelectList(items, 6, editorTheme.selectList);
-    this.resultSelectList.onSelect = (item) => void this.openRolePicker(item.value);
+    // No onSelect here — pi-tui's own SelectList already moves
+    // selectedIndex on both a keyboard confirm AND a real mouse click
+    // before ever calling onSelect, so leaving onSelect unset makes
+    // selecting a row (either way) a real no-op beyond updating the
+    // selection; opening the editor is Enter's own explicit job, handled
+    // in handleInput below, never implicit in selection itself.
     this.resultSelectList.onCancel = () => this.close();
   }
 
@@ -546,6 +549,18 @@ export class ProjectOverlay {
       if (data === "e" || data === "E") {
         this.showTeamEvidence = !this.showTeamEvidence;
         this.requestRender();
+        return;
+      }
+      // Enter is the one explicit way to open the currently selected
+      // role's real edit picker — handled here, before the SelectList
+      // ever sees Enter, since SelectList's own "confirm" keybinding
+      // would otherwise call onSelect (which this overlay deliberately
+      // leaves unset — see buildResultRoleList's own doc). Arrow keys and
+      // Esc still fall through to resultSelectList.handleInput below,
+      // completely unaffected.
+      if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
+        const item = this.resultSelectList.getSelectedItem();
+        if (item) void this.openRolePicker(item.value);
         return;
       }
       this.resultSelectList.handleInput(data);
@@ -741,7 +756,10 @@ export class ProjectOverlay {
         const selectedEntry = selectedItem
           ? (strategy.projectTeam ?? []).find((entry) => entry.role === selectedItem.value)
           : null;
-        if (selectedEntry) pushAssignmentDetail(selectedEntry.role, selectedEntry.model, { entry: selectedEntry });
+        if (selectedEntry) {
+          const overrideNote = selectedEntry.assignmentSource === "override" ? "override" : null;
+          pushAssignmentDetail(selectedEntry.role, selectedEntry.model, { entry: selectedEntry, note: overrideNote });
+        }
         // Quality/Efficient/Evidence are all optional DETAIL, not the
         // default view — the default result screen shows only Analyst +
         // the real operational PROJECT TEAM. All three share the exact

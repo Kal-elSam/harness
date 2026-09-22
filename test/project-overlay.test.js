@@ -827,7 +827,7 @@ test("REGRESSION: an overridden role shows an honest 'manual override' explanati
   selectByKey(overlay, QUALITY_MODEL.candidateKey);
   overlay.handleInput(ENTER);
   await flush();
-  overlay.resultSelectList.onSelect({ value: "Explorer" });
+  overlay.handleInput(ENTER); // opens the edit picker for the already-selected (only) Explorer role
   await flush();
   overlay.beginConfirmEdit(EXPLORER_ALTERNATIVE.candidateKey);
   overlay.handleInput(ENTER);
@@ -892,19 +892,26 @@ test("REGRESSION: a real in-flight action (analyzing, saving, approving, refresh
   assert.equal(view.actionLabel, null, "endAction must run once the real analysis settles, live or not");
 });
 
-test("REGRESSION: a real mouse click on a PROJECT TEAM row reaches the real SelectList and opens that role's edit picker — ProjectOverlay now forwards handleMouse", async () => {
+test("REGRESSION: a real mouse click on a PROJECT TEAM row only selects it and updates the detail block — it must never silently open the edit picker, indistinguishable from just browsing", async () => {
+  const team = ["Explorer", "Architect"].map((role, i) => ({
+    role, model: { adapterId: "codex", modelId: `model-${i}`, displayName: `Model ${role}` },
+    fallback: null, reason: `${role}-specific reason.`, assignmentSource: "recommended"
+  }));
+  const suggested = {
+    status: "suggested", bootstrapAnalystChoice: "quality", bootstrapAnalystSelectionSource: "recommended",
+    bootstrapAnalyst: { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" },
+    qualityTeam: [], efficientTeam: [], projectTeam: team
+  };
   const service = makePreflightService();
-  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
+  const overlay = new ProjectOverlay({ service, view: makeFakeView({ projectStrategy: suggested }), cwd: "/repo", onClose: () => {} });
   await flush();
-  selectByKey(overlay, QUALITY_MODEL.candidateKey);
-  overlay.handleInput(ENTER);
-  await flush();
+  assert.equal(overlay.state, S.RESULT);
   const width = 76;
   overlay.render(width);
   // The RESULT screen's real layout: title, analyst line, blank, "PROJECT
-  // TEAM" heading, then the real resultSelectList's own first row —
-  // exactly where the earlier render() calls (see buildResultRoleList's
-  // own box.addChild order) place it inside the Box.
+  // TEAM" heading, then the real resultSelectList's own rows — exactly
+  // where the earlier render() calls (see buildResultRoleList's own
+  // box.addChild order) place it inside the Box.
   const rows = overlay.box.mouseLayout.children;
   let rowY = 0;
   for (const { component, height } of rows) {
@@ -916,13 +923,24 @@ test("REGRESSION: a real mouse click on a PROJECT TEAM row reaches the real Sele
   // border row + left border/padding column (see ProjectOverlay's own
   // handleMouse), THEN the Box's own paddingY/paddingX (2,1) on top of
   // that — both real, both have to be crossed to land inside a child.
+  // "+3" (one row below the SelectList's own first row, at +2) lands the
+  // click on the SECOND real row (Architect), proving a click actually
+  // moves selection, not just re-clicks whatever was already selected.
   const clickEvent = {
-    type: "click", button: "left", x: 4, y: rowY + 2, screenX: 4, screenY: rowY + 2,
+    type: "click", button: "left", x: 4, y: rowY + 3, screenX: 4, screenY: rowY + 3,
     width, height: 1, shift: false, alt: false, ctrl: false
   };
   const result = overlay.handleMouse(clickEvent);
   assert.ok(result?.handled, "a real click on the real PROJECT TEAM row must be handled, not silently dropped");
-  assert.equal(overlay.state, S.EDIT_LOADING, "the real click must have triggered resultSelectList's onSelect, exactly like pressing Enter on that row would");
+  assert.equal(overlay.state, S.RESULT, "a click must never leave RESULT on its own — only Enter opens the edit picker");
+  assert.equal(overlay.resultSelectList.getSelectedItem()?.value, "Architect", "the click must have moved the real selection to the clicked row");
+  assert.equal(service.calls.editCatalog.length, 0, "a click must never itself request the edit catalog — that's Enter's own explicit job");
+  assert.match(overlay.render(width).join("\n"), /Architect-specific reason\./, "the detail block must already reflect the newly clicked row");
+
+  overlay.handleInput(ENTER);
+  await flush();
+  assert.equal(overlay.state, S.EDIT_MODEL_SEARCH, "Enter on the now-selected row must explicitly open its edit picker");
+  assert.deepEqual(service.calls.editCatalog.at(-1), { cwd: "/repo", role: "Architect" });
 });
 
 test("ProjectOverlay.handleMouse returns undefined harmlessly before any real render() has happened", () => {
@@ -1092,6 +1110,44 @@ test("REGRESSION: RESULT rows are role + model only — no inline description, n
   assert.match(rowLines, /GPT-6 Astra/);
   assert.doesNotMatch(rowLines, /Codex/i, "the compact row must not show the provider — it belongs in the detail block below");
   assert.doesNotMatch(rowLines, /Real capability leader/, "the compact row must not show the inline WHY description — it belongs in the detail block below");
+});
+
+test("REGRESSION: available, blocked, and overridden rows are all strictly role + model — override and reanalysis status live only in the detail block", async () => {
+  const available = { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra" };
+  const blockedFable = { adapterId: "claude", modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" };
+  const overridden = { adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5" };
+  const suggested = {
+    status: "suggested", bootstrapAnalystChoice: "quality", bootstrapAnalystSelectionSource: "recommended",
+    bootstrapAnalyst: available, qualityTeam: [], efficientTeam: [],
+    projectTeam: [
+      { role: "Architect", model: available, fallback: null, reason: "Ranked first.", assignmentSource: "recommended" },
+      { role: "Builder", model: blockedFable, fallback: null, reason: "Ranked first.", assignmentSource: "recommended" },
+      { role: "Debugger", model: overridden, fallback: null, reason: null, assignmentSource: "override" }
+    ]
+  };
+  const view = makeFakeView({
+    projectStrategy: suggested,
+    modelIntelligence: {
+      eligibility: { codex: { ok: true }, claude: { ok: true } },
+      claudeEntitlement: { "claude-fable-5-1": { status: "unverified", reason: null } }
+    }
+  });
+  const overlay = new ProjectOverlay({ service: makePreflightService(), view, cwd: "/repo", onClose: () => {} });
+  await flush();
+  assert.equal(overlay.state, S.RESULT);
+
+  const rowLines = overlay.resultSelectList.render(76).join("\n");
+  assert.match(rowLines, /Architect\s+GPT-6 Astra/);
+  assert.match(rowLines, /Builder\s+Claude Fable 5\.1/);
+  assert.match(rowLines, /Debugger\s+Claude Opus 5/);
+  assert.doesNotMatch(rowLines, /override/i, "no row may show an override marker — that belongs in the detail block");
+  assert.doesNotMatch(rowLines, /needs reanalysis/i, "no row may show a reanalysis marker — that belongs in the detail block");
+
+  overlay.resultSelectList.setSelectedIndex(1);
+  assert.match(joinPlain(overlay.render(76)), /needs reanalysis/, "the blocked role's own detail block must still show the real marker");
+
+  overlay.resultSelectList.setSelectedIndex(2);
+  assert.match(joinPlain(overlay.render(76)), /Debugger \(override\)/, "the overridden role's own detail block must still show the real override note");
 });
 
 test("the first role is selected by default and shows a full readable detail block below the compact list", async () => {
