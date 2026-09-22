@@ -2083,6 +2083,52 @@ test("buildUnverifiedClaudePreflightNotice is the measured one-line Spanish noti
   assert.match(notice, /centavo/);
 });
 
+test("REGRESSION: a real /models --verify-access result reaches the very next snapshot() in the same session, never stuck behind the 10-minute in-memory entitlement cache", async () => {
+  // A real, stateful fake disk — writeClaudeEntitlementCache actually
+  // updates what readClaudeEntitlementCache returns next, exactly like
+  // the real filesystem does. Without cache invalidation, snapshot()'s
+  // own in-memory readClaudeEntitlementCacheCached (10-minute TTL) would
+  // keep serving the pre-verification read even though the real disk
+  // file changed moments ago, in the same long-running session.
+  let diskDoc = null;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => diskDoc,
+    writeClaudeEntitlementCache: async (_homeDir, doc) => { diskDoc = doc; },
+    readCodexModels: async () => ({ status: "measured", models: [] }),
+    readClaudeModels: () => ({ status: "documented", models: [{ id: "claude-newly-allowed" }] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    probeClaudeModelEntitlements: async ({ modelIds }) => modelIds.map((modelId) => ({
+      modelId, status: ENTITLEMENT.ALLOWED, reason: null, probedAt: new Date().toISOString()
+    })),
+    readArtificialAnalysisModels: async () => ({ status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h", models: [] }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
+  });
+
+  // First snapshot populates the in-memory cache with "nothing verified yet".
+  const before = await service.snapshot({ cwd: "/repo" });
+  assert.equal(before.modelIntelligence.claudeEntitlement["claude-newly-allowed"].status, ENTITLEMENT.UNVERIFIED);
+
+  // A real verify-access sweep persists ALLOWED for this model.
+  await service.verifyClaudeEntitlements({ cwd: "/repo", refresh: false });
+
+  // The very next snapshot, same session, must see it — never the stale
+  // in-memory read from before verification.
+  const after = await service.snapshot({ cwd: "/repo" });
+  assert.equal(after.modelIntelligence.claudeEntitlement["claude-newly-allowed"].status, ENTITLEMENT.ALLOWED);
+});
+
 test("verifyClaudeEntitlements without refresh only probes unverified or TTL-expired ids", async () => {
   const probed = [];
   const nowMs = Date.parse("2026-09-19T12:00:00.000Z");
