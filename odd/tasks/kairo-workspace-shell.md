@@ -78,6 +78,7 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   shell`). Pi now renders a compact Kairo widget and exposes `/kairo`,
   `/kairo-team`, `/kairo-sessions`,
   `/kairo-usage`, `/kairo-route`, and `/kairo-memory`.
-- KWS-03 completed locally; commit pending. Kairo now isolates the host and
-  disables discovered extensions, skills, prompts, and themes; its own explicit
-  extension remains the only product resource in the normal workspace launch.
+- KWS-03 completed locally in `a684570` (`fix(host): isolate Kairo workspace
+  resources`). Kairo now isolates the host and disables discovered extensions,
+  skills, prompts, and themes; its own explicit extension remains the only
+  product resource in the normal workspace launch.
