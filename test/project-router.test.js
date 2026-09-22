@@ -191,9 +191,11 @@ test("REGRESSION: resolveProjectRoute blocks ACTIVE strategy when live modelEnti
     strategy,
     eligibility: { claude: { ok: true } },
     modelEntitlement: {
-      "claude-fable-5-1": {
-        status: "denied",
-        reason: "Credits required to use this model — upgrade your plan"
+      claude: {
+        "claude-fable-5-1": {
+          status: "denied",
+          reason: "Credits required to use this model — upgrade your plan"
+        }
       }
     }
   });
@@ -209,7 +211,7 @@ test("REGRESSION: resolveProjectRoute also blocks when live modelEntitlement say
     role: "Builder",
     strategy,
     eligibility: { claude: { ok: true } },
-    modelEntitlement: { "builder-model": { status: "unverified", reason: null } }
+    modelEntitlement: { claude: { "builder-model": { status: "unverified", reason: null } } }
   });
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);
   assert.match(route.why, /not currently entitled/);
@@ -223,7 +225,7 @@ test("REGRESSION: resolveProjectRoute blocks a real, active Cursor (Fable-via-Cu
     eligibility: { cursor: { ok: true } },
     // The exact real projection service.js builds from a real Cursor pool
     // probe (cursorStatusToEntitlement: EXHAUSTED -> DENIED).
-    modelEntitlement: { "claude-fable-5-1": { status: "denied", reason: "Other Models quota exhausted" } }
+    modelEntitlement: { cursor: { "claude-fable-5-1": { status: "denied", reason: "Other Models quota exhausted" } } }
   });
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);
   assert.equal(route.blockedAssignment.model.modelId, "claude-fable-5-1");
@@ -236,6 +238,23 @@ test("empty modelEntitlement {} does not gate — keeps pre-entitlement callers 
     role: "Builder", strategy, eligibility: { claude: { ok: true } }, modelEntitlement: {}
   });
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED);
+});
+
+test("REGRESSION: a Claude model and a Cursor-proxied model sharing the same raw modelId never collide — each adapter's entitlement is independent", () => {
+  // Cursor can proxy a model under the exact same id string Claude itself
+  // uses (e.g. "claude-fable-5-1"). A flat modelId -> entitlement map would
+  // let one adapter's entry silently overwrite the other's.
+  const strategy = activeStrategy([{ role: "Builder", model: claudeModel({ modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1" }), assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({
+    role: "Builder",
+    strategy,
+    eligibility: { claude: { ok: true } },
+    modelEntitlement: {
+      claude: { "claude-fable-5-1": { status: "allowed", reason: null } },
+      cursor: { "claude-fable-5-1": { status: "denied", reason: "Other Models quota exhausted" } }
+    }
+  });
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED, "Cursor's denied entry for the same raw modelId must never block the real Claude assignment");
 });
 
 test("suggestedAlternative under entitlement block also requires fallback entitlement allowed/not_applicable (or missing key)", () => {
@@ -252,8 +271,10 @@ test("suggestedAlternative under entitlement block also requires fallback entitl
     strategy: strategyDeniedFallback,
     eligibility: { claude: { ok: true } },
     modelEntitlement: {
-      "claude-fable-5-1": { status: "denied", reason: "Credits required" },
-      "claude-haiku-4-5": { status: "denied", reason: "also denied" }
+      claude: {
+        "claude-fable-5-1": { status: "denied", reason: "Credits required" },
+        "claude-haiku-4-5": { status: "denied", reason: "also denied" }
+      }
     }
   });
   assert.equal(blockedFallback.suggestedAlternative, null);
@@ -269,7 +290,7 @@ test("suggestedAlternative under entitlement block also requires fallback entitl
     strategy: strategyCodexFallback,
     eligibility: { claude: { ok: true }, codex: { ok: true } },
     modelEntitlement: {
-      "claude-fable-5-1": { status: "denied", reason: "Credits required" }
+      claude: { "claude-fable-5-1": { status: "denied", reason: "Credits required" } }
     }
   });
   assert.equal(withCodex.suggestedAlternative?.model.modelId, "gpt-6-astra");

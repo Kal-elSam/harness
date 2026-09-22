@@ -54,20 +54,35 @@ import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
 
 const AUTOMATIC_ENTITLEMENTS = new Set([ENTITLEMENT.ALLOWED, ENTITLEMENT.NOT_APPLICABLE]);
 
+// Every other adapter's real, live catalog presence IS its own access
+// proof (Codex/OpenCode Go/OpenCode Zen never gate on a per-model
+// entitlement map at all, whatever a caller might accidentally pass).
+const ENTITLEMENT_TRACKED_ADAPTERS = new Set(["claude", "cursor"]);
+
 /**
- * Resolves per-model entitlement orthogonal to accessMode.
- * Non-Claude adapters: not_applicable (catalog presence is access proof).
- * Claude: from deps.modelEntitlement[modelId], or unverified when missing.
+ * Resolves per-model entitlement orthogonal to accessMode, via one central
+ * rule shared by both tracked adapters — never a Claude-only branch.
+ * Claude always fails closed to unverified when this modelId has no real
+ * entry, even when `modelEntitlement` omits the `claude` key entirely —
+ * Claude access always needs live proof. Cursor stays not_applicable when
+ * its own `cursor` key is simply absent (no tracking requested for this
+ * call), but once that key IS present, an unlisted modelId fails closed to
+ * unverified exactly like Claude — real, per-pool Cursor access is never
+ * assumed just because the model showed up in Cursor's catalog.
  * @param {string} adapterId
  * @param {string} modelId
- * @param {Record<string, {status?: string, reason?: string|null}>} [modelEntitlement]
+ * @param {Record<string, Record<string, {status?: string, reason?: string|null}>>} [modelEntitlement] - adapterId -> modelId -> entitlement
  * @returns {{entitlement: ModelEntitlementStatus, entitlementReason: string|null}}
  */
 function resolveEntitlement(adapterId, modelId, modelEntitlement = {}) {
-  if (adapterId !== "claude") {
+  if (!ENTITLEMENT_TRACKED_ADAPTERS.has(adapterId)) {
     return { entitlement: ENTITLEMENT.NOT_APPLICABLE, entitlementReason: null };
   }
-  const entry = modelEntitlement[modelId];
+  const adapterMap = modelEntitlement[adapterId];
+  if (!adapterMap && adapterId === "cursor") {
+    return { entitlement: ENTITLEMENT.NOT_APPLICABLE, entitlementReason: null };
+  }
+  const entry = adapterMap?.[modelId];
   if (!entry || typeof entry !== "object") {
     return { entitlement: ENTITLEMENT.UNVERIFIED, entitlementReason: null };
   }
@@ -415,11 +430,13 @@ function buildCandidateIdentity(adapterId, rawModel, aaModels, matcher, modelEnt
  * @param {Array<object>} aaModels - readArtificialAnalysisModels().models
  * @param {{
  *   matchArtificialAnalysisScore?: (modelId: string, aaModels: Array<object>) => object|null,
- *   modelEntitlement?: Record<string, {status?: string, reason?: string|null}>
+ *   modelEntitlement?: Record<string, Record<string, {status?: string, reason?: string|null}>>
  * }} [deps] -
  *   injectable for tests; defaults to model-intelligence.js's real export.
- *   `modelEntitlement` is Claude-only live entitlement (allowed/denied/unverified);
- *   missing keys leave Claude as unverified. Non-Claude adapters ignore it.
+ *   `modelEntitlement` is adapterId -> modelId -> live entitlement
+ *   (allowed/denied/unverified), applied via the same rule to every adapter
+ *   present — an adapter absent from the map entirely stays not_applicable;
+ *   a present adapter missing this modelId fails closed to unverified.
  * @returns {Array<ModelCandidateIdentity>}
  */
 export function buildCompleteCandidateCatalog(providerCatalogs, aaModels, deps = {}) {

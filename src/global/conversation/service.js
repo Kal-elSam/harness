@@ -721,7 +721,10 @@ export function createConversationService(deps = {}) {
           const pool = classifyCursorPool(model);
           cursorModelEntitlement[model.id] = { status: cursorStatusToEntitlement(cursorAccess[pool]?.status), reason: cursorAccess[pool]?.reason ?? null };
         }
-        const modelEntitlement = { ...claudeEntitlement, ...cursorModelEntitlement };
+        // Namespaced by adapter — never a flat modelId merge, which would
+        // let a Cursor-proxied model silently collide with (and overwrite)
+        // a Claude entry sharing the exact same raw id.
+        const modelEntitlement = { claude: claudeEntitlement, cursor: cursorModelEntitlement };
         const scored = scoreAvailableModels(
           candidates.map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
           aa.models
@@ -1377,7 +1380,7 @@ export function createConversationService(deps = {}) {
       // actually prevents launching a task on a blocked/exhausted model,
       // for either adapter, via the exact same blockingEntitlement check
       // (project-router.js) real Claude entitlement already used alone.
-      const modelEntitlement = snap.modelIntelligence?.modelEntitlement ?? snap.modelIntelligence?.claudeEntitlement ?? {};
+      const modelEntitlement = snap.modelIntelligence?.modelEntitlement ?? {};
       return resolveProjectRoute({ role, strategy, eligibility, modelEntitlement });
     },
     /**

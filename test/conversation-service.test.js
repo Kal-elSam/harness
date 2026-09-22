@@ -1267,7 +1267,7 @@ test("REGRESSION: a real Cursor probe failure (never verified) fails closed — 
   // Per-model: real quota was never confirmed — fails closed. "composer-2.5"
   // is Cursor's own model line, so it's the cursor_models pool here.
   assert.equal(snapshot.modelIntelligence.cursorAccess.cursor_models.status, "unverified");
-  assert.equal(snapshot.modelIntelligence.modelEntitlement["composer-2.5"].status, ENTITLEMENT.UNVERIFIED);
+  assert.equal(snapshot.modelIntelligence.modelEntitlement.cursor["composer-2.5"].status, ENTITLEMENT.UNVERIFIED);
 });
 
 test("snapshot exposes globalGuide.capability/efficient as the real, uncoordinated per-role winners — separate from the portfolio-coordinated aiTeam/efficientTeam", async () => {
