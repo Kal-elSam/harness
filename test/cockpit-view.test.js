@@ -1482,6 +1482,35 @@ test("INC4: resolveAssignmentAvailability — entitlement beats adapter ineligib
   assert.equal(ineligible.warning, "Unavailable — rate limited");
 });
 
+test("REGRESSION: resolveAssignmentAvailability's real Cursor branch — available/exhausted/unverified per pool, auto always available, adapter-level eligibility never overrides a real pool block", () => {
+  const composer = { adapterId: "cursor", modelId: "composer-2.5", displayName: "Composer 2.5" };
+  const fableViaCursor = { adapterId: "cursor", modelId: "claude-fable-5-1", displayName: "Fable 5.1" };
+  const auto = { adapterId: "cursor", modelId: "auto", displayName: "Auto (current, default)" };
+
+  const available = resolveAssignmentAvailability(composer, {
+    eligibility: { cursor: { ok: true } },
+    cursorAccess: { cursor_models: { status: "available", reason: null }, other_models: { status: "unverified", reason: null } }
+  });
+  assert.equal(available.available, true);
+
+  const exhausted = resolveAssignmentAvailability(fableViaCursor, {
+    eligibility: { cursor: { ok: true } },
+    cursorAccess: { cursor_models: { status: "available", reason: null }, other_models: { status: "exhausted", reason: "monthly limit" } }
+  });
+  assert.equal(exhausted.available, false);
+  assert.match(exhausted.warning, /Other Models quota exhausted \(monthly limit\)/);
+
+  const unverified = resolveAssignmentAvailability(fableViaCursor, {
+    eligibility: { cursor: { ok: true } },
+    cursorAccess: {}
+  });
+  assert.equal(unverified.available, false);
+  assert.match(unverified.warning, /could not be verified automatically/);
+
+  const autoStaysAvailable = resolveAssignmentAvailability(auto, { eligibility: { cursor: { ok: true } }, cursorAccess: {} });
+  assert.equal(autoStaysAvailable.available, true, "auto is never probed/scored — it must never be blocked by a pool it was never part of");
+});
+
 test("INC4: projectTeamEvidenceLines names quality leader when it differs and retains real retention%", () => {
   const { view } = makeView();
   const strategy = {

@@ -153,14 +153,9 @@ export const LOW_QUOTA_WARN_PERCENT = 20;
  * Real availability/launchability/quota only; never a capability judgment
  * (that's scoreAvailableModels' job, applied only to survivors of this).
  * @param {string} adapterId - "codex" | "claude" | "opencode-go" | "opencode-zen" | "cursor"
- * @param {{adapters: object[], codexUsage?: object|null, claudeUsage?: object|null, opencodeGoUsage?: object|null, cursorManualQuota?: {manualExhausted: boolean, reason?: string|null}|null}} context -
- *   `cursorManualQuota` is the human-reported override (see
- *   runtime/usage-store.js's `cursor.json` record, set via
- *   `/project cursor exhausted|available`) — Cursor exposes no real,
- *   zero-cost local quota read (its CLI has no usage/billing subcommand
- *   and a successful `-p` call only reports per-request token counts, not
- *   remaining account balance), so unlike Codex/Claude/OpenCode Go this is
- *   never auto-detected, only ever what the human last told Kairo.
+ * @param {{adapters: object[], codexUsage?: object|null, claudeUsage?: object|null, opencodeGoUsage?: object|null}} context -
+ *   Cursor's real quota state is judged per-model, not here — see
+ *   cursor-entitlement.js/resolveProjectRoute's own blockingEntitlement.
  * @returns {{ok: boolean, reason: string|null}}
  * @param {{requireLaunchable?: boolean}} [options] - `requireLaunchable: false`
  *   is for AI TEAM's recommendation surface only (service.js's snapshot()):
@@ -177,7 +172,7 @@ export const LOW_QUOTA_WARN_PERCENT = 20;
  *   something guaranteed to fail at launch (run-manager.js's own
  *   launchable gate would reject it).
  */
-export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage, cursorManualQuota }, { requireLaunchable = true } = {}) {
+export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage }, { requireLaunchable = true } = {}) {
   // Zen carries real PAYG/billing risk (see conversation/service.js's
   // capabilities.openCodeExecution) — never an automatic pick, regardless
   // of what its real catalog/benchmarks might otherwise say.
@@ -208,26 +203,16 @@ export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, o
     const limited = windows.find((window) => window.status === "rate-limited");
     if (limited) return { ok: false, reason: `OpenCode Go ${limited.name} window is rate-limited` };
   }
-  // Cursor: only ever the human's own last word (see this function's own
-  // doc) — never fabricated from a guess. Applies to BOTH the
-  // recommendation path AND real task routing now that Cursor is a real
-  // automatic candidate — a human-reported "out of credits" must block
-  // an actual launch, not just a suggestion. Fail-closed by default: that
-  // Cursor LISTS a named model proves nothing about whether this
-  // account's current quota can actually run it — only an explicit
-  // `/project cursor available` (manualExhausted: false, a real record)
-  // clears named models for automatic use. No record at all (never
-  // toggled either way) is UNVERIFIED, not silently available — the
-  // opposite of the old behavior, which treated "never checked" the same
-  // as "confirmed fine".
-  if (adapterId === "cursor") {
-    if (cursorManualQuota?.manualExhausted === true) {
-      return { ok: false, reason: cursorManualQuota.reason ?? "Cursor marked out of credits (manual, via /project cursor exhausted)" };
-    }
-    if (cursorManualQuota?.manualExhausted !== false) {
-      return { ok: false, reason: "Cursor access unverified — run /project cursor available once you've confirmed real quota, or /project cursor exhausted if you don't have any." };
-    }
-  }
+  // Cursor's real quota state is no longer a manual human toggle here —
+  // Kairo now runs a real, minimal, automatic probe per pool (see
+  // cursor-entitlement.js/cursor-entitlement-store.js) and gates each real
+  // MODEL individually via the same per-model entitlement mechanism
+  // Claude already uses (resolveProjectRoute's blockingEntitlement,
+  // resolveAssignmentAvailability in view.js) — never a single coarse
+  // adapter-level boolean, since Cursor has two real, independent pools
+  // (its own Composer line vs. every proxied third-party model). This
+  // function's own job for Cursor is therefore identical to every other
+  // adapter: real availability/launchability only, nothing quota-related.
   return { ok: true, reason: null };
 }
 

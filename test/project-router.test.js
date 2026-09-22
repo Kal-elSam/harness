@@ -6,6 +6,10 @@ function claudeModel(overrides = {}) {
   return { candidateKey: "claude::builder-model", adapterId: "claude", modelId: "builder-model", displayName: "Builder Model", accessMode: "automatic", ...overrides };
 }
 
+function cursorModel(overrides = {}) {
+  return { candidateKey: "cursor::claude-fable-5-1", adapterId: "cursor", modelId: "claude-fable-5-1", displayName: "Fable 5.1", accessMode: "automatic", ...overrides };
+}
+
 function activeStrategy(projectTeam) {
   return { status: "active", profileFingerprint: "fp-1", projectTeam };
 }
@@ -209,6 +213,21 @@ test("REGRESSION: resolveProjectRoute also blocks when live modelEntitlement say
   });
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);
   assert.match(route.why, /not currently entitled/);
+});
+
+test("REGRESSION: resolveProjectRoute blocks a real, active Cursor (Fable-via-Cursor) assignment when the real per-pool probe projects it as denied — the exact same generic modelEntitlement gate Claude already used, now also fed by Cursor's real access", () => {
+  const strategy = activeStrategy([{ role: "Builder", model: cursorModel(), assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({
+    role: "Builder",
+    strategy,
+    eligibility: { cursor: { ok: true } },
+    // The exact real projection service.js builds from a real Cursor pool
+    // probe (cursorStatusToEntitlement: EXHAUSTED -> DENIED).
+    modelEntitlement: { "claude-fable-5-1": { status: "denied", reason: "Other Models quota exhausted" } }
+  });
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);
+  assert.equal(route.blockedAssignment.model.modelId, "claude-fable-5-1");
+  assert.match(route.why, /Other Models quota exhausted/);
 });
 
 test("empty modelEntitlement {} does not gate — keeps pre-entitlement callers green", () => {

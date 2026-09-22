@@ -805,21 +805,9 @@ test("refreshProjectStrategy never silently re-runs a real provider call for a p
   assert.equal(profileComputed, false);
 });
 
-test("setCursorManualQuota persists the human's real report as an ordinary provider usage record — the only way Cursor's quota state ever changes", async () => {
-  let stored = null;
-  const service = createConversationService({
-    resolveRoot: async () => "/repo", homeDir: "/home/test",
-    writeProviderUsage: async (homeDir, provider, record) => { assert.equal(homeDir, "/home/test"); assert.equal(provider, "cursor"); stored = record; return record; }
-  });
-
-  const exhausted = await service.setCursorManualQuota({ exhausted: true });
-  assert.equal(exhausted.manualExhausted, true);
-  assert.match(exhausted.reason, /out of credits/);
-  assert.equal(stored, exhausted, "the exact record returned must be the exact record persisted — never a second, drifting shape");
-
-  const available = await service.setCursorManualQuota({ exhausted: false });
-  assert.equal(available.manualExhausted, false);
-  assert.equal(available.reason, null, "clearing the flag must honestly clear the reason too, never leave a stale exhausted reason behind");
+test("REGRESSION: setCursorManualQuota no longer exists — Cursor's real access is a real automatic probe now (cursor-entitlement.js), never a human toggle", () => {
+  const service = createConversationService({ resolveRoot: async () => "/repo", homeDir: "/home/test" });
+  assert.equal(service.setCursorManualQuota, undefined);
 });
 
 async function realTeamEditCandidates() {
@@ -1221,10 +1209,13 @@ test("snapshot genuinely includes a real, available Cursor as an AI TEAM recomme
     readClaudeModels: () => ({ status: "documented", models: [] }),
     readOpenCodeModels: async () => ({ status: "measured", models: [] }),
     readCursorModels: async () => ({ status: "measured", models: [{ id: "composer-2.5", displayName: "Composer 2.5" }, { id: "auto", displayName: "Auto (current, default)" }] }),
-    // Fail-closed by default (see execution-router.js's checkCandidate) —
-    // a real, explicit "confirmed available" record is required for a
-    // named Cursor model to be a real recommendation candidate at all.
-    readProviderUsage: async () => ({ provider: "cursor", manualExhausted: false, reason: null }),
+    // Real Cursor access is now a real, automatic probe (cursor-entitlement.js)
+    // — never mock a spawn implicitly; a test that needs Cursor eligible
+    // mocks the probe result explicitly, same discipline as every other
+    // real subprocess call in this suite.
+    readCursorAccessCache: async () => null,
+    probeCursorPoolAccess: async ({ pool }) => ({ pool, status: "available", reason: null, probedAt: new Date().toISOString() }),
+    writeCursorAccessCache: async () => {},
     readArtificialAnalysisModels: async () => ({
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
       models: [{ slug: "composer-2.5", name: "Composer 2.5", intelligenceIndex: 90, codingIndex: 95, mathIndex: null }]
@@ -1239,7 +1230,7 @@ test("snapshot genuinely includes a real, available Cursor as an AI TEAM recomme
   assert.ok(!snapshot.modelIntelligence.models.some((m) => m.adapterId === "cursor" && m.modelId === "auto"), "Cursor's opaque 'auto' fallback must never be scored or recommended as if it were a real, checkable named model");
 });
 
-test("REGRESSION: an untouched Cursor account (no /project cursor available|exhausted ever run) is unverified, not silently recommended — that a model is LISTED proves nothing about real quota", async () => {
+test("REGRESSION: a real Cursor probe failure (never verified) fails closed — the model still appears (auditable) but its per-model entitlement is UNVERIFIED, never silently ALLOWED", async () => {
   const service = createConversationService({
     resolveRoot: async () => "/repo",
     homeDir: "/home/kal-el",
@@ -1258,7 +1249,9 @@ test("REGRESSION: an untouched Cursor account (no /project cursor available|exha
     readClaudeModels: () => ({ status: "documented", models: [] }),
     readOpenCodeModels: async () => ({ status: "measured", models: [] }),
     readCursorModels: async () => ({ status: "measured", models: [{ id: "composer-2.5", displayName: "Composer 2.5" }] }),
-    readProviderUsage: async () => null,
+    readCursorAccessCache: async () => null,
+    probeCursorPoolAccess: async ({ pool }) => ({ pool, status: "unverified", reason: "cursor-agent probe timed out", probedAt: new Date().toISOString() }),
+    writeCursorAccessCache: async () => {},
     readArtificialAnalysisModels: async () => ({
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
       models: [{ slug: "composer-2.5", name: "Composer 2.5", intelligenceIndex: 90, codingIndex: 95, mathIndex: null }]
@@ -1268,8 +1261,13 @@ test("REGRESSION: an untouched Cursor account (no /project cursor available|exha
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
-  assert.equal(snapshot.modelIntelligence.eligibility.cursor.ok, false);
-  assert.match(snapshot.modelIntelligence.eligibility.cursor.reason, /unverified/);
+  // Adapter-level: Cursor CLI is genuinely installed/launchable — that's
+  // real and true regardless of quota.
+  assert.equal(snapshot.modelIntelligence.eligibility.cursor.ok, true);
+  // Per-model: real quota was never confirmed — fails closed. "composer-2.5"
+  // is Cursor's own model line, so it's the cursor_models pool here.
+  assert.equal(snapshot.modelIntelligence.cursorAccess.cursor_models.status, "unverified");
+  assert.equal(snapshot.modelIntelligence.modelEntitlement["composer-2.5"].status, ENTITLEMENT.UNVERIFIED);
 });
 
 test("snapshot exposes globalGuide.capability/efficient as the real, uncoordinated per-role winners — separate from the portfolio-coordinated aiTeam/efficientTeam", async () => {

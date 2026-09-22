@@ -4,6 +4,8 @@ import { CARD_TONE, cardBottom, cardInnerWidth, cardLine, cardTop, renderPanel a
 import { theme } from "./theme.js";
 import { LOW_QUOTA_WARN_PERCENT } from "../intelligence/execution-router.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
+import { CURSOR_ACCESS_STATUS, classifyCursorPool } from "../observability/cursor-entitlement.js";
+import { isCursorAutoModel } from "../observability/cursor-models.js";
 
 /** Plain-language description of what each role optimizes for — mirrors
  * buildAiTeamRoleDefinitions()'s real compute functions in
@@ -53,7 +55,7 @@ export function explainTeamDecision(entry) {
  * @param {{eligibility?: Record<string, {ok: boolean, reason?: string}>, claudeEntitlement?: Record<string, {status: string, reason?: string|null}>}} [opts]
  * @returns {{available: boolean, warning: string|null}}
  */
-export function resolveAssignmentAvailability(model, { eligibility = {}, claudeEntitlement = {} } = {}) {
+export function resolveAssignmentAvailability(model, { eligibility = {}, claudeEntitlement = {}, cursorAccess = {} } = {}) {
   if (!model) return { available: false, warning: null };
 
   if (model.adapterId === "claude") {
@@ -69,6 +71,28 @@ export function resolveAssignmentAvailability(model, { eligibility = {}, claudeE
       return {
         available: false,
         warning: "Unavailable — model entitlement not verified (run /models --verify-access)"
+      };
+    }
+  }
+
+  // Cursor's own real access check (cursor-entitlement.js) — never a
+  // human toggle anymore. `auto` is the opaque, manual-only fallback and
+  // is never probed/scored (see cursor-models.js's own isCursorAutoModel)
+  // — it stays available here so it can still be named as a manual
+  // option, never blocked by a pool it was never part of.
+  if (model.adapterId === "cursor" && !isCursorAutoModel(model.modelId)) {
+    const pool = classifyCursorPool(model);
+    const access = cursorAccess[pool];
+    if (access?.status === CURSOR_ACCESS_STATUS.EXHAUSTED) {
+      return {
+        available: false,
+        warning: `Unavailable — Cursor ${pool === "cursor_models" ? "Cursor Models" : "Other Models"} quota exhausted${access.reason ? ` (${access.reason})` : ""}`
+      };
+    }
+    if (access?.status !== CURSOR_ACCESS_STATUS.AVAILABLE) {
+      return {
+        available: false,
+        warning: "Unavailable — Cursor access could not be verified automatically"
       };
     }
   }
@@ -659,9 +683,10 @@ export class CockpitView {
     // now-blocked model as if it were fine (see resolveAssignmentAvailability).
     const eligibility = this.snapshot?.modelIntelligence?.eligibility ?? {};
     const claudeEntitlement = this.snapshot?.modelIntelligence?.claudeEntitlement ?? {};
+    const cursorAccess = this.snapshot?.modelIntelligence?.cursorAccess ?? {};
     const roleLine = (label, model) => {
       const base = `${label.padEnd(18)} ${this.teamRoleLabel(model, modelColumnWidth)}`;
-      const { available, warning } = resolveAssignmentAvailability(model, { eligibility, claudeEntitlement });
+      const { available, warning } = resolveAssignmentAvailability(model, { eligibility, claudeEntitlement, cursorAccess });
       return available || !warning ? base : `${base}  ${theme.fg("warning", warning)}`;
     };
     if (strategy.bootstrapAnalyst) lines.push(roleLine("Project Analyst", strategy.bootstrapAnalyst));
@@ -1155,17 +1180,17 @@ export class CockpitView {
    * has no `available`), and injecting quality-leader + entitlement warnings
    * via extraLinesFor — never a forked evidence renderer.
    * @param {object} strategy
-   * @param {{eligibility?: object, claudeEntitlement?: object}} [opts]
+   * @param {{eligibility?: object, claudeEntitlement?: object, cursorAccess?: object}} [opts]
    */
-  projectTeamEvidenceLines(strategy, { eligibility = {}, claudeEntitlement = {} } = {}) {
+  projectTeamEvidenceLines(strategy, { eligibility = {}, claudeEntitlement = {}, cursorAccess = {} } = {}) {
     const projectTeam = strategy?.projectTeam ?? [];
     const hasQualityTeam = Array.isArray(strategy?.qualityTeam);
     const qualityByRole = new Map((strategy?.qualityTeam ?? []).map((row) => [row.role, row]));
 
     const team = projectTeam.map((entry) => {
-      const primaryAvailability = resolveAssignmentAvailability(entry.model, { eligibility, claudeEntitlement });
+      const primaryAvailability = resolveAssignmentAvailability(entry.model, { eligibility, claudeEntitlement, cursorAccess });
       const fallbackAvailability = entry.fallback
-        ? resolveAssignmentAvailability(entry.fallback, { eligibility, claudeEntitlement })
+        ? resolveAssignmentAvailability(entry.fallback, { eligibility, claudeEntitlement, cursorAccess })
         : null;
       return {
         role: entry.role,

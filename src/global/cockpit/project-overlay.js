@@ -38,7 +38,8 @@ const overlayFrameTheme = {
 function currentAvailability(view) {
   return {
     eligibility: view.snapshot?.modelIntelligence?.eligibility ?? {},
-    claudeEntitlement: view.snapshot?.modelIntelligence?.claudeEntitlement ?? {}
+    claudeEntitlement: view.snapshot?.modelIntelligence?.claudeEntitlement ?? {},
+    cursorAccess: view.snapshot?.modelIntelligence?.cursorAccess ?? {}
   };
 }
 
@@ -706,8 +707,9 @@ export class ProjectOverlay {
           if (typeof this.view.projectTeamEvidenceLines === "function") {
             const eligibility = this.view.snapshot?.modelIntelligence?.eligibility ?? {};
             const claudeEntitlement = this.view.snapshot?.modelIntelligence?.claudeEntitlement ?? {};
+            const cursorAccess = this.view.snapshot?.modelIntelligence?.cursorAccess ?? {};
             push(theme.fg("muted", "Evidence"));
-            for (const line of this.view.projectTeamEvidenceLines(strategy, { eligibility, claudeEntitlement })) {
+            for (const line of this.view.projectTeamEvidenceLines(strategy, { eligibility, claudeEntitlement, cursorAccess })) {
               push(line);
             }
           }

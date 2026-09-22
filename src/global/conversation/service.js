@@ -38,7 +38,6 @@ import { runCodexSandboxedBootstrap } from "./codex-sandbox.js";
 import { createBootstrapAnalyzerAdapter } from "./bootstrap-analyzer-adapters.js";
 import { verifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
-import { readProviderUsage, writeProviderUsage } from "../runtime/usage-store.js";
 import { resolveProjectRoute } from "./project-router.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -53,6 +52,17 @@ import {
   ENTITLEMENT,
   probeClaudeModelEntitlements
 } from "../observability/claude-model-entitlement.js";
+import {
+  DEFAULT_CURSOR_ACCESS_TTL_MS,
+  invalidateCursorPoolAccess,
+  mergeCursorAccessResult,
+  readCursorAccessCache,
+  resolveCursorPoolAccess,
+  writeCursorAccessCache
+} from "../observability/cursor-entitlement-store.js";
+import {
+  CURSOR_ACCESS_STATUS, CURSOR_POOL, classifyCursorPool, probeCursorPoolAccess
+} from "../observability/cursor-entitlement.js";
 import {
   annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam,
   buildEfficientTeam, scoreAvailableModels, summarizeCatalogCoverage
@@ -100,6 +110,53 @@ export function buildUnverifiedClaudePreflightNotice(count) {
 
 function isPersistableEntitlementStatus(status) {
   return status === ENTITLEMENT.ALLOWED || status === ENTITLEMENT.DENIED;
+}
+
+// Cursor's own real access status (AVAILABLE/EXHAUSTED/UNVERIFIED) uses a
+// vocabulary purpose-built for its own two-pool model; wherever Kairo's
+// existing per-model entitlement machinery (blockingEntitlement in
+// project-router.js, buildCompleteCandidateCatalog's own DENIED/UNVERIFIED
+// filtering) expects the shared ENTITLEMENT vocabulary, this projects one
+// onto the other — never invents a second, parallel gating mechanism.
+function cursorStatusToEntitlement(status) {
+  if (status === CURSOR_ACCESS_STATUS.AVAILABLE) return ENTITLEMENT.ALLOWED;
+  if (status === CURSOR_ACCESS_STATUS.EXHAUSTED) return ENTITLEMENT.DENIED;
+  return ENTITLEMENT.UNVERIFIED;
+}
+
+/**
+ * Resolves each real Cursor pool's access from the 15-minute disk cache,
+ * probing at most once per pool (never per model, never concurrently —
+ * one real representative model per pool) only when that pool's cached
+ * state is missing or expired. A pool with no real candidate model in the
+ * current catalog is never probed — there's nothing to gate.
+ * @param {{homeDir: string, cursorModels: Array<{id:string,displayName?:string}>, cwd: string, now: number, ttlMs: number, readCache: Function, writeCache: Function, probe: Function}} args
+ * @returns {Promise<Record<string, {status: string, reason: string|null}>>}
+ */
+async function resolveOrProbeCursorAccess({ homeDir, cursorModels, cwd, now, ttlMs, readCache, writeCache, probe }) {
+  const byPool = { [CURSOR_POOL.CURSOR_MODELS]: [], [CURSOR_POOL.OTHER_MODELS]: [] };
+  for (const model of cursorModels) byPool[classifyCursorPool(model)].push(model);
+
+  const cache = await readCache(homeDir).catch(() => null);
+  let workingCache = cache;
+  const result = {};
+  for (const pool of [CURSOR_POOL.CURSOR_MODELS, CURSOR_POOL.OTHER_MODELS]) {
+    const representative = byPool[pool][0];
+    if (!representative) {
+      result[pool] = { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null };
+      continue;
+    }
+    const resolved = resolveCursorPoolAccess({ cache: workingCache, pool, now, ttlMs });
+    if (resolved.status !== CURSOR_ACCESS_STATUS.UNVERIFIED) {
+      result[pool] = resolved;
+      continue;
+    }
+    const probed = await probe({ pool, modelId: representative.id, cwd });
+    workingCache = mergeCursorAccessResult(workingCache, probed);
+    result[pool] = { status: probed.status, reason: probed.reason };
+  }
+  if (workingCache !== cache) await writeCache(homeDir, workingCache).catch(() => {});
+  return result;
 }
 
 /**
@@ -341,8 +398,6 @@ export function createConversationService(deps = {}) {
   const computeProjectProfileImpl = deps.computeProjectProfile ?? computeProjectProfile;
   const readProjectStrategyImpl = deps.readProjectStrategy ?? readProjectStrategy;
   const writeProjectStrategyImpl = deps.writeProjectStrategy ?? writeProjectStrategy;
-  const readProviderUsageImpl = deps.readProviderUsage ?? readProviderUsage;
-  const writeProviderUsageImpl = deps.writeProviderUsage ?? writeProviderUsage;
   const parseProjectAnalysisImpl = deps.parseProjectAnalysis ?? parseProjectAnalysis;
   const deriveRoleRequirementsImpl = deps.deriveRoleRequirements ?? deriveRoleRequirements;
   const buildSanitizedSnapshotImpl = deps.buildSanitizedSnapshot ?? buildSanitizedSnapshot;
@@ -420,6 +475,10 @@ export function createConversationService(deps = {}) {
   const writeClaudeEntitlementCacheImpl = deps.writeClaudeEntitlementCache ?? writeClaudeEntitlementCache;
   const mergeEntitlementResultsImpl = deps.mergeEntitlementResults ?? mergeEntitlementResults;
   const probeClaudeModelEntitlementsImpl = deps.probeClaudeModelEntitlements ?? probeClaudeModelEntitlements;
+  const readCursorAccessCacheImpl = deps.readCursorAccessCache ?? readCursorAccessCache;
+  const writeCursorAccessCacheImpl = deps.writeCursorAccessCache ?? writeCursorAccessCache;
+  const probeCursorPoolAccessImpl = deps.probeCursorPoolAccess ?? probeCursorPoolAccess;
+  const cursorAccessTtlMs = deps.cursorAccessTtlMs ?? DEFAULT_CURSOR_ACCESS_TTL_MS;
   const readClaudeEntitlementCacheCached = createCachedProbe(
     () => readClaudeEntitlementCacheImpl(homeDir), claudeEntitlementCacheTtlMs
   );
@@ -620,15 +679,10 @@ export function createConversationService(deps = {}) {
         // launchable), so Kairo never actually picks Go for a real run
         // it's guaranteed to reject at launch. Zen and Cursor stay
         // excluded here regardless (PAYG risk / manual-only).
-        // Cursor's own real usage/billing data is never auto-detected (see
-        // execution-router.js's checkCandidate doc) — this is only ever
-        // the human's last word via /project cursor exhausted|available,
-        // persisted as an ordinary provider usage record.
-        const cursorManualQuota = await readProviderUsageImpl(homeDir, "cursor");
         const eligibility = {};
         const candidates = [];
         for (const adapterId of ["codex", "claude", "opencode-go", "opencode-zen", "cursor"]) {
-          const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage: opencodeUsage?.go, cursorManualQuota }, { requireLaunchable: false });
+          const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, opencodeGoUsage: opencodeUsage?.go }, { requireLaunchable: false });
           eligibility[adapterId] = check;
           if (check.ok) candidates.push(adapterId);
         }
@@ -650,6 +704,24 @@ export function createConversationService(deps = {}) {
           // named model (see cursor-models.js's own doc).
           cursor: (cursorCatalog?.models ?? []).filter((model) => !isCursorAutoModel(model.id))
         };
+        // Cursor's own real access, per pool — a real, minimal probe (at
+        // most one per pool, only when the 15-minute disk cache is stale
+        // or missing; see cursor-entitlement.js/-store.js). Never a human
+        // toggle anymore. Projected into the shared ENTITLEMENT vocabulary
+        // so it plugs into the exact same per-model gating Claude's own
+        // entitlement already uses (buildCompleteCandidateCatalog's DENIED/
+        // UNVERIFIED filtering, project-router.js's blockingEntitlement) —
+        // never a second, parallel mechanism.
+        const cursorAccess = await resolveOrProbeCursorAccess({
+          homeDir, cursorModels: catalogsByAdapter.cursor, cwd: projectRoot, now: now(), ttlMs: cursorAccessTtlMs,
+          readCache: readCursorAccessCacheImpl, writeCache: writeCursorAccessCacheImpl, probe: probeCursorPoolAccessImpl
+        });
+        const cursorModelEntitlement = {};
+        for (const model of catalogsByAdapter.cursor) {
+          const pool = classifyCursorPool(model);
+          cursorModelEntitlement[model.id] = { status: cursorStatusToEntitlement(cursorAccess[pool]?.status), reason: cursorAccess[pool]?.reason ?? null };
+        }
+        const modelEntitlement = { ...claudeEntitlement, ...cursorModelEntitlement };
         const scored = scoreAvailableModels(
           candidates.map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
           aa.models
@@ -671,7 +743,7 @@ export function createConversationService(deps = {}) {
         const completeCandidateCatalog = buildCompleteCandidateCatalog(
           Object.keys(catalogsByAdapter).map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
           aa.models,
-          { modelEntitlement: claudeEntitlement }
+          { modelEntitlement }
         );
         // The Recommendation Pool: scoredAllRaw joined with its real
         // identity, with genuinely superseded generations excluded —
@@ -773,6 +845,13 @@ export function createConversationService(deps = {}) {
           eligibility, coverage, unscoredModels,
           // Resolved Claude per-model entitlement (cache-only; never probed here).
           claudeEntitlement,
+          // Real, per-pool Cursor access — a real minimal probe, never a
+          // human toggle. `modelEntitlement` (claude + cursor, shared
+          // ENTITLEMENT vocabulary) is the internal per-model gate
+          // completeCandidateCatalog/routeProjectExecution actually use;
+          // `cursorAccess` (pool-level) is what the UI reads for real,
+          // human-readable Cursor-specific status text.
+          cursorAccess, modelEntitlement,
           // BEST FIT GLOBAL / EFFICIENT GLOBAL: the honest, uncoordinated
           // per-role winner — never cedes a role for portfolio diversity,
           // family concentration, or provider distribution (see
@@ -993,9 +1072,9 @@ export function createConversationService(deps = {}) {
       const snap = await this.snapshot({ cwd: projectRoot });
       const {
         scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null,
-        providerCapacity = null, unscoredModels = [], claudeEntitlement = {}
+        providerCapacity = null, unscoredModels = [], claudeEntitlement = {}, cursorAccess = {}
       } = snap.modelIntelligence ?? {};
-      const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement };
+      const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement, cursorAccess };
       const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, unscoredModels });
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
@@ -1190,25 +1269,6 @@ export function createConversationService(deps = {}) {
       return { ...existing, projectRoot, profile };
     },
     /**
-     * `/project cursor exhausted|available`: the ONLY way Cursor's quota
-     * state ever changes (see execution-router.js's checkCandidate doc —
-     * Cursor exposes no real, zero-cost local usage read, so this is never
-     * auto-detected). Persisted as an ordinary provider usage record
-     * (runtime/usage-store.js), read back by snapshot()'s own eligibility
-     * computation on every poll — never held only in memory, so it
-     * survives a restart the same way a real detected quota state would.
-     * @param {{exhausted: boolean, reason?: string|null}} args
-     */
-    async setCursorManualQuota({ exhausted, reason = null }) {
-      const record = {
-        provider: "cursor", manualExhausted: !!exhausted,
-        reason: exhausted ? (reason ?? "Cursor marked out of credits (manual, via /project cursor exhausted)") : null,
-        setAt: new Date().toISOString()
-      };
-      await writeProviderUsageImpl(homeDir, "cursor", record);
-      return record;
-    },
-    /**
      * The real projectTeam edit catalog for one role (section 4 —
      * "Edición persistida del PROJECT TEAM") — every real, non-superseded
      * candidate from all four real adapters, with its own real
@@ -1313,7 +1373,11 @@ export function createConversationService(deps = {}) {
       const strategy = await readProjectStrategyImpl(homeDir, projectRoot);
       const snap = await this.snapshot({ cwd: projectRoot });
       const eligibility = snap.modelIntelligence?.eligibility ?? {};
-      const modelEntitlement = snap.modelIntelligence?.claudeEntitlement ?? {};
+      // Combined claude+cursor per-model entitlement — the real gate that
+      // actually prevents launching a task on a blocked/exhausted model,
+      // for either adapter, via the exact same blockingEntitlement check
+      // (project-router.js) real Claude entitlement already used alone.
+      const modelEntitlement = snap.modelIntelligence?.modelEntitlement ?? snap.modelIntelligence?.claudeEntitlement ?? {};
       return resolveProjectRoute({ role, strategy, eligibility, modelEntitlement });
     },
     /**
