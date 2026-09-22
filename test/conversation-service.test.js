@@ -433,7 +433,7 @@ test("preflightProject computes a real read-only ProjectProfile and full analyst
   assert.equal(result.analystCatalog.models.length, 2, "both real ask-supported candidates from realScoredCandidates() must appear");
 });
 
-test("preflightProject recommends only entitlement-safe models while retaining unverified Claude for explicit manual analyst selection", async () => {
+test("REGRESSION: preflightProject recommends only entitlement-safe models and excludes unverified Claude entirely — 'unavailable' means absent, never visible with a warning", async () => {
   const candidates = await realScoredCandidates();
   const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
   const claude = {
@@ -454,10 +454,7 @@ test("preflightProject recommends only entitlement-safe models while retaining u
 
   const result = await service.preflightProject({ cwd: "/repo" });
   assert.equal(result.analystCatalog.recommendedModel.adapterId, "codex");
-  const manualClaude = result.analystCatalog.models.find((model) => model.adapterId === "claude");
-  assert.equal(manualClaude.entitlement, ENTITLEMENT.UNVERIFIED);
-  assert.equal(manualClaude.entitlementReason, "Access has not been verified");
-  assert.deepEqual(manualClaude.recommendationTags, []);
+  assert.ok(!result.analystCatalog.models.some((model) => model.adapterId === "claude"), "an unverified model must never appear in the analyst catalog at all, not even with a warning");
 });
 
 test("runBootstrapAnalysis runs the real chosen model read-only against a SANITIZED SNAPSHOT (never the real cwd), validates its response, and only then builds + persists a SUGGESTED ProjectStrategy genuinely re-scored per its real, evidence-backed findings", async () => {

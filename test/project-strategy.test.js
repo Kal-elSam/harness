@@ -107,7 +107,7 @@ test("computeBootstrapAnalystCatalog reports real availability and quota per can
   assert.equal(codex.quota, null, "no real quota data for codex here — must stay honestly null, never invented");
 });
 
-test("unverified Claude is visible only in the explicit analyst catalog, with entitlement metadata and no recommendation tag", () => {
+test("REGRESSION: unverified Claude is absent from the Bootstrap Analyst catalog — 'unavailable' means absent, never visible with a warning", () => {
   const candidates = realCandidates();
   const unverifiedClaude = {
     ...candidates.scoredAll.find((model) => model.adapterId === "claude"),
@@ -120,10 +120,7 @@ test("unverified Claude is visible only in the explicit analyst catalog, with en
     manualSelectionScoredPool: [safeCodex, unverifiedClaude]
   };
   const catalog = computeBootstrapAnalystCatalog(input);
-  const claude = catalog.models.find((model) => model.adapterId === "claude");
-  assert.equal(claude.entitlement, ENTITLEMENT.UNVERIFIED);
-  assert.equal(claude.entitlementReason, "Access has not been verified");
-  assert.deepEqual(claude.recommendationTags, []);
+  assert.ok(!catalog.models.some((model) => model.adapterId === "claude"), "an unverified model must never appear in the selector at all, not even with a warning");
   assert.equal(catalog.recommendedModel.adapterId, "codex");
 });
 
@@ -329,7 +326,7 @@ test("computeProjectTeamEditCatalog includes every real candidate from all four 
   assert.deepEqual(new Set(catalog.models.map((m) => m.adapterId)), new Set(["claude", "codex", "cursor"]));
 });
 
-test("project role editing retains unverified Claude with access metadata while denied Claude stays excluded", () => {
+test("REGRESSION: project role editing excludes both unverified and denied Claude — 'unavailable' means absent, never visible with a warning", () => {
   const candidates = editCandidates();
   const claude = candidates.scoredAll.find((model) => model.adapterId === "claude");
   const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
@@ -344,9 +341,7 @@ test("project role editing retains unverified Claude with access metadata while 
   const catalog = computeProjectTeamEditCatalog("Explorer", {
     ...candidates, scoredAll: [codex], manualSelectionScoredPool: [codex, unverified, denied]
   });
-  const manualClaude = catalog.models.find((model) => model.candidateKey === "claude::claude-model");
-  assert.equal(manualClaude.entitlement, ENTITLEMENT.UNVERIFIED);
-  assert.equal(manualClaude.entitlementReason, "May require credits");
+  assert.ok(!catalog.models.some((model) => model.candidateKey === "claude::claude-model"), "an unverified model must never appear in the role editor at all, not even with a warning tag");
   assert.ok(!catalog.models.some((model) => model.candidateKey === "claude::claude-denied"));
 });
 
