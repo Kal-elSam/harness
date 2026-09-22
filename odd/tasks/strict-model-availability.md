@@ -42,12 +42,14 @@ This document tracks scope 2 and 3 only. Scope 1 lives in `odd/tasks/cursor-reac
 - [x] Regression tests (RED before the fix, GREEN after, confirmed by temporarily reverting the fix and re-running): `cockpit-view.test.js` (2 new — probe-reason surfacing, and `/why`'s catalog-error line), `model-intelligence.test.js` (1 new — `summarizeCatalogCoverage` propagates a real error without fabricating one for providers that have none).
 - [x] Full suite green, `npm test`.
 
-### 3 — Reduce initial load (follow-up increment, not started)
+### 3 — Reduce initial load (done)
 
-- Start the independent usage/catalog/benchmark/entitlement reads concurrently.
-- Run both Cursor pool probes in parallel, keeping single-flight per pool.
-- Apply an in-memory-only 30s cooldown to Cursor UNVERIFIED results; never persist them as valid access.
-- Keep the immediate first render, updating it once real hydration finishes.
+- [x] `service.js`'s `snapshot()` started usage reads, the persisted project strategy read, and the provider-probe catalog/entitlement reads as two-then-three sequential `Promise.all` waves — the later waves' reads have no real data dependency on the earlier ones (only the ELIGIBILITY computation after them does). Now all three groups' promises are constructed eagerly and awaited together in one `Promise.all`, so a cold snapshot's wall-clock time is bounded by the single slowest read, not their sum.
+- [x] `resolveOrProbeCursorAccess`'s two Cursor pool checks (`cursor_models`/`other_models`) ran in a sequential `for...of` loop with an `await probe(...)` inside — when both pools needed a real probe, this doubled real CLI wall-clock time. Now both run inside one `Promise.all`; each pool's disk-cache read stays against the same immutable snapshot (safe — neither pool's own cache entry is ever touched by the other's outcome), and the two real probe results merge into the working cache afterward.
+- [x] A real UNVERIFIED probe result is never persisted to disk (pre-existing behavior, `mergeCursorAccessResult`'s own doc) — meaning an unauthenticated account's disk cache stays permanently stale, and every single `snapshot()` poll (~every 2s) was re-spawning a real `cursor-agent` CLI probe per pool with no throttle at all. New in-memory-only 30s cooldown (`cursorProbeCooldownMs`, default 30_000, configurable via `deps`): two independent `createCachedProbe` instances, one per pool, wrapping the real probe call — never written to disk, never confused with a real AVAILABLE/EXHAUSTED disk-cached result.
+- [x] Verified "keep the immediate first render, updating once real hydration finishes" is already satisfied by the existing architecture — `app.js` calls `tui.start()` before ever awaiting the first `refresh()`/`service.snapshot()` call, with `view.beginAction("Loading usage and model intelligence")` covering the wait with a spinner rather than blocking the screen (see that file's own existing comment). No code change needed; documented here as verified rather than left unaddressed.
+- [x] Regression tests (RED before each fix, GREEN after, confirmed by temporarily reverting each specific change and re-running — not a whole-file stash, to isolate each of the three fixes independently): `conversation-service.test.js` (3 new — concurrent read-wave start, concurrent pool-probe start, in-memory cooldown suppressing repeated real probes across 3 polls to exactly 1 real call).
+- [x] Full suite green, `npm test`: 2021/2021.
 
 ## Constraints
 
@@ -78,4 +80,4 @@ This document tracks scope 2 and 3 only. Scope 1 lives in `odd/tasks/cursor-reac
 - Real design refinement found mid-implementation: a fully adapter-agnostic `resolveEntitlement` broke the pre-existing contract that Claude fails closed to UNVERIFIED even with zero entitlement data, while Cursor/Codex/OpenCode-Go stay NOT_APPLICABLE with zero data (existing test: "Codex/Cursor/OpenCode-Go get entitlement not_applicable"). Resolved with an explicit `ENTITLEMENT_TRACKED_ADAPTERS = Set(["claude", "cursor"])`: untracked adapters are always NOT_APPLICABLE; Cursor is NOT_APPLICABLE only when its own `cursor` key is absent from `modelEntitlement` (opt-in tracking), but once present, an unlisted modelId fails closed to UNVERIFIED exactly like Claude always did.
 - 2.2: done, see task list above. 20 changed lines (20 insertions, 56 deletions — net removal, mostly dead UI code and obsolete test assertions).
 - 2.3: done, see task list above.
-- Scope 3 is NOT started. Separate future work-unit commit per the delivery constraint above.
+- Scope 3: done, see task list above. All three numbered scopes of the original plan are now complete on this branch.
