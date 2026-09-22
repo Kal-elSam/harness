@@ -5,6 +5,27 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.35.0 — 2026-09-22 (Kairo Runtime)
+
+Minor release. Cursor access is now auto-detected, like every other
+adapter — the manual `/project cursor available|exhausted` toggle is gone.
+
+### Changed
+
+- Cursor's real access is now probed automatically per pool (Cursor's own
+  Composer line vs. every proxied third-party model), a minimal real
+  `cursor-agent -p` probe cached 15 minutes, fail-closed to unverified on
+  any ambiguous result.
+- Cursor's real per-model quota gating now reuses the same entitlement
+  mechanism Claude's own per-model check already uses, both in the
+  Recommendation Pool and in real execution routing.
+- `/project cursor` no longer accepts `available|exhausted` — it explains
+  that access is detected automatically.
+
+### Removed
+
+- `setCursorManualQuota` and the manual quota toggle it backed.
+
 ## 0.34.0 — 2026-09-21 (Kairo Runtime)
 
 Minor release. Fail-closed Cursor eligibility: Kairo no longer confuses

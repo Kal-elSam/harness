@@ -89,7 +89,7 @@ export async function readCodexModels({
     child.once?.("close", () => { if (!finished) finish(unknown("codex app-server closed before model list")); });
 
     writeRequest(child, 1, "initialize", {
-      clientInfo: { name: "kairo", title: "Kairo", version: "0.34.0" },
+      clientInfo: { name: "kairo", title: "Kairo", version: "0.35.0" },
       capabilities: {}
     });
   });
