@@ -90,9 +90,16 @@ export function resolveAssignmentAvailability(model, { eligibility = {}, claudeE
       };
     }
     if (access?.status !== CURSOR_ACCESS_STATUS.AVAILABLE) {
+      // Kairo can detect a real probe failure (e.g. Cursor isn't
+      // authenticated) but cannot fix it automatically — surface the
+      // real reason when the probe captured one, never bury it behind a
+      // generic message; fall back to the honest generic wording only
+      // when no real reason was ever captured (e.g. no pool entry at all).
       return {
         available: false,
-        warning: "Unavailable — Cursor access could not be verified automatically"
+        warning: access?.reason
+          ? `Unavailable — Cursor access could not be verified automatically (${access.reason})`
+          : "Unavailable — Cursor access could not be verified automatically"
       };
     }
   }
@@ -1302,7 +1309,11 @@ export class CockpitView {
       lines.push("");
       lines.push(theme.fg("muted", "Catalog coverage (real data matched, not runtime eligibility):"));
       for (const entry of coverage) {
-        lines.push(theme.fg("muted", `${entry.adapterId}: ${entry.catalogStatus} catalog, ${entry.matchedModels}/${entry.totalModels} models matched to Artificial Analysis`));
+        // A real catalog read failure carries its own real reason (e.g.
+        // "Authentication required") — surfaced honestly instead of an
+        // "unknown catalog, 0/0 matched" line that explains nothing.
+        const errorNote = entry.error ? ` — ${entry.error}` : "";
+        lines.push(theme.fg("muted", `${entry.adapterId}: ${entry.catalogStatus} catalog, ${entry.matchedModels}/${entry.totalModels} models matched to Artificial Analysis${errorNote}`));
       }
     }
     return lines;

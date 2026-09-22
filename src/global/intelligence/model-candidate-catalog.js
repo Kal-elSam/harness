@@ -54,20 +54,35 @@ import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
 
 const AUTOMATIC_ENTITLEMENTS = new Set([ENTITLEMENT.ALLOWED, ENTITLEMENT.NOT_APPLICABLE]);
 
+// Every other adapter's real, live catalog presence IS its own access
+// proof (Codex/OpenCode Go/OpenCode Zen never gate on a per-model
+// entitlement map at all, whatever a caller might accidentally pass).
+const ENTITLEMENT_TRACKED_ADAPTERS = new Set(["claude", "cursor"]);
+
 /**
- * Resolves per-model entitlement orthogonal to accessMode.
- * Non-Claude adapters: not_applicable (catalog presence is access proof).
- * Claude: from deps.modelEntitlement[modelId], or unverified when missing.
+ * Resolves per-model entitlement orthogonal to accessMode, via one central
+ * rule shared by both tracked adapters — never a Claude-only branch.
+ * Claude always fails closed to unverified when this modelId has no real
+ * entry, even when `modelEntitlement` omits the `claude` key entirely —
+ * Claude access always needs live proof. Cursor stays not_applicable when
+ * its own `cursor` key is simply absent (no tracking requested for this
+ * call), but once that key IS present, an unlisted modelId fails closed to
+ * unverified exactly like Claude — real, per-pool Cursor access is never
+ * assumed just because the model showed up in Cursor's catalog.
  * @param {string} adapterId
  * @param {string} modelId
- * @param {Record<string, {status?: string, reason?: string|null}>} [modelEntitlement]
+ * @param {Record<string, Record<string, {status?: string, reason?: string|null}>>} [modelEntitlement] - adapterId -> modelId -> entitlement
  * @returns {{entitlement: ModelEntitlementStatus, entitlementReason: string|null}}
  */
 function resolveEntitlement(adapterId, modelId, modelEntitlement = {}) {
-  if (adapterId !== "claude") {
+  if (!ENTITLEMENT_TRACKED_ADAPTERS.has(adapterId)) {
     return { entitlement: ENTITLEMENT.NOT_APPLICABLE, entitlementReason: null };
   }
-  const entry = modelEntitlement[modelId];
+  const adapterMap = modelEntitlement[adapterId];
+  if (!adapterMap && adapterId === "cursor") {
+    return { entitlement: ENTITLEMENT.NOT_APPLICABLE, entitlementReason: null };
+  }
+  const entry = adapterMap?.[modelId];
   if (!entry || typeof entry !== "object") {
     return { entitlement: ENTITLEMENT.UNVERIFIED, entitlementReason: null };
   }
@@ -415,11 +430,13 @@ function buildCandidateIdentity(adapterId, rawModel, aaModels, matcher, modelEnt
  * @param {Array<object>} aaModels - readArtificialAnalysisModels().models
  * @param {{
  *   matchArtificialAnalysisScore?: (modelId: string, aaModels: Array<object>) => object|null,
- *   modelEntitlement?: Record<string, {status?: string, reason?: string|null}>
+ *   modelEntitlement?: Record<string, Record<string, {status?: string, reason?: string|null}>>
  * }} [deps] -
  *   injectable for tests; defaults to model-intelligence.js's real export.
- *   `modelEntitlement` is Claude-only live entitlement (allowed/denied/unverified);
- *   missing keys leave Claude as unverified. Non-Claude adapters ignore it.
+ *   `modelEntitlement` is adapterId -> modelId -> live entitlement
+ *   (allowed/denied/unverified), applied via the same rule to every adapter
+ *   present — an adapter absent from the map entirely stays not_applicable;
+ *   a present adapter missing this modelId fails closed to unverified.
  * @returns {Array<ModelCandidateIdentity>}
  */
 export function buildCompleteCandidateCatalog(providerCatalogs, aaModels, deps = {}) {
@@ -463,10 +480,17 @@ export function buildCompleteCandidateCatalog(providerCatalogs, aaModels, deps =
  * "current" and "unknown" lifecycle candidates are BOTH kept — an
  * unrecognized lineage never excludes a real candidate from being
  * recommended, only a PROVEN newer same-lineage successor does. Manual-
- * only real candidates (Cursor, OpenCode Go today) are kept too — this
- * The hydrated result is split afterward: recommendations fail closed on
- * entitlement, while an explicit human picker may additionally show an
- * unverified candidate with its access warning.
+ * only real candidates (Cursor, OpenCode Go today) are kept too.
+ *
+ * This is an internal, unfiltered-on-unverified building block — not a
+ * UI-facing selection surface itself. `manualSelectionPool` (below) still
+ * retains an unverified candidate for lower-level audit/evidence use
+ * (e.g. snapshot.modelIntelligence, `/models --evidence`'s AI TEAM/
+ * EFFICIENT TEAM detail lines, which read `aiTeam`/`efficientTeam`, not
+ * this pool). Every real human-facing SELECTION catalog built on top of
+ * it (computeBootstrapAnalystCatalog, computeProjectTeamEditCatalog) does
+ * its own additional entitlement filtering that also excludes unverified
+ * — a human can no longer explicitly pick an unverified model anywhere.
  * @param {Array<object>} scoredAll - scoreAvailableModels() output, every candidate provider regardless of eligibility.
  * @param {Array<ModelCandidateIdentity>} completeCatalog - buildCompleteCandidateCatalog() output, same provider catalogs.
  * @returns {Array<RecommendationPoolCandidate>}
@@ -484,9 +508,10 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
     // unknown, exactly like any other real unrecognized lineage.
     if (identity?.lifecycle === "superseded") continue;
     // Denied entitlement is the same class as superseded: it is not a
-    // selectable candidate anywhere. Unverified access is retained here so
-    // the explicit manual catalogs can still offer it with an honest warning;
-    // recommendation-safe filtering happens in buildScoredCandidatePools.
+    // selectable candidate anywhere. Unverified access IS still retained
+    // in this internal pool (see this function's own doc above) —
+    // recommendation-safe filtering happens in buildScoredCandidatePools,
+    // and every real UI selection catalog filters unverified out too.
     if (identity?.entitlement === ENTITLEMENT.DENIED) continue;
     const fallbackEntitlement = scored.adapterId === "claude"
       ? ENTITLEMENT.UNVERIFIED
@@ -509,10 +534,14 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
 }
 
 /**
- * Builds the two scored selection surfaces from one identity hydration pass.
- * `recommendationPool` is fail-closed for per-model entitlement; the manual
- * pool additionally retains unverified Claude models for explicit human
- * selection. Denied and superseded candidates enter neither pool.
+ * Builds two candidate pools from one identity hydration pass.
+ * `recommendationPool` is fail-closed for per-model entitlement (denied
+ * AND unverified excluded). `manualSelectionPool` is the internal,
+ * unfiltered-on-unverified pool `hydrateScoredCandidatePool` returns —
+ * an audit/evidence-only structure, never offered as a real human
+ * selection surface itself (see that function's own doc for exactly
+ * which UI catalogs filter it further before any human ever sees a
+ * candidate from it). Denied and superseded candidates enter neither pool.
  * @param {Array<object>} scoredAll
  * @param {Array<ModelCandidateIdentity>} completeCatalog
  * @returns {{recommendationPool: Array<RecommendationPoolCandidate>, manualSelectionPool: Array<RecommendationPoolCandidate>}}

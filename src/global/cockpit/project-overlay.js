@@ -250,7 +250,6 @@ export class ProjectOverlay {
   /** A short, honest label for a catalog entry's own real recommendationTags/evidenceStatus — never a fabricated "Quality"/"Efficient" claim for a model that doesn't actually carry that tag. */
   static tagLabel(model) {
     const tags = [];
-    if (model.entitlement === "unverified") tags.push("Unverified · extra credits");
     if (model.evidenceStatus === "unscored") tags.push("Unscored");
     if (model.recommendationTags.includes("quality")) tags.push("Quality fit");
     if (model.recommendationTags.includes("efficient")) tags.push("Efficient fit");
@@ -436,7 +435,6 @@ export class ProjectOverlay {
     if (model.candidateKey === recommendedKey) tags.push("recommended");
     if (model.evidenceStatus === "unscored") tags.push("unscored");
     if (model.accessMode === "manual") tags.push("manual");
-    if (model.entitlement === "unverified") tags.push("unverified · extra credits");
     return tags.join(" · ");
   }
 
@@ -677,15 +675,12 @@ export class ProjectOverlay {
         push(theme.fg("muted", "Enter Select · Esc Cancel"));
         break;
       case S.CONFIRM_ANALYST: {
-        const { model, selectionSource, available, evidenceStatus, entitlement } = this.selectedAnalyst;
+        const { model, selectionSource, available, evidenceStatus } = this.selectedAnalyst;
         push(theme.bold("Confirm Project Analyst"));
         const sourceNote = selectionSource === "manual" ? theme.fg("muted", " (manual selection)") : "";
         push(`  ${this.view.aiTeamLabelWithProvider(model)}${sourceNote}${available === false ? theme.fg("warning", " (not available)") : ""}`);
         if (evidenceStatus === "unscored") {
           push(theme.fg("warning", "This model has no real benchmark evidence — Kairo isn't recommending it, you're choosing it manually."));
-        }
-        if (entitlement === "unverified") {
-          push(theme.fg("warning", "This model's access is unverified and may require extra credits. Continue only if you explicitly want to try it."));
         }
         push(theme.fg("warning", "This will run a real, read-only investigation against your project and consume real quota from this provider."));
         push(theme.fg("muted", "Enter confirm and run · Esc back"));
@@ -811,9 +806,6 @@ export class ProjectOverlay {
         }
         if (candidate.accessMode === "manual") {
           push(theme.fg("warning", `${candidate.adapterId} isn't executable by Kairo automatically — this role will need a manual handoff.`));
-        }
-        if (candidate.entitlement === "unverified") {
-          push(theme.fg("warning", "This model's access is unverified and may require extra credits. This is an explicit manual override."));
         }
         push(theme.fg("muted", "Enter confirm and save (still suggested, not yet approved) · Esc back"));
         break;

@@ -49,15 +49,18 @@ function assignmentRef(model, assignmentSource) {
 }
 
 /**
- * Live entitlement gate: only when `modelEntitlement[modelId]` is PRESENT
- * and status is denied or unverified. Missing key (empty `{}`) keeps
- * existing callers/tests green — no gate.
+ * Live entitlement gate: only when `modelEntitlement[model.adapterId][model.modelId]`
+ * is PRESENT and status is denied or unverified. Missing key (empty `{}`,
+ * or the adapter/model absent) keeps existing callers/tests green — no
+ * gate. Namespaced by adapterId so two adapters that happen to share a raw
+ * modelId (e.g. Cursor proxying a Claude model under the same id) never
+ * collide.
  * @param {object} model
- * @param {Record<string, {status?: string, reason?: string|null}>} modelEntitlement
+ * @param {Record<string, Record<string, {status?: string, reason?: string|null}>>} modelEntitlement - adapterId -> modelId -> entitlement
  * @returns {{status: string, reason: string|null}|null}
  */
 function blockingEntitlement(model, modelEntitlement) {
-  const entry = modelEntitlement?.[model?.modelId];
+  const entry = modelEntitlement?.[model?.adapterId]?.[model?.modelId];
   if (!entry || typeof entry !== "object") return null;
   if (entry.status === ENTITLEMENT.DENIED || entry.status === ENTITLEMENT.UNVERIFIED) {
     return {
@@ -77,7 +80,7 @@ function routableAlternative(model, eligibility, modelEntitlement = {}) {
   if (!model) return null;
   if (!isAutomatic(model)) return null;
   if (eligibility[model.adapterId]?.ok !== true) return null;
-  const entry = modelEntitlement?.[model.modelId];
+  const entry = modelEntitlement?.[model.adapterId]?.[model.modelId];
   if (entry && typeof entry === "object" && !ROUTABLE_ENTITLEMENTS.has(entry.status)) {
     return null;
   }
@@ -112,8 +115,8 @@ function blocked(role, strategyFingerprint, why, { blockedAssignment = null, sug
  *    MANUAL_HANDOFF, still naming the real model/provider so the caller
  *    can show a concrete handoff ("Continue in Cursor with <model>"),
  *    never a bare "not supported".
- * 3.5 Live model entitlement (when `modelEntitlement[modelId]` is present
- *    and status is denied or unverified) -> WAIT_FOR_PROJECT_TEAM with
+ * 3.5 Live model entitlement (when `modelEntitlement[adapterId][modelId]`
+ *    is present and status is denied or unverified) -> WAIT_FOR_PROJECT_TEAM with
  *    blockedAssignment naming the real CLI reason when available.
  *    Empty `{}` skips this gate.
  * 4. The assigned provider isn't currently eligible (quota/availability
@@ -139,8 +142,8 @@ function blocked(role, strategyFingerprint, why, { blockedAssignment = null, sug
  * @param {Record<string, {ok: boolean, reason?: string}>} [args.eligibility] -
  *   CURRENT provider eligibility — may have changed since the strategy was
  *   built/approved.
- * @param {Record<string, {status?: string, reason?: string|null}>} [args.modelEntitlement] -
- *   live per-model Claude entitlement map (modelId → {status, reason}).
+ * @param {Record<string, Record<string, {status?: string, reason?: string|null}>>} [args.modelEntitlement] -
+ *   live per-model entitlement, namespaced by adapter (adapterId → modelId → {status, reason}).
  *   Empty `{}` (default) does not gate — keeps pre-entitlement callers green.
  * @returns {{decision: "ROUTED"|"MANUAL_HANDOFF"|"WAIT_FOR_PROJECT_TEAM", role: string, provider: string|null, model: object|null, assignmentSource: string|null, strategyFingerprint: string|null, blockedAssignment: {provider: string, model: object, assignmentSource: string}|null, suggestedAlternative: {provider: string, model: object}|null, why: string}}
  */

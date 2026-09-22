@@ -177,19 +177,6 @@ test("manually picking a real UNSCORED model is honestly selectionSource:\"manua
   assert.match(lines, /no real benchmark evidence/, "the confirm screen must honestly warn about the real unscored state");
 });
 
-test("unverified Claude stays explicitly selectable but is tagged and warned as possible extra-credit access", async () => {
-  const service = makePreflightService({ analystCatalog: makeAnalystCatalog([QUALITY_MODEL, UNVERIFIED_CLAUDE_MODEL]) });
-  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
-  await flush();
-  const pickerLines = overlay.render(76).join("\n");
-  assert.match(pickerLines, /Unverified · extra credits/);
-
-  selectByKey(overlay, UNVERIFIED_CLAUDE_MODEL.candidateKey);
-  const confirmLines = overlay.render(76).join("\n");
-  assert.match(confirmLines, /access is unverified and may require extra credits/i);
-  assert.equal(overlay.selectedAnalyst.entitlement, "unverified");
-});
-
 test("Escape from the confirm step goes back to selection instead of closing the overlay", async () => {
   const service = makePreflightService();
   let closed = false;
@@ -373,22 +360,6 @@ test("picking a real unscored/manual candidate shows both honest warnings before
   const lines = overlay.render(76).join("\n");
   assert.match(lines, /no real benchmark evidence/);
   assert.match(lines, /manual handoff/);
-});
-
-test("an unverified Claude role override is tagged in the picker and warned before saving", async () => {
-  const service = makePreflightService();
-  const overlay = new ProjectOverlay({ service, view: makeFakeView(), cwd: "/repo", onClose: () => {} });
-  await flush();
-  selectByKey(overlay, QUALITY_MODEL.candidateKey);
-  overlay.handleInput(ENTER);
-  await flush();
-  overlay.handleInput(ENTER);
-  await flush();
-  const pickerLines = overlay.render(76).join("\n");
-  assert.match(pickerLines, /unverified · extra credits/i);
-  overlay.beginConfirmEdit(EXPLORER_UNVERIFIED_CLAUDE.candidateKey);
-  const confirmLines = overlay.render(76).join("\n");
-  assert.match(confirmLines, /access is unverified and may require extra credits/i);
 });
 
 test("choosing the real recommended candidate again in the picker is honestly labeled a restore, not an override", async () => {

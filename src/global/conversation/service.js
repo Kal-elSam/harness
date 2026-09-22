@@ -29,7 +29,7 @@ import { createSession, getSession, listSessions, sessionDirFor, updateSessionMo
 import { acquireSessionLock } from "./session-lock.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
-  ASK_SUPPORTED_ADAPTERS, buildProjectStrategy, computeBootstrapAnalystCatalog,
+  ASK_SUPPORTED_ADAPTERS, BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog,
   isStrategyStale, computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "./project-strategy.js";
 import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
@@ -138,22 +138,30 @@ async function resolveOrProbeCursorAccess({ homeDir, cursorModels, cwd, now, ttl
   for (const model of cursorModels) byPool[classifyCursorPool(model)].push(model);
 
   const cache = await readCache(homeDir).catch(() => null);
-  let workingCache = cache;
-  const result = {};
-  for (const pool of [CURSOR_POOL.CURSOR_MODELS, CURSOR_POOL.OTHER_MODELS]) {
+  // Both pools are entirely independent real CLI probes — reading `cache`
+  // (never mutated here) for both in parallel is exactly equivalent to the
+  // old sequential read, since neither pool's disk entry is ever touched
+  // by the other's outcome; only the two real cursor-agent spawns
+  // themselves need to run concurrently instead of one waiting out the
+  // other's full real timeout first.
+  const outcomes = await Promise.all([CURSOR_POOL.CURSOR_MODELS, CURSOR_POOL.OTHER_MODELS].map(async (pool) => {
     const representative = byPool[pool][0];
     if (!representative) {
-      result[pool] = { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null };
-      continue;
+      return { pool, result: { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null }, probed: null };
     }
-    const resolved = resolveCursorPoolAccess({ cache: workingCache, pool, now, ttlMs });
+    const resolved = resolveCursorPoolAccess({ cache, pool, now, ttlMs });
     if (resolved.status !== CURSOR_ACCESS_STATUS.UNVERIFIED) {
-      result[pool] = resolved;
-      continue;
+      return { pool, result: resolved, probed: null };
     }
     const probed = await probe({ pool, modelId: representative.id, cwd });
-    workingCache = mergeCursorAccessResult(workingCache, probed);
-    result[pool] = { status: probed.status, reason: probed.reason };
+    return { pool, result: { status: probed.status, reason: probed.reason }, probed };
+  }));
+
+  let workingCache = cache;
+  const result = {};
+  for (const { pool, result: poolResult, probed } of outcomes) {
+    result[pool] = poolResult;
+    if (probed) workingCache = mergeCursorAccessResult(workingCache, probed);
   }
   if (workingCache !== cache) await writeCache(homeDir, workingCache).catch(() => {});
   return result;
@@ -479,6 +487,21 @@ export function createConversationService(deps = {}) {
   const writeCursorAccessCacheImpl = deps.writeCursorAccessCache ?? writeCursorAccessCache;
   const probeCursorPoolAccessImpl = deps.probeCursorPoolAccess ?? probeCursorPoolAccess;
   const cursorAccessTtlMs = deps.cursorAccessTtlMs ?? DEFAULT_CURSOR_ACCESS_TTL_MS;
+  // A real UNVERIFIED probe result is never persisted to disk (see
+  // cursor-entitlement-store.js's own mergeCursorAccessResult doc), so
+  // without this the disk cache stays permanently stale for an
+  // unauthenticated account and every single snapshot() poll (~every 2s)
+  // would re-spawn a real cursor-agent CLI probe per pool. This in-memory-
+  // only cooldown — never written to disk, never confused with a real
+  // AVAILABLE/EXHAUSTED result — rate-limits real probe attempts per pool
+  // independently, one createCachedProbe instance each, so both pools keep
+  // their own single-flight/TTL and never share or clobber each other's.
+  const cursorProbeCooldownMs = deps.cursorProbeCooldownMs ?? 30_000;
+  const probeCursorPoolAccessCooldown = {
+    [CURSOR_POOL.CURSOR_MODELS]: createCachedProbe(probeCursorPoolAccessImpl, cursorProbeCooldownMs),
+    [CURSOR_POOL.OTHER_MODELS]: createCachedProbe(probeCursorPoolAccessImpl, cursorProbeCooldownMs)
+  };
+  const probeCursorPoolAccessCooldownImpl = (args) => probeCursorPoolAccessCooldown[args.pool](args.pool, args);
   const readClaudeEntitlementCacheCached = createCachedProbe(
     () => readClaudeEntitlementCacheImpl(homeDir), claudeEntitlementCacheTtlMs
   );
@@ -637,7 +660,13 @@ export function createConversationService(deps = {}) {
       const engram = inspectEngram();
       const recentRuns = await listRuns(homeDir, { limit: 50 });
       const usageByAgent = aggregateRunUsageByAgent(recentRuns);
-      const [codexUsage, claudeUsage, opencodeUsage] = await Promise.all([
+      // Usage, the persisted project strategy, and (when enabled) every
+      // provider-probe catalog/entitlement read are all independent I/O —
+      // only the ELIGIBILITY computation below actually needs codex/claude/
+      // opencode usage resolved first. Started together, never as two (or
+      // three) sequential waves, so a cold snapshot's real wall-clock time
+      // is bounded by the single slowest read, not their sum.
+      const usagePromise = Promise.all([
         readCodexUsageCached(projectRoot, { cwd: projectRoot }),
         readClaudeUsageCached("global", {}),
         deps.readOpenCodeUsage
@@ -647,6 +676,26 @@ export function createConversationService(deps = {}) {
             readOpenCodeStatsCached("global", {})
           ]).then(([go, zen]) => ({ go, zen }))
       ]);
+      // Cheap local read only — never recomputed here. Recomputing a real
+      // ProjectProfile (git log, Graphify probe) on every poll tick would
+      // make the dashboard itself expensive; that only happens on an
+      // explicit /project analyze or /project refresh.
+      const projectStrategyPromise = readProjectStrategyImpl(homeDir, projectRoot);
+      const providerProbesPromise = enableProviderProbes
+        ? Promise.all([
+          readCodexModelsCached(projectRoot, { cwd: projectRoot }),
+          readOpenCodeGoModelsCached("global", {}),
+          readCursorModelsCached(projectRoot, { cwd: projectRoot }),
+          readArtificialAnalysisModelsCached("global", {}),
+          readClaudeEntitlementCacheCached("global", {}),
+          verifyClaudeSubscriptionAuthCached("global", {})
+        ])
+        : Promise.resolve(null);
+
+      const [[codexUsage, claudeUsage, opencodeUsage], projectStrategyResult, providerProbes] = await Promise.all([
+        usagePromise, projectStrategyPromise, providerProbesPromise
+      ]);
+
       const result = snapshot(
         projectRoot, projected,
         providersFromAdapters(adapters, usageByAgent, codexUsage, claudeUsage, opencodeUsage), integrationsFromInspections(engram)
@@ -654,20 +703,9 @@ export function createConversationService(deps = {}) {
       result.usage.codex = codexUsage;
       result.usage.claude = claudeUsage;
       result.usage.opencode = opencodeUsage;
-      // Cheap local read only — never recomputed here. Recomputing a real
-      // ProjectProfile (git log, Graphify probe) on every poll tick would
-      // make the dashboard itself expensive; that only happens on an
-      // explicit /project analyze or /project refresh.
-      result.projectStrategy = await readProjectStrategyImpl(homeDir, projectRoot);
+      result.projectStrategy = projectStrategyResult;
       if (enableProviderProbes) {
-        const [codexCatalog, opencodeGoCatalog, cursorCatalog, aa, entitlementCache, claudeAuth] = await Promise.all([
-          readCodexModelsCached(projectRoot, { cwd: projectRoot }),
-          readOpenCodeGoModelsCached("global", {}),
-          readCursorModelsCached(projectRoot, { cwd: projectRoot }),
-          readArtificialAnalysisModelsCached("global", {}),
-          readClaudeEntitlementCacheCached("global", {}),
-          verifyClaudeSubscriptionAuthCached("global", {})
-        ]);
+        const [codexCatalog, opencodeGoCatalog, cursorCatalog, aa, entitlementCache, claudeAuth] = providerProbes;
         // Same eligibility policy the execution/ask router uses, with one
         // deliberate exception: opencode-go is allowed here even without
         // `launchable` (requireLaunchable: false) — you do have real
@@ -714,14 +752,17 @@ export function createConversationService(deps = {}) {
         // never a second, parallel mechanism.
         const cursorAccess = await resolveOrProbeCursorAccess({
           homeDir, cursorModels: catalogsByAdapter.cursor, cwd: projectRoot, now: now(), ttlMs: cursorAccessTtlMs,
-          readCache: readCursorAccessCacheImpl, writeCache: writeCursorAccessCacheImpl, probe: probeCursorPoolAccessImpl
+          readCache: readCursorAccessCacheImpl, writeCache: writeCursorAccessCacheImpl, probe: probeCursorPoolAccessCooldownImpl
         });
         const cursorModelEntitlement = {};
         for (const model of catalogsByAdapter.cursor) {
           const pool = classifyCursorPool(model);
           cursorModelEntitlement[model.id] = { status: cursorStatusToEntitlement(cursorAccess[pool]?.status), reason: cursorAccess[pool]?.reason ?? null };
         }
-        const modelEntitlement = { ...claudeEntitlement, ...cursorModelEntitlement };
+        // Namespaced by adapter — never a flat modelId merge, which would
+        // let a Cursor-proxied model silently collide with (and overwrite)
+        // a Claude entry sharing the exact same raw id.
+        const modelEntitlement = { claude: claudeEntitlement, cursor: cursorModelEntitlement };
         const scored = scoreAvailableModels(
           candidates.map((adapterId) => ({ adapterId, models: catalogsByAdapter[adapterId] ?? [] })),
           aa.models
@@ -771,10 +812,13 @@ export function createConversationService(deps = {}) {
         // AA doesn't track them, or (Claude, today) Kairo only has a
         // documented catalog rather than a live per-account discovery.
         const coverage = summarizeCatalogCoverage([
-          { adapterId: "codex", catalogStatus: codexCatalog?.status ?? "unknown", models: codexCatalog?.models ?? [] },
-          { adapterId: "claude", catalogStatus: claudeCatalog.status, models: claudeCatalog.models },
-          { adapterId: "opencode-go", catalogStatus: opencodeGoCatalog?.status ?? "unknown", models: opencodeGoCatalog?.models ?? [] },
-          { adapterId: "cursor", catalogStatus: cursorCatalog?.status ?? "unknown", models: cursorCatalog?.models ?? [] }
+          { adapterId: "codex", catalogStatus: codexCatalog?.status ?? "unknown", models: codexCatalog?.models ?? [], error: codexCatalog?.error ?? null },
+          { adapterId: "claude", catalogStatus: claudeCatalog.status, models: claudeCatalog.models, error: claudeCatalog.error ?? null },
+          { adapterId: "opencode-go", catalogStatus: opencodeGoCatalog?.status ?? "unknown", models: opencodeGoCatalog?.models ?? [], error: opencodeGoCatalog?.error ?? null },
+          // Real catalog read failure surfaces here — e.g. "Authentication
+          // required" when Cursor isn't authenticated, never a generic
+          // "unknown" status with no explanation (see fitWhyLines()).
+          { adapterId: "cursor", catalogStatus: cursorCatalog?.status ?? "unknown", models: cursorCatalog?.models ?? [], error: cursorCatalog?.error ?? null }
         ], aa.models);
         // Real catalog models that exist but couldn't be matched to any
         // real Artificial Analysis data — shown honestly as UNSCORED in
@@ -790,10 +834,13 @@ export function createConversationService(deps = {}) {
           // successor is exactly as stale as a scored one would be, and
           // must never surface in /models --evidence's UNSCORED list or
           // the projectTeam edit catalog as if it were still current.
+          // "Unavailable" (denied OR unverified) means absent here too —
+          // this exact array is what aiTeamDetailLines() (/models
+          // --evidence) renders directly, unfiltered by anything else.
           .filter((candidate) => (
             candidate.evidenceStatus === "unscored"
             && candidate.lifecycle !== "superseded"
-            && candidate.entitlement !== ENTITLEMENT.DENIED
+            && !BLOCKED_ENTITLEMENTS.has(candidate.entitlement)
           ))
           .map((candidate) => ({
             adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.rawDisplayName,
@@ -1377,7 +1424,7 @@ export function createConversationService(deps = {}) {
       // actually prevents launching a task on a blocked/exhausted model,
       // for either adapter, via the exact same blockingEntitlement check
       // (project-router.js) real Claude entitlement already used alone.
-      const modelEntitlement = snap.modelIntelligence?.modelEntitlement ?? snap.modelIntelligence?.claudeEntitlement ?? {};
+      const modelEntitlement = snap.modelIntelligence?.modelEntitlement ?? {};
       return resolveProjectRoute({ role, strategy, eligibility, modelEntitlement });
     },
     /**

@@ -433,7 +433,7 @@ test("preflightProject computes a real read-only ProjectProfile and full analyst
   assert.equal(result.analystCatalog.models.length, 2, "both real ask-supported candidates from realScoredCandidates() must appear");
 });
 
-test("preflightProject recommends only entitlement-safe models while retaining unverified Claude for explicit manual analyst selection", async () => {
+test("REGRESSION: preflightProject recommends only entitlement-safe models and excludes unverified Claude entirely — 'unavailable' means absent, never visible with a warning", async () => {
   const candidates = await realScoredCandidates();
   const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
   const claude = {
@@ -454,10 +454,7 @@ test("preflightProject recommends only entitlement-safe models while retaining u
 
   const result = await service.preflightProject({ cwd: "/repo" });
   assert.equal(result.analystCatalog.recommendedModel.adapterId, "codex");
-  const manualClaude = result.analystCatalog.models.find((model) => model.adapterId === "claude");
-  assert.equal(manualClaude.entitlement, ENTITLEMENT.UNVERIFIED);
-  assert.equal(manualClaude.entitlementReason, "Access has not been verified");
-  assert.deepEqual(manualClaude.recommendationTags, []);
+  assert.ok(!result.analystCatalog.models.some((model) => model.adapterId === "claude"), "an unverified model must never appear in the analyst catalog at all, not even with a warning");
 });
 
 test("runBootstrapAnalysis runs the real chosen model read-only against a SANITIZED SNAPSHOT (never the real cwd), validates its response, and only then builds + persists a SUGGESTED ProjectStrategy genuinely re-scored per its real, evidence-backed findings", async () => {
@@ -1028,6 +1025,18 @@ test("REGRESSION: snapshot's real unscoredModels preserves candidateKey/accessMo
     inspectEngramIntegration: () => ({ status: "configured" }),
     readCodexUsage: async () => null,
     readClaudeUsage: async () => null,
+    // claude-opus-5 must be entitlement-ALLOWED here — this test is about
+    // real field preservation (candidateKey/accessMode/lifecycle) and
+    // supersession, orthogonal to entitlement; an UNVERIFIED default
+    // (the real behavior with no cache) would now correctly exclude it.
+    // subscriptionType must match resolveClaudeEntitlements' own real
+    // cache-invalidation check, or the mocked cache is silently ignored.
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => ({
+      subscriptionType: "pro",
+      fetchedAt: new Date().toISOString(),
+      models: { "claude-opus-5": { status: "allowed", probedAt: new Date().toISOString() } }
+    }),
     readCodexModels: async () => ({ status: "measured", models: [] }),
     // None of these three real ids have an AA match below — all unscored.
     // opus-4-6/4-8 are a real, recognized older generation once opus-5 is
@@ -1054,6 +1063,162 @@ test("REGRESSION: snapshot's real unscoredModels preserves candidateKey/accessMo
   assert.equal(byId["claude-opus-5"].candidateKey, "claude::claude-opus-5");
   assert.equal(byId["claude-opus-4-6"], undefined, "a real superseded generation must never appear in unscoredModels");
   assert.equal(byId["claude-opus-4-8"], undefined, "a real superseded generation must never appear in unscoredModels");
+});
+
+test("REGRESSION: snapshot starts usage, project strategy, and provider-probe catalog reads concurrently — never as sequential waves", async () => {
+  // A slow usage read (50ms) must not block a provider-probe read
+  // (artificial-analysis models) from resolving first — if they were
+  // still two sequential Promise.all waves, the second wave couldn't
+  // even START until the slow usage read in the first wave finished.
+  let aaResolvedBeforeSlowUsageFinished = false;
+  let usageFinished = false;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [{ id: "codex", available: true, launchable: true, reason: null }],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      usageFinished = true;
+      return null;
+    },
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [] }),
+    readClaudeModels: () => ({ status: "documented", models: [] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    readArtificialAnalysisModels: async () => {
+      if (!usageFinished) aaResolvedBeforeSlowUsageFinished = true;
+      return { status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h", models: [] };
+    },
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
+  });
+
+  await service.snapshot({ cwd: "/repo" });
+  assert.equal(aaResolvedBeforeSlowUsageFinished, true, "provider-probe reads must start concurrently with usage reads, not wait for them to finish first");
+});
+
+test("REGRESSION: Cursor's two real pool probes run concurrently, never sequentially — a slow probe for one pool must not delay starting the other's", async () => {
+  const startedAt = {};
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [{ id: "cursor", available: true, launchable: true, reason: null }],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [] }),
+    readClaudeModels: () => ({ status: "documented", models: [] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({
+      status: "measured",
+      models: [
+        { id: "composer-2.5", displayName: "Composer 2.5" }, // cursor_models pool
+        { id: "gpt-5.3-codex", displayName: "Codex 5.3" } // other_models pool
+      ]
+    }),
+    readCursorAccessCache: async () => null,
+    writeCursorAccessCache: async () => {},
+    probeCursorPoolAccess: async ({ pool }) => {
+      startedAt[pool] = Date.now();
+      // cursor_models is deliberately the slow one — a sequential for-loop
+      // probes it FIRST (see resolveOrProbeCursorAccess's real pool order),
+      // so other_models would only start after this whole delay if the two
+      // probes weren't running concurrently.
+      await new Promise((resolve) => setTimeout(resolve, pool === "cursor_models" ? 40 : 5));
+      return { pool, status: "available", reason: null, probedAt: new Date().toISOString() };
+    },
+    readArtificialAnalysisModels: async () => ({ status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h", models: [] }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
+  });
+
+  await service.snapshot({ cwd: "/repo" });
+  assert.ok(startedAt.cursor_models, "cursor_models pool must have been probed");
+  assert.ok(startedAt.other_models, "other_models pool must have been probed");
+  const gap = Math.abs(startedAt.other_models - startedAt.cursor_models);
+  assert.ok(gap < 20, `both pool probes must start within a few ms of each other (concurrent) — got a ${gap}ms gap, consistent with a sequential for-loop waiting out cursor_models' full 40ms delay first`);
+});
+
+test("REGRESSION: a real UNVERIFIED Cursor probe result cools down in memory for 30s — never re-spawns cursor-agent on every snapshot() poll", async () => {
+  let probeCalls = 0;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [{ id: "cursor", available: true, launchable: true, reason: null }],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [] }),
+    readClaudeModels: () => ({ status: "documented", models: [] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [{ id: "composer-2.5", displayName: "Composer 2.5" }] }),
+    readCursorAccessCache: async () => null,
+    writeCursorAccessCache: async () => {},
+    // A real, ongoing auth failure — this account never resolves to
+    // AVAILABLE/EXHAUSTED, so the disk cache (which never persists
+    // UNVERIFIED) stays permanently stale between polls.
+    probeCursorPoolAccess: async ({ pool }) => {
+      probeCalls += 1;
+      return { pool, status: "unverified", reason: "cursor-agent exited 1: Authentication required", probedAt: new Date().toISOString() };
+    },
+    readArtificialAnalysisModels: async () => ({ status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h", models: [] }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
+  });
+
+  await service.snapshot({ cwd: "/repo" });
+  await service.snapshot({ cwd: "/repo" });
+  await service.snapshot({ cwd: "/repo" });
+  assert.equal(probeCalls, 1, "three snapshot() polls within the 30s cooldown must real-probe exactly once, not once per poll");
+});
+
+test("REGRESSION: snapshot's real unscoredModels — the exact list /models --evidence renders — excludes an UNVERIFIED unscored Claude model, not just a DENIED one", async () => {
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    // Never spawn the real Claude CLI in a test — mocked deterministic,
+    // not this machine's own real auth state.
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    // No real entitlement cache at all — the exact real-world default,
+    // per resolveClaudeEntitlements — resolves to UNVERIFIED.
+    readClaudeEntitlementCache: async () => null,
+    readClaudeModels: () => ({ status: "documented", models: [{ id: "claude-unscored-model", displayName: "Claude Unscored Model" }] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    readArtificialAnalysisModels: async () => ({ status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h", models: [] }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
+  });
+
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.ok(
+    !snapshot.modelIntelligence.unscoredModels.some((m) => m.modelId === "claude-unscored-model"),
+    "an UNVERIFIED unscored Claude model must never appear in /models --evidence's UNSCORED list — 'unavailable' means absent, never visible with a warning"
+  );
 });
 
 test("snapshot excludes a provider from FIT once its real quota is exhausted, even though it would otherwise win on capability", async () => {
@@ -1267,7 +1432,7 @@ test("REGRESSION: a real Cursor probe failure (never verified) fails closed — 
   // Per-model: real quota was never confirmed — fails closed. "composer-2.5"
   // is Cursor's own model line, so it's the cursor_models pool here.
   assert.equal(snapshot.modelIntelligence.cursorAccess.cursor_models.status, "unverified");
-  assert.equal(snapshot.modelIntelligence.modelEntitlement["composer-2.5"].status, ENTITLEMENT.UNVERIFIED);
+  assert.equal(snapshot.modelIntelligence.modelEntitlement.cursor["composer-2.5"].status, ENTITLEMENT.UNVERIFIED);
 });
 
 test("snapshot exposes globalGuide.capability/efficient as the real, uncoordinated per-role winners — separate from the portfolio-coordinated aiTeam/efficientTeam", async () => {

@@ -243,8 +243,10 @@ test("buildRecommendationPool excludes only real superseded candidates — curre
   const scoredAll = scoreAvailableModels(providerCatalogs, aa);
   const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, {
     modelEntitlement: {
-      "claude-opus-4-6": { status: ENTITLEMENT.ALLOWED },
-      "claude-opus-5": { status: ENTITLEMENT.ALLOWED }
+      claude: {
+        "claude-opus-4-6": { status: ENTITLEMENT.ALLOWED },
+        "claude-opus-5": { status: ENTITLEMENT.ALLOWED }
+      }
     }
   });
   const pool = buildRecommendationPool(scoredAll, catalog);
@@ -342,8 +344,10 @@ test("INTEGRATION: feeding the Recommendation Pool into buildAiTeam as its `mode
   const scoredAll = scoreAvailableModels(providerCatalogs, aa);
   const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, {
     modelEntitlement: {
-      "claude-opus-4-6": { status: ENTITLEMENT.ALLOWED },
-      "claude-opus-5": { status: ENTITLEMENT.ALLOWED }
+      claude: {
+        "claude-opus-4-6": { status: ENTITLEMENT.ALLOWED },
+        "claude-opus-5": { status: ENTITLEMENT.ALLOWED }
+      }
     }
   });
   const recommendationPool = buildRecommendationPool(scoredAll, catalog);
@@ -400,8 +404,10 @@ test("REGRESSION: claude-fable-5-1 with entitlement denied + eligibility.claude=
     ]
   }];
   const modelEntitlement = {
-    "claude-fable-5-1": { status: ENTITLEMENT.DENIED, reason: "Credits required to use this model" },
-    "claude-opus-5": { status: ENTITLEMENT.ALLOWED, reason: null }
+    claude: {
+      "claude-fable-5-1": { status: ENTITLEMENT.DENIED, reason: "Credits required to use this model" },
+      "claude-opus-5": { status: ENTITLEMENT.ALLOWED, reason: null }
+    }
   };
   const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, { modelEntitlement });
   assert.equal(catalog.find((c) => c.modelId === "claude-fable-5-1").entitlement, ENTITLEMENT.DENIED);
@@ -413,6 +419,24 @@ test("REGRESSION: claude-fable-5-1 with entitlement denied + eligibility.claude=
   const automaticPool = buildAutomaticExecutionPool(recommendationPool, { claude: { ok: true } });
   assert.ok(!automaticPool.some((c) => c.modelId === "claude-fable-5-1"));
   assert.ok(automaticPool.some((c) => c.modelId === "claude-opus-5"), "allowed Claude may auto-launch when eligible");
+});
+
+test("REGRESSION: Cursor's own real entitlement now gates recommendation/automatic pools — previously discarded by a Claude-only condition", () => {
+  const aa = [{ slug: "claude-fable-5-1", name: "Claude Fable 5.1", intelligenceIndex: 90, codingIndex: 90 }];
+  const providerCatalogs = [{
+    adapterId: "cursor",
+    models: [{ id: "claude-fable-5-1", displayName: "Claude Fable 5.1" }]
+  }];
+  const modelEntitlement = {
+    cursor: { "claude-fable-5-1": { status: ENTITLEMENT.DENIED, reason: "Other Models quota exhausted" } }
+  };
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, { modelEntitlement });
+  assert.equal(catalog[0].entitlement, ENTITLEMENT.DENIED, "Cursor's real per-model entitlement must reach the Complete Candidate Catalog, not fall back to not_applicable");
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const recommendationPool = buildRecommendationPool(scoredAll, catalog);
+  assert.deepEqual(recommendationPool, [], "a denied Cursor-proxied model must never be recommended");
+  const automaticPool = buildAutomaticExecutionPool(recommendationPool, { cursor: { ok: true } });
+  assert.deepEqual(automaticPool, [], "a denied Cursor-proxied model must never auto-launch even when Cursor itself is eligible");
 });
 
 test("REGRESSION: without entitlement data, Claude is manual-only — absent from recommendations but retained with metadata for explicit selection", () => {
@@ -444,7 +468,7 @@ test("buildScoredCandidatePools excludes denied Claude from both recommendation 
   const aa = [{ slug: "claude-fable-5-1", name: "Claude Fable 5.1", intelligenceIndex: 99, codingIndex: 99 }];
   const providerCatalogs = [{ adapterId: "claude", models: [{ id: "claude-fable-5-1", displayName: "Claude Fable 5.1" }] }];
   const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, {
-    modelEntitlement: { "claude-fable-5-1": { status: ENTITLEMENT.DENIED, reason: "Credits required" } }
+    modelEntitlement: { claude: { "claude-fable-5-1": { status: ENTITLEMENT.DENIED, reason: "Credits required" } } }
   });
   const pools = buildScoredCandidatePools(scoreAvailableModels(providerCatalogs, aa), catalog);
   assert.deepEqual(pools.recommendationPool, []);
