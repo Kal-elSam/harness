@@ -15,7 +15,7 @@ The change was archived with 23/23 implementation checkboxes, but no `sdd-verify
 - [x] UWS-03 Install `gentle-pi@3.5.1` only in an isolated temporary verification prefix, inspect its declared license, and run the real host harness through that temporary PATH. Do not vendor or add it to runtime dependencies. Package metadata declares MIT; live host harness: 5/5.
 - [x] UWS-04 Route `kairo conversation` and `kairo ui` through the new host by default, retaining `--legacy-cockpit` as the explicit compatibility escape hatch. New regression tests were RED then GREEN.
 - [x] UWS-05 Produce a manual verification report equivalent to the unavailable `sdd-verify` phase, then re-archive OpenSpec only if all required checks pass or are explicitly deferred with evidence. `verify-report.md` records manual evidence and explicitly does not claim `sdd-verify` ran.
-- [ ] UWS-06 Commit the completed local work on this feature branch; do not push, create a PR, merge, or publish.
+- [x] UWS-06 Commit the completed local work on this feature branch; do not push, create a PR, merge, or publish. Commit: `0968661` (`feat(host): unify kairo interactive workspace`).
 
 ## Constraints
 
@@ -36,4 +36,5 @@ The change was archived with 23/23 implementation checkboxes, but no `sdd-verify
 ## Progress
 
 - Created on branch `feat/unified-kairo-workspace-completion` after auditing the prematurely archived change.
-- OpenSpec is ready to re-archive after the local work-unit commit.
+- OpenSpec was re-archived with `verify-report.md` after the final passing suite.
+- The inherited implementation had existed uncommitted on `main`; it was preserved in one recovery commit rather than falsely inventing the five historical PR slices described by the archived task plan.
