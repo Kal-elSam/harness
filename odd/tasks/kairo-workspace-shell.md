@@ -43,6 +43,13 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   run exposed a non-interactive host regression; fixed it before final proof.
   GREEN: isolated `gentle-shell --list-models kairo` listed Kairo routes and
   the final full suite passed 2063/2063.
+- [x] KWS-07 Forward Pi flags through Gentle Shell after its `--` delimiter so
+  the host actually disables discovered Gentle resources. RED: launcher placed
+  Pi flags before the delimiter. GREEN: 11/11 focused host/extension tests.
+- [x] KWS-08 Replace the opening line-dump with a compact Kairo status surface;
+  details remain behind explicit Kairo commands/overlays. RED: opening widget
+  contained full TEAM/USAGE/command text. GREEN: 11/11 focused host/extension
+  tests prove opening compactness and retain detail commands.
 
 ## Constraints
 
@@ -69,7 +76,7 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
 
 ## Delivery
 
-- Forecast: ~550 authored changed lines across six cohesive tasks.
+- Forecast: ~650 authored changed lines across eight cohesive tasks.
 - Strategy: stacked-to-main in small PR slices, explicitly chosen by the user.
   Each local work-unit commit remains local until the user separately authorizes
   its remote push/PR/merge. No remote delivery is included.
@@ -104,3 +111,12 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   caught an actual regression: a non-TTY could launch the host and exit zero.
   The fixed final run passed 2063/2063. Pi 0.85.1 remains the minimum host API;
   this machine's 0.87.1 also passed the isolated route-model harness.
+- KWS-07/KWS-08 were authorized after a live screenshot proved that Gentle
+  resource inventory still leaked into the host and that the Kairo widget is
+  visually overloaded. The delimiter bug is verified against `gentle-shell
+  --help`; no third-party UI package is needed for the correction.
+- KWS-07 completed locally in `297118b` (`fix(host): forward Pi flags through
+  Gentle Shell`). The wrapper delimiter now precedes every Pi-only flag.
+- KWS-08 completed locally in `e4d67e8` (`feat(host): compact Kairo workspace
+  opening`). Startup now presents project/session/team state only; usage,
+  memory and assignment detail are opt-in commands.
