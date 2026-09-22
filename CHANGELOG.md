@@ -5,6 +5,26 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.35.1 — 2026-09-22 (Kairo Runtime)
+
+Patch release. PROJECT TEAM's suggested-team screen is readable again.
+
+### Changed
+
+- Compact PROJECT TEAM rows now show role + model only — no inline WHY
+  sentence, no provider, no `(override)`/`needs reanalysis` markers
+  crammed into the picker's fixed-width column, which was the real,
+  reported cause of clipped/truncated reasons.
+- A full, readable detail block (Model / Via / Access / Why) now renders
+  below the list for whichever role is currently selected.
+- Project Analyst and Orchestrator now render as full, non-editable
+  context blocks above PROJECT TEAM — Orchestrator previously wasn't
+  shown in this screen at all.
+- Selecting a row (arrow keys or a real mouse click) only ever updates
+  the detail block; Enter is now the one explicit way to open a role's
+  edit picker. A click used to silently open it too, indistinguishable
+  from just browsing.
+
 ## 0.35.0 — 2026-09-22 (Kairo Runtime)
 
 Minor release. Cursor access is now auto-detected, like every other
