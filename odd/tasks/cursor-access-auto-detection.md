@@ -74,8 +74,16 @@ Branch: `fix/project-team-readable-detail`. Pure UI — no ranking, routing, quo
 - [x] Evidence/Quality/Efficient stay behind `e`, unchanged. Enter/`a`/`e`/`r`/Esc behavior unchanged (all 55 pre-existing regression tests pass with zero modification).
 - [x] Real word-wrapping (pi-tui's `Text` component) confirmed via a dedicated test with a long WHY sentence — never truncated. One layout bug found and fixed along the way: concatenating a warning string with a literal `"  needs reanalysis"` suffix could get that literal phrase split mid-wrap; moved to its own short, never-wrapping line.
 - [x] Tests: 7 new regression tests in `test/project-overlay.test.js` (compact-row content, default selection, keyboard/mouse-equivalent selection change, Cursor-exhausted/Claude-unverified/available Access text, Analyst/Orchestrator non-editability, long-reason wrapping, narrow-width border/footer).
-- [x] Full suite green: 2013/2013 (2006 + 7 new), stress-tested 3x, zero real-disk leakage.
-- [ ] Committed locally on `fix/project-team-readable-detail`; push/PR/CI/merge/publish deliberately NOT run yet — the plan itself scopes those as a separate remote authorization.
+- [x] Committed locally: `af9b01e` (`fix(cockpit): make PROJECT TEAM details readable`) — full suite 2013/2013, stress-tested 3x, zero real-disk leakage.
+
+**Pre-ship correction** (caught before shipping, own real bug in the first pass): the compact rows still carried `(override)` and `needs reanalysis` markers, and a plain mouse click on a row silently opened that role's edit picker — indistinguishable from just browsing, and inconsistent with arrow-key navigation (which only ever moved selection). Fixed in a second commit:
+
+- [x] `buildResultRoleList()`: rows are now STRICTLY role + model — `(override)`/`needs reanalysis` markers removed from the row entirely. Both now live only in the detail block (via `pushAssignmentDetail`'s `note` param for override, and its existing `needs reanalysis` marker for a blocked pick) and, for a strategy-wide problem, the existing top NEEDS REANALYSIS banner — never a third place.
+- [x] `resultSelectList.onSelect` removed entirely — pi-tui's `SelectList` already moves `selectedIndex` on both a keyboard confirm and a real mouse click before calling `onSelect`, so leaving it unset makes selecting a row (either way) a real no-op beyond updating the selection.
+- [x] `handleInput`'s `S.RESULT` branch now intercepts Enter explicitly, before it reaches `resultSelectList.handleInput` — Enter is the one, explicit way to open the selected role's edit picker; arrow keys and Esc are unaffected (still routed through `resultSelectList.handleInput` as before).
+- [x] Tests: the old "click opens the picker" test was replaced with one asserting a click only moves selection/updates the detail block and never touches the edit catalog, followed by an explicit Enter that does; the one test that poked `resultSelectList.onSelect` directly now drives a real Enter keypress instead; one new test confirms available/blocked/overridden rows are all still strictly role + model, with override/reanalysis status confirmed present only in the detail block.
+- [x] Committed locally: `fix(cockpit): separate project team selection from editing` — full suite 2014/2014 (2013 + 1 new), stress-tested 3x, zero real-disk leakage.
+- [ ] push/PR/CI/merge/publish deliberately NOT run yet — the plan itself scopes those as a separate remote authorization (planned as v0.35.1).
 
 ## Progress
 
