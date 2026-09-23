@@ -2,8 +2,8 @@ import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi } from
 import { buildTaskRows, clampSelection, isActionAvailable } from "./rows.js";
 import { CARD_TONE, cardBottom, cardInnerWidth, cardLine, cardTop, renderPanel as renderPanelWithTheme } from "./card.js";
 import { theme } from "./theme.js";
-import { LOW_QUOTA_WARN_PERCENT } from "../intelligence/execution-router.js";
 import { resolveAssignmentAvailability } from "../conversation/assignment-availability.js";
+import { formatSubscriptionUsageSegments, quotaWarnSuffix } from "../conversation/usage-summary.js";
 
 // Re-exported for every existing importer of this module — the real
 // implementation moved to conversation/assignment-availability.js (a
@@ -12,6 +12,12 @@ import { resolveAssignmentAvailability } from "../conversation/assignment-availa
 // pulling in the legacy cockpit's rendering dependencies. No behavior
 // change: same function, same signature, same result.
 export { resolveAssignmentAvailability };
+
+// Re-exported for the same reason: quotaWarnSuffix moved to
+// conversation/usage-summary.js (UI-free) alongside compactUsageLines'
+// own text logic, so the Pi host's always-visible usage line can share
+// the exact same LOW threshold text, never a second implementation.
+export { quotaWarnSuffix };
 
 /** Plain-language description of what each role optimizes for — mirrors
  * buildAiTeamRoleDefinitions()'s real compute functions in
@@ -52,21 +58,6 @@ export function explainTeamDecision(entry) {
     return `Ranked first for ${blurb} among eligible candidates.`;
   }
   return `Selected for ${blurb}.`;
-}
-
-/**
- * A real, early heads-up — never fabricated, never re-deriving its own
- * threshold (see execution-router.js's LOW_QUOTA_WARN_PERCENT, the same
- * canonical policy checkCandidate itself uses for its harder exclusion
- * cutoff). `alreadyFlagged` skips this for a window a caller already
- * tagged some other way (e.g. Go's own "RATE LIMITED"), so a single
- * window is never double-tagged.
- * @param {number|null|undefined} remainingPercent
- * @param {boolean} [alreadyFlagged]
- */
-function quotaWarnSuffix(remainingPercent, alreadyFlagged = false) {
-  if (alreadyFlagged || remainingPercent == null) return "";
-  return remainingPercent < LOW_QUOTA_WARN_PERCENT ? " LOW" : "";
 }
 
 /** view.js's own local binding for card.js's real renderPanel, fixed to this module's theme. */
@@ -1318,30 +1309,9 @@ export class CockpitView {
    */
   compactUsageLines(width = 80) {
     const project = this.snapshot?.projectRoot?.split("/").filter(Boolean).pop() ?? "current project";
-    const usage = this.snapshot?.usage ?? {};
-    const providers = this.snapshot?.providers ?? {};
-    const status = (name) => providers[name]?.status ?? providers[name.toLowerCase()]?.status;
-
-    const codex = usage.codex;
-    const codexText = codex?.primary
-      ? `Codex 5h ${codex.primary.remainingPercent}%${quotaWarnSuffix(codex.primary.remainingPercent)}${codex.secondary ? ` / W ${codex.secondary.remainingPercent}%${quotaWarnSuffix(codex.secondary.remainingPercent)}` : ""}`
-      : `Codex ${status("Codex") ?? "usage unknown"}`;
-
-    const claude = usage.claude;
-    const claudeText = claude?.primary
-      ? `Claude S ${claude.primary.remainingPercent}%${quotaWarnSuffix(claude.primary.remainingPercent)}${claude.secondary ? ` / W ${claude.secondary.remainingPercent}%${quotaWarnSuffix(claude.secondary.remainingPercent)}` : ""}`
-      : `Claude ${status("Claude") ?? "usage unknown"}`;
-
-    const go = usage.opencode?.go;
-    const goText = go?.windows?.length
-      ? `Go ${go.windows.map((window) => {
-        const limited = window.status === "rate-limited";
-        return `${window.remainingPercent}%${limited ? " LIMITED" : quotaWarnSuffix(window.remainingPercent)}`;
-      }).join(" / ")}`
-      : `Go ${status("OpenCode") ?? "usage unknown"}`;
+    const segments = formatSubscriptionUsageSegments({ usage: this.snapshot?.usage, providers: this.snapshot?.providers });
 
     const header = `KAIRO · ${project}`;
-    const segments = [codexText, claudeText, goText];
     const full = `${header} │ ${segments.join(" │ ")}`;
     if (visibleWidth(full) <= width) return [theme.fg("muted", full)];
     return [theme.fg("muted", header), theme.fg("muted", segments.join(" │ "))];
