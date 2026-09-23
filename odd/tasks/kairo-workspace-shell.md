@@ -24,8 +24,11 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   RED: extension exports absent and host binding missing from environment.
   GREEN: 19/19 focused host/kernel/workspace tests. Session IDs reach the host
   through `KAIRO_SESSION_ID`, never command argv.
-- [ ] KWS-03 Make the normal host launch quiet and Kairo-branded; preserve
-  explicit diagnostics/debug behavior without hiding real errors.
+- [x] KWS-03 Make the normal host launch quiet and Kairo-branded; preserve
+  explicit diagnostics/debug behavior without hiding real errors. RED: host
+  still passed `--link`. GREEN: isolated, discovery-disabled Pi host with the
+  explicit Kairo extension; 13/13 focused tests and real `gentle-shell` 0.87.1
+  isolated launch completed successfully.
 - [ ] KWS-04 Add a Pi provider/model bridge that exposes only Kairo-verified,
   launchable routed choices; never invent subscription access.
 - [ ] KWS-05 Provide an honest unavailable/blocked state when no verified route
@@ -71,6 +74,10 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
 - KWS-01 completed locally in `fde214c` (`feat(host): add workspace snapshot
   contract`). It intentionally does not select a "latest" session when the
   host has no explicit session binding.
-- KWS-02 completed locally; commit pending. Pi now renders a compact Kairo
-  widget and exposes `/kairo`, `/kairo-team`, `/kairo-sessions`,
+- KWS-02 completed locally in `3c2c525` (`feat(host): render Kairo workspace
+  shell`). Pi now renders a compact Kairo widget and exposes `/kairo`,
+  `/kairo-team`, `/kairo-sessions`,
   `/kairo-usage`, `/kairo-route`, and `/kairo-memory`.
+- KWS-03 completed locally; commit pending. Kairo now isolates the host and
+  disables discovered extensions, skills, prompts, and themes; its own explicit
+  extension remains the only product resource in the normal workspace launch.
