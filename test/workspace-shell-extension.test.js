@@ -20,6 +20,10 @@ const snapshot = {
     ]
   },
   usage: [{ provider: "codex", totalTokens: 2400 }],
+  subscriptions: {
+    state: "ready",
+    segments: ["Codex 5h 58% / W 86%", "Claude S 34% / W 65%", "Go 100% / 100% / 96%"]
+  },
   memory: { status: "configured" }
 };
 
@@ -39,15 +43,24 @@ function fakePi() {
   };
 }
 
-test("workspace opening surface lists every role on its own row instead of a count", () => {
+test("workspace opening surface always shows subscription usage right after the session line, plus every team role", () => {
   assert.deepEqual(formatKairoWorkspaceLines(snapshot), [
     "KAIRO WORKSPACE · agentic-harness",
     "SESSION · session 11111111 · agent",
+    "USAGE · Codex 5h 58% / W 86% │ Claude S 34% / W 65% │ Go 100% / 100% / 96%",
     "TEAM · active",
     "Builder · GPT-6 Terra · codex · checking",
     "Reviewer · MiniMax-M3 · opencode-go · BLOCKED",
     "Details: /kairo-team · /kairo-route · /kairo-usage · /kairo-memory"
   ]);
+});
+
+test("workspace opening surface shows USAGE · checking before live data, and USAGE · unknown on a failed check", () => {
+  const checking = { ...snapshot, subscriptions: { state: "checking", segments: [] } };
+  const unknown = { ...snapshot, subscriptions: { state: "unknown", segments: [] } };
+
+  assert.equal(formatKairoWorkspaceLines(checking)[2], "USAGE · checking");
+  assert.equal(formatKairoWorkspaceLines(unknown)[2], "USAGE · unknown");
 });
 
 test("extension registers only Kairo-routed provider models", async () => {
@@ -66,11 +79,11 @@ test("extension registers only Kairo-routed provider models", async () => {
   assert.equal(await extension.registerRoutes("/other"), true);
 });
 
-test("extension replaces a missing Pi route with an actionable Kairo state, but still shows the team rows", async () => {
+test("extension replaces a missing Pi route with an actionable Kairo state, but still shows usage and the team rows", async () => {
   const { pi, events } = fakePi();
   createKairoWorkspaceExtension(pi, {
     loadSnapshot: async () => snapshot,
-    loadTeamAvailability: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {} }),
+    loadLiveData: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {}, usage: {}, providers: {} }),
     loadRouteModels: async () => []
   });
 
@@ -87,6 +100,7 @@ test("extension replaces a missing Pi route with an actionable Kairo state, but 
     "KAIRO ROUTES · unavailable",
     "No verified automatic route is available for this project.",
     "Next: run kairo --legacy-cockpit, then /project analyze.",
+    "USAGE · Codex 5h 58% / W 86% │ Claude S 34% / W 65% │ Go 100% / 100% / 96%",
     "TEAM · active",
     "Builder · GPT-6 Terra · codex · checking",
     "Reviewer · MiniMax-M3 · opencode-go · BLOCKED"
@@ -103,7 +117,7 @@ test("extension renders a Kairo status/widget on session start using the explici
       assert.equal(input.sessionId, "11111111-1111-4111-8111-111111111111");
       return snapshot;
     },
-    loadTeamAvailability: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {} }),
+    loadLiveData: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {}, usage: {}, providers: {} }),
     loadRouteModels: async () => [{ id: "codex::gpt-6-astra", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }]
   });
 
@@ -116,7 +130,7 @@ test("extension renders a Kairo status/widget on session start using the explici
   });
 
   // Two-phase: the immediate "checking" render, then the re-render once
-  // real availability resolved — never fewer than both.
+  // real availability/usage resolved — never fewer than both.
   assert.deepEqual(calls[0], ["status", "kairo", "Kairo · agentic-harness · agent"]);
   assert.deepEqual(calls[1], ["widget", "kairo-workspace", formatKairoWorkspaceLines(snapshot)]);
   assert.deepEqual(calls[2], ["status", "kairo", "Kairo · agentic-harness · agent"]);
@@ -124,21 +138,23 @@ test("extension renders a Kairo status/widget on session start using the explici
   assert.equal(calls.length, 4);
 });
 
-test("extension renders team availability in two phases: checking immediately, then real availability", async () => {
+test("extension renders live data in two phases: checking immediately, then real team availability and usage", async () => {
   const { pi, events } = fakePi();
   const widgetCalls = [];
   const checkingSnapshot = {
     ...snapshot,
-    team: { ...snapshot.team, rows: [{ role: "Builder", model: "GPT-6 Terra", via: "codex", accessMode: "automatic", availability: { state: "checking", warning: null } }] }
+    team: { ...snapshot.team, rows: [{ role: "Builder", model: "GPT-6 Terra", via: "codex", accessMode: "automatic", availability: { state: "checking", warning: null } }] },
+    subscriptions: { state: "checking", segments: [] }
   };
   const resolvedSnapshot = {
     ...snapshot,
-    team: { ...snapshot.team, rows: [{ role: "Builder", model: "GPT-6 Terra", via: "codex", accessMode: "automatic", availability: { state: "available", warning: null } }] }
+    team: { ...snapshot.team, rows: [{ role: "Builder", model: "GPT-6 Terra", via: "codex", accessMode: "automatic", availability: { state: "available", warning: null } }] },
+    subscriptions: { state: "ready", segments: ["Codex 5h 58% / W 86%", "Claude S 34% / W 65%", "Go 100% / 100% / 96%"] }
   };
 
   createKairoWorkspaceExtension(pi, {
     loadSnapshot: async ({ intelligence } = {}) => (intelligence === undefined ? checkingSnapshot : resolvedSnapshot),
-    loadTeamAvailability: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {} }),
+    loadLiveData: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {}, usage: {}, providers: {} }),
     loadRouteModels: async () => [{ id: "codex::gpt-6-astra", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }]
   });
 
@@ -148,11 +164,13 @@ test("extension renders team availability in two phases: checking immediately, t
   });
 
   assert.equal(widgetCalls.length, 2);
-  assert.ok(widgetCalls[0][1].some((line) => line.includes("checking")), "first render shows checking");
-  assert.ok(widgetCalls[1][1].some((line) => line.includes("available")), "second render shows real availability");
+  assert.ok(widgetCalls[0][1].some((line) => line === "USAGE · checking"), "first render shows USAGE · checking");
+  assert.ok(widgetCalls[0][1].some((line) => line.includes("checking")), "first render shows team checking too");
+  assert.ok(widgetCalls[1][1].some((line) => line.includes("Codex 5h 58%")), "second render shows real usage");
+  assert.ok(widgetCalls[1][1].some((line) => line.includes("available")), "second render shows real team availability");
 });
 
-test("extension shows unknown rows plus one explanatory line when the live availability check fails", async () => {
+test("extension shows unknown rows, USAGE · unknown, and one explanatory line when the live data check fails", async () => {
   const { pi, events } = fakePi();
   const widgetCalls = [];
   const failedSnapshot = {
@@ -160,12 +178,13 @@ test("extension shows unknown rows plus one explanatory line when the live avail
     team: {
       ...snapshot.team,
       rows: snapshot.team.rows.map((row) => ({ ...row, availability: { state: "unknown", warning: null } }))
-    }
+    },
+    subscriptions: { state: "unknown", segments: [] }
   };
 
   createKairoWorkspaceExtension(pi, {
     loadSnapshot: async ({ intelligence } = {}) => (intelligence === null ? failedSnapshot : snapshot),
-    loadTeamAvailability: async () => null,
+    loadLiveData: async () => null,
     loadRouteModels: async () => [{ id: "codex::gpt-6-astra", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }]
   });
 
@@ -175,7 +194,8 @@ test("extension shows unknown rows plus one explanatory line when the live avail
   });
 
   const finalLines = widgetCalls.at(-1)[1];
-  assert.ok(finalLines.some((line) => line.includes("unknown")), "unknown status shown for every row");
+  assert.ok(finalLines.includes("USAGE · unknown"), "usage shown as unknown");
+  assert.ok(finalLines.some((line) => line.includes("unknown")), "unknown status shown for every team row");
   assert.ok(
     finalLines.some((line) => line.toLowerCase().includes("availability check failed")),
     "one line explains the failed check"
@@ -190,15 +210,26 @@ test("extension registers only Kairo workspace commands and refreshes their matc
     "kairo", "kairo-team", "kairo-sessions", "kairo-usage", "kairo-route", "kairo-memory"
   ]);
 
-  const calls = [];
+  const teamCalls = [];
   await commands.get("kairo-team").handler("", {
     cwd: "/repo",
-    ui: { setWidget: (...args) => calls.push(args) }
+    ui: { setWidget: (...args) => teamCalls.push(args) }
   });
-  assert.deepEqual(calls, [["kairo-workspace", [
+  assert.deepEqual(teamCalls, [["kairo-workspace", [
     "KAIRO TEAM · active",
     "Builder · GPT-6 Terra · codex · checking",
     "Reviewer · MiniMax-M3 · opencode-go · BLOCKED",
     "  Unavailable — Cursor Models quota exhausted"
+  ]]]);
+
+  const usageCalls = [];
+  await commands.get("kairo-usage").handler("", {
+    cwd: "/repo",
+    ui: { setWidget: (...args) => usageCalls.push(args) }
+  });
+  assert.deepEqual(usageCalls, [["kairo-workspace", [
+    "KAIRO USAGE",
+    "USAGE · Codex 5h 58% / W 86% │ Claude S 34% / W 65% │ Go 100% / 100% / 96%",
+    "codex 2400 tokens"
   ]]]);
 });

@@ -4,7 +4,7 @@ import {
   KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
   buildKairoWorkspaceSnapshot,
   loadKairoWorkspaceSnapshot,
-  loadKairoTeamAvailability
+  loadKairoLiveData
 } from "../src/global/host/workspace-snapshot.js";
 
 const FULL_STRATEGY = {
@@ -135,34 +135,71 @@ test("workspace loader reads only the explicitly bound Kairo session", async () 
   assert.equal(snapshot.session.mode, "plan");
 });
 
-test("loadKairoTeamAvailability returns real intelligence from the conversation service snapshot", async () => {
-  const intelligence = await loadKairoTeamAvailability({ cwd: "/repo" }, {
+test("loadKairoLiveData returns real intelligence AND real usage/providers from ONE conversation service snapshot call", async () => {
+  let snapshotCalls = 0;
+  const liveData = await loadKairoLiveData({ cwd: "/repo" }, {
     createConversationService: (deps) => {
       assert.equal(deps.enableProviderProbes, true);
       return {
         snapshot: async ({ cwd }) => {
+          snapshotCalls += 1;
           assert.equal(cwd, "/repo");
-          return { modelIntelligence: { eligibility: { codex: { ok: true } }, claudeEntitlement: { x: { status: "denied" } }, cursorAccess: {} } };
+          return {
+            modelIntelligence: { eligibility: { codex: { ok: true } }, claudeEntitlement: { x: { status: "denied" } }, cursorAccess: {} },
+            usage: { codex: { primary: { remainingPercent: 58 } } },
+            providers: { claude: { status: "Pro · usage unknown" } }
+          };
         }
       };
     }
   });
 
-  assert.deepEqual(intelligence, { eligibility: { codex: { ok: true } }, claudeEntitlement: { x: { status: "denied" } }, cursorAccess: {} });
+  assert.equal(snapshotCalls, 1, "one snapshot() call serves both team availability and subscription usage — no second probe");
+  assert.deepEqual(liveData, {
+    eligibility: { codex: { ok: true } },
+    claudeEntitlement: { x: { status: "denied" } },
+    cursorAccess: {},
+    usage: { codex: { primary: { remainingPercent: 58 } } },
+    providers: { claude: { status: "Pro · usage unknown" } }
+  });
 });
 
-test("loadKairoTeamAvailability never reports available when the service throws", async () => {
-  const intelligence = await loadKairoTeamAvailability({ cwd: "/repo" }, {
+test("loadKairoLiveData never reports available when the service throws", async () => {
+  const liveData = await loadKairoLiveData({ cwd: "/repo" }, {
     createConversationService: () => ({ snapshot: async () => { throw new Error("provider probe failed"); } })
   });
 
-  assert.equal(intelligence, null);
+  assert.equal(liveData, null);
 });
 
-test("loadKairoTeamAvailability never reports available when the snapshot has no real eligibility data", async () => {
-  const intelligence = await loadKairoTeamAvailability({ cwd: "/repo" }, {
+test("loadKairoLiveData never reports available when the snapshot has no real eligibility data", async () => {
+  const liveData = await loadKairoLiveData({ cwd: "/repo" }, {
     createConversationService: () => ({ snapshot: async () => ({ modelIntelligence: { eligibility: {} } }) })
   });
 
-  assert.equal(intelligence, null);
+  assert.equal(liveData, null);
+});
+
+test("workspace snapshot subscriptions default to checking, then real segments, then unknown on failure", () => {
+  const checking = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY });
+  assert.deepEqual(checking.subscriptions, { state: "checking", segments: [] });
+
+  const ready = buildKairoWorkspaceSnapshot({
+    projectRoot: "/work/agentic-harness",
+    strategy: FULL_STRATEGY,
+    intelligence: {
+      eligibility: {},
+      usage: { codex: { primary: { remainingPercent: 58 }, secondary: { remainingPercent: 86 } } },
+      providers: { claude: { status: "Pro · usage unknown" } }
+    }
+  });
+  assert.equal(ready.subscriptions.state, "ready");
+  assert.deepEqual(ready.subscriptions.segments, [
+    "Codex 5h 58% / W 86%",
+    "Claude Pro · usage unknown",
+    "Go usage unknown"
+  ]);
+
+  const failed = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY, intelligence: null });
+  assert.deepEqual(failed.subscriptions, { state: "unknown", segments: [] });
 });

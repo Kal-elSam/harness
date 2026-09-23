@@ -6,6 +6,7 @@ import { readProjectStrategy } from "../conversation/project-strategy-store.js";
 import { getSession, isValidSessionId } from "../conversation/session-registry.js";
 import { listProviderUsage } from "../runtime/usage-store.js";
 import { resolveAssignmentAvailability } from "../conversation/assignment-availability.js";
+import { formatSubscriptionUsageSegments } from "../conversation/usage-summary.js";
 import { createConversationService } from "../conversation/service.js";
 
 export const KAIRO_WORKSPACE_SNAPSHOT_SCHEMA = "kairo.workspace-shell/v1";
@@ -89,6 +90,26 @@ function workspaceTeam(strategy, intelligence) {
 }
 
 /**
+ * The always-visible subscription usage summary — Codex/Claude/OpenCode Go,
+ * same real text `formatSubscriptionUsageSegments` gives the legacy
+ * cockpit's compact USAGE bar. Same three-state contract as team
+ * availability (see `rowAvailability`'s own doc): `undefined` -> the live
+ * probe hasn't run yet (`checking`), `null` -> it ran and failed/produced
+ * no usable data (`unknown`, never a fabricated line), an object -> the
+ * real `usage`/`providers` facts from that one conversation-service
+ * snapshot call.
+ * @param {object|null|undefined} intelligence
+ */
+function workspaceSubscriptions(intelligence) {
+  if (intelligence === undefined) return { state: "checking", segments: [] };
+  if (intelligence === null) return { state: "unknown", segments: [] };
+  return {
+    state: "ready",
+    segments: formatSubscriptionUsageSegments({ usage: intelligence.usage, providers: intelligence.providers })
+  };
+}
+
+/**
  * Pure host view model. It exposes existing Kairo facts without creating a
  * second recommendation, quota, or memory policy in the Pi integration.
  */
@@ -109,6 +130,7 @@ export function buildKairoWorkspaceSnapshot({
     session: workspaceSession(session),
     team: workspaceTeam(strategy, intelligence),
     usage: Array.isArray(usage) ? usage : [],
+    subscriptions: workspaceSubscriptions(intelligence),
     memory: { status: engram?.status ?? "unknown" }
   };
 }
@@ -151,23 +173,25 @@ export async function loadKairoWorkspaceSnapshot({ cwd, sessionId = null, intell
 }
 
 /**
- * Obtains Kairo's real, live team availability data (eligibility, Claude
- * entitlement, Cursor access) from the conversation service's own
- * `modelIntelligence` snapshot — the same real probe the legacy cockpit
- * uses. This is deliberately a SEPARATE call from
- * `loadKairoWorkspaceSnapshot`: the service snapshot probes real adapters
- * and can be slow, so the host calls this only for its second render
- * phase, never blocking the first, immediate `checking` render.
+ * Obtains Kairo's real, live data for the host's second render phase —
+ * team availability (eligibility, Claude entitlement, Cursor access) AND
+ * subscription usage (`usage`/`providers`) — from ONE call to the
+ * conversation service's own snapshot, the same real probe the legacy
+ * cockpit uses. Deliberately one snapshot() call for both: the probe
+ * itself is the slow part, never worth paying twice in the same refresh.
+ * This is a SEPARATE call from `loadKairoWorkspaceSnapshot`, called only
+ * for the host's second render phase, never blocking the first,
+ * immediate `checking` render.
  *
  * Fails closed: a thrown probe or a snapshot with no real eligibility
  * data returns `null` (never a fabricated "everything's fine" empty
- * object) — the caller then renders every row `unknown`, never
- * `available`.
+ * object) — the caller then renders every team row `unknown` and the
+ * subscriptions line `unknown`, never `available`/real numbers.
  * @param {{cwd?: string}} [args]
  * @param {{createConversationService?: typeof createConversationService}} [deps]
- * @returns {Promise<{eligibility: object, claudeEntitlement: object, cursorAccess: object}|null>}
+ * @returns {Promise<{eligibility: object, claudeEntitlement: object, cursorAccess: object, usage: object, providers: object}|null>}
  */
-export async function loadKairoTeamAvailability({ cwd } = {}, deps = {}) {
+export async function loadKairoLiveData({ cwd } = {}, deps = {}) {
   const createService = deps.createConversationService ?? createConversationService;
   try {
     const service = createService({ enableProviderProbes: true });
@@ -177,7 +201,9 @@ export async function loadKairoTeamAvailability({ cwd } = {}, deps = {}) {
     return {
       eligibility,
       claudeEntitlement: snap?.modelIntelligence?.claudeEntitlement ?? {},
-      cursorAccess: snap?.modelIntelligence?.cursorAccess ?? {}
+      cursorAccess: snap?.modelIntelligence?.cursorAccess ?? {},
+      usage: snap?.usage ?? {},
+      providers: snap?.providers ?? {}
     };
   } catch {
     return null;

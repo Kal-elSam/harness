@@ -1,6 +1,6 @@
 import { createKernelService } from "../../kernel/service.js";
 import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-route-provider.js";
-import { loadKairoWorkspaceSnapshot, loadKairoTeamAvailability } from "../workspace-snapshot.js";
+import { loadKairoWorkspaceSnapshot, loadKairoLiveData } from "../workspace-snapshot.js";
 
 export function requestKernelSnapshot(deps = {}) {
   return createKernelService(deps).snapshot();
@@ -57,10 +57,21 @@ function teamOverviewLines(team) {
   return [`TEAM · ${team?.state ?? "not_analyzed"}`, ...rows.map(teamRowLine)];
 }
 
+/** The always-visible subscription usage line — never behind a command,
+ * per the user's real TTY review ("we had it before"). `checking`/
+ * `unknown` print the honest state word; real data prints the same
+ * segment text the legacy cockpit's compact USAGE bar uses. */
+function subscriptionsLine(subscriptions) {
+  const state = subscriptions?.state ?? "checking";
+  if (state === "ready") return `USAGE · ${(subscriptions.segments ?? []).join(" │ ")}`;
+  return `USAGE · ${state}`;
+}
+
 export function formatKairoWorkspaceLines(snapshot) {
   return [
     `KAIRO WORKSPACE · ${snapshot.project.label}`,
     `SESSION · ${sessionLabel(snapshot.session)}`,
+    subscriptionsLine(snapshot.subscriptions),
     ...teamOverviewLines(snapshot.team),
     "Details: /kairo-team · /kairo-route · /kairo-usage · /kairo-memory"
   ];
@@ -85,7 +96,10 @@ function linesForView(snapshot, view) {
           : "No Kairo session is bound. Run kairo start or kairo resume."
       ];
     case "usage":
-      return ["KAIRO USAGE", usageLabel(snapshot.usage)];
+      // The always-visible subscription line, plus the existing measured
+      // per-provider token totals underneath it (a different, complementary
+      // real fact — never merged into one line).
+      return ["KAIRO USAGE", subscriptionsLine(snapshot.subscriptions), usageLabel(snapshot.usage)];
     case "route":
       return ["KAIRO ROUTING", `Project team is ${snapshot.team.state}.`, teamLabel(snapshot.team.assignments)];
     case "memory":
@@ -107,6 +121,7 @@ function unavailableRoutesLines(snapshot) {
     "KAIRO ROUTES · unavailable",
     "No verified automatic route is available for this project.",
     "Next: run kairo --legacy-cockpit, then /project analyze.",
+    subscriptionsLine(snapshot.subscriptions),
     ...teamOverviewLines(snapshot.team)
   ];
 }
@@ -130,7 +145,7 @@ async function refreshWorkspace(ctx, { loadSnapshot, env, view = "overview", int
 export function createKairoWorkspaceExtension(pi, {
   env = process.env,
   loadSnapshot = loadKairoWorkspaceSnapshot,
-  loadTeamAvailability = loadKairoTeamAvailability,
+  loadLiveData = loadKairoLiveData,
   loadRouteModels = loadKairoProviderModels,
   createProvider = createKairoRouteProvider
 } = {}) {
@@ -161,14 +176,15 @@ export function createKairoWorkspaceExtension(pi, {
       ctx?.ui?.setWidget?.("kairo-workspace", unavailableRoutesLines(snapshot));
     }
 
-    // Phase 2: the conversation service's live modelIntelligence probe
-    // (loadKairoTeamAvailability) can be slow, so it never blocks phase
-    // 1 above. It fails closed on its own (null on any throw or missing
-    // data — see its own doc), never fabricating "available".
+    // Phase 2: the conversation service's live snapshot probe
+    // (loadKairoLiveData — ONE call for team availability AND
+    // subscription usage) can be slow, so it never blocks phase 1 above.
+    // It fails closed on its own (null on any throw or missing data —
+    // see its own doc), never fabricating "available" or real numbers.
     const cwd = ctx?.cwd ?? process.cwd();
-    const intelligence = await loadTeamAvailability({ cwd });
+    const intelligence = await loadLiveData({ cwd });
     const extraLines = intelligence === null
-      ? ["Live availability check failed — team status shown as unknown."]
+      ? ["Live availability check failed — team and usage status shown as unknown."]
       : [];
     const refreshedSnapshot = await refreshWorkspace(ctx, { loadSnapshot, env, intelligence, extraLines });
     if (routeState === "unavailable") {
