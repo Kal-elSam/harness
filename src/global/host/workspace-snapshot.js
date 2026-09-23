@@ -8,6 +8,9 @@ import { listProviderUsage } from "../runtime/usage-store.js";
 import { resolveAssignmentAvailability } from "../conversation/assignment-availability.js";
 import { buildUsageModel, formatSubscriptionUsageSegments } from "../conversation/usage-summary.js";
 import { createConversationService } from "../conversation/service.js";
+import { readCodexUsage } from "../observability/codex-usage.js";
+import { readClaudeUsage } from "../observability/claude-usage.js";
+import { readOpenCodeUsage } from "../observability/opencode-usage.js";
 
 export const KAIRO_WORKSPACE_SNAPSHOT_SCHEMA = "kairo.workspace-shell/v1";
 
@@ -118,6 +121,14 @@ function workspaceSubscriptions(intelligence) {
 /**
  * Pure host view model. It exposes existing Kairo facts without creating a
  * second recommendation, quota, or memory policy in the Pi integration.
+ *
+ * `usageIntelligence` and `availabilityIntelligence` are the P01.2 split:
+ * team availability and subscription usage resolve from two INDEPENDENT
+ * live sources (usage is ~5s, the full availability probe is ~20s — see
+ * loadKairoUsageData vs loadKairoLiveData), so each is read from its own
+ * argument instead of one shared `intelligence` object. Both default to
+ * the legacy `intelligence` argument for back-compat with callers that
+ * still pass one combined value (e.g. the P01.1 snapshot tests).
  */
 export function buildKairoWorkspaceSnapshot({
   projectRoot,
@@ -125,7 +136,9 @@ export function buildKairoWorkspaceSnapshot({
   strategy = null,
   usage = [],
   engram = null,
-  intelligence
+  intelligence,
+  usageIntelligence = intelligence,
+  availabilityIntelligence = intelligence
 } = {}) {
   if (typeof projectRoot !== "string" || projectRoot.trim() === "") {
     throw new Error("Kairo workspace snapshot requires a project root.");
@@ -134,9 +147,9 @@ export function buildKairoWorkspaceSnapshot({
     schema: KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
     project: { root: projectRoot, label: basename(projectRoot) || projectRoot },
     session: workspaceSession(session),
-    team: workspaceTeam(strategy, intelligence),
+    team: workspaceTeam(strategy, availabilityIntelligence),
     usage: Array.isArray(usage) ? usage : [],
-    subscriptions: workspaceSubscriptions(intelligence),
+    subscriptions: workspaceSubscriptions(usageIntelligence),
     memory: { status: engram?.status ?? "unknown" }
   };
 }
@@ -149,7 +162,13 @@ export function buildKairoWorkspaceSnapshot({
  * loader never computes availability itself, only reads Kairo's other
  * sources of truth.
  */
-export async function loadKairoWorkspaceSnapshot({ cwd, sessionId = null, intelligence } = {}, deps = {}) {
+export async function loadKairoWorkspaceSnapshot({
+  cwd,
+  sessionId = null,
+  intelligence,
+  usageIntelligence = intelligence,
+  availabilityIntelligence = intelligence
+} = {}, deps = {}) {
   const resolveRoot = deps.resolveProjectRoot ?? resolveProjectRoot;
   const homeDir = (deps.resolveHomeDir ?? resolveHomeDir)();
   const projectRoot = await resolveRoot(cwd);
@@ -174,7 +193,8 @@ export async function loadKairoWorkspaceSnapshot({ cwd, sessionId = null, intell
     usage,
     session,
     engram: inspectMemory({ homeDir }),
-    intelligence
+    usageIntelligence,
+    availabilityIntelligence
   });
 }
 
@@ -214,4 +234,38 @@ export async function loadKairoLiveData({ cwd } = {}, deps = {}) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Loads real subscription usage ONLY, independent of team availability
+ * (see loadKairoLiveData above) — the three usage readers (Codex, Claude,
+ * OpenCode Go+Zen) run in parallel and typically resolve in ~5s combined,
+ * far faster than the full conversation-service snapshot probe team
+ * availability needs (~20s on the user's machine). Splitting these lets
+ * the host render fresh usage without waiting on the slower availability
+ * probe (see the P01.2 "Why" in odd/tasks/kairo-pi-parity.md).
+ *
+ * Same call shapes service.js's own snapshot() uses for these three
+ * readers (readCodexUsage({cwd}), readClaudeUsage({}),
+ * readOpenCodeUsage({})), so the numbers this loader produces match what
+ * the service would produce for the same project.
+ *
+ * Each reader already fails closed on its own (returns a `status:
+ * "unknown"` shape rather than throwing) — this loader additionally
+ * guards against an unexpected throw from any one reader with `.catch`,
+ * so one failed reader never prevents the other two from reporting.
+ * @param {{cwd?: string}} [args]
+ * @param {{readCodexUsage?: typeof readCodexUsage, readClaudeUsage?: typeof readClaudeUsage, readOpenCodeUsage?: typeof readOpenCodeUsage}} [deps]
+ * @returns {Promise<{usage: {codex: object|null, claude: object|null, opencode: object|null}, providers: object}>}
+ */
+export async function loadKairoUsageData({ cwd = process.cwd() } = {}, deps = {}) {
+  const readCodex = deps.readCodexUsage ?? readCodexUsage;
+  const readClaude = deps.readClaudeUsage ?? readClaudeUsage;
+  const readOpenCode = deps.readOpenCodeUsage ?? readOpenCodeUsage;
+  const [codex, claude, opencode] = await Promise.all([
+    readCodex({ cwd }).catch(() => null),
+    readClaude({}).catch(() => null),
+    readOpenCode({}).catch(() => null)
+  ]);
+  return { usage: { codex, claude, opencode }, providers: {} };
 }

@@ -4,7 +4,8 @@ import {
   KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
   buildKairoWorkspaceSnapshot,
   loadKairoWorkspaceSnapshot,
-  loadKairoLiveData
+  loadKairoLiveData,
+  loadKairoUsageData
 } from "../src/global/host/workspace-snapshot.js";
 
 const FULL_STRATEGY = {
@@ -213,4 +214,68 @@ test("workspace snapshot subscriptions default to checking, then real segments, 
 
   const failed = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY, intelligence: null });
   assert.deepEqual(failed.subscriptions, { state: "unknown", segments: [], usageModel: [] });
+});
+
+test("workspace snapshot computes team availability and subscription usage from INDEPENDENT sources (P01.2 split), never waiting on each other", () => {
+  const usageOnly = buildKairoWorkspaceSnapshot({
+    projectRoot: "/work/agentic-harness",
+    strategy: FULL_STRATEGY,
+    usageIntelligence: { usage: { codex: { primary: { remainingPercent: 58 } } }, providers: {} },
+    availabilityIntelligence: undefined
+  });
+  assert.equal(usageOnly.subscriptions.state, "ready");
+  for (const row of usageOnly.team.rows) assert.equal(row.availability.state, "checking");
+
+  const availabilityOnly = buildKairoWorkspaceSnapshot({
+    projectRoot: "/work/agentic-harness",
+    strategy: FULL_STRATEGY,
+    usageIntelligence: undefined,
+    availabilityIntelligence: { eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {} }
+  });
+  assert.deepEqual(availabilityOnly.subscriptions, { state: "checking", segments: [], usageModel: [] });
+  assert.equal(availabilityOnly.team.rows[2].availability.state, "available");
+});
+
+test("workspace snapshot falls back to the single `intelligence` field for both team and subscriptions when usageIntelligence/availabilityIntelligence are not explicitly given (back-compat)", () => {
+  const snapshot = buildKairoWorkspaceSnapshot({
+    projectRoot: "/work/agentic-harness",
+    strategy: FULL_STRATEGY,
+    intelligence: { eligibility: { codex: { ok: true } }, usage: { codex: { primary: { remainingPercent: 58 } } }, providers: {} }
+  });
+  assert.equal(snapshot.subscriptions.state, "ready");
+  assert.equal(snapshot.team.rows[2].availability.state, "available");
+});
+
+test("loadKairoUsageData runs Codex/Claude/OpenCode usage readers in parallel with the same call shapes service.js uses, and never throws", async () => {
+  const calls = [];
+  const usageData = await loadKairoUsageData({ cwd: "/repo/project" }, {
+    readCodexUsage: async (args) => { calls.push(["codex", args]); return { status: "measured", primary: { remainingPercent: 58 } }; },
+    readClaudeUsage: async (args) => { calls.push(["claude", args]); return { status: "measured", primary: { remainingPercent: 34 } }; },
+    readOpenCodeUsage: async (args) => { calls.push(["opencode", args]); return { go: { windows: [] }, zen: null }; }
+  });
+
+  assert.deepEqual(calls, [
+    ["codex", { cwd: "/repo/project" }],
+    ["claude", {}],
+    ["opencode", {}]
+  ]);
+  assert.deepEqual(usageData, {
+    usage: {
+      codex: { status: "measured", primary: { remainingPercent: 58 } },
+      claude: { status: "measured", primary: { remainingPercent: 34 } },
+      opencode: { go: { windows: [] }, zen: null }
+    },
+    providers: {}
+  });
+});
+
+test("loadKairoUsageData never throws even when a reader rejects — a failed reader resolves to null, the others still report", async () => {
+  const usageData = await loadKairoUsageData({ cwd: "/repo" }, {
+    readCodexUsage: async () => { throw new Error("codex spawn failed"); },
+    readClaudeUsage: async () => ({ status: "measured", primary: { remainingPercent: 34 } }),
+    readOpenCodeUsage: async () => ({ go: { windows: [] }, zen: null })
+  });
+
+  assert.equal(usageData.usage.codex, null);
+  assert.deepEqual(usageData.usage.claude, { status: "measured", primary: { remainingPercent: 34 } });
 });
