@@ -55,7 +55,10 @@ export function isLikelyQuestion(text) {
 
 const RISK_KEYWORDS = [
   "auth", "authentication", "payment", "security", "production", "credential",
-  "secret", "delete", "drop table", "migration", "billing", "pii"
+  "secret", "delete", "drop table", "migration", "billing", "pii",
+  // Also matches error-recovery logic ("the error recovery code"): an
+  // accepted false positive, since over-provisioning is the cheap error.
+  "recovery code"
 ];
 // Spanish risk terms, written without accents. Unlike the English list they
 // match accent-insensitively and only at the start of a word, so "pago" never
