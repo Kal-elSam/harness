@@ -53,6 +53,8 @@ execution; Pi supplies widgets and overlays only.
 ## Delivery
 
 - Strategy: `ask-on-risk`. P01 forecast: ~300 authored changed lines, one PR.
+- P01 actual: 547 authored code+test lines (about 180 are a pure move in T1).
+  User chose a single PR over a stacked split (size exception, 2026-09-23).
 - RDD: off (decided by default) — ordinary checks only.
 
 ## P01 — Visible team
