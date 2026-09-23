@@ -192,3 +192,59 @@ Parent: run CI across Node 20/22/24 and the real TTY check
 (`kairo` against this project — the read-only render in T5's evidence
 above already confirms the two-phase USAGE line end to end), then close
 P01 and move to P02.
+
+## P01.1 — Widget UI
+
+### Why
+
+User TTY review of P01 (2026-09-23): the string-array widget is plain,
+unaligned and uncolored, and Pi caps string widgets at 10 lines
+(`MAX_WIDGET_LINES`), which truncated the Reviewer row. The user asked for
+two side-by-side panels and no `available` noise: approved team models are
+expected to be available; only exceptions should surface, with a prompt to
+re-analyze the project.
+
+### Design
+
+- `ctx.ui.setWidget(key, (tui, theme) => component)` — a component factory
+  has no line cap and receives Pi's theme. Built from `pi-tui` `Box`,
+  `HStack`/`VStack`, `Text`.
+- Left panel USAGE: Codex (5h, W), Claude (S, W), Go windows as bars with
+  percentages; green normally, warning color for LOW, error color for
+  LIMITED. Footer: session + mode.
+- Right panel TEAM: aligned columns role / model / via; no per-row status
+  when available; `checking…` dimmed in the panel title while live data
+  loads; a blocked row in error color with `BLOCKED`; footer lists
+  `/kairo-*` commands.
+- Narrow terminals stack the panels vertically instead of breaking.
+- Blocked assignment: one `ctx.ui.notify` per blocked role per refresh
+  naming role, model, Kairo's warning, and the next step
+  (`kairo --legacy-cockpit` → `/project analyze` until P03 lands).
+- Live check failure: one dim line saying availability could not be
+  verified; never implies available.
+- Data unchanged: same snapshot fields from P01; usage needs a structured
+  (numeric) model extracted next to `usage-summary.js`, reused by the
+  existing text formatter.
+
+### Tasks
+
+- [ ] P01.1-T1 Structured usage model (providers → windows with label,
+  remainingPercent, level normal/low/limited) in the UI-free module; the
+  existing text formatter builds on it with byte-identical output.
+- [ ] P01.1-T2 Widget component: two panels side by side, stacked when
+  narrow, themed; every team row always rendered (no 10-line cap).
+- [ ] P01.1-T3 Availability UX: no `available` marker, `checking…` title,
+  blocked rows highlighted, one notify per blocked role with the
+  re-analysis next step, failure line.
+- [ ] P01.1-T4 Evidence: render tests at 60/100/160 columns, full suite,
+  CI, user TTY check.
+
+### Acceptance criteria
+
+- All 7 roles visible with no truncation at common widths.
+- Two panels side by side when width allows; stacked otherwise; no line
+  exceeds the given width.
+- No per-row `available`; blocked roles highlighted and notified once per
+  refresh.
+- Cockpit output unchanged.
+
