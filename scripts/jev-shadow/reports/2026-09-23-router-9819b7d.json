@@ -1,0 +1,477 @@
+{
+  "generatedAt": "2026-09-23T22:34:48.387Z",
+  "labels": "provisional",
+  "clear": {
+    "rows": [
+      {
+        "id": "en-light-1",
+        "text": "What does this project do?",
+        "language": "en",
+        "local": "light",
+        "expected": "light",
+        "jev": "light",
+        "confidence": 0.79,
+        "latencyMs": 747,
+        "tokens": 398,
+        "agree": true
+      },
+      {
+        "id": "en-light-2",
+        "text": "Fix the typo in the README title",
+        "language": "en",
+        "local": "light",
+        "expected": "light",
+        "jev": "light",
+        "confidence": 1,
+        "latencyMs": 293,
+        "tokens": 399,
+        "agree": true
+      },
+      {
+        "id": "en-light-3",
+        "text": "Rename the button label from 'Save' to 'Guard'",
+        "language": "en",
+        "local": "light",
+        "expected": "light",
+        "jev": "light",
+        "confidence": 0.98,
+        "latencyMs": 285,
+        "tokens": 404,
+        "agree": true
+      },
+      {
+        "id": "en-standard-1",
+        "text": "Update the changelog with the last five releases, copying the version numbers and dates from the git tags into the markdown table",
+        "language": "en",
+        "local": "standard",
+        "expected": "standard",
+        "jev": "light",
+        "confidence": 0.5,
+        "latencyMs": 461,
+        "tokens": 416,
+        "agree": false
+      },
+      {
+        "id": "en-standard-2",
+        "text": "Add a docstring to every exported function in the utils folder explaining parameters and return values in one sentence each",
+        "language": "en",
+        "local": "standard",
+        "expected": "standard",
+        "jev": "light",
+        "confidence": 0.32,
+        "latencyMs": 363,
+        "tokens": 414,
+        "agree": false
+      },
+      {
+        "id": "en-heavy-1",
+        "text": "Why does the auth token refresh fail under load?",
+        "language": "en",
+        "local": "heavy",
+        "expected": "heavy",
+        "jev": "heavy",
+        "confidence": 0.46,
+        "latencyMs": 426,
+        "tokens": 402,
+        "agree": true
+      },
+      {
+        "id": "en-heavy-2",
+        "text": "Investigate the race condition in the payment webhook handler",
+        "language": "en",
+        "local": "heavy",
+        "expected": "heavy",
+        "jev": "heavy",
+        "confidence": 0.9,
+        "latencyMs": 292,
+        "tokens": 404,
+        "agree": true
+      },
+      {
+        "id": "en-heavy-3",
+        "text": "Integrate the new billing API across the backend and frontend",
+        "language": "en",
+        "local": "heavy",
+        "expected": "heavy",
+        "jev": "standard",
+        "confidence": 0.37,
+        "latencyMs": 487,
+        "tokens": 404,
+        "agree": false
+      },
+      {
+        "id": "en-heavy-4",
+        "text": "Evaluate the tradeoffs of migrating the session store from Redis to Postgres",
+        "language": "en",
+        "local": "heavy",
+        "expected": "heavy",
+        "jev": "heavy",
+        "confidence": 0.32,
+        "latencyMs": 386,
+        "tokens": 406,
+        "agree": true
+      },
+      {
+        "id": "en-heavy-5",
+        "text": "Is it safe to store a payment credential here?",
+        "language": "en",
+        "local": "heavy",
+        "expected": "heavy",
+        "jev": "heavy",
+        "confidence": 0.15,
+        "latencyMs": 373,
+        "tokens": 402,
+        "agree": true
+      },
+      {
+        "id": "es-light-1",
+        "text": "¿Qué hace este proyecto?",
+        "language": "es",
+        "local": "light",
+        "expected": "light",
+        "jev": "light",
+        "confidence": 0.72,
+        "latencyMs": 370,
+        "tokens": 399,
+        "agree": true
+      },
+      {
+        "id": "es-light-2",
+        "text": "Corrige el typo en el título del README",
+        "language": "es",
+        "local": "light",
+        "expected": "light",
+        "jev": "light",
+        "confidence": 1,
+        "latencyMs": 337,
+        "tokens": 401,
+        "agree": true
+      },
+      {
+        "id": "es-light-3",
+        "text": "Renombra el botón de 'Guardar' a 'Enviar'",
+        "language": "es",
+        "local": "light",
+        "expected": "light",
+        "jev": "light",
+        "confidence": 0.98,
+        "latencyMs": 376,
+        "tokens": 405,
+        "agree": true
+      },
+      {
+        "id": "es-standard-1",
+        "text": "Actualiza el changelog con las últimas cinco versiones, copiando los números de versión y las fechas desde las etiquetas de git a la tabla markdown",
+        "language": "es",
+        "local": "standard",
+        "expected": "standard",
+        "jev": "light",
+        "confidence": 0.45,
+        "latencyMs": 569,
+        "tokens": 422,
+        "agree": false
+      },
+      {
+        "id": "es-standard-2",
+        "text": "Agrega un comentario explicativo a cada función exportada de la carpeta de utilidades describiendo parámetros y valores de retorno",
+        "language": "es",
+        "local": "standard",
+        "expected": "standard",
+        "jev": "standard",
+        "confidence": 0.51,
+        "latencyMs": 358,
+        "tokens": 425,
+        "agree": true
+      },
+      {
+        "id": "es-heavy-1",
+        "text": "¿Por qué falla la autenticación cuando hay mucha carga?",
+        "language": "es",
+        "local": "heavy",
+        "expected": "heavy",
+        "jev": "standard",
+        "confidence": 0.44,
+        "latencyMs": 374,
+        "tokens": 407,
+        "agree": false
+      },
+      {
+        "id": "es-heavy-2",
+        "text": "Investiga la condición de carrera en el manejador de webhooks de pagos",
+        "language": "es",
+        "local": "heavy",
+        "expected": "heavy",
+        "jev": "heavy",
+        "confidence": 0.75,
+        "latencyMs": 320,
+        "tokens": 409,
+        "agree": true
+      },
+      {
+        "id": "es-heavy-3",
+        "text": "Integra la nueva API de facturación en el backend y el frontend",
+        "language": "es",
+        "local": "heavy",
+        "expected": "heavy",
+        "jev": "heavy",
+        "confidence": 0.29,
+        "latencyMs": 334,
+        "tokens": 408,
+        "agree": true
+      }
+    ],
+    "summary": {
+      "total": 18,
+      "labeled": 18,
+      "scored": 18,
+      "jevFailures": 0,
+      "jevFailureIds": [],
+      "agreements": 13,
+      "agreementRate": 0.7222222222222222,
+      "localAccuracy": 1,
+      "jevAccuracy": 0.7222222222222222,
+      "disagreements": [
+        "en-standard-1",
+        "en-standard-2",
+        "en-heavy-3",
+        "es-standard-1",
+        "es-heavy-1"
+      ]
+    }
+  },
+  "ambiguous": {
+    "rows": [
+      {
+        "id": "en-amb-1",
+        "text": "Refactor the login form validation",
+        "language": "en",
+        "local": "heavy",
+        "note": "Local rule says heavy (refactor); a small form refactor may really be standard. Size unknown.",
+        "jev": "standard",
+        "confidence": 0.95,
+        "latencyMs": 384,
+        "tokens": 398,
+        "agree": false
+      },
+      {
+        "id": "en-amb-2",
+        "text": "Improve the performance of the search endpoint",
+        "language": "en",
+        "local": "heavy",
+        "note": "Could be one index or a deep investigation; the text alone does not say.",
+        "jev": "standard",
+        "confidence": 0.59,
+        "latencyMs": 315,
+        "tokens": 400,
+        "agree": false
+      },
+      {
+        "id": "en-amb-3",
+        "text": "Delete the old unused feature flags from the codebase",
+        "language": "en",
+        "local": "heavy",
+        "note": "Local rule says heavy (delete); removing dead flags is arguably mechanical.",
+        "jev": "standard",
+        "confidence": 0.58,
+        "latencyMs": 288,
+        "tokens": 402,
+        "agree": false
+      },
+      {
+        "id": "es-amb-1",
+        "text": "Migra los estilos del componente de perfil a CSS modules",
+        "language": "es",
+        "local": "light",
+        "note": "Standard or heavy depending on component size; not stated.",
+        "jev": "standard",
+        "confidence": 0.87,
+        "latencyMs": 345,
+        "tokens": 403,
+        "agree": false
+      },
+      {
+        "id": "es-amb-2",
+        "text": "¿Cómo deberíamos estructurar la autenticación del nuevo servicio?",
+        "language": "es",
+        "local": "heavy",
+        "note": "Design question touching auth; advice-only vs implementation changes the tier.",
+        "jev": "heavy",
+        "confidence": 0.34,
+        "latencyMs": 395,
+        "tokens": 413,
+        "agree": true
+      }
+    ],
+    "note": "No expected tier — excluded from accuracy. Human review required."
+  },
+  "contrast": {
+    "rows": [
+      {
+        "id": "en-contrast-light-1",
+        "text": "Given five version/date pairs, copy them into the five existing release-table rows without other edits.",
+        "language": "en",
+        "local": "standard",
+        "expected": "light",
+        "pair": "changelog-en",
+        "jev": "light",
+        "confidence": 0.99,
+        "latencyMs": 310,
+        "tokens": 411,
+        "agree": false
+      },
+      {
+        "id": "en-contrast-standard-1",
+        "text": "Given five Git tags, obtain each version/date pair and enter them in the five existing release-table rows.",
+        "language": "en",
+        "local": "standard",
+        "expected": "standard",
+        "pair": "changelog-en",
+        "jev": "standard",
+        "confidence": 0.44,
+        "latencyMs": 438,
+        "tokens": 413,
+        "agree": true
+      },
+      {
+        "id": "es-contrast-light-1",
+        "text": "Con cinco pares de versión/fecha dados, cópialos en las cinco filas existentes de la tabla de versiones.",
+        "language": "es",
+        "local": "standard",
+        "expected": "light",
+        "pair": "changelog-es",
+        "jev": "light",
+        "confidence": 0.97,
+        "latencyMs": 325,
+        "tokens": 417,
+        "agree": false
+      },
+      {
+        "id": "es-contrast-standard-1",
+        "text": "Con cinco etiquetas de Git, obtén cada par de versión/fecha y colócalo en las cinco filas de la tabla.",
+        "language": "es",
+        "local": "standard",
+        "expected": "standard",
+        "pair": "changelog-es",
+        "jev": "standard",
+        "confidence": 0.47,
+        "latencyMs": 369,
+        "tokens": 420,
+        "agree": true
+      },
+      {
+        "id": "en-contrast-standard-2",
+        "text": "Choose where to store the user's display name in the profile table, then update the form to use it while keeping other fields unchanged.",
+        "language": "en",
+        "local": "standard",
+        "expected": "standard",
+        "pair": "storage-en",
+        "jev": "standard",
+        "confidence": 0.79,
+        "latencyMs": 352,
+        "tokens": 419,
+        "agree": true
+      },
+      {
+        "id": "en-contrast-heavy-2",
+        "text": "Choose where to store the user's recovery code in the profile table, then update the form to use it while keeping other fields unchanged.",
+        "language": "en",
+        "local": "standard",
+        "expected": "heavy",
+        "pair": "storage-en",
+        "jev": "standard",
+        "confidence": 0.77,
+        "latencyMs": 281,
+        "tokens": 419,
+        "agree": true
+      },
+      {
+        "id": "es-contrast-standard-2",
+        "text": "Elige dónde guardar el nombre visible del usuario en la tabla de perfil y adapta el formulario para usarlo.",
+        "language": "es",
+        "local": "standard",
+        "expected": "standard",
+        "pair": "storage-es",
+        "jev": "standard",
+        "confidence": 0.92,
+        "latencyMs": 360,
+        "tokens": 414,
+        "agree": true
+      },
+      {
+        "id": "es-contrast-heavy-2",
+        "text": "Elige dónde guardar el código de recuperación del usuario en la tabla de perfil y adapta el formulario para usarlo.",
+        "language": "es",
+        "local": "heavy",
+        "expected": "heavy",
+        "pair": "storage-es",
+        "jev": null,
+        "jevError": "TypeSafe request failed with status 429 (rate_limit_exceeded: The upstream provider is currently experiencing high demand. Please retry shortly.)",
+        "agree": null
+      }
+    ],
+    "summary": {
+      "pairs": 4,
+      "pairsScored": 3,
+      "jevPairsSeparated": 2,
+      "localPairsSeparated": 0,
+      "jevFailures": 1,
+      "jevFailureIds": [
+        "es-contrast-heavy-2"
+      ],
+      "byPair": [
+        {
+          "pair": "changelog-en",
+          "ids": [
+            "en-contrast-light-1",
+            "en-contrast-standard-1"
+          ],
+          "jevSeparated": true,
+          "localSeparated": false
+        },
+        {
+          "pair": "changelog-es",
+          "ids": [
+            "es-contrast-light-1",
+            "es-contrast-standard-1"
+          ],
+          "jevSeparated": true,
+          "localSeparated": false
+        },
+        {
+          "pair": "storage-en",
+          "ids": [
+            "en-contrast-standard-2",
+            "en-contrast-heavy-2"
+          ],
+          "jevSeparated": false,
+          "localSeparated": false
+        },
+        {
+          "pair": "storage-es",
+          "ids": [
+            "es-contrast-standard-2",
+            "es-contrast-heavy-2"
+          ],
+          "jevSeparated": null,
+          "localSeparated": null
+        }
+      ]
+    },
+    "note": "Paired cases; the local classifier answers standard for all by design. Read pair separation, not overall accuracy."
+  },
+  "provenance": {
+    "routerSha256": "9819b7d64a066259b39ee376653649b0b5a628c56612297e6b0601f0e3ecb493",
+    "fixtureSha256": "24cccd1f16c14a578d9802d6d86ef246edfaacf602c9519257098fde1fda007d",
+    "jevQuestion": {
+      "type": "choice",
+      "instructions": "Classify how much model capability this software task needs.",
+      "criteria": {
+        "light": "Trivial mechanical edit or simple question.",
+        "standard": "Ordinary, well-understood work.",
+        "heavy": "Reasoning-heavy, risky, or cross-cutting work."
+      }
+    },
+    "route": "vercel-gateway",
+    "model": "typesafe-ai/jev"
+  }
+}

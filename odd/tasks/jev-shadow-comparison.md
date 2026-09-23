@@ -164,6 +164,19 @@ no chain. RDD: off (default) — ordinary checks only.
   se cae el servicio…?" because the fix made the old text a local hit.
   Tests: Jev 25/25; full suite 2167 pass / 0 fail / 1 skipped; Jev + router
   68/68 on Node 20.14.
+- [x] T16 — First provenance-verified run 2026-09-23T22:34Z
+  (`reports/2026-09-23-router-9819b7d.json`, router 9819b7d64a06 = post-#341,
+  fixture 24cccd1f16c1, gateway, typesafe-ai/jev). Local 18/18 clear
+  (IN-SAMPLE: the fix came from these cases). Jev 13/18. Versus 20:58Z, Jev
+  is stable: 25/26 same tier, confidences within ~±0.05; the only clear flip
+  is es-heavy-3 at confidence 0.29. The recovery-code blind spot reproduces
+  (en-contrast-heavy-2 standard 0.77). One 429 (rate_limit_exceeded) on
+  es-contrast-heavy-2 left storage-es unscored, which hides local's only
+  separable pair (evaluator: local 0/3 pairs). Latency median 363 ms, p90 487
+  ms, max 747 ms (no multi-second tail this run).
+  INCONSISTENCY FOUND: on the same report the simulator says local 1/4 pairs.
+  It counts a failed Jev row as wrong for `jev` and falls back for `hybrid`,
+  while the evaluator excludes failed rows for both classifiers.
 - [ ] T5 — (PENDING, future) Human review of disagreements, especially risky
   misclassifications; only then consider an integration proposal.
 
