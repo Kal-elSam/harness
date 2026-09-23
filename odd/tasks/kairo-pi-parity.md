@@ -443,3 +443,48 @@ time, so the blocked/BLOCKED/notify path has unit-test evidence only;
 worth a deliberate TTY check with a blocked role (e.g. via
 `--legacy-cockpit` state) if the parent wants direct visual confirmation.
 
+
+## P01.2 — Fast, compact widget
+
+### Why
+
+User TTY review of P01.1 (2026-09-23): the widget took ~20–30 s to fill,
+the 10-cell solid bars merged into a blob, Go windows had no labels, and
+half-width panels left most of the row empty.
+
+Measured on the user's machine: codex usage 0.7 s, opencode usage 2.2 s,
+claude usage 4.7 s, full conversation-service snapshot 21.2 s. Usage waits
+on model intelligence (catalogs, benchmarks, entitlements) that only
+availability needs.
+
+### Design
+
+- Split live loading: subscription usage from the three usage readers in
+  parallel (~5 s); team availability from the service snapshot separately.
+  Each updates the widget as soon as it resolves.
+- Last-known cache: persist the last live usage and availability under the
+  Kairo home (per project for availability) with a timestamp; render it
+  instantly on start in a dim tone with its age ("5m ago"), replaced by
+  fresh data when it arrives. Never show cached availability as fresher
+  than it is; failures keep the cached value marked stale.
+- Visual: thin one-line bars (`━` in the level color for remaining, `─`
+  muted for used); labels on every window (Codex `5h`/`W`, Claude `S`/`W`,
+  Go `roll`/`W`/`M`); panels sized to their content, left-aligned, side by
+  side with a 2-column gap, stacked when they do not fit.
+
+### Tasks
+
+- [ ] P01.2-T1 Split usage loading from availability loading (parallel
+  usage readers; availability via the service snapshot) and render each
+  phase independently.
+- [ ] P01.2-T2 Last-known cache for usage and availability with age, stale
+  handling, and tests.
+- [ ] P01.2-T3 Visual: thin bars, labeled windows, content-sized panels.
+- [ ] P01.2-T4 Evidence: render tests, full suite, CI, user TTY check.
+
+### Acceptance criteria
+
+- With a warm cache the widget is fully drawn on start; fresh usage within
+  ~5 s; availability later without blocking usage.
+- Bars read as separate one-line bars; every window labeled.
+- Panels do not stretch to half the terminal; no line exceeds the width.
