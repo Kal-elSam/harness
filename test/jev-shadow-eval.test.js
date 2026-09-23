@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runEvaluation, resolveTransportConfig, limitFixture } from "../scripts/jev-shadow/evaluate.mjs";
+import { runEvaluation, resolveTransportConfig, limitFixture, groupByPair } from "../scripts/jev-shadow/evaluate.mjs";
 import { createTypeSafeTransport, GATEWAY_BASE_URL, GATEWAY_MODEL } from "../scripts/jev-shadow/typesafe-client.mjs";
 import { classifyEffort, classifyTask } from "../src/global/intelligence/execution-router.js";
 
@@ -427,7 +427,7 @@ test("contrast cases are summarized by pair separation, separately from clear ca
 test("real contrast fixture keeps its design control: paired, single-language, local-neutral", async () => {
   const data = JSON.parse(await readFile(FIXTURE, "utf8"));
   assert.equal(data.contrast.length, 8);
-  const pairs = Map.groupBy(data.contrast, (task) => task.pair);
+  const pairs = groupByPair(data.contrast);
   assert.equal(pairs.size, 4);
   for (const [pair, tasks] of pairs) {
     assert.equal(tasks.length, 2, pair);

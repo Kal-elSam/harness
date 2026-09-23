@@ -142,6 +142,13 @@ no chain. RDD: off (default) — ordinary checks only.
   tiers in it come from the pre-fix router (main b3e2725): clear 15/18,
   contrast pairs 0/4. The first full run (19:45Z-era retry) was overwritten
   and is not recoverable.
+- [x] T15 — Node 20 compatibility: CI tests Node 20/22/24, and Map.groupBy
+  (Node 21+) broke every Jev test on Node 20.14 ("Map.groupBy is not a
+  function", reproduced locally). Replaced it with an exported
+  `groupByPair` helper. Jev tests 21/21 on Node 20.14 and 22.23; full suite
+  2157 pass / 0 fail / 1 skipped on 22. On local Node 20 the only failures are
+  two stray test files under `.git/opencode-intelligence-preserve/`
+  (local-only, absent from CI checkouts).
 - [ ] T14 — (BLOCKED on fix/spanish-risk-keywords reaching main) Provenance:
   each report records a hash of `execution-router.js`, the fixture, and the
   Jev criteria; the simulator refuses to mix a report's stored `local` with

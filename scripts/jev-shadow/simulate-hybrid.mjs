@@ -13,6 +13,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { classifyTask } from "../../src/global/intelligence/execution-router.js";
+import { groupByPair } from "./evaluate.mjs";
 
 const DEFAULT_THRESHOLDS = [0.3, 0.4, 0.5, 0.55, 0.6, 0.7, 0.8];
 
@@ -58,7 +59,7 @@ function score(rows, tierOf) {
 
 // A pair is separated only when BOTH of its cases get their expected tier.
 function pairSeparation(rows, tierOf) {
-  const pairs = [...Map.groupBy(rows, (row) => row.pair).values()];
+  const pairs = [...groupByPair(rows).values()];
   return {
     pairsSeparated: pairs.filter((pairRows) => pairRows.every((row) => tierOf(row) === row.expected)).length,
     pairs: pairs.length,

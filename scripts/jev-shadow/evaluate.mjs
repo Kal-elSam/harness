@@ -102,11 +102,25 @@ function summarize(rows) {
   };
 }
 
+/**
+ * Groups rows by `pair`, keeping first-seen order. Map.groupBy would do this,
+ * but it needs Node 21+ and CI still tests on Node 20.
+ * @returns {Map<string, object[]>}
+ */
+export function groupByPair(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    if (!groups.has(row.pair)) groups.set(row.pair, []);
+    groups.get(row.pair).push(row);
+  }
+  return groups;
+}
+
 // A pair is separated when BOTH of its cases get their (different) expected
 // tier. Pairs with a failed Jev answer are unscored for both classifiers, the
 // same fairness rule the clear summary applies to single cases.
 function summarizeContrast(rows) {
-  const byPair = [...Map.groupBy(rows, (row) => row.pair)].map(([pair, pairRows]) => {
+  const byPair = [...groupByPair(rows)].map(([pair, pairRows]) => {
     const scored = pairRows.every((row) => row.jev !== null);
     return {
       pair,
