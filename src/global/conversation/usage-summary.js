@@ -23,57 +23,86 @@ function providerStatus(providers, name) {
   return providers?.[name]?.status ?? providers?.[name.toLowerCase()]?.status;
 }
 
-/** `Codex 5h X%[ LOW] / W Y%[ LOW]`, or the real provider status
- * (falling back to "usage unknown") when no measured window exists yet. */
-export function formatCodexUsageSegment(usage = {}, providers = {}) {
+/** A window's bar-render level — the same LOW/LIMITED policy
+ * `quotaWarnSuffix` encodes as text, expressed as a plain, themeable enum
+ * instead. `limited` (an already rate-limited window, e.g. Go) always wins
+ * over a redundant `low`, exactly like `quotaWarnSuffix`'s `alreadyFlagged`.
+ * @param {number} remainingPercent
+ * @param {boolean} [limited]
+ * @returns {"normal"|"low"|"limited"}
+ */
+function windowLevel(remainingPercent, limited = false) {
+  if (limited) return "limited";
+  return remainingPercent < LOW_QUOTA_WARN_PERCENT ? "low" : "normal";
+}
+
+/** One measured window: `{label, remainingPercent, level}` — `label` is
+ * `null` for a provider (Go) whose windows carry no name of their own. */
+function usageWindow(label, remainingPercent, limited = false) {
+  return { label, remainingPercent, level: windowLevel(remainingPercent, limited) };
+}
+
+function codexUsageWindows(usage) {
   const codex = usage.codex;
-  if (codex?.primary) {
-    const secondary = codex.secondary ? ` / W ${codex.secondary.remainingPercent}%${quotaWarnSuffix(codex.secondary.remainingPercent)}` : "";
-    return `Codex 5h ${codex.primary.remainingPercent}%${quotaWarnSuffix(codex.primary.remainingPercent)}${secondary}`;
-  }
-  return `Codex ${providerStatus(providers, "Codex") ?? "usage unknown"}`;
+  if (!codex?.primary) return [];
+  const windows = [usageWindow("5h", codex.primary.remainingPercent)];
+  if (codex.secondary) windows.push(usageWindow("W", codex.secondary.remainingPercent));
+  return windows;
 }
 
-/** `Claude S X%[ LOW] / W Y%[ LOW]`, or the real provider status
- * (falling back to "usage unknown") when no measured window exists yet. */
-export function formatClaudeUsageSegment(usage = {}, providers = {}) {
+function claudeUsageWindows(usage) {
   const claude = usage.claude;
-  if (claude?.primary) {
-    const secondary = claude.secondary ? ` / W ${claude.secondary.remainingPercent}%${quotaWarnSuffix(claude.secondary.remainingPercent)}` : "";
-    return `Claude S ${claude.primary.remainingPercent}%${quotaWarnSuffix(claude.primary.remainingPercent)}${secondary}`;
-  }
-  return `Claude ${providerStatus(providers, "Claude") ?? "usage unknown"}`;
+  if (!claude?.primary) return [];
+  const windows = [usageWindow("S", claude.primary.remainingPercent)];
+  if (claude.secondary) windows.push(usageWindow("W", claude.secondary.remainingPercent));
+  return windows;
 }
 
-/** `Go a%[ LOW] / b%[ LOW] / ...`, tagging an already rate-limited window
- * LIMITED instead of a redundant LOW, or the real provider status
- * (falling back to "usage unknown") when no measured window exists yet. */
-export function formatGoUsageSegment(usage = {}, providers = {}) {
-  const go = usage.opencode?.go;
-  if (go?.windows?.length) {
-    const windows = go.windows.map((window) => {
-      const limited = window.status === "rate-limited";
-      return `${window.remainingPercent}%${limited ? " LIMITED" : quotaWarnSuffix(window.remainingPercent)}`;
-    }).join(" / ");
-    return `Go ${windows}`;
-  }
-  return `Go ${providerStatus(providers, "OpenCode") ?? "usage unknown"}`;
+function goUsageWindows(usage) {
+  const windows = usage.opencode?.go?.windows;
+  if (!windows?.length) return [];
+  return windows.map((window) => usageWindow(null, window.remainingPercent, window.status === "rate-limited"));
+}
+
+/**
+ * The structured, UI-free usage model: providers -> windows, in the exact
+ * legacy cockpit order (Codex, Claude, OpenCode Go). Only AUTOMATIC-routing
+ * providers appear; Zen/Cursor are manual/PAYG-risk and stay out of this
+ * shared resource-pool summary (see providerLines() in cockpit/view.js for
+ * those). A provider with no measured window yet reports an empty
+ * `windows` array plus `fallbackStatus` — the real provider status, or the
+ * honest "usage unknown" — never a fabricated window.
+ * @param {{usage?: object, providers?: object}} [args]
+ * @returns {{name: string, windows: {label: string|null, remainingPercent: number, level: "normal"|"low"|"limited"}[], fallbackStatus: string}[]}
+ */
+export function buildUsageModel({ usage = {}, providers = {} } = {}) {
+  return [
+    { name: "Codex", windows: codexUsageWindows(usage), fallbackStatus: providerStatus(providers, "Codex") ?? "usage unknown" },
+    { name: "Claude", windows: claudeUsageWindows(usage), fallbackStatus: providerStatus(providers, "Claude") ?? "usage unknown" },
+    { name: "Go", windows: goUsageWindows(usage), fallbackStatus: providerStatus(providers, "OpenCode") ?? "usage unknown" }
+  ];
+}
+
+function formatWindowSegment(window) {
+  const suffix = window.level === "low" ? " LOW" : window.level === "limited" ? " LIMITED" : "";
+  const value = `${window.remainingPercent}%${suffix}`;
+  return window.label ? `${window.label} ${value}` : value;
+}
+
+function formatProviderSegment(provider) {
+  if (!provider.windows.length) return `${provider.name} ${provider.fallbackStatus}`;
+  return `${provider.name} ${provider.windows.map(formatWindowSegment).join(" / ")}`;
 }
 
 /**
  * The three automatic-routing provider usage segments, in the exact
  * legacy cockpit order (Codex, Claude, OpenCode Go) — text only, no
  * width/wrap/theme decisions, which stay with each caller's own render.
- * Only AUTOMATIC-routing providers appear; Zen/Cursor are manual/PAYG-risk
- * and stay out of this shared resource-pool summary (see providerLines()
- * in cockpit/view.js for those).
+ * Built directly on `buildUsageModel`, so the text and the widget's bars
+ * can never drift apart.
  * @param {{usage?: object, providers?: object}} [args]
  * @returns {[string, string, string]}
  */
 export function formatSubscriptionUsageSegments({ usage = {}, providers = {} } = {}) {
-  return [
-    formatCodexUsageSegment(usage, providers),
-    formatClaudeUsageSegment(usage, providers),
-    formatGoUsageSegment(usage, providers)
-  ];
+  return buildUsageModel({ usage, providers }).map(formatProviderSegment);
 }
