@@ -1,6 +1,6 @@
 import { createKernelService } from "../../kernel/service.js";
 import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-route-provider.js";
-import { loadKairoWorkspaceSnapshot } from "../workspace-snapshot.js";
+import { loadKairoWorkspaceSnapshot, loadKairoLiveData } from "../workspace-snapshot.js";
 
 export function requestKernelSnapshot(deps = {}) {
   return createKernelService(deps).snapshot();
@@ -32,30 +32,62 @@ function teamLabel(assignments = []) {
   return assignments.map((entry) => `${entry.role}: ${entry.model} via ${entry.via}`).join(" · ");
 }
 
-function teamSummary(team) {
-  if (team?.state !== "active") return team?.state ?? "not analyzed";
-  const count = Array.isArray(team.assignments) ? team.assignments.length : 0;
-  return `${count} routed role${count === 1 ? "" : "s"}`;
+/** The status word shown per role row — BLOCKED is upper-case, the only
+ * word worth catching a glance at; the rest read as ordinary prose. */
+function statusWord(state) {
+  switch (state) {
+    case "available": return "available";
+    case "blocked": return "BLOCKED";
+    case "checking": return "checking";
+    default: return "unknown";
+  }
+}
+
+/** One compact `role · model · via · status` line — no warning text here
+ * (that's the whole point of keeping the overview short); the full
+ * warning only ever shows in the `/kairo-team` detail view below. */
+function teamRowLine(row) {
+  return `${row.role} · ${row.model} · ${row.via} · ${statusWord(row.availability?.state)}`;
+}
+
+/** Every real role on its own row, not a count — the overview's entire
+ * team section. `rows` is empty before a real ProjectStrategy exists. */
+function teamOverviewLines(team) {
+  const rows = Array.isArray(team?.rows) ? team.rows : [];
+  return [`TEAM · ${team?.state ?? "not_analyzed"}`, ...rows.map(teamRowLine)];
+}
+
+/** The always-visible subscription usage line — never behind a command,
+ * per the user's real TTY review ("we had it before"). `checking`/
+ * `unknown` print the honest state word; real data prints the same
+ * segment text the legacy cockpit's compact USAGE bar uses. */
+function subscriptionsLine(subscriptions) {
+  const state = subscriptions?.state ?? "checking";
+  if (state === "ready") return `USAGE · ${(subscriptions.segments ?? []).join(" │ ")}`;
+  return `USAGE · ${state}`;
 }
 
 export function formatKairoWorkspaceLines(snapshot) {
   return [
     `KAIRO WORKSPACE · ${snapshot.project.label}`,
     `SESSION · ${sessionLabel(snapshot.session)}`,
-    `TEAM · ${snapshot.team.state} · ${teamSummary(snapshot.team)}`,
+    subscriptionsLine(snapshot.subscriptions),
+    ...teamOverviewLines(snapshot.team),
     "Details: /kairo-team · /kairo-route · /kairo-usage · /kairo-memory"
   ];
 }
 
 function linesForView(snapshot, view) {
   switch (view) {
-    case "team":
+    case "team": {
+      const rows = Array.isArray(snapshot.team.rows) ? snapshot.team.rows : [];
       return [
         `KAIRO TEAM · ${snapshot.team.state}`,
-        ...(snapshot.team.assignments.length
-          ? snapshot.team.assignments.map((entry) => `${entry.role} · ${entry.model} · ${entry.via}`)
+        ...(rows.length
+          ? rows.flatMap((row) => (row.availability?.warning ? [teamRowLine(row), `  ${row.availability.warning}`] : [teamRowLine(row)]))
           : ["Run /project analyze to build this project's team."])
       ];
+    }
     case "sessions":
       return [
         "KAIRO SESSION",
@@ -64,7 +96,10 @@ function linesForView(snapshot, view) {
           : "No Kairo session is bound. Run kairo start or kairo resume."
       ];
     case "usage":
-      return ["KAIRO USAGE", usageLabel(snapshot.usage)];
+      // The always-visible subscription line, plus the existing measured
+      // per-provider token totals underneath it (a different, complementary
+      // real fact — never merged into one line).
+      return ["KAIRO USAGE", subscriptionsLine(snapshot.subscriptions), usageLabel(snapshot.usage)];
     case "route":
       return ["KAIRO ROUTING", `Project team is ${snapshot.team.state}.`, teamLabel(snapshot.team.assignments)];
     case "memory":
@@ -78,21 +113,27 @@ function workspaceStatus(snapshot) {
   return `Kairo · ${snapshot.project.label} · ${snapshot.session?.mode ?? "ask"}`;
 }
 
-function unavailableRoutesLines() {
+/** No verified automatic Pi route exists, but the real team is still
+ * worth showing — the human can act on it (approve/edit) even before a
+ * route is wired up, and this is never a reason to hide real Kairo facts. */
+function unavailableRoutesLines(snapshot) {
   return [
     "KAIRO ROUTES · unavailable",
     "No verified automatic route is available for this project.",
-    "Next: run kairo --legacy-cockpit, then /project analyze."
+    "Next: run kairo --legacy-cockpit, then /project analyze.",
+    subscriptionsLine(snapshot.subscriptions),
+    ...teamOverviewLines(snapshot.team)
   ];
 }
 
-async function refreshWorkspace(ctx, { loadSnapshot, env, view = "overview" }) {
+async function refreshWorkspace(ctx, { loadSnapshot, env, view = "overview", intelligence, extraLines = [] }) {
   const snapshot = await loadSnapshot({
     cwd: ctx?.cwd ?? process.cwd(),
-    sessionId: env?.KAIRO_SESSION_ID ?? null
+    sessionId: env?.KAIRO_SESSION_ID ?? null,
+    intelligence
   });
   ctx?.ui?.setStatus?.("kairo", workspaceStatus(snapshot));
-  ctx?.ui?.setWidget?.("kairo-workspace", linesForView(snapshot, view));
+  ctx?.ui?.setWidget?.("kairo-workspace", [...linesForView(snapshot, view), ...extraLines]);
   return snapshot;
 }
 
@@ -104,6 +145,7 @@ async function refreshWorkspace(ctx, { loadSnapshot, env, view = "overview" }) {
 export function createKairoWorkspaceExtension(pi, {
   env = process.env,
   loadSnapshot = loadKairoWorkspaceSnapshot,
+  loadLiveData = loadKairoLiveData,
   loadRouteModels = loadKairoProviderModels,
   createProvider = createKairoRouteProvider
 } = {}) {
@@ -125,9 +167,28 @@ export function createKairoWorkspaceExtension(pi, {
 
   pi.on("session_start", async (_event, ctx) => {
     await registerRoutes(ctx?.cwd ?? process.cwd());
+
+    // Phase 1: render immediately from the persisted strategy — every
+    // row's availability shows "checking" (see workspace-snapshot.js's
+    // own doc), never blocked on the live probe below.
     const snapshot = await refreshWorkspace(ctx, { loadSnapshot, env });
     if (routeState === "unavailable") {
       ctx?.ui?.setWidget?.("kairo-workspace", unavailableRoutesLines(snapshot));
+    }
+
+    // Phase 2: the conversation service's live snapshot probe
+    // (loadKairoLiveData — ONE call for team availability AND
+    // subscription usage) can be slow, so it never blocks phase 1 above.
+    // It fails closed on its own (null on any throw or missing data —
+    // see its own doc), never fabricating "available" or real numbers.
+    const cwd = ctx?.cwd ?? process.cwd();
+    const intelligence = await loadLiveData({ cwd });
+    const extraLines = intelligence === null
+      ? ["Live availability check failed — team and usage status shown as unknown."]
+      : [];
+    const refreshedSnapshot = await refreshWorkspace(ctx, { loadSnapshot, env, intelligence, extraLines });
+    if (routeState === "unavailable") {
+      ctx?.ui?.setWidget?.("kairo-workspace", [...unavailableRoutesLines(refreshedSnapshot), ...extraLines]);
     }
   });
 
