@@ -44,7 +44,10 @@ export function resolveAssignmentAvailability(model, { eligibility = {}, claudeE
     if (access?.status === CURSOR_ACCESS_STATUS.EXHAUSTED) {
       return {
         available: false,
-        warning: `Unavailable — Cursor ${pool === "cursor_models" ? "Cursor Models" : "Other Models"} quota exhausted${access.reason ? ` (${access.reason})` : ""}`
+        // EXHAUSTED is Cursor's internal status for ANY recognized limit text
+        // (rate, usage, or monthly limit), so the visible wording states only
+        // what is known — a limit was reached — and quotes Cursor's reason.
+        warning: `Unavailable — Cursor ${pool === "cursor_models" ? "Cursor Models" : "Other Models"} limit reached${access.reason ? ` (${access.reason})` : ""}`
       };
     }
     if (access?.status !== CURSOR_ACCESS_STATUS.AVAILABLE) {

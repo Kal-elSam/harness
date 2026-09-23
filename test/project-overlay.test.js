@@ -1188,7 +1188,7 @@ test("REGRESSION: the detail block shows the real Access text for an exhausted C
   assert.match(joinPlain(overlay.render(100)), /Access: Available/, "Architect's real Codex assignment must show as Available");
 
   overlay.resultSelectList.setSelectedIndex(1);
-  assert.match(joinPlain(overlay.render(100)), /Cursor Other Models quota exhausted/, "Builder's exhausted Cursor pool must show its own real reason");
+  assert.match(joinPlain(overlay.render(100)), /Cursor Other Models limit reached/, "Builder's limited Cursor pool must show its own real reason");
 
   overlay.resultSelectList.setSelectedIndex(2);
   assert.match(joinPlain(overlay.render(100)), /model entitlement not verified/, "Debugger's unverified Claude model must show the real entitlement warning");

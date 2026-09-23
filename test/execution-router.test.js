@@ -98,7 +98,7 @@ test("falls back away from a provider whose real quota is nearly exhausted", () 
     catalogs: { claude: { status: "measured", models: [{ id: "claude-opus-5", isDefault: true }] } }
   });
   assert.equal(result.provider, "claude");
-  assert.equal(result.rejectedCandidates[0].reason, "Codex quota nearly exhausted (2% left)");
+  assert.equal(result.rejectedCandidates[0].reason, "Codex usage window is limited (2% left)");
 });
 
 test("REGRESSION: a provider whose secondary (weekly) window is nearly exhausted is excluded, even when its primary (5h) window looks healthy", () => {
@@ -107,7 +107,7 @@ test("REGRESSION: a provider whose secondary (weekly) window is nearly exhausted
     codexUsage: { primary: { remainingPercent: 97 }, secondary: { remainingPercent: 2 } }
   });
   assert.equal(result.ok, false);
-  assert.equal(result.reason, "Codex quota nearly exhausted (2% left)");
+  assert.equal(result.reason, "Codex usage window is limited (2% left)");
 });
 
 test("REGRESSION: ASK order prefers the provider whose WORST window (5h or weekly) has more headroom, not just its primary window", () => {
@@ -299,7 +299,8 @@ test("checkCandidate still applies the real codex/claude quota floor unchanged",
   const adapters = [{ id: "codex", available: true, launchable: true, reason: null }];
   const low = checkCandidate("codex", { adapters, codexUsage: { primary: { remainingPercent: 2 } } });
   assert.equal(low.ok, false);
-  assert.match(low.reason, /nearly exhausted/);
+  assert.match(low.reason, /window is limited/);
+  assert.doesNotMatch(low.reason, /exhaust/i);
 });
 
 test("REGRESSION: checkCandidate treats opencode-go as a real automatic candidate — same launchable gate for both recommendation and real task routing now, no more leniency", () => {
@@ -467,4 +468,45 @@ test("known false positive, accepted: error-recovery logic also matches 'recover
   const result = selectExecutionProvider({ task: "Refactor the error recovery code in the parser", adapters: ADAPTERS });
   assert.deepEqual(result.profile.risk, ["recovery code"]);
   assert.equal(result.decision, "WAIT_FOR_APPROVAL");
+});
+
+test("REGRESSION: a window-limited Codex/Claude is reported as a temporary window limit, never as exhausted tokens", () => {
+  const codex = checkCandidate("codex", {
+    adapters: ADAPTERS,
+    codexUsage: {
+      primary: { name: "5h", remainingPercent: 60, resetsAtIso: "2026-09-24T02:00:00.000Z" },
+      secondary: { name: "weekly", remainingPercent: 2, resetsAtIso: "2026-09-30T00:00:00.000Z" }
+    }
+  });
+  assert.equal(codex.ok, false);
+  assert.equal(codex.reason, "Codex weekly window is limited (2% left, resets 2026-09-30T00:00:00.000Z)");
+  assert.deepEqual(codex.limit, { provider: "codex", window: "weekly", remainingPercent: 2, resetsAt: "2026-09-30T00:00:00.000Z" });
+
+  const claude = checkCandidate("claude", {
+    adapters: ADAPTERS,
+    claudeUsage: { primary: { label: "Current session", remainingPercent: 1, resetsAt: "Sep 13 at 7:59am" } }
+  });
+  assert.equal(claude.reason, "Claude Current session window is limited (1% left, resets Sep 13 at 7:59am)");
+  assert.deepEqual(claude.limit, { provider: "claude", window: "Current session", remainingPercent: 1, resetsAt: "Sep 13 at 7:59am" });
+
+  for (const result of [codex, claude]) assert.doesNotMatch(result.reason, /exhaust/i);
+});
+
+test("an OpenCode Go rate limit carries the same structured window limit", () => {
+  const result = checkCandidate("opencode-go", {
+    adapters: [{ id: "opencode", available: true, launchable: true, reason: null }],
+    opencodeGoUsage: { windows: [
+      { name: "rolling", remainingPercent: 100, status: "ok" },
+      { name: "monthly", remainingPercent: 0, status: "rate-limited", resetsAt: "2026-10-01T00:00:00Z" }
+    ] }
+  });
+  assert.equal(result.reason, "OpenCode Go monthly window is rate-limited (resets 2026-10-01T00:00:00Z)");
+  assert.deepEqual(result.limit, { provider: "opencode-go", window: "monthly", remainingPercent: 0, resetsAt: "2026-10-01T00:00:00Z" });
+});
+
+test("non-window ineligibility carries no window limit", () => {
+  const zen = checkCandidate("opencode-zen", { adapters: [{ id: "opencode", available: true, launchable: true }] });
+  assert.equal(zen.limit, undefined);
+  const healthy = checkCandidate("codex", { adapters: ADAPTERS, codexUsage: { primary: { name: "5h", remainingPercent: 80 } } });
+  assert.deepEqual(healthy, { ok: true, reason: null });
 });
