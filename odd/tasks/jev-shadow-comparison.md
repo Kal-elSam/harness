@@ -33,21 +33,25 @@ no chain. RDD: off (default) — ordinary checks only.
 - [x] T1 — Labeled fixture `scripts/jev-shadow/tasks.json`: 18 clear cases
   (ES + EN) with expected tier, plus 5 ambiguous cases in a separate array
   (no expected tier, flagged for human review). Commit f1f2e6b.
-- [~] T2 — REOPENED 2026-09-23 (reason: client implemented an INVENTED
+- [x] T2 — Fixed 2026-09-23 (was reopened: client implemented an INVENTED
   contract — /v1/choice with {question, choices, input}; user verified the
   published contract is POST /v1/systemone with {state, model, questions} and
-  the choice inside answers.<id>.choice). Fix client to the verified contract.
-- [ ] T6 — Contract-shaped test: request hits exactly
-  https://api.typesafe.ai/v1/systemone with the documented payload; response
-  parsed from the documented {model, answers, usage} shape.
-- [ ] T7 — Error sanitization: client redacts the key from EVERY error path
-  (unrecognized tier echo, fetch rejection, non-JSON response); evaluate.mjs
-  truncates stored transport errors. Canary tests cover all these paths.
-- [ ] T8 — Fair comparison: localAccuracy and jevAccuracy computed over the
-  SAME cases (labeled AND jev-answered); failures reported as
-  jevFailures/jevFailureIds, never silently dropped.
-- [ ] T9 — Labels marked PROVISIONAL (fixture description + report field)
-  until human review in T5.
+  the choice inside answers.<id>.choice; orchestrator re-verified against
+  docs.typesafe.ai/api). Client now sends {state, model: "jev-latest",
+  questions: {effort: {type: "choice", instructions, criteria}}} and parses
+  answers.effort.{choice, confidence} + usage. Commit 7baaacd.
+- [x] T6 — Contract-shaped test asserts the exact URL
+  https://api.typesafe.ai/v1/systemone, the documented payload, and parsing
+  from the documented {model, answers, usage} response. Commit 7baaacd.
+- [x] T7 — Client redacts the key from EVERY error path (status, tier echo,
+  fetch rejection, non-JSON); evaluate.mjs truncates stored transport errors
+  to 200 chars. Canary tests cover all paths including a hostile tier echo
+  and a key-echoing fetch rejection. Commit 7baaacd.
+- [x] T8 — localAccuracy and jevAccuracy now computed over the SAME scored
+  set (labeled AND jev-answered); failures reported as
+  jevFailures/jevFailureIds. Commit 7baaacd.
+- [x] T9 — Labels marked PROVISIONAL in fixture description and report root
+  (`labels: "provisional"`) until human review in T5. Commit 7baaacd.
 - [x] T3 — Mock tests `test/jev-shadow-eval.test.js`: canned transport, no
   network, key canary never appears in output/errors. 8/8 green; regression
   test/execution-router.test.js 37/37 green. Commit f1f2e6b.
@@ -72,7 +76,17 @@ no chain. RDD: off (default) — ordinary checks only.
   - Discovery: classifyTask keywords are English-only, so Spanish heavy tasks
     fall to light locally — the es-heavy-* fixture cases exist to measure
     exactly that gap.
+- 2026-09-23 (second batch): T2 reopened by user review and fixed, T6–T9 done.
+  - Commit: 7baaacd. Checks: 10/10 new tests, 37/37 regression.
+  - Contract verified by orchestrator against docs.typesafe.ai/api before
+    implementing: POST /v1/systemone, {state, model, questions},
+    answers.<id>.{choice, confidence}, usage.{input_tokens, output_tokens}.
+  - T4 note: documented contract asks for exponential backoff on 429/529;
+    the client deliberately does not retry — re-run manually if rate-limited,
+    or switch to the official @typesafe-ai/sdk (retries built in). User
+    decision before T4.
 
 ## Next step
 Await explicit user confirmation for T4 (manual real API run). Never run it
-automatically.
+automatically. Open question for T4: keep the zero-dependency fetch client
+(manual retry on 429/529) or adopt @typesafe-ai/sdk (auto-retry, new dep).
