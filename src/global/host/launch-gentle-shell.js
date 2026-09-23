@@ -46,7 +46,8 @@ export async function launchGentleShell({
   }
 
   const args = ["--link", "-e", extensionDir, "--"];
-  const result = await spawnImpl(binary, args, { cwd, env, shell: false, stdio: "inherit" });
+  const hostEnv = sessionId == null ? env : { ...env, KAIRO_SESSION_ID: sessionId };
+  const result = await spawnImpl(binary, args, { cwd, env: hostEnv, shell: false, stdio: "inherit" });
   if (result && Number.isInteger(result.status) && result.status !== 0) {
     throw new Error(`gentle-shell exited ${result.status}. Use --legacy-cockpit for the previous cockpit.`);
   }

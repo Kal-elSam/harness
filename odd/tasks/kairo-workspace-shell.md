@@ -19,8 +19,11 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   project strategy, session, routing, usage, and memory state; add RED/GREEN
   contract tests. RED: missing workspace-snapshot module. GREEN: 4/4 focused
   contract tests, plus 15/15 host/kernel regression tests.
-- [ ] KWS-02 Replace the no-op Pi extension with a compact Kairo workspace
+- [x] KWS-02 Replace the no-op Pi extension with a compact Kairo workspace
   header and commands for status, team, sessions, usage, routing, and memory.
+  RED: extension exports absent and host binding missing from environment.
+  GREEN: 19/19 focused host/kernel/workspace tests. Session IDs reach the host
+  through `KAIRO_SESSION_ID`, never command argv.
 - [ ] KWS-03 Make the normal host launch quiet and Kairo-branded; preserve
   explicit diagnostics/debug behavior without hiding real errors.
 - [ ] KWS-04 Add a Pi provider/model bridge that exposes only Kairo-verified,
@@ -68,3 +71,6 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
 - KWS-01 completed locally in `fde214c` (`feat(host): add workspace snapshot
   contract`). It intentionally does not select a "latest" session when the
   host has no explicit session binding.
+- KWS-02 completed locally; commit pending. Pi now renders a compact Kairo
+  widget and exposes `/kairo`, `/kairo-team`, `/kairo-sessions`,
+  `/kairo-usage`, `/kairo-route`, and `/kairo-memory`.

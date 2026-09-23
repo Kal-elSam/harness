@@ -57,6 +57,25 @@ test("invalid session id is never passed to spawn", async () => {
   assert.equal(spawned, false);
 });
 
+test("explicit Kairo session binding is passed to the host environment, never argv", async () => {
+  const calls = [];
+  await launchGentleShell({
+    cwd: "/tmp/proj",
+    extensionDir,
+    sessionId: "11111111-1111-4111-8111-111111111111",
+    env: { PATH: "/bin" },
+    statImpl: okStat,
+    whichImpl: () => "/usr/bin/gentle-shell",
+    probeImpl: () => ({ ok: true, stdout: "0.85.1" }),
+    spawnImpl: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    }
+  });
+  assert.equal(calls[0].options.env.KAIRO_SESSION_ID, "11111111-1111-4111-8111-111111111111");
+  assert.equal(calls[0].args.includes("11111111-1111-4111-8111-111111111111"), false);
+});
+
 test("unresolvable gentle-shell fails closed and names --legacy-cockpit", async () => {
   await assert.rejects(
     () => launchGentleShell({
