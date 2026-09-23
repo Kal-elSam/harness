@@ -390,3 +390,63 @@ test("selectExecutionProvider picks OpenCode Go's real cheapest/median model by 
   assert.equal(standard.provider, "opencode-go");
   assert.equal(standard.model, "deepseek-v4-pro"); // real median-cost option
 });
+
+test("REGRESSION: Spanish authentication, billing, and recovery-credential terms raise the risk signal", () => {
+  assert.deepEqual(classifyTask("¿Por qué falla la autenticación cuando hay mucha carga?").risk, ["autentica"]);
+  assert.deepEqual(classifyTask("Integra la nueva API de facturación en el backend y el frontend").risk, ["facturacion"]);
+  assert.deepEqual(
+    classifyTask("Elige dónde guardar el código de recuperación del usuario en la tabla de perfil").risk,
+    ["codigo de recuperacion"]
+  );
+  assert.deepEqual(classifyTask("Procesa los pagos pendientes y revisa el cobro").risk, ["pago", "cobro"]);
+  assert.deepEqual(classifyTask("Cambia la contraseña y las credenciales del admin").risk, ["contrasena", "credencial"]);
+  assert.deepEqual(classifyTask("Revisa la autorización del endpoint").risk, ["autorizacion"]);
+  assert.equal(classifyEffort("¿Por qué falla la autenticación cuando hay mucha carga?"), "heavy");
+  assert.equal(classifyEffort("Guarda el código de recuperación"), "heavy");
+});
+
+test("Spanish risk terms match with or without accents", () => {
+  for (const [accented, plain] of [
+    ["autenticación", "autenticacion"],
+    ["facturación", "facturacion"],
+    ["contraseña", "contrasena"],
+    ["código de recuperación", "codigo de recuperacion"],
+  ]) {
+    assert.deepEqual(classifyTask(`Revisa ${plain}`).risk, classifyTask(`Revisa ${accented}`).risk, plain);
+    assert.equal(classifyTask(`Revisa ${plain}`).riskScore, 1, plain);
+  }
+});
+
+test("Spanish risk terms only match at a word start — innocuous phrases stay risk-free", () => {
+  for (const text of [
+    "Se apagó el contenedor de pruebas",
+    "Apago el servidor local",
+    "Agrega paginación a la tabla",
+    "Actualiza la página de inicio",
+    "Sube la cobertura de tests",
+    "Cambia el autor del commit",
+  ]) {
+    assert.deepEqual(classifyTask(text).risk, [], text);
+  }
+});
+
+test("a Spanish risk + reasoning task needs approval exactly like its English twin", () => {
+  const english = selectExecutionProvider({ task: "Refactor the authentication flow", adapters: ADAPTERS });
+  const spanish = selectExecutionProvider({ task: "Refactoriza el flujo de autenticación", adapters: ADAPTERS });
+  assert.equal(english.decision, "WAIT_FOR_APPROVAL");
+  assert.equal(spanish.decision, "WAIT_FOR_APPROVAL");
+  assert.match(spanish.why, /autentica/);
+});
+
+test("English risk matching is unchanged by the Spanish list", () => {
+  assert.deepEqual(classifyTask("Migrate the production authentication database schema").risk, ["production", "auth", "authentication"]);
+  assert.deepEqual(classifyTask("Refactor the authentication flow").risk, ["auth", "authentication"]);
+  assert.deepEqual(classifyTask("Store the secret in the vault").risk, ["secret"]);
+});
+
+test("mixed English and Spanish risk terms keep their order of appearance, even after emoji", () => {
+  assert.deepEqual(classifyTask("🔒🔒 revisa el pago 🔒 before production").risk, ["pago", "production"]);
+  // Each astral character is two UTF-16 units; folding must not shift the
+  // Spanish index ahead of an earlier English match.
+  assert.deepEqual(classifyTask(`${"🔒".repeat(12)} production pago`).risk, ["production", "pago"]);
+});
