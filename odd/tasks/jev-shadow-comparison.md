@@ -104,6 +104,18 @@ no chain. RDD: off (default) — ordinary checks only.
   misclassification; do NOT relaunch the batch immediately — TypeSafe
   requires exponential backoff when retrying. If rate limits appear
   frequently, add a bounded backoff before ever considering the SDK.
+- [x] T10 — Contrast set (2026-09-23): 8 cases in 4 pairs (changelog
+  supplied-vs-Git, storage display-name-vs-recovery-code; EN + ES), labeled
+  BEFORE any Jev run. Control: each pair stays on one side of the local
+  100-char threshold with zero keyword hits, so local answers standard for
+  all 8 by design (pinned by a fixture test). Report adds a `contrast`
+  section scored by pair separation (both cases get their expected tier);
+  pairs with a Jev failure are unscored for both classifiers. A constant
+  classifier separates 0/4 pairs (verified with a stub transport). Tests
+  17/17, full suite 2153 pass / 0 fail / 1 skipped.
+- [ ] T11 — Manual contrast run (user, key in shell):
+  `node scripts/jev-shadow/evaluate.mjs --out report.json`, then review
+  `contrast.summary.byPair`.
 - [ ] T5 — (PENDING, future) Human review of disagreements, especially risky
   misclassifications; only then consider an integration proposal.
 

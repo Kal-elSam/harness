@@ -28,6 +28,8 @@ export async function runEvaluation({ fixture, jevClassify }) {
   for (const task of fixture.clear) clearRows.push(await evalRow(task, jevClassify));
   const ambiguousRows = [];
   for (const task of fixture.ambiguous ?? []) ambiguousRows.push(await evalRow(task, jevClassify));
+  const contrastRows = [];
+  for (const task of fixture.contrast ?? []) contrastRows.push(await evalRow(task, jevClassify));
   return {
     generatedAt: new Date().toISOString(),
     // Fixture labels are human-judgment labels pending human review (T5) —
@@ -38,6 +40,11 @@ export async function runEvaluation({ fixture, jevClassify }) {
       rows: ambiguousRows,
       note: "No expected tier — excluded from accuracy. Human review required.",
     },
+    contrast: {
+      rows: contrastRows,
+      summary: summarizeContrast(contrastRows),
+      note: "Paired cases; the local classifier answers standard for all by design. Read pair separation, not overall accuracy.",
+    },
   };
 }
 
@@ -45,6 +52,7 @@ async function evalRow(task, jevClassify) {
   const local = classifyEffort(task.text);
   const row = { id: task.id, text: task.text, language: task.language, local };
   if (task.expected) row.expected = task.expected;
+  if (task.pair) row.pair = task.pair;
   if (task.note) row.note = task.note;
   try {
     const jev = await jevClassify(task.text);
@@ -94,6 +102,32 @@ function summarize(rows) {
   };
 }
 
+// A pair is separated when BOTH of its cases get their (different) expected
+// tier. Pairs with a failed Jev answer are unscored for both classifiers, the
+// same fairness rule the clear summary applies to single cases.
+function summarizeContrast(rows) {
+  const byPair = [...Map.groupBy(rows, (row) => row.pair)].map(([pair, pairRows]) => {
+    const scored = pairRows.every((row) => row.jev !== null);
+    return {
+      pair,
+      ids: pairRows.map((row) => row.id),
+      jevSeparated: scored ? pairRows.every((row) => row.jev === row.expected) : null,
+      localSeparated: scored ? pairRows.every((row) => row.local === row.expected) : null,
+    };
+  });
+  const scoredPairs = byPair.filter((entry) => entry.jevSeparated !== null);
+  const failed = rows.filter((row) => row.jev === null);
+  return {
+    pairs: byPair.length,
+    pairsScored: scoredPairs.length,
+    jevPairsSeparated: scoredPairs.filter((entry) => entry.jevSeparated).length,
+    localPairsSeparated: scoredPairs.filter((entry) => entry.localSeparated).length,
+    jevFailures: failed.length,
+    jevFailureIds: failed.map((row) => row.id),
+    byPair,
+  };
+}
+
 async function resolveJevClassify(argv) {
   const transportPath = argValue(argv, "--transport");
   if (transportPath) {
@@ -138,7 +172,7 @@ export function resolveTransportConfig(env) {
 }
 
 /**
- * Smoke-run slice: the first N clear cases, no ambiguous ones. A null limit
+ * Smoke-run slice: the first N clear cases, no ambiguous or contrast ones. A null limit
  * returns the fixture untouched.
  */
 export function limitFixture(fixture, limit) {
@@ -147,7 +181,7 @@ export function limitFixture(fixture, limit) {
   if (!Number.isInteger(count) || count < 1) {
     throw new Error(`--limit must be a positive integer, got: ${limit}`);
   }
-  return { clear: fixture.clear.slice(0, count), ambiguous: [] };
+  return { clear: fixture.clear.slice(0, count), ambiguous: [], contrast: [] };
 }
 
 function argValue(argv, flag) {

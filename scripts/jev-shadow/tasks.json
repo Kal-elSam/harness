@@ -1,30 +1,204 @@
 {
   "description": "Labeled task set for the Jev shadow comparison. Labels are PROVISIONAL human-judgment labels (not derived from classifyEffort output) pending human review in task T5 — they are not verified ground truth. No private code, secrets, or real conversations.",
   "clear": [
-    { "id": "en-light-1", "text": "What does this project do?", "language": "en", "expected": "light" },
-    { "id": "en-light-2", "text": "Fix the typo in the README title", "language": "en", "expected": "light" },
-    { "id": "en-light-3", "text": "Rename the button label from 'Save' to 'Guard'", "language": "en", "expected": "light" },
-    { "id": "en-standard-1", "text": "Update the changelog with the last five releases, copying the version numbers and dates from the git tags into the markdown table", "language": "en", "expected": "standard" },
-    { "id": "en-standard-2", "text": "Add a docstring to every exported function in the utils folder explaining parameters and return values in one sentence each", "language": "en", "expected": "standard" },
-    { "id": "en-heavy-1", "text": "Why does the auth token refresh fail under load?", "language": "en", "expected": "heavy" },
-    { "id": "en-heavy-2", "text": "Investigate the race condition in the payment webhook handler", "language": "en", "expected": "heavy" },
-    { "id": "en-heavy-3", "text": "Integrate the new billing API across the backend and frontend", "language": "en", "expected": "heavy" },
-    { "id": "en-heavy-4", "text": "Evaluate the tradeoffs of migrating the session store from Redis to Postgres", "language": "en", "expected": "heavy" },
-    { "id": "en-heavy-5", "text": "Is it safe to store a payment credential here?", "language": "en", "expected": "heavy" },
-    { "id": "es-light-1", "text": "¿Qué hace este proyecto?", "language": "es", "expected": "light" },
-    { "id": "es-light-2", "text": "Corrige el typo en el título del README", "language": "es", "expected": "light" },
-    { "id": "es-light-3", "text": "Renombra el botón de 'Guardar' a 'Enviar'", "language": "es", "expected": "light" },
-    { "id": "es-standard-1", "text": "Actualiza el changelog con las últimas cinco versiones, copiando los números de versión y las fechas desde las etiquetas de git a la tabla markdown", "language": "es", "expected": "standard" },
-    { "id": "es-standard-2", "text": "Agrega un comentario explicativo a cada función exportada de la carpeta de utilidades describiendo parámetros y valores de retorno", "language": "es", "expected": "standard" },
-    { "id": "es-heavy-1", "text": "¿Por qué falla la autenticación cuando hay mucha carga?", "language": "es", "expected": "heavy" },
-    { "id": "es-heavy-2", "text": "Investiga la condición de carrera en el manejador de webhooks de pagos", "language": "es", "expected": "heavy" },
-    { "id": "es-heavy-3", "text": "Integra la nueva API de facturación en el backend y el frontend", "language": "es", "expected": "heavy" }
+    {
+      "id": "en-light-1",
+      "text": "What does this project do?",
+      "language": "en",
+      "expected": "light"
+    },
+    {
+      "id": "en-light-2",
+      "text": "Fix the typo in the README title",
+      "language": "en",
+      "expected": "light"
+    },
+    {
+      "id": "en-light-3",
+      "text": "Rename the button label from 'Save' to 'Guard'",
+      "language": "en",
+      "expected": "light"
+    },
+    {
+      "id": "en-standard-1",
+      "text": "Update the changelog with the last five releases, copying the version numbers and dates from the git tags into the markdown table",
+      "language": "en",
+      "expected": "standard"
+    },
+    {
+      "id": "en-standard-2",
+      "text": "Add a docstring to every exported function in the utils folder explaining parameters and return values in one sentence each",
+      "language": "en",
+      "expected": "standard"
+    },
+    {
+      "id": "en-heavy-1",
+      "text": "Why does the auth token refresh fail under load?",
+      "language": "en",
+      "expected": "heavy"
+    },
+    {
+      "id": "en-heavy-2",
+      "text": "Investigate the race condition in the payment webhook handler",
+      "language": "en",
+      "expected": "heavy"
+    },
+    {
+      "id": "en-heavy-3",
+      "text": "Integrate the new billing API across the backend and frontend",
+      "language": "en",
+      "expected": "heavy"
+    },
+    {
+      "id": "en-heavy-4",
+      "text": "Evaluate the tradeoffs of migrating the session store from Redis to Postgres",
+      "language": "en",
+      "expected": "heavy"
+    },
+    {
+      "id": "en-heavy-5",
+      "text": "Is it safe to store a payment credential here?",
+      "language": "en",
+      "expected": "heavy"
+    },
+    {
+      "id": "es-light-1",
+      "text": "¿Qué hace este proyecto?",
+      "language": "es",
+      "expected": "light"
+    },
+    {
+      "id": "es-light-2",
+      "text": "Corrige el typo en el título del README",
+      "language": "es",
+      "expected": "light"
+    },
+    {
+      "id": "es-light-3",
+      "text": "Renombra el botón de 'Guardar' a 'Enviar'",
+      "language": "es",
+      "expected": "light"
+    },
+    {
+      "id": "es-standard-1",
+      "text": "Actualiza el changelog con las últimas cinco versiones, copiando los números de versión y las fechas desde las etiquetas de git a la tabla markdown",
+      "language": "es",
+      "expected": "standard"
+    },
+    {
+      "id": "es-standard-2",
+      "text": "Agrega un comentario explicativo a cada función exportada de la carpeta de utilidades describiendo parámetros y valores de retorno",
+      "language": "es",
+      "expected": "standard"
+    },
+    {
+      "id": "es-heavy-1",
+      "text": "¿Por qué falla la autenticación cuando hay mucha carga?",
+      "language": "es",
+      "expected": "heavy"
+    },
+    {
+      "id": "es-heavy-2",
+      "text": "Investiga la condición de carrera en el manejador de webhooks de pagos",
+      "language": "es",
+      "expected": "heavy"
+    },
+    {
+      "id": "es-heavy-3",
+      "text": "Integra la nueva API de facturación en el backend y el frontend",
+      "language": "es",
+      "expected": "heavy"
+    }
   ],
   "ambiguous": [
-    { "id": "en-amb-1", "text": "Refactor the login form validation", "language": "en", "note": "Local rule says heavy (refactor); a small form refactor may really be standard. Size unknown." },
-    { "id": "en-amb-2", "text": "Improve the performance of the search endpoint", "language": "en", "note": "Could be one index or a deep investigation; the text alone does not say." },
-    { "id": "en-amb-3", "text": "Delete the old unused feature flags from the codebase", "language": "en", "note": "Local rule says heavy (delete); removing dead flags is arguably mechanical." },
-    { "id": "es-amb-1", "text": "Migra los estilos del componente de perfil a CSS modules", "language": "es", "note": "Standard or heavy depending on component size; not stated." },
-    { "id": "es-amb-2", "text": "¿Cómo deberíamos estructurar la autenticación del nuevo servicio?", "language": "es", "note": "Design question touching auth; advice-only vs implementation changes the tier." }
-  ]
+    {
+      "id": "en-amb-1",
+      "text": "Refactor the login form validation",
+      "language": "en",
+      "note": "Local rule says heavy (refactor); a small form refactor may really be standard. Size unknown."
+    },
+    {
+      "id": "en-amb-2",
+      "text": "Improve the performance of the search endpoint",
+      "language": "en",
+      "note": "Could be one index or a deep investigation; the text alone does not say."
+    },
+    {
+      "id": "en-amb-3",
+      "text": "Delete the old unused feature flags from the codebase",
+      "language": "en",
+      "note": "Local rule says heavy (delete); removing dead flags is arguably mechanical."
+    },
+    {
+      "id": "es-amb-1",
+      "text": "Migra los estilos del componente de perfil a CSS modules",
+      "language": "es",
+      "note": "Standard or heavy depending on component size; not stated."
+    },
+    {
+      "id": "es-amb-2",
+      "text": "¿Cómo deberíamos estructurar la autenticación del nuevo servicio?",
+      "language": "es",
+      "note": "Design question touching auth; advice-only vs implementation changes the tier."
+    }
+  ],
+  "contrast": [
+    {
+      "id": "en-contrast-light-1",
+      "pair": "changelog-en",
+      "text": "Given five version/date pairs, copy them into the five existing release-table rows without other edits.",
+      "language": "en",
+      "expected": "light"
+    },
+    {
+      "id": "en-contrast-standard-1",
+      "pair": "changelog-en",
+      "text": "Given five Git tags, obtain each version/date pair and enter them in the five existing release-table rows.",
+      "language": "en",
+      "expected": "standard"
+    },
+    {
+      "id": "es-contrast-light-1",
+      "pair": "changelog-es",
+      "text": "Con cinco pares de versión/fecha dados, cópialos en las cinco filas existentes de la tabla de versiones.",
+      "language": "es",
+      "expected": "light"
+    },
+    {
+      "id": "es-contrast-standard-1",
+      "pair": "changelog-es",
+      "text": "Con cinco etiquetas de Git, obtén cada par de versión/fecha y colócalo en las cinco filas de la tabla.",
+      "language": "es",
+      "expected": "standard"
+    },
+    {
+      "id": "en-contrast-standard-2",
+      "pair": "storage-en",
+      "text": "Choose where to store the user's display name in the profile table, then update the form to use it while keeping other fields unchanged.",
+      "language": "en",
+      "expected": "standard"
+    },
+    {
+      "id": "en-contrast-heavy-2",
+      "pair": "storage-en",
+      "text": "Choose where to store the user's recovery code in the profile table, then update the form to use it while keeping other fields unchanged.",
+      "language": "en",
+      "expected": "heavy"
+    },
+    {
+      "id": "es-contrast-standard-2",
+      "pair": "storage-es",
+      "text": "Elige dónde guardar el nombre visible del usuario en la tabla de perfil y adapta el formulario para usarlo.",
+      "language": "es",
+      "expected": "standard"
+    },
+    {
+      "id": "es-contrast-heavy-2",
+      "pair": "storage-es",
+      "text": "Elige dónde guardar el código de recuperación del usuario en la tabla de perfil y adapta el formulario para usarlo.",
+      "language": "es",
+      "expected": "heavy"
+    }
+  ],
+  "contrastDescription": "Paired contrast cases, labeled BEFORE any Jev run. Each pair changes one variable (data supplied vs. fetched from Git; display name vs. recovery code) and stays on the same side of the local 100-character threshold with no local keyword hits, so the local classifier answers standard for all eight by design. Read pair separation, not overall accuracy. Labels are PROVISIONAL."
 }

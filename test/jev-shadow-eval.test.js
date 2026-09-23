@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runEvaluation, resolveTransportConfig, limitFixture } from "../scripts/jev-shadow/evaluate.mjs";
 import { createTypeSafeTransport, GATEWAY_BASE_URL, GATEWAY_MODEL } from "../scripts/jev-shadow/typesafe-client.mjs";
+import { classifyEffort, classifyTask } from "../src/global/intelligence/execution-router.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, "..", "scripts", "jev-shadow", "evaluate.mjs");
@@ -362,10 +363,11 @@ test("transport config: gateway key wins, direct key keeps the direct contract, 
   });
 });
 
-test("--limit keeps the first N clear cases and drops ambiguous ones for a smoke run", () => {
-  const limited = limitFixture(fixture, 1);
+test("--limit keeps the first N clear cases and drops ambiguous and contrast ones for a smoke run", () => {
+  const limited = limitFixture({ ...fixture, contrast: [{ id: "x", pair: "p", text: "t", expected: "light" }] }, 1);
   assert.deepEqual(limited.clear.map((task) => task.id), ["c1"]);
   assert.deepEqual(limited.ambiguous, []);
+  assert.deepEqual(limited.contrast, []);
   assert.equal(limitFixture(fixture, null), fixture);
   for (const bad of ["0", "-1", "abc", "1.5"]) {
     assert.throws(() => limitFixture(fixture, bad), /--limit/);
@@ -382,6 +384,67 @@ test("CLI without any API key fails closed with the manual-run message (no netwo
     assert.match(error.stderr, /MANUAL/);
     return true;
   });
+});
+
+test("contrast cases are summarized by pair separation, separately from clear cases", async () => {
+  const contrastFixture = {
+    clear: [],
+    contrast: [
+      { id: "p1-light", pair: "p1", text: "p1 light", language: "en", expected: "light" },
+      { id: "p1-standard", pair: "p1", text: "p1 standard", language: "en", expected: "standard" },
+      { id: "p2-standard", pair: "p2", text: "p2 standard", language: "es", expected: "standard" },
+      { id: "p2-heavy", pair: "p2", text: "p2 heavy", language: "es", expected: "heavy" },
+      { id: "p3-standard", pair: "p3", text: "p3 standard", language: "en", expected: "standard" },
+      { id: "p3-heavy", pair: "p3", text: "p3 heavy", language: "en", expected: "heavy" },
+    ],
+  };
+  // p1 separated correctly; p2 collapsed to one tier; p3 has a transport failure.
+  const answers = { "p1 light": "light", "p1 standard": "standard", "p2 standard": "standard", "p2 heavy": "standard", "p3 standard": "standard" };
+  const jevClassify = async (text) => {
+    if (!(text in answers)) throw new Error("TypeSafe request failed with status 500");
+    return { tier: answers[text], confidence: 0.5, latencyMs: 1, usage: { inputTokens: 1, outputTokens: 0 } };
+  };
+
+  const report = await runEvaluation({ fixture: contrastFixture, jevClassify });
+  assert.equal(report.clear.rows.length, 0);
+  assert.equal(report.contrast.rows.length, 6);
+  assert.equal(report.contrast.rows[0].pair, "p1");
+  const { summary } = report.contrast;
+  assert.equal(summary.pairs, 3);
+  assert.equal(summary.pairsScored, 2); // p3 excluded: one side never answered
+  assert.equal(summary.jevPairsSeparated, 1);
+  assert.deepEqual(summary.jevFailureIds, ["p3-heavy"]);
+  assert.deepEqual(
+    summary.byPair.map(({ pair, jevSeparated }) => [pair, jevSeparated]),
+    [["p1", true], ["p2", false], ["p3", null]]
+  );
+  // Local separation is computed over the same scored pairs, never over p3.
+  assert.equal(typeof summary.localPairsSeparated, "number");
+  assert.equal(summary.byPair.find((entry) => entry.pair === "p3").localSeparated, null);
+  assert.match(report.contrast.note, /pair/i);
+});
+
+test("real contrast fixture keeps its design control: paired, single-language, local-neutral", async () => {
+  const data = JSON.parse(await readFile(FIXTURE, "utf8"));
+  assert.equal(data.contrast.length, 8);
+  const pairs = Map.groupBy(data.contrast, (task) => task.pair);
+  assert.equal(pairs.size, 4);
+  for (const [pair, tasks] of pairs) {
+    assert.equal(tasks.length, 2, pair);
+    assert.notEqual(tasks[0].expected, tasks[1].expected, `${pair}: labels must differ`);
+    assert.equal(tasks[0].language, tasks[1].language, `${pair}: one language per pair`);
+  }
+  for (const lang of ["es", "en"]) {
+    assert.ok(data.contrast.some((task) => task.language === lang), `contrast missing ${lang}`);
+  }
+  // The control: the local classifier sees no keyword and answers standard
+  // for every case, so text length never decides a contrast.
+  for (const task of data.contrast) {
+    const profile = classifyTask(task.text);
+    const hits = [...profile.repetitive, ...profile.reasoning, ...profile.multiFile, ...profile.risk];
+    assert.deepEqual(hits, [], `${task.id} hits local keywords: ${hits}`);
+    assert.equal(classifyEffort(task.text), "standard", task.id);
+  }
 });
 
 test("real fixture: shape, sizes, language mix, and provisional-labels wording", async () => {
