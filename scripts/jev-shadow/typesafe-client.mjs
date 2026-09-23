@@ -19,7 +19,7 @@
 // rate-limited, or switch to the official @typesafe-ai/sdk (retries built in).
 const DEFAULT_BASE_URL = "https://api.typesafe.ai";
 const SYSTEMONE_PATH = "/v1/systemone";
-const DEFAULT_MODEL = "jev-latest";
+export const DEFAULT_MODEL = "jev-latest";
 export const GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/typesafe";
 export const GATEWAY_MODEL = "typesafe-ai/jev";
 const QUESTION_ID = "effort";
@@ -33,6 +33,13 @@ const EFFORT_CRITERIA = {
   standard: "Ordinary, well-understood work.",
   heavy: "Reasoning-heavy, risky, or cross-cutting work.",
 };
+
+// The exact typed question sent to Jev, exported so reports can record it.
+export const JEV_QUESTION = Object.freeze({
+  type: "choice",
+  instructions: EFFORT_INSTRUCTIONS,
+  criteria: Object.freeze({ ...EFFORT_CRITERIA }),
+});
 
 /**
  * @param {{apiKey: string, baseUrl?: string, model?: string, fetchImpl?: Function}} options
@@ -59,13 +66,7 @@ export function createTypeSafeTransport({
         body: JSON.stringify({
           state: taskText,
           model,
-          questions: {
-            [QUESTION_ID]: {
-              type: "choice",
-              instructions: EFFORT_INSTRUCTIONS,
-              criteria: EFFORT_CRITERIA,
-            },
-          },
+          questions: { [QUESTION_ID]: JEV_QUESTION },
         }),
       });
     } catch (error) {

@@ -149,15 +149,21 @@ no chain. RDD: off (default) — ordinary checks only.
   2157 pass / 0 fail / 1 skipped on 22. On local Node 20 the only failures are
   two stray test files under `.git/opencode-intelligence-preserve/`
   (local-only, absent from CI checkouts).
-- [ ] T14 — (BLOCKED on fix/spanish-risk-keywords reaching main) Provenance:
-  each report records a hash of `execution-router.js`, the fixture, and the
-  Jev criteria; the simulator refuses to mix a report's stored `local` with
-  a different current router (today `hybridTier` recomputes risk with the
-  CURRENT classifyTask while `row.local` is historical). Update the contrast
-  control test to state that "8/8 local standard" held for the pre-fix
-  router; with the fix, es-contrast-heavy-2 is heavy (local pairs 1/4) and
-  clear becomes 18/18 IN-SAMPLE (the fix was motivated by es-heavy-1/3, so
-  this is not a validation). Do not invent metadata for older reports.
+- [x] T14 — Provenance (after #341 merged as 5fc1c29; branch rebased on it).
+  CLI reports carry `provenance`: routerSha256 (execution-router.js),
+  fixtureSha256, jevQuestion + model actually sent, route. A custom
+  --transport records jevQuestion/model as null (unknown, never assumed).
+  `simulate-hybrid` refuses a report whose routerSha256 is missing or differs
+  from the current router; `--allow-router-mismatch` proceeds but marks
+  routerVerified: false with the reason. The archived 20:58Z report has no
+  provenance, so it is refused by default (no metadata invented for it).
+  Contrast control test split: the length invariant stays; the local profile
+  is now pinned to the CURRENT router (only es-contrast-heavy-2 is a hit,
+  "codigo de recuperacion" -> heavy), documenting that "8/8 standard" held
+  for the pre-fix router b3e2725. The mock fixture's c3 moved to "¿Por qué
+  se cae el servicio…?" because the fix made the old text a local hit.
+  Tests: Jev 25/25; full suite 2167 pass / 0 fail / 1 skipped; Jev + router
+  68/68 on Node 20.14.
 - [ ] T5 — (PENDING, future) Human review of disagreements, especially risky
   misclassifications; only then consider an integration proposal.
 

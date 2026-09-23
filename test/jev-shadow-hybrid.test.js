@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { writeFile, mkdtemp } from "node:fs/promises";
+import { writeFile, mkdtemp, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,7 @@ import { hybridTier, simulateHybrid } from "../scripts/jev-shadow/simulate-hybri
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, "..", "scripts", "jev-shadow", "simulate-hybrid.mjs");
+const ROUTER_PATH = path.join(HERE, "..", "src", "global", "intelligence", "execution-router.js");
 const execFileAsync = promisify(execFile);
 
 const row = (overrides) => ({ id: "r", text: "Add a field", local: "light", jev: "light", confidence: 0.9, ...overrides });
@@ -25,7 +27,10 @@ test("hybrid policy: risk keyword floors to heavy, confident Jev decides, otherw
   assert.equal(hybridTier(row({ jev: "heavy", confidence: null }), 0.5), "standard");
 });
 
+const ROUTER_SHA = "a".repeat(64);
+
 const report = {
+  provenance: { routerSha256: ROUTER_SHA },
   clear: {
     rows: [
       { id: "c-light", text: "Fix a typo", expected: "light", local: "light", jev: "light", confidence: 0.95 },
@@ -46,7 +51,7 @@ const report = {
 };
 
 test("simulation reports hits, separated pairs, and downgraded heavy cases per policy", () => {
-  const result = simulateHybrid(report, { thresholds: [0.5] });
+  const result = simulateHybrid(report, { thresholds: [0.5], currentRouterSha256: ROUTER_SHA });
   const byName = Object.fromEntries(result.policies.map((policy) => [policy.name, policy]));
   assert.deepEqual(Object.keys(byName), ["local", "jev", "hybrid@0.5"]);
 
@@ -64,7 +69,7 @@ test("simulation reports hits, separated pairs, and downgraded heavy cases per p
 });
 
 test("simulation never picks a winning threshold from the data it was measured on", () => {
-  const result = simulateHybrid(report, { thresholds: [0.3, 0.5, 0.8] });
+  const result = simulateHybrid(report, { thresholds: [0.3, 0.5, 0.8], currentRouterSha256: ROUTER_SHA });
   assert.deepEqual(result.policies.map((policy) => policy.name), ["local", "jev", "hybrid@0.3", "hybrid@0.5", "hybrid@0.8"]);
   const serialized = JSON.stringify(result);
   assert.doesNotMatch(serialized, /"(best|winner|recommended|selected)/i);
@@ -73,12 +78,41 @@ test("simulation never picks a winning threshold from the data it was measured o
   assert.ok(!serialized.includes('"a1"'));
 });
 
-test("CLI reads a report file and prints the simulation, offline", async () => {
+test("simulation refuses to mix a report's stored local tiers with a different current router", () => {
+  const other = "b".repeat(64);
+  assert.throws(() => simulateHybrid(report, { currentRouterSha256: other }), /router.*aaaaaaaaaaaa.*bbbbbbbbbbbb/i);
+  const { provenance, ...legacy } = report;
+  assert.throws(() => simulateHybrid(legacy, { currentRouterSha256: ROUTER_SHA }), /no router provenance/i);
+  assert.throws(() => simulateHybrid(report, {}), /current router hash is required/i);
+
+  // Explicit opt-in proceeds, but the result says so — never a silent mix.
+  const mixed = simulateHybrid(legacy, { currentRouterSha256: ROUTER_SHA, allowRouterMismatch: true });
+  assert.equal(mixed.routerVerified, false);
+  assert.match(mixed.routerNote, /no router provenance/i);
+  const verified = simulateHybrid(report, { currentRouterSha256: ROUTER_SHA });
+  assert.equal(verified.routerVerified, true);
+});
+
+test("CLI checks the report's router hash against the real router file", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "jev-hybrid-"));
   const reportPath = path.join(dir, "report.json");
-  await writeFile(reportPath, JSON.stringify(report));
+  const realSha = createHash("sha256").update(await readFile(ROUTER_PATH)).digest("hex");
+  await writeFile(reportPath, JSON.stringify({ ...report, provenance: { routerSha256: realSha } }));
   const { stdout } = await execFileAsync("node", [CLI, reportPath]);
   const result = JSON.parse(stdout);
   assert.ok(result.policies.some((policy) => policy.name.startsWith("hybrid@")));
   assert.equal(result.source, reportPath);
+  assert.equal(result.routerVerified, true);
+
+  const legacyPath = path.join(dir, "legacy.json");
+  const { provenance, ...legacy } = report;
+  await writeFile(legacyPath, JSON.stringify(legacy));
+  await assert.rejects(execFileAsync("node", [CLI, legacyPath]), (error) => {
+    assert.equal(error.code, 1);
+    assert.match(error.stderr, /no router provenance/i);
+    assert.match(error.stderr, /--allow-router-mismatch/);
+    return true;
+  });
+  const { stdout: mixedOut } = await execFileAsync("node", [CLI, legacyPath, "--allow-router-mismatch"]);
+  assert.equal(JSON.parse(mixedOut).routerVerified, false);
 });

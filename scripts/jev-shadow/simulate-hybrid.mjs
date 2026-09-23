@@ -9,11 +9,17 @@
 //
 // Every threshold is reported side by side and none is selected: the
 // thresholds would be tuned on the same cases they are measured on.
+//
+// The report's `local` tiers are historical, but the risk floor is recomputed
+// with the CURRENT router. The report's routerSha256 must match the current
+// router file, or the simulation refuses to run (--allow-router-mismatch
+// proceeds and marks the result routerVerified: false).
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { classifyTask } from "../../src/global/intelligence/execution-router.js";
 import { groupByPair } from "./evaluate.mjs";
+import { ROUTER_PATH, sha256File } from "./provenance.mjs";
 
 const DEFAULT_THRESHOLDS = [0.3, 0.4, 0.5, 0.55, 0.6, 0.7, 0.8];
 
@@ -29,10 +35,14 @@ export function hybridTier(row, threshold) {
 }
 
 /**
- * @param {{clear: {rows: object[]}, contrast?: {rows: object[]}}} report
- * @param {{thresholds?: number[]}} [options]
+ * @param {{clear: {rows: object[]}, contrast?: {rows: object[]}, provenance?: {routerSha256?: string}}} report
+ * @param {{thresholds?: number[], currentRouterSha256: string, allowRouterMismatch?: boolean}} options
  */
-export function simulateHybrid(report, { thresholds = DEFAULT_THRESHOLDS } = {}) {
+export function simulateHybrid(report, { thresholds = DEFAULT_THRESHOLDS, currentRouterSha256, allowRouterMismatch = false } = {}) {
+  const routerNote = routerMismatch(report, currentRouterSha256);
+  if (routerNote && !allowRouterMismatch) {
+    throw new Error(`${routerNote} Re-run the evaluation, or pass --allow-router-mismatch to simulate anyway (marked unverified).`);
+  }
   const clearRows = report.clear.rows.filter((row) => row.expected);
   const contrastRows = (report.contrast?.rows ?? []).filter((row) => row.expected);
   const policies = [
@@ -41,6 +51,8 @@ export function simulateHybrid(report, { thresholds = DEFAULT_THRESHOLDS } = {})
     ...thresholds.map((threshold) => ({ name: `hybrid@${threshold}`, tierOf: (row) => hybridTier(row, threshold) })),
   ];
   return {
+    routerVerified: routerNote === null,
+    ...(routerNote ? { routerNote } : {}),
     note: "Candidate policies side by side. This simulation does not select a threshold: choosing one on these same cases would overfit them.",
     policies: policies.map(({ name, tierOf }) => ({
       name,
@@ -51,6 +63,16 @@ export function simulateHybrid(report, { thresholds = DEFAULT_THRESHOLDS } = {})
         .map((row) => row.id),
     })),
   };
+}
+
+function routerMismatch(report, currentRouterSha256) {
+  if (!currentRouterSha256) throw new Error("A current router hash is required to check the report's provenance.");
+  const reportSha = report.provenance?.routerSha256;
+  if (!reportSha) return "Report has no router provenance: its local tiers may come from a different router.";
+  if (reportSha !== currentRouterSha256) {
+    return `Report router ${reportSha.slice(0, 12)} differs from current router ${currentRouterSha256.slice(0, 12)}.`;
+  }
+  return null;
 }
 
 function score(rows, tierOf) {
@@ -67,10 +89,20 @@ function pairSeparation(rows, tierOf) {
 }
 
 async function main() {
-  const reportPath = process.argv[2];
-  if (!reportPath) throw new Error("Usage: simulate-hybrid.mjs <report.json>");
+  const argv = process.argv.slice(2);
+  const reportPath = argv.find((arg) => !arg.startsWith("--"));
+  if (!reportPath) throw new Error("Usage: simulate-hybrid.mjs <report.json> [--allow-router-mismatch]");
   const report = JSON.parse(await readFile(reportPath, "utf8"));
-  const result = { source: reportPath, generatedAt: report.generatedAt ?? null, ...simulateHybrid(report) };
+  const simulation = simulateHybrid(report, {
+    currentRouterSha256: await sha256File(ROUTER_PATH),
+    allowRouterMismatch: argv.includes("--allow-router-mismatch"),
+  });
+  const result = {
+    source: reportPath,
+    generatedAt: report.generatedAt ?? null,
+    provenance: report.provenance ?? null,
+    ...simulation,
+  };
   process.stdout.write(JSON.stringify(result, null, 2) + "\n");
 }
 

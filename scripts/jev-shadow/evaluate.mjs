@@ -10,11 +10,17 @@
 // shell (never paste it in chat or files) and run this script directly. Use
 // --limit 1 for a one-case smoke run before the full fixture. Tests inject a
 // transport and never touch the network.
+//
+// Every CLI report carries `provenance`: sha256 of the local router and the
+// fixture, plus the Jev question, route, and model actually sent (null for a
+// custom --transport, whose question is unknown here). Reports whose router
+// hashes differ are different baselines and must not be compared as one.
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { classifyEffort } from "../../src/global/intelligence/execution-router.js";
-import { createTypeSafeTransport, GATEWAY_BASE_URL, GATEWAY_MODEL } from "./typesafe-client.mjs";
+import { createTypeSafeTransport, DEFAULT_MODEL, GATEWAY_BASE_URL, GATEWAY_MODEL, JEV_QUESTION } from "./typesafe-client.mjs";
+import { ROUTER_PATH, sha256File } from "./provenance.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = path.join(HERE, "tasks.json");
@@ -150,10 +156,25 @@ async function resolveJevClassify(argv) {
     if (typeof classify !== "function") {
       throw new Error(`--transport module must export a classify function: ${transportPath}`);
     }
-    return classify;
+    return { classify, route: "custom-transport", model: null };
   }
-  const { apiKey, baseUrl, model } = resolveTransportConfig(process.env);
-  return createTypeSafeTransport({ apiKey, baseUrl, model });
+  const { route, apiKey, baseUrl, model } = resolveTransportConfig(process.env);
+  return { classify: createTypeSafeTransport({ apiKey, baseUrl, model }), route, model };
+}
+
+/**
+ * What a report was produced with. A custom transport's question and model
+ * are unknown here, so they are recorded as null — never assumed.
+ */
+export function buildProvenance({ routerSha256, fixtureSha256, route, model }) {
+  const custom = route === "custom-transport";
+  return {
+    routerSha256,
+    fixtureSha256,
+    jevQuestion: custom ? null : JEV_QUESTION,
+    route,
+    model: custom ? null : model ?? DEFAULT_MODEL,
+  };
 }
 
 /**
@@ -205,12 +226,18 @@ function argValue(argv, flag) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const jevClassify = await resolveJevClassify(argv);
+  const { classify: jevClassify, route, model } = await resolveJevClassify(argv);
   const limit = argValue(argv, "--limit");
   const fixture = limitFixture(JSON.parse(await readFile(FIXTURE_PATH, "utf8")), limit);
   const report = await runEvaluation({ fixture, jevClassify });
   // A smoke report must never be mistaken for the full T4 run.
   if (limit !== null) report.limit = Number(limit);
+  report.provenance = buildProvenance({
+    routerSha256: await sha256File(ROUTER_PATH),
+    fixtureSha256: await sha256File(FIXTURE_PATH),
+    route,
+    model,
+  });
   const json = JSON.stringify(report, null, 2) + "\n";
   const out = argValue(argv, "--out");
   if (out) await writeFile(path.resolve(out), json);

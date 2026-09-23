@@ -2,11 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runEvaluation, resolveTransportConfig, limitFixture, groupByPair } from "../scripts/jev-shadow/evaluate.mjs";
-import { createTypeSafeTransport, GATEWAY_BASE_URL, GATEWAY_MODEL } from "../scripts/jev-shadow/typesafe-client.mjs";
+import { runEvaluation, resolveTransportConfig, limitFixture, groupByPair, buildProvenance } from "../scripts/jev-shadow/evaluate.mjs";
+import { createTypeSafeTransport, GATEWAY_BASE_URL, GATEWAY_MODEL, JEV_QUESTION } from "../scripts/jev-shadow/typesafe-client.mjs";
 import { classifyEffort, classifyTask } from "../src/global/intelligence/execution-router.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -20,7 +22,7 @@ const fixture = {
   clear: [
     { id: "c1", text: "What does this project do?", language: "en", expected: "light" },
     { id: "c2", text: "Why does the auth token refresh fail under load?", language: "en", expected: "heavy" },
-    { id: "c3", text: "¿Por qué falla la autenticación cuando hay mucha carga?", language: "es", expected: "heavy" },
+    { id: "c3", text: "¿Por qué se cae el servicio cuando hay mucha carga?", language: "es", expected: "heavy" },
   ],
   ambiguous: [
     { id: "a1", text: "Refactor the login form validation", language: "en", note: "size unknown" },
@@ -28,12 +30,12 @@ const fixture = {
 };
 
 // Local baseline on this fixture: c1 light, c2 heavy (why does + auth),
-// c3 light (Spanish text matches no English keyword — the disagreement the
-// pilot exists to measure), a1 heavy (refactor).
+// c3 light (Spanish reasoning with no local keyword in either language — the
+// disagreement the pilot exists to measure), a1 heavy (refactor).
 const canned = new Map([
   ["What does this project do?", { tier: "light", confidence: 0.98, latencyMs: 5, usage: { inputTokens: 10, outputTokens: 1 } }],
   ["Why does the auth token refresh fail under load?", { tier: "heavy", confidence: 0.91, latencyMs: 6, usage: { inputTokens: 12, outputTokens: 1 } }],
-  ["¿Por qué falla la autenticación cuando hay mucha carga?", { tier: "heavy", confidence: 0.87, latencyMs: 7, usage: { inputTokens: 12, outputTokens: 1 } }],
+  ["¿Por qué se cae el servicio cuando hay mucha carga?", { tier: "heavy", confidence: 0.87, latencyMs: 7, usage: { inputTokens: 12, outputTokens: 1 } }],
   ["Refactor the login form validation", { tier: "standard", confidence: 0.55, latencyMs: 5, usage: { inputTokens: 9, outputTokens: 1 } }],
 ]);
 
@@ -424,7 +426,7 @@ test("contrast cases are summarized by pair separation, separately from clear ca
   assert.match(report.contrast.note, /pair/i);
 });
 
-test("real contrast fixture keeps its design control: paired, single-language, local-neutral", async () => {
+test("real contrast fixture: paired, single-language, and length never decides a pair", async () => {
   const data = JSON.parse(await readFile(FIXTURE, "utf8"));
   assert.equal(data.contrast.length, 8);
   const pairs = groupByPair(data.contrast);
@@ -433,19 +435,64 @@ test("real contrast fixture keeps its design control: paired, single-language, l
     assert.equal(tasks.length, 2, pair);
     assert.notEqual(tasks[0].expected, tasks[1].expected, `${pair}: labels must differ`);
     assert.equal(tasks[0].language, tasks[1].language, `${pair}: one language per pair`);
+    // Both cases sit on the same side of the local 100-char light threshold.
+    assert.equal(tasks[0].text.length > 100, tasks[1].text.length > 100, `${pair}: length straddles the threshold`);
   }
   for (const lang of ["es", "en"]) {
     assert.ok(data.contrast.some((task) => task.language === lang), `contrast missing ${lang}`);
   }
-  // The control: the local classifier sees no keyword and answers standard
-  // for every case, so text length never decides a contrast.
+});
+
+test("contrast set under the CURRENT router: only the Spanish recovery code is a local keyword hit", async () => {
+  // The "8/8 local standard, zero keyword hits" control held for the router
+  // before the Spanish risk fix (main b3e2725). Since #341 (5fc1c29)
+  // es-contrast-heavy-2 hits "codigo de recuperacion" and is heavy, so the
+  // local classifier separates storage-es. Reports record routerSha256 so
+  // runs from the two routers are never compared as one baseline.
+  const data = JSON.parse(await readFile(FIXTURE, "utf8"));
+  const expectedLocal = { "es-contrast-heavy-2": { tier: "heavy", hits: ["codigo de recuperacion"] } };
   for (const task of data.contrast) {
     const profile = classifyTask(task.text);
     const hits = [...profile.repetitive, ...profile.reasoning, ...profile.multiFile, ...profile.risk];
-    assert.deepEqual(hits, [], `${task.id} hits local keywords: ${hits}`);
-    assert.equal(classifyEffort(task.text), "standard", task.id);
+    const expected = expectedLocal[task.id] ?? { tier: "standard", hits: [] };
+    assert.deepEqual(hits, expected.hits, task.id);
+    assert.equal(classifyEffort(task.text), expected.tier, task.id);
   }
 });
+
+test("CLI report records provenance: router and fixture hashes, Jev question, route", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "jev-prov-"));
+  const stub = path.join(dir, "stub.mjs");
+  await writeFile(stub, 'export const classify = async () => ({ tier: "standard", confidence: 0.5, latencyMs: 1, usage: { inputTokens: 1, outputTokens: 0 } });\n');
+  const { stdout } = await execFileAsync("node", [CLI, "--transport", stub, "--limit", "1"]);
+  const report = JSON.parse(stdout);
+  const sha = async (file) => createHash("sha256").update(await readFile(file)).digest("hex");
+  const ROUTER = path.join(HERE, "..", "src", "global", "intelligence", "execution-router.js");
+  assert.deepEqual(report.provenance, {
+    routerSha256: await sha(ROUTER),
+    fixtureSha256: await sha(FIXTURE),
+    // A custom transport's question is unknown to the evaluator: recorded as
+    // null, never assumed to be the bundled client's question.
+    jevQuestion: null,
+    route: "custom-transport",
+    model: null,
+  });
+});
+
+test("provenance for the real routes records the exact Jev question and model sent", () => {
+  const hashes = { routerSha256: "r".repeat(64), fixtureSha256: "f".repeat(64) };
+  assert.deepEqual(buildProvenance({ ...hashes, route: "vercel-gateway", model: GATEWAY_MODEL }), {
+    ...hashes,
+    jevQuestion: JEV_QUESTION,
+    route: "vercel-gateway",
+    model: "typesafe-ai/jev",
+  });
+  // The direct route leaves model unset; the client's default is what is sent.
+  assert.equal(buildProvenance({ ...hashes, route: "typesafe-direct", model: undefined }).model, "jev-latest");
+  assert.equal(JEV_QUESTION.type, "choice");
+  assert.deepEqual(Object.keys(JEV_QUESTION.criteria).sort(), ["heavy", "light", "standard"]);
+});
+
 
 test("real fixture: shape, sizes, language mix, and provisional-labels wording", async () => {
   const data = JSON.parse(await readFile(FIXTURE, "utf8"));
