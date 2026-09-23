@@ -99,9 +99,13 @@ Each slice targets <=400 changed lines; any overage is reported, not squeezed.
   tests that pinned "nearly exhausted"/"quota exhausted" were updated because
   the requirement changes that text. Full suite 2147 pass / 0 fail / 1
   skipped; the touched suites pass 281/281 on Node 20.14. +95/-14.
-- [ ] R2 — Availability fingerprint: a pure per-provider fingerprint from the
-  snapshot eligibility, plus a per-project store of the last fingerprint
-  acted on.
+- [x] R2 — Availability fingerprint. `availabilityFingerprint(eligibility)`
+  gives a sorted, stable key per provider: ok, limited:<window>, or
+  unavailable. Remaining percent and reset time are ignored so plain
+  refreshes never look like a change. `availability-recovery-store.js`
+  persists the last fingerprint acted on per project
+  (sessions/<projectKey>/availability-recovery.json). Tests 7/7 RED -> GREEN
+  on Node 22 and 20.14.
 - [ ] R3 — Project analysis lock: one analysis per project at a time, and at
   most one automatic re-analysis per (project, fingerprint). Manual analyze
   respects it.
@@ -132,4 +136,4 @@ Each slice targets <=400 changed lines; any overage is reported, not squeezed.
 - No message claims exhaustion from a window-limited signal.
 
 ## Next step
-R2 on branch feat/kairo-team-auto-recovery-01-foundations.
+R3 on branch feat/kairo-team-auto-recovery-01-foundations.
