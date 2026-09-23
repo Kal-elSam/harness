@@ -141,7 +141,13 @@ test("non-interactive terminal fails closed before resolving or spawning the hos
   assert.deepEqual(calls, []);
 });
 
-test("live direct Pi host exposes Kairo routes without Gentle inventory", { skip: !piPath.startsWith("/") }, () => {
+// Opt-in: needs a real Pi plus a saved Kairo PROJECT TEAM for this exact
+// checkout path and reachable adapters, which fresh clones, worktrees and CI lack.
+const liveRoutesSkip = process.env.KAIRO_LIVE_PI_TEST === "1" && piPath.startsWith("/")
+  ? false
+  : "set KAIRO_LIVE_PI_TEST=1 with Pi and a Kairo PROJECT TEAM for this checkout";
+
+test("live direct Pi host exposes Kairo routes without Gentle inventory", { skip: liveRoutesSkip }, () => {
   const result = spawnSync(
     piPath,
     [
