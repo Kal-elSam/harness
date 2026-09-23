@@ -11,6 +11,10 @@ import {
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 import { DEFAULT_ENTITLEMENT_TTL_MS } from "../src/global/observability/claude-entitlement-store.js";
 
+
+// runBootstrapAnalysis now takes the per-project analysis lock; these tests
+// use a fake homeDir, so they grant it in memory.
+const grantedLock = async () => ({ acquired: true, release: async () => {} });
 test("conversation service projects a provider-neutral durable timeline", async () => {
   const calls = [];
   const status = {
@@ -457,6 +461,44 @@ test("REGRESSION: preflightProject recommends only entitlement-safe models and e
   assert.ok(!result.analystCatalog.models.some((model) => model.adapterId === "claude"), "an unverified model must never appear in the analyst catalog at all, not even with a warning");
 });
 
+test("runBootstrapAnalysis refuses to start while another analysis holds the project lock, without touching the analyst", async () => {
+  let analyzed = false;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    acquireProjectAnalysisLock: async (homeDir, projectRoot, { owner }) => {
+      assert.equal(projectRoot, "/repo");
+      assert.equal(owner, "manual");
+      return { acquired: false, holder: { owner: "automatic-recovery", startedAt: "2026-09-23T10:00:00.000Z" } };
+    },
+    buildSanitizedSnapshot: async () => { analyzed = true; throw new Error("must not snapshot"); },
+    createBootstrapAnalyzerAdapter: () => { analyzed = true; throw new Error("must not create an analyst"); }
+  });
+  await assert.rejects(
+    service.runBootstrapAnalysis({ cwd: "/repo", profile: {}, candidates: {}, analyst: { model: { adapterId: "claude", modelId: "claude-sonnet-5" } } }),
+    /already running for this project.*2026-09-23T10:00:00\.000Z.*automatic-recovery/
+  );
+  assert.equal(analyzed, false);
+});
+
+test("runBootstrapAnalysis releases the project lock when the analysis fails", async () => {
+  const events = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    acquireProjectAnalysisLock: async () => {
+      events.push("acquire");
+      return { acquired: true, release: async () => { events.push("release"); } };
+    },
+    buildSanitizedSnapshot: async () => { events.push("snapshot"); throw new Error("snapshot failed"); }
+  });
+  await assert.rejects(
+    service.runBootstrapAnalysis({ cwd: "/repo", profile: {}, candidates: {}, analyst: { model: { adapterId: "claude", modelId: "claude-sonnet-5" } } }),
+    /snapshot failed/
+  );
+  assert.deepEqual(events, ["acquire", "snapshot", "release"]);
+});
+
 test("runBootstrapAnalysis runs the real chosen model read-only against a SANITIZED SNAPSHOT (never the real cwd), validates its response, and only then builds + persists a SUGGESTED ProjectStrategy genuinely re-scored per its real, evidence-backed findings", async () => {
   let written = null;
   const askCalls = [];
@@ -471,6 +513,7 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
     // rather than depending on whatever OS actually runs this suite (CI
     // runs on Linux).
     codexIsolationDeps: { platform: "darwin", access: async () => {} },
+    acquireProjectAnalysisLock: grantedLock,
     buildSanitizedSnapshot: async (projectRoot) => {
       assert.equal(projectRoot, "/repo");
       return {
@@ -524,6 +567,7 @@ test("runBootstrapAnalysis drops the analyst's recommendedRoleNeeds when none of
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
     codexIsolationDeps: { platform: "darwin", access: async () => {} },
+    acquireProjectAnalysisLock: grantedLock,
     buildSanitizedSnapshot: async () => ({
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 1, secretsRedacted: 0,
       copiedFiles: ["src/real.ts"], excludedPrivatePaths: [], cleanup: async () => { cleanedUp = true; }
@@ -555,6 +599,7 @@ test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the a
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
     codexIsolationDeps: { platform: "darwin", access: async () => {} },
+    acquireProjectAnalysisLock: grantedLock,
     buildSanitizedSnapshot: async () => ({
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
       copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => { cleanedUp = true; }
@@ -574,6 +619,7 @@ test("runBootstrapAnalysis never builds or persists a ProjectStrategy when the r
   let wrote = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
+    acquireProjectAnalysisLock: grantedLock,
     codexIsolationDeps: { platform: "darwin", access: async () => {} },
     runCodexSandboxedBootstrap: async () => ({ status: "error", error: "codex -p timed out", answer: null }),
     writeProjectStrategy: async () => { wrote = true; }
@@ -591,6 +637,7 @@ test("runBootstrapAnalysis routes a Codex analyst through the real OS-level sand
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
     codexIsolationDeps: { platform: "darwin", access: async () => {} },
+    acquireProjectAnalysisLock: grantedLock,
     buildSanitizedSnapshot: async () => ({
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
       copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => {}
@@ -615,6 +662,7 @@ test("runBootstrapAnalysis keeps a Claude analyst on the plain askProvider path 
   let sandboxCalled = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
+    acquireProjectAnalysisLock: grantedLock,
     buildSanitizedSnapshot: async () => ({
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
       copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => {}
@@ -642,6 +690,7 @@ test("runBootstrapAnalysis fails closed (never a silent fallback) when Codex's O
   let cleanedUp = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
+    acquireProjectAnalysisLock: grantedLock,
     buildSanitizedSnapshot: async () => ({
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
       copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => { cleanedUp = true; }
@@ -662,6 +711,7 @@ test("runBootstrapAnalysis rejects an analyst adapterId with no real BootstrapAn
   let wrote = false;
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
+    acquireProjectAnalysisLock: grantedLock,
     buildSanitizedSnapshot: async () => ({
       snapshotRoot: "/tmp/fake-snapshot", filesCopied: 0, secretsRedacted: 0,
       copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => {}
@@ -706,6 +756,7 @@ test("CANARY: runBootstrapAnalysis's real sanitized-snapshot pipeline (not mocke
   const service = createConversationService({
     resolveRoot: async () => projectRoot,
     homeDir: "/home/test",
+    acquireProjectAnalysisLock: grantedLock,
     codexIsolationDeps: { platform: "darwin", access: async () => {} },
     // Inspect the real sanitized snapshot WHILE it still exists — the
     // real cleanup() runs in runBootstrapAnalysis's own `finally`, right
