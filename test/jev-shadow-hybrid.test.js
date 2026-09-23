@@ -116,3 +116,32 @@ test("CLI checks the report's router hash against the real router file", async (
   const { stdout: mixedOut } = await execFileAsync("node", [CLI, legacyPath, "--allow-router-mismatch"]);
   assert.equal(JSON.parse(mixedOut).routerVerified, false);
 });
+
+test("REGRESSION: a failed Jev row (e.g. 429) is missing evidence — excluded for every policy, pair unscored", () => {
+  const withFailure = {
+    ...report,
+    clear: {
+      rows: [
+        ...report.clear.rows,
+        { id: "c-failed", text: "Rotate the production credential", expected: "heavy", local: "heavy", jev: null, confidence: null },
+      ],
+    },
+    contrast: {
+      rows: report.contrast.rows.map((row) =>
+        row.id === "p2-heavy" ? { ...row, text: "Store the payment token", local: "heavy", jev: null, confidence: null } : row
+      ),
+    },
+  };
+  const result = simulateHybrid(withFailure, { thresholds: [0.5], currentRouterSha256: ROUTER_SHA });
+  for (const policy of result.policies) {
+    // Same scored rows and the same complete pairs for local, jev, and hybrid.
+    assert.equal(policy.clear.total, 4, policy.name);
+    assert.deepEqual({ total: policy.contrast.total, pairs: policy.contrast.pairs }, { total: 2, pairs: 1 }, policy.name);
+    assert.ok(!policy.downgradedHeavy.includes("c-failed"), policy.name);
+    assert.ok(!policy.downgradedHeavy.includes("p2-heavy"), policy.name);
+  }
+  // Local would separate p2 via the risk keyword, but p2 is unscored for
+  // everyone; on the only complete pair (p1) local answers standard twice.
+  assert.equal(result.policies.find((policy) => policy.name === "local").contrast.pairsSeparated, 0);
+  assert.deepEqual(result.excluded, { jevFailureIds: ["c-failed", "p2-heavy"], unscoredPairs: ["p2"] });
+});

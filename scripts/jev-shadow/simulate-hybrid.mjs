@@ -43,8 +43,19 @@ export function simulateHybrid(report, { thresholds = DEFAULT_THRESHOLDS, curren
   if (routerNote && !allowRouterMismatch) {
     throw new Error(`${routerNote} Re-run the evaluation, or pass --allow-router-mismatch to simulate anyway (marked unverified).`);
   }
-  const clearRows = report.clear.rows.filter((row) => row.expected);
-  const contrastRows = (report.contrast?.rows ?? []).filter((row) => row.expected);
+  // Same fairness rule as evaluate.mjs: a failed Jev answer (e.g. a 429) is
+  // missing evidence, not a classification. Every policy is scored over the
+  // same answered rows and the same complete pairs; failures are listed apart.
+  const labeledClear = report.clear.rows.filter((row) => row.expected);
+  const labeledContrast = (report.contrast?.rows ?? []).filter((row) => row.expected);
+  const clearRows = labeledClear.filter((row) => row.jev !== null);
+  const pairGroups = [...groupByPair(labeledContrast)];
+  const completePairs = pairGroups.filter(([, pairRows]) => pairRows.every((row) => row.jev !== null));
+  const contrastRows = completePairs.flatMap(([, pairRows]) => pairRows);
+  const excluded = {
+    jevFailureIds: [...labeledClear, ...labeledContrast].filter((row) => row.jev === null).map((row) => row.id),
+    unscoredPairs: pairGroups.filter(([, pairRows]) => pairRows.some((row) => row.jev === null)).map(([pair]) => pair),
+  };
   const policies = [
     { name: "local", tierOf: (row) => row.local },
     { name: "jev", tierOf: (row) => row.jev },
@@ -53,6 +64,7 @@ export function simulateHybrid(report, { thresholds = DEFAULT_THRESHOLDS, curren
   return {
     routerVerified: routerNote === null,
     ...(routerNote ? { routerNote } : {}),
+    excluded,
     note: "Candidate policies side by side. This simulation does not select a threshold: choosing one on these same cases would overfit them.",
     policies: policies.map(({ name, tierOf }) => ({
       name,

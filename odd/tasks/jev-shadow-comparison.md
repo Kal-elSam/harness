@@ -177,6 +177,17 @@ no chain. RDD: off (default) — ordinary checks only.
   INCONSISTENCY FOUND: on the same report the simulator says local 1/4 pairs.
   It counts a failed Jev row as wrong for `jev` and falls back for `hybrid`,
   while the evaluator excludes failed rows for both classifiers.
+- [x] T17 — Simulator aligned with the evaluator: a failed Jev row is missing
+  evidence, excluded for EVERY policy; a pair with any failure is unscored for
+  all; both are listed under `excluded`. Regression test failed first (5
+  scored rows instead of 4), then passed. Jev + router tests 69/69 (hybrid
+  6/6 on Node 20.14); full suite 2168 pass / 0 fail / 1 skipped.
+  Corrected T16 simulation (saved report untouched): excluded es-contrast-
+  heavy-2, unscored storage-es; every policy has 3 scored pairs. Local 18/18
+  clear, 3/6 contrast, 0/3 pairs. Jev 13/18, 5/6, 2/3. Hybrid 15-17/18 clear,
+  5/6, 2/3 at every threshold. The earlier "hybrid 7/8, 3/4" was an artifact
+  of scoring the 429 as a standard decision. Next: re-run into a new file to
+  recover storage-es (local 18/18 stays in-sample).
 - [ ] T5 — (PENDING, future) Human review of disagreements, especially risky
   misclassifications; only then consider an integration proposal.
 
