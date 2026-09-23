@@ -207,6 +207,85 @@ test("client errors never contain the key — status, tier echo, fetch rejection
   });
 });
 
+test("HTTP errors surface the upstream error code and message, redacted and bounded", async () => {
+  const failWith = (body) =>
+    createTypeSafeTransport({
+      apiKey: CANARY_KEY,
+      fetchImpl: async () => ({ ok: false, status: 403, json: async () => body }),
+    });
+
+  // Gateway allowlist shape (vercel.com/docs/ai-gateway/security-and-compliance/model-allowlist).
+  await assert.rejects(
+    failWith({
+      error: "Your team has restricted access to this model. Contact the owner of the account for more details.",
+      type: "no_providers_available",
+      statusCode: 403,
+    })("x"),
+    (error) => {
+      assert.match(error.message, /status 403/);
+      assert.match(error.message, /no_providers_available/);
+      assert.match(error.message, /restricted access to this model/);
+      return true;
+    }
+  );
+
+  // TypeSafe error shape (vercel.com/docs/ai-gateway/sdks-and-apis/typesafe).
+  await assert.rejects(
+    failWith({ message: "questions.effort.type: expected one of 'noul', 'choice', 'score'", error_type: "invalid_request" })("x"),
+    (error) => {
+      assert.match(error.message, /invalid_request/);
+      assert.match(error.message, /questions\.effort\.type/);
+      return true;
+    }
+  );
+
+  // Nested OpenAI-style shape.
+  await assert.rejects(failWith({ error: { type: "forbidden", message: "nope" } })("x"), (error) => {
+    assert.match(error.message, /forbidden: nope/);
+    return true;
+  });
+
+  // An upstream that echoes the key in its error body must not leak it.
+  await assert.rejects(failWith({ type: "auth", error: `bad key ${CANARY_KEY}` })("x"), (error) => {
+    assert.ok(!error.message.includes(CANARY_KEY));
+    assert.match(error.message, /\[redacted\]/);
+    return true;
+  });
+
+  // Redact BEFORE truncating: a key straddling the cut must not leave a
+  // partial secret that whole-key redaction can no longer match.
+  for (let pad = 100; pad <= 125; pad++) {
+    await assert.rejects(failWith({ type: "t", error: `${"p".repeat(pad)}${CANARY_KEY}` })("x"), (error) => {
+      assert.ok(!error.message.includes(CANARY_KEY.slice(0, 6)), `partial key leaked at pad ${pad}`);
+      return true;
+    });
+  }
+
+  // Same rule on the unrecognized-tier path, which truncates the echoed choice.
+  for (let pad = 60; pad <= 85; pad++) {
+    const echoing = createTypeSafeTransport({
+      apiKey: CANARY_KEY,
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => documentedResponse(`${"p".repeat(pad)}${CANARY_KEY}`) }),
+    });
+    await assert.rejects(echoing("x"), (error) => {
+      assert.ok(!error.message.includes(CANARY_KEY.slice(0, 6)), `partial key leaked in tier echo at pad ${pad}`);
+      return true;
+    });
+  }
+
+  // Unreadable body: keep the bare status, never a parse crash.
+  await assert.rejects(failWith(Promise.reject(new Error("bad json")))("x"), (error) => {
+    assert.equal(error.message, "TypeSafe request failed with status 403");
+    return true;
+  });
+
+  // Long upstream messages stay bounded so the report stays readable.
+  await assert.rejects(failWith({ type: "x", error: "y".repeat(1000) })("x"), (error) => {
+    assert.ok(error.message.length < 200, `too long: ${error.message.length}`);
+    return true;
+  });
+});
+
 test("rate limits (429/529) are transport failures, never classification errors", async () => {
   // User decision for T4: no automatic retries. A rate-limited case stays a
   // transport failure — excluded from BOTH accuracy denominators, reported in

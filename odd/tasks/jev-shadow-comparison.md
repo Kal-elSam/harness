@@ -74,6 +74,16 @@ no chain. RDD: off (default) — ordinary checks only.
   the first N clear cases for a one-case smoke run before the full 23. The
   zero-dep fetch client is kept; no SDK. Tests 14/14, full suite 2150 pass /
   0 fail / 1 skipped.
+  SMOKE 2026-09-23 (`--limit 1`, gateway key): 401 -> 403. The key and the
+  route are now accepted; the Gateway refuses the request. The client dropped
+  the error body, so the 403 cause was unknowable. Fix: HTTP errors now carry
+  the upstream code and message (Gateway `{error,type}`, TypeSafe
+  `{message,error_type}`, nested `{error:{type,message}}`), redacted and capped
+  at 120 chars. Also fixed a latent leak: upstream text was truncated BEFORE
+  redaction (error body and unrecognized-tier echo), so a key straddling the
+  cut could survive as a partial secret. Regression tests cover both paths
+  (the tier-path test fails on the old code). Tests 15/15, full suite
+  2151 pass / 0 fail / 1 skipped.
   USER DECISION 2026-09-23: zero-dependency fetch client stays; NO SDK, NO
   automatic retries (23-case manual pilot doesn't justify a dependency).
   Runbook: a 429/529 leaves the case as a TRANSPORT failure (jevError,
@@ -109,7 +119,8 @@ no chain. RDD: off (default) — ordinary checks only.
     decision before T4.
 
 ## Next step
-User runs the smoke case first, key in their shell:
+User re-runs the smoke case to read the 403 code/message, fixes the Vercel
+team setting it names (allowlist, deny rule, or billing), then re-runs:
 `AI_GATEWAY_API_KEY=... node scripts/jev-shadow/evaluate.mjs --limit 1`.
 If it returns a real tier, run the full fixture with `--out report.json`.
 Never run it automatically. T4 approach decided by the user: zero-dep fetch client, no

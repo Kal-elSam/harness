@@ -74,8 +74,11 @@ export function createTypeSafeTransport({
     }
     const latencyMs = Math.round(performance.now() - startedAt);
     if (!response.ok) {
-      // Deliberately generic: never echo the key, headers, or request body.
-      throw new Error(`TypeSafe request failed with status ${response.status}`);
+      // Never echo the key, headers, or request body — only the upstream's own
+      // error code and message, redacted and bounded, so a 403 explains itself.
+      const detail = await readErrorDetail(response, apiKey);
+      const suffix = detail ? ` (${detail})` : "";
+      throw safeError(`TypeSafe request failed with status ${response.status}${suffix}`, apiKey);
     }
     let data;
     try {
@@ -91,7 +94,7 @@ function normalizeAnswer(data, latencyMs, apiKey) {
   const answer = data?.answers?.[QUESTION_ID];
   const tier = String(answer?.choice ?? "").toLowerCase();
   if (!EFFORT_TIERS.includes(tier)) {
-    throw safeError(`TypeSafe returned an unrecognized tier: ${truncate(JSON.stringify(answer?.choice))}`, apiKey);
+    throw new Error(`TypeSafe returned an unrecognized tier: ${redactThenTruncate(JSON.stringify(answer?.choice), apiKey)}`);
   }
   return {
     tier,
@@ -104,10 +107,38 @@ function normalizeAnswer(data, latencyMs, apiKey) {
   };
 }
 
+// Reads the documented error shapes: Gateway `{ error, type }`, TypeSafe
+// `{ message, error_type }`, and nested `{ error: { type, message } }`. Any
+// unreadable body yields null so the bare status is still reported.
+async function readErrorDetail(response, apiKey) {
+  let body;
+  try {
+    body = await response.json?.();
+  } catch {
+    return null;
+  }
+  if (!body || typeof body !== "object") return null;
+  const nested = body.error && typeof body.error === "object" ? body.error : null;
+  const code = body.type ?? body.error_type ?? nested?.type ?? nested?.code;
+  const message = nested ? nested.message : body.error ?? body.message;
+  const parts = [code, message].filter((part) => typeof part === "string" && part.length > 0);
+  return parts.length ? redactThenTruncate(parts.join(": "), apiKey, 120) : null;
+}
+
 // Every error this client throws passes through here: the key is redacted
 // even if a lower layer (fetch, proxy, response echo) leaked it.
 function safeError(message, apiKey) {
-  return new Error(String(message).split(apiKey).join("[redacted]"));
+  return new Error(redact(message, apiKey));
+}
+
+function redact(value, apiKey) {
+  return String(value ?? "").split(apiKey).join("[redacted]");
+}
+
+// Upstream text is redacted BEFORE truncation: cutting first could leave a
+// partial key that whole-key redaction no longer matches.
+function redactThenTruncate(value, apiKey, max) {
+  return truncate(redact(value, apiKey), max);
 }
 
 function truncate(value, max = 80) {
