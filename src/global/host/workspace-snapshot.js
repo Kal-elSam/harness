@@ -11,6 +11,7 @@ import { createConversationService } from "../conversation/service.js";
 import { readCodexUsage } from "../observability/codex-usage.js";
 import { readClaudeUsage } from "../observability/claude-usage.js";
 import { readOpenCodeUsage } from "../observability/opencode-usage.js";
+import { readCachedUsage, writeCachedUsage, readCachedAvailability, writeCachedAvailability } from "./workspace-cache.js";
 
 export const KAIRO_WORKSPACE_SNAPSHOT_SCHEMA = "kairo.workspace-shell/v1";
 
@@ -83,13 +84,30 @@ function workspaceTeamRows(strategy, intelligence) {
   return rows;
 }
 
-function workspaceTeam(strategy, intelligence) {
+/**
+ * @param {object} strategy
+ * @param {object|null|undefined} intelligence
+ * @param {{value: object, savedAt: number}|null} [cache] - the last-known
+ *   availability cache (see workspace-cache.js's readCachedAvailability).
+ *   Used ONLY while `intelligence` hasn't resolved yet (`undefined`) or
+ *   explicitly failed (`null`) — real live data always wins once it
+ *   arrives (see the P01.2 "Design": "replaced by fresh data when it
+ *   arrives... failures keep the cached value marked stale").
+ * @param {number} [now]
+ */
+function workspaceTeam(strategy, intelligence, cache = null, now = Date.now()) {
   if (!strategy) return { state: "not_analyzed", assignments: [], rows: [] };
-  return {
+  const useCache = intelligence === undefined || intelligence === null;
+  const cachedIntelligence = useCache && cache?.value ? cache.value : intelligence;
+  const base = {
     state: strategy.status ?? "unknown",
     assignments: (strategy.projectTeam ?? []).map(compactAssignment),
-    rows: workspaceTeamRows(strategy, intelligence)
+    rows: workspaceTeamRows(strategy, cachedIntelligence)
   };
+  if (useCache && cache?.value) {
+    return { ...base, cached: true, cacheAgeMs: Math.max(0, now - cache.savedAt) };
+  }
+  return base;
 }
 
 /**
@@ -102,10 +120,25 @@ function workspaceTeam(strategy, intelligence) {
  * real `usage`/`providers` facts from that one conversation-service
  * snapshot call.
  * @param {object|null|undefined} intelligence
+ * @param {{value: object, savedAt: number}|null} [cache] - the last-known
+ *   usage cache (see workspace-cache.js's readCachedUsage). Used ONLY
+ *   while `intelligence` hasn't resolved yet (`undefined`) or explicitly
+ *   failed (`null`) — real live data always wins once it arrives.
+ * @param {number} [now]
  */
-function workspaceSubscriptions(intelligence) {
-  if (intelligence === undefined) return { state: "checking", segments: [], usageModel: [] };
-  if (intelligence === null) return { state: "unknown", segments: [], usageModel: [] };
+function workspaceSubscriptions(intelligence, cache = null, now = Date.now()) {
+  if (intelligence === undefined || intelligence === null) {
+    if (cache?.value) {
+      const usage = { usage: cache.value.usage, providers: cache.value.providers };
+      return {
+        state: "cached",
+        segments: formatSubscriptionUsageSegments(usage),
+        usageModel: buildUsageModel(usage),
+        cacheAgeMs: Math.max(0, now - cache.savedAt)
+      };
+    }
+    return { state: intelligence === null ? "unknown" : "checking", segments: [], usageModel: [] };
+  }
   const usage = { usage: intelligence.usage, providers: intelligence.providers };
   return {
     state: "ready",
@@ -138,7 +171,10 @@ export function buildKairoWorkspaceSnapshot({
   engram = null,
   intelligence,
   usageIntelligence = intelligence,
-  availabilityIntelligence = intelligence
+  availabilityIntelligence = intelligence,
+  usageCache = null,
+  availabilityCache = null,
+  now = Date.now()
 } = {}) {
   if (typeof projectRoot !== "string" || projectRoot.trim() === "") {
     throw new Error("Kairo workspace snapshot requires a project root.");
@@ -147,9 +183,9 @@ export function buildKairoWorkspaceSnapshot({
     schema: KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
     project: { root: projectRoot, label: basename(projectRoot) || projectRoot },
     session: workspaceSession(session),
-    team: workspaceTeam(strategy, availabilityIntelligence),
+    team: workspaceTeam(strategy, availabilityIntelligence, availabilityCache, now),
     usage: Array.isArray(usage) ? usage : [],
-    subscriptions: workspaceSubscriptions(usageIntelligence),
+    subscriptions: workspaceSubscriptions(usageIntelligence, usageCache, now),
     memory: { status: engram?.status ?? "unknown" }
   };
 }
@@ -167,7 +203,9 @@ export async function loadKairoWorkspaceSnapshot({
   sessionId = null,
   intelligence,
   usageIntelligence = intelligence,
-  availabilityIntelligence = intelligence
+  availabilityIntelligence = intelligence,
+  usageCache: explicitUsageCache,
+  availabilityCache: explicitAvailabilityCache
 } = {}, deps = {}) {
   const resolveRoot = deps.resolveProjectRoot ?? resolveProjectRoot;
   const homeDir = (deps.resolveHomeDir ?? resolveHomeDir)();
@@ -176,6 +214,10 @@ export async function loadKairoWorkspaceSnapshot({
   const readUsage = deps.listProviderUsage ?? listProviderUsage;
   const inspectMemory = deps.inspectEngramIntegration ?? inspectEngramIntegration;
   const readSession = deps.getSession ?? getSession;
+  const readUsageCacheImpl = deps.readCachedUsage ?? readCachedUsage;
+  const writeUsageCacheImpl = deps.writeCachedUsage ?? writeCachedUsage;
+  const readAvailabilityCacheImpl = deps.readCachedAvailability ?? readCachedAvailability;
+  const writeAvailabilityCacheImpl = deps.writeCachedAvailability ?? writeCachedAvailability;
 
   if (sessionId != null && !isValidSessionId(sessionId)) {
     throw new Error(`Invalid Kairo host session id "${sessionId}".`);
@@ -187,6 +229,28 @@ export async function loadKairoWorkspaceSnapshot({
     sessionId == null ? null : readSession(homeDir, projectRoot, sessionId)
   ]);
 
+  // P01.2 last-known cache: while a side hasn't resolved yet (`undefined`)
+  // or explicitly failed (`null`), read its last-known cache so the very
+  // first render can show it dim with its age instead of a blank
+  // "checking" state — see workspace-cache.js's own doc. A caller-supplied
+  // `usageCache`/`availabilityCache` (e.g. one already read by the host
+  // for an earlier phase this same refresh) short-circuits a redundant
+  // disk read.
+  const usageCache = explicitUsageCache !== undefined
+    ? explicitUsageCache
+    : usageIntelligence == null ? await readUsageCacheImpl(homeDir).catch(() => null) : null;
+  const availabilityCache = explicitAvailabilityCache !== undefined
+    ? explicitAvailabilityCache
+    : availabilityIntelligence == null ? await readAvailabilityCacheImpl(homeDir, projectRoot).catch(() => null) : null;
+
+  // A freshly resolved live value (never `undefined`/`null`) becomes the
+  // new last-known cache. A still-pending probe or an explicit failure
+  // never overwrites the existing cache — see the P01.2 "Design": "a
+  // failed refresh keeps the cached value marked stale, never presented
+  // as fresh".
+  if (usageIntelligence != null) await writeUsageCacheImpl(homeDir, usageIntelligence).catch(() => {});
+  if (availabilityIntelligence != null) await writeAvailabilityCacheImpl(homeDir, projectRoot, availabilityIntelligence).catch(() => {});
+
   return buildKairoWorkspaceSnapshot({
     projectRoot,
     strategy,
@@ -194,7 +258,9 @@ export async function loadKairoWorkspaceSnapshot({
     session,
     engram: inspectMemory({ homeDir }),
     usageIntelligence,
-    availabilityIntelligence
+    availabilityIntelligence,
+    usageCache,
+    availabilityCache
   });
 }
 

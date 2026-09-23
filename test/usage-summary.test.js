@@ -94,6 +94,45 @@ test("buildUsageModel exposes a structured providers -> windows shape (label, re
   ]);
 });
 
+test("formatSubscriptionUsageSegments never prints Go's roll/W/M labels — the legacy cockpit's compact bar stays deliberately terse (byte-identical contract)", () => {
+  const segments = formatSubscriptionUsageSegments({
+    usage: {
+      opencode: {
+        go: {
+          windows: [
+            { name: "rolling", remainingPercent: 100, status: "ok" },
+            { name: "weekly", remainingPercent: 100, status: "ok" },
+            { name: "monthly", remainingPercent: 0, status: "rate-limited" }
+          ]
+        }
+      }
+    },
+    providers: {}
+  });
+
+  assert.equal(segments[2], "Go 100% / 100% / 0% LIMITED");
+});
+
+test("buildUsageModel labels Go's rolling/weekly/monthly windows roll/W/M (P01.2) — a window with no recognized name still gets label null", () => {
+  const model = buildUsageModel({
+    usage: {
+      opencode: {
+        go: {
+          windows: [
+            { name: "rolling", remainingPercent: 100 },
+            { name: "weekly", remainingPercent: 60 },
+            { name: "monthly", remainingPercent: 26 },
+            { remainingPercent: 50 }
+          ]
+        }
+      }
+    },
+    providers: {}
+  });
+
+  assert.deepEqual(model[2].windows.map((w) => w.label), ["roll", "W", "M", null]);
+});
+
 test("buildUsageModel reports an empty windows array plus the real provider status (or honest unknown) when a provider has no measured usage", () => {
   const model = buildUsageModel({ usage: {}, providers: { claude: { status: "Pro · usage unknown" } } });
 

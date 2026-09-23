@@ -58,10 +58,21 @@ function claudeUsageWindows(usage) {
   return windows;
 }
 
+/** Go's real window names (see opencode-usage.js's normalizeOpenCodeGoUsage)
+ * mapped to the widget's compact display labels (P01.2 "Design": "Go
+ * `roll`/`W`/`M`") — an unrecognized/missing name stays `null`, exactly
+ * the honest pre-P01.2 behavior for any window this mapping doesn't know. */
+function goWindowLabel(name) {
+  if (name === "rolling") return "roll";
+  if (name === "weekly") return "W";
+  if (name === "monthly") return "M";
+  return null;
+}
+
 function goUsageWindows(usage) {
   const windows = usage.opencode?.go?.windows;
   if (!windows?.length) return [];
-  return windows.map((window) => usageWindow(null, window.remainingPercent, window.status === "rate-limited"));
+  return windows.map((window) => usageWindow(goWindowLabel(window.name), window.remainingPercent, window.status === "rate-limited"));
 }
 
 /**
@@ -83,15 +94,22 @@ export function buildUsageModel({ usage = {}, providers = {} } = {}) {
   ];
 }
 
-function formatWindowSegment(window) {
+/** `showLabel` is false for Go (legacy cockpit contract: the compact bar
+ * is deliberately terse, real percentages only, no per-window name labels
+ * — see cockpit-view.test.js). Go's real "roll"/"W"/"M" labels (P01.2)
+ * live only in `buildUsageModel`'s structured `windows[].label`, which the
+ * Pi widget bar-renders directly — this text formatter never picks them
+ * up for Go, so the legacy cockpit's own text stays byte-identical. */
+function formatWindowSegment(window, showLabel) {
   const suffix = window.level === "low" ? " LOW" : window.level === "limited" ? " LIMITED" : "";
   const value = `${window.remainingPercent}%${suffix}`;
-  return window.label ? `${window.label} ${value}` : value;
+  return showLabel && window.label ? `${window.label} ${value}` : value;
 }
 
 function formatProviderSegment(provider) {
   if (!provider.windows.length) return `${provider.name} ${provider.fallbackStatus}`;
-  return `${provider.name} ${provider.windows.map(formatWindowSegment).join(" / ")}`;
+  const showLabel = provider.name !== "Go";
+  return `${provider.name} ${provider.windows.map((window) => formatWindowSegment(window, showLabel)).join(" / ")}`;
 }
 
 /**
