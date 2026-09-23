@@ -1,3 +1,4 @@
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { CARD_TONE, renderPanel } from "../cockpit/card.js";
 
 // The Pi widget for the Kairo workspace — two bordered panels (USAGE,
@@ -162,6 +163,24 @@ export function createKairoWorkspaceWidget(snapshot, extraLines = []) {
   return (_tui, theme) => ({
     render(width) {
       return renderKairoWorkspaceWidget(snapshot, width, theme, extraLines);
+    }
+  });
+}
+
+/**
+ * A component factory for a plain, unframed list of text lines — the same
+ * shape a detail view (e.g. `/kairo-team`) used to pass straight to
+ * `ctx.ui.setWidget` as a string array. Wrapping it in a component instead
+ * only removes Pi's MAX_WIDGET_LINES=10 cap; it does not add framing or
+ * theming (a bounded view under 10 lines can stay a plain string array —
+ * see extension/index.js for which views need this).
+ * @param {string[]} lines
+ */
+export function createKairoTextWidget(lines) {
+  return () => ({
+    render(width) {
+      const targetWidth = Math.max(1, Math.floor(width));
+      return lines.map((line) => truncateToWidth(line, targetWidth));
     }
   });
 }
