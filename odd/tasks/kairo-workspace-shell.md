@@ -83,8 +83,10 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
 
 - Forecast: ~650 authored changed lines across eight cohesive tasks.
 - Strategy: stacked-to-main in small PR slices, explicitly chosen by the user.
-  Each local work-unit commit remains local until the user separately authorizes
-  its remote push/PR/merge. No remote delivery is included.
+  The user authorized remote delivery on 2026-09-22. Open stack: #328
+  foundation, #329 snapshot, #330 widget, #331 isolation, #332 routes, #333
+  safety, #334 compact UI, #335 direct Pi. Each subsequent PR is based on the
+  prior slice and merges to main in that order.
 
 ## Progress
 
