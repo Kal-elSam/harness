@@ -95,15 +95,44 @@ test("lost quota/availability on the assigned provider blocks execution instead 
   assert.match(route.why, /quota nearly exhausted/);
 });
 
-test("lost quota with a real, currently-eligible persisted fallback surfaces it as suggestedAlternative — computed by the router, never by the caller", () => {
+test("an availability block with a real, currently-eligible persisted fallback routes to it automatically, naming what it replaced", () => {
   const codexFallback = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
   const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), fallback: codexFallback, assignmentSource: "recommended" }]);
   const route = resolveProjectRoute({
     role: "Builder", strategy,
-    eligibility: { claude: { ok: false, reason: "Claude quota nearly exhausted (1% left)" }, codex: { ok: true } }
+    eligibility: { claude: { ok: false, reason: "Claude Current session window is limited (1% left)" }, codex: { ok: true } }
+  });
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED);
+  assert.equal(route.provider, "codex");
+  assert.deepEqual(route.model, codexFallback);
+  assert.equal(route.assignmentSource, "availability-fallback");
+  assert.equal(route.blockedAssignment.provider, "claude", "the replaced assignment stays visible");
+  assert.equal(route.blockedAssignment.model.modelId, "builder-model");
+  assert.equal(route.suggestedAlternative, null, "nothing left to confirm");
+  assert.match(route.why, /temporarily unavailable/);
+  assert.match(route.why, /window is limited/);
+  assert.match(route.why, /GPT-6 Astra/);
+  assert.match(route.why, /until the team is recovered/);
+});
+
+test("an entitlement block never substitutes automatically, even with an eligible fallback — it still asks for confirmation", () => {
+  const codexFallback = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
+  const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), fallback: codexFallback, assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({
+    role: "Builder", strategy,
+    eligibility: { claude: { ok: true }, codex: { ok: true } },
+    modelEntitlement: { claude: { "builder-model": { status: "unverified", reason: "probe timed out" } } }
   });
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);
   assert.deepEqual(route.suggestedAlternative, { provider: "codex", model: codexFallback });
+  assert.match(route.why, /confirm the suggested alternative/);
+});
+
+test("a human override whose provider is unavailable keeps waiting — overrides carry no fallback, so nothing replaces the human's pick", () => {
+  const strategy = activeStrategy([{ role: "Builder", model: claudeModel({ modelId: "human-chosen" }), fallback: null, assignmentSource: "override" }]);
+  const route = resolveProjectRoute({ role: "Builder", strategy, eligibility: { claude: { ok: false, reason: "quota" }, codex: { ok: true } } });
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);
+  assert.equal(route.blockedAssignment.assignmentSource, "override");
 });
 
 test("a persisted fallback that is itself currently ineligible is never suggested — no fabricated alternative", () => {
@@ -129,7 +158,7 @@ test("no persisted fallback at all means an honest null suggestedAlternative, ne
   assert.equal(route.suggestedAlternative, null);
 });
 
-test("ROUTED and MANUAL_HANDOFF results never carry a blockedAssignment or suggestedAlternative — those only ever apply to a real block", () => {
+test("a normal ROUTED result and MANUAL_HANDOFF never carry a blockedAssignment or suggestedAlternative — those only apply to a block or an availability substitution", () => {
   const routed = resolveProjectRoute({ role: "Builder", strategy: activeStrategy([{ role: "Builder", model: claudeModel(), assignmentSource: "recommended" }]), eligibility: { claude: { ok: true } } });
   assert.equal(routed.blockedAssignment, null);
   assert.equal(routed.suggestedAlternative, null);
@@ -160,14 +189,6 @@ test("REGRESSION: with no real automatic alternative available, the why message 
   assert.equal(route.suggestedAlternative, null);
   assert.match(route.why, /no automatic alternative is available/);
   assert.doesNotMatch(route.why, /confirm the suggested alternative/, "must never promise a confirmation step when there is nothing to confirm");
-});
-
-test("REGRESSION: with a real automatic alternative available, the why message still invites confirmation", () => {
-  const codexFallback = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
-  const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), fallback: codexFallback, assignmentSource: "recommended" }]);
-  const route = resolveProjectRoute({ role: "Builder", strategy, eligibility: { claude: { ok: false, reason: "quota" }, codex: { ok: true } } });
-  assert.ok(route.suggestedAlternative);
-  assert.match(route.why, /confirm the suggested alternative/);
 });
 
 test("an override assignmentSource passes through untouched — the router never rewrites who decided the pick", () => {
