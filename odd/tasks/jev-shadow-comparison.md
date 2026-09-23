@@ -122,6 +122,20 @@ no chain. RDD: off (default) — ordinary checks only.
   < 0.35 (en-standard-2, en-heavy-3, en-heavy-5, es-heavy-3), so low
   confidence means unstable, while high confidence is stable but not always
   correct. Latency median 369 ms, p90 7.6 s, max 9.4 s (heavy tail).
+- [x] T12 — Offline hybrid simulator `scripts/jev-shadow/simulate-hybrid.mjs`
+  (no network, no routing change). Policy: local RISK keyword -> heavy;
+  else Jev at/above threshold; else standard. Reports clear hits, contrast
+  hits, pairs separated, and downgraded heavy ids for local, jev, and each
+  threshold side by side; selects NO threshold (overfitting guard, pinned by
+  test). Tests 4/4, full suite 2157 pass / 0 fail / 1 skipped.
+  On the 20:58Z report: no hybrid threshold beats local on clear (best
+  15/18 = tie; results are non-monotonic across thresholds, i.e. noise).
+  Hybrid contrast 6/8 (2/4 pairs) comes entirely from Jev. es-heavy-1,
+  es-heavy-3, and both recovery-code cases are downgraded under EVERY
+  policy: the RISK_KEYWORDS floor is English-only ("autenticación" does not
+  contain "auth"; "facturación" is not "billing"). At >= 0.5 the standard
+  fallback also downgrades en-heavy-4, which Jev had right at 0.42.
+  Only the latest report exists; the first full run was overwritten.
 - [ ] T5 — (PENDING, future) Human review of disagreements, especially risky
   misclassifications; only then consider an integration proposal.
 
