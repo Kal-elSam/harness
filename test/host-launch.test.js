@@ -35,8 +35,8 @@ test("cwd with metacharacters still spawns argv array with shell false", async (
   assert.ok(Array.isArray(calls[0].args));
   assert.ok(!String(calls[0].command).includes(";"));
   assert.deepEqual(calls[0].args.slice(0, 8), [
-    "--isolated", "--no-extensions", "--no-skills", "--no-prompt-templates",
-    "--no-themes", "-e", extensionDir, "--"
+    "--isolated", "--", "-e", extensionDir,
+    "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes"
   ]);
 });
 

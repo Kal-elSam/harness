@@ -38,8 +38,11 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   exists, with the next Kairo action rather than Pi's generic warning. RED:
   missing routes still rendered the ordinary workspace. GREEN: focused host
   tests show the Kairo-owned unavailable state and its recovery action.
-- [ ] KWS-06 Exercise the real temporary Gentle Shell/Pi harness and full
-  regression suite; document any host API/version constraints.
+- [x] KWS-06 Exercise the real temporary Gentle Shell/Pi harness and full
+  regression suite; document any host API/version constraints. A first full
+  run exposed a non-interactive host regression; fixed it before final proof.
+  GREEN: isolated `gentle-shell --list-models kairo` listed Kairo routes and
+  the final full suite passed 2063/2063.
 
 ## Constraints
 
@@ -96,3 +99,8 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   routes`). If no verified automatic route exists, the workspace now replaces
   the ordinary widget with an explicit unavailable state and the real recovery
   action instead of implying that Pi's model setup is the fix.
+- KWS-06 completed locally with corrective commit `7a83bea`
+  (`fix(cli): reject noninteractive Kairo host`). The initial full-suite run
+  caught an actual regression: a non-TTY could launch the host and exit zero.
+  The fixed final run passed 2063/2063. Pi 0.85.1 remains the minimum host API;
+  this machine's 0.87.1 also passed the isolated route-model harness.
