@@ -5,15 +5,16 @@
 // accuracy vs labels, confidence, latency, and tokens.
 //
 // LOCAL ANALYSIS ONLY — a Jev answer never changes routing, providers,
-// models, permissions, or execution. The real run against api.typesafe.ai is
-// MANUAL (task T4): export TYPESAFE_API_KEY in your shell (never paste it in
-// chat or files) and run this script directly. Tests inject a transport and
-// never touch the network.
+// models, permissions, or execution. The real run is MANUAL (task T4): export
+// AI_GATEWAY_API_KEY (Vercel AI Gateway) or TYPESAFE_API_KEY (direct) in your
+// shell (never paste it in chat or files) and run this script directly. Use
+// --limit 1 for a one-case smoke run before the full fixture. Tests inject a
+// transport and never touch the network.
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { classifyEffort } from "../../src/global/intelligence/execution-router.js";
-import { createTypeSafeTransport } from "./typesafe-client.mjs";
+import { createTypeSafeTransport, GATEWAY_BASE_URL, GATEWAY_MODEL } from "./typesafe-client.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = path.join(HERE, "tasks.json");
@@ -103,15 +104,50 @@ async function resolveJevClassify(argv) {
     }
     return classify;
   }
-  const apiKey = process.env.TYPESAFE_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "TYPESAFE_API_KEY is not set. The real run against api.typesafe.ai is MANUAL: " +
-        "export the key in your shell (never paste it in chat or files) and re-run, " +
-        "or pass --transport <module> for a mocked local evaluation."
-    );
+  const { apiKey, baseUrl, model } = resolveTransportConfig(process.env);
+  return createTypeSafeTransport({ apiKey, baseUrl, model });
+}
+
+/**
+ * Picks the credential and endpoint from the environment. A Gateway key wins
+ * when both are set: it cannot authenticate against api.typesafe.ai (that
+ * mismatch caused the first T4 attempt's 401s), so it must never be sent there.
+ */
+export function resolveTransportConfig(env) {
+  if (env.AI_GATEWAY_API_KEY) {
+    return {
+      route: "vercel-gateway",
+      apiKey: env.AI_GATEWAY_API_KEY,
+      baseUrl: GATEWAY_BASE_URL,
+      model: GATEWAY_MODEL,
+    };
   }
-  return createTypeSafeTransport({ apiKey, baseUrl: process.env.TYPESAFE_BASE_URL || undefined });
+  if (env.TYPESAFE_API_KEY) {
+    return {
+      route: "typesafe-direct",
+      apiKey: env.TYPESAFE_API_KEY,
+      baseUrl: env.TYPESAFE_BASE_URL || undefined,
+      model: undefined,
+    };
+  }
+  throw new Error(
+    "AI_GATEWAY_API_KEY or TYPESAFE_API_KEY is not set. The real run is MANUAL: " +
+      "export the key in your shell (never paste it in chat or files) and re-run, " +
+      "or pass --transport <module> for a mocked local evaluation."
+  );
+}
+
+/**
+ * Smoke-run slice: the first N clear cases, no ambiguous ones. A null limit
+ * returns the fixture untouched.
+ */
+export function limitFixture(fixture, limit) {
+  if (limit === null || limit === undefined) return fixture;
+  const count = Number(limit);
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error(`--limit must be a positive integer, got: ${limit}`);
+  }
+  return { clear: fixture.clear.slice(0, count), ambiguous: [] };
 }
 
 function argValue(argv, flag) {
@@ -122,8 +158,11 @@ function argValue(argv, flag) {
 async function main() {
   const argv = process.argv.slice(2);
   const jevClassify = await resolveJevClassify(argv);
-  const fixture = JSON.parse(await readFile(FIXTURE_PATH, "utf8"));
+  const limit = argValue(argv, "--limit");
+  const fixture = limitFixture(JSON.parse(await readFile(FIXTURE_PATH, "utf8")), limit);
   const report = await runEvaluation({ fixture, jevClassify });
+  // A smoke report must never be mistaken for the full T4 run.
+  if (limit !== null) report.limit = Number(limit);
   const json = JSON.stringify(report, null, 2) + "\n";
   const out = argValue(argv, "--out");
   if (out) await writeFile(path.resolve(out), json);

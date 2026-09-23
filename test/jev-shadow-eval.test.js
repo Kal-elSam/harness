@@ -5,8 +5,8 @@ import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runEvaluation } from "../scripts/jev-shadow/evaluate.mjs";
-import { createTypeSafeTransport } from "../scripts/jev-shadow/typesafe-client.mjs";
+import { runEvaluation, resolveTransportConfig, limitFixture } from "../scripts/jev-shadow/evaluate.mjs";
+import { createTypeSafeTransport, GATEWAY_BASE_URL, GATEWAY_MODEL } from "../scripts/jev-shadow/typesafe-client.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, "..", "scripts", "jev-shadow", "evaluate.mjs");
@@ -239,12 +239,67 @@ test("rate limits (429/529) are transport failures, never classification errors"
   assert.equal(summary.jevAccuracy, null);
 });
 
-test("CLI without TYPESAFE_API_KEY fails closed with the manual-run message (no network)", async () => {
+test("client routes through Vercel AI Gateway with the gateway model id", async () => {
+  // Contract: vercel.com/docs/ai-gateway/sdks-and-apis/typesafe — same
+  // request/response shape, base URL https://ai-gateway.vercel.sh/typesafe.
+  let captured;
+  const fetchImpl = async (url, init) => {
+    captured = { url, init };
+    return { ok: true, status: 200, json: async () => documentedResponse("light", 0.9) };
+  };
+  const classify = createTypeSafeTransport({
+    apiKey: CANARY_KEY,
+    baseUrl: GATEWAY_BASE_URL,
+    model: GATEWAY_MODEL,
+    fetchImpl,
+  });
+  const result = await classify("Rename this variable");
+
+  assert.equal(captured.url, "https://ai-gateway.vercel.sh/typesafe/v1/systemone");
+  assert.equal(captured.init.headers.authorization, `Bearer ${CANARY_KEY}`);
+  assert.equal(JSON.parse(captured.init.body).model, "typesafe-ai/jev");
+  assert.equal(result.tier, "light");
+});
+
+test("transport config: gateway key wins, direct key keeps the direct contract, none fails closed", () => {
+  const gateway = resolveTransportConfig({ AI_GATEWAY_API_KEY: CANARY_KEY, TYPESAFE_API_KEY: "other" });
+  assert.deepEqual(gateway, {
+    route: "vercel-gateway",
+    apiKey: CANARY_KEY,
+    baseUrl: "https://ai-gateway.vercel.sh/typesafe",
+    model: "typesafe-ai/jev",
+  });
+
+  const direct = resolveTransportConfig({ TYPESAFE_API_KEY: CANARY_KEY });
+  assert.equal(direct.route, "typesafe-direct");
+  assert.equal(direct.apiKey, CANARY_KEY);
+  assert.equal(direct.baseUrl, undefined);
+  assert.equal(direct.model, undefined);
+
+  assert.throws(() => resolveTransportConfig({}), (error) => {
+    assert.match(error.message, /AI_GATEWAY_API_KEY/);
+    assert.match(error.message, /TYPESAFE_API_KEY/);
+    return true;
+  });
+});
+
+test("--limit keeps the first N clear cases and drops ambiguous ones for a smoke run", () => {
+  const limited = limitFixture(fixture, 1);
+  assert.deepEqual(limited.clear.map((task) => task.id), ["c1"]);
+  assert.deepEqual(limited.ambiguous, []);
+  assert.equal(limitFixture(fixture, null), fixture);
+  for (const bad of ["0", "-1", "abc", "1.5"]) {
+    assert.throws(() => limitFixture(fixture, bad), /--limit/);
+  }
+});
+
+test("CLI without any API key fails closed with the manual-run message (no network)", async () => {
   const env = { ...process.env };
   delete env.TYPESAFE_API_KEY;
+  delete env.AI_GATEWAY_API_KEY;
   await assert.rejects(execFileAsync("node", [CLI], { env }), (error) => {
     assert.equal(error.code, 1);
-    assert.match(error.stderr, /TYPESAFE_API_KEY is not set/);
+    assert.match(error.stderr, /AI_GATEWAY_API_KEY or TYPESAFE_API_KEY is not set/);
     assert.match(error.stderr, /MANUAL/);
     return true;
   });

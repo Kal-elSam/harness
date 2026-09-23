@@ -65,6 +65,15 @@ no chain. RDD: off (default) — ordinary checks only.
   the key in console.typesafe.ai/settings/keys and can probe auth with the
   documented GET /v1/models, then re-runs. T4 stays OPEN until a run
   produces real classifications.
+  ROOT CAUSE CONFIRMED 2026-09-23: the key is a Vercel AI Gateway key, not a
+  direct TypeSafe key. Vercel serves the same systemone contract at
+  https://ai-gateway.vercel.sh/typesafe/v1/systemone with model
+  "typesafe-ai/jev" (vercel.com/docs/ai-gateway/sdks-and-apis/typesafe).
+  Fix: the client takes baseUrl + model; the CLI prefers AI_GATEWAY_API_KEY
+  (gateway route) over TYPESAFE_API_KEY (direct route), and `--limit N` runs
+  the first N clear cases for a one-case smoke run before the full 23. The
+  zero-dep fetch client is kept; no SDK. Tests 14/14, full suite 2150 pass /
+  0 fail / 1 skipped.
   USER DECISION 2026-09-23: zero-dependency fetch client stays; NO SDK, NO
   automatic retries (23-case manual pilot doesn't justify a dependency).
   Runbook: a 429/529 leaves the case as a TRANSPORT failure (jevError,
@@ -100,6 +109,8 @@ no chain. RDD: off (default) — ordinary checks only.
     decision before T4.
 
 ## Next step
-Await explicit user confirmation for T4 (manual real API run). Never run it
-automatically. T4 approach decided by the user: zero-dep fetch client, no
+User runs the smoke case first, key in their shell:
+`AI_GATEWAY_API_KEY=... node scripts/jev-shadow/evaluate.mjs --limit 1`.
+If it returns a real tier, run the full fixture with `--out report.json`.
+Never run it automatically. T4 approach decided by the user: zero-dep fetch client, no
 auto-retry, 429/529 = transport failure + backoff before any relaunch.

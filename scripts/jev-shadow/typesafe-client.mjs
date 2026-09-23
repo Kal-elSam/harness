@@ -5,6 +5,11 @@
 //   { state, model, questions: { <id>: { type: "choice", instructions, criteria } } }
 //   -> { model, answers: { <id>: { type, choice, probabilities, confidence } }, usage }
 //
+// The same contract is served by Vercel AI Gateway (verified 2026-09-23
+// against vercel.com/docs/ai-gateway/sdks-and-apis/typesafe): base URL
+// https://ai-gateway.vercel.sh/typesafe, Gateway API key as Bearer token, and
+// model "typesafe-ai/jev". Request and response shapes are unchanged.
+//
 // Used ONLY by the manual real run (T4) — tests inject their own fetch and
 // never touch the network. The API key arrives as a parameter, is sent once
 // as a Bearer header, and is never logged, persisted, or included in errors.
@@ -14,7 +19,9 @@
 // rate-limited, or switch to the official @typesafe-ai/sdk (retries built in).
 const DEFAULT_BASE_URL = "https://api.typesafe.ai";
 const SYSTEMONE_PATH = "/v1/systemone";
-const MODEL = "jev-latest";
+const DEFAULT_MODEL = "jev-latest";
+export const GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/typesafe";
+export const GATEWAY_MODEL = "typesafe-ai/jev";
 const QUESTION_ID = "effort";
 
 const EFFORT_TIERS = ["light", "standard", "heavy"];
@@ -28,10 +35,15 @@ const EFFORT_CRITERIA = {
 };
 
 /**
- * @param {{apiKey: string, baseUrl?: string, fetchImpl?: Function}} options
+ * @param {{apiKey: string, baseUrl?: string, model?: string, fetchImpl?: Function}} options
  * @returns {(taskText: string) => Promise<{tier: string, confidence: number|null, latencyMs: number, usage: {inputTokens: number|null, outputTokens: number|null}}>}
  */
-export function createTypeSafeTransport({ apiKey, baseUrl = DEFAULT_BASE_URL, fetchImpl = fetch } = {}) {
+export function createTypeSafeTransport({
+  apiKey,
+  baseUrl = DEFAULT_BASE_URL,
+  model = DEFAULT_MODEL,
+  fetchImpl = fetch,
+} = {}) {
   if (!apiKey) throw new Error("apiKey is required");
   return async function classify(taskText) {
     const startedAt = performance.now();
@@ -46,7 +58,7 @@ export function createTypeSafeTransport({ apiKey, baseUrl = DEFAULT_BASE_URL, fe
         },
         body: JSON.stringify({
           state: taskText,
-          model: MODEL,
+          model,
           questions: {
             [QUESTION_ID]: {
               type: "choice",
