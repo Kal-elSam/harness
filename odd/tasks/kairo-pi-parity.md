@@ -192,3 +192,254 @@ Parent: run CI across Node 20/22/24 and the real TTY check
 (`kairo` against this project — the read-only render in T5's evidence
 above already confirms the two-phase USAGE line end to end), then close
 P01 and move to P02.
+
+## P01.1 — Widget UI
+
+### Why
+
+User TTY review of P01 (2026-09-23): the string-array widget is plain,
+unaligned and uncolored, and Pi caps string widgets at 10 lines
+(`MAX_WIDGET_LINES`), which truncated the Reviewer row. The user asked for
+two side-by-side panels and no `available` noise: approved team models are
+expected to be available; only exceptions should surface, with a prompt to
+re-analyze the project.
+
+### Design
+
+- `ctx.ui.setWidget(key, (tui, theme) => component)` — a component factory
+  has no line cap and receives Pi's theme. Built from `pi-tui` `Box`,
+  `HStack`/`VStack`, `Text`.
+- Left panel USAGE: Codex (5h, W), Claude (S, W), Go windows as bars with
+  percentages; green normally, warning color for LOW, error color for
+  LIMITED. Footer: session + mode.
+- Right panel TEAM: aligned columns role / model / via; no per-row status
+  when available; `checking…` dimmed in the panel title while live data
+  loads; a blocked row in error color with `BLOCKED`; footer lists
+  `/kairo-*` commands.
+- Narrow terminals stack the panels vertically instead of breaking.
+- Blocked assignment: one `ctx.ui.notify` per blocked role per refresh
+  naming role, model, Kairo's warning, and the next step
+  (`kairo --legacy-cockpit` → `/project analyze` until P03 lands).
+- Live check failure: one dim line saying availability could not be
+  verified; never implies available.
+- Data unchanged: same snapshot fields from P01; usage needs a structured
+  (numeric) model extracted next to `usage-summary.js`, reused by the
+  existing text formatter.
+
+### Tasks
+
+- [x] P01.1-T1 Structured usage model (providers → windows with label,
+  remainingPercent, level normal/low/limited) in the UI-free module; the
+  existing text formatter builds on it with byte-identical output.
+  - `buildUsageModel({usage, providers})` added to
+    `src/global/conversation/usage-summary.js`; `formatSubscriptionUsageSegments`
+    now builds its text from the same model (`formatProviderSegment`/
+    `formatWindowSegment`), so the two can never drift apart.
+  - RED: `node --test test/usage-summary.test.js` — `SyntaxError: ...
+    does not provide an export named 'buildUsageModel'`.
+  - GREEN: `node --test test/usage-summary.test.js test/cockpit-view.test.js
+    test/project-overlay.test.js` → 150 pass, 0 fail (existing
+    formatSubscriptionUsageSegments/cockpit tests confirm byte-identical
+    text output, unchanged).
+  - Commit: `5b6d88b` feat(conversation): expose structured usage model
+    alongside the text formatter.
+- [x] P01.1-T2 Widget component: two panels side by side, stacked when
+  narrow, themed; every team row always rendered (no 10-line cap).
+  - `src/global/host/workspace-widget.js`: pure `renderKairoWorkspaceWidget
+    (snapshot, width, theme, extraLines)` builds two `card.js` panels
+    (USAGE bars from `usageModel`, TEAM rows); side by side at width ≥ 70,
+    stacked below that. `createKairoWorkspaceWidget(snapshot, extraLines)`
+    wraps it as a Pi `(tui, theme) => component` factory — no
+    MAX_WIDGET_LINES cap. `card.js`'s `cardBottom`/`renderPanel` gained an
+    optional `footer` label (backward compatible) so panel bottoms mirror
+    `cardTop`'s title, e.g. `session: none · ask`.
+    `workspace-snapshot.js` additively exposes `subscriptions.usageModel`
+    (same structured model, built once alongside `segments`).
+  - RED: `node --test test/workspace-widget.test.js` — module not found;
+    `node --test test/workspace-shell-snapshot.test.js` — `usageModel`
+    field missing from `deepEqual`.
+  - GREEN: `node --test test/workspace-widget.test.js test/cockpit-view.test.js
+    test/project-overlay.test.js test/usage-summary.test.js
+    test/workspace-shell-snapshot.test.js` → 174 pass, 0 fail.
+  - Commit: `0d2bbc9` feat(host): render the Kairo workspace widget as
+    themed USAGE/TEAM panels.
+- [x] P01.1-T3 Availability UX: no `available` marker, `checking…` title,
+  blocked rows highlighted, one notify per blocked role with the
+  re-analysis next step, failure line.
+  - Enforced in `workspace-widget.js`: `teamRowLine` never prints
+    "available"; `teamPanelTitle` dims to `TEAM · checking…` while any
+    row is unresolved; a blocked row gets the error tone plus `BLOCKED`.
+    `blockedRoleNotifications(team)` returns one entry per blocked role;
+    `extension/index.js`'s `notifyBlockedRoles` calls `ctx.ui.notify(...,
+    "warning")` once per entry on every `refreshWorkspace`. The one dim
+    failure line (`extraLines`) is still appended below both panels.
+    `/kairo-team` and the unavailable-routes fallback now render through
+    `createKairoTextWidget` (uncapped) since 7 roles with warnings can
+    exceed 10 lines; `/kairo-sessions`/`/kairo-usage`/`/kairo-route`/
+    `/kairo-memory` stay plain string arrays (always well under 10 lines).
+  - RED: mutation check — commenting out the `notifyBlockedRoles(ctx,
+    snapshot)` call and re-running
+    `node --test test/workspace-shell-extension.test.js` fails exactly
+    the "notifies once per blocked role..." test (1 of 8 failing);
+    restored immediately after. **Note (2026-09-23, post-review):** this
+    was a post-hoc mutation check run AFTER implementing the notify
+    wiring, not a true test-first RED observed before writing the code —
+    strict TDD calls for the test to fail first, then the code to make it
+    pass. The two defect fixes below (post-review) instead wrote each
+    failing test first and observed a genuine module-level RED before
+    touching implementation code, per the coordinator's explicit
+    correction.
+  - GREEN: `node --test test/workspace-shell-extension.test.js
+    test/workspace-shell-snapshot.test.js test/workspace-widget.test.js
+    test/usage-summary.test.js test/cockpit-view.test.js
+    test/project-overlay.test.js` → 182 pass, 0 fail.
+  - Commit: `b1170fe` feat(host): wire the Pi extension to the themed
+    workspace widget.
+- [x] P01.1-T4 Evidence: render tests at 60/100/160 columns, full suite,
+  CI, user TTY check.
+  - Render tests: `test/workspace-widget.test.js` sweeps widths 60/100/160
+    against a 7-role fixture (Project Analyst, Orchestrator, Builder,
+    Reviewer, Tester, Researcher, Documenter), asserting every line's
+    `visibleWidth(line) <= width` and every role's name present in the
+    output (also verifies stacked-vs-side-by-side switching, no
+    `available` marker, `BLOCKED` tone, footers, and the >10-line
+    component path).
+  - Full suite: `npm test` → 2099 tests, 2098 pass, 1 skipped
+    (`KAIRO_LIVE_PI_TEST`, opt-in), 0 fail. (Baseline before this slice:
+    2083/2082/1/0 — net +16 tests, all new, 0 regressions.)
+  - `git log --oneline origin/main..HEAD` → `b1170fe`, `0d2bbc9`,
+    `5b6d88b` (T1–T3), `34dbdc5` (planning docs, pre-existing).
+  - `git diff --stat origin/main` (source+tests only, excluding the
+    planning doc) → 9 files changed, 696 insertions(+), 160 deletions(-)
+    = 856 authored lines — well above forecast; flagged for the parent's
+    `ask-on-risk` delivery decision, same as P01's own overage, not
+    resolved here.
+  - CI (Node 20/22/24) and a real interactive Pi TTY check are the
+    parent's remaining items (not run from this worktree — no live Pi
+    session available here). The real-data render below is the closest
+    equivalent available from this worktree.
+  - Real render against `/Users/kal-el/Desktop/agentic-harness`
+    (read-only, live strategy, identity theme, `visibleWidth` verified
+    ≤ width at 100 and 160): both phases confirmed — phase 1 shows
+    `usage checking` and `TEAM · checking…` with all 7 real roles
+    already listed (Project Analyst, Orchestrator, Explorer, Architect,
+    Builder, Debugger, Reviewer); phase 2 shows real bars (`Codex 5h 75%
+    / W 82%`, `Claude S 44% / W 82%`, `Go 100% / 60% / 26%`) and
+    `TEAM · active` with the same 7 roles, no role blocked, no
+    `available` marker anywhere, side-by-side panels at both widths with
+    every line within the given width.
+
+### Post-review fixes (2026-09-23)
+
+The coordinator caught two defects against the approved design in the
+real render above, before this task was reported done:
+
+1. **TEAM columns not aligned.** The original `teamRowLine` used a
+   literal fixed `"  "` gap between role/model/via, so the model column
+   landed at a different visible column per row (e.g. `Orchestrator  Kimi
+   K3  opencode-go` vs. a much wider `Project Analyst` row) instead of
+   the approved aligned-columns design.
+2. **Footer overflow.** The TEAM footer's `/kairo-*` command list relied
+   on `cardBottom`'s own `truncateToWidth`, which cut `/kairo-memory`
+   mid-name at narrower widths, leaving a partial command plus a stray
+   `[0m` artifact visible in the real render at width 100.
+
+Fix:
+- `teamColumnWidths(rows, innerWidth)` pads role/model to the longest
+  real `visibleWidth` per column; only the model column ever truncates
+  (`truncateToWidth`) when space is tight — the role column never does.
+- `teamPanelFooter(panelWidth)` / `fitFooterCommands` now render only
+  whole `/kairo-*` commands that fit the real footer-label budget
+  (`footerLabelBudget`, mirroring `cardBottom`'s own arithmetic),
+  dropping every trailing command starting from the first that wouldn't
+  fit — never truncating one mid-name.
+- `renderKairoWorkspaceWidget` now computes panel widths up front via
+  the new exported `computeSideBySideWidths(width)` and threads them
+  into the TEAM body/footer builders, instead of building TEAM content
+  before knowing the panel width.
+
+TDD (true test-first this time, per the coordinator's correction):
+- RED (module-level, before any implementation change): added
+  `computeSideBySideWidths` to the test import and two new test blocks
+  (column alignment at widths 100/160; footer-never-cuts-a-command at
+  widths 60/100/160) to `test/workspace-widget.test.js`, then ran
+  `node --test test/workspace-widget.test.js` — failed immediately with
+  `SyntaxError: ... does not provide an export named
+  'computeSideBySideWidths'` (the whole file failed to load, 0 of the 18
+  tests ran) — a genuine RED observed before touching
+  `workspace-widget.js`.
+- GREEN: implemented `computeSideBySideWidths`, `teamColumnWidths`,
+  `padColumn`, `fitFooterCommands`, `footerLabelBudget`, and rewired
+  `renderKairoWorkspaceWidget`/`teamPanelBody`/`teamRowLine`/
+  `teamPanelFooter` to use them; `node --test test/workspace-widget.test.js`
+  → 18 pass, 0 fail (including the 5 new alignment/footer tests).
+- Related suites: `node --test test/workspace-widget.test.js
+  test/workspace-shell-extension.test.js test/workspace-shell-snapshot.test.js
+  test/usage-summary.test.js test/cockpit-view.test.js
+  test/project-overlay.test.js` → 187 pass, 0 fail.
+- Full suite: `npm test` → 2104 tests, 2103 pass, 1 skipped
+  (`KAIRO_LIVE_PI_TEST`, opt-in), 0 fail. (One transient failure on a
+  first run — `test/quick-ask.test.js`'s "codex's timeout resets on real
+  output" — an unrelated, pre-existing timing test not touched by this
+  slice; passed alone in isolation and on a clean full-suite rerun,
+  confirmed not a regression from this change.)
+- Commit: `9e2a8f9` fix(host): align TEAM columns and stop cutting footer
+  commands mid-name.
+- Real render re-verified against `/Users/kal-el/Desktop/agentic-harness`
+  at widths 100 and 160 (read-only, identity theme): TEAM's model column
+  now starts at the same visible position on every row (`Project
+  Analyst  GPT-6-Astra    codex`, `Orchestrator     Kimi K3        opencode-go`,
+  ...); the width-100 footer now reads `/kairo-team · /kairo-route ·
+  /kairo-usage` (whole commands only, `/kairo-memory` dropped cleanly,
+  no `[0m` artifact); width-160 footer shows all four commands in full.
+
+- `git log --oneline origin/main..HEAD` (updated) → `9e2a8f9`,
+  `d6b9d28`, `b1170fe`, `0d2bbc9`, `5b6d88b` (T1–T3 + fix), `34dbdc5`
+  (planning docs, pre-existing).
+- `git diff --stat origin/main` (updated, source+tests only, excluding
+  the planning doc) → 9 files changed, 833 insertions(+), 160
+  deletions(-) = 993 authored lines total across all commits in this
+  slice — further above the ~300-line forecast; still flagged for the
+  parent's `ask-on-risk` delivery decision, not resolved here.
+
+### Acceptance criteria
+
+- [x] All 7 roles visible with no truncation at common widths — verified
+  by the 60/100/160 width sweep and the real-project render.
+- [x] Two panels side by side when width allows; stacked otherwise; no
+  line exceeds the given width — verified by `visibleWidth(line) <= width`
+  assertions in the width sweep and by the real render.
+- [x] No per-row `available`; blocked roles highlighted and notified once
+  per refresh — verified by unit tests (including a RED mutation check
+  for the notify call) and confirmed absent from the real render (no
+  role happened to be blocked in the live project, so the highlighted/
+  notified path is unit-test-only evidence here, not TTY evidence).
+- [x] Cockpit output unchanged — `formatSubscriptionUsageSegments`,
+  `test/cockpit-view.test.js`, and `test/project-overlay.test.js` all
+  stayed green untouched throughout (150/174/182-pass runs above).
+
+### Progress
+
+- Branch: `feat/kairo-pi-p01-1-widget-ui` from `origin/main` 6b7b615, in
+  worktree `/Users/kal-el/Desktop/agentic-harness-worktrees/p01-1-widget-ui`.
+- Commits: `5b6d88b` (T1), `0d2bbc9` (T2), `b1170fe` (T3) — each its own
+  work-unit commit with tests; this doc update is its own commit
+  (`docs(odd): record P01.1 evidence`).
+- T1–T4 done with observed RED→GREEN (or RED-mutation→GREEN for T3's
+  notify behavior) evidence above.
+- Delivery: 856 authored lines across the three work commits, well above
+  the ~300-line-per-task planning heuristic — same pattern as P01. Not a
+  single-writer decision; flagged for the parent's `ask-on-risk` call
+  (single PR vs. chained split), per the cached delivery strategy.
+
+### Next step
+
+Parent: decide delivery (single PR vs. chained, per `ask-on-risk`), run
+CI across Node 20/22/24, and do the real interactive Pi TTY check
+(`kairo` against this project) — the read-only render in T4's evidence
+above already confirms both render phases and both target widths outside
+a live Pi session. No role was blocked in the real project at render
+time, so the blocked/BLOCKED/notify path has unit-test evidence only;
+worth a deliberate TTY check with a blocked role (e.g. via
+`--legacy-cockpit` state) if the parent wants direct visual confirmation.
+
