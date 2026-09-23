@@ -76,9 +76,18 @@ Tests are written first anyway (RED observed before each change).
 
 ## Delivery
 Branch: feat/kairo-team-auto-recovery (from main 1b27571). RDD: off (default).
-Forecast: ~900-1,100 authored lines across R1-R7, which exceeds the ~400-line
-budget, so the delivery strategy is `ask-on-risk` and the chain strategy is
-pending a user decision.
+Forecast: ~900-1,100 authored lines across R1-R8. Delivery: `ask-on-risk`, and
+the user chose chain strategy **feature-branch-chain** (2026-09-23): recovery
+is only safe complete, so nothing reaches main in pieces.
+- Tracker: `feat/kairo-team-auto-recovery` (this doc), with a draft/no-merge
+  tracker PR to main, merged only after R8 passes.
+- PR 1 `feat/kairo-team-auto-recovery-01-foundations` -> tracker: R1, R2, R3
+  (wording, fingerprint, lock; no routing change).
+- PR 2 `feat/kairo-team-auto-recovery-02-recovery` -> PR 1: R4, R5
+  (availability fallback, recovery orchestration).
+- PR 3 `feat/kairo-team-auto-recovery-03-pi-notices` -> PR 2: R6, R7, R8
+  (Pi route refresh, deduplicated notices, end-to-end).
+Each slice targets <=400 changed lines; any overage is reported, not squeezed.
 
 ## Tasks
 - [ ] R1 — Availability wording: `checkCandidate` and
@@ -118,4 +127,4 @@ pending a user decision.
 - No message claims exhaustion from a window-limited signal.
 
 ## Next step
-User picks the chain strategy (forecast > 400 lines), then R1.
+R1 on branch feat/kairo-team-auto-recovery-01-foundations.
