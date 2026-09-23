@@ -84,6 +84,10 @@ no chain. RDD: off (default) — ordinary checks only.
   cut could survive as a partial secret. Regression tests cover both paths
   (the tier-path test fails on the old code). Tests 15/15, full suite
   2151 pass / 0 fail / 1 skipped.
+  403 cause: customer_verification_required (Vercel needs a card on file).
+  User added it. SMOKE PASSED 2026-09-23 (`--limit 1`): en-light-1 -> jev
+  "light", confidence 0.78, 852 ms, 398 tokens, agrees with local and label.
+  The route works end to end. T4 stays OPEN until the full 23-case run.
   USER DECISION 2026-09-23: zero-dependency fetch client stays; NO SDK, NO
   automatic retries (23-case manual pilot doesn't justify a dependency).
   Runbook: a 429/529 leaves the case as a TRANSPORT failure (jevError,
