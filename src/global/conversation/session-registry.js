@@ -27,7 +27,9 @@ const LEGACY_SESSION_TITLE = "Previous Kairo session";
 // resolve to a path outside `conversations/`.
 const SESSION_ID_PATTERN = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|legacy-[0-9a-f]{16})$/;
 
-function isValidSessionId(id) {
+export const HOST_BINDING_SCHEMA = "kairo.host-binding/v1";
+
+export function isValidSessionId(id) {
   return typeof id === "string" && SESSION_ID_PATTERN.test(id);
 }
 
@@ -236,4 +238,20 @@ export async function resolveSessionRef(homeDir, projectRoot, ref, deps = {}) {
   const prefixMatches = sessions.filter((session) => session.id.startsWith(ref));
   if (prefixMatches.length > 1) throw new Error(`"${ref}" matches ${prefixMatches.length} real sessions — use a longer prefix.`);
   return prefixMatches[0] ?? null;
+}
+
+export async function ensureHostMetadata(homeDir, projectRoot, sessionId, deps = {}) {
+  const dir = sessionDirFor(homeDir, projectRoot, sessionId);
+  const path = join(dir, "host.json");
+  const existing = await readJsonOrNull(path, deps);
+  if (existing?.schema === HOST_BINDING_SCHEMA) return existing;
+  const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
+  const doc = {
+    schema: HOST_BINDING_SCHEMA,
+    host: "gentle-shell",
+    sessionId,
+    boundAt: new Date().toISOString()
+  };
+  await writeJson(path, doc);
+  return doc;
 }

@@ -7,12 +7,17 @@
 
 import { resolveHomeDir } from "../paths.js";
 import { resolveProjectRoot } from "../architect/architect-store.js";
-import { createSession, listSessions, resolveSessionRef } from "./session-registry.js";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+import { createSession, ensureHostMetadata, listSessions, resolveSessionRef } from "./session-registry.js";
 import { runCockpitCli } from "../cockpit/cli.js";
+import { launchGentleShell } from "../host/launch-gentle-shell.js";
 import { commandHeader } from "../brand/index.js";
 import { formatCliCommand } from "../brand/cli.js";
 import { printJson } from "../json-output.js";
 import { createReadlinePrompt, isInteractiveTerminal } from "../apply-confirmation.js";
+
+const DEFAULT_EXTENSION_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../host/extension");
 
 function formatSessionLabel(session) {
   const title = session.title ?? `(untitled, started ${session.createdAt})`;
@@ -46,10 +51,9 @@ export async function runKairoStart(options, deps = {}) {
   const homeDir = deps.homeDir ?? resolveHomeDir();
   const resolveRoot = deps.resolveProjectRoot ?? resolveProjectRoot;
   const createSessionImpl = deps.createSession ?? createSession;
-  const runCockpit = deps.runCockpitCli ?? runCockpitCli;
   const projectRoot = await resolveRoot(options.cwd);
   const session = await createSessionImpl(homeDir, projectRoot, {});
-  return runCockpit({ ...options, sessionId: session.id }, { runCockpitApp: deps.runCockpitApp, interactive: deps.interactive });
+  return launchBoundSession(options, session, deps, homeDir, projectRoot);
 }
 
 /**
@@ -67,7 +71,6 @@ export async function runKairoResume(options, deps = {}) {
   const resolveRoot = deps.resolveProjectRoot ?? resolveProjectRoot;
   const resolveRefImpl = deps.resolveSessionRef ?? resolveSessionRef;
   const listSessionsImpl = deps.listSessions ?? listSessions;
-  const runCockpit = deps.runCockpitCli ?? runCockpitCli;
   const projectRoot = await resolveRoot(options.cwd);
 
   if (options.sessionRef) {
@@ -75,7 +78,7 @@ export async function runKairoResume(options, deps = {}) {
     if (!session) {
       throw new Error(`No session matches "${options.sessionRef}". Run ${formatCliCommand("list")} to see real sessions.`);
     }
-    return runCockpit({ ...options, sessionId: session.id }, { runCockpitApp: deps.runCockpitApp, interactive: deps.interactive });
+    return launchBoundSession(options, session, deps, homeDir, projectRoot);
   }
 
   const sessions = await listSessionsImpl(homeDir, projectRoot);
@@ -83,7 +86,7 @@ export async function runKairoResume(options, deps = {}) {
     throw new Error(`No sessions yet. Run ${formatCliCommand("start")} to create one.`);
   }
   if (sessions.length === 1) {
-    return runCockpit({ ...options, sessionId: sessions[0].id }, { runCockpitApp: deps.runCockpitApp, interactive: deps.interactive });
+    return launchBoundSession(options, sessions[0], deps, homeDir, projectRoot);
   }
 
   const interactive = deps.interactive ?? isInteractiveTerminal();
@@ -104,8 +107,28 @@ export async function runKairoResume(options, deps = {}) {
     if (!Number.isInteger(index) || index < 1 || index > sessions.length) {
       throw new Error(`"${answer}" is not a valid choice — enter a number from 1 to ${sessions.length}.`);
     }
-    return runCockpit({ ...options, sessionId: sessions[index - 1].id }, { runCockpitApp: deps.runCockpitApp, interactive: deps.interactive });
+    return launchBoundSession(options, sessions[index - 1], deps, homeDir, projectRoot);
   } finally {
     await prompt.close?.();
   }
+}
+
+async function launchBoundSession(options, session, deps, homeDir, projectRoot) {
+  if (options.legacyCockpit) {
+    const runCockpit = deps.runCockpitCli ?? runCockpitCli;
+    return runCockpit({ ...options, sessionId: session.id }, {
+      runCockpitApp: deps.runCockpitApp,
+      interactive: deps.interactive
+    });
+  }
+  const launch = deps.launchGentleShell ?? launchGentleShell;
+  if (deps.ensureHostMetadata !== undefined || deps.launchGentleShell === undefined) {
+    const ensure = deps.ensureHostMetadata ?? ensureHostMetadata;
+    await ensure(homeDir, projectRoot, session.id);
+  }
+  return launch({
+    cwd: projectRoot,
+    sessionId: session.id,
+    extensionDir: deps.extensionDir ?? DEFAULT_EXTENSION_DIR
+  });
 }

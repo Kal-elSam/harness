@@ -11,6 +11,8 @@ test("short help shows core commands and points to --all", () => {
   assert.match(text, /kairo sync/);
   assert.match(text, /kairo update/);
   assert.match(text, /kairo doctor/);
+  assert.match(text, /Open the unified workspace/);
+  assert.doesNotMatch(text, /Open the cockpit/);
   assert.match(text, /help --all/);
   assert.doesNotMatch(text, /OPENROUTER_API_KEY/);
   assert.doesNotMatch(text, /kairo run --agent/);
@@ -26,6 +28,7 @@ test("full help groups commands and documents advanced surfaces", () => {
   assert.match(text, /--workspace-bound --cwd/);
   assert.match(text, /runs list/);
   assert.match(text, /Operations cockpit/);
+  assert.match(text, /Unified Gentle Shell workspace/);
   assert.match(text, /intelligence/);
   assert.match(text, /OPENROUTER_API_KEY/);
   assert.match(text, /Legacy aliases: harness/);

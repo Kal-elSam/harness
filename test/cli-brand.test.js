@@ -101,7 +101,7 @@ test("help output shows Kairo Runtime branding", () => {
   assert.doesNotMatch(cli.stdout, /Agentic Harness/);
 });
 
-test("bare kairo defaults to shell command", () => {
+test("bare kairo defaults to host command", () => {
   const { command } = parseArgs([]);
-  assert.equal(command, "shell");
+  assert.equal(command, "host");
 });
