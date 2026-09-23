@@ -43,9 +43,13 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   run exposed a non-interactive host regression; fixed it before final proof.
   GREEN: isolated `gentle-shell --list-models kairo` listed Kairo routes and
   the final full suite passed 2063/2063.
-- [x] KWS-07 Forward Pi flags through Gentle Shell after its `--` delimiter so
-  the host actually disables discovered Gentle resources. RED: launcher placed
-  Pi flags before the delimiter. GREEN: 11/11 focused host/extension tests.
+- [x] KWS-07 Replace Gentle Shell as Kairo's runtime launcher. The live
+  screenshot after `297118b` proves Gentle Shell always injects its own
+  package assets before forwarding Pi flags, so `--no-*` cannot suppress its
+  Context/Skills/Extensions/Themes inventory. Launch Pi directly with only
+  Kairo's explicit extension and a Kairo-owned agent home. RED: host test
+  proves `gentle-shell` is selected. GREEN: 12/12 focused host tests, including
+  a live direct-Pi `--list-models kairo` proof with no Gentle inventory.
 - [x] KWS-08 Replace the opening line-dump with a compact Kairo status surface;
   details remain behind explicit Kairo commands/overlays. RED: opening widget
   contained full TEAM/USAGE/command text. GREEN: 11/11 focused host/extension
@@ -53,8 +57,9 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
 
 ## Constraints
 
-- Pi/Gentle Shell is the renderer and interactive-session substrate; Kairo owns
-  product state, routing policy, subscriptions, and visual workspace content.
+- Pi is the renderer and interactive-session substrate; Gentle Shell remains
+  optional tooling, never Kairo's default runtime package. Kairo owns product
+  state, routing policy, subscriptions, and visual workspace content.
 - Reuse existing Kairo sources of truth; do not duplicate PROJECT TEAM,
   entitlement, session, quota, or Engram state.
 - No unreviewed third-party Pi package is a runtime dependency.
@@ -115,8 +120,17 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   resource inventory still leaked into the host and that the Kairo widget is
   visually overloaded. The delimiter bug is verified against `gentle-shell
   --help`; no third-party UI package is needed for the correction.
-- KWS-07 completed locally in `297118b` (`fix(host): forward Pi flags through
-  Gentle Shell`). The wrapper delimiter now precedes every Pi-only flag.
+- KWS-07 was reopened after live verification. `297118b` correctly forwards
+  Pi-only flags, but the actual Gentle Shell launcher unconditionally injects
+  its own package (`-e`, themes, skills, prompts) before those flags. The
+  screenshot therefore still shows its inventory and conflicts; Kairo must
+  bypass that wrapper for its default host.
+- KWS-07 completed locally: direct Pi now receives a Kairo-owned agent home
+  with `quietStartup`, the explicit Kairo extension, and all ambient resource
+  discovery/context disabled. The host metadata and CLI help now accurately
+  name Pi, not Gentle Shell. RED was observed when direct-Pi expectations
+  failed against the old wrapper; GREEN: 12/12 focused host checks and live
+  `pi --list-models kairo` output show Kairo routes with no Gentle inventory.
 - KWS-08 completed locally in `e4d67e8` (`feat(host): compact Kairo workspace
   opening`). Startup now presents project/session/team state only; usage,
   memory and assignment detail are opt-in commands.

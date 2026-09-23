@@ -16,13 +16,14 @@ test("missing cwd fails closed", async () => {
   );
 });
 
-test("cwd with metacharacters still spawns argv array with shell false", async () => {
+test("cwd with metacharacters launches direct Pi without Gentle package injection", async () => {
   const calls = [];
   await launchGentleShell({
     cwd: "/tmp/proj; rm -rf /",
     extensionDir,
     statImpl: okStat,
-    whichImpl: () => "/usr/bin/gentle-shell",
+    env: { HARNESS_HOME: "/tmp/kairo-host-test" },
+    whichImpl: (command) => (command === "pi" ? "/usr/bin/pi" : null),
     probeImpl: () => ({ ok: true, stdout: "0.85.1" }),
     spawnImpl: (command, args, options) => {
       calls.push({ command, args, options });
@@ -34,10 +35,12 @@ test("cwd with metacharacters still spawns argv array with shell false", async (
   assert.equal(typeof calls[0].command, "string");
   assert.ok(Array.isArray(calls[0].args));
   assert.ok(!String(calls[0].command).includes(";"));
-  assert.deepEqual(calls[0].args.slice(0, 8), [
-    "--isolated", "--", "-e", extensionDir,
-    "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes"
+  assert.deepEqual(calls[0].args, [
+    "-e", extensionDir,
+    "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files"
   ]);
+  assert.equal(calls[0].command, "/usr/bin/pi");
+  assert.equal(calls[0].options.env.PI_CODING_AGENT_DIR, "/tmp/kairo-host-test/.harness/pi-agent");
 });
 
 test("invalid session id is never passed to spawn", async () => {
@@ -48,7 +51,7 @@ test("invalid session id is never passed to spawn", async () => {
       extensionDir,
       sessionId: "../../etc",
       statImpl: okStat,
-      whichImpl: () => "/usr/bin/gentle-shell",
+      whichImpl: (command) => (command === "pi" ? "/usr/bin/pi" : null),
       probeImpl: () => ({ ok: true, stdout: "0.85.1" }),
       spawnImpl: () => {
         spawned = true;
@@ -66,9 +69,9 @@ test("explicit Kairo session binding is passed to the host environment, never ar
     cwd: "/tmp/proj",
     extensionDir,
     sessionId: "11111111-1111-4111-8111-111111111111",
-    env: { PATH: "/bin" },
+    env: { PATH: "/bin", HARNESS_HOME: "/tmp/kairo-session-test" },
     statImpl: okStat,
-    whichImpl: () => "/usr/bin/gentle-shell",
+    whichImpl: (command) => (command === "pi" ? "/usr/bin/pi" : null),
     probeImpl: () => ({ ok: true, stdout: "0.85.1" }),
     spawnImpl: (command, args, options) => {
       calls.push({ command, args, options });
@@ -76,10 +79,11 @@ test("explicit Kairo session binding is passed to the host environment, never ar
     }
   });
   assert.equal(calls[0].options.env.KAIRO_SESSION_ID, "11111111-1111-4111-8111-111111111111");
+  assert.equal(calls[0].options.env.PI_CODING_AGENT_DIR, "/tmp/kairo-session-test/.harness/pi-agent");
   assert.equal(calls[0].args.includes("11111111-1111-4111-8111-111111111111"), false);
 });
 
-test("unresolvable gentle-shell fails closed and names --legacy-cockpit", async () => {
+test("unresolvable Pi fails closed and names --legacy-cockpit", async () => {
   await assert.rejects(
     () => launchGentleShell({
       cwd: "/tmp/proj",
@@ -90,26 +94,26 @@ test("unresolvable gentle-shell fails closed and names --legacy-cockpit", async 
         throw new Error("should not spawn");
       }
     }),
-    /legacy-cockpit/
+    /Pi CLI|legacy-cockpit/
   );
 });
 
-const gentleShellPath = spawnSync("which", ["gentle-shell"], { encoding: "utf8" }).stdout.trim();
+const piPath = spawnSync("which", ["pi"], { encoding: "utf8" }).stdout.trim();
 
-test("live gentle-shell version gate and launch argv isolate Kairo resources", { skip: !gentleShellPath.startsWith("/") }, async () => {
+test("live Pi version gate and launch argv isolate Kairo resources", { skip: !piPath.startsWith("/") }, async () => {
   const calls = [];
   await launchGentleShell({
     cwd: process.cwd(),
     extensionDir: "/abs/kairo-extension",
-    whichImpl: () => gentleShellPath,
+    env: { HARNESS_HOME: "/tmp/kairo-live-host-test" },
+    whichImpl: (command) => (command === "pi" ? piPath : null),
     probeImpl: () => ({ ok: true, stdout: "0.85.1" }),
     spawnImpl: (command, args) => {
       calls.push({ command, args });
       return { status: 0 };
     }
   });
-  assert.equal(calls[0].command, gentleShellPath);
-  assert.ok(calls[0].args.includes("--isolated"));
+  assert.equal(calls[0].command, piPath);
   assert.ok(calls[0].args.includes("--no-extensions"));
   assert.ok(calls[0].args.includes("-e"));
 });
@@ -135,4 +139,23 @@ test("non-interactive terminal fails closed before resolving or spawning the hos
     /interactive terminal[\s\S]*--legacy-cockpit/
   );
   assert.deepEqual(calls, []);
+});
+
+test("live direct Pi host exposes Kairo routes without Gentle inventory", { skip: !piPath.startsWith("/") }, () => {
+  const result = spawnSync(
+    piPath,
+    [
+      "-e", new URL("../src/global/host/extension/", import.meta.url).pathname,
+      "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+      "--list-models", "kairo"
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, PI_CODING_AGENT_DIR: "/tmp/kairo-direct-pi-live-test" }
+    }
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^kairo\s+/m);
+  assert.doesNotMatch(result.stdout, /\[Skills\]|\[Extensions\]|Theme conflicts/);
 });

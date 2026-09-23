@@ -8,7 +8,7 @@ test("bare kairo resolves to unified host not shell", () => {
   assert.equal(isImplicitCommand, true);
   assert.equal(command, "host");
   assert.notEqual(command, "shell");
-  assert.equal(routeInteractiveHost({ command, options: {} }), "gentle-shell");
+  assert.equal(routeInteractiveHost({ command, options: {} }), "pi");
 });
 
 test("explicit shell still selects the Ink orchestrator", () => {
