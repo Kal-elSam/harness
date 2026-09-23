@@ -474,17 +474,221 @@ availability needs.
 
 ### Tasks
 
-- [ ] P01.2-T1 Split usage loading from availability loading (parallel
+- [x] P01.2-T1 Split usage loading from availability loading (parallel
   usage readers; availability via the service snapshot) and render each
   phase independently.
-- [ ] P01.2-T2 Last-known cache for usage and availability with age, stale
+  - `loadKairoUsageData({cwd})` (workspace-snapshot.js) runs
+    `readCodexUsage({cwd})`, `readClaudeUsage({})`, `readOpenCodeUsage({})`
+    in parallel — same call shapes service.js's own snapshot() uses —
+    and never throws (each reader already fails closed; `.catch(() =>
+    null)` guards the rest).
+  - `buildKairoWorkspaceSnapshot`/`loadKairoWorkspaceSnapshot` split their
+    single `intelligence` argument into `usageIntelligence`/
+    `availabilityIntelligence` (both default to the legacy `intelligence`
+    for back-compat).
+  - `extension/index.js`'s `session_start` handler fires `loadUsageData`
+    and `loadLiveData` independently (`Promise.all` over two `.then`
+    chains, each calling its own `rerender()`), so either can re-render
+    the widget first, in whichever order it resolves, without waiting on
+    the other.
+  - RED: added `loadKairoUsageData` to the workspace-shell-snapshot.js
+    test import plus new test blocks before writing any implementation —
+    `node --test test/workspace-shell-snapshot.test.js` failed with
+    `SyntaxError: ... does not provide an export named
+    'loadKairoUsageData'` (whole file failed to load). Added the
+    extension-side independent-resolution tests
+    (`test/workspace-shell-extension.test.js`) against the OLD two-phase
+    extension code — 4 of 9 failed (`expected 2, actual 1` /
+    `expected 3, actual 2` / missing-data assertions), a genuine RED.
+  - GREEN: `node --test test/workspace-shell-snapshot.test.js` → 15 pass,
+    0 fail; `node --test test/workspace-shell-extension.test.js` → 9
+    pass, 0 fail (including the two new independent-resolution-order
+    tests and the rewritten availability-failure test).
+  - Full suite: `npm test` → 2109 tests, 2108 pass, 1 skipped, 0 fail
+    (baseline 2104/2103/1/0 — net +5, all new, 0 regressions).
+  - Commit: `a20765a` feat(host): split usage loading from availability
+    loading in Pi widget.
+- [x] P01.2-T2 Last-known cache for usage and availability with age, stale
   handling, and tests.
-- [ ] P01.2-T3 Visual: thin bars, labeled windows, content-sized panels.
-- [ ] P01.2-T4 Evidence: render tests, full suite, CI, user TTY check.
+  - New `src/global/host/workspace-cache.js`: `readCachedUsage`/
+    `writeCachedUsage` (global, under `<home>/.harness/`) and
+    `readCachedAvailability`/`writeCachedAvailability` (per project,
+    under `<home>/.harness/sessions/<projectKey>/`), following
+    project-strategy-store.js's own conventions (schema field,
+    `writeAtomicJson`, `mkdir` recursive).
+  - `loadKairoWorkspaceSnapshot` reads the last-known cache internally
+    (only while its own side is still `undefined`/`null`) and writes a
+    freshly resolved value back (only for a real, non-null value) — no
+    cache-specific code needed in `extension/index.js`, since it already
+    forwards `usageIntelligence`/`availabilityIntelligence` from T1.
+  - `buildKairoWorkspaceSnapshot`/`workspaceSubscriptions`/`workspaceTeam`
+    gained a `cached`/`state: "cached"` branch with `cacheAgeMs`, used
+    only while the live side hasn't resolved (or explicitly failed) —
+    real live data always overwrites it once it arrives.
+  - `workspace-widget.js` renders the cached branch dim (`muted` tone,
+    "cached Xm ago" line for USAGE; "TEAM · cached Xm ago" title for
+    TEAM), with `BLOCKED` still in the error tone even while cached.
+  - RED (module-level, before implementation): `test/workspace-cache.test.js`
+    failed to load (`does not provide an export named 'readCachedUsage'`
+    etc.); new cache-branch tests in `test/workspace-shell-snapshot.test.js`
+    and `test/workspace-widget.test.js` failed genuinely (3 assertion
+    failures in the snapshot file, 2 in the widget file) against the
+    pre-cache code.
+  - GREEN: `node --test test/workspace-cache.test.js` → 8 pass, 0 fail
+    (round-trip, malformed/missing file returns `null`, global-vs-
+    per-project isolation, real atomic write verified on disk in a temp
+    home). `node --test test/workspace-shell-snapshot.test.js` → 24
+    pass, 0 fail. `node --test test/workspace-widget.test.js` → 27 pass
+    (at this point, before T3's additional tests), 0 fail.
+- [x] P01.2-T3 Visual: thin bars, labeled windows, content-sized panels.
+  - `paintUsageBar` now paints `━` (remaining, level-colored) and `─`
+    (used, muted) instead of the old solid `█`/`░` block bar that "merged
+    into a blob" per the reported defect.
+  - `usage-summary.js`'s `goUsageWindows` labels Go's real `rolling`/
+    `weekly`/`monthly` window names `roll`/`W`/`M` inside
+    `buildUsageModel` (consumed directly by the widget); the legacy
+    cockpit's `formatSubscriptionUsageSegments`/`formatProviderSegment`
+    deliberately keep Go unlabeled (`showLabel = provider.name !== "Go"`)
+    so its byte-identical terse-bar contract (`test/cockpit-view.test.js`)
+    is preserved — this was a real regression caught during T3 (see
+    below) and fixed before commit.
+  - `computeSideBySideWidths(width, usageBody, teamRows)` now sizes each
+    panel to its OWN content (`naturalContentWidth`/
+    `desiredTeamContentWidth`, including a reserved `BLOCKED` suffix
+    width) instead of a naive half-width split; side by side only when
+    both desired widths plus a 2-column gap fit the given width, both
+    equal to the full width when stacked — so a line can never exceed
+    the given width either way.
+  - RED: added the bar-character, label, and content-sizing tests to
+    `test/workspace-widget.test.js` and the Go-label test to
+    `test/usage-summary.test.js` before touching `workspace-widget.js`/
+    `usage-summary.js` — `node --test test/workspace-widget.test.js` → 3
+    genuine failures (bar characters, content-sized-at-160, the new
+    `computeSideBySideWidths` content-sizing test); `node --test
+    test/usage-summary.test.js` → 1 genuine failure (Go label mapping).
+  - GREEN (first pass): implementing the bar/label/sizing changes turned
+    all of the above green, but broke 2 PRE-EXISTING tests in
+    `test/cockpit-view.test.js` (the legacy compact USAGE bar started
+    showing Go labels it never had) — caught by running the related
+    suites together, not by the new tests themselves. Fixed by keeping
+    `formatWindowSegment`/`formatProviderSegment` label-free for Go (see
+    above), with a new regression test added
+    (`test/usage-summary.test.js`: "formatSubscriptionUsageSegments
+    never prints Go's roll/W/M labels").
+  - Also fixed one more RED→GREEN cycle: a `markerTheme()`-based existing
+    test ("shows no per-row 'available' marker, but colors a blocked row
+    with BLOCKED") started failing once TEAM panels became tightly
+    content-sized, because `markerTheme` wraps text in literal
+    `<role>...</role>` characters (unlike a real ANSI theme, whose escape
+    codes are zero-width to `visibleWidth`), which are counted as real
+    content by the exact-fit column math and got truncated by
+    `cardLine`. Fixed by rendering that specific assertion at a width
+    that forces the stacked (full-width) layout instead of the
+    content-sized side-by-side one — the per-row marker/tone behavior
+    under test doesn't depend on panel width, and stacked mode gives the
+    row generous real headroom regardless of the test double's overhead.
+    This is a test-only artifact; real (ANSI) themes add zero visible
+    width, so production panels are unaffected.
+  - GREEN (final): `node --test test/workspace-widget.test.js` → 27
+    pass, 0 fail; `node --test test/usage-summary.test.js
+    test/cockpit-view.test.js test/workspace-widget.test.js` → 118 pass,
+    0 fail.
+  - Commit: `8dc4a0f` feat(host): add last-known cache and redesign the
+    Pi widget's usage bars (T2+T3 combined — see the "single writer"
+    note below).
+- [x] P01.2-T4 Evidence: render tests, full suite, CI, user TTY check.
+  - Render tests: `test/workspace-widget.test.js` sweeps widths
+    60/100/160 for both "no line exceeds width, all 7 roles present" and
+    the new "panels are sized to their own content, never stretched to
+    half the terminal" (with an explicit combined-width-vs-full-width
+    check at 160); a dedicated "labels every usage window, including
+    Go's roll/W/M" test; two `computeSideBySideWidths` unit tests
+    (content-sized side-by-side, and forced stacking with no width
+    overflow).
+  - Full suite: `npm test` → 2137 tests, 2136 pass, 1 skipped
+    (`KAIRO_LIVE_PI_TEST`, opt-in), 0 fail. (Baseline before this slice:
+    2104/2103/1/0 — net +33 tests, all new, 0 regressions. The
+    documented pre-existing flake, `test/quick-ask.test.js`'s "codex's
+    timeout resets on real output", was not observed on this run.)
+  - `git log --oneline origin/main..HEAD` → `8dc4a0f` (T2+T3), `a20765a`
+    (T1), `e94d32d` (planning docs, pre-existing).
+  - `git diff --stat origin/main -- src test` → 10 files changed, 961
+    insertions(+), 107 deletions(-) = 1068 authored lines — well above
+    the ~400-line planning heuristic, same pattern as P01/P01.1; flagged
+    for the parent's `ask-on-risk` delivery decision, not resolved here.
+  - CI (Node 20/22/24) and a real interactive Pi TTY check are the
+    parent's remaining items (not run from this worktree — no live Pi
+    session available here).
+  - Real timing + render against `/Users/kal-el/Desktop/agentic-harness`
+    (read-only; `loadKairoUsageData`/`loadKairoLiveData` called directly,
+    so no cache was written to the user's real home): usage ready at
+    **+6.2s**, availability ready at **+23.3s** — matching the "Why"
+    section's measured expectations (usage ~5s, availability ~20s).
+    Rendered at widths 100 and 160 with an identity theme after both
+    resolved: identical content-sized panels at both widths (proving
+    they're no longer stretched to the terminal width), real bars
+    (`Codex 5h ━━━━━━━━── 75%`, `W ━━━━━━━━── 82%`; `Claude S
+    ━───────── 7%`, `W ━━━━━━━━── 78%`; `Go roll ━━━━━━━━━━ 100%`, `W
+    ━━━━━━──── 60%`, `M ━━━─────── 26%`), Go's `roll`/`W`/`M` labels
+    visible, `TEAM · active` with all 7 real roles
+    (Project Analyst/Orchestrator/Explorer/Architect/Builder/Debugger/
+    Reviewer), no role blocked, no `available` marker, no line exceeding
+    either width.
+
+### Single-writer note
+
+This slice was implemented by one delegated writer covering T1–T4. T1
+landed as its own commit (`a20765a`). T2 and T3 were written and tested
+sequentially against the same shared module (`workspace-widget.js`, whose
+dim/cache rendering (T2) and bar/label/sizing rewrite (T3) touch
+overlapping functions), so by the time both were green there was no clean
+hunk-level split left that wouldn't risk a broken intermediate commit;
+they were committed together (`8dc4a0f`) with a message documenting both.
+Future slices with foreseeably overlapping edits in one file should
+commit after each task before starting the next to keep the one-commit-
+per-task convention intact.
 
 ### Acceptance criteria
 
-- With a warm cache the widget is fully drawn on start; fresh usage within
-  ~5 s; availability later without blocking usage.
-- Bars read as separate one-line bars; every window labeled.
-- Panels do not stretch to half the terminal; no line exceeds the width.
+- [x] With a warm cache the widget is fully drawn on start; fresh usage
+  within ~5 s; availability later without blocking usage — verified by
+  the extension's independent-resolution tests (T1) and the cache
+  round-trip/dim-render tests (T2); the real render above additionally
+  confirms usage resolves in ~6s and availability in ~23s, with usage
+  never waiting on availability.
+- [x] Bars read as separate one-line bars; every window labeled —
+  verified by the bar-character and label tests (T3) and the real render
+  above.
+- [x] Panels do not stretch to half the terminal; no line exceeds the
+  width — verified by the content-sizing tests and the width-sweep tests
+  (T3/T4), and by the real render showing identical panel widths at 100
+  and 160.
+
+### Progress
+
+- Branch: `feat/kairo-pi-p01-2-fast-widget` from `origin/main` b5f601e, in
+  worktree `/Users/kal-el/Desktop/agentic-harness-worktrees/p01-2-fast-widget`.
+- Commits: `a20765a` (T1), `8dc4a0f` (T2+T3, see the single-writer note
+  above) — this doc update is its own commit (`docs(odd): record P01.2
+  evidence`).
+- T1–T4 done with observed RED→GREEN evidence above, including two
+  regressions caught and fixed mid-T3 (the legacy cockpit's Go-label
+  leak, and a `markerTheme()` test-double width artifact) before
+  reporting done.
+- Delivery: 1068 authored lines across the two work commits, well above
+  the ~400-line-per-task planning heuristic — same pattern as P01/P01.1.
+  Not a single-writer decision; flagged for the parent's `ask-on-risk`
+  call (single PR vs. chained split), per the cached delivery strategy.
+
+### Next step
+
+Parent: decide delivery (single PR vs. chained, per `ask-on-risk`), run
+CI across Node 20/22/24, and do the real interactive Pi TTY check
+(`kairo` against this project) — the read-only render in T4's evidence
+above already confirms real timing (usage ~6s, availability ~23s) and
+both target widths outside a live Pi session. No role was blocked in the
+real project at render time, so the cached-and-stale and blocked-while-
+cached paths have unit-test evidence only; worth a deliberate TTY check
+(e.g. airplane mode for the usage readers, or a blocked role via
+`--legacy-cockpit` state) if the parent wants direct visual confirmation
+of the last-known cache actually going stale.
