@@ -207,6 +207,38 @@ test("client errors never contain the key — status, tier echo, fetch rejection
   });
 });
 
+test("rate limits (429/529) are transport failures, never classification errors", async () => {
+  // User decision for T4: no automatic retries. A rate-limited case stays a
+  // transport failure — excluded from BOTH accuracy denominators, reported in
+  // jevFailures — and the batch is not relaunched immediately (TypeSafe asks
+  // for exponential backoff when retrying).
+  for (const status of [429, 529]) {
+    const classify = createTypeSafeTransport({
+      apiKey: CANARY_KEY,
+      fetchImpl: async () => ({ ok: false, status }),
+    });
+    await assert.rejects(classify("x"), (error) => {
+      assert.match(error.message, new RegExp(`status ${status}`));
+      assert.ok(!error.message.includes(CANARY_KEY));
+      return true;
+    });
+  }
+
+  const rateLimited = async () => {
+    throw new Error("TypeSafe request failed with status 429");
+  };
+  const { summary, rows } = (await runEvaluation({ fixture, jevClassify: rateLimited })).clear;
+  for (const row of rows) {
+    assert.equal(row.jev, null); // never a fabricated tier
+    assert.match(row.jevError, /status 429/);
+  }
+  assert.equal(summary.jevFailures, 3);
+  assert.deepEqual(summary.jevFailureIds, ["c1", "c2", "c3"]);
+  assert.equal(summary.scored, 0);
+  assert.equal(summary.localAccuracy, null);
+  assert.equal(summary.jevAccuracy, null);
+});
+
 test("CLI without TYPESAFE_API_KEY fails closed with the manual-run message (no network)", async () => {
   const env = { ...process.env };
   delete env.TYPESAFE_API_KEY;

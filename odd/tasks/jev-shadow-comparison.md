@@ -56,9 +56,14 @@ no chain. RDD: off (default) — ordinary checks only.
   network, key canary never appears in output/errors. 8/8 green; regression
   test/execution-router.test.js 37/37 green. Commit f1f2e6b.
 - [ ] T4 — (PENDING, future) Manual real run against api.typesafe.ai after
-  explicit user confirmation. Endpoint/payload shape in typesafe-client.mjs is
-  an UNVERIFIED assumption marked VERIFY (T4); TYPESAFE_BASE_URL overrides the
-  base URL without code changes.
+  explicit user confirmation. Contract verified against docs.typesafe.ai/api.
+  USER DECISION 2026-09-23: zero-dependency fetch client stays; NO SDK, NO
+  automatic retries (23-case manual pilot doesn't justify a dependency).
+  Runbook: a 429/529 leaves the case as a TRANSPORT failure (jevError,
+  excluded from both accuracy denominators — pinned by test) never as a Jev
+  misclassification; do NOT relaunch the batch immediately — TypeSafe
+  requires exponential backoff when retrying. If rate limits appear
+  frequently, add a bounded backoff before ever considering the SDK.
 - [ ] T5 — (PENDING, future) Human review of disagreements, especially risky
   misclassifications; only then consider an integration proposal.
 
@@ -88,5 +93,5 @@ no chain. RDD: off (default) — ordinary checks only.
 
 ## Next step
 Await explicit user confirmation for T4 (manual real API run). Never run it
-automatically. Open question for T4: keep the zero-dependency fetch client
-(manual retry on 429/529) or adopt @typesafe-ai/sdk (auto-retry, new dep).
+automatically. T4 approach decided by the user: zero-dep fetch client, no
+auto-retry, 429/529 = transport failure + backoff before any relaunch.
