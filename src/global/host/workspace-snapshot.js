@@ -6,7 +6,7 @@ import { readProjectStrategy } from "../conversation/project-strategy-store.js";
 import { getSession, isValidSessionId } from "../conversation/session-registry.js";
 import { listProviderUsage } from "../runtime/usage-store.js";
 import { resolveAssignmentAvailability } from "../conversation/assignment-availability.js";
-import { formatSubscriptionUsageSegments } from "../conversation/usage-summary.js";
+import { buildUsageModel, formatSubscriptionUsageSegments } from "../conversation/usage-summary.js";
 import { createConversationService } from "../conversation/service.js";
 
 export const KAIRO_WORKSPACE_SNAPSHOT_SCHEMA = "kairo.workspace-shell/v1";
@@ -101,11 +101,17 @@ function workspaceTeam(strategy, intelligence) {
  * @param {object|null|undefined} intelligence
  */
 function workspaceSubscriptions(intelligence) {
-  if (intelligence === undefined) return { state: "checking", segments: [] };
-  if (intelligence === null) return { state: "unknown", segments: [] };
+  if (intelligence === undefined) return { state: "checking", segments: [], usageModel: [] };
+  if (intelligence === null) return { state: "unknown", segments: [], usageModel: [] };
+  const usage = { usage: intelligence.usage, providers: intelligence.providers };
   return {
     state: "ready",
-    segments: formatSubscriptionUsageSegments({ usage: intelligence.usage, providers: intelligence.providers })
+    segments: formatSubscriptionUsageSegments(usage),
+    // Additive: the same structured providers -> windows model
+    // formatSubscriptionUsageSegments' text is built from (see
+    // usage-summary.js), so the Pi widget can bar-render it directly
+    // instead of re-parsing `segments`.
+    usageModel: buildUsageModel(usage)
   };
 }
 

@@ -182,7 +182,7 @@ test("loadKairoLiveData never reports available when the snapshot has no real el
 
 test("workspace snapshot subscriptions default to checking, then real segments, then unknown on failure", () => {
   const checking = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY });
-  assert.deepEqual(checking.subscriptions, { state: "checking", segments: [] });
+  assert.deepEqual(checking.subscriptions, { state: "checking", segments: [], usageModel: [] });
 
   const ready = buildKairoWorkspaceSnapshot({
     projectRoot: "/work/agentic-harness",
@@ -199,7 +199,18 @@ test("workspace snapshot subscriptions default to checking, then real segments, 
     "Claude Pro · usage unknown",
     "Go usage unknown"
   ]);
+  // Same structured model formatSubscriptionUsageSegments builds its text
+  // from (see usage-summary.js) — the widget bar-renders this directly
+  // instead of re-parsing the text segments above.
+  assert.deepEqual(ready.subscriptions.usageModel[0], {
+    name: "Codex",
+    windows: [
+      { label: "5h", remainingPercent: 58, level: "normal" },
+      { label: "W", remainingPercent: 86, level: "normal" }
+    ],
+    fallbackStatus: "usage unknown"
+  });
 
   const failed = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY, intelligence: null });
-  assert.deepEqual(failed.subscriptions, { state: "unknown", segments: [] });
+  assert.deepEqual(failed.subscriptions, { state: "unknown", segments: [], usageModel: [] });
 });

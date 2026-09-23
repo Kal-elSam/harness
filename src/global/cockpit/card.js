@@ -73,14 +73,26 @@ export function cardLine(text, tone, theme, width) {
  * @param {string} tone
  * @param {{fg(role:string,text:string):string}} theme
  * @param {number} width
+ * @param {string} [label] - an optional footer label mirrored into the
+ *   bottom rule, the same way cardTop mirrors its title into the top rule
+ *   (e.g. "session: none · ask", "/kairo-team · /kairo-route"). Omitted
+ *   entirely, this renders the plain rule it always has.
  * @returns {string}
  */
-export function cardBottom(tone, theme, width) {
+export function cardBottom(tone, theme, width, label) {
   const targetWidth = Math.max(0, Math.floor(width));
   if (targetWidth === 0) return "";
   const left = theme.fg(tone, "╰");
   if (targetWidth === 1) return left;
-  return left + theme.fg(FRAME_ROLE, `${rule(targetWidth - 2)}╯`);
+  if (!label || targetWidth < 6) return left + theme.fg(FRAME_ROLE, `${rule(targetWidth - 2)}╯`);
+
+  const head = `─ ${label} `;
+  const headWidth = visibleWidth(head);
+  const maxHeadWidth = Math.max(0, targetWidth - 3);
+  const clippedHead = headWidth <= maxHeadWidth ? head : truncateToWidth(head, maxHeadWidth, "");
+  const clippedWidth = headWidth <= maxHeadWidth ? headWidth : visibleWidth(clippedHead);
+  const fill = rule(Math.max(0, targetWidth - clippedWidth - 2));
+  return left + theme.fg(FRAME_ROLE, `${clippedHead}${fill}╯`);
 }
 
 /** @param {number} width */
@@ -100,12 +112,14 @@ export function cardInnerWidth(width) {
  * @param {number} width
  * @param {string[]} contentLines - lines already sized to cardInnerWidth(width)
  * @param {number} [targetLineCount]
+ * @param {string} [footer] - an optional footer label mirrored into the
+ *   bottom rule (see cardBottom's own doc).
  * @returns {string[]}
  */
-export function renderPanel(title, tone, theme, width, contentLines, targetLineCount = contentLines.length) {
+export function renderPanel(title, tone, theme, width, contentLines, targetLineCount = contentLines.length, footer) {
   const padded = Array.from({ length: targetLineCount }, (_, i) => contentLines[i] ?? "");
   const lines = [cardTop(title, tone, theme, width)];
   for (const line of padded) lines.push(cardLine(line, tone, theme, width));
-  lines.push(cardBottom(tone, theme, width));
+  lines.push(cardBottom(tone, theme, width, footer));
   return lines;
 }
