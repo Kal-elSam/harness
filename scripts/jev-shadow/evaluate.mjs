@@ -29,6 +29,9 @@ export async function runEvaluation({ fixture, jevClassify }) {
   for (const task of fixture.ambiguous ?? []) ambiguousRows.push(await evalRow(task, jevClassify));
   return {
     generatedAt: new Date().toISOString(),
+    // Fixture labels are human-judgment labels pending human review (T5) —
+    // not verified ground truth. Read accuracy numbers accordingly.
+    labels: "provisional",
     clear: { rows: clearRows, summary: summarize(clearRows) },
     ambiguous: {
       rows: ambiguousRows,
@@ -50,28 +53,42 @@ async function evalRow(task, jevClassify) {
     row.tokens = jev.usage ? (jev.usage.inputTokens ?? 0) + (jev.usage.outputTokens ?? 0) : null;
     row.agree = row.jev === row.local;
   } catch (error) {
-    // One bad Jev response must not kill the whole evaluation.
+    // One bad Jev response must not kill the whole evaluation. Secret
+    // redaction is the transport's job (the bundled client redacts the key
+    // from every error it throws); here we only bound the stored message.
     row.jev = null;
-    row.jevError = error.message;
+    row.jevError = truncateError(error?.message ?? String(error));
     row.agree = null;
   }
   return row;
 }
 
+function truncateError(message, max = 200) {
+  const text = String(message);
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
 function summarize(rows) {
   const answered = rows.filter((row) => row.jev !== null);
   const agreements = answered.filter((row) => row.agree).length;
-  const withExpected = rows.filter((row) => row.expected);
-  const localCorrect = withExpected.filter((row) => row.local === row.expected).length;
-  const jevScored = withExpected.filter((row) => row.jev !== null);
-  const jevCorrect = jevScored.filter((row) => row.jev === row.expected).length;
+  const labeled = rows.filter((row) => row.expected);
+  // Both classifiers are scored over the SAME cases — labeled rows where Jev
+  // actually answered — so the comparison is fair. Failed answers are
+  // reported explicitly, never silently dropped from the denominator.
+  const scored = labeled.filter((row) => row.jev !== null);
+  const failed = labeled.filter((row) => row.jev === null);
+  const localCorrect = scored.filter((row) => row.local === row.expected).length;
+  const jevCorrect = scored.filter((row) => row.jev === row.expected).length;
   return {
     total: rows.length,
-    jevFailures: rows.length - answered.length,
+    labeled: labeled.length,
+    scored: scored.length,
+    jevFailures: failed.length,
+    jevFailureIds: failed.map((row) => row.id),
     agreements,
     agreementRate: answered.length ? agreements / answered.length : null,
-    localAccuracy: withExpected.length ? localCorrect / withExpected.length : null,
-    jevAccuracy: jevScored.length ? jevCorrect / jevScored.length : null,
+    localAccuracy: scored.length ? localCorrect / scored.length : null,
+    jevAccuracy: scored.length ? jevCorrect / scored.length : null,
     disagreements: answered.filter((row) => !row.agree).map((row) => row.id),
   };
 }

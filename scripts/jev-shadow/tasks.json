@@ -1,5 +1,5 @@
 {
-  "description": "Labeled task set for the Jev shadow comparison. Labels are HUMAN ground truth about real task complexity, not derived from classifyEffort output. No private code, secrets, or real conversations.",
+  "description": "Labeled task set for the Jev shadow comparison. Labels are PROVISIONAL human-judgment labels (not derived from classifyEffort output) pending human review in task T5 — they are not verified ground truth. No private code, secrets, or real conversations.",
   "clear": [
     { "id": "en-light-1", "text": "What does this project do?", "language": "en", "expected": "light" },
     { "id": "en-light-2", "text": "Fix the typo in the README title", "language": "en", "expected": "light" },
