@@ -55,8 +55,16 @@ no chain. RDD: off (default) — ordinary checks only.
 - [x] T3 — Mock tests `test/jev-shadow-eval.test.js`: canned transport, no
   network, key canary never appears in output/errors. 8/8 green; regression
   test/execution-router.test.js 37/37 green. Commit f1f2e6b.
-- [ ] T4 — (PENDING, future) Manual real run against api.typesafe.ai after
-  explicit user confirmation. Contract verified against docs.typesafe.ai/api.
+- [~] T4 — FIRST ATTEMPT 2026-09-23 (user-run, key in their shell): all 23
+  cases failed with HTTP 401 (invalid/missing API key per TypeSafe docs).
+  Fail-closed design held: 0 fabricated tiers, scored 0, accuracies null, all
+  failures reported as transport (report.json, no secrets in it). A 401
+  points at AUTH, not payload (a bad payload would be 422). Likely causes:
+  key is not a direct TypeSafe key (the plan's Vercel-Gateway assumption),
+  expired/revoked, or whitespace/quoting when exporting. Next: user verifies
+  the key in console.typesafe.ai/settings/keys and can probe auth with the
+  documented GET /v1/models, then re-runs. T4 stays OPEN until a run
+  produces real classifications.
   USER DECISION 2026-09-23: zero-dependency fetch client stays; NO SDK, NO
   automatic retries (23-case manual pilot doesn't justify a dependency).
   Runbook: a 429/529 leaves the case as a TRANSPORT failure (jevError,
