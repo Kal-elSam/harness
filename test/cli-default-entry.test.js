@@ -84,7 +84,7 @@ test("bare conversation and ui converge on the host when no legacy flag is suppl
   for (const command of ["conversation", "ui"]) {
     const cli = runHarness([command], { homeDir });
     assert.notEqual(cli.status, 0, cli.stderr);
-    assert.match(cli.stderr, /gentle-shell.*not on PATH/i);
+    assert.match(cli.stderr, /Kairo workspace requires an interactive terminal/i);
     assert.match(cli.stderr, /legacy-cockpit/i);
   }
 });

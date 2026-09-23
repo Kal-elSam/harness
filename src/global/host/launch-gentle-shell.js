@@ -15,12 +15,18 @@ export async function launchGentleShell({
   cwd,
   extensionDir,
   sessionId = null,
+  interactive = true,
   env = process.env,
   spawnImpl = defaultSpawn,
   whichImpl = defaultWhich,
   probeImpl = defaultProbe,
   statImpl = statSync
 } = {}) {
+  if (interactive === false) {
+    throw new Error(
+      "The Kairo workspace requires an interactive terminal (TTY). Use --legacy-cockpit for the previous cockpit."
+    );
+  }
   assertDirectoryCwd(cwd, statImpl);
   if (sessionId != null && !isValidSessionId(sessionId)) {
     throw new Error(`Invalid session id "${sessionId}" — refusing to spawn.`);

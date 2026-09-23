@@ -98,7 +98,8 @@ export async function runCli(argv) {
       }
       await launchGentleShell({
         cwd: optionsWithPolicy.cwd,
-        extensionDir: resolve(__dirname, "global/host/extension")
+        extensionDir: resolve(__dirname, "global/host/extension"),
+        interactive: optionsWithPolicy.interactive
       });
       return;
     }
@@ -148,7 +149,8 @@ export async function runCli(argv) {
         }
         await launchGentleShell({
           cwd: optionsWithPolicy.cwd,
-          extensionDir: resolve(__dirname, "global/host/extension")
+          extensionDir: resolve(__dirname, "global/host/extension"),
+          interactive: optionsWithPolicy.interactive
         });
         return;
       }
@@ -158,7 +160,8 @@ export async function runCli(argv) {
       if (!optionsWithPolicy.legacyCockpit) {
         await launchGentleShell({
           cwd: optionsWithPolicy.cwd,
-          extensionDir: resolve(__dirname, "global/host/extension")
+          extensionDir: resolve(__dirname, "global/host/extension"),
+          interactive: optionsWithPolicy.interactive
         });
         return;
       }
