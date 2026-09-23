@@ -188,6 +188,14 @@ no chain. RDD: off (default) — ordinary checks only.
   5/6, 2/3 at every threshold. The earlier "hybrid 7/8, 3/4" was an artifact
   of scoring the 429 as a standard decision. Next: re-run into a new file to
   recover storage-es (local 18/18 stays in-sample).
+- [x] T18 — Rebased on main 1b27571 (#342: English "recovery code" risk
+  keyword). The contrast test now pins BOTH recovery-code cases as local hits
+  (local separates both storage pairs). The simulator unit fixture's "silent
+  heavy" example moved to "backup phrase", which is still keyword-free, so it
+  keeps testing the same thing. Router hash is now a5f91be1b0b9: the
+  simulator correctly REFUSES the 22:34Z report (router 9819b7d64a06); a new
+  run is needed for any current-router comparison. Tests: Jev 26/26; Jev +
+  router 71/71 on Node 20.14; full suite 2170 pass / 0 fail / 1 skipped.
 - [ ] T5 — (PENDING, future) Human review of disagreements, especially risky
   misclassifications; only then consider an integration proposal.
 

@@ -35,7 +35,7 @@ const report = {
     rows: [
       { id: "c-light", text: "Fix a typo", expected: "light", local: "light", jev: "light", confidence: 0.95 },
       { id: "c-heavy-risk", text: "Rotate the production credential", expected: "heavy", local: "heavy", jev: "standard", confidence: 0.9 },
-      { id: "c-heavy-silent", text: "Store the recovery code", expected: "heavy", local: "light", jev: "standard", confidence: 0.8 },
+      { id: "c-heavy-silent", text: "Store the backup phrase", expected: "heavy", local: "light", jev: "standard", confidence: 0.8 },
       { id: "c-standard-unsure", text: "Add a settings page", expected: "standard", local: "light", jev: "light", confidence: 0.3 },
     ],
   },
@@ -45,7 +45,7 @@ const report = {
       { id: "p1-light", pair: "p1", text: "Copy given pairs", expected: "light", local: "standard", jev: "light", confidence: 0.99 },
       { id: "p1-standard", pair: "p1", text: "Read tags then copy", expected: "standard", local: "standard", jev: "standard", confidence: 0.47 },
       { id: "p2-standard", pair: "p2", text: "Store display name", expected: "standard", local: "standard", jev: "standard", confidence: 0.77 },
-      { id: "p2-heavy", pair: "p2", text: "Store recovery code", expected: "heavy", local: "standard", jev: "standard", confidence: 0.76 },
+      { id: "p2-heavy", pair: "p2", text: "Store backup phrase", expected: "heavy", local: "standard", jev: "standard", confidence: 0.76 },
     ],
   },
 };

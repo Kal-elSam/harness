@@ -443,14 +443,18 @@ test("real contrast fixture: paired, single-language, and length never decides a
   }
 });
 
-test("contrast set under the CURRENT router: only the Spanish recovery code is a local keyword hit", async () => {
+test("contrast set under the CURRENT router: only the recovery-code cases are local keyword hits", async () => {
   // The "8/8 local standard, zero keyword hits" control held for the router
   // before the Spanish risk fix (main b3e2725). Since #341 (5fc1c29)
-  // es-contrast-heavy-2 hits "codigo de recuperacion" and is heavy, so the
-  // local classifier separates storage-es. Reports record routerSha256 so
-  // runs from the two routers are never compared as one baseline.
+  // es-contrast-heavy-2 hits "codigo de recuperacion"; since #342 (1b27571)
+  // en-contrast-heavy-2 hits "recovery code". Both are heavy, so the local
+  // classifier now separates both storage pairs. Reports record routerSha256
+  // so runs from different routers are never compared as one baseline.
   const data = JSON.parse(await readFile(FIXTURE, "utf8"));
-  const expectedLocal = { "es-contrast-heavy-2": { tier: "heavy", hits: ["codigo de recuperacion"] } };
+  const expectedLocal = {
+    "es-contrast-heavy-2": { tier: "heavy", hits: ["codigo de recuperacion"] },
+    "en-contrast-heavy-2": { tier: "heavy", hits: ["recovery code"] },
+  };
   for (const task of data.contrast) {
     const profile = classifyTask(task.text);
     const hits = [...profile.repetitive, ...profile.reasoning, ...profile.multiFile, ...profile.risk];
