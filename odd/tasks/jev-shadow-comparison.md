@@ -55,7 +55,7 @@ no chain. RDD: off (default) — ordinary checks only.
 - [x] T3 — Mock tests `test/jev-shadow-eval.test.js`: canned transport, no
   network, key canary never appears in output/errors. 8/8 green; regression
   test/execution-router.test.js 37/37 green. Commit f1f2e6b.
-- [~] T4 — FIRST ATTEMPT 2026-09-23 (user-run, key in their shell): all 23
+- [x] T4 — FIRST ATTEMPT 2026-09-23 (user-run, key in their shell): all 23
   cases failed with HTTP 401 (invalid/missing API key per TypeSafe docs).
   Fail-closed design held: 0 fabricated tiers, scored 0, accuracies null, all
   failures reported as transport (report.json, no secrets in it). A 401
@@ -87,7 +87,16 @@ no chain. RDD: off (default) — ordinary checks only.
   403 cause: customer_verification_required (Vercel needs a card on file).
   User added it. SMOKE PASSED 2026-09-23 (`--limit 1`): en-light-1 -> jev
   "light", confidence 0.78, 852 ms, 398 tokens, agrees with local and label.
-  The route works end to end. T4 stays OPEN until the full 23-case run.
+  The route works end to end.
+  FULL RUN 2026-09-23T20:28Z (23 cases, gateway): 0 failures, 18/18 scored.
+  Local 15/18 (0.83), Jev 14/18 (0.78), agreement 12/18. By language: EN
+  local 10/10, Jev 8/10; ES local 5/8, Jev 6/8. Local misses all 3 ES heavy
+  cases (English-only keywords). Jev misses: both changelog cases (EN+ES ->
+  light), en-heavy-5 payment credential (standard, conf 0.06), es-heavy-1
+  (standard, 0.45). Mean Jev confidence: correct 0.67 vs wrong 0.35. Median
+  latency ~445 ms, max 6563 ms; 7325 tokens (~$0.0003). A one-case gap on
+  n=18 with provisional labels is noise, not a verdict. Local's EN 10/10 may
+  be circular (EN cases may match its keywords). Report: report.json (untracked).
   USER DECISION 2026-09-23: zero-dependency fetch client stays; NO SDK, NO
   automatic retries (23-case manual pilot doesn't justify a dependency).
   Runbook: a 429/529 leaves the case as a TRANSPORT failure (jevError,
