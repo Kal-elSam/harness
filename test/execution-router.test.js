@@ -450,3 +450,21 @@ test("mixed English and Spanish risk terms keep their order of appearance, even 
   // Spanish index ahead of an earlier English match.
   assert.deepEqual(classifyTask(`${"🔒".repeat(12)} production pago`).risk, ["production", "pago"]);
 });
+
+test("REGRESSION: English recovery codes raise the risk signal (the Jev pilot's only measured under-provision)", () => {
+  const task = "Choose where to store the user's recovery code in the profile table, then update the form to use it while keeping other fields unchanged.";
+  assert.deepEqual(classifyTask(task).risk, ["recovery code"]);
+  assert.equal(classifyEffort(task), "heavy");
+  assert.deepEqual(classifyTask("Rotate the recovery codes for all users").risk, ["recovery code"]);
+  assert.equal(classifyEffort("Rotate the recovery codes for all users"), "heavy");
+});
+
+test("known false positive, accepted: error-recovery logic also matches 'recovery code'", () => {
+  // Lexical matching cannot tell a 2FA recovery code from error-recovery
+  // logic. Accepted on purpose: this over-provisions and may ask for
+  // approval, which is cheap. Missing a credential under-provisions it and
+  // auto-routes it, which is the expensive error.
+  const result = selectExecutionProvider({ task: "Refactor the error recovery code in the parser", adapters: ADAPTERS });
+  assert.deepEqual(result.profile.risk, ["recovery code"]);
+  assert.equal(result.decision, "WAIT_FOR_APPROVAL");
+});
