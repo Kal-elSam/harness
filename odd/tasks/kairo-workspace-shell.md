@@ -131,6 +131,7 @@ warning instead of Kairo's PROJECT TEAM and control-plane state.
   name Pi, not Gentle Shell. RED was observed when direct-Pi expectations
   failed against the old wrapper; GREEN: 12/12 focused host checks and live
   `pi --list-models kairo` output show Kairo routes with no Gentle inventory.
+  Implementation commit: `f3c8057` (`fix(host): launch Kairo directly in Pi`).
 - KWS-08 completed locally in `e4d67e8` (`feat(host): compact Kairo workspace
   opening`). Startup now presents project/session/team state only; usage,
   memory and assignment detail are opt-in commands.
