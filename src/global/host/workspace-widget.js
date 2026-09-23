@@ -1,5 +1,5 @@
-import { truncateToWidth } from "@earendil-works/pi-tui";
-import { CARD_TONE, renderPanel } from "../cockpit/card.js";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { CARD_TONE, cardInnerWidth, renderPanel } from "../cockpit/card.js";
 
 // The Pi widget for the Kairo workspace — two bordered panels (USAGE,
 // TEAM), side by side when the terminal is wide enough, stacked otherwise.
@@ -20,6 +20,28 @@ const GAUGE_CELLS = 10;
 const SIDE_BY_SIDE_MIN_WIDTH = 70;
 const NAME_COLUMN_WIDTH = 7;
 const LABEL_COLUMN_WIDTH = 2;
+const TEAM_COLUMN_GAP = "  ";
+const FOOTER_COMMAND_SEPARATOR = " · ";
+
+/**
+ * The USAGE/TEAM panel widths for a given total render width — side by
+ * side (with a 1-column gap) at or above `SIDE_BY_SIDE_MIN_WIDTH`, both
+ * equal to the full width when stacked. Exported so tests can locate the
+ * TEAM panel's own substring inside a combined side-by-side line without
+ * re-deriving this arithmetic (see test/workspace-widget.test.js).
+ * @param {number} width
+ * @returns {{leftWidth: number, rightWidth: number, sideBySide: boolean}}
+ */
+export function computeSideBySideWidths(width) {
+  const targetWidth = Math.max(1, Math.floor(width));
+  if (targetWidth < SIDE_BY_SIDE_MIN_WIDTH) {
+    return { leftWidth: targetWidth, rightWidth: targetWidth, sideBySide: false };
+  }
+  const gap = 1;
+  const leftWidth = Math.floor((targetWidth - gap) / 2);
+  const rightWidth = targetWidth - gap - leftWidth;
+  return { leftWidth, rightWidth, sideBySide: true };
+}
 
 function usageBarTone(level) {
   if (level === "limited") return "error";
@@ -67,20 +89,58 @@ function usagePanelFooter(session) {
   return `session: ${idPart} · ${session?.mode ?? "ask"}`;
 }
 
-/** One team row: `role  model  via`, colored by tone. A blocked role gets
- * the error tone plus a trailing "BLOCKED" word — the ONLY per-row status
- * marker this panel ever prints (see the P01.1 "Why": the user explicitly
- * asked for no `available` noise, only exceptions). */
-function teamRowLine(row, theme) {
-  const base = `${row.role}  ${row.model}  ${row.via}`;
-  if (row.availability?.state === "blocked") return theme.fg("error", `${base}  BLOCKED`);
+/** Pads `text` to exactly `width` visible columns — truncating with
+ * `truncateToWidth` first when it's already wider (only ever asked of the
+ * model column, never the role column; see `teamColumnWidths`' own doc). */
+function padColumn(text, width) {
+  const clipped = visibleWidth(text) > width ? truncateToWidth(text, width, "") : text;
+  return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
+}
+
+/**
+ * The role/model column widths for one TEAM panel render — each padded to
+ * the longest VISIBLE width in that column across every real row, so
+ * every row's model (and via) column starts at the same visible position
+ * (the reported defect: a literal fixed `"  "` gap puts the model column
+ * at a different position per row, since roles like "Project Analyst"
+ * and "Builder" have very different lengths).
+ *
+ * The role column is never truncated (real role names are short and
+ * meaningful; truncating them would be actively misleading). When
+ * `innerWidth` can't fit the role column plus the desired model column
+ * plus the widest `via`, the model column alone shrinks to what's left —
+ * `teamRowLine` then truncates an individual model's text into that
+ * narrower column with `truncateToWidth`, never the role.
+ * @param {object[]} rows
+ * @param {number} innerWidth
+ */
+function teamColumnWidths(rows, innerWidth) {
+  const roleWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.role ?? "")), 0);
+  const desiredModelWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.model ?? "")), 0);
+  const viaWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.via ?? "")), 0);
+  const gapWidth = visibleWidth(TEAM_COLUMN_GAP);
+  const available = innerWidth - roleWidth - gapWidth * 2 - viaWidth;
+  const modelWidth = Math.max(0, Math.min(desiredModelWidth, Math.max(0, available)));
+  return { roleWidth, modelWidth };
+}
+
+/** One team row, columns aligned via `teamColumnWidths`. A blocked role
+ * gets the error tone plus a trailing "BLOCKED" word — the ONLY per-row
+ * status marker this panel ever prints (see the P01.1 "Why": the user
+ * explicitly asked for no `available` noise, only exceptions). */
+function teamRowLine(row, columns, theme) {
+  const rolePart = padColumn(row.role ?? "", columns.roleWidth);
+  const modelPart = padColumn(row.model ?? "", columns.modelWidth);
+  const base = `${rolePart}${TEAM_COLUMN_GAP}${modelPart}${TEAM_COLUMN_GAP}${row.via ?? ""}`;
+  if (row.availability?.state === "blocked") return theme.fg("error", `${base}${TEAM_COLUMN_GAP}BLOCKED`);
   return theme.fg("text", base);
 }
 
-function teamPanelBody(team, theme) {
+function teamPanelBody(team, theme, innerWidth) {
   const rows = team?.rows ?? [];
   if (!rows.length) return [theme.fg("muted", "Run /project analyze to build this project's team.")];
-  return rows.map((row) => teamRowLine(row, theme));
+  const columns = teamColumnWidths(rows, innerWidth);
+  return rows.map((row) => teamRowLine(row, columns, theme));
 }
 
 function anyRowChecking(team) {
@@ -104,8 +164,32 @@ function teamPanelTone(team) {
   return "accent";
 }
 
-function teamPanelFooter() {
-  return "/kairo-team · /kairo-route · /kairo-usage · /kairo-memory";
+const TEAM_FOOTER_COMMANDS = ["/kairo-team", "/kairo-route", "/kairo-usage", "/kairo-memory"];
+
+/** The largest visible width `cardBottom` can give a footer label inside
+ * a panel of `panelWidth` columns — mirrors its own arithmetic
+ * (`head = "─ " + label + " "`, `maxHeadWidth = panelWidth - 3`) so this
+ * never drifts out of sync with what actually fits. */
+function footerLabelBudget(panelWidth) {
+  return Math.max(0, panelWidth - 6);
+}
+
+/** Only whole commands that fit — dropping every command starting from
+ * the first one that wouldn't, never truncating a command mid-name (the
+ * reported defect: cardBottom's own truncateToWidth used to cut
+ * "/kairo-memory" into a partial, ANSI-artifact-trailing fragment). */
+function fitFooterCommands(commands, maxWidth) {
+  let result = "";
+  for (const command of commands) {
+    const candidate = result ? `${result}${FOOTER_COMMAND_SEPARATOR}${command}` : command;
+    if (visibleWidth(candidate) > maxWidth) break;
+    result = candidate;
+  }
+  return result;
+}
+
+function teamPanelFooter(panelWidth) {
+  return fitFooterCommands(TEAM_FOOTER_COMMANDS, footerLabelBudget(panelWidth));
 }
 
 /**
@@ -124,27 +208,24 @@ function teamPanelFooter() {
  * @returns {string[]}
  */
 export function renderKairoWorkspaceWidget(snapshot, width, theme, extraLines = []) {
-  const targetWidth = Math.max(1, Math.floor(width));
+  const { leftWidth, rightWidth, sideBySide } = computeSideBySideWidths(width);
   const usageBody = usagePanelBody(snapshot.subscriptions, theme);
-  const teamBody = teamPanelBody(snapshot.team, theme);
+  const teamBody = teamPanelBody(snapshot.team, theme, cardInnerWidth(rightWidth));
   const usageFooter = usagePanelFooter(snapshot.session);
-  const teamFooter = teamPanelFooter();
+  const teamFooter = teamPanelFooter(rightWidth);
   const teamTitle = teamPanelTitle(snapshot.team);
   const teamTone = teamPanelTone(snapshot.team);
 
   let panelLines;
-  if (targetWidth >= SIDE_BY_SIDE_MIN_WIDTH) {
-    const gap = 1;
-    const leftWidth = Math.floor((targetWidth - gap) / 2);
-    const rightWidth = targetWidth - gap - leftWidth;
+  if (sideBySide) {
     const targetLineCount = Math.max(usageBody.length, teamBody.length);
     const left = renderPanel("USAGE", CARD_TONE.SUCCESS, theme, leftWidth, usageBody, targetLineCount, usageFooter);
     const right = renderPanel(teamTitle, teamTone, theme, rightWidth, teamBody, targetLineCount, teamFooter);
     panelLines = left.map((line, index) => `${line} ${right[index] ?? ""}`);
   } else {
     panelLines = [
-      ...renderPanel("USAGE", CARD_TONE.SUCCESS, theme, targetWidth, usageBody, undefined, usageFooter),
-      ...renderPanel(teamTitle, teamTone, theme, targetWidth, teamBody, undefined, teamFooter)
+      ...renderPanel("USAGE", CARD_TONE.SUCCESS, theme, leftWidth, usageBody, undefined, usageFooter),
+      ...renderPanel(teamTitle, teamTone, theme, rightWidth, teamBody, undefined, teamFooter)
     ];
   }
 

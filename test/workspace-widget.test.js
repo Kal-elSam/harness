@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { blockedRoleNotifications, renderKairoWorkspaceWidget } from "../src/global/host/workspace-widget.js";
+import { blockedRoleNotifications, computeSideBySideWidths, renderKairoWorkspaceWidget } from "../src/global/host/workspace-widget.js";
 
 const IDENTITY_THEME = { fg: (_role, text) => text, bold: (text) => text };
 
@@ -126,3 +126,59 @@ test("blockedRoleNotifications returns nothing when no role is blocked", () => {
   assert.deepEqual(blockedRoleNotifications({ rows: [SEVEN_ROLES[0]] }), []);
   assert.deepEqual(blockedRoleNotifications(undefined), []);
 });
+
+// --- Defects reported against the user-approved design in the real
+// render (2026-09-23): TEAM columns must align role/model/via to fixed
+// widths (never a literal fixed double-space), and a footer must only
+// ever show whole commands that fit — never cut one mid-name.
+
+for (const width of [100, 160]) {
+  test(`renderKairoWorkspaceWidget aligns TEAM role/model/via into fixed columns at width ${width}, padded to the longest visible width per column`, () => {
+    const lines = renderKairoWorkspaceWidget(fixtureSnapshot(), width, IDENTITY_THEME);
+    const { leftWidth } = computeSideBySideWidths(width);
+    const teamLines = lines
+      .map((line) => line.slice(leftWidth + 1))
+      .filter((line) => SEVEN_ROLES.some((row) => line.includes(row.role)));
+
+    assert.equal(teamLines.length, SEVEN_ROLES.length, `expected exactly one TEAM content line per role at width ${width}`);
+
+    const modelStarts = [];
+    const viaStarts = [];
+    for (const row of SEVEN_ROLES) {
+      const line = teamLines.find((candidate) => candidate.includes(row.role));
+      assert.ok(line, `missing TEAM line for role "${row.role}"`);
+      const modelStart = line.indexOf(row.model);
+      assert.ok(modelStart > 0, `model "${row.model}" not found after the role column on "${line}"`);
+      const viaStart = line.indexOf(row.via, modelStart + row.model.length);
+      assert.ok(viaStart > modelStart, `via "${row.via}" not found after the model column on "${line}"`);
+      modelStarts.push(modelStart);
+      viaStarts.push(viaStart);
+    }
+
+    // The whole point: with roles of very different lengths ("Project
+    // Analyst" vs. "Builder"), a naive fixed "  " gap (the reported
+    // defect) puts the model column at a DIFFERENT visible column on
+    // every row. A real column layout puts it at the SAME column on
+    // every row, padded to the longest role's visible width.
+    assert.equal(new Set(modelStarts).size, 1, `model column should start at the same visible column on every row, got starts: ${modelStarts.join(",")}`);
+    assert.equal(new Set(viaStarts).size, 1, `via column should start at the same visible column on every row, got starts: ${viaStarts.join(",")}`);
+  });
+}
+
+for (const width of [60, 100, 160]) {
+  test(`renderKairoWorkspaceWidget's TEAM footer at width ${width} never cuts a /kairo-* command mid-name`, () => {
+    const lines = renderKairoWorkspaceWidget(fixtureSnapshot(), width, IDENTITY_THEME);
+    const footerLine = lines.find((line) => line.includes("/kairo-"));
+    assert.ok(footerLine, `expected a TEAM footer line with /kairo-* commands at width ${width}`);
+
+    const KNOWN_COMMANDS = ["/kairo-team", "/kairo-route", "/kairo-usage", "/kairo-memory"];
+    const found = footerLine.match(/\/kairo-[a-z]*/g) ?? [];
+    assert.ok(found.length > 0, `expected at least one /kairo-* command in the footer at width ${width}`);
+    for (const command of found) {
+      assert.ok(KNOWN_COMMANDS.includes(command), `footer contains a partial/unknown command "${command}" at width ${width} (line: "${footerLine}")`);
+    }
+    // No stray control-sequence artifact from a mid-string truncation
+    // (the visible symptom of the reported defect in the real render).
+    assert.ok(!footerLine.includes("[0m"), `footer should never show a raw escape artifact at width ${width}: "${footerLine}"`);
+  });
+}
