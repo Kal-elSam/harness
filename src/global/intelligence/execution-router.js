@@ -57,6 +57,15 @@ const RISK_KEYWORDS = [
   "auth", "authentication", "payment", "security", "production", "credential",
   "secret", "delete", "drop table", "migration", "billing", "pii"
 ];
+// Spanish risk terms, written without accents. Unlike the English list they
+// match accent-insensitively and only at the start of a word, so "pago" never
+// fires inside "apagó" and "autentica" covers autenticación/autenticar.
+// Deliberately bounded: generic verbs like "borrar" are left out until their
+// false-positive rate is measured.
+const SPANISH_RISK_KEYWORDS = [
+  "autentica", "autorizacion", "facturacion", "pago", "cobro", "credencial",
+  "contrasena", "codigo de recuperacion", "codigos de recuperacion"
+];
 
 /** Matches in the order they actually appear in the text, so a "why" built from them reads naturally. */
 /**
@@ -80,12 +89,35 @@ export function matchSkills(taskText, skills = []) {
   return matches.sort((a, b) => b.overlap.length - a.overlap.length);
 }
 
-function countMatches(text, keywords) {
+function findMatches(text, keywords) {
   return keywords
     .map((keyword) => ({ keyword, index: text.indexOf(keyword) }))
-    .filter((entry) => entry.index !== -1)
-    .sort((a, b) => a.index - b.index)
-    .map((entry) => entry.keyword);
+    .filter((entry) => entry.index !== -1);
+}
+
+function findWordStartMatches(text, keywords) {
+  return keywords
+    .map((keyword) => ({ keyword, index: text.search(new RegExp(`(?<![a-z0-9])${keyword}`)) }))
+    .filter((entry) => entry.index !== -1);
+}
+
+function inOrder(entries) {
+  return [...entries].sort((a, b) => a.index - b.index).map((entry) => entry.keyword);
+}
+
+function countMatches(text, keywords) {
+  return inOrder(findMatches(text, keywords));
+}
+
+// Strips accents code point by code point (á -> a, ñ -> n). A code point is
+// only replaced when its folded form has the same UTF-16 length, so emoji and
+// stray combining marks stay intact and match indexes stay aligned with the
+// original text for ordering against the English matches.
+function foldAccents(text) {
+  return [...text].map((char) => {
+    const folded = char.normalize("NFD").replace(/\p{M}/gu, "");
+    return folded.length === char.length ? folded : char;
+  }).join("");
 }
 
 /**
@@ -99,7 +131,10 @@ export function classifyTask(taskText) {
   const repetitive = countMatches(text, REPETITIVE_KEYWORDS);
   const reasoning = countMatches(text, REASONING_KEYWORDS);
   const multiFile = countMatches(text, MULTI_FILE_KEYWORDS);
-  const risk = countMatches(text, RISK_KEYWORDS);
+  const risk = inOrder([
+    ...findMatches(text, RISK_KEYWORDS),
+    ...findWordStartMatches(foldAccents(text), SPANISH_RISK_KEYWORDS)
+  ]);
   return {
     repetitive, reasoning, multiFile, risk,
     repetitionScore: repetitive.length,
