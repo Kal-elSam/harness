@@ -150,7 +150,8 @@ test("extension replaces a missing Pi route with an actionable Kairo state, but 
   const { pi, events } = fakePi();
   createKairoWorkspaceExtension(pi, {
     loadSnapshot: async () => snapshot,
-    loadLiveData: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {}, usage: {}, providers: {} }),
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {} }),
     loadRouteModels: async () => []
   });
 
@@ -190,7 +191,8 @@ test("extension renders a Kairo status/widget on session start using the explici
       assert.equal(input.sessionId, "11111111-1111-4111-8111-111111111111");
       return snapshot;
     },
-    loadLiveData: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {}, usage: {}, providers: {} }),
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {} }),
     loadRouteModels: async () => [{ id: "codex::gpt-6-astra", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }]
   });
 
@@ -203,69 +205,116 @@ test("extension renders a Kairo status/widget on session start using the explici
     }
   });
 
-  // Two-phase: the immediate "checking" render, then the re-render once
-  // real availability/usage resolved — never fewer than both.
+  // Three phases: the immediate "checking" render, then one re-render for
+  // each of usage and availability resolving independently — never fewer
+  // than all three (see the P01.2 split tests below for resolution order).
   assert.deepEqual(calls[0], ["status", "kairo", "Kairo · agentic-harness · agent"]);
   assert.equal(calls[1][0], "widget");
   assert.equal(typeof calls[1][2], "function", "the overview render is a component factory");
   assert.deepEqual(calls[2], ["status", "kairo", "Kairo · agentic-harness · agent"]);
   assert.equal(calls[3][0], "widget");
-  assert.equal(calls.length, 4);
+  assert.deepEqual(calls[4], ["status", "kairo", "Kairo · agentic-harness · agent"]);
+  assert.equal(calls[5][0], "widget");
+  assert.equal(calls.length, 6);
 
   const firstLines = renderWidgetCall(calls[1][2]);
-  const secondLines = renderWidgetCall(calls[3][2]);
-  assert.deepEqual(firstLines, secondLines, "loadSnapshot returns the same fixture snapshot in both phases here");
+  const lastLines = renderWidgetCall(calls[5][2]);
+  assert.deepEqual(firstLines, lastLines, "loadSnapshot returns the same fixture snapshot in every phase here");
   assert.ok(firstLines.some((line) => line.includes("Builder")));
 });
 
-test("extension renders live data in two phases: checking immediately, then real team availability and usage", async () => {
+// P01.2: usage and team availability now resolve from two INDEPENDENT
+// sources (loadUsageData ~5s, loadLiveData ~20s) instead of one combined
+// probe — each re-renders the widget as soon as IT arrives, never waiting
+// on the other. `loadSnapshot` below derives its rendered state from
+// `usageIntelligence`/`availabilityIntelligence` instead of the old single
+// `intelligence` field, mirroring workspace-snapshot.js's real split.
+function snapshotFor({ usageIntelligence, availabilityIntelligence } = {}) {
+  return {
+    ...snapshot,
+    subscriptions: usageIntelligence ? snapshot.subscriptions : { state: "checking", segments: [], usageModel: [] },
+    team: {
+      ...snapshot.team,
+      rows: snapshot.team.rows.map((row) => ({
+        ...row,
+        availability: availabilityIntelligence === undefined
+          ? { state: "checking", warning: null }
+          : availabilityIntelligence === null
+            ? { state: "unknown", warning: null }
+            : { state: "available", warning: null }
+      }))
+    }
+  };
+}
+
+test("extension renders usage as soon as it arrives, without waiting on the still-pending availability probe", async () => {
   const { pi, events } = fakePi();
   const widgetCalls = [];
-  const checkingSnapshot = {
-    ...snapshot,
-    team: { ...snapshot.team, rows: [{ role: "Builder", model: "GPT-6 Terra", via: "codex", accessMode: "automatic", availability: { state: "checking", warning: null } }] },
-    subscriptions: { state: "checking", segments: [], usageModel: [] }
-  };
-  const resolvedSnapshot = {
-    ...snapshot,
-    team: { ...snapshot.team, rows: [{ role: "Builder", model: "GPT-6 Terra", via: "codex", accessMode: "automatic", availability: { state: "available", warning: null } }] },
-    subscriptions: snapshot.subscriptions
-  };
+  let resolveAvailability;
+  const availabilityPromise = new Promise((resolve) => { resolveAvailability = resolve; });
 
   createKairoWorkspaceExtension(pi, {
-    loadSnapshot: async ({ intelligence } = {}) => (intelligence === undefined ? checkingSnapshot : resolvedSnapshot),
-    loadLiveData: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {}, usage: {}, providers: {} }),
+    loadSnapshot: async (args) => snapshotFor(args),
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => availabilityPromise,
     loadRouteModels: async () => [{ id: "codex::gpt-6-astra", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }]
   });
 
-  await events.get("session_start")({}, {
+  const startPromise = events.get("session_start")({}, {
     cwd: "/repo",
     ui: { setStatus: () => {}, setWidget: (...args) => widgetCalls.push(args), notify: () => {} }
   });
 
-  assert.equal(widgetCalls.length, 2);
-  const firstLines = renderWidgetCall(widgetCalls[0][1]);
-  const secondLines = renderWidgetCall(widgetCalls[1][1]);
-  assert.ok(firstLines.some((line) => line.includes("usage checking")), "first render shows usage checking");
-  assert.ok(firstLines.some((line) => line.includes("checking")), "first render shows team checking too");
-  assert.ok(secondLines.some((line) => line.includes("58%")), "second render shows real usage");
-  assert.ok(!secondLines.some((line) => line.includes("available")), "the resolved-available row prints no 'available' marker (only exceptions do)");
+  // The usage probe above resolves immediately; give its microtasks a
+  // chance to run while availability is still deliberately pending.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(widgetCalls.length, 2, "phase 1 (checking) + usage arriving, availability still pending");
+  const afterUsage = renderWidgetCall(widgetCalls[1][1]);
+  assert.ok(afterUsage.some((line) => line.includes("58%")), "usage now shows real data");
+  assert.ok(afterUsage.some((line) => line.includes("checking")), "team still checking while availability is pending");
+
+  resolveAvailability({ eligibility: { codex: { ok: true } } });
+  await startPromise;
+  assert.equal(widgetCalls.length, 3, "availability resolving re-renders once more");
+  const finalLines = renderWidgetCall(widgetCalls[2][1]);
+  assert.ok(!finalLines.some((line) => line.includes("checking")), "nothing left checking once both resolved");
 });
 
-test("extension shows unknown rows, usage unknown, and one explanatory line when the live data check fails", async () => {
+test("extension renders availability as soon as it arrives, without waiting on the still-pending usage probe", async () => {
   const { pi, events } = fakePi();
   const widgetCalls = [];
-  const failedSnapshot = {
-    ...snapshot,
-    team: {
-      ...snapshot.team,
-      rows: snapshot.team.rows.map((row) => ({ ...row, availability: { state: "unknown", warning: null } }))
-    },
-    subscriptions: { state: "unknown", segments: [], usageModel: [] }
-  };
+  let resolveUsage;
+  const usagePromise = new Promise((resolve) => { resolveUsage = resolve; });
 
   createKairoWorkspaceExtension(pi, {
-    loadSnapshot: async ({ intelligence } = {}) => (intelligence === null ? failedSnapshot : snapshot),
+    loadSnapshot: async (args) => snapshotFor(args),
+    loadUsageData: async () => usagePromise,
+    loadLiveData: async () => ({ eligibility: { codex: { ok: true } }, claudeEntitlement: {}, cursorAccess: {} }),
+    loadRouteModels: async () => [{ id: "codex::gpt-6-astra", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }]
+  });
+
+  const startPromise = events.get("session_start")({}, {
+    cwd: "/repo",
+    ui: { setStatus: () => {}, setWidget: (...args) => widgetCalls.push(args), notify: () => {} }
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(widgetCalls.length, 2, "phase 1 (checking) + availability arriving, usage still pending");
+  const afterAvailability = renderWidgetCall(widgetCalls[1][1]);
+  assert.ok(afterAvailability.some((line) => line.includes("usage checking")), "usage still checking while its probe is pending");
+
+  resolveUsage({ usage: {}, providers: {} });
+  await startPromise;
+  assert.equal(widgetCalls.length, 3, "usage resolving re-renders once more");
+});
+
+test("extension shows unknown team rows and one explanatory line when the availability probe fails, independent of usage", async () => {
+  const { pi, events } = fakePi();
+  const widgetCalls = [];
+
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async (args) => snapshotFor(args),
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
     loadLiveData: async () => null,
     loadRouteModels: async () => [{ id: "codex::gpt-6-astra", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }]
   });
@@ -276,9 +325,9 @@ test("extension shows unknown rows, usage unknown, and one explanatory line when
   });
 
   const finalLines = renderWidgetCall(widgetCalls.at(-1)[1]);
-  assert.ok(finalLines.some((line) => line.includes("usage unknown")), "usage shown as unknown");
+  assert.ok(finalLines.some((line) => line.includes("58%")), "usage still shows real data — availability failing never blanks it");
   assert.ok(
     finalLines.some((line) => line.toLowerCase().includes("availability check failed")),
-    "one line explains the failed check"
+    "one line explains the failed availability check"
   );
 });

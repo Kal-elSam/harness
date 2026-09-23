@@ -1,6 +1,6 @@
 import { createKernelService } from "../../kernel/service.js";
 import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-route-provider.js";
-import { loadKairoWorkspaceSnapshot, loadKairoLiveData } from "../workspace-snapshot.js";
+import { loadKairoWorkspaceSnapshot, loadKairoLiveData, loadKairoUsageData } from "../workspace-snapshot.js";
 import { blockedRoleNotifications, createKairoTextWidget, createKairoWorkspaceWidget } from "../workspace-widget.js";
 
 export function requestKernelSnapshot(deps = {}) {
@@ -153,11 +153,14 @@ function notifyBlockedRoles(ctx, snapshot) {
   }
 }
 
-async function refreshWorkspace(ctx, { loadSnapshot, env, view = "overview", intelligence, extraLines = [] }) {
+async function refreshWorkspace(ctx, {
+  loadSnapshot, env, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = []
+}) {
   const snapshot = await loadSnapshot({
     cwd: ctx?.cwd ?? process.cwd(),
     sessionId: env?.KAIRO_SESSION_ID ?? null,
-    intelligence
+    usageIntelligence,
+    availabilityIntelligence
   });
   ctx?.ui?.setStatus?.("kairo", workspaceStatus(snapshot));
   setWorkspaceWidget(ctx, snapshot, view, extraLines);
@@ -173,6 +176,7 @@ async function refreshWorkspace(ctx, { loadSnapshot, env, view = "overview", int
 export function createKairoWorkspaceExtension(pi, {
   env = process.env,
   loadSnapshot = loadKairoWorkspaceSnapshot,
+  loadUsageData = loadKairoUsageData,
   loadLiveData = loadKairoLiveData,
   loadRouteModels = loadKairoProviderModels,
   createProvider = createKairoRouteProvider
@@ -197,27 +201,57 @@ export function createKairoWorkspaceExtension(pi, {
     await registerRoutes(ctx?.cwd ?? process.cwd());
 
     // Phase 1: render immediately from the persisted strategy — every
-    // row's availability shows "checking" (see workspace-snapshot.js's
-    // own doc), never blocked on the live probe below.
+    // row's availability shows "checking" and usage shows "checking" (see
+    // workspace-snapshot.js's own doc), never blocked on either live probe
+    // below.
     const snapshot = await refreshWorkspace(ctx, { loadSnapshot, env });
     if (routeState === "unavailable") {
       setWorkspaceWidget(ctx, snapshot, "unavailable-routes", []);
     }
 
-    // Phase 2: the conversation service's live snapshot probe
-    // (loadKairoLiveData — ONE call for team availability AND
-    // subscription usage) can be slow, so it never blocks phase 1 above.
-    // It fails closed on its own (null on any throw or missing data —
-    // see its own doc), never fabricating "available" or real numbers.
+    // Phase 2 (P01.2 split): usage (the three usage readers, ~5s combined)
+    // and team availability (the full conversation-service snapshot probe,
+    // ~20s on the user's machine) resolve from two INDEPENDENT probes —
+    // each re-renders the widget as soon as IT arrives, in whichever order
+    // that happens, never waiting on the other (see the P01.2 "Why" in
+    // odd/tasks/kairo-pi-parity.md). `latest*` tracks the most recently
+    // resolved value of the OTHER probe so a re-render never regresses an
+    // already-resolved side back to "checking".
     const cwd = ctx?.cwd ?? process.cwd();
-    const intelligence = await loadLiveData({ cwd });
-    const extraLines = intelligence === null
-      ? ["Live availability check failed — team and usage status shown as unknown."]
-      : [];
-    const refreshedSnapshot = await refreshWorkspace(ctx, { loadSnapshot, env, intelligence, extraLines });
-    if (routeState === "unavailable") {
-      setWorkspaceWidget(ctx, refreshedSnapshot, "unavailable-routes", extraLines);
+    let latestUsageIntelligence;
+    let latestAvailabilityIntelligence;
+    let usageExtraLines = [];
+    let availabilityExtraLines = [];
+
+    async function rerender() {
+      const extraLines = [...availabilityExtraLines, ...usageExtraLines];
+      const refreshed = await refreshWorkspace(ctx, {
+        loadSnapshot,
+        env,
+        usageIntelligence: latestUsageIntelligence,
+        availabilityIntelligence: latestAvailabilityIntelligence,
+        extraLines
+      });
+      if (routeState === "unavailable") {
+        setWorkspaceWidget(ctx, refreshed, "unavailable-routes", extraLines);
+      }
     }
+
+    const usagePromise = loadUsageData({ cwd }).then(async (result) => {
+      latestUsageIntelligence = result;
+      await rerender();
+    });
+    // loadKairoLiveData fails closed on its own (null on any throw or
+    // missing data — see its own doc), never fabricating "available" rows.
+    const availabilityPromise = loadLiveData({ cwd }).then(async (result) => {
+      latestAvailabilityIntelligence = result;
+      availabilityExtraLines = result === null
+        ? ["Live availability check failed — team status shown as unknown."]
+        : [];
+      await rerender();
+    });
+
+    await Promise.all([usagePromise, availabilityPromise]);
   });
 
   const commands = [

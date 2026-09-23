@@ -8,6 +8,10 @@ import { listProviderUsage } from "../runtime/usage-store.js";
 import { resolveAssignmentAvailability } from "../conversation/assignment-availability.js";
 import { buildUsageModel, formatSubscriptionUsageSegments } from "../conversation/usage-summary.js";
 import { createConversationService } from "../conversation/service.js";
+import { readCodexUsage } from "../observability/codex-usage.js";
+import { readClaudeUsage } from "../observability/claude-usage.js";
+import { readOpenCodeUsage } from "../observability/opencode-usage.js";
+import { readCachedUsage, writeCachedUsage, readCachedAvailability, writeCachedAvailability } from "./workspace-cache.js";
 
 export const KAIRO_WORKSPACE_SNAPSHOT_SCHEMA = "kairo.workspace-shell/v1";
 
@@ -80,13 +84,30 @@ function workspaceTeamRows(strategy, intelligence) {
   return rows;
 }
 
-function workspaceTeam(strategy, intelligence) {
+/**
+ * @param {object} strategy
+ * @param {object|null|undefined} intelligence
+ * @param {{value: object, savedAt: number}|null} [cache] - the last-known
+ *   availability cache (see workspace-cache.js's readCachedAvailability).
+ *   Used ONLY while `intelligence` hasn't resolved yet (`undefined`) or
+ *   explicitly failed (`null`) — real live data always wins once it
+ *   arrives (see the P01.2 "Design": "replaced by fresh data when it
+ *   arrives... failures keep the cached value marked stale").
+ * @param {number} [now]
+ */
+function workspaceTeam(strategy, intelligence, cache = null, now = Date.now()) {
   if (!strategy) return { state: "not_analyzed", assignments: [], rows: [] };
-  return {
+  const useCache = intelligence === undefined || intelligence === null;
+  const cachedIntelligence = useCache && cache?.value ? cache.value : intelligence;
+  const base = {
     state: strategy.status ?? "unknown",
     assignments: (strategy.projectTeam ?? []).map(compactAssignment),
-    rows: workspaceTeamRows(strategy, intelligence)
+    rows: workspaceTeamRows(strategy, cachedIntelligence)
   };
+  if (useCache && cache?.value) {
+    return { ...base, cached: true, cacheAgeMs: Math.max(0, now - cache.savedAt) };
+  }
+  return base;
 }
 
 /**
@@ -99,10 +120,25 @@ function workspaceTeam(strategy, intelligence) {
  * real `usage`/`providers` facts from that one conversation-service
  * snapshot call.
  * @param {object|null|undefined} intelligence
+ * @param {{value: object, savedAt: number}|null} [cache] - the last-known
+ *   usage cache (see workspace-cache.js's readCachedUsage). Used ONLY
+ *   while `intelligence` hasn't resolved yet (`undefined`) or explicitly
+ *   failed (`null`) — real live data always wins once it arrives.
+ * @param {number} [now]
  */
-function workspaceSubscriptions(intelligence) {
-  if (intelligence === undefined) return { state: "checking", segments: [], usageModel: [] };
-  if (intelligence === null) return { state: "unknown", segments: [], usageModel: [] };
+function workspaceSubscriptions(intelligence, cache = null, now = Date.now()) {
+  if (intelligence === undefined || intelligence === null) {
+    if (cache?.value) {
+      const usage = { usage: cache.value.usage, providers: cache.value.providers };
+      return {
+        state: "cached",
+        segments: formatSubscriptionUsageSegments(usage),
+        usageModel: buildUsageModel(usage),
+        cacheAgeMs: Math.max(0, now - cache.savedAt)
+      };
+    }
+    return { state: intelligence === null ? "unknown" : "checking", segments: [], usageModel: [] };
+  }
   const usage = { usage: intelligence.usage, providers: intelligence.providers };
   return {
     state: "ready",
@@ -118,6 +154,14 @@ function workspaceSubscriptions(intelligence) {
 /**
  * Pure host view model. It exposes existing Kairo facts without creating a
  * second recommendation, quota, or memory policy in the Pi integration.
+ *
+ * `usageIntelligence` and `availabilityIntelligence` are the P01.2 split:
+ * team availability and subscription usage resolve from two INDEPENDENT
+ * live sources (usage is ~5s, the full availability probe is ~20s — see
+ * loadKairoUsageData vs loadKairoLiveData), so each is read from its own
+ * argument instead of one shared `intelligence` object. Both default to
+ * the legacy `intelligence` argument for back-compat with callers that
+ * still pass one combined value (e.g. the P01.1 snapshot tests).
  */
 export function buildKairoWorkspaceSnapshot({
   projectRoot,
@@ -125,7 +169,12 @@ export function buildKairoWorkspaceSnapshot({
   strategy = null,
   usage = [],
   engram = null,
-  intelligence
+  intelligence,
+  usageIntelligence = intelligence,
+  availabilityIntelligence = intelligence,
+  usageCache = null,
+  availabilityCache = null,
+  now = Date.now()
 } = {}) {
   if (typeof projectRoot !== "string" || projectRoot.trim() === "") {
     throw new Error("Kairo workspace snapshot requires a project root.");
@@ -134,9 +183,9 @@ export function buildKairoWorkspaceSnapshot({
     schema: KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
     project: { root: projectRoot, label: basename(projectRoot) || projectRoot },
     session: workspaceSession(session),
-    team: workspaceTeam(strategy, intelligence),
+    team: workspaceTeam(strategy, availabilityIntelligence, availabilityCache, now),
     usage: Array.isArray(usage) ? usage : [],
-    subscriptions: workspaceSubscriptions(intelligence),
+    subscriptions: workspaceSubscriptions(usageIntelligence, usageCache, now),
     memory: { status: engram?.status ?? "unknown" }
   };
 }
@@ -149,7 +198,15 @@ export function buildKairoWorkspaceSnapshot({
  * loader never computes availability itself, only reads Kairo's other
  * sources of truth.
  */
-export async function loadKairoWorkspaceSnapshot({ cwd, sessionId = null, intelligence } = {}, deps = {}) {
+export async function loadKairoWorkspaceSnapshot({
+  cwd,
+  sessionId = null,
+  intelligence,
+  usageIntelligence = intelligence,
+  availabilityIntelligence = intelligence,
+  usageCache: explicitUsageCache,
+  availabilityCache: explicitAvailabilityCache
+} = {}, deps = {}) {
   const resolveRoot = deps.resolveProjectRoot ?? resolveProjectRoot;
   const homeDir = (deps.resolveHomeDir ?? resolveHomeDir)();
   const projectRoot = await resolveRoot(cwd);
@@ -157,6 +214,10 @@ export async function loadKairoWorkspaceSnapshot({ cwd, sessionId = null, intell
   const readUsage = deps.listProviderUsage ?? listProviderUsage;
   const inspectMemory = deps.inspectEngramIntegration ?? inspectEngramIntegration;
   const readSession = deps.getSession ?? getSession;
+  const readUsageCacheImpl = deps.readCachedUsage ?? readCachedUsage;
+  const writeUsageCacheImpl = deps.writeCachedUsage ?? writeCachedUsage;
+  const readAvailabilityCacheImpl = deps.readCachedAvailability ?? readCachedAvailability;
+  const writeAvailabilityCacheImpl = deps.writeCachedAvailability ?? writeCachedAvailability;
 
   if (sessionId != null && !isValidSessionId(sessionId)) {
     throw new Error(`Invalid Kairo host session id "${sessionId}".`);
@@ -168,13 +229,38 @@ export async function loadKairoWorkspaceSnapshot({ cwd, sessionId = null, intell
     sessionId == null ? null : readSession(homeDir, projectRoot, sessionId)
   ]);
 
+  // P01.2 last-known cache: while a side hasn't resolved yet (`undefined`)
+  // or explicitly failed (`null`), read its last-known cache so the very
+  // first render can show it dim with its age instead of a blank
+  // "checking" state — see workspace-cache.js's own doc. A caller-supplied
+  // `usageCache`/`availabilityCache` (e.g. one already read by the host
+  // for an earlier phase this same refresh) short-circuits a redundant
+  // disk read.
+  const usageCache = explicitUsageCache !== undefined
+    ? explicitUsageCache
+    : usageIntelligence == null ? await readUsageCacheImpl(homeDir).catch(() => null) : null;
+  const availabilityCache = explicitAvailabilityCache !== undefined
+    ? explicitAvailabilityCache
+    : availabilityIntelligence == null ? await readAvailabilityCacheImpl(homeDir, projectRoot).catch(() => null) : null;
+
+  // A freshly resolved live value (never `undefined`/`null`) becomes the
+  // new last-known cache. A still-pending probe or an explicit failure
+  // never overwrites the existing cache — see the P01.2 "Design": "a
+  // failed refresh keeps the cached value marked stale, never presented
+  // as fresh".
+  if (usageIntelligence != null) await writeUsageCacheImpl(homeDir, usageIntelligence).catch(() => {});
+  if (availabilityIntelligence != null) await writeAvailabilityCacheImpl(homeDir, projectRoot, availabilityIntelligence).catch(() => {});
+
   return buildKairoWorkspaceSnapshot({
     projectRoot,
     strategy,
     usage,
     session,
     engram: inspectMemory({ homeDir }),
-    intelligence
+    usageIntelligence,
+    availabilityIntelligence,
+    usageCache,
+    availabilityCache
   });
 }
 
@@ -214,4 +300,38 @@ export async function loadKairoLiveData({ cwd } = {}, deps = {}) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Loads real subscription usage ONLY, independent of team availability
+ * (see loadKairoLiveData above) — the three usage readers (Codex, Claude,
+ * OpenCode Go+Zen) run in parallel and typically resolve in ~5s combined,
+ * far faster than the full conversation-service snapshot probe team
+ * availability needs (~20s on the user's machine). Splitting these lets
+ * the host render fresh usage without waiting on the slower availability
+ * probe (see the P01.2 "Why" in odd/tasks/kairo-pi-parity.md).
+ *
+ * Same call shapes service.js's own snapshot() uses for these three
+ * readers (readCodexUsage({cwd}), readClaudeUsage({}),
+ * readOpenCodeUsage({})), so the numbers this loader produces match what
+ * the service would produce for the same project.
+ *
+ * Each reader already fails closed on its own (returns a `status:
+ * "unknown"` shape rather than throwing) — this loader additionally
+ * guards against an unexpected throw from any one reader with `.catch`,
+ * so one failed reader never prevents the other two from reporting.
+ * @param {{cwd?: string}} [args]
+ * @param {{readCodexUsage?: typeof readCodexUsage, readClaudeUsage?: typeof readClaudeUsage, readOpenCodeUsage?: typeof readOpenCodeUsage}} [deps]
+ * @returns {Promise<{usage: {codex: object|null, claude: object|null, opencode: object|null}, providers: object}>}
+ */
+export async function loadKairoUsageData({ cwd = process.cwd() } = {}, deps = {}) {
+  const readCodex = deps.readCodexUsage ?? readCodexUsage;
+  const readClaude = deps.readClaudeUsage ?? readClaudeUsage;
+  const readOpenCode = deps.readOpenCodeUsage ?? readOpenCodeUsage;
+  const [codex, claude, opencode] = await Promise.all([
+    readCodex({ cwd }).catch(() => null),
+    readClaude({}).catch(() => null),
+    readOpenCode({}).catch(() => null)
+  ]);
+  return { usage: { codex, claude, opencode }, providers: {} };
 }

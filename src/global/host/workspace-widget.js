@@ -17,30 +17,81 @@ import { CARD_TONE, cardInnerWidth, renderPanel } from "../cockpit/card.js";
 // module never uses those two roles.
 
 const GAUGE_CELLS = 10;
-const SIDE_BY_SIDE_MIN_WIDTH = 70;
 const NAME_COLUMN_WIDTH = 7;
-const LABEL_COLUMN_WIDTH = 2;
+const LABEL_COLUMN_WIDTH = 4;
 const TEAM_COLUMN_GAP = "  ";
 const FOOTER_COMMAND_SEPARATOR = " · ";
+// Mirrors card.js's own FRAME_COLUMNS (left rail + space + space + right
+// rail) — every bordered panel needs exactly this many columns beyond its
+// content. Duplicated here rather than imported since card.js doesn't
+// export it; cardInnerWidth's own inverse arithmetic is the same relation.
+const PANEL_FRAME_COLUMNS = 4;
+// "left-aligned side by side with a 2-column gap" (P01.2 Design).
+const PANEL_GAP = 2;
+
+function naturalContentWidth(lines) {
+  return lines.reduce((max, line) => Math.max(max, visibleWidth(line)), 0);
+}
+
+/** The TEAM panel's own desired (untruncated) content width, from the real
+ * row fields — never from an already-rendered, already-width-constrained
+ * body (computing THAT would need the width this function itself decides,
+ * see computeSideBySideWidths' own doc). */
+function desiredTeamContentWidth(rows) {
+  if (!rows.length) return naturalContentWidth(["Run /project analyze to build this project's team."]);
+  const roleWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.role ?? "")), 0);
+  const modelWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.model ?? "")), 0);
+  const viaWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.via ?? "")), 0);
+  const gapWidth = visibleWidth(TEAM_COLUMN_GAP);
+  const blockedWidth = rows.some((row) => row.availability?.state === "blocked")
+    ? gapWidth + visibleWidth("BLOCKED")
+    : 0;
+  return roleWidth + gapWidth + modelWidth + gapWidth + viaWidth + blockedWidth;
+}
 
 /**
- * The USAGE/TEAM panel widths for a given total render width — side by
- * side (with a 1-column gap) at or above `SIDE_BY_SIDE_MIN_WIDTH`, both
- * equal to the full width when stacked. Exported so tests can locate the
- * TEAM panel's own substring inside a combined side-by-side line without
- * re-deriving this arithmetic (see test/workspace-widget.test.js).
+ * The USAGE/TEAM panel widths for a given total render width — each sized
+ * to its OWN content (P01.2: "panels sized to their content, left-aligned,
+ * side by side with a 2-column gap, stacked when they do not fit"), never
+ * a naive half-width split. Side by side only when both panels' desired
+ * widths plus the gap actually fit; both equal to the full width when
+ * stacked (so no line can ever exceed `width`, the one hard constraint —
+ * see renderKairoWorkspaceWidget's own doc).
+ *
+ * Exported so tests can locate the TEAM panel's own substring inside a
+ * combined side-by-side line without re-deriving this arithmetic (see
+ * test/workspace-widget.test.js).
  * @param {number} width
- * @returns {{leftWidth: number, rightWidth: number, sideBySide: boolean}}
+ * @param {string[]} usageBody - the ALREADY-themed USAGE panel content
+ *   lines (their width never depends on the panel's own width, unlike
+ *   TEAM's — see usagePanelBody).
+ * @param {object[]} teamRows - `snapshot.team.rows`
+ * @returns {{leftWidth: number, rightWidth: number, sideBySide: boolean, gap: number}}
  */
-export function computeSideBySideWidths(width) {
+export function computeSideBySideWidths(width, usageBody = [], teamRows = []) {
   const targetWidth = Math.max(1, Math.floor(width));
-  if (targetWidth < SIDE_BY_SIDE_MIN_WIDTH) {
-    return { leftWidth: targetWidth, rightWidth: targetWidth, sideBySide: false };
+  const usageDesired = naturalContentWidth(usageBody) + PANEL_FRAME_COLUMNS;
+  const teamDesired = desiredTeamContentWidth(teamRows) + PANEL_FRAME_COLUMNS;
+  const fits = usageDesired <= targetWidth
+    && teamDesired <= targetWidth
+    && usageDesired + PANEL_GAP + teamDesired <= targetWidth;
+  if (!fits) {
+    return { leftWidth: targetWidth, rightWidth: targetWidth, sideBySide: false, gap: 0 };
   }
-  const gap = 1;
-  const leftWidth = Math.floor((targetWidth - gap) / 2);
-  const rightWidth = targetWidth - gap - leftWidth;
-  return { leftWidth, rightWidth, sideBySide: true };
+  return { leftWidth: usageDesired, rightWidth: teamDesired, sideBySide: true, gap: PANEL_GAP };
+}
+
+/** Renders a cache age in whole minutes/hours/days ("5m ago"), the same
+ * compact vocabulary across usage and team panels. `null` when there's no
+ * age to show. */
+function formatCacheAge(ms) {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return null;
+  const totalMinutes = Math.floor(Math.max(0, ms) / 60_000);
+  if (totalMinutes < 1) return "just now";
+  if (totalMinutes < 60) return `${totalMinutes}m ago`;
+  const hours = Math.floor(totalMinutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 function usageBarTone(level) {
@@ -49,20 +100,26 @@ function usageBarTone(level) {
   return "success";
 }
 
-/** A themed `remainingPercent` bar — filled cells read the window's own
+/** A themed `remainingPercent` bar — one thin line, never a solid block
+ * (P01.2 "Why": "the 10-cell solid bars merged into a blob"). The
+ * remaining segment (`━`, a heavy horizontal line) reads the window's own
  * level (never a separately re-derived threshold; see usage-summary.js's
- * `buildUsageModel`, the single source of truth for `level`). */
+ * `buildUsageModel`, the single source of truth for `level`); the used
+ * segment (`─`, a light horizontal line) stays muted, so remaining vs.
+ * used reads as two visually distinct line weights, not just two colors. */
 function paintUsageBar(window, theme, cells = GAUGE_CELLS) {
   const clamped = Math.max(0, Math.min(100, window.remainingPercent ?? 0));
   const filled = Math.round((clamped / 100) * cells);
-  return theme.fg(usageBarTone(window.level), "█".repeat(filled)) + theme.fg("border", "░".repeat(cells - filled));
+  return theme.fg(usageBarTone(window.level), "━".repeat(filled)) + theme.fg("muted", "─".repeat(cells - filled));
 }
 
 /** One provider's usage lines: `Codex   5h ████░░░░ 80%` then, for any
  * further window, an indented continuation (`         W ████░░░░ 83%`).
  * A provider with no measured window yet (`windows` empty) prints its
- * real fallback status instead of a fabricated bar. */
-function usageProviderLines(provider, theme) {
+ * real fallback status instead of a fabricated bar. `dim` (the P01.2
+ * last-known cache) renders every line muted regardless of level, since a
+ * stale value should never read as a fresh, colored warning/error. */
+function usageProviderLines(provider, theme, dim = false) {
   const name = provider.name.padEnd(NAME_COLUMN_WIDTH);
   if (!provider.windows.length) {
     return [`${name}${theme.fg("muted", provider.fallbackStatus)}`];
@@ -70,14 +127,25 @@ function usageProviderLines(provider, theme) {
   return provider.windows.map((window, index) => {
     const namePart = index === 0 ? name : " ".repeat(NAME_COLUMN_WIDTH);
     const label = (window.label ?? "").padEnd(LABEL_COLUMN_WIDTH);
-    return `${namePart}${label} ${paintUsageBar(window, theme)} ${window.remainingPercent}%`;
+    const bar = dim
+      ? theme.fg("muted", "━".repeat(GAUGE_CELLS))
+      : paintUsageBar(window, theme);
+    const line = `${namePart}${label} ${bar} ${window.remainingPercent}%`;
+    return dim ? theme.fg("muted", line) : line;
   });
 }
 
-/** The USAGE panel body — real bars once live data is ready, or one dim
- * honest state line (`usage checking`/`usage unknown`) before/on failure.
- * Never fabricates a bar for state that hasn't resolved yet. */
+/** The USAGE panel body — real bars once live data is ready, the P01.2
+ * last-known cache dim with its age while a live refresh is pending or has
+ * just failed, or one dim honest state line (`usage checking`/`usage
+ * unknown`) when there's no cache at all. Never fabricates a bar for state
+ * that hasn't resolved yet, and never presents a cached value as fresh. */
 function usagePanelBody(subscriptions, theme) {
+  if (subscriptions?.state === "cached") {
+    const lines = (subscriptions.usageModel ?? []).flatMap((provider) => usageProviderLines(provider, theme, true));
+    const age = formatCacheAge(subscriptions.cacheAgeMs);
+    return [...lines, theme.fg("muted", age ? `cached ${age}` : "cached")];
+  }
   if (!subscriptions || subscriptions.state !== "ready") {
     return [theme.fg("muted", `usage ${subscriptions?.state ?? "checking"}`)];
   }
@@ -127,20 +195,24 @@ function teamColumnWidths(rows, innerWidth) {
 /** One team row, columns aligned via `teamColumnWidths`. A blocked role
  * gets the error tone plus a trailing "BLOCKED" word — the ONLY per-row
  * status marker this panel ever prints (see the P01.1 "Why": the user
- * explicitly asked for no `available` noise, only exceptions). */
-function teamRowLine(row, columns, theme) {
+ * explicitly asked for no `available` noise, only exceptions). `dim`
+ * (the P01.2 last-known cache) mutes a non-blocked row's text tone, since
+ * a stale row should never read as freshly confirmed — BLOCKED still gets
+ * the error tone even while cached, since that's the more important
+ * exception to keep visible. */
+function teamRowLine(row, columns, theme, dim = false) {
   const rolePart = padColumn(row.role ?? "", columns.roleWidth);
   const modelPart = padColumn(row.model ?? "", columns.modelWidth);
   const base = `${rolePart}${TEAM_COLUMN_GAP}${modelPart}${TEAM_COLUMN_GAP}${row.via ?? ""}`;
   if (row.availability?.state === "blocked") return theme.fg("error", `${base}${TEAM_COLUMN_GAP}BLOCKED`);
-  return theme.fg("text", base);
+  return theme.fg(dim ? "muted" : "text", base);
 }
 
 function teamPanelBody(team, theme, innerWidth) {
   const rows = team?.rows ?? [];
   if (!rows.length) return [theme.fg("muted", "Run /project analyze to build this project's team.")];
   const columns = teamColumnWidths(rows, innerWidth);
-  return rows.map((row) => teamRowLine(row, columns, theme));
+  return rows.map((row) => teamRowLine(row, columns, theme, team?.cached === true));
 }
 
 function anyRowChecking(team) {
@@ -152,14 +224,20 @@ function anyRowBlocked(team) {
 }
 
 /** The TEAM panel title — dims to "checking…" while any row's live
- * availability is still resolving, instead of a per-row marker. */
+ * availability is still resolving, or to "cached <age>" (P01.2 last-known
+ * cache) while showing a stale value instead of a per-row marker. */
 function teamPanelTitle(team) {
   if (anyRowChecking(team)) return "TEAM · checking…";
+  if (team?.cached) {
+    const age = formatCacheAge(team.cacheAgeMs);
+    return age ? `TEAM · cached ${age}` : "TEAM · cached";
+  }
   return `TEAM · ${team?.state ?? "not_analyzed"}`;
 }
 
 function teamPanelTone(team) {
   if (anyRowChecking(team)) return "muted";
+  if (team?.cached) return "muted";
   if (anyRowBlocked(team)) return "warning";
   return "accent";
 }
@@ -208,8 +286,9 @@ function teamPanelFooter(panelWidth) {
  * @returns {string[]}
  */
 export function renderKairoWorkspaceWidget(snapshot, width, theme, extraLines = []) {
-  const { leftWidth, rightWidth, sideBySide } = computeSideBySideWidths(width);
   const usageBody = usagePanelBody(snapshot.subscriptions, theme);
+  const teamRows = snapshot.team?.rows ?? [];
+  const { leftWidth, rightWidth, sideBySide, gap } = computeSideBySideWidths(width, usageBody, teamRows);
   const teamBody = teamPanelBody(snapshot.team, theme, cardInnerWidth(rightWidth));
   const usageFooter = usagePanelFooter(snapshot.session);
   const teamFooter = teamPanelFooter(rightWidth);
@@ -221,7 +300,8 @@ export function renderKairoWorkspaceWidget(snapshot, width, theme, extraLines = 
     const targetLineCount = Math.max(usageBody.length, teamBody.length);
     const left = renderPanel("USAGE", CARD_TONE.SUCCESS, theme, leftWidth, usageBody, targetLineCount, usageFooter);
     const right = renderPanel(teamTitle, teamTone, theme, rightWidth, teamBody, targetLineCount, teamFooter);
-    panelLines = left.map((line, index) => `${line} ${right[index] ?? ""}`);
+    const gapStr = " ".repeat(gap);
+    panelLines = left.map((line, index) => `${line}${gapStr}${right[index] ?? ""}`);
   } else {
     panelLines = [
       ...renderPanel("USAGE", CARD_TONE.SUCCESS, theme, leftWidth, usageBody, undefined, usageFooter),
