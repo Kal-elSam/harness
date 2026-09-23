@@ -136,6 +136,21 @@ no chain. RDD: off (default) — ordinary checks only.
   contain "auth"; "facturación" is not "billing"). At >= 0.5 the standard
   fallback also downgrades en-heavy-4, which Jev had right at 0.42.
   Only the latest report exists; the first full run was overwritten.
+- [x] T13 — Preserved the 20:58Z report byte-for-byte as
+  `scripts/jev-shadow/reports/2026-09-23T20-58-30Z.json` (no added
+  metadata; its provenance is only what the file itself records). Local
+  tiers in it come from the pre-fix router (main b3e2725): clear 15/18,
+  contrast pairs 0/4. The first full run (19:45Z-era retry) was overwritten
+  and is not recoverable.
+- [ ] T14 — (BLOCKED on fix/spanish-risk-keywords reaching main) Provenance:
+  each report records a hash of `execution-router.js`, the fixture, and the
+  Jev criteria; the simulator refuses to mix a report's stored `local` with
+  a different current router (today `hybridTier` recomputes risk with the
+  CURRENT classifyTask while `row.local` is historical). Update the contrast
+  control test to state that "8/8 local standard" held for the pre-fix
+  router; with the fix, es-contrast-heavy-2 is heavy (local pairs 1/4) and
+  clear becomes 18/18 IN-SAMPLE (the fix was motivated by es-heavy-1/3, so
+  this is not a validation). Do not invent metadata for older reports.
 - [ ] T5 — (PENDING, future) Human review of disagreements, especially risky
   misclassifications; only then consider an integration proposal.
 
