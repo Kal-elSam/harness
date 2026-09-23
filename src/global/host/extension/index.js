@@ -1,4 +1,5 @@
 import { createKernelService } from "../../kernel/service.js";
+import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-route-provider.js";
 import { loadKairoWorkspaceSnapshot } from "../workspace-snapshot.js";
 
 export function requestKernelSnapshot(deps = {}) {
@@ -88,7 +89,9 @@ async function refreshWorkspace(ctx, { loadSnapshot, env, view = "overview" }) {
  */
 export function createKairoWorkspaceExtension(pi, {
   env = process.env,
-  loadSnapshot = loadKairoWorkspaceSnapshot
+  loadSnapshot = loadKairoWorkspaceSnapshot,
+  loadRouteModels = loadKairoProviderModels,
+  createProvider = createKairoRouteProvider
 } = {}) {
   pi.on("session_start", async (_event, ctx) => refreshWorkspace(ctx, { loadSnapshot, env }));
 
@@ -106,8 +109,22 @@ export function createKairoWorkspaceExtension(pi, {
       handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, env, view })
     });
   }
+
+  let registered = false;
+  return {
+    async registerRoutes(cwd = process.cwd()) {
+      if (registered) return false;
+      const models = await loadRouteModels({ cwd });
+      if (models.length === 0) return false;
+      pi.registerProvider("kairo", createProvider({ models, cwd }));
+      registered = true;
+      return true;
+    }
+  };
 }
 
-export default function kairoExtension(pi) {
-  return createKairoWorkspaceExtension(pi);
+export default async function kairoExtension(pi) {
+  const extension = createKairoWorkspaceExtension(pi);
+  await extension.registerRoutes(process.cwd());
+  return extension;
 }

@@ -22,11 +22,14 @@ const snapshot = {
 function fakePi() {
   const commands = new Map();
   const events = new Map();
+  const providers = new Map();
   return {
     commands,
     events,
+    providers,
     pi: {
       registerCommand(name, definition) { commands.set(name, definition); },
+      registerProvider(name, definition) { providers.set(name, definition); },
       on(name, handler) { events.set(name, handler); }
     }
   };
@@ -39,6 +42,22 @@ test("workspace lines are compact Kairo facts, not host resource inventory", () 
     "USAGE · codex 2400 tokens · MEMORY · configured",
     "Commands: /kairo /kairo-team /kairo-sessions /kairo-usage /kairo-route /kairo-memory"
   ]);
+});
+
+test("extension registers only Kairo-routed provider models", async () => {
+  const { pi, providers } = fakePi();
+  const extension = createKairoWorkspaceExtension(pi, {
+    loadRouteModels: async ({ cwd }) => {
+      assert.equal(cwd, "/repo");
+      return [{ id: "codex::gpt-6-astra", name: "GPT-6 Astra · Builder", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }];
+    },
+    createProvider: ({ models, cwd }) => ({ models, cwd })
+  });
+
+  assert.equal(await extension.registerRoutes("/repo"), true);
+  assert.deepEqual([...providers.keys()], ["kairo"]);
+  assert.deepEqual(providers.get("kairo").models.map((model) => model.id), ["codex::gpt-6-astra"]);
+  assert.equal(await extension.registerRoutes("/other"), false);
 });
 
 test("extension renders a Kairo status/widget on session start using the explicit host session", async () => {
