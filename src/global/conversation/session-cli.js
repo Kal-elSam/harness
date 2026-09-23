@@ -129,6 +129,7 @@ async function launchBoundSession(options, session, deps, homeDir, projectRoot) 
   return launch({
     cwd: projectRoot,
     sessionId: session.id,
+    interactive: options.interactive,
     extensionDir: deps.extensionDir ?? DEFAULT_EXTENSION_DIR
   });
 }

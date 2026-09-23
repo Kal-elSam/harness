@@ -109,3 +109,26 @@ test("live gentle-shell version gate and launch argv include --link and -e", { s
   assert.ok(calls[0].args.includes("--link"));
   assert.ok(calls[0].args.includes("-e"));
 });
+
+test("non-interactive terminal fails closed before resolving or spawning the host", async () => {
+  const calls = [];
+  await assert.rejects(
+    () => launchGentleShell({
+      cwd: "/abs/project",
+      extensionDir,
+      interactive: false,
+      statImpl: okStat,
+      whichImpl: (command) => {
+        calls.push(`which:${command}`);
+        return "/usr/bin/gentle-shell";
+      },
+      probeImpl: () => ({ ok: true, stdout: "0.85.1" }),
+      spawnImpl: () => {
+        calls.push("spawn");
+        return { status: 0 };
+      }
+    }),
+    /interactive terminal[\s\S]*--legacy-cockpit/
+  );
+  assert.deepEqual(calls, []);
+});
