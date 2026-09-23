@@ -52,8 +52,8 @@ sections, components, backups, and drift repair under ~/.harness.
 Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_NAME}).
 
 ## Configuration & health
-  ${cli}                              Unified Gentle Shell workspace (TTY).
-                                      Requires gentle-shell + Pi on PATH; use --legacy-cockpit as fallback.
+  ${cli}                              Unified Kairo workspace (TTY).
+                                      Requires Pi on PATH; use --legacy-cockpit as fallback.
   ${cli} --dry-run                      Setup dry-run (scriptable)
   ${cli} --version
   ${cli} setup [--dry-run] [--yes] [--confirm] [--simple] [--no-preflight] [--agents <list|all>] [--components <list>]
@@ -145,7 +145,7 @@ Scopes:
 Commands:
   architect  Run subscription-authenticated Codex in bounded read-only planning mode.
   plans      Inspect and explicitly approve or reject project-local architecture plans.
-  shell      Operations cockpit (TTY). Bare ${cli} opens the Unified Gentle Shell workspace;
+  shell      Operations cockpit (TTY). Bare ${cli} opens the Unified Kairo workspace;
              explicit ${cli} shell keeps the legacy operations cockpit available.
              Keys: ↑↓ · Enter · Esc back/exit · R refresh · C cancel · ? help.
              Tab switches region only when content is interactive (runs/launch).

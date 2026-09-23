@@ -8,8 +8,9 @@ test("missing Hermes does not fail host launch", async () => {
   await launchGentleShell({
     cwd: "/tmp/proj",
     extensionDir: "/abs/kairo-extension",
+    env: { HARNESS_HOME: "/tmp/kairo-ecosystem-test" },
     statImpl: () => ({ isDirectory: () => true }),
-    whichImpl: (command) => (command === "gentle-shell" ? "/usr/bin/gentle-shell" : null),
+    whichImpl: (command) => (command === "pi" ? "/usr/bin/pi" : null),
     probeImpl: () => ({ ok: true, stdout: "0.85.1" }),
     spawnImpl: (command, args, options) => {
       calls.push({ command, args, options });
@@ -17,7 +18,7 @@ test("missing Hermes does not fail host launch", async () => {
     }
   });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].command, "/usr/bin/gentle-shell");
+  assert.equal(calls[0].command, "/usr/bin/pi");
 });
 
 test("absent optional integrations disable only their capability", () => {

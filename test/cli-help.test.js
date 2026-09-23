@@ -28,7 +28,7 @@ test("full help groups commands and documents advanced surfaces", () => {
   assert.match(text, /--workspace-bound --cwd/);
   assert.match(text, /runs list/);
   assert.match(text, /Operations cockpit/);
-  assert.match(text, /Unified Gentle Shell workspace/);
+  assert.match(text, /Unified Kairo workspace/);
   assert.match(text, /intelligence/);
   assert.match(text, /OPENROUTER_API_KEY/);
   assert.match(text, /Legacy aliases: harness/);

@@ -1,12 +1,14 @@
 import { spawn, spawnSync } from "node:child_process";
-import { statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { isValidSessionId } from "../conversation/session-registry.js";
+import { resolveHomeDir } from "../paths.js";
 
 export const MIN_PI_VERSION = "0.85.1";
 
 export function routeInteractiveHost({ command, options = {} }) {
   if (options.legacyCockpit) return "cockpit";
-  if (command === "host") return "gentle-shell";
+  if (command === "host") return "pi";
   if (command === "shell") return "shell";
   return null;
 }
@@ -35,15 +37,18 @@ export async function launchGentleShell({
     throw new Error("Kairo extension path must be absolute.");
   }
 
-  const binary = whichImpl("gentle-shell", env);
+  // Do not launch through Gentle Shell. Its launcher explicitly prepends its
+  // package, skills, prompts, and themes, so Pi's --no-* flags cannot make
+  // Kairo's first screen quiet. Kairo uses Pi directly and supplies only its
+  // own extension.
+  const binary = whichImpl("pi", env);
   if (typeof binary !== "string" || !binary.startsWith("/")) {
     throw new Error(
-      'Gentle Shell CLI "gentle-shell" is not on PATH. Use --legacy-cockpit for the previous cockpit.'
+      'Pi CLI "pi" is not on PATH. Install Pi or use --legacy-cockpit for the previous cockpit.'
     );
   }
 
-  const piBinary = resolvePiBinary(env, whichImpl);
-  const probed = probeImpl(piBinary, ["--version"], { env });
+  const probed = probeImpl(binary, ["--version"], { env });
   const version = parseVersion(probed?.stdout ?? "");
   if (!version || compareSemver(version, MIN_PI_VERSION) < 0) {
     throw new Error(
@@ -51,23 +56,26 @@ export async function launchGentleShell({
     );
   }
 
-  // Kairo owns its interactive surface. An isolated, minimal Pi resource set
-  // prevents a user's unrelated Gentle package inventory, collisions, and
-  // changelog from becoming Kairo's first screen. The explicit Kairo extension
-  // remains loaded even with discovery disabled.
+  const kairoPiHome = prepareKairoPiHome(env);
+  // Kairo owns its interactive surface. A Kairo-only Pi home and explicit
+  // resource flags prevent ambient packages, skills, themes, context files,
+  // changelogs, and diagnostics from becoming Kairo's first screen.
   const args = [
-    "--isolated",
-    "--",
     "-e", extensionDir,
     "--no-extensions",
     "--no-skills",
     "--no-prompt-templates",
-    "--no-themes"
+    "--no-themes",
+    "--no-context-files"
   ];
-  const hostEnv = sessionId == null ? env : { ...env, KAIRO_SESSION_ID: sessionId };
+  const hostEnv = {
+    ...env,
+    PI_CODING_AGENT_DIR: kairoPiHome,
+    ...(sessionId == null ? {} : { KAIRO_SESSION_ID: sessionId })
+  };
   const result = await spawnImpl(binary, args, { cwd, env: hostEnv, shell: false, stdio: "inherit" });
   if (result && Number.isInteger(result.status) && result.status !== 0) {
-    throw new Error(`gentle-shell exited ${result.status}. Use --legacy-cockpit for the previous cockpit.`);
+    throw new Error(`Pi exited ${result.status}. Use --legacy-cockpit for the previous cockpit.`);
   }
   return result ?? { status: 0 };
 }
@@ -87,11 +95,26 @@ function assertDirectoryCwd(cwd, statImpl) {
   }
 }
 
-function resolvePiBinary(env, whichImpl) {
-  const override = env?.GENTLE_SHELL_PI;
-  if (typeof override === "string" && override.startsWith("/")) return override;
-  const fromPath = whichImpl("pi", env);
-  return typeof fromPath === "string" && fromPath.startsWith("/") ? fromPath : "pi";
+function prepareKairoPiHome(env) {
+  const dir = join(resolveHomeDir(env), ".harness", "pi-agent");
+  const settingsPath = join(dir, "settings.json");
+  mkdirSync(dir, { recursive: true });
+
+  let settings = {};
+  if (existsSync(settingsPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) settings = parsed;
+    } catch {
+      // The directory is Kairo-owned; preserve an unreadable/malformed file
+      // rather than silently replacing it with a different configuration.
+      return dir;
+    }
+  }
+  if (settings.quietStartup !== true) {
+    writeFileSync(settingsPath, `${JSON.stringify({ ...settings, quietStartup: true }, null, 2)}\n`, "utf8");
+  }
+  return dir;
 }
 
 function parseVersion(output) {

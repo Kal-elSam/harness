@@ -208,7 +208,7 @@ test("ensureHostMetadata writes host.json without changing session.json or trans
   assert.deepEqual(await readFile(transcriptPath), transcriptBytes);
   const host = JSON.parse(await readFile(join(dir, "host.json"), "utf8"));
   assert.equal(host.schema, "kairo.host-binding/v1");
-  assert.equal(host.host, "gentle-shell");
+  assert.equal(host.host, "pi");
   assert.equal(host.sessionId, session.id);
 });
 

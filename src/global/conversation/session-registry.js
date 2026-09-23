@@ -248,7 +248,7 @@ export async function ensureHostMetadata(homeDir, projectRoot, sessionId, deps =
   const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
   const doc = {
     schema: HOST_BINDING_SCHEMA,
-    host: "gentle-shell",
+    host: "pi",
     sessionId,
     boundAt: new Date().toISOString()
   };
