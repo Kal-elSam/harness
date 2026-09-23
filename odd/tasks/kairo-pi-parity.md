@@ -281,7 +281,14 @@ re-analyze the project.
     snapshot)` call and re-running
     `node --test test/workspace-shell-extension.test.js` fails exactly
     the "notifies once per blocked role..." test (1 of 8 failing);
-    restored immediately after.
+    restored immediately after. **Note (2026-09-23, post-review):** this
+    was a post-hoc mutation check run AFTER implementing the notify
+    wiring, not a true test-first RED observed before writing the code —
+    strict TDD calls for the test to fail first, then the code to make it
+    pass. The two defect fixes below (post-review) instead wrote each
+    failing test first and observed a genuine module-level RED before
+    touching implementation code, per the coordinator's explicit
+    correction.
   - GREEN: `node --test test/workspace-shell-extension.test.js
     test/workspace-shell-snapshot.test.js test/workspace-widget.test.js
     test/usage-summary.test.js test/cockpit-view.test.js
@@ -321,6 +328,79 @@ re-analyze the project.
     `TEAM · active` with the same 7 roles, no role blocked, no
     `available` marker anywhere, side-by-side panels at both widths with
     every line within the given width.
+
+### Post-review fixes (2026-09-23)
+
+The coordinator caught two defects against the approved design in the
+real render above, before this task was reported done:
+
+1. **TEAM columns not aligned.** The original `teamRowLine` used a
+   literal fixed `"  "` gap between role/model/via, so the model column
+   landed at a different visible column per row (e.g. `Orchestrator  Kimi
+   K3  opencode-go` vs. a much wider `Project Analyst` row) instead of
+   the approved aligned-columns design.
+2. **Footer overflow.** The TEAM footer's `/kairo-*` command list relied
+   on `cardBottom`'s own `truncateToWidth`, which cut `/kairo-memory`
+   mid-name at narrower widths, leaving a partial command plus a stray
+   `[0m` artifact visible in the real render at width 100.
+
+Fix:
+- `teamColumnWidths(rows, innerWidth)` pads role/model to the longest
+  real `visibleWidth` per column; only the model column ever truncates
+  (`truncateToWidth`) when space is tight — the role column never does.
+- `teamPanelFooter(panelWidth)` / `fitFooterCommands` now render only
+  whole `/kairo-*` commands that fit the real footer-label budget
+  (`footerLabelBudget`, mirroring `cardBottom`'s own arithmetic),
+  dropping every trailing command starting from the first that wouldn't
+  fit — never truncating one mid-name.
+- `renderKairoWorkspaceWidget` now computes panel widths up front via
+  the new exported `computeSideBySideWidths(width)` and threads them
+  into the TEAM body/footer builders, instead of building TEAM content
+  before knowing the panel width.
+
+TDD (true test-first this time, per the coordinator's correction):
+- RED (module-level, before any implementation change): added
+  `computeSideBySideWidths` to the test import and two new test blocks
+  (column alignment at widths 100/160; footer-never-cuts-a-command at
+  widths 60/100/160) to `test/workspace-widget.test.js`, then ran
+  `node --test test/workspace-widget.test.js` — failed immediately with
+  `SyntaxError: ... does not provide an export named
+  'computeSideBySideWidths'` (the whole file failed to load, 0 of the 18
+  tests ran) — a genuine RED observed before touching
+  `workspace-widget.js`.
+- GREEN: implemented `computeSideBySideWidths`, `teamColumnWidths`,
+  `padColumn`, `fitFooterCommands`, `footerLabelBudget`, and rewired
+  `renderKairoWorkspaceWidget`/`teamPanelBody`/`teamRowLine`/
+  `teamPanelFooter` to use them; `node --test test/workspace-widget.test.js`
+  → 18 pass, 0 fail (including the 5 new alignment/footer tests).
+- Related suites: `node --test test/workspace-widget.test.js
+  test/workspace-shell-extension.test.js test/workspace-shell-snapshot.test.js
+  test/usage-summary.test.js test/cockpit-view.test.js
+  test/project-overlay.test.js` → 187 pass, 0 fail.
+- Full suite: `npm test` → 2104 tests, 2103 pass, 1 skipped
+  (`KAIRO_LIVE_PI_TEST`, opt-in), 0 fail. (One transient failure on a
+  first run — `test/quick-ask.test.js`'s "codex's timeout resets on real
+  output" — an unrelated, pre-existing timing test not touched by this
+  slice; passed alone in isolation and on a clean full-suite rerun,
+  confirmed not a regression from this change.)
+- Commit: `9e2a8f9` fix(host): align TEAM columns and stop cutting footer
+  commands mid-name.
+- Real render re-verified against `/Users/kal-el/Desktop/agentic-harness`
+  at widths 100 and 160 (read-only, identity theme): TEAM's model column
+  now starts at the same visible position on every row (`Project
+  Analyst  GPT-6-Astra    codex`, `Orchestrator     Kimi K3        opencode-go`,
+  ...); the width-100 footer now reads `/kairo-team · /kairo-route ·
+  /kairo-usage` (whole commands only, `/kairo-memory` dropped cleanly,
+  no `[0m` artifact); width-160 footer shows all four commands in full.
+
+- `git log --oneline origin/main..HEAD` (updated) → `9e2a8f9`,
+  `d6b9d28`, `b1170fe`, `0d2bbc9`, `5b6d88b` (T1–T3 + fix), `34dbdc5`
+  (planning docs, pre-existing).
+- `git diff --stat origin/main` (updated, source+tests only, excluding
+  the planning doc) → 9 files changed, 833 insertions(+), 160
+  deletions(-) = 993 authored lines total across all commits in this
+  slice — further above the ~300-line forecast; still flagged for the
+  parent's `ask-on-risk` delivery decision, not resolved here.
 
 ### Acceptance criteria
 
