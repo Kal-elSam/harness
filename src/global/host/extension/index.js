@@ -72,6 +72,14 @@ function workspaceStatus(snapshot) {
   return `Kairo · ${snapshot.project.label} · ${snapshot.session?.mode ?? "ask"}`;
 }
 
+function unavailableRoutesLines() {
+  return [
+    "KAIRO ROUTES · unavailable",
+    "No verified automatic route is available for this project.",
+    "Next: run kairo --legacy-cockpit, then /project analyze."
+  ];
+}
+
 async function refreshWorkspace(ctx, { loadSnapshot, env, view = "overview" }) {
   const snapshot = await loadSnapshot({
     cwd: ctx?.cwd ?? process.cwd(),
@@ -93,7 +101,29 @@ export function createKairoWorkspaceExtension(pi, {
   loadRouteModels = loadKairoProviderModels,
   createProvider = createKairoRouteProvider
 } = {}) {
-  pi.on("session_start", async (_event, ctx) => refreshWorkspace(ctx, { loadSnapshot, env }));
+  let registered = false;
+  let routeState = "unknown";
+
+  async function registerRoutes(cwd = process.cwd()) {
+    if (registered) return true;
+    const models = await loadRouteModels({ cwd });
+    if (models.length === 0) {
+      routeState = "unavailable";
+      return false;
+    }
+    pi.registerProvider("kairo", createProvider({ models, cwd }));
+    registered = true;
+    routeState = "available";
+    return true;
+  }
+
+  pi.on("session_start", async (_event, ctx) => {
+    await registerRoutes(ctx?.cwd ?? process.cwd());
+    const snapshot = await refreshWorkspace(ctx, { loadSnapshot, env });
+    if (routeState === "unavailable") {
+      ctx?.ui?.setWidget?.("kairo-workspace", unavailableRoutesLines(snapshot));
+    }
+  });
 
   const commands = [
     ["kairo", "Show Kairo workspace status", "overview"],
@@ -110,16 +140,8 @@ export function createKairoWorkspaceExtension(pi, {
     });
   }
 
-  let registered = false;
   return {
-    async registerRoutes(cwd = process.cwd()) {
-      if (registered) return false;
-      const models = await loadRouteModels({ cwd });
-      if (models.length === 0) return false;
-      pi.registerProvider("kairo", createProvider({ models, cwd }));
-      registered = true;
-      return true;
-    }
+    registerRoutes
   };
 }
 
