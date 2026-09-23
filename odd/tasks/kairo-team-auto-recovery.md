@@ -90,10 +90,15 @@ is only safe complete, so nothing reaches main in pieces.
 Each slice targets <=400 changed lines; any overage is reported, not squeezed.
 
 ## Tasks
-- [ ] R1 — Availability wording: `checkCandidate` and
-  `resolveAssignmentAvailability` distinguish a temporary window limit
-  (window name + reset when known) from real exhaustion; no "exhausted"
-  without evidence.
+- [x] R1 — Availability wording (1bd7116). `checkCandidate` names the limiting
+  window and its reset ("Codex weekly window is limited (2% left, resets …)")
+  and returns a structured `limit` {provider, window, remainingPercent,
+  resetsAt} for Codex, Claude, and Go. Cursor's visible warning says "limit
+  reached" (its internal EXHAUSTED status matches ANY limit text, including
+  rate limits). Tests were written first (5 RED, then GREEN). The 5 existing
+  tests that pinned "nearly exhausted"/"quota exhausted" were updated because
+  the requirement changes that text. Full suite 2147 pass / 0 fail / 1
+  skipped; the touched suites pass 281/281 on Node 20.14. +95/-14.
 - [ ] R2 — Availability fingerprint: a pure per-provider fingerprint from the
   snapshot eligibility, plus a per-project store of the last fingerprint
   acted on.
@@ -127,4 +132,4 @@ Each slice targets <=400 changed lines; any overage is reported, not squeezed.
 - No message claims exhaustion from a window-limited signal.
 
 ## Next step
-R1 on branch feat/kairo-team-auto-recovery-01-foundations.
+R2 on branch feat/kairo-team-auto-recovery-01-foundations.
