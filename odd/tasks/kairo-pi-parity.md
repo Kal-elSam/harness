@@ -125,23 +125,70 @@ execution; Pi supplies widgets and overlays only.
   - CI Node 20/22/24 and the real TTY check against this project are the
     parent's remaining items (not run from this worktree).
 
+- [x] P01-T5 Always-visible subscription usage (added 2026-09-23 after the
+  user's TTY review: "there is information that should always be visible,
+  like our subscription usage — we had it before"). The persistent overview
+  shows the legacy cockpit's compact USAGE line (Codex 5h/W, Claude S/W,
+  Go windows, with LOW/LIMITED markers) taken from the same conversation
+  service snapshot phase 2 already reads (no extra probe). Extract the
+  cockpit's `compactUsageLines` text logic into a UI-free formatter reused
+  by both. Before live data arrives the line reads `usage checking`; on
+  failure `usage unknown`.
+  - Extracted `compactUsageLines`' Codex/Claude/Go text (and
+    `quotaWarnSuffix`) into `src/global/conversation/usage-summary.js`
+    (`formatSubscriptionUsageSegments`); `cockpit/view.js` now calls it
+    and re-exports `quotaWarnSuffix` for its other callers — output is
+    byte-identical (existing cockpit-view tests pass unchanged).
+    RED: `node --test test/usage-summary.test.js` → module not found.
+    GREEN: same command → 5 pass, 0 fail; `node --test
+    test/cockpit-view.test.js test/project-overlay.test.js` → 145 pass,
+    0 fail (byte-identical confirmed). Commit: `cf72796`.
+  - Renamed `loadKairoTeamAvailability` → `loadKairoLiveData` in
+    `src/global/host/workspace-snapshot.js`, extended to also return
+    `usage`/`providers` from the SAME `service.snapshot()` call (asserted
+    by a test counting snapshot() invocations == 1). Added additive
+    `subscriptions` field to `buildKairoWorkspaceSnapshot` with the same
+    checking/unknown/real three-state contract as `team.rows`.
+    `src/global/host/extension/index.js`: overview prints
+    `USAGE · <segments>` right after SESSION (checking/unknown before/on
+    a failed probe); `/kairo-usage` shows the same line plus its existing
+    measured-token detail; `unavailableRoutesLines` shows it too.
+    RED: `node --test test/workspace-shell-snapshot.test.js
+    test/workspace-shell-extension.test.js` → SyntaxError (renamed
+    export not found) then assertion failures against the new fields.
+    GREEN: same command → 19 pass, 0 fail. Commit: `a1e08c9`.
+  - Real render against `/Users/kal-el/Desktop/agentic-harness` (read-only,
+    live strategy) confirms both phases:
+    phase 1: `USAGE · checking`, every team row `checking`;
+    phase 2: `USAGE · Codex 5h 80% / W 83% │ Claude S 60% / W 85% │
+    Go 100% / 60% / 26%`, every team row `available`.
+
 ### Acceptance criteria
 
 - Startup overview lists every role, not a count.
 - A blocked assignment shows as blocked with Kairo's own warning text.
 - No availability computed inside the widget; failures show `unknown`.
 - Existing snapshot fields keep their shape (additive change).
+- Subscription usage is visible at startup without any command.
 
 ### Progress
 
-- Branch: `feat/kairo-pi-p01-team` from `origin/main` 54ecb3e.
-- Commits: `5cb8918`, `48b4b67`, `e378a6b` (T1–T3, each its own work-unit
-  commit with tests).
-- T1–T3 done with observed RED→GREEN evidence above. T4 partial: local
-  focused/full-suite evidence recorded; CI (Node 20/22/24) and the real
-  TTY check are the parent's remaining items.
+- Branch: `feat/kairo-pi-p01-team` from `origin/main` 54ecb3e; PR #338 open.
+- Commits: `5cb8918`, `48b4b67`, `e378a6b` (T1–T3), `1e0e19e`/`0a1a748`
+  (docs), `cf72796`/`a1e08c9` (T5) — each its own work-unit commit with
+  tests.
+- T1–T3, T5 done with observed RED→GREEN evidence above. T4 partial:
+  local focused/full-suite evidence recorded; CI (Node 20/22/24) and the
+  real TTY check are the parent's remaining items.
+- Full suite after T5: `npm test` → 2083 tests, 2082 pass, 1 skipped,
+  0 fail (baseline before T5 was 2076/2075/1/0 — net +7 tests, 0
+  regressions).
+- `git diff --stat origin/feat/kairo-pi-p01-team` (T5's two commits only)
+  → 8 files changed, 318 insertions(+), 88 deletions(-).
 
 ### Next step
 
 Parent: run CI across Node 20/22/24 and the real TTY check
-(`kairo` against this project), then close P01 and move to P02.
+(`kairo` against this project — the read-only render in T5's evidence
+above already confirms the two-phase USAGE line end to end), then close
+P01 and move to P02.
