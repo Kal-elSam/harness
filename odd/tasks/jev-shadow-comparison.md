@@ -113,9 +113,15 @@ no chain. RDD: off (default) — ordinary checks only.
   pairs with a Jev failure are unscored for both classifiers. A constant
   classifier separates 0/4 pairs (verified with a stub transport). Tests
   17/17, full suite 2153 pass / 0 fail / 1 skipped.
-- [ ] T11 — Manual contrast run (user, key in shell):
-  `node scripts/jev-shadow/evaluate.mjs --out report.json`, then review
-  `contrast.summary.byPair`.
+- [x] T11 — Contrast run 2026-09-23T20:58Z (31 cases, 0 failures). Jev
+  separates 2/4 pairs, local 0/4 by design. Changelog pairs separated in EN
+  and ES (light 0.99/0.97, standard ~0.47). Storage pairs FAILED in both
+  languages: recovery code -> standard with HIGH confidence (0.76 EN, 0.87
+  ES), a confident blind spot on data-sensitivity risk. Clear cases re-run
+  with identical input: Jev 14/18 -> 12/18. All 4 flips had confidence
+  < 0.35 (en-standard-2, en-heavy-3, en-heavy-5, es-heavy-3), so low
+  confidence means unstable, while high confidence is stable but not always
+  correct. Latency median 369 ms, p90 7.6 s, max 9.4 s (heavy tail).
 - [ ] T5 — (PENDING, future) Human review of disagreements, especially risky
   misclassifications; only then consider an integration proposal.
 
