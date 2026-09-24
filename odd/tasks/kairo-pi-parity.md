@@ -344,8 +344,15 @@ Branch: `feat/kairo-pi-p02-session-binding`, stacked on
 
 ### Tasks
 
-- [ ] P02-T1 Bare `kairo` creates and binds a session (same path as
+- [x] P02-T1 Bare `kairo` creates and binds a session (same path as
   `kairo start`); `--legacy-cockpit` routing unchanged.
+  - Files: `src/cli.js` (case `"host"`), `test/cli-implicit-host.test.js`.
+  - RED: `node --test test/cli-implicit-host.test.js` — "bare kairo
+    must create exactly one real session" (0 !== 1).
+  - GREEN: `node --test test/cli-implicit-host.test.js
+    test/cli-default-entry.test.js test/session-cli.test.js` — 23/23,
+    5/5, all pass.
+  - Commit: `36f91d9`.
 - [ ] P02-T2 Pi binding index module: record, look up, and fail closed on
   malformed files; atomic writes; per-project isolation.
 - [ ] P02-T3 Extension binding lifecycle: in-memory binding;
