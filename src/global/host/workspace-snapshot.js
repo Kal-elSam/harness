@@ -52,7 +52,11 @@ function rowAvailability(model, intelligence) {
   if (intelligence === undefined) return { state: "checking", warning: null };
   if (intelligence === null) return { state: "unknown", warning: null };
   const { available, warning } = resolveAssignmentAvailability(model, intelligence);
-  return { state: available ? "available" : "blocked", warning: warning ?? null };
+  if (available) return { state: "available", warning: warning ?? null };
+  // A provider window limit (checkCandidate's structured `limit`) rides
+  // along so notices can group every role hit by the same provider window.
+  const limit = intelligence?.eligibility?.[model?.adapterId]?.limit ?? null;
+  return { state: "blocked", warning: warning ?? null, ...(limit ? { limit } : {}) };
 }
 
 function teamRow(role, model, intelligence) {
@@ -283,6 +287,23 @@ export async function loadKairoWorkspaceSnapshot({
  * @param {{createConversationService?: typeof createConversationService}} [deps]
  * @returns {Promise<{eligibility: object, claudeEntitlement: object, cursorAccess: object, usage: object, providers: object}|null>}
  */
+/**
+ * Runs automatic team recovery (conversation/team-recovery.js) for this
+ * project with live provider probes. Never throws: an unexpected failure is
+ * reported as `{outcome: "error", reason}` so the Pi host can say so without
+ * breaking its refresh.
+ * @param {{cwd: string}} args
+ * @param {{createConversationService?: typeof createConversationService}} [deps]
+ */
+export async function recoverKairoProjectTeam({ cwd } = {}, deps = {}) {
+  const createService = deps.createConversationService ?? createConversationService;
+  try {
+    return await createService({ enableProviderProbes: true }).recoverProjectTeam({ cwd });
+  } catch (error) {
+    return { outcome: "error", reason: error?.message ?? String(error) };
+  }
+}
+
 export async function loadKairoLiveData({ cwd } = {}, deps = {}) {
   const createService = deps.createConversationService ?? createConversationService;
   try {

@@ -42,7 +42,8 @@ function fakePi() {
     providers,
     pi: {
       registerCommand(name, definition) { commands.set(name, definition); },
-      registerProvider(name, definition) { providers.set(name, definition); },
+      registerProvider(name, definition) { providers.set(name, definition); providers.registrations = (providers.registrations ?? 0) + 1; },
+      unregisterProvider(name) { providers.delete(name); },
       on(name, handler) { events.set(name, handler); }
     }
   };
@@ -111,7 +112,7 @@ test("the overview command renders the themed two-panel widget as a component fa
   assert.ok(lines.some((line) => line.includes("Reviewer") && line.includes("BLOCKED")));
 });
 
-test("extension notifies once per blocked role on every refresh, with role, model, Kairo's warning, and the next step", async () => {
+test("a command refresh has no fresh availability, so it never re-notifies blocked roles", async () => {
   const { pi, commands } = fakePi();
   createKairoWorkspaceExtension(pi, { loadSnapshot: async () => snapshot });
 
@@ -120,14 +121,52 @@ test("extension notifies once per blocked role on every refresh, with role, mode
     cwd: "/repo",
     ui: { setWidget: () => {}, notify: (...args) => notifications.push(args) }
   });
+  assert.deepEqual(notifications, []);
+});
 
-  assert.equal(notifications.length, 1);
-  const [message, level] = notifications[0];
-  assert.equal(level, "warning");
-  assert.match(message, /Reviewer/);
-  assert.match(message, /MiniMax-M3/);
-  assert.match(message, /Cursor Models quota exhausted/);
-  assert.match(message, /project analyze/);
+const GO_LIMIT = { provider: "opencode-go", window: "monthly", remainingPercent: 0, resetsAt: null };
+function goBlockedSnapshot() {
+  return {
+    ...snapshot,
+    team: {
+      ...snapshot.team,
+      rows: [
+        { role: "Builder", model: "GLM-5.3", via: "opencode-go", accessMode: "automatic", availability: { state: "blocked", warning: "Unavailable — OpenCode Go monthly window is rate-limited", limit: GO_LIMIT } },
+        { role: "Reviewer", model: "Kimi K3", via: "opencode-go", accessMode: "automatic", availability: { state: "blocked", warning: "Unavailable — OpenCode Go monthly window is rate-limited", limit: GO_LIMIT } }
+      ]
+    }
+  };
+}
+
+test("live availability notifies once per provider and window per episode, and again only after it clears and returns", async () => {
+  const { pi, events } = fakePi();
+  let current = goBlockedSnapshot();
+  const extension = createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => current,
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => ({ eligibility: { "opencode-go": { ok: false, limit: GO_LIMIT } } }),
+    loadRouteModels: async () => [{ id: "codex::gpt-6-astra", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }],
+    recoverTeam: async () => ({ outcome: "skipped", reason: "retry-later" })
+  });
+  const notifications = [];
+  const ctx = { cwd: "/repo", ui: { setStatus: () => {}, setWidget: () => {}, notify: (...args) => notifications.push(args) } };
+
+  await events.get("session_start")({}, ctx);
+  await extension.recovery();
+  assert.equal(notifications.length, 1, "two blocked roles on the same provider window make ONE notice");
+  assert.match(notifications[0][0], /Builder \(GLM-5\.3\), Reviewer \(Kimi K3\)/);
+  assert.equal(notifications[0][1], "warning");
+
+  await events.get("session_start")({}, ctx);
+  await extension.recovery();
+  assert.equal(notifications.length, 1, "the same limit on a later live refresh is not repeated");
+
+  current = { ...snapshot, team: { ...snapshot.team, rows: [] } };
+  await events.get("session_start")({}, ctx);
+  current = goBlockedSnapshot();
+  await events.get("session_start")({}, ctx);
+  await extension.recovery();
+  assert.equal(notifications.length, 2, "a limit that cleared and came back is a new episode");
 });
 
 test("extension registers only Kairo-routed provider models", async () => {
@@ -143,8 +182,98 @@ test("extension registers only Kairo-routed provider models", async () => {
   assert.equal(await extension.registerRoutes("/repo"), true);
   assert.deepEqual([...providers.keys()], ["kairo"]);
   assert.deepEqual(providers.get("kairo").models.map((model) => model.id), ["codex::gpt-6-astra"]);
-  assert.equal(await extension.registerRoutes("/other"), true);
+  assert.equal(await extension.registerRoutes("/repo"), true);
+  assert.equal(providers.registrations, 1, "unchanged routes are not re-registered");
 });
+
+test("routes follow the active team: changed models re-register, no models unregister", async () => {
+  const { pi, providers } = fakePi();
+  let models = [{ id: "opencode-go::glm", kairoRoute: { adapterId: "opencode-go", modelId: "glm" } }];
+  const extension = createKairoWorkspaceExtension(pi, {
+    loadRouteModels: async () => models,
+    createProvider: ({ models: registered }) => ({ models: registered })
+  });
+  await extension.registerRoutes("/repo");
+  models = [{ id: "claude::claude-opus-5", kairoRoute: { adapterId: "claude", modelId: "claude-opus-5" } }];
+  assert.equal(await extension.registerRoutes("/repo"), true);
+  assert.equal(providers.registrations, 2);
+  assert.deepEqual(providers.get("kairo").models.map((model) => model.id), ["claude::claude-opus-5"]);
+
+  models = [];
+  assert.equal(await extension.registerRoutes("/repo"), false);
+  assert.equal(providers.has("kairo"), false, "a team with no automatic route leaves no stale Pi route behind");
+});
+
+async function sessionWithRecovery(recoverTeam, { liveData = { eligibility: { codex: { ok: true } } }, routeModels } = {}) {
+  const { pi, events, providers } = fakePi();
+  const recoverCalls = [];
+  let routeLoads = 0;
+  const extension = createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => ({ ...snapshot, team: { ...snapshot.team, rows: [] } }),
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => liveData,
+    loadRouteModels: async () => {
+      routeLoads += 1;
+      return routeModels ? routeModels(routeLoads) : [{ id: "codex::gpt-6-astra", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }];
+    },
+    createProvider: ({ models }) => ({ models }),
+    recoverTeam: async (args) => { recoverCalls.push(args); return recoverTeam(); }
+  });
+  const notifications = [];
+  const ctx = { cwd: "/repo", ui: { setStatus: () => {}, setWidget: () => {}, notify: (...args) => notifications.push(args) } };
+  await events.get("session_start")({}, ctx);
+  await extension.recovery();
+  return { notifications, recoverCalls, providers, extension, events, ctx, routeLoads: () => routeLoads };
+}
+
+test("fresh live availability triggers one team recovery; an activated team re-syncs Pi routes and says what changed", async () => {
+  const recovered = { status: "active", projectTeam: [{ role: "Builder", model: { displayName: "Claude Opus 5", adapterId: "claude", modelId: "claude-opus-5" } }] };
+  const { notifications, recoverCalls, providers } = await sessionWithRecovery(
+    () => ({ outcome: "activated", fingerprint: "claude=ok|opencode-go=limited:monthly", strategy: recovered }),
+    { routeModels: (load) => (load === 1
+      ? [{ id: "opencode-go::glm", kairoRoute: { adapterId: "opencode-go", modelId: "glm" } }]
+      : [{ id: "claude::claude-opus-5", kairoRoute: { adapterId: "claude", modelId: "claude-opus-5" } }]) }
+  );
+  assert.deepEqual(recoverCalls, [{ cwd: "/repo" }]);
+  assert.deepEqual(providers.get("kairo").models.map((model) => model.id), ["claude::claude-opus-5"], "Pi routes follow the recovered team");
+  const [message, level] = notifications.at(-1);
+  assert.equal(level, "info");
+  assert.match(message, /recovered the project team/);
+  assert.match(message, /Builder → Claude Opus 5/);
+});
+
+test("a recovery that keeps the previous team says why and what to do, once", async () => {
+  const kept = await sessionWithRecovery(() => ({ outcome: "kept-previous", reason: "Bootstrap Analyst did not answer: timeout", fingerprint: "fp-a" }));
+  assert.equal(kept.notifications.length, 1);
+  assert.equal(kept.notifications[0][1], "warning");
+  assert.match(kept.notifications[0][0], /could not recover the project team/);
+  assert.match(kept.notifications[0][0], /did not answer: timeout/);
+  assert.match(kept.notifications[0][0], /retries on a later refresh/);
+
+  await kept.events.get("session_start")({}, kept.ctx);
+  await kept.extension.recovery();
+  assert.equal(kept.notifications.length, 1, "the same outcome for the same availability is not repeated");
+});
+
+test("exhausted retries point to the manual next step; quiet outcomes stay quiet", async () => {
+  const exhausted = await sessionWithRecovery(() => ({ outcome: "skipped", reason: "retries-exhausted", lastOutcome: "no-analyst", fingerprint: "fp-b" }));
+  assert.equal(exhausted.notifications.length, 1);
+  assert.match(exhausted.notifications[0][0], /stopped retrying/);
+  assert.match(exhausted.notifications[0][0], /no-analyst/);
+  assert.match(exhausted.notifications[0][0], /project analyze/);
+
+  for (const reason of ["baseline", "already-handled", "retry-later", "analysis-in-progress", "no-active-team"]) {
+    const quiet = await sessionWithRecovery(() => ({ outcome: reason === "baseline" ? "baseline" : "skipped", reason, fingerprint: "fp-c" }));
+    assert.deepEqual(quiet.notifications, [], reason);
+  }
+});
+
+test("no recovery is attempted when the live availability probe failed", async () => {
+  const { recoverCalls } = await sessionWithRecovery(() => ({ outcome: "activated" }), { liveData: null });
+  assert.deepEqual(recoverCalls, []);
+});
+
+
 
 test("extension replaces a missing Pi route with an actionable Kairo state, but still shows usage and the team rows, unbounded", async () => {
   const { pi, events } = fakePi();
