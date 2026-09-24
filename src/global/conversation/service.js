@@ -39,6 +39,8 @@ import { createBootstrapAnalyzerAdapter } from "./bootstrap-analyzer-adapters.js
 import { verifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
 import { acquireProjectAnalysisLock } from "./project-analysis-lock.js";
+import { readAvailabilityRecovery, writeAvailabilityRecovery } from "./availability-recovery-store.js";
+import { runTeamRecovery } from "./team-recovery.js";
 import { resolveProjectRoute } from "./project-router.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -413,6 +415,8 @@ export function createConversationService(deps = {}) {
   const runCodexSandboxedBootstrapImpl = deps.runCodexSandboxedBootstrap ?? runCodexSandboxedBootstrap;
   const createBootstrapAnalyzerAdapterImpl = deps.createBootstrapAnalyzerAdapter ?? createBootstrapAnalyzerAdapter;
   const acquireProjectAnalysisLockImpl = deps.acquireProjectAnalysisLock ?? acquireProjectAnalysisLock;
+  const readAvailabilityRecoveryImpl = deps.readAvailabilityRecovery ?? readAvailabilityRecovery;
+  const writeAvailabilityRecoveryImpl = deps.writeAvailabilityRecovery ?? writeAvailabilityRecovery;
   const codexIsolationDeps = deps.codexIsolationDeps ?? {};
   const verifyClaudeSubscriptionAuthImpl = deps.verifyClaudeSubscriptionAuth ?? verifyClaudeSubscriptionAuth;
   const readArtificialAnalysisModelsImpl = deps.readArtificialAnalysisModels ?? readArtificialAnalysisModels;
@@ -551,8 +555,10 @@ export function createConversationService(deps = {}) {
   async function root(cwd) { return resolveRoot(cwd); }
 
   // runBootstrapAnalysis's body, run only while the project analysis lock
-  // is held (see runBootstrapAnalysis).
-  async function runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst }) {
+  // is held (see runBootstrapAnalysis). `persist: false` returns the
+  // suggested strategy without writing it: automatic team recovery must not
+  // overwrite the ACTIVE team before it has verified the rebuilt one.
+  async function runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst, persist = true }) {
     // SECRET-SAFE (a real, meaningful reduction — not by itself a
     // filesystem sandbox guarantee, see sanitized-snapshot.js's own
     // header for why): the analyst's `cwd` points at a bounded,
@@ -601,7 +607,7 @@ export function createConversationService(deps = {}) {
       // vouch for every other role need in the same response.
       const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, snapshot.copiedFiles);
       const strategy = buildProjectStrategy({ ...profile, roleRequirements }, candidates, analyst);
-      await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
+      if (persist) await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
       return {
         ...strategy, projectRoot, analysis: parsed.analysis,
         sanitization: { filesCopied: snapshot.filesCopied, secretsRedacted: snapshot.secretsRedacted, excludedPrivatePaths: snapshot.excludedPrivatePaths.length }
@@ -1315,6 +1321,30 @@ export function createConversationService(deps = {}) {
       } finally {
         await lock.release();
       }
+    },
+    /**
+     * Automatic team recovery after a provider-availability change (see
+     * team-recovery.js): at most once per availability fingerprint, under
+     * the project analysis lock, activating the rebuilt team only when it
+     * was built for the availability that is still current. Availability
+     * comes from snapshot(), whose usage probes are cached (60 s for
+     * Codex/Claude, 5 min for Go); a change hidden by that cache shows up as
+     * a new fingerprint on a later refresh and triggers one more recovery.
+     * Never throws for an expected outcome; returns what happened.
+     */
+    async recoverProjectTeam({ cwd }) {
+      const projectRoot = await root(cwd);
+      return runTeamRecovery({
+        readStrategy: () => readProjectStrategyImpl(homeDir, projectRoot),
+        writeStrategy: (strategy) => writeProjectStrategyImpl(homeDir, projectRoot, strategy),
+        readRecord: () => readAvailabilityRecoveryImpl(homeDir, projectRoot),
+        writeRecord: (record) => writeAvailabilityRecoveryImpl(homeDir, projectRoot, record),
+        acquireLock: () => acquireProjectAnalysisLockImpl(homeDir, projectRoot, { owner: "automatic-recovery" }),
+        currentEligibility: async () => (await this.snapshot({ cwd: projectRoot })).modelIntelligence?.eligibility ?? {},
+        preflight: () => this.preflightProject({ cwd: projectRoot }),
+        analyze: ({ profile, candidates, analyst }) => runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst, persist: false }),
+        now
+      });
     },
     /** `/project approve`: SUGGESTED -> ACTIVE. Requires a real suggested strategy to already exist — the Bootstrap Analyst choice is already locked in by the time a strategy exists at all (see runBootstrapAnalysis), so there's nothing left to confirm here. */
     async approveProjectStrategy({ cwd }) {
