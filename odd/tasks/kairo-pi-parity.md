@@ -732,6 +732,35 @@ environment only. Pi's own subprocesses inherit it (documented).
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
+  - Local integration (delegated writer; publication was already done by
+    the user, not by this work unit): public npm resolution and tarball
+    download succeeded without npm credentials in a temporary directory.
+    `package.json` now pins the exact published
+    `@kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.1`; `pnpm-lock.yaml`
+    records its registry integrity and transitive dependencies. No
+    `file:` dependency or vendored Pi remains.
+  - Strict build policy: the new dependency graph includes
+    `@google/genai`, `esbuild`, and `protobufjs` install scripts. The repo
+    keeps `pnpm.onlyBuiltDependencies: []` and explicitly lists those
+    three in `pnpm.ignoredBuiltDependencies`; no install scripts were
+    approved. A clean, offline `pnpm install --frozen-lockfile` passed
+    using the public packages cached from the isolated download. An
+    earlier install over existing `node_modules` failed with
+    `ERR_PNPM_IGNORED_BUILDS` because pnpm retained pending builds; a
+    fresh installation passed. The old generated `node_modules` tree was
+    preserved under `/private/tmp/kairo-t10-modules-backup-*`.
+  - TDD: `node --test test/host-launch.test.js` had one behavioral RED:
+    Kairo's manifest did not pin the required fork version. After the
+    manifest/lock install, the new test resolves the actual installed
+    package, verifies its identity/version and `dist/bundle/cli.js`, and
+    executes `cli.js --version` on Node >=22. Focused GREEN: 17 pass,
+    1 opt-in live test skipped, 0 fail.
+  - Full suite: `npm test` with an isolated npm cache and permission for
+    the loopback-only UI test: 2231 pass, 1 opt-in live test skipped,
+    0 fail. A sandboxed run had two environmental failures (`listen EPERM`
+    on 127.0.0.1 and npm cache write `EPERM`); both passed with the
+    corresponding permissions/cache configuration. No interactive TTY
+    run, CI run, push, PR, or merge was performed in this work unit.
 
 Route: one delegated writer for T1–T4 (4+ non-trivial files across CLI,
 registry, extension, and widget; writer trigger). One work-unit commit

@@ -405,6 +405,25 @@ function resolveInstalledKairoPiCli() {
   }
 }
 
+test("Kairo pins and launches the installed fork bundle", () => {
+  const kairoPackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(kairoPackage.dependencies?.[KAIRO_PI_PACKAGE_NAME], KAIRO_PI_PACKAGE_VERSION);
+
+  const entryPath = fileURLToPath(import.meta.resolve(KAIRO_PI_PACKAGE_NAME));
+  const packageRoot = dirname(dirname(dirname(entryPath)));
+  const forkPackage = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
+  assert.equal(forkPackage.name, KAIRO_PI_PACKAGE_NAME);
+  assert.equal(forkPackage.version, KAIRO_PI_PACKAGE_VERSION);
+
+  const cliPath = join(packageRoot, "dist", "bundle", "cli.js");
+  assert.ok(existsSync(cliPath), `missing installed fork bundle: ${cliPath}`);
+  if (Number(process.versions.node.split(".")[0]) >= 22) {
+    const result = spawnSync(process.execPath, [cliPath, "--version"], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), KAIRO_PI_PACKAGE_VERSION);
+  }
+});
+
 const resolvedLiveCliPath = resolveInstalledKairoPiCli();
 
 // Opt-in: needs the Kairo-only Pi fork actually installed at its resolvable
