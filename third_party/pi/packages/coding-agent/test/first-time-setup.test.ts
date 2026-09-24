@@ -33,8 +33,13 @@ describe("shouldRunFirstTimeSetup", () => {
 		}
 	});
 
-	it("returns true when experimental, default agent dir, and no settings.json", () => {
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(true);
+	// Kairo fork: PACKAGE_NAME is "@kal-elsam/kairo-pi-coding-agent", so
+	// isOfficialDistribution() is always false here and first-time setup never
+	// runs, even when every other condition (experimental flag, default agent
+	// dir, no settings.json) is satisfied. This guards against the fork
+	// accidentally regaining the upstream onboarding flow.
+	it("returns false for the fork even when every other condition is met", () => {
+		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
 	});
 
 	it("returns false when experimental features are disabled", () => {
