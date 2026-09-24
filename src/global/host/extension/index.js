@@ -5,6 +5,10 @@ import {
 } from "../workspace-snapshot.js";
 import { availabilityNotices, createKairoTextWidget, createKairoWorkspaceWidget } from "../workspace-widget.js";
 import { MAX_RECOVERY_ATTEMPTS } from "../../conversation/team-recovery.js";
+import { resolveHomeDir } from "../../paths.js";
+import { resolveProjectRoot } from "../../architect/architect-store.js";
+import { createSession, getSession, isValidSessionId } from "../../conversation/session-registry.js";
+import { lookupPiBinding, recordPiBinding } from "../../conversation/pi-session-bindings.js";
 
 export function requestKernelSnapshot(deps = {}) {
   return createKernelService(deps).snapshot();
@@ -175,11 +179,11 @@ function recoveryNotice(result) {
 }
 
 async function refreshWorkspace(ctx, {
-  loadSnapshot, env, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [], onSnapshot = () => {}
+  loadSnapshot, sessionId = null, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [], onSnapshot = () => {}
 }) {
   const snapshot = await loadSnapshot({
     cwd: ctx?.cwd ?? process.cwd(),
-    sessionId: env?.KAIRO_SESSION_ID ?? null,
+    sessionId,
     usageIntelligence,
     availabilityIntelligence
   });
@@ -201,13 +205,115 @@ export function createKairoWorkspaceExtension(pi, {
   loadLiveData = loadKairoLiveData,
   loadRouteModels = loadKairoProviderModels,
   createProvider = createKairoRouteProvider,
-  recoverTeam = recoverKairoProjectTeam
+  recoverTeam = recoverKairoProjectTeam,
+  resolveHomeDirImpl = resolveHomeDir,
+  resolveProjectRootImpl = resolveProjectRoot,
+  createSessionImpl = createSession,
+  getSessionImpl = getSession,
+  lookupPiBindingImpl = lookupPiBinding,
+  recordPiBindingImpl = recordPiBinding
 } = {}) {
   let routeSignature = null;
   let routeState = "unknown";
   let shownAvailabilityKeys = new Set();
   const shownRecoveryKeys = new Set();
   let pendingRecovery = Promise.resolve(null);
+  // The Kairo session currently bound to THIS Pi process, held in memory —
+  // never re-derived from env on every refresh (see bindSession below).
+  // null means genuinely unbound, presented as such, never a silent "ask".
+  let boundKairoSessionId = null;
+
+  /**
+   * Keeps `boundKairoSessionId` in step with Pi's own session lifecycle.
+   * Per the P02 design (bind everything): startup/reload adopt the id Pi
+   * was launched with; new/resume/fork each resolve or create a real Kairo
+   * session and record it against the current Pi session id. Any failure
+   * anywhere in this — a missing Pi session id when one is required, an
+   * invalid env value, a registry or binding-store error — leaves the
+   * extension unbound with a visible notice; it never keeps a stale id.
+   */
+  async function bindSession(ctx, event) {
+    const reason = event?.reason ?? "startup";
+    const piSessionId = ctx?.sessionManager?.getSessionId?.() ?? null;
+    const cwd = ctx?.cwd ?? process.cwd();
+
+    try {
+      if (reason === "startup" || reason === "reload") {
+        const envSessionId = env?.KAIRO_SESSION_ID ?? null;
+        if (envSessionId == null) {
+          // No session was provided at launch (e.g. Pi started outside
+          // Kairo) — genuinely unbound, not an error, so no notice.
+          boundKairoSessionId = null;
+          return;
+        }
+        if (!isValidSessionId(envSessionId)) {
+          throw new Error(`Invalid Kairo session id "${envSessionId}" from KAIRO_SESSION_ID.`);
+        }
+        boundKairoSessionId = envSessionId;
+        if (piSessionId != null) {
+          const homeDir = resolveHomeDirImpl(env);
+          const projectRoot = await resolveProjectRootImpl(cwd);
+          await recordPiBindingImpl(homeDir, projectRoot, piSessionId, envSessionId);
+        }
+        return;
+      }
+
+      if (piSessionId == null) {
+        throw new Error(`Pi did not provide a session id for a "${reason}" session_start.`);
+      }
+      const homeDir = resolveHomeDirImpl(env);
+      const projectRoot = await resolveProjectRootImpl(cwd);
+
+      if (reason === "new") {
+        const session = await createSessionImpl(homeDir, projectRoot, {});
+        await recordPiBindingImpl(homeDir, projectRoot, piSessionId, session.id);
+        boundKairoSessionId = session.id;
+        return;
+      }
+
+      if (reason === "resume") {
+        const boundId = await lookupPiBindingImpl(homeDir, projectRoot, piSessionId);
+        const existing = boundId != null ? await getSessionImpl(homeDir, projectRoot, boundId) : null;
+        if (existing) {
+          boundKairoSessionId = existing.id;
+          return;
+        }
+        // Never silently reuse a stale or missing binding — start a real
+        // new session instead and say so, visibly.
+        const session = await createSessionImpl(homeDir, projectRoot, {});
+        await recordPiBindingImpl(homeDir, projectRoot, piSessionId, session.id);
+        boundKairoSessionId = session.id;
+        ctx?.ui?.notify?.(
+          `No Kairo session was found for this Pi session — started a new one (${session.id.slice(0, 8)}).`,
+          "info"
+        );
+        return;
+      }
+
+      if (reason === "fork") {
+        const previous = boundKairoSessionId != null
+          ? await getSessionImpl(homeDir, projectRoot, boundKairoSessionId)
+          : null;
+        const mode = previous?.mode ?? "ask";
+        const session = await createSessionImpl(homeDir, projectRoot, { mode });
+        await recordPiBindingImpl(homeDir, projectRoot, piSessionId, session.id);
+        boundKairoSessionId = session.id;
+        ctx?.ui?.notify?.(
+          `Forked to a new Kairo session (${session.id.slice(0, 8)}) in ${mode} mode.`,
+          "info"
+        );
+        return;
+      }
+
+      throw new Error(`Unknown session_start reason "${reason}".`);
+    } catch (error) {
+      boundKairoSessionId = null;
+      ctx?.ui?.notify?.(
+        `Kairo session binding failed (${error.message}); Pi is running unbound.`,
+        "error"
+      );
+    }
+  }
 
   /**
    * Keeps Pi's "kairo" provider in step with the ACTIVE team. Pi's
@@ -263,14 +369,19 @@ export function createKairoWorkspaceExtension(pi, {
     return result;
   }
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
+    await bindSession(ctx, event);
     await registerRoutes(ctx?.cwd ?? process.cwd());
 
     // Phase 1: render immediately from the persisted strategy — every
     // row's availability shows "checking" and usage shows "checking" (see
     // workspace-snapshot.js's own doc), never blocked on either live probe
     // below.
-    const snapshot = await refreshWorkspace(ctx, { loadSnapshot, env, onSnapshot: (snap, info) => notifyAvailability(ctx, snap, info) });
+    const snapshot = await refreshWorkspace(ctx, {
+      loadSnapshot,
+      sessionId: boundKairoSessionId,
+      onSnapshot: (snap, info) => notifyAvailability(ctx, snap, info)
+    });
     if (routeState === "unavailable") {
       setWorkspaceWidget(ctx, snapshot, "unavailable-routes", []);
     }
@@ -293,7 +404,7 @@ export function createKairoWorkspaceExtension(pi, {
       const extraLines = [...availabilityExtraLines, ...usageExtraLines];
       const refreshed = await refreshWorkspace(ctx, {
         loadSnapshot,
-        env,
+        sessionId: boundKairoSessionId,
         usageIntelligence: latestUsageIntelligence,
         availabilityIntelligence: latestAvailabilityIntelligence,
         extraLines,
@@ -336,7 +447,7 @@ export function createKairoWorkspaceExtension(pi, {
   for (const [name, description, view] of commands) {
     pi.registerCommand(name, {
       description,
-      handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, env, view })
+      handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, sessionId: boundKairoSessionId, view })
     });
   }
 
