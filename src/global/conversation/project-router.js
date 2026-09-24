@@ -193,14 +193,24 @@ export function resolveProjectRoute({ role, strategy, eligibility = {}, modelEnt
 
   if (eligibility[model.adapterId]?.ok !== true) {
     const reason = eligibility[model.adapterId]?.reason ?? "unknown reason";
-    const suggestedAlternative = routableAlternative(fallback, eligibility, modelEntitlement);
-    const why = suggestedAlternative
-      ? `${model.adapterId} is not currently eligible (${reason}) — no automatic substitution; confirm the suggested alternative for ${role} before proceeding.`
-      : `${model.adapterId} is not currently eligible (${reason}) — no automatic alternative is available for ${role} right now.`;
-    return blocked(role, strategyFingerprint, why, {
-      blockedAssignment: assignmentRef(model, assignmentSource),
-      suggestedAlternative
-    });
+    const alternative = routableAlternative(fallback, eligibility, modelEntitlement);
+    // Provider AVAILABILITY (window limits, CLI not ready) is not a verdict
+    // on the model: the role's own stored fallback — already vetted by
+    // routableAlternative as automatic, eligible, and entitled — takes over
+    // until automatic team recovery rebuilds the team. Entitlement blocks
+    // above never substitute; a human override has no stored fallback, so
+    // it keeps waiting instead of being replaced.
+    if (alternative) {
+      return {
+        decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: alternative.provider, model: alternative.model,
+        assignmentSource: "availability-fallback", strategyFingerprint,
+        blockedAssignment: assignmentRef(model, assignmentSource), suggestedAlternative: null,
+        why: `${model.displayName ?? model.modelId} is temporarily unavailable (${reason}) — ${role} uses its fallback ${alternative.model.displayName ?? alternative.model.modelId} until the team is recovered.`
+      };
+    }
+    return blocked(role, strategyFingerprint,
+      `${model.adapterId} is not currently eligible (${reason}) — no automatic alternative is available for ${role} right now.`,
+      { blockedAssignment: assignmentRef(model, assignmentSource), suggestedAlternative: null });
   }
 
   return {

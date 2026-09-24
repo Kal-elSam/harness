@@ -1826,7 +1826,7 @@ function refusingLegacyRouter() {
   return () => { throw new Error("the legacy text-classification router must never be called on the role-based path"); };
 }
 
-function serviceWithEligibility(overrides, eligibility) {
+function serviceWithEligibility(overrides, eligibility, modelEntitlement = null) {
   const service = createConversationService({
     resolveRoot: async () => "/repo", homeDir: "/home/test",
     selectExecutionProvider: refusingLegacyRouter(),
@@ -1835,10 +1835,16 @@ function serviceWithEligibility(overrides, eligibility) {
   const realSnapshot = service.snapshot.bind(service);
   service.snapshot = async (args) => {
     const snap = await realSnapshot(args);
-    return { ...snap, modelIntelligence: { ...snap.modelIntelligence, eligibility } };
+    const entitlement = modelEntitlement ? { modelEntitlement } : {};
+    return { ...snap, modelIntelligence: { ...snap.modelIntelligence, eligibility, ...entitlement } };
   };
   return service;
 }
+
+// The assigned Codex model is not entitled (unverified), while every
+// provider is available: the one block where a fallback is still only
+// suggested and must be confirmed.
+const CODEX_UNVERIFIED = { codex: { "gpt-6-astra": { status: "unverified", reason: "probe timed out" } } };
 
 test("planExecution({role}) calls resolveProjectRoute and never the legacy classifier, returning a ROUTED ProjectExecutionPreview with a confirmable target", async () => {
   const record = { status: {}, taskMarkdown: "irrelevant text — role decides, never text", planMarkdown: "# Plan" };
@@ -1915,7 +1921,7 @@ test("planExecution({role}) returns MANUAL_HANDOFF for an OpenCode Go assignment
   assert.match(preview.taskPrompt, /Implement the explicitly approved architecture plan/, "must be the exact same real task text executePlan would have used for a real automatic run — never a second, invented formula");
 });
 
-test("planExecution({role}) shows a persisted, currently-eligible fallback as suggestedAlternative when the assigned candidate lost eligibility — offered for confirmation, never auto-executed by the preview itself", async () => {
+test("planExecution({role}) routes to the persisted fallback when the assigned provider is temporarily unavailable — naming the replaced model, never reserving or launching from the preview", async () => {
   const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Plan" };
   const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL, fallback: ALTERNATIVE_MODEL });
   let reserved = false;
@@ -1925,7 +1931,29 @@ test("planExecution({role}) shows a persisted, currently-eligible fallback as su
     readProjectStrategy: async () => strategy,
     writeExecution: async () => { reserved = true; },
     startRun: async () => { launched = true; return { metadata: {} }; }
-  }, { codex: { ok: false, reason: "quota exhausted" }, claude: { ok: true } });
+  }, { codex: { ok: false, reason: "Codex weekly window is limited (2% left)" }, claude: { ok: true } });
+
+  const preview = await service.planExecution({ cwd: "/repo", taskId: "task-id", role: "Builder" });
+  assert.equal(preview.decision, "ROUTED");
+  assert.equal(preview.provider, "claude");
+  assert.equal(preview.assignmentSource, "availability-fallback");
+  assert.equal(preview.blockedAssignment.provider, "codex");
+  assert.deepEqual(preview.confirmationTarget, {
+    role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5"
+  });
+  assert.equal(reserved, false, "a preview must never reserve quota");
+  assert.equal(launched, false, "a preview must never start a run");
+});
+
+test("planExecution({role}) still only SUGGESTS the fallback for an entitlement block — offered for confirmation, never auto-executed", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Plan" };
+  const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL, fallback: ALTERNATIVE_MODEL });
+  let launched = false;
+  const service = serviceWithEligibility({
+    readPlan: async () => record,
+    readProjectStrategy: async () => strategy,
+    startRun: async () => { launched = true; return { metadata: {} }; }
+  }, { codex: { ok: true }, claude: { ok: true } }, CODEX_UNVERIFIED);
 
   const preview = await service.planExecution({ cwd: "/repo", taskId: "task-id", role: "Builder" });
   assert.equal(preview.decision, "WAIT_FOR_PROJECT_TEAM");
@@ -1934,8 +1962,7 @@ test("planExecution({role}) shows a persisted, currently-eligible fallback as su
   assert.deepEqual(preview.confirmationTarget, {
     role: "Builder", selection: "suggested-alternative", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5"
   });
-  assert.equal(reserved, false, "a preview must never reserve quota");
-  assert.equal(launched, false, "a preview must never start a run — a suggested alternative is never equivalent to authorization to run it");
+  assert.equal(launched, false, "a suggested alternative is never equivalent to authorization to run it");
 });
 
 test("executePlan rejects a confirmationTarget whose candidate no longer matches the freshly recomputed route (eligibility changed since preview) — never silently substitutes", async () => {
@@ -2056,7 +2083,7 @@ test("REGRESSION: executePlan launches OpenCode Go with the real, fully-qualifie
   assert.equal(result.execution.state, "starting");
 });
 
-test("executePlan with a confirmationTarget selecting the suggested alternative launches on the alternative, never the blocked assignment", async () => {
+test("executePlan with a confirmationTarget selecting the suggested alternative (entitlement block) launches on the alternative, never the blocked assignment", async () => {
   const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Approved plan" };
   const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL, fallback: ALTERNATIVE_MODEL });
   let link = null;
@@ -2072,9 +2099,32 @@ test("executePlan with a confirmationTarget selecting the suggested alternative 
       assert.equal(input.model, "claude-opus-5");
       return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
     }
-  }, { codex: { ok: false, reason: "quota exhausted" }, claude: { ok: true } });
+  }, { codex: { ok: true }, claude: { ok: true } }, CODEX_UNVERIFIED);
 
   const confirmationTarget = { role: "Builder", selection: "suggested-alternative", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5" };
+  const result = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
+  assert.equal(result.execution.provider, "claude");
+});
+
+test("executePlan on an availability fallback launches the fallback through the normal assigned target", async () => {
+  const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Approved plan" };
+  const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL, fallback: ALTERNATIVE_MODEL });
+  let link = null;
+  const service = serviceWithEligibility({
+    verifyExecution: async () => record,
+    createRunId: () => "run_fixed",
+    readExecution: async () => link,
+    writeExecution: async (_root, _id, value) => { link = value; },
+    updateExecution: async (_root, _id, value) => { link = value; },
+    readProjectStrategy: async () => strategy,
+    startRun: async (input) => {
+      assert.equal(input.agentId, "claude");
+      assert.equal(input.model, "claude-opus-5");
+      return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
+    }
+  }, { codex: { ok: false, reason: "Codex weekly window is limited (2% left)" }, claude: { ok: true } });
+
+  const confirmationTarget = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5" };
   const result = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
   assert.equal(result.execution.provider, "claude");
 });
