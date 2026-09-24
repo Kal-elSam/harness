@@ -807,6 +807,15 @@ environment only. Pi's own subprocesses inherit it (documented).
       (`declined_this_candidate`, same target identity). RDD stays on,
       and related fixes are grouped before the next review. CI on the
       pushed commit is still required.
+  - Push (authorized by the user, 2026-09-24): `b7435ed..55e903f` to
+    `origin/feat/kairo-pi-p02-session-binding`. Before pushing, checked
+    that no auth.json or `(HARNESS_HOME)/` path is tracked or in the
+    pushed commits.
+  - CI: run 36070663911 on `55e903f` — **success** (Test on Node 22,
+    Test on Node 24).
+  - Remaining for T5/T10: the real TTY run by the user (`kairo` → `/new` →
+    `/resume` → `/fork` → exit → `kairo resume`), then close both and
+    integrate #351 → #352 in order.
 
 Route: one delegated writer for T1–T4 (4+ non-trivial files across CLI,
 registry, extension, and widget; writer trigger). One work-unit commit
