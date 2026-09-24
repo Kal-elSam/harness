@@ -14,6 +14,12 @@ export const KAIRO_PI_PACKAGE_NAME = "@kal-elsam/kairo-pi-coding-agent";
 export const KAIRO_PI_PACKAGE_VERSION = "0.87.1-kairo.1";
 export const MIN_NODE_VERSION = "22.19.0";
 
+// The only filesystem writes launchGentleShell performs (with the child
+// spawn stubbed) are mkdirSync/writeFileSync inside prepareKairoPiHome.
+// Injectable so tests can observe every write target instead of relying on
+// mocking node:fs, whose named ESM imports are bound before any mock runs.
+const defaultFsImpl = { mkdirSync, writeFileSync };
+
 export function routeInteractiveHost({ command, options = {} }) {
   if (options.legacyCockpit) return "cockpit";
   if (command === "host") return "pi";
@@ -31,7 +37,8 @@ export async function launchGentleShell({
   resolveEntryImpl = defaultResolveEntry,
   nodeVersion = process.versions.node,
   execPath = process.execPath,
-  statImpl = statSync
+  statImpl = statSync,
+  fsImpl = defaultFsImpl
 } = {}) {
   if (interactive === false) {
     throw new Error(
@@ -53,8 +60,14 @@ export async function launchGentleShell({
   // supplies only its own extension.
   const packageRoot = resolveKairoPiPackageRoot(resolveEntryImpl);
   const cliPath = join(packageRoot, "dist", "bundle", "cli.js");
+  if (!existsSync(cliPath)) {
+    throw new Error(
+      `Kairo-only Pi fork bundle is missing: "${cliPath}" does not exist. ` +
+      "Reinstall the Kairo-only Pi fork, or use --legacy-cockpit for the previous cockpit."
+    );
+  }
 
-  const kairoPiHome = prepareKairoPiHome(env);
+  const kairoPiHome = prepareKairoPiHome(env, fsImpl);
   // Kairo owns its interactive surface. A Kairo-only Pi home and explicit
   // resource flags prevent ambient packages, skills, themes, context files,
   // changelogs, and diagnostics from becoming Kairo's first screen.
@@ -166,10 +179,10 @@ function defaultResolveEntry() {
   return fileURLToPath(import.meta.resolve(KAIRO_PI_PACKAGE_NAME));
 }
 
-function prepareKairoPiHome(env) {
+function prepareKairoPiHome(env, fsImpl) {
   const dir = join(resolveHomeDir(env), ".harness", "pi-agent");
   const settingsPath = join(dir, "settings.json");
-  mkdirSync(dir, { recursive: true });
+  fsImpl.mkdirSync(dir, { recursive: true });
 
   let settings = {};
   if (existsSync(settingsPath)) {
@@ -183,7 +196,7 @@ function prepareKairoPiHome(env) {
     }
   }
   if (settings.quietStartup !== true) {
-    writeFileSync(settingsPath, `${JSON.stringify({ ...settings, quietStartup: true }, null, 2)}\n`, "utf8");
+    fsImpl.writeFileSync(settingsPath, `${JSON.stringify({ ...settings, quietStartup: true }, null, 2)}\n`, "utf8");
   }
   return dir;
 }

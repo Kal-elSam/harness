@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { chmod, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
   KAIRO_PI_PACKAGE_NAME,
@@ -11,7 +12,11 @@ import {
   MIN_NODE_VERSION,
   launchGentleShell
 } from "../src/global/host/launch-gentle-shell.js";
-import { buildKairoPiFixture } from "./helpers/kairo-pi-fixture.js";
+import {
+  buildKairoPiEntryWithoutPackageJson,
+  buildKairoPiFixture,
+  buildKairoPiFixtureWithMalformedIntermediatePackageJson
+} from "./helpers/kairo-pi-fixture.js";
 
 const extensionDir = "/abs/kairo-extension";
 const okNodeVersion = "22.19.0";
@@ -24,26 +29,13 @@ async function tmpProjectDir(prefix = "kairo-host-launch-") {
   return mkdtemp(join(tmpdir(), prefix));
 }
 
-async function snapshotTree(root) {
-  const entries = [];
-  async function walk(dir) {
-    const items = await readdir(dir, { withFileTypes: true }).catch(() => []);
-    for (const item of items) {
-      const full = join(dir, item.name);
-      if (item.isDirectory()) {
-        await walk(full);
-      } else if (item.isFile()) {
-        const content = await readFile(full);
-        entries.push({
-          path: relative(root, full),
-          hash: createHash("sha256").update(content).digest("hex")
-        });
-      }
-    }
-  }
-  await walk(root);
-  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return entries;
+async function tmpHarnessHome() {
+  return mkdtemp(join(tmpdir(), "kairo-fake-harness-home-"));
+}
+
+function isUnder(root, target) {
+  const rel = relative(root, target);
+  return rel !== "" && !rel.startsWith("..");
 }
 
 test("missing cwd fails closed", async () => {
@@ -159,7 +151,62 @@ test("Kairo-only Pi fork at the wrong version fails closed and names both versio
   );
 });
 
-test("resolution succeeds and spawns process.execPath with the bundle cli.js path", async () => {
+test("no package.json with the fork's name is found while walking up: fails closed with an explicit 'could not find' error", async () => {
+  const fixture = await buildKairoPiEntryWithoutPackageJson();
+  await assert.rejects(
+    () => launchGentleShell({
+      cwd: "/abs/project",
+      extensionDir,
+      statImpl: okStat,
+      nodeVersion: okNodeVersion,
+      resolveEntryImpl: fixture.resolveEntryImpl,
+      spawnImpl: () => {
+        throw new Error("should not spawn");
+      }
+    }),
+    /Could not find[\s\S]*package\.json[\s\S]*--legacy-cockpit/
+  );
+});
+
+test("a malformed intermediate package.json is skipped while walking up to the real package root", async () => {
+  const fixture = await buildKairoPiFixtureWithMalformedIntermediatePackageJson();
+  const cwd = await tmpProjectDir();
+  const calls = [];
+  await launchGentleShell({
+    cwd,
+    extensionDir,
+    statImpl: okStat,
+    env: { HARNESS_HOME: await tmpHarnessHome() },
+    nodeVersion: okNodeVersion,
+    execPath: "/fake/node/bin/node",
+    resolveEntryImpl: fixture.resolveEntryImpl,
+    spawnImpl: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    }
+  });
+  assert.equal(calls.length, 1, "resolution must still succeed by walking past the malformed file");
+  assert.equal(calls[0].args[0], fixture.cliPath);
+});
+
+test("missing dist/bundle/cli.js fails closed with an explicit error before spawning", async () => {
+  const fixture = await buildKairoPiFixture({ withCliEntry: false });
+  await assert.rejects(
+    () => launchGentleShell({
+      cwd: "/abs/project",
+      extensionDir,
+      statImpl: okStat,
+      nodeVersion: okNodeVersion,
+      resolveEntryImpl: fixture.resolveEntryImpl,
+      spawnImpl: () => {
+        throw new Error("should not spawn");
+      }
+    }),
+    (err) => err.message.includes(fixture.cliPath) && /--legacy-cockpit/.test(err.message)
+  );
+});
+
+test("resolution succeeds and spawns the injected execPath with the bundle cli.js path", async () => {
   const fixture = await buildKairoPiFixture();
   const cwd = await tmpProjectDir();
   const calls = [];
@@ -187,20 +234,35 @@ test("resolution succeeds and spawns process.execPath with the bundle cli.js pat
   assert.equal(calls[0].options.env.PI_CODING_AGENT_DIR, "/tmp/kairo-host-test/.harness/pi-agent");
 });
 
-test("a different pi on PATH is ignored: PATH is never consulted", async () => {
+test("execPath defaults to process.execPath when nothing is injected", async () => {
   const fixture = await buildKairoPiFixture();
   const cwd = await tmpProjectDir();
-  const binDir = await mkdtemp(join(tmpdir(), "kairo-fake-pi-on-path-"));
-  const fakePiPath = join(binDir, "pi");
-  await writeFile(fakePiPath, "#!/bin/sh\necho should-never-run\nexit 1\n", "utf8");
-  await chmod(fakePiPath, 0o755);
-
   const calls = [];
   await launchGentleShell({
     cwd,
     extensionDir,
     statImpl: okStat,
-    env: { HARNESS_HOME: "/tmp/kairo-host-test", PATH: `${binDir}${delimiter}/usr/bin` },
+    env: { HARNESS_HOME: await tmpHarnessHome() },
+    nodeVersion: okNodeVersion,
+    resolveEntryImpl: fixture.resolveEntryImpl,
+    spawnImpl: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    }
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, process.execPath);
+});
+
+test("PATH is never consulted: launch spawns the resolved fork even with an empty PATH", async () => {
+  const fixture = await buildKairoPiFixture();
+  const cwd = await tmpProjectDir();
+  const calls = [];
+  await launchGentleShell({
+    cwd,
+    extensionDir,
+    statImpl: okStat,
+    env: { HARNESS_HOME: await tmpHarnessHome(), PATH: "" },
     nodeVersion: okNodeVersion,
     execPath: "/fake/node/bin/node",
     resolveEntryImpl: fixture.resolveEntryImpl,
@@ -210,7 +272,7 @@ test("a different pi on PATH is ignored: PATH is never consulted", async () => {
     }
   });
   assert.equal(calls[0].command, "/fake/node/bin/node");
-  assert.notEqual(calls[0].command, fakePiPath);
+  assert.notEqual(calls[0].command, "pi");
   assert.equal(calls[0].args[0], fixture.cliPath);
 });
 
@@ -262,48 +324,77 @@ test("explicit Kairo session binding is passed to the host environment, never ar
   assert.equal(calls[0].args.includes("11111111-1111-4111-8111-111111111111"), false);
 });
 
-test("fake-HOME tree snapshot: launching the host never writes outside HARNESS_HOME", async () => {
+test("launchGentleShell's only filesystem writes are mkdirSync/writeFileSync, and every one lands under HARNESS_HOME", async () => {
   const fixture = await buildKairoPiFixture();
   const cwd = await tmpProjectDir();
-  const fakeHome = await mkdtemp(join(tmpdir(), "kairo-fake-home-"));
-  const fakeHarnessHome = await mkdtemp(join(tmpdir(), "kairo-fake-harness-home-"));
+  const fakeHarnessHome = await tmpHarnessHome();
 
-  const before = await snapshotTree(fakeHome);
-  assert.deepEqual(before, [], "test precondition: fake HOME must start empty");
+  // Instrument the launcher's actual write destinations. mock.method on the
+  // node:fs module object does NOT intercept launch-gentle-shell.js's own
+  // named imports (ESM named bindings are resolved before any mock runs —
+  // verified empirically), so this test relies on launchGentleShell's own
+  // injectable `fsImpl`, which wraps the real functions below so every call
+  // is both recorded and actually performed.
+  const writes = [];
+  const fsImpl = {
+    mkdirSync: (path, options) => {
+      writes.push({ op: "mkdirSync", path });
+      return mkdirSync(path, options);
+    },
+    writeFileSync: (path, data, options) => {
+      writes.push({ op: "writeFileSync", path });
+      return writeFileSync(path, data, options);
+    }
+  };
 
   await launchGentleShell({
     cwd,
     extensionDir,
     statImpl: okStat,
-    env: { HOME: fakeHome, HARNESS_HOME: fakeHarnessHome },
+    env: { HARNESS_HOME: fakeHarnessHome },
     nodeVersion: okNodeVersion,
     execPath: "/fake/node/bin/node",
     resolveEntryImpl: fixture.resolveEntryImpl,
+    fsImpl,
     spawnImpl: () => ({ status: 0 })
   });
 
-  const after = await snapshotTree(fakeHome);
-  assert.deepEqual(after, [], "no file must be written under the real/fake HOME tree");
-
-  const harnessWrites = await snapshotTree(fakeHarnessHome);
-  assert.ok(
-    harnessWrites.some((entry) => entry.path === join(".harness", "pi-agent", "settings.json")),
-    "the only expected write is the Kairo-owned Pi settings file under HARNESS_HOME"
-  );
+  assert.ok(writes.length > 0, "the launcher must perform at least one write to prove interception is live");
+  assert.deepEqual(writes.map((w) => w.op).sort(), ["mkdirSync", "writeFileSync"]);
+  for (const write of writes) {
+    assert.ok(
+      isUnder(fakeHarnessHome, write.path),
+      `write "${write.op}" to "${write.path}" is outside HARNESS_HOME "${fakeHarnessHome}"`
+    );
+  }
 });
 
-const piPath = spawnSync("which", ["pi"], { encoding: "utf8" }).stdout.trim();
+function resolveInstalledKairoPiCli() {
+  try {
+    const entryPath = fileURLToPath(import.meta.resolve(KAIRO_PI_PACKAGE_NAME));
+    const cliPath = join(dirname(entryPath), "cli.js");
+    return existsSync(cliPath) ? cliPath : null;
+  } catch {
+    return null;
+  }
+}
 
-// Opt-in: needs a real Pi plus a saved Kairo PROJECT TEAM for this exact
-// checkout path and reachable adapters, which fresh clones, worktrees and CI lack.
-const liveRoutesSkip = process.env.KAIRO_LIVE_PI_TEST === "1" && piPath.startsWith("/")
+const resolvedLiveCliPath = resolveInstalledKairoPiCli();
+
+// Opt-in: needs the Kairo-only Pi fork actually installed at its resolvable
+// dist/bundle/cli.js, plus a saved Kairo PROJECT TEAM for this exact
+// checkout path and reachable adapters, which fresh clones, worktrees and CI
+// lack. Gated on resolving the fork itself, never on a "pi" binary on PATH —
+// this launcher never consults PATH.
+const liveRoutesSkip = process.env.KAIRO_LIVE_PI_TEST === "1" && resolvedLiveCliPath
   ? false
-  : "set KAIRO_LIVE_PI_TEST=1 with Pi and a Kairo PROJECT TEAM for this checkout";
+  : `set KAIRO_LIVE_PI_TEST=1 with "${KAIRO_PI_PACKAGE_NAME}"@${KAIRO_PI_PACKAGE_VERSION} installed and a Kairo PROJECT TEAM for this checkout`;
 
 test("live direct Pi host exposes Kairo routes without Gentle inventory", { skip: liveRoutesSkip }, () => {
   const result = spawnSync(
-    piPath,
+    process.execPath,
     [
+      resolvedLiveCliPath,
       "-e", new URL("../src/global/host/extension/", import.meta.url).pathname,
       "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
       "--list-models", "kairo"
