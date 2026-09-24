@@ -50,10 +50,11 @@ test("recovery store round-trips the last fingerprint acted on, per project", as
   const projectRoot = "/work/project-a";
   assert.equal(await readAvailabilityRecovery(homeDir, projectRoot), null);
 
-  await writeAvailabilityRecovery(homeDir, projectRoot, { fingerprint: "codex=limited:weekly", outcome: "activated" });
+  await writeAvailabilityRecovery(homeDir, projectRoot, { fingerprint: "codex=limited:weekly", outcome: "activated", attempts: 2 });
   const record = await readAvailabilityRecovery(homeDir, projectRoot);
   assert.equal(record.fingerprint, "codex=limited:weekly");
   assert.equal(record.outcome, "activated");
+  assert.equal(record.attempts, 2, "the attempt count survives a round trip so retries stay bounded across processes");
   assert.equal(record.schema, "kairo.availability-recovery/v1");
   assert.equal(typeof record.updatedAt, "string");
 

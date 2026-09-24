@@ -38,7 +38,7 @@ export async function readAvailabilityRecovery(homeDir, projectRoot, deps = {}) 
 /**
  * @param {string} homeDir
  * @param {string} projectRoot
- * @param {{fingerprint: string, outcome?: string|null}} record
+ * @param {{fingerprint: string, outcome?: string|null, attempts?: number|null}} record
  */
 export async function writeAvailabilityRecovery(homeDir, projectRoot, record, deps = {}) {
   if (typeof record?.fingerprint !== "string") {
@@ -51,6 +51,9 @@ export async function writeAvailabilityRecovery(homeDir, projectRoot, record, de
     schema: AVAILABILITY_RECOVERY_SCHEMA,
     fingerprint: record.fingerprint,
     outcome: record.outcome ?? null,
+    // Recovery attempts made for this fingerprint. Persisted so the retry
+    // bound holds across Kairo processes and restarts.
+    attempts: Number.isInteger(record.attempts) ? record.attempts : null,
     updatedAt: new Date().toISOString()
   };
   await mkdirImpl(dirname(path), { recursive: true });

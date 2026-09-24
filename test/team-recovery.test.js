@@ -69,7 +69,7 @@ test("pickRecoveryAnalyst prefers the available quality pick, then efficient, th
 // A controllable world for runTeamRecovery: eligibility can change between
 // calls, and every write is observable.
 function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIMITED], analyze, lock = true, analystCatalog } = {}) {
-  const state = { strategy, record, writes: [], records: [], released: false, analyzeCalls: 0 };
+  const state = { strategy, record, writes: [], records: [], released: false, analyzeCalls: 0, clock: Date.parse("2026-09-23T12:00:00.000Z") };
   let eligibilityCalls = 0;
   const nextEligibility = () => eligibilitySequence[Math.min(eligibilityCalls++, eligibilitySequence.length - 1)];
   const catalogEntry = (model) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, recommendationTags: ["quality"] });
@@ -77,7 +77,12 @@ function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIM
     readStrategy: async () => state.strategy,
     writeStrategy: async (next) => { state.writes.push(next); state.strategy = next; },
     readRecord: async () => state.record,
-    writeRecord: async (next) => { state.records.push(next); state.record = next; },
+    // Mirrors the real store, which stamps updatedAt on every write.
+    writeRecord: async (next) => {
+      const stored = { ...next, updatedAt: new Date(state.clock).toISOString() };
+      state.records.push(stored);
+      state.record = stored;
+    },
     acquireLock: async () => (lock
       ? { acquired: true, release: async () => { state.released = true; } }
       : { acquired: false, holder: { owner: "manual", startedAt: "2026-09-23T10:00:00.000Z" } }),
@@ -98,7 +103,7 @@ function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIM
         ]
       };
     },
-    now: () => Date.parse("2026-09-23T12:00:00.000Z")
+    now: () => state.clock
   };
   return { state, context };
 }
@@ -185,4 +190,67 @@ test("a human override carries over into the recovered team — recovery never d
   const reviewer = state.writes[0].projectTeam.find((entry) => entry.role === "Reviewer");
   assert.equal(reviewer.assignmentSource, "override");
   assert.equal(reviewer.model.modelId, "human-pick");
+});
+
+const MINUTE = 60_000;
+
+test("REGRESSION: a failed recovery is retried on a later refresh after a backoff — never blocked forever by its fingerprint", async () => {
+  let fail = true;
+  const { state, context } = world({ analyze: () => {
+    if (fail) throw new Error("Bootstrap Analyst did not answer: timeout");
+    return { status: "suggested", projectTeam: [{ role: "Builder", model: CODEX, fallback: null, assignmentSource: "recommended" }] };
+  } });
+  const first = await runTeamRecovery(context);
+  assert.equal(first.outcome, "kept-previous");
+  assert.equal(state.records.at(-1).attempts, 1);
+
+  state.clock += 5 * MINUTE;
+  const tooSoon = await runTeamRecovery(context);
+  assert.deepEqual({ outcome: tooSoon.outcome, reason: tooSoon.reason }, { outcome: "skipped", reason: "retry-later" });
+  assert.equal(state.analyzeCalls, 1);
+
+  fail = false;
+  state.clock += 10 * MINUTE;
+  const retried = await runTeamRecovery(context);
+  assert.equal(retried.outcome, "activated");
+  assert.equal(state.analyzeCalls, 2);
+  assert.equal(state.records.at(-1).attempts, 2);
+});
+
+test("retries are bounded: after the last attempt the fingerprint reports retries-exhausted with the last reason", async () => {
+  const { state, context } = world({ analyze: () => { throw new Error("Bootstrap Analyst did not answer: timeout"); } });
+  await runTeamRecovery(context);
+  state.clock += 10 * MINUTE;
+  await runTeamRecovery(context);
+  state.clock += 20 * MINUTE;
+  await runTeamRecovery(context);
+  assert.equal(state.analyzeCalls, 3);
+
+  state.clock += 24 * 60 * MINUTE;
+  const exhausted = await runTeamRecovery(context);
+  assert.equal(exhausted.outcome, "skipped");
+  assert.equal(exhausted.reason, "retries-exhausted");
+  assert.equal(exhausted.lastOutcome, "analysis-failed");
+  assert.equal(state.analyzeCalls, 3, "no fourth analysis for the same availability");
+  assert.equal(state.writes.length, 0, "the previous team is still untouched");
+});
+
+test("an attempt left 'started' by a crashed process is retried after the backoff", async () => {
+  const fingerprint = availabilityFingerprint(GO_LIMITED).key;
+  const { state, context } = world({ record: { fingerprint, outcome: "started", attempts: 1, updatedAt: "2026-09-23T11:00:00.000Z" } });
+  const result = await runTeamRecovery(context);
+  assert.equal(result.outcome, "activated");
+  assert.equal(state.records.at(-1).attempts, 2);
+});
+
+test("decide: activated and baseline close a fingerprint; failures only defer it", () => {
+  const fingerprint = availabilityFingerprint(GO_LIMITED);
+  const at = (minutesAgo) => new Date(Date.parse("2026-09-23T12:00:00.000Z") - minutesAgo * MINUTE).toISOString();
+  const now = Date.parse("2026-09-23T12:00:00.000Z");
+  const decide = (record) => decideTeamRecovery({ strategy: goTeam, fingerprint, record: { fingerprint: fingerprint.key, ...record }, eligibility: GO_LIMITED, now });
+  assert.deepEqual(decide({ outcome: "activated", attempts: 1, updatedAt: at(600) }), { action: "skip", reason: "already-handled" });
+  assert.deepEqual(decide({ outcome: "baseline", updatedAt: at(600) }), { action: "skip", reason: "already-handled" });
+  assert.deepEqual(decide({ outcome: "no-usable-provider", attempts: 1, updatedAt: at(1) }), { action: "skip", reason: "retry-later" });
+  assert.deepEqual(decide({ outcome: "no-usable-provider", attempts: 1, updatedAt: at(11) }), { action: "recover" });
+  assert.deepEqual(decide({ outcome: "no-analyst", attempts: 3, updatedAt: at(600) }), { action: "skip", reason: "retries-exhausted", lastOutcome: "no-analyst" });
 });

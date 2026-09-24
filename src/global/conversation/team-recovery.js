@@ -2,7 +2,8 @@
 //
 // When a provider is limited, the ACTIVE team keeps working through
 // resolveProjectRoute's availability fallback. This module rebuilds the team
-// itself: at most once per availability fingerprint, under the project
+// itself: once per availability fingerprint (with bounded retries on
+// failure), under the project
 // analysis lock, with an analyst that is available right now. The rebuilt
 // team becomes ACTIVE only if the analysis succeeds, availability is still
 // the one it was built for, and at least one role is routable. Otherwise
@@ -14,17 +15,38 @@ import { applyProjectTeamOverride } from "./project-strategy.js";
 
 const BLOCKED_ENTITLEMENTS = new Set(["denied", "unverified"]);
 
+// Only these outcomes close a fingerprint. Every other one (a failed or
+// crashed analysis, no analyst, no usable provider, availability moving
+// mid-analysis) is retried on a later refresh, at most this many attempts
+// per fingerprint, waiting 10 min then 20 min between them. A transient
+// failure never leaves the team without another try; a persistent one
+// stops at retries-exhausted instead of re-analyzing on every refresh.
+const TERMINAL_OUTCOMES = new Set(["activated", "baseline"]);
+export const MAX_RECOVERY_ATTEMPTS = 3;
+export const RECOVERY_RETRY_BACKOFF_MS = 10 * 60_000;
+
+function retryBackoffMs(attempts) {
+  return RECOVERY_RETRY_BACKOFF_MS * 2 ** Math.max(0, attempts - 1);
+}
+
 function isRoutableNow(model, eligibility) {
   return model?.accessMode === "automatic" && eligibility?.[model.adapterId]?.ok === true;
 }
 
 /**
- * @param {{strategy: object|null, fingerprint: {key: string}, record: {fingerprint: string}|null, eligibility: object}} input
- * @returns {{action: "skip", reason: string} | {action: "baseline"} | {action: "recover"}}
+ * @param {{strategy: object|null, fingerprint: {key: string}, record: {fingerprint: string, outcome?: string, attempts?: number|null, updatedAt?: string}|null, eligibility: object, now?: number}} input
+ * @returns {{action: "skip", reason: string, lastOutcome?: string} | {action: "baseline"} | {action: "recover"}}
  */
-export function decideTeamRecovery({ strategy, fingerprint, record, eligibility }) {
+export function decideTeamRecovery({ strategy, fingerprint, record, eligibility, now = Date.now() }) {
   if (strategy?.status !== "active" || !Array.isArray(strategy.projectTeam)) return { action: "skip", reason: "no-active-team" };
-  if (record?.fingerprint === fingerprint.key) return { action: "skip", reason: "already-handled" };
+  if (record?.fingerprint === fingerprint.key) {
+    if (TERMINAL_OUTCOMES.has(record.outcome)) return { action: "skip", reason: "already-handled" };
+    const attempts = record.attempts ?? 1;
+    if (attempts >= MAX_RECOVERY_ATTEMPTS) return { action: "skip", reason: "retries-exhausted", lastOutcome: record.outcome };
+    const lastAttemptAt = Date.parse(record.updatedAt);
+    if (Number.isFinite(lastAttemptAt) && now - lastAttemptAt < retryBackoffMs(attempts)) return { action: "skip", reason: "retry-later" };
+    return { action: "recover" };
+  }
   const affected = strategy.projectTeam.some((entry) => (
     entry.model?.accessMode === "automatic" && !isRoutableNow(entry.model, eligibility)
   ));
@@ -84,7 +106,7 @@ function carryOverOverrides(rebuilt, previous) {
  * @param {(input: {profile: object, candidates: object, analyst: object}) => Promise<object>} context.analyze -
  *   returns a SUGGESTED strategy WITHOUT persisting it.
  * @param {() => number} [context.now]
- * @returns {Promise<{outcome: "skipped"|"baseline"|"activated"|"kept-previous", reason?: string, fingerprint: string, strategy?: object, analyst?: object}>}
+ * @returns {Promise<{outcome: "skipped"|"baseline"|"activated"|"kept-previous", reason?: string, lastOutcome?: string, fingerprint: string, strategy?: object, analyst?: object}>}
  */
 export async function runTeamRecovery(context) {
   const now = context.now ?? (() => Date.now());
@@ -92,30 +114,37 @@ export async function runTeamRecovery(context) {
   const eligibility = await context.currentEligibility();
   const fingerprint = availabilityFingerprint(eligibility);
   const record = await context.readRecord();
-  const decision = decideTeamRecovery({ strategy, fingerprint, record, eligibility });
+  const decision = decideTeamRecovery({ strategy, fingerprint, record, eligibility, now: now() });
 
   if (decision.action === "baseline") {
     await context.writeRecord({ fingerprint: fingerprint.key, outcome: "baseline" });
     return { outcome: "baseline", fingerprint: fingerprint.key };
   }
-  if (decision.action === "skip") return { outcome: "skipped", reason: decision.reason, fingerprint: fingerprint.key };
+  const skipped = ({ reason, lastOutcome }) => ({
+    outcome: "skipped", reason, fingerprint: fingerprint.key, ...(lastOutcome ? { lastOutcome } : {})
+  });
+  if (decision.action === "skip") return skipped(decision);
 
   const lock = await context.acquireLock();
   if (!lock.acquired) return { outcome: "skipped", reason: "analysis-in-progress", fingerprint: fingerprint.key };
 
+  let attempts = 1;
   const keepPrevious = async (reason, detail = reason) => {
-    await context.writeRecord({ fingerprint: fingerprint.key, outcome: reason });
+    await context.writeRecord({ fingerprint: fingerprint.key, outcome: reason, attempts });
     return { outcome: "kept-previous", reason: detail, fingerprint: fingerprint.key };
   };
 
   try {
-    // Another process may have handled this fingerprint while we waited.
-    if ((await context.readRecord())?.fingerprint === fingerprint.key) {
-      return { outcome: "skipped", reason: "already-handled", fingerprint: fingerprint.key };
-    }
-    // Claim the fingerprint before the analysis: at most one attempt each,
-    // even if this process dies mid-analysis.
-    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "started" });
+    // Another process may have handled (or be backing off) this
+    // fingerprint while we waited for the lock: decide again on the fresh
+    // record.
+    const fresh = await context.readRecord();
+    const recheck = decideTeamRecovery({ strategy, fingerprint, record: fresh, eligibility, now: now() });
+    if (recheck.action === "skip") return skipped(recheck);
+    attempts = fresh?.fingerprint === fingerprint.key ? (fresh.attempts ?? 1) + 1 : 1;
+    // Claim the attempt before the analysis, so a process that dies
+    // mid-analysis still counts toward the retry bound.
+    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "started", attempts });
 
     const preflight = await context.preflight();
     if (availabilityFingerprint(preflight.candidates?.eligibility).key !== fingerprint.key) return keepPrevious("availability-changed");
@@ -141,7 +170,7 @@ export async function runTeamRecovery(context) {
       activation: { source: "automatic-recovery", fingerprint: fingerprint.key }
     };
     await context.writeStrategy(activated);
-    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "activated" });
+    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "activated", attempts });
     return { outcome: "activated", fingerprint: fingerprint.key, strategy: activated, analyst };
   } finally {
     await lock.release();
