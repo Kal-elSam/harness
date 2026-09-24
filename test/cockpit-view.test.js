@@ -1513,7 +1513,11 @@ test("REGRESSION: resolveAssignmentAvailability's real Cursor branch — availab
     cursorAccess: { cursor_models: { status: "available", reason: null }, other_models: { status: "exhausted", reason: "monthly limit" } }
   });
   assert.equal(exhausted.available, false);
-  assert.match(exhausted.warning, /Other Models quota exhausted \(monthly limit\)/);
+  // Cursor classifies ANY limit text (rate limit, usage limit, monthly
+  // limit) as its internal EXHAUSTED status, so the visible warning says
+  // "limit reached" and quotes Cursor's own reason, never "exhausted".
+  assert.match(exhausted.warning, /Other Models limit reached \(monthly limit\)/);
+  assert.doesNotMatch(exhausted.warning, /exhaust/i);
 
   const unverified = resolveAssignmentAvailability(fableViaCursor, {
     eligibility: { cursor: { ok: true } },

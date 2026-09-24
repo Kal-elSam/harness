@@ -174,9 +174,40 @@ function remainingPercent(usageEntry) {
 }
 
 // Below this real remaining-quota percentage, a provider is treated as
-// exhausted for automatic routing — conserved for the tests explicitly
-// listed as this increment's scope, not a newly-invented number.
+// window-limited for automatic routing — conserved for the tests explicitly
+// listed as this increment's scope, not a newly-invented number. It is a
+// temporary window signal (5h/session or weekly), never proof that the
+// account's tokens are exhausted.
 export const MIN_QUOTA_PERCENT = 5;
+
+/** The real window with the least headroom (same windows remainingPercent reads). */
+function limitingWindow(usageEntry) {
+  const windows = [usageEntry?.primary, usageEntry?.secondary]
+    .filter((window) => typeof window?.remainingPercent === "number");
+  if (windows.length === 0) return null;
+  return windows.reduce((lowest, window) => (window.remainingPercent < lowest.remainingPercent ? window : lowest));
+}
+
+/**
+ * An ineligible verdict for a temporary window limit. `limit` is the
+ * structured evidence (which provider, which window, when it resets) that
+ * availability tracking and notices key on; `reason` stays human-readable
+ * and never claims exhaustion.
+ */
+function windowLimited(provider, label, window, verb = "limited") {
+  const name = window.name ?? window.label ?? null;
+  const resetsAt = window.resetsAtIso ?? window.resetsAt ?? null;
+  const remainingPercent = typeof window.remainingPercent === "number" ? window.remainingPercent : null;
+  const details = [
+    verb === "limited" && remainingPercent != null ? `${remainingPercent}% left` : null,
+    resetsAt ? `resets ${resetsAt}` : null
+  ].filter(Boolean).join(", ");
+  return {
+    ok: false,
+    reason: `${label} ${name ?? "usage"} window is ${verb}${details ? ` (${details})` : ""}`,
+    limit: { provider, window: name, remainingPercent, resetsAt }
+  };
+}
 
 // A softer, earlier heads-up threshold — strictly above MIN_QUOTA_PERCENT,
 // so the human sees a warning before a provider actually gets excluded,
@@ -226,12 +257,12 @@ export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, o
   if (!adapter.launchable) return { ok: false, reason: adapter.reason ?? `${adapterId}: not launchable yet` };
 
   if (adapterId === "codex") {
-    const left = remainingPercent(codexUsage);
-    if (left != null && left < MIN_QUOTA_PERCENT) return { ok: false, reason: `Codex quota nearly exhausted (${left}% left)` };
+    const window = limitingWindow(codexUsage);
+    if (window && window.remainingPercent < MIN_QUOTA_PERCENT) return windowLimited("codex", "Codex", window);
   }
   if (adapterId === "claude") {
-    const left = remainingPercent(claudeUsage);
-    if (left != null && left < MIN_QUOTA_PERCENT) return { ok: false, reason: `Claude quota nearly exhausted (${left}% left)` };
+    const window = limitingWindow(claudeUsage);
+    if (window && window.remainingPercent < MIN_QUOTA_PERCENT) return windowLimited("claude", "Claude", window);
   }
   if (adapterId === "opencode-go") {
     const windows = opencodeGoUsage?.go?.windows ?? opencodeGoUsage?.windows ?? [];
@@ -239,7 +270,7 @@ export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, o
     // having headroom — any rate-limited window is real evidence of that,
     // so it's the conservative (fail-closed) reading, not a guess.
     const limited = windows.find((window) => window.status === "rate-limited");
-    if (limited) return { ok: false, reason: `OpenCode Go ${limited.name} window is rate-limited` };
+    if (limited) return windowLimited("opencode-go", "OpenCode Go", limited, "rate-limited");
   }
   // Cursor's real quota state is no longer a manual human toggle here —
   // Kairo now runs a real, minimal, automatic probe per pool (see

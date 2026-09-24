@@ -113,6 +113,23 @@ test("workspace snapshot team rows compute real availability when intelligence i
   assert.deepEqual(snapshot.team.rows[2].availability, { state: "available", warning: null });
 });
 
+test("a row blocked by a provider window limit carries that limit, so notices can group by provider and window", () => {
+  const limit = { provider: "opencode-go", window: "monthly", remainingPercent: 0, resetsAt: null };
+  const snapshot = buildKairoWorkspaceSnapshot({
+    projectRoot: "/work/agentic-harness",
+    strategy: FULL_STRATEGY,
+    intelligence: {
+      eligibility: { codex: { ok: true }, claude: { ok: true }, "opencode-go": { ok: false, reason: "OpenCode Go monthly window is rate-limited", limit } },
+      claudeEntitlement: {}, cursorAccess: {}
+    }
+  });
+  const orchestrator = snapshot.team.rows.find((row) => row.role === "Orchestrator");
+  assert.equal(orchestrator.availability.state, "blocked");
+  assert.deepEqual(orchestrator.availability.limit, limit);
+  const builder = snapshot.team.rows.find((row) => row.role === "Builder");
+  assert.deepEqual(builder.availability, { state: "available", warning: null }, "available rows gain no extra field");
+});
+
 test("workspace snapshot team rows never claim available when intelligence explicitly failed", () => {
   const snapshot = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY, intelligence: null });
 
