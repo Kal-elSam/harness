@@ -801,6 +801,12 @@ environment only. Pi's own subprocesses inherit it (documented).
       opt-in live test); `npm test` → 2233 pass / 0 fail / 1 skip.
     - No RED for these test-hardening changes: they change how failures
       are reported, not product behavior.
+    - Review of `6c2a8ff..236a60f`: flagged high because of the test
+      spawn and the CI YAML. **Declined for this candidate** by the user,
+      since the change is tests and docs only. The decline was validated
+      (`declined_this_candidate`, same target identity). RDD stays on,
+      and related fixes are grouped before the next review. CI on the
+      pushed commit is still required.
 
 Route: one delegated writer for T1–T4 (4+ non-trivial files across CLI,
 registry, extension, and widget; writer trigger). One work-unit commit
