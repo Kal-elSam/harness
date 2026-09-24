@@ -760,6 +760,8 @@ environment only. Pi's own subprocesses inherit it (documented).
     checked only the Node major version, which would have run the fork
     on unsupported Node 22.0–22.18. It now compares all three components
     against `MIN_NODE_VERSION`; this does not change product behavior.
+    Correction commit: `cf9afce`. Focused: 17 pass, 1 skipped; full:
+    2231 pass, 1 skipped, 0 fail.
   - Full suite: `npm test` with an isolated npm cache and permission for
     the loopback-only UI test: 2231 pass, 1 opt-in live test skipped,
     0 fail. A sandboxed run had two environmental failures (`listen EPERM`
