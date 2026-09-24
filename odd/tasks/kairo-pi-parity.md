@@ -735,6 +735,7 @@ environment only. Pi's own subprocesses inherit it (documented).
   - Local integration (delegated writer; publication was already done by
     the user, not by this work unit): public npm resolution and tarball
     download succeeded without npm credentials in a temporary directory.
+    Work-unit commit: `9f08654`.
     `package.json` now pins the exact published
     `@kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.1`; `pnpm-lock.yaml`
     records its registry integrity and transitive dependencies. No
