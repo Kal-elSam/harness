@@ -1,6 +1,6 @@
 {
 	"name": "@kal-elsam/kairo-pi-coding-agent",
-	"version": "0.87.1-kairo.1",
+	"version": "0.87.1-kairo.2",
 	"description": "Kairo-only fork of @earendil-works/pi-coding-agent 0.87.1 (MIT). See NOTICE.md for attribution. No CLI bin: the built dist/bundle/cli.js is run by path by the Kairo launcher.",
 	"type": "module",
 	"piConfig": {
@@ -16,7 +16,15 @@
 		}
 	},
 	"files": [
-		"dist/bundle",
+		"dist",
+		"!dist/client",
+		"!dist/experimental",
+		"!dist/cli/experimental",
+		"docs",
+		"examples",
+		"containerization.md",
+		"CHANGELOG.md",
+		"npm-shrinkwrap.json",
 		"LICENSE",
 		"NOTICE.md"
 	],

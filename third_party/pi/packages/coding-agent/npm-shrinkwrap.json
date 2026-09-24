@@ -1,12 +1,12 @@
 {
 	"name": "@kal-elsam/kairo-pi-coding-agent",
-	"version": "0.87.1-kairo.1",
+	"version": "0.87.1-kairo.2",
 	"lockfileVersion": 3,
 	"requires": true,
 	"packages": {
 		"": {
 			"name": "@kal-elsam/kairo-pi-coding-agent",
-			"version": "0.87.1-kairo.1",
+			"version": "0.87.1-kairo.2",
 			"license": "MIT",
 			"dependencies": {
 				"@earendil-works/chord": "^0.87.1",
