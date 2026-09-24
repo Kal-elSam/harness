@@ -92,8 +92,10 @@ is only safe complete, so nothing reaches main in pieces.
   orchestration) plus the review fix for bounded retries. ~+545/-25: over
   budget, of which ~355 lines are tests. There is no cohesive smaller cut (the module, its tests, and the
   wiring belong together), so it is reported, not squeezed.
-- PR 5 `feat/kairo-team-auto-recovery-05-pi-notices` -> PR 4: R6, R7, R8
-  (Pi route refresh, deduplicated notices, end-to-end).
+- PR 5 `feat/kairo-team-auto-recovery-05-pi-notices` -> PR 4: R6, R7
+  (Pi recovery trigger, route sync, grouped notices). +317/-63.
+- PR 6 `feat/kairo-team-auto-recovery-06-end-to-end` -> PR 5: R8 (end-to-end
+  test). +144.
 Each slice targets <=400 changed lines; any overage is reported, not squeezed.
 The first plan had R1-R3 in one slice; at 612 changed lines it was split into
 PR 1 and PR 2 before any PR was opened.
@@ -170,14 +172,38 @@ PR 1 and PR 2 before any PR was opened.
   at 3 with exhausted reported; crashed attempt retried; decide matrix);
   store round-trips `attempts`. Full suite 2181 pass / 0 fail / 1 skipped;
   Node 20.14 120/120.
-- [ ] R6 — Pi routes refresh when the active team changes (replace the
-  one-shot `registered` guard safely).
-- [ ] R7 — Notices: one notice per (provider, window) stating the recovery
-  applied or the real blocker; no repeats on later refreshes.
-- [ ] R8 — End-to-end check: OpenCode Go limited with Codex/Claude available
-  means no new Go assignment, the new team is active, and Pi can run its
-  routes. Strategy, routing, service, host, and full suites; Node 20.14 on
-  the touched tests.
+- [x] R6 — Pi recovery trigger + route sync (15875e4). Verified in Pi's own
+  types (core/extensions/types.d.ts): `registerProvider` "Register or
+  override", `models` replaces the provider's models, and after load it
+  "takes effect immediately"; `unregisterProvider` exists. The one-shot
+  `registered` guard became `registerRoutes` sync: unchanged set -> no
+  re-register; changed -> re-register; empty -> unregister (no stale
+  route). Fresh live availability at session_start phase 2 starts
+  `recoverKairoProjectTeam` (workspace-snapshot.js; never throws). It is
+  not awaited by session_start (it can run an analysis for minutes) and is
+  exposed as `extension.recovery()`. An activated team re-syncs routes and
+  re-renders. No recovery runs when the live probe failed.
+- [x] R7 — Notices (15875e4). Blocked team rows carry the provider's
+  structured `limit`. `availabilityNotices` (replaces the per-role, every-
+  refresh `blockedRoleNotifications`) groups roles per provider+window
+  (window limit) or provider+warning (entitlement/Cursor). Only FRESH live
+  refreshes notify: a key is shown once while it lasts and again after it
+  clears and returns. Command/first-paint refreshes neither notify nor
+  forget. Recovery outcomes are notified once per (fingerprint, outcome,
+  reason): activated (info, role -> model), kept-previous/error (warning:
+  reason, retries later, manual next step), retries-exhausted (warning:
+  last outcome, manual next step); quiet outcomes stay quiet. The notice
+  text only claims automatic recovery, never a fallback it cannot
+  guarantee.
+- [x] R8 — End-to-end (8bf6c63): the real extension + service recovery +
+  runTeamRecovery + route loader over one in-memory store; only probes,
+  analyst, and storage are faked. Go limited with Codex/Claude available:
+  no new Go assignment, the recovered team is active (activation source
+  automatic-recovery), Pi routes resolve to it (none to Go), exactly one Go
+  window notice, nothing says "exhausted", and one analysis. Repeated
+  refreshes: no second analysis, no repeated notice. Full suite 2190 pass /
+  0 fail / 1 skipped; the touched host + recovery suites pass 86/86 on Node
+  20.14.
 
 ## Acceptance criteria
 - Simulated Go limited with Codex or Claude available: no new assignment uses
@@ -189,4 +215,4 @@ PR 1 and PR 2 before any PR was opened.
 - No message claims exhaustion from a window-limited signal.
 
 ## Next step
-Open PRs 3-4, then R6-R8 on feat/kairo-team-auto-recovery-05-pi-notices.
+All tasks done. User reviews and merges PRs 1-6 into the tracker in order, then the tracker (#344) into main.
