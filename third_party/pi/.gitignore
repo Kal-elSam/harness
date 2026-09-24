@@ -8,7 +8,9 @@ dist/
 packages/*/dist/
 packages/*/dist-chrome/
 packages/*/dist-firefox/
-packages/ai/src/providers/data/
+# Kairo fork: packages/ai/src/providers/data/ is tracked (not ignored) so the
+# release build is reproducible from the tag without a live models.dev
+# fetch. See packages/coding-agent/NOTICE.md for the release build command.
 packages/ai/src/providers/.model-generation-*/
 *.cpuprofile
 
