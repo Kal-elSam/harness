@@ -716,6 +716,19 @@ environment only. Pi's own subprocesses inherit it (documented).
       `openSync(..., "w")`) each fail and name the path.
     - GREEN after restoring: 18 pass / 0 fail / 1 skip on the focused
       files; `npm test` 2230 pass / 0 fail / 1 skip.
+  - Review of `fa7373e..0f2c589`: high risk; consent granted by the user.
+    4 lenses, **approved** with no blocking findings, and acknowledged.
+    Advisory findings are left open deliberately; they are not fixed in
+    a loop, because each fix reopens a high-risk review:
+    - R2 WARNING: the probe records copyFile/cp sources and symlink
+      targets as writes. That could cause a spurious failure later, but
+      never a false pass.
+    - R4/R3: `fs.open(path, callback)` treats the callback as flags,
+      which could record a false write (again only a spurious failure).
+    - R3: the coverage header still overclaims `fs.WriteStream` and
+      `mkdtempDisposable*`.
+    - R2: PROBE_ARGS is duplicated.
+    Address these the next time the probe changes.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
