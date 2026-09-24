@@ -477,13 +477,70 @@ environment only. Pi's own subprocesses inherit it (documented).
   - Noted: `isOfficialDistribution()` is false for the fork, which only
     disables the experimental first-time setup. The config dir stays
     `.pi`, so sessions are shared with a standalone Pi.
-- [ ] P02-T9 Kairo launcher: remove any global write; resolve the fork's
+- [x] P02-T9 Kairo launcher: remove any global write; resolve the fork's
   CLI by path and run it with `process.execPath` after checking Node
   ≥22.19; fail explicitly if the package is missing or at another
   version; set `KAIRO_PI_EMPTY_SESSIONS=1` only in the child env. Tests:
   fake-HOME tree snapshot fails on any write outside the repo or
   HARNESS_HOME; a different `pi` on PATH is ignored. Validate locally
   against the temporary tarball (preliminary). Route: delegated writer.
+  - Done (`bd37236`, single commit — tests and implementation together):
+    `src/global/host/launch-gentle-shell.js` no longer resolves `pi` via
+    `whichImpl(PATH)`/`probeImpl`. It resolves the package root by
+    calling an injectable `resolveEntryImpl` (default:
+    `fileURLToPath(import.meta.resolve("@kal-elsam/kairo-pi-coding-agent"))`),
+    walks up from that entry file to the `package.json` whose `name`
+    matches, and requires `version === "0.87.1-kairo.1"` exactly (both
+    constants centralized as `KAIRO_PI_PACKAGE_NAME`/
+    `KAIRO_PI_PACKAGE_VERSION`); no PATH fallback on any failure. Node
+    version is checked via an injectable `nodeVersion` param against a
+    new `MIN_NODE_VERSION = "22.19.0"`. Spawn uses an injectable
+    `execPath` (default `process.execPath`) against
+    `<packageRoot>/dist/bundle/cli.js`. `KAIRO_PI_EMPTY_SESSIONS: "1"`
+    is set only on the child env object built for `spawnImpl`; a test
+    asserts `process.env.KAIRO_PI_EMPTY_SESSIONS` stays `undefined`
+    after launch. No leftover `.bak-kairo`/`~/.local` copy code was
+    found in the launcher (checked, none present).
+  - RED: confirmed by `git stash`-ing the new source and running the
+    new/changed test files against the old (`whichImpl`/`probeImpl`)
+    implementation — both files failed at import time (`does not
+    provide an export named 'KAIRO_PI_PACKAGE_NAME'`), 0/0 pass, exit 1.
+  - GREEN (same files, new implementation): `test/host-launch.test.js`
+    + `test/ecosystem-degrade.test.js` → 13 pass, 1 skip (opt-in live
+    test), 0 fail.
+  - Focused: `node --test test/host-launch.test.js
+    test/cli-implicit-host.test.js test/session-cli.test.js
+    test/ecosystem-degrade.test.js test/pi-session-bindings.test.js
+    test/workspace-shell-extension.test.js` → 71 pass, 1 skip, 0 fail.
+  - Full: `npm test` → 2224 pass, 1 skip, 0 fail (baseline before this
+    task: 2218 pass, 1 skip — net +6 tests, no regressions).
+  - Lint/typecheck: no `lint`/`typecheck` script exists in
+    `package.json`; skipped.
+  - Smoke (preliminary, outside the repo, per constraint 7): installed
+    the local tarball with `npm install
+    .../kairo-pi-coding-agent-0.87.1-kairo.1.tgz --prefix
+    <scratchpad>/t9-smoke --no-save`, then called the launcher's real
+    resolution/spawn logic against that prefix (real
+    `import.meta.resolve`, no fake resolver) and ran the resolved
+    `<execPath> <root>/dist/bundle/cli.js --version`:
+    resolved package `@kal-elsam/kairo-pi-coding-agent 0.87.1-kairo.1`;
+    `--version` printed `0.87.1-kairo.1`, exit 0, empty stderr. No
+    interactive TUI was launched.
+  - Docs: searched `docs/*.md` and `README.md` for "pi"/PATH/"Install
+    Pi"/`--legacy-cockpit` mentions tied to this launcher; the only hit
+    (`docs/adapters.md` "Kairo does not install Pi...") documents the
+    unrelated `kairo run --agent pi` execution adapter
+    (`src/global/runtime/execution-adapters/pi.js`), not this
+    interactive host launcher, and was left unchanged.
+  - Deviation from the task's literal step order: tests were written
+    and iterated in the same working session as the implementation
+    rather than committed as a separate RED commit; RED was still
+    observed and recorded (above) by diffing against the prior
+    implementation before committing, per the "TDD" section's allowance
+    to commit tests with the change.
+  - Not done here (explicitly out of scope per constraint 7/T10): the
+    package was not added to `package.json`/`pnpm-lock.yaml`, and it
+    was not published; both are P02-T10.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
