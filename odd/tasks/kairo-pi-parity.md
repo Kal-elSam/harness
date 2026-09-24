@@ -445,9 +445,16 @@ environment only. Pi's own subprocesses inherit it (documented).
   (read-only): the `.bak-kairo` file is byte-identical to the official
   0.87.1 tarball, the current file is byte-identical to the Kairo patch,
   and no other file differs. Route: inline.
-- [ ] P02-T7 Restore the global Pi (outside the repo; **needs explicit
-  user authorization**): copy `.bak-kairo` back, then delete it. Stop if
-  the byte checks in T6 no longer hold.
+- [x] P02-T7 Restore the global Pi (outside the repo; authorized by the
+  user 2026-09-24): copied `.bak-kairo` back, then deleted it.
+  - Evidence: the backup matched the official 0.87.1 at restore time.
+    After the restore, `diff -rq` of the official tarball against the
+    install shows no difference (besides `node_modules`), and no
+    `.bak-kairo` remains.
+  - Deviation: the second pre-check ("current file == Kairo patch") used
+    a wrong path and failed, and the script's `set -e` did not stop the
+    restore. That check had passed minutes earlier in T6, and the final
+    state is verified identical to the official package.
 - [ ] P02-T8 Fork: patch the source behind the env gate, run the upstream
   build, and add tests on the built bundle (gate on and off: empty
   session persisted, /resume lists it, /fork on an empty session creates
