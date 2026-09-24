@@ -719,3 +719,43 @@ test("an invalid KAIRO_SESSION_ID fails closed to unbound with a visible error",
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0][1], "error");
 });
+
+// P02-T4: unbound presentation — status bar never implies a default "ask"
+// mode, and /kairo-sessions stays consistent with the footer/status bar.
+
+test("the status bar shows an explicit unbound state, never a default ask mode", async () => {
+  const { pi, events } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    env: {},
+    loadSnapshot: async () => ({ ...snapshot, session: { state: "unbound" } }),
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => []
+  });
+
+  const statusCalls = [];
+  const ctx = fakeCtx({ piSessionId: null, statusCalls });
+  await events.get("session_start")({ reason: "startup" }, ctx);
+
+  assert.ok(statusCalls.length > 0);
+  for (const [, message] of statusCalls) {
+    assert.ok(message.includes("unbound"), `expected an explicit unbound status, got "${message}"`);
+    assert.ok(!message.endsWith("· ask"), `status bar must never default to ask when unbound, got "${message}"`);
+  }
+});
+
+test("/kairo-sessions reports unbound consistently with the footer and status bar", async () => {
+  const { pi, commands } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => ({ ...snapshot, session: { state: "unbound" } })
+  });
+
+  const calls = [];
+  await commands.get("kairo-sessions").handler("", {
+    cwd: "/repo",
+    ui: { setWidget: (...args) => calls.push(args), notify: () => {} }
+  });
+  const lines = renderWidgetCall(calls[0][1]);
+  assert.ok(lines.some((line) => /no kairo session is bound/i.test(line)));
+  assert.ok(!lines.some((line) => /· ask/i.test(line)));
+});

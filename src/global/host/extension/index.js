@@ -130,7 +130,8 @@ function linesForView(snapshot, view) {
 }
 
 function workspaceStatus(snapshot) {
-  return `Kairo · ${snapshot.project.label} · ${snapshot.session?.mode ?? "ask"}`;
+  const mode = snapshot.session?.state === "bound" ? (snapshot.session.mode ?? "ask") : "unbound";
+  return `Kairo · ${snapshot.project.label} · ${mode}`;
 }
 
 /** Renders `snapshot` onto the one Kairo widget slot, in the shape `view`

@@ -153,8 +153,8 @@ function usagePanelBody(subscriptions, theme) {
 }
 
 function usagePanelFooter(session) {
-  const idPart = session?.state === "bound" ? session.id.slice(0, 8) : "none";
-  return `session: ${idPart} · ${session?.mode ?? "ask"}`;
+  if (session?.state !== "bound") return "session: unbound";
+  return `session: ${session.id.slice(0, 8)} · ${session.mode ?? "ask"}`;
 }
 
 /** Pads `text` to exactly `width` visible columns — truncating with
