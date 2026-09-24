@@ -781,11 +781,26 @@ environment only. Pi's own subprocesses inherit it (documented).
       instead, as the launcher does.
     - R3-004 (suggestion): the version compare assumes three numeric
       components.
-  - Open decision: `9f08654` raised Kairo's `engines` to `>=22.19.0` for
-    the whole CLI (the legacy cockpit included), while `ci.yml` still
-    runs Node 20, and that row does not exercise the Pi host.
-    Recommendation: drop Node 20 from CI (Node 20 reached end of life in
-    April 2026) and record the engines change as an explicit decision.
+  - Decision (user, 2026-09-24): Kairo as a whole requires Node >=22.19.0,
+    the legacy cockpit included (engines set in `9f08654`). Node 20
+    reached end of life in April 2026 and cannot run the Pi host.
+  - Pre-push follow-ups done in `1414097` (inline):
+    - The fork smoke now resolves the bundle through the launcher itself
+      (real resolver, spawn stubbed). No triple `dirname`, and no
+      exported private helper.
+    - `--version` runs with a 30 s timeout and stdin ignored, and the
+      test asserts that `result.error` is undefined, reporting the
+      signal.
+    - Below MIN_NODE_VERSION the version test is an explicit `skip` with
+      a reason, not a silent pass. The comparison is `isNodeAtLeast`,
+      which pads to three components and has its own test.
+    - Node 20 was removed from the `ci.yml` matrix. README.md,
+      docs/contributing.md, and docs/install.md now say Node 22.19+.
+    - Checks: `node --test test/host-launch.test.js
+      test/ecosystem-degrade.test.js` → 21 pass / 0 fail / 1 skip (the
+      opt-in live test); `npm test` → 2233 pass / 0 fail / 1 skip.
+    - No RED for these test-hardening changes: they change how failures
+      are reported, not product behavior.
 
 Route: one delegated writer for T1–T4 (4+ non-trivial files across CLI,
 registry, extension, and widget; writer trigger). One work-unit commit
