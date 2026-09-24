@@ -420,6 +420,58 @@ async function realScoredCandidates() {
   return { scoredAll, eligibility: { codex: { ok: true }, claude: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null };
 }
 
+test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit and activates it only after verifying — never persisting the suggestion over the active team", async () => {
+  const base = await realScoredCandidates();
+  const candidates = { ...base, scoredAll: base.scoredAll.map((model) => ({ ...model, accessMode: "automatic" })) };
+  const goModel = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "automatic" };
+  const active = { status: "active", profileFingerprint: "fp-1", approvedAt: "2026-09-01T00:00:00.000Z", projectTeam: [{ role: "Explorer", model: goModel, fallback: null, assignmentSource: "recommended" }] };
+  const writes = [];
+  const records = [];
+  const lockOwners = [];
+  const analyzedWith = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    now: () => Date.parse("2026-09-23T12:00:00.000Z"),
+    computeProjectProfile: async () => ({
+      projectName: "repo", stack: ["Node.js"], architecture: { pattern: "x" },
+      quality: { buildCommand: null, testCommand: null, lintCommand: null, typeCheckCommand: null },
+      hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-2",
+      roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+    }),
+    readProjectStrategy: async () => writes.at(-1) ?? active,
+    writeProjectStrategy: async (_home, _root, strategy) => { writes.push(strategy); return strategy; },
+    readAvailabilityRecovery: async () => records.at(-1) ?? null,
+    writeAvailabilityRecovery: async (_home, _root, record) => { records.push(record); return record; },
+    acquireProjectAnalysisLock: async (_home, _root, { owner }) => { lockOwners.push(owner); return { acquired: true, release: async () => {} }; },
+    buildSanitizedSnapshot: async () => ({ snapshotRoot: "/tmp/snap", filesCopied: 0, secretsRedacted: 0, copiedFiles: [], excludedPrivatePaths: [], cleanup: async () => {} }),
+    createBootstrapAnalyzerAdapter: (adapterId, { modelId }) => ({
+      checkEligibility: async () => ({ eligible: true, isolation: "verified" }),
+      analyze: async () => {
+        analyzedWith.push(`${adapterId}::${modelId}`);
+        return { status: "answered", answer: JSON.stringify({ architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [], recommendedRoleNeeds: [], uncertainties: [], evidenceReferences: [] }) };
+      }
+    })
+  });
+  // Go is not in eligibility at all: unavailable, so the Go-assigned Explorer is affected.
+  service.snapshot = async () => ({ modelIntelligence: candidates });
+
+  const result = await service.recoverProjectTeam({ cwd: "/repo" });
+  assert.equal(result.outcome, "activated", result.reason);
+  assert.deepEqual(lockOwners, ["automatic-recovery"]);
+  assert.equal(analyzedWith.length, 1);
+  assert.ok(!analyzedWith[0].startsWith("opencode-go"), "the analyst is available right now");
+  assert.equal(writes.length, 1, "exactly one write: the verified ACTIVE team, never an intermediate suggestion");
+  assert.equal(writes[0].status, "active");
+  assert.equal(writes[0].activation.source, "automatic-recovery");
+  assert.ok(writes[0].projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no new assignment uses the unavailable provider");
+  assert.deepEqual(records.map((record) => record.outcome), ["started", "activated"]);
+
+  const again = await service.recoverProjectTeam({ cwd: "/repo" });
+  assert.equal(again.reason, "already-handled");
+  assert.equal(analyzedWith.length, 1, "a refresh with the same availability never re-analyzes");
+});
+
 test("preflightProject computes a real read-only ProjectProfile and full analyst catalog, never touching persistence", async () => {
   let wrote = false;
   const service = createConversationService({
