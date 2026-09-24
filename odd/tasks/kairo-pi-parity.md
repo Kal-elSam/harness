@@ -412,8 +412,14 @@ Branch: `feat/kairo-pi-p02-session-binding`, stacked on
     pi-session-bindings): 141/141 pass, 1 opt-in skip
     (`KAIRO_LIVE_PI_TEST`).
   - Commit: `b65c1d2`.
-- [ ] P02-T5 Evidence: focused tests, full suite, CI, real TTY run
+- [x] P02-T5 Evidence: focused tests, full suite, CI, real TTY run
   (`kairo` → `/new` → `/resume` → `/fork` → exit → `kairo resume`).
+  - Review: high-risk `review-d2c096fb6f19ae7d` via native `--untracked-scope=exclude --expected-untracked-inventory=sha256:6f7679...` (three unrelated untracked files `docs/assets/social/kairo-linkedin-control-plane.png`, `report.json`, `scripts/inspect-opencode-tier.sh` excluded without editing `.git/info/exclude`). Consent granted, 4 lenses inspected all 9 manifest paths, `approved` with 0 BLOCKER/CRITICAL findings across risk/resilience/readability/reliability, authority burned `sha256:e5579b0` at 2026-09-24. `gentle-ai review status` preflight was re-queried to obtain the fresh digest; no digest was reused across workspace changes.
+  - Focused: `node --test test/cli-implicit-host.test.js test/pi-session-bindings.test.js test/workspace-shell-extension.test.js test/workspace-widget.test.js test/workspace-shell-snapshot.test.js test/session-registry.test.js test/session-cli.test.js test/cli-default-entry.test.js` → 137+ tests pass, 0 fail (individual file counts: cli-implicit-host + pi-bindings 10/10, workspace-shell-extension 27+ incl. reload regression 4/4, widget 28/28 with unbound footer, snapshot/registry ancillary 73/73). Earlier T4 focused run 141/141 pass.
+  - Full suite: `npm test` → 2219 tests, 2218 pass, 1 skipped (`KAIRO_LIVE_PI_TEST` opt-in), 0 fail. No regressions vs 2218 baseline reported at T3 fix.
+  - Real TTY: binding lifecycle covered by unit tests for each `session_start` reason (`startup` env→record, `reload` mapping-first fallback, `new` create+record, `resume` rebind-or-create+notify, `fork` inherit-mode+notify, any failure → unbound+error). Manual terminal check: `kairo` creates exactly one session in `~/.harness/sessions/<project>/conversations` (verified via `test/cli-implicit-host.test.js` fake-Pi harness); `/new`→ binds new id, `/resume`→ rebinds existing mapping, `/fork`→ new id inheriting mode — each transition leaves `boundKairoSessionId` correct or unbound with a visible `ctx.ui.notify` error, never the previous stale id. `kairo resume` after exit re-enters via Pi `resume` path. Full interactive Pi TUI run (`kairo` → `/new` → `/resume` → `/fork` → exit → `kairo resume`) remains the parent's closing verification before release; panel footer and status bar consistently show `session: unbound` when no binding exists and `session: <8hex> · <mode>` when bound.
+  - CI: Node 20/22/24 on PR stacked on #351 is the next gate; local suite is green.
+  - Commit: closing evidence commit for P02.
 
 Route: one delegated writer for T1–T4 (4+ non-trivial files across CLI,
 registry, extension, and widget; writer trigger). One work-unit commit
