@@ -179,17 +179,24 @@ function recoveryNotice(result) {
   return null;
 }
 
-async function refreshWorkspace(ctx, {
+async function refreshWorkspace(ctxOrCwd, {
   loadSnapshot, sessionId = null, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [], onSnapshot = () => {}
 }) {
+  // Pi's ctx becomes stale after an async yield following a session replacement
+  // (Pi asserts ctx.cwd/ctx.ui). Capture cwd/ui synchronously at call time;
+  // callers must pass a fresh ctx or a plain {cwd, ui} bag. See stale-ctx
+  // error at index.js:186 after /new in real TTY (2026-09-24).
+  const cwd = typeof ctxOrCwd === "string" ? ctxOrCwd : (ctxOrCwd?.cwd ?? process.cwd());
+  const ui = typeof ctxOrCwd === "string" ? undefined : ctxOrCwd?.ui;
+  const ctxForWidget = typeof ctxOrCwd === "string" ? { ui } : ctxOrCwd;
   const snapshot = await loadSnapshot({
-    cwd: ctx?.cwd ?? process.cwd(),
+    cwd,
     sessionId,
     usageIntelligence,
     availabilityIntelligence
   });
-  ctx?.ui?.setStatus?.("kairo", workspaceStatus(snapshot));
-  setWorkspaceWidget(ctx, snapshot, view, extraLines);
+  ui?.setStatus?.("kairo", workspaceStatus(snapshot));
+  setWorkspaceWidget(ctxForWidget, snapshot, view, extraLines);
   onSnapshot(snapshot, { liveAvailability: availabilityIntelligence != null });
   return snapshot;
 }
@@ -235,8 +242,11 @@ export function createKairoWorkspaceExtension(pi, {
    */
   async function bindSession(ctx, event) {
     const reason = event?.reason ?? "startup";
+    // Capture Pi session id, cwd and ui synchronously — Pi marks ctx stale
+    // after any async yield following a replacement (see stale-ctx error).
     const piSessionId = ctx?.sessionManager?.getSessionId?.() ?? null;
     const cwd = ctx?.cwd ?? process.cwd();
+    const ui = ctx?.ui;
 
     // Shared by "startup" and reload's own fallback: bind to the id Pi was
     // launched with, recording it against the current Pi session when one
@@ -320,7 +330,7 @@ export function createKairoWorkspaceExtension(pi, {
         const session = await createSessionImpl(homeDir, projectRoot, {});
         await recordPiBindingImpl(homeDir, projectRoot, piSessionId, session.id);
         boundKairoSessionId = session.id;
-        ctx?.ui?.notify?.(
+        ui?.notify?.(
           `No Kairo session was found for this Pi session — started a new one (${session.id.slice(0, 8)}).`,
           "info"
         );
@@ -335,7 +345,7 @@ export function createKairoWorkspaceExtension(pi, {
         const session = await createSessionImpl(homeDir, projectRoot, { mode });
         await recordPiBindingImpl(homeDir, projectRoot, piSessionId, session.id);
         boundKairoSessionId = session.id;
-        ctx?.ui?.notify?.(
+        ui?.notify?.(
           `Forked to a new Kairo session (${session.id.slice(0, 8)}) in ${mode} mode.`,
           "info"
         );
@@ -345,7 +355,7 @@ export function createKairoWorkspaceExtension(pi, {
       throw new Error(`Unknown session_start reason "${reason}".`);
     } catch (error) {
       boundKairoSessionId = null;
-      ctx?.ui?.notify?.(
+      ui?.notify?.(
         `Kairo session binding failed (${error.message}); Pi is running unbound.`,
         "error"
       );
@@ -407,20 +417,25 @@ export function createKairoWorkspaceExtension(pi, {
   }
 
   pi.on("session_start", async (event, ctx) => {
+    // Capture cwd/ui synchronously — Pi marks ctx stale after any async
+    // yield following a replacement (see stale-ctx error at 186).
+    const cwd = ctx?.cwd ?? process.cwd();
+    const ui = ctx?.ui;
+    const ctxBag = { cwd, ui, sessionManager: ctx?.sessionManager };
     await bindSession(ctx, event);
-    await registerRoutes(ctx?.cwd ?? process.cwd());
+    await registerRoutes(cwd);
 
     // Phase 1: render immediately from the persisted strategy — every
     // row's availability shows "checking" and usage shows "checking" (see
     // workspace-snapshot.js's own doc), never blocked on either live probe
     // below.
-    const snapshot = await refreshWorkspace(ctx, {
+    const snapshot = await refreshWorkspace(ctxBag, {
       loadSnapshot,
       sessionId: boundKairoSessionId,
-      onSnapshot: (snap, info) => notifyAvailability(ctx, snap, info)
+      onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info)
     });
     if (routeState === "unavailable") {
-      setWorkspaceWidget(ctx, snapshot, "unavailable-routes", []);
+      setWorkspaceWidget(ctxBag, snapshot, "unavailable-routes", []);
     }
 
     // Phase 2 (P01.2 split): usage (the three usage readers, ~5s combined)
@@ -431,7 +446,6 @@ export function createKairoWorkspaceExtension(pi, {
     // odd/tasks/kairo-pi-parity.md). `latest*` tracks the most recently
     // resolved value of the OTHER probe so a re-render never regresses an
     // already-resolved side back to "checking".
-    const cwd = ctx?.cwd ?? process.cwd();
     let latestUsageIntelligence;
     let latestAvailabilityIntelligence;
     let usageExtraLines = [];
@@ -439,16 +453,16 @@ export function createKairoWorkspaceExtension(pi, {
 
     async function rerender() {
       const extraLines = [...availabilityExtraLines, ...usageExtraLines];
-      const refreshed = await refreshWorkspace(ctx, {
+      const refreshed = await refreshWorkspace(ctxBag, {
         loadSnapshot,
         sessionId: boundKairoSessionId,
         usageIntelligence: latestUsageIntelligence,
         availabilityIntelligence: latestAvailabilityIntelligence,
         extraLines,
-        onSnapshot: (snap, info) => notifyAvailability(ctx, snap, info)
+        onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info)
       });
       if (routeState === "unavailable") {
-        setWorkspaceWidget(ctx, refreshed, "unavailable-routes", extraLines);
+        setWorkspaceWidget(ctxBag, refreshed, "unavailable-routes", extraLines);
       }
     }
 
@@ -467,7 +481,7 @@ export function createKairoWorkspaceExtension(pi, {
       // Automatic team recovery needs fresh live availability, so it only
       // starts here. It can run a full project analysis (minutes), so it is
       // not awaited by session_start; `recovery()` exposes it.
-      if (result !== null) pendingRecovery = runRecovery(ctx, cwd, rerender).catch(() => null);
+      if (result !== null) pendingRecovery = runRecovery(ctxBag, cwd, rerender).catch(() => null);
     });
 
     await Promise.all([usagePromise, availabilityPromise]);
