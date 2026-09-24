@@ -25,15 +25,21 @@ execution; Pi supplies widgets and overlays only.
   with model, route, and live availability at startup; long reasons and
   warnings in a readable detail view.
 - P02 — Single session binding (`kairo` creates, `kairo resume` reopens).
-- P03 — Analysis (`/project`, `/project analyze`) via existing service.
+- P03 — Analysis (`/project`, `/project analyze`) via existing service;
+  re-analysis never removes the active team before approval.
 - P04 — Team editing and explicit approval.
-- P05 — Conversation: ASK/PLAN/AGENT, mode switch, transcript, `/clear`.
-- P06 — Work: plans, approval, execution and revalidation through
-  `planExecution`/`executePlan` (exact scope to be defined before starting).
+- P05 — Conversation: ASK/PLAN/AGENT, mode switch, transcript, `/clear`;
+  Kairo owns all normal input.
+- P06 — AGENT continuation: plan approval, explicit role, route preview,
+  confirmation, execution, cancel, and status through
+  `planExecution`/`executePlan` (scope defined in the design review below).
 - P07 — Diagnostics: models/evidence, access verification, usage, providers.
 - Closing acceptance: contract + integration tests per slice, full suite,
   real TTY run start→analysis→approval→ASK/PLAN→execution→resume, then
   release and global install.
+
+See "Design review (2026-09-24)" at the end of this document for the
+code-verified scope, gaps, and acceptance criteria of P02–P07.
 
 ## Constraints
 
@@ -692,3 +698,152 @@ cached paths have unit-test evidence only; worth a deliberate TTY check
 (e.g. airplane mode for the usage readers, or a blocked role via
 `--legacy-cockpit` state) if the parent wants direct visual confirmation
 of the last-known cache actually going stale.
+
+## Design review (2026-09-24)
+
+Read-only review of P02–P07 against the code, before starting P02. No
+code, branch, or tests changed. Symbols are cited by name; line numbers
+refer to `main` at `0f8ad58`.
+
+### Verified premises
+
+- Pi input interception exists in the **installed** Pi 0.87.1
+  (`@earendil-works/pi-coding-agent`,
+  `dist/core/extensions/types.d.ts`): `pi.on("input")` returns
+  `InputEventResult` = `continue` | `transform` | `handled`; `handled`
+  stops the input before Pi's own agent loop. Replies can be rendered with
+  `pi.sendMessage` + `pi.registerMessageRenderer`; `pi.appendEntry`
+  persists custom session entries.
+- Pi session lifecycle: `session_start` carries
+  `reason: "startup" | "reload" | "new" | "resume" | "fork"` and
+  `previousSessionFile`; `session_before_switch` and
+  `session_before_fork` are cancellable.
+- Today the `kairo` host does not use any of these: the extension only
+  calls `registerCommand`, `registerProvider`, and `on("session_start")`
+  (`src/global/host/extension/index.js`). Pi's own model answers every
+  normal input.
+
+### Unverified (pending check, not a fact)
+
+- The `input` event, `handled` result, and session events were verified
+  only on 0.87.1. `MIN_PI_VERSION` is `0.85.1`
+  (`src/global/host/launch-gentle-shell.js:7`). Whether 0.85.1 exposes
+  them is unknown. See task R01.
+
+### Gaps found
+
+1. **P02 — session binding is spawn-only.** `KAIRO_SESSION_ID` is set once
+   when Pi is spawned (`launch-gentle-shell.js`) and read by
+   `workspace-snapshot.js`; nothing reacts to a Pi `new`/`resume`/`fork`,
+   so a Pi session change keeps the old Kairo identity silently.
+2. **P03 — re-analysis replaces the active team before approval.**
+   `runBootstrapAnalysis` → `runLockedBootstrapAnalysis` persists by
+   default (`persist` defaults to true; `writeProjectStrategyImpl` at
+   `service.js:610`), overwriting the single strategy file with a
+   `suggested` strategy on top of the active one. Only automatic recovery
+   passes `persist: false`. `refreshProjectStrategy` keeping the team does
+   NOT cover `/project analyze`. No cancel operation exists. Analyst
+   selection and recommendation review live in UI code
+   (`project-overlay.js`, `cockpit/app.js`).
+3. **P04 — role picker lives in the cockpit UI** (`cockpit/view.js`).
+   The service side (`getProjectTeamEditCatalog`,
+   `setProjectTeamAssignment` gated on `suggested`,
+   `approveProjectStrategy`) is reusable as-is.
+4. **P05 — AGENT is identical to PLAN in the service.** `submitTask`
+   routes both to `submitArchitecture`; AGENT behavior only exists as the
+   cockpit's approve → `planExecution` → `executePlan` UI flow. No
+   `/mode` command exists (cockpit uses Shift+Tab and `/plan`). Mode and
+   transcript already persist per session (`updateSessionMode`,
+   `transcript-store.js`). No enforcement point blocks input that
+   bypasses Kairo.
+5. **P06 — no execution status operation.** The contract is otherwise
+   complete: `planExecution` requires an explicit `role` and returns a
+   `confirmationTarget`; `executePlan` recomputes the route and rejects on
+   any `strategyFingerprint`/`candidateKey` drift, rejects
+   `MANUAL_HANDOFF`, and reserves idempotently; `cancelExecution` exists.
+   Status is assembled today from `snapshot()` plus polling
+   `readRunTranscript`.
+6. **P07 — diagnostics formatting lives in the cockpit UI.**
+   `modelsExplainLines`, `aiTeamDetailLines`, `fitWhyLines`,
+   `providerLines`, `usageLines` are `CockpitView` methods; only
+   `verifyClaudeEntitlements` is a service operation.
+7. **`--legacy-cockpit` references:** 6 source files (`src/cli.js`,
+   `src/global/cli-help.js`, `src/global/host/workspace-widget.js`,
+   `src/global/host/launch-gentle-shell.js`,
+   `src/global/host/extension/index.js`,
+   `src/global/conversation/session-cli.js`) and 6 test files.
+
+### Decisions carried into the slices
+
+- PLAN only produces and shows a plan; it never executes.
+- AGENT continues after the plan with explicit approval, an explicit role
+  choice, and execution. The role is never inferred from text.
+- Kairo remains the source of truth for session, strategy, routing, and
+  execution; Pi supplies terminal, dialogs, and presentation.
+
+### Slice scope and acceptance criteria
+
+**R01 — Pi compatibility check (before P02).**
+- Verify `input`/`handled`, `sendMessage`/`registerMessageRenderer`, and
+  `session_start` reasons on Pi 0.85.1. If any is missing, raise
+  `MIN_PI_VERSION` to the first version that has all of them, with a
+  test on the version gate.
+
+**P02 — Single session binding.**
+- `kairo` creates and binds a real Kairo session; `kairo resume` reopens
+  the chosen one.
+- The panel shows the bound session ID and mode; it never shows
+  `session: none · ask` as if a session were active.
+- A Pi `new`/`resume`/`fork` never silently reuses another Kairo
+  identity: it rebinds explicitly or is blocked with a visible reason.
+
+**P03 — Analysis in Pi.**
+- `/project` and `/project analyze` run analyst selection, analysis,
+  recommendation review/editing, and approval inside Pi.
+- A re-analysis that is cancelled, fails, or is pending approval never
+  removes or replaces the active team. The proposal is stored apart from
+  the active strategy (service change) and replaces it only on approval.
+- Extract analyst-selection/review logic from UI code into a UI-free
+  module shared with the cockpit.
+
+**P04 — Team editing and approval.**
+- Extract the role picker from `cockpit/view.js` into a UI-free module
+  reused by P04 and P06.
+
+**P05 — Conversation governed by Kairo.**
+- `pi.on("input")` routes every normal input through the Kairo service
+  and returns `handled`; Pi's selected model never receives it.
+- Visible mode control and `/mode ask|plan|agent`.
+- ASK answers without editing; PLAN produces and shows a plan and never
+  executes; AGENT hands off to P06.
+- Mode and transcript persist per session and survive `kairo resume`.
+- Any input that would bypass Kairo policy is blocked, with a test per
+  path (interactive, rpc, extension sources).
+
+**P06 — AGENT continuation (work).**
+- Flow: plan approval → explicit role choice → route preview
+  (`planExecution`) → confirmation → execution (`executePlan` with the
+  exact `confirmationTarget`) → cancel (`cancelExecution`) → status.
+- Add a service-level execution status operation (wrapping the plan
+  execution state and `readRunTranscript`) instead of assembling it in
+  the UI.
+- Revalidation drift, `MANUAL_HANDOFF`, missing role, unauthorized model,
+  and unavailable role each fail closed with a visible reason, tested.
+
+**P07 — Diagnostics.**
+- Extract the `CockpitView` diagnostics formatters (models/evidence,
+  exclusion reasons, providers, usage) into UI-free modules, same pattern
+  as `usage-summary.js`; cockpit output stays byte-identical.
+- Access verification goes through `verifyClaudeEntitlements`; no new
+  selection policy.
+
+**Closing.**
+- Help and notices point to actions inside Pi.
+- Remove `--legacy-cockpit` and its references only after the real TTY
+  run passes: `kairo` → analyze → approve team → ASK → PLAN → AGENT →
+  choose role → execute → exit → `kairo resume`.
+- Full suite and CI on Node 20/22/24.
+
+### Next step
+
+Run R01, then start P02 on a new branch from `main`.
