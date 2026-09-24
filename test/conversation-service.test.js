@@ -1259,7 +1259,8 @@ test("snapshot excludes a provider from FIT once its real quota is exhausted, ev
   const snapshot = await service.snapshot({ cwd: "/repo" });
   assert.deepEqual(snapshot.modelIntelligence.models.map((m) => m.adapterId), ["codex"]);
   assert.equal(snapshot.modelIntelligence.eligibility.claude.ok, false);
-  assert.match(snapshot.modelIntelligence.eligibility.claude.reason, /nearly exhausted/);
+  assert.match(snapshot.modelIntelligence.eligibility.claude.reason, /window is limited/);
+  assert.doesNotMatch(snapshot.modelIntelligence.eligibility.claude.reason, /exhaust/i);
   assert.equal(snapshot.modelIntelligence.eligibility.codex.ok, true);
   // Claude never wins a role despite the higher real score, because it was excluded before comparison.
   assert.ok(snapshot.modelIntelligence.roles.every((r) => r.adapterId === "codex"));
