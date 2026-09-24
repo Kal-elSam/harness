@@ -361,9 +361,19 @@ Branch: `feat/kairo-pi-p02-session-binding`, stacked on
     found (`ERR_MODULE_NOT_FOUND`).
   - GREEN: same command — 10/10 pass.
   - Commit: `f7d6bfd`.
-- [ ] P02-T3 Extension binding lifecycle: in-memory binding;
+- [x] P02-T3 Extension binding lifecycle: in-memory binding;
   `session_start` `startup`/`reload`/`new`/`resume`/`fork` per the design;
   fail closed to unbound with a notice.
+  - Files: `src/global/host/extension/index.js`,
+    `test/workspace-shell-extension.test.js`.
+  - RED: `node --test test/workspace-shell-extension.test.js` against
+    the pre-T3 baseline (implementation stashed) — 9 new tests failed,
+    16 pre-existing unaffected.
+  - GREEN: same command, implementation restored — 25/25 pass. Also
+    reran `test/workspace-shell-snapshot.test.js`,
+    `test/workspace-widget.test.js`, `test/session-registry.test.js` —
+    73/73 pass, no regression.
+  - Commit: `a48b7e6`.
 - [ ] P02-T4 Presentation: bound id + mode; explicit unbound in footer,
   status bar, and `/kairo-sessions`; unbound tests added.
 - [ ] P02-T5 Evidence: focused tests, full suite, CI, real TTY run
