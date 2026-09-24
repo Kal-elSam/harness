@@ -461,6 +461,22 @@ environment only. Pi's own subprocesses inherit it (documented).
   a child with session_start:fork, the first append adds no duplicate
   header). Check `npm pack --dry-run` includes `dist/bundle/**`, LICENSE,
   and attribution. Route: delegated writer (new repo, build, tests).
+  - Done (fork repo `../kairo-pi`, branch `kairo/0.87.1` on upstream tag
+    `v0.87.1` = `f07218c4d`): tests `3f3b98e4e` (RED 6 fail / 4 pass),
+    fix `a8a10c4f5` (GREEN 10/10; parent re-ran it: 10/10), lock script
+    `10ddd65d9`, rebrand `a4ac58ddb`. Node 22.23.0. Upstream suite
+    2422 pass before the rename. `npm pack --dry-run`: 60 files,
+    `dist/bundle/**`, LICENSE, NOTICE.md, no bin. The tarball is in the
+    session scratchpad.
+  - Open before publishing: (a) 3 upstream tests fail after the rename
+    (`package-distribution` ×2, `first-time-setup` ×1); adapt them to the
+    fork identity so the suite is green. (b) `npm run build` fetches the
+    model catalog live, so 4 chunks differ from the official 0.87.1.
+    Build with the catalog pinned to the tag so the output is
+    reproducible.
+  - Noted: `isOfficialDistribution()` is false for the fork, which only
+    disables the experimental first-time setup. The config dir stays
+    `.pi`, so sessions are shared with a standalone Pi.
 - [ ] P02-T9 Kairo launcher: remove any global write; resolve the fork's
   CLI by path and run it with `process.execPath` after checking Node
   ≥22.19; fail explicitly if the package is missing or at another
