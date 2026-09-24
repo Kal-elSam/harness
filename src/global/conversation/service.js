@@ -38,6 +38,7 @@ import { runCodexSandboxedBootstrap } from "./codex-sandbox.js";
 import { createBootstrapAnalyzerAdapter } from "./bootstrap-analyzer-adapters.js";
 import { verifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
+import { acquireProjectAnalysisLock } from "./project-analysis-lock.js";
 import { resolveProjectRoute } from "./project-router.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -411,6 +412,7 @@ export function createConversationService(deps = {}) {
   const buildSanitizedSnapshotImpl = deps.buildSanitizedSnapshot ?? buildSanitizedSnapshot;
   const runCodexSandboxedBootstrapImpl = deps.runCodexSandboxedBootstrap ?? runCodexSandboxedBootstrap;
   const createBootstrapAnalyzerAdapterImpl = deps.createBootstrapAnalyzerAdapter ?? createBootstrapAnalyzerAdapter;
+  const acquireProjectAnalysisLockImpl = deps.acquireProjectAnalysisLock ?? acquireProjectAnalysisLock;
   const codexIsolationDeps = deps.codexIsolationDeps ?? {};
   const verifyClaudeSubscriptionAuthImpl = deps.verifyClaudeSubscriptionAuth ?? verifyClaudeSubscriptionAuth;
   const readArtificialAnalysisModelsImpl = deps.readArtificialAnalysisModels ?? readArtificialAnalysisModels;
@@ -547,6 +549,68 @@ export function createConversationService(deps = {}) {
   // longer imported or called anywhere in this file.
 
   async function root(cwd) { return resolveRoot(cwd); }
+
+  // runBootstrapAnalysis's body, run only while the project analysis lock
+  // is held (see runBootstrapAnalysis).
+  async function runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst }) {
+    // SECRET-SAFE (a real, meaningful reduction — not by itself a
+    // filesystem sandbox guarantee, see sanitized-snapshot.js's own
+    // header for why): the analyst's `cwd` points at a bounded,
+    // secret-redacted temporary copy, never the real project directory.
+    // A normal investigation never sees an unredacted secret.
+    //
+    // The actual provider call is routed through a neutral
+    // BootstrapAnalyzerAdapter (bootstrap-analyzer-adapters.js) rather
+    // than branched inline here — each adapter reports its own real
+    // isolation level ("verified" | "restricted" | "unverified") and is
+    // checked BEFORE any provider call is attempted, so an ineligible
+    // adapter (e.g. Codex without a verified OS-level boundary on this
+    // platform) fails closed with a concrete reason instead of silently
+    // running with weaker protection than the caller expects.
+    const snapshot = await buildSanitizedSnapshotImpl(projectRoot);
+    try {
+      const prompt = buildAnalystPrompt(profile);
+      const adapter = createBootstrapAnalyzerAdapterImpl(analyst.model.adapterId, {
+        modelId: analyst.model.modelId,
+        deps: {
+          askProvider: askProviderImpl, runCodexSandboxedBootstrap: runCodexSandboxedBootstrapImpl, isolationDeps: codexIsolationDeps,
+          verifyClaudeSubscriptionAuth: verifyClaudeSubscriptionAuthImpl, readClaudeModels: readClaudeModelsImpl,
+          modelEntitlement: candidates?.claudeEntitlement ?? {}
+        }
+      });
+      const eligibility = await adapter.checkEligibility();
+      if (!eligibility.eligible) {
+        throw new Error(`Bootstrap Analyst is not eligible to run: ${eligibility.reason ?? "unknown reason"}`);
+      }
+      // A real project investigation (the model reads real files, not
+      // just answering from the prompt text) genuinely takes longer
+      // than ASK mode's quick-question default — give it real room
+      // instead of timing out mid-investigation.
+      const response = await adapter.analyze({
+        question: prompt, snapshotRoot: snapshot.snapshotRoot, timeoutMs: BOOTSTRAP_ANALYST_TIMEOUT_MS
+      });
+      if (response.status !== "answered") {
+        throw new Error(`Bootstrap Analyst did not answer: ${response.error ?? response.status}`);
+      }
+      const parsed = parseProjectAnalysisImpl(response.answer);
+      if (!parsed.valid) throw new Error(`Bootstrap Analyst response failed validation: ${parsed.error}`);
+      // Real-evidence gate, checked PER recommendedRoleNeeds entry (see
+      // deriveRoleRequirements): a role need is only trusted when its
+      // OWN evidence cites at least one real file the analyst actually
+      // had access to — one well-evidenced role need can no longer
+      // vouch for every other role need in the same response.
+      const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, snapshot.copiedFiles);
+      const strategy = buildProjectStrategy({ ...profile, roleRequirements }, candidates, analyst);
+      await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
+      return {
+        ...strategy, projectRoot, analysis: parsed.analysis,
+        sanitization: { filesCopied: snapshot.filesCopied, secretsRedacted: snapshot.secretsRedacted, excludedPrivatePaths: snapshot.excludedPrivatePaths.length }
+      };
+    } finally {
+      await snapshot.cleanup();
+    }
+  }
+
 
   /**
    * The exact real task text an automatic run gets launched with (see
@@ -1239,61 +1303,17 @@ export function createConversationService(deps = {}) {
      */
     async runBootstrapAnalysis({ cwd, profile, candidates, analyst }) {
       const projectRoot = await root(cwd);
-      // SECRET-SAFE (a real, meaningful reduction — not by itself a
-      // filesystem sandbox guarantee, see sanitized-snapshot.js's own
-      // header for why): the analyst's `cwd` points at a bounded,
-      // secret-redacted temporary copy, never the real project directory.
-      // A normal investigation never sees an unredacted secret.
-      //
-      // The actual provider call is routed through a neutral
-      // BootstrapAnalyzerAdapter (bootstrap-analyzer-adapters.js) rather
-      // than branched inline here — each adapter reports its own real
-      // isolation level ("verified" | "restricted" | "unverified") and is
-      // checked BEFORE any provider call is attempted, so an ineligible
-      // adapter (e.g. Codex without a verified OS-level boundary on this
-      // platform) fails closed with a concrete reason instead of silently
-      // running with weaker protection than the caller expects.
-      const snapshot = await buildSanitizedSnapshotImpl(projectRoot);
+      // One analysis per project at a time: automatic team recovery takes
+      // the same lock, so a manual analyze never races it (or vice versa).
+      const lock = await acquireProjectAnalysisLockImpl(homeDir, projectRoot, { owner: "manual" });
+      if (!lock.acquired) {
+        const holder = lock.holder ? ` (started ${lock.holder.startedAt} by ${lock.holder.owner})` : "";
+        throw new Error(`A project analysis is already running for this project${holder}. Wait for it to finish, then try again.`);
+      }
       try {
-        const prompt = buildAnalystPrompt(profile);
-        const adapter = createBootstrapAnalyzerAdapterImpl(analyst.model.adapterId, {
-          modelId: analyst.model.modelId,
-          deps: {
-            askProvider: askProviderImpl, runCodexSandboxedBootstrap: runCodexSandboxedBootstrapImpl, isolationDeps: codexIsolationDeps,
-            verifyClaudeSubscriptionAuth: verifyClaudeSubscriptionAuthImpl, readClaudeModels: readClaudeModelsImpl,
-            modelEntitlement: candidates?.claudeEntitlement ?? {}
-          }
-        });
-        const eligibility = await adapter.checkEligibility();
-        if (!eligibility.eligible) {
-          throw new Error(`Bootstrap Analyst is not eligible to run: ${eligibility.reason ?? "unknown reason"}`);
-        }
-        // A real project investigation (the model reads real files, not
-        // just answering from the prompt text) genuinely takes longer
-        // than ASK mode's quick-question default — give it real room
-        // instead of timing out mid-investigation.
-        const response = await adapter.analyze({
-          question: prompt, snapshotRoot: snapshot.snapshotRoot, timeoutMs: BOOTSTRAP_ANALYST_TIMEOUT_MS
-        });
-        if (response.status !== "answered") {
-          throw new Error(`Bootstrap Analyst did not answer: ${response.error ?? response.status}`);
-        }
-        const parsed = parseProjectAnalysisImpl(response.answer);
-        if (!parsed.valid) throw new Error(`Bootstrap Analyst response failed validation: ${parsed.error}`);
-        // Real-evidence gate, checked PER recommendedRoleNeeds entry (see
-        // deriveRoleRequirements): a role need is only trusted when its
-        // OWN evidence cites at least one real file the analyst actually
-        // had access to — one well-evidenced role need can no longer
-        // vouch for every other role need in the same response.
-        const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, snapshot.copiedFiles);
-        const strategy = buildProjectStrategy({ ...profile, roleRequirements }, candidates, analyst);
-        await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
-        return {
-          ...strategy, projectRoot, analysis: parsed.analysis,
-          sanitization: { filesCopied: snapshot.filesCopied, secretsRedacted: snapshot.secretsRedacted, excludedPrivatePaths: snapshot.excludedPrivatePaths.length }
-        };
+        return await runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst });
       } finally {
-        await snapshot.cleanup();
+        await lock.release();
       }
     },
     /** `/project approve`: SUGGESTED -> ACTIVE. Requires a real suggested strategy to already exist — the Bootstrap Analyst choice is already locked in by the time a strategy exists at all (see runBootstrapAnalysis), so there's nothing left to confirm here. */

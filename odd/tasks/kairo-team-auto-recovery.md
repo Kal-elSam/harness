@@ -81,13 +81,18 @@ the user chose chain strategy **feature-branch-chain** (2026-09-23): recovery
 is only safe complete, so nothing reaches main in pieces.
 - Tracker: `feat/kairo-team-auto-recovery` (this doc), with a draft/no-merge
   tracker PR to main, merged only after R8 passes.
-- PR 1 `feat/kairo-team-auto-recovery-01-foundations` -> tracker: R1, R2, R3
-  (wording, fingerprint, lock; no routing change).
-- PR 2 `feat/kairo-team-auto-recovery-02-recovery` -> PR 1: R4, R5
+- PR 1 `feat/kairo-team-auto-recovery-01-foundations` -> tracker: R1, R2
+  (window-limit wording, availability fingerprint). +257/-14.
+- PR 2 `feat/kairo-team-auto-recovery-02-analysis-lock` -> PR 1: R3 (project
+  analysis lock). +288/-53, mostly the analysis body moved unchanged into a
+  helper.
+- PR 3 `feat/kairo-team-auto-recovery-03-recovery` -> PR 2: R4, R5
   (availability fallback, recovery orchestration).
-- PR 3 `feat/kairo-team-auto-recovery-03-pi-notices` -> PR 2: R6, R7, R8
+- PR 4 `feat/kairo-team-auto-recovery-04-pi-notices` -> PR 3: R6, R7, R8
   (Pi route refresh, deduplicated notices, end-to-end).
 Each slice targets <=400 changed lines; any overage is reported, not squeezed.
+The first plan had R1-R3 in one slice; at 612 changed lines it was split into
+PR 1 and PR 2 before any PR was opened.
 
 ## Tasks
 - [x] R1 — Availability wording (1bd7116). `checkCandidate` names the limiting
@@ -106,9 +111,18 @@ Each slice targets <=400 changed lines; any overage is reported, not squeezed.
   persists the last fingerprint acted on per project
   (sessions/<projectKey>/availability-recovery.json). Tests 7/7 RED -> GREEN
   on Node 22 and 20.14.
-- [ ] R3 — Project analysis lock: one analysis per project at a time, and at
-  most one automatic re-analysis per (project, fingerprint). Manual analyze
-  respects it.
+- [x] R3 — Project analysis lock (53c157f). `project-analysis-lock.js` takes an
+  exclusive-create lock under sessions/<projectKey>/, which holds across
+  processes. A lock whose holder process is dead, or that is older than 10
+  min (the analyst timeout is 180 s), is taken over once. A stale holder's
+  late release never frees the new holder's lock. The manual
+  `runBootstrapAnalysis` takes it (owner "manual") and refuses to start
+  while it is held. "At most one automatic re-analysis per fingerprint"
+  moves to R5, which owns the recovery-store check. Tests: lock 4/4; service
+  +2 (refuses while held and never touches the analyst; releases on
+  failure); 9 existing analysis tests got an in-memory granted lock because
+  they use a fake homeDir. Full suite 2160 pass / 0 fail / 1 skipped;
+  touched suites 152/152 on Node 20.14.
 - [ ] R4 — Availability fallback in `resolveProjectRoute`: ROUTED to the
   stored fallback on availability blocks only, labelled as a temporary
   fallback. Entitlement blocks are unchanged.
@@ -136,4 +150,4 @@ Each slice targets <=400 changed lines; any overage is reported, not squeezed.
 - No message claims exhaustion from a window-limited signal.
 
 ## Next step
-R3 on branch feat/kairo-team-auto-recovery-01-foundations.
+Open PRs 1-2 (plus the tracker), then R4 on feat/kairo-team-auto-recovery-03-recovery.
