@@ -541,6 +541,35 @@ environment only. Pi's own subprocesses inherit it (documented).
   - Not done here (explicitly out of scope per constraint 7/T10): the
     package was not added to `package.json`/`pnpm-lock.yaml`, and it
     was not published; both are P02-T10.
+  - Parent spot check: the focused set passes 71, 0 fail, 1 skip.
+    Correction: the writer called `fakePiOnPath()` in
+    `test/cli-implicit-host.test.js` "vestigial", but it is still used
+    at line 56, so it stays.
+  - Review: high risk (process boundary). Consent was granted by the user.
+    Lineage `review-e4a26e2f991beac3`, range `9cbed7a..482a8b1` (base tree
+    `5b3c8f6`), with the unrelated untracked files excluded. All 4 lenses
+    were admitted and the review was **approved** with no blocking
+    findings; the acknowledgement burned the authority
+    (`gentle-ai.review-acknowledged/v1`).
+  - Advisory findings are non-blocking. The ones worth fixing are tracked
+    in P02-T9b.
+- [ ] P02-T9b Review follow-ups:
+  - (a) The fake-HOME test overclaims (R2 and R3-003 WARNING). It only
+    snapshots a HOME the launcher never uses. Snapshot a common temp root
+    that holds HOME, cwd, and the package root, and allow only
+    HARNESS_HOME. Fix the test name and the T9 doc claim to match.
+  - (b) Check that `dist/bundle/cli.js` exists before spawning, and fail
+    with an explicit error; add a test (R3-001, R4 suggestion).
+  - (c) Add a test for the error when no package.json with the fork's
+    name is found (R3-004).
+  - (d) Test names: the execPath default and the "PATH ignored" setup are
+    decorative (R2 suggestions).
+  - (e) The opt-in live test still gates on `which pi`; gate it on
+    resolving the fork instead (R2 suggestion).
+  - Delivery note (R4-unshipped-hard-dependency WARNING): this branch
+    must not be pushed or merged before P02-T10 pins the published
+    package. Until then, the default `kairo` launch fails with the
+    explicit "not installed" error.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
