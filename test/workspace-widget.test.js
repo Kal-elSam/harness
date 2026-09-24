@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { blockedRoleNotifications, computeSideBySideWidths, renderKairoWorkspaceWidget } from "../src/global/host/workspace-widget.js";
+import { availabilityNotices, computeSideBySideWidths, renderKairoWorkspaceWidget } from "../src/global/host/workspace-widget.js";
 
 const IDENTITY_THEME = { fg: (_role, text) => text, bold: (text) => text };
 
@@ -213,21 +213,31 @@ test("renderKairoWorkspaceWidget's USAGE panel footer shows the session and mode
   assert.ok(lines.some((line) => line.includes("11111111") && line.includes("agent")));
 });
 
-test("blockedRoleNotifications returns exactly one entry per blocked role, carrying role, model, and Kairo's own warning", () => {
-  const notifications = blockedRoleNotifications({ rows: SEVEN_ROLES });
-  assert.equal(notifications.length, 1);
-  assert.equal(notifications[0].role, "Researcher");
-  assert.equal(notifications[0].model, "MiniMax-M3");
-  assert.equal(notifications[0].warning, "Unavailable — Cursor Models quota exhausted");
-  assert.match(notifications[0].message, /Researcher/);
-  assert.match(notifications[0].message, /MiniMax-M3/);
-  assert.match(notifications[0].message, /Cursor Models quota exhausted/);
-  assert.match(notifications[0].message, /project analyze/);
+test("availabilityNotices groups blocked roles into one notice per provider and window, never one per role", () => {
+  const goLimit = { provider: "opencode-go", window: "monthly", remainingPercent: 0, resetsAt: null };
+  const rows = [
+    { role: "Builder", model: "GLM-5.3", via: "opencode-go", availability: { state: "blocked", warning: "Unavailable — OpenCode Go monthly window is rate-limited", limit: goLimit } },
+    { role: "Reviewer", model: "Kimi K3", via: "opencode-go", availability: { state: "blocked", warning: "Unavailable — OpenCode Go monthly window is rate-limited", limit: goLimit } },
+    { role: "Tester", model: "Fable", via: "cursor", availability: { state: "blocked", warning: "Unavailable — Cursor Other Models limit reached" } },
+    { role: "Explorer", model: "GPT-6 Astra", via: "codex", availability: { state: "available", warning: null } }
+  ];
+  const notices = availabilityNotices({ rows });
+  assert.equal(notices.length, 2);
+
+  const go = notices.find((notice) => notice.key === "opencode-go|window:monthly");
+  assert.match(go.message, /OpenCode Go monthly window is rate-limited/);
+  assert.match(go.message, /Builder \(GLM-5\.3\), Reviewer \(Kimi K3\)/);
+  assert.match(go.message, /recover the team automatically/, "a window limit is what automatic recovery handles");
+
+  const cursor = notices.find((notice) => notice.key.startsWith("cursor|"));
+  assert.match(cursor.message, /Tester \(Fable\)/);
+  assert.match(cursor.message, /project analyze/, "a non-window block still points at the manual next step");
+  assert.doesNotMatch(cursor.message, /recover the team automatically/);
 });
 
-test("blockedRoleNotifications returns nothing when no role is blocked", () => {
-  assert.deepEqual(blockedRoleNotifications({ rows: [SEVEN_ROLES[0]] }), []);
-  assert.deepEqual(blockedRoleNotifications(undefined), []);
+test("availabilityNotices returns nothing when no role is blocked", () => {
+  assert.deepEqual(availabilityNotices({ rows: [SEVEN_ROLES[0]] }), []);
+  assert.deepEqual(availabilityNotices(undefined), []);
 });
 
 // --- Defects reported against the user-approved design in the real

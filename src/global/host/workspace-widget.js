@@ -347,25 +347,29 @@ export function createKairoTextWidget(lines) {
 }
 
 /**
- * One notification per blocked role, per refresh — the user-approved UX:
- * no per-row warning text in the panel (that would be noise for the
- * approved-and-expected-available common case), but a blocked role is a
- * real exception the user must see, with Kairo's own warning and a next
- * step, never invented here.
+ * One notice per provider and window, never one per role and never on every
+ * refresh: blocked roles are grouped by the provider window that blocks them
+ * (checkCandidate's structured `limit`), or by provider and warning when the
+ * block is not a window limit (entitlement, Cursor pool). The caller keeps
+ * the keys it already showed and notifies only new ones.
  * @param {{rows?: object[]}|undefined} team
- * @returns {{role: string, model: string, warning: string, message: string}[]}
+ * @returns {{key: string, message: string}[]}
  */
-export function blockedRoleNotifications(team) {
-  const rows = team?.rows ?? [];
-  return rows
-    .filter((row) => row.availability?.state === "blocked")
-    .map((row) => {
-      const warning = row.availability?.warning ?? "Blocked.";
-      return {
-        role: row.role,
-        model: row.model,
-        warning,
-        message: `${row.role} (${row.model}) is blocked: ${warning} Next: run kairo --legacy-cockpit, then /project analyze.`
-      };
-    });
+export function availabilityNotices(team) {
+  const groups = new Map();
+  for (const row of team?.rows ?? []) {
+    if (row.availability?.state !== "blocked") continue;
+    const limit = row.availability.limit ?? null;
+    const warning = row.availability.warning ?? "Blocked.";
+    const key = limit ? `${row.via}|window:${limit.window ?? "usage"}` : `${row.via}|${warning}`;
+    const group = groups.get(key) ?? { key, warning, windowLimited: Boolean(limit), roles: [] };
+    group.roles.push(`${row.role} (${row.model})`);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map(({ key, warning, windowLimited, roles }) => ({
+    key,
+    message: windowLimited
+      ? `${warning} — affects ${roles.join(", ")}. Kairo will try to recover the team automatically.`
+      : `${warning} — affects ${roles.join(", ")}. Next: run kairo --legacy-cockpit, then /project analyze.`
+  }));
 }

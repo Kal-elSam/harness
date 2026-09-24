@@ -1,7 +1,10 @@
 import { createKernelService } from "../../kernel/service.js";
 import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-route-provider.js";
-import { loadKairoWorkspaceSnapshot, loadKairoLiveData, loadKairoUsageData } from "../workspace-snapshot.js";
-import { blockedRoleNotifications, createKairoTextWidget, createKairoWorkspaceWidget } from "../workspace-widget.js";
+import {
+  loadKairoWorkspaceSnapshot, loadKairoLiveData, loadKairoUsageData, recoverKairoProjectTeam
+} from "../workspace-snapshot.js";
+import { availabilityNotices, createKairoTextWidget, createKairoWorkspaceWidget } from "../workspace-widget.js";
+import { MAX_RECOVERY_ATTEMPTS } from "../../conversation/team-recovery.js";
 
 export function requestKernelSnapshot(deps = {}) {
   return createKernelService(deps).snapshot();
@@ -143,18 +146,36 @@ function setWorkspaceWidget(ctx, snapshot, view, extraLines) {
   ctx?.ui?.setWidget?.("kairo-workspace", lines);
 }
 
-/** One `ctx.ui.notify` per blocked role, every refresh — never
- * deduplicated across refreshes, since each refresh is its own real
- * snapshot of who is blocked right now (see blockedRoleNotifications'
- * own doc in workspace-widget.js). */
-function notifyBlockedRoles(ctx, snapshot) {
-  for (const notification of blockedRoleNotifications(snapshot.team)) {
-    ctx?.ui?.notify?.(notification.message, "warning");
+/**
+ * The Pi message for a team-recovery outcome, or null when it should stay
+ * quiet (baseline, already handled, backing off, lock held, no active team).
+ * @param {object} result - runTeamRecovery's result (or {outcome: "error"})
+ * @returns {{message: string, level: "info"|"warning"}|null}
+ */
+function recoveryNotice(result) {
+  if (result?.outcome === "activated") {
+    const team = (result.strategy?.projectTeam ?? [])
+      .map((entry) => `${entry.role} → ${entry.model?.displayName ?? entry.model?.modelId ?? "no eligible option"}`)
+      .join(", ");
+    return { level: "info", message: `Kairo recovered the project team after a provider availability change: ${team}. Pi routes are updated.` };
   }
+  if (result?.outcome === "kept-previous" || result?.outcome === "error") {
+    return {
+      level: "warning",
+      message: `Kairo could not recover the project team (${result.reason ?? "unknown reason"}). The current team stays active and Kairo retries on a later refresh. To recover now: run kairo --legacy-cockpit, then /project analyze.`
+    };
+  }
+  if (result?.outcome === "skipped" && result.reason === "retries-exhausted") {
+    return {
+      level: "warning",
+      message: `Kairo stopped retrying team recovery after ${MAX_RECOVERY_ATTEMPTS} attempts (last: ${result.lastOutcome ?? "unknown"}). Next: run kairo --legacy-cockpit, then /project analyze.`
+    };
+  }
+  return null;
 }
 
 async function refreshWorkspace(ctx, {
-  loadSnapshot, env, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = []
+  loadSnapshot, env, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [], onSnapshot = () => {}
 }) {
   const snapshot = await loadSnapshot({
     cwd: ctx?.cwd ?? process.cwd(),
@@ -164,7 +185,7 @@ async function refreshWorkspace(ctx, {
   });
   ctx?.ui?.setStatus?.("kairo", workspaceStatus(snapshot));
   setWorkspaceWidget(ctx, snapshot, view, extraLines);
-  notifyBlockedRoles(ctx, snapshot);
+  onSnapshot(snapshot, { liveAvailability: availabilityIntelligence != null });
   return snapshot;
 }
 
@@ -179,22 +200,67 @@ export function createKairoWorkspaceExtension(pi, {
   loadUsageData = loadKairoUsageData,
   loadLiveData = loadKairoLiveData,
   loadRouteModels = loadKairoProviderModels,
-  createProvider = createKairoRouteProvider
+  createProvider = createKairoRouteProvider,
+  recoverTeam = recoverKairoProjectTeam
 } = {}) {
-  let registered = false;
+  let routeSignature = null;
   let routeState = "unknown";
+  let shownAvailabilityKeys = new Set();
+  const shownRecoveryKeys = new Set();
+  let pendingRecovery = Promise.resolve(null);
 
+  /**
+   * Keeps Pi's "kairo" provider in step with the ACTIVE team. Pi's
+   * registerProvider replaces a provider's models and applies immediately
+   * after load, so a recovered team is routable without restarting Pi. An
+   * unchanged route set is not re-registered; an empty one is unregistered
+   * so no stale route survives a team change.
+   */
   async function registerRoutes(cwd = process.cwd()) {
-    if (registered) return true;
     const models = await loadRouteModels({ cwd });
     if (models.length === 0) {
+      if (routeSignature !== null) pi.unregisterProvider?.("kairo");
+      routeSignature = null;
       routeState = "unavailable";
       return false;
     }
-    pi.registerProvider("kairo", createProvider({ models, cwd }));
-    registered = true;
+    const signature = JSON.stringify(models.map((model) => [model.id, model.kairoRoute ?? null]));
+    if (signature !== routeSignature) {
+      pi.registerProvider("kairo", createProvider({ models, cwd }));
+      routeSignature = signature;
+    }
     routeState = "available";
     return true;
+  }
+
+  /**
+   * Availability notices only from FRESH live availability: command and
+   * first-paint refreshes render from the persisted strategy or a cache and
+   * neither notify nor forget what was shown. A provider window is shown
+   * once while it stays limited, and again only after it clears and returns.
+   */
+  function notifyAvailability(ctx, snapshot, { liveAvailability }) {
+    if (!liveAvailability) return;
+    const notices = availabilityNotices(snapshot.team);
+    for (const notice of notices) {
+      if (!shownAvailabilityKeys.has(notice.key)) ctx?.ui?.notify?.(notice.message, "warning");
+    }
+    shownAvailabilityKeys = new Set(notices.map((notice) => notice.key));
+  }
+
+  async function runRecovery(ctx, cwd, rerender) {
+    const result = await recoverTeam({ cwd });
+    if (result?.outcome === "activated") {
+      await registerRoutes(cwd);
+      await rerender();
+    }
+    const notice = recoveryNotice(result);
+    const key = `${result?.fingerprint ?? ""}|${result?.outcome}|${result?.reason ?? ""}`;
+    if (notice && !shownRecoveryKeys.has(key)) {
+      shownRecoveryKeys.add(key);
+      ctx?.ui?.notify?.(notice.message, notice.level);
+    }
+    return result;
   }
 
   pi.on("session_start", async (_event, ctx) => {
@@ -204,7 +270,7 @@ export function createKairoWorkspaceExtension(pi, {
     // row's availability shows "checking" and usage shows "checking" (see
     // workspace-snapshot.js's own doc), never blocked on either live probe
     // below.
-    const snapshot = await refreshWorkspace(ctx, { loadSnapshot, env });
+    const snapshot = await refreshWorkspace(ctx, { loadSnapshot, env, onSnapshot: (snap, info) => notifyAvailability(ctx, snap, info) });
     if (routeState === "unavailable") {
       setWorkspaceWidget(ctx, snapshot, "unavailable-routes", []);
     }
@@ -230,7 +296,8 @@ export function createKairoWorkspaceExtension(pi, {
         env,
         usageIntelligence: latestUsageIntelligence,
         availabilityIntelligence: latestAvailabilityIntelligence,
-        extraLines
+        extraLines,
+        onSnapshot: (snap, info) => notifyAvailability(ctx, snap, info)
       });
       if (routeState === "unavailable") {
         setWorkspaceWidget(ctx, refreshed, "unavailable-routes", extraLines);
@@ -249,6 +316,10 @@ export function createKairoWorkspaceExtension(pi, {
         ? ["Live availability check failed — team status shown as unknown."]
         : [];
       await rerender();
+      // Automatic team recovery needs fresh live availability, so it only
+      // starts here. It can run a full project analysis (minutes), so it is
+      // not awaited by session_start; `recovery()` exposes it.
+      if (result !== null) pendingRecovery = runRecovery(ctx, cwd, rerender).catch(() => null);
     });
 
     await Promise.all([usagePromise, availabilityPromise]);
@@ -270,7 +341,9 @@ export function createKairoWorkspaceExtension(pi, {
   }
 
   return {
-    registerRoutes
+    registerRoutes,
+    /** The most recent automatic team recovery (null when none ran). */
+    recovery: () => pendingRecovery
   };
 }
 
