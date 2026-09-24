@@ -40,6 +40,18 @@ import {
 } from "./messages.ts";
 export const CURRENT_SESSION_VERSION = 3;
 
+/**
+ * Kairo fork: gate for eager persistence of sessions that have not yet
+ * received an assistant reply (empty or in-progress sessions). Off by
+ * default so upstream behavior is unchanged; opt in per-process by setting
+ * KAIRO_PI_EMPTY_SESSIONS=1 before pi starts. Read at call time (not
+ * cached) so it reflects the environment at the moment each session
+ * operation runs.
+ */
+function kairoEmptySessionsEnabled(): boolean {
+	return process.env.KAIRO_PI_EMPTY_SESSIONS === "1";
+}
+
 export interface SessionHeader {
 	type: "session";
 	version?: number; // v1 sessions don't have this
@@ -1078,6 +1090,16 @@ export class SessionManager {
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 			this.sessionFile = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+
+			// Kairo fork: with the gate on, write the header immediately so an
+			// empty session (no assistant reply yet) is already on disk and
+			// shows up under /resume. This must set flushed=true together with
+			// the write, otherwise the next _persist() call would reopen the
+			// file with "wx" and fail with EEXIST (or duplicate the header).
+			if (kairoEmptySessionsEnabled()) {
+				this._rewriteFile();
+				this.flushed = true;
+			}
 		}
 		return this.sessionFile;
 	}
@@ -1712,8 +1734,14 @@ export class SessionManager {
 			// first assistant response, matching the newSession() contract
 			// and avoiding the duplicate-header bug when _persist()'s
 			// no-assistant guard later resets flushed to false.
+			//
+			// Kairo fork: with the gate on, write eagerly even without an
+			// assistant message yet, same as newSession(), so a fork of an
+			// in-progress/empty session is immediately visible under /resume
+			// and the /fork "has not been saved yet" guard (which checks
+			// existsSync on the session file) does not reject it.
 			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-			if (hasAssistant) {
+			if (hasAssistant || kairoEmptySessionsEnabled()) {
 				this._rewriteFile();
 				this.flushed = true;
 			} else {
