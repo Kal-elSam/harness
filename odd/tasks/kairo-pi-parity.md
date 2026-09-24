@@ -729,6 +729,25 @@ environment only. Pi's own subprocesses inherit it (documented).
       `mkdtempDisposable*`.
     - R2: PROBE_ARGS is duplicated.
     Address these the next time the probe changes.
+- [ ] P02-T8b Fork packaging defect (found in the TTY attempt): the
+  published `0.87.1-kairo.1` ships 60 files. The official 0.87.1 ships
+  1108. The fork's `files` kept only `dist/bundle`, so TUI runtime
+  assets are missing: `dist/modes/interactive/theme`, components, utils,
+  cli, docs/images, and examples, plus `npm-shrinkwrap.json`. The
+  parent's T8 brief asked for `dist/bundle/**` and accepted "no dist/core"
+  as good; the root cause is on the parent.
+  - Fix: restore upstream `files` (`dist` minus its 3 exclusions, `docs`,
+    `examples`, `containerization.md`, CHANGELOG, and a shrinkwrap
+    regenerated for the fork name). Bump to `0.87.1-kairo.2`.
+  - Tests: a regression that runs `npm pack` against the built `dist`
+    with upstream's exclusions, expecting an empty difference (RED on
+    the current package first), and a real TUI start over a PTY from a
+    tarball installed into a clean prefix.
+  - Then (each needs specific authorization): publish `.2` with
+    `--tag kairo`, `npm deprecate` `.1`, and move `latest` to `.2`.
+    After that, pin `.2` in Kairo, run the suite and CI, and repeat the
+    TTY run.
+  - Route: delegated writer (fork repo).
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
