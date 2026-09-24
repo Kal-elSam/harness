@@ -405,26 +405,80 @@ function resolveInstalledKairoPiCli() {
   }
 }
 
-test("Kairo pins and launches the installed fork bundle", () => {
+const FORK_VERSION_TIMEOUT_MS = 30_000;
+
+function isNodeAtLeast(actual, minimum) {
+  const parts = (version) => {
+    const numbers = version.split(".").map(Number);
+    return [0, 1, 2].map((index) => numbers[index] ?? 0);
+  };
+  const [a, m] = [parts(actual), parts(minimum)];
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== m[index]) return a[index] > m[index];
+  }
+  return true;
+}
+
+// Resolves the installed fork through the launcher itself (real
+// import.meta.resolve and package.json walk, spawn stubbed), so the test
+// exercises the same resolution path as `kairo` instead of re-deriving it.
+async function resolveInstalledForkThroughLauncher() {
+  let spawned;
+  await launchGentleShell({
+    cwd: await tmpProjectDir(),
+    extensionDir,
+    statImpl: okStat,
+    env: { HARNESS_HOME: await tmpHarnessHome() },
+    nodeVersion: MIN_NODE_VERSION,
+    spawnImpl: (command, args) => {
+      spawned = { command, args };
+      return { status: 0 };
+    }
+  });
+  return spawned;
+}
+
+test("Kairo pins the published fork and the launcher resolves its installed bundle", async () => {
   const kairoPackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(kairoPackage.dependencies?.[KAIRO_PI_PACKAGE_NAME], KAIRO_PI_PACKAGE_VERSION);
 
-  const entryPath = fileURLToPath(import.meta.resolve(KAIRO_PI_PACKAGE_NAME));
-  const packageRoot = dirname(dirname(dirname(entryPath)));
-  const forkPackage = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
-  assert.equal(forkPackage.name, KAIRO_PI_PACKAGE_NAME);
-  assert.equal(forkPackage.version, KAIRO_PI_PACKAGE_VERSION);
-
-  const cliPath = join(packageRoot, "dist", "bundle", "cli.js");
+  const spawned = await resolveInstalledForkThroughLauncher();
+  assert.equal(spawned.command, process.execPath);
+  const cliPath = spawned.args[0];
+  assert.match(cliPath, /[\\/]dist[\\/]bundle[\\/]cli\.js$/);
   assert.ok(existsSync(cliPath), `missing installed fork bundle: ${cliPath}`);
-  const runtimeVersion = process.versions.node.split(".").map(Number);
-  const minimumVersion = MIN_NODE_VERSION.split(".").map(Number);
-  const firstDifference = runtimeVersion.findIndex((part, index) => part !== minimumVersion[index]);
-  if (firstDifference < 0 || runtimeVersion[firstDifference] > minimumVersion[firstDifference]) {
-    const result = spawnSync(process.execPath, [cliPath, "--version"], { encoding: "utf8" });
+});
+
+test(
+  "the installed fork bundle reports its pinned version",
+  {
+    skip: isNodeAtLeast(process.versions.node, MIN_NODE_VERSION)
+      ? false
+      : `the fork requires Node >= ${MIN_NODE_VERSION}; this runtime is ${process.versions.node}`
+  },
+  async () => {
+    const { args } = await resolveInstalledForkThroughLauncher();
+    const result = spawnSync(process.execPath, [args[0], "--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: FORK_VERSION_TIMEOUT_MS
+    });
+    assert.equal(
+      result.error,
+      undefined,
+      `fork --version did not complete: ${result.error?.message} (signal: ${result.signal})`
+    );
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), KAIRO_PI_PACKAGE_VERSION);
   }
+);
+
+test("isNodeAtLeast compares padded numeric versions", () => {
+  assert.equal(isNodeAtLeast("22.19.0", "22.19.0"), true);
+  assert.equal(isNodeAtLeast("22.19.1", "22.19"), true);
+  assert.equal(isNodeAtLeast("22.18.9", "22.19.0"), false);
+  assert.equal(isNodeAtLeast("20.19.0", "22.19.0"), false);
+  assert.equal(isNodeAtLeast("24.0.0", "22.19.0"), true);
 });
 
 const resolvedLiveCliPath = resolveInstalledKairoPiCli();

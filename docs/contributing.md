@@ -7,7 +7,7 @@ through npm (`npx` / `npm install -g`). Publishing keeps `npm publish` with
 Trusted Publishing/OIDC.
 
 ```bash
-# requires Node.js 20.12+ and pnpm 10.34.5 (see packageManager in package.json)
+# requires Node.js 22.19+ and pnpm 10.34.5 (see packageManager in package.json)
 corepack enable
 pnpm install --frozen-lockfile
 pnpm test
