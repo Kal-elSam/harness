@@ -729,6 +729,8 @@ refer to `main` at `0f8ad58`.
   only on 0.87.1. `MIN_PI_VERSION` is `0.85.1`
   (`src/global/host/launch-gentle-shell.js:7`). Whether 0.85.1 exposes
   them is unknown. See task R01.
+  - Resolved by R01 (2026-09-24): 0.85.1 exposes all of them. See R01
+    below.
 
 ### Gaps found
 
@@ -818,7 +820,11 @@ refer to `main` at `0f8ad58`.
   executes; AGENT hands off to P06.
 - Mode and transcript persist per session and survive `kairo resume`.
 - Any input that would bypass Kairo policy is blocked, with a test per
-  path (interactive, rpc, extension sources).
+  path (interactive, rpc, extension sources), including unregistered `/`
+  text and `!`/`!!` shell commands (`user_bash`).
+- The `input` handler fails closed: any internal error still returns
+  `handled` with a visible error, never falls through to Pi's model
+  (see R01 constraint 1).
 
 **P06 — AGENT continuation (work).**
 - Flow: plan approval → explicit role choice → route preview
@@ -844,6 +850,52 @@ refer to `main` at `0f8ad58`.
   choose role → execute → exit → `kairo resume`.
 - Full suite and CI on Node 20/22/24.
 
+## R01 — Pi compatibility check
+
+- [x] R01-T1 Verify the Pi extension APIs the plan depends on exist with
+  the same contract in `MIN_PI_VERSION` 0.85.1.
+  - Route: inline (read-only type/runtime comparison, no source change).
+  - Method: `npm pack @earendil-works/pi-coding-agent@0.85.1` into the
+    session scratchpad (read-only, not installed); compared
+    `dist/core/extensions/types.d.ts` and runtime files against the
+    installed 0.87.1.
+  - `InputEvent`/`InputEventResult` (`continue`|`transform`|`handled`),
+    `SessionStartEvent` (`startup`|`reload`|`new`|`resume`|`fork` +
+    `previousSessionFile`), `SessionBeforeSwitchResult`, and
+    `SessionBeforeForkResult`: byte-identical between 0.85.1 and 0.87.1.
+  - Present in 0.85.1: `on("input")`, `on("session_start")`,
+    `on("session_before_switch")`, `on("session_before_fork")`,
+    `on("user_bash")`, `sendMessage`, `registerMessageRenderer`,
+    `appendEntry`, `registerCommand`, `registerProvider`,
+    `unregisterProvider`, and the component-factory `setWidget`.
+  - Runtime: `handled` short-circuits before the agent runs
+    (0.85.1 `core/extensions/runner.js` `emitInput`,
+    `core/agent-session.js` `prompt`); same in 0.87.1.
+  - Outcome: no `MIN_PI_VERSION` change and no source change needed, so
+    no RED/GREEN cycle applies; this task is evidence only.
+
+### Constraints found for P02/P05 (carry into their design)
+
+1. **A throwing `input` handler fails open.** `emitInput` catches the
+   error, reports it, and continues to the next handler and then to Pi's
+   model (0.85.1 and 0.87.1). P05's handler must catch everything itself
+   and return `handled` on any failure, with a test that a thrown error
+   still returns `handled`.
+2. **Registered extension commands run before `input`.** `prompt` runs
+   `_tryExecuteExtensionCommand` for `/`-prefixed text first, so
+   `/mode` and `/project` never reach the `input` handler. Unregistered
+   `/` text does reach it and must be handled too.
+3. **`!cmd` bypasses `input`.** User shell commands go through the
+   `user_bash` event, whose result (`operations` or a full `result`)
+   can replace execution. P05's "block any bypass" must cover
+   `user_bash`, not only `input`.
+4. **`pi.on()` returns `void` in 0.85.1** (an unsubscribe function only
+   from later versions). Do not rely on its return value.
+5. `input` fires before skill/template expansion, and carries
+   `source: interactive | rpc | extension`, so the per-source tests in
+   P05 are feasible.
+
 ### Next step
 
-Run R01, then start P02 on a new branch from `main`.
+Start P02 on a new branch from `main` (after this branch merges), or
+stack it on this branch if the user prefers.
