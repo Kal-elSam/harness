@@ -86,9 +86,13 @@ is only safe complete, so nothing reaches main in pieces.
 - PR 2 `feat/kairo-team-auto-recovery-02-analysis-lock` -> PR 1: R3 (project
   analysis lock). +288/-53, mostly the analysis body moved unchanged into a
   helper.
-- PR 3 `feat/kairo-team-auto-recovery-03-recovery` -> PR 2: R4, R5
-  (availability fallback, recovery orchestration).
-- PR 4 `feat/kairo-team-auto-recovery-04-pi-notices` -> PR 3: R6, R7, R8
+- PR 3 `feat/kairo-team-auto-recovery-03-availability-fallback` -> PR 2: R4
+  (availability fallback in resolveProjectRoute). +108/-27.
+- PR 4 `feat/kairo-team-auto-recovery-04-team-recovery` -> PR 3: R5 (recovery
+  orchestration). +422/-3: slightly over budget, of which ~265 lines are
+  tests. There is no cohesive smaller cut (the module, its tests, and the
+  wiring belong together), so it is reported, not squeezed.
+- PR 5 `feat/kairo-team-auto-recovery-05-pi-notices` -> PR 4: R6, R7, R8
   (Pi route refresh, deduplicated notices, end-to-end).
 Each slice targets <=400 changed lines; any overage is reported, not squeezed.
 The first plan had R1-R3 in one slice; at 612 changed lines it was split into
@@ -123,14 +127,37 @@ PR 1 and PR 2 before any PR was opened.
   failure); 9 existing analysis tests got an in-memory granted lock because
   they use a fake homeDir. Full suite 2160 pass / 0 fail / 1 skipped;
   touched suites 152/152 on Node 20.14.
-- [ ] R4 — Availability fallback in `resolveProjectRoute`: ROUTED to the
-  stored fallback on availability blocks only, labelled as a temporary
-  fallback. Entitlement blocks are unchanged.
-- [ ] R5 — Recovery orchestration: on a fingerprint change, pick an eligible
-  isolated analyst, re-analyze, rebuild the strategy, re-check the
-  fingerprint, and activate or keep the previous strategy. Cases covered:
-  success, analysis failure, availability changing mid-analysis, unverified
-  entitlement, no usable provider.
+- [x] R4 — Availability fallback (49643c4). On an availability block,
+  `resolveProjectRoute` returns ROUTED to the stored fallback that
+  `routableAlternative` accepts, with assignmentSource
+  "availability-fallback", `blockedAssignment` naming the replaced model, and
+  why "... temporarily unavailable (...) — uses its fallback ... until the
+  team is recovered". Entitlement blocks still only suggest and ask for
+  confirmation; a human override (no stored fallback) keeps waiting. Tests
+  that pinned "never substitute" for availability were rewritten, and the
+  confirm-flow tests moved to an entitlement block so that flow stays
+  covered. The new service tests fail on the old router (verified). Full
+  suite 2163 pass; Node 20.14 123/123.
+- [x] R5 — Recovery orchestration (86224a2). `team-recovery.js` (pure; I/O
+  injected) plus `service.recoverProjectTeam({cwd})`. It recovers only an
+  ACTIVE team, once per fingerprint (claimed as "started" before analyzing).
+  On first sight with nothing affected it records a baseline and does not
+  analyze. It skips without claiming when the lock is held, so a later
+  refresh retries. Analyst priority: available + scored + entitled; quality,
+  then efficient, then any other. The recovery analysis runs with
+  `persist: false` (NEW flag on runLockedBootstrapAnalysis), so the active
+  team is never overwritten before verification. The team is activated only
+  if the analysis succeeds, the fingerprint is unchanged after it, and at
+  least one role is routable; overrides carry over; activation records
+  {source, fingerprint}. Every failure keeps the previous team and records
+  the reason. Known limit: snapshot usage probes are cached (60 s
+  Codex/Claude, 5 min Go); a change hidden by the cache becomes a new
+  fingerprint on a later refresh. Tests: module 13/13 (success, failure,
+  availability changed mid-analysis, no analyst / unverified, no usable
+  provider, lock held, once per fingerprint, overrides kept); service
+  wiring 1, which first failed on an incomplete fixture profile and
+  correctly kept the previous team. Full suite 2177 pass / 0 fail / 1
+  skipped; Node 20.14 137/137.
 - [ ] R6 — Pi routes refresh when the active team changes (replace the
   one-shot `registered` guard safely).
 - [ ] R7 — Notices: one notice per (provider, window) stating the recovery
@@ -150,4 +177,4 @@ PR 1 and PR 2 before any PR was opened.
 - No message claims exhaustion from a window-limited signal.
 
 ## Next step
-Open PRs 1-2 (plus the tracker), then R4 on feat/kairo-team-auto-recovery-03-recovery.
+Open PRs 3-4, then R6-R8 on feat/kairo-team-auto-recovery-05-pi-notices.
