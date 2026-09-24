@@ -768,6 +768,24 @@ environment only. Pi's own subprocesses inherit it (documented).
     on 127.0.0.1 and npm cache write `EPERM`); both passed with the
     corresponding permissions/cache configuration. No interactive TTY
     run, CI run, push, PR, or merge was performed in this work unit.
+  - Review of `420df58..6cce2b7`: high risk; consent granted by the user.
+    4 lenses, **approved** with no blocking findings, and acknowledged.
+    Advisory WARNINGs worth fixing before push:
+    - R4/R3-001: the fork smoke `spawnSync` has no timeout, no
+      `stdio: ignore` for stdin, and no `result.error` check. A blocking
+      `--version` would hang the whole suite and CI with no diagnosis.
+    - R2-001/R3-002: below MIN_NODE_VERSION the launch half is skipped
+      silently and the test still passes. Use `t.skip` with a reason.
+    - R3-003 (and R2-002): the package root comes from a triple
+      `dirname`. Walk up to the package.json with the fork's name
+      instead, as the launcher does.
+    - R3-004 (suggestion): the version compare assumes three numeric
+      components.
+  - Open decision: `9f08654` raised Kairo's `engines` to `>=22.19.0` for
+    the whole CLI (the legacy cockpit included), while `ci.yml` still
+    runs Node 20, and that row does not exercise the Pi host.
+    Recommendation: drop Node 20 from CI (Node 20 reached end of life in
+    April 2026) and record the engines change as an explicit decision.
 
 Route: one delegated writer for T1–T4 (4+ non-trivial files across CLI,
 registry, extension, and widget; writer trigger). One work-unit commit
