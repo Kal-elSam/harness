@@ -422,6 +422,48 @@ Branch: `feat/kairo-pi-p02-session-binding`, stacked on
   - Real TTY — **pendiente y bloquea el cierre de T5**: `kairo` → `/new` → `/resume` → `/fork` → exit → `kairo resume`, comprobando que cada sesión conserva la vinculación correcta y que un fallo queda visible (panel `session: unbound` vs `session: <8hex> · <mode>`). Hasta completar esta corrida interactiva, T5 permanece abierta.
   - Corrección 2026-09-24: reabierto T5 tras cierre prematuro en 787d0b9 — CI verde y fake-Pi no bastan para cerrar.
   - Bloqueo real verificado (2026-09-24): Pi 0.87.1 no persiste sesión vacía — `newSession()` en `session-manager.js:691-715` prepara header + ruta pero deja `flushed=false` sin crear JSONL; `_persist:788-798` solo escribe al llegar el primer `assistant`, por eso `/resume` muestra "No sessions in current folder" y `/fork` exige mensaje previo. Headless con Tab no lo arregla. El TTY real tras `/new` mostró el error `Extension ... ctx is stale after session replacement` en `extension/index.js:186` (uso de `ctx.cwd/ctx.ui` tras `await`); los tests verdes previos (68/68, 2218/2219) no lo reproducían. Parche de Pi debe escribir header y poner `flushed=true` juntos, o el primer guardado intentará recrear el mismo archivo con `wx` y fallará con `EEXIST`/duplicado. Regresión stale: RED en 002a779, GREEN en b7435ed.
+  - Correction (2026-09-24): the vendored patch attempt (a58cac4, 7c8f59c) was
+    withdrawn before push. It overwrote the global Pi's
+    `dist/core/session-manager.js`, but the `pi` bin runs
+    `dist/bundle/cli.js` with its own chunk, so the TUI never loaded the
+    patch. Its commit message ("Outside Kairo, Pi keeps its original
+    behavior") was false. Local backup ref: `backup/p02-defective-vendor`.
+    Repaired by P02-T6..T10.
+
+### P02 repair — Kairo-only Pi fork (2026-09-24)
+
+Fork: `@kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.1`, built from the
+upstream `earendil-works/pi` source at 0.87.1 with the upstream build. Its
+source lives in a separate sibling repo (`../kairo-pi`), with the patch as
+commits on top of the upstream 0.87.1 tag. There is no `pi` bin. The
+empty-session behavior is off by default and turns on only with
+`KAIRO_PI_EMPTY_SESSIONS=1`, which the Kairo launcher sets in the child
+environment only. Pi's own subprocesses inherit it (documented).
+
+- [x] P02-T6 Withdraw the defective vendor: rebuild the history from
+  9cbed7a and remove `vendor/` (tracked and untracked). Global Pi check
+  (read-only): the `.bak-kairo` file is byte-identical to the official
+  0.87.1 tarball, the current file is byte-identical to the Kairo patch,
+  and no other file differs. Route: inline.
+- [ ] P02-T7 Restore the global Pi (outside the repo; **needs explicit
+  user authorization**): copy `.bak-kairo` back, then delete it. Stop if
+  the byte checks in T6 no longer hold.
+- [ ] P02-T8 Fork: patch the source behind the env gate, run the upstream
+  build, and add tests on the built bundle (gate on and off: empty
+  session persisted, /resume lists it, /fork on an empty session creates
+  a child with session_start:fork, the first append adds no duplicate
+  header). Check `npm pack --dry-run` includes `dist/bundle/**`, LICENSE,
+  and attribution. Route: delegated writer (new repo, build, tests).
+- [ ] P02-T9 Kairo launcher: remove any global write; resolve the fork's
+  CLI by path and run it with `process.execPath` after checking Node
+  ≥22.19; fail explicitly if the package is missing or at another
+  version; set `KAIRO_PI_EMPTY_SESSIONS=1` only in the child env. Tests:
+  fake-HOME tree snapshot fails on any write outside the repo or
+  HARNESS_HOME; a different `pi` on PATH is ignored. Validate locally
+  against the temporary tarball (preliminary). Route: delegated writer.
+- [ ] P02-T10 Publish (needs explicit authorization: npm,
+  `--tag kairo`, credential), pin the exact version, run CI, then the
+  real TTY run. Only then close T5.
 
 Route: one delegated writer for T1–T4 (4+ non-trivial files across CLI,
 registry, extension, and widget; writer trigger). One work-unit commit
