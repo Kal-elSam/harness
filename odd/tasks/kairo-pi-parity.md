@@ -353,8 +353,14 @@ Branch: `feat/kairo-pi-p02-session-binding`, stacked on
     test/cli-default-entry.test.js test/session-cli.test.js` — 23/23,
     5/5, all pass.
   - Commit: `36f91d9`.
-- [ ] P02-T2 Pi binding index module: record, look up, and fail closed on
+- [x] P02-T2 Pi binding index module: record, look up, and fail closed on
   malformed files; atomic writes; per-project isolation.
+  - Files: `src/global/conversation/pi-session-bindings.js`,
+    `test/pi-session-bindings.test.js`.
+  - RED: `node --test test/pi-session-bindings.test.js` — module not
+    found (`ERR_MODULE_NOT_FOUND`).
+  - GREEN: same command — 10/10 pass.
+  - Commit: `f7d6bfd`.
 - [ ] P02-T3 Extension binding lifecycle: in-memory binding;
   `session_start` `startup`/`reload`/`new`/`resume`/`fork` per the design;
   fail closed to unbound with a notice.
