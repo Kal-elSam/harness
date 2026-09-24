@@ -13,6 +13,7 @@ const outputPackageJsonPath = join(outputDir, "package.json");
 const outputLockfilePath = join(outputDir, "package-lock.json");
 const internalPackagePrefix = "@earendil-works/pi-";
 const internalPackageNames = new Set(["@earendil-works/chord"]);
+const upstreamCodingAgentName = "@earendil-works/pi-coding-agent";
 const installPackageName = "@earendil-works/pi-coding-agent-install";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],
@@ -424,6 +425,21 @@ function generateInstallLock() {
 
 	validateGeneratedFiles(installerPackageJson, installLock, internalNames);
 	return { installerPackageJson, installLock };
+}
+
+const currentCodingAgentPackage = readJson(join(codingAgentDir, "package.json"));
+if (currentCodingAgentPackage.name !== upstreamCodingAgentName) {
+	// Kairo fork: this generator builds an installer lockfile scoped to the
+	// upstream published package name/version family (it requires every
+	// @earendil-works/pi-* sibling to share one version). packages/coding-agent
+	// is renamed here to @kal-elsam/kairo-pi-coding-agent at a divergent
+	// version (see NOTICE.md), so that invariant does not hold and does not
+	// need to: this fork ships no "pi" bin and is not installed through Pi's
+	// own installer/updater, so there is nothing for this check to validate.
+	console.log(
+		`Skipping install-lock generation: packages/coding-agent is "${currentCodingAgentPackage.name}", not "${upstreamCodingAgentName}".`,
+	);
+	process.exit(0);
 }
 
 try {
