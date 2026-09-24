@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -272,7 +272,6 @@ test("PATH is never consulted: launch spawns the resolved fork even with an empt
     }
   });
   assert.equal(calls[0].command, "/fake/node/bin/node");
-  assert.notEqual(calls[0].command, "pi");
   assert.equal(calls[0].args[0], fixture.cliPath);
 });
 
@@ -329,12 +328,10 @@ test("launchGentleShell's only filesystem writes are mkdirSync/writeFileSync, an
   const cwd = await tmpProjectDir();
   const fakeHarnessHome = await tmpHarnessHome();
 
-  // Instrument the launcher's actual write destinations. mock.method on the
-  // node:fs module object does NOT intercept launch-gentle-shell.js's own
-  // named imports (ESM named bindings are resolved before any mock runs —
-  // verified empirically), so this test relies on launchGentleShell's own
-  // injectable `fsImpl`, which wraps the real functions below so every call
-  // is both recorded and actually performed.
+  // Records the writes routed through the injectable `fsImpl` seam, which
+  // wraps the real functions so every call is both recorded and performed.
+  // mock.method on node:fs would not see the launcher's named imports; the
+  // child-process test below covers writes that bypass this seam.
   const writes = [];
   const fsImpl = {
     mkdirSync: (path, options) => {
@@ -369,24 +366,26 @@ test("launchGentleShell's only filesystem writes are mkdirSync/writeFileSync, an
   }
 });
 
-test("launchGentleShell writes only under HARNESS_HOME, including writes that bypass fsImpl", async () => {
+test("launcher-process fs writes, including ones that bypass fsImpl, land only under HARNESS_HOME", async () => {
   // The fsImpl test above only sees writes routed through the injected
-  // fsImpl. This one runs the launcher in a child process that patches every
-  // node:fs write API before the launcher module loads, so a direct named
-  // import (the class of the withdrawn global-Pi patch) is recorded as well.
+  // fsImpl. This one runs the launcher in a child process that patches the
+  // node:fs write entry points before the launcher module loads (coverage is
+  // listed in the probe header), so a direct named import (the class of the
+  // withdrawn global-Pi patch) is recorded as well.
   const fixture = await buildKairoPiFixture();
   const cwd = await tmpProjectDir();
   const fakeHarnessHome = await tmpHarnessHome();
   const probe = fileURLToPath(new URL("./helpers/launch-write-probe.mjs", import.meta.url));
+  const resultPath = join(await tmpProjectDir("kairo-write-probe-result-"), "writes.json");
 
   const result = spawnSync(
     process.execPath,
-    [probe, cwd, extensionDir, fakeHarnessHome, fixture.entryPath],
+    [probe, cwd, extensionDir, fakeHarnessHome, fixture.entryPath, resultPath],
     { encoding: "utf8" }
   );
   assert.equal(result.status, 0, `probe failed: ${result.stderr}`);
 
-  const writes = JSON.parse(result.stdout);
+  const writes = JSON.parse(readFileSync(resultPath, "utf8"));
   assert.ok(writes.length > 0, "the probe must record at least one write to prove interception is live");
   for (const write of writes) {
     assert.ok(

@@ -14,10 +14,10 @@ export const KAIRO_PI_PACKAGE_NAME = "@kal-elsam/kairo-pi-coding-agent";
 export const KAIRO_PI_PACKAGE_VERSION = "0.87.1-kairo.1";
 export const MIN_NODE_VERSION = "22.19.0";
 
-// The only filesystem writes launchGentleShell performs (with the child
-// spawn stubbed) are mkdirSync/writeFileSync inside prepareKairoPiHome.
-// Injectable so tests can observe every write target instead of relying on
-// mocking node:fs, whose named ESM imports are bound before any mock runs.
+// Write seam for prepareKairoPiHome only (mkdirSync/writeFileSync); reads
+// still use the direct imports. Unit tests inject it to record write targets
+// in-process. The whole-module guarantee, which also covers writes that
+// bypass this seam, comes from test/helpers/launch-write-probe.mjs.
 const defaultFsImpl = { mkdirSync, writeFileSync };
 
 export function routeInteractiveHost({ command, options = {} }) {
