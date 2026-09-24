@@ -417,7 +417,10 @@ test("Kairo pins and launches the installed fork bundle", () => {
 
   const cliPath = join(packageRoot, "dist", "bundle", "cli.js");
   assert.ok(existsSync(cliPath), `missing installed fork bundle: ${cliPath}`);
-  if (Number(process.versions.node.split(".")[0]) >= 22) {
+  const runtimeVersion = process.versions.node.split(".").map(Number);
+  const minimumVersion = MIN_NODE_VERSION.split(".").map(Number);
+  const firstDifference = runtimeVersion.findIndex((part, index) => part !== minimumVersion[index]);
+  if (firstDifference < 0 || runtimeVersion[firstDifference] > minimumVersion[firstDifference]) {
     const result = spawnSync(process.execPath, [cliPath, "--version"], { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), KAIRO_PI_PACKAGE_VERSION);

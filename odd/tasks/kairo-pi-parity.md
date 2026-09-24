@@ -754,8 +754,12 @@ environment only. Pi's own subprocesses inherit it (documented).
     Kairo's manifest did not pin the required fork version. After the
     manifest/lock install, the new test resolves the actual installed
     package, verifies its identity/version and `dist/bundle/cli.js`, and
-    executes `cli.js --version` on Node >=22. Focused GREEN: 17 pass,
-    1 opt-in live test skipped, 0 fail.
+    executes `cli.js --version` only on Node >=22.19. Focused GREEN:
+    17 pass, 1 opt-in live test skipped, 0 fail.
+  - Test-gate correction after self-review: the initial smoke condition
+    checked only the Node major version, which would have run the fork
+    on unsupported Node 22.0–22.18. It now compares all three components
+    against `MIN_NODE_VERSION`; this does not change product behavior.
   - Full suite: `npm test` with an isolated npm cache and permission for
     the loopback-only UI test: 2231 pass, 1 opt-in live test skipped,
     0 fail. A sandboxed run had two environmental failures (`listen EPERM`
