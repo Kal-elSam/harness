@@ -374,8 +374,24 @@ Branch: `feat/kairo-pi-p02-session-binding`, stacked on
     `test/workspace-widget.test.js`, `test/session-registry.test.js` —
     73/73 pass, no regression.
   - Commit: `a48b7e6`.
-- [ ] P02-T4 Presentation: bound id + mode; explicit unbound in footer,
+- [x] P02-T4 Presentation: bound id + mode; explicit unbound in footer,
   status bar, and `/kairo-sessions`; unbound tests added.
+  - Files: `src/global/host/workspace-widget.js` (`usagePanelFooter`),
+    `src/global/host/extension/index.js` (`workspaceStatus`),
+    `test/workspace-widget.test.js`, `test/workspace-shell-extension.test.js`.
+  - `/kairo-sessions` was already correct (unbound test added, passed
+    immediately — no source change needed there).
+  - RED: `node --test test/workspace-widget.test.js` — unbound footer
+    test failed (`session: 11111111 · ask`-style default, not
+    "session: unbound"); `node --test test/workspace-shell-extension.test.js`
+    — status bar test failed (`"Kairo · agentic-harness · ask"`).
+  - GREEN: both commands — 28/28 and 27/27 pass.
+  - Full focused set (session-cli, session-registry, host-launch,
+    workspace-shell-extension, workspace-shell-snapshot,
+    workspace-widget, cli-implicit-host, cli-default-entry,
+    pi-session-bindings): 141/141 pass, 1 opt-in skip
+    (`KAIRO_LIVE_PI_TEST`).
+  - Commit: `b65c1d2`.
 - [ ] P02-T5 Evidence: focused tests, full suite, CI, real TTY run
   (`kairo` → `/new` → `/resume` → `/fork` → exit → `kairo resume`).
 
