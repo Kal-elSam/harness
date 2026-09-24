@@ -9,16 +9,28 @@ the quota cost today:
 - Jev's measured edge (light vs standard without keywords, EN and ES) is the
   cheap error: Haiku vs Sonnet. Its measured weakness (confident misses on
   data-sensitivity risk) is the expensive one. The local router already covers
-  risk lexically in EN and ES since #341.
+  risk lexically in EN and ES since #341 and #342.
 - Adopting Jev adds an external dependency (Vercel card, 429s) and latency
   (p90 up to 7.6 s in one run).
 
+### Scope correction (2026-09-24, verified on main 50ebda0)
+This design assumed the effort tier chooses the model for task EXECUTION. It
+does not. `classifyEffort` is live only through `selectAskProvider`
+(execution-router.js:431; called from service.js:393), where it picks the
+model tier for ASK answers (questions). Task execution routes through the
+project team (`resolveProjectRoute`), and `selectExecutionProvider` is not
+called anywhere in production (service.js:551). So misrouting by effort tier
+can only cost anything on asks. If this is ever resumed, the tasks,
+execution, and metrics below must be re-scoped to ask answers, not
+executed tasks.
+
 ### Resume when ALL hold
-1. Kairo routes real volume (dozens of routed runs), and
-2. run records carry the effort tier the router chose (today they store
-   `model` but not the tier), and
-3. those records show misrouting that costs something: failures or retries on
-   light/Haiku, or Opus spent on work a cheaper tier completes.
+1. Kairo answers real ask volume through `selectAskProvider` (dozens of
+   asks), and
+2. ask records carry the effort tier the router chose for each answer, and
+3. those records show misrouting that costs something: poor or retried
+   answers on light/Haiku, or Opus spent on questions a cheaper tier
+   answers well.
 
 ### Idea kept: Jev's concept, native to Kairo (not Jev itself)
 Jev's useful idea is the decision contract, not the model: shared state in,
@@ -48,8 +60,9 @@ Spanish risk fix (#341) was motivated by those same cases. Neither classifier
 has been validated on unseen tasks against real outcomes.
 
 ## Why
-The effort tier selects the model: light is Haiku, standard is Sonnet, heavy
-is Opus. A tier that is too low means a failed or wrong task. A tier that is
+For asks, the effort tier selects the model: light is Haiku, standard is
+Sonnet, heavy is Opus (see the scope correction above; task execution does
+not use it). A tier that is too low means a failed or wrong task. A tier that is
 too high burns Opus quota. Only execution tells us which error each
 classifier makes, and how much it costs.
 

@@ -7,6 +7,9 @@
 > lists, so every router fix would break them. What the pilot produced that
 > is merged: #341 (Spanish risk keywords) and #342 (English "recovery code").
 > Why it paused and when to resume: `odd/tasks/effort-tier-outcome-validation.md`.
+> Scope: `classifyEffort`, the baseline compared here, only picks the model
+> tier for asks (`selectAskProvider`). Task execution routes through the
+> project team, so this pilot says nothing about execution routing.
 
 ## Objective
 Compare TypeSafe Jev's task-effort classification (light/standard/heavy) against
