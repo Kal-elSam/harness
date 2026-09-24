@@ -293,5 +293,83 @@ refer to `main` at `0f8ad58`.
 
 ### Next step
 
-Start P02 on a new branch from `main` (after this branch merges), or
-stack it on this branch if the user prefers.
+P02 started 2026-09-24, stacked on this branch (user choice).
+
+## P02 — Single session binding
+
+Branch: `feat/kairo-pi-p02-session-binding`, stacked on
+`feat/kairo-pi-r01-pi-compat` (PR #351, CI green, not merged yet).
+
+### Current behavior (mapped 2026-09-24)
+
+- Bare `kairo` launches Pi with no `KAIRO_SESSION_ID` (`src/cli.js` case
+  `host` → `launchGentleShell` without `sessionId`); only `kairo start` and
+  `kairo resume` bind (`session-cli.js` `launchBoundSession`).
+- Unbound snapshot session is `{state: "unbound"}`, rendered by
+  `usagePanelFooter` (`workspace-widget.js`) as `session: none · ask`; the
+  status bar also defaults to `ask`.
+- The extension reads `env.KAIRO_SESSION_ID` on every refresh and only
+  listens to `session_start`; nothing maps a Pi session to a Kairo
+  session (`host.json` only repeats Kairo's own id).
+- No test covers the unbound state.
+
+### Design
+
+- Product decision (user, 2026-09-24): **bind everything**. Pi `/new`
+  creates and binds a new Kairo session; `/resume` rebinds the Kairo
+  session recorded for that Pi session; `/fork` creates a new Kairo
+  session inheriting the previous mode.
+- Bare `kairo` behaves like `kairo start`: create, then bind.
+- Pi identity: `ctx.sessionManager.getSessionId()` (present in 0.85.1 and
+  0.87.1 `ReadonlySessionManager`).
+- Mapping store: one per-project index next to the sessions,
+  `kairo.pi-bindings/v1` = `{ [piSessionId]: { kairoSessionId, boundAt } }`,
+  written atomically with the existing session-registry conventions.
+- The extension holds the current Kairo binding in memory, initialized from
+  `KAIRO_SESSION_ID` at `startup`/`reload` (and recorded for the current Pi
+  session); `new`/`resume`/`fork` replace it. The env var is no longer read
+  on every refresh.
+- `resume` of a Pi session with no recorded (or missing) Kairo session
+  creates a new Kairo session and says so visibly; it never reuses the
+  previous binding.
+- Fail closed: any error creating, reading, or recording a binding leaves
+  the extension **unbound** with a visible notice; it never keeps the
+  previous Kairo id.
+- Presentation: bound shows the short id and mode; unbound shows
+  `session: unbound` (no mode) in the footer, status bar, and
+  `/kairo-sessions`, never a default `ask`.
+- Out of scope: reopening the Pi transcript when running
+  `kairo resume <ref>` (Pi starts a fresh Pi session bound to that Kairo
+  session; the mapping records it).
+
+### Tasks
+
+- [ ] P02-T1 Bare `kairo` creates and binds a session (same path as
+  `kairo start`); `--legacy-cockpit` routing unchanged.
+- [ ] P02-T2 Pi binding index module: record, look up, and fail closed on
+  malformed files; atomic writes; per-project isolation.
+- [ ] P02-T3 Extension binding lifecycle: in-memory binding;
+  `session_start` `startup`/`reload`/`new`/`resume`/`fork` per the design;
+  fail closed to unbound with a notice.
+- [ ] P02-T4 Presentation: bound id + mode; explicit unbound in footer,
+  status bar, and `/kairo-sessions`; unbound tests added.
+- [ ] P02-T5 Evidence: focused tests, full suite, CI, real TTY run
+  (`kairo` → `/new` → `/resume` → `/fork` → exit → `kairo resume`).
+
+Route: one delegated writer for T1–T4 (4+ non-trivial files across CLI,
+registry, extension, and widget; writer trigger). One work-unit commit
+per task.
+
+### Acceptance criteria
+
+- `kairo` and `kairo resume` always start bound; the panel shows the bound
+  id and mode.
+- No path shows `session: none · ask` or an implied `ask` when unbound.
+- Pi `new`/`resume`/`fork` each end bound to the right Kairo session, or
+  unbound with a visible reason; never to the previous Kairo id by
+  accident.
+
+### Delivery
+
+Forecast ~400 authored lines (code + tests). Strategy `ask-on-risk`; PR
+stacked on #351.
