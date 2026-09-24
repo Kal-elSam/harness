@@ -468,12 +468,31 @@ environment only. Pi's own subprocesses inherit it (documented).
     2422 pass before the rename. `npm pack --dry-run`: 60 files,
     `dist/bundle/**`, LICENSE, NOTICE.md, no bin. The tarball is in the
     session scratchpad.
-  - Open before publishing: (a) 3 upstream tests fail after the rename
-    (`package-distribution` ×2, `first-time-setup` ×1); adapt them to the
-    fork identity so the suite is green. (b) `npm run build` fetches the
-    model catalog live, so 4 chunks differ from the official 0.87.1.
-    Build with the catalog pinned to the tag so the output is
-    reproducible.
+  - Closed before publishing (delegated writer, then a parent split of
+    the mislabeled commits; the pre-split backup ref is
+    `backup/kairo-t8-before-split`, with an identical final tree):
+    - (a) The distribution tests now assert the fork identity (name, no
+      bin, `exports` pointing to `dist/bundle`, and first-time setup off
+      for the fork). `dc9703d54`.
+    - (b) The release build is `npm run build:offline` (an upstream
+      switch) with `packages/ai/src/providers/data/` committed. That
+      catalog is a models.dev snapshot from 2026-09-24, not from the
+      0.87.1 release date, because upstream never versioned it; this is
+      documented in NOTICE.md. `38961683f` (catalog), `7543ea0d0`
+      (NOTICE).
+    - Evidence: three builds (including a full clean build) produced
+      byte-identical `dist/bundle` output. Against the official 0.87.1
+      tarball, the only content differences are the Kairo gate and the
+      catalog drift. `cli.js` is byte-identical; the other files differ
+      only in chunk hash names.
+    - Checks: `npx vitest --run test/kairo` 10/10; the fork package's
+      `npm test` 2422 pass, 50 skip, 0 fail; the parent re-ran the kairo
+      and distribution tests, 20/20. `npm pack --dry-run`: 60 files, no
+      bin. Tarball sha256 `69df4a27…c778bf` (built before the split, from
+      the same tree).
+  - Still open (minor): 3 upstream `first-time-setup` cases now pass
+    vacuously in the fork, because `isOfficialDistribution()` returns
+    false first. Tighten or document them before publishing.
   - Noted: `isOfficialDistribution()` is false for the fork, which only
     disables the experimental first-time setup. The config dir stays
     `.pi`, so sessions are shared with a standalone Pi.
@@ -675,6 +694,28 @@ environment only. Pi's own subprocesses inherit it (documented).
       `npm test`: 2230 pass, 0 fail, 1 skip.
     - Scope: this covers writes made in the launcher process. The spawned
       Pi child is stubbed, and its own writes are the fork's concern.
+  - Review of the T9b range: high risk; consent granted by the user.
+    Lineage `review-80e62b92156fe3f9`, range `482a8b1..fa7373e`, 4
+    lenses, **approved** with no blocking findings, and acknowledged.
+    Advisory findings (R2 and R3 WARNING): the probe overclaimed "every
+    write API". It recorded only the first path of rename, copyFile, cp,
+    symlink, and link, and did not wrap open-for-write or
+    createWriteStream. The fsImpl comment was stale.
+  - Follow-up `5d36bba` (inline, the parent's own probe) fixes this:
+    - Both paths of two-path APIs are recorded; open/openSync/
+      fs/promises.open with write flags and createWriteStream are wrapped;
+      descriptor writes are covered through the recorded open. The
+      coverage is listed in the probe header.
+    - Results now go to a dedicated file, so launcher console output
+      cannot corrupt them.
+    - The argv guard is derived from a named arg list. The test is renamed
+      to what it proves, the fsImpl comment is corrected, and the
+      decorative `notEqual(command, "pi")` is removed.
+    - RED: three planted writes (a direct `writeFileSync`, a `renameSync`
+      with its destination outside HARNESS_HOME, and an
+      `openSync(..., "w")`) each fail and name the path.
+    - GREEN after restoring: 18 pass / 0 fail / 1 skip on the focused
+      files; `npm test` 2230 pass / 0 fail / 1 skip.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
