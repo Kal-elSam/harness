@@ -658,6 +658,23 @@ environment only. Pi's own subprocesses inherit it (documented).
     must not be pushed or merged before P02-T10 pins the published
     package. Until then, the default `kairo` launch fails with the
     explicit "not installed" error.
+  - Parent gap fix (`969d5ab`, route: inline). The fsImpl test only sees
+    writes routed through the injected fsImpl, and the writer's planted
+    RED also went through fsImpl. A direct named-import write (the class
+    of the withdrawn global-Pi patch) passed it. The new test runs the
+    launcher in a child process
+    (`test/helpers/launch-write-probe.mjs`) that patches every node:fs and
+    fs/promises write API and calls `syncBuiltinESMExports()` before
+    importing the launcher, then asserts every recorded write is under
+    HARNESS_HOME.
+    - RED: planted `writeFileSync(join(cwd, "planted-direct-write.txt"))`
+      after `prepareKairoPiHome`. Result: the fsImpl test passed and the
+      new test failed, naming the path outside HARNESS_HOME.
+    - GREEN after the revert: `node --test test/host-launch.test.js
+      test/ecosystem-degrade.test.js`: 18 pass, 0 fail, 1 skip.
+      `npm test`: 2230 pass, 0 fail, 1 skip.
+    - Scope: this covers writes made in the launcher process. The spawned
+      Pi child is stubbed, and its own writes are the fork's concern.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
