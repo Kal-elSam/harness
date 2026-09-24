@@ -61,7 +61,7 @@ code-verified scope, gaps, and acceptance criteria of P02–P07.
 - Strategy: `ask-on-risk`. P01 forecast: ~300 authored changed lines, one PR.
 - P01 actual: 547 authored code+test lines (about 180 are a pure move in T1).
   User chose a single PR over a stacked split (size exception, 2026-09-23).
-- RDD: off (decided by default) — ordinary checks only.
+- RDD: on (decided by default; `gentle-ai review mode status`, 2026-09-24).
 
 ## P01–P01.2 — Closed slices (summary)
 
@@ -374,6 +374,26 @@ Branch: `feat/kairo-pi-p02-session-binding`, stacked on
     `test/workspace-widget.test.js`, `test/session-registry.test.js` —
     73/73 pass, no regression.
   - Commit: `a48b7e6`.
+  - Honesty note: the T3 RED above was observed post-hoc, by stashing
+    the already-written implementation and re-running the tests — not
+    genuine test-first RED.
+  - Fix (parent review, 2026-09-24): `reason: "reload"` was handled
+    identically to `"startup"` and always fell back to
+    `KAIRO_SESSION_ID`, so after a `/new` or `/fork` a `/reload`
+    silently rebound to the original launch session (reuse of another
+    Kairo identity, forbidden by P02). `reload` now looks up the
+    current Pi session's own recorded mapping first; a mapping to a
+    missing Kairo session fails closed to unbound, never falls back
+    to env.
+    - RED (genuine, test-first, against the pre-fix code):
+      `node --test test/workspace-shell-extension.test.js` — 3 of 4
+      new regression tests failed (`not ok 18/19/21`; the 4th,
+      "no mapping falls back to env", already passed since that path
+      was unaffected by the bug).
+    - GREEN: `node --test test/workspace-shell-extension.test.js
+      test/pi-session-bindings.test.js` — 40/40 pass. `npm test` —
+      2218/2219 pass, 1 opt-in skip, 0 failures.
+    - Commit: `bac6630`.
 - [x] P02-T4 Presentation: bound id + mode; explicit unbound in footer,
   status bar, and `/kairo-sessions`; unbound tests added.
   - Files: `src/global/host/workspace-widget.js` (`usagePanelFooter`),
