@@ -496,239 +496,26 @@ environment only. Pi's own subprocesses inherit it (documented).
   - Noted: `isOfficialDistribution()` is false for the fork, which only
     disables the experimental first-time setup. The config dir stays
     `.pi`, so sessions are shared with a standalone Pi.
-- [x] P02-T9 Kairo launcher: remove any global write; resolve the fork's
-  CLI by path and run it with `process.execPath` after checking Node
-  ≥22.19; fail explicitly if the package is missing or at another
-  version; set `KAIRO_PI_EMPTY_SESSIONS=1` only in the child env. Tests:
-  fake-HOME tree snapshot fails on any write outside the repo or
-  HARNESS_HOME (corrected in P02-T9b to intercept the launcher's actual
-  mkdirSync/writeFileSync write calls, since the original only snapshotted
-  a HOME the launcher never touches); a different `pi` on PATH is ignored.
-  Validate locally
-  against the temporary tarball (preliminary). Route: delegated writer.
-  - Done (`bd37236`, single commit — tests and implementation together):
-    `src/global/host/launch-gentle-shell.js` no longer resolves `pi` via
-    `whichImpl(PATH)`/`probeImpl`. It resolves the package root by
-    calling an injectable `resolveEntryImpl` (default:
-    `fileURLToPath(import.meta.resolve("@kal-elsam/kairo-pi-coding-agent"))`),
-    walks up from that entry file to the `package.json` whose `name`
-    matches, and requires `version === "0.87.1-kairo.1"` exactly (both
-    constants centralized as `KAIRO_PI_PACKAGE_NAME`/
-    `KAIRO_PI_PACKAGE_VERSION`); no PATH fallback on any failure. Node
-    version is checked via an injectable `nodeVersion` param against a
-    new `MIN_NODE_VERSION = "22.19.0"`. Spawn uses an injectable
-    `execPath` (default `process.execPath`) against
-    `<packageRoot>/dist/bundle/cli.js`. `KAIRO_PI_EMPTY_SESSIONS: "1"`
-    is set only on the child env object built for `spawnImpl`; a test
-    asserts `process.env.KAIRO_PI_EMPTY_SESSIONS` stays `undefined`
-    after launch. No leftover `.bak-kairo`/`~/.local` copy code was
-    found in the launcher (checked, none present).
-  - RED: confirmed by `git stash`-ing the new source and running the
-    new/changed test files against the old (`whichImpl`/`probeImpl`)
-    implementation — both files failed at import time (`does not
-    provide an export named 'KAIRO_PI_PACKAGE_NAME'`), 0/0 pass, exit 1.
-  - GREEN (same files, new implementation): `test/host-launch.test.js`
-    + `test/ecosystem-degrade.test.js` → 13 pass, 1 skip (opt-in live
-    test), 0 fail.
-  - Focused: `node --test test/host-launch.test.js
-    test/cli-implicit-host.test.js test/session-cli.test.js
-    test/ecosystem-degrade.test.js test/pi-session-bindings.test.js
-    test/workspace-shell-extension.test.js` → 71 pass, 1 skip, 0 fail.
-  - Full: `npm test` → 2224 pass, 1 skip, 0 fail (baseline before this
-    task: 2218 pass, 1 skip — net +6 tests, no regressions).
-  - Lint/typecheck: no `lint`/`typecheck` script exists in
-    `package.json`; skipped.
-  - Smoke (preliminary, outside the repo, per constraint 7): installed
-    the local tarball with `npm install
-    .../kairo-pi-coding-agent-0.87.1-kairo.1.tgz --prefix
-    <scratchpad>/t9-smoke --no-save`, then called the launcher's real
-    resolution/spawn logic against that prefix (real
-    `import.meta.resolve`, no fake resolver) and ran the resolved
-    `<execPath> <root>/dist/bundle/cli.js --version`:
-    resolved package `@kal-elsam/kairo-pi-coding-agent 0.87.1-kairo.1`;
-    `--version` printed `0.87.1-kairo.1`, exit 0, empty stderr. No
-    interactive TUI was launched.
-  - Docs: searched `docs/*.md` and `README.md` for "pi"/PATH/"Install
-    Pi"/`--legacy-cockpit` mentions tied to this launcher; the only hit
-    (`docs/adapters.md` "Kairo does not install Pi...") documents the
-    unrelated `kairo run --agent pi` execution adapter
-    (`src/global/runtime/execution-adapters/pi.js`), not this
-    interactive host launcher, and was left unchanged.
-  - Deviation from the task's literal step order: tests were written
-    and iterated in the same working session as the implementation
-    rather than committed as a separate RED commit; RED was still
-    observed and recorded (above) by diffing against the prior
-    implementation before committing, per the "TDD" section's allowance
-    to commit tests with the change.
-  - Not done here (explicitly out of scope per constraint 7/T10): the
-    package was not added to `package.json`/`pnpm-lock.yaml`, and it
-    was not published; both are P02-T10.
-  - Parent spot check: the focused set passes 71, 0 fail, 1 skip.
-    Correction: the writer called `fakePiOnPath()` in
-    `test/cli-implicit-host.test.js` "vestigial", but it is still used
-    at line 56, so it stays.
-  - Review: high risk (process boundary). Consent was granted by the user.
-    Lineage `review-e4a26e2f991beac3`, range `9cbed7a..482a8b1` (base tree
-    `5b3c8f6`), with the unrelated untracked files excluded. All 4 lenses
-    were admitted and the review was **approved** with no blocking
-    findings; the acknowledgement burned the authority
-    (`gentle-ai.review-acknowledged/v1`).
-  - Advisory findings are non-blocking. The ones worth fixing are tracked
-    in P02-T9b.
+- [x] P02-T9 Kairo launcher: resolves the fork by path through Kairo's own
+  module resolution and runs `<root>/dist/bundle/cli.js` with
+  `process.execPath` after checking Node >=22.19. It fails explicitly
+  on a missing package, wrong name or version, or missing bundle; it
+  never uses PATH `pi`; and it sets `KAIRO_PI_EMPTY_SESSIONS=1` in the
+  child env only. Commits: `bd37236`, `482a8b1`.
+  - Review `review-e4a26e2f991beac3` approved (user consent).
 - [x] P02-T9b Review follow-ups:
-  - (a) The fake-HOME test overclaims (R2 and R3-003 WARNING). It only
-    snapshots a HOME the launcher never uses. Snapshot a common temp root
-    that holds HOME, cwd, and the package root, and allow only
-    HARNESS_HOME. Fix the test name and the T9 doc claim to match.
-  - (b) Check that `dist/bundle/cli.js` exists before spawning, and fail
-    with an explicit error; add a test (R3-001, R4 suggestion).
-  - (c) Add a test for the error when no package.json with the fork's
-    name is found (R3-004).
-  - (d) Test names: the execPath default and the "PATH ignored" setup are
-    decorative (R2 suggestions).
-  - (e) The opt-in live test still gates on `which pi`; gate it on
-    resolving the fork instead (R2 suggestion).
-  - Done (`3c66897`, single commit — tests and the two source guards
-    together): `src/global/host/launch-gentle-shell.js` gained an
-    injectable `fsImpl` (default `{ mkdirSync, writeFileSync }`, the
-    launcher's real functions) threaded into `prepareKairoPiHome`, and an
-    `existsSync(cliPath)` check before spawning that throws an explicit
-    "bundle is missing" error with `--legacy-cockpit` guidance.
-  - (a) `mock.method` on the `node:fs` module object does NOT intercept
-    `launch-gentle-shell.js`'s named ESM imports — verified empirically
-    (a minimal repro: `mock.method(fs, "writeFileSync", ...)` never fired
-    while a sibling module's `import { writeFileSync } from "node:fs"`
-    call still hit the real filesystem). Traced the whole module and its
-    two callees (`resolveHomeDir`, `isValidSessionId`): both are
-    read-only, so with the child spawn stubbed the launcher's only writes
-    are `mkdirSync`/`writeFileSync`, both inside `prepareKairoPiHome`.
-    Renamed the test to "launchGentleShell's only filesystem writes are
-    mkdirSync/writeFileSync, and every one lands under HARNESS_HOME"; it
-    wraps the injected `fsImpl.mkdirSync`/`fsImpl.writeFileSync` so every
-    call is both recorded and actually performed, then asserts each
-    recorded path is under the fake `HARNESS_HOME`. No write API used by
-    this code path is left unobserved.
-  - (b) Added the `existsSync(cliPath)` guard plus
-    `test/helpers/kairo-pi-fixture.js`'s new `withCliEntry: false` option
-    (package.json and `dist/bundle/` present, `cli.js` missing) and a test
-    asserting the thrown message names the exact missing path and
-    `--legacy-cockpit`.
-  - (c) Added `buildKairoPiEntryWithoutPackageJson()` (no package.json
-    anywhere in the entry's ancestor chain — safe because the fork's name
-    never matches any real ancestor of the OS temp dir) and a test
-    expecting the existing "Could not find ... package.json" error; this
-    behavior already existed pre-T9b (confirmed by running the new test
-    against the pre-T9b source: it already passed, no RED). Also added
-    `buildKairoPiFixtureWithMalformedIntermediatePackageJson()` (a real
-    matching root package + a malformed `package.json` one level below
-    it) and a test proving the malformed-file catch-and-continue branch
-    is exercised: resolution still succeeds and spawns the root's
-    `cli.js`.
-  - (d) Renamed "spawns process.execPath..." to "resolution succeeds and
-    spawns the injected execPath..." (it always injected a fake
-    `execPath`, never `process.execPath`) and added a new test asserting
-    the true default: with `execPath` omitted and spawn stubbed, the
-    launcher calls `process.execPath`. Rewrote "a different pi on PATH is
-    ignored" (its fake-pi-binary setup was never actually checked against
-    — the launcher has no PATH-lookup code to bypass) as "PATH is never
-    consulted: launch spawns the resolved fork even with an empty PATH",
-    which sets `PATH: ""` and asserts the resolved fork/execPath are used
-    regardless. Left `fakePiOnPath()` in `test/cli-implicit-host.test.js`
-    untouched (still used at line 56).
-  - (e) The opt-in live test now resolves
-    `dirname(fileURLToPath(import.meta.resolve(KAIRO_PI_PACKAGE_NAME)))`
-    + `cli.js` and skips unless that path exists (plus
-    `KAIRO_LIVE_PI_TEST=1`), instead of gating on `which pi`; when it
-    runs, it spawns `process.execPath <resolved cli.js>` instead of a
-    `pi` binary from PATH, matching how the launcher itself spawns.
-  - RED (behavioral, not import error — via `git stash` on only
-    `src/global/host/launch-gentle-shell.js` while keeping the new/changed
-    test files, confirmed with `node --test test/host-launch.test.js`):
-    (a) "the launcher must perform at least one write to prove
-    interception is live" failed (0 writes observed — old code called the
-    real `mkdirSync`/`writeFileSync` directly, bypassing the injected
-    `fsImpl`); (b) "missing dist/bundle/cli.js..." failed (`should not
-    spawn` thrown instead of the expected explicit message — old code
-    spawned instead of checking `cli.js` first); (c) both "no package.json
-    with the fork's name..." and "a malformed intermediate package.json is
-    skipped..." already passed against the old code — no RED, recorded
-    here per the letter of the task.
-  - Planted-write proof for (a): temporarily hardcoded
-    `prepareKairoPiHome`'s `dir` to `/tmp/not-harness-home/...` (ignoring
-    `env.HARNESS_HOME`), reran `test/host-launch.test.js`: the write test
-    failed (op-list/HARNESS_HOME mismatch — writes escaped the fake
-    HARNESS_HOME). Reverted immediately; confirmed clean via `git diff`
-    against the prior committed version before committing.
-  - GREEN: `node --test test/host-launch.test.js
-    test/ecosystem-degrade.test.js` → 17 pass, 1 skip, 0 fail.
-  - Focused: `node --test test/host-launch.test.js
-    test/cli-implicit-host.test.js test/session-cli.test.js
-    test/ecosystem-degrade.test.js test/pi-session-bindings.test.js
-    test/workspace-shell-extension.test.js` → 75 pass, 1 skip, 0 fail.
-  - Full: `npm test` → 2228 pass, 1 skip, 0 fail (baseline before this
-    task: 2224 pass, 1 skip — net +4 tests: no-name-match,
-    malformed-intermediate-skip, missing-bundle, default-execPath; no
-    regressions).
-  - Lint/typecheck: no `lint`/`typecheck` script exists in
-    `package.json`; skipped (same as T9).
-  - Not done here (out of scope, per constraint 7/T10): the fork was not
-    added to `package.json`/`pnpm-lock.yaml`.
-  - Delivery note (R4-unshipped-hard-dependency WARNING): this branch
-    must not be pushed or merged before P02-T10 pins the published
-    package. Until then, the default `kairo` launch fails with the
-    explicit "not installed" error.
-  - Parent gap fix (`969d5ab`, route: inline). The fsImpl test only sees
-    writes routed through the injected fsImpl, and the writer's planted
-    RED also went through fsImpl. A direct named-import write (the class
-    of the withdrawn global-Pi patch) passed it. The new test runs the
-    launcher in a child process
-    (`test/helpers/launch-write-probe.mjs`) that patches every node:fs and
-    fs/promises write API and calls `syncBuiltinESMExports()` before
-    importing the launcher, then asserts every recorded write is under
-    HARNESS_HOME.
-    - RED: planted `writeFileSync(join(cwd, "planted-direct-write.txt"))`
-      after `prepareKairoPiHome`. Result: the fsImpl test passed and the
-      new test failed, naming the path outside HARNESS_HOME.
-    - GREEN after the revert: `node --test test/host-launch.test.js
-      test/ecosystem-degrade.test.js`: 18 pass, 0 fail, 1 skip.
-      `npm test`: 2230 pass, 0 fail, 1 skip.
-    - Scope: this covers writes made in the launcher process. The spawned
-      Pi child is stubbed, and its own writes are the fork's concern.
-  - Review of the T9b range: high risk; consent granted by the user.
-    Lineage `review-80e62b92156fe3f9`, range `482a8b1..fa7373e`, 4
-    lenses, **approved** with no blocking findings, and acknowledged.
-    Advisory findings (R2 and R3 WARNING): the probe overclaimed "every
-    write API". It recorded only the first path of rename, copyFile, cp,
-    symlink, and link, and did not wrap open-for-write or
-    createWriteStream. The fsImpl comment was stale.
-  - Follow-up `5d36bba` (inline, the parent's own probe) fixes this:
-    - Both paths of two-path APIs are recorded; open/openSync/
-      fs/promises.open with write flags and createWriteStream are wrapped;
-      descriptor writes are covered through the recorded open. The
-      coverage is listed in the probe header.
-    - Results now go to a dedicated file, so launcher console output
-      cannot corrupt them.
-    - The argv guard is derived from a named arg list. The test is renamed
-      to what it proves, the fsImpl comment is corrected, and the
-      decorative `notEqual(command, "pi")` is removed.
-    - RED: three planted writes (a direct `writeFileSync`, a `renameSync`
-      with its destination outside HARNESS_HOME, and an
-      `openSync(..., "w")`) each fail and name the path.
-    - GREEN after restoring: 18 pass / 0 fail / 1 skip on the focused
-      files; `npm test` 2230 pass / 0 fail / 1 skip.
-  - Review of `fa7373e..0f2c589`: high risk; consent granted by the user.
-    4 lenses, **approved** with no blocking findings, and acknowledged.
-    Advisory findings are left open deliberately; they are not fixed in
-    a loop, because each fix reopens a high-risk review:
-    - R2 WARNING: the probe records copyFile/cp sources and symlink
-      targets as writes. That could cause a spurious failure later, but
-      never a false pass.
-    - R4/R3: `fs.open(path, callback)` treats the callback as flags,
-      which could record a false write (again only a spurious failure).
-    - R3: the coverage header still overclaims `fs.WriteStream` and
-      `mkdtempDisposable*`.
-    - R2: PROBE_ARGS is duplicated.
-    Address these the next time the probe changes.
+  - The write guard is an fsImpl seam test, plus a child-process probe
+    (`test/helpers/launch-write-probe.mjs`) that patches node:fs before
+    import. RED came from planted direct, rename, and open writes.
+  - Commits: `3c66897`, `2690a8c`, `969d5ab`, `fa7373e`, `5d36bba`.
+  - Reviews `review-80e62b92156fe3f9` and the `fa7373e..0f2c589` range
+    were approved (user consent). The advisory probe findings (reported
+    as spurious failures only) remain open for the next probe change.
+  - Delivery note: do not push before the fork pin (done in T10).
+  - The full evidence (commands, RED/GREEN output, and review findings)
+    was archived verbatim on 2026-09-24 to Engram topic
+    `odd/kairo-pi-parity/archive-p02-t9`. It is also in git history
+    (this file at `4af6db4`).
 - [ ] P02-T8b Fork packaging defect (found in the TTY attempt): the
   published `0.87.1-kairo.1` ships 60 files. The official 0.87.1 ships
   1108. The fork's `files` kept only `dist/bundle`, so TUI runtime
@@ -748,6 +535,23 @@ environment only. Pi's own subprocesses inherit it (documented).
     After that, pin `.2` in Kairo, run the suite and CI, and repeat the
     TTY run.
   - Route: delegated writer (fork repo).
+  - Fork side done: `a8943dd1f` (packaging regression test) and
+    `146fa0456` (restores upstream `files`, bumps to `0.87.1-kairo.2`,
+    and regenerates the shrinkwrap with the existing upstream script).
+    - RED: `npx vitest --run test/kairo/packaging-files.test.ts` 3/3
+      fail (hundreds of missing paths, no shrinkwrap, no theme JSON).
+    - GREEN: 3/3 pass. `test/kairo` 13/13 (parent re-ran it: 13/13).
+      The package `npm test` has 2425 pass, 50 skip, 0 fail.
+    - PTY smoke from clean prefixes, with a temporary HOME and agent
+      dir, `PI_OFFLINE=1`, and no model calls. `.1` exits 1 with
+      `ENOENT ... dist/modes/interactive/theme/dark.json` and never
+      renders. `.2` renders `pi v0.87.1-kairo.2`, the footer, and doc
+      links resolved from `docs/`, then exits 0 on Ctrl+D.
+    - Pack: 1110 files. The parent checked the diff against the official
+      1108: only LICENSE and NOTICE.md are extra, and 3 chunks differ
+      only in their hash names. No bin. Tarball sha256 `b6a0db34…d7bbb`.
+  - Pending (each needs authorization): publish `.2`, deprecate `.1`,
+    and move `latest`. Then pin `.2` in Kairo, run CI, and do the TTY run.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
