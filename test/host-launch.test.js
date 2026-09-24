@@ -369,6 +369,33 @@ test("launchGentleShell's only filesystem writes are mkdirSync/writeFileSync, an
   }
 });
 
+test("launchGentleShell writes only under HARNESS_HOME, including writes that bypass fsImpl", async () => {
+  // The fsImpl test above only sees writes routed through the injected
+  // fsImpl. This one runs the launcher in a child process that patches every
+  // node:fs write API before the launcher module loads, so a direct named
+  // import (the class of the withdrawn global-Pi patch) is recorded as well.
+  const fixture = await buildKairoPiFixture();
+  const cwd = await tmpProjectDir();
+  const fakeHarnessHome = await tmpHarnessHome();
+  const probe = fileURLToPath(new URL("./helpers/launch-write-probe.mjs", import.meta.url));
+
+  const result = spawnSync(
+    process.execPath,
+    [probe, cwd, extensionDir, fakeHarnessHome, fixture.entryPath],
+    { encoding: "utf8" }
+  );
+  assert.equal(result.status, 0, `probe failed: ${result.stderr}`);
+
+  const writes = JSON.parse(result.stdout);
+  assert.ok(writes.length > 0, "the probe must record at least one write to prove interception is live");
+  for (const write of writes) {
+    assert.ok(
+      isUnder(fakeHarnessHome, write.path),
+      `write "${write.op}" to "${write.path}" is outside HARNESS_HOME "${fakeHarnessHome}"`
+    );
+  }
+});
+
 function resolveInstalledKairoPiCli() {
   try {
     const entryPath = fileURLToPath(import.meta.resolve(KAIRO_PI_PACKAGE_NAME));
