@@ -89,8 +89,8 @@ is only safe complete, so nothing reaches main in pieces.
 - PR 3 `feat/kairo-team-auto-recovery-03-availability-fallback` -> PR 2: R4
   (availability fallback in resolveProjectRoute). +108/-27.
 - PR 4 `feat/kairo-team-auto-recovery-04-team-recovery` -> PR 3: R5 (recovery
-  orchestration). +422/-3: slightly over budget, of which ~265 lines are
-  tests. There is no cohesive smaller cut (the module, its tests, and the
+  orchestration) plus the review fix for bounded retries. ~+545/-25: over
+  budget, of which ~355 lines are tests. There is no cohesive smaller cut (the module, its tests, and the
   wiring belong together), so it is reported, not squeezed.
 - PR 5 `feat/kairo-team-auto-recovery-05-pi-notices` -> PR 4: R6, R7, R8
   (Pi route refresh, deduplicated notices, end-to-end).
@@ -158,6 +158,18 @@ PR 1 and PR 2 before any PR was opened.
   wiring 1, which first failed on an incomplete fixture profile and
   correctly kept the previous team. Full suite 2177 pass / 0 fail / 1
   skipped; Node 20.14 137/137.
+  REVIEW FIX (7b6a374, user review 2026-09-24): a failed recovery recorded
+  its fingerprint like a success, so every later refresh skipped it and a
+  transient failure left the team unrecovered. Now only
+  activated/baseline close a fingerprint. Failed, crashed ("started"), or
+  superseded attempts retry on a later refresh: at most 3 attempts per
+  fingerprint, 10 then 20 min backoff, then `retries-exhausted` with
+  `lastOutcome` (R7 surfaces it as a notice pointing to /project analyze).
+  The attempt count is persisted in the recovery store, so the bound holds
+  across processes. Tests +4 (retry after backoff and not before; bounded
+  at 3 with exhausted reported; crashed attempt retried; decide matrix);
+  store round-trips `attempts`. Full suite 2181 pass / 0 fail / 1 skipped;
+  Node 20.14 120/120.
 - [ ] R6 — Pi routes refresh when the active team changes (replace the
   one-shot `registered` guard safely).
 - [ ] R7 — Notices: one notice per (provider, window) stating the recovery
