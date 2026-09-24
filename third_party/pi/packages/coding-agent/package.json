@@ -1,41 +1,24 @@
 {
-	"name": "@earendil-works/pi-coding-agent",
-	"version": "0.87.1",
-	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
+	"name": "@kal-elsam/kairo-pi-coding-agent",
+	"version": "0.87.1-kairo.1",
+	"description": "Kairo-only fork of @earendil-works/pi-coding-agent 0.87.1 (MIT). See NOTICE.md for attribution. No CLI bin: the built dist/bundle/cli.js is run by path by the Kairo launcher.",
 	"type": "module",
 	"piConfig": {
 		"configDir": ".pi"
 	},
-	"bin": {
-		"pi": "dist/bundle/cli.js"
-	},
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
+	"main": "./dist/bundle/index.js",
 	"exports": {
 		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js"
+			"import": "./dist/bundle/index.js"
 		},
 		"./rpc-entry": {
 			"import": "./dist/bundle/rpc-entry.js"
-		},
-		"./client": {
-			"source": "./src/client/index.ts"
-		},
-		"./experimental/plugin": {
-			"source": "./src/experimental/plugin.ts"
 		}
 	},
 	"files": [
-		"dist",
-		"!dist/client",
-		"!dist/experimental",
-		"!dist/cli/experimental",
-		"docs",
-		"examples",
-		"containerization.md",
-		"CHANGELOG.md",
-		"npm-shrinkwrap.json"
+		"dist/bundle",
+		"LICENSE",
+		"NOTICE.md"
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
