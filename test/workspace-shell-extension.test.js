@@ -564,13 +564,76 @@ test("startup with no KAIRO_SESSION_ID stays unbound, silently — never an impl
   assert.deepEqual(notifications, []);
 });
 
-test("reload behaves exactly like startup: binds to env KAIRO_SESSION_ID and records it", async () => {
-  const { events, recordCalls } = bindingHarness();
+// Pi reloads the extension on /reload, so `boundKairoSessionId` is lost —
+// reload must recover the CURRENT Pi session's own recorded binding first,
+// never blindly fall back to the launch-time env id. Falling back to env
+// unconditionally would silently rebind to the original launch session
+// after a /new or /fork in the same process, which is exactly the "reuse
+// another Kairo identity" case P02 forbids.
+
+test("reload with an existing Pi->Kairo mapping rebinds to that session, never env — REGRESSION for /new then reload", async () => {
+  const { events, seenSessionIds } = bindingHarness({
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    lookupPiBindingImpl: async (homeDir, projectRoot, piSessionId) => {
+      assert.equal(piSessionId, PI_ID_A);
+      return KAIRO_ID_B;
+    },
+    getSessionImpl: async (homeDir, projectRoot, sessionId) => {
+      assert.equal(sessionId, KAIRO_ID_B);
+      return { id: KAIRO_ID_B, mode: "agent" };
+    }
+  });
+  const notifications = [];
+  const ctx = fakeCtx({ piSessionId: PI_ID_A, notifications });
+  await events.get("session_start")({ reason: "reload" }, ctx);
+
+  assert.ok(seenSessionIds.includes(KAIRO_ID_B), "reload must bind to the /new session, not the launch-time env id");
+  assert.ok(!seenSessionIds.includes(KAIRO_ID_A));
+  assert.deepEqual(notifications, [], "a real, existing mapping rebinds silently");
+});
+
+test("reload with a mapping pointing at a forked session rebinds to the fork — REGRESSION for /fork then reload", async () => {
+  const { events, seenSessionIds } = bindingHarness({
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    lookupPiBindingImpl: async () => KAIRO_ID_B,
+    getSessionImpl: async () => ({ id: KAIRO_ID_B, mode: "plan" })
+  });
+  const ctx = fakeCtx({ piSessionId: "pi-session-forked" });
+  await events.get("session_start")({ reason: "reload" }, ctx);
+
+  assert.ok(seenSessionIds.includes(KAIRO_ID_B));
+  assert.ok(!seenSessionIds.includes(KAIRO_ID_A));
+});
+
+test("reload with no recorded mapping falls back to the launch-time env session and records it", async () => {
+  const { events, recordCalls, seenSessionIds } = bindingHarness({
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    lookupPiBindingImpl: async () => null
+  });
   const ctx = fakeCtx({ piSessionId: PI_ID_A });
   await events.get("session_start")({ reason: "reload" }, ctx);
-  // No env override here means env.KAIRO_SESSION_ID is undefined -> unbound,
-  // exercising the same "startup" branch reload shares, with no crash.
-  assert.deepEqual(recordCalls, []);
+
+  assert.ok(seenSessionIds.includes(KAIRO_ID_A));
+  assert.deepEqual(recordCalls, [{
+    homeDir: "/home/kairo", projectRoot: "/repo", piSessionId: PI_ID_A, kairoSessionId: KAIRO_ID_A
+  }]);
+});
+
+test("reload with a mapping to a Kairo session that no longer exists fails closed to unbound, never falls back to env", async () => {
+  const { events, seenSessionIds } = bindingHarness({
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    lookupPiBindingImpl: async () => KAIRO_ID_B,
+    getSessionImpl: async () => null
+  });
+  const notifications = [];
+  const ctx = fakeCtx({ piSessionId: PI_ID_A, notifications });
+  await events.get("session_start")({ reason: "reload" }, ctx);
+
+  assert.ok(!seenSessionIds.includes(KAIRO_ID_A), "a missing mapped session must never fall back to reusing env");
+  assert.ok(!seenSessionIds.includes(KAIRO_ID_B));
+  assert.equal(seenSessionIds.at(-1), null, "fails closed to unbound");
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0][1], "error");
 });
 
 test("a Pi /new creates and binds a fresh Kairo session, recorded against the Pi session id", async () => {

@@ -238,24 +238,60 @@ export function createKairoWorkspaceExtension(pi, {
     const piSessionId = ctx?.sessionManager?.getSessionId?.() ?? null;
     const cwd = ctx?.cwd ?? process.cwd();
 
+    // Shared by "startup" and reload's own fallback: bind to the id Pi was
+    // launched with, recording it against the current Pi session when one
+    // is known. Never called when a real Pi->Kairo mapping already exists
+    // for this Pi session — that takes priority (see "reload" below).
+    async function bindFromEnv() {
+      const envSessionId = env?.KAIRO_SESSION_ID ?? null;
+      if (envSessionId == null) {
+        // No session was provided at launch (e.g. Pi started outside
+        // Kairo) — genuinely unbound, not an error, so no notice.
+        boundKairoSessionId = null;
+        return;
+      }
+      if (!isValidSessionId(envSessionId)) {
+        throw new Error(`Invalid Kairo session id "${envSessionId}" from KAIRO_SESSION_ID.`);
+      }
+      boundKairoSessionId = envSessionId;
+      if (piSessionId != null) {
+        const homeDir = resolveHomeDirImpl(env);
+        const projectRoot = await resolveProjectRootImpl(cwd);
+        await recordPiBindingImpl(homeDir, projectRoot, piSessionId, envSessionId);
+      }
+    }
+
     try {
-      if (reason === "startup" || reason === "reload") {
-        const envSessionId = env?.KAIRO_SESSION_ID ?? null;
-        if (envSessionId == null) {
-          // No session was provided at launch (e.g. Pi started outside
-          // Kairo) — genuinely unbound, not an error, so no notice.
-          boundKairoSessionId = null;
-          return;
-        }
-        if (!isValidSessionId(envSessionId)) {
-          throw new Error(`Invalid Kairo session id "${envSessionId}" from KAIRO_SESSION_ID.`);
-        }
-        boundKairoSessionId = envSessionId;
+      if (reason === "startup") {
+        await bindFromEnv();
+        return;
+      }
+
+      if (reason === "reload") {
+        // Pi reloads the extension on /reload, so the in-memory binding is
+        // lost — recover the CURRENT Pi session's own recorded mapping
+        // first. Falling back to env unconditionally would silently
+        // rebind to the ORIGINAL launch session after a /new or /fork in
+        // the same process: exactly the "reuse another Kairo identity"
+        // case P02 forbids.
         if (piSessionId != null) {
           const homeDir = resolveHomeDirImpl(env);
           const projectRoot = await resolveProjectRootImpl(cwd);
-          await recordPiBindingImpl(homeDir, projectRoot, piSessionId, envSessionId);
+          const boundId = await lookupPiBindingImpl(homeDir, projectRoot, piSessionId);
+          if (boundId != null) {
+            const existing = await getSessionImpl(homeDir, projectRoot, boundId);
+            if (existing) {
+              boundKairoSessionId = existing.id;
+              return;
+            }
+            // A real mapping exists but its Kairo session is gone — never
+            // fall back to env here, that would be exactly the reuse this
+            // branch exists to prevent.
+            throw new Error(`Kairo session "${boundId}" recorded for this Pi session no longer exists.`);
+          }
         }
+        // No mapping (or no Pi session id at all) — same as startup.
+        await bindFromEnv();
         return;
       }
 
