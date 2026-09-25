@@ -1,0 +1,48 @@
+name: Pi fork
+
+on:
+  pull_request:
+    paths:
+      - "third_party/pi/**"
+      - ".github/workflows/pi-fork.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "third_party/pi/**"
+      - ".github/workflows/pi-fork.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test the Pi fork
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: third_party/pi
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.19"
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build offline
+        run: npm run build:offline
+
+      - name: Run Kairo fork tests
+        working-directory: third_party/pi/packages/coding-agent
+        run: npx vitest --run test/kairo
+
+      - name: Verify package contents
+        working-directory: third_party/pi/packages/coding-agent
+        run: npm pack --dry-run
