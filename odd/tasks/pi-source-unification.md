@@ -54,7 +54,7 @@ nobody else could reach, and extra steps for every fork change.
   `third_party/pi`; NOTICE and attribution. Route: delegated writer.
 - [ ] U7 Remove the `.3` release-age exclusion from `.npmrc` after
   2026-09-26T18:03Z (24 h after the publish).
-- [ ] U8 Retire the extra folders:
+- [x] U8 Retire the extra folders:
   - `../kairo-pi`, only after U4 passes;
   - the other worktrees, only if they are clean and not in use, keeping
     their branches and preserving any untracked work first;
@@ -165,4 +165,25 @@ nobody else could reach, and extra steps for every fork change.
     `feat/unify-pi-source` stays in the repo.
   - `git gc` is deferred: another session is active in the main
     checkout, so no `--prune=now` while it works.
+- PR #353 CI is green on `53849fbf5`:
+  - Kairo "Test on Node 22" and "Test on Node 24" pass (run 36188205233).
+  - The new `pi-fork.yml` job "Build and test the Pi fork" passes (run
+    36188205331). It ran every step: `npm ci` (459 packages),
+    `build:offline`, `test/kairo` 25/25, and `npm pack --dry-run` with
+    1110 files.
+- Incident: at 15:03-15:04 another session (herd-shell H6/H7) recreated
+  `~/Desktop/kairo-pi` by writing two vitest drafts to the retired path
+  (`shell-viewport.test.ts` and `shell-slots-ui.test.ts`, plus a vitest
+  cache).
+  - The drafts were preserved verbatim in Engram #4021, and the folder
+    was deleted at the user's request.
+  - To prevent a repeat, a pinned Engram decision (topic
+    `kairo/pi-fork-location`) says the fork lives only in
+    `third_party/pi`. The historical mentions in `kairo-pi-parity.md`
+    are now marked as retired.
+- U8 result: the Desktop holds only `agentic-harness`. Worktrees live
+  under `~/Developer/worktrees/agentic-harness/`.
+- Still pending:
+  - U7, after 2026-09-26T18:03Z;
+  - `git gc` once no other session is active.
 
