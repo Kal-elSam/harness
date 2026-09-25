@@ -649,6 +649,24 @@ environment only. Pi's own subprocesses inherit it (documented).
   the status bar. Separate RED/GREEN for the launcher env and for
   bound/unbound in each view. Route: delegated writer (Kairo repo),
   running in parallel with T11 in a separate repo.
+- Intermittent full-suite failure, identified and fixed (`600d4fb`, route:
+  inline, user OK):
+  - Six sequential full runs were clean. Running three suites
+    concurrently reproduced it: `test/quick-ask.test.js` "codex's timeout
+    resets on real output" returned `error` instead of `answered`. It
+    raced real 60/80/120 ms timers with a 20 ms margin.
+  - Fix: drive `setTimeout` with `node:test` mock timers.
+  - RED: with the stdout reset planted off, the new test fails
+    deterministically. GREEN: 4 concurrent plus 30 sequential runs are
+    clean, and `npm test` gives 2234 pass / 0 fail / 1 skip.
+  - A second failure under concurrency (`package-contents.test.js`,
+    ENOENT on the packed tgz) only appears when several suites pack the
+    same tarball in one checkout at once, so it is an artifact of the
+    parallel run itself.
+  - T12 done: `a60f12d` (PI_SKIP_VERSION_CHECK only in the child env)
+    and `9bfb071` (shared `formatSessionIdentity` for the overview,
+    every replacement view, and the status bar). Parent spot check: 80
+    pass / 0 fail.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
