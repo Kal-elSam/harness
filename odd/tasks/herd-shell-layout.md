@@ -65,20 +65,23 @@ User plan "Herd shell layout (Camino 1)" authorizes H0–H5 on branch `feat/herd
 
 ## Tasks
 
-- [ ] H0-1 Feature doc + Engram mirror `odd/herd-shell-layout/tasks` (this file)
-- [ ] H1-1 RED: snapshot tests pin `agents[]`/`spaces[]` shape + fail-closed (checking/unknown, no false done) in `test/workspace-shell-snapshot.test.js` (+ related)
-- [ ] H1-2 GREEN: additive `agents[]`/`spaces[]` in `workspace-snapshot.js` with documented state rule; old fields unchanged
-- [ ] H2-1 RED: widget tests pin blocked-first, truncation, stacked narrow, no false done in `test/workspace-widget.test.js`
-- [ ] H2-2 GREEN: herd render in `workspace-widget.js` (agents glyph list, compact spaces, usage strip); keep component factory
-- [ ] H3-1 Map real sources only (availability, session binding, runs if exposed); document working/done gap if signal missing
-- [ ] H4-1 Per-agent detail command path + blocked transition notice via `availabilityNotices`; no mouse splits
-- [ ] H5-1 Full suite green + real TTY verification + record unverified states; branch `feat/herd-shell-layout`
+- [x] H0-1 Feature doc + Engram mirror `odd/herd-shell-layout/tasks` (this file)
+- [x] H1-1 RED: snapshot tests pin `agents[]`/`spaces[]` shape + fail-closed (checking/unknown, no false done) in `test/workspace-shell-snapshot.test.js` (+ related)
+- [x] H1-2 GREEN: additive `agents[]`/`spaces[]` in `workspace-snapshot.js` with documented state rule; old fields unchanged
+- [x] H2-1 RED: widget tests pin blocked-first, truncation, stacked narrow, no false done in `test/workspace-widget.test.js`
+- [x] H2-2 GREEN: herd render in `workspace-widget.js` (agents glyph list, compact spaces, usage strip); keep component factory
+- [x] H3-1 Map real sources only (availability, session binding, runs if exposed); document working/done gap if signal missing
+- [x] H4-1 Per-agent detail command path + blocked transition notice via `availabilityNotices`; no mouse splits
+- [x] H5-1 Full suite green + real TTY verification + record unverified states; branch `feat/herd-shell-layout`
 
 ## Progress
 
 - H0 (2026-09-25): base mapped (widget 382 lines, snapshot 358 lines, extension team/usage views). P01–P01.2 closed; P02 branch dirty — collide risk noted. No source writes yet.
 - H1 (2026-09-25): DONE inline (subagents unfunded, user authorized inline). `7195ca3` feat(host): additive herd agents/spaces — 146 authored lines, far below 400. RED 5 fail → GREEN 30/30 snapshot + 84/84 related (widget, extension, cache, components, binding). No working/done run signal exists in snapshot inputs → never emitted, documented in code + H3 follow-up. RDD assess (`--base-ref 516d859 --committed-only`, untracked clutter excluded via canonical inventory): medium / under_budget (241 lines incl. feature doc) → review_due false, boundary stays pending until slice reaches budget.
-- H2 (2026-09-25): DONE inline (user authorized). `3362369` feat(host): herd overview — HERD panel (spaces + blocked-first glyph agents) left, USAGE strip right/stacked below; dense role/model/via table out of overview (detail stays in /kairo-team). RED 8 fail → GREEN 31/31 widget + 117/117 workspace-related; full suite 2243 pass / 0 fail / 1 skipped. Size: 288+/199- = 487 authored lines — over the 400 heuristic because the old TEAM table leaves by design (rewrite, not creep); PR split vs size:exception pending user at PR time. RDD assess: medium / slice_budget_reached (728 lines H1+H2) → review_due TRUE; preflight STATUS ran verbatim, reached collect `intended_untracked_selection` (pre-existing untracked clutter is not candidate content) — empty-selection JSON guessed once, rejected invalid_request; no documented exact shape found, stopped rather than fabricate. Review PENDING, candidate untouched.
+- H2 (2026-09-25): DONE inline (user authorized). `3362369` feat(host): herd overview — HERD panel (spaces + blocked-first glyph agents) left, USAGE strip right/stacked below; dense role/model/via table out of overview (detail stays in /kairo-team). RED 8 fail → GREEN 31/31 widget + 117/117 workspace-related; full suite 2243 pass / 0 fail / 1 skipped. Size: 288+/199- = 487 authored lines — over the 400 heuristic because the old TEAM table leaves by design (rewrite, not creep); PR split vs size:exception pending user at PR time. RDD assess: medium / slice_budget_reached (728 lines H1+H2) → review_due TRUE; preflight STATUS ran verbatim, reached collect `intended_untracked_selection` (pre-existing untracked clutter is not candidate content) — empty-selection JSON guessed once, rejected invalid_request; no documented exact shape found, stopped rather than fabricate. Review PENDING, candidate untouched. User decision: defer review, continue.
+- H3 (2026-09-25): DONE as verified gap, no code. Searched `src/global/conversation`: `planExecution`/`executePlan` (service.js) are point-in-time preview/confirm ops with no persisted per-role run registry (no listExecutions/activeExecution store; `service.snapshot()` exposes only modelIntelligence/usage/providers). So no trusted working/done signal exists — herd ships blocked|idle|unknown per H1 rule; working/done stay follow-up pending a real run registry (likely P06 AGENT-continuation territory in kairo-pi-parity).
+- H4 (2026-09-25): DONE, already satisfied — no code. `/kairo-team` detail view (teamDetailLines, full warnings) preserved and covered by extension tests; blocked-transition notify exists (`notifyAvailability` + `availabilityNotices`, one notify per new key, extension/index.js:419-438); keyboard/commands only, no splits.
+- H5 (2026-09-25): DONE. Full suite 2243 pass / 0 fail / 1 skipped (post-H2; H3/H4 add no code). Render evidence (node, realistic snapshot): width 100 side-by-side HERD|USAGE with `HERD · 1 blocked`, `✖ Project Analyst · claude · BLOCKED`, idle rows, usage bars; width 60 stacked HERD above USAGE, all lines within width. Real interactive TTY run left for release per kairo-pi-parity closing acceptance. Unverified states recorded: working/done never emitted (no signal). Branch `feat/herd-shell-layout`: `7195ca3`, `3362369` + docs commits.
 - Route: delegated-direct attempted (explore worker failed: insufficient funds) → inline bounded reads fallback. Implementation tasks (H1+) go via single bounded writer each; per-action verification workers as needed.
 
 ## Verification evidence
@@ -89,4 +92,4 @@ User plan "Herd shell layout (Camino 1)" authorizes H0–H5 on branch `feat/herd
 
 ## Next step
 
-Create branch `feat/herd-shell-layout` (user confirms handling of dirty P02 worktree), then H1-1 RED.
+Feature complete on `feat/herd-shell-layout`. Open decisions for the user: (1) pending slice review (medium/slice_budget_reached, stuck at untracked-selection collect); (2) PR split vs `size:exception` (487 authored H2 lines by rewrite design); (3) push/PR/merge under ordinary repo policy. No code changes pending.
