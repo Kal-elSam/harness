@@ -590,7 +590,10 @@ environment only. Pi's own subprocesses inherit it (documented).
     - The intermittent failure could not be reproduced: 5 more full runs
       (2 earlier, 3 with full logs kept) all gave 2233 pass / 0 fail. It
       remains unidentified.
-  - Next: push and CI, then the real TTY run.
+  - Push (authorized by the user): `55e903f..ce6ee7a`. CI run 36161103241
+    on `ce6ee7a` — **success** (Node 22, Node 24). This also proves that
+    the frozen CI install accepts `.2` under the version-scoped exclusion.
+  - Next: the real TTY run with `.2`.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
