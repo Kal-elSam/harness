@@ -631,6 +631,24 @@ environment only. Pi's own subprocesses inherit it (documented).
         the literal `HARNESS_HOME=(HARNESS_HOME)`.
   - Next: fix the fork (empty-session `/fork`, update check) and Kairo
     (session id in every view), publish `.3`, and repeat this run.
+- [ ] P02-T11 Fork `.3`: empty-session `/fork`. With
+  `KAIRO_PI_EMPTY_SESSIONS=1` and a truly empty session, the TUI calls a
+  runtime empty-fork path that emits a cancellable `session_before_fork`
+  with `entryId: ""`, `position: "at"`, and `emptySession: true`. It
+  reuses the parent-linked child creation and `session_start` reason
+  `fork`. The empty id is rejected when the flag is off or the session
+  has entries; RPC fork and `/clone` are unchanged. Nothing in Kairo
+  listens to `session_before_fork` (checked). Separate RED/GREEN for the
+  TUI command and for the runtime/event contract. Bump to
+  `0.87.1-kairo.3` and run the packaging check. Route: delegated
+  writer (fork repo).
+- [ ] P02-T12 Kairo: set the existing `PI_SKIP_VERSION_CHECK=1` only in
+  the child env (no semver change), and use one session-identity
+  formatter (`session: <8hex> · <mode>` / `session: unbound`) in the
+  overview, the replacement views (including unavailable-routes), and
+  the status bar. Separate RED/GREEN for the launcher env and for
+  bound/unbound in each view. Route: delegated writer (Kairo repo),
+  running in parallel with T11 in a separate repo.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
