@@ -642,7 +642,7 @@ environment only. Pi's own subprocesses inherit it (documented).
   TUI command and for the runtime/event contract. Bump to
   `0.87.1-kairo.3` and run the packaging check. Route: delegated
   writer (fork repo).
-- [ ] P02-T12 Kairo: set the existing `PI_SKIP_VERSION_CHECK=1` only in
+- [x] P02-T12 Kairo: set the existing `PI_SKIP_VERSION_CHECK=1` only in
   the child env (no semver change), and use one session-identity
   formatter (`session: <8hex> · <mode>` / `session: unbound`) in the
   overview, the replacement views (including unavailable-routes), and
