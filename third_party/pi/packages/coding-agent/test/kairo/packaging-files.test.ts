@@ -23,6 +23,17 @@ import { describe, expect, it } from "vitest";
 
 const packageRoot = new URL("../..", import.meta.url).pathname;
 
+/**
+ * Each test below shells out to `npm pack --dry-run --json`, which measured
+ * ~1.0-1.2s in isolation but has been observed up to ~6.6s when the machine
+ * is under load from other concurrent processes (e.g. a parallel test run
+ * or build). vitest's default test timeout is 5000ms, which is not enough
+ * margin for that observed variance, so give these three tests an explicit,
+ * generous timeout instead of relying on a --testTimeout CLI flag (which
+ * would have to be remembered on every invocation, including CI).
+ */
+const NPM_PACK_TEST_TIMEOUT_MS = 20_000;
+
 /** Upstream's package.json "files" exclusions for the dist tree (negated globs). */
 const DIST_EXCLUSIONS = ["dist/client", "dist/experimental", "dist/cli/experimental"];
 
@@ -88,30 +99,42 @@ function packedFilePaths(): Set<string> {
 }
 
 describe("fork packaging (npm pack)", () => {
-	it("packs every built runtime asset that survives upstream's dist exclusions", () => {
-		const expected = expectedRuntimeFiles();
-		const packed = packedFilePaths();
+	it(
+		"packs every built runtime asset that survives upstream's dist exclusions",
+		() => {
+			const expected = expectedRuntimeFiles();
+			const packed = packedFilePaths();
 
-		const missing = expected.filter((path) => !packed.has(path));
+			const missing = expected.filter((path) => !packed.has(path));
 
-		expect(missing).toEqual([]);
-	});
+			expect(missing).toEqual([]);
+		},
+		NPM_PACK_TEST_TIMEOUT_MS,
+	);
 
-	it("packs npm-shrinkwrap.json", () => {
-		const packed = packedFilePaths();
-		expect(packed.has("npm-shrinkwrap.json")).toBe(true);
-	});
+	it(
+		"packs npm-shrinkwrap.json",
+		() => {
+			const packed = packedFilePaths();
+			expect(packed.has("npm-shrinkwrap.json")).toBe(true);
+		},
+		NPM_PACK_TEST_TIMEOUT_MS,
+	);
 
-	it("packs the interactive TUI theme JSON files", () => {
-		const themeDir = join(packageRoot, "dist", "modes", "interactive", "theme");
-		if (!existsSync(themeDir)) {
-			throw new Error(`${themeDir} is missing; build the release bundle first.`);
-		}
-		const themeFiles = walkFiles(packageRoot, themeDir, []).filter((path) => path.endsWith(".json"));
-		expect(themeFiles.length).toBeGreaterThan(0);
+	it(
+		"packs the interactive TUI theme JSON files",
+		() => {
+			const themeDir = join(packageRoot, "dist", "modes", "interactive", "theme");
+			if (!existsSync(themeDir)) {
+				throw new Error(`${themeDir} is missing; build the release bundle first.`);
+			}
+			const themeFiles = walkFiles(packageRoot, themeDir, []).filter((path) => path.endsWith(".json"));
+			expect(themeFiles.length).toBeGreaterThan(0);
 
-		const packed = packedFilePaths();
-		const missingThemeFiles = themeFiles.filter((path) => !packed.has(path));
-		expect(missingThemeFiles).toEqual([]);
-	});
+			const packed = packedFilePaths();
+			const missingThemeFiles = themeFiles.filter((path) => !packed.has(path));
+			expect(missingThemeFiles).toEqual([]);
+		},
+		NPM_PACK_TEST_TIMEOUT_MS,
+	);
 });
