@@ -149,3 +149,20 @@ nobody else could reach, and extra steps for every fork change.
   publish --tag kairo --access public`, move `latest`, pin in Kairo,
   conditional `minimum-release-age-exclude`), and `git subtree pull
   --squash` for future upstream pulls.
+- Parent verification of U3-U6: the tarball built from `third_party/pi`
+  has sha256 `7621f1e78c51c7f2…`, identical as a whole file to the
+  published `.3`. The branch `npm test` gives 2237 tests, 2236 pass,
+  0 fail, 1 skip; the only `third_party` mention in the log is the new
+  exclusion test.
+- U8 (user-approved plan: only `agentic-harness` stays on the Desktop):
+  - `architect-m1` was moved with `git worktree move` to
+    `~/Developer/worktrees/agentic-harness/architect-m1`. Its branch and
+    its 6 untracked `.ai/` files are intact.
+  - `../kairo-pi` is removed once U4 has proven the imported source
+    reproduces `.3`. Its only unique refs were `backup/kairo-t8-before-split`
+    and local `main` (upstream), both superseded.
+  - This worktree is removed after this commit; the branch
+    `feat/unify-pi-source` stays in the repo.
+  - `git gc` is deferred: another session is active in the main
+    checkout, so no `--prune=now` while it works.
+
