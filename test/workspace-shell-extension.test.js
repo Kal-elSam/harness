@@ -20,6 +20,14 @@ const snapshot = {
     ]
   },
   usage: [{ provider: "codex", totalTokens: 2400 }],
+  agents: [
+    { id: "builder", label: "Builder", role: "Builder", provider: "codex", model: "GPT-6 Terra", state: "unknown", stateReason: null },
+    { id: "reviewer", label: "Reviewer", role: "Reviewer", provider: "opencode-go", model: "MiniMax-M3", state: "blocked", stateReason: "Unavailable — Cursor Models quota exhausted" }
+  ],
+  spaces: [
+    { kind: "project", label: "agentic-harness", root: "/repo" },
+    { kind: "session", id: "11111111", mode: "agent", state: "bound" }
+  ],
   subscriptions: {
     state: "ready",
     segments: ["Codex 5h 58% / W 86%", "Claude S 34% / W 65%", "Go 100% / 100% / 96%"],
@@ -131,7 +139,7 @@ test("the overview command renders the themed two-panel widget as a component fa
   const lines = renderWidgetCall(calls[0][1]);
   for (const line of lines) assert.ok(visibleWidth(line) <= 160);
   assert.ok(lines.some((line) => line.includes("USAGE")));
-  assert.ok(lines.some((line) => line.includes("TEAM")));
+  assert.ok(lines.some((line) => line.includes("HERD")));
   assert.ok(lines.some((line) => line.includes("Builder")));
   assert.ok(lines.some((line) => line.includes("Reviewer") && line.includes("BLOCKED")));
 });
@@ -384,9 +392,14 @@ test("extension renders a Kairo status/widget on session start using the explici
 // `usageIntelligence`/`availabilityIntelligence` instead of the old single
 // `intelligence` field, mirroring workspace-snapshot.js's real split.
 function snapshotFor({ usageIntelligence, availabilityIntelligence } = {}) {
+  // The herd contract (H1) derives agents from the same availability
+  // signal as team rows — the test double mirrors that derivation so
+  // phase semantics (pending/failed → unknown, resolved → idle) hold.
+  const herdState = availabilityIntelligence == null ? "unknown" : "idle";
   return {
     ...snapshot,
     subscriptions: usageIntelligence ? snapshot.subscriptions : { state: "checking", segments: [], usageModel: [] },
+    agents: snapshot.agents.map((agent) => ({ ...agent, state: herdState, stateReason: null })),
     team: {
       ...snapshot.team,
       rows: snapshot.team.rows.map((row) => ({
@@ -425,13 +438,14 @@ test("extension renders usage as soon as it arrives, without waiting on the stil
   assert.equal(widgetCalls.length, 2, "phase 1 (checking) + usage arriving, availability still pending");
   const afterUsage = renderWidgetCall(widgetCalls[1][1]);
   assert.ok(afterUsage.some((line) => line.includes("58%")), "usage now shows real data");
-  assert.ok(afterUsage.some((line) => line.includes("checking")), "team still checking while availability is pending");
+  const pendingBuilder = afterUsage.find((line) => line.includes("Builder"));
+  assert.ok(pendingBuilder?.includes("?"), "herd still unknown while availability is pending");
 
   resolveAvailability({ eligibility: { codex: { ok: true } } });
   await startPromise;
   assert.equal(widgetCalls.length, 3, "availability resolving re-renders once more");
   const finalLines = renderWidgetCall(widgetCalls[2][1]);
-  assert.ok(!finalLines.some((line) => line.includes("checking")), "nothing left checking once both resolved");
+  assert.ok(!finalLines.some((line) => line.includes("?")), "nothing left unknown once both resolved");
 });
 
 test("extension renders availability as soon as it arrives, without waiting on the still-pending usage probe", async () => {
@@ -509,7 +523,16 @@ test("a delayed /new render cannot repaint the forked session identity", async (
   const ctxFor = (piSessionId) => fakeCtx({ piSessionId, statusCalls, widgetCalls });
   const actualSnapshot = ({ sessionId }) => ({
     ...snapshot,
-    session: sessionId == null ? { state: "unbound" } : { state: "bound", id: sessionId, mode: "ask" }
+    session: sessionId == null ? { state: "unbound" } : { state: "bound", id: sessionId, mode: "ask" },
+    // Spaces derive from the bound session exactly like the real loader
+    // (H1) — a forked session must repaint its own short id, never the
+    // fixture's static one.
+    spaces: [
+      { kind: "project", label: "agentic-harness", root: "/repo" },
+      sessionId == null
+        ? { kind: "session", state: "unbound" }
+        : { kind: "session", id: sessionId.slice(0, 8), mode: "ask", state: "bound" }
+    ]
   });
   createKairoWorkspaceExtension(pi, {
     env: { KAIRO_SESSION_ID: KAIRO_ID_A },

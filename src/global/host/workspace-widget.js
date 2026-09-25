@@ -1,12 +1,16 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { CARD_TONE, cardInnerWidth, renderPanel } from "../cockpit/card.js";
 
-// The Pi widget for the Kairo workspace — two bordered panels (USAGE,
-// TEAM), side by side when the terminal is wide enough, stacked otherwise.
-// Rendered as a Pi component factory (see createKairoWorkspaceWidget below)
-// instead of a plain string array so it is never capped at Pi's
-// MAX_WIDGET_LINES=10 (see the P01.1 "Why" in odd/tasks/kairo-pi-parity.md
-// — that cap is exactly what truncated the Reviewer row in P01).
+// The Pi widget for the Kairo workspace — two bordered panels (HERD,
+// USAGE), side by side when the terminal is wide enough, stacked otherwise
+// (HERD above USAGE). The HERD panel is the Herdr-style attention view:
+// compact spaces (project + session) above a blocked-first glyph agent
+// list — the dense role/model/via table left the overview on purpose, its
+// detail lives in /kairo-team. Rendered as a Pi component factory (see
+// createKairoWorkspaceWidget below) instead of a plain string array so it
+// is never capped at Pi's MAX_WIDGET_LINES=10 (see the P01.1 "Why" in
+// odd/tasks/kairo-pi-parity.md — that cap is exactly what truncated the
+// Reviewer row in P01).
 //
 // The pure render function (renderKairoWorkspaceWidget) never reads a TTY
 // or Pi's real Theme class — it only calls theme.fg(role, text) and
@@ -19,7 +23,18 @@ import { CARD_TONE, cardInnerWidth, renderPanel } from "../cockpit/card.js";
 const GAUGE_CELLS = 10;
 const NAME_COLUMN_WIDTH = 7;
 const LABEL_COLUMN_WIDTH = 4;
-const TEAM_COLUMN_GAP = "  ";
+const HERD_SEPARATOR = " · ";
+const HERD_PROJECT_GLYPH = "◈";
+// One glyph per herd state — a single-width character each, so
+// visibleWidth arithmetic holds on real TTYs. Only BLOCKED also prints
+// as a word (the P01.1 "no available noise, only exceptions" contract);
+// every other state reads from its glyph alone.
+const HERD_STATE_GLYPH = { blocked: "✖", working: "◉", idle: "○", done: "✔", unknown: "?" };
+const HERD_STATE_TONE = { blocked: "error", working: "success", idle: "text", done: "muted", unknown: "muted" };
+// Attention order: blocked first, then working, idle, done, unknown last
+// (unknown is no evidence, never an alarm — its glyph still shows it
+// honestly). Sort is stable, so ties keep snapshot (strategy) order.
+const HERD_STATE_RANK = { blocked: 0, working: 1, idle: 2, done: 3, unknown: 4 };
 const FOOTER_COMMAND_SEPARATOR = " · ";
 // Mirrors card.js's own FRAME_COLUMNS (left rail + space + space + right
 // rail) — every bordered panel needs exactly this many columns beyond its
@@ -33,24 +48,25 @@ function naturalContentWidth(lines) {
   return lines.reduce((max, line) => Math.max(max, visibleWidth(line)), 0);
 }
 
-/** The TEAM panel's own desired (untruncated) content width, from the real
- * row fields — never from an already-rendered, already-width-constrained
- * body (computing THAT would need the width this function itself decides,
- * see computeSideBySideWidths' own doc). */
-function desiredTeamContentWidth(rows) {
-  if (!rows.length) return naturalContentWidth(["Run /project analyze to build this project's team."]);
-  const roleWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.role ?? "")), 0);
-  const modelWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.model ?? "")), 0);
-  const viaWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.via ?? "")), 0);
-  const gapWidth = visibleWidth(TEAM_COLUMN_GAP);
-  const blockedWidth = rows.some((row) => row.availability?.state === "blocked")
-    ? gapWidth + visibleWidth("BLOCKED")
-    : 0;
-  return roleWidth + gapWidth + modelWidth + gapWidth + viaWidth + blockedWidth;
+/** The HERD panel's unthemed measure lines — the real herd facts (spaces
+ * plus one natural line per agent, attention-ordered), never an
+ * already-rendered, already-width-constrained body (computing THAT would
+ * need the width the caller itself decides, see computeSideBySideWidths'
+ * own doc). Unthemed plain strings: a real ANSI theme is zero-width, and
+ * themed measuring would lie. */
+function herdMeasureLines(snapshot) {
+  const agents = snapshot.agents ?? [];
+  const lines = [...herdSpacesLines(snapshot)];
+  if (!agents.length) {
+    lines.push("Run /project analyze to build this project's team.");
+  } else {
+    for (const agent of sortedHerdAgents(agents)) lines.push(herdNaturalLine(agent));
+  }
+  return lines;
 }
 
 /**
- * The USAGE/TEAM panel widths for a given total render width — each sized
+ * The HERD/USAGE panel widths for a given total render width — each sized
  * to its OWN content (P01.2: "panels sized to their content, left-aligned,
  * side by side with a 2-column gap, stacked when they do not fit"), never
  * a naive half-width split. Side by side only when both panels' desired
@@ -58,27 +74,28 @@ function desiredTeamContentWidth(rows) {
  * stacked (so no line can ever exceed `width`, the one hard constraint —
  * see renderKairoWorkspaceWidget's own doc).
  *
- * Exported so tests can locate the TEAM panel's own substring inside a
- * combined side-by-side line without re-deriving this arithmetic (see
- * test/workspace-widget.test.js).
+ * Exported so tests can pass short bodies without re-deriving this
+ * arithmetic (see test/workspace-widget.test.js).
  * @param {number} width
- * @param {string[]} usageBody - the ALREADY-themed USAGE panel content
+ * @param {string[]} leftBody - the HERD panel's unthemed measure lines
+ *   (their width never depends on the panel's own width, unlike a body
+ *   that truncates providers into it — see herdPanelBody)
+ * @param {string[]} rightBody - the ALREADY-themed USAGE panel content
  *   lines (their width never depends on the panel's own width, unlike
- *   TEAM's — see usagePanelBody).
- * @param {object[]} teamRows - `snapshot.team.rows`
+ *   HERD's — see usagePanelBody).
  * @returns {{leftWidth: number, rightWidth: number, sideBySide: boolean, gap: number}}
  */
-export function computeSideBySideWidths(width, usageBody = [], teamRows = []) {
+export function computeSideBySideWidths(width, leftBody = [], rightBody = []) {
   const targetWidth = Math.max(1, Math.floor(width));
-  const usageDesired = naturalContentWidth(usageBody) + PANEL_FRAME_COLUMNS;
-  const teamDesired = desiredTeamContentWidth(teamRows) + PANEL_FRAME_COLUMNS;
-  const fits = usageDesired <= targetWidth
-    && teamDesired <= targetWidth
-    && usageDesired + PANEL_GAP + teamDesired <= targetWidth;
+  const leftDesired = naturalContentWidth(leftBody) + PANEL_FRAME_COLUMNS;
+  const rightDesired = naturalContentWidth(rightBody) + PANEL_FRAME_COLUMNS;
+  const fits = leftDesired <= targetWidth
+    && rightDesired <= targetWidth
+    && leftDesired + PANEL_GAP + rightDesired <= targetWidth;
   if (!fits) {
     return { leftWidth: targetWidth, rightWidth: targetWidth, sideBySide: false, gap: 0 };
   }
-  return { leftWidth: usageDesired, rightWidth: teamDesired, sideBySide: true, gap: PANEL_GAP };
+  return { leftWidth: leftDesired, rightWidth: rightDesired, sideBySide: true, gap: PANEL_GAP };
 }
 
 /** Renders a cache age in whole minutes/hours/days ("5m ago"), the same
@@ -164,92 +181,96 @@ export function formatSessionIdentity(session) {
   return `session: ${session.id.slice(0, 8)} · ${session.mode ?? "ask"}`;
 }
 
-/** Pads `text` to exactly `width` visible columns — truncating with
- * `truncateToWidth` first when it's already wider (only ever asked of the
- * model column, never the role column; see `teamColumnWidths`' own doc). */
-function padColumn(text, width) {
-  const clipped = visibleWidth(text) > width ? truncateToWidth(text, width, "") : text;
-  return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
+/** The compact spaces lines — current project plus bound session, from
+ * the H1 herd contract (`snapshot.spaces`), never an invented multi-repo
+ * list. Pre-herd snapshots (no `spaces`) fall back to the same two
+ * top-level facts, worded identically. Unthemed: the caller themes. */
+function herdSpacesLines(snapshot) {
+  const spaces = snapshot.spaces;
+  if (Array.isArray(spaces) && spaces.length) {
+    return spaces.map((space) => {
+      if (space?.kind === "session") {
+        if (space.state !== "bound") return "session: unbound";
+        return `session: ${space.id} · ${space.mode ?? "ask"}`;
+      }
+      return `${HERD_PROJECT_GLYPH} ${space?.label ?? space?.root ?? "unknown"}`;
+    });
+  }
+  return [
+    `${HERD_PROJECT_GLYPH} ${snapshot.project?.label ?? snapshot.project?.root ?? "unknown"}`,
+    formatSessionIdentity(snapshot.session)
+  ];
 }
 
-/**
- * The role/model column widths for one TEAM panel render — each padded to
- * the longest VISIBLE width in that column across every real row, so
- * every row's model (and via) column starts at the same visible position
- * (the reported defect: a literal fixed `"  "` gap puts the model column
- * at a different position per row, since roles like "Project Analyst"
- * and "Builder" have very different lengths).
- *
- * The role column is never truncated (real role names are short and
- * meaningful; truncating them would be actively misleading). When
- * `innerWidth` can't fit the role column plus the desired model column
- * plus the widest `via`, the model column alone shrinks to what's left —
- * `teamRowLine` then truncates an individual model's text into that
- * narrower column with `truncateToWidth`, never the role.
- * @param {object[]} rows
- * @param {number} innerWidth
- */
-function teamColumnWidths(rows, innerWidth) {
-  const roleWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.role ?? "")), 0);
-  const desiredModelWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.model ?? "")), 0);
-  const viaWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.via ?? "")), 0);
-  const gapWidth = visibleWidth(TEAM_COLUMN_GAP);
-  const available = innerWidth - roleWidth - gapWidth * 2 - viaWidth;
-  const modelWidth = Math.max(0, Math.min(desiredModelWidth, Math.max(0, available)));
-  return { roleWidth, modelWidth };
+/** One agent's natural (unthemed) herd line — glyph + label + short
+ * provider, BLOCKED as the only state word (see HERD_STATE_GLYPH). */
+function herdNaturalLine(agent) {
+  const glyph = HERD_STATE_GLYPH[agent.state] ?? HERD_STATE_GLYPH.unknown;
+  const tail = agent.state === "blocked"
+    ? `${agent.provider ?? "unknown"}${HERD_SEPARATOR}BLOCKED`
+    : (agent.provider ?? "unknown");
+  return `${glyph} ${agent.label ?? "Unknown role"}${HERD_SEPARATOR}${tail}`;
 }
 
-/** One team row, columns aligned via `teamColumnWidths`. A blocked role
- * gets the error tone plus a trailing "BLOCKED" word — the ONLY per-row
- * status marker this panel ever prints (see the P01.1 "Why": the user
- * explicitly asked for no `available` noise, only exceptions). `dim`
- * (the P01.2 last-known cache) mutes a non-blocked row's text tone, since
- * a stale row should never read as freshly confirmed — BLOCKED still gets
- * the error tone even while cached, since that's the more important
- * exception to keep visible. */
-function teamRowLine(row, columns, theme, dim = false) {
-  const rolePart = padColumn(row.role ?? "", columns.roleWidth);
-  const modelPart = padColumn(row.model ?? "", columns.modelWidth);
-  const base = `${rolePart}${TEAM_COLUMN_GAP}${modelPart}${TEAM_COLUMN_GAP}${row.via ?? ""}`;
-  if (row.availability?.state === "blocked") return theme.fg("error", `${base}${TEAM_COLUMN_GAP}BLOCKED`);
-  return theme.fg(dim ? "muted" : "text", base);
+/** Herd agents in attention order (see HERD_STATE_RANK) — stable, so ties
+ * keep snapshot (strategy) order. */
+function sortedHerdAgents(agents) {
+  return [...agents].sort(
+    (a, b) => (HERD_STATE_RANK[a.state] ?? HERD_STATE_RANK.unknown) - (HERD_STATE_RANK[b.state] ?? HERD_STATE_RANK.unknown)
+  );
 }
 
-function teamPanelBody(team, theme, innerWidth) {
-  const rows = team?.rows ?? [];
-  if (!rows.length) return [theme.fg("muted", "Run /project analyze to build this project's team.")];
-  const columns = teamColumnWidths(rows, innerWidth);
-  return rows.map((row) => teamRowLine(row, columns, theme, team?.cached === true));
+/** One themed herd agent line, fitted into `innerWidth` — the label is
+ * never truncated (real names are short and meaningful; truncating them
+ * would be actively misleading); only the provider tail shrinks, via
+ * `truncateToWidth`. `cardLine` remains the final backstop. */
+function herdAgentLine(agent, theme, innerWidth) {
+  const tone = HERD_STATE_TONE[agent.state] ?? "muted";
+  const glyph = HERD_STATE_GLYPH[agent.state] ?? HERD_STATE_GLYPH.unknown;
+  const head = `${glyph} ${agent.label ?? "Unknown role"}`;
+  const tail = agent.state === "blocked"
+    ? `${agent.provider ?? "unknown"}${HERD_SEPARATOR}BLOCKED`
+    : (agent.provider ?? "unknown");
+  const maxTail = innerWidth - visibleWidth(head) - visibleWidth(HERD_SEPARATOR);
+  if (maxTail < 1) return theme.fg(tone, truncateToWidth(head, innerWidth, "…"));
+  const clippedTail = visibleWidth(tail) > maxTail ? truncateToWidth(tail, maxTail, "…") : tail;
+  return theme.fg(tone, `${head}${HERD_SEPARATOR}${clippedTail}`);
 }
 
-function anyRowChecking(team) {
-  return (team?.rows ?? []).some((row) => row.availability?.state === "checking");
+function herdPanelBody(snapshot, theme, innerWidth) {
+  const agents = snapshot.agents ?? [];
+  const spaces = herdSpacesLines(snapshot).map((line) => theme.fg("text", line));
+  if (!agents.length) {
+    return [...spaces, theme.fg("muted", "Run /project analyze to build this project's team.")];
+  }
+  return [...spaces, ...sortedHerdAgents(agents).map((agent) => herdAgentLine(agent, theme, innerWidth))];
 }
 
-function anyRowBlocked(team) {
-  return (team?.rows ?? []).some((row) => row.availability?.state === "blocked");
-}
-
-/** The TEAM panel title — dims to "checking…" while any row's live
- * availability is still resolving, or to "cached <age>" (P01.2 last-known
- * cache) while showing a stale value instead of a per-row marker. */
-function teamPanelTitle(team) {
-  if (anyRowChecking(team)) return "TEAM · checking…";
+/** The HERD panel title — the blocked count when anything needs
+ * attention (one glance answers who), the team state otherwise, or the
+ * P01.2 last-known cache age while showing a stale value. Never claims
+ * "checking": unknown glyphs on the rows already say that honestly. */
+function herdPanelTitle(snapshot) {
+  const team = snapshot.team;
   if (team?.cached) {
     const age = formatCacheAge(team.cacheAgeMs);
-    return age ? `TEAM · cached ${age}` : "TEAM · cached";
+    return age ? `HERD · cached ${age}` : "HERD · cached";
   }
-  return `TEAM · ${team?.state ?? "not_analyzed"}`;
+  const blocked = (snapshot.agents ?? []).filter((agent) => agent.state === "blocked").length;
+  if (blocked === 1) return "HERD · 1 blocked";
+  if (blocked > 1) return `HERD · ${blocked} blocked`;
+  return `HERD · ${team?.state ?? "not_analyzed"}`;
 }
 
-function teamPanelTone(team) {
-  if (anyRowChecking(team)) return "muted";
-  if (team?.cached) return "muted";
-  if (anyRowBlocked(team)) return "warning";
+function herdPanelTone(snapshot) {
+  const agents = snapshot.agents ?? [];
+  if (snapshot.team?.cached) return "muted";
+  if (agents.some((agent) => agent.state === "blocked")) return "warning";
+  if (agents.length && agents.every((agent) => agent.state === "unknown")) return "muted";
   return "accent";
 }
 
-const TEAM_FOOTER_COMMANDS = ["/kairo-team", "/kairo-route", "/kairo-usage", "/kairo-memory"];
+const HERD_FOOTER_COMMANDS = ["/kairo-team", "/kairo-route", "/kairo-usage", "/kairo-memory"];
 
 /** The largest visible width `cardBottom` can give a footer label inside
  * a panel of `panelWidth` columns — mirrors its own arithmetic
@@ -273,8 +294,8 @@ function fitFooterCommands(commands, maxWidth) {
   return result;
 }
 
-function teamPanelFooter(panelWidth) {
-  return fitFooterCommands(TEAM_FOOTER_COMMANDS, footerLabelBudget(panelWidth));
+function herdPanelFooter(panelWidth) {
+  return fitFooterCommands(HERD_FOOTER_COMMANDS, footerLabelBudget(panelWidth));
 }
 
 /**
@@ -293,26 +314,25 @@ function teamPanelFooter(panelWidth) {
  * @returns {string[]}
  */
 export function renderKairoWorkspaceWidget(snapshot, width, theme, extraLines = []) {
+  const herdMeasure = herdMeasureLines(snapshot);
   const usageBody = usagePanelBody(snapshot.subscriptions, theme);
-  const teamRows = snapshot.team?.rows ?? [];
-  const { leftWidth, rightWidth, sideBySide, gap } = computeSideBySideWidths(width, usageBody, teamRows);
-  const teamBody = teamPanelBody(snapshot.team, theme, cardInnerWidth(rightWidth));
-  const usageFooter = formatSessionIdentity(snapshot.session);
-  const teamFooter = teamPanelFooter(rightWidth);
-  const teamTitle = teamPanelTitle(snapshot.team);
-  const teamTone = teamPanelTone(snapshot.team);
+  const { leftWidth, rightWidth, sideBySide, gap } = computeSideBySideWidths(width, herdMeasure, usageBody);
+  const herdBody = herdPanelBody(snapshot, theme, cardInnerWidth(leftWidth));
+  const herdFooter = herdPanelFooter(leftWidth);
+  const herdTitle = herdPanelTitle(snapshot);
+  const herdTone = herdPanelTone(snapshot);
 
   let panelLines;
   if (sideBySide) {
-    const targetLineCount = Math.max(usageBody.length, teamBody.length);
-    const left = renderPanel("USAGE", CARD_TONE.SUCCESS, theme, leftWidth, usageBody, targetLineCount, usageFooter);
-    const right = renderPanel(teamTitle, teamTone, theme, rightWidth, teamBody, targetLineCount, teamFooter);
+    const targetLineCount = Math.max(herdBody.length, usageBody.length);
+    const left = renderPanel(herdTitle, herdTone, theme, leftWidth, herdBody, targetLineCount, herdFooter);
+    const right = renderPanel("USAGE", CARD_TONE.SUCCESS, theme, rightWidth, usageBody, targetLineCount);
     const gapStr = " ".repeat(gap);
     panelLines = left.map((line, index) => `${line}${gapStr}${right[index] ?? ""}`);
   } else {
     panelLines = [
-      ...renderPanel("USAGE", CARD_TONE.SUCCESS, theme, leftWidth, usageBody, undefined, usageFooter),
-      ...renderPanel(teamTitle, teamTone, theme, rightWidth, teamBody, undefined, teamFooter)
+      ...renderPanel(herdTitle, herdTone, theme, leftWidth, herdBody, undefined, herdFooter),
+      ...renderPanel("USAGE", CARD_TONE.SUCCESS, theme, rightWidth, usageBody)
     ];
   }
 

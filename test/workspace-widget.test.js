@@ -24,6 +24,19 @@ function fixtureSnapshot(overrides = {}) {
     project: { label: "agentic-harness" },
     session: { state: "bound", id: "11111111-2222", title: "Ship widget", mode: "agent" },
     team: { state: "active", assignments: [], rows: SEVEN_ROLES },
+    agents: [
+      { id: "project-analyst", label: "Project Analyst", role: "Project Analyst", provider: "codex", model: "GPT-6-Astra", state: "idle", stateReason: null },
+      { id: "orchestrator", label: "Orchestrator", role: "Orchestrator", provider: "opencode-go", model: "Kimi K3", state: "idle", stateReason: null },
+      { id: "builder", label: "Builder", role: "Builder", provider: "codex", model: "GPT-6 Terra", state: "idle", stateReason: null },
+      { id: "reviewer", label: "Reviewer", role: "Reviewer", provider: "codex", model: "GPT-5.6-Terra", state: "idle", stateReason: null },
+      { id: "tester", label: "Tester", role: "Tester", provider: "claude", model: "Claude Haiku", state: "idle", stateReason: null },
+      { id: "researcher", label: "Researcher", role: "Researcher", provider: "opencode-go", model: "MiniMax-M3", state: "blocked", stateReason: "Unavailable — Cursor Models quota exhausted" },
+      { id: "documenter", label: "Documenter", role: "Documenter", provider: "opencode-go", model: "Gemini Flash", state: "unknown", stateReason: null }
+    ],
+    spaces: [
+      { kind: "project", label: "agentic-harness", root: "/work/agentic-harness" },
+      { kind: "session", id: "11111111", mode: "agent", state: "bound" }
+    ],
     subscriptions: {
       state: "ready",
       segments: ["Codex 5h 58% / W 86%", "Claude S 34% / W 65%", "Go 100% / 100% / 96%"],
@@ -50,40 +63,33 @@ for (const width of [60, 100, 160]) {
   });
 }
 
-test("renderKairoWorkspaceWidget stacks USAGE above TEAM when the width is narrow, and places them side by side otherwise", () => {
+test("renderKairoWorkspaceWidget stacks HERD above USAGE when the width is narrow, and places them side by side otherwise", () => {
   const narrow = renderKairoWorkspaceWidget(fixtureSnapshot(), 60, IDENTITY_THEME);
+  const herdIndex = narrow.findIndex((line) => line.includes("HERD"));
   const usageIndex = narrow.findIndex((line) => line.includes("USAGE"));
-  const teamIndex = narrow.findIndex((line) => line.includes("TEAM"));
-  assert.ok(usageIndex >= 0 && teamIndex >= 0 && usageIndex < teamIndex, "USAGE panel should render fully before TEAM when stacked");
+  assert.ok(herdIndex >= 0 && usageIndex >= 0 && herdIndex < usageIndex, "HERD panel should render fully before USAGE when stacked");
 
   const wide = renderKairoWorkspaceWidget(fixtureSnapshot(), 120, IDENTITY_THEME);
-  const wideLineWithBoth = wide.find((line) => line.includes("USAGE") && line.includes("TEAM"));
-  assert.ok(wideLineWithBoth, "USAGE and TEAM titles should share a line when side by side");
+  const wideLineWithBoth = wide.find((line) => line.includes("USAGE") && line.includes("HERD"));
+  assert.ok(wideLineWithBoth, "USAGE and HERD titles should share a line when side by side");
 });
 
 test("renderKairoWorkspaceWidget shows no per-row 'available' marker, but colors a blocked row with BLOCKED", () => {
   const theme = markerTheme();
-  // A short-content fixture stacked (full width, not content-sized): a
-  // content-sized panel (P01.2) allocates a row EXACTLY its own desired
-  // width, and markerTheme wraps every themed segment in literal
-  // "<role>...</role>" text — unlike a real ANSI theme, whose escape
-  // codes are zero-width to visibleWidth — so a side-by-side panel sized
-  // that tightly would truncate under this test double's own overhead.
-  // Stacking (at a width too narrow for both panels to fit side by side)
-  // gives the row the FULL given width instead, which is what's under
-  // test here anyway (per-row marker/tone behavior, not width fitting).
+  // Stacked (at a width too narrow for both panels to fit side by side)
+  // gives each row the FULL given width instead — see the same markerTheme
+  // note the old TEAM test carried: the test double's own "<role>" wraps
+  // would truncate inside a tightly content-sized side-by-side panel.
   const shortSnapshot = fixtureSnapshot({
-    team: {
-      state: "active",
-      rows: [
-        { role: "A", model: "M", via: "codex", availability: { state: "available", warning: null } },
-        { role: "B", model: "N", via: "codex", availability: { state: "blocked", warning: "Blocked." } }
-      ]
-    }
+    agents: [
+      { id: "a", label: "A", role: "A", provider: "codex", model: "M", state: "idle", stateReason: null },
+      { id: "b", label: "B", role: "B", provider: "codex", model: "N", state: "blocked", stateReason: "Blocked." }
+    ]
   });
   const lines = renderKairoWorkspaceWidget(shortSnapshot, 50, theme);
   const joined = lines.join("\n");
   assert.ok(!joined.includes("available"), "no row should print the word 'available'");
+  assert.ok(!joined.includes("idle"), "no row should print its idle state as a word");
   assert.ok(joined.includes("BLOCKED"), "the blocked role should be marked BLOCKED");
   assert.ok(joined.includes("<error>") && joined.includes("BLOCKED"), "the blocked row should use the error tone");
 });
@@ -134,12 +140,12 @@ for (const width of [60, 100, 160]) {
       assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: "${line}"`);
     }
     // The whole point of content-sizing: at a wide-enough width, the
-    // combined USAGE+TEAM line should NOT consume the entire given width
+    // combined HERD+USAGE line should NOT consume the entire given width
     // just because it's available — it should stop at what the content
     // (plus frame/gap) actually needs.
     if (width === 160) {
-      const combined = lines.find((line) => line.includes("USAGE") && line.includes("TEAM"));
-      assert.ok(combined, "expected a combined USAGE+TEAM line at width 160");
+      const combined = lines.find((line) => line.includes("USAGE") && line.includes("HERD"));
+      assert.ok(combined, "expected a combined USAGE+HERD line at width 160");
       assert.ok(
         visibleWidth(combined) < width,
         `combined USAGE+TEAM line should stop short of the full width at ${width}, got ${visibleWidth(combined)}`
@@ -148,10 +154,17 @@ for (const width of [60, 100, 160]) {
   });
 }
 
-test("renderKairoWorkspaceWidget dims the TEAM title with 'checking…' while any row is still resolving live availability", () => {
-  const theme = markerTheme();
-  const lines = renderKairoWorkspaceWidget(fixtureSnapshot(), 160, theme);
-  assert.ok(lines.some((line) => line.includes("checking")), "TEAM title should show checking while a row is unresolved");
+test("renderKairoWorkspaceWidget's HERD title names the blocked count when anything needs attention", () => {
+  const lines = renderKairoWorkspaceWidget(fixtureSnapshot(), 160, IDENTITY_THEME);
+  assert.ok(lines.some((line) => line.includes("HERD") && line.includes("1 blocked")), "one blocked agent should read as 'HERD · 1 blocked'");
+});
+
+test("renderKairoWorkspaceWidget's HERD title falls back to the team state when nothing is blocked", () => {
+  const lines = renderKairoWorkspaceWidget(fixtureSnapshot({
+    agents: [{ id: "a", label: "A", role: "A", provider: "codex", model: "M", state: "idle", stateReason: null }]
+  }), 160, IDENTITY_THEME);
+  assert.ok(lines.some((line) => line.includes("HERD · active")));
+  assert.ok(!lines.some((line) => line.includes("blocked")), "no blocked count without a blocked agent");
 });
 
 test("renderKairoWorkspaceWidget renders every team row even though a string-array widget would truncate past 10 lines", () => {
@@ -190,12 +203,12 @@ test("renderKairoWorkspaceWidget renders a cached usage value dim with its age, 
   assert.ok(!joined.includes("usage checking"), "cached data is never shown as plain checking");
 });
 
-test("renderKairoWorkspaceWidget renders a cached team value dim with its age in the TEAM title, instead of checking", () => {
+test("renderKairoWorkspaceWidget renders a cached herd value dim with its age in the HERD title, instead of fresh", () => {
   const cachedTeam = { state: "active", rows: [SEVEN_ROLES[0]], cached: true, cacheAgeMs: 120_000 };
   const lines = renderKairoWorkspaceWidget(fixtureSnapshot({ team: cachedTeam }), 160, IDENTITY_THEME);
   const joined = lines.join("\n");
-  assert.ok(joined.includes("2m ago"), "the team cache age is shown");
-  assert.ok(joined.includes(SEVEN_ROLES[0].role), "the cached row itself still renders");
+  assert.ok(joined.includes("2m ago"), "the herd cache age is shown");
+  assert.ok(joined.includes("Project Analyst"), "the cached agent itself still renders");
 });
 
 test("renderKairoWorkspaceWidget appends one dim availability-check-failure line when given extraLines", () => {
@@ -203,18 +216,26 @@ test("renderKairoWorkspaceWidget appends one dim availability-check-failure line
   assert.ok(lines.some((line) => line.includes("availability check failed")));
 });
 
-test("renderKairoWorkspaceWidget's TEAM panel footer lists the /kairo-* commands", () => {
+test("renderKairoWorkspaceWidget's HERD panel footer lists whole /kairo-* commands, starting with the detail view", () => {
   const lines = renderKairoWorkspaceWidget(fixtureSnapshot(), 160, IDENTITY_THEME);
-  assert.ok(lines.some((line) => line.includes("/kairo-team") && line.includes("/kairo-route") && line.includes("/kairo-usage")));
+  assert.ok(lines.some((line) => line.includes("/kairo-team")), "the narrow herd panel always fits at least the /kairo-team detail entry");
 });
 
-test("renderKairoWorkspaceWidget's USAGE panel footer shows the session and mode", () => {
+test("renderKairoWorkspaceWidget's spaces section shows the project label and the short bound session id", () => {
   const lines = renderKairoWorkspaceWidget(fixtureSnapshot(), 160, IDENTITY_THEME);
-  assert.ok(lines.some((line) => line.includes("11111111") && line.includes("agent")));
+  const joined = lines.join("\n");
+  assert.ok(joined.includes("agentic-harness"), "the current project label is visible");
+  assert.ok(joined.includes("session: 11111111 · agent"), "the bound session shows as short id + mode");
 });
 
-test("renderKairoWorkspaceWidget's USAGE panel footer shows an explicit unbound state, never a default ask mode", () => {
-  const lines = renderKairoWorkspaceWidget(fixtureSnapshot({ session: { state: "unbound" } }), 160, IDENTITY_THEME);
+test("renderKairoWorkspaceWidget's spaces section shows an explicit unbound state, never a default ask mode", () => {
+  const lines = renderKairoWorkspaceWidget(fixtureSnapshot({
+    session: { state: "unbound" },
+    spaces: [
+      { kind: "project", label: "agentic-harness", root: "/work/agentic-harness" },
+      { kind: "session", state: "unbound" }
+    ]
+  }), 160, IDENTITY_THEME);
   assert.ok(lines.some((line) => line.includes("session: unbound")));
   assert.ok(!lines.some((line) => line.includes("· ask")), "unbound must never imply a default mode");
 });
@@ -252,10 +273,10 @@ test("availabilityNotices returns nothing when no role is blocked", () => {
 // ever show whole commands that fit — never cut one mid-name.
 
 test("computeSideBySideWidths sizes each panel to its own content (P01.2), never a naive half-width split", () => {
+  const herdBody = ["◈ agentic-harness", "○ Builder · codex"];
   const usageBody = ["Codex   5h ━━━━━━━━━━ 80%"]; // 26 visible columns
-  const teamRows = [{ role: "Builder", model: "GPT-6 Terra", via: "codex", availability: { state: "available" } }];
 
-  const { leftWidth, rightWidth, sideBySide, gap } = computeSideBySideWidths(160, usageBody, teamRows);
+  const { leftWidth, rightWidth, sideBySide, gap } = computeSideBySideWidths(160, herdBody, usageBody);
   assert.equal(sideBySide, true);
   assert.ok(leftWidth < 80, `left panel should be sized to its short content, not half of 160, got ${leftWidth}`);
   assert.ok(rightWidth < 80, `right panel should be sized to its short content, not half of 160, got ${rightWidth}`);
@@ -263,58 +284,83 @@ test("computeSideBySideWidths sizes each panel to its own content (P01.2), never
 });
 
 test("computeSideBySideWidths stacks (never exceeding the given width) when combined content doesn't fit", () => {
+  const herdBody = ["◈ agentic-harness", "○ Project Analyst · opencode-go · A Very Long Provider Name Indeed"];
   const usageBody = ["Codex   5h ━━━━━━━━━━ 80%"];
-  const teamRows = [{ role: "Project Analyst", model: "A Very Long Model Name Indeed", via: "opencode-go", availability: { state: "available" } }];
 
-  const { leftWidth, rightWidth, sideBySide } = computeSideBySideWidths(40, usageBody, teamRows);
+  const { leftWidth, rightWidth, sideBySide } = computeSideBySideWidths(40, herdBody, usageBody);
   assert.equal(sideBySide, false);
   assert.equal(leftWidth, 40);
   assert.equal(rightWidth, 40);
 });
 
-for (const width of [100, 160]) {
-  test(`renderKairoWorkspaceWidget aligns TEAM role/model/via into fixed columns at width ${width}, padded to the longest visible width per column`, () => {
-    const lines = renderKairoWorkspaceWidget(fixtureSnapshot(), width, IDENTITY_THEME);
-    // Locate the TEAM panel's own start column from the real rendered top
-    // border (its second "╭") — content-sized panels (P01.2) no longer
-    // split the width in half, so this never re-derives that arithmetic.
-    const topLine = lines[0];
-    const teamStart = topLine.indexOf("╭", topLine.indexOf("╭") + 1);
-    assert.ok(teamStart > 0, `expected a second panel top border on the first line at width ${width}: "${topLine}"`);
-    const teamLines = lines
-      .map((line) => line.slice(teamStart))
-      .filter((line) => SEVEN_ROLES.some((row) => line.includes(row.role)));
+// --- H2 herd layout: the dense role/model/via table leaves the overview
+// (detail lives in /kairo-team) — agents render blocked-first as a Herdr
+// glyph list, so one glance answers who needs attention.
 
-    assert.equal(teamLines.length, SEVEN_ROLES.length, `expected exactly one TEAM content line per role at width ${width}`);
-
-    const modelStarts = [];
-    const viaStarts = [];
-    for (const row of SEVEN_ROLES) {
-      const line = teamLines.find((candidate) => candidate.includes(row.role));
-      assert.ok(line, `missing TEAM line for role "${row.role}"`);
-      const modelStart = line.indexOf(row.model);
-      assert.ok(modelStart > 0, `model "${row.model}" not found after the role column on "${line}"`);
-      const viaStart = line.indexOf(row.via, modelStart + row.model.length);
-      assert.ok(viaStart > modelStart, `via "${row.via}" not found after the model column on "${line}"`);
-      modelStarts.push(modelStart);
-      viaStarts.push(viaStart);
-    }
-
-    // The whole point: with roles of very different lengths ("Project
-    // Analyst" vs. "Builder"), a naive fixed "  " gap (the reported
-    // defect) puts the model column at a DIFFERENT visible column on
-    // every row. A real column layout puts it at the SAME column on
-    // every row, padded to the longest role's visible width.
-    assert.equal(new Set(modelStarts).size, 1, `model column should start at the same visible column on every row, got starts: ${modelStarts.join(",")}`);
-    assert.equal(new Set(viaStarts).size, 1, `via column should start at the same visible column on every row, got starts: ${viaStarts.join(",")}`);
-  });
+function herdAgentLine(lines, label) {
+  return lines.find((line) => line.includes(label));
 }
 
+test("renderKairoWorkspaceWidget orders herd agents blocked first, then working, idle, done, unknown last", () => {
+  const lines = renderKairoWorkspaceWidget(fixtureSnapshot({
+    agents: [
+      { id: "u", label: "Uma", role: "Uma", provider: "codex", model: "M", state: "unknown", stateReason: null },
+      { id: "i", label: "Ida", role: "Ida", provider: "codex", model: "M", state: "idle", stateReason: null },
+      { id: "d", label: "Dora", role: "Dora", provider: "codex", model: "M", state: "done", stateReason: null },
+      { id: "b", label: "Bea", role: "Bea", provider: "codex", model: "M", state: "blocked", stateReason: "Blocked." },
+      { id: "w", label: "Wally", role: "Wally", provider: "codex", model: "M", state: "working", stateReason: null }
+    ]
+  }), 60, IDENTITY_THEME);
+
+  const order = ["Bea", "Wally", "Ida", "Dora", "Uma"]
+    .map((label) => lines.findIndex((line) => line.includes(label)));
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), `herd order should be blocked, working, idle, done, unknown, got indexes ${order.join(",")}`);
+});
+
+test("renderKairoWorkspaceWidget gives every herd state its own glyph and never a false done", () => {
+  const lines = renderKairoWorkspaceWidget(fixtureSnapshot({
+    agents: [
+      { id: "b", label: "Bea", role: "Bea", provider: "codex", model: "M", state: "blocked", stateReason: "Blocked." },
+      { id: "w", label: "Wally", role: "Wally", provider: "codex", model: "M", state: "working", stateReason: null },
+      { id: "i", label: "Ida", role: "Ida", provider: "codex", model: "M", state: "idle", stateReason: null },
+      { id: "d", label: "Dora", role: "Dora", provider: "codex", model: "M", state: "done", stateReason: null },
+      { id: "u", label: "Uma", role: "Uma", provider: "codex", model: "M", state: "unknown", stateReason: null }
+    ]
+  }), 60, IDENTITY_THEME);
+  const joined = lines.join("\n");
+  for (const [label, glyph] of [["Bea", "✖"], ["Wally", "◉"], ["Ida", "○"], ["Dora", "✔"], ["Uma", "?"]]) {
+    assert.ok(herdAgentLine(lines, label)?.includes(glyph), `agent "${label}" should carry the "${glyph}" glyph`);
+  }
+  assert.ok(!joined.includes("DONE"), "done is glyph-only, never a DONE word");
+
+  const noDone = renderKairoWorkspaceWidget(fixtureSnapshot({
+    agents: [{ id: "i", label: "Ida", role: "Ida", provider: "codex", model: "M", state: "idle", stateReason: null }]
+  }), 60, IDENTITY_THEME).join("\n");
+  assert.ok(!noDone.includes("✔"), "no done glyph without a real finished signal");
+});
+
+test("renderKairoWorkspaceWidget truncates a long herd provider but never the agent label", () => {
+  const lines = renderKairoWorkspaceWidget(fixtureSnapshot({
+    agents: [{ id: "b", label: "Builder", role: "Builder", provider: "a-very-long-provider-name-indeed", model: "M", state: "idle", stateReason: null }]
+  }), 40, IDENTITY_THEME);
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= 40, `line exceeds width 40: "${line}"`);
+  }
+  const agentLine = herdAgentLine(lines, "Builder");
+  assert.ok(agentLine, "the agent label survives truncation");
+  assert.ok(!agentLine.includes("a-very-long-provider-name-indeed"), "the overflowing provider is truncated, not the label");
+});
+
+test("renderKairoWorkspaceWidget shows the analyze hint when the herd is empty", () => {
+  const lines = renderKairoWorkspaceWidget(fixtureSnapshot({ agents: [] }), 60, IDENTITY_THEME);
+  assert.ok(lines.some((line) => line.includes("Run /project analyze to build this project's team.")));
+});
+
 for (const width of [60, 100, 160]) {
-  test(`renderKairoWorkspaceWidget's TEAM footer at width ${width} never cuts a /kairo-* command mid-name`, () => {
+  test(`renderKairoWorkspaceWidget's HERD footer at width ${width} never cuts a /kairo-* command mid-name`, () => {
     const lines = renderKairoWorkspaceWidget(fixtureSnapshot(), width, IDENTITY_THEME);
     const footerLine = lines.find((line) => line.includes("/kairo-"));
-    assert.ok(footerLine, `expected a TEAM footer line with /kairo-* commands at width ${width}`);
+    assert.ok(footerLine, `expected a HERD footer line with /kairo-* commands at width ${width}`);
 
     const KNOWN_COMMANDS = ["/kairo-team", "/kairo-route", "/kairo-usage", "/kairo-memory"];
     const found = footerLine.match(/\/kairo-[a-z]*/g) ?? [];
