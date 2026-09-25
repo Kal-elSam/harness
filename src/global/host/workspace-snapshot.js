@@ -34,6 +34,73 @@ function workspaceSession(session) {
   };
 }
 
+/** Stable herd id for one agent — a slug of the role name, never a random
+ * or session-scoped value, so attention state can be tracked per role
+ * across refreshes. */
+function agentId(role) {
+  const slug = String(role ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "unknown-role";
+}
+
+/**
+ * The herd state for one agent, derived ONLY from the team row's real
+ * availability — this snapshot never invents its own liveness rule.
+ * - `blocked`: resolveAssignmentAvailability said blocked (fail-closed
+ *   attention signal; never presented as available).
+ * - `idle`: assignment available with no active run for that role.
+ * - `unknown`: still checking, or the probe failed / produced no evidence.
+ * `working`/`done` are deliberately NEVER emitted here: the snapshot
+ * inputs expose no per-role run signal yet (see H3 in
+ * odd/tasks/herd-shell-layout.md) — claiming them would be fabrication.
+ * @param {object} availability - a team row's `availability`
+ */
+function agentState(availability) {
+  if (availability?.state === "blocked") return "blocked";
+  if (availability?.state === "available") return "idle";
+  return "unknown";
+}
+
+/**
+ * The herd agents — one entry per team row, in strategy order (Project
+ * Analyst, Orchestrator, then project-team roles). Same facts as
+ * `team.rows`, reshaped for attention ordering (blocked first happens at
+ * render, see workspace-widget.js); no second recommendation.
+ * @param {object} team - the `workspaceTeam` value
+ */
+function workspaceAgents(team) {
+  return (team?.rows ?? []).map((row) => ({
+    id: agentId(row.role),
+    label: row.role ?? "Unknown role",
+    role: row.role ?? "Unknown role",
+    provider: row.via ?? "unknown",
+    model: row.model ?? "no eligible option",
+    state: agentState(row.availability),
+    stateReason: row.availability?.warning ?? null
+  }));
+}
+
+/**
+ * The herd spaces — minimum viable: the current project plus the bound
+ * session (short id + mode). Never an invented multi-repo list: exactly
+ * these two entries, with the session entry honestly `unbound` when no
+ * host binding exists.
+ * @param {object} project - the snapshot's `project`
+ * @param {object} session - the snapshot's `session`
+ */
+function workspaceSpaces(project, session) {
+  const spaces = [{
+    kind: "project",
+    label: project?.label ?? project?.root ?? "unknown",
+    root: project?.root ?? null
+  }];
+  if (session?.state === "bound") {
+    spaces.push({ kind: "session", id: String(session.id).slice(0, 8), mode: session.mode ?? "ask", state: "bound" });
+  } else {
+    spaces.push({ kind: "session", state: "unbound" });
+  }
+  return spaces;
+}
+
 /**
  * Availability for one team row, computed ONLY through the real,
  * moved `resolveAssignmentAvailability` — this widget never invents its
@@ -183,14 +250,21 @@ export function buildKairoWorkspaceSnapshot({
   if (typeof projectRoot !== "string" || projectRoot.trim() === "") {
     throw new Error("Kairo workspace snapshot requires a project root.");
   }
+  const project = { root: projectRoot, label: basename(projectRoot) || projectRoot };
+  const sessionValue = workspaceSession(session);
+  const team = workspaceTeam(strategy, availabilityIntelligence, availabilityCache, now);
   return {
     schema: KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
-    project: { root: projectRoot, label: basename(projectRoot) || projectRoot },
-    session: workspaceSession(session),
-    team: workspaceTeam(strategy, availabilityIntelligence, availabilityCache, now),
+    project,
+    session: sessionValue,
+    team,
     usage: Array.isArray(usage) ? usage : [],
     subscriptions: workspaceSubscriptions(usageIntelligence, usageCache, now),
-    memory: { status: engram?.status ?? "unknown" }
+    memory: { status: engram?.status ?? "unknown" },
+    // Additive herd contract (H1): same team/session facts, reshaped for
+    // attention ordering — old consumers keep reading team/session untouched.
+    agents: workspaceAgents(team),
+    spaces: workspaceSpaces(project, sessionValue)
   };
 }
 

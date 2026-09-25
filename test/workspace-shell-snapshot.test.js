@@ -441,3 +441,71 @@ test("loadKairoUsageData never throws even when a reader rejects — a failed re
   assert.equal(usageData.usage.codex, null);
   assert.deepEqual(usageData.usage.claude, { status: "measured", primary: { remainingPercent: 34 } });
 });
+
+test("workspace snapshot exposes herd agents[] derived from team rows, additive to the existing shape", () => {
+  const snapshot = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY });
+
+  assert.deepEqual(snapshot.agents, [
+    { id: "project-analyst", label: "Project Analyst", role: "Project Analyst", provider: "claude", model: "Claude Opus 5", state: "unknown", stateReason: null },
+    { id: "orchestrator", label: "Orchestrator", role: "Orchestrator", provider: "opencode-go", model: "Kimi K3", state: "unknown", stateReason: null },
+    { id: "builder", label: "Builder", role: "Builder", provider: "codex", model: "GPT-6 Terra", state: "unknown", stateReason: null },
+    { id: "reviewer", label: "Reviewer", role: "Reviewer", provider: "unknown", model: "no eligible option", state: "unknown", stateReason: null }
+  ]);
+  // Additive: the pre-existing team shape is unchanged.
+  assert.equal(snapshot.team.rows.length, 4);
+  assert.equal(snapshot.team.state, "active");
+});
+
+test("workspace snapshot agents map blocked to blocked with reason and available to idle, never working or done without a run signal", () => {
+  const snapshot = buildKairoWorkspaceSnapshot({
+    projectRoot: "/work/agentic-harness",
+    strategy: FULL_STRATEGY,
+    intelligence: { eligibility: { codex: { ok: true } }, claudeEntitlement: { "claude-opus-5": { status: "denied", reason: "plan tier too low" } }, cursorAccess: {} }
+  });
+
+  const analyst = snapshot.agents.find((agent) => agent.id === "project-analyst");
+  assert.equal(analyst.state, "blocked");
+  assert.equal(analyst.stateReason, "Unavailable — your Claude plan denies this model (plan tier too low)");
+
+  const builder = snapshot.agents.find((agent) => agent.id === "builder");
+  assert.equal(builder.state, "idle");
+  assert.equal(builder.stateReason, null);
+
+  for (const agent of snapshot.agents) {
+    assert.ok(agent.state !== "working" && agent.state !== "done", `no run signal exists, so ${agent.id} must not claim ${agent.state}`);
+  }
+});
+
+test("workspace snapshot agents fail closed to unknown when intelligence explicitly failed", () => {
+  const snapshot = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY, intelligence: null });
+
+  assert.equal(snapshot.agents.length, 4);
+  for (const agent of snapshot.agents) {
+    assert.equal(agent.state, "unknown");
+  }
+});
+
+test("workspace snapshot agents stay empty when the project was never analyzed", () => {
+  const snapshot = buildKairoWorkspaceSnapshot({ projectRoot: "/work/empty", session: null, strategy: null });
+
+  assert.deepEqual(snapshot.agents, []);
+});
+
+test("workspace snapshot spaces carries the current project plus the bound session short id, never an invented multi-repo", () => {
+  const bound = buildKairoWorkspaceSnapshot({
+    projectRoot: "/work/agentic-harness",
+    session: { id: "11111111-1111-4111-8111-111111111111", title: "Routing overhaul", mode: "agent" },
+    strategy: FULL_STRATEGY
+  });
+
+  assert.deepEqual(bound.spaces, [
+    { kind: "project", label: "agentic-harness", root: "/work/agentic-harness" },
+    { kind: "session", id: "11111111", mode: "agent", state: "bound" }
+  ]);
+
+  const unbound = buildKairoWorkspaceSnapshot({ projectRoot: "/work/empty", session: null, strategy: null });
+  assert.deepEqual(unbound.spaces, [
+    { kind: "project", label: "empty", root: "/work/empty" },
+    { kind: "session", state: "unbound" }
+  ]);
+});
