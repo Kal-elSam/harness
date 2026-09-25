@@ -16,7 +16,7 @@
  * built CLI uses, without tripping this repo's check:ts-imports rule, which
  * forbids relative ".js" import specifiers in source .ts files.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -78,7 +78,12 @@ describe("Kairo empty-session fork via AgentSessionRuntime (dist/bundle)", () =>
 		}
 	});
 
-	async function createRuntimeForTest(onSessionStart: (event: SessionStartEvent) => void) {
+	async function createRuntimeForTest(
+		onSessionStart: (event: SessionStartEvent) => void,
+		options?: {
+			buildInitialSessionManager?: (cwd: string, sessionDir: string) => ReturnType<typeof SessionManager.create>;
+		},
+	) {
 		const tempDir = join(tmpdir(), `kairo-fork-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		const sessionDir = join(tempDir, "sessions");
 		mkdirSync(tempDir, { recursive: true });
@@ -135,7 +140,9 @@ describe("Kairo empty-session fork via AgentSessionRuntime (dist/bundle)", () =>
 		const runtime = await createAgentSessionRuntime(createRuntime, {
 			cwd: tempDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(tempDir, sessionDir),
+			sessionManager: options?.buildInitialSessionManager
+				? options.buildInitialSessionManager(tempDir, sessionDir)
+				: SessionManager.create(tempDir, sessionDir),
 		});
 		await runtime.session.bindExtensions({});
 
@@ -192,5 +199,100 @@ describe("Kairo empty-session fork via AgentSessionRuntime (dist/bundle)", () =>
 		expect(existsSync(previousSessionFile!)).toBe(false); // upstream: not persisted yet
 
 		await expect(runtime.fork(userEntryId, { position: "at" })).rejects.toThrow(/has not been saved yet/);
+	});
+
+	it("gate ON: forking at the very first user message (position 'before', no target leaf) leaves no orphan session file", async () => {
+		process.env[ENV_VAR] = "1";
+
+		// Append the user message as the very first entry (parentId: null)
+		// BEFORE the runtime/session is created around this SessionManager.
+		// Going through the normal runtime startup first would seed a
+		// model_change/thinking_level_change entry ahead of any user
+		// message, which is never the case for imported/legacy sessions or a
+		// session driven directly through this lower-level API without that
+		// startup sequence: the entry-append order here, not a
+		// createRuntimeForTest quirk, is what makes the very first user
+		// message have a null parentId, which is the "no target leaf" case
+		// fork() hits when the user forks "before" it.
+		let userEntryId = "";
+		const { runtime, sessionDir } = await createRuntimeForTest(() => {}, {
+			buildInitialSessionManager: (cwd, sessionDirForManager) => {
+				const manager = SessionManager.create(cwd, sessionDirForManager);
+				userEntryId = manager.appendMessage(userMsg("hello"));
+				return manager;
+			},
+		});
+
+		expect(runtime.session.sessionManager.getEntry(userEntryId)?.parentId).toBeNull();
+		const previousSessionFile = runtime.session.sessionFile!;
+		expect(existsSync(previousSessionFile)).toBe(true); // eager write from newSession()
+
+		const forkResult = await runtime.fork(userEntryId, { position: "before" });
+		expect(forkResult.cancelled).toBe(false);
+		await runtime.session.bindExtensions({});
+
+		const forkedSessionFile = runtime.session.sessionFile!;
+		expect(forkedSessionFile).not.toBe(previousSessionFile);
+		expect(existsSync(forkedSessionFile)).toBe(true);
+
+		const sessionFiles = readdirSync(sessionDir)
+			.filter((name) => name.endsWith(".jsonl"))
+			.map((name) => join(sessionDir, name));
+
+		// Exactly two files: the original session and the forked child. No
+		// orphan (parent-less, unreferenced) session file left behind from an
+		// intermediate SessionManager that was persisted before being
+		// discarded.
+		expect(sessionFiles.sort()).toEqual([previousSessionFile, forkedSessionFile].sort());
+
+		const header = JSON.parse(readFileSync(forkedSessionFile, "utf8").split("\n")[0]);
+		expect(header.parentSession).toBe(previousSessionFile);
+	});
+
+	it("gate ON: plain /new still creates exactly one new session file (no parentSession option)", async () => {
+		process.env[ENV_VAR] = "1";
+		const { runtime, sessionDir } = await createRuntimeForTest(() => {});
+
+		const previousSessionFile = runtime.session.sessionFile!;
+		expect(existsSync(previousSessionFile)).toBe(true); // eager write from newSession()
+
+		const newResult = await runtime.newSession();
+		expect(newResult.cancelled).toBe(false);
+		await runtime.session.bindExtensions({});
+
+		const newSessionFile = runtime.session.sessionFile!;
+		expect(newSessionFile).not.toBe(previousSessionFile);
+		expect(existsSync(newSessionFile)).toBe(true);
+
+		const sessionFiles = readdirSync(sessionDir)
+			.filter((name) => name.endsWith(".jsonl"))
+			.map((name) => join(sessionDir, name));
+
+		expect(sessionFiles.sort()).toEqual([previousSessionFile, newSessionFile].sort());
+	});
+
+	it("gate ON: /new with an explicit parentSession leaves no orphan session file", async () => {
+		process.env[ENV_VAR] = "1";
+		const { runtime, sessionDir } = await createRuntimeForTest(() => {});
+
+		const previousSessionFile = runtime.session.sessionFile!;
+		expect(existsSync(previousSessionFile)).toBe(true); // eager write from newSession()
+
+		const newResult = await runtime.newSession({ parentSession: previousSessionFile });
+		expect(newResult.cancelled).toBe(false);
+		await runtime.session.bindExtensions({});
+
+		const newSessionFile = runtime.session.sessionFile!;
+		expect(newSessionFile).not.toBe(previousSessionFile);
+		expect(existsSync(newSessionFile)).toBe(true);
+
+		const sessionFiles = readdirSync(sessionDir)
+			.filter((name) => name.endsWith(".jsonl"))
+			.map((name) => join(sessionDir, name));
+
+		expect(sessionFiles.sort()).toEqual([previousSessionFile, newSessionFile].sort());
+
+		const header = JSON.parse(readFileSync(newSessionFile, "utf8").split("\n")[0]);
+		expect(header.parentSession).toBe(previousSessionFile);
 	});
 });
