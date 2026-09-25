@@ -15,8 +15,8 @@ importers:
         specifier: 0.85.1
         version: 0.85.1
       '@kal-elsam/kairo-pi-coding-agent':
-        specifier: 0.87.1-kairo.1
-        version: 0.87.1-kairo.1(ws@8.21.0)(zod@4.4.3)
+        specifier: 0.87.1-kairo.2
+        version: 0.87.1-kairo.2(ws@8.21.0)(zod@4.4.3)
       '@modelcontextprotocol/server':
         specifier: 2.0.0
         version: 2.0.0
@@ -330,8 +330,8 @@ packages:
       '@modelcontextprotocol/sdk':
         optional: true
 
-  '@kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.1':
-    resolution: {integrity: sha512-CIuXsResijB1OASKQ1Iz5ytkp01efBUGYgRVh+Q4SQgvRVl6ORhIfrQxi9fU0WXk/azYFMf5Ssl8+39ukDIu4w==}
+  '@kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.2':
+    resolution: {integrity: sha512-57piJGjf1RPjkUijRUutTq4+nuwgXcKudc9LKmzw5//i/Ov4ZO8omIEHH2IHN6VtnRPGeirikTxON4fkE26/CQ==}
     engines: {node: '>=22.19.0'}
 
   '@modelcontextprotocol/core@2.0.0':
@@ -1217,7 +1217,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.1(ws@8.21.0)(zod@4.4.3)':
+  '@kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.2(ws@8.21.0)(zod@4.4.3)':
     dependencies:
       '@earendil-works/chord': 0.87.1
       '@earendil-works/pi-agent-core': 0.87.1(ws@8.21.0)(zod@4.4.3)

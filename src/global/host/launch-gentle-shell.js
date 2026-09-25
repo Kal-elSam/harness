@@ -11,7 +11,7 @@ import { resolveHomeDir } from "../paths.js";
 // make Kairo's first screen quiet. See odd/tasks/kairo-pi-parity.md,
 // "P02 repair — Kairo-only Pi fork".
 export const KAIRO_PI_PACKAGE_NAME = "@kal-elsam/kairo-pi-coding-agent";
-export const KAIRO_PI_PACKAGE_VERSION = "0.87.1-kairo.1";
+export const KAIRO_PI_PACKAGE_VERSION = "0.87.1-kairo.2";
 export const MIN_NODE_VERSION = "22.19.0";
 
 // Write seam for prepareKairoPiHome only (mkdirSync/writeFileSync); reads

@@ -147,7 +147,7 @@ test("Kairo-only Pi fork at the wrong version fails closed and names both versio
         throw new Error("should not spawn");
       }
     }),
-    /0\.87\.1-kairo\.0[\s\S]*0\.87\.1-kairo\.1/
+    new RegExp(`0\\.87\\.1-kairo\\.0[\\s\\S]*${KAIRO_PI_PACKAGE_VERSION.replaceAll(".", "\\.")}`)
   );
 });
 
