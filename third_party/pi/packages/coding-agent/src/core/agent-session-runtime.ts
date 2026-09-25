@@ -236,12 +236,18 @@ export class AgentSessionRuntime {
 
 		const previousSessionFile = this.session.sessionFile;
 		const sessionDir = this.session.sessionManager.getSessionDir();
+		// Kairo fork: pass parentSession straight into SessionManager.create()
+		// / SessionManager.inMemory() (both accept it) instead of calling
+		// newSession() again afterwards, for the same reason as fork() and
+		// forkEmptySession() above — a second newSession() call would leave a
+		// parent-less orphan session file on disk when the empty-session
+		// persistence gate is on and options.parentSession is set. In
+		// ordinary /new usage (no options.parentSession) this is a no-op
+		// change: the single internal newSession() call was already correct.
+		const newSessionOptions = options?.parentSession ? { parentSession: options.parentSession } : undefined;
 		const sessionManager = this.session.sessionManager.isPersisted()
-			? SessionManager.create(this.cwd, sessionDir)
-			: SessionManager.inMemory(this.cwd);
-		if (options?.parentSession) {
-			sessionManager.newSession({ parentSession: options.parentSession });
-		}
+			? SessionManager.create(this.cwd, sessionDir, newSessionOptions)
+			: SessionManager.inMemory(this.cwd, newSessionOptions);
 
 		await this.teardownCurrent("new", sessionManager.getSessionFile());
 		this.apply(
@@ -295,8 +301,13 @@ export class AgentSessionRuntime {
 			}
 			const sessionDir = this.session.sessionManager.getSessionDir();
 			if (!targetLeafId) {
-				const sessionManager = SessionManager.create(this.cwd, sessionDir);
-				sessionManager.newSession({ parentSession: currentSessionFile });
+				// Kairo fork: see the matching comment in forkEmptySession() for
+				// why parentSession must be passed straight into
+				// SessionManager.create() instead of calling newSession() again
+				// afterwards — with the empty-session persistence gate on, the
+				// redundant second call would otherwise leave a parent-less
+				// orphan session file on disk.
+				const sessionManager = SessionManager.create(this.cwd, sessionDir, { parentSession: currentSessionFile });
 				await this.teardownCurrent("fork", sessionManager.getSessionFile());
 				this.apply(
 					await this.createRuntime({
