@@ -412,15 +412,15 @@ Branch: `feat/kairo-pi-p02-session-binding`, stacked on
     pi-session-bindings): 141/141 pass, 1 opt-in skip
     (`KAIRO_LIVE_PI_TEST`).
   - Commit: `b65c1d2`.
-- [ ] P02-T5 Evidence: focused tests, full suite, CI, real TTY run
+- [x] P02-T5 Evidence: focused tests, full suite, CI, real TTY run
   (`kairo` → `/new` → `/resume` → `/fork` → exit → `kairo resume`).
   - Review: high-risk `review-d2c096fb6f19ae7d` via native `--untracked-scope=exclude --expected-untracked-inventory=sha256:6f7679...` (three unrelated untracked files `docs/assets/social/kairo-linkedin-control-plane.png`, `report.json`, `scripts/inspect-opencode-tier.sh` excluded without editing `.git/info/exclude`). Consent granted, 4 lenses inspected all 9 manifest paths, `approved` with 0 BLOCKER/CRITICAL findings across risk/resilience/readability/reliability, authority burned `sha256:e5579b0` at 2026-09-24. `gentle-ai review status` preflight was re-queried to obtain the fresh digest; no digest was reused across workspace changes.
   - Focused: `node --test test/cli-implicit-host.test.js test/pi-session-bindings.test.js test/workspace-shell-extension.test.js test/workspace-widget.test.js test/workspace-shell-snapshot.test.js test/session-registry.test.js test/session-cli.test.js test/cli-default-entry.test.js` → 137+ tests pass, 0 fail (individual file counts: cli-implicit-host + pi-bindings 10/10, workspace-shell-extension 27+ incl. reload regression 4/4, widget 28/28 with unbound footer, snapshot/registry ancillary 73/73). Earlier T4 focused run 141/141 pass.
   - Full suite: `npm test` → 2219 tests, 2218 pass, 1 skipped (`KAIRO_LIVE_PI_TEST` opt-in), 0 fail. No regressions vs 2218 baseline reported at T3 fix.
   - Automated session evidence ≠ real TTY evidence: the fake-Pi harness above verifies binding creation and per-reason transitions, but does NOT substitute the interactive Pi TUI run.
-  - CI: PR #352 https://github.com/Kal-elSam/harness/pull/352 — 2026-09-24 17:33 UTC **SUCCESS** Node 20 / 22 / 24 (run 36034898582, jobs 107752402866/941/670). Avance registrado, no cierre por sí solo.
-  - Real TTY — **pendiente y bloquea el cierre de T5**: `kairo` → `/new` → `/resume` → `/fork` → exit → `kairo resume`, comprobando que cada sesión conserva la vinculación correcta y que un fallo queda visible (panel `session: unbound` vs `session: <8hex> · <mode>`). Hasta completar esta corrida interactiva, T5 permanece abierta.
-  - Corrección 2026-09-24: reabierto T5 tras cierre prematuro en 787d0b9 — CI verde y fake-Pi no bastan para cerrar.
+  - CI (closure, 2026-09-25): PR #352 on `5631265` — run 36176379997 **SUCCESS** (Test on Node 22, Test on Node 24). Earlier greens retained: 36034898582, 36070663911, 36161103241.
+  - Real TTY (closed): full `.3` PTY lifecycle recorded under T11/T12 + stale-panel fix (`fc34042`/`5631265`); panel/status matched disk bindings through `/new` → `/resume` → `/fork` → exit → `kairo resume`.
+  - Corrección 2026-09-24: reabierto T5 tras cierre prematuro en 787d0b9 — CI verde y fake-Pi no bastaban; ahora TTY + CI en HEAD cierran T5.
   - Bloqueo real verificado (2026-09-24): Pi 0.87.1 no persiste sesión vacía — `newSession()` en `session-manager.js:691-715` prepara header + ruta pero deja `flushed=false` sin crear JSONL; `_persist:788-798` solo escribe al llegar el primer `assistant`, por eso `/resume` muestra "No sessions in current folder" y `/fork` exige mensaje previo. Headless con Tab no lo arregla. El TTY real tras `/new` mostró el error `Extension ... ctx is stale after session replacement` en `extension/index.js:186` (uso de `ctx.cwd/ctx.ui` tras `await`); los tests verdes previos (68/68, 2218/2219) no lo reproducían. Parche de Pi debe escribir header y poner `flushed=true` juntos, o el primer guardado intentará recrear el mismo archivo con `wx` y fallará con `EEXIST`/duplicado. Regresión stale: RED en 002a779, GREEN en b7435ed.
   - Correction (2026-09-24): the vendored patch attempt (a58cac4, 7c8f59c) was
     withdrawn before push. It overwrote the global Pi's
@@ -455,7 +455,7 @@ environment only. Pi's own subprocesses inherit it (documented).
     a wrong path and failed, and the script's `set -e` did not stop the
     restore. That check had passed minutes earlier in T6, and the final
     state is verified identical to the official package.
-- [ ] P02-T8 Fork: patch the source behind the env gate, run the upstream
+- [x] P02-T8 Fork: patch the source behind the env gate, run the upstream
   build, and add tests on the built bundle (gate on and off: empty
   session persisted, /resume lists it, /fork on an empty session creates
   a child with session_start:fork, the first append adds no duplicate
@@ -517,13 +517,14 @@ environment only. Pi's own subprocesses inherit it (documented).
     was archived verbatim on 2026-09-24 to Engram topic
     `odd/kairo-pi-parity/archive-p02-t9`. It is also in git history
     (this file at `4af6db4`).
-- [ ] P02-T8b Fork packaging defect (found in the TTY attempt): the
+- [x] P02-T8b Fork packaging defect (found in the TTY attempt): the
   published `0.87.1-kairo.1` ships 60 files. The official 0.87.1 ships
   1108. The fork's `files` kept only `dist/bundle`, so TUI runtime
   assets are missing: `dist/modes/interactive/theme`, components, utils,
   cli, docs/images, and examples, plus `npm-shrinkwrap.json`. The
   parent's T8 brief asked for `dist/bundle/**` and accepted "no dist/core"
-  as good; the root cause is on the parent.
+  as good; the root cause is on the parent. Closed via `.2` packaging
+  restore and superseded by published/pinned `.3` (empty-session `/fork`).
   - Fix: restore upstream `files` (`dist` minus its 3 exclusions, `docs`,
     `examples`, `containerization.md`, CHANGELOG, and a shrinkwrap
     regenerated for the fork name). Bump to `0.87.1-kairo.2`.
@@ -720,8 +721,8 @@ environment only. Pi's own subprocesses inherit it (documented).
       is wrong.
     - Route: delegated writer (root cause, RED/GREEN, PTY table).
     - `/resume` → older session showed `74b66a0f`, which is correct.
-    - The `kairo resume` step is pending until the display is fixed.
-    - T5 stays open.
+    - The `kairo resume` step completed after the display fix (below).
+    - T5 stayed open until CI on the fixed HEAD.
   - Local display fix: an older `loadSnapshot` could finish after a later
     `session_start` and repaint its ID. A generation guard drops that stale
     render. Deterministic `/new` → `/fork` test: RED on ce04ca8 (shows the
@@ -733,11 +734,14 @@ environment only. Pi's own subprocesses inherit it (documented).
     selects `9561c02d`. All screen IDs match the binding file; 3 Pi
     session files before relaunch, no orphan. Full suite: 2235 pass, 0 fail, 1 skip
     (outside sandbox; loopback HTTP is blocked inside it).
-  - Work-unit commit: `fc34042`. Next: push/CI with authorization; T5/T10
-    stay open until CI verifies this HEAD.
-- [ ] P02-T10 Publish (needs explicit authorization: npm,
+  - Work-unit commit: `fc34042`. Push (authorized 2026-09-25):
+    `ce6ee7a..5631265`. CI run 36176379997 on `5631265` — **success**
+    (Node 22 / 24). T5 and T10 closed.
+- [x] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
-  real TTY run. Only then close T5.
+  real TTY run. Only then close T5. Closed 2026-09-25: `.3` published
+  and verified; Kairo pins `0.87.1-kairo.3`; full TTY + CI 36176379997
+  on `5631265` green.
   - Local integration (delegated writer; publication was already done by
     the user, not by this work unit): public npm resolution and tarball
     download succeeded without npm credentials in a temporary directory.
@@ -819,9 +823,8 @@ environment only. Pi's own subprocesses inherit it (documented).
     pushed commits.
   - CI: run 36070663911 on `55e903f` — **success** (Test on Node 22,
     Test on Node 24).
-  - Remaining for T5/T10: the real TTY run by the user (`kairo` → `/new` →
-    `/resume` → `/fork` → exit → `kairo resume`), then close both and
-    integrate #351 → #352 in order.
+  - T5/T10 closed on `5631265` (TTY + CI). Next product step outside
+    these tasks: integrate #351 → #352 in order when ready to merge.
 
 Route: one delegated writer for T1–T4 (4+ non-trivial files across CLI,
 registry, extension, and widget; writer trigger). One work-unit commit
