@@ -697,6 +697,16 @@ environment only. Pi's own subprocesses inherit it (documented).
     and `9bfb071` (shared `formatSessionIdentity` for the overview,
     every replacement view, and the status bar). Parent spot check: 80
     pass / 0 fail.
+- `.3` published (the user ran the commands; passkey approvals for
+  publish and dist-tag were separate). Parent verification: registry
+  integrity `sha512-qSNDEr…x1lg==` equals the verified tarball, 1110
+  files, and `latest` and `kairo` point to `.3`.
+  - Kairo pin: RED 2 tests fail with the constant on `.3` and the install
+    on `.2`. Then package.json, the lockfile, and the `.npmrc` exclusion
+    were REPLACED from `.2` to exactly `.3`, with no `.2` line kept.
+    GREEN: `pnpm install --frozen-lockfile` OK; focused 80 pass, 0 fail;
+    `npm test` 2234 pass, 0 fail, 1 skip.
+  - Next: push, CI, then the full PTY run through `kairo`.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
