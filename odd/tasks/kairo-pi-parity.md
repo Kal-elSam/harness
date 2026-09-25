@@ -511,7 +511,8 @@ environment only. Pi's own subprocesses inherit it (documented).
   - Reviews `review-80e62b92156fe3f9` and the `fa7373e..0f2c589` range
     were approved (user consent). The advisory probe findings (reported
     as spurious failures only) remain open for the next probe change.
-  - Delivery note: do not push before the fork pin (done in T10).
+  - Delivery note: do not push before the fork pin. `.1` was pinned in
+    T10 and replaced by the `.2` pin in T8b (`f90a90a`).
   - The full evidence (commands, RED/GREEN output, and review findings)
     was archived verbatim on 2026-09-24 to Engram topic
     `odd/kairo-pi-parity/archive-p02-t9`. It is also in git history
@@ -576,6 +577,19 @@ environment only. Pi's own subprocesses inherit it (documented).
     - Side effect: an earlier `pnpm install` with purge allowed emptied
       `node_modules`. It was restored from the lockfile before
       continuing.
+  - Review of `55e903f..90db7f7` (the `.2` pin, the release-age
+    exclusion, and docs): high risk; consent granted by the user. 4
+    lenses, **approved** with no blocking findings, and acknowledged.
+    - Applied: a `.npmrc` comment saying why the exclusion exists, who
+      approved it, and when to remove it; the T9b and T10 note no longer
+      contradicts itself.
+    - Rejected: R3 "pin consistency untested". `test/host-launch.test.js:443`
+      already asserts the package.json pin equals KAIRO_PI_PACKAGE_VERSION.
+    - Follow-up: remove the exclusion once `.2` is older than 1440
+      minutes (after 2026-09-26 08:48 local).
+    - The intermittent failure could not be reproduced: 5 more full runs
+      (2 earlier, 3 with full logs kept) all gave 2233 pass / 0 fail. It
+      remains unidentified.
   - Next: push and CI, then the real TTY run.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
