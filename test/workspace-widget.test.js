@@ -390,14 +390,32 @@ test("SHELL_SIDEBAR_MIN_COLUMNS is 90", () => {
   assert.equal(SHELL_SIDEBAR_MIN_COLUMNS, 90);
 });
 
-test("renderShellSidebarLines uses SPACES and AGENTS headers, never HERD", () => {
+test("renderShellSidebarLines uses SPACES and AGENTS headers, never HERD, and never repeats the session line the status bar already shows", () => {
   const lines = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME);
   const joined = lines.join("\n");
   assert.ok(lines.some((line) => line.includes("SPACES")));
   assert.ok(lines.some((line) => line.includes("AGENTS")));
   assert.ok(!joined.includes("HERD"), "shell sidebar must never reuse the HERD overview title");
   assert.ok(joined.includes("agentic-harness"));
-  assert.ok(joined.includes("session: 11111111 · agent"));
+  assert.ok(!joined.includes("session:"), "session identity belongs to the status bar only in fullscreen — never duplicated in the sidebar");
+});
+
+test("renderShellSidebarLines truncates an overflowing line with an ellipsis, never a silent cut", () => {
+  const lines = renderShellSidebarLines(fixtureSnapshot({ agents: [] }), IDENTITY_THEME);
+  const hint = lines.find((line) => line.includes("Run /project analyze"));
+  assert.ok(hint, "expected the no-team hint line");
+  assert.ok(stripTerminalSequences(hint).endsWith("…"), `overflowing sidebar line must end in an ellipsis, got: "${hint}"`);
+  assert.ok(visibleWidth(hint) <= 24, `sidebar content must fit its 28-column budget, got ${visibleWidth(hint)}: "${hint}"`);
+});
+
+test("renderShellSidebarLines folds an unavailable route notice into the sidebar instead of a separate widget", () => {
+  const available = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME);
+  assert.ok(!available.join("\n").includes("ROUTES unavailable"), "no route notice when routes are fine");
+
+  const unavailable = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME, { routeUnavailable: true });
+  const joined = unavailable.join("\n");
+  assert.ok(joined.includes("ROUTES unavailable"));
+  assert.ok(/project analyze/.test(joined));
 });
 
 test("renderShellSidebarLines orders agents blocked-first and keeps unknown when that is the evidence", () => {
@@ -416,19 +434,30 @@ test("renderShellSidebarLines orders agents blocked-first and keeps unknown when
   assert.ok(!lines.join("\n").includes("✔"), "no done glyph without a done agent");
 });
 
-test("renderShellBottomStripLines carries USAGE gauges and session identity from the snapshot", () => {
+test("renderShellBottomStripLines carries USAGE gauges but never the session line the status bar already shows", () => {
   const lines = renderShellBottomStripLines(fixtureSnapshot(), IDENTITY_THEME);
   const joined = lines.join("\n");
   assert.ok(lines.some((line) => line.includes("USAGE")));
+  assert.equal(lines.filter((line) => line.includes("USAGE")).length, 1, "USAGE header must appear exactly once");
   assert.ok(joined.includes("58%") || joined.includes("80%"), "usage percentages from the model must appear");
-  assert.ok(joined.includes("session: 11111111 · agent"));
+  assert.ok(!joined.includes("session:"), "session identity belongs to the status bar only in fullscreen — never duplicated in the strip");
 });
 
-test("renderCompactShellSummaryLines is a short attention+usage summary for narrow terminals", () => {
+test("renderCompactShellSummaryLines is a short attention+usage summary for narrow terminals, with no session line", () => {
   const lines = renderCompactShellSummaryLines(fixtureSnapshot(), IDENTITY_THEME);
   assert.ok(lines.length >= 1 && lines.length <= 6, `compact summary should stay short, got ${lines.length} lines`);
   const joined = lines.join("\n");
   assert.ok(joined.includes("blocked") || joined.includes("✖") || joined.includes("Researcher"), "attention signal must remain visible");
   assert.ok(joined.includes("USAGE") || joined.includes("%") || joined.includes("usage"), "usage signal must remain visible");
   assert.ok(!joined.includes("HERD"));
+  assert.ok(!joined.includes("session:"), "session identity belongs to the status bar only in fullscreen");
+});
+
+test("renderCompactShellSummaryLines folds an unavailable route notice in, without duplicating the old widget's full text", () => {
+  const lines = renderCompactShellSummaryLines(fixtureSnapshot(), IDENTITY_THEME, { routeUnavailable: true });
+  assert.ok(lines.length <= 6, `compact summary with a route notice should stay short, got ${lines.length} lines`);
+  const joined = lines.join("\n");
+  assert.ok(joined.includes("ROUTES unavailable"));
+  assert.ok(!joined.includes("KAIRO ROUTES"), "the compact summary is not the old detail widget re-labeled");
+  assert.ok(!joined.includes("KAIRO TEAM"), "the compact summary never repeats the old widget's team detail line");
 });

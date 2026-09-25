@@ -390,33 +390,69 @@ export const SHELL_SIDEBAR_MIN_COLUMNS = 90;
 // wraps to this budget.
 const SHELL_SIDEBAR_COLUMNS = 28;
 
+// The Pi status bar (see extension/index.js's workspaceStatus, painted via
+// ctx.ui.setStatus) already shows the bound session's identity in
+// fullscreen. Every shell slot below therefore drops the "session: ..."
+// line herdSpacesLines/formatSessionIdentity would otherwise add — one
+// fact, one place, never the sidebar AND the strip AND the status bar.
+function isSessionIdentityLine(line) {
+  return line.startsWith("session:");
+}
+
+/** The two short lines that replace the old "unavailable-routes" detail
+ * widget once the shell owns the layout — that widget must never render
+ * next to (or instead of) the sidebar/strip once slots are active; its two
+ * essential facts (no route, run /project analyze) fold in here instead. */
+function routeUnavailableLines(theme, truncate = (line) => line) {
+  return [
+    theme.fg("warning", truncate("ROUTES unavailable")),
+    theme.fg("muted", truncate("Run /project analyze."))
+  ];
+}
+
 /** The fullscreen sidebar's lines — SPACES then AGENTS (blocked-first,
- * fail-closed unknown), reusing the exact same glyph/order/truncation
- * rules as the HERD panel (see herdAgentLine/sortedHerdAgents above), just
- * under different headers and without a bordered card. */
-export function renderShellSidebarLines(snapshot, theme) {
+ * fail-closed unknown), reusing the exact same glyph/order rules as the
+ * HERD panel (see herdAgentLine/sortedHerdAgents above), just under
+ * different headers and without a bordered card. Every line is truncated
+ * to the sidebar's own 28-column budget with an ellipsis — never a silent
+ * cut — since, unlike herdAgentLine's tail-only truncation, a sidebar line
+ * has no separate "must stay whole" part.
+ * @param {object} snapshot
+ * @param {{fg(role:string,text:string):string, bold(text:string):string}} theme
+ * @param {{routeUnavailable?: boolean}} [options] - true when no automatic
+ *   Pi route exists (see extension/index.js's routeState) — folds the same
+ *   notice the old "unavailable-routes" widget carried into the sidebar
+ *   instead of a separate, duplicate widget.
+ */
+export function renderShellSidebarLines(snapshot, theme, { routeUnavailable = false } = {}) {
   const innerWidth = cardInnerWidth(SHELL_SIDEBAR_COLUMNS);
+  const truncate = (line) => truncateToWidth(line, innerWidth, "…");
+  const spaceLines = herdSpacesLines(snapshot)
+    .filter((line) => !isSessionIdentityLine(line))
+    .map((line) => theme.fg("text", truncate(line)));
   const agents = snapshot.agents ?? [];
   const agentLines = agents.length
     ? sortedHerdAgents(agents).map((agent) => herdAgentLine(agent, theme, innerWidth))
-    : [theme.fg("muted", "Run /project analyze to build this project's team.")];
+    : [theme.fg("muted", truncate("Run /project analyze to build this project's team."))];
   return [
     theme.bold("SPACES"),
-    ...herdSpacesLines(snapshot).map((line) => theme.fg("text", line)),
+    ...spaceLines,
+    ...(routeUnavailable ? routeUnavailableLines(theme, truncate) : []),
     theme.bold("AGENTS"),
     ...agentLines
   ];
 }
 
 /** The fullscreen bottom strip's lines — the same USAGE gauges as the
- * overview's USAGE panel, plus the shared session-identity line (see
- * formatSessionIdentity), since the strip replaces that panel's footer
- * role once the shell owns the layout. */
+ * overview's USAGE panel. Session identity is never repeated here (see
+ * isSessionIdentityLine's own doc); the strip is only shown at
+ * SHELL_SIDEBAR_MIN_COLUMNS or more (see extension/index.js), so USAGE
+ * appears exactly once across the whole fullscreen surface — never also
+ * folded into the compact summary at the same time. */
 export function renderShellBottomStripLines(snapshot, theme) {
   return [
     theme.bold("USAGE"),
-    ...usagePanelBody(snapshot.subscriptions, theme),
-    theme.fg("muted", formatSessionIdentity(snapshot.session))
+    ...usagePanelBody(snapshot.subscriptions, theme)
   ];
 }
 
@@ -447,14 +483,22 @@ function compactUsageLine(subscriptions, theme) {
 }
 
 /** A short (≤6 line) attention + usage summary for narrow terminals (H8:
- * below SHELL_SIDEBAR_MIN_COLUMNS the sidebar is hidden entirely) — one
- * attention line, one usage line, and the shared session-identity line,
- * so both signals the sidebar/strip carried stay readable at any width. */
-export function renderCompactShellSummaryLines(snapshot, theme) {
+ * below SHELL_SIDEBAR_MIN_COLUMNS the sidebar AND the bottom strip are both
+ * hidden — the chat keeps the width) — one attention line, one usage line,
+ * and (when routing has no automatic team) the same short route notice the
+ * sidebar folds in at wider columns. Never the shared session-identity
+ * line (see isSessionIdentityLine's own doc) and never the old
+ * "unavailable-routes" widget's full text (its own KAIRO ROUTES/KAIRO TEAM
+ * headings) — only its two essential facts.
+ * @param {object} snapshot
+ * @param {{fg(role:string,text:string):string, bold(text:string):string}} theme
+ * @param {{routeUnavailable?: boolean}} [options]
+ */
+export function renderCompactShellSummaryLines(snapshot, theme, { routeUnavailable = false } = {}) {
   return [
     compactAttentionLine(snapshot, theme),
     compactUsageLine(snapshot.subscriptions, theme),
-    theme.fg("muted", formatSessionIdentity(snapshot.session))
+    ...(routeUnavailable ? routeUnavailableLines(theme) : [])
   ];
 }
 
@@ -462,11 +506,14 @@ export function renderCompactShellSummaryLines(snapshot, theme) {
  * — mirrors createKairoWorkspaceWidget's pattern so it is exercised the
  * same way in tests (`content(tui, theme).render(width)`), even though
  * the sidebar's own content never depends on `width` (it stays fixed at
- * SHELL_SIDEBAR_COLUMNS regardless of what the fork passes in). */
-export function createShellSidebarWidget(snapshot) {
+ * SHELL_SIDEBAR_COLUMNS regardless of what the fork passes in).
+ * @param {object} snapshot
+ * @param {{routeUnavailable?: boolean}} [options]
+ */
+export function createShellSidebarWidget(snapshot, options = {}) {
   return (_tui, theme) => ({
     render() {
-      return renderShellSidebarLines(snapshot, theme);
+      return renderShellSidebarLines(snapshot, theme, options);
     }
   });
 }
@@ -483,11 +530,14 @@ export function createShellBottomStripWidget(snapshot) {
 
 /** Component factory for the narrow-terminal compact summary, shown in
  * the ordinary widget slot (`ctx.ui.setWidget`) once the sidebar is
- * hidden. See createShellSidebarWidget's own doc. */
-export function createCompactShellSummaryWidget(snapshot) {
+ * hidden. See createShellSidebarWidget's own doc.
+ * @param {object} snapshot
+ * @param {{routeUnavailable?: boolean}} [options]
+ */
+export function createCompactShellSummaryWidget(snapshot, options = {}) {
   return (_tui, theme) => ({
     render() {
-      return renderCompactShellSummaryLines(snapshot, theme);
+      return renderCompactShellSummaryLines(snapshot, theme, options);
     }
   });
 }

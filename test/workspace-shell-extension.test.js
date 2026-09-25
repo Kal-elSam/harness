@@ -970,7 +970,7 @@ test("fullscreen overview with shell APIs at ≥90 cols sets SPACES/AGENTS sideb
   assert.equal(lastWidget[1], undefined, "fullscreen shell overview must clear the above-editor widget");
 });
 
-test("fullscreen overview with shell APIs at <90 cols clears sidebar and shows compact summary", async () => {
+test("fullscreen overview with shell APIs at <90 cols clears sidebar AND strip, shows compact summary", async () => {
   const { pi, commands } = fakePi();
   createKairoWorkspaceExtension(pi, {
     loadSnapshot: async () => snapshot,
@@ -985,8 +985,7 @@ test("fullscreen overview with shell APIs at <90 cols clears sidebar and shows c
   await commands.get("kairo").handler("", fakeShellCtx({ widgetCalls, sidebarCalls, bottomStripCalls, statusCalls }));
 
   assert.ok(sidebarCalls.some((args) => args[0] === undefined), "narrow width must clear sidebar");
-  const strip = lastBottomStripLines(bottomStripCalls);
-  assert.ok(strip?.some((line) => line.includes("USAGE") || line.includes("%") || line.includes("usage")));
+  assert.ok(bottomStripCalls.some((args) => args[0] === undefined), "narrow width must ALSO clear the strip — usage folds into the compact summary instead, so the chat keeps the width and USAGE renders exactly once");
 
   const lastWidget = widgetCalls.at(-1);
   assert.equal(lastWidget[0], "kairo-workspace");
@@ -1077,4 +1076,121 @@ test("shell overview never invents working or done agent states", async () => {
   assert.ok(!joined.includes("◉"), "no working glyph without evidence");
   assert.ok(!joined.includes("✔"), "no done glyph without evidence");
   assert.ok(joined.includes("?"), "unknown stays visible when that is the evidence");
+});
+// --- Coordinator-reported dedup fix (2026-09-25 real PTY review): the
+// earlier H7/H8 tests above only exercised the per-command refresh path
+// (commands.get("kairo").handler), which never runs the session_start
+// "unavailable-routes" override. A REAL launch always goes through
+// session_start first, and that override unconditionally re-set the
+// widget slot with the old KAIRO ROUTES/KAIRO TEAM detail text even when
+// the shell slots were already active — landing that text in the chat
+// column next to (or, at <90 cols, instead of) the shell's own sidebar/
+// strip/compact-summary content, and duplicating USAGE and the session
+// line along the way. These tests drive the real session_start path.
+
+async function startShellSession({
+  getColumns = () => 100,
+  getTuiMode = () => "fullscreen",
+  withShellApis = true,
+  routeModels = async () => []
+} = {}) {
+  const { pi, events } = fakePi();
+  const widgetCalls = [];
+  const sidebarCalls = [];
+  const bottomStripCalls = [];
+  const statusCalls = [];
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => ({ eligibility: {} }),
+    loadRouteModels: routeModels,
+    recoverTeam: async () => ({ outcome: "skipped", reason: "retry-later" }),
+    getColumns,
+    getTuiMode
+  });
+  const ui = {
+    setStatus: (...args) => statusCalls.push(args),
+    setWidget: (...args) => widgetCalls.push(args),
+    notify: () => {}
+  };
+  if (withShellApis) {
+    ui.setSidebar = (...args) => sidebarCalls.push(args);
+    ui.setBottomStrip = (...args) => bottomStripCalls.push(args);
+  }
+  const ctx = { cwd: "/repo", ui, sessionManager: fakeSessionManager(null) };
+  await events.get("session_start")({}, ctx);
+  return { widgetCalls, sidebarCalls, bottomStripCalls, statusCalls };
+}
+
+/** Every rendered "screen" fact this session_start run could have shown,
+ * flattened to plain lines, for a single global occurrence count — the
+ * real duplication bug (session line 4x, USAGE 2x, old widget rendered
+ * beside the sidebar) only shows up once every slot's FINAL content is
+ * considered together, not slot by slot. */
+function finalScreenLines({ widgetCalls, sidebarCalls, bottomStripCalls, statusCalls }, width = 100) {
+  const lines = [];
+  const lastWidget = widgetCalls.at(-1)?.[1];
+  if (lastWidget !== undefined) lines.push(...renderWidgetCall(lastWidget, width));
+  const lastSidebar = lastSidebarLines(sidebarCalls);
+  if (lastSidebar) lines.push(...lastSidebar);
+  const lastStrip = lastBottomStripLines(bottomStripCalls);
+  if (lastStrip) lines.push(...lastStrip);
+  const lastStatus = statusCalls.at(-1)?.[1];
+  if (lastStatus) lines.push(lastStatus);
+  return lines;
+}
+
+function countOccurrences(lines, needle) {
+  return lines.filter((line) => line.includes(needle)).length;
+}
+
+test("fullscreen with shell APIs and no automatic route: the route notice folds into the sidebar, never a duplicate old-widget render", async () => {
+  const result = await startShellSession({ getColumns: () => 100, getTuiMode: () => "fullscreen" });
+  const lines = finalScreenLines(result, 100);
+
+  assert.ok(countOccurrences(lines, "ROUTES unavailable") >= 1, "the route-unavailable fact must still be visible somewhere");
+  assert.equal(countOccurrences(lines, "KAIRO ROUTES"), 0, "the old detail widget's own heading must never render once the shell owns the layout");
+  assert.equal(countOccurrences(lines, "KAIRO TEAM"), 0, "the old detail widget's team heading must never render once the shell owns the layout");
+});
+
+test("fullscreen with shell APIs at >=90 cols: session identity appears exactly once (the status bar), USAGE exactly once (the strip)", async () => {
+  const result = await startShellSession({ getColumns: () => 100, getTuiMode: () => "fullscreen" });
+  const lines = finalScreenLines(result, 100);
+
+  assert.equal(countOccurrences(lines, "session:"), 1, `expected exactly one session line, got ${countOccurrences(lines, "session:")}: ${JSON.stringify(lines)}`);
+  assert.equal(countOccurrences(lines, "USAGE"), 1, `expected exactly one USAGE header, got ${countOccurrences(lines, "USAGE")}: ${JSON.stringify(lines)}`);
+  assert.equal(result.widgetCalls.at(-1)[1], undefined, "the ordinary widget slot stays cleared at >=90 cols — the chat column has no widget content");
+});
+
+test("fullscreen with shell APIs at <90 cols: sidebar AND strip are both cleared, one compact summary carries attention+usage+route, session identity stays status-bar-only", async () => {
+  const result = await startShellSession({ getColumns: () => 60, getTuiMode: () => "fullscreen" });
+  const lines = finalScreenLines(result, 60);
+
+  assert.ok(result.sidebarCalls.some((args) => args[0] === undefined), "sidebar must be cleared below 90 cols");
+  assert.ok(result.bottomStripCalls.some((args) => args[0] === undefined), "the strip must ALSO be cleared below 90 cols — the chat keeps the width, not a second usage rendering");
+
+  const lastWidget = result.widgetCalls.at(-1)[1];
+  assert.notEqual(lastWidget, undefined, "the compact summary must occupy the widget slot below 90 cols");
+  const compact = renderWidgetCall(lastWidget, 60);
+  assert.ok(!compact.join("\n").includes("KAIRO ROUTES"), "the compact summary is not the old detail widget re-labeled");
+  assert.ok(!compact.join("\n").includes("KAIRO TEAM"));
+
+  assert.equal(countOccurrences(lines, "session:"), 1, `expected exactly one session line, got ${countOccurrences(lines, "session:")}: ${JSON.stringify(lines)}`);
+  assert.equal(countOccurrences(lines, "USAGE"), 1, `expected exactly one USAGE fact, got ${countOccurrences(lines, "USAGE")}: ${JSON.stringify(lines)}`);
+});
+
+test("fullscreen without shell APIs (published .3 pin) keeps the old widget fallback behavior unchanged, including its own unavailable-routes override", async () => {
+  const result = await startShellSession({ getColumns: () => 100, getTuiMode: () => "fullscreen", withShellApis: false });
+  const lastWidget = result.widgetCalls.at(-1)[1];
+  const lines = renderWidgetCall(lastWidget, 100);
+  assert.ok(lines.some((line) => line.includes("KAIRO ROUTES")), "with no shell APIs at all, the classic unavailable-routes widget is still the only surface available");
+});
+
+test("regular mode keeps the old widget fallback behavior unchanged, including its own unavailable-routes override", async () => {
+  const result = await startShellSession({ getColumns: () => 100, getTuiMode: () => "regular" });
+  assert.ok(result.sidebarCalls.every((args) => args[0] === undefined), "regular mode never shows sidebar content");
+  assert.ok(result.bottomStripCalls.every((args) => args[0] === undefined), "regular mode never shows strip content");
+  const lastWidget = result.widgetCalls.at(-1)[1];
+  const lines = renderWidgetCall(lastWidget, 100);
+  assert.ok(lines.some((line) => line.includes("KAIRO ROUTES")), "regular mode keeps exactly the pre-H7 unavailable-routes widget behavior");
 });
