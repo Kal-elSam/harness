@@ -706,7 +706,23 @@ environment only. Pi's own subprocesses inherit it (documented).
     were REPLACED from `.2` to exactly `.3`, with no `.2` line kept.
     GREEN: `pnpm install --frozen-lockfile` OK; focused 80 pass, 0 fail;
     `npm test` 2234 pass, 0 fail, 1 skip.
-  - Next: push, CI, then the full PTY run through `kairo`.
+  - Full PTY run through `kairo` with `.3` (by the parent, temporary
+    HARNESS_HOME, no model prompts):
+    - Bindings on disk are all correct: start Pi `615a` → `74b66a0f`,
+      `/new` Pi `a0bb` → `6b8b1854`, and `/fork` child Pi `fb3c`
+      (parentSession `615a`) → `5f069ed0`. There are 3 files and no
+      orphan.
+    - **Display defect:** the panel and status bar lag after `/new`
+      (they still showed `74b66a0f` about 5 s later). After `/fork` the
+      notice says `5f069ed0`, but the panel and status bar show
+      `6b8b1854` (the `/new` session) until exit. The binding logic sets
+      `boundKairoSessionId` correctly, so the widget/status refresh path
+      is wrong.
+    - Route: delegated writer (root cause, RED/GREEN, PTY table).
+    - `/resume` → older session showed `74b66a0f`, which is correct.
+    - The `kairo resume` step is pending until the display is fixed.
+    - T5 stays open.
+  - Next: fix the stale panel id, push, CI, then repeat the full PTY run.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
