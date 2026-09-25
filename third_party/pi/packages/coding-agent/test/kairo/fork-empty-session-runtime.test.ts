@@ -23,7 +23,7 @@
  * built CLI uses, without tripping this repo's check:ts-imports rule, which
  * forbids relative ".js" import specifiers in source .ts files.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -172,6 +172,41 @@ describe("Kairo empty-session /fork via AgentSessionRuntime.forkEmptySession (di
 
 		expect(events).toEqual([{ type: "session_start", reason: "fork", previousSessionFile }]);
 		expect(runtime.session.getUserMessagesForForking()).toEqual([]);
+	});
+
+	it("gate ON + empty session: leaves no orphan session file behind (exactly original + child, no parent-less extra)", async () => {
+		process.env[ENV_VAR] = "1";
+		const { runtime, sessionDir } = await createRuntimeForTest(() => {});
+
+		const previousSessionFile = runtime.session.sessionFile!;
+		expect(existsSync(previousSessionFile)).toBe(true); // eager write from newSession()
+
+		const forkResult = await runtime.forkEmptySession();
+		expect(forkResult.cancelled).toBe(false);
+		await runtime.session.bindExtensions({});
+
+		const forkedSessionFile = runtime.session.sessionFile!;
+		expect(forkedSessionFile).not.toBe(previousSessionFile);
+
+		const sessionFiles = readdirSync(sessionDir)
+			.filter((name) => name.endsWith(".jsonl"))
+			.map((name) => join(sessionDir, name));
+
+		// Exactly two files: the original session and the forked child. No
+		// orphan (parent-less, unreferenced) session file left behind from an
+		// intermediate SessionManager that was persisted before being
+		// discarded.
+		expect(sessionFiles.sort()).toEqual([previousSessionFile, forkedSessionFile].sort());
+
+		for (const filePath of sessionFiles) {
+			const header = JSON.parse(readFileSync(filePath, "utf8").split("\n")[0]);
+			expect(header.type).toBe("session");
+			if (filePath === forkedSessionFile) {
+				expect(header.parentSession).toBe(previousSessionFile);
+			} else {
+				expect(header.parentSession).toBeUndefined();
+			}
+		}
 	});
 
 	it("cancellation creates nothing: a session_before_fork handler that cancels leaves the original session untouched", async () => {
