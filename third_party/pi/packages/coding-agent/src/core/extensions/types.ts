@@ -592,6 +592,13 @@ export interface SessionBeforeForkEvent {
 	type: "session_before_fork";
 	entryId: string;
 	position: "before" | "at";
+	/**
+	 * Kairo extension: true when this fork creates a brand-new child from a
+	 * session with no user messages to fork from (`entryId` is `""` and
+	 * `position` is `"at"`). Only set when `KAIRO_PI_EMPTY_SESSIONS=1`.
+	 * Undefined for every ordinary fork.
+	 */
+	emptySession?: boolean;
 }
 
 /** Fired before context compaction (can be cancelled or customized) */

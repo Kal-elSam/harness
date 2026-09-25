@@ -33,6 +33,9 @@ type ForkCommandContext = {
 	showError: (message: string) => void;
 	showSelector: (...args: unknown[]) => void;
 	ui: { requestRender: () => void };
+	// Bound to the real InteractiveMode.prototype.forkEmptySession in
+	// makeContext(), not mocked: see the comment there for why.
+	forkEmptySession: () => Promise<void>;
 };
 
 type InteractiveModePrototype = {
@@ -57,7 +60,7 @@ function makeContext(userMessages: Array<{ entryId: string; text: string }>): Fo
 	const showSelector = vi.fn();
 	const requestRender = vi.fn();
 
-	return {
+	const context = {
 		session: { getUserMessagesForForking: () => userMessages },
 		runtimeHost: { forkEmptySession: forkEmptySessionSpy },
 		editor: { setText },
@@ -65,10 +68,19 @@ function makeContext(userMessages: Array<{ entryId: string; text: string }>): Fo
 		showError,
 		showSelector,
 		ui: { requestRender },
+		// showUserMessageSelector() calls this.forkEmptySession(), a sibling
+		// private method on the real prototype. Bound below to the real
+		// implementation (not a mock) so the test exercises both methods end
+		// to end, exactly as they run together on a live InteractiveMode
+		// instance.
+		forkEmptySession: undefined as unknown as ForkCommandContext["forkEmptySession"],
 		forkEmptySessionSpy,
 		setText,
 		requestRender,
 	};
+	context.forkEmptySession = interactiveModePrototype.forkEmptySession.bind(context);
+
+	return context;
 }
 
 describe("InteractiveMode /fork on an empty session", () => {
