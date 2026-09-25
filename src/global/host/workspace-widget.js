@@ -373,6 +373,125 @@ export function createKairoTextWidget(lines) {
   });
 }
 
+// --- H7/H8 shell surface: the fullscreen left sidebar (SPACES/AGENTS,
+// never HERD — that title stays the regular-mode overview's own) and
+// bottom strip (USAGE) that the extension feeds when the fork exposes
+// `setSidebar`/`setBottomStrip` (see extension/index.js). Same snapshot
+// facts and glyph/order rules as the HERD panel above; only the framing
+// and headers differ, since the fork renders these as bare slot content,
+// never inside a bordered card.
+
+/** Columns below which the fixed 28-col sidebar is dropped for a compact
+ * summary instead (H8 responsive contract). */
+export const SHELL_SIDEBAR_MIN_COLUMNS = 90;
+
+// The fixed sidebar width from the H8 acceptance criteria — the sidebar
+// never resizes with the terminal once it is shown; only its content
+// wraps to this budget.
+const SHELL_SIDEBAR_COLUMNS = 28;
+
+/** The fullscreen sidebar's lines — SPACES then AGENTS (blocked-first,
+ * fail-closed unknown), reusing the exact same glyph/order/truncation
+ * rules as the HERD panel (see herdAgentLine/sortedHerdAgents above), just
+ * under different headers and without a bordered card. */
+export function renderShellSidebarLines(snapshot, theme) {
+  const innerWidth = cardInnerWidth(SHELL_SIDEBAR_COLUMNS);
+  const agents = snapshot.agents ?? [];
+  const agentLines = agents.length
+    ? sortedHerdAgents(agents).map((agent) => herdAgentLine(agent, theme, innerWidth))
+    : [theme.fg("muted", "Run /project analyze to build this project's team.")];
+  return [
+    theme.bold("SPACES"),
+    ...herdSpacesLines(snapshot).map((line) => theme.fg("text", line)),
+    theme.bold("AGENTS"),
+    ...agentLines
+  ];
+}
+
+/** The fullscreen bottom strip's lines — the same USAGE gauges as the
+ * overview's USAGE panel, plus the shared session-identity line (see
+ * formatSessionIdentity), since the strip replaces that panel's footer
+ * role once the shell owns the layout. */
+export function renderShellBottomStripLines(snapshot, theme) {
+  return [
+    theme.bold("USAGE"),
+    ...usagePanelBody(snapshot.subscriptions, theme),
+    theme.fg("muted", formatSessionIdentity(snapshot.session))
+  ];
+}
+
+/** One attention line: the blocked agent(s) by name, or (when nothing is
+ * blocked) the single highest-attention agent's own state — never a
+ * fabricated "all clear" when there simply is no agent yet. */
+function compactAttentionLine(snapshot, theme) {
+  const agents = snapshot.agents ?? [];
+  const blocked = agents.filter((agent) => agent.state === "blocked");
+  if (blocked.length === 1) return theme.fg("error", `✖ ${blocked[0].label ?? "Unknown role"} blocked`);
+  if (blocked.length > 1) {
+    return theme.fg("error", `✖ ${blocked.length} blocked: ${blocked.map((agent) => agent.label ?? "Unknown role").join(", ")}`);
+  }
+  const [first] = sortedHerdAgents(agents);
+  if (!first) return theme.fg("muted", "Run /project analyze to build this project's team.");
+  const glyph = HERD_STATE_GLYPH[first.state] ?? HERD_STATE_GLYPH.unknown;
+  return theme.fg(HERD_STATE_TONE[first.state] ?? "muted", `${glyph} ${first.label ?? "Unknown role"} ${first.state}`);
+}
+
+/** One compact usage line — the first ready segment, or the honest
+ * checking/unknown state word; never a fabricated percentage. */
+function compactUsageLine(subscriptions, theme) {
+  if (subscriptions?.state === "ready") {
+    const [firstSegment] = subscriptions.segments ?? [];
+    return theme.fg("text", firstSegment ? `USAGE ${firstSegment}` : "USAGE");
+  }
+  return theme.fg("muted", `USAGE ${subscriptions?.state ?? "checking"}`);
+}
+
+/** A short (≤6 line) attention + usage summary for narrow terminals (H8:
+ * below SHELL_SIDEBAR_MIN_COLUMNS the sidebar is hidden entirely) — one
+ * attention line, one usage line, and the shared session-identity line,
+ * so both signals the sidebar/strip carried stay readable at any width. */
+export function renderCompactShellSummaryLines(snapshot, theme) {
+  return [
+    compactAttentionLine(snapshot, theme),
+    compactUsageLine(snapshot.subscriptions, theme),
+    theme.fg("muted", formatSessionIdentity(snapshot.session))
+  ];
+}
+
+/** Component factory for the fullscreen sidebar slot (`ctx.ui.setSidebar`)
+ * — mirrors createKairoWorkspaceWidget's pattern so it is exercised the
+ * same way in tests (`content(tui, theme).render(width)`), even though
+ * the sidebar's own content never depends on `width` (it stays fixed at
+ * SHELL_SIDEBAR_COLUMNS regardless of what the fork passes in). */
+export function createShellSidebarWidget(snapshot) {
+  return (_tui, theme) => ({
+    render() {
+      return renderShellSidebarLines(snapshot, theme);
+    }
+  });
+}
+
+/** Component factory for the fullscreen bottom strip slot
+ * (`ctx.ui.setBottomStrip`). See createShellSidebarWidget's own doc. */
+export function createShellBottomStripWidget(snapshot) {
+  return (_tui, theme) => ({
+    render() {
+      return renderShellBottomStripLines(snapshot, theme);
+    }
+  });
+}
+
+/** Component factory for the narrow-terminal compact summary, shown in
+ * the ordinary widget slot (`ctx.ui.setWidget`) once the sidebar is
+ * hidden. See createShellSidebarWidget's own doc. */
+export function createCompactShellSummaryWidget(snapshot) {
+  return (_tui, theme) => ({
+    render() {
+      return renderCompactShellSummaryLines(snapshot, theme);
+    }
+  });
+}
+
 /**
  * One notice per provider and window, never one per role and never on every
  * refresh: blocked roles are grouped by the provider window that blocks them

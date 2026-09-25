@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { availabilityNotices, computeSideBySideWidths, renderKairoWorkspaceWidget } from "../src/global/host/workspace-widget.js";
+import {
+  availabilityNotices,
+  computeSideBySideWidths,
+  renderCompactShellSummaryLines,
+  renderKairoWorkspaceWidget,
+  renderShellBottomStripLines,
+  renderShellSidebarLines,
+  SHELL_SIDEBAR_MIN_COLUMNS
+} from "../src/global/host/workspace-widget.js";
 
 const IDENTITY_THEME = { fg: (_role, text) => text, bold: (text) => text };
 
@@ -373,3 +381,54 @@ for (const width of [60, 100, 160]) {
     assert.ok(!footerLine.includes("[0m"), `footer should never show a raw escape artifact at width ${width}: "${footerLine}"`);
   });
 }
+
+// --- H7/H8 shell surface helpers: SPACES/AGENTS sidebar (never HERD),
+// USAGE bottom strip, compact narrow summary. Same snapshot facts as the
+// regular-mode overview widget; never invent working/done.
+
+test("SHELL_SIDEBAR_MIN_COLUMNS is 90", () => {
+  assert.equal(SHELL_SIDEBAR_MIN_COLUMNS, 90);
+});
+
+test("renderShellSidebarLines uses SPACES and AGENTS headers, never HERD", () => {
+  const lines = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME);
+  const joined = lines.join("\n");
+  assert.ok(lines.some((line) => line.includes("SPACES")));
+  assert.ok(lines.some((line) => line.includes("AGENTS")));
+  assert.ok(!joined.includes("HERD"), "shell sidebar must never reuse the HERD overview title");
+  assert.ok(joined.includes("agentic-harness"));
+  assert.ok(joined.includes("session: 11111111 · agent"));
+});
+
+test("renderShellSidebarLines orders agents blocked-first and keeps unknown when that is the evidence", () => {
+  const lines = renderShellSidebarLines(fixtureSnapshot({
+    agents: [
+      { id: "u", label: "Uma", role: "Uma", provider: "codex", model: "M", state: "unknown", stateReason: null },
+      { id: "i", label: "Ida", role: "Ida", provider: "codex", model: "M", state: "idle", stateReason: null },
+      { id: "b", label: "Bea", role: "Bea", provider: "codex", model: "M", state: "blocked", stateReason: "Blocked." }
+    ]
+  }), IDENTITY_THEME);
+  const order = ["Bea", "Ida", "Uma"].map((label) => lines.findIndex((line) => line.includes(label)));
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  assert.ok(herdAgentLine(lines, "Bea")?.includes("✖"));
+  assert.ok(herdAgentLine(lines, "Uma")?.includes("?"));
+  assert.ok(!lines.join("\n").includes("◉"), "no working glyph without a working agent");
+  assert.ok(!lines.join("\n").includes("✔"), "no done glyph without a done agent");
+});
+
+test("renderShellBottomStripLines carries USAGE gauges and session identity from the snapshot", () => {
+  const lines = renderShellBottomStripLines(fixtureSnapshot(), IDENTITY_THEME);
+  const joined = lines.join("\n");
+  assert.ok(lines.some((line) => line.includes("USAGE")));
+  assert.ok(joined.includes("58%") || joined.includes("80%"), "usage percentages from the model must appear");
+  assert.ok(joined.includes("session: 11111111 · agent"));
+});
+
+test("renderCompactShellSummaryLines is a short attention+usage summary for narrow terminals", () => {
+  const lines = renderCompactShellSummaryLines(fixtureSnapshot(), IDENTITY_THEME);
+  assert.ok(lines.length >= 1 && lines.length <= 6, `compact summary should stay short, got ${lines.length} lines`);
+  const joined = lines.join("\n");
+  assert.ok(joined.includes("blocked") || joined.includes("✖") || joined.includes("Researcher"), "attention signal must remain visible");
+  assert.ok(joined.includes("USAGE") || joined.includes("%") || joined.includes("usage"), "usage signal must remain visible");
+  assert.ok(!joined.includes("HERD"));
+});

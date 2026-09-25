@@ -229,9 +229,53 @@ test("resolution succeeds and spawns the injected execPath with the bundle cli.j
   assert.deepEqual(calls[0].args, [
     fixture.cliPath,
     "-e", extensionDir,
-    "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files"
+    "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+    "--tui-mode", "fullscreen"
   ]);
   assert.equal(calls[0].options.env.PI_CODING_AGENT_DIR, "/tmp/kairo-host-test/.harness/pi-agent");
+});
+
+test("prepareKairoPiHome defaults tuiMode to fullscreen alongside quietStartup", async () => {
+  const fixture = await buildKairoPiFixture();
+  const cwd = await tmpProjectDir();
+  const fakeHarnessHome = await tmpHarnessHome();
+  await launchGentleShell({
+    cwd,
+    extensionDir,
+    statImpl: okStat,
+    env: { HARNESS_HOME: fakeHarnessHome },
+    nodeVersion: okNodeVersion,
+    execPath: "/fake/node/bin/node",
+    resolveEntryImpl: fixture.resolveEntryImpl,
+    spawnImpl: () => ({ status: 0 })
+  });
+  const settingsPath = join(fakeHarnessHome, ".harness", "pi-agent", "settings.json");
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  assert.equal(settings.quietStartup, true);
+  assert.equal(settings.tuiMode, "fullscreen");
+});
+
+test("prepareKairoPiHome does not overwrite an explicit regular tuiMode the user already chose", async () => {
+  const fixture = await buildKairoPiFixture();
+  const cwd = await tmpProjectDir();
+  const fakeHarnessHome = await tmpHarnessHome();
+  const agentDir = join(fakeHarnessHome, ".harness", "pi-agent");
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ quietStartup: true, tuiMode: "regular" }, null, 2)}\n`);
+
+  await launchGentleShell({
+    cwd,
+    extensionDir,
+    statImpl: okStat,
+    env: { HARNESS_HOME: fakeHarnessHome },
+    nodeVersion: okNodeVersion,
+    execPath: "/fake/node/bin/node",
+    resolveEntryImpl: fixture.resolveEntryImpl,
+    spawnImpl: () => ({ status: 0 })
+  });
+
+  const settings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
+  assert.equal(settings.tuiMode, "regular", "user-chosen regular mode must survive relaunch");
 });
 
 test("execPath defaults to process.execPath when nothing is injected", async () => {

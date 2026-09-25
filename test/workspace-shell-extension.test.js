@@ -898,3 +898,183 @@ test("/kairo-sessions reports unbound consistently with the footer and status ba
   assert.ok(lines.some((line) => /no kairo session is bound/i.test(line)));
   assert.ok(!lines.some((line) => /· ask/i.test(line)));
 });
+
+// --- H7/H8: fullscreen shell slots when setSidebar/setBottomStrip exist;
+// regular mode and missing APIs keep the overview widget fallback.
+// Terminal width is injectable (process.stdout.columns when not injected).
+
+function fakeShellCtx({
+  cwd = "/repo",
+  piSessionId = null,
+  notifications = [],
+  widgetCalls = [],
+  statusCalls = [],
+  sidebarCalls = [],
+  bottomStripCalls = []
+} = {}) {
+  return {
+    cwd,
+    sessionManager: fakeSessionManager(piSessionId),
+    ui: {
+      setStatus: (...args) => statusCalls.push(args),
+      setWidget: (...args) => widgetCalls.push(args),
+      setSidebar: (...args) => sidebarCalls.push(args),
+      setBottomStrip: (...args) => bottomStripCalls.push(args),
+      notify: (...args) => notifications.push(args)
+    }
+  };
+}
+
+function lastSidebarLines(sidebarCalls) {
+  const content = sidebarCalls.at(-1)?.[0];
+  if (content == null) return null;
+  if (Array.isArray(content)) return content;
+  return renderWidgetCall(content, 28);
+}
+
+function lastBottomStripLines(bottomStripCalls) {
+  const content = bottomStripCalls.at(-1)?.[0];
+  if (content == null) return null;
+  if (Array.isArray(content)) return content;
+  return renderWidgetCall(content, 80);
+}
+
+test("fullscreen overview with shell APIs at ≥90 cols sets SPACES/AGENTS sidebar and USAGE strip, clears overview widget", async () => {
+  const { pi, commands } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    getColumns: () => 100,
+    getTuiMode: () => "fullscreen"
+  });
+
+  const widgetCalls = [];
+  const sidebarCalls = [];
+  const bottomStripCalls = [];
+  await commands.get("kairo").handler("", fakeShellCtx({ widgetCalls, sidebarCalls, bottomStripCalls }));
+
+  const sidebar = lastSidebarLines(sidebarCalls);
+  assert.ok(sidebar, "setSidebar must be called with content");
+  assert.ok(sidebar.some((line) => line.includes("SPACES")));
+  assert.ok(sidebar.some((line) => line.includes("AGENTS")));
+  assert.ok(!sidebar.join("\n").includes("HERD"));
+  const reviewerIdx = sidebar.findIndex((line) => line.includes("Reviewer"));
+  const builderIdx = sidebar.findIndex((line) => line.includes("Builder"));
+  assert.ok(reviewerIdx >= 0 && builderIdx >= 0 && reviewerIdx < builderIdx, "blocked Reviewer before unknown Builder");
+
+  const strip = lastBottomStripLines(bottomStripCalls);
+  assert.ok(strip?.some((line) => line.includes("USAGE")));
+
+  const lastWidget = widgetCalls.at(-1);
+  assert.ok(lastWidget, "setWidget must be called");
+  assert.equal(lastWidget[0], "kairo-workspace");
+  assert.equal(lastWidget[1], undefined, "fullscreen shell overview must clear the above-editor widget");
+});
+
+test("fullscreen overview with shell APIs at <90 cols clears sidebar and shows compact summary", async () => {
+  const { pi, commands } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    getColumns: () => 60,
+    getTuiMode: () => "fullscreen"
+  });
+
+  const widgetCalls = [];
+  const sidebarCalls = [];
+  const bottomStripCalls = [];
+  const statusCalls = [];
+  await commands.get("kairo").handler("", fakeShellCtx({ widgetCalls, sidebarCalls, bottomStripCalls, statusCalls }));
+
+  assert.ok(sidebarCalls.some((args) => args[0] === undefined), "narrow width must clear sidebar");
+  const strip = lastBottomStripLines(bottomStripCalls);
+  assert.ok(strip?.some((line) => line.includes("USAGE") || line.includes("%") || line.includes("usage")));
+
+  const lastWidget = widgetCalls.at(-1);
+  assert.equal(lastWidget[0], "kairo-workspace");
+  assert.notEqual(lastWidget[1], undefined, "narrow shell mode shows a compact summary widget");
+  const compact = renderWidgetCall(lastWidget[1], 60);
+  assert.ok(!compact.join("\n").includes("HERD"));
+  assert.ok(
+    compact.some((line) => /blocked|✖|Reviewer|USAGE|%/i.test(line))
+    || statusCalls.some(([, msg]) => /blocked|✖|Reviewer/i.test(msg)),
+    "compact attention/usage must remain readable"
+  );
+});
+
+test("regular mode keeps the overview widget even when shell APIs exist", async () => {
+  const { pi, commands } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    getColumns: () => 100,
+    getTuiMode: () => "regular"
+  });
+
+  const widgetCalls = [];
+  const sidebarCalls = [];
+  const bottomStripCalls = [];
+  await commands.get("kairo").handler("", fakeShellCtx({ widgetCalls, sidebarCalls, bottomStripCalls }));
+
+  assert.ok(sidebarCalls.some((args) => args[0] === undefined), "regular mode clears shell sidebar");
+  assert.ok(bottomStripCalls.some((args) => args[0] === undefined), "regular mode clears bottom strip");
+  const lastWidget = widgetCalls.at(-1);
+  assert.equal(typeof lastWidget[1], "function", "regular mode uses the themed overview widget");
+  const lines = renderWidgetCall(lastWidget[1]);
+  assert.ok(lines.some((line) => line.includes("HERD")));
+  assert.ok(lines.some((line) => line.includes("USAGE")));
+});
+
+test("missing shell APIs keep the overview widget fallback (published .3 pin)", async () => {
+  const { pi, commands } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    getColumns: () => 100,
+    getTuiMode: () => "fullscreen"
+  });
+
+  const widgetCalls = [];
+  await commands.get("kairo").handler("", {
+    cwd: "/repo",
+    ui: { setWidget: (...args) => widgetCalls.push(args), notify: () => {} }
+  });
+
+  assert.equal(typeof widgetCalls.at(-1)[1], "function");
+  assert.ok(renderWidgetCall(widgetCalls.at(-1)[1]).some((line) => line.includes("HERD")));
+});
+
+test("/kairo-team still renders the full detail list under narrow shell mode", async () => {
+  const { pi, commands } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    getColumns: () => 60,
+    getTuiMode: () => "fullscreen"
+  });
+
+  const widgetCalls = [];
+  await commands.get("kairo-team").handler("", fakeShellCtx({ widgetCalls }));
+  const lines = renderWidgetCall(widgetCalls.at(-1)[1]);
+  assert.ok(lines.some((line) => line.includes("KAIRO TEAM")));
+  assert.ok(lines.some((line) => line.includes("Builder")));
+  assert.ok(lines.some((line) => line.includes("Reviewer") && line.includes("BLOCKED")));
+});
+
+test("shell overview never invents working or done agent states", async () => {
+  const { pi, commands } = fakePi();
+  const idleOnly = {
+    ...snapshot,
+    agents: [
+      { id: "builder", label: "Builder", role: "Builder", provider: "codex", model: "M", state: "idle", stateReason: null },
+      { id: "reviewer", label: "Reviewer", role: "Reviewer", provider: "codex", model: "N", state: "unknown", stateReason: null }
+    ]
+  };
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => idleOnly,
+    getColumns: () => 100,
+    getTuiMode: () => "fullscreen"
+  });
+
+  const sidebarCalls = [];
+  await commands.get("kairo").handler("", fakeShellCtx({ sidebarCalls }));
+  const joined = lastSidebarLines(sidebarCalls).join("\n");
+  assert.ok(!joined.includes("◉"), "no working glyph without evidence");
+  assert.ok(!joined.includes("✔"), "no done glyph without evidence");
+  assert.ok(joined.includes("?"), "unknown stays visible when that is the evidence");
+});

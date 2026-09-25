@@ -67,10 +67,15 @@ export async function launchGentleShell({
     );
   }
 
-  const kairoPiHome = prepareKairoPiHome(env, fsImpl);
+  const { dir: kairoPiHome, tuiMode } = prepareKairoPiHome(env, fsImpl);
   // Kairo owns its interactive surface. A Kairo-only Pi home and explicit
   // resource flags prevent ambient packages, skills, themes, context files,
   // changelogs, and diagnostics from becoming Kairo's first screen.
+  // --tui-mode is the fork's own CLI flag (cli/args.ts) for its
+  // fullscreen/regular InteractiveMode layout (H6); Kairo defaults it to
+  // fullscreen (see prepareKairoPiHome) but honors a regular mode the user
+  // already chose (persisted in the fork's own settings.json), so
+  // "--legacy-cockpit" is never the only way back to a non-fullscreen view.
   const args = [
     cliPath,
     "-e", extensionDir,
@@ -78,11 +83,18 @@ export async function launchGentleShell({
     "--no-skills",
     "--no-prompt-templates",
     "--no-themes",
-    "--no-context-files"
+    "--no-context-files",
+    "--tui-mode", tuiMode
   ];
   const hostEnv = {
     ...env,
     PI_CODING_AGENT_DIR: kairoPiHome,
+    // Mirrors the --tui-mode flag above so the Kairo extension (which has
+    // no other way to learn the fork's current layout mode — the fork's
+    // ExtensionUIContext exposes no getter for it) can feature-detect
+    // whether to feed the fullscreen sidebar/bottom-strip slots or keep
+    // the regular-mode overview widget. See extension/index.js.
+    KAIRO_TUI_MODE: tuiMode,
     // The fork's empty-session persistence is off by default; only this
     // child process opts in. Never set on process.env — any Pi subprocess
     // spawned from within this child inherits it from this object, not
@@ -186,6 +198,21 @@ function defaultResolveEntry() {
   return fileURLToPath(import.meta.resolve(KAIRO_PI_PACKAGE_NAME));
 }
 
+// Kairo's own default TUI mode (H7): fullscreen unless the user already
+// chose "regular" (persisted in the fork's settings.json — see
+// SettingsManager.getTuiMode, which falls back to "regular" for any value
+// other than exactly "fullscreen"). Never re-derived from the CLI flag
+// itself, so a user who switches back to regular mode from inside Pi (its
+// own runtime toggle calls SettingsManager.setTuiMode, which persists here)
+// stays in regular mode on the next Kairo launch.
+const DEFAULT_TUI_MODE = "fullscreen";
+
+/**
+ * Prepares the Kairo-only Pi fork's settings home, and returns the tuiMode
+ * to launch with. Never overwrites an existing "regular" choice back to
+ * "fullscreen" — only fills in the two settings when they are missing.
+ * @returns {{dir: string, tuiMode: "fullscreen"|"regular"}}
+ */
 function prepareKairoPiHome(env, fsImpl) {
   const dir = join(resolveHomeDir(env), ".harness", "pi-agent");
   const settingsPath = join(dir, "settings.json");
@@ -199,13 +226,21 @@ function prepareKairoPiHome(env, fsImpl) {
     } catch {
       // The directory is Kairo-owned; preserve an unreadable/malformed file
       // rather than silently replacing it with a different configuration.
-      return dir;
+      // This launch still needs SOME tuiMode to pass on the CLI — fall
+      // back to the default without persisting anything.
+      return { dir, tuiMode: DEFAULT_TUI_MODE };
     }
   }
-  if (settings.quietStartup !== true) {
-    fsImpl.writeFileSync(settingsPath, `${JSON.stringify({ ...settings, quietStartup: true }, null, 2)}\n`, "utf8");
+  const tuiMode = settings.tuiMode === "regular" ? "regular" : DEFAULT_TUI_MODE;
+  const needsWrite = settings.quietStartup !== true || settings.tuiMode !== tuiMode;
+  if (needsWrite) {
+    fsImpl.writeFileSync(
+      settingsPath,
+      `${JSON.stringify({ ...settings, quietStartup: true, tuiMode }, null, 2)}\n`,
+      "utf8"
+    );
   }
-  return dir;
+  return { dir, tuiMode };
 }
 
 function compareSemver(left, right) {

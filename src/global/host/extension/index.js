@@ -3,7 +3,10 @@ import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-rout
 import {
   loadKairoWorkspaceSnapshot, loadKairoLiveData, loadKairoUsageData, recoverKairoProjectTeam
 } from "../workspace-snapshot.js";
-import { availabilityNotices, createKairoTextWidget, createKairoWorkspaceWidget, formatSessionIdentity } from "../workspace-widget.js";
+import {
+  availabilityNotices, createCompactShellSummaryWidget, createKairoTextWidget, createKairoWorkspaceWidget,
+  createShellBottomStripWidget, createShellSidebarWidget, formatSessionIdentity, SHELL_SIDEBAR_MIN_COLUMNS
+} from "../workspace-widget.js";
 import { MAX_RECOVERY_ATTEMPTS } from "../../conversation/team-recovery.js";
 import { resolveHomeDir } from "../../paths.js";
 import { resolveProjectRoot } from "../../architect/architect-store.js";
@@ -128,6 +131,50 @@ function workspaceStatus(snapshot) {
   return `Kairo · ${snapshot.project.label} · ${formatSessionIdentity(snapshot.session)}`;
 }
 
+/**
+ * The H7/H8 fullscreen shell surface for the "overview" view only: feeds
+ * the fork's own sidebar/bottom-strip slots (SPACES/AGENTS + USAGE) and
+ * clears the ordinary widget slot, or — below SHELL_SIDEBAR_MIN_COLUMNS —
+ * drops the sidebar for a compact attention/usage summary in the widget
+ * slot instead, per the H8 responsive contract. Only engaged when BOTH the
+ * fork exposes `setSidebar`/`setBottomStrip` (feature-detected; the
+ * published `.3` pin Kairo still ships does not) AND the current TUI mode
+ * is fullscreen — `getTuiMode` has no real API to read from (the fork's
+ * ExtensionUIContext exposes no mode getter), so its honest default reads
+ * the `KAIRO_TUI_MODE` env var the launcher sets from the same value it
+ * passed as `--tui-mode` (see launch-gentle-shell.js).
+ * @returns {boolean} true when the shell surface handled the render (the
+ *   caller must not also render the classic widget).
+ */
+function setShellOverview(ctx, snapshot, extraLines, { getColumns, getTuiMode }) {
+  const hasShellApis = typeof ctx?.ui?.setSidebar === "function" && typeof ctx?.ui?.setBottomStrip === "function";
+  if (!hasShellApis) return false;
+  if (getTuiMode?.() !== "fullscreen") {
+    // Regular mode: the shell slots are already a safe no-op there, but
+    // clear them explicitly so a mode switch mid-session never leaves
+    // stale sidebar/strip content behind once fullscreen returns.
+    ctx.ui.setSidebar(undefined);
+    ctx.ui.setBottomStrip(undefined);
+    return false;
+  }
+
+  const columns = getColumns?.() ?? 0;
+  if (columns >= SHELL_SIDEBAR_MIN_COLUMNS) {
+    ctx.ui.setSidebar(createShellSidebarWidget(snapshot));
+    ctx.ui.setBottomStrip(createShellBottomStripWidget(snapshot));
+    ctx.ui.setWidget?.("kairo-workspace", undefined);
+    return true;
+  }
+  // Narrow fullscreen: hide the sidebar, keep the bottom strip (it still
+  // fits), and fill the vacated widget slot with a compact summary so the
+  // blocked-first attention signal and usage stay visible either way.
+  ctx.ui.setSidebar(undefined);
+  ctx.ui.setBottomStrip(createShellBottomStripWidget(snapshot));
+  ctx.ui.setWidget?.("kairo-workspace", createCompactShellSummaryWidget(snapshot));
+  void extraLines; // reserved for parity with the classic widget's extraLines; the compact summary stays terse on purpose.
+  return true;
+}
+
 /** Renders `snapshot` onto the one Kairo widget slot, in the shape `view`
  * needs: the themed two-panel component for "overview", the component
  * path (no line cap) for a detail view that can exceed 10 lines, or a
@@ -136,8 +183,9 @@ function workspaceStatus(snapshot) {
  * (see formatSessionIdentity) appended once here — the overview shows it
  * through its own USAGE panel footer, so every view that can occupy the
  * one Kairo widget slot names the bound session the same honest way. */
-function setWorkspaceWidget(ctx, snapshot, view, extraLines) {
+function setWorkspaceWidget(ctx, snapshot, view, extraLines, shellDeps = {}) {
   if (view === "overview") {
+    if (setShellOverview(ctx, snapshot, extraLines, shellDeps)) return;
     ctx?.ui?.setWidget?.("kairo-workspace", createKairoWorkspaceWidget(snapshot, extraLines));
     return;
   }
@@ -192,7 +240,8 @@ function recoveryNotice(result) {
  * is real (just for a session that is no longer the active one).
  */
 async function refreshWorkspace(ctxOrCwd, {
-  loadSnapshot, sessionId = null, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [], onSnapshot = () => {}, isCurrent = () => true
+  loadSnapshot, sessionId = null, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [],
+  onSnapshot = () => {}, isCurrent = () => true, getColumns, getTuiMode
 }) {
   // Pi's ctx becomes stale after an async yield following a session replacement
   // (Pi asserts ctx.cwd/ctx.ui). Capture cwd/ui synchronously at call time;
@@ -209,7 +258,7 @@ async function refreshWorkspace(ctxOrCwd, {
   });
   if (!isCurrent()) return snapshot;
   ui?.setStatus?.("kairo", workspaceStatus(snapshot));
-  setWorkspaceWidget(ctxForWidget, snapshot, view, extraLines);
+  setWorkspaceWidget(ctxForWidget, snapshot, view, extraLines, { getColumns, getTuiMode });
   onSnapshot(snapshot, { liveAvailability: availabilityIntelligence != null });
   return snapshot;
 }
@@ -232,7 +281,14 @@ export function createKairoWorkspaceExtension(pi, {
   createSessionImpl = createSession,
   getSessionImpl = getSession,
   lookupPiBindingImpl = lookupPiBinding,
-  recordPiBindingImpl = recordPiBinding
+  recordPiBindingImpl = recordPiBinding,
+  // H7/H8: the fork exposes no getter for its own TUI mode or terminal
+  // width, so these default to the one honest real source each has —
+  // KAIRO_TUI_MODE (set by the launcher from the same value it passed as
+  // --tui-mode, see launch-gentle-shell.js) and the process's own stdout
+  // columns. Tests inject fixed values instead of a real TTY.
+  getColumns = () => process.stdout.columns,
+  getTuiMode = () => (env?.KAIRO_TUI_MODE === "regular" ? "regular" : "fullscreen")
 } = {}) {
   let routeSignature = null;
   let routeState = "unknown";
@@ -464,7 +520,9 @@ export function createKairoWorkspaceExtension(pi, {
       loadSnapshot,
       sessionId: boundKairoSessionId,
       onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info),
-      isCurrent
+      isCurrent,
+      getColumns,
+      getTuiMode
     });
     if (routeState === "unavailable" && isCurrent()) {
       setWorkspaceWidget(ctxBag, snapshot, "unavailable-routes", []);
@@ -492,7 +550,9 @@ export function createKairoWorkspaceExtension(pi, {
         availabilityIntelligence: latestAvailabilityIntelligence,
         extraLines,
         onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info),
-        isCurrent
+        isCurrent,
+        getColumns,
+        getTuiMode
       });
       if (routeState === "unavailable" && isCurrent()) {
         setWorkspaceWidget(ctxBag, refreshed, "unavailable-routes", extraLines);
@@ -531,7 +591,7 @@ export function createKairoWorkspaceExtension(pi, {
   for (const [name, description, view] of commands) {
     pi.registerCommand(name, {
       description,
-      handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, sessionId: boundKairoSessionId, view })
+      handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, sessionId: boundKairoSessionId, view, getColumns, getTuiMode })
     });
   }
 
