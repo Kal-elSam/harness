@@ -24,6 +24,8 @@ function createUiContext(
 		setWidget: () => {},
 		setFooter: () => {},
 		setHeader: () => {},
+		setSidebar: () => {},
+		setBottomStrip: () => {},
 		setTitle: () => {},
 		custom: async <T>() => undefined as T,
 		pasteToEditor: () => {},

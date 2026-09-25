@@ -127,7 +127,7 @@ import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { reportBug } from "./bug-report.ts";
-import { createChatViewport } from "./chat-viewport.ts";
+import { createShellViewport } from "./shell-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
@@ -527,6 +527,12 @@ export class InteractiveMode {
 	private extensionWidgetsBelow = new Map<string, Component & { dispose?(): void }>();
 	private widgetContainerAbove!: Container;
 	private widgetContainerBelow!: Container;
+	/** Fullscreen left sidebar slot (extension-owned). */
+	private shellSidebarContainer!: Container;
+	private extensionSidebar: (Component & { dispose?(): void }) | undefined = undefined;
+	/** Fullscreen bottom strip slot (extension-owned; not the built-in footer). */
+	private shellBottomStripContainer!: Container;
+	private extensionBottomStrip: (Component & { dispose?(): void }) | undefined = undefined;
 
 	// Custom footer from extension (undefined = use built-in footer)
 	private customFooter: (Component & { dispose?(): void }) | undefined = undefined;
@@ -596,6 +602,8 @@ export class InteractiveMode {
 		this.statusContainer = new Container();
 		this.widgetContainerAbove = new Container();
 		this.widgetContainerBelow = new Container();
+		this.shellSidebarContainer = new Container();
+		this.shellBottomStripContainer = new Container();
 		this.keybindings = KeybindingsManager.create();
 		setKeybindings(this.keybindings);
 		const editorPaddingX = this.settingsManager.getEditorPaddingX();
@@ -918,20 +926,7 @@ export class InteractiveMode {
 
 		// Keep one component tree and remount it when changing renderers.
 		this.renderWidgets(); // Initialize with default spacer
-		const viewport = createChatViewport({
-			document: this.documentContainer,
-			pendingMessages: this.pendingMessagesContainer,
-			status: this.statusContainer,
-			widgetsAbove: this.widgetContainerAbove,
-			editor: this.editorContainer,
-			widgetsBelow: this.widgetContainerBelow,
-			footer: this.footerContainer,
-			scrollbar: this.settingsManager.getFullscreenScrollbar(),
-			scrollbarTrackStyle: (text) => theme.fg("scrollbarTrack", text),
-			scrollbarThumbStyle: (text) => theme.fg("scrollbarThumb", text),
-		});
-		this.transcriptScrollView = viewport.transcript;
-		this.fullscreenLayoutRoot = viewport.root;
+		this.rebuildFullscreenShellLayout();
 		this.mountInteractiveTui(this.renderer, [
 			this.documentContainer,
 			this.pendingMessagesContainer,
@@ -2366,6 +2361,8 @@ export class InteractiveMode {
 		this.clearExtensionTerminalInputListeners();
 		this.setExtensionFooter(undefined);
 		this.setExtensionHeader(undefined);
+		this.setExtensionSidebar(undefined);
+		this.setExtensionBottomStrip(undefined);
 		this.clearExtensionWidgets();
 		this.footerDataProvider.clearExtensionStatuses();
 		this.footer.invalidate();
@@ -2492,6 +2489,89 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	/**
+	 * Set fullscreen left sidebar content, or clear. Safe no-op when UI slots are not ready.
+	 * Regular mode updates stored content without throwing; layout root applies on fullscreen.
+	 */
+	private setExtensionSidebar(
+		content: string[] | ((tui: TUI, thm: Theme) => Component & { dispose?(): void }) | undefined,
+	): void {
+		this.applyShellSlot("sidebar", content);
+	}
+
+	/**
+	 * Set fullscreen bottom strip content, or clear. Dedicated slot — does not replace built-in footer.
+	 */
+	private setExtensionBottomStrip(
+		content: string[] | ((tui: TUI, thm: Theme) => Component & { dispose?(): void }) | undefined,
+	): void {
+		this.applyShellSlot("bottomStrip", content);
+	}
+
+	private applyShellSlot(
+		slot: "sidebar" | "bottomStrip",
+		content: string[] | ((tui: TUI, thm: Theme) => Component & { dispose?(): void }) | undefined,
+	): void {
+		const container = slot === "sidebar" ? this.shellSidebarContainer : this.shellBottomStripContainer;
+		if (!container) return;
+
+		const existing = slot === "sidebar" ? this.extensionSidebar : this.extensionBottomStrip;
+		existing?.dispose?.();
+		if (slot === "sidebar") this.extensionSidebar = undefined;
+		else this.extensionBottomStrip = undefined;
+		container.clear();
+
+		if (content !== undefined) {
+			let component: Component & { dispose?(): void };
+			if (Array.isArray(content)) {
+				const lines = new Container();
+				for (const line of content.slice(0, InteractiveMode.MAX_WIDGET_LINES)) {
+					lines.addChild(new Text(line, 1, 0));
+				}
+				if (content.length > InteractiveMode.MAX_WIDGET_LINES) {
+					lines.addChild(new Text(theme.fg("muted", "... (widget truncated)"), 1, 0));
+				}
+				component = lines;
+			} else {
+				component = content(this.ui, theme);
+			}
+			if (slot === "sidebar") this.extensionSidebar = component;
+			else this.extensionBottomStrip = component;
+			container.addChild(component);
+		}
+
+		this.rebuildFullscreenShellLayout();
+	}
+
+	/** Rebuild fullscreen layout root from chat viewport + optional shell slots. */
+	private rebuildFullscreenShellLayout(): void {
+		if (!this.documentContainer || !this.editorContainer || !this.footerContainer) return;
+
+		const hasSidebar = (this.shellSidebarContainer?.children.length ?? 0) > 0;
+		const hasBottomStrip = (this.shellBottomStripContainer?.children.length ?? 0) > 0;
+		const viewport = createShellViewport({
+			document: this.documentContainer,
+			pendingMessages: this.pendingMessagesContainer,
+			status: this.statusContainer,
+			widgetsAbove: this.widgetContainerAbove,
+			editor: this.editorContainer,
+			widgetsBelow: this.widgetContainerBelow,
+			footer: this.footerContainer,
+			scrollbar: this.settingsManager.getFullscreenScrollbar(),
+			scrollbarTrackStyle: (text) => theme.fg("scrollbarTrack", text),
+			scrollbarThumbStyle: (text) => theme.fg("scrollbarThumb", text),
+			...(hasSidebar ? { sidebar: this.shellSidebarContainer } : {}),
+			...(hasBottomStrip ? { bottomStrip: this.shellBottomStripContainer } : {}),
+		});
+		this.transcriptScrollView = viewport.transcript;
+		this.fullscreenLayoutRoot = viewport.root;
+
+		if (this.renderer && TuiLayouts.isViewportTUI(this.renderer) && this.renderer.mode === "fullscreen") {
+			this.renderer.setLayoutRoot(this.fullscreenLayoutRoot);
+		}
+		this.ui?.requestRender();
+	}
+
 	private addExtensionTerminalInputListener(
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined,
 	): () => void {
@@ -2553,6 +2633,8 @@ export class InteractiveMode {
 			setWidget: (key, content, options) => this.setExtensionWidget(key, content, options),
 			setFooter: (factory) => this.setExtensionFooter(factory),
 			setHeader: (factory) => this.setExtensionHeader(factory),
+			setSidebar: (content) => this.setExtensionSidebar(content),
+			setBottomStrip: (content) => this.setExtensionBottomStrip(content),
 			setTitle: (title) => this.ui.terminal.setTitle(title),
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
 			pasteToEditor: (text) => this.editor.handleInput(`\x1b[200~${text}\x1b[201~`),

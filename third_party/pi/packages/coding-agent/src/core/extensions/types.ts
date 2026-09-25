@@ -195,6 +195,22 @@ export interface ExtensionUIContext {
 	/** Set a custom header component (shown at startup, above chat), or undefined to restore the built-in header. */
 	setHeader(factory: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined): void;
 
+	/**
+	 * Set the fullscreen left sidebar slot (extension-owned), or undefined to clear.
+	 * Accepts string array or component factory (mirrors setWidget).
+	 * In regular (non-fullscreen) mode this is a safe no-op / clear — does not throw.
+	 */
+	setSidebar(content: string[] | undefined): void;
+	setSidebar(content: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined): void;
+
+	/**
+	 * Set the fullscreen bottom strip slot (extension-owned; dedicated — does not replace the built-in footer).
+	 * Accepts string array or component factory (mirrors setWidget).
+	 * In regular (non-fullscreen) mode this is a safe no-op / clear — does not throw.
+	 */
+	setBottomStrip(content: string[] | undefined): void;
+	setBottomStrip(content: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined): void;
+
 	/** Set the terminal window/tab title. */
 	setTitle(title: string): void;
 

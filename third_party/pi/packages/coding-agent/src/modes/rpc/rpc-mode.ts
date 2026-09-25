@@ -215,6 +215,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// Custom header not supported in RPC mode - requires TUI access
 		},
 
+		setSidebar(_content: unknown): void {
+			// Shell sidebar not supported in RPC mode - requires TUI access
+		},
+
+		setBottomStrip(_content: unknown): void {
+			// Shell bottom strip not supported in RPC mode - requires TUI access
+		},
+
 		setTitle(title: string): void {
 			// Fire and forget - host can implement terminal title control
 			output({
