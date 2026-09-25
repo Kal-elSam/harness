@@ -631,7 +631,7 @@ environment only. Pi's own subprocesses inherit it (documented).
         the literal `HARNESS_HOME=(HARNESS_HOME)`.
   - Next: fix the fork (empty-session `/fork`, update check) and Kairo
     (session id in every view), publish `.3`, and repeat this run.
-- [ ] P02-T11 Fork `.3`: empty-session `/fork`. With
+- [x] P02-T11 Fork `.3`: empty-session `/fork`. With
   `KAIRO_PI_EMPTY_SESSIONS=1` and a truly empty session, the TUI calls a
   runtime empty-fork path that emits a cancellable `session_before_fork`
   with `entryId: ""`, `position: "at"`, and `emptySession: true`. It
@@ -642,6 +642,36 @@ environment only. Pi's own subprocesses inherit it (documented).
   TUI command and for the runtime/event contract. Bump to
   `0.87.1-kairo.3` and run the packaging check. Route: delegated
   writer (fork repo).
+  - Done (fork repo, delegated writer; the parent verified each step):
+    - Implementation: `a059533a0` (RED 6 fail), `30ad7761a` (runtime
+      `forkEmptySession()` plus the TUI path; `session_before_fork` with
+      `entryId ""`, `position "at"`, and `emptySession true`,
+      cancellable), and `543698fb6` (bump to `.3`).
+    - Pre-publish PTY with the `.3` bundle, run by the parent:
+      `/fork` on an empty session showed "Forked to a new Kairo session
+      (e8a22a8b)", and the child had `parentSession`. It also exposed an
+      ORPHAN header-only session: `SessionManager.create()` already
+      persists a session, and `newSession({parentSession})` then created
+      a second one.
+    - Orphan fixes: `d28ee9a83` (RED: 3 files instead of 2) and
+      `17d3a082a` (pass `parentSession` into `create()`). The same
+      pattern existed in `fork()` from the first message and in
+      `newSession({parentSession})`: `531ca9c7b` (RED) and `167cc12eb`
+      fix them, plus a guard that plain `/new` still makes one file.
+    - `84affa94c`: the packaging tests get an explicit 20 s timeout in
+      the test file (npm pack measured 1–6.6 s under load), so no CLI
+      flag is needed.
+    - Checks with no flags: `npx vitest --run test/kairo` 25/25 (the
+      parent re-ran it: 25/25). The package's `npm test` has 2437 pass,
+      50 skip, 0 fail. The PTY re-check produced exactly 2 files,
+      original and child.
+    - The root monorepo `npm test` has 2 failures outside this package:
+      `pi-ai` needs a local Ollama daemon (environmental), and
+      `chord` hits `delta.test.ts` "large append argument lists"
+      RangeError. The parent verified that `packages/chord` has no diff
+      against `v0.87.1`, so that one is upstream, and the fork consumes
+      the published chord anyway.
+    - Tarball sha256 `7621f1e78c51c7f2…` (in the session scratchpad).
 - [x] P02-T12 Kairo: set the existing `PI_SKIP_VERSION_CHECK=1` only in
   the child env (no semver change), and use one session-identity
   formatter (`session: <8hex> · <mode>` / `session: unbound`) in the
