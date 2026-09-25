@@ -79,8 +79,8 @@ User plan "Kairo shell con sidebar real" (2026-09-25) authorizes H6–H10 on bra
 - [x] H3-1 Map sources; working/done gap documented
 - [x] H4-1 `/kairo-team` + blocked notify (already satisfied)
 - [x] H5-1 Widget suite + node render evidence (shell acceptance reopened)
-- [ ] H6-1 RED: fork tests for shell slots (fullscreen composition, resize, regular switch, editor focus, transcript scroll)
-- [ ] H6-2 GREEN: fork layout slots + extension UI API (`setSidebar` / bottom strip) without replacing Pi core surfaces
+- [x] H6-1 RED: fork tests for shell slots (fullscreen composition, resize, regular switch, editor focus, transcript scroll)
+- [x] H6-2 GREEN: fork layout slots + extension UI API (`setSidebar` / bottom strip) without replacing Pi core surfaces
 - [ ] H7-1 RED: harness tests — fullscreen default launch; sidebar data/order; no invented states; headers SPACES/AGENTS
 - [ ] H7-2 GREEN: launch fullscreen; extension fills sidebar + usage strip; regular keeps widget fallback
 - [ ] H8-1 RED/GREEN: ≥90 → 28-col sidebar; &lt;90 → hide sidebar + compact summary
@@ -90,13 +90,14 @@ User plan "Kairo shell con sidebar real" (2026-09-25) authorizes H6–H10 on bra
 ## Progress
 
 - H0–H5 (2026-09-25): DONE as widget/IA foundation. Commits include `7195ca3`, `3362369`. Working/done never emitted (no run registry). Widget RDD review still deferred (slice_budget_reached / untracked collect). Visual shell acceptance **reopened** under H6–H10.
-- H6+ (2026-09-25): Plan accepted — real sidebar shell. Route: fork first (kairo-pi `kairo/0.87.1` @ `0.87.1-kairo.3`), then harness. No publish/push/PR without explicit auth. Engram mirror may need resync (multi-session).
+- H6+ (2026-09-25): Plan accepted — real sidebar shell. Route: fork first (vendored `third_party/pi` @ `0.87.1-kairo.4`), then harness. No publish/push/PR without explicit auth.
+- H6 (2026-09-25): DONE — `createShellViewport` + `ExtensionUIContext.setSidebar` / `setBottomStrip`; fullscreen rebuild in interactive-mode; regular mode safe no-op. Version `0.87.1-kairo.4`. Evidence: `npx vitest --run test/kairo` → 33 passed / 0 failed (after `npm run build:offline`).
 
 ## Verification evidence
 
 - H1–H5: `node --test` snapshot/widget/extension; full `npm test` 2243 pass / 0 fail / 1 skip; node-width render only (not shell TTY).
-- H6+: fork vitest + harness `node --test`; real PTY TTY @100/@60 required for acceptance.
+- H6: fork vitest `test/kairo` 33 pass / 0 fail after offline build; shell composition unit tests cover sidebar HStack, basis 28, clear/omit, transcript primary, bottomStrip vs footer. Real PTY TTY @100/@60 still required for acceptance (H10).
 
 ## Next step
 
-H6 — add shell slots in `/Users/kal-el/Desktop/kairo-pi` (delegated writer, strict TDD). Then H7/H8 in harness. Hold H9 publish until remote authorization.
+H7 — Kairo launch fullscreen by default; extension feeds sidebar (SPACES/AGENTS) + USAGE bottom strip; regular keeps widget fallback. Hold H9 publish until remote authorization.
