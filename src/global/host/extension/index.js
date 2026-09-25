@@ -3,7 +3,7 @@ import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-rout
 import {
   loadKairoWorkspaceSnapshot, loadKairoLiveData, loadKairoUsageData, recoverKairoProjectTeam
 } from "../workspace-snapshot.js";
-import { availabilityNotices, createKairoTextWidget, createKairoWorkspaceWidget } from "../workspace-widget.js";
+import { availabilityNotices, createKairoTextWidget, createKairoWorkspaceWidget, formatSessionIdentity } from "../workspace-widget.js";
 import { MAX_RECOVERY_ATTEMPTS } from "../../conversation/team-recovery.js";
 import { resolveHomeDir } from "../../paths.js";
 import { resolveProjectRoot } from "../../architect/architect-store.js";
@@ -20,11 +20,6 @@ export function workerCardFromEvent(event) {
     workerId: event.workerId,
     type: event.type
   };
-}
-
-function sessionLabel(session) {
-  if (session?.state !== "bound") return "no Kairo session";
-  return `session ${session.id.slice(0, 8)} · ${session.mode}`;
 }
 
 function usageLabel(usage = []) {
@@ -130,20 +125,23 @@ function linesForView(snapshot, view) {
 }
 
 function workspaceStatus(snapshot) {
-  const mode = snapshot.session?.state === "bound" ? (snapshot.session.mode ?? "ask") : "unbound";
-  return `Kairo · ${snapshot.project.label} · ${mode}`;
+  return `Kairo · ${snapshot.project.label} · ${formatSessionIdentity(snapshot.session)}`;
 }
 
 /** Renders `snapshot` onto the one Kairo widget slot, in the shape `view`
  * needs: the themed two-panel component for "overview", the component
  * path (no line cap) for a detail view that can exceed 10 lines, or a
- * plain string array for a detail view that stays comfortably under it. */
+ * plain string array for a detail view that stays comfortably under it.
+ * Every non-overview view gets the same shared session-identity line
+ * (see formatSessionIdentity) appended once here — the overview shows it
+ * through its own USAGE panel footer, so every view that can occupy the
+ * one Kairo widget slot names the bound session the same honest way. */
 function setWorkspaceWidget(ctx, snapshot, view, extraLines) {
   if (view === "overview") {
     ctx?.ui?.setWidget?.("kairo-workspace", createKairoWorkspaceWidget(snapshot, extraLines));
     return;
   }
-  const lines = [...linesForView(snapshot, view), ...extraLines];
+  const lines = [...linesForView(snapshot, view), formatSessionIdentity(snapshot.session), ...extraLines];
   if (UNBOUNDED_TEXT_VIEWS.has(view)) {
     ctx?.ui?.setWidget?.("kairo-workspace", createKairoTextWidget(lines));
     return;

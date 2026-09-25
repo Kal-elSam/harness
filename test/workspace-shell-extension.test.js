@@ -99,7 +99,8 @@ test("extension registers only Kairo workspace commands and refreshes their matc
     "KAIRO TEAM · active",
     "Builder · GPT-6 Terra · codex · checking",
     "Reviewer · MiniMax-M3 · opencode-go · BLOCKED",
-    "  Unavailable — Cursor Models quota exhausted"
+    "  Unavailable — Cursor Models quota exhausted",
+    "session: 11111111 · agent"
   ]);
 
   const usageCalls = [];
@@ -110,7 +111,8 @@ test("extension registers only Kairo workspace commands and refreshes their matc
   assert.deepEqual(usageCalls, [["kairo-workspace", [
     "KAIRO USAGE",
     "USAGE · Codex 5h 58% / W 86% │ Claude S 34% / W 65% │ Go 100% / 100% / 96%",
-    "codex 2400 tokens"
+    "codex 2400 tokens",
+    "session: 11111111 · agent"
   ]]]);
 });
 
@@ -328,7 +330,8 @@ test("extension replaces a missing Pi route with an actionable Kairo state, but 
     "KAIRO TEAM · active",
     "Builder · GPT-6 Terra · codex · checking",
     "Reviewer · MiniMax-M3 · opencode-go · BLOCKED",
-    "  Unavailable — Cursor Models quota exhausted"
+    "  Unavailable — Cursor Models quota exhausted",
+    "session: 11111111 · agent"
   ]);
 });
 
@@ -359,12 +362,12 @@ test("extension renders a Kairo status/widget on session start using the explici
   // Three phases: the immediate "checking" render, then one re-render for
   // each of usage and availability resolving independently — never fewer
   // than all three (see the P01.2 split tests below for resolution order).
-  assert.deepEqual(calls[0], ["status", "kairo", "Kairo · agentic-harness · agent"]);
+  assert.deepEqual(calls[0], ["status", "kairo", "Kairo · agentic-harness · session: 11111111 · agent"]);
   assert.equal(calls[1][0], "widget");
   assert.equal(typeof calls[1][2], "function", "the overview render is a component factory");
-  assert.deepEqual(calls[2], ["status", "kairo", "Kairo · agentic-harness · agent"]);
+  assert.deepEqual(calls[2], ["status", "kairo", "Kairo · agentic-harness · session: 11111111 · agent"]);
   assert.equal(calls[3][0], "widget");
-  assert.deepEqual(calls[4], ["status", "kairo", "Kairo · agentic-harness · agent"]);
+  assert.deepEqual(calls[4], ["status", "kairo", "Kairo · agentic-harness · session: 11111111 · agent"]);
   assert.equal(calls[5][0], "widget");
   assert.equal(calls.length, 6);
 
