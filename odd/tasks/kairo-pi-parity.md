@@ -722,7 +722,17 @@ environment only. Pi's own subprocesses inherit it (documented).
     - `/resume` → older session showed `74b66a0f`, which is correct.
     - The `kairo resume` step is pending until the display is fixed.
     - T5 stays open.
-  - Next: fix the stale panel id, push, CI, then repeat the full PTY run.
+  - Local display fix: an older `loadSnapshot` could finish after a later
+    `session_start` and repaint its ID. A generation guard drops that stale
+    render. Deterministic `/new` → `/fork` test: RED on ce04ca8 (shows the
+    `/new` ID), GREEN with the fix. Real `.3` PTY: startup `7e7fcb20`,
+    `/new` `9c47f5d0`, `/fork` `81eeb08b`; panel/status match bindings at
+    each step and after 12 s. `kairo resume` selecting the child also shows
+    `81eeb08b`. Full suite: 2235 pass, 0 fail, 1 skip (outside sandbox;
+    loopback HTTP is blocked inside it). Native `/resume` lists empty
+    sessions, but selecting one in this run remains unverified.
+  - Next: commit, push/CI with authorization, then verify native `/resume`
+    selection and the full PTY lifecycle before closing T5/T10.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.

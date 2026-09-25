@@ -177,8 +177,22 @@ function recoveryNotice(result) {
   return null;
 }
 
+/**
+ * Loads a fresh snapshot and paints it onto the widget/status bar — unless
+ * `isCurrent()` says this render has been superseded by a later session
+ * lifecycle event while `loadSnapshot` was in flight. `loadSnapshot` itself
+ * can take real, variable time (strategy/usage/Engram reads), and a
+ * `sessionId` captured at call time never changes even though the shared
+ * `boundKairoSessionId` this render's caller read it from may move on to a
+ * newer session before the read resolves (see the `isCurrent` doc on the
+ * session_start handler below). Painting a superseded snapshot would show
+ * the WRONG session id on top of an already-correct render, exactly the
+ * "never reuse another Kairo identity" case P02 forbids — so a stale
+ * result is discarded here, never painted, even though the data it holds
+ * is real (just for a session that is no longer the active one).
+ */
 async function refreshWorkspace(ctxOrCwd, {
-  loadSnapshot, sessionId = null, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [], onSnapshot = () => {}
+  loadSnapshot, sessionId = null, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [], onSnapshot = () => {}, isCurrent = () => true
 }) {
   // Pi's ctx becomes stale after an async yield following a session replacement
   // (Pi asserts ctx.cwd/ctx.ui). Capture cwd/ui synchronously at call time;
@@ -193,6 +207,7 @@ async function refreshWorkspace(ctxOrCwd, {
     usageIntelligence,
     availabilityIntelligence
   });
+  if (!isCurrent()) return snapshot;
   ui?.setStatus?.("kairo", workspaceStatus(snapshot));
   setWorkspaceWidget(ctxForWidget, snapshot, view, extraLines);
   onSnapshot(snapshot, { liveAvailability: availabilityIntelligence != null });
@@ -228,6 +243,17 @@ export function createKairoWorkspaceExtension(pi, {
   // never re-derived from env on every refresh (see bindSession below).
   // null means genuinely unbound, presented as such, never a silent "ask".
   let boundKairoSessionId = null;
+  // Bumped once at the START of every session_start invocation (see below).
+  // A render belongs to the most recent session_start iff its own captured
+  // generation still equals this counter when its (possibly slow) snapshot
+  // read resolves — a session replacement (new/resume/fork) fired while an
+  // older render's loadSnapshot was still in flight bumps this counter and
+  // makes that older render's eventual result stale, so it is discarded
+  // instead of painting an old session's id over the current one. Fixes
+  // the real-TTY defect where a slow /new refresh finally resolved after
+  // /resume and /fork had already rebound and correctly rendered, briefly
+  // repainting the abandoned /new session id on top of the correct one.
+  let renderGeneration = 0;
 
   /**
    * Keeps `boundKairoSessionId` in step with Pi's own session lifecycle.
@@ -415,6 +441,13 @@ export function createKairoWorkspaceExtension(pi, {
   }
 
   pi.on("session_start", async (event, ctx) => {
+    // Every session_start invocation supersedes any still-in-flight render
+    // from an earlier one (see renderGeneration's own doc above) — bumped
+    // synchronously, before any await, so a fast-following new/resume/fork
+    // always wins over a slower earlier refresh's eventual result.
+    const myGeneration = ++renderGeneration;
+    const isCurrent = () => renderGeneration === myGeneration;
+
     // Capture cwd/ui synchronously — Pi marks ctx stale after any async
     // yield following a replacement (see stale-ctx error at 186).
     const cwd = ctx?.cwd ?? process.cwd();
@@ -430,9 +463,10 @@ export function createKairoWorkspaceExtension(pi, {
     const snapshot = await refreshWorkspace(ctxBag, {
       loadSnapshot,
       sessionId: boundKairoSessionId,
-      onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info)
+      onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info),
+      isCurrent
     });
-    if (routeState === "unavailable") {
+    if (routeState === "unavailable" && isCurrent()) {
       setWorkspaceWidget(ctxBag, snapshot, "unavailable-routes", []);
     }
 
@@ -457,9 +491,10 @@ export function createKairoWorkspaceExtension(pi, {
         usageIntelligence: latestUsageIntelligence,
         availabilityIntelligence: latestAvailabilityIntelligence,
         extraLines,
-        onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info)
+        onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info),
+        isCurrent
       });
-      if (routeState === "unavailable") {
+      if (routeState === "unavailable" && isCurrent()) {
         setWorkspaceWidget(ctxBag, refreshed, "unavailable-routes", extraLines);
       }
     }

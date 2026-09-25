@@ -494,7 +494,57 @@ test("extension shows unknown team rows and one explanatory line when the availa
 
 const KAIRO_ID_A = "aaaaaaaa-0000-4000-8000-000000000001";
 const KAIRO_ID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const KAIRO_ID_C = "cccccccc-0000-4000-8000-000000000003";
 const PI_ID_A = "pi-session-a";
+
+test("a delayed /new render cannot repaint the forked session identity", async () => {
+  const { pi, events } = fakePi();
+  let releaseOldSnapshot;
+  let oldSnapshotStarted;
+  const oldSnapshotStartedPromise = new Promise((resolve) => { oldSnapshotStarted = resolve; });
+  const oldSnapshotPromise = new Promise((resolve) => { releaseOldSnapshot = resolve; });
+  const statusCalls = [];
+  const widgetCalls = [];
+  let created = 0;
+  const ctxFor = (piSessionId) => fakeCtx({ piSessionId, statusCalls, widgetCalls });
+  const actualSnapshot = ({ sessionId }) => ({
+    ...snapshot,
+    session: sessionId == null ? { state: "unbound" } : { state: "bound", id: sessionId, mode: "ask" }
+  });
+  createKairoWorkspaceExtension(pi, {
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    loadSnapshot: async (input) => {
+      if (input.sessionId === KAIRO_ID_B && input.usageIntelligence) {
+        oldSnapshotStarted();
+        await oldSnapshotPromise;
+      }
+      return actualSnapshot(input);
+    },
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => [{ id: "codex::test", kairoRoute: { adapterId: "codex", modelId: "test" } }],
+    resolveHomeDirImpl: () => "/home/kairo",
+    resolveProjectRootImpl: async () => "/repo",
+    recordPiBindingImpl: async () => {},
+    getSessionImpl: async () => ({ id: KAIRO_ID_B, mode: "ask" }),
+    createSessionImpl: async () => ({ id: ++created === 1 ? KAIRO_ID_B : KAIRO_ID_C, mode: "ask" })
+  });
+
+  await events.get("session_start")({ reason: "startup" }, ctxFor(PI_ID_A));
+  const oldStart = events.get("session_start")({ reason: "new" }, ctxFor("pi-session-b"));
+  await oldSnapshotStartedPromise;
+  await events.get("session_start")({ reason: "fork" }, ctxFor("pi-session-c"));
+  const currentStatus = statusCalls.at(-1)[1];
+  const currentWidget = renderWidgetCall(widgetCalls.at(-1)[1]).join("\n");
+  assert.match(currentStatus, /cccccccc/);
+  assert.match(currentWidget, /session: cccccccc · ask/);
+
+  releaseOldSnapshot();
+  await oldStart;
+  assert.equal(statusCalls.at(-1)[1], currentStatus, "older snapshot must not replace the current status");
+  assert.equal(renderWidgetCall(widgetCalls.at(-1)[1]).join("\n"), currentWidget,
+    "older snapshot must not replace the current widget");
+});
 
 function bindingHarness(overrides = {}) {
   const { pi, events } = fakePi();
