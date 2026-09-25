@@ -6,90 +6,97 @@ Build a Herdr-style layout inside the Pi/Kairo host: left sidebar with spaces/ag
 
 ## Problem
 
-Today the overview is two side-by-side USAGE/TEAM panels in `src/global/host/workspace-widget.js`, fed by snapshot `kairo.workspace-shell/v1` via `src/global/host/extension/index.js` and `src/global/host/workspace-snapshot.js`. P01–P01.2 (see `odd/tasks/kairo-pi-parity.md`) delivered visible team + widget; the information architecture is still a dense role/model/via table, not an attention-ordered herd view.
+H1–H5 delivered an attention-ordered **overview widget** (HERD|USAGE) above the editor. That closed the IA/data gap but not the visual acceptance: spaces/agents must live in a **persistent left sidebar**, Pi conversation in the center, and usage in a **bottom strip** — composed around Pi's fullscreen viewport, not as a temporary widget.
 
 ## Why
 
-Attention ordering (blocked first, fail-closed unknown) is the next IA layer, not a brain rewrite. It reuses the same snapshot + availability sources and keeps `/kairo-team` as the detail view.
+Attention ordering (blocked first, fail-closed unknown) reuses the same snapshot + availability sources. The missing piece is real shell composition in the Kairo Pi fork (slots), then wiring the Kairo extension into those slots. Herdr remains visual reference only — never installed or integrated.
 
 ## Scope
 
-- H1 — Additive snapshot contract: `agents[]` ({id, label, role?, provider?, model?, state, stateReason?}) + `spaces[]` (current project + bound session: short id, mode). State in working | blocked | idle | done | unknown with documented rule:
-  - blocked from `resolveAssignmentAvailability` blocked, or run awaiting input/approval only if a real signal exists
-  - working from an active run for that role/assignment
-  - idle = assignment available with no active run
-  - done only with a real "finished and unseen" signal; otherwise never emit done
-  - unknown when checking / no evidence
-- H2 — Widget herd render in `workspace-widget.js`: agents section with glyph + name + short provider (Herdr style, no wide table), compact spaces (project + session), USAGE as bottom strip or thin bar (reuse P01.2 gauges/cache age). Narrow width stacks vertically (same content-sized discipline as `computeSideBySideWidths`). Keep Pi component factory (avoid MAX_WIDGET_LINES=10).
-- H3 — Real-state wiring in extension/snapshot loaders: map only already-trusted sources (assignment-availability, session binding, conversation-service runs if they expose state). No screen-scraping. If no run-per-role signal exists, ship H2 with blocked | idle | unknown and document working/done as follow-up.
-- H4 — Minimal interaction: existing per-agent command/detail or `/kairo-team`; notification on transition to blocked (reuse `availabilityNotices`). No mouse splits; Pi keyboard/commands only.
-- H5 — Close vs parity: does not block P02–P07 of kairo-pi-parity. Own branch `feat/herd-shell-layout`; rebase if widget/extension collide. Legacy `--legacy-cockpit` unchanged.
+### Closed (preserve — valid work)
+
+- H1 — Additive snapshot `agents[]`/`spaces[]` with fail-closed states (blocked|idle|unknown; working/done never invented).
+- H2 — Widget herd render (glyph agents, compact spaces, usage strip) as **regular-mode fallback**.
+- H3 — Real-state wiring gap documented (no working/done run registry).
+- H4 — `/kairo-team` detail + blocked-transition notify already satisfied.
+- H5 — Suite green + node render evidence for the **widget** overview (not shell acceptance).
+
+### Open — Real shell (authorized 2026-09-25 plan)
+
+- H6 — Fork Pi: shell slots for left sidebar + bottom strip around existing fullscreen chat viewport. Do not replace transcript, editor, session, or Pi shortcuts. Tests: fullscreen composition, resize, switch to regular, editor focus, transcript scroll.
+- H7 — Kairo launch: fullscreen by default; user can return to regular (widget overview fallback). Extension feeds sidebar from `agents[]`/`spaces[]` (headers **SPACES** / **AGENTS**, never "HERD"); USAGE → bottom strip; blocked-first; unknown when no evidence. Regular mode keeps current widget + `/kairo-team`.
+- H8 — Responsive: ≥90 columns → fixed 28-col sidebar + chat remainder; &lt;90 → hide sidebar, compact attention/usage summary; `/kairo-team` keeps full list.
+- H9 — Integrate new fork version into harness (pin). **No npm publish, push, or PR without explicit remote authorization.**
+- H10 — Evidence: fork + harness suites; interactive TTY at 100 and 60 columns with capture (sidebar beside chat at 100; readable fallback at 60). Visual acceptance does **not** close on an isolated Node render. Record RDD status in this doc.
 
 ## Non-goals
 
 - Own PTY binary/server, multi-machine detach, screen manifests
 - Herdr dependency or install
-- Second tdo pane
+- Second chat / bun pane / own PTY splits (single Pi chat only)
 - Adopting Jev / changing routing
+- `--legacy-cockpit` changes
 
 ## Constraints
 
 - Additive `kairo.workspace-shell/v1` changes only; old consumers must not break.
-- Fail-closed to `unknown` whenever there is no evidence; never invent state, never present blocked as available.
+- Fail-closed to `unknown` whenever there is no evidence; never invent state.
 - `--legacy-cockpit` stays untouched.
-- Small chained PRs if widget exceeds ~400 authored lines.
+- Fullscreen default chosen by user; regular mode keeps overview widget as fallback.
+- No publish / push / PR without explicit remote authorization.
 
 ## Authorized scope
 
-User plan "Herd shell layout (Camino 1)" authorizes H0–H5 on branch `feat/herd-shell-layout`. Push/PR/merge remain user decisions under ordinary repo policy. Base observed at H0: worktree on `feat/kairo-pi-p02-session-binding` with dirty `src/global/host/extension/index.js` + `test/workspace-shell-extension.test.js` — rebase/collide risk recorded, no branch switch done in H0.
+User plan "Kairo shell con sidebar real" (2026-09-25) authorizes H6–H10 on branch `feat/herd-shell-layout`. H1–H5 remain accepted as the data/widget foundation. Push/PR/merge/npm remain user decisions.
 
 ## Acceptance criteria
 
-- [ ] Real TTY: kairo shows agents with honest blocked/idle/unknown (+ working/done only with real signal) and usage strip
-- [ ] Snapshot additive: old consumers do not break
-- [ ] Suite green; widget tests cover blocked-first and fail-closed (no false done)
-- [ ] Feature doc records which states still lack signal (working/done if applicable)
+- [ ] Real TTY @100 cols: persistent sidebar (SPACES/AGENTS) beside Pi chat; usage strip below; blocked-first; no invented states
+- [ ] Real TTY @60 cols: sidebar hidden; compact attention/usage summary readable; `/kairo-team` still has full list
+- [ ] Fullscreen default on Kairo launch; switch to regular restores widget overview
+- [ ] Snapshot additive; suite green (fork + harness); fork tests cover composition/resize/mode/focus/scroll
+- [ ] Feature doc records RDD status and any remaining signal gaps (working/done)
 
 ## TDD
 
-- Mode: strict (source: `odd/tasks/kairo-pi-parity.md` → `~/.claude/CLAUDE.md` "Strict TDD Mode: enabled").
-- Runner: `node --test <file>` focused, `npm test` full suite before merge.
+- Mode: strict (source: project Strict TDD Mode enabled).
+- Runner: `node --test <file>` / fork vitest focused; `npm test` full before merge.
 - RED before implementation, GREEN, then REFACTOR; never invent evidence.
 
 ## Delivery
 
-- Strategy: `ask-on-risk` (default). Slices H1 → H2 → H3 (H4 small) as chained PRs if widget exceeds ~400 authored lines.
-- Chain strategy: not yet chosen; ask once if split is needed (`stacked-to-main` vs `feature-branch-chain`).
-- RDD: per clone mode; assess per work-unit commit.
-- Forecast: H1+H2 likely under 400 authored lines combined; H3 depends on run-state signal availability.
+- Strategy: `ask-on-risk` (default).
+- Chain: fork bump (H6/H9) then harness wiring (H7/H8) then evidence (H10).
+- RDD: assess per work-unit commit when enabled.
+- Forecast: fork layout + harness likely &gt;400 authored lines combined → ask chain strategy before PR if split.
 
 ## Tasks
 
-- [x] H0-1 Feature doc + Engram mirror `odd/herd-shell-layout/tasks` (this file)
-- [x] H1-1 RED: snapshot tests pin `agents[]`/`spaces[]` shape + fail-closed (checking/unknown, no false done) in `test/workspace-shell-snapshot.test.js` (+ related)
-- [x] H1-2 GREEN: additive `agents[]`/`spaces[]` in `workspace-snapshot.js` with documented state rule; old fields unchanged
-- [x] H2-1 RED: widget tests pin blocked-first, truncation, stacked narrow, no false done in `test/workspace-widget.test.js`
-- [x] H2-2 GREEN: herd render in `workspace-widget.js` (agents glyph list, compact spaces, usage strip); keep component factory
-- [x] H3-1 Map real sources only (availability, session binding, runs if exposed); document working/done gap if signal missing
-- [x] H4-1 Per-agent detail command path + blocked transition notice via `availabilityNotices`; no mouse splits
-- [x] H5-1 Full suite green + real TTY verification + record unverified states; branch `feat/herd-shell-layout`
+- [x] H0-1 Feature doc + Engram mirror `odd/herd-shell-layout/tasks`
+- [x] H1-1 / H1-2 Snapshot agents/spaces (additive, fail-closed)
+- [x] H2-1 / H2-2 Widget herd overview (regular-mode fallback)
+- [x] H3-1 Map sources; working/done gap documented
+- [x] H4-1 `/kairo-team` + blocked notify (already satisfied)
+- [x] H5-1 Widget suite + node render evidence (shell acceptance reopened)
+- [ ] H6-1 RED: fork tests for shell slots (fullscreen composition, resize, regular switch, editor focus, transcript scroll)
+- [ ] H6-2 GREEN: fork layout slots + extension UI API (`setSidebar` / bottom strip) without replacing Pi core surfaces
+- [ ] H7-1 RED: harness tests — fullscreen default launch; sidebar data/order; no invented states; headers SPACES/AGENTS
+- [ ] H7-2 GREEN: launch fullscreen; extension fills sidebar + usage strip; regular keeps widget fallback
+- [ ] H8-1 RED/GREEN: ≥90 → 28-col sidebar; &lt;90 → hide sidebar + compact summary
+- [ ] H9-1 Integrate fork version into harness pin (after authorized publish — **blocked until remote auth**)
+- [ ] H10-1 Suites both repos + interactive TTY captures @100/@60; record RDD; reopen checklist above only when TTY passes
 
 ## Progress
 
-- H0 (2026-09-25): base mapped (widget 382 lines, snapshot 358 lines, extension team/usage views). P01–P01.2 closed; P02 branch dirty — collide risk noted. No source writes yet.
-- H1 (2026-09-25): DONE inline (subagents unfunded, user authorized inline). `7195ca3` feat(host): additive herd agents/spaces — 146 authored lines, far below 400. RED 5 fail → GREEN 30/30 snapshot + 84/84 related (widget, extension, cache, components, binding). No working/done run signal exists in snapshot inputs → never emitted, documented in code + H3 follow-up. RDD assess (`--base-ref 516d859 --committed-only`, untracked clutter excluded via canonical inventory): medium / under_budget (241 lines incl. feature doc) → review_due false, boundary stays pending until slice reaches budget.
-- H2 (2026-09-25): DONE inline (user authorized). `3362369` feat(host): herd overview — HERD panel (spaces + blocked-first glyph agents) left, USAGE strip right/stacked below; dense role/model/via table out of overview (detail stays in /kairo-team). RED 8 fail → GREEN 31/31 widget + 117/117 workspace-related; full suite 2243 pass / 0 fail / 1 skipped. Size: 288+/199- = 487 authored lines — over the 400 heuristic because the old TEAM table leaves by design (rewrite, not creep); PR split vs size:exception pending user at PR time. RDD assess: medium / slice_budget_reached (728 lines H1+H2) → review_due TRUE; preflight STATUS ran verbatim, reached collect `intended_untracked_selection` (pre-existing untracked clutter is not candidate content) — empty-selection JSON guessed once, rejected invalid_request; no documented exact shape found, stopped rather than fabricate. Review PENDING, candidate untouched. User decision: defer review, continue.
-- H3 (2026-09-25): DONE as verified gap, no code. Searched `src/global/conversation`: `planExecution`/`executePlan` (service.js) are point-in-time preview/confirm ops with no persisted per-role run registry (no listExecutions/activeExecution store; `service.snapshot()` exposes only modelIntelligence/usage/providers). So no trusted working/done signal exists — herd ships blocked|idle|unknown per H1 rule; working/done stay follow-up pending a real run registry (likely P06 AGENT-continuation territory in kairo-pi-parity).
-- H4 (2026-09-25): DONE, already satisfied — no code. `/kairo-team` detail view (teamDetailLines, full warnings) preserved and covered by extension tests; blocked-transition notify exists (`notifyAvailability` + `availabilityNotices`, one notify per new key, extension/index.js:419-438); keyboard/commands only, no splits.
-- H5 (2026-09-25): DONE. Full suite 2243 pass / 0 fail / 1 skipped (post-H2; H3/H4 add no code). Render evidence (node, realistic snapshot): width 100 side-by-side HERD|USAGE with `HERD · 1 blocked`, `✖ Project Analyst · claude · BLOCKED`, idle rows, usage bars; width 60 stacked HERD above USAGE, all lines within width. Real interactive TTY run left for release per kairo-pi-parity closing acceptance. Unverified states recorded: working/done never emitted (no signal). Branch `feat/herd-shell-layout`: `7195ca3`, `3362369` + docs commits.
-- Route: delegated-direct attempted (explore worker failed: insufficient funds) → inline bounded reads fallback. Implementation tasks (H1+) go via single bounded writer each; per-action verification workers as needed.
+- H0–H5 (2026-09-25): DONE as widget/IA foundation. Commits include `7195ca3`, `3362369`. Working/done never emitted (no run registry). Widget RDD review still deferred (slice_budget_reached / untracked collect). Visual shell acceptance **reopened** under H6–H10.
+- H6+ (2026-09-25): Plan accepted — real sidebar shell. Route: fork first (kairo-pi `kairo/0.87.1` @ `0.87.1-kairo.3`), then harness. No publish/push/PR without explicit auth. Engram mirror may need resync (multi-session).
 
 ## Verification evidence
 
-- H0: file + Engram mirror readback only (no functional checks).
-- H1+: `node --test test/workspace-shell-snapshot.test.js`, `node --test test/workspace-widget.test.js`, then `npm test`.
-- Per work-unit commit on `feat/herd-shell-layout`: RDD assess when enabled.
+- H1–H5: `node --test` snapshot/widget/extension; full `npm test` 2243 pass / 0 fail / 1 skip; node-width render only (not shell TTY).
+- H6+: fork vitest + harness `node --test`; real PTY TTY @100/@60 required for acceptance.
 
 ## Next step
 
-Feature complete on `feat/herd-shell-layout`. Open decisions for the user: (1) pending slice review (medium/slice_budget_reached, stuck at untracked-selection collect); (2) PR split vs `size:exception` (487 authored H2 lines by rewrite design); (3) push/PR/merge under ordinary repo policy. No code changes pending.
+H6 — add shell slots in `/Users/kal-el/Desktop/kairo-pi` (delegated writer, strict TDD). Then H7/H8 in harness. Hold H9 publish until remote authorization.
