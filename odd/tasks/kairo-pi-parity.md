@@ -727,12 +727,14 @@ environment only. Pi's own subprocesses inherit it (documented).
     render. Deterministic `/new` → `/fork` test: RED on ce04ca8 (shows the
     `/new` ID), GREEN with the fix. Real `.3` PTY: startup `7e7fcb20`,
     `/new` `9c47f5d0`, `/fork` `81eeb08b`; panel/status match bindings at
-    each step and after 12 s. `kairo resume` selecting the child also shows
-    `81eeb08b`. Full suite: 2235 pass, 0 fail, 1 skip (outside sandbox;
-    loopback HTTP is blocked inside it). Native `/resume` lists empty
-    sessions, but selecting one in this run remains unverified.
-  - Work-unit commit: `fc34042`. Next: push/CI with authorization, then verify native `/resume`
-    selection and the full PTY lifecycle before closing T5/T10.
+    each step and after 12 s. Full PTY repeat: startup `66270ad1` →
+    `/new` `6b375b9a` → `/resume` selects original `66270ad1` → `/fork`
+    `9561c02d` (Pi child has original parent path) → exit → `kairo resume`
+    selects `9561c02d`. All screen IDs match the binding file; 3 Pi
+    session files before relaunch, no orphan. Full suite: 2235 pass, 0 fail, 1 skip
+    (outside sandbox; loopback HTTP is blocked inside it).
+  - Work-unit commit: `fc34042`. Next: push/CI with authorization; T5/T10
+    stay open until CI verifies this HEAD.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
