@@ -34,10 +34,10 @@ nobody else could reach, and extra steps for every fork change.
 
 ## Tasks
 
-- [ ] U1 Import upstream `v0.87.1` squashed at `third_party/pi`
+- [x] U1 Import upstream `v0.87.1` squashed at `third_party/pi`
   (`git subtree add --squash` from the local fork repo tag).
   Route: inline (mechanical git).
-- [ ] U2 Replay the 17 Kairo commits into `third_party/pi`
+- [x] U2 Replay the 17 Kairo commits into `third_party/pi`
   (`git format-patch` + `git am --directory=third_party/pi`), keeping
   authorship and messages. Route: inline.
 - [ ] U3 Scope Kairo tooling: the `npm test` globs (same test count as
@@ -82,6 +82,15 @@ nobody else could reach, and extra steps for every fork change.
   U3–U6) is reviewable on its own.
 
 ## Progress
+
+- U1: `7b0c558f6` squashes `f07218c4d`; merge commit `04cefdd49`; 1863
+  files. Only 2078 new objects are reachable (no upstream history). No
+  upstream tags or refs leaked. The local `.git` holds the fetched
+  upstream objects loose until `git gc` (U8).
+- U2: 17 commits applied with `git am --directory=third_party/pi`,
+  keeping authorship and dates; the last one is `1f03781ba`.
+  Verification: `HEAD:third_party/pi` has tree `9611eda62acf…`, identical
+  to the fork's `kairo/0.87.1` tree.
 
 - 2026-09-25: The stray `(HARNESS_HOME)/` folder was deleted from the
   main checkout. It was last touched on 2026-09-24, and its `auth.json`
