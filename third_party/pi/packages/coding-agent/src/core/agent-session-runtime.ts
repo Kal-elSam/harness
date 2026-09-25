@@ -149,7 +149,7 @@ export class AgentSessionRuntime {
 
 	private async emitBeforeFork(
 		entryId: string,
-		options: { position: "before" | "at" },
+		options: { position: "before" | "at"; emptySession?: boolean },
 	): Promise<{ cancelled: boolean }> {
 		const runner = this.session.extensionRunner;
 		if (!runner.hasHandlers("session_before_fork")) {
@@ -159,7 +159,8 @@ export class AgentSessionRuntime {
 		const result = await runner.emit({
 			type: "session_before_fork",
 			entryId,
-			...options,
+			position: options.position,
+			...(options.emptySession ? { emptySession: true as const } : {}),
 		});
 		return { cancelled: result?.cancel === true };
 	}
@@ -349,6 +350,73 @@ export class AgentSessionRuntime {
 		);
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false, selectedText };
+	}
+
+	/**
+	 * Kairo extension: fork a session that has no user messages to fork from.
+	 *
+	 * Upstream's fork flow always resolves an existing entry via
+	 * `SessionManager.getEntry()`. A truly empty session (no user messages)
+	 * has no entry to select, so upstream's TUI shows "No messages to fork
+	 * from" instead of forking. Gated behind `KAIRO_PI_EMPTY_SESSIONS=1`
+	 * (read at call time), this creates a new parent-linked child from the
+	 * current, still-empty session, exactly like `fork()`'s existing
+	 * "fork the very first message" case (no target leaf, parent-linked
+	 * child, `session_start` reason `fork`) but with no entry, no message
+	 * text, and no model call involved.
+	 *
+	 * @throws {Error} When the gate is off, or when the current session has
+	 * user messages to fork from (use `fork()` instead).
+	 */
+	async forkEmptySession(): Promise<{ cancelled: boolean }> {
+		if (process.env.KAIRO_PI_EMPTY_SESSIONS !== "1") {
+			throw new Error("Invalid entry ID for forking");
+		}
+		if (this.session.getUserMessagesForForking().length > 0) {
+			throw new Error("Invalid entry ID for forking");
+		}
+
+		const beforeResult = await this.emitBeforeFork("", { position: "at", emptySession: true });
+		if (beforeResult.cancelled) {
+			return { cancelled: true };
+		}
+
+		const previousSessionFile = this.session.sessionFile;
+		const sessionManager = this.session.sessionManager;
+
+		if (sessionManager.isPersisted()) {
+			const currentSessionFile = this.session.sessionFile;
+			if (!currentSessionFile) {
+				throw new Error("Persisted session is missing a session file");
+			}
+			const sessionDir = sessionManager.getSessionDir();
+			const newSessionManager = SessionManager.create(this.cwd, sessionDir);
+			newSessionManager.newSession({ parentSession: currentSessionFile });
+			await this.teardownCurrent("fork", newSessionManager.getSessionFile());
+			this.apply(
+				await this.createRuntime({
+					cwd: this.cwd,
+					agentDir: this.services.agentDir,
+					sessionManager: newSessionManager,
+					sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
+				}),
+			);
+			await this.finishSessionReplacement();
+			return { cancelled: false };
+		}
+
+		await this.teardownCurrent("fork", sessionManager.getSessionFile());
+		sessionManager.newSession({ parentSession: previousSessionFile });
+		this.apply(
+			await this.createRuntime({
+				cwd: this.cwd,
+				agentDir: this.services.agentDir,
+				sessionManager,
+				sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
+			}),
+		);
+		await this.finishSessionReplacement();
+		return { cancelled: false };
 	}
 
 	/**

@@ -5342,6 +5342,15 @@ export class InteractiveMode {
 		const userMessages = this.session.getUserMessagesForForking();
 
 		if (userMessages.length === 0) {
+			// Kairo extension: on a truly empty session (no user messages),
+			// fork immediately into a new parent-linked child instead of
+			// showing "No messages to fork from". Gated behind
+			// KAIRO_PI_EMPTY_SESSIONS=1 (read at call time); flag off keeps
+			// upstream's status message unchanged.
+			if (process.env.KAIRO_PI_EMPTY_SESSIONS === "1") {
+				void this.forkEmptySession();
+				return;
+			}
 			this.showStatus("No messages to fork from");
 			return;
 		}
@@ -5374,6 +5383,27 @@ export class InteractiveMode {
 			);
 			return { component: selector, focus: selector.getMessageList() };
 		});
+	}
+
+	/**
+	 * Kairo extension: fork a truly empty session (no user messages) into a
+	 * new parent-linked child, gated behind KAIRO_PI_EMPTY_SESSIONS=1. Only
+	 * called from {@link showUserMessageSelector} once that gate and the
+	 * empty-session check have already passed.
+	 */
+	private async forkEmptySession(): Promise<void> {
+		try {
+			const result = await this.runtimeHost.forkEmptySession();
+			if (result.cancelled) {
+				this.ui.requestRender();
+				return;
+			}
+
+			this.editor.setText("");
+			this.showStatus("Forked to new session");
+		} catch (error: unknown) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
 	}
 
 	private async handleCloneCommand(): Promise<void> {
