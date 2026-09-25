@@ -61,3 +61,20 @@ test("packed tarball includes release scripts and full SDD skill packs", () => {
     if (existsSync(tarballPath)) unlinkSync(tarballPath);
   }
 });
+
+test("packed tarball excludes the vendored third_party/ Pi fork source", () => {
+  const dryRunOutput = execSync("npm pack --dry-run --json", {
+    cwd: packageRoot,
+    encoding: "utf8"
+  });
+  const [{ files }] = JSON.parse(dryRunOutput);
+  const thirdPartyEntries = files
+    .map((entry) => entry.path)
+    .filter((path) => path.startsWith("third_party/") || path === "third_party");
+
+  assert.deepEqual(
+    thirdPartyEntries,
+    [],
+    `expected no third_party/ paths in the packed Kairo package, found: ${thirdPartyEntries.join(", ")}`
+  );
+});
