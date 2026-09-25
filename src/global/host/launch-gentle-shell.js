@@ -88,6 +88,13 @@ export async function launchGentleShell({
     // spawned from within this child inherits it from this object, not
     // from the ambient environment.
     KAIRO_PI_EMPTY_SESSIONS: "1",
+    // The fork correctly ranks its own prerelease (e.g. 0.87.1-kairo.2)
+    // below the real 0.87.1 release, so it always shows an "Update
+    // Available" notice — never accurate for this Kairo-only fork, which
+    // is not upgraded through `pi update`. The fork already honors this
+    // flag (src/utils/version-check.ts). Same never-on-process.env rule
+    // as KAIRO_PI_EMPTY_SESSIONS above.
+    PI_SKIP_VERSION_CHECK: "1",
     ...(sessionId == null ? {} : { KAIRO_SESSION_ID: sessionId })
   };
   const result = await spawnImpl(execPath, args, { cwd, env: hostEnv, shell: false, stdio: "inherit" });

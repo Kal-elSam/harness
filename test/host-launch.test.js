@@ -300,6 +300,31 @@ test("KAIRO_PI_EMPTY_SESSIONS is set only in the child env, never on process.env
   assert.equal(process.env.KAIRO_PI_EMPTY_SESSIONS, undefined);
 });
 
+test("PI_SKIP_VERSION_CHECK is set only in the child env, never on process.env", async () => {
+  const fixture = await buildKairoPiFixture();
+  const cwd = await tmpProjectDir();
+  const originalProcessEnvFlag = process.env.PI_SKIP_VERSION_CHECK;
+  assert.equal(originalProcessEnvFlag, undefined, "test precondition: flag must not already be set");
+
+  const calls = [];
+  await launchGentleShell({
+    cwd,
+    extensionDir,
+    statImpl: okStat,
+    env: { HARNESS_HOME: "/tmp/kairo-host-test" },
+    nodeVersion: okNodeVersion,
+    execPath: "/fake/node/bin/node",
+    resolveEntryImpl: fixture.resolveEntryImpl,
+    spawnImpl: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    }
+  });
+
+  assert.equal(calls[0].options.env.PI_SKIP_VERSION_CHECK, "1");
+  assert.equal(process.env.PI_SKIP_VERSION_CHECK, undefined);
+});
+
 test("explicit Kairo session binding is passed to the host environment, never argv", async () => {
   const fixture = await buildKairoPiFixture();
   const cwd = await tmpProjectDir();
