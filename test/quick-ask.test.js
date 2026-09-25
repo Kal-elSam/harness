@@ -152,28 +152,33 @@ test("codex: reads the real answer from --output-last-message, never combining -
   assert.equal(args.includes("--approve-for-me"), false);
 });
 
-test("REGRESSION: codex's timeout resets on real output, so a genuinely slow-but-alive call isn't killed just for taking a while", async () => {
+test("REGRESSION: codex's timeout resets on real output, so a genuinely slow-but-alive call isn't killed just for taking a while", async (t) => {
+  // Mocked setTimeout makes this deterministic: real timers slipped under
+  // full-suite load and made the old 20ms-margin version flaky. File I/O
+  // (mkdtemp/writeFile/readFile) is not a timer, so it stays real.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let child;
+  let outFile;
+  let markSpawned;
+  const spawned = new Promise((resolve) => { markSpawned = resolve; });
   const spawn = (_cmd, args) => {
-    const outFileIndex = args.indexOf("-o") + 1;
-    const outFile = args[outFileIndex];
-    const child = new EventEmitter();
+    outFile = args[args.indexOf("-o") + 1];
+    child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.kill = () => {};
-    // A real chunk arrives BEFORE the original timeoutMs elapses, then the
-    // real answer arrives well AFTER it — an absolute deadline would have
-    // killed this; an idle-reset one must not, since real output kept
-    // arriving.
-    // Generous margins: under full-suite load, timer callbacks can slip by
-    // several ms, and a tight margin here made this test genuinely flaky —
-    // this only needs to prove the reset happens, not measure exact timing.
-    setTimeout(() => child.stdout.emit("data", "thinking...\n"), 60);
-    setTimeout(async () => {
-      await writeFile(outFile, "still alive.\n", "utf8");
-      child.emit("close", 0);
-    }, 120);
+    markSpawned();
     return child;
   };
-  const answer = await askProvider({ provider: "codex", question: "q", cwd: "/repo", timeoutMs: 80, spawn });
+  const pending = askProvider({ provider: "codex", question: "q", cwd: "/repo", timeoutMs: 80, spawn });
+  await spawned;
+
+  t.mock.timers.tick(60); // before the original 80ms deadline
+  child.stdout.emit("data", "thinking...\n"); // real output: deadline moves to 140ms
+  t.mock.timers.tick(60); // 120ms: past the original deadline, before the reset one
+  await writeFile(outFile, "still alive.\n", "utf8");
+  child.emit("close", 0);
+
+  const answer = await pending;
   assert.equal(answer.status, "answered");
   assert.equal(answer.answer, "still alive.");
 });

@@ -213,6 +213,12 @@ test("renderKairoWorkspaceWidget's USAGE panel footer shows the session and mode
   assert.ok(lines.some((line) => line.includes("11111111") && line.includes("agent")));
 });
 
+test("renderKairoWorkspaceWidget's USAGE panel footer shows an explicit unbound state, never a default ask mode", () => {
+  const lines = renderKairoWorkspaceWidget(fixtureSnapshot({ session: { state: "unbound" } }), 160, IDENTITY_THEME);
+  assert.ok(lines.some((line) => line.includes("session: unbound")));
+  assert.ok(!lines.some((line) => line.includes("· ask")), "unbound must never imply a default mode");
+});
+
 test("availabilityNotices groups blocked roles into one notice per provider and window, never one per role", () => {
   const goLimit = { provider: "opencode-go", window: "monthly", remainingPercent: 0, resetsAt: null };
   const rows = [

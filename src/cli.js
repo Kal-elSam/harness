@@ -96,11 +96,10 @@ export async function runCli(argv) {
         await runCockpitCli(optionsWithPolicy);
         return;
       }
-      await launchGentleShell({
-        cwd: optionsWithPolicy.cwd,
-        extensionDir: resolve(__dirname, "global/host/extension"),
-        interactive: optionsWithPolicy.interactive
-      });
+      // Bare `kairo` (implicit "host") always creates and binds a real
+      // Kairo session, the same path as `kairo start` — never an unbound
+      // launch. `--legacy-cockpit` is handled above and stays untouched.
+      await runKairoStart(optionsWithPolicy);
       return;
     }
     case "shell": {

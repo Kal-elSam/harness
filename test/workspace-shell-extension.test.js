@@ -49,6 +49,28 @@ function fakePi() {
   };
 }
 
+/** A fakeable `ctx.sessionManager`, mirroring Pi's real
+ * `ReadonlySessionManager.getSessionId()` contract used by the P02 binding
+ * lifecycle. `piSessionId: null` mimics a ctx with no sessionManager at all
+ * (pre-P02 test fixtures), matching `ctx?.sessionManager?.getSessionId?.()
+ * ?? null` in the extension. */
+function fakeSessionManager(piSessionId) {
+  if (piSessionId == null) return undefined;
+  return { getSessionId: () => piSessionId };
+}
+
+function fakeCtx({ cwd = "/repo", piSessionId = null, notifications = [], widgetCalls = [], statusCalls = [] } = {}) {
+  return {
+    cwd,
+    sessionManager: fakeSessionManager(piSessionId),
+    ui: {
+      setStatus: (...args) => statusCalls.push(args),
+      setWidget: (...args) => widgetCalls.push(args),
+      notify: (...args) => notifications.push(args)
+    }
+  };
+}
+
 /** Renders whatever `ctx.ui.setWidget` received (a component factory or a
  * plain string array) into lines, the way Pi itself would, so tests can
  * assert on real rendered text either way. */
@@ -77,7 +99,8 @@ test("extension registers only Kairo workspace commands and refreshes their matc
     "KAIRO TEAM · active",
     "Builder · GPT-6 Terra · codex · checking",
     "Reviewer · MiniMax-M3 · opencode-go · BLOCKED",
-    "  Unavailable — Cursor Models quota exhausted"
+    "  Unavailable — Cursor Models quota exhausted",
+    "session: 11111111 · agent"
   ]);
 
   const usageCalls = [];
@@ -88,7 +111,8 @@ test("extension registers only Kairo workspace commands and refreshes their matc
   assert.deepEqual(usageCalls, [["kairo-workspace", [
     "KAIRO USAGE",
     "USAGE · Codex 5h 58% / W 86% │ Claude S 34% / W 65% │ Go 100% / 100% / 96%",
-    "codex 2400 tokens"
+    "codex 2400 tokens",
+    "session: 11111111 · agent"
   ]]]);
 });
 
@@ -306,7 +330,8 @@ test("extension replaces a missing Pi route with an actionable Kairo state, but 
     "KAIRO TEAM · active",
     "Builder · GPT-6 Terra · codex · checking",
     "Reviewer · MiniMax-M3 · opencode-go · BLOCKED",
-    "  Unavailable — Cursor Models quota exhausted"
+    "  Unavailable — Cursor Models quota exhausted",
+    "session: 11111111 · agent"
   ]);
 });
 
@@ -337,12 +362,12 @@ test("extension renders a Kairo status/widget on session start using the explici
   // Three phases: the immediate "checking" render, then one re-render for
   // each of usage and availability resolving independently — never fewer
   // than all three (see the P01.2 split tests below for resolution order).
-  assert.deepEqual(calls[0], ["status", "kairo", "Kairo · agentic-harness · agent"]);
+  assert.deepEqual(calls[0], ["status", "kairo", "Kairo · agentic-harness · session: 11111111 · agent"]);
   assert.equal(calls[1][0], "widget");
   assert.equal(typeof calls[1][2], "function", "the overview render is a component factory");
-  assert.deepEqual(calls[2], ["status", "kairo", "Kairo · agentic-harness · agent"]);
+  assert.deepEqual(calls[2], ["status", "kairo", "Kairo · agentic-harness · session: 11111111 · agent"]);
   assert.equal(calls[3][0], "widget");
-  assert.deepEqual(calls[4], ["status", "kairo", "Kairo · agentic-harness · agent"]);
+  assert.deepEqual(calls[4], ["status", "kairo", "Kairo · agentic-harness · session: 11111111 · agent"]);
   assert.equal(calls[5][0], "widget");
   assert.equal(calls.length, 6);
 
@@ -459,4 +484,394 @@ test("extension shows unknown team rows and one explanatory line when the availa
     finalLines.some((line) => line.toLowerCase().includes("availability check failed")),
     "one line explains the failed availability check"
   );
+});
+
+// P02-T3: Pi session -> Kairo session binding lifecycle. Every test below
+// injects resolveHomeDirImpl/resolveProjectRootImpl/createSessionImpl/
+// getSessionImpl/lookupPiBindingImpl/recordPiBindingImpl so no real disk or
+// git is touched — mirroring the deps-injection convention used throughout
+// this file and in session-cli.test.js.
+
+const KAIRO_ID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const KAIRO_ID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const KAIRO_ID_C = "cccccccc-0000-4000-8000-000000000003";
+const PI_ID_A = "pi-session-a";
+
+test("a delayed /new render cannot repaint the forked session identity", async () => {
+  const { pi, events } = fakePi();
+  let releaseOldSnapshot;
+  let oldSnapshotStarted;
+  const oldSnapshotStartedPromise = new Promise((resolve) => { oldSnapshotStarted = resolve; });
+  const oldSnapshotPromise = new Promise((resolve) => { releaseOldSnapshot = resolve; });
+  const statusCalls = [];
+  const widgetCalls = [];
+  let created = 0;
+  const ctxFor = (piSessionId) => fakeCtx({ piSessionId, statusCalls, widgetCalls });
+  const actualSnapshot = ({ sessionId }) => ({
+    ...snapshot,
+    session: sessionId == null ? { state: "unbound" } : { state: "bound", id: sessionId, mode: "ask" }
+  });
+  createKairoWorkspaceExtension(pi, {
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    loadSnapshot: async (input) => {
+      if (input.sessionId === KAIRO_ID_B && input.usageIntelligence) {
+        oldSnapshotStarted();
+        await oldSnapshotPromise;
+      }
+      return actualSnapshot(input);
+    },
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => [{ id: "codex::test", kairoRoute: { adapterId: "codex", modelId: "test" } }],
+    resolveHomeDirImpl: () => "/home/kairo",
+    resolveProjectRootImpl: async () => "/repo",
+    recordPiBindingImpl: async () => {},
+    getSessionImpl: async () => ({ id: KAIRO_ID_B, mode: "ask" }),
+    createSessionImpl: async () => ({ id: ++created === 1 ? KAIRO_ID_B : KAIRO_ID_C, mode: "ask" })
+  });
+
+  await events.get("session_start")({ reason: "startup" }, ctxFor(PI_ID_A));
+  const oldStart = events.get("session_start")({ reason: "new" }, ctxFor("pi-session-b"));
+  await oldSnapshotStartedPromise;
+  await events.get("session_start")({ reason: "fork" }, ctxFor("pi-session-c"));
+  const currentStatus = statusCalls.at(-1)[1];
+  const currentWidget = renderWidgetCall(widgetCalls.at(-1)[1]).join("\n");
+  assert.match(currentStatus, /cccccccc/);
+  assert.match(currentWidget, /session: cccccccc · ask/);
+
+  releaseOldSnapshot();
+  await oldStart;
+  assert.equal(statusCalls.at(-1)[1], currentStatus, "older snapshot must not replace the current status");
+  assert.equal(renderWidgetCall(widgetCalls.at(-1)[1]).join("\n"), currentWidget,
+    "older snapshot must not replace the current widget");
+});
+
+function bindingHarness(overrides = {}) {
+  const { pi, events } = fakePi();
+  const recordCalls = [];
+  const seenSessionIds = [];
+  const extension = createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async (input) => {
+      seenSessionIds.push(input.sessionId);
+      return snapshot;
+    },
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => [],
+    resolveHomeDirImpl: () => "/home/kairo",
+    resolveProjectRootImpl: async () => "/repo",
+    recordPiBindingImpl: async (homeDir, projectRoot, piSessionId, kairoSessionId) => {
+      recordCalls.push({ homeDir, projectRoot, piSessionId, kairoSessionId });
+      return { kairoSessionId, boundAt: "2026-09-24T00:00:00.000Z" };
+    },
+    lookupPiBindingImpl: async () => null,
+    createSessionImpl: async () => { throw new Error("createSessionImpl not stubbed for this test"); },
+    getSessionImpl: async () => { throw new Error("getSessionImpl not stubbed for this test"); },
+    ...overrides
+  });
+  return { events, extension, recordCalls, seenSessionIds };
+}
+
+test("startup binds to env KAIRO_SESSION_ID and records it for the current Pi session id", async () => {
+  const { pi, events } = fakePi();
+  const recordCalls = [];
+  createKairoWorkspaceExtension(pi, {
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    loadSnapshot: async () => snapshot,
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => [],
+    resolveHomeDirImpl: () => "/home/kairo",
+    resolveProjectRootImpl: async () => "/repo",
+    recordPiBindingImpl: async (homeDir, projectRoot, piSessionId, kairoSessionId) => {
+      recordCalls.push({ homeDir, projectRoot, piSessionId, kairoSessionId });
+    }
+  });
+
+  const notifications = [];
+  const ctx = fakeCtx({ piSessionId: PI_ID_A, notifications });
+  await events.get("session_start")({ reason: "startup" }, ctx);
+
+  assert.deepEqual(recordCalls, [{
+    homeDir: "/home/kairo", projectRoot: "/repo", piSessionId: PI_ID_A, kairoSessionId: KAIRO_ID_A
+  }]);
+  assert.deepEqual(notifications, [], "a normal startup binding is silent");
+});
+
+test("startup with no KAIRO_SESSION_ID stays unbound, silently — never an implied session", async () => {
+  const { pi, events } = fakePi();
+  let sawSessionId;
+  createKairoWorkspaceExtension(pi, {
+    env: {},
+    loadSnapshot: async (input) => { sawSessionId = input.sessionId; return snapshot; },
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => []
+  });
+
+  const notifications = [];
+  const ctx = fakeCtx({ piSessionId: PI_ID_A, notifications });
+  await events.get("session_start")({ reason: "startup" }, ctx);
+
+  assert.equal(sawSessionId, null);
+  assert.deepEqual(notifications, []);
+});
+
+// Pi reloads the extension on /reload, so `boundKairoSessionId` is lost —
+// reload must recover the CURRENT Pi session's own recorded binding first,
+// never blindly fall back to the launch-time env id. Falling back to env
+// unconditionally would silently rebind to the original launch session
+// after a /new or /fork in the same process, which is exactly the "reuse
+// another Kairo identity" case P02 forbids.
+
+test("reload with an existing Pi->Kairo mapping rebinds to that session, never env — REGRESSION for /new then reload", async () => {
+  const { events, seenSessionIds } = bindingHarness({
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    lookupPiBindingImpl: async (homeDir, projectRoot, piSessionId) => {
+      assert.equal(piSessionId, PI_ID_A);
+      return KAIRO_ID_B;
+    },
+    getSessionImpl: async (homeDir, projectRoot, sessionId) => {
+      assert.equal(sessionId, KAIRO_ID_B);
+      return { id: KAIRO_ID_B, mode: "agent" };
+    }
+  });
+  const notifications = [];
+  const ctx = fakeCtx({ piSessionId: PI_ID_A, notifications });
+  await events.get("session_start")({ reason: "reload" }, ctx);
+
+  assert.ok(seenSessionIds.includes(KAIRO_ID_B), "reload must bind to the /new session, not the launch-time env id");
+  assert.ok(!seenSessionIds.includes(KAIRO_ID_A));
+  assert.deepEqual(notifications, [], "a real, existing mapping rebinds silently");
+});
+
+test("reload with a mapping pointing at a forked session rebinds to the fork — REGRESSION for /fork then reload", async () => {
+  const { events, seenSessionIds } = bindingHarness({
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    lookupPiBindingImpl: async () => KAIRO_ID_B,
+    getSessionImpl: async () => ({ id: KAIRO_ID_B, mode: "plan" })
+  });
+  const ctx = fakeCtx({ piSessionId: "pi-session-forked" });
+  await events.get("session_start")({ reason: "reload" }, ctx);
+
+  assert.ok(seenSessionIds.includes(KAIRO_ID_B));
+  assert.ok(!seenSessionIds.includes(KAIRO_ID_A));
+});
+
+test("reload with no recorded mapping falls back to the launch-time env session and records it", async () => {
+  const { events, recordCalls, seenSessionIds } = bindingHarness({
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    lookupPiBindingImpl: async () => null
+  });
+  const ctx = fakeCtx({ piSessionId: PI_ID_A });
+  await events.get("session_start")({ reason: "reload" }, ctx);
+
+  assert.ok(seenSessionIds.includes(KAIRO_ID_A));
+  assert.deepEqual(recordCalls, [{
+    homeDir: "/home/kairo", projectRoot: "/repo", piSessionId: PI_ID_A, kairoSessionId: KAIRO_ID_A
+  }]);
+});
+
+test("reload with a mapping to a Kairo session that no longer exists fails closed to unbound, never falls back to env", async () => {
+  const { events, seenSessionIds } = bindingHarness({
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    lookupPiBindingImpl: async () => KAIRO_ID_B,
+    getSessionImpl: async () => null
+  });
+  const notifications = [];
+  const ctx = fakeCtx({ piSessionId: PI_ID_A, notifications });
+  await events.get("session_start")({ reason: "reload" }, ctx);
+
+  assert.ok(!seenSessionIds.includes(KAIRO_ID_A), "a missing mapped session must never fall back to reusing env");
+  assert.ok(!seenSessionIds.includes(KAIRO_ID_B));
+  assert.equal(seenSessionIds.at(-1), null, "fails closed to unbound");
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0][1], "error");
+});
+
+test("a Pi /new creates and binds a fresh Kairo session, recorded against the Pi session id", async () => {
+  const { events, recordCalls, seenSessionIds } = bindingHarness({
+    createSessionImpl: async (homeDir, projectRoot, opts) => {
+      assert.deepEqual(opts, {});
+      return { id: KAIRO_ID_A, mode: "ask" };
+    }
+  });
+  const ctx = fakeCtx({ piSessionId: PI_ID_A });
+  await events.get("session_start")({ reason: "new" }, ctx);
+
+  assert.deepEqual(recordCalls, [{
+    homeDir: "/home/kairo", projectRoot: "/repo", piSessionId: PI_ID_A, kairoSessionId: KAIRO_ID_A
+  }]);
+  assert.ok(seenSessionIds.includes(KAIRO_ID_A));
+});
+
+test("a Pi /resume rebinds to the Kairo session already recorded for that Pi session, when it still exists", async () => {
+  const { events, seenSessionIds } = bindingHarness({
+    lookupPiBindingImpl: async () => KAIRO_ID_A,
+    getSessionImpl: async (homeDir, projectRoot, sessionId) => {
+      assert.equal(sessionId, KAIRO_ID_A);
+      return { id: KAIRO_ID_A, mode: "plan" };
+    }
+  });
+  const notifications = [];
+  const ctx = fakeCtx({ piSessionId: PI_ID_A, notifications });
+  await events.get("session_start")({ reason: "resume" }, ctx);
+
+  assert.ok(seenSessionIds.includes(KAIRO_ID_A));
+  assert.deepEqual(notifications, [], "rebinding a real, existing session is silent");
+});
+
+test("a Pi /resume with no recorded (or missing) Kairo session creates a new one and notifies visibly", async () => {
+  const { events, recordCalls, seenSessionIds } = bindingHarness({
+    lookupPiBindingImpl: async () => null,
+    createSessionImpl: async () => ({ id: KAIRO_ID_B, mode: "ask" })
+  });
+  const notifications = [];
+  const ctx = fakeCtx({ piSessionId: PI_ID_A, notifications });
+  await events.get("session_start")({ reason: "resume" }, ctx);
+
+  assert.deepEqual(recordCalls, [{
+    homeDir: "/home/kairo", projectRoot: "/repo", piSessionId: PI_ID_A, kairoSessionId: KAIRO_ID_B
+  }]);
+  assert.ok(seenSessionIds.includes(KAIRO_ID_B));
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0][1], "info");
+  assert.match(notifications[0][0], /started a new one/i);
+});
+
+test("a Pi /resume whose recorded Kairo session no longer exists creates a new one instead of reusing the stale binding", async () => {
+  const { events, seenSessionIds } = bindingHarness({
+    lookupPiBindingImpl: async () => KAIRO_ID_A,
+    getSessionImpl: async () => null,
+    createSessionImpl: async () => ({ id: KAIRO_ID_B, mode: "ask" })
+  });
+  const notifications = [];
+  const ctx = fakeCtx({ piSessionId: PI_ID_A, notifications });
+  await events.get("session_start")({ reason: "resume" }, ctx);
+
+  assert.ok(seenSessionIds.includes(KAIRO_ID_B));
+  assert.ok(!seenSessionIds.includes(KAIRO_ID_A));
+  assert.equal(notifications.length, 1);
+});
+
+test("a Pi /fork creates a new Kairo session inheriting the previous binding's mode, records it, and notifies", async () => {
+  const { pi, events } = fakePi();
+  const recordCalls = [];
+  const createCalls = [];
+  const extension = createKairoWorkspaceExtension(pi, {
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    loadSnapshot: async () => snapshot,
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => [],
+    resolveHomeDirImpl: () => "/home/kairo",
+    resolveProjectRootImpl: async () => "/repo",
+    recordPiBindingImpl: async (homeDir, projectRoot, piSessionId, kairoSessionId) => {
+      recordCalls.push({ piSessionId, kairoSessionId });
+    },
+    getSessionImpl: async (homeDir, projectRoot, sessionId) => {
+      assert.equal(sessionId, KAIRO_ID_A);
+      return { id: KAIRO_ID_A, mode: "agent" };
+    },
+    createSessionImpl: async (homeDir, projectRoot, opts) => {
+      createCalls.push(opts);
+      return { id: KAIRO_ID_B, mode: opts.mode };
+    }
+  });
+
+  // First bind via startup (so boundKairoSessionId = KAIRO_ID_A), then fork.
+  await events.get("session_start")({ reason: "startup" }, fakeCtx({ piSessionId: PI_ID_A }));
+  const notifications = [];
+  await events.get("session_start")({ reason: "fork" }, fakeCtx({ piSessionId: "pi-session-forked", notifications }));
+
+  assert.deepEqual(createCalls, [{ mode: "agent" }], "fork inherits the previous binding's mode");
+  assert.deepEqual(recordCalls.at(-1), { piSessionId: "pi-session-forked", kairoSessionId: KAIRO_ID_B });
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0][1], "info");
+  assert.match(notifications[0][0], /Forked/);
+  void extension;
+});
+
+test("any binding failure leaves the extension unbound with a visible error, never the previous Kairo id", async () => {
+  const { pi, events } = fakePi();
+  let sawSessionId;
+  createKairoWorkspaceExtension(pi, {
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    loadSnapshot: async (input) => { sawSessionId = input.sessionId; return snapshot; },
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => [],
+    resolveHomeDirImpl: () => "/home/kairo",
+    resolveProjectRootImpl: async () => "/repo",
+    recordPiBindingImpl: async () => { throw new Error("disk full"); }
+  });
+
+  const notifications = [];
+  const ctx = fakeCtx({ piSessionId: PI_ID_A, notifications });
+  await events.get("session_start")({ reason: "startup" }, ctx);
+
+  assert.equal(sawSessionId, null, "a failed binding renders as unbound, never the id that failed to record");
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0][1], "error");
+  assert.match(notifications[0][0], /disk full/);
+});
+
+test("an invalid KAIRO_SESSION_ID fails closed to unbound with a visible error", async () => {
+  const { pi, events } = fakePi();
+  let sawSessionId;
+  createKairoWorkspaceExtension(pi, {
+    env: { KAIRO_SESSION_ID: "../../etc" },
+    loadSnapshot: async (input) => { sawSessionId = input.sessionId; return snapshot; },
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => []
+  });
+
+  const notifications = [];
+  const ctx = fakeCtx({ piSessionId: PI_ID_A, notifications });
+  await events.get("session_start")({ reason: "startup" }, ctx);
+
+  assert.equal(sawSessionId, null);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0][1], "error");
+});
+
+// P02-T4: unbound presentation — status bar never implies a default "ask"
+// mode, and /kairo-sessions stays consistent with the footer/status bar.
+
+test("the status bar shows an explicit unbound state, never a default ask mode", async () => {
+  const { pi, events } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    env: {},
+    loadSnapshot: async () => ({ ...snapshot, session: { state: "unbound" } }),
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => []
+  });
+
+  const statusCalls = [];
+  const ctx = fakeCtx({ piSessionId: null, statusCalls });
+  await events.get("session_start")({ reason: "startup" }, ctx);
+
+  assert.ok(statusCalls.length > 0);
+  for (const [, message] of statusCalls) {
+    assert.ok(message.includes("unbound"), `expected an explicit unbound status, got "${message}"`);
+    assert.ok(!message.endsWith("· ask"), `status bar must never default to ask when unbound, got "${message}"`);
+  }
+});
+
+test("/kairo-sessions reports unbound consistently with the footer and status bar", async () => {
+  const { pi, commands } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => ({ ...snapshot, session: { state: "unbound" } })
+  });
+
+  const calls = [];
+  await commands.get("kairo-sessions").handler("", {
+    cwd: "/repo",
+    ui: { setWidget: (...args) => calls.push(args), notify: () => {} }
+  });
+  const lines = renderWidgetCall(calls[0][1]);
+  assert.ok(lines.some((line) => /no kairo session is bound/i.test(line)));
+  assert.ok(!lines.some((line) => /· ask/i.test(line)));
 });

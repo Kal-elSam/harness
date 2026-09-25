@@ -152,9 +152,16 @@ function usagePanelBody(subscriptions, theme) {
   return (subscriptions.usageModel ?? []).flatMap((provider) => usageProviderLines(provider, theme));
 }
 
-function usagePanelFooter(session) {
-  const idPart = session?.state === "bound" ? session.id.slice(0, 8) : "none";
-  return `session: ${idPart} · ${session?.mode ?? "ask"}`;
+/** The one shared Kairo session-identity line (`session: <8hex> · <mode>`,
+ * or the honest `session: unbound` — never an implied "ask"), used
+ * everywhere a Kairo surface names the currently bound session: the
+ * overview's USAGE panel footer, every other Pi-side detail/replacement
+ * view (workspace-shell extension's `linesForView`/`workspaceStatus`),
+ * and the status bar. Kept in this module (not duplicated per call site)
+ * so bound/unbound wording only ever needs to change in one place. */
+export function formatSessionIdentity(session) {
+  if (session?.state !== "bound") return "session: unbound";
+  return `session: ${session.id.slice(0, 8)} · ${session.mode ?? "ask"}`;
 }
 
 /** Pads `text` to exactly `width` visible columns — truncating with
@@ -290,7 +297,7 @@ export function renderKairoWorkspaceWidget(snapshot, width, theme, extraLines = 
   const teamRows = snapshot.team?.rows ?? [];
   const { leftWidth, rightWidth, sideBySide, gap } = computeSideBySideWidths(width, usageBody, teamRows);
   const teamBody = teamPanelBody(snapshot.team, theme, cardInnerWidth(rightWidth));
-  const usageFooter = usagePanelFooter(snapshot.session);
+  const usageFooter = formatSessionIdentity(snapshot.session);
   const teamFooter = teamPanelFooter(rightWidth);
   const teamTitle = teamPanelTitle(snapshot.team);
   const teamTone = teamPanelTone(snapshot.team);

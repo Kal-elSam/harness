@@ -3,8 +3,12 @@ import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-rout
 import {
   loadKairoWorkspaceSnapshot, loadKairoLiveData, loadKairoUsageData, recoverKairoProjectTeam
 } from "../workspace-snapshot.js";
-import { availabilityNotices, createKairoTextWidget, createKairoWorkspaceWidget } from "../workspace-widget.js";
+import { availabilityNotices, createKairoTextWidget, createKairoWorkspaceWidget, formatSessionIdentity } from "../workspace-widget.js";
 import { MAX_RECOVERY_ATTEMPTS } from "../../conversation/team-recovery.js";
+import { resolveHomeDir } from "../../paths.js";
+import { resolveProjectRoot } from "../../architect/architect-store.js";
+import { createSession, getSession, isValidSessionId } from "../../conversation/session-registry.js";
+import { lookupPiBinding, recordPiBinding } from "../../conversation/pi-session-bindings.js";
 
 export function requestKernelSnapshot(deps = {}) {
   return createKernelService(deps).snapshot();
@@ -16,11 +20,6 @@ export function workerCardFromEvent(event) {
     workerId: event.workerId,
     type: event.type
   };
-}
-
-function sessionLabel(session) {
-  if (session?.state !== "bound") return "no Kairo session";
-  return `session ${session.id.slice(0, 8)} · ${session.mode}`;
 }
 
 function usageLabel(usage = []) {
@@ -126,19 +125,23 @@ function linesForView(snapshot, view) {
 }
 
 function workspaceStatus(snapshot) {
-  return `Kairo · ${snapshot.project.label} · ${snapshot.session?.mode ?? "ask"}`;
+  return `Kairo · ${snapshot.project.label} · ${formatSessionIdentity(snapshot.session)}`;
 }
 
 /** Renders `snapshot` onto the one Kairo widget slot, in the shape `view`
  * needs: the themed two-panel component for "overview", the component
  * path (no line cap) for a detail view that can exceed 10 lines, or a
- * plain string array for a detail view that stays comfortably under it. */
+ * plain string array for a detail view that stays comfortably under it.
+ * Every non-overview view gets the same shared session-identity line
+ * (see formatSessionIdentity) appended once here — the overview shows it
+ * through its own USAGE panel footer, so every view that can occupy the
+ * one Kairo widget slot names the bound session the same honest way. */
 function setWorkspaceWidget(ctx, snapshot, view, extraLines) {
   if (view === "overview") {
     ctx?.ui?.setWidget?.("kairo-workspace", createKairoWorkspaceWidget(snapshot, extraLines));
     return;
   }
-  const lines = [...linesForView(snapshot, view), ...extraLines];
+  const lines = [...linesForView(snapshot, view), formatSessionIdentity(snapshot.session), ...extraLines];
   if (UNBOUNDED_TEXT_VIEWS.has(view)) {
     ctx?.ui?.setWidget?.("kairo-workspace", createKairoTextWidget(lines));
     return;
@@ -174,17 +177,39 @@ function recoveryNotice(result) {
   return null;
 }
 
-async function refreshWorkspace(ctx, {
-  loadSnapshot, env, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [], onSnapshot = () => {}
+/**
+ * Loads a fresh snapshot and paints it onto the widget/status bar — unless
+ * `isCurrent()` says this render has been superseded by a later session
+ * lifecycle event while `loadSnapshot` was in flight. `loadSnapshot` itself
+ * can take real, variable time (strategy/usage/Engram reads), and a
+ * `sessionId` captured at call time never changes even though the shared
+ * `boundKairoSessionId` this render's caller read it from may move on to a
+ * newer session before the read resolves (see the `isCurrent` doc on the
+ * session_start handler below). Painting a superseded snapshot would show
+ * the WRONG session id on top of an already-correct render, exactly the
+ * "never reuse another Kairo identity" case P02 forbids — so a stale
+ * result is discarded here, never painted, even though the data it holds
+ * is real (just for a session that is no longer the active one).
+ */
+async function refreshWorkspace(ctxOrCwd, {
+  loadSnapshot, sessionId = null, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [], onSnapshot = () => {}, isCurrent = () => true
 }) {
+  // Pi's ctx becomes stale after an async yield following a session replacement
+  // (Pi asserts ctx.cwd/ctx.ui). Capture cwd/ui synchronously at call time;
+  // callers must pass a fresh ctx or a plain {cwd, ui} bag. See stale-ctx
+  // error at index.js:186 after /new in real TTY (2026-09-24).
+  const cwd = typeof ctxOrCwd === "string" ? ctxOrCwd : (ctxOrCwd?.cwd ?? process.cwd());
+  const ui = typeof ctxOrCwd === "string" ? undefined : ctxOrCwd?.ui;
+  const ctxForWidget = typeof ctxOrCwd === "string" ? { ui } : ctxOrCwd;
   const snapshot = await loadSnapshot({
-    cwd: ctx?.cwd ?? process.cwd(),
-    sessionId: env?.KAIRO_SESSION_ID ?? null,
+    cwd,
+    sessionId,
     usageIntelligence,
     availabilityIntelligence
   });
-  ctx?.ui?.setStatus?.("kairo", workspaceStatus(snapshot));
-  setWorkspaceWidget(ctx, snapshot, view, extraLines);
+  if (!isCurrent()) return snapshot;
+  ui?.setStatus?.("kairo", workspaceStatus(snapshot));
+  setWorkspaceWidget(ctxForWidget, snapshot, view, extraLines);
   onSnapshot(snapshot, { liveAvailability: availabilityIntelligence != null });
   return snapshot;
 }
@@ -201,13 +226,165 @@ export function createKairoWorkspaceExtension(pi, {
   loadLiveData = loadKairoLiveData,
   loadRouteModels = loadKairoProviderModels,
   createProvider = createKairoRouteProvider,
-  recoverTeam = recoverKairoProjectTeam
+  recoverTeam = recoverKairoProjectTeam,
+  resolveHomeDirImpl = resolveHomeDir,
+  resolveProjectRootImpl = resolveProjectRoot,
+  createSessionImpl = createSession,
+  getSessionImpl = getSession,
+  lookupPiBindingImpl = lookupPiBinding,
+  recordPiBindingImpl = recordPiBinding
 } = {}) {
   let routeSignature = null;
   let routeState = "unknown";
   let shownAvailabilityKeys = new Set();
   const shownRecoveryKeys = new Set();
   let pendingRecovery = Promise.resolve(null);
+  // The Kairo session currently bound to THIS Pi process, held in memory —
+  // never re-derived from env on every refresh (see bindSession below).
+  // null means genuinely unbound, presented as such, never a silent "ask".
+  let boundKairoSessionId = null;
+  // Bumped once at the START of every session_start invocation (see below).
+  // A render belongs to the most recent session_start iff its own captured
+  // generation still equals this counter when its (possibly slow) snapshot
+  // read resolves — a session replacement (new/resume/fork) fired while an
+  // older render's loadSnapshot was still in flight bumps this counter and
+  // makes that older render's eventual result stale, so it is discarded
+  // instead of painting an old session's id over the current one. Fixes
+  // the real-TTY defect where a slow /new refresh finally resolved after
+  // /resume and /fork had already rebound and correctly rendered, briefly
+  // repainting the abandoned /new session id on top of the correct one.
+  let renderGeneration = 0;
+
+  /**
+   * Keeps `boundKairoSessionId` in step with Pi's own session lifecycle.
+   * Per the P02 design (bind everything): startup/reload adopt the id Pi
+   * was launched with; new/resume/fork each resolve or create a real Kairo
+   * session and record it against the current Pi session id. Any failure
+   * anywhere in this — a missing Pi session id when one is required, an
+   * invalid env value, a registry or binding-store error — leaves the
+   * extension unbound with a visible notice; it never keeps a stale id.
+   */
+  async function bindSession(ctx, event) {
+    const reason = event?.reason ?? "startup";
+    // Capture Pi session id, cwd and ui synchronously — Pi marks ctx stale
+    // after any async yield following a replacement (see stale-ctx error).
+    const piSessionId = ctx?.sessionManager?.getSessionId?.() ?? null;
+    const cwd = ctx?.cwd ?? process.cwd();
+    const ui = ctx?.ui;
+
+    // Shared by "startup" and reload's own fallback: bind to the id Pi was
+    // launched with, recording it against the current Pi session when one
+    // is known. Never called when a real Pi->Kairo mapping already exists
+    // for this Pi session — that takes priority (see "reload" below).
+    async function bindFromEnv() {
+      const envSessionId = env?.KAIRO_SESSION_ID ?? null;
+      if (envSessionId == null) {
+        // No session was provided at launch (e.g. Pi started outside
+        // Kairo) — genuinely unbound, not an error, so no notice.
+        boundKairoSessionId = null;
+        return;
+      }
+      if (!isValidSessionId(envSessionId)) {
+        throw new Error(`Invalid Kairo session id "${envSessionId}" from KAIRO_SESSION_ID.`);
+      }
+      boundKairoSessionId = envSessionId;
+      if (piSessionId != null) {
+        const homeDir = resolveHomeDirImpl(env);
+        const projectRoot = await resolveProjectRootImpl(cwd);
+        await recordPiBindingImpl(homeDir, projectRoot, piSessionId, envSessionId);
+      }
+    }
+
+    try {
+      if (reason === "startup") {
+        await bindFromEnv();
+        return;
+      }
+
+      if (reason === "reload") {
+        // Pi reloads the extension on /reload, so the in-memory binding is
+        // lost — recover the CURRENT Pi session's own recorded mapping
+        // first. Falling back to env unconditionally would silently
+        // rebind to the ORIGINAL launch session after a /new or /fork in
+        // the same process: exactly the "reuse another Kairo identity"
+        // case P02 forbids.
+        if (piSessionId != null) {
+          const homeDir = resolveHomeDirImpl(env);
+          const projectRoot = await resolveProjectRootImpl(cwd);
+          const boundId = await lookupPiBindingImpl(homeDir, projectRoot, piSessionId);
+          if (boundId != null) {
+            const existing = await getSessionImpl(homeDir, projectRoot, boundId);
+            if (existing) {
+              boundKairoSessionId = existing.id;
+              return;
+            }
+            // A real mapping exists but its Kairo session is gone — never
+            // fall back to env here, that would be exactly the reuse this
+            // branch exists to prevent.
+            throw new Error(`Kairo session "${boundId}" recorded for this Pi session no longer exists.`);
+          }
+        }
+        // No mapping (or no Pi session id at all) — same as startup.
+        await bindFromEnv();
+        return;
+      }
+
+      if (piSessionId == null) {
+        throw new Error(`Pi did not provide a session id for a "${reason}" session_start.`);
+      }
+      const homeDir = resolveHomeDirImpl(env);
+      const projectRoot = await resolveProjectRootImpl(cwd);
+
+      if (reason === "new") {
+        const session = await createSessionImpl(homeDir, projectRoot, {});
+        await recordPiBindingImpl(homeDir, projectRoot, piSessionId, session.id);
+        boundKairoSessionId = session.id;
+        return;
+      }
+
+      if (reason === "resume") {
+        const boundId = await lookupPiBindingImpl(homeDir, projectRoot, piSessionId);
+        const existing = boundId != null ? await getSessionImpl(homeDir, projectRoot, boundId) : null;
+        if (existing) {
+          boundKairoSessionId = existing.id;
+          return;
+        }
+        // Never silently reuse a stale or missing binding — start a real
+        // new session instead and say so, visibly.
+        const session = await createSessionImpl(homeDir, projectRoot, {});
+        await recordPiBindingImpl(homeDir, projectRoot, piSessionId, session.id);
+        boundKairoSessionId = session.id;
+        ui?.notify?.(
+          `No Kairo session was found for this Pi session — started a new one (${session.id.slice(0, 8)}).`,
+          "info"
+        );
+        return;
+      }
+
+      if (reason === "fork") {
+        const previous = boundKairoSessionId != null
+          ? await getSessionImpl(homeDir, projectRoot, boundKairoSessionId)
+          : null;
+        const mode = previous?.mode ?? "ask";
+        const session = await createSessionImpl(homeDir, projectRoot, { mode });
+        await recordPiBindingImpl(homeDir, projectRoot, piSessionId, session.id);
+        boundKairoSessionId = session.id;
+        ui?.notify?.(
+          `Forked to a new Kairo session (${session.id.slice(0, 8)}) in ${mode} mode.`,
+          "info"
+        );
+        return;
+      }
+
+      throw new Error(`Unknown session_start reason "${reason}".`);
+    } catch (error) {
+      boundKairoSessionId = null;
+      ui?.notify?.(
+        `Kairo session binding failed (${error.message}); Pi is running unbound.`,
+        "error"
+      );
+    }
+  }
 
   /**
    * Keeps Pi's "kairo" provider in step with the ACTIVE team. Pi's
@@ -263,16 +440,34 @@ export function createKairoWorkspaceExtension(pi, {
     return result;
   }
 
-  pi.on("session_start", async (_event, ctx) => {
-    await registerRoutes(ctx?.cwd ?? process.cwd());
+  pi.on("session_start", async (event, ctx) => {
+    // Every session_start invocation supersedes any still-in-flight render
+    // from an earlier one (see renderGeneration's own doc above) — bumped
+    // synchronously, before any await, so a fast-following new/resume/fork
+    // always wins over a slower earlier refresh's eventual result.
+    const myGeneration = ++renderGeneration;
+    const isCurrent = () => renderGeneration === myGeneration;
+
+    // Capture cwd/ui synchronously — Pi marks ctx stale after any async
+    // yield following a replacement (see stale-ctx error at 186).
+    const cwd = ctx?.cwd ?? process.cwd();
+    const ui = ctx?.ui;
+    const ctxBag = { cwd, ui, sessionManager: ctx?.sessionManager };
+    await bindSession(ctx, event);
+    await registerRoutes(cwd);
 
     // Phase 1: render immediately from the persisted strategy — every
     // row's availability shows "checking" and usage shows "checking" (see
     // workspace-snapshot.js's own doc), never blocked on either live probe
     // below.
-    const snapshot = await refreshWorkspace(ctx, { loadSnapshot, env, onSnapshot: (snap, info) => notifyAvailability(ctx, snap, info) });
-    if (routeState === "unavailable") {
-      setWorkspaceWidget(ctx, snapshot, "unavailable-routes", []);
+    const snapshot = await refreshWorkspace(ctxBag, {
+      loadSnapshot,
+      sessionId: boundKairoSessionId,
+      onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info),
+      isCurrent
+    });
+    if (routeState === "unavailable" && isCurrent()) {
+      setWorkspaceWidget(ctxBag, snapshot, "unavailable-routes", []);
     }
 
     // Phase 2 (P01.2 split): usage (the three usage readers, ~5s combined)
@@ -283,7 +478,6 @@ export function createKairoWorkspaceExtension(pi, {
     // odd/tasks/kairo-pi-parity.md). `latest*` tracks the most recently
     // resolved value of the OTHER probe so a re-render never regresses an
     // already-resolved side back to "checking".
-    const cwd = ctx?.cwd ?? process.cwd();
     let latestUsageIntelligence;
     let latestAvailabilityIntelligence;
     let usageExtraLines = [];
@@ -291,16 +485,17 @@ export function createKairoWorkspaceExtension(pi, {
 
     async function rerender() {
       const extraLines = [...availabilityExtraLines, ...usageExtraLines];
-      const refreshed = await refreshWorkspace(ctx, {
+      const refreshed = await refreshWorkspace(ctxBag, {
         loadSnapshot,
-        env,
+        sessionId: boundKairoSessionId,
         usageIntelligence: latestUsageIntelligence,
         availabilityIntelligence: latestAvailabilityIntelligence,
         extraLines,
-        onSnapshot: (snap, info) => notifyAvailability(ctx, snap, info)
+        onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info),
+        isCurrent
       });
-      if (routeState === "unavailable") {
-        setWorkspaceWidget(ctx, refreshed, "unavailable-routes", extraLines);
+      if (routeState === "unavailable" && isCurrent()) {
+        setWorkspaceWidget(ctxBag, refreshed, "unavailable-routes", extraLines);
       }
     }
 
@@ -319,7 +514,7 @@ export function createKairoWorkspaceExtension(pi, {
       // Automatic team recovery needs fresh live availability, so it only
       // starts here. It can run a full project analysis (minutes), so it is
       // not awaited by session_start; `recovery()` exposes it.
-      if (result !== null) pendingRecovery = runRecovery(ctx, cwd, rerender).catch(() => null);
+      if (result !== null) pendingRecovery = runRecovery(ctxBag, cwd, rerender).catch(() => null);
     });
 
     await Promise.all([usagePromise, availabilityPromise]);
@@ -336,7 +531,7 @@ export function createKairoWorkspaceExtension(pi, {
   for (const [name, description, view] of commands) {
     pi.registerCommand(name, {
       description,
-      handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, env, view })
+      handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, sessionId: boundKairoSessionId, view })
     });
   }
 

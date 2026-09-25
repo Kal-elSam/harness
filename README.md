@@ -59,7 +59,7 @@ Run `kairo help --all` for everything else, or read the
 
 ## Install
 
-Requires Node.js 20.12 or newer.
+Requires Node.js 22.19 or newer.
 
 ```bash
 # Run without installing

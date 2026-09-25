@@ -95,7 +95,7 @@ curl -fsSL https://raw.githubusercontent.com/Kal-elSam/harness/main/scripts/inst
 
 The bootstrap installer:
 
-- requires Node.js 20.12+ and npm
+- requires Node.js 22.19+ and npm
 - installs `@kal-elsam/kairo-runtime` globally (`kairo` CLI)
 - runs `kairo setup --dry-run` by default (no agent configs, no `~/.harness` writes)
 - never uses `sudo`, never modifies shell profiles, and never installs AI apps
