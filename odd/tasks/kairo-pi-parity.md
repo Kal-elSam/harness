@@ -731,7 +731,7 @@ environment only. Pi's own subprocesses inherit it (documented).
     `81eeb08b`. Full suite: 2235 pass, 0 fail, 1 skip (outside sandbox;
     loopback HTTP is blocked inside it). Native `/resume` lists empty
     sessions, but selecting one in this run remains unverified.
-  - Next: commit, push/CI with authorization, then verify native `/resume`
+  - Work-unit commit: `fc34042`. Next: push/CI with authorization, then verify native `/resume`
     selection and the full PTY lifecycle before closing T5/T10.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
