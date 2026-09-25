@@ -390,8 +390,17 @@ export class AgentSessionRuntime {
 				throw new Error("Persisted session is missing a session file");
 			}
 			const sessionDir = sessionManager.getSessionDir();
-			const newSessionManager = SessionManager.create(this.cwd, sessionDir);
-			newSessionManager.newSession({ parentSession: currentSessionFile });
+			// Kairo fork: pass `parentSession` straight into `SessionManager.create()`
+			// so the constructor's single internal `newSession()` call already
+			// writes the correct header. Calling `newSession()` again afterwards
+			// (as upstream's fork-from-first-message path does) would work fine
+			// with the empty-session persistence gate off, since the first,
+			// discarded session id is never written to disk. But with the gate
+			// on, `newSession()` persists eagerly, so the first (parent-less)
+			// session id gets written to disk and is then abandoned when the
+			// second call replaces it in memory — leaving an orphan session file
+			// with no parent, visible under /resume.
+			const newSessionManager = SessionManager.create(this.cwd, sessionDir, { parentSession: currentSessionFile });
 			await this.teardownCurrent("fork", newSessionManager.getSessionFile());
 			this.apply(
 				await this.createRuntime({
