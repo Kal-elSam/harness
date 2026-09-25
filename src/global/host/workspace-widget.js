@@ -402,7 +402,11 @@ function isSessionIdentityLine(line) {
 /** The two short lines that replace the old "unavailable-routes" detail
  * widget once the shell owns the layout — that widget must never render
  * next to (or instead of) the sidebar/strip once slots are active; its two
- * essential facts (no route, run /project analyze) fold in here instead. */
+ * essential facts (no route, run /project analyze) fold in here instead.
+ * Never paired with `noTeamHintLine`'s own "Run /project analyze..." text
+ * in the same surface — see renderShellSidebarLines/
+ * renderCompactShellSummaryLines, which each show the instruction exactly
+ * once (native review finding, 2026-09-25 PTY re-check). */
 function routeUnavailableLines(theme, truncate = (line) => line) {
   return [
     theme.fg("warning", truncate("ROUTES unavailable")),
@@ -410,56 +414,90 @@ function routeUnavailableLines(theme, truncate = (line) => line) {
   ];
 }
 
+/** The no-team hint shown when there is no agent roster yet. When a route
+ * notice is already on the same surface (`routeUnavailableLines` above
+ * already told the user to run /project analyze), this shortens to a
+ * plain fact with no repeated instruction — one "Run /project analyze"
+ * per surface, never two. */
+function noTeamHintLine(theme, truncate, routeUnavailable) {
+  return theme.fg("muted", truncate(routeUnavailable ? "No agents yet." : "Run /project analyze to build this project's team."));
+}
+
+/** Extra transient notices (e.g. a team-recovery outcome from session_start
+ * phase 2 — see extension/index.js's recoveryNotice) appended, muted, and
+ * truncated the same way as everything else on the surface. Dropped
+ * silently in fullscreen before this fix (native review R3 WARNING,
+ * 2026-09-25) — now shown on whichever shell surface is currently active. */
+function appendExtraLines(theme, truncate, extraLines) {
+  return extraLines.map((line) => theme.fg("muted", truncate(line)));
+}
+
 /** The fullscreen sidebar's lines — SPACES then AGENTS (blocked-first,
  * fail-closed unknown), reusing the exact same glyph/order rules as the
  * HERD panel (see herdAgentLine/sortedHerdAgents above), just under
- * different headers and without a bordered card. Every line is truncated
- * to the sidebar's own 28-column budget with an ellipsis — never a silent
- * cut — since, unlike herdAgentLine's tail-only truncation, a sidebar line
- * has no separate "must stay whole" part.
+ * different headers and without a bordered card. EVERY line (headers,
+ * route notice, spaces, agents) is truncated to the sidebar's real
+ * SHELL_SIDEBAR_COLUMNS (28) budget with an ellipsis — never a silent cut,
+ * and never the bordered-panel `cardInnerWidth` deduction (24), which
+ * doesn't apply here since the sidebar draws no border (native review R2
+ * WARNING, 2026-09-25: the doc said 28 but truncation used 24).
  * @param {object} snapshot
  * @param {{fg(role:string,text:string):string, bold(text:string):string}} theme
- * @param {{routeUnavailable?: boolean}} [options] - true when no automatic
- *   Pi route exists (see extension/index.js's routeState) — folds the same
- *   notice the old "unavailable-routes" widget carried into the sidebar
- *   instead of a separate, duplicate widget.
+ * @param {{routeUnavailable?: boolean, extraLines?: string[]}} [options] -
+ *   `routeUnavailable`: true when no automatic Pi route exists (see
+ *   extension/index.js's routeState) — folds the same notice the old
+ *   "unavailable-routes" widget carried into the sidebar instead of a
+ *   separate, duplicate widget. `extraLines`: transient notices (see
+ *   appendExtraLines's own doc).
  */
-export function renderShellSidebarLines(snapshot, theme, { routeUnavailable = false } = {}) {
-  const innerWidth = cardInnerWidth(SHELL_SIDEBAR_COLUMNS);
-  const truncate = (line) => truncateToWidth(line, innerWidth, "…");
+export function renderShellSidebarLines(snapshot, theme, { routeUnavailable = false, extraLines = [] } = {}) {
+  const truncate = (line) => truncateToWidth(line, SHELL_SIDEBAR_COLUMNS, "…");
   const spaceLines = herdSpacesLines(snapshot)
     .filter((line) => !isSessionIdentityLine(line))
     .map((line) => theme.fg("text", truncate(line)));
   const agents = snapshot.agents ?? [];
   const agentLines = agents.length
-    ? sortedHerdAgents(agents).map((agent) => herdAgentLine(agent, theme, innerWidth))
-    : [theme.fg("muted", truncate("Run /project analyze to build this project's team."))];
+    ? sortedHerdAgents(agents).map((agent) => herdAgentLine(agent, theme, SHELL_SIDEBAR_COLUMNS))
+    : [noTeamHintLine(theme, truncate, routeUnavailable)];
   return [
-    theme.bold("SPACES"),
+    theme.bold(truncate("SPACES")),
     ...spaceLines,
     ...(routeUnavailable ? routeUnavailableLines(theme, truncate) : []),
-    theme.bold("AGENTS"),
-    ...agentLines
+    theme.bold(truncate("AGENTS")),
+    ...agentLines,
+    ...appendExtraLines(theme, truncate, extraLines)
   ];
 }
 
 /** The fullscreen bottom strip's lines — the same USAGE gauges as the
  * overview's USAGE panel. Session identity is never repeated here (see
- * isSessionIdentityLine's own doc); the strip is only shown at
- * SHELL_SIDEBAR_MIN_COLUMNS or more (see extension/index.js), so USAGE
- * appears exactly once across the whole fullscreen surface — never also
- * folded into the compact summary at the same time. */
-export function renderShellBottomStripLines(snapshot, theme) {
+ * isSessionIdentityLine's own doc); the strip only ever shows real content
+ * at SHELL_SIDEBAR_MIN_COLUMNS or more (its own createShellBottomStripWidget
+ * factory decides that live — see below), so USAGE appears exactly once
+ * across the whole fullscreen surface — never also folded into the compact
+ * summary at the same time.
+ * @param {object} snapshot
+ * @param {{fg(role:string,text:string):string, bold(text:string):string}} theme
+ * @param {{extraLines?: string[]}} [options] - see appendExtraLines's doc.
+ */
+export function renderShellBottomStripLines(snapshot, theme, { extraLines = [] } = {}) {
+  const truncate = (line) => line; // the strip spans the chat column width, not a fixed 28 — no fixed truncation budget here.
   return [
     theme.bold("USAGE"),
-    ...usagePanelBody(snapshot.subscriptions, theme)
+    ...usagePanelBody(snapshot.subscriptions, theme),
+    ...appendExtraLines(theme, truncate, extraLines)
   ];
 }
 
 /** One attention line: the blocked agent(s) by name, or (when nothing is
  * blocked) the single highest-attention agent's own state — never a
- * fabricated "all clear" when there simply is no agent yet. */
-function compactAttentionLine(snapshot, theme) {
+ * fabricated "all clear" when there simply is no agent yet. When
+ * `routeUnavailable` is true, the "no team" case is suppressed here — the
+ * caller's own route notice already carries the "Run /project analyze"
+ * instruction, so this returns `null` rather than repeating it (native
+ * review + parent PTY finding, 2026-09-25: the instruction appeared twice,
+ * once under ROUTES and once under AGENTS/attention). */
+function compactAttentionLine(snapshot, theme, routeUnavailable) {
   const agents = snapshot.agents ?? [];
   const blocked = agents.filter((agent) => agent.state === "blocked");
   if (blocked.length === 1) return theme.fg("error", `✖ ${blocked[0].label ?? "Unknown role"} blocked`);
@@ -467,77 +505,150 @@ function compactAttentionLine(snapshot, theme) {
     return theme.fg("error", `✖ ${blocked.length} blocked: ${blocked.map((agent) => agent.label ?? "Unknown role").join(", ")}`);
   }
   const [first] = sortedHerdAgents(agents);
-  if (!first) return theme.fg("muted", "Run /project analyze to build this project's team.");
+  if (!first) return routeUnavailable ? null : theme.fg("muted", "Run /project analyze to build this project's team.");
   const glyph = HERD_STATE_GLYPH[first.state] ?? HERD_STATE_GLYPH.unknown;
   return theme.fg(HERD_STATE_TONE[first.state] ?? "muted", `${glyph} ${first.label ?? "Unknown role"} ${first.state}`);
 }
 
-/** One compact usage line — the first ready segment, or the honest
- * checking/unknown state word; never a fabricated percentage. */
-function compactUsageLine(subscriptions, theme) {
+/** Every ready usage segment that fits `maxWidth`, joined the same way the
+ * HERD footer fits `/kairo-*` commands (see fitFooterCommands) — whole
+ * segments only, never truncated mid-name, dropping from the first one
+ * that would not fit. Returns `{ text, dropped }` so the caller can decide
+ * whether an ellipsis is owed. */
+function fitUsageSegments(segments, maxWidth) {
+  let result = "";
+  for (const segment of segments) {
+    const candidate = result ? `${result} │ ${segment}` : segment;
+    if (visibleWidth(candidate) > maxWidth) return { text: result, dropped: true };
+    result = candidate;
+  }
+  return { text: result, dropped: false };
+}
+
+/** One compact usage line — every ready segment that fits `width` (never
+ * just the first — native review + parent PTY finding, 2026-09-25: the
+ * 60-column line showed only Codex even though Claude also fit), ending in
+ * an ellipsis when one had to be dropped; or the honest checking/unknown
+ * state word when there is no ready data yet — never a fabricated
+ * percentage. */
+function compactUsageLine(subscriptions, theme, width) {
   if (subscriptions?.state === "ready") {
-    const [firstSegment] = subscriptions.segments ?? [];
-    return theme.fg("text", firstSegment ? `USAGE ${firstSegment}` : "USAGE");
+    const segments = subscriptions.segments ?? [];
+    if (!segments.length) return theme.fg("text", "USAGE");
+    const prefix = "USAGE ";
+    // Reserve one column for the trailing "…" up front, so a dropped
+    // segment never pushes the final line over `width`.
+    const { text, dropped } = fitUsageSegments(segments, Math.max(0, width - visibleWidth(prefix) - 1));
+    return theme.fg("text", `${prefix}${text}${dropped ? "…" : ""}`);
   }
   return theme.fg("muted", `USAGE ${subscriptions?.state ?? "checking"}`);
 }
 
+// The narrow-terminal budget renderCompactShellSummaryLines assumes when no
+// live width is given (e.g. a direct unit-test call, or a caller that
+// hasn't wired getColumns/width through yet) — SHELL_SIDEBAR_MIN_COLUMNS-1,
+// the widest column count still classified "narrow".
+const DEFAULT_COMPACT_WIDTH = SHELL_SIDEBAR_MIN_COLUMNS - 1;
+
 /** A short (≤6 line) attention + usage summary for narrow terminals (H8:
- * below SHELL_SIDEBAR_MIN_COLUMNS the sidebar AND the bottom strip are both
- * hidden — the chat keeps the width) — one attention line, one usage line,
- * and (when routing has no automatic team) the same short route notice the
- * sidebar folds in at wider columns. Never the shared session-identity
- * line (see isSessionIdentityLine's own doc) and never the old
- * "unavailable-routes" widget's full text (its own KAIRO ROUTES/KAIRO TEAM
- * headings) — only its two essential facts.
+ * below SHELL_SIDEBAR_MIN_COLUMNS the sidebar AND the bottom strip both
+ * render empty — the chat keeps the width) — one attention line (omitted
+ * entirely when there is nothing to say and a route notice already covers
+ * it, see compactAttentionLine's own doc), one usage line, any transient
+ * extraLines, and (when routing has no automatic team) the same short
+ * route notice the sidebar folds in at wider columns. Never the shared
+ * session-identity line (see isSessionIdentityLine's own doc) and never
+ * the old "unavailable-routes" widget's full text (its own KAIRO ROUTES/
+ * KAIRO TEAM headings) — only its two essential facts.
  * @param {object} snapshot
  * @param {{fg(role:string,text:string):string, bold(text:string):string}} theme
- * @param {{routeUnavailable?: boolean}} [options]
+ * @param {{routeUnavailable?: boolean, extraLines?: string[], width?: number}} [options] -
+ *   `width`: the real live column count, used to fit as many USAGE
+ *   providers as possible (see compactUsageLine/fitUsageSegments).
  */
-export function renderCompactShellSummaryLines(snapshot, theme, { routeUnavailable = false } = {}) {
+export function renderCompactShellSummaryLines(snapshot, theme, { routeUnavailable = false, extraLines = [], width = DEFAULT_COMPACT_WIDTH } = {}) {
+  const attention = compactAttentionLine(snapshot, theme, routeUnavailable);
   return [
-    compactAttentionLine(snapshot, theme),
-    compactUsageLine(snapshot.subscriptions, theme),
-    ...(routeUnavailable ? routeUnavailableLines(theme) : [])
+    ...(attention ? [attention] : []),
+    compactUsageLine(snapshot.subscriptions, theme, width),
+    ...(routeUnavailable ? routeUnavailableLines(theme) : []),
+    ...appendExtraLines(theme, (line) => line, extraLines)
   ];
+}
+
+/**
+ * True once `columns` clears the H8 sidebar threshold — the ONE live
+ * check every shell slot component below re-runs on every `render()` call
+ * (never a value captured once outside render, per the native review's R4
+ * finding, 2026-09-25: the sidebar-or-compact choice used to be decided
+ * once per session_start/command refresh from a `getColumns()` snapshot
+ * taken at dispatch time, so a live terminal resize with no following
+ * refresh left the wrong slot painted). `getColumns` is read fresh inside
+ * each factory's `render()` below, not memoized anywhere, so crossing the
+ * threshold reflows on the very next repaint — no extension-side refresh
+ * needed. Known tradeoff: the fork's HStack sidebar column has a FIXED
+ * 28-column basis once `ctx.ui.setSidebar` is called at all (see
+ * shell-viewport.ts's `SHELL_SIDEBAR_BASIS`) — there is no live API to
+ * shrink that reserved column itself from inside render(), only to make
+ * its CONTENT empty, which is what returning `[]` below does. The sidebar
+ * is therefore installed once (whenever the shell is active) and stays
+ * installed; only its rendered CONTENT toggles with the live width.
+ */
+function isWideEnoughForSidebar(getColumns) {
+  return (getColumns?.() ?? 0) >= SHELL_SIDEBAR_MIN_COLUMNS;
 }
 
 /** Component factory for the fullscreen sidebar slot (`ctx.ui.setSidebar`)
  * — mirrors createKairoWorkspaceWidget's pattern so it is exercised the
- * same way in tests (`content(tui, theme).render(width)`), even though
- * the sidebar's own content never depends on `width` (it stays fixed at
- * SHELL_SIDEBAR_COLUMNS regardless of what the fork passes in).
+ * same way in tests (`content(tui, theme).render(width)`). Renders real
+ * content only while `getColumns()` (read live, see isWideEnoughForSidebar)
+ * is at or above SHELL_SIDEBAR_MIN_COLUMNS; empty otherwise — see
+ * isWideEnoughForSidebar's own doc for why this can't also shrink the
+ * column itself.
  * @param {object} snapshot
- * @param {{routeUnavailable?: boolean}} [options]
+ * @param {{getColumns?: () => number, routeUnavailable?: boolean, extraLines?: string[]}} [options]
  */
-export function createShellSidebarWidget(snapshot, options = {}) {
+export function createShellSidebarWidget(snapshot, { getColumns, routeUnavailable = false, extraLines = [] } = {}) {
   return (_tui, theme) => ({
     render() {
-      return renderShellSidebarLines(snapshot, theme, options);
+      if (!isWideEnoughForSidebar(getColumns)) return [];
+      return renderShellSidebarLines(snapshot, theme, { routeUnavailable, extraLines });
     }
   });
 }
 
 /** Component factory for the fullscreen bottom strip slot
- * (`ctx.ui.setBottomStrip`). See createShellSidebarWidget's own doc. */
-export function createShellBottomStripWidget(snapshot) {
+ * (`ctx.ui.setBottomStrip`) — real content only at SHELL_SIDEBAR_MIN_COLUMNS
+ * or more (read live, see isWideEnoughForSidebar), empty otherwise (its
+ * "auto" VStack basis collapses an empty strip to zero height, unlike the
+ * sidebar's fixed-basis column). See createShellSidebarWidget's own doc.
+ * @param {object} snapshot
+ * @param {{getColumns?: () => number, extraLines?: string[]}} [options]
+ */
+export function createShellBottomStripWidget(snapshot, { getColumns, extraLines = [] } = {}) {
   return (_tui, theme) => ({
     render() {
-      return renderShellBottomStripLines(snapshot, theme);
+      if (!isWideEnoughForSidebar(getColumns)) return [];
+      return renderShellBottomStripLines(snapshot, theme, { extraLines });
     }
   });
 }
 
-/** Component factory for the narrow-terminal compact summary, shown in
- * the ordinary widget slot (`ctx.ui.setWidget`) once the sidebar is
- * hidden. See createShellSidebarWidget's own doc.
+/** Component factory for the narrow-terminal compact summary, shown in the
+ * ordinary widget slot (`ctx.ui.setWidget`). Real content only BELOW
+ * SHELL_SIDEBAR_MIN_COLUMNS (read live, see isWideEnoughForSidebar) —
+ * empty once the sidebar/strip are wide enough to carry everything, so the
+ * same fact never renders twice. `width` (the actual `render(width)`
+ * argument the fork passes for this slot, unlike the fixed-basis sidebar —
+ * see createShellSidebarWidget's own doc) sizes the USAGE line's fit.
  * @param {object} snapshot
- * @param {{routeUnavailable?: boolean}} [options]
+ * @param {{getColumns?: () => number, routeUnavailable?: boolean, extraLines?: string[]}} [options]
  */
-export function createCompactShellSummaryWidget(snapshot, options = {}) {
+export function createCompactShellSummaryWidget(snapshot, { getColumns, routeUnavailable = false, extraLines = [] } = {}) {
   return (_tui, theme) => ({
-    render() {
-      return renderCompactShellSummaryLines(snapshot, theme, options);
+    render(width) {
+      if (isWideEnoughForSidebar(getColumns)) return [];
+      return renderCompactShellSummaryLines(snapshot, theme, { routeUnavailable, extraLines, width });
     }
   });
 }

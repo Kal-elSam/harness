@@ -198,6 +198,19 @@ function defaultResolveEntry() {
   return fileURLToPath(import.meta.resolve(KAIRO_PI_PACKAGE_NAME));
 }
 
+/**
+ * The Kairo-only Pi fork's settings.json path — the single source of truth
+ * both `prepareKairoPiHome` (below) and the extension's live `getTuiMode`
+ * (see extension/index.js's `readLiveKairoTuiMode`) read/write, so a mode
+ * change made from inside a running Pi session (its settings selector calls
+ * `SettingsManager.setTuiMode`, which persists here immediately) is visible
+ * to the extension on its very next check — never a value only captured
+ * once at launch time (env), which cannot observe a live in-session change.
+ */
+export function resolveKairoPiSettingsPath(env) {
+  return join(resolveHomeDir(env), ".harness", "pi-agent", "settings.json");
+}
+
 // Kairo's own default TUI mode (H7): fullscreen unless the user already
 // chose "regular" (persisted in the fork's settings.json — see
 // SettingsManager.getTuiMode, which falls back to "regular" for any value
@@ -215,7 +228,7 @@ const DEFAULT_TUI_MODE = "fullscreen";
  */
 function prepareKairoPiHome(env, fsImpl) {
   const dir = join(resolveHomeDir(env), ".harness", "pi-agent");
-  const settingsPath = join(dir, "settings.json");
+  const settingsPath = resolveKairoPiSettingsPath(env);
   fsImpl.mkdirSync(dir, { recursive: true });
 
   let settings = {};

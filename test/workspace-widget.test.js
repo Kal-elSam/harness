@@ -4,6 +4,9 @@ import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import {
   availabilityNotices,
   computeSideBySideWidths,
+  createCompactShellSummaryWidget,
+  createShellBottomStripWidget,
+  createShellSidebarWidget,
   renderCompactShellSummaryLines,
   renderKairoWorkspaceWidget,
   renderShellBottomStripLines,
@@ -405,7 +408,7 @@ test("renderShellSidebarLines truncates an overflowing line with an ellipsis, ne
   const hint = lines.find((line) => line.includes("Run /project analyze"));
   assert.ok(hint, "expected the no-team hint line");
   assert.ok(stripTerminalSequences(hint).endsWith("…"), `overflowing sidebar line must end in an ellipsis, got: "${hint}"`);
-  assert.ok(visibleWidth(hint) <= 24, `sidebar content must fit its 28-column budget, got ${visibleWidth(hint)}: "${hint}"`);
+  assert.ok(visibleWidth(hint) <= 28, `sidebar content must fit its real 28-column budget, got ${visibleWidth(hint)}: "${hint}"`);
 });
 
 test("renderShellSidebarLines folds an unavailable route notice into the sidebar instead of a separate widget", () => {
@@ -460,4 +463,93 @@ test("renderCompactShellSummaryLines folds an unavailable route notice in, witho
   assert.ok(joined.includes("ROUTES unavailable"));
   assert.ok(!joined.includes("KAIRO ROUTES"), "the compact summary is not the old detail widget re-labeled");
   assert.ok(!joined.includes("KAIRO TEAM"), "the compact summary never repeats the old widget's team detail line");
+});
+
+// --- H8b native review fixes (2026-09-25): real 28-col truncation budget
+// (not the bordered-panel 24), no duplicate "Run /project analyze", every
+// USAGE provider that fits (not just the first), extraLines surfaced in
+// fullscreen, and live width-reactive slot components (no stale decision
+// captured once per refresh).
+
+test("renderShellSidebarLines truncates every line to the real 28-column budget, not a bordered-panel 24", () => {
+  const lines = renderShellSidebarLines(fixtureSnapshot({
+    spaces: [{ kind: "project", label: "a-genuinely-very-long-project-name-that-overflows", root: "/x" }]
+  }), IDENTITY_THEME, { routeUnavailable: true });
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= 28, `sidebar line exceeds the real 28-column budget: "${line}" (${visibleWidth(line)})`);
+  }
+  const projectLine = lines.find((line) => line.includes("a-genuinely"));
+  assert.equal(visibleWidth(projectLine), 28, `an overflowing line must use the full 28-column budget, not stop at 24: "${projectLine}" (${visibleWidth(projectLine)})`);
+});
+
+test("renderShellSidebarLines shows the 'run /project analyze' hint exactly once when routes are unavailable and there is no team yet", () => {
+  const lines = renderShellSidebarLines(fixtureSnapshot({ agents: [] }), IDENTITY_THEME, { routeUnavailable: true });
+  const joined = lines.join("\n");
+  const hintCount = (joined.match(/project analyze/gi) ?? []).length;
+  assert.equal(hintCount, 1, `expected exactly one "project analyze" hint, found ${hintCount} in: ${JSON.stringify(lines)}`);
+});
+
+test("renderCompactShellSummaryLines shows the 'run /project analyze' hint exactly once when routes are unavailable and there is no team yet", () => {
+  const lines = renderCompactShellSummaryLines(fixtureSnapshot({ agents: [] }), IDENTITY_THEME, { routeUnavailable: true });
+  const joined = lines.join("\n");
+  const hintCount = (joined.match(/project analyze/gi) ?? []).length;
+  assert.equal(hintCount, 1, `expected exactly one "project analyze" hint, found ${hintCount} in: ${JSON.stringify(lines)}`);
+});
+
+test("renderShellSidebarLines and renderShellBottomStripLines surface extraLines (e.g. a team-recovery notice)", () => {
+  const sidebar = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME, { extraLines: ["Team recovered."] });
+  assert.ok(sidebar.some((line) => line.includes("Team recovered.")), `sidebar should carry the extra line, got: ${JSON.stringify(sidebar)}`);
+
+  const strip = renderShellBottomStripLines(fixtureSnapshot(), IDENTITY_THEME, { extraLines: ["Kairo recovered the project team."] });
+  assert.ok(strip.some((line) => line.includes("Kairo recovered the project team.")), `strip is not width-constrained, so it should carry the full extra line, got: ${JSON.stringify(strip)}`);
+});
+
+test("renderCompactShellSummaryLines surfaces extraLines too, within its short line budget", () => {
+  const lines = renderCompactShellSummaryLines(fixtureSnapshot(), IDENTITY_THEME, { extraLines: ["Kairo recovered the project team."] });
+  assert.ok(lines.some((line) => line.includes("Kairo recovered the project team.")));
+});
+
+test("the compact USAGE line includes every provider that fits the given width, ellipsis when one is dropped", () => {
+  const wide = renderCompactShellSummaryLines(fixtureSnapshot(), IDENTITY_THEME, { width: 100 });
+  const wideUsage = wide.find((line) => line.includes("USAGE"));
+  assert.ok(wideUsage.includes("Codex") && wideUsage.includes("Claude") && wideUsage.includes("Go"), `expected every provider at width 100, got: "${wideUsage}"`);
+  assert.ok(!wideUsage.includes("…"), "no ellipsis needed when everything fits");
+
+  const narrow = renderCompactShellSummaryLines(fixtureSnapshot(), IDENTITY_THEME, { width: 30 });
+  const narrowUsage = narrow.find((line) => line.includes("USAGE"));
+  assert.ok(visibleWidth(narrowUsage) <= 30, `usage line must fit width 30, got ${visibleWidth(narrowUsage)}: "${narrowUsage}"`);
+  assert.ok(narrowUsage.includes("Codex"), "at least the first provider must still show");
+  assert.ok(!narrowUsage.includes("Go"), "a provider that does not fit must be dropped, not truncated mid-name");
+  assert.ok(narrowUsage.endsWith("…"), `dropping a provider must end the line in an ellipsis, got: "${narrowUsage}"`);
+});
+
+test("createShellSidebarWidget/createShellBottomStripWidget/createCompactShellSummaryWidget decide live from getColumns() on every render, with no re-creation in between", () => {
+  let columns = 100;
+  const getColumns = () => columns;
+  const sidebarFactory = createShellSidebarWidget(fixtureSnapshot(), { getColumns });
+  const stripFactory = createShellBottomStripWidget(fixtureSnapshot(), { getColumns });
+  const compactFactory = createCompactShellSummaryWidget(fixtureSnapshot(), { getColumns });
+  const sidebarComponent = sidebarFactory(undefined, IDENTITY_THEME);
+  const stripComponent = stripFactory(undefined, IDENTITY_THEME);
+  const compactComponent = compactFactory(undefined, IDENTITY_THEME);
+
+  // 100 cols: sidebar/strip show real content, compact summary stays empty
+  // (the sidebar/strip already cover it) — all from the SAME component
+  // instances, no factory re-invocation.
+  assert.ok(sidebarComponent.render(28).some((line) => line.includes("SPACES")), "sidebar shows content at 100 cols");
+  assert.ok(stripComponent.render(80).some((line) => line.includes("USAGE")), "strip shows content at 100 cols");
+  assert.deepEqual(compactComponent.render(100), [], "compact summary stays empty while the sidebar/strip are shown");
+
+  // Cross below 90 with NO intervening refresh (no new factory calls) —
+  // just flip what getColumns() returns, as a live resize would.
+  columns = 60;
+  assert.deepEqual(sidebarComponent.render(28), [], "sidebar goes empty once columns drop below 90, same instance, no refresh");
+  assert.deepEqual(stripComponent.render(80), [], "strip goes empty once columns drop below 90, same instance, no refresh");
+  assert.ok(compactComponent.render(60).length > 0, "compact summary takes over once columns drop below 90, same instance, no refresh");
+
+  // And back again, still the same instances.
+  columns = 100;
+  assert.ok(sidebarComponent.render(28).some((line) => line.includes("SPACES")), "sidebar shows content again once columns return to 100");
+  assert.ok(stripComponent.render(80).some((line) => line.includes("USAGE")), "strip shows content again once columns return to 100");
+  assert.deepEqual(compactComponent.render(100), [], "compact summary empties again once columns return to 100");
 });

@@ -278,6 +278,59 @@ test("prepareKairoPiHome does not overwrite an explicit regular tuiMode the user
   assert.equal(settings.tuiMode, "regular", "user-chosen regular mode must survive relaunch");
 });
 
+// --- H8b-5 (native review, R3 suggestion): the spawned argv and the child
+// env must agree on the TUI mode — the extension's live getTuiMode falls
+// back to the settings file, but --tui-mode is what Pi's own CLI parsing
+// actually applies for THIS process, so both must carry the same value.
+
+test("launchGentleShell passes --tui-mode fullscreen in argv AND KAIRO_TUI_MODE=fullscreen in the child env by default", async () => {
+  const fixture = await buildKairoPiFixture();
+  const cwd = await tmpProjectDir();
+  const fakeHarnessHome = await tmpHarnessHome();
+  const calls = [];
+  await launchGentleShell({
+    cwd,
+    extensionDir,
+    statImpl: okStat,
+    env: { HARNESS_HOME: fakeHarnessHome },
+    nodeVersion: okNodeVersion,
+    execPath: "/fake/node/bin/node",
+    resolveEntryImpl: fixture.resolveEntryImpl,
+    spawnImpl: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    }
+  });
+  assert.deepEqual(calls[0].args.slice(-2), ["--tui-mode", "fullscreen"]);
+  assert.equal(calls[0].options.env.KAIRO_TUI_MODE, "fullscreen");
+});
+
+test("launchGentleShell passes --tui-mode regular in argv AND KAIRO_TUI_MODE=regular in the child env when the user already chose regular", async () => {
+  const fixture = await buildKairoPiFixture();
+  const cwd = await tmpProjectDir();
+  const fakeHarnessHome = await tmpHarnessHome();
+  const agentDir = join(fakeHarnessHome, ".harness", "pi-agent");
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ quietStartup: true, tuiMode: "regular" }, null, 2)}\n`);
+
+  const calls = [];
+  await launchGentleShell({
+    cwd,
+    extensionDir,
+    statImpl: okStat,
+    env: { HARNESS_HOME: fakeHarnessHome },
+    nodeVersion: okNodeVersion,
+    execPath: "/fake/node/bin/node",
+    resolveEntryImpl: fixture.resolveEntryImpl,
+    spawnImpl: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    }
+  });
+  assert.deepEqual(calls[0].args.slice(-2), ["--tui-mode", "regular"]);
+  assert.equal(calls[0].options.env.KAIRO_TUI_MODE, "regular");
+});
+
 test("execPath defaults to process.execPath when nothing is injected", async () => {
   const fixture = await buildKairoPiFixture();
   const cwd = await tmpProjectDir();

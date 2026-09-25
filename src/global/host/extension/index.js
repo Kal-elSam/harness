@@ -1,11 +1,13 @@
+import { readFileSync } from "node:fs";
 import { createKernelService } from "../../kernel/service.js";
+import { resolveKairoPiSettingsPath } from "../launch-gentle-shell.js";
 import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-route-provider.js";
 import {
   loadKairoWorkspaceSnapshot, loadKairoLiveData, loadKairoUsageData, recoverKairoProjectTeam
 } from "../workspace-snapshot.js";
 import {
   availabilityNotices, createCompactShellSummaryWidget, createKairoTextWidget, createKairoWorkspaceWidget,
-  createShellBottomStripWidget, createShellSidebarWidget, formatSessionIdentity, SHELL_SIDEBAR_MIN_COLUMNS
+  createShellBottomStripWidget, createShellSidebarWidget, formatSessionIdentity
 } from "../workspace-widget.js";
 import { MAX_RECOVERY_ATTEMPTS } from "../../conversation/team-recovery.js";
 import { resolveHomeDir } from "../../paths.js";
@@ -132,18 +134,51 @@ function workspaceStatus(snapshot) {
 }
 
 /**
+ * The fork's ACTUAL current TUI mode, read fresh from its own settings.json
+ * (see launch-gentle-shell.js's resolveKairoPiSettingsPath and
+ * prepareKairoPiHome, which write to this exact file before every launch)
+ * — never cached, so a live mode switch from inside a running Pi session
+ * (its settings selector calls `SettingsManager.setTuiMode`, which
+ * persists to this same file immediately, per interactive-mode.ts's
+ * `onTuiModeChange`) is visible on the very next call. This mirrors the
+ * fork's OWN default rule exactly (`SettingsManager.getTuiMode`: anything
+ * other than exactly `"fullscreen"` is regular) — an earlier version
+ * defaulted the OPPOSITE way (missing/unreadable meant fullscreen), which
+ * only worked by coincidence because Kairo's own launcher always writes an
+ * explicit value first (native review R2 WARNING, 2026-09-25).
+ */
+function readLiveKairoTuiMode(env) {
+  try {
+    const parsed = JSON.parse(readFileSync(resolveKairoPiSettingsPath(env), "utf8"));
+    return parsed && typeof parsed === "object" && parsed.tuiMode === "fullscreen" ? "fullscreen" : "regular";
+  } catch {
+    // Missing, unreadable, or malformed settings file: mirror the fork's
+    // own default (SettingsManager.getTuiMode falls back to "regular"),
+    // never Kairo's own launch-time opinion (see prepareKairoPiHome).
+    return "regular";
+  }
+}
+
+/**
  * True only when the shell surface should own the render: the fork exposes
  * BOTH `setSidebar`/`setBottomStrip` (feature-detected; the published `.3`
  * pin Kairo still ships does not) AND the current TUI mode is fullscreen.
- * `getTuiMode` has no real API to read from (the fork's ExtensionUIContext
- * exposes no mode getter), so its honest default reads the `KAIRO_TUI_MODE`
- * env var the launcher sets from the same value it passed as `--tui-mode`
- * (see launch-gentle-shell.js). Regular mode and the `.3` pin both fall
- * back to the single classic widget slot exactly as before H7/H8 — this
- * function is the ONE place that decides which surface owns a render, so
- * every caller (the ordinary "overview" render and the "no automatic
- * route" override alike — see runOverviewRender below) makes the same
- * choice and never lets both surfaces show the same fact at once.
+ *
+ * `getTuiMode` is called FRESH here on every render — never cached — so a
+ * live mode switch (the fork's settings selector, which persists through
+ * `SettingsManager.setTuiMode` to the same settings.json this reads — see
+ * readLiveKairoTuiMode below) is picked up on the very next render. An
+ * earlier version read `KAIRO_TUI_MODE`, captured once from `env` at
+ * extension-creation time; that value never changed once the process
+ * started, so switching to regular mid-session left the extension still
+ * painting into slots the fork had stopped drawing (native review R4/R3
+ * finding, 2026-09-25).
+ *
+ * Regular mode and the `.3` pin both fall back to the single classic
+ * widget slot exactly as before H7/H8 — this function is the ONE place
+ * that decides which surface owns a render, so every caller (the ordinary
+ * "overview" render and the "no automatic route" override alike) makes
+ * the same choice and never lets both surfaces show the same fact at once.
  */
 function isShellActive(ctx, getTuiMode) {
   const hasShellApis = typeof ctx?.ui?.setSidebar === "function" && typeof ctx?.ui?.setBottomStrip === "function";
@@ -151,47 +186,56 @@ function isShellActive(ctx, getTuiMode) {
 }
 
 /**
- * The H7/H8 fullscreen shell surface: feeds the fork's own sidebar/
- * bottom-strip slots (SPACES/AGENTS + USAGE) and clears the ordinary
- * widget slot at SHELL_SIDEBAR_MIN_COLUMNS or more, or — below it — clears
- * BOTH slots and folds attention + usage (+ the route-unavailable notice,
- * when `routeUnavailable`) into one compact summary in the widget slot
- * instead, so the chat column keeps its width and no fact renders twice.
+ * The H7/H8 fullscreen shell surface: installs the sidebar, bottom strip,
+ * and compact-summary widget ONCE, whenever the shell is active — never
+ * branching on column count here at dispatch time. Each of the three
+ * factories (see workspace-widget.js's createShellSidebarWidget /
+ * createShellBottomStripWidget / createCompactShellSummaryWidget) decides
+ * its OWN content live inside its own `render()`, reading `getColumns()`
+ * fresh on every repaint: sidebar+strip render real content at
+ * SHELL_SIDEBAR_MIN_COLUMNS or more and stay empty below it; the compact
+ * summary does the opposite. This means crossing the 90-column threshold
+ * reflows on the very next repaint with NO extension-triggered refresh —
+ * an earlier version captured `getColumns()` once here and baked the
+ * sidebar-shown/compact-shown choice into which factory got installed, so
+ * a live resize with no following session_start/command refresh left the
+ * wrong surface painted (native review R4/R3 finding, 2026-09-25).
+ * `extraLines` (e.g. a team-recovery notice) and `routeUnavailable` (no
+ * automatic Pi route — folds the old "unavailable-routes" widget's two
+ * facts in here instead of a separate, duplicate widget) are forwarded to
+ * every factory so whichever surface ends up visible carries them.
  * Only called once `isShellActive` is true; the caller (setWorkspaceWidget)
  * handles the regular-mode/`.3`-pin fallback and slot clearing itself.
  */
-function renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable = false }) {
-  const columns = getColumns?.() ?? 0;
-  if (columns >= SHELL_SIDEBAR_MIN_COLUMNS) {
-    ctx.ui.setSidebar(createShellSidebarWidget(snapshot, { routeUnavailable }));
-    ctx.ui.setBottomStrip(createShellBottomStripWidget(snapshot));
-    ctx.ui.setWidget?.("kairo-workspace", undefined);
-    return;
-  }
-  // Narrow fullscreen: the chat needs the width, so BOTH the sidebar and
-  // the strip are cleared (not just the sidebar) — every fact they would
-  // have carried (attention, usage, route notice) folds into the one
-  // compact summary below instead, never rendered a second time in the
-  // strip at the same time.
-  ctx.ui.setSidebar(undefined);
-  ctx.ui.setBottomStrip(undefined);
-  ctx.ui.setWidget?.("kairo-workspace", createCompactShellSummaryWidget(snapshot, { routeUnavailable }));
+function renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable = false, extraLines = [] }) {
+  ctx.ui.setSidebar(createShellSidebarWidget(snapshot, { getColumns, routeUnavailable, extraLines }));
+  ctx.ui.setBottomStrip(createShellBottomStripWidget(snapshot, { getColumns, extraLines }));
+  ctx.ui.setWidget?.("kairo-workspace", createCompactShellSummaryWidget(snapshot, { getColumns, routeUnavailable, extraLines }));
 }
 
-/** Renders `snapshot` onto the one Kairo widget slot, in the shape `view`
- * needs: the themed two-panel component for "overview", the component
- * path (no line cap) for a detail view that can exceed 10 lines, or a
- * plain string array for a detail view that stays comfortably under it.
- * Every non-overview view gets the same shared session-identity line
- * (see formatSessionIdentity) appended once here — the overview shows it
- * through its own USAGE panel footer, so every view that can occupy the
- * one Kairo widget slot names the bound session the same honest way. */
+/**
+ * Renders `snapshot` onto the Kairo surface, in the shape `view` needs.
+ * For "overview" and "unavailable-routes", the ACTIVE surface — the H7/H8
+ * fullscreen shell (sidebar/strip/compact-summary, see renderShellSurface)
+ * or the classic single widget slot — decides based on `isShellActive`;
+ * every other view always uses the classic widget slot (team/sessions/
+ * usage/route/memory detail views are unaffected by the shell surface).
+ * The classic widget path renders the themed two-panel component for
+ * "overview", the component path (no line cap) for a detail view that can
+ * exceed 10 lines, or a plain string array for a detail view that stays
+ * comfortably under it. Every non-overview classic-widget view gets the
+ * same shared session-identity line (see formatSessionIdentity) appended
+ * once here — the overview shows it through the status bar in fullscreen
+ * (see workspaceStatus) or its own USAGE panel footer in regular mode, so
+ * every surface that can occupy the one Kairo widget slot names the bound
+ * session the same honest way.
+ */
 function setWorkspaceWidget(ctx, snapshot, view, extraLines, { getColumns, getTuiMode } = {}) {
   const shellActive = isShellActive(ctx, getTuiMode);
 
   if (view === "overview") {
     if (shellActive) {
-      renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable: false });
+      renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable: false, extraLines });
       return;
     }
     // Regular mode, or the shell APIs are missing entirely (the published
@@ -212,7 +256,7 @@ function setWorkspaceWidget(ctx, snapshot, view, extraLines, { getColumns, getTu
     // is active, instead of a separate widget landing next to — or, below
     // SHELL_SIDEBAR_MIN_COLUMNS, replacing — the sidebar/strip/compact
     // summary. See renderShellSurface's own doc.
-    renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable: true });
+    renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable: true, extraLines });
     return;
   }
 
@@ -310,12 +354,13 @@ export function createKairoWorkspaceExtension(pi, {
   lookupPiBindingImpl = lookupPiBinding,
   recordPiBindingImpl = recordPiBinding,
   // H7/H8: the fork exposes no getter for its own TUI mode or terminal
-  // width, so these default to the one honest real source each has —
-  // KAIRO_TUI_MODE (set by the launcher from the same value it passed as
-  // --tui-mode, see launch-gentle-shell.js) and the process's own stdout
-  // columns. Tests inject fixed values instead of a real TTY.
+  // width, so these default to the one honest, LIVE real source each has:
+  // the fork's own settings.json (see readLiveKairoTuiMode — read fresh on
+  // every call, so a live in-session mode switch is never stale) and the
+  // process's own stdout columns. Tests inject fixed values instead of a
+  // real TTY/settings file.
   getColumns = () => process.stdout.columns,
-  getTuiMode = () => (env?.KAIRO_TUI_MODE === "regular" ? "regular" : "fullscreen")
+  getTuiMode = () => readLiveKairoTuiMode(env)
 } = {}) {
   let routeSignature = null;
   let routeState = "unknown";

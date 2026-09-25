@@ -1,7 +1,21 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createKairoWorkspaceExtension } from "../src/global/host/extension/index.js";
+
+async function tmpHarnessHome() {
+  return mkdtemp(join(tmpdir(), "kairo-shell-ext-harness-home-"));
+}
+
+function writeKairoPiSettings(harnessHome, settings) {
+  const agentDir = join(harnessHome, ".harness", "pi-agent");
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+}
 
 const IDENTITY_THEME = { fg: (_role, text) => text, bold: (text) => text };
 
@@ -967,7 +981,8 @@ test("fullscreen overview with shell APIs at ≥90 cols sets SPACES/AGENTS sideb
   const lastWidget = widgetCalls.at(-1);
   assert.ok(lastWidget, "setWidget must be called");
   assert.equal(lastWidget[0], "kairo-workspace");
-  assert.equal(lastWidget[1], undefined, "fullscreen shell overview must clear the above-editor widget");
+  assert.equal(typeof lastWidget[1], "function", "the widget slot holds a live-reactive compact-summary factory, not a one-shot undefined clear — see H8b's render(width)-live fix");
+  assert.deepEqual(renderWidgetCall(lastWidget[1], 100), [], "at >=90 cols the compact summary renders empty — the sidebar/strip already carry everything, so nothing doubles up");
 });
 
 test("fullscreen overview with shell APIs at <90 cols clears sidebar AND strip, shows compact summary", async () => {
@@ -984,8 +999,12 @@ test("fullscreen overview with shell APIs at <90 cols clears sidebar AND strip, 
   const statusCalls = [];
   await commands.get("kairo").handler("", fakeShellCtx({ widgetCalls, sidebarCalls, bottomStripCalls, statusCalls }));
 
-  assert.ok(sidebarCalls.some((args) => args[0] === undefined), "narrow width must clear sidebar");
-  assert.ok(bottomStripCalls.some((args) => args[0] === undefined), "narrow width must ALSO clear the strip — usage folds into the compact summary instead, so the chat keeps the width and USAGE renders exactly once");
+  const sidebarContent = sidebarCalls.at(-1)?.[0];
+  assert.equal(typeof sidebarContent, "function", "the sidebar stays installed (live-reactive) rather than cleared to undefined — a later resize back to wide needs no refresh to reappear");
+  assert.deepEqual(renderWidgetCall(sidebarContent, 28), [], "sidebar renders empty content below 90 cols");
+  const stripContent = bottomStripCalls.at(-1)?.[0];
+  assert.equal(typeof stripContent, "function");
+  assert.deepEqual(renderWidgetCall(stripContent, 80), [], "strip renders empty content below 90 cols — usage folds into the compact summary instead, so it renders exactly once");
 
   const lastWidget = widgetCalls.at(-1);
   assert.equal(lastWidget[0], "kairo-workspace");
@@ -1131,10 +1150,14 @@ function finalScreenLines({ widgetCalls, sidebarCalls, bottomStripCalls, statusC
   const lines = [];
   const lastWidget = widgetCalls.at(-1)?.[1];
   if (lastWidget !== undefined) lines.push(...renderWidgetCall(lastWidget, width));
-  const lastSidebar = lastSidebarLines(sidebarCalls);
-  if (lastSidebar) lines.push(...lastSidebar);
-  const lastStrip = lastBottomStripLines(bottomStripCalls);
-  if (lastStrip) lines.push(...lastStrip);
+  // Sidebar/strip stay installed (live-reactive, see H8b) rather than
+  // cleared to undefined — render them at the SAME live width so an
+  // out-of-range slot correctly contributes zero lines here, matching
+  // what the fork would actually paint.
+  const sidebarContent = sidebarCalls.at(-1)?.[0];
+  if (sidebarContent !== undefined) lines.push(...renderWidgetCall(sidebarContent, 28));
+  const stripContent = bottomStripCalls.at(-1)?.[0];
+  if (stripContent !== undefined) lines.push(...renderWidgetCall(stripContent, 80));
   const lastStatus = statusCalls.at(-1)?.[1];
   if (lastStatus) lines.push(lastStatus);
   return lines;
@@ -1159,15 +1182,21 @@ test("fullscreen with shell APIs at >=90 cols: session identity appears exactly 
 
   assert.equal(countOccurrences(lines, "session:"), 1, `expected exactly one session line, got ${countOccurrences(lines, "session:")}: ${JSON.stringify(lines)}`);
   assert.equal(countOccurrences(lines, "USAGE"), 1, `expected exactly one USAGE header, got ${countOccurrences(lines, "USAGE")}: ${JSON.stringify(lines)}`);
-  assert.equal(result.widgetCalls.at(-1)[1], undefined, "the ordinary widget slot stays cleared at >=90 cols — the chat column has no widget content");
+  const lastWidget = result.widgetCalls.at(-1)[1];
+  assert.equal(typeof lastWidget, "function", "the widget slot holds a live-reactive compact-summary factory, not a one-shot undefined clear");
+  assert.deepEqual(renderWidgetCall(lastWidget, 100), [], "at >=90 cols the compact summary renders empty — the chat column shows no widget content");
 });
 
-test("fullscreen with shell APIs at <90 cols: sidebar AND strip are both cleared, one compact summary carries attention+usage+route, session identity stays status-bar-only", async () => {
+test("fullscreen with shell APIs at <90 cols: sidebar AND strip both render empty, one compact summary carries attention+usage+route, session identity stays status-bar-only", async () => {
   const result = await startShellSession({ getColumns: () => 60, getTuiMode: () => "fullscreen" });
   const lines = finalScreenLines(result, 60);
 
-  assert.ok(result.sidebarCalls.some((args) => args[0] === undefined), "sidebar must be cleared below 90 cols");
-  assert.ok(result.bottomStripCalls.some((args) => args[0] === undefined), "the strip must ALSO be cleared below 90 cols — the chat keeps the width, not a second usage rendering");
+  const sidebarContent = result.sidebarCalls.at(-1)?.[0];
+  assert.equal(typeof sidebarContent, "function", "sidebar stays installed (live-reactive) below 90 cols");
+  assert.deepEqual(renderWidgetCall(sidebarContent, 28), [], "sidebar renders empty below 90 cols");
+  const stripContent = result.bottomStripCalls.at(-1)?.[0];
+  assert.equal(typeof stripContent, "function");
+  assert.deepEqual(renderWidgetCall(stripContent, 80), [], "the strip must ALSO render empty below 90 cols — the chat keeps the width, not a second usage rendering");
 
   const lastWidget = result.widgetCalls.at(-1)[1];
   assert.notEqual(lastWidget, undefined, "the compact summary must occupy the widget slot below 90 cols");
@@ -1193,4 +1222,90 @@ test("regular mode keeps the old widget fallback behavior unchanged, including i
   const lastWidget = result.widgetCalls.at(-1)[1];
   const lines = renderWidgetCall(lastWidget, 100);
   assert.ok(lines.some((line) => line.includes("KAIRO ROUTES")), "regular mode keeps exactly the pre-H7 unavailable-routes widget behavior");
+});
+
+// --- H8b native review fixes (2026-09-25): live TUI mode from the fork's
+// own settings.json (not a value captured once at extension creation),
+// live width-reactive slot components (no stale per-refresh decision), and
+// extraLines (e.g. team-recovery notices) surfaced in fullscreen.
+
+test("default getTuiMode reads the fork's live settings.json and reacts to a mode switch in BOTH directions, with no new extension instance", async () => {
+  const harnessHome = await tmpHarnessHome();
+  writeKairoPiSettings(harnessHome, { quietStartup: true, tuiMode: "fullscreen" });
+  const { pi, commands } = fakePi();
+  // No getTuiMode override — exercising the real default, which must read
+  // the settings file live rather than a value frozen at creation time.
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    env: { HARNESS_HOME: harnessHome },
+    getColumns: () => 100
+  });
+
+  const sidebarCalls1 = [];
+  await commands.get("kairo").handler("", fakeShellCtx({ sidebarCalls: sidebarCalls1 }));
+  assert.ok(
+    renderWidgetCall(sidebarCalls1.at(-1)[0], 28).some((line) => line.includes("SPACES")),
+    "fullscreen (from the settings file) shows the real sidebar"
+  );
+
+  // Simulate the fork's own settings-selector persisting a live switch to
+  // regular (SettingsManager.setTuiMode) — no new extension instance, same
+  // process, same command dispatch mechanism, just the file on disk changing.
+  writeKairoPiSettings(harnessHome, { quietStartup: true, tuiMode: "regular" });
+  const widgetCalls2 = [];
+  const sidebarCalls2 = [];
+  await commands.get("kairo").handler("", fakeShellCtx({ widgetCalls: widgetCalls2, sidebarCalls: sidebarCalls2 }));
+  assert.ok(sidebarCalls2.some((args) => args[0] === undefined), "after a live switch to regular, the sidebar is cleared on the very next render");
+  assert.ok(
+    renderWidgetCall(widgetCalls2.at(-1)[1], 100).some((line) => line.includes("HERD")),
+    "after a live switch to regular, the classic overview widget is shown again"
+  );
+
+  // And back to fullscreen — the reverse direction.
+  writeKairoPiSettings(harnessHome, { quietStartup: true, tuiMode: "fullscreen" });
+  const sidebarCalls3 = [];
+  await commands.get("kairo").handler("", fakeShellCtx({ sidebarCalls: sidebarCalls3 }));
+  assert.ok(
+    renderWidgetCall(sidebarCalls3.at(-1)[0], 28).some((line) => line.includes("SPACES")),
+    "switching back to fullscreen shows the real sidebar again, still no new extension instance"
+  );
+});
+
+test("a live availability-check-failed notice (extraLines) surfaces in the sidebar at >=90 cols and in the compact summary below 90", async () => {
+  // loadLiveData resolving to null is the real, existing source of a
+  // session_start phase-2 extraLine (see extension/index.js's
+  // availabilityExtraLines) — it must reach whichever shell surface is
+  // active, not just the classic widget.
+  async function sessionWithFailedAvailability(getColumns) {
+    const { pi, events } = fakePi();
+    const widgetCalls = [];
+    const sidebarCalls = [];
+    const bottomStripCalls = [];
+    createKairoWorkspaceExtension(pi, {
+      loadSnapshot: async () => snapshot,
+      loadUsageData: async () => ({ usage: {}, providers: {} }),
+      loadLiveData: async () => null,
+      loadRouteModels: async () => [{ id: "codex::gpt-6-astra", kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra" } }],
+      getColumns,
+      getTuiMode: () => "fullscreen"
+    });
+    const ui = {
+      setStatus: () => {},
+      setWidget: (...args) => widgetCalls.push(args),
+      setSidebar: (...args) => sidebarCalls.push(args),
+      setBottomStrip: (...args) => bottomStripCalls.push(args),
+      notify: () => {}
+    };
+    const ctx = { cwd: "/repo", ui, sessionManager: fakeSessionManager(null) };
+    await events.get("session_start")({}, ctx);
+    return { widgetCalls, sidebarCalls, bottomStripCalls };
+  }
+
+  const at100 = await sessionWithFailedAvailability(() => 100);
+  const sidebarAt100 = renderWidgetCall(at100.sidebarCalls.at(-1)[0], 28).join("\n");
+  assert.match(sidebarAt100, /Live availability check/i, `expected the extraLines notice in the sidebar at 100 cols, got: ${sidebarAt100}`);
+
+  const at60 = await sessionWithFailedAvailability(() => 60);
+  const compactAt60 = renderWidgetCall(at60.widgetCalls.at(-1)[1], 60).join("\n");
+  assert.match(compactAt60, /Live availability check/i, `expected the extraLines notice in the compact summary at 60 cols, got: ${compactAt60}`);
 });
