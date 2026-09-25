@@ -550,8 +550,33 @@ environment only. Pi's own subprocesses inherit it (documented).
     - Pack: 1110 files. The parent checked the diff against the official
       1108: only LICENSE and NOTICE.md are extra, and 3 chunks differ
       only in their hash names. No bin. Tarball sha256 `b6a0db34…d7bbb`.
-  - Pending (each needs authorization): publish `.2`, deprecate `.1`,
-    and move `latest`. Then pin `.2` in Kairo, run CI, and do the TTY run.
+  - Registry (the user ran the commands, 2026-09-25): `.2` is published
+    and its integrity `sha512-57piJG…26/CQ==` equals the verified
+    tarball; 1110 files. `kairo` and `latest` point to `.2`. `.1` is
+    deprecated with the message "Missing TUI runtime assets; use
+    0.87.1-kairo.2".
+  - Kairo pin `f90a90a`:
+    - `KAIRO_PI_PACKAGE_VERSION`, package.json, and the lockfile are on
+      `.2`. The wrong-version test now derives the expected version
+      from the constant.
+    - RED: 3 host-launch tests failed with the constant on `.2` and the
+      install still on `.1` (one was the hard-coded regex, fixed).
+    - The repo's versioned `.npmrc` has `minimum-release-age=1440`,
+      which blocked `.2`. The user chose a version-scoped exclusion,
+      `minimum-release-age-exclude[]=@kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.2`,
+      kept in `.npmrc` next to the policy (the repo has no
+      `pnpm-workspace.yaml`). Negative check: installing `.1` (under
+      24 h old) with the same `.npmrc` still fails with
+      `ERR_PNPM_NO_MATURE_MATCHING_VERSION`.
+    - GREEN: `pnpm install --frozen-lockfile` OK. Focused: 21 pass,
+      0 fail, 1 skip. `npm test` twice: 2233 pass, 0 fail, 1 skip.
+    - A first full run had 1 intermittent failure, and its output was
+      not captured, so the test is unidentified. Pending: capture it if
+      it recurs.
+    - Side effect: an earlier `pnpm install` with purge allowed emptied
+      `node_modules`. It was restored from the lockfile before
+      continuing.
+  - Next: push and CI, then the real TTY run.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
