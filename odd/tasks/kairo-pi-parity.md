@@ -593,7 +593,44 @@ environment only. Pi's own subprocesses inherit it (documented).
   - Push (authorized by the user): `55e903f..ce6ee7a`. CI run 36161103241
     on `ce6ee7a` — **success** (Node 22, Node 24). This also proves that
     the frozen CI install accepts `.2` under the version-scoped exclusion.
-  - Next: the real TTY run with `.2`.
+  - Real PTY run with `.2` (2026-09-25, by the parent; the user chose a
+    real PTY with an isolated temporary HARNESS_HOME). The TUI was driven
+    by keystrokes, the screen was rebuilt with pyte, and it was
+    cross-checked against files. No model prompts were sent.
+    - Start: TUI renders, exits 0 on Ctrl+D. An empty Pi session is
+      persisted at start (JSONL with its header only). Bound Pi →
+      Kairo, 1:1.
+    - `/new`: new Pi session `01a0d96d` → new Kairo `30da37ee`
+      (`/kairo-sessions` shows it). No `ctx is stale` warning. PASS.
+    - `/resume`: lists both empty sessions as `(no messages)` (before
+      the fork: "No sessions in current folder"). Selecting the older
+      one rebinds to Kairo `70e2eae2`, matching the binding file for Pi
+      `01a0d96c`. PASS.
+    - `/fork` on the empty session: **FAIL**, "No messages to fork
+      from". `interactive-mode.ts:5341` `showUserMessageSelector()`
+      returns early when there are no user messages. The fork patched
+      only SessionManager, not this UI guard.
+    - The `kairo resume` step was not run, because `/fork` already
+      fails. **T5 stays open.**
+    - Also found:
+      - (a) The fork shows "Update Available: New version 0.87.1 is
+        available. Run pi update". Semver ranks the `0.87.1-kairo.2`
+        prerelease below `0.87.1`, so the update check nags, and
+        `pi update` would leave the fork. The fork must disable the
+        check or fix the comparison.
+      - (b) Kairo gap: the `unavailable-routes` view (no team analyzed)
+        shows only `ask` in the status bar and no session id. The
+        `session: <8hex> · <mode>` line exists only in the two-panel
+        layout. This does not meet "the panel shows the bound id and
+        mode".
+      - (c) The first `/kairo-sessions` in run 2 did not execute
+        (autocomplete took the Enter), so that one step was ambiguous;
+        run 3 repeated it successfully.
+      - (d) The repo's `(HARNESS_HOME)/` directory has exactly the
+        layout Kairo creates, so it most likely came from a run with
+        the literal `HARNESS_HOME=(HARNESS_HOME)`.
+  - Next: fix the fork (empty-session `/fork`, update check) and Kairo
+    (session id in every view), publish `.3`, and repeat this run.
 - [ ] P02-T10 Publish (needs explicit authorization: npm,
   `--tag kairo`, credential), pin the exact version, run CI, then the
   real TTY run. Only then close T5.
