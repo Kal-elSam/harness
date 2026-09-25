@@ -77,6 +77,7 @@ User plan "Herd shell layout (Camino 1)" authorizes H0–H5 on branch `feat/herd
 ## Progress
 
 - H0 (2026-09-25): base mapped (widget 382 lines, snapshot 358 lines, extension team/usage views). P01–P01.2 closed; P02 branch dirty — collide risk noted. No source writes yet.
+- H1 (2026-09-25): DONE inline (subagents unfunded, user authorized inline). `7195ca3` feat(host): additive herd agents/spaces — 146 authored lines, far below 400. RED 5 fail → GREEN 30/30 snapshot + 84/84 related (widget, extension, cache, components, binding). No working/done run signal exists in snapshot inputs → never emitted, documented in code + H3 follow-up. Route: delegated-direct attempted (explore + writer failed: insufficient funds) → inline fallback with thin-context discipline.
 - Route: delegated-direct attempted (explore worker failed: insufficient funds) → inline bounded reads fallback. Implementation tasks (H1+) go via single bounded writer each; per-action verification workers as needed.
 
 ## Verification evidence
