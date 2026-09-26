@@ -906,7 +906,9 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	time("createAgentSession");
 
-	if (appMode !== "interactive" && !session.model) {
+	// RPC hosts (e.g. Kairo ratatui) own model selection via set_model after
+	// connect. Allow cold-start with no session.model in rpc mode only.
+	if (appMode !== "interactive" && appMode !== "rpc" && !session.model) {
 		console.error(chalk.red(formatNoModelsAvailableMessage()));
 		process.exit(1);
 	}

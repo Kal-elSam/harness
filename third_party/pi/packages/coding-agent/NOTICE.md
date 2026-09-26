@@ -21,12 +21,23 @@ for the full text, unmodified from upstream.
   when the environment variable `KAIRO_PI_EMPTY_SESSIONS` is set to `1` in
   the process running this package. With that variable unset, or set to
   anything else, behavior is unchanged from upstream `0.87.1`.
+- `packages/coding-agent/src/main.ts`: `--mode rpc` may start when
+  `session.model` is unset. Upstream exits(1) for every non-interactive
+  mode without a model; this fork skips that exit for `appMode === "rpc"`
+  only so a host (Kairo ratatui sidecar) can call `set_model` after
+  connect. Interactive and other non-rpc modes keep the upstream
+  no-model exit. Not unit-tested here: `main()` is CLI entry and needs a
+  full agent bootstrap; coverage is the intentional `appMode === "rpc"`
+  exception plus Kairo bridge tests that assume RPC can answer before
+  Architect `set_model`. **Runtime-active only after the next npm
+  publish of this fork** — vendored `third_party` edits are not the pin
+  `kairo` resolves until published.
 - This package's `package.json` has no `bin` entry (upstream publishes a
   `pi` bin at `dist/bundle/cli.js`; this fork does not, since it is run by
   the Kairo launcher by resolving that same file's path directly).
 - This package's `name` and `version` are changed to distinguish it from
   upstream on npm; no other upstream source under `packages/coding-agent`
-  was modified beyond the change above.
+  was modified beyond the changes above.
 
 All other behavior, code, and licensing terms are unchanged from upstream
 `@earendil-works/pi-coding-agent@0.87.1`.
