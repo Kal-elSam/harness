@@ -91,9 +91,9 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - (2026-09-26) **V2 + R3b** — work column split transcript + 5-row `ratatui-textarea` editor; Tab focus cycle; local mock reply without bridge; `kairo-ui-rpc-stdio.js` JSONL sidecar over `openPiRpcBridge`; Rust `bridge.rs` client with `--bridge` / `KAIRO_UI_BRIDGE=1`.
   - Evidence: `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **16/16**. `node --test test/kairo-ui-rpc-stdio.test.js` → **3/3**. `node --test test/pi-rpc-bridge.test.js` → **8/8** (unchanged bridge).
   - Keybindings: Tab (focus), Enter submit, Esc abort/blur sidebar, PgUp/Dn transcript scroll, q quit (empty editor or sidebar/transcript), Ctrl+C/Q always quit.
-- (2026-09-26) **R5** — `apply_workspace_snapshot` maps `kairo.workspace-shell/v1` agents (idle/blocked/unknown only), project label, and `subscriptions.segments`/`state` into sidebar + USAGE; `ready`/`snapshot` JSONL on bridge; optional sidecar `reload_snapshot`. No change to default `kairo ui`.
-  - Evidence: `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` (snapshot + paint). `node --test test/kairo-ui-rpc-stdio.test.js`, `test/pi-rpc-bridge.test.js`.
+- (2026-09-26) **R5** — `apply_workspace_snapshot` maps `kairo.workspace-shell/v1` agents (idle/blocked/unknown only; `working`/`done` → unknown), project label, and USAGE via extension `subscriptionsLine` (`ready` → segments with ` │ `; else honest state). Applied on `ready`/`snapshot`; sidecar `reload_snapshot`. Follow-up `eb5f13c66` fixed segment gate/join. No change to default `kairo ui`.
+  - Evidence: `cargo test` → **22/22**; `kairo-ui-rpc-stdio` → **3/3**; `pi-rpc-bridge` → **8/8**. Commits: `35ba2fa30`, `eb5f13c66`.
 
 ## Next step
 
-V3 visual gate: real conversation capture @60/100/160 with `--bridge` (agents + USAGE from snapshot, chat stream). R4/R6 still pending. PTY: from worktree repo root, `cd crates/kairo-ui && KAIRO_UI_BRIDGE=1 cargo run -- --bridge` (or `--bridge` flag).
+With `--bridge`, confirm sidebar agents + USAGE come from snapshot (often `USAGE · checking|cached|unknown` until subscriptions are `ready`). Then V3: color captures @60/100/160 with a real Pi reply when a model is available. R4/R6 still pending.
