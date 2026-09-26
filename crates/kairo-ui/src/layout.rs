@@ -13,7 +13,10 @@ pub const SIDEBAR_COLUMNS: u16 = 28;
 pub const SIDEBAR_MIN_COLUMNS: u16 = 90;
 
 /// Usage / status strip height (rows).
-pub const USAGE_STRIP_ROWS: u16 = 1;
+/// Must be ≥2 when the strip paints a top border: one row for the border,
+/// one for visible `USAGE` text. A single row left the border consuming the
+/// only cell and hid the label (V1 PTY review, 2026-09-26).
+pub const USAGE_STRIP_ROWS: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShellRegions {
@@ -67,10 +70,10 @@ mod tests {
         let regions = split_shell(area);
         let sidebar = regions.sidebar.expect("sidebar at 100 cols");
         assert_eq!(sidebar.width, SIDEBAR_COLUMNS);
-        assert_eq!(sidebar.height, 29); // body above 1-row usage
+        assert_eq!(sidebar.height, 28); // body above 2-row usage
         assert_eq!(regions.main.x, SIDEBAR_COLUMNS);
         assert_eq!(regions.main.width, 100 - SIDEBAR_COLUMNS);
-        assert_eq!(regions.usage.y, 29);
+        assert_eq!(regions.usage.y, 28);
         assert_eq!(regions.usage.height, USAGE_STRIP_ROWS);
         assert_eq!(regions.usage.width, 100);
     }
@@ -81,8 +84,15 @@ mod tests {
         let regions = split_shell(area);
         assert!(regions.sidebar.is_none());
         assert_eq!(regions.main.width, 60);
-        assert_eq!(regions.main.height, 29);
+        assert_eq!(regions.main.height, 28);
         assert_eq!(regions.usage.width, 60);
+        assert_eq!(regions.usage.height, USAGE_STRIP_ROWS);
+    }
+
+    #[test]
+    fn usage_strip_reserves_two_rows_for_border_plus_label() {
+        let regions = split_shell(Rect::new(0, 0, 100, 30));
+        assert!(regions.usage.height >= 2);
     }
 
     #[test]
