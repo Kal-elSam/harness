@@ -86,7 +86,7 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - (2026-09-26) **V0+V1** — upgraded `crates/kairo-ui` to ratatui 0.30 + ratatui-textarea 0.9; `surfaces.rs` paints bordered sidebar (selection/blocked), focused work panel, USAGE strip with distinct backgrounds; notice line for errors. Keys: `q` quit, `n` demo notice, `c` clear, `j/k` select agent.
   - Evidence: `cargo test` → **6/6** (3 layout + 3 surface bg/notice/narrow). Work-unit commit: `652d9bcc7`.
 - (2026-09-26) **V1-fix** — PTY review (100×30 TrueColor): USAGE 1-row + top border hid label; selection colored text-width only. Fixes: `USAGE_STRIP_ROWS=2`; `padded_span` fills sidebar/USAGE inner width; tests assert buffer contains `USAGE`/`Codex` and `SELECT_BG` at far-x of selected row (bg-only tests are insufficient).
-  - Evidence: `cargo test` → **9/9**. Learning: a background-color assert does not prove strip content is visible.
+  - Evidence: `cargo test` → **9/9**. Work-unit commit: `3757a6c21`. Learning: a background-color assert does not prove strip content is visible.
 
 ## Next step
 
