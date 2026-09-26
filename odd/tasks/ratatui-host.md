@@ -68,8 +68,8 @@ User-accepted plan "Kairo: un solo host visual con ratatui" (2026-09-26). Supers
 - [x] R0 Feature doc + mark herd-shell visual path superseded (bridge-only)
 - [x] R1 Rust toolchain + `crates/kairo-ui` scaffold: three-region layout (28 / grow / strip), 90-col collapse, no RPC yet
 - [x] R2 Node bridge: spawn Pi `--mode rpc`, JSONL framing, feed `kairo.workspace-shell/v1`
-- [ ] R3 Chat parity: prompt, stream, tools/errors, cancel, scroll, editor send
-- [ ] R4 Session continuity: resume / create / fork; model switch; no-model honest block + retry
+- [x] R3 Chat parity (bridge slice): consumable event flow; post-connect Pi exit flips `engine` off `connected` (prompt/stream/editor still open for later R3 chat work)
+- [ ] R4 Session continuity: resume / create / fork; model switch; **real** Pi cold-start without model (honest `unavailable` vs `no_model` against the real binary — simulated RPC `get_state` without model is **not** sufficient evidence); retry path
 - [ ] R5 Kairo chrome data: agents sidebar (blocked-first), agent select, USAGE strip, notices
 - [ ] R6 Commands/dialogs via RPC extension-UI forward
 - [ ] R7 Package binaries (darwin/linux × arch) into npm; Windows explicit error for `ui`
@@ -85,9 +85,13 @@ User-accepted plan "Kairo: un solo host visual con ratatui" (2026-09-26). Supers
   - Work-unit commit: `77595cfef`.
   - Note: Cursor sandbox may redirect `CARGO_TARGET_DIR`; local runs should `unset CARGO_TARGET_DIR` before `cargo run --release`.
 
-- (2026-09-26) **R2 closed** — `src/global/host/pi-rpc-bridge.js`: `openPiRpcBridge` loads `kairo.workspace-shell/v1` first, always returns `hostOpen: true`; spawns Pi with `--mode rpc` JSONL (LF-only framing); `engine.status` is `connected` | `no_model` | `unavailable`. Spawn / get_state / missing-model failures never throw out of open. No `kairo ui` default change; no ratatui polish.
-  - Evidence: `node --test test/pi-rpc-bridge.test.js` → **5/5 pass** (spawn fail, no_model, connected, get_state fail, classify). Work-unit commit: `cd5796f08`.
+- (2026-09-26) **R2 closed** — `src/global/host/pi-rpc-bridge.js`: `openPiRpcBridge` loads `kairo.workspace-shell/v1` first, always returns `hostOpen: true`; spawns Pi with `--mode rpc` JSONL (LF-only framing). Spawn / get_state failures never throw out of open. No `kairo ui` default change; no ratatui polish.
+  - Evidence: `node --test test/pi-rpc-bridge.test.js` → **5/5 pass** (simulated child). Work-unit commit: `cd5796f08`.
+  - **Precision (2026-09-26, user-verified):** the `no_model` case in those tests is a **simulated** RPC peer that answers `get_state` without a model. Real Pi often **exits before RPC starts** when no model is available, so that cold-start today surfaces as `engine.status === "unavailable"`, not a verified `no_model`. Treating real cold-start classification as **pending R4** — do not claim it verified by R2.
+  - `classifyPiEngineFromState` remains a unit helper for when RPC *did* start and `get_state` omitted `model`; it is not proof of real Pi no-model startup.
+- (2026-09-26) **R3 bridge slice** — `onEvent` / `takeEvents` consumable session flow; unexpected child exit after connect sets `engine.status` to `unavailable` (keeps `sessionId`, clears model) and emits `engine_unavailable`; intentional `stop()` → `stopped` (not crash). Host stays open. Prompt/stream/editor chat parity still open.
+  - Evidence: `node --test test/pi-rpc-bridge.test.js` → **8/8**; `cargo test --offline` in `crates/kairo-ui` → **3/3**. Work-unit commits: _(filled after commit)_.
 
 ## Next step
 
-R3: chat parity over the bridge (prompt/stream/tools/cancel/scroll/editor) — ratatui still owns paint; still no default cutover.
+Continue R3 chat (prompt/stream/tools with model available) or R4 real no-model cold-start — your call. No `kairo ui` default cutover.
