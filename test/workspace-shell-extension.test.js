@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createKairoWorkspaceExtension, createLiveTuiModeReader } from "../src/global/host/extension/index.js";
+import { agentRowHitboxes } from "../src/global/host/workspace-widget.js";
 
 async function tmpHarnessHome() {
   return mkdtemp(join(tmpdir(), "kairo-shell-ext-harness-home-"));
@@ -985,6 +986,32 @@ function lastBottomStripLines(bottomStripCalls) {
   if (Array.isArray(content)) return content;
   return renderWidgetCall(content, 80);
 }
+
+test("S2-1b clicking a sidebar agent row opens its detail; clicking again closes it", async () => {
+  const { pi, commands } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    getColumns: () => 100,
+    getTuiMode: () => "fullscreen"
+  });
+  const sidebarCalls = [];
+  await commands.get("kairo").handler("", fakeShellCtx({ sidebarCalls }));
+  const click = (y) => {
+    const factory = sidebarCalls.at(-1)[0];
+    const component = factory(undefined, IDENTITY_THEME);
+    assert.equal(typeof component.handleMouse, "function", "sidebar handles mouse");
+    component.handleMouse({ type: "click", button: "left", x: 2, y, screenX: 2, screenY: y, width: 28, height: 30, shift: false, alt: false, ctrl: false });
+  };
+  const [first] = agentRowHitboxes(snapshot, {});
+  const before = (sidebarCalls.length);
+  click(first.y);
+  assert.ok(sidebarCalls.length > before, "click reinstalls the sidebar with the detail open");
+  const open = lastSidebarLines(sidebarCalls).join("\n");
+  assert.ok(open.includes("MiniMax-M3"), "detail shows the clicked agent model");
+  click(first.y);
+  const closed = lastSidebarLines(sidebarCalls).join("\n");
+  assert.ok(!closed.includes("MiniMax-M3"), "clicking the open agent closes its detail");
+});
 
 test("fullscreen overview with shell APIs at ≥90 cols sets project/AGENTS sidebar and USAGE strip, clears overview widget", async () => {
   const { pi, commands } = fakePi();

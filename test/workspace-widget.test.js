@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import {
+  agentRowHitboxes,
   availabilityNotices,
   computeSideBySideWidths,
   createCompactShellSummaryWidget,
@@ -613,4 +614,43 @@ test("S2 compact summary without a captured reason says access is unavailable, n
   const joined = lines.join("\n");
   assert.ok(!joined.toLowerCase().includes("blocked"), "no generic blocked word without a proven cause");
   assert.ok(joined.includes("Unavailable"), "honest fallback without inventing a cause");
+});
+
+// --- S2-1b: click opens detail, keyboard (/kairo-team) offers the same access
+test("S2-1b agentRowHitboxes maps click rows to agent ids, shifting with route lines", () => {
+  const snap = fixtureSnapshot();
+  const plain = agentRowHitboxes(snap, {});
+  assert.ok(plain.length === snap.agents.length, "one hitbox per agent row");
+  assert.deepEqual(plain.map((h) => h.y), [2, 3, 4, 5, 6, 7, 8], "rows follow the project header + AGENTS header");
+  const routed = agentRowHitboxes(snap, { routeUnavailable: true });
+  assert.deepEqual(routed.map((h) => h.y), [4, 5, 6, 7, 8, 9, 10], "route notice lines shift every hitbox down");
+  assert.deepEqual(routed.map((h) => h.agentId), plain.map((h) => h.agentId), "same agents, shifted rows");
+});
+
+test("S2-1b sidebar shows the selected agent detail block with model, cause and next step", () => {
+  const lines = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME, { selectedAgentId: "researcher" });
+  const joined = lines.join("\n");
+  assert.ok(joined.includes("MiniMax-M3"), "detail names the model");
+  assert.ok(joined.replace(/\n/g, " ").includes("Cursor Models quota exhausted"), "detail carries the full cause (wrapped, never cut)");
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= 28, `detail line exceeds 28: "${line}"`);
+  }
+  const noCause = renderShellSidebarLines(fixtureSnapshot({
+    agents: [
+      { id: "b", label: "Builder", role: "Builder", provider: "codex", model: "M", state: "blocked", stateReason: null }
+    ]
+  }), IDENTITY_THEME, { selectedAgentId: "b" });
+  assert.ok(noCause.join("\n").includes("Next step"), "detail without a cause offers the next step");
+});
+
+test("S2-1b sidebar handleMouse calls onSelectAgent for agent rows and ignores headers", () => {
+  const snap = fixtureSnapshot();
+  const seen = [];
+  const component = createShellSidebarWidget(snap, { getColumns: () => 100, onSelectAgent: (id) => seen.push(id) })(undefined, IDENTITY_THEME);
+  assert.equal(typeof component.handleMouse, "function", "sidebar handles mouse");
+  const [first] = agentRowHitboxes(snap, {});
+  component.handleMouse({ type: "click", button: "left", x: 2, y: first.y, screenX: 2, screenY: first.y, width: 28, height: 30, shift: false, alt: false, ctrl: false });
+  assert.deepEqual(seen, [first.agentId], "click on an agent row selects it");
+  component.handleMouse({ type: "click", button: "left", x: 2, y: 0, screenX: 2, screenY: 0, width: 28, height: 30, shift: false, alt: false, ctrl: false });
+  assert.deepEqual(seen, [first.agentId], "click on the header selects nothing");
 });

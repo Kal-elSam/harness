@@ -508,7 +508,8 @@ Engram mirror: `odd/herd-shell-layout/tasks` SYNCED via CLI (#4007; MCP save amb
   - s2-100/s2-60 (fixture causa conocida + ausente): `◈ agentic-harness`, SPACES 0, session 0, BLOCKED 0; `✖ Researcher · Cursor Model…` (causa larga trunca con …, completa en /kairo-team); `✖ Builder · Unavailable`; compacto `✖ 2 unavailable: Researcher, Builder` + USAGE una vez.
   - s2-live100 (shell real fullscreen): header `◈ agentic-harness` en vivo, SPACES 0, AGENTS 1, ROUTES unavailable 1, strip USAGE + session en status bar.
 - Review riesgo alto (tu decision 2026-09-26): untracked excluidos (`docs/assets/…png`, `report.json`, `inspect-opencode-tier.sh` — preexistentes, no del commit). Recomendado hacerlo ahora; NO lanzado (autorizacion tuya pendiente, sin adivinar preflight JSON) y workers reviewers sin fondos registrado (2 delegaciones fallidas `Insufficient account funds`).
-- [ ] S2-1b Click abre detalle + equivalencia teclado (`/kairo-team`): verificar routeo mouse del fork hacia slot sidebar; hitbox/resize tests
+- [x] S2-1b Click abre detalle + equivalencia teclado (2026-09-26): fork verificado — `dispatchMouseToLayout` routea a slots con `handleMouse` propio (hitboxes del layout real, sin cambios fork). `agentRowHitboxes` (recomputo por render/resize, contempla detalle abierto), bloque detalle (modelo, causa completa envuelta, next step), toggle al re-clic; seleccion en closure `shellSelection` con repaint guardado por `isShellActive`; `/kairo-team` misma info por teclado. Touches: `workspace-widget.js`, `extension/index.js` + tests. Route: inline (delegacion sin fondos, 3er intento registrado).
+  - Evidence: RED 1+3 fail -> GREEN 102/102 (2 files); scoped 128/0/1; full `pnpm test` 2288/0/1. Commit: ver abajo.
 - [ ] S2-2 Captura TTY por cambio S2 + aprobado/rechazado
 - [ ] S2-2 Captura TTY por cambio S2 + aprobado/rechazado
 - [ ] S3-1 RED/GREEN: propuesta sin activacion; ciclo perdida->motivo->propuesta->decision->team; salida ejecutable sin alternativa
@@ -518,6 +519,15 @@ Engram mirror: `odd/herd-shell-layout/tasks` SYNCED via CLI (#4007; MCP save amb
 ### Stage approvals
 
 - S1: aprobado (2026-09-26, parcial: build+suite+capturas iniciales OK; resize/regular/pantalla-unica pasan a deuda S1-2)
+- S2: pendiente (S2-1a codigo + S2-2 capturas hechos; falta S2-1b click/teclado + veredicto visual tuyo)
+
+## Prueba-real plan (autorizado 2026-09-26)
+
+1. AGENTS click->detalle + `/kairo-team` misma accion por teclado; hitboxes + resize verificados.
+2. Recuperacion: causa + modelo alternativo verificado, sin activar hasta aprobacion; probar aprobacion, rechazo y sin-alternativa.
+3. Review riesgo alto sin los 3 untracked, sin inventar JSON; fondos-impedido = pendiente, nunca aprobado.
+4. Publicar fork .4 + pin + instalacion SOLO con autorizacion explicita tuya (sesion indicada por vos). Sin auth = bloqueado.
+Criterio «listo»: kairo normal (no CLI fork) a 100/60 + resize + mouse/teclado + ciclo proponer->aprobar/rechazar, con capturas y resuites antes de tu veredicto final.
 - S2: pendiente
 - S3: pendiente
 - S4: pendiente (bloqueado hasta autorizacion remota explicita)

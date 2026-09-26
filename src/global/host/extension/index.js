@@ -248,10 +248,22 @@ function isShellActive(ctx, getTuiMode) {
  * Only called once `isShellActive` is true; the caller (setWorkspaceWidget)
  * handles the regular-mode/`.3`-pin fallback and slot clearing itself.
  */
-function renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable = false, extraLines = [] }) {
-  ctx.ui.setSidebar(createShellSidebarWidget(snapshot, { getColumns, routeUnavailable, extraLines }));
+function renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable = false, extraLines = [], getTuiMode = null, selection = null }) {
+  ctx.ui.setSidebar(createShellSidebarWidget(snapshot, {
+    getColumns,
+    routeUnavailable,
+    extraLines,
+    selectedAgentId: selection?.selectedAgentId ?? null,
+    onSelectAgent: selection?.onSelectAgent ?? null
+  }));
   ctx.ui.setBottomStrip(createShellBottomStripWidget(snapshot, { getColumns, extraLines }));
   ctx.ui.setWidget?.("kairo-workspace", createCompactShellSummaryWidget(snapshot, { getColumns, routeUnavailable, extraLines }));
+  // Remember this paint so a sidebar click can re-open the surface with a
+  // new selection without a full snapshot reload — the click only changes
+  // which detail block is open, never the facts. Guarded by isShellActive
+  // at click time (see the closure's onSelectAgent): a mode switch away
+  // from fullscreen must never repaint slots the fork stopped drawing.
+  if (selection) selection._paint = { ctx, snapshot, getColumns, routeUnavailable, extraLines, getTuiMode };
 }
 
 /**
@@ -271,12 +283,12 @@ function renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable = fals
  * every surface that can occupy the one Kairo widget slot names the bound
  * session the same honest way.
  */
-function setWorkspaceWidget(ctx, snapshot, view, extraLines, { getColumns, getTuiMode } = {}) {
+function setWorkspaceWidget(ctx, snapshot, view, extraLines, { getColumns, getTuiMode, selection = null } = {}) {
   const shellActive = isShellActive(ctx, getTuiMode);
 
   if (view === "overview") {
     if (shellActive) {
-      renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable: false, extraLines });
+      renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable: false, extraLines, getTuiMode, selection });
       return;
     }
     // Regular mode, or the shell APIs are missing entirely (the published
@@ -297,7 +309,7 @@ function setWorkspaceWidget(ctx, snapshot, view, extraLines, { getColumns, getTu
     // is active, instead of a separate widget landing next to — or, below
     // SHELL_SIDEBAR_MIN_COLUMNS, replacing — the sidebar/strip/compact
     // summary. See renderShellSurface's own doc.
-    renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable: true, extraLines });
+    renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable: true, extraLines, getTuiMode, selection });
     return;
   }
 
@@ -353,7 +365,7 @@ function recoveryNotice(result) {
  */
 async function refreshWorkspace(ctxOrCwd, {
   loadSnapshot, sessionId = null, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [],
-  onSnapshot = () => {}, isCurrent = () => true, getColumns, getTuiMode
+  onSnapshot = () => {}, isCurrent = () => true, getColumns, getTuiMode, selection = null
 }) {
   // Pi's ctx becomes stale after an async yield following a session replacement
   // (Pi asserts ctx.cwd/ctx.ui). Capture cwd/ui synchronously at call time;
@@ -370,7 +382,7 @@ async function refreshWorkspace(ctxOrCwd, {
   });
   if (!isCurrent()) return snapshot;
   ui?.setStatus?.("kairo", workspaceStatus(snapshot));
-  setWorkspaceWidget(ctxForWidget, snapshot, view, extraLines, { getColumns, getTuiMode });
+  setWorkspaceWidget(ctxForWidget, snapshot, view, extraLines, { getColumns, getTuiMode, selection });
   onSnapshot(snapshot, { liveAvailability: availabilityIntelligence != null });
   return snapshot;
 }
@@ -413,6 +425,25 @@ export function createKairoWorkspaceExtension(pi, {
   // never re-derived from env on every refresh (see bindSession below).
   // null means genuinely unbound, presented as such, never a silent "ask".
   let boundKairoSessionId = null;
+  // The open sidebar agent detail (S2-1b): clicking an agent row toggles
+  // its detail block, clicking it again closes it. Held here — one per
+  // extension instance — and threaded into every shell paint as
+  // `selection`, so a snapshot refresh keeps the open detail instead of
+  // collapsing it. Keyboard reaches the same detail through `/kairo-team`
+  // (see teamDetailLines), which needs no selection state at all.
+  const shellSelection = { selectedAgentId: null, _paint: null };
+  shellSelection.onSelectAgent = (agentId) => {
+    shellSelection.selectedAgentId = shellSelection.selectedAgentId === agentId ? null : agentId;
+    const paint = shellSelection._paint;
+    if (!paint || !isShellActive(paint.ctx, paint.getTuiMode)) return;
+    renderShellSurface(paint.ctx, paint.snapshot, {
+      getColumns: paint.getColumns,
+      routeUnavailable: paint.routeUnavailable,
+      extraLines: paint.extraLines,
+      getTuiMode: paint.getTuiMode,
+      selection: shellSelection
+    });
+  };
   // Bumped once at the START of every session_start invocation (see below).
   // A render belongs to the most recent session_start iff its own captured
   // generation still equals this counter when its (possibly slow) snapshot
@@ -636,10 +667,11 @@ export function createKairoWorkspaceExtension(pi, {
       onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info),
       isCurrent,
       getColumns,
-      getTuiMode
+      getTuiMode,
+      selection: shellSelection
     });
     if (routeState === "unavailable" && isCurrent()) {
-      setWorkspaceWidget(ctxBag, snapshot, "unavailable-routes", [], { getColumns, getTuiMode });
+      setWorkspaceWidget(ctxBag, snapshot, "unavailable-routes", [], { getColumns, getTuiMode, selection: shellSelection });
     }
 
     // Phase 2 (P01.2 split): usage (the three usage readers, ~5s combined)
@@ -666,10 +698,11 @@ export function createKairoWorkspaceExtension(pi, {
         onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info),
         isCurrent,
         getColumns,
-        getTuiMode
+        getTuiMode,
+        selection: shellSelection
       });
       if (routeState === "unavailable" && isCurrent()) {
-        setWorkspaceWidget(ctxBag, refreshed, "unavailable-routes", extraLines, { getColumns, getTuiMode });
+        setWorkspaceWidget(ctxBag, refreshed, "unavailable-routes", extraLines, { getColumns, getTuiMode, selection: shellSelection });
       }
     }
 
@@ -705,7 +738,7 @@ export function createKairoWorkspaceExtension(pi, {
   for (const [name, description, view] of commands) {
     pi.registerCommand(name, {
       description,
-      handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, sessionId: boundKairoSessionId, view, getColumns, getTuiMode })
+      handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, sessionId: boundKairoSessionId, view, getColumns, getTuiMode, selection: shellSelection })
     });
   }
 

@@ -454,6 +454,65 @@ function shellAgentLine(agent, theme) {
   return herdAgentLine(agent, theme, SHELL_SIDEBAR_COLUMNS);
 }
 
+/** Row hitboxes for the sidebar's agent list — one `{agentId, y}` per
+ * agent row in render order, so a click's y-coordinate resolves to the
+ * agent without reparsing text. `routeUnavailable` shifts every row down
+ * by its two notice lines; `extraLines` append AFTER the agent rows, so
+ * they never shift a hitbox. Recomputed on every render (like the width
+ * check), so a resize or refresh can never leave stale boxes behind. */
+export function agentRowHitboxes(snapshot, { routeUnavailable = false, selectedAgentId = null } = {}) {
+  const identity = { fg: (_role, text) => text };
+  let y = 1 + (routeUnavailable ? 2 : 0) + 1;
+  const boxes = [];
+  for (const agent of sortedHerdAgents(snapshot.agents ?? [])) {
+    const id = agent.id ?? agent.label;
+    boxes.push({ agentId: id, y });
+    y += 1;
+    // An open detail block pushes every row below it down — hitboxes walk
+    // the same insertion renderShellSidebarLines does, so a click never
+    // lands on the wrong agent while a detail is open. Line count never
+    // depends on theming, so the identity measure below matches.
+    if (selectedAgentId != null && id === selectedAgentId) y += agentDetailLines(agent, identity).length;
+  }
+  return boxes;
+}
+
+/** Wrap one detail line at word boundaries to the sidebar budget —
+ * detail (model, full cause, next step) must read whole, never truncated
+ * with an ellipsis like the glanceable rows above it. */
+function wrapDetailLine(line, width) {
+  const words = String(line).split(/\s+/).filter(Boolean);
+  const out = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (visibleWidth(candidate) > width && current) {
+      out.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) out.push(current);
+  return out.length ? out : [""];
+}
+
+/** The open-agent detail block — model, full cause (or the honest
+ * Unavailable + next step when no cause was captured). Same facts
+ * `/kairo-team` shows for the row, so mouse and keyboard reach the same
+ * detail; clicking never opens a per-agent conversation or terminal. */
+function agentDetailLines(agent, theme) {
+  const cause = agent.stateReason ?? null;
+  const lines = [`  ${agent.model ?? "no eligible option"}`];
+  if (cause) {
+    lines.push(...wrapDetailLine(`  ${cause}`, SHELL_SIDEBAR_COLUMNS));
+  } else {
+    lines.push(...wrapDetailLine("  Unavailable", SHELL_SIDEBAR_COLUMNS));
+    lines.push(...wrapDetailLine("  Next step: run /project analyze", SHELL_SIDEBAR_COLUMNS));
+  }
+  return lines.map((line) => theme.fg("muted", line));
+}
+
 /** The fullscreen sidebar's lines — project header, then AGENTS
  * (blocked-first, fail-closed unknown), reusing the HERD panel's
  * glyph/order rules (see herdAgentLine/sortedHerdAgents above) with two
@@ -474,13 +533,17 @@ function shellAgentLine(agent, theme) {
  *   separate, duplicate widget. `extraLines`: transient notices (see
  *   appendExtraLines's own doc).
  */
-export function renderShellSidebarLines(snapshot, theme, { routeUnavailable = false, extraLines = [] } = {}) {
+export function renderShellSidebarLines(snapshot, theme, { routeUnavailable = false, extraLines = [], selectedAgentId = null } = {}) {
   const truncate = (line) => truncateToWidth(line, SHELL_SIDEBAR_COLUMNS, "…");
   const projectName = snapshot.project?.label ?? snapshot.project?.root ?? "unknown";
-  const agents = snapshot.agents ?? [];
-  const agentLines = agents.length
-    ? sortedHerdAgents(agents).map((agent) => shellAgentLine(agent, theme))
-    : [noTeamHintLine(theme, truncate, routeUnavailable)];
+  const agents = sortedHerdAgents(snapshot.agents ?? []);
+  const agentLines = [];
+  for (const agent of agents) {
+    agentLines.push(shellAgentLine(agent, theme));
+    const id = agent.id ?? agent.label;
+    if (selectedAgentId != null && id === selectedAgentId) agentLines.push(...agentDetailLines(agent, theme));
+  }
+  if (!agents.length) agentLines.push(noTeamHintLine(theme, truncate, routeUnavailable));
   return [
     theme.bold(truncate(`${HERD_PROJECT_GLYPH} ${projectName}`)),
     ...(routeUnavailable ? routeUnavailableLines(theme, truncate) : []),
@@ -631,14 +694,32 @@ function isWideEnoughForSidebar(getColumns) {
  * is at or above SHELL_SIDEBAR_MIN_COLUMNS; empty otherwise — see
  * isWideEnoughForSidebar's own doc for why this can't also shrink the
  * column itself.
+ * `onSelectAgent` (optional) turns agent rows into click targets: a left
+ * press/click resolves through agentRowHitboxes — recomputed live on
+ * every event, so resize/shift can never desync the boxes — and reports
+ * the agent id. The fork forwards mouse to slot components that define
+ * `handleMouse` (see tui-alt-screen's dispatchMouseToLayout); components
+ * without it stay inert. Clicking only opens the detail block (see
+ * agentDetailLines) — never a per-agent conversation or terminal — and
+ * `/kairo-team` offers the same detail by keyboard.
  * @param {object} snapshot
- * @param {{getColumns?: () => number, routeUnavailable?: boolean, extraLines?: string[]}} [options]
+ * @param {{getColumns?: () => number, routeUnavailable?: boolean, extraLines?: string[], selectedAgentId?: string|null, onSelectAgent?: (agentId: string) => void}} [options]
  */
-export function createShellSidebarWidget(snapshot, { getColumns, routeUnavailable = false, extraLines = [] } = {}) {
+export function createShellSidebarWidget(snapshot, { getColumns, routeUnavailable = false, extraLines = [], selectedAgentId = null, onSelectAgent = null } = {}) {
+  const options = { routeUnavailable, extraLines, selectedAgentId };
   return (_tui, theme) => ({
     render() {
       if (!isWideEnoughForSidebar(getColumns)) return [];
-      return renderShellSidebarLines(snapshot, theme, { routeUnavailable, extraLines });
+      return renderShellSidebarLines(snapshot, theme, options);
+    },
+    handleMouse(event) {
+      if (!onSelectAgent) return undefined;
+      if (event?.button !== "left" || (event?.type !== "press" && event?.type !== "click")) return undefined;
+      if (!isWideEnoughForSidebar(getColumns)) return undefined;
+      const hit = agentRowHitboxes(snapshot, { routeUnavailable, selectedAgentId }).find((box) => box.y === event.y);
+      if (!hit) return undefined;
+      onSelectAgent(hit.agentId);
+      return { handled: true };
     }
   });
 }
