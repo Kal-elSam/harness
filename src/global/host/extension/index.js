@@ -3,7 +3,7 @@ import { createKernelService } from "../../kernel/service.js";
 import { resolveKairoPiSettingsPath } from "../launch-gentle-shell.js";
 import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-route-provider.js";
 import {
-  loadKairoWorkspaceSnapshot, loadKairoLiveData, loadKairoUsageData, recoverKairoProjectTeam
+  approveKairoRecovery, loadKairoWorkspaceSnapshot, loadKairoLiveData, loadKairoUsageData, readPendingKairoRecovery, recoverKairoProjectTeam, rejectKairoRecovery
 } from "../workspace-snapshot.js";
 import {
   availabilityNotices, createCompactShellSummaryWidget, createKairoTextWidget, createKairoWorkspaceWidget,
@@ -345,7 +345,7 @@ function recoveryNotice(result) {
     const alternative = (result.proposal?.projectTeam ?? [])
       .map((entry) => `${entry.role} → ${entry.model?.displayName ?? entry.model?.modelId ?? "no eligible option"}`)
       .join(", ") || "no verified alternative yet";
-    return { level: "warning", message: `Kairo proposes a recovered team after ${cause}. Verified alternative: ${alternative}. Nothing was activated — approve or reject it from /project.` };
+    return { level: "warning", message: `Kairo proposes a recovered team after ${cause}. Verified alternative: ${alternative}. Nothing was activated — approve with /kairo-team-approve or reject with /kairo-team-reject.` };
   }
   if (result?.outcome === "kept-previous" || result?.outcome === "error") {
     return {
@@ -413,6 +413,9 @@ export function createKairoWorkspaceExtension(pi, {
   loadRouteModels = loadKairoProviderModels,
   createProvider = createKairoRouteProvider,
   recoverTeam = recoverKairoProjectTeam,
+  approveTeam = approveKairoRecovery,
+  rejectTeam = rejectKairoRecovery,
+  readPendingRecovery = readPendingKairoRecovery,
   resolveHomeDirImpl = resolveHomeDir,
   resolveProjectRootImpl = resolveProjectRoot,
   createSessionImpl = createSession,
@@ -737,7 +740,24 @@ export function createKairoWorkspaceExtension(pi, {
       if (result !== null) pendingRecovery = runRecovery(ctxBag, cwd, rerender).catch(() => null);
     });
 
-    await Promise.all([usagePromise, availabilityPromise]);
+    // A proposal made before a restart still waits on the record (cause +
+    // suggested team persisted there, never in memory) — surface it while
+    // the probes run, never before them: this read must not delay probe
+    // startup (timing-sensitive renders depend on it). Same dedupe key as
+    // runRecovery's own notice, so it says it once.
+    const pendingNotice = readPendingRecovery({ cwd }).catch(() => null).then((pending) => {
+      if (!isCurrent()) return;
+      if (pending?.outcome === "proposed" && pending?.proposal) {
+        const notice = recoveryNotice({ outcome: "proposed", affected: pending.affected ?? [], proposal: pending.proposal });
+        const key = `${pending.fingerprint}|proposed|`;
+        if (notice && !shownRecoveryKeys.has(key)) {
+          shownRecoveryKeys.add(key);
+          ctx?.ui?.notify?.(notice.message, notice.level);
+        }
+      }
+    });
+
+    await Promise.all([usagePromise, availabilityPromise, pendingNotice]);
   });
 
   const commands = [
@@ -754,6 +774,39 @@ export function createKairoWorkspaceExtension(pi, {
       handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, sessionId: boundKairoSessionId, view, getColumns, getTuiMode, selection: shellSelection })
     });
   }
+
+  // Recovery proposal decisions are real Pi commands (not legacy-cockpit
+  // only): approving re-verifies, activates, re-syncs Pi routes and
+  // repaints; rejecting only closes. Both report loudly on error — a
+  // failed approval never looks like an approval.
+  pi.registerCommand("kairo-team-approve", {
+    description: "Approve the pending recovery proposal",
+    handler: async (_args, ctx) => {
+      const cwd = ctx?.cwd ?? process.cwd();
+      const result = await approveTeam({ cwd });
+      if (result?.outcome === "approved") {
+        await registerRoutes(cwd);
+        await refreshWorkspace(ctx, { loadSnapshot, sessionId: boundKairoSessionId, view: "overview", getColumns, getTuiMode, selection: shellSelection });
+        ctx?.ui?.notify?.("Recovery proposal approved — the new team is active and Pi routes follow it.", "info");
+      } else {
+        ctx?.ui?.notify?.(`Could not approve the recovery proposal (${result?.reason ?? "unknown reason"}). The current team stays active.`, "warning");
+      }
+      return result;
+    }
+  });
+  pi.registerCommand("kairo-team-reject", {
+    description: "Reject the pending recovery proposal",
+    handler: async (_args, ctx) => {
+      const cwd = ctx?.cwd ?? process.cwd();
+      const result = await rejectTeam({ cwd });
+      if (result?.outcome === "rejected") {
+        ctx?.ui?.notify?.("Recovery proposal rejected — the current team stays active.", "info");
+      } else {
+        ctx?.ui?.notify?.(`Could not reject the recovery proposal (${result?.reason ?? "unknown reason"}).`, "warning");
+      }
+      return result;
+    }
+  });
 
   return {
     registerRoutes,

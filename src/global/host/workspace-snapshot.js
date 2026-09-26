@@ -12,6 +12,7 @@ import { readCodexUsage } from "../observability/codex-usage.js";
 import { readClaudeUsage } from "../observability/claude-usage.js";
 import { readOpenCodeUsage } from "../observability/opencode-usage.js";
 import { readCachedUsage, writeCachedUsage, readCachedAvailability, writeCachedAvailability } from "./workspace-cache.js";
+import { readAvailabilityRecovery } from "../conversation/availability-recovery-store.js";
 
 export const KAIRO_WORKSPACE_SNAPSHOT_SCHEMA = "kairo.workspace-shell/v1";
 
@@ -375,6 +376,46 @@ export async function recoverKairoProjectTeam({ cwd } = {}, deps = {}) {
     return await createService({ enableProviderProbes: true }).recoverProjectTeam({ cwd });
   } catch (error) {
     return { outcome: "error", reason: error?.message ?? String(error) };
+  }
+}
+
+/** Approve / reject a pending recovery proposal from the Pi host (the
+ * `kairo-team-approve` / `kairo-team-reject` commands). Never throw: an
+ * unexpected failure is reported as `{outcome: "error", reason}` so the
+ * Pi host can say so without breaking its refresh. Approval re-verifies
+ * and activates; rejection only closes — see team-recovery.js. */
+export async function approveKairoRecovery({ cwd } = {}, deps = {}) {
+  const createService = deps.createConversationService ?? createConversationService;
+  try {
+    return await createService({ enableProviderProbes: true }).approveRecoveryProposal({ cwd });
+  } catch (error) {
+    return { outcome: "error", reason: error?.message ?? String(error) };
+  }
+}
+
+export async function rejectKairoRecovery({ cwd } = {}, deps = {}) {
+  const createService = deps.createConversationService ?? createConversationService;
+  try {
+    return await createService({ enableProviderProbes: true }).rejectRecoveryProposal({ cwd });
+  } catch (error) {
+    return { outcome: "error", reason: error?.message ?? String(error) };
+  }
+}
+
+/** Read the pending recovery record for this project (null when none) —
+ * how a fresh process (restart) still sees a proposal made before it: the
+ * cause (`affected`) and the suggested team live on the record, never in
+ * memory. Returns null on any read failure: no record is never an error,
+ * only "nothing pending". */
+export async function readPendingKairoRecovery({ cwd = process.cwd() } = {}, deps = {}) {
+  try {
+    const resolveRoot = deps.resolveProjectRoot ?? resolveProjectRoot;
+    const homeDir = (deps.resolveHomeDir ?? resolveHomeDir)();
+    const projectRoot = await resolveRoot(cwd);
+    const read = deps.readAvailabilityRecovery ?? readAvailabilityRecovery;
+    return await read(homeDir, projectRoot);
+  } catch {
+    return null;
   }
 }
 

@@ -118,6 +118,8 @@ test("recovery success: Go limited with Codex/Claude available proposes a team w
   const record = state.records.at(-1);
   assert.equal(record.proposal.status, "suggested", "the proposal is suggested, never active");
   assert.ok(record.proposal.projectTeam.every((entry) => entry.model.adapterId !== "opencode-go"), "no proposed assignment uses the limited provider");
+  assert.deepEqual(record.basedOn, { profileFingerprint: "fp-1", approvedAt: null }, "the proposal pins the base it was built against");
+  assert.deepEqual(record.affected, result.affected, "the cause is persisted on the record, not just returned");
   assert.deepEqual(result.affected, [{ role: "Builder", model: "GLM-5.3", reason: "OpenCode Go monthly window is rate-limited" }], "the cause rides along");
   assert.equal(state.released, true);
 });
@@ -268,7 +270,7 @@ function proposalWorld({ recordOutcome = "proposed", eligibility = GO_LIMITED } 
   };
   const state = { strategy: goTeam, writes: [], records: [] };
   const context = {
-    readRecord: async () => ({ fingerprint, outcome: recordOutcome, attempts: 1, ...(recordOutcome === "proposed" ? { proposal } : {}) }),
+    readRecord: async () => ({ fingerprint, outcome: recordOutcome, attempts: 1, basedOn: { profileFingerprint: "fp-1", approvedAt: null }, ...(recordOutcome === "proposed" ? { proposal, affected: [{ role: "Builder", model: "GLM-5.3", reason: "limited" }] } : {}) }),
     writeRecord: async (next) => { state.records.push(next); },
     readStrategy: async () => state.strategy,
     writeStrategy: async (next) => { state.writes.push(next); state.strategy = next; },
@@ -298,6 +300,21 @@ test("approve refuses a stale proposal instead of activating unverified models",
   await assert.rejects(() => approveRecoveryProposal(context), /stale/);
   assert.equal(state.writes.length, 0, "a stale proposal is never activated");
   assert.equal(state.records.length, 0, "the proposal stays pending for a fresh look");
+});
+
+test("approve refuses when the active team changed since the proposal was built", async () => {
+  const { state, context } = proposalWorld();
+  state.strategy = { ...goTeam, approvedAt: "2026-09-24T12:00:00.000Z" };
+  await assert.rejects(() => approveRecoveryProposal(context), /changed since the proposal/);
+  assert.equal(state.writes.length, 0, "a late approval never overwrites an edited team");
+  assert.equal(state.records.length, 0, "the proposal stays pending for a fresh look");
+});
+
+test("approve refuses when the active team is no longer active", async () => {
+  const { state, context } = proposalWorld();
+  state.strategy = { ...goTeam, status: "stale" };
+  await assert.rejects(() => approveRecoveryProposal(context), /no longer active/);
+  assert.equal(state.writes.length, 0);
 });
 
 test("approve without a pending proposal fails loudly", async () => {

@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createKairoWorkspaceExtension } from "../src/global/host/extension/index.js";
 import { buildKairoProviderModels, loadKairoProviderModels } from "../src/global/host/kairo-route-provider.js";
-import { buildKairoWorkspaceSnapshot, recoverKairoProjectTeam } from "../src/global/host/workspace-snapshot.js";
+import { approveKairoRecovery, buildKairoWorkspaceSnapshot, recoverKairoProjectTeam, rejectKairoRecovery } from "../src/global/host/workspace-snapshot.js";
 import { createConversationService } from "../src/global/conversation/service.js";
 import { scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
@@ -71,7 +71,7 @@ function scenario() {
 
   const { pi, providers, events } = fakePi();
   const service = createService();
-  const extension = createKairoWorkspaceExtension(pi, {
+  const buildExtension = (extra = {}) => createKairoWorkspaceExtension(pi, {
     loadSnapshot: async ({ availabilityIntelligence }) => buildKairoWorkspaceSnapshot({
       projectRoot: "/repo", strategy: store.strategy, usageIntelligence: {}, availabilityIntelligence
     }),
@@ -84,11 +84,16 @@ function scenario() {
       resolveAdapter: () => ({ availability: () => ({ launchable: true }) })
     }),
     createProvider: ({ models }) => ({ models }),
-    recoverTeam: (args) => recoverKairoProjectTeam(args, { createConversationService: createService })
+    recoverTeam: (args) => recoverKairoProjectTeam(args, { createConversationService: createService }),
+    approveTeam: (args) => approveKairoRecovery(args, { createConversationService: createService }),
+    rejectTeam: (args) => rejectKairoRecovery(args, { createConversationService: createService }),
+    readPendingRecovery: async () => store.recovery,
+    ...extra
   });
+  const extension = buildExtension();
   const notifications = [];
   const ctx = { cwd: "/repo", ui: { setStatus: () => {}, setWidget: () => {}, notify: (...args) => notifications.push(args) } };
-  return { store, providers, events, extension, notifications, ctx, approveRecovery: (args) => service.approveRecoveryProposal(args) };
+  return { store, providers, events, extension, notifications, ctx, buildExtension, approveRecovery: (args) => service.approveRecoveryProposal(args) };
 }
 
 function fakePi() {
@@ -154,4 +159,25 @@ test("E2E: repeated refreshes trigger no duplicate analysis and no repeated noti
 
   assert.equal(store.analyses, 1, "same availability, no second analysis");
   assert.equal(notifications.length, afterFirst, "no notice is repeated");
+});
+
+test("E2E: proposal survives a restart — a fresh process notifies the persisted cause and its approve decides", async () => {
+  const first = scenario();
+  await first.events.get("session_start")({}, first.ctx);
+  const proposed = await first.extension.recovery();
+  assert.equal(proposed.outcome, "proposed");
+
+  // Restart: a new extension instance sharing only the persisted stores.
+  const second = scenario();
+  second.store.strategy = first.store.strategy;
+  second.store.recovery = first.store.recovery;
+  second.store.analyses = first.store.analyses;
+  const restarted = second.buildExtension();
+  assert.ok(restarted, "a fresh instance boots on the persisted stores");
+  const notifications = [];
+  const ctx = { cwd: "/repo", ui: { setStatus: () => {}, setWidget: () => {}, notify: (...args) => notifications.push(args) } };
+  await second.events.get("session_start")({}, ctx);
+  const joined = notifications.map(([message]) => message).join("\n");
+  assert.match(joined, /rate-limited/, "the persisted cause shows after restart");
+  assert.match(joined, /kairo-team-approve/, "the restart notice names the approve command");
 });

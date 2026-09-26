@@ -41,7 +41,7 @@ export async function readAvailabilityRecovery(homeDir, projectRoot, deps = {}) 
 /**
  * @param {string} homeDir
  * @param {string} projectRoot
- * @param {{fingerprint: string, outcome?: string|null, attempts?: number|null, proposal?: object|null}} record
+ * @param {{fingerprint: string, outcome?: string|null, attempts?: number|null, proposal?: object|null, affected?: object[]|null, basedOn?: object|null}} record
  */
 export async function writeAvailabilityRecovery(homeDir, projectRoot, record, deps = {}) {
   if (typeof record?.fingerprint !== "string") {
@@ -59,8 +59,12 @@ export async function writeAvailabilityRecovery(homeDir, projectRoot, record, de
     attempts: Number.isInteger(record.attempts) ? record.attempts : null,
     // The pending SUGGESTED proposal (see team-recovery.js): the active
     // strategy file is never overwritten by a proposal, so the proposal
-    // lives here until a human approves or rejects it.
+    // lives here until a human approves or rejects it. `affected` (the
+    // proven cause per role) and `basedOn` (the base-team pin approval
+    // checks) ride along so both survive a restart.
     ...(record.proposal != null ? { proposal: record.proposal } : {}),
+    ...(record.affected != null ? { affected: record.affected } : {}),
+    ...(record.basedOn != null ? { basedOn: record.basedOn } : {}),
     updatedAt: new Date().toISOString()
   };
   await mkdirImpl(dirname(path), { recursive: true });

@@ -141,7 +141,8 @@ test("extension registers only Kairo workspace commands and refreshes their matc
   createKairoWorkspaceExtension(pi, { loadSnapshot: async () => snapshot });
 
   assert.deepEqual([...commands.keys()], [
-    "kairo", "kairo-team", "kairo-sessions", "kairo-usage", "kairo-route", "kairo-memory"
+    "kairo", "kairo-team", "kairo-sessions", "kairo-usage", "kairo-route", "kairo-memory",
+    "kairo-team-approve", "kairo-team-reject"
   ]);
 
   const teamCalls = [];
@@ -338,6 +339,83 @@ test("a proposed recovery never re-syncs routes and says the cause, the alternat
   assert.match(message, /rate-limited/);
   assert.match(message, /Builder → Claude Opus 5/);
   assert.match(message, /Nothing was activated/);
+});
+
+test("kairo-team-approve activates, re-syncs routes and says so; kairo-team-reject only closes", async () => {
+  const { pi, events, providers, commands } = fakePi();
+  const approvals = [];
+  const rejections = [];
+  let routeLoads = 0;
+  const extension = createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => {
+      routeLoads += 1;
+      return routeLoads === 1
+        ? [{ id: "opencode-go::glm", kairoRoute: { adapterId: "opencode-go", modelId: "glm" } }]
+        : [{ id: "claude::claude-opus-5", kairoRoute: { adapterId: "claude", modelId: "claude-opus-5" } }];
+    },
+    createProvider: ({ models }) => ({ models }),
+    recoverTeam: async () => ({ outcome: "skipped", reason: "no-active-team", fingerprint: "fp" }),
+    approveTeam: async (args) => { approvals.push(args); return { outcome: "approved", fingerprint: "fp" }; },
+    rejectTeam: async (args) => { rejections.push(args); return { outcome: "rejected", fingerprint: "fp" }; },
+    readPendingRecovery: async () => null
+  });
+  const notifications = [];
+  const ctx = { cwd: "/repo", ui: { setStatus: () => {}, setWidget: () => {}, setSidebar: () => {}, setBottomStrip: () => {}, notify: (...args) => notifications.push(args) } };
+  await events.get("session_start")({}, ctx);
+  assert.deepEqual(approvals, [], "nothing approved without the command");
+  await commands.get("kairo-team-approve").handler("", ctx);
+  assert.deepEqual(approvals, [{ cwd: "/repo" }]);
+  assert.deepEqual(providers.get("kairo").models.map((model) => model.id), ["claude::claude-opus-5"], "approval re-syncs Pi routes");
+  assert.match(notifications.at(-1)[0], /approved/);
+  await commands.get("kairo-team-reject").handler("", ctx);
+  assert.deepEqual(rejections, [{ cwd: "/repo" }]);
+  assert.match(notifications.at(-1)[0], /rejected/);
+  assert.equal(extension.recovery() instanceof Promise, true);
+});
+
+test("a stale approval reports the failure and never looks like an approval", async () => {
+  const { pi, commands } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    approveTeam: async () => ({ outcome: "error", reason: "Recovery proposal is stale" }),
+    rejectTeam: async () => ({ outcome: "error", reason: "x" }),
+    readPendingRecovery: async () => null
+  });
+  const notifications = [];
+  const ctx = { cwd: "/repo", ui: { setStatus: () => {}, setWidget: () => {}, notify: (...args) => notifications.push(args) } };
+  await commands.get("kairo-team-approve").handler("", ctx);
+  const [message, level] = notifications.at(-1);
+  assert.equal(level, "warning");
+  assert.match(message, /Could not approve/);
+  assert.match(message, /stale/);
+});
+
+test("a proposal made before a restart still notifies its cause on the next session start", async () => {
+  const { pi, events } = fakePi();
+  const pending = {
+    fingerprint: "fp-restart",
+    outcome: "proposed",
+    affected: [{ role: "Explorer", model: "GLM-5.3", reason: "OpenCode Go monthly window is rate-limited" }],
+    proposal: { status: "suggested", projectTeam: [{ role: "Explorer", model: { displayName: "Codex Model", adapterId: "codex", modelId: "codex-model" } }] }
+  };
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    loadUsageData: async () => ({ usage: {}, providers: {} }),
+    loadLiveData: async () => null,
+    loadRouteModels: async () => [],
+    createProvider: ({ models }) => ({ models }),
+    recoverTeam: async () => { throw new Error("must not run: the proposal already exists"); },
+    readPendingRecovery: async () => pending
+  });
+  const notifications = [];
+  const ctx = { cwd: "/repo", ui: { setStatus: () => {}, setWidget: () => {}, notify: (...args) => notifications.push(args) } };
+  await events.get("session_start")({}, ctx);
+  const joined = notifications.map(([message]) => message).join("\n");
+  assert.match(joined, /rate-limited/, "the persisted cause survives the restart");
+  assert.match(joined, /kairo-team-approve/, "the notice names the real approve command");
 });
 
 test("a recovery that keeps the previous team says why and what to do, once", async () => {

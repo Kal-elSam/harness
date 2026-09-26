@@ -194,7 +194,16 @@ export async function runTeamRecovery(context) {
       proposal: { source: "automatic-recovery", fingerprint: fingerprint.key }
     };
     const affected = affectedEntries(strategy, eligibility);
-    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "proposed", attempts, proposal });
+    // basedOn pins the exact active team this proposal was built against
+    // (see approveRecoveryProposal): a late approval after a human edit
+    // or a newer approval must refuse instead of overwriting. affected is
+    // persisted — not just returned — so the cause still shows after a
+    // restart, when only the record (never memory) is left.
+    const basedOn = {
+      profileFingerprint: strategy?.profileFingerprint ?? null,
+      approvedAt: strategy?.approvedAt ?? null
+    };
+    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "proposed", attempts, proposal, affected, basedOn });
     return { outcome: "proposed", fingerprint: fingerprint.key, proposal, affected, analyst };
   } finally {
     await lock.release();
@@ -220,6 +229,20 @@ export async function approveRecoveryProposal(context) {
   const record = await context.readRecord();
   if (record?.outcome !== "proposed" || typeof record?.proposal !== "object" || !record.proposal) {
     throw new Error("No proposed recovery to approve — run a recovery analysis first.");
+  }
+  // The proposal was verified against the active team of its own time. A
+  // human edit or a newer approval since then (any activation bumps
+  // approvedAt; any re-analysis bumps profileFingerprint; only an ACTIVE
+  // team is approvable onto) makes this approval late: refuse instead of
+  // overwriting a team the human changed meanwhile. readStrategy is not
+  // decorative — it is the guard.
+  const current = await context.readStrategy();
+  if (current?.status !== "active") {
+    throw new Error("The active team is no longer active — review the current team before approving a stale proposal.");
+  }
+  if ((current?.profileFingerprint ?? null) !== (record.basedOn?.profileFingerprint ?? null) ||
+      (current?.approvedAt ?? null) !== (record.basedOn?.approvedAt ?? null)) {
+    throw new Error("The active team changed since the proposal was built — run a fresh recovery analysis instead of approving.");
   }
   const eligibility = await context.currentEligibility();
   const stale = (record.proposal.projectTeam ?? []).filter((entry) => !isRoutableNow(entry.model, eligibility));
