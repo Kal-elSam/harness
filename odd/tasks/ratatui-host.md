@@ -72,7 +72,7 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - [x] V2 Wire `ratatui-textarea` editor into work surface (after V0)
 - [x] R3b Chat over surfaces: prompt, stream, tools, cancel, scroll (model available)
 - [ ] R4 Sessions / model switch / **real** Pi cold-start no-model
-- [ ] R5 Agents sidebar data + USAGE + notices (honest states)
+- [x] R5 Agents sidebar data + USAGE + notices (honest states)
 - [ ] R6 Commands/dialogs via RPC extension-UI
 - [ ] V3 Visual gate: color captures @60/100/160 with conversation, agents, USAGE, error notice — **your approval** (blocks R7)
 - [ ] R7 Package binaries (darwin/linux); Windows `ui` error
@@ -91,7 +91,9 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - (2026-09-26) **V2 + R3b** — work column split transcript + 5-row `ratatui-textarea` editor; Tab focus cycle; local mock reply without bridge; `kairo-ui-rpc-stdio.js` JSONL sidecar over `openPiRpcBridge`; Rust `bridge.rs` client with `--bridge` / `KAIRO_UI_BRIDGE=1`.
   - Evidence: `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **16/16**. `node --test test/kairo-ui-rpc-stdio.test.js` → **3/3**. `node --test test/pi-rpc-bridge.test.js` → **8/8** (unchanged bridge).
   - Keybindings: Tab (focus), Enter submit, Esc abort/blur sidebar, PgUp/Dn transcript scroll, q quit (empty editor or sidebar/transcript), Ctrl+C/Q always quit.
+- (2026-09-26) **R5** — `apply_workspace_snapshot` maps `kairo.workspace-shell/v1` agents (idle/blocked/unknown only), project label, and `subscriptions.segments`/`state` into sidebar + USAGE; `ready`/`snapshot` JSONL on bridge; optional sidecar `reload_snapshot`. No change to default `kairo ui`.
+  - Evidence: `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` (snapshot + paint). `node --test test/kairo-ui-rpc-stdio.test.js`, `test/pi-rpc-bridge.test.js`.
 
 ## Next step
 
-V3 visual gate: color TTY captures @60/100/160 with real chat (bridge or mock), agents, USAGE, error notice — user approval before R7. PTY check: `cargo run` (mock) or `KAIRO_UI_BRIDGE=1 cargo run -- --bridge` from repo root with Pi model.
+V3 visual gate: real conversation capture @60/100/160 with `--bridge` (agents + USAGE from snapshot, chat stream). R4/R6 still pending. PTY: from worktree repo root, `cd crates/kairo-ui && KAIRO_UI_BRIDGE=1 cargo run -- --bridge` (or `--bridge` flag).

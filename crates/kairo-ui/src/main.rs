@@ -1,6 +1,7 @@
 mod bridge;
 mod chat;
 mod layout;
+mod snapshot;
 mod surfaces;
 
 use std::env;
@@ -19,6 +20,7 @@ use ratatui_textarea::{Input, Key, TextArea};
 use bridge::BridgeClient;
 use chat::{sidebar_accepts_selection_keys, ChatState, Focus};
 use layout::split_shell;
+use snapshot::apply_workspace_snapshot;
 use surfaces::{render_shell, ShellViewModel};
 
 // Keybindings (V2 + R3b):
@@ -62,11 +64,9 @@ impl ShellApp {
                     .unwrap_or("engine unavailable");
                 self.view.notice = Some(format!("Pi engine unavailable: {reason}"));
             }
-            if kind == Some("ready") {
-                if let Some(engine) = record.get("engine") {
-                    if engine.get("status").and_then(|v| v.as_str()) == Some("connected") {
-                        self.view.usage_line = "USAGE · bridge connected".into();
-                    }
+            if matches!(kind, Some("ready") | Some("snapshot")) {
+                if let Some(snap) = record.get("snapshot") {
+                    apply_workspace_snapshot(&mut self.view, snap);
                 }
             }
             if kind == Some("error") {
