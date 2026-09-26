@@ -20,6 +20,7 @@ function fakeSnapshot(overrides = {}) {
 
 function createFakeRpcChild({ onCommand = () => null } = {}) {
   const child = new EventEmitter();
+  let activeModel = null;
   child.stdin = new EventEmitter();
   child.stdin.write = (chunk) => {
     const lines = String(chunk).split("\n").filter(Boolean);
@@ -30,7 +31,12 @@ function createFakeRpcChild({ onCommand = () => null } = {}) {
       } catch {
         continue;
       }
-      const response = onCommand(cmd);
+      const response = onCommand(cmd, {
+        activeModel,
+        setModel: (model) => {
+          activeModel = model;
+        }
+      });
       if (response) {
         const body = { ...response };
         if (cmd.id != null && body.id == null) body.id = cmd.id;
@@ -50,6 +56,11 @@ function createFakeRpcChild({ onCommand = () => null } = {}) {
   return child;
 }
 
+const architectModel = {
+  id: "codex::m1",
+  kairoRoute: { role: "Architect", adapterId: "codex", modelId: "m1" }
+};
+
 function mockOpenBridge(factory) {
   return async (opts) => {
     const child = factory();
@@ -57,6 +68,7 @@ function mockOpenBridge(factory) {
       cwd: opts?.cwd ?? "/project",
       loadSnapshot: async () => fakeSnapshot(),
       resolveCliPath: () => "/fake/cli.js",
+      loadKairoProviderModels: async () => [architectModel],
       spawnImpl: () => child,
       execPath: "/usr/bin/node",
       connectTimeoutMs: 500
@@ -81,13 +93,25 @@ test("sidecar emits ready then forwards prompt stream and agent_settled", async 
     cwd: "/project",
     openBridge: mockOpenBridge(() => {
       childRef = createFakeRpcChild({
-        onCommand: (cmd) => {
+        onCommand: (cmd, ctx) => {
           if (cmd.type === "get_state") {
             return {
               type: "response",
               command: "get_state",
               success: true,
-              data: { sessionId: "s1", model: { id: "m1" } }
+              data: {
+                sessionId: "s1",
+                model: ctx?.activeModel ?? null
+              }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return {
+              type: "response",
+              command: "set_model",
+              success: true,
+              data: { id: cmd.modelId, provider: "kairo" }
             };
           }
           if (cmd.type === "prompt") {
@@ -190,14 +214,18 @@ test("sidecar abort forwards abort command to Pi", async () => {
     stdout,
     openBridge: mockOpenBridge(() =>
       createFakeRpcChild({
-        onCommand: (cmd) => {
+        onCommand: (cmd, ctx) => {
           if (cmd.type === "get_state") {
             return {
               type: "response",
               command: "get_state",
               success: true,
-              data: { model: { id: "m" } }
+              data: { model: ctx?.activeModel ?? { id: "m" } }
             };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId });
+            return { type: "response", command: "set_model", success: true };
           }
           if (cmd.type === "abort") {
             abortCalls.push(cmd);
@@ -235,14 +263,21 @@ test("sidecar stays alive and emits engine_unavailable after Pi exit", async () 
     stdout,
     openBridge: mockOpenBridge(() => {
       childRef = createFakeRpcChild({
-        onCommand: (cmd) => {
+        onCommand: (cmd, ctx) => {
           if (cmd.type === "get_state") {
             return {
               type: "response",
               command: "get_state",
               success: true,
-              data: { sessionId: "live", model: { id: "m" } }
+              data: {
+                sessionId: "live",
+                model: ctx?.activeModel ?? { id: "m" }
+              }
             };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId });
+            return { type: "response", command: "set_model", success: true };
           }
           return null;
         }
