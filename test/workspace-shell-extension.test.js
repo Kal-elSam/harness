@@ -111,6 +111,30 @@ function renderWidgetCall(content, width = 160) {
   return component.render(width);
 }
 
+test("kairo-team detail offers a next step for a blocked row with no captured cause", async () => {
+  const noCause = {
+    ...snapshot,
+    team: {
+      state: "active",
+      assignments: [],
+      rows: [
+        { role: "Builder", model: "no eligible option", via: "unknown", accessMode: "automatic", availability: { state: "blocked", warning: null } }
+      ]
+    }
+  };
+  const { pi, commands } = fakePi();
+  createKairoWorkspaceExtension(pi, { loadSnapshot: async () => noCause });
+  const teamCalls = [];
+  await commands.get("kairo-team").handler("", {
+    cwd: "/repo",
+    ui: { setWidget: (...args) => teamCalls.push(args), notify: () => {} }
+  });
+  const teamLines = renderWidgetCall(teamCalls[0][1]);
+  const joined = teamLines.join("\n");
+  assert.ok(joined.includes("Next step"), "detail offers the next step instead of a bare BLOCKED");
+  assert.ok(joined.includes("/project analyze"), "next step names the real command");
+});
+
 test("extension registers only Kairo workspace commands and refreshes their matching compact view", async () => {
   const { pi, commands } = fakePi();
   createKairoWorkspaceExtension(pi, { loadSnapshot: async () => snapshot });

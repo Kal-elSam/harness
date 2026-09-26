@@ -580,18 +580,37 @@ test("S2 sidebar blocked row shows the proven short cause, not generic BLOCKED",
   assert.ok(longJoined.includes("…"), "overflowing cause ends in an ellipsis");
 });
 
-test("S2 sidebar blocked row without a captured reason keeps the honest provider fallback", () => {
-  const lines = renderShellSidebarLines(fixtureSnapshot({
+test("S2 sidebar blocked row without a captured reason says access is unavailable, never BLOCKED", () => {
+  const short = renderShellSidebarLines(fixtureSnapshot({
+    agents: [
+      { id: "qa", label: "QA", role: "QA", provider: "codex", model: "M", state: "blocked", stateReason: null }
+    ]
+  }), IDENTITY_THEME);
+  const shortJoined = short.join("\n");
+  assert.ok(!shortJoined.includes("BLOCKED"), "no generic BLOCKED word without a proven cause");
+  assert.ok(shortJoined.includes("Access unavailable"), "honest fallback without inventing a cause");
+  const long = renderShellSidebarLines(fixtureSnapshot({
     agents: [
       { id: "b", label: "Builder", role: "Builder", provider: "codex", model: "M", state: "blocked", stateReason: null }
     ]
   }), IDENTITY_THEME);
-  const joined = lines.join("\n");
-  assert.ok(joined.includes("BLOCKED"), "honest fallback when no cause was captured");
+  const longJoined = long.join("\n");
+  assert.ok(!longJoined.includes("BLOCKED"), "a long fallback truncates with an ellipsis, never BLOCKED");
 });
 
 test("S2 compact summary names the proven cause for one blocked agent", () => {
   const lines = renderCompactShellSummaryLines(fixtureSnapshot(), IDENTITY_THEME, { width: 60 });
   const joined = lines.join("\n");
   assert.ok(joined.includes("Cursor Models quota exhausted"), "compact summary carries the proven cause");
+});
+
+test("S2 compact summary without a captured reason says access is unavailable, never blocked", () => {
+  const lines = renderCompactShellSummaryLines(fixtureSnapshot({
+    agents: [
+      { id: "b", label: "Builder", role: "Builder", provider: "codex", model: "M", state: "blocked", stateReason: null }
+    ]
+  }), IDENTITY_THEME, { width: 60 });
+  const joined = lines.join("\n");
+  assert.ok(!joined.toLowerCase().includes("blocked"), "no generic blocked word without a proven cause");
+  assert.ok(joined.includes("Access unavailable"), "honest fallback without inventing a cause");
 });

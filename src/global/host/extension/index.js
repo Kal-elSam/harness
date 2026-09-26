@@ -72,15 +72,24 @@ function subscriptionsLine(subscriptions) {
 }
 
 /** `/kairo-team`'s full detail lines, unbounded — every role, plus its
- * full warning text when it has one. Rendered through the component path
- * (createKairoTextWidget), never a plain string array, because 7 real
- * roles with warnings can exceed Pi's MAX_WIDGET_LINES=10 cap. */
+ * full warning text when it has one, plus the next step when a row is
+ * blocked with no captured cause (the sidebar/compact summary can only
+ * say access is unavailable there — this detail view owes the action).
+ * Rendered through the component path (createKairoTextWidget), never a
+ * plain string array, because 7 real roles with warnings can exceed Pi's
+ * MAX_WIDGET_LINES=10 cap. */
 function teamDetailLines(team) {
   const rows = Array.isArray(team?.rows) ? team.rows : [];
   return [
     `KAIRO TEAM · ${team?.state ?? "not_analyzed"}`,
     ...(rows.length
-      ? rows.flatMap((row) => (row.availability?.warning ? [teamRowLine(row), `  ${row.availability.warning}`] : [teamRowLine(row)]))
+      ? rows.flatMap((row) => {
+          if (row.availability?.warning) return [teamRowLine(row), `  ${row.availability.warning}`];
+          if (row.availability?.state === "blocked") {
+            return [teamRowLine(row), "  Next step: run /project analyze to assign an eligible model."];
+          }
+          return [teamRowLine(row)];
+        })
       : ["Run /project analyze to build this project's team."])
   ];
 }
