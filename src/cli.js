@@ -47,6 +47,7 @@ import { runUiCli } from "./global/conversation/ui.js";
 import { runKairoResume, runKairoSessionsList, runKairoStart } from "./global/conversation/session-cli.js";
 import { runCockpitCli } from "./global/cockpit/cli.js";
 import { launchGentleShell, routeInteractiveHost } from "./global/host/launch-gentle-shell.js";
+import { launchRatatuiHost, resolveUiHost } from "./global/host/launch-ratatui-host.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
 import { runGlobalAlerts } from "./global/runtime/alerts/alert-cli.js";
@@ -146,22 +147,14 @@ export async function runCli(argv) {
           await runCockpitCli(optionsWithPolicy);
           return;
         }
-        await launchGentleShell({
-          cwd: optionsWithPolicy.cwd,
-          extensionDir: resolve(__dirname, "global/host/extension"),
-          interactive: optionsWithPolicy.interactive
-        });
+        await launchInteractiveWorkspace(optionsWithPolicy);
         return;
       }
       await runConversationCli(optionsWithPolicy);
       return;
     case "ui":
       if (!optionsWithPolicy.legacyCockpit) {
-        await launchGentleShell({
-          cwd: optionsWithPolicy.cwd,
-          extensionDir: resolve(__dirname, "global/host/extension"),
-          interactive: optionsWithPolicy.interactive
-        });
+        await launchInteractiveWorkspace(optionsWithPolicy);
         return;
       }
       await runUiCli(optionsWithPolicy);
@@ -523,6 +516,22 @@ export function buildMcpCliOptions(options = {}, extras = {}) {
   };
 }
 
+/** Default Pi host, or experimental ratatui when `--ratatui` / `KAIRO_UI_HOST=ratatui`. */
+async function launchInteractiveWorkspace(options) {
+  if (resolveUiHost({ options }) === "ratatui") {
+    await launchRatatuiHost({
+      cwd: options.cwd,
+      interactive: options.interactive
+    });
+    return;
+  }
+  await launchGentleShell({
+    cwd: options.cwd,
+    extensionDir: resolve(__dirname, "global/host/extension"),
+    interactive: options.interactive
+  });
+}
+
 export function parseArgs(argv) {
   const args = [...argv];
   const firstArg = args[0];
@@ -626,7 +635,8 @@ export function parseArgs(argv) {
     includePrivate: false,
     cloudConsent: false,
     port: null,
-    legacyCockpit: false
+    legacyCockpit: false,
+    ratatui: false
   };
 
   if (command === "components") {
@@ -825,6 +835,7 @@ export function parseArgs(argv) {
       options.failOn = requireFlagValue("--fail-on", arg.slice("--fail-on=".length));
     }
     else if (arg === "--legacy-cockpit") options.legacyCockpit = true;
+    else if (arg === "--ratatui") options.ratatui = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--all") options.helpAll = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
