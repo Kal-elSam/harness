@@ -71,6 +71,26 @@ impl ChatState {
         });
     }
 
+    /// Remove the last user message if it matches `text` (prompt send failed).
+    pub fn pop_last_user_if_matches(&mut self, text: &str) {
+        let trimmed = text.trim();
+        if let Some(last) = self.messages.last() {
+            if last.role == MessageRole::User && last.content == trimmed {
+                self.messages.pop();
+            }
+        }
+    }
+
+    /// Drop an empty streaming assistant placeholder (engine died before deltas).
+    pub fn cancel_empty_assistant_stream(&mut self) {
+        if let Some(last) = self.messages.last() {
+            if last.role == MessageRole::Assistant && last.streaming && last.content.is_empty() {
+                self.messages.pop();
+            }
+        }
+        self.is_streaming = self.messages.iter().any(|m| m.streaming);
+    }
+
     pub fn push_mock_assistant_reply(&mut self, user_text: &str) {
         self.messages.push(ChatMessage {
             role: MessageRole::Assistant,
@@ -239,6 +259,55 @@ mod tests {
             chat.messages
                 .iter()
                 .any(|m| m.role == MessageRole::User && m.content == "hi there")
+        );
+    }
+
+    #[test]
+    fn pop_last_user_rolls_back_failed_send() {
+        let mut chat = ChatState::default();
+        chat.submit_user("keep me".into());
+        chat.submit_user("rollback".into());
+        chat.pop_last_user_if_matches("rollback");
+        assert_eq!(
+            chat.messages
+                .iter()
+                .filter(|m| m.role == MessageRole::User)
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["keep me"]
+        );
+    }
+
+    #[test]
+    fn cancel_empty_assistant_stream_drops_ghost() {
+        let mut chat = ChatState::default();
+        chat.begin_assistant_stream();
+        assert!(chat.is_streaming);
+        chat.cancel_empty_assistant_stream();
+        assert!(!chat.is_streaming);
+        assert!(
+            !chat
+                .messages
+                .iter()
+                .any(|m| m.role == MessageRole::Assistant)
+        );
+    }
+
+    #[test]
+    fn cancel_empty_keeps_assistant_with_content() {
+        let mut chat = ChatState::default();
+        chat.begin_assistant_stream();
+        if let Some(last) = chat.messages.last_mut() {
+            last.content.push_str("partial");
+        }
+        chat.cancel_empty_assistant_stream();
+        assert!(chat.is_streaming);
+        assert_eq!(
+            chat.messages
+                .iter()
+                .find(|m| m.role == MessageRole::Assistant)
+                .map(|m| m.content.as_str()),
+            Some("partial")
         );
     }
 }

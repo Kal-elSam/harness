@@ -1,5 +1,6 @@
 mod bridge;
 mod chat;
+mod engine;
 mod layout;
 mod snapshot;
 mod surfaces;
@@ -19,6 +20,7 @@ use ratatui_textarea::{Input, Key, TextArea};
 
 use bridge::BridgeClient;
 use chat::{sidebar_accepts_selection_keys, ChatState, Focus};
+use engine::{decide_submit, EngineGate, SubmitDecision};
 use layout::split_shell;
 use snapshot::apply_workspace_snapshot;
 use surfaces::{render_shell, ShellViewModel};
@@ -36,6 +38,9 @@ struct ShellApp {
     chat: ChatState,
     editor: TextArea<'static>,
     bridge: Option<BridgeClient>,
+    engine: EngineGate,
+    /// Last prompt accepted by the sidecar write path; restored if Pi rejects it.
+    pending_prompt: Option<String>,
 }
 
 impl ShellApp {
@@ -47,6 +52,8 @@ impl ShellApp {
             chat: ChatState::default(),
             editor,
             bridge,
+            engine: EngineGate::default(),
+            pending_prompt: None,
         }
     }
 
@@ -62,9 +69,27 @@ impl ShellApp {
                     .get("reason")
                     .and_then(|v| v.as_str())
                     .unwrap_or("engine unavailable");
+                self.engine.status = "unavailable".into();
+                self.engine.reason = Some(reason.to_string());
                 self.view.notice = Some(format!("Pi engine unavailable: {reason}"));
+                self.revert_failed_prompt();
             }
-            if matches!(kind, Some("ready") | Some("snapshot")) {
+            if kind == Some("ready") {
+                self.engine = EngineGate::from_ready_record(&record);
+                if let Some(notice) = self.engine.open_notice() {
+                    self.view.notice = Some(notice);
+                } else if self
+                    .view
+                    .notice
+                    .as_deref()
+                    .is_some_and(|n| n.starts_with("Pi engine "))
+                {
+                    self.view.notice = None;
+                }
+                if let Some(snap) = record.get("snapshot") {
+                    apply_workspace_snapshot(&mut self.view, snap);
+                }
+            } else if kind == Some("snapshot") {
                 if let Some(snap) = record.get("snapshot") {
                     apply_workspace_snapshot(&mut self.view, snap);
                 }
@@ -75,6 +100,19 @@ impl ShellApp {
                     .and_then(|v| v.as_str())
                     .unwrap_or("bridge error");
                 self.view.notice = Some(msg.to_string());
+                self.revert_failed_prompt();
+            }
+            // Real deltas mean the prompt was accepted — drop restore token.
+            if kind == Some("message_update")
+                && record
+                    .pointer("/assistantMessageEvent/delta")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|d| !d.is_empty())
+            {
+                self.pending_prompt = None;
+            }
+            if kind == Some("agent_settled") {
+                self.pending_prompt = None;
             }
             self.chat.apply_sidecar_event(&record);
         }
@@ -85,16 +123,52 @@ impl ShellApp {
         if text.trim().is_empty() {
             return;
         }
-        self.chat.submit_user(text.clone());
+        let bridge_attached = self.bridge.is_some();
+        match decide_submit(bridge_attached, &self.engine) {
+            SubmitDecision::KeepDraft { notice } => {
+                self.view.notice = Some(notice);
+            }
+            SubmitDecision::LocalMock => {
+                self.chat.submit_user(text.clone());
+                self.clear_editor();
+                self.chat.push_mock_assistant_reply(text.trim());
+            }
+            SubmitDecision::SendToPi => {
+                self.chat.submit_user(text.clone());
+                self.clear_editor();
+                match self.bridge.as_mut().expect("bridge").prompt(text.trim()) {
+                    Ok(()) => {
+                        self.pending_prompt = Some(text.trim().to_string());
+                        self.chat.begin_assistant_stream();
+                    }
+                    Err(err) => {
+                        self.chat.pop_last_user_if_matches(text.trim());
+                        self.restore_editor(text.trim());
+                        self.view.notice = Some(format!("Failed to send prompt: {err}"));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Pi rejected the prompt (or died) before any assistant content — restore draft.
+    fn revert_failed_prompt(&mut self) {
+        self.chat.cancel_empty_assistant_stream();
+        if let Some(text) = self.pending_prompt.take() {
+            self.chat.pop_last_user_if_matches(&text);
+            self.restore_editor(&text);
+        }
+    }
+
+    fn clear_editor(&mut self) {
         self.editor = TextArea::default();
         self.editor.set_placeholder_text("Message…");
+    }
 
-        if let Some(bridge) = self.bridge.as_mut() {
-            let _ = bridge.prompt(text.trim());
-            self.chat.begin_assistant_stream();
-        } else {
-            self.chat.push_mock_assistant_reply(text.trim());
-        }
+    fn restore_editor(&mut self, text: &str) {
+        self.editor = TextArea::default();
+        self.editor.insert_str(text);
+        self.editor.set_placeholder_text("Message…");
     }
 
     fn abort_stream(&mut self) {
