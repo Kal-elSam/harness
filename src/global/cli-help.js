@@ -75,8 +75,8 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} start [--cwd <dir>]             Start a new unified workspace session
   ${cli} resume [sessionId] [--cwd <dir>]    Resume a unified workspace session (picker if more than one and no id given)
   ${cli} list [--cwd <dir>] [--json]         Real sessions for this project, most recently updated first
-  ${cli} ui [--cwd <dir>] [--port <n>] [--ratatui]
-                                      Unified workspace (Pi default); --ratatui = experimental terminal host; --legacy-cockpit = legacy browser UI
+  ${cli} ui [--cwd <dir>] [--port <n>] [--pi] [--ratatui]
+                                      Unified workspace (ratatui default); --pi / KAIRO_UI_HOST=pi = old Pi shell; --legacy-cockpit = legacy browser UI
   ${cli} conversation                     Unified workspace
   ${cli} conversation snapshot|architect|show|approve|reject|cancel ... [--json]
   ${cli} conversation execute <taskId> [--role <role>] [--confirm] [--model <name>] [--json]  No --confirm: preview only. --confirm: revalidate and execute the shown target.

@@ -30,12 +30,12 @@ async function realRepo() {
   return root;
 }
 
-test("bare kairo resolves to unified host not shell", () => {
+test("bare kairo resolves to unified ratatui host not shell", () => {
   const { command, isImplicitCommand } = parseArgs([]);
   assert.equal(isImplicitCommand, true);
   assert.equal(command, "host");
   assert.notEqual(command, "shell");
-  assert.equal(routeInteractiveHost({ command, options: {} }), "pi");
+  assert.equal(routeInteractiveHost({ command, options: {}, env: {} }), "ratatui");
 });
 
 test("explicit shell still selects the Ink orchestrator", () => {
@@ -50,21 +50,38 @@ test("--legacy-cockpit routes to the conversation cockpit", () => {
   assert.equal(routeInteractiveHost({ command, options }), "cockpit");
 });
 
-test("--ratatui routes bare kairo to the experimental ratatui host", () => {
+test("--pi routes bare kairo to the Pi shell", () => {
+  const { command, options } = parseArgs(["--pi"]);
+  assert.equal(options.piHost, true);
+  assert.equal(routeInteractiveHost({ command, options, env: {} }), "pi");
+});
+
+test("--pi-host alias also selects Pi", () => {
+  const { command, options } = parseArgs(["--pi-host"]);
+  assert.equal(options.piHost, true);
+  assert.equal(routeInteractiveHost({ command, options, env: {} }), "pi");
+});
+
+test("KAIRO_UI_HOST=pi routes bare kairo to Pi without the flag", () => {
+  assert.equal(
+    routeInteractiveHost({ command: "host", options: {}, env: { KAIRO_UI_HOST: "pi" } }),
+    "pi"
+  );
+});
+
+test("--ratatui still routes bare kairo to ratatui (redundant with default)", () => {
   const { command, options } = parseArgs(["--ratatui"]);
   assert.equal(options.ratatui, true);
   assert.equal(routeInteractiveHost({ command, options, env: {} }), "ratatui");
 });
 
-test("KAIRO_UI_HOST=ratatui routes bare kairo to ratatui without the flag", () => {
-  assert.equal(
-    routeInteractiveHost({ command: "host", options: {}, env: { KAIRO_UI_HOST: "ratatui" } }),
-    "ratatui"
-  );
+test("--pi wins over --ratatui for bare kairo routing", () => {
+  const { command, options } = parseArgs(["--pi", "--ratatui"]);
+  assert.equal(routeInteractiveHost({ command, options, env: {} }), "pi");
 });
 
-test("--legacy-cockpit wins over --ratatui for bare kairo routing", () => {
-  const { command, options } = parseArgs(["--legacy-cockpit", "--ratatui"]);
+test("--legacy-cockpit wins over --pi and --ratatui for bare kairo routing", () => {
+  const { command, options } = parseArgs(["--legacy-cockpit", "--pi", "--ratatui"]);
   assert.equal(routeInteractiveHost({ command, options, env: { KAIRO_UI_HOST: "ratatui" } }), "cockpit");
 });
 

@@ -11,17 +11,17 @@ export const DEFAULT_KAIRO_UI_CRATE_DIR = join(DEFAULT_PACKAGE_ROOT, "crates", "
 
 /**
  * Choose the interactive UI host for daily work paths.
- * `--legacy-cockpit` always wins; `--ratatui` or `KAIRO_UI_HOST=ratatui` opt into ratatui;
- * otherwise Pi remains the default until V3/R9 cutover.
- * @param {{ options?: { legacyCockpit?: boolean, ratatui?: boolean }, env?: NodeJS.ProcessEnv }} args
+ * Precedence: `--legacy-cockpit` > `--pi` / `KAIRO_UI_HOST=pi` >
+ * `--ratatui` / `KAIRO_UI_HOST=ratatui` > default `ratatui`.
+ * @param {{ options?: { legacyCockpit?: boolean, piHost?: boolean, ratatui?: boolean }, env?: NodeJS.ProcessEnv }} args
  * @returns {"ratatui"|"pi"|"cockpit"}
  */
 export function resolveUiHost({ options = {}, env = process.env } = {}) {
   if (options.legacyCockpit === true) return "cockpit";
-  if (options.ratatui === true) return "ratatui";
   const fromEnv = typeof env?.KAIRO_UI_HOST === "string" ? env.KAIRO_UI_HOST.trim().toLowerCase() : "";
-  if (fromEnv === "ratatui") return "ratatui";
-  return "pi";
+  if (options.piHost === true || fromEnv === "pi") return "pi";
+  if (options.ratatui === true || fromEnv === "ratatui") return "ratatui";
+  return "ratatui";
 }
 
 /**
@@ -45,14 +45,14 @@ export async function launchRatatuiHost({
   if (platform === "win32") {
     throw new Error(
       "The ratatui host is not supported on Windows yet. " +
-        "Omit --ratatui (and unset KAIRO_UI_HOST) to use the default Pi host, " +
+        "Use --pi (or KAIRO_UI_HOST=pi) for the Pi shell, " +
         "or use --legacy-cockpit for the previous cockpit."
     );
   }
   if (interactive === false) {
     throw new Error(
       "The Kairo ratatui host requires an interactive terminal (TTY). " +
-        "Omit --ratatui for the default Pi host, or use --legacy-cockpit for the previous cockpit."
+        "Use --pi for the Pi shell, or use --legacy-cockpit for the previous cockpit."
     );
   }
   assertDirectoryCwd(cwd, statImpl);
@@ -64,7 +64,7 @@ export async function launchRatatuiHost({
   if (!existsSyncImpl(manifestPath)) {
     throw new Error(
       `Ratatui host crate is missing: "${manifestPath}" does not exist. ` +
-        "Use the default Pi host (omit --ratatui), or use --legacy-cockpit for the previous cockpit."
+        "Use --pi for the Pi shell, or use --legacy-cockpit for the previous cockpit."
     );
   }
 
@@ -81,13 +81,13 @@ export async function launchRatatuiHost({
     if (buildResult && Number.isInteger(buildResult.status) && buildResult.status !== 0) {
       throw new Error(
         `cargo build --release for kairo-ui exited ${buildResult.status}. ` +
-          "Fix the Rust build, or omit --ratatui to use the default Pi host."
+          "Fix the Rust build, or use --pi for the Pi shell."
       );
     }
     if (!existsSyncImpl(binaryPath)) {
       throw new Error(
         `Ratatui host binary is still missing after cargo build: "${binaryPath}". ` +
-          "Omit --ratatui to use the default Pi host."
+          "Use --pi for the Pi shell."
       );
     }
   }
@@ -96,7 +96,7 @@ export async function launchRatatuiHost({
   if (!existsSyncImpl(sidecarScript)) {
     throw new Error(
       `Ratatui sidecar is missing: "${sidecarScript}". ` +
-        "Omit --ratatui to use the default Pi host."
+        "Use --pi for the Pi shell."
     );
   }
   // Sidecar path must be absolute: spawn cwd is the *project*, not the package,
@@ -119,7 +119,7 @@ export async function launchRatatuiHost({
   });
   if (result && Number.isInteger(result.status) && result.status !== 0) {
     throw new Error(
-      `kairo-ui exited ${result.status}. Omit --ratatui for the default Pi host, ` +
+      `kairo-ui exited ${result.status}. Use --pi for the Pi shell, ` +
         "or use --legacy-cockpit for the previous cockpit."
     );
   }

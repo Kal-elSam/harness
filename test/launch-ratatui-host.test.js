@@ -27,9 +27,15 @@ function fakeCrateRoot() {
   return { packageRoot: root, crateDir, sidecarScript };
 }
 
-test("resolveUiHost defaults to pi without flag or env", () => {
-  assert.equal(resolveUiHost({ options: {}, env: {} }), "pi");
-  assert.equal(resolveUiHost({ options: { ratatui: false }, env: { KAIRO_UI_HOST: "pi" } }), "pi");
+test("resolveUiHost defaults to ratatui without flag or env", () => {
+  assert.equal(resolveUiHost({ options: {}, env: {} }), "ratatui");
+  assert.equal(resolveUiHost({ options: { ratatui: false, piHost: false }, env: {} }), "ratatui");
+});
+
+test("resolveUiHost opts into pi via --pi or KAIRO_UI_HOST=pi", () => {
+  assert.equal(resolveUiHost({ options: { piHost: true }, env: {} }), "pi");
+  assert.equal(resolveUiHost({ options: {}, env: { KAIRO_UI_HOST: "pi" } }), "pi");
+  assert.equal(resolveUiHost({ options: {}, env: { KAIRO_UI_HOST: " Pi " } }), "pi");
 });
 
 test("resolveUiHost selects ratatui from --ratatui or KAIRO_UI_HOST", () => {
@@ -38,11 +44,21 @@ test("resolveUiHost selects ratatui from --ratatui or KAIRO_UI_HOST", () => {
   assert.equal(resolveUiHost({ options: {}, env: { KAIRO_UI_HOST: " Ratatui " } }), "ratatui");
 });
 
-test("resolveUiHost: --legacy-cockpit wins over --ratatui and env", () => {
+test("resolveUiHost: --pi wins over --ratatui and env=ratatui", () => {
   assert.equal(
     resolveUiHost({
-      options: { legacyCockpit: true, ratatui: true },
+      options: { piHost: true, ratatui: true },
       env: { KAIRO_UI_HOST: "ratatui" }
+    }),
+    "pi"
+  );
+});
+
+test("resolveUiHost: --legacy-cockpit wins over --pi, --ratatui and env", () => {
+  assert.equal(
+    resolveUiHost({
+      options: { legacyCockpit: true, piHost: true, ratatui: true },
+      env: { KAIRO_UI_HOST: "pi" }
     }),
     "cockpit"
   );
@@ -55,10 +71,17 @@ test("parseArgs accepts --ratatui; routeInteractiveHost returns ratatui for bare
   assert.equal(routeInteractiveHost({ command, options, env: {} }), "ratatui");
 });
 
-test("parseArgs ui --ratatui sets options.ratatui; default ui stays not ratatui", () => {
+test("parseArgs accepts --pi / --pi-host; default ui routes to ratatui", () => {
   assert.equal(parseArgs(["ui", "--ratatui"]).options.ratatui, true);
   assert.equal(parseArgs(["ui"]).options.ratatui, false);
-  assert.equal(routeInteractiveHost({ command: "host", options: {}, env: {} }), "pi");
+  assert.equal(parseArgs(["ui"]).options.piHost, false);
+  assert.equal(parseArgs(["ui", "--pi"]).options.piHost, true);
+  assert.equal(parseArgs(["ui", "--pi-host"]).options.piHost, true);
+  assert.equal(routeInteractiveHost({ command: "host", options: {}, env: {} }), "ratatui");
+  assert.equal(
+    routeInteractiveHost({ command: "host", options: { piHost: true }, env: {} }),
+    "pi"
+  );
 });
 
 test("routeInteractiveHost: --legacy-cockpit wins over --ratatui", () => {
@@ -66,7 +89,11 @@ test("routeInteractiveHost: --legacy-cockpit wins over --ratatui", () => {
   assert.equal(routeInteractiveHost({ command, options, env: { KAIRO_UI_HOST: "ratatui" } }), "cockpit");
 });
 
-test("routeInteractiveHost: KAIRO_UI_HOST=ratatui selects ratatui without flag", () => {
+test("routeInteractiveHost: KAIRO_UI_HOST=pi selects pi; env ratatui stays ratatui", () => {
+  assert.equal(
+    routeInteractiveHost({ command: "host", options: {}, env: { KAIRO_UI_HOST: "pi" } }),
+    "pi"
+  );
   assert.equal(
     routeInteractiveHost({ command: "host", options: {}, env: { KAIRO_UI_HOST: "ratatui" } }),
     "ratatui"
