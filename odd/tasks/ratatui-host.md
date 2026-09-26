@@ -83,7 +83,7 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - (2026-09-26) R0–R3a closed on `feat/ratatui-host` (see commits in prior progress). R2 `no_model` simulated-only; real cold-start pending R4.
 - (2026-09-26) Plan update: **visual before R7**. V0 spike: `ratatui@0.30.2` + `ratatui-textarea@0.9.2` → single tree; `tui-textarea@0.7` rejected (pulls 0.29). `ratcn` not adopted.
 - (2026-09-26) **V0+V1** — upgraded `crates/kairo-ui` to ratatui 0.30 + ratatui-textarea 0.9; `surfaces.rs` paints bordered sidebar (selection/blocked), focused work panel, USAGE strip with distinct backgrounds; notice line for errors. Keys: `q` quit, `n` demo notice, `c` clear, `j/k` select agent.
-  - Evidence: `cargo test` → **6/6** (3 layout + 3 surface bg/notice/narrow). Work-unit commit: _(filled after commit)_.
+  - Evidence: `cargo test` → **6/6** (3 layout + 3 surface bg/notice/narrow). Work-unit commit: `652d9bcc7`.
   - **Still needed for visual gate:** your color TTY look at `cargo run --release` (center must not read as empty black). V2 textarea + R3b chat next.
 
 ## Next step
