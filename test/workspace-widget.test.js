@@ -643,6 +643,17 @@ test("S2-1b sidebar shows the selected agent detail block with model, cause and 
   assert.ok(noCause.join("\n").includes("Next step"), "detail without a cause offers the next step");
 });
 
+test("S2-1b sidebar answers one full press-then-click gesture with a single select", () => {
+  const snap = fixtureSnapshot();
+  const seen = [];
+  const component = createShellSidebarWidget(snap, { getColumns: () => 100, onSelectAgent: (id) => seen.push(id) })(undefined, IDENTITY_THEME);
+  const [first] = agentRowHitboxes(snap, {});
+  const at = (type) => ({ type, button: "left", x: 2, y: first.y, screenX: 2, screenY: first.y, width: 28, height: 30, shift: false, alt: false, ctrl: false });
+  component.handleMouse(at("press"));
+  component.handleMouse(at("click"));
+  assert.deepEqual(seen, [first.agentId], "one gesture selects exactly once — press must not toggle");
+});
+
 test("S2-1b sidebar handleMouse calls onSelectAgent for agent rows and ignores headers", () => {
   const snap = fixtureSnapshot();
   const seen = [];

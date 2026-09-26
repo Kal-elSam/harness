@@ -695,7 +695,7 @@ function isWideEnoughForSidebar(getColumns) {
  * isWideEnoughForSidebar's own doc for why this can't also shrink the
  * column itself.
  * `onSelectAgent` (optional) turns agent rows into click targets: a left
- * press/click resolves through agentRowHitboxes — recomputed live on
+ * click resolves through agentRowHitboxes — recomputed live on
  * every event, so resize/shift can never desync the boxes — and reports
  * the agent id. The fork forwards mouse to slot components that define
  * `handleMouse` (see tui-alt-screen's dispatchMouseToLayout); components
@@ -714,7 +714,10 @@ export function createShellSidebarWidget(snapshot, { getColumns, routeUnavailabl
     },
     handleMouse(event) {
       if (!onSelectAgent) return undefined;
-      if (event?.button !== "left" || (event?.type !== "press" && event?.type !== "click")) return undefined;
+      // Click only: Pi sends press AND click for one gesture, and the
+      // selection toggles — answering both would open and close the
+      // detail with a single click (real-TTM defect, 2026-09-26).
+      if (event?.button !== "left" || event?.type !== "click") return undefined;
       if (!isWideEnoughForSidebar(getColumns)) return undefined;
       const hit = agentRowHitboxes(snapshot, { routeUnavailable, selectedAgentId }).find((box) => box.y === event.y);
       if (!hit) return undefined;
