@@ -86,7 +86,7 @@ User-accepted plan "Kairo: un solo host visual con ratatui" (2026-09-26). Supers
   - Note: Cursor sandbox may redirect `CARGO_TARGET_DIR`; local runs should `unset CARGO_TARGET_DIR` before `cargo run --release`.
 
 - (2026-09-26) **R2 closed** — `src/global/host/pi-rpc-bridge.js`: `openPiRpcBridge` loads `kairo.workspace-shell/v1` first, always returns `hostOpen: true`; spawns Pi with `--mode rpc` JSONL (LF-only framing); `engine.status` is `connected` | `no_model` | `unavailable`. Spawn / get_state / missing-model failures never throw out of open. No `kairo ui` default change; no ratatui polish.
-  - Evidence: `node --test test/pi-rpc-bridge.test.js` → **5/5 pass** (spawn fail, no_model, connected, get_state fail, classify). Work-unit commit: _(filled after commit)_.
+  - Evidence: `node --test test/pi-rpc-bridge.test.js` → **5/5 pass** (spawn fail, no_model, connected, get_state fail, classify). Work-unit commit: `cd5796f08`.
 
 ## Next step
 
