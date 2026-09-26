@@ -130,20 +130,24 @@ impl ShellApp {
                 self.engine = EngineGate::from_ready_record(&record);
                 self.sync_engine_line();
                 self.ingest_sessions_record(&record);
-                if let Some(note) = record.get("sessionsNote").and_then(|v| v.as_str()) {
-                    if self.pi_session_count == 0 {
-                        self.view.notice = Some(note.to_string());
-                    }
-                }
+                // Prefer engine open_notice over sessionsNote when chat cannot prompt.
                 if let Some(notice) = self.engine.open_notice() {
                     self.view.notice = Some(notice);
-                } else if self
-                    .view
-                    .notice
-                    .as_deref()
-                    .is_some_and(|n| n.starts_with("Pi engine "))
-                {
-                    self.view.notice = None;
+                    self.view.work_empty_hint = self.engine.work_empty_hint_lines();
+                } else {
+                    self.view.work_empty_hint = None;
+                    if let Some(note) = record.get("sessionsNote").and_then(|v| v.as_str()) {
+                        if self.pi_session_count == 0 {
+                            self.view.notice = Some(note.to_string());
+                        }
+                    } else if self
+                        .view
+                        .notice
+                        .as_deref()
+                        .is_some_and(|n| n.starts_with("Pi engine "))
+                    {
+                        self.view.notice = None;
+                    }
                 }
                 if let Some(snap) = record.get("snapshot") {
                     apply_workspace_snapshot(&mut self.view, snap);
@@ -152,6 +156,10 @@ impl ShellApp {
                 self.engine = EngineGate::from_sidecar_engine_record(&record);
                 self.sync_engine_line();
                 self.ingest_sessions_record(&record);
+                self.view.work_empty_hint = self.engine.work_empty_hint_lines();
+                if let Some(notice) = self.engine.open_notice() {
+                    self.view.notice = Some(notice);
+                }
             } else if kind == Some("snapshot") {
                 if let Some(snap) = record.get("snapshot") {
                     apply_workspace_snapshot(&mut self.view, snap);
