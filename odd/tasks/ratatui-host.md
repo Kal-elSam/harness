@@ -2,96 +2,90 @@
 
 ## Objective
 
-Replace Kairo's interactive UI with one Rust/ratatui host. Pi keeps the agent, conversation, and sessions. Kairo keeps agents, routing, and USAGE. Pi-TUI shell and legacy cockpit stay temporary bridges only — not product alternatives. First deliverable: a usable replacement, not a visual demo.
+Replace Kairo's interactive UI with one Rust/ratatui host. Pi keeps the agent, conversation, and sessions. Kairo keeps agents, routing, and USAGE. Pi-TUI shell and legacy cockpit stay temporary bridges only — not product alternatives. **Visual acceptance on a real TTY happens before packaging or changing the `kairo ui` default** — avoid repeating the Pi-TUI failure mode (functional but unsatisfying to look at).
 
 ## Problem
 
-Pi-TUI layout (sidebar / chat / USAGE) works functionally but cannot meet the product visual bar after bounded polish. Continuing dual/triple UIs wastes time. We need one host that owns chrome and paint.
+Pi-TUI layout works functionally but never met the product visual bar. Continuing dual UIs wastes time. We need one host that owns chrome and paint — and we must prove the paint before cutover.
 
 ## Why
 
-Pi already exposes `--mode rpc` (JSONL) so agent and UI can separate; RPC does not transport chrome. Ratatui owns layout surfaces. Herdr is visual reference only — not multi-pane/PTY multiplexer scope.
+Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surfaces. Herdr is visual reference only (hierarchy/density), not multipanel/PTY or pixel clone. App-gallery crates are references, not a drop-in Kairo design.
 
 ## Scope
 
 ### In
 
-- `kairo ui` eventually launches one terminal-owning process: ratatui.
-- Local Node bridge feeds existing `kairo.workspace-shell/v1` snapshot and supervises Pi via RPC JSONL.
-- Host draws: sidebar, chat, editor, notices, USAGE.
-- Same arrangement: 28-col sidebar when wide (≥90 cols), compact under 90 cols, single chat center.
-- Essential interaction before cutover: streaming, tools/errors, edit/send, cancel, scroll, agent select, Kairo commands/dialogs, model switch, session resume/create/fork. No model → UI still opens with honest block + retry.
-- Ship macOS + Linux binaries from the npm package (platform/arch select). Windows: explicit error for `kairo ui`; non-visual commands keep working.
-- Default switch only after functional parity + visual approval; then remove product routes/docs that present Pi-TUI or cockpit as alternative UIs.
+- `kairo ui` eventually launches one terminal-owning process: ratatui (default **unchanged** until chat works **and** visual approval).
+- Node bridge: `kairo.workspace-shell/v1` + Pi `--mode rpc` JSONL.
+- Host draws full surfaces: sidebar, work area, USAGE — contrast, borders, spacing, selection, notices.
+- Layout: 28-col sidebar ≥90 cols; compact below; single chat center.
+- Editor: `ratatui-textarea` after compatibility proof (ratatui 0.30). **Do not** adopt `ratcn` as base (preliminary).
+- R3–R6 on those surfaces: prompt/stream/tools/cancel/scroll; sessions; model switch; real no-model; agents; commands. Host stays open when Pi fails; never invent states.
+- Visual verdict **before** R7 packaging: color TTY captures @ 60×30, 100×30, 160×48 with conversation, agents, USAGE, and an error notice. If the center still reads as empty black, fix design before binaries/default cutover.
+- Then: binaries (macOS/Linux), final parity, cutover. Windows: explicit error for `ui`.
 
 ### Out / non-goals
 
-- PTY panes, multiplexer, multi-chat splits
+- PTY panes / multiplexer / multi-chat splits
 - Pixel-perfect Herdr clone
-- Designing further Pi-TUI chrome or cockpit visuals
-- npm publish / push / PR without explicit remote authorization
+- Further Pi-TUI chrome design
+- npm publish / push / PR / default cutover without remote auth + visual approval
 
 ## Constraints
 
-- Worktree: `~/Desktop/agentic-harness-worktrees/ratatui-host` on branch `feat/ratatui-host`.
-- During build, old shell may remain for daily use; after cutover it is not a second face.
-- Additive snapshot schema only until cutover consumers migrate.
+- Worktree: `~/Desktop/agentic-harness-worktrees/ratatui-host` on `feat/ratatui-host`.
+- Old shell may remain for daily use until cutover; not a second product face after cutover.
 - Fail-closed agent states (no invented working/done).
-- `--legacy-cockpit` receives no new features; bridge-only until cutover docs cleanup.
+- Compatibility: do not mix ratatui 0.29 and 0.30 blindly — upgrade crate in one step when adopting 0.30 widgets.
 
 ## Authorized scope
 
-User-accepted plan "Kairo: un solo host visual con ratatui" (2026-09-26). Supersedes herd-shell visual polish as the product UI destination; herd-shell data/layout contracts (snapshot, 28/90) remain reusable inputs.
+- Plan "Kairo: un solo host visual con ratatui" (2026-09-26).
+- Plan "validar el producto visual antes del corte" (2026-09-26) — reorder: surfaces + visual gate before R7.
 
 ## Acceptance criteria
 
-- [ ] Host paints distinguishable sidebar, work surface, USAGE bar (color TTY captures; your approval required)
-- [ ] Bridge: RPC events, engine crash/restart, no-model block, honest states, resize, focus, input, streaming, session identity
-- [ ] Real TTY macOS+Linux at 60×30, 100×30, 160×48 with live agents/USAGE/conversation
-- [ ] Install from built package selects correct binary
-- [ ] Default `kairo ui` → ratatui only after parity + visual approval; Pi-TUI/cockpit no longer documented as product UIs
+- [ ] Color TTY @60/100/160: distinguishable sidebar, work surface, USAGE (your approval) — **before R7**
+- [ ] Chat with model: prompt/stream/tools/cancel/scroll on those surfaces
+- [ ] Bridge: fail-open host; post-connect crash reflected; real no-model cold-start classified honestly (R4)
+- [ ] Install from package selects correct binary (after visual gate)
+- [ ] Default `kairo ui` → ratatui only after parity **and** visual approval
 
 ## TDD
 
-- Mode: strict (project Strict TDD Mode).
-- Runner: `node --test` (bridge/harness) + `cargo test` (host).
-- RED before implementation; never invent evidence.
+- Mode: strict. Runner: `node --test` + `cargo test`. Add render/responsiveness tests for surfaces. RED before implementation.
 
 ## Delivery
 
-- Strategy: `ask-on-risk` (default). Forecast ≫400 lines → ask chain strategy before PR.
-- No publish/push without remote auth.
-- Cutover of default is a separate gate after visual approval.
+- Strategy: `ask-on-risk`. No publish/push without remote auth. Default cutover is a separate gate after visual approval.
 
 ## Tasks
 
-- [x] R0 Feature doc + mark herd-shell visual path superseded (bridge-only)
-- [x] R1 Rust toolchain + `crates/kairo-ui` scaffold: three-region layout (28 / grow / strip), 90-col collapse, no RPC yet
-- [x] R2 Node bridge: spawn Pi `--mode rpc`, JSONL framing, feed `kairo.workspace-shell/v1`
-- [x] R3 Chat parity (bridge slice): consumable event flow; post-connect Pi exit flips `engine` off `connected` (prompt/stream/editor still open for later R3 chat work)
-- [ ] R4 Session continuity: resume / create / fork; model switch; **real** Pi cold-start without model (honest `unavailable` vs `no_model` against the real binary — simulated RPC `get_state` without model is **not** sufficient evidence); retry path
-- [ ] R5 Kairo chrome data: agents sidebar (blocked-first), agent select, USAGE strip, notices
-- [ ] R6 Commands/dialogs via RPC extension-UI forward
-- [ ] R7 Package binaries (darwin/linux × arch) into npm; Windows explicit error for `ui`
-- [ ] R8 Evidence: unit + real TTY captures; visual approval gate
-- [ ] R9 Cutover: default → ratatui; strip product docs/routes for Pi-TUI & cockpit (**remote auth**)
+- [x] R0 Feature doc + supersede Pi-TUI visual path
+- [x] R1 Scaffold three-region layout (28/90)
+- [x] R2 Node ↔ Pi RPC JSONL + snapshot (fail-open host)
+- [x] R3a Bridge: consumable events + post-connect engine drop
+- [x] V0 Compatibility spike: ratatui 0.30 + ratatui-textarea 0.9 (single ratatui tree; **no ratcn**)
+- [x] V1 Native surfaces: sidebar / work / USAGE with contrast, borders, spacing, selection, notices (+ render tests)
+- [ ] V2 Wire `ratatui-textarea` editor into work surface (after V0)
+- [ ] R3b Chat over surfaces: prompt, stream, tools, cancel, scroll (model available)
+- [ ] R4 Sessions / model switch / **real** Pi cold-start no-model
+- [ ] R5 Agents sidebar data + USAGE + notices (honest states)
+- [ ] R6 Commands/dialogs via RPC extension-UI
+- [ ] V3 Visual gate: color captures @60/100/160 with conversation, agents, USAGE, error notice — **your approval** (blocks R7)
+- [ ] R7 Package binaries (darwin/linux); Windows `ui` error
+- [ ] R8 Final parity evidence
+- [ ] R9 Cutover default + strip Pi-TUI/cockpit as product UIs (**remote auth**)
 
 ## Progress
 
-- (2026-09-26) Plan accepted. Worktree `~/Desktop/agentic-harness-worktrees/ratatui-host` on `feat/ratatui-host`. Solo-agent guard disabled globally (`~/.cursor/hooks.json` no longer references it; script/rule/README removed).
-- (2026-09-26) **R0 closed** — feature doc `odd/tasks/ratatui-host.md`; `odd/tasks/herd-shell-layout.md` marked superseded as product UI destination (bridge-only). Work-unit commit: `31ff4e2c0`.
-- (2026-09-26) **R1 closed** — `crates/kairo-ui` (ratatui 0.29, crossterm 0.28): `split_shell` with 28-col sidebar at ≥90 cols, collapse below, 1-row USAGE strip; painted sidebar / work surface / USAGE. Quit: `q`/`Esc`.
-  - Evidence: `cd crates/kairo-ui && cargo test --offline` → **3/3 pass** (agent + user re-check 2026-09-26). `.gitignore` ignores `crates/kairo-ui/target/`; `Cargo.lock` tracked.
-  - Work-unit commit: `77595cfef`.
-  - Note: Cursor sandbox may redirect `CARGO_TARGET_DIR`; local runs should `unset CARGO_TARGET_DIR` before `cargo run --release`.
-
-- (2026-09-26) **R2 closed** — `src/global/host/pi-rpc-bridge.js`: `openPiRpcBridge` loads `kairo.workspace-shell/v1` first, always returns `hostOpen: true`; spawns Pi with `--mode rpc` JSONL (LF-only framing). Spawn / get_state failures never throw out of open. No `kairo ui` default change; no ratatui polish.
-  - Evidence: `node --test test/pi-rpc-bridge.test.js` → **5/5 pass** (simulated child). Work-unit commit: `cd5796f08`.
-  - **Precision (2026-09-26, user-verified):** the `no_model` case in those tests is a **simulated** RPC peer that answers `get_state` without a model. Real Pi often **exits before RPC starts** when no model is available, so that cold-start today surfaces as `engine.status === "unavailable"`, not a verified `no_model`. Treating real cold-start classification as **pending R4** — do not claim it verified by R2.
-  - `classifyPiEngineFromState` remains a unit helper for when RPC *did* start and `get_state` omitted `model`; it is not proof of real Pi no-model startup.
-- (2026-09-26) **R3 bridge slice** — `onEvent` / `takeEvents` consumable session flow; unexpected child exit after connect sets `engine.status` to `unavailable` (keeps `sessionId`, clears model) and emits `engine_unavailable`; intentional `stop()` → `stopped` (not crash). Host stays open. Prompt/stream/editor chat parity still open.
-  - Evidence: `node --test test/pi-rpc-bridge.test.js` → **8/8**; `cargo test --offline` in `crates/kairo-ui` → **3/3**. Work-unit commits: `a7df783e9` (evidence), `3df30696c` (bridge).
+- (2026-09-26) R0–R3a closed on `feat/ratatui-host` (see commits in prior progress). R2 `no_model` simulated-only; real cold-start pending R4.
+- (2026-09-26) Plan update: **visual before R7**. V0 spike: `ratatui@0.30.2` + `ratatui-textarea@0.9.2` → single tree; `tui-textarea@0.7` rejected (pulls 0.29). `ratcn` not adopted.
+- (2026-09-26) **V0+V1** — upgraded `crates/kairo-ui` to ratatui 0.30 + ratatui-textarea 0.9; `surfaces.rs` paints bordered sidebar (selection/blocked), focused work panel, USAGE strip with distinct backgrounds; notice line for errors. Keys: `q` quit, `n` demo notice, `c` clear, `j/k` select agent.
+  - Evidence: `cargo test` → **6/6** (3 layout + 3 surface bg/notice/narrow). Work-unit commit: _(filled after commit)_.
+  - **Still needed for visual gate:** your color TTY look at `cargo run --release` (center must not read as empty black). V2 textarea + R3b chat next.
 
 ## Next step
 
-Continue R3 chat (prompt/stream/tools with model available) or R4 real no-model cold-start — your call. No `kairo ui` default cutover.
+You: run `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo run --release` and say if the three surfaces read as product UI. Then V2 (textarea) + R3b chat on those surfaces.
