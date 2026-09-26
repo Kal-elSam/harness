@@ -7,6 +7,8 @@ use serde_json::Value;
 pub struct EngineGate {
     pub status: String,
     pub reason: Option<String>,
+    pub model_label: Option<String>,
+    pub session_id: Option<String>,
 }
 
 impl Default for EngineGate {
@@ -14,14 +16,30 @@ impl Default for EngineGate {
         Self {
             status: "starting".into(),
             reason: None,
+            model_label: None,
+            session_id: None,
         }
     }
 }
 
 impl EngineGate {
     pub fn from_ready_record(record: &Value) -> Self {
+        Self::from_sidecar_engine_record(record)
+    }
+
+    /// `ready` / `engine` sidecar records (`engine` object plus optional `modelLabel`).
+    pub fn from_sidecar_engine_record(record: &Value) -> Self {
         let engine = record.get("engine").cloned().unwrap_or(Value::Null);
-        Self::from_engine_value(&engine)
+        let mut gate = Self::from_engine_value(&engine);
+        if let Some(label) = record
+            .get("modelLabel")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            gate.model_label = Some(label.to_string());
+        }
+        gate
     }
 
     pub fn from_engine_value(engine: &Value) -> Self {
@@ -36,7 +54,51 @@ impl EngineGate {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
-        Self { status, reason }
+        let model_label = engine
+            .get("modelLabel")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                engine
+                    .get("model")
+                    .and_then(|m| m.get("id"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            });
+        let session_id = engine
+            .get("sessionId")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        Self {
+            status,
+            reason,
+            model_label,
+            session_id,
+        }
+    }
+
+    /// Second USAGE strip line: model + optional Pi session id.
+    pub fn status_line(&self) -> String {
+        let model = self
+            .model_label
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("no model");
+        match self.session_id.as_deref().filter(|s| !s.is_empty()) {
+            Some(id) => {
+                let short = if id.len() > 10 {
+                    format!("{}…", &id[..8])
+                } else {
+                    id.to_string()
+                };
+                format!("MODEL · {model} · session {short}")
+            }
+            None => format!("MODEL · {model}"),
+        }
     }
 
     /// Only a fully connected engine may receive prompts.
@@ -169,5 +231,21 @@ mod tests {
             decide_submit(false, &EngineGate::default()),
             SubmitDecision::LocalMock
         );
+    }
+
+    #[test]
+    fn status_line_shows_model_and_session_short_id() {
+        let gate = EngineGate::from_sidecar_engine_record(&json!({
+            "engine": {
+                "status": "connected",
+                "sessionId": "abcdef012345",
+                "model": { "id": "codex::m1" }
+            },
+            "modelLabel": "GPT · Architect (codex::m1)"
+        }));
+        let line = gate.status_line();
+        assert!(line.contains("MODEL ·"));
+        assert!(line.contains("GPT · Architect"));
+        assert!(line.contains("session abcdef01"));
     }
 }

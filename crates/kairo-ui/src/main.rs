@@ -25,13 +25,14 @@ use layout::split_shell;
 use snapshot::apply_workspace_snapshot;
 use surfaces::{render_shell, ShellViewModel};
 
-// Keybindings (V2 + R3b):
+// Keybindings (V2 + R3b + R4):
 // - Tab: cycle focus Editor → Sidebar → Transcript
 // - Editor: type in textarea; Enter submits prompt; Esc aborts stream or moves focus to Sidebar
 // - Sidebar: j/k or arrows move agent selection
 // - Transcript: PgUp/PgDn scroll
 // - q: quit when Editor is empty; Ctrl+C / Ctrl+Q always quit
-// - n/c: demo notice clear (visual review)
+// - Bridge only: Ctrl+M cycle Kairo model; Ctrl+N new Pi session; Ctrl+[ / Ctrl+] prev/next session on disk; Ctrl+K compact
+// - n/c: demo notice clear (local, no bridge)
 
 struct ShellApp {
     view: ShellViewModel,
@@ -39,6 +40,8 @@ struct ShellApp {
     editor: TextArea<'static>,
     bridge: Option<BridgeClient>,
     engine: EngineGate,
+    pi_session_count: usize,
+    pi_session_index: usize,
     /// Last prompt accepted by the sidecar write path; restored if Pi rejects it.
     pending_prompt: Option<String>,
 }
@@ -47,13 +50,62 @@ impl ShellApp {
     fn new(bridge: Option<BridgeClient>) -> Self {
         let mut editor = TextArea::default();
         editor.set_placeholder_text("Message…");
+        let mut view = ShellViewModel::default();
+        if bridge.is_some() {
+            view.engine_line = "MODEL · starting".into();
+        }
         Self {
-            view: ShellViewModel::default(),
+            view,
             chat: ChatState::default(),
             editor,
             bridge,
             engine: EngineGate::default(),
+            pi_session_count: 0,
+            pi_session_index: 0,
             pending_prompt: None,
+        }
+    }
+
+    fn sync_engine_line(&mut self) {
+        self.view.engine_line = self.engine.status_line();
+    }
+
+    fn ingest_sessions_record(&mut self, record: &serde_json::Value) {
+        let Some(list) = record.get("sessions").and_then(|v| v.as_array()) else {
+            return;
+        };
+        self.pi_session_count = list.len();
+        if self.pi_session_index >= self.pi_session_count {
+            self.pi_session_index = self.pi_session_count.saturating_sub(1);
+        }
+        if let Some(sid) = self.engine.session_id.as_deref() {
+            for (i, entry) in list.iter().enumerate() {
+                if entry
+                    .get("sessionId")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|id| id == sid)
+                {
+                    self.pi_session_index = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    fn step_pi_session(&mut self, delta: i32) {
+        if self.pi_session_count == 0 {
+            self.view.notice = Some(
+                "No Pi session files for this project (RPC has no list_sessions)".into(),
+            );
+            return;
+        }
+        let count = self.pi_session_count as i32;
+        let next = (self.pi_session_index as i32 + delta).rem_euclid(count) as usize;
+        self.pi_session_index = next;
+        if let Some(bridge) = self.bridge.as_mut() {
+            if let Err(err) = bridge.switch_session_index(next) {
+                self.view.notice = Some(format!("Session switch failed: {err}"));
+            }
         }
     }
 
@@ -76,6 +128,13 @@ impl ShellApp {
             }
             if kind == Some("ready") {
                 self.engine = EngineGate::from_ready_record(&record);
+                self.sync_engine_line();
+                self.ingest_sessions_record(&record);
+                if let Some(note) = record.get("sessionsNote").and_then(|v| v.as_str()) {
+                    if self.pi_session_count == 0 {
+                        self.view.notice = Some(note.to_string());
+                    }
+                }
                 if let Some(notice) = self.engine.open_notice() {
                     self.view.notice = Some(notice);
                 } else if self
@@ -89,9 +148,24 @@ impl ShellApp {
                 if let Some(snap) = record.get("snapshot") {
                     apply_workspace_snapshot(&mut self.view, snap);
                 }
+            } else if kind == Some("engine") {
+                self.engine = EngineGate::from_sidecar_engine_record(&record);
+                self.sync_engine_line();
+                self.ingest_sessions_record(&record);
             } else if kind == Some("snapshot") {
                 if let Some(snap) = record.get("snapshot") {
                     apply_workspace_snapshot(&mut self.view, snap);
+                }
+            } else if kind == Some("sessions") {
+                self.ingest_sessions_record(&record);
+            } else if kind == Some("transcript") {
+                if let Some(rows) = record.get("messages").and_then(|v| v.as_array()) {
+                    self.chat.replace_from_sidecar_transcript(rows);
+                    self.pending_prompt = None;
+                }
+            } else if kind == Some("notice") {
+                if let Some(msg) = record.get("message").and_then(|v| v.as_str()) {
+                    self.view.notice = Some(msg.to_string());
                 }
             }
             if kind == Some("error") {
@@ -114,7 +188,9 @@ impl ShellApp {
             if kind == Some("agent_settled") {
                 self.pending_prompt = None;
             }
-            self.chat.apply_sidecar_event(&record);
+            if kind != Some("transcript") {
+                self.chat.apply_sidecar_event(&record);
+            }
         }
     }
 
@@ -243,6 +319,9 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
     {
         return Ok(true);
     }
+    if try_bridge_shortcut(app, key) {
+        return Ok(false);
+    }
 
     match app.chat.focus {
         Focus::Editor => {
@@ -265,7 +344,7 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
             if key.code == KeyCode::Char('q') && app.editor.lines().join("").trim().is_empty() {
                 return Ok(true);
             }
-            if key.code == KeyCode::Char('n') {
+            if key.code == KeyCode::Char('n') && app.bridge.is_none() {
                 app.view.notice = Some("Demo notice: engine unavailable (bridge not wired)".into());
                 return Ok(false);
             }
@@ -295,7 +374,7 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
                             % app.view.agents.len();
                     }
                 }
-                KeyCode::Char('n') => {
+                KeyCode::Char('n') if app.bridge.is_none() => {
                     app.view.notice = Some("Demo notice: engine unavailable (bridge not wired)".into());
                 }
                 KeyCode::Char('c') => app.view.notice = None,
@@ -323,7 +402,7 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
                     let total = app.chat.messages.len() + 4;
                     app.chat.scroll_page_down(inner_h.max(1), total);
                 }
-                KeyCode::Char('n') => {
+                KeyCode::Char('n') if app.bridge.is_none() => {
                     app.view.notice = Some("Demo notice: engine unavailable (bridge not wired)".into());
                 }
                 KeyCode::Char('c') => app.view.notice = None,
@@ -331,6 +410,44 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
             }
             return Ok(false);
         }
+    }
+}
+
+fn try_bridge_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
+    if app.bridge.is_none() || !key.modifiers.contains(KeyModifiers::CONTROL) {
+        return false;
+    }
+    let Some(bridge) = app.bridge.as_mut() else {
+        return false;
+    };
+    match key.code {
+        KeyCode::Char('m') => {
+            if let Err(err) = bridge.cycle_model() {
+                app.view.notice = Some(format!("Model switch failed: {err}"));
+            }
+            true
+        }
+        KeyCode::Char('n') => {
+            if let Err(err) = bridge.new_session() {
+                app.view.notice = Some(format!("New session failed: {err}"));
+            }
+            true
+        }
+        KeyCode::Char('[') => {
+            app.step_pi_session(-1);
+            true
+        }
+        KeyCode::Char(']') => {
+            app.step_pi_session(1);
+            true
+        }
+        KeyCode::Char('k') => {
+            if let Err(err) = bridge.compact_session() {
+                app.view.notice = Some(format!("Compact failed: {err}"));
+            }
+            true
+        }
+        _ => false,
     }
 }
 

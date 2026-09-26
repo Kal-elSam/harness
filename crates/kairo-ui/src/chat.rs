@@ -99,6 +99,42 @@ impl ChatState {
         });
     }
 
+    /// Replace chat with Pi transcript rows from the sidecar (`get_messages` mapping).
+    pub fn replace_from_sidecar_transcript(&mut self, rows: &[Value]) {
+        let mut messages = vec![ChatMessage {
+            role: MessageRole::System,
+            content: "Work surface — conversation streams above; type below.".into(),
+            streaming: false,
+        }];
+        for row in rows {
+            let Some(obj) = row.as_object() else {
+                continue;
+            };
+            let content = obj
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let Some(content) = content else {
+                continue;
+            };
+            let role = match obj.get("role").and_then(|v| v.as_str()) {
+                Some("user") => MessageRole::User,
+                Some("assistant") => MessageRole::Assistant,
+                Some("system") => MessageRole::System,
+                _ => continue,
+            };
+            messages.push(ChatMessage {
+                role,
+                content: content.to_string(),
+                streaming: false,
+            });
+        }
+        self.messages = messages;
+        self.scroll_offset = 0;
+        self.is_streaming = false;
+    }
+
     pub fn begin_assistant_stream(&mut self) {
         self.is_streaming = true;
         self.messages.push(ChatMessage {
@@ -294,6 +330,33 @@ mod tests {
     }
 
     #[test]
+    fn replace_transcript_from_sidecar_rows() {
+        let mut chat = ChatState::default();
+        chat.submit_user("old".into());
+        chat.replace_from_sidecar_transcript(&[
+            json!({ "role": "user", "content": "hello" }),
+            json!({ "role": "assistant", "content": "hi" }),
+        ]);
+        assert!(
+            chat.messages
+                .iter()
+                .any(|m| m.role == MessageRole::User && m.content == "hello")
+        );
+        assert!(
+            chat.messages
+                .iter()
+                .any(|m| m.role == MessageRole::Assistant && m.content == "hi")
+        );
+        assert!(
+            !chat
+                .messages
+                .iter()
+                .any(|m| m.role == MessageRole::User && m.content == "old")
+        );
+        assert_eq!(chat.scroll_offset, 0);
+        assert!(!chat.is_streaming);
+    }
+
     fn cancel_empty_keeps_assistant_with_content() {
         let mut chat = ChatState::default();
         chat.begin_assistant_stream();
