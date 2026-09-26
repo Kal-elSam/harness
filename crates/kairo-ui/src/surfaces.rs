@@ -625,7 +625,6 @@ mod tests {
         assert_eq!(cell_bg(&buf, select_x, name_y), tone::SELECT_BG);
 
         // Builder name row: AGENTS + orch name + orch detail + builder name
-        let builder_y = sidebar.y + 1 + 1 + 1 + 1; // inner + AGENTS + orch + detail → builder at +4 from sidebar.y+1?
         // inner starts at sidebar.y+1; items: 0 AGENTS, 1 orch name, 2 orch detail, 3 builder name
         let builder_name_y = sidebar.y + 1 + 3;
         let builder_x = sidebar.x + 2;
