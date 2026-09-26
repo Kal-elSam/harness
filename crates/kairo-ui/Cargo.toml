@@ -1,9 +1,10 @@
 [package]
 name = "kairo-ui"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 crossterm = "0.28"
 ratatui = "0.30"
 ratatui-textarea = "0.9"
+serde_json = "1"

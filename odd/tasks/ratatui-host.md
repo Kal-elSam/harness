@@ -69,8 +69,8 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - [x] V0 Compatibility spike: ratatui 0.30 + ratatui-textarea 0.9 (single ratatui tree; **no ratcn**)
 - [x] V1 Native surfaces: sidebar / work / USAGE with contrast, borders, spacing, selection, notices (+ render tests)
 - [x] V1-fix USAGE strip ≥2 rows (border+label visible) + full-row selection padding; content-visibility tests (not bg-only)
-- [ ] V2 Wire `ratatui-textarea` editor into work surface (after V0)
-- [ ] R3b Chat over surfaces: prompt, stream, tools, cancel, scroll (model available)
+- [x] V2 Wire `ratatui-textarea` editor into work surface (after V0)
+- [x] R3b Chat over surfaces: prompt, stream, tools, cancel, scroll (model available)
 - [ ] R4 Sessions / model switch / **real** Pi cold-start no-model
 - [ ] R5 Agents sidebar data + USAGE + notices (honest states)
 - [ ] R6 Commands/dialogs via RPC extension-UI
@@ -87,7 +87,11 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
   - Evidence: `cargo test` → **6/6** (3 layout + 3 surface bg/notice/narrow). Work-unit commit: `652d9bcc7`.
 - (2026-09-26) **V1-fix** — PTY review (100×30 TrueColor): USAGE 1-row + top border hid label; selection colored text-width only. Fixes: `USAGE_STRIP_ROWS=2`; `padded_span` fills sidebar/USAGE inner width; tests assert buffer contains `USAGE`/`Codex` and `SELECT_BG` at far-x of selected row (bg-only tests are insufficient).
   - Evidence: `cargo test` → **9/9**. Work-unit commit: `3757a6c21`. Learning: a background-color assert does not prove strip content is visible.
+- (2026-09-26) **V1-fix approved** (user, 100×30 TrueColor): USAGE text visible; `j` moves full-row highlight. **Not** product visual gate — center still placeholders; final verdict needs real chat + captures @60/100/160.
+- (2026-09-26) **V2 + R3b** — work column split transcript + 5-row `ratatui-textarea` editor; Tab focus cycle; local mock reply without bridge; `kairo-ui-rpc-stdio.js` JSONL sidecar over `openPiRpcBridge`; Rust `bridge.rs` client with `--bridge` / `KAIRO_UI_BRIDGE=1`.
+  - Evidence: `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **16/16**. `node --test test/kairo-ui-rpc-stdio.test.js` → **3/3**. `node --test test/pi-rpc-bridge.test.js` → **8/8** (unchanged bridge).
+  - Keybindings: Tab (focus), Enter submit, Esc abort/blur sidebar, PgUp/Dn transcript scroll, q quit (empty editor or sidebar/transcript), Ctrl+C/Q always quit.
 
 ## Next step
 
-Re-check on color PTY (`cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo run --release`): USAGE label visible, selection fills the agent row. Center still sample text until V2/R3b — approve chrome, then editor + chat.
+V3 visual gate: color TTY captures @60/100/160 with real chat (bridge or mock), agents, USAGE, error notice — user approval before R7. PTY check: `cargo run` (mock) or `KAIRO_UI_BRIDGE=1 cargo run -- --bridge` from repo root with Pi model.

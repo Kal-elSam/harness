@@ -1,15 +1,14 @@
 //! Painted shell surfaces — product chrome, not bare text on black.
-//!
-//! V1: native ratatui widgets for sidebar / work / USAGE with contrast,
-//! borders, and spacing. Data is still placeholder until R5 wires snapshot.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget};
+use ratatui_textarea::TextArea;
 
-use crate::layout::ShellRegions;
+use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
+use crate::layout::{split_work_main, ShellRegions};
 
 /// Kairo surface palette (session-local identity — not a Herdr clone).
 pub mod tone {
@@ -25,6 +24,8 @@ pub mod tone {
     pub const ACCENT: Color = Color::Rgb(180, 160, 255);
     pub const ERROR: Color = Color::Rgb(220, 90, 90);
     pub const SELECT_BG: Color = Color::Rgb(48, 40, 72);
+    pub const USER: Color = Color::Rgb(160, 200, 255);
+    pub const TOOL: Color = Color::Rgb(200, 180, 120);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +41,6 @@ pub struct ShellViewModel {
     pub agents: Vec<SidebarAgent>,
     pub selected_agent: usize,
     pub work_title: String,
-    pub work_body: Vec<String>,
     pub notice: Option<String>,
     pub usage_line: String,
 }
@@ -62,11 +62,7 @@ impl Default for ShellViewModel {
                 },
             ],
             selected_agent: 0,
-            work_title: "Welcome to Kairo".into(),
-            work_body: vec![
-                "Work surface — conversation will stream here.".into(),
-                "Type below when the editor is wired (V2).".into(),
-            ],
+            work_title: "Chat".into(),
             notice: None,
             usage_line: "USAGE · waiting for bridge".into(),
         }
@@ -74,18 +70,29 @@ impl Default for ShellViewModel {
 }
 
 /// Paint all shell regions for one frame.
-pub fn render_shell(buf: &mut Buffer, regions: ShellRegions, model: &ShellViewModel) {
+pub fn render_shell(
+    buf: &mut Buffer,
+    regions: ShellRegions,
+    model: &ShellViewModel,
+    chat: &ChatState,
+    editor: &TextArea<'_>,
+) {
     if let Some(sidebar) = regions.sidebar {
-        render_sidebar(buf, sidebar, model);
+        render_sidebar(buf, sidebar, model, chat.focus);
     }
-    render_work(buf, regions.main, model);
+    render_work(buf, regions.main, model, chat, editor);
     render_usage(buf, regions.usage, model);
 }
 
-fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel) {
+fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel, focus: Focus) {
+    let border = if focus == Focus::Sidebar {
+        tone::BORDER_FOCUS
+    } else {
+        tone::BORDER
+    };
     let block = Block::default()
         .borders(Borders::RIGHT | Borders::TOP | Borders::BOTTOM)
-        .border_style(Style::default().fg(tone::BORDER))
+        .border_style(Style::default().fg(border))
         .style(Style::default().bg(tone::SIDEBAR_BG))
         .title(Span::styled(
             format!(" ◈ {} ", truncate(&model.project, (area.width.saturating_sub(4)) as usize)),
@@ -138,10 +145,27 @@ fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel) {
     List::new(items).render(inner, buf);
 }
 
-fn render_work(buf: &mut Buffer, area: Rect, model: &ShellViewModel) {
+fn render_work(
+    buf: &mut Buffer,
+    area: Rect,
+    model: &ShellViewModel,
+    chat: &ChatState,
+    editor: &TextArea<'_>,
+) {
+    let work = split_work_main(area);
+    render_transcript(buf, work.transcript, model, chat);
+    render_editor(buf, work.editor, chat.focus, editor);
+}
+
+fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat: &ChatState) {
+    let border = if chat.focus == Focus::Transcript {
+        tone::BORDER_FOCUS
+    } else {
+        tone::BORDER
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .border_style(Style::default().fg(border))
         .style(Style::default().bg(tone::WORK_BG))
         .title(Span::styled(
             format!(" {} ", model.work_title),
@@ -152,11 +176,7 @@ fn render_work(buf: &mut Buffer, area: Rect, model: &ShellViewModel) {
     let inner = block.inner(area);
     block.render(area, buf);
 
-    let mut lines: Vec<Line> = model
-        .work_body
-        .iter()
-        .map(|s| Line::from(Span::styled(s.clone(), Style::default().fg(tone::TEXT))))
-        .collect();
+    let mut lines: Vec<Line> = transcript_lines(chat);
     if let Some(notice) = &model.notice {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -164,14 +184,73 @@ fn render_work(buf: &mut Buffer, area: Rect, model: &ShellViewModel) {
             Style::default().fg(tone::ERROR).add_modifier(Modifier::BOLD),
         )));
     }
-    Paragraph::new(lines)
+    let total = lines.len();
+    let start = chat.scroll_offset.min(total);
+    let visible = inner.height as usize;
+    let slice: Vec<Line> = lines.into_iter().skip(start).take(visible).collect();
+    Paragraph::new(slice)
         .style(Style::default().bg(tone::WORK_BG))
         .render(inner, buf);
 }
 
+fn transcript_lines(chat: &ChatState) -> Vec<Line<'static>> {
+    chat.messages
+        .iter()
+        .flat_map(message_to_lines)
+        .collect()
+}
+
+fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
+    let (prefix, color) = match msg.role {
+        MessageRole::User => ("you", tone::USER),
+        MessageRole::Assistant => ("assistant", tone::ACCENT),
+        MessageRole::Tool => ("tool", tone::TOOL),
+        MessageRole::System => ("", tone::MUTED),
+    };
+    let body = if msg.streaming && msg.content.is_empty() {
+        "…".to_string()
+    } else {
+        msg.content.clone()
+    };
+    if prefix.is_empty() {
+        vec![Line::from(Span::styled(body, Style::default().fg(color)))]
+    } else {
+        vec![Line::from(vec![
+            Span::styled(
+                format!("{prefix}: "),
+                Style::default()
+                    .fg(color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(body, Style::default().fg(tone::TEXT)),
+        ])]
+    }
+}
+
+fn render_editor(buf: &mut Buffer, area: Rect, focus: Focus, editor: &TextArea<'_>) {
+    let border = if focus == Focus::Editor {
+        tone::BORDER_FOCUS
+    } else {
+        tone::BORDER
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border))
+        .style(Style::default().bg(tone::WORK_BG))
+        .title(Span::styled(
+            " compose ",
+            Style::default().fg(tone::MUTED),
+        ));
+    let inner = block.inner(area);
+    block.render(area, buf);
+    let mut area_editor = editor.clone();
+    area_editor.set_block(Block::default());
+    area_editor.set_style(Style::default().fg(tone::TEXT).bg(tone::WORK_BG));
+    area_editor.set_cursor_line_style(Style::default().bg(tone::SELECT_BG));
+    area_editor.render(inner, buf);
+}
+
 fn render_usage(buf: &mut Buffer, area: Rect, model: &ShellViewModel) {
-    // Top border + one content row (USAGE_STRIP_ROWS == 2). Never paint a
-    // bordered strip into a 1-row rect — the border eats the only line.
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(tone::BORDER))
@@ -216,6 +295,7 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::ChatState;
     use crate::layout::split_shell;
     use ratatui::layout::Rect;
 
@@ -227,20 +307,68 @@ mod tests {
         buf.content().iter().map(|c| c.symbol().to_string()).collect()
     }
 
+    fn default_editor() -> TextArea<'static> {
+        TextArea::default()
+    }
+
     #[test]
     fn wide_frame_paints_three_distinct_surface_backgrounds() {
         let area = Rect::new(0, 0, 100, 30);
         let regions = split_shell(area);
         let mut buf = Buffer::empty(area);
-        render_shell(&mut buf, regions, &ShellViewModel::default());
+        render_shell(
+            &mut buf,
+            regions,
+            &ShellViewModel::default(),
+            &ChatState::default(),
+            &default_editor(),
+        );
 
         let sidebar = regions.sidebar.expect("sidebar");
         assert_eq!(cell_bg(&buf, sidebar.x + 1, sidebar.y + 1), tone::SIDEBAR_BG);
         assert_eq!(cell_bg(&buf, regions.main.x + 2, regions.main.y + 2), tone::WORK_BG);
-        // Content row is below the top border of the USAGE strip.
         assert_eq!(
             cell_bg(&buf, regions.usage.x + 1, regions.usage.y + 1),
             tone::USAGE_BG
+        );
+    }
+
+    #[test]
+    fn transcript_shows_submitted_user_message() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut chat = ChatState::default();
+        chat.submit_user("hello kairo".into());
+        render_shell(
+            &mut buf,
+            regions,
+            &ShellViewModel::default(),
+            &chat,
+            &default_editor(),
+        );
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("hello kairo"),
+            "submitted user text must appear in transcript: {hay}"
+        );
+    }
+
+    #[test]
+    fn editor_region_uses_compose_title() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        render_shell(
+            &mut buf,
+            regions,
+            &ShellViewModel::default(),
+            &ChatState::default(),
+            &default_editor(),
+        );
+        assert!(
+            buffer_text(&buf).contains("compose"),
+            "editor strip should be labeled"
         );
     }
 
@@ -252,7 +380,13 @@ mod tests {
         let mut buf = Buffer::empty(area);
         let mut model = ShellViewModel::default();
         model.usage_line = "USAGE · Codex 5h 96%".into();
-        render_shell(&mut buf, regions, &model);
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+        );
         let hay = buffer_text(&buf);
         assert!(
             hay.contains("USAGE") && hay.contains("Codex"),
@@ -268,13 +402,19 @@ mod tests {
         let mut buf = Buffer::empty(area);
         let mut model = ShellViewModel::default();
         model.selected_agent = 0;
-        render_shell(&mut buf, regions, &model);
+        let mut chat = ChatState::default();
+        chat.focus = Focus::Sidebar;
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &chat,
+            &default_editor(),
+        );
 
-        // Title row + AGENTS + first agent name row ≈ y = sidebar.y + 1 (title) is border;
-        // inner starts at y+1. AGENTS at inner.y, name at inner.y+1.
         let inner_y = sidebar.y + 1;
-        let name_y = inner_y + 1; // after AGENTS header
-        let far_x = sidebar.x + sidebar.width - 3; // inside, left of right border
+        let name_y = inner_y + 1;
+        let far_x = sidebar.x + sidebar.width - 3;
         assert_eq!(
             cell_bg(&buf, far_x, name_y),
             tone::SELECT_BG,
@@ -289,7 +429,13 @@ mod tests {
         let mut buf = Buffer::empty(area);
         let mut model = ShellViewModel::default();
         model.notice = Some("Pi engine unavailable".into());
-        render_shell(&mut buf, regions, &model);
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+        );
 
         let hay = buffer_text(&buf);
         assert!(hay.contains("Pi engine unavailable"), "buffer missing notice: {hay}");
@@ -301,7 +447,13 @@ mod tests {
         let regions = split_shell(area);
         assert!(regions.sidebar.is_none());
         let mut buf = Buffer::empty(area);
-        render_shell(&mut buf, regions, &ShellViewModel::default());
+        render_shell(
+            &mut buf,
+            regions,
+            &ShellViewModel::default(),
+            &ChatState::default(),
+            &default_editor(),
+        );
         assert_eq!(cell_bg(&buf, regions.main.x + 2, regions.main.y + 2), tone::WORK_BG);
         assert_eq!(
             cell_bg(&buf, regions.usage.x + 1, regions.usage.y + 1),
