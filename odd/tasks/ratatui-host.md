@@ -79,10 +79,10 @@ User-accepted plan "Kairo: un solo host visual con ratatui" (2026-09-26). Supers
 ## Progress
 
 - (2026-09-26) Plan accepted. Worktree `~/Desktop/agentic-harness-worktrees/ratatui-host` on `feat/ratatui-host`. Solo-agent guard disabled globally (`~/.cursor/hooks.json` no longer references it; script/rule/README removed).
-- (2026-09-26) **R0 closed** — feature doc `odd/tasks/ratatui-host.md`; `odd/tasks/herd-shell-layout.md` marked superseded as product UI destination (bridge-only). Work-unit commit: _(filled after commit)_.
+- (2026-09-26) **R0 closed** — feature doc `odd/tasks/ratatui-host.md`; `odd/tasks/herd-shell-layout.md` marked superseded as product UI destination (bridge-only). Work-unit commit: `31ff4e2c0`.
 - (2026-09-26) **R1 closed** — `crates/kairo-ui` (ratatui 0.29, crossterm 0.28): `split_shell` with 28-col sidebar at ≥90 cols, collapse below, 1-row USAGE strip; painted sidebar / work surface / USAGE. Quit: `q`/`Esc`.
   - Evidence: `cd crates/kairo-ui && cargo test --offline` → **3/3 pass** (agent + user re-check 2026-09-26). `.gitignore` ignores `crates/kairo-ui/target/`; `Cargo.lock` tracked.
-  - Work-unit commit: _(filled after commit)_.
+  - Work-unit commit: `77595cfef`.
   - Note: Cursor sandbox may redirect `CARGO_TARGET_DIR`; local runs should `unset CARGO_TARGET_DIR` before `cargo run --release`.
 
 ## Next step
