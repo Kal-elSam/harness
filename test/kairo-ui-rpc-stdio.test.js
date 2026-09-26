@@ -446,3 +446,166 @@ test("sidecar new_session reloads transcript from get_messages", async () => {
   stdin.end();
   await runPromise;
 });
+
+test("sidecar new_session re-applies Architect set_model when get_state has no model", async () => {
+  const setModelCalls = [];
+  let afterNewSession = false;
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    loadKairoProviderModels: async () => [architectModel],
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: {
+                sessionId: afterNewSession ? "fresh" : "s1",
+                model: ctx?.activeModel ?? null
+              }
+            };
+          }
+          if (cmd.type === "set_model") {
+            setModelCalls.push(cmd);
+            if (ctx?.setModel) {
+              ctx.setModel({ id: cmd.modelId, provider: "kairo", name: cmd.modelId });
+            }
+            return {
+              type: "response",
+              command: "set_model",
+              success: true,
+              data: { id: cmd.modelId, provider: "kairo" }
+            };
+          }
+          if (cmd.type === "new_session") {
+            afterNewSession = true;
+            if (ctx?.setModel) ctx.setModel(null);
+            return {
+              type: "response",
+              command: "new_session",
+              success: true,
+              data: { cancelled: false }
+            };
+          }
+          if (cmd.type === "get_messages") {
+            return {
+              type: "response",
+              command: "get_messages",
+              success: true,
+              data: { messages: [] }
+            };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [architectModel],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const setModelsBeforeNewSession = setModelCalls.length;
+  assert.ok(setModelsBeforeNewSession >= 1, "open bridge should set Architect once");
+  assert.equal(setModelCalls.at(-1)?.modelId, architectModel.id);
+
+  stdin.write(`${JSON.stringify({ op: "new_session" })}\n`);
+  await new Promise((r) => setTimeout(r, 100));
+
+  assert.ok(
+    setModelCalls.length > setModelsBeforeNewSession,
+    "new_session must re-apply Architect via set_model"
+  );
+  assert.equal(setModelCalls.at(-1)?.provider, "kairo");
+  assert.equal(setModelCalls.at(-1)?.modelId, architectModel.id);
+  const engineAfter = [...out].reverse().find((r) => r.type === "engine");
+  assert.equal(engineAfter?.engine?.status, "connected");
+  assert.equal(engineAfter?.engine?.model?.id, architectModel.id);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar cycle_model does not re-apply Architect after the cycle", async () => {
+  const setModelCalls = [];
+  const models = [
+    architectModel,
+    {
+      id: "claude::m2",
+      kairoRoute: { role: "Builder", adapterId: "claude", modelId: "m2" }
+    }
+  ];
+  const stdout = new PassThrough();
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    loadKairoProviderModels: async () => models,
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: {
+                sessionId: "s1",
+                model: ctx?.activeModel ?? { id: architectModel.id }
+              }
+            };
+          }
+          if (cmd.type === "set_model") {
+            setModelCalls.push(cmd);
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, name: cmd.modelId });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => models,
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const beforeCycle = setModelCalls.length;
+  stdin.write(`${JSON.stringify({ op: "cycle_model" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+  const afterCycle = setModelCalls.slice(beforeCycle);
+  assert.equal(afterCycle.length, 1, "cycle_model must set_model once, not re-apply Architect");
+  assert.equal(afterCycle[0]?.modelId, "claude::m2");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});

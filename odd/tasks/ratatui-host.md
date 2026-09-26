@@ -71,7 +71,7 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - [x] V1-fix USAGE strip ≥2 rows (border+label visible) + full-row selection padding; content-visibility tests (not bg-only)
 - [x] V2 Wire `ratatui-textarea` editor into work surface (after V0)
 - [x] R3b Chat over surfaces: prompt, stream, tools, cancel, scroll (model available)
-- [ ] R4 Sessions / model switch / **real** Pi cold-start no-model (partial: Pi file list + new/switch + model cycle; Kairo session registry not wired)
+- [ ] R4 Sessions / model switch / **real** Pi cold-start no-model (partial: Pi file list + new/switch + model cycle; Architect reapply on session ops done; RPC no-model cold-start in third_party pending publish; Kairo session registry not wired)
 - [x] R5 Agents sidebar data + USAGE + notices (honest states)
 - [ ] R6 Commands/dialogs via RPC extension-UI (partial: abort + compact via RPC; extension_ui dialogs pending)
 - [ ] V3 Visual gate: color captures @60/100/160 with conversation, agents, USAGE, error notice — **your approval** (blocks R7)
@@ -104,8 +104,11 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - (2026-09-26) **R4 partial + commands** — Sidecar ops: `cycle_model` (Kairo `projectTeam` routes only via `set_model`), `new_session`, `switch_session` / `switch_session_index`, `compact`, `list_sessions`. Pi RPC has **no** `list_sessions`; host lists `.jsonl` under `PI_CODING_AGENT_DIR/sessions/<cwd-hash>/` honestly. `ready`/`engine`/`transcript` records; USAGE strip row 2 = `MODEL · … · session …`. Mock assistant only without `--bridge`; demo `n` notice gated off when bridge on. Keybindings (bridge): Ctrl+M model, Ctrl+N new session, Ctrl+[ / Ctrl+] prev/next on-disk session, Ctrl+K compact, Esc/abort unchanged.
   - Evidence: `cargo test` (kairo-ui), `node --test test/pi-rpc-bridge.test.js test/kairo-ui-rpc-stdio.test.js test/pi-rpc-sessions.test.js test/pi-rpc-kairo-models.test.js test/pi-rpc-transcript.test.js`. Work-unit commit on `feat/ratatui-host`.
 
+- (2026-09-26) **R4 remainder (Architect reapply + RPC no-model)** — After `new_session` / `switch_session` / `switch_session_index`, sidecar re-applies Architect via `resolveArchitectRouteForRpc` (not only `classifyPiEngineFromState`). **Does not** re-apply after `cycle_model` (would undo the cycle). Vendored Pi fork: `--mode rpc` may start without `session.model` (`main.ts`); documented in `third_party/pi/packages/coding-agent/NOTICE.md`. **No version bump / no npm publish** — third_party change is **not** runtime-active until next publish of `@kal-elsam/kairo-pi-coding-agent`; published pin still exits on no-model cold-start.
+  - Evidence: `node --test test/kairo-ui-rpc-stdio.test.js test/pi-rpc-bridge.test.js`. Work-unit commit on `feat/ratatui-host`.
+
 ## Next step
 
 1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7). Live provider check only with a session you authorize.
 2. **R6** extension-UI dialogs (RPC extension_ui only; no simulated tools).
-3. **R4 remainder:** bind Kairo `kairo list` / `resume` session ids to Pi `switch_session` when product wants one picker (today: Pi files on disk only).
+3. **R4 remainder:** publish Pi fork (user-authorized) so RPC no-model cold-start is runtime-active; then bind Kairo `kairo list` / `resume` session ids to Pi `switch_session` when product wants one picker (today: Pi files on disk only).
