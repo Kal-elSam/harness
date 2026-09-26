@@ -1,5 +1,7 @@
 # Herd Shell Layout (Camino 1)
 
+> **Superseded as product UI destination (2026-09-26).** Visual chrome on Pi-TUI is no longer the goal. The single product host is **ratatui** — see `odd/tasks/ratatui-host.md`. This feature’s snapshot (`kairo.workspace-shell/v1`), 28/90 layout contracts, and Pi shell remain a **temporary bridge** until cutover; do not invest further design polish here.
+
 ## Objective
 
 Build a Herdr-style layout inside the Pi/Kairo host: left sidebar with spaces/agents carrying honest states (working | blocked | idle | done | unknown), main zone = existing Pi conversation, bottom strip = compact usage + short session id. One glance answers who needs attention (blocked first).
