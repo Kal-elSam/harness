@@ -115,7 +115,9 @@ impl EngineGate {
     }
 
     /// Empty-chat hint when the engine cannot prompt (actionable, short).
-    pub fn work_empty_hint_lines(&self) -> Option<Vec<String>> {
+    /// `team_state` is the snapshot's own `team.state` when known — it only
+    /// picks which in-UI next step to name; team setup never leaves this UI.
+    pub fn work_empty_hint_lines(&self, team_state: Option<&str>) -> Option<Vec<String>> {
         if self.can_prompt() {
             return None;
         }
@@ -123,10 +125,7 @@ impl EngineGate {
             Some(reason) => format!("Chat blocked: {} — {reason}", self.status),
             None => format!("Chat blocked: {}", self.status),
         };
-        Some(vec![
-            line1,
-            "Next: kairo --legacy-cockpit → /project analyze → approve team, then reopen.".into(),
-        ])
+        Some(vec![line1, team_next_step_line(team_state)])
     }
 
     /// Why a prompt was refused (engine cannot receive it).
@@ -141,6 +140,40 @@ impl EngineGate {
             (status, None) => format!("Pi engine {status}"),
         }
     }
+}
+
+/// The in-UI next step for a blocked chat: `a` analyzes this project's team
+/// (default analyst, headless) and `A` approves the suggestion. Both run
+/// through the sidecar — no cockpit, no slash command, no second UI.
+pub fn team_next_step_line(team_state: Option<&str>) -> String {
+    match team_state {
+        Some("suggested") => "Next: press A to approve the suggested team (a re-analyzes).".into(),
+        Some("active") | Some("stale") => {
+            "Next: press a to re-analyze this project's team, then A to approve.".into()
+        }
+        _ => "Next: press a to analyze project team, then A to approve.".into(),
+    }
+}
+
+/// Whether `a` (analyze) is offered: only while chat is blocked, so a
+/// connected session never loses `a` as a typed character.
+pub fn can_analyze_team(engine: &EngineGate) -> bool {
+    !engine.can_prompt()
+}
+
+/// Whether `A` (approve) is offered: a real suggested strategy must exist.
+pub fn can_approve_team(team_state: Option<&str>) -> bool {
+    team_state == Some("suggested")
+}
+
+/// Whether the `a` / `A` team keys may be read as keys at all. A compose box
+/// that can send keeps every character; Sidebar / Transcript focus is not
+/// typing, so the keys stay available there.
+pub fn team_keys_available(focus_is_editor: bool, editor_empty: bool, can_prompt: bool) -> bool {
+    if !focus_is_editor {
+        return true;
+    }
+    editor_empty && !can_prompt
 }
 
 /// Decide whether Enter may leave the editor / start an assistant stream.
@@ -198,10 +231,49 @@ mod tests {
             gate.open_notice().as_deref(),
             Some("Pi engine no_model: No model selected")
         );
-        let hint = gate.work_empty_hint_lines().expect("hint");
+        let hint = gate.work_empty_hint_lines(None).expect("hint");
         assert_eq!(hint[0], "Chat blocked: no_model — No model selected");
-        assert!(hint[1].contains("legacy-cockpit"));
-        assert!(hint[1].contains("/project analyze"));
+        // Team setup is in this UI: keys, never a cockpit round trip.
+        assert!(hint[1].contains("press a"));
+        assert!(hint[1].contains("A to approve"));
+        assert!(!hint[1].contains("legacy-cockpit"));
+        assert!(!hint[1].contains("/project analyze"));
+    }
+
+    #[test]
+    fn suggested_team_hint_asks_for_approval_not_another_analysis() {
+        let gate = EngineGate::from_engine_value(&json!({
+            "status": "no_model",
+            "reason": "No active strategy with launchable projectTeam routes"
+        }));
+        let hint = gate.work_empty_hint_lines(Some("suggested")).expect("hint");
+        assert!(hint[1].contains("press A to approve"));
+        assert!(can_approve_team(Some("suggested")));
+        assert!(!can_approve_team(Some("not_analyzed")));
+        assert!(!can_approve_team(None));
+        assert!(can_analyze_team(&gate));
+    }
+
+    #[test]
+    fn analyze_key_is_not_offered_while_chat_works() {
+        let connected = EngineGate::from_engine_value(&json!({
+            "status": "connected",
+            "model": { "id": "x" }
+        }));
+        assert!(!can_analyze_team(&connected));
+    }
+
+    #[test]
+    fn team_keys_never_steal_characters_from_a_working_compose_box() {
+        // Editor focus, chat works: 'a' is a character, not a command.
+        assert!(!team_keys_available(true, true, true));
+        assert!(!team_keys_available(true, false, true));
+        // Editor focus with a draft the engine cannot send: keep the draft.
+        assert!(!team_keys_available(true, false, false));
+        // Blocked chat, empty draft: the key is the only useful action.
+        assert!(team_keys_available(true, true, false));
+        // Sidebar / transcript focus is never typing.
+        assert!(team_keys_available(false, false, true));
     }
 
     #[test]
@@ -213,7 +285,7 @@ mod tests {
         }));
         assert!(gate.can_prompt());
         assert_eq!(gate.open_notice(), None);
-        assert_eq!(gate.work_empty_hint_lines(), None);
+        assert_eq!(gate.work_empty_hint_lines(None), None);
         assert_eq!(decide_submit(true, &gate), SubmitDecision::SendToPi);
     }
 

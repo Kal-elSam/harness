@@ -20,7 +20,10 @@ use ratatui_textarea::{Input, Key, TextArea};
 
 use bridge::BridgeClient;
 use chat::{sidebar_accepts_selection_keys, ChatState, Focus};
-use engine::{decide_submit, EngineGate, SubmitDecision};
+use engine::{
+    can_analyze_team, can_approve_team, decide_submit, team_keys_available, EngineGate,
+    SubmitDecision,
+};
 use layout::split_shell;
 use snapshot::apply_workspace_snapshot;
 use surfaces::{render_shell, ShellViewModel};
@@ -32,7 +35,33 @@ use surfaces::{render_shell, ShellViewModel};
 // - Transcript: PgUp/PgDn scroll
 // - q: quit when Editor is empty; Ctrl+C / Ctrl+Q always quit
 // - Bridge only: Ctrl+M cycle Kairo model; Ctrl+N new Pi session; Ctrl+[ / Ctrl+] prev/next session on disk; Ctrl+K compact
+// - Bridge only, team setup in this UI (no cockpit): `a` analyze this project's team
+//   (default analyst), `A` approve the suggestion. Offered while chat is blocked, or
+//   from Sidebar/Transcript focus — never stolen from a compose box that can send.
 // - n/c: demo notice clear (local, no bridge)
+
+/// The two in-UI team setup actions (`a` / `A`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TeamOp {
+    Analyze,
+    Approve,
+}
+
+impl TeamOp {
+    fn progress_notice(self) -> &'static str {
+        match self {
+            TeamOp::Analyze => "Analyzing project team…",
+            TeamOp::Approve => "Approving project team…",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            TeamOp::Analyze => "Project analyze",
+            TeamOp::Approve => "Team approve",
+        }
+    }
+}
 
 struct ShellApp {
     view: ShellViewModel,
@@ -44,6 +73,8 @@ struct ShellApp {
     pi_session_index: usize,
     /// Last prompt accepted by the sidecar write path; restored if Pi rejects it.
     pending_prompt: Option<String>,
+    /// A team op (analyze / approve) is in flight — one at a time.
+    team_action_pending: bool,
 }
 
 impl ShellApp {
@@ -63,11 +94,20 @@ impl ShellApp {
             pi_session_count: 0,
             pi_session_index: 0,
             pending_prompt: None,
+            team_action_pending: false,
         }
     }
 
     fn sync_engine_line(&mut self) {
         self.view.engine_line = self.engine.status_line();
+    }
+
+    /// Blocked-chat hint, recomputed from the current engine + real team state.
+    fn sync_empty_hint(&mut self) {
+        let hint = self
+            .engine
+            .work_empty_hint_lines(self.view.team_state.as_deref());
+        self.view.work_empty_hint = hint;
     }
 
     fn ingest_sessions_record(&mut self, record: &serde_json::Value) {
@@ -130,40 +170,42 @@ impl ShellApp {
                 self.engine = EngineGate::from_ready_record(&record);
                 self.sync_engine_line();
                 self.ingest_sessions_record(&record);
+                // Snapshot before the hint: the blocked-chat next step names
+                // the team key that matches this record's real team state.
+                if let Some(snap) = record.get("snapshot") {
+                    apply_workspace_snapshot(&mut self.view, snap);
+                }
+                self.sync_empty_hint();
                 // Prefer engine open_notice over sessionsNote when chat cannot prompt.
                 if let Some(notice) = self.engine.open_notice() {
                     self.view.notice = Some(notice);
-                    self.view.work_empty_hint = self.engine.work_empty_hint_lines();
-                } else {
-                    self.view.work_empty_hint = None;
-                    if let Some(note) = record.get("sessionsNote").and_then(|v| v.as_str()) {
-                        if self.pi_session_count == 0 {
-                            self.view.notice = Some(note.to_string());
-                        }
-                    } else if self
-                        .view
-                        .notice
-                        .as_deref()
-                        .is_some_and(|n| n.starts_with("Pi engine "))
-                    {
-                        self.view.notice = None;
+                } else if let Some(note) = record.get("sessionsNote").and_then(|v| v.as_str()) {
+                    if self.pi_session_count == 0 {
+                        self.view.notice = Some(note.to_string());
                     }
-                }
-                if let Some(snap) = record.get("snapshot") {
-                    apply_workspace_snapshot(&mut self.view, snap);
+                } else if self
+                    .view
+                    .notice
+                    .as_deref()
+                    .is_some_and(|n| n.starts_with("Pi engine "))
+                {
+                    self.view.notice = None;
                 }
             } else if kind == Some("engine") {
                 self.engine = EngineGate::from_sidecar_engine_record(&record);
                 self.sync_engine_line();
                 self.ingest_sessions_record(&record);
-                self.view.work_empty_hint = self.engine.work_empty_hint_lines();
+                self.sync_empty_hint();
                 if let Some(notice) = self.engine.open_notice() {
                     self.view.notice = Some(notice);
                 }
             } else if kind == Some("snapshot") {
                 if let Some(snap) = record.get("snapshot") {
                     apply_workspace_snapshot(&mut self.view, snap);
+                    self.sync_empty_hint();
                 }
+            } else if kind == Some("team") {
+                self.ingest_team_record(&record);
             } else if kind == Some("sessions") {
                 self.ingest_sessions_record(&record);
             } else if kind == Some("transcript") {
@@ -182,6 +224,7 @@ impl ShellApp {
                     .and_then(|v| v.as_str())
                     .unwrap_or("bridge error");
                 self.view.notice = Some(msg.to_string());
+                self.team_action_pending = false;
                 self.revert_failed_prompt();
             }
             // Real deltas mean the prompt was accepted — drop restore token.
@@ -198,6 +241,43 @@ impl ShellApp {
             }
             if kind != Some("transcript") {
                 self.chat.apply_sidecar_event(&record);
+            }
+        }
+    }
+
+    /// Sidecar `team` record for `project.analyze` / `team.approve`. The real
+    /// summary text arrives as its own `notice`; this only tracks state.
+    fn ingest_team_record(&mut self, record: &serde_json::Value) {
+        self.team_action_pending = false;
+        let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !ok {
+            return;
+        }
+        if let Some(state) = record.get("state").and_then(|v| v.as_str()) {
+            self.view.team_state = Some(state.to_string());
+        }
+        self.sync_empty_hint();
+    }
+
+    fn request_team_op(&mut self, op: TeamOp) {
+        if self.team_action_pending {
+            self.view.notice = Some("A project team action is already running…".into());
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        let sent = match op {
+            TeamOp::Analyze => bridge.analyze_project_team(),
+            TeamOp::Approve => bridge.approve_project_team(),
+        };
+        match sent {
+            Ok(()) => {
+                self.team_action_pending = true;
+                self.view.notice = Some(op.progress_notice().into());
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("{} failed: {err}", op.label()));
             }
         }
     }
@@ -330,6 +410,9 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
     if try_bridge_shortcut(app, key) {
         return Ok(false);
     }
+    if try_team_shortcut(app, key) {
+        return Ok(false);
+    }
 
     match app.chat.focus {
         Focus::Editor => {
@@ -418,6 +501,38 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
             }
             return Ok(false);
         }
+    }
+}
+
+/// `a` = analyze project team, `A` = approve the suggestion — the whole
+/// unblock-chat path, in this UI. From Editor focus they only fire while the
+/// engine cannot prompt and the draft is empty, so a working compose box
+/// never loses a typed character.
+fn try_team_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
+    if app.bridge.is_none()
+        || key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return false;
+    }
+    if !team_keys_available(
+        app.chat.focus == Focus::Editor,
+        app.editor.lines().join("").trim().is_empty(),
+        app.engine.can_prompt(),
+    ) {
+        return false;
+    }
+    match key.code {
+        KeyCode::Char('a') if can_analyze_team(&app.engine) => {
+            app.request_team_op(TeamOp::Analyze);
+            true
+        }
+        KeyCode::Char('A') if can_approve_team(app.view.team_state.as_deref()) => {
+            app.request_team_op(TeamOp::Approve);
+            true
+        }
+        _ => false,
     }
 }
 
