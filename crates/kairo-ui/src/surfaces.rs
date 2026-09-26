@@ -74,6 +74,8 @@ pub struct ShellViewModel {
     pub selected_agent: usize,
     pub work_title: String,
     pub notice: Option<String>,
+    /// Empty-chat copy when the engine cannot prompt (honest, not a fake conversation).
+    pub work_empty_hint: Option<Vec<String>>,
     pub usage_line: String,
     /// Engine model / Pi session (second row of USAGE strip when bridge is on).
     pub engine_line: String,
@@ -83,21 +85,12 @@ impl Default for ShellViewModel {
     fn default() -> Self {
         Self {
             project: "kairo".into(),
-            agents: vec![
-                SidebarAgent {
-                    label: "Orchestrator".into(),
-                    detail: "idle · placeholder".into(),
-                    state: AgentState::Idle,
-                },
-                SidebarAgent {
-                    label: "Builder".into(),
-                    detail: "blocked · placeholder".into(),
-                    state: AgentState::Blocked,
-                },
-            ],
+            // Honest empty team — never invent Orchestrator/Builder placeholders.
+            agents: Vec::new(),
             selected_agent: 0,
             work_title: "Chat".into(),
             notice: None,
+            work_empty_hint: None,
             usage_line: "USAGE · waiting for bridge".into(),
             engine_line: "MODEL · (local mock without --bridge)".into(),
         }
@@ -148,34 +141,44 @@ fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel, focus: F
             .add_modifier(Modifier::BOLD)
             .bg(tone::SIDEBAR_BG),
     )));
-    for (i, agent) in model.agents.iter().enumerate() {
-        let selected = i == model.selected_agent;
-        let glyph = agent.glyph();
-        let name_style = if selected {
-            Style::default()
-                .fg(tone::TEXT)
-                .bg(tone::SELECT_BG)
-                .add_modifier(Modifier::BOLD)
-        } else if agent.state == AgentState::Blocked {
-            Style::default().fg(tone::ERROR).bg(tone::SIDEBAR_BG)
-        } else {
-            Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
-        };
-        let detail_style = if selected {
-            Style::default().fg(tone::MUTED).bg(tone::SELECT_BG)
-        } else {
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
-        };
+    if model.agents.is_empty() {
+        let empty_style = Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG);
+        items.push(ListItem::new(padded_span("No team yet", row_width, empty_style)));
         items.push(ListItem::new(padded_span(
-            &format!("{glyph} {}", agent.label),
+            "Need project strategy",
             row_width,
-            name_style,
+            empty_style,
         )));
-        items.push(ListItem::new(padded_span(
-            &format!("  {}", agent.detail),
-            row_width,
-            detail_style,
-        )));
+    } else {
+        for (i, agent) in model.agents.iter().enumerate() {
+            let selected = i == model.selected_agent;
+            let glyph = agent.glyph();
+            let name_style = if selected {
+                Style::default()
+                    .fg(tone::TEXT)
+                    .bg(tone::SELECT_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else if agent.state == AgentState::Blocked {
+                Style::default().fg(tone::ERROR).bg(tone::SIDEBAR_BG)
+            } else {
+                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+            };
+            let detail_style = if selected {
+                Style::default().fg(tone::MUTED).bg(tone::SELECT_BG)
+            } else {
+                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
+            };
+            items.push(ListItem::new(padded_span(
+                &format!("{glyph} {}", agent.label),
+                row_width,
+                name_style,
+            )));
+            items.push(ListItem::new(padded_span(
+                &format!("  {}", agent.detail),
+                row_width,
+                detail_style,
+            )));
+        }
     }
     List::new(items).render(inner, buf);
 }
@@ -211,7 +214,7 @@ fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat:
     let inner = block.inner(area);
     block.render(area, buf);
 
-    let mut lines: Vec<Line> = transcript_lines(chat);
+    let mut lines: Vec<Line> = transcript_lines(chat, model);
     if let Some(notice) = &model.notice {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -228,7 +231,34 @@ fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat:
         .render(inner, buf);
 }
 
-fn transcript_lines(chat: &ChatState) -> Vec<Line<'static>> {
+fn transcript_has_conversation(chat: &ChatState) -> bool {
+    chat.messages.iter().any(|m| match m.role {
+        MessageRole::User | MessageRole::Assistant | MessageRole::Tool => true,
+        MessageRole::System => {
+            !m.content.is_empty()
+                && m.content != "Work surface — conversation streams above; type below."
+        }
+    })
+}
+
+fn transcript_lines(chat: &ChatState, model: &ShellViewModel) -> Vec<Line<'static>> {
+    if !transcript_has_conversation(chat) {
+        if let Some(hint) = &model.work_empty_hint {
+            return hint
+                .iter()
+                .map(|line| {
+                    Line::from(Span::styled(
+                        line.clone(),
+                        Style::default().fg(tone::MUTED),
+                    ))
+                })
+                .collect();
+        }
+        return vec![Line::from(Span::styled(
+            "Work surface — conversation streams above; type below.".to_string(),
+            Style::default().fg(tone::MUTED),
+        ))];
+    }
     chat.messages
         .iter()
         .flat_map(message_to_lines)
@@ -445,6 +475,11 @@ mod tests {
         let sidebar = regions.sidebar.expect("sidebar");
         let mut buf = Buffer::empty(area);
         let mut model = ShellViewModel::default();
+        model.agents = vec![SidebarAgent {
+            label: "Orchestrator".into(),
+            detail: "idle".into(),
+            state: AgentState::Idle,
+        }];
         model.selected_agent = 0;
         let mut chat = ChatState::default();
         chat.focus = Focus::Sidebar;
@@ -626,7 +661,18 @@ mod tests {
         let sidebar = regions.sidebar.expect("sidebar");
         let mut buf = Buffer::empty(area);
         let mut model = ShellViewModel::default();
-        // Default: Orchestrator idle (selected), Builder blocked.
+        model.agents = vec![
+            SidebarAgent {
+                label: "Orchestrator".into(),
+                detail: "idle".into(),
+                state: AgentState::Idle,
+            },
+            SidebarAgent {
+                label: "Builder".into(),
+                detail: "blocked".into(),
+                state: AgentState::Blocked,
+            },
+        ];
         model.selected_agent = 0;
         let mut chat = ChatState::default();
         chat.focus = Focus::Sidebar;
@@ -644,6 +690,63 @@ mod tests {
             cell_fg(&buf, builder_x, builder_name_y),
             tone::ERROR,
             "blocked agent must paint ERROR red, not accent green"
+        );
+    }
+
+    #[test]
+    fn empty_agents_paint_honest_no_team_copy() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let model = ShellViewModel::default();
+        assert!(model.agents.is_empty(), "default must not invent team roles");
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+        );
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("No team yet"), "empty AGENTS hint missing: {hay}");
+        assert!(
+            hay.contains("Need project strategy"),
+            "strategy hint missing: {hay}"
+        );
+        assert!(!hay.contains("Orchestrator"), "must not invent Orchestrator");
+        assert!(!hay.contains("Builder"), "must not invent Builder");
+    }
+
+    #[test]
+    fn work_empty_hint_replaces_generic_work_surface_copy() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut model = ShellViewModel::default();
+        model.work_empty_hint = Some(vec![
+            "Chat blocked: no_model — No active strategy with automatic launchable projectTeam routes"
+                .into(),
+            "Next: kairo --legacy-cockpit → /project analyze → approve team, then reopen.".into(),
+        ]);
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+        );
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("Chat blocked: no_model"),
+            "actionable empty hint missing: {hay}"
+        );
+        assert!(
+            hay.contains("legacy-cockpit"),
+            "next-step hint missing: {hay}"
+        );
+        assert!(
+            !hay.contains("conversation streams"),
+            "generic Work surface placeholder must not win: {hay}"
         );
     }
 

@@ -99,21 +99,26 @@ fn sort_agents_blocked_first(agents: &mut [SidebarAgent]) {
     agents.sort_by_key(|a| state_rank(a.state));
 }
 
-/// Mirrors host `subscriptionsLine` (`extension/index.js`):
-/// segments only when `state === "ready"`; otherwise the honest state word.
+/// Honest USAGE line from subscription payload.
+/// - `ready`: `USAGE · seg1 │ seg2`
+/// - `cached` / `checking` with segments: `USAGE · {state} · seg1 │ seg2`
+/// - otherwise: `USAGE · {state}`
 /// Join separator is ` │ ` (same as the extension, not a middot).
 pub fn subscriptions_usage_line(subscriptions: &Value) -> String {
     let state = subscriptions
         .get("state")
         .and_then(|v| v.as_str())
         .unwrap_or("checking");
+    let segments: Vec<&str> = subscriptions
+        .get("segments")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     if state == "ready" {
-        let segments: Vec<&str> = subscriptions
-            .get("segments")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-            .unwrap_or_default();
         return format!("USAGE · {}", segments.join(" │ "));
+    }
+    if (state == "cached" || state == "checking") && !segments.is_empty() {
+        return format!("USAGE · {state} · {}", segments.join(" │ "));
     }
     format!("USAGE · {state}")
 }
@@ -161,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn usage_segments_only_when_ready_else_honest_state() {
+    fn usage_segments_when_ready_or_cached_checking_with_segments() {
         assert_eq!(
             subscriptions_usage_line(&json!({
                 "state": "ready",
@@ -173,12 +178,23 @@ mod tests {
             subscriptions_usage_line(&json!({ "state": "checking", "segments": [] })),
             "USAGE · checking"
         );
-        // Cached may still carry segments — never paint them until ready.
+        // Cached/checking with segments: honest state + useful segment paint.
         assert_eq!(
             subscriptions_usage_line(&json!({
                 "state": "cached",
-                "segments": ["Codex 5h 96%"]
+                "segments": ["Codex 5h 96%", "Claude ok"]
             })),
+            "USAGE · cached · Codex 5h 96% │ Claude ok"
+        );
+        assert_eq!(
+            subscriptions_usage_line(&json!({
+                "state": "checking",
+                "segments": ["Go ok"]
+            })),
+            "USAGE · checking · Go ok"
+        );
+        assert_eq!(
+            subscriptions_usage_line(&json!({ "state": "cached", "segments": [] })),
             "USAGE · cached"
         );
         assert_eq!(

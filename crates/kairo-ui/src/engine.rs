@@ -114,6 +114,21 @@ impl EngineGate {
         Some(self.describe())
     }
 
+    /// Empty-chat hint when the engine cannot prompt (actionable, short).
+    pub fn work_empty_hint_lines(&self) -> Option<Vec<String>> {
+        if self.can_prompt() {
+            return None;
+        }
+        let line1 = match self.reason.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(reason) => format!("Chat blocked: {} — {reason}", self.status),
+            None => format!("Chat blocked: {}", self.status),
+        };
+        Some(vec![
+            line1,
+            "Next: kairo --legacy-cockpit → /project analyze → approve team, then reopen.".into(),
+        ])
+    }
+
     /// Why a prompt was refused (engine cannot receive it).
     pub fn reject_reason(&self) -> String {
         self.describe()
@@ -183,6 +198,10 @@ mod tests {
             gate.open_notice().as_deref(),
             Some("Pi engine no_model: No model selected")
         );
+        let hint = gate.work_empty_hint_lines().expect("hint");
+        assert_eq!(hint[0], "Chat blocked: no_model — No model selected");
+        assert!(hint[1].contains("legacy-cockpit"));
+        assert!(hint[1].contains("/project analyze"));
     }
 
     #[test]
@@ -194,6 +213,7 @@ mod tests {
         }));
         assert!(gate.can_prompt());
         assert_eq!(gate.open_notice(), None);
+        assert_eq!(gate.work_empty_hint_lines(), None);
         assert_eq!(decide_submit(true, &gate), SubmitDecision::SendToPi);
     }
 

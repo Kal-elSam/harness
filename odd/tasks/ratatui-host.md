@@ -113,6 +113,9 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - (2026-09-26) **Daily default = ratatui** — `resolveUiHost` now defaults to `ratatui` (no `--ratatui` required). Opt out: `--pi` / `--pi-host` / `KAIRO_UI_HOST=pi`. Precedence: `--legacy-cockpit` > pi flag/env > ratatui flag/env > default ratatui. R9 still owns stripping old UIs / packaging; V3 remains the visual gate before claiming product-done.
   - Evidence: `node --test test/launch-ratatui-host.test.js test/cli-implicit-host.test.js test/cli-help.test.js`.
 
+- (2026-09-26) **no-model UX honesty** — Real sidecar `ready` with `engine.status=no_model` + empty team + `subscriptions.state=cached` looked empty/confused because defaults invented Orchestrator/Builder and USAGE hid cached segments. Fix (UI only, no invented team): empty default agents + muted `No team yet` / `Need project strategy`; `work_empty_hint` from `open_notice` (`Chat blocked: no_model — …` + legacy-cockpit next step); `USAGE · cached · seg1 │ seg2` when cached/checking has segments; `ready` prefers engine notice over sessionsNote.
+  - Evidence: `cargo test -q --manifest-path crates/kairo-ui/Cargo.toml` → **41/41**.
+
 ## Next step
 
 1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7 packaging claim). Live provider check only with a session you authorize. Daily: `node ./bin/kairo.js ui` (ratatui default); `--pi` for old shell.
