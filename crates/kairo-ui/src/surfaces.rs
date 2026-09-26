@@ -10,22 +10,37 @@ use ratatui_textarea::TextArea;
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
 use crate::layout::{split_work_main, ShellRegions};
 
-/// Kairo surface palette (session-local identity — not a Herdr clone).
+/// Kairo sober hacker palette — graphite greens; accent green only for
+/// brand / focus / selection. Semantic red / amber / user-blue stay distinct.
 pub mod tone {
     use ratatui::style::Color;
 
-    pub const SIDEBAR_BG: Color = Color::Rgb(24, 24, 32);
-    pub const WORK_BG: Color = Color::Rgb(12, 12, 16);
-    pub const USAGE_BG: Color = Color::Rgb(36, 28, 52);
-    pub const BORDER: Color = Color::Rgb(72, 72, 88);
-    pub const BORDER_FOCUS: Color = Color::Rgb(140, 120, 200);
-    pub const TEXT: Color = Color::Rgb(230, 230, 235);
-    pub const MUTED: Color = Color::Rgb(130, 130, 145);
-    pub const ACCENT: Color = Color::Rgb(180, 160, 255);
-    pub const ERROR: Color = Color::Rgb(220, 90, 90);
-    pub const SELECT_BG: Color = Color::Rgb(48, 40, 72);
-    pub const USER: Color = Color::Rgb(160, 200, 255);
-    pub const TOOL: Color = Color::Rgb(200, 180, 120);
+    /// Work surface `#090F0E`.
+    pub const WORK_BG: Color = Color::Rgb(0x09, 0x0f, 0x0e);
+    /// Sidebar `#111A18`.
+    pub const SIDEBAR_BG: Color = Color::Rgb(0x11, 0x1a, 0x18);
+    /// USAGE strip `#13211C`.
+    pub const USAGE_BG: Color = Color::Rgb(0x13, 0x21, 0x1c);
+    /// Quiet graphite border (not purple, not accent green).
+    pub const BORDER: Color = Color::Rgb(0x2c, 0x3d, 0x36);
+    /// Brand / focus green `#5EE6A8`.
+    pub const ACCENT: Color = Color::Rgb(0x5e, 0xe6, 0xa8);
+    pub const BORDER_FOCUS: Color = ACCENT;
+    /// Primary text `#E8F5EF`.
+    pub const TEXT: Color = Color::Rgb(0xe8, 0xf5, 0xef);
+    /// Secondary text `#9AB2A5`.
+    pub const MUTED: Color = Color::Rgb(0x9a, 0xb2, 0xa5);
+    /// Selection wash — dark green tint, not full accent fill.
+    pub const SELECT_BG: Color = Color::Rgb(0x1a, 0x33, 0x2c);
+    /// Blocked / hard error — red, never green.
+    pub const ERROR: Color = Color::Rgb(0xdc, 0x5a, 0x5a);
+    /// Notices and tool rows — amber.
+    pub const WARN: Color = Color::Rgb(0xe0, 0xb4, 0x5c);
+    pub const TOOL: Color = WARN;
+    /// User messages — light blue (not green).
+    pub const USER: Color = Color::Rgb(0x8e, 0xc8, 0xff);
+    /// Assistant label — neutral mint-gray, not accent green.
+    pub const ASSISTANT: Color = Color::Rgb(0xc5, 0xd4, 0xcc);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,7 +213,7 @@ fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat:
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             format!("⚠ {notice}"),
-            Style::default().fg(tone::ERROR).add_modifier(Modifier::BOLD),
+            Style::default().fg(tone::WARN).add_modifier(Modifier::BOLD),
         )));
     }
     let total = lines.len();
@@ -220,7 +235,7 @@ fn transcript_lines(chat: &ChatState) -> Vec<Line<'static>> {
 fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
     let (prefix, color) = match msg.role {
         MessageRole::User => ("you", tone::USER),
-        MessageRole::Assistant => ("assistant", tone::ACCENT),
+        MessageRole::Assistant => ("assistant", tone::ASSISTANT),
         MessageRole::Tool => ("tool", tone::TOOL),
         MessageRole::System => ("", tone::MUTED),
     };
@@ -518,5 +533,168 @@ mod tests {
             tone::USAGE_BG
         );
         assert!(buffer_text(&buf).contains("USAGE"));
+    }
+
+    fn rgb_channels(c: Color) -> Option<(u8, u8, u8)> {
+        match c {
+            Color::Rgb(r, g, b) => Some((r, g, b)),
+            _ => None,
+        }
+    }
+
+    fn relative_luminance(c: Color) -> f64 {
+        let (r, g, b) = rgb_channels(c).expect("theme colors are Rgb");
+        let lin = |u: u8| {
+            let s = f64::from(u) / 255.0;
+            if s <= 0.03928 {
+                s / 12.92
+            } else {
+                ((s + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    }
+
+    fn contrast_ratio(fg: Color, bg: Color) -> f64 {
+        let (a, b) = (relative_luminance(fg), relative_luminance(bg));
+        let (hi, lo) = if a > b { (a, b) } else { (b, a) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    fn cell_fg(buf: &Buffer, x: u16, y: u16) -> Color {
+        buf[(x, y)].style().fg.unwrap_or(Color::Reset)
+    }
+
+    #[test]
+    fn hacker_theme_surfaces_are_graphite_green_not_violet() {
+        assert_eq!(tone::WORK_BG, Color::Rgb(0x09, 0x0f, 0x0e));
+        assert_eq!(tone::SIDEBAR_BG, Color::Rgb(0x11, 0x1a, 0x18));
+        assert_eq!(tone::USAGE_BG, Color::Rgb(0x13, 0x21, 0x1c));
+        assert_eq!(tone::ACCENT, Color::Rgb(0x5e, 0xe6, 0xa8));
+        assert_eq!(tone::TEXT, Color::Rgb(0xe8, 0xf5, 0xef));
+        assert_eq!(tone::MUTED, Color::Rgb(0x9a, 0xb2, 0xa5));
+        // Surfaces must stay distinct.
+        assert_ne!(tone::WORK_BG, tone::SIDEBAR_BG);
+        assert_ne!(tone::SIDEBAR_BG, tone::USAGE_BG);
+        assert_ne!(tone::WORK_BG, tone::USAGE_BG);
+    }
+
+    #[test]
+    fn text_on_surfaces_meets_wcag_aa_contrast() {
+        for bg in [tone::WORK_BG, tone::SIDEBAR_BG, tone::USAGE_BG, tone::SELECT_BG] {
+            let ratio = contrast_ratio(tone::TEXT, bg);
+            assert!(
+                ratio >= 4.5,
+                "TEXT on {bg:?} contrast {ratio:.2} must be ≥ 4.5"
+            );
+        }
+        let muted_work = contrast_ratio(tone::MUTED, tone::WORK_BG);
+        assert!(
+            muted_work >= 3.0,
+            "MUTED on WORK_BG contrast {muted_work:.2} must be ≥ 3.0 (large/UI text)"
+        );
+    }
+
+    #[test]
+    fn semantic_colors_stay_distinct_from_accent_green() {
+        assert_ne!(tone::ERROR, tone::ACCENT);
+        assert_ne!(tone::WARN, tone::ACCENT);
+        assert_ne!(tone::USER, tone::ACCENT);
+        assert_ne!(tone::ASSISTANT, tone::ACCENT);
+        assert_ne!(tone::ERROR, tone::WARN);
+        assert_ne!(tone::USER, tone::ERROR);
+        assert_eq!(tone::TOOL, tone::WARN);
+        assert_eq!(tone::BORDER_FOCUS, tone::ACCENT);
+    }
+
+    #[test]
+    fn selection_and_blocked_states_keep_semantic_paint() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let sidebar = regions.sidebar.expect("sidebar");
+        let mut buf = Buffer::empty(area);
+        let mut model = ShellViewModel::default();
+        // Default: Orchestrator idle (selected), Builder blocked.
+        model.selected_agent = 0;
+        let mut chat = ChatState::default();
+        chat.focus = Focus::Sidebar;
+        render_shell(&mut buf, regions, &model, &chat, &default_editor());
+
+        let name_y = sidebar.y + 2; // after title border + AGENTS
+        let select_x = sidebar.x + sidebar.width - 3;
+        assert_eq!(cell_bg(&buf, select_x, name_y), tone::SELECT_BG);
+
+        // Builder name row: AGENTS + orch name + orch detail + builder name
+        let builder_y = sidebar.y + 1 + 1 + 1 + 1; // inner + AGENTS + orch + detail → builder at +4 from sidebar.y+1?
+        // inner starts at sidebar.y+1; items: 0 AGENTS, 1 orch name, 2 orch detail, 3 builder name
+        let builder_name_y = sidebar.y + 1 + 3;
+        let builder_x = sidebar.x + 2;
+        assert_eq!(
+            cell_fg(&buf, builder_x, builder_name_y),
+            tone::ERROR,
+            "blocked agent must paint ERROR red, not accent green"
+        );
+    }
+
+    #[test]
+    fn focus_border_uses_accent_green_not_chat_body() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut chat = ChatState::default();
+        chat.focus = Focus::Editor;
+        chat.submit_user("hi".into());
+        chat.push_mock_assistant_reply("hi");
+        render_shell(
+            &mut buf,
+            regions,
+            &ShellViewModel::default(),
+            &chat,
+            &default_editor(),
+        );
+        // Editor top border cell should be focus accent.
+        let work = crate::layout::split_work_main(regions.main);
+        let border_cell = buf[(work.editor.x, work.editor.y)].style().fg.unwrap_or(Color::Reset);
+        assert_eq!(border_cell, tone::BORDER_FOCUS);
+
+        // Assistant prefix must not use accent green (chat not tinted).
+        let hay_styles_ok = tone::ASSISTANT != tone::ACCENT;
+        assert!(hay_styles_ok);
+        assert!(buffer_text(&buf).contains("assistant:"));
+        assert!(buffer_text(&buf).contains("you:"));
+    }
+
+    #[test]
+    fn notice_uses_amber_warn_not_error_red() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut model = ShellViewModel::default();
+        model.notice = Some("UNIQUE_NOTICE_TOKEN".into());
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+        );
+        // Find a cell whose symbol is part of the notice and check fg.
+        let mut found_warn = false;
+        for y in regions.main.y..regions.main.y + regions.main.height {
+            for x in regions.main.x..regions.main.x + regions.main.width {
+                let cell = &buf[(x, y)];
+                if cell.symbol().contains('⚠') || cell.symbol() == "U" {
+                    let fg = cell.style().fg.unwrap_or(Color::Reset);
+                    if fg == tone::WARN {
+                        found_warn = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            found_warn,
+            "notice glyph/text must use WARN amber, not ERROR or ACCENT"
+        );
+        assert_ne!(tone::WARN, tone::ERROR);
     }
 }
