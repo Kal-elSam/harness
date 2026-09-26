@@ -1537,3 +1537,85 @@ test("createLiveTuiModeReader never caches a missing/unreadable settings file, s
   assert.strictEqual(getTuiMode(), "fullscreen", "once the file appears, it is picked up immediately — nothing was wrongly cached");
   assert.strictEqual(readCalls, 1);
 });
+
+// --- P2 polish (2026-09-26): a Kairo welcome header, shown only while the
+// bound conversation has no messages yet, cleared on the first turn. Never
+// a transcript message — the transcript document itself never carries it.
+
+function fakeShellCtxWithHeader({ entries = [] } = {}) {
+  const headerCalls = [];
+  const ctx = {
+    cwd: "/repo",
+    sessionManager: { getEntries: () => entries },
+    ui: {
+      setStatus: () => {},
+      setWidget: () => {},
+      setSidebar: () => {},
+      setBottomStrip: () => {},
+      setHeader: (...args) => headerCalls.push(args),
+      notify: () => {}
+    }
+  };
+  return { ctx, headerCalls };
+}
+
+test("P2 session_start installs the Kairo welcome header only when the bound conversation has no messages yet", async () => {
+  const { pi, events } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    loadRouteModels: async () => [],
+    getColumns: () => 100,
+    getTuiMode: () => "fullscreen"
+  });
+
+  const empty = fakeShellCtxWithHeader({ entries: [] });
+  await events.get("session_start")({ reason: "startup" }, empty.ctx);
+  assert.ok(empty.headerCalls.length > 0, "expected setHeader to be called for an empty conversation");
+  const factory = empty.headerCalls.at(-1)[0];
+  assert.equal(typeof factory, "function", "welcome header is a component factory, like the other shell slots");
+  const lines = factory(undefined, IDENTITY_THEME).render(60);
+  assert.ok(lines.join("\n").includes("agentic-harness"), "welcome names the current project");
+
+  const resumed = fakeShellCtxWithHeader({ entries: [{ type: "message" }] });
+  await events.get("session_start")({ reason: "resume" }, resumed.ctx);
+  assert.equal(resumed.headerCalls.length, 0, "a conversation that already has messages must never get the welcome header");
+});
+
+test("P2 session_start never installs the welcome header outside the fullscreen shell (regular mode / missing shell APIs)", async () => {
+  const { pi, events } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    loadRouteModels: async () => [],
+    getColumns: () => 100,
+    getTuiMode: () => "regular"
+  });
+  const headerCalls = [];
+  const ctx = {
+    cwd: "/repo",
+    sessionManager: { getEntries: () => [] },
+    ui: { setStatus: () => {}, setWidget: () => {}, setHeader: (...args) => headerCalls.push(args), notify: () => {} }
+  };
+  await events.get("session_start")({ reason: "startup" }, ctx);
+  assert.equal(headerCalls.length, 0, "regular mode keeps Pi's own built-in header, never the Kairo welcome");
+});
+
+test("P2 the first turn_start clears the Kairo welcome header back to Pi's own default", async () => {
+  const { pi, events } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    loadRouteModels: async () => [],
+    getColumns: () => 100,
+    getTuiMode: () => "fullscreen"
+  });
+  const { ctx, headerCalls } = fakeShellCtxWithHeader({ entries: [] });
+  await events.get("session_start")({ reason: "startup" }, ctx);
+  assert.ok(headerCalls.length > 0, "welcome header installed while empty");
+
+  assert.equal(typeof events.get("turn_start"), "function", "extension must listen for turn_start to clear the welcome");
+  await events.get("turn_start")({ type: "turn_start", turnIndex: 0, timestamp: Date.now() }, ctx);
+  assert.equal(headerCalls.at(-1)[0], undefined, "turnIndex 0 clears the welcome header back to Pi's built-in default");
+
+  headerCalls.length = 0;
+  await events.get("turn_start")({ type: "turn_start", turnIndex: 1, timestamp: Date.now() }, ctx);
+  assert.equal(headerCalls.length, 0, "a later turn never re-touches the header");
+});

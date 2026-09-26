@@ -8,10 +8,12 @@ import {
   createCompactShellSummaryWidget,
   createShellBottomStripWidget,
   createShellSidebarWidget,
+  createShellWelcomeWidget,
   renderCompactShellSummaryLines,
   renderKairoWorkspaceWidget,
   renderShellBottomStripLines,
   renderShellSidebarLines,
+  renderShellWelcomeLines,
   SHELL_SIDEBAR_MIN_COLUMNS
 } from "../src/global/host/workspace-widget.js";
 
@@ -621,10 +623,39 @@ test("S2-1b agentRowHitboxes maps click rows to agent ids, shifting with route l
   const snap = fixtureSnapshot();
   const plain = agentRowHitboxes(snap, {});
   assert.ok(plain.length === snap.agents.length, "one hitbox per agent row");
-  assert.deepEqual(plain.map((h) => h.y), [2, 3, 4, 5, 6, 7, 8], "rows follow the project header + AGENTS header");
+  // header(1) + separator(1) + AGENTS header(1) = 3, then 2 lines per agent (P1: name + dimmed status).
+  assert.deepEqual(plain.map((h) => h.y), [3, 5, 7, 9, 11, 13, 15], "rows follow the project header + separator + AGENTS header, 2 lines per agent");
   const routed = agentRowHitboxes(snap, { routeUnavailable: true });
-  assert.deepEqual(routed.map((h) => h.y), [4, 5, 6, 7, 8, 9, 10], "route notice lines shift every hitbox down");
+  assert.deepEqual(routed.map((h) => h.y), [5, 7, 9, 11, 13, 15, 17], "route notice lines shift every hitbox down");
   assert.deepEqual(routed.map((h) => h.agentId), plain.map((h) => h.agentId), "same agents, shifted rows");
+});
+
+// --- P1 polish (2026-09-26): two-row agent format, subtle separator, selection marker.
+test("P1 renderShellSidebarLines shows each agent as two rows: name then a dimmed status/model row", () => {
+  const lines = renderShellSidebarLines(fixtureSnapshot({
+    agents: [{ id: "b", label: "Builder", role: "Builder", provider: "codex", model: "M", state: "idle", stateReason: null }]
+  }), IDENTITY_THEME);
+  const nameIndex = lines.findIndex((line) => line.includes("Builder"));
+  assert.ok(nameIndex >= 0, "expected a name row for Builder");
+  const statusLine = lines[nameIndex + 1];
+  assert.ok(statusLine.includes("codex"), `expected the row right after the name to carry the provider/status, got: "${statusLine}"`);
+  assert.ok(statusLine.trim().startsWith("codex"), "status row is its own line, not appended to the name");
+});
+
+test("P1 renderShellSidebarLines separates the project header from AGENTS with a subtle rule", () => {
+  const lines = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME);
+  const agentsIndex = lines.findIndex((line) => line.includes("AGENTS"));
+  assert.ok(agentsIndex > 0, "expected an AGENTS header");
+  const before = lines[agentsIndex - 1];
+  assert.ok(/^─+$/.test(before), `expected a rule line right before AGENTS, got: "${before}"`);
+});
+
+test("P1 renderShellSidebarLines marks the selected agent's row, distinct from an unselected one", () => {
+  const unselected = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME);
+  const selected = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME, { selectedAgentId: "researcher" });
+  const unselectedLine = unselected.find((line) => line.includes("Researcher"));
+  const selectedLine = selected.find((line) => line.includes("Researcher"));
+  assert.notEqual(selectedLine, unselectedLine, "the selected row must render differently from the unselected one");
 });
 
 test("S2-1b sidebar shows the selected agent detail block with model, cause and next step", () => {
@@ -664,4 +695,40 @@ test("S2-1b sidebar handleMouse calls onSelectAgent for agent rows and ignores h
   assert.deepEqual(seen, [first.agentId], "click on an agent row selects it");
   component.handleMouse({ type: "click", button: "left", x: 2, y: 0, screenX: 2, screenY: 0, width: 28, height: 30, shift: false, alt: false, ctrl: false });
   assert.deepEqual(seen, [first.agentId], "click on the header selects nothing");
+});
+
+// --- P3 polish (2026-09-26): the bottom strip is at most 2 lines, wide or narrow.
+test("P3 renderShellBottomStripLines stays within 2 lines", () => {
+  const lines = renderShellBottomStripLines(fixtureSnapshot(), IDENTITY_THEME);
+  assert.ok(lines.length <= 2, `bottom strip must stay at most 2 lines, got ${lines.length}: ${JSON.stringify(lines)}`);
+  const joined = lines.join(" ");
+  assert.ok(joined.includes("USAGE"), "USAGE must still be visible");
+  assert.equal((joined.match(/USAGE/g) ?? []).length, 1, "USAGE appears exactly once");
+});
+
+test("P3 renderShellBottomStripLines is one line when everything fits, still honest when not ready", () => {
+  const lines = renderShellBottomStripLines(fixtureSnapshot({ subscriptions: { state: "checking" } }), IDENTITY_THEME);
+  assert.ok(lines.length <= 2, `bottom strip must stay at most 2 lines, got ${lines.length}`);
+  assert.ok(lines.join(" ").includes("checking"), "honest checking state, never a fabricated bar");
+});
+
+test("P3 renderShellBottomStripLines carries extraLines within the 2-line budget", () => {
+  const lines = renderShellBottomStripLines(fixtureSnapshot(), IDENTITY_THEME, { extraLines: ["Team recovered."] });
+  assert.ok(lines.length <= 2, `bottom strip with extraLines must still stay at most 2 lines, got ${lines.length}: ${JSON.stringify(lines)}`);
+  assert.ok(lines.join(" ").includes("Team recovered."), "extra notice still shown");
+});
+
+// --- P2 polish (2026-09-26): a Kairo welcome state for the shell's header
+// slot, shown only while the bound conversation has no messages yet (see
+// extension/index.js's updateWelcomeHeader) — never a transcript message.
+test("P2 renderShellWelcomeLines names the project and never claims to be a transcript message", () => {
+  const lines = renderShellWelcomeLines("agentic-harness", IDENTITY_THEME);
+  assert.ok(lines.length >= 1 && lines.length <= 3, `welcome should stay short, got ${lines.length}`);
+  assert.ok(lines.join("\n").includes("agentic-harness"), "welcome names the current project");
+});
+
+test("P2 createShellWelcomeWidget renders the welcome lines through the same factory shape as other shell slots", () => {
+  const component = createShellWelcomeWidget("agentic-harness")(undefined, IDENTITY_THEME);
+  const lines = component.render(60);
+  assert.ok(lines.join("\n").includes("agentic-harness"));
 });

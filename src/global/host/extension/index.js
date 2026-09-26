@@ -7,7 +7,7 @@ import {
 } from "../workspace-snapshot.js";
 import {
   availabilityNotices, createCompactShellSummaryWidget, createKairoTextWidget, createKairoWorkspaceWidget,
-  createShellBottomStripWidget, createShellSidebarWidget, formatSessionIdentity
+  createShellBottomStripWidget, createShellSidebarWidget, createShellWelcomeWidget, formatSessionIdentity
 } from "../workspace-widget.js";
 import { MAX_RECOVERY_ATTEMPTS } from "../../conversation/team-recovery.js";
 import { resolveHomeDir } from "../../paths.js";
@@ -363,6 +363,33 @@ function recoveryNotice(result) {
 }
 
 /**
+ * P2 polish (2026-09-26): installs the Kairo welcome header (see
+ * workspace-widget.js's createShellWelcomeWidget) into the fork's header
+ * slot (`ctx.ui.setHeader`), but ONLY while both are true: the fullscreen
+ * shell owns the render (see isShellActive — regular mode and the
+ * shell-API-less `.3` pin keep Pi's own built-in header, untouched) and the
+ * bound conversation genuinely has no messages yet, read live from
+ * `ctx.sessionManager.getEntries()` — never a reason-based guess (a
+ * "reload"/"resume"/"fork" can each land on an empty or a populated
+ * conversation). The welcome is cleared back to Pi's default by the
+ * `turn_start` handler below at the first turn — it is never a transcript
+ * message, so it never needs clearing from session history itself.
+ */
+function updateWelcomeHeader(ctxBag, snapshot, getTuiMode) {
+  if (!isShellActive(ctxBag, getTuiMode)) return;
+  const entries = ctxBag?.sessionManager?.getEntries?.() ?? [];
+  // A brand-new session already carries non-message bookkeeping entries
+  // (e.g. a "model_change"/"session_info" entry) even with zero real
+  // conversation turns — only "message" entries are actual user/assistant
+  // turns (see the fork's SessionEntry union in session-manager.ts), so
+  // that is the one honest "has the conversation started" signal.
+  const hasMessages = entries.some((entry) => entry?.type === "message");
+  if (hasMessages) return;
+  const projectLabel = snapshot.project?.label ?? snapshot.project?.root ?? "unknown";
+  ctxBag?.ui?.setHeader?.(createShellWelcomeWidget(projectLabel));
+}
+
+/**
  * Loads a fresh snapshot and paints it onto the widget/status bar — unless
  * `isCurrent()` says this render has been superseded by a later session
  * lifecycle event while `loadSnapshot` was in flight. `loadSnapshot` itself
@@ -689,6 +716,7 @@ export function createKairoWorkspaceExtension(pi, {
     if (routeState === "unavailable" && isCurrent()) {
       setWorkspaceWidget(ctxBag, snapshot, "unavailable-routes", [], { getColumns, getTuiMode, selection: shellSelection });
     }
+    if (isCurrent()) updateWelcomeHeader(ctxBag, snapshot, getTuiMode);
 
     // Phase 2 (P01.2 split): usage (the three usage readers, ~5s combined)
     // and team availability (the full conversation-service snapshot probe,
@@ -758,6 +786,16 @@ export function createKairoWorkspaceExtension(pi, {
     });
 
     await Promise.all([usagePromise, availabilityPromise, pendingNotice]);
+  });
+
+  // P2 polish: the first turn clears the Kairo welcome header (see
+  // updateWelcomeHeader) back to Pi's own built-in default — `turnIndex`
+  // is Pi's own real count, so this needs no extension-side bookkeeping
+  // and never fires again on a later turn.
+  pi.on("turn_start", (event, ctx) => {
+    if (event?.turnIndex === 0 && isShellActive(ctx, getTuiMode)) {
+      ctx?.ui?.setHeader?.(undefined);
+    }
   });
 
   const commands = [

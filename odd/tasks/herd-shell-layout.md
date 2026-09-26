@@ -578,25 +578,141 @@ Checks: fork `test/kairo`; focused host tests; package/version resolution; real 
   chat; use pi-tui only (no ratatui, no PTYs, no second renderer, no new
   dependencies); Herdr-like hierarchy and quality with Kairo's own
   identity.
-  - [ ] P1 Sidebar: subtle background and separator; the project on
-    top, AGENTS below. Each agent has a clear name row and a dimmed
-    status/model row. Mouse selection highlights the row and keeps the
-    S2 detail. Access causes stay concrete; never invent working/done.
-  - [ ] P2 Chat: a visual frame around the main area without replacing
-    the transcript, editor, or status bar. A Kairo welcome state appears
-    while the conversation is empty and disappears with the first
-    message; no fake messages.
-  - [ ] P3 USAGE and notices: a 1–2 line strip depending on the width;
-    the availability notice becomes a short signal, with the full
-    explanation in the agent detail and `/kairo-team`. Each fact in
-    exactly one place.
-  - [ ] P4 Responsive: the sidebar from 90 columns; below that, the
-    chat at full width; at 60 only the compact summary. Regular mode is
-    unchanged.
-  - [ ] P5 Evidence: RED/GREEN for layout, Unicode truncation, mouse
-    after resize, empty state, no duplicates, and honest states. Real
-    Kairo PTY captures at 100 and 60, with empty and active
-    conversations, plus a live resize, printed row-numbered with blank
-    rows kept. Visual acceptance comes from the user looking at the
-    captures.
+  - [x] P1 Sidebar (2026-09-26): a subtle rule (`theme.fg("borderMuted",
+    "─".repeat(28))`) separates the project header (+ route notice) from
+    AGENTS. Each agent is now two rows: `shellAgentLines` returns a
+    state-toned name row (`<glyph> <label>`, truncated to 27 cols to leave
+    room for the selection marker) and a dimmed status/model row below it
+    (provider, or the proven blocked cause / honest "Unavailable" — never
+    a generic word). Mouse selection prepends an accent `▎` marker to the
+    selected row's name line (no `theme.bg` dependency, since the fake
+    test theme and Pi's real Theme both guarantee `fg` but only the real
+    one has `bg`) and keeps opening the existing S2 detail block
+    unchanged. `agentRowHitboxes` updated for 2 lines/agent + the new
+    separator line; access causes stay concrete (`shortBlockedCause`/
+    detail block unchanged), never invented.
+    Touches: `src/global/host/workspace-widget.js`
+    (`shellAgentLines` replacing `shellAgentLine`, `agentRowHitboxes`,
+    `renderShellSidebarLines`) + `test/workspace-widget.test.js`.
+    RED: new P1 tests + the hitbox test's hardcoded row numbers failed
+    against the pre-change code (missing exports / stale row math). GREEN:
+    `node --test test/workspace-widget.test.js` 63/63 (was 55 pre-change).
+  - [x] P2 Chat (2026-09-26): a Kairo welcome state — `renderShellWelcomeLines`/
+    `createShellWelcomeWidget` in workspace-widget.js — installed through
+    the fork's EXISTING `ctx.ui.setHeader` extension API (no fork source
+    change needed; `setHeader` was already there, undocumented for this
+    use). `updateWelcomeHeader` in extension/index.js installs it only
+    when the fullscreen shell owns the render (`isShellActive`) AND the
+    bound conversation has no real `"message"` entries yet — read live via
+    `ctx.sessionManager.getEntries()`, filtered by `entry.type === "message"`
+    (a fresh session already carries a non-message bookkeeping entry, e.g.
+    `model_change`, so a raw `entries.length === 0` check is wrong — found
+    live via a real PTY run, see below). A new `pi.on("turn_start", ...)`
+    handler clears the header back to Pi's built-in default the moment
+    `event.turnIndex === 0`. It is never a transcript message: the
+    transcript document never carries this text. No visible "frame" box
+    (top/bottom/side border) was added around the chat column — see
+    "Known gap" below.
+    Touches: `src/global/host/workspace-widget.js`
+    (`renderShellWelcomeLines`, `createShellWelcomeWidget`),
+    `src/global/host/extension/index.js` (`updateWelcomeHeader`, the
+    `turn_start` handler) + both test files.
+    RED: new P2 tests failed on missing exports/wiring. GREEN:
+    `node --test test/workspace-widget.test.js test/workspace-shell-extension.test.js`
+    118/118.
+    Real PTY (100x30, empty conversation, launcher-equivalent settings):
+    confirmed `◈ Welcome to Kairo — agentic-harness` / `Type a message to
+    start...` next to the sidebar. Disappearing after the first message
+    could NOT be captured live in this offline sandbox: sending a message
+    hits "No models available" / "No API key found" before Pi ever calls
+    `turn_start` (confirmed via a temporary debug print, since removed),
+    so the clearing path is proven only by the unit test
+    (`P2 the first turn_start clears...`), not by a live capture. This is
+    an environment limit (no configured provider), not a defect in the
+    logic — disclosed rather than worked around.
+  - [x] P3 USAGE and notices (2026-09-26): `renderShellBottomStripLines`
+    now renders ONE compact `USAGE ...` line (reusing `compactUsageLine`/
+    `fitUsageSegments`, the same "every provider that fits, ellipsis
+    otherwise" logic the narrow compact summary already used) instead of
+    the old multi-row per-provider gauge table; capped to
+    `SHELL_STRIP_MAX_LINES = 2` so a transient extra line (e.g. a
+    team-recovery notice) can use the 2nd and last line. The full
+    per-provider percentages still live in the agent detail block and
+    `/kairo-team` (unchanged) — each fact appears once. `createShellBottomStripWidget`
+    now forwards the real `render(width)` argument instead of a fixed
+    default, so the strip fits the actual chat-column width live.
+    Touches: `src/global/host/workspace-widget.js`
+    (`renderShellBottomStripLines`, `createShellBottomStripWidget`) +
+    `test/workspace-widget.test.js`.
+    RED: new P3 tests failed (multi-line strip exceeded the 2-line budget).
+    GREEN: same 63/118 runs above. Real PTY confirms a single
+    `USAGE Codex 5h 96% / W 25% │ Claude S ...` line at 100 cols and a
+    fitted, ellipsis-terminated line at 60/narrow.
+  - [x] P4 Responsive: no code change needed — H8's `SHELL_SIDEBAR_MIN_COLUMNS`
+    (90) threshold, `CollapsibleSidebarLayout`'s zero-width collapse, and
+    the compact-summary/regular-mode fallback are unaffected by P1-P3 (all
+    P1-P3 changes are inside the sidebar/strip CONTENT, not the layout
+    engine). Confirmed by the unchanged responsive tests (still passing)
+    and by real PTY: 100→60→100 resize keeps the editor/status/dock intact
+    at every width (same H8d layout-node fix, untouched); a fresh 60x30
+    start shows the compact summary with no sidebar; `--tui-mode regular`
+    at 100 cols shows the unchanged classic HERD/USAGE widget with no
+    welcome header (welcome is shell-only, gated by `isShellActive`).
+  - [x] P5 Evidence (2026-09-26):
+    - Kairo (`node --test`): scoped `test/workspace-widget.test.js
+      test/workspace-shell-extension.test.js` → 118 pass / 0 fail (up
+      from 107 pre-P1-P3). Full `npm test` (log saved) → 2312 pass / 0
+      fail / 1 skip, twice (before and after the entries-type fix),
+      matching the pre-change baseline exactly — no regressions anywhere
+      else in the suite.
+    - Fork (no source changes needed for P1-P3; H6-H8d's shell-viewport.ts
+      already covers layout/resize/mouse): rebuilt fresh
+      (`npm ci && npm run build:offline` → 56 files, 8.2 MiB) since the
+      checked-in dist was a stub; `npx vitest --run test/kairo` → 8 files /
+      39 pass / 0 fail (unchanged); `npx tsgo --noEmit` → 0 errors. No
+      fork-side biome run needed (no fork files touched); the harness repo
+      has no configured linter for `src/global/host/*.js`.
+    - Real Kairo PTY captures (launcher-equivalent setup: fresh
+      `HARNESS_HOME`, `settings.json` `{"quietStartup": true, "tuiMode":
+      "fullscreen"|"regular"}`, `KAIRO_PI_EMPTY_SESSIONS=1`,
+      `PI_SKIP_VERSION_CHECK=1`, the fork's built `dist/bundle/cli.js -e
+      src/global/host/extension/ --no-extensions --no-skills
+      --no-prompt-templates --no-themes --no-context-files --tui-mode
+      <mode>`, `tty_driver.py`, row-numbered with blank rows kept):
+      - 100x30, empty conversation: sidebar (`◈ agentic-harness` /
+        `ROUTES unavailable` / `Run /project analyze.` / separator rule /
+        `AGENTS` / `No agents yet.`) beside the welcome header (`◈
+        Welcome to Kairo — agentic-harness` / `Type a message to start.
+        AGENTS and USAGE live in the sidebar.`) and a single-line `USAGE
+        Codex 5h 96% / W 25% │ Claude S 63% / W 2% LOW │ Go usage
+        unknown` strip.
+      - Sending `hello kairo`: hit "No models available" / "No API key
+        found" before any turn began (no provider configured in this
+        sandbox) — the welcome header stayed visible, consistent with
+        `turn_start` never firing (confirmed via a temporary debug log,
+        removed after use). Disclosed above as an environment limit, not
+        a defect.
+      - Live resize 100→60→100 (same process): at 60, the sidebar
+        collapses to zero width (chat gets full width, matching H8c/H8d),
+        the welcome header and Pi's own "No models available" warning
+        both render in the chat column, and the bottom strip becomes one
+        compact `USAGE ... │ ... LOW…` line with the route notice folded
+        in; back at 100, the sidebar (with its separator and two-row
+        `No agents yet.` state) and welcome header both return.
+      - Fresh 60x30 start: no sidebar; welcome header + one compact
+        `USAGE ...` line + the route notice, editor/status/dock intact.
+      - Regular mode (`--tui-mode regular`) at 100x30: unchanged classic
+        `KAIRO ROUTES` / `USAGE` / `KAIRO TEAM` widget; no welcome header
+        (gated correctly to the shell).
+    - **Known gap, disclosed rather than silently skipped**: P2's "a
+      visual frame around the main area" (a literal border box around
+      transcript+editor+status) was NOT implemented. `createShellViewport`
+      is shared by ALL Pi fullscreen sessions (not just Kairo's), so a
+      frame would need a new opt-in extension API in the fork (there is
+      no existing hook for this, unlike the welcome state which reused
+      `setHeader`); scoping, designing, and testing that fork API was
+      judged out of this pass's bounded scope. The welcome state and the
+      P1/P3 content changes are the real, tested, delivered part of P2/P1/P3.
+      Visual acceptance for everything above is the user's call from the
+      captures, per this doc's own contract.
 

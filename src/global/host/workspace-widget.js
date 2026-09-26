@@ -438,36 +438,50 @@ function shortBlockedCause(stateReason) {
   return String(stateReason ?? "").replace(/^Unavailable\s+[—–-]\s*/, "").trim();
 }
 
-/** One sidebar agent row — blocked rows with a captured cause name it
- * (e.g. "Cursor Models quota exhausted") instead of a generic word;
- * blocked rows with no captured cause say Unavailable without inventing
- * one (short on purpose: the 28-column budget truncates longer tails,
- * and the next step lives in `/kairo-team`, never here); every other row
- * matches the HERD panel. Always within the sidebar's
- * SHELL_SIDEBAR_COLUMNS budget. */
-function shellAgentLine(agent, theme) {
-  if (agent.state === "blocked") {
-    const cause = agent.stateReason ? shortBlockedCause(agent.stateReason) : null;
-    const tail = cause || "Unavailable";
-    return theme.fg("error", truncateToWidth(`✖ ${agent.label ?? "Unknown role"} · ${tail}`, SHELL_SIDEBAR_COLUMNS, "…"));
-  }
-  return herdAgentLine(agent, theme, SHELL_SIDEBAR_COLUMNS);
+/** One sidebar agent's TWO rows (P1 polish, 2026-09-26): a name row (glyph +
+ * label, state-toned) and a dimmed status/model row right below it — never
+ * combined into one line. Blocked rows show their captured cause (e.g.
+ * "Cursor Models quota exhausted") on the status row instead of a generic
+ * word; blocked rows with no captured cause say Unavailable without
+ * inventing one (short on purpose: the 28-column budget truncates longer
+ * tails, and the next step lives in `/kairo-team`, never here). Every other
+ * state shows its provider on the status row. `selected` prepends a
+ * left-rail accent marker to the name row (never a background color: the
+ * fake test theme and Pi's real Theme class both guarantee `fg`, only the
+ * real Theme also has `bg`, so a marker is the one highlight every theme
+ * can render). Both rows always stay within SHELL_SIDEBAR_COLUMNS. */
+function shellAgentLines(agent, theme, { selected = false } = {}) {
+  const tone = HERD_STATE_TONE[agent.state] ?? "muted";
+  const glyph = HERD_STATE_GLYPH[agent.state] ?? HERD_STATE_GLYPH.unknown;
+  const marker = selected ? theme.fg("accent", "▎") : " ";
+  const nameBudget = SHELL_SIDEBAR_COLUMNS - 1;
+  const name = truncateToWidth(`${glyph} ${agent.label ?? "Unknown role"}`, nameBudget, "…");
+  const nameLine = `${marker}${theme.fg(tone, name)}`;
+  const statusText = agent.state === "blocked"
+    ? (agent.stateReason ? shortBlockedCause(agent.stateReason) : "Unavailable")
+    : (agent.provider ?? "unknown");
+  const statusBudget = SHELL_SIDEBAR_COLUMNS - 2;
+  const statusLine = `  ${theme.fg("muted", truncateToWidth(statusText, statusBudget, "…"))}`;
+  return [nameLine, statusLine];
 }
 
 /** Row hitboxes for the sidebar's agent list — one `{agentId, y}` per
- * agent row in render order, so a click's y-coordinate resolves to the
- * agent without reparsing text. `routeUnavailable` shifts every row down
- * by its two notice lines; `extraLines` append AFTER the agent rows, so
- * they never shift a hitbox. Recomputed on every render (like the width
- * check), so a resize or refresh can never leave stale boxes behind. */
+ * agent row (its NAME row — see shellAgentLines) in render order, so a
+ * click's y-coordinate resolves to the agent without reparsing text.
+ * `routeUnavailable` shifts every row down by its two notice lines; the P1
+ * separator rule adds one more fixed line before AGENTS; `extraLines`
+ * append AFTER the agent rows, so they never shift a hitbox. Recomputed on
+ * every render (like the width check), so a resize or refresh can never
+ * leave stale boxes behind. */
 export function agentRowHitboxes(snapshot, { routeUnavailable = false, selectedAgentId = null } = {}) {
   const identity = { fg: (_role, text) => text };
-  let y = 1 + (routeUnavailable ? 2 : 0) + 1;
+  // project header(1) + route notice(0/2) + separator rule(1) + AGENTS header(1)
+  let y = 1 + (routeUnavailable ? 2 : 0) + 1 + 1;
   const boxes = [];
   for (const agent of sortedHerdAgents(snapshot.agents ?? [])) {
     const id = agent.id ?? agent.label;
     boxes.push({ agentId: id, y });
-    y += 1;
+    y += 2; // P1: name row + dimmed status/model row
     // An open detail block pushes every row below it down — hitboxes walk
     // the same insertion renderShellSidebarLines does, so a click never
     // lands on the wrong agent while a detail is open. Line count never
@@ -539,39 +553,59 @@ export function renderShellSidebarLines(snapshot, theme, { routeUnavailable = fa
   const agents = sortedHerdAgents(snapshot.agents ?? []);
   const agentLines = [];
   for (const agent of agents) {
-    agentLines.push(shellAgentLine(agent, theme));
     const id = agent.id ?? agent.label;
-    if (selectedAgentId != null && id === selectedAgentId) agentLines.push(...agentDetailLines(agent, theme));
+    const selected = selectedAgentId != null && id === selectedAgentId;
+    agentLines.push(...shellAgentLines(agent, theme, { selected }));
+    if (selected) agentLines.push(...agentDetailLines(agent, theme));
   }
   if (!agents.length) agentLines.push(noTeamHintLine(theme, truncate, routeUnavailable));
+  // P1 polish: a subtle rule separates the project header (and any route
+  // notice) from AGENTS — the sidebar's own visual hierarchy, distinct from
+  // the fork's border-less slot.
+  const separator = theme.fg("borderMuted", "─".repeat(SHELL_SIDEBAR_COLUMNS));
   return [
     theme.bold(truncate(`${HERD_PROJECT_GLYPH} ${projectName}`)),
     ...(routeUnavailable ? routeUnavailableLines(theme, truncate) : []),
+    separator,
     theme.bold(truncate("AGENTS")),
     ...agentLines,
     ...appendExtraLines(theme, truncate, extraLines)
   ];
 }
 
-/** The fullscreen bottom strip's lines — the same USAGE gauges as the
- * overview's USAGE panel. Session identity is never repeated here (the
- * status bar owns it — see the sidebar-header note above); the strip only
- * ever shows real content
- * at SHELL_SIDEBAR_MIN_COLUMNS or more (its own createShellBottomStripWidget
+// The bottom strip's own line budget (P3 polish, 2026-09-26): 1 line when a
+// single compact USAGE line carries everything, 2 at most (the second line
+// only for a transient notice — e.g. a team-recovery outcome). The full
+// per-provider gauge bars the strip used to print (one or two rows PER
+// provider) moved to the agent detail block and `/kairo-team`, so the same
+// fact (a provider's exact remaining percent) still lives somewhere, just
+// never here at full length.
+const SHELL_STRIP_MAX_LINES = 2;
+
+/** The fullscreen bottom strip's lines — ONE compact "USAGE …" line (the
+ * same fit-as-many-segments logic the narrow compact summary already uses,
+ * see compactUsageLine/fitUsageSegments), never the full multi-row gauge
+ * table (P3: "1 line when wide and 2 lines at most" — the full detail lives
+ * in the agent detail block and `/kairo-team`). Session identity is never
+ * repeated here (the status bar owns it — see the sidebar-header note
+ * above); the strip only ever shows real content at
+ * SHELL_SIDEBAR_MIN_COLUMNS or more (its own createShellBottomStripWidget
  * factory decides that live — see below), so USAGE appears exactly once
  * across the whole fullscreen surface — never also folded into the compact
- * summary at the same time.
+ * summary at the same time. A transient extra line (e.g. a team-recovery
+ * notice) may use the strip's second and last line; anything beyond that
+ * budget is dropped rather than growing the strip past 2 lines.
  * @param {object} snapshot
  * @param {{fg(role:string,text:string):string, bold(text:string):string}} theme
- * @param {{extraLines?: string[]}} [options] - see appendExtraLines's doc.
+ * @param {{extraLines?: string[], width?: number}} [options] - see
+ *   appendExtraLines's doc. `width` sizes the USAGE line's fit, like the
+ *   compact summary's own `width` option; the strip has no fixed 28-column
+ *   budget, so a caller with no live width gets a generous default.
  */
-export function renderShellBottomStripLines(snapshot, theme, { extraLines = [] } = {}) {
-  const truncate = (line) => line; // the strip spans the chat column width, not a fixed 28 — no fixed truncation budget here.
-  return [
-    theme.bold("USAGE"),
-    ...usagePanelBody(snapshot.subscriptions, theme),
-    ...appendExtraLines(theme, truncate, extraLines)
-  ];
+export function renderShellBottomStripLines(snapshot, theme, { extraLines = [], width = 120 } = {}) {
+  const usageLine = compactUsageLine(snapshot.subscriptions, theme, width);
+  const extra = appendExtraLines(theme, (line) => line, extraLines);
+  return [usageLine, ...extra].slice(0, SHELL_STRIP_MAX_LINES);
 }
 
 /** One attention line: the blocked agent(s) by name, or (when nothing is
@@ -737,9 +771,9 @@ export function createShellSidebarWidget(snapshot, { getColumns, routeUnavailabl
  */
 export function createShellBottomStripWidget(snapshot, { getColumns, extraLines = [] } = {}) {
   return (_tui, theme) => ({
-    render() {
+    render(width) {
       if (!isWideEnoughForSidebar(getColumns)) return [];
-      return renderShellBottomStripLines(snapshot, theme, { extraLines });
+      return renderShellBottomStripLines(snapshot, theme, { extraLines, width });
     }
   });
 }
@@ -759,6 +793,36 @@ export function createCompactShellSummaryWidget(snapshot, { getColumns, routeUna
     render(width) {
       if (isWideEnoughForSidebar(getColumns)) return [];
       return renderCompactShellSummaryLines(snapshot, theme, { routeUnavailable, extraLines, width });
+    }
+  });
+}
+
+// --- P2 polish (2026-09-26): a Kairo welcome state for the fork's header
+// slot (`ctx.ui.setHeader`) — shown only while the bound conversation has no
+// messages yet (extension/index.js's updateWelcomeHeader checks
+// `ctx.sessionManager.getEntries().length === 0` before installing this, and
+// clears it back to Pi's built-in header on the very first turn). It is
+// NEVER a transcript message: the transcript document never carries this
+// text, so it never scrolls into history and never counts as a real
+// conversation turn.
+
+/** The welcome lines themselves — the project name plus one short hint
+ * pointing at the sidebar/USAGE facts, never a fabricated status. Kept to
+ * 2 lines: a real welcome, not a second overview widget. */
+export function renderShellWelcomeLines(projectLabel, theme) {
+  return [
+    theme.bold(`${HERD_PROJECT_GLYPH} Welcome to Kairo — ${projectLabel ?? "unknown"}`),
+    theme.fg("muted", "Type a message to start. AGENTS and USAGE live in the sidebar.")
+  ];
+}
+
+/** Component factory for the header slot — mirrors the other shell slot
+ * factories' `(tui, theme) => Component` shape (see
+ * createShellSidebarWidget), so it is installed and tested the same way. */
+export function createShellWelcomeWidget(projectLabel) {
+  return (_tui, theme) => ({
+    render() {
+      return renderShellWelcomeLines(projectLabel, theme);
     }
   });
 }
