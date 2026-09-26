@@ -558,7 +558,8 @@ Objective: let the user run the current `.4` shell through a local `kairo` comma
 
 - [x] L1 Built `.4` (`npm run build:offline`) and staged an isolated Kairo runtime at `/private/tmp/kairo-herd-local/stage/package`. Its package version is `0.35.1-herd-local.0`, its Pi dependency and launcher constant are `.4`, and its `bin/kairo` shadows the global binary only when PATH is explicitly prefixed. The global 0.35.1/`.3` installation and tracked source remain untouched. Route: inline, no tracked source change; user explicitly authorized the local trial after the publication gate blocked visual acceptance.
 - [x] L2 Verified `env PATH="/private/tmp/kairo-herd-local/bin:$PATH" kairo --version` -> `0.35.1-herd-local.0`, while bare `kairo --version` -> `0.35.1`. Real PTY at 100 columns showed `◈ agentic-harness`, AGENTS sidebar, center Pi chat, and bottom USAGE; at 60 columns it showed the compact agent/USAGE summary with chat full-width. Isolated `HARNESS_HOME` copied only the project strategy, so usage was correctly unknown; a separately authorized 100-column run against the real home showed measured Codex/Claude/Go usage. Trial sessions were exited cleanly. Fork tests 39/39; host-focused tests 134 pass, 1 skip. First fork-test attempt failed solely because the ambient npm cache is unwritable; rerunning with `npm_config_cache=/private/tmp/kairo-herd-npm-cache` passed. Rollback: exit trial and run bare `kairo`; no global files need restoration.
-- [ ] L3 Present the runnable local command and capture evidence to the user; await their visual verdict. This is a local trial, not a published release or native review approval; S3-2/S4 stay open.
+- [x] L3 Present the runnable local command and capture evidence to the user; await their visual verdict. This is a local trial, not a published release or native review approval; S3-2/S4 stay open.
+  - Verdict 2026-09-26: APROBADO SIN MARCO (user). No fork frame work to scope. S4 (publish/pin .4) stays blocked until explicit remote authorization.
 
 Checks: fork `test/kairo`; focused host tests; package/version resolution; real PTY render; `git status` leaves the three pre-existing untracked files untouched.
 
@@ -715,4 +716,38 @@ Checks: fork `test/kairo`; focused host tests; package/version resolution; real 
       P1/P3 content changes are the real, tested, delivered part of P2/P1/P3.
       Visual acceptance for everything above is the user's call from the
       captures, per this doc's own contract.
+  - [x] P6 Welcome-copy + first-input clear (2026-09-26, commit `bdae3c757`):
+    the P2 welcome header claimed "AGENTS and USAGE live in the sidebar"
+    at every width, but the sidebar only exists at 90+ cols and USAGE has
+    always lived in the bottom strip. `renderShellWelcomeLines` now only
+    adds the "Agents are on the left" hint when `isWideEnoughForSidebar`
+    is true at the live width, and drops it below the threshold.
+    Submitting a message with no model configured kept the header visible
+    above the "No models available" errors because Pi's `turn_start` never
+    fires without a model — the extension now also clears the header on
+    Pi's `"input"` event, which fires as soon as user input is received.
+    Touches: `src/global/host/extension/index.js`,
+    `src/global/host/workspace-widget.js` + both test files.
+    RED 3 fail -> GREEN; full `npm test` 2316/0/1 skip (re-verified
+    2026-09-26 post-Cloude-handoff: 2316 pass / 0 fail / 1 skip);
+    real PTY 100 cols confirms the accurate hint and that the welcome is
+    gone immediately after sending "hola".
+  - [x] L3 Isolated real-agents capture (2026-09-26, post-Claude handoff):
+    `env PATH="/private/tmp/kairo-herd-local/bin:$PATH" kairo ui --cwd
+    /Users/kal-el/Desktop/agentic-harness` (staging
+    `0.35.1-herd-local.1` + Pi `.4`, isolated HARNESS_HOME with the real
+    `project-strategy.json` copied in) at 100x30 stdlib PTY: `◈
+    agentic-harness` header, AGENTS with 7 real rows (Project Analyst /
+    Orchestrator / Explorer / Architect / Builder / Debugger / Reviewer +
+    providers), welcome `Type a message to start. Agents are on the left.`,
+    USAGE strip final + transient checking, `session:` 1 (status bar
+    only), SPACES 0 / KAIRO 0 (no classic widget). Staged version drift
+    noted: stage package reads `0.35.1-herd-local.1` (doc earlier said
+    `.0`) — local-only label, no source impact.
+  - **Known gap (unchanged)**: the visual frame around the chat column was
+    NOT implemented — it needs a new opt-in fork API in
+    `createShellViewport` (shared by all Pi fullscreen sessions). That is
+    new fork work, not polish of existing slots; needs your explicit
+    authorization before scoping. Publishing/pinning `.4` stays blocked
+    until your explicit remote authorization.
 
