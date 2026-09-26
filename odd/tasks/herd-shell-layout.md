@@ -504,6 +504,10 @@ Engram mirror: `odd/herd-shell-layout/tasks` SYNCED via CLI (#4007; MCP save amb
 - [x] S2-1a2 Correccion del usuario (2026-09-26): sin `stateReason`, ni sidebar ni resumen angosto imprimen BLOCKED/blocked — fallback `Access unavailable` sin inventar causa; `/kairo-team` agrega `Next step: run /project analyze to assign an eligible model.` en filas bloqueadas sin causa. Touches: `workspace-widget.js` (`shellAgentLine`, `compactAttentionLine`), `extension/index.js` (`teamDetailLines`) + tests. Route: inline (contexto ya cargado, 2 archivos no-triviales + tests; delegacion sin fondos).
   - Evidence: RED 3 fail -> GREEN 98/98 (2 files); scoped 124/0/1; full `pnpm test` 2284/0/1. Commit: ver abajo.
 - [x] S2-1a3 Segunda correccion (2026-09-26, pedida por vos): `Unavailable` corto (entra en 28 cols sin romperse) en sidebar + resumen simple y multiple (`✖ 2 unavailable: …`); `herdAgentLine` del panel HERD intacto. Evidence: GREEN 98/98; scoped 124/0/1; full 2284/0/1.
+- [x] S2-2 Capturas TTY del commit exacto `be8c0eee3` (2026-09-26, stdlib PTY sin pyte: conteos sobre raw-stream con redibujados):
+  - s2-100/s2-60 (fixture causa conocida + ausente): `◈ agentic-harness`, SPACES 0, session 0, BLOCKED 0; `✖ Researcher · Cursor Model…` (causa larga trunca con …, completa en /kairo-team); `✖ Builder · Unavailable`; compacto `✖ 2 unavailable: Researcher, Builder` + USAGE una vez.
+  - s2-live100 (shell real fullscreen): header `◈ agentic-harness` en vivo, SPACES 0, AGENTS 1, ROUTES unavailable 1, strip USAGE + session en status bar.
+- Review riesgo alto (tu decision 2026-09-26): untracked excluidos (`docs/assets/…png`, `report.json`, `inspect-opencode-tier.sh` — preexistentes, no del commit). Recomendado hacerlo ahora; NO lanzado (autorizacion tuya pendiente, sin adivinar preflight JSON) y workers reviewers sin fondos registrado (2 delegaciones fallidas `Insufficient account funds`).
 - [ ] S2-1b Click abre detalle + equivalencia teclado (`/kairo-team`): verificar routeo mouse del fork hacia slot sidebar; hitbox/resize tests
 - [ ] S2-2 Captura TTY por cambio S2 + aprobado/rechazado
 - [ ] S2-2 Captura TTY por cambio S2 + aprobado/rechazado
