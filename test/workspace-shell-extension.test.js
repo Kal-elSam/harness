@@ -962,7 +962,7 @@ function lastBottomStripLines(bottomStripCalls) {
   return renderWidgetCall(content, 80);
 }
 
-test("fullscreen overview with shell APIs at ≥90 cols sets SPACES/AGENTS sidebar and USAGE strip, clears overview widget", async () => {
+test("fullscreen overview with shell APIs at ≥90 cols sets project/AGENTS sidebar and USAGE strip, clears overview widget", async () => {
   const { pi, commands } = fakePi();
   createKairoWorkspaceExtension(pi, {
     loadSnapshot: async () => snapshot,
@@ -977,7 +977,7 @@ test("fullscreen overview with shell APIs at ≥90 cols sets SPACES/AGENTS sideb
 
   const sidebar = lastSidebarLines(sidebarCalls);
   assert.ok(sidebar, "setSidebar must be called with content");
-  assert.ok(sidebar.some((line) => line.includes("SPACES")));
+  assert.ok(sidebar.some((line) => line.includes("agentic-harness")));
   assert.ok(sidebar.some((line) => line.includes("AGENTS")));
   assert.ok(!sidebar.join("\n").includes("HERD"));
   const reviewerIdx = sidebar.findIndex((line) => line.includes("Reviewer"));
@@ -1253,7 +1253,7 @@ test("default getTuiMode reads the fork's live settings.json and reacts to a mod
   const sidebarCalls1 = [];
   await commands.get("kairo").handler("", fakeShellCtx({ sidebarCalls: sidebarCalls1 }));
   assert.ok(
-    renderWidgetCall(sidebarCalls1.at(-1)[0], 28).some((line) => line.includes("SPACES")),
+    renderWidgetCall(sidebarCalls1.at(-1)[0], 28).some((line) => line.includes("agentic-harness")),
     "fullscreen (from the settings file) shows the real sidebar"
   );
 
@@ -1277,7 +1277,7 @@ test("default getTuiMode reads the fork's live settings.json and reacts to a mod
   const sidebarCalls3 = [];
   await commands.get("kairo").handler("", fakeShellCtx({ sidebarCalls: sidebarCalls3 }));
   assert.ok(
-    renderWidgetCall(sidebarCalls3.at(-1)[0], 28).some((line) => line.includes("SPACES")),
+    renderWidgetCall(sidebarCalls3.at(-1)[0], 28).some((line) => line.includes("agentic-harness")),
     "switching back to fullscreen shows the real sidebar again, still no new extension instance"
   );
 });

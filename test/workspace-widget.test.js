@@ -393,10 +393,10 @@ test("SHELL_SIDEBAR_MIN_COLUMNS is 90", () => {
   assert.equal(SHELL_SIDEBAR_MIN_COLUMNS, 90);
 });
 
-test("renderShellSidebarLines uses SPACES and AGENTS headers, never HERD, and never repeats the session line the status bar already shows", () => {
+test("renderShellSidebarLines heads with the project name and AGENTS, never SPACES/HERD, never a session line", () => {
   const lines = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME);
   const joined = lines.join("\n");
-  assert.ok(lines.some((line) => line.includes("SPACES")));
+  assert.ok(!joined.includes("SPACES"), "multiproject SPACES nav is gone");
   assert.ok(lines.some((line) => line.includes("AGENTS")));
   assert.ok(!joined.includes("HERD"), "shell sidebar must never reuse the HERD overview title");
   assert.ok(joined.includes("agentic-harness"));
@@ -473,7 +473,7 @@ test("renderCompactShellSummaryLines folds an unavailable route notice in, witho
 
 test("renderShellSidebarLines truncates every line to the real 28-column budget, not a bordered-panel 24", () => {
   const lines = renderShellSidebarLines(fixtureSnapshot({
-    spaces: [{ kind: "project", label: "a-genuinely-very-long-project-name-that-overflows", root: "/x" }]
+    project: { label: "a-genuinely-very-long-project-name-that-overflows" }
   }), IDENTITY_THEME, { routeUnavailable: true });
   for (const line of lines) {
     assert.ok(visibleWidth(line) <= 28, `sidebar line exceeds the real 28-column budget: "${line}" (${visibleWidth(line)})`);
@@ -536,7 +536,7 @@ test("createShellSidebarWidget/createShellBottomStripWidget/createCompactShellSu
   // 100 cols: sidebar/strip show real content, compact summary stays empty
   // (the sidebar/strip already cover it) — all from the SAME component
   // instances, no factory re-invocation.
-  assert.ok(sidebarComponent.render(28).some((line) => line.includes("SPACES")), "sidebar shows content at 100 cols");
+  assert.ok(sidebarComponent.render(28).some((line) => line.includes("agentic-harness")), "sidebar shows content at 100 cols");
   assert.ok(stripComponent.render(80).some((line) => line.includes("USAGE")), "strip shows content at 100 cols");
   assert.deepEqual(compactComponent.render(100), [], "compact summary stays empty while the sidebar/strip are shown");
 
@@ -549,7 +549,49 @@ test("createShellSidebarWidget/createShellBottomStripWidget/createCompactShellSu
 
   // And back again, still the same instances.
   columns = 100;
-  assert.ok(sidebarComponent.render(28).some((line) => line.includes("SPACES")), "sidebar shows content again once columns return to 100");
+  assert.ok(sidebarComponent.render(28).some((line) => line.includes("agentic-harness")), "sidebar shows content again once columns return to 100");
   assert.ok(stripComponent.render(80).some((line) => line.includes("USAGE")), "strip shows content again once columns return to 100");
   assert.deepEqual(compactComponent.render(100), [], "compact summary empties again once columns return to 100");
+});
+
+// --- S2: project header instead of SPACES, proven blocked cause instead of generic BLOCKED
+test("S2 renderShellSidebarLines heads the sidebar with the current project name, never SPACES, never a session line", () => {
+  const lines = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME);
+  assert.ok(!lines.some((line) => line.includes("SPACES")), "no SPACES header");
+  assert.ok(!lines.some((line) => line.includes("session:")), "no session line in the sidebar");
+  assert.ok(lines.some((line) => line.includes("agentic-harness")), "project name heads the sidebar");
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= 28, `sidebar line exceeds 28: "${line}"`);
+  }
+});
+
+test("S2 sidebar blocked row shows the proven short cause, not generic BLOCKED", () => {
+  const short = renderShellSidebarLines(fixtureSnapshot({
+    agents: [
+      { id: "qa", label: "QA", role: "QA", provider: "cursor", model: "M", state: "blocked", stateReason: "Unavailable — Cursor limit hit" }
+    ]
+  }), IDENTITY_THEME);
+  const shortJoined = short.join("\n");
+  assert.ok(shortJoined.includes("Cursor limit hit"), "proven cause on the blocked row");
+  assert.ok(!shortJoined.includes("BLOCKED"), "no generic BLOCKED word when the cause is known");
+  const long = renderShellSidebarLines(fixtureSnapshot(), IDENTITY_THEME);
+  const longJoined = long.join("\n");
+  assert.ok(!longJoined.includes("BLOCKED"), "a long cause truncates with an ellipsis, never falls back to BLOCKED");
+  assert.ok(longJoined.includes("…"), "overflowing cause ends in an ellipsis");
+});
+
+test("S2 sidebar blocked row without a captured reason keeps the honest provider fallback", () => {
+  const lines = renderShellSidebarLines(fixtureSnapshot({
+    agents: [
+      { id: "b", label: "Builder", role: "Builder", provider: "codex", model: "M", state: "blocked", stateReason: null }
+    ]
+  }), IDENTITY_THEME);
+  const joined = lines.join("\n");
+  assert.ok(joined.includes("BLOCKED"), "honest fallback when no cause was captured");
+});
+
+test("S2 compact summary names the proven cause for one blocked agent", () => {
+  const lines = renderCompactShellSummaryLines(fixtureSnapshot(), IDENTITY_THEME, { width: 60 });
+  const joined = lines.join("\n");
+  assert.ok(joined.includes("Cursor Models quota exhausted"), "compact summary carries the proven cause");
 });

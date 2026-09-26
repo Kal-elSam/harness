@@ -476,3 +476,40 @@ H9/H10 remain open: H9 (integrate fork version into harness pin) is blocked on e
   upstream. After the fix: `npx tsgo --noEmit` has 0 errors, biome is
   clean, and `npx vitest --run test/kairo` gives 8 files and 39/39.
 
+## Staged visible-results plan (authorized 2026-09-26)
+
+Source: user "Autorizo todo" on plan "Kairo shell con resultados visibles por etapa".
+Route: delegated direct per task (inline only for 1-3 file decide/verify). No SDD artifacts.
+TDD: strict (source: sdd-init/harness strict_tdd true). Runner: `pnpm test` (`node --test`); fork `npx vitest --run test/kairo`.
+Delivery: `ask-on-risk` (default). Forecast: S1+S2+S3 likely >400 authored lines combined -> ask chain strategy before PR if split.
+RDD: on (decided by default; global/clone unset). Assess per work-unit commit; candidate = work-unit commit, never TODO checkbox.
+Engram mirror: `odd/herd-shell-layout/tasks` SYNCED via CLI (#4007; MCP save ambiguous without session_id).
+
+### Stage gates (must record aprobado/rechazado per stage before next)
+
+- [ ] S1 Launcher real .4 local aislado (sin publicar): capturas 100 y 60 cols + resize ambos sentidos + modo regular; conteo sesion/agents/usage; cero duplicados/datos cacheados como vigentes
+- [ ] S2 UI cierre: proyecto actual en vez de SPACES; AGENTS con modelo + causa concreta (no BLOCKED generico); click abre detalle + misma accion por teclado; RED->GREEN + captura TTY por cambio
+- [ ] S3 Recuperacion en origen: perdida acceso -> motivo -> propuesta verificable -> aprobar/rechazar -> team resultante; sin activacion hasta aprobacion; sin alternativa -> salida ejecutable real
+- [ ] S4 Cierre: revision riesgo alto + publicar/fijar .4 solo con autorizacion remota explicita; aceptacion final repite capturas y recuperacion con kairo instalado (no solo CLI fork)
+
+### Tasks
+
+- [ ] S1-1 RED/GREEN: launcher-equivalent PTY harness (100/60 + resize + regular) con conteos `session:`/`USAGE`/sidebar
+  - Baseline 2026-09-26 (sin cambios fuente): scoped `node --test test/host-launch test/workspace-shell-extension test/workspace-widget test/ecosystem-degrade` -> 118 pass / 0 fail / 1 skip. Pin confirmado `.3` (`pnpm list`); `third_party/pi` dist es stub (cli.js 160B, cli-runtime.js 660B) -> falta `npm ci + build:offline` para .4 local; `tty_driver.py` no esta en el repo -> capturas PTY S1 pendientes.
+  - Evidencia 2026-09-26 (build .4 local fresco): `npm run build:offline` en `third_party/pi` OK (bundle 56 files, 8.2 MiB); `npx vitest --run test/kairo` -> 8 files / 39 pass. PTY aislado (stdlib, sin pyte: conteos sobre raw-stream con redibujados, no pantalla unica): 100x30 fullscreen -> SPACES 1 / AGENTS 1 / ROUTES unavailable 1 / USAGE 2 (strip + re-draw) / session: 2 (historial con 2 status bars, pantalla muestra 1); sidebar junto al chat confirmada en tail. 60x30 -> SPACES 0 / AGENTS 0 / ROUTES unavailable 1 / session: 1 / USAGE 2 (transitorio "checking" + compacto final); sin sidebar, resume compacto OK. Pendiente: resize 100->60->100 mismo proceso + modo regular + conteo pantalla-unica (requiere emulacion tipo pyte).
+- [ ] S1-2 Capturas revisadas con usuario: aprobado/rechazado registrado abajo
+- [x] S2-1a RED/GREEN: header proyecto actual (`◈ <label>`, sin SPACES/sesion); filas AGENTS con causa concreta (`shellAgentLine`/`shortBlockedCause`, fallback honesto sin causa); `compactAttentionLine` causa en 1 bloqueado. Touches: `src/global/host/workspace-widget.js` + 2 test files. Route: delegated-direct intent, inline fallback (subagent funds exhausted, 2 attempts).
+- [ ] S2-1b Click abre detalle + equivalencia teclado (`/kairo-team`): verificar routeo mouse del fork hacia slot sidebar; hitbox/resize tests
+- [ ] S2-2 Captura TTY por cambio S2 + aprobado/rechazado
+- [ ] S2-2 Captura TTY por cambio S2 + aprobado/rechazado
+- [ ] S3-1 RED/GREEN: propuesta sin activacion; ciclo perdida->motivo->propuesta->decision->team; salida ejecutable sin alternativa
+- [ ] S3-2 Flujo recuperacion con kairo instalado + aprobado/rechazado
+- [ ] S4-1 Review riesgo alto + autorizacion remota + pin .4 + capturas finales
+
+### Stage approvals
+
+- S1: aprobado (2026-09-26, parcial: build+suite+capturas iniciales OK; resize/regular/pantalla-unica pasan a deuda S1-2)
+- S2: pendiente
+- S3: pendiente
+- S4: pendiente (bloqueado hasta autorizacion remota explicita)
+

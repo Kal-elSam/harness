@@ -392,12 +392,9 @@ const SHELL_SIDEBAR_COLUMNS = 28;
 
 // The Pi status bar (see extension/index.js's workspaceStatus, painted via
 // ctx.ui.setStatus) already shows the bound session's identity in
-// fullscreen. Every shell slot below therefore drops the "session: ..."
-// line herdSpacesLines/formatSessionIdentity would otherwise add — one
-// fact, one place, never the sidebar AND the strip AND the status bar.
-function isSessionIdentityLine(line) {
-  return line.startsWith("session:");
-}
+// fullscreen. The sidebar header therefore names only the project —
+// session identity appears in exactly one place, never in the sidebar
+// AND the strip AND the status bar.
 
 /** The two short lines that replace the old "unavailable-routes" detail
  * widget once the shell owns the layout — that widget must never render
@@ -432,13 +429,37 @@ function appendExtraLines(theme, truncate, extraLines) {
   return extraLines.map((line) => theme.fg("muted", truncate(line)));
 }
 
-/** The fullscreen sidebar's lines — SPACES then AGENTS (blocked-first,
- * fail-closed unknown), reusing the exact same glyph/order rules as the
- * HERD panel (see herdAgentLine/sortedHerdAgents above), just under
- * different headers and without a bordered card. EVERY line (headers,
- * route notice, spaces, agents) is truncated to the sidebar's real
- * SHELL_SIDEBAR_COLUMNS (28) budget with an ellipsis — never a silent cut,
- * and never the bordered-panel `cardInnerWidth` deduction (24), which
+/** Shorten a proven blocked cause for a 28-column row — strip the
+ * shared "Unavailable — " prefix every resolveAssignmentAvailability
+ * warning carries, since the ✖ glyph already says unavailable. The full
+ * warning stays one level down in `/kairo-team` (see extension/index.js's
+ * teamDetailLines), never truncated. */
+function shortBlockedCause(stateReason) {
+  return String(stateReason ?? "").replace(/^Unavailable\s+[—–-]\s*/, "").trim();
+}
+
+/** One sidebar agent row — blocked rows with a captured cause name it
+ * (e.g. "Cursor Models quota exhausted") instead of the generic BLOCKED
+ * word; blocked rows with no captured cause keep the honest
+ * `provider · BLOCKED` fallback; every other row matches the HERD panel.
+ * Always within the sidebar's SHELL_SIDEBAR_COLUMNS budget. */
+function shellAgentLine(agent, theme) {
+  if (agent.state === "blocked" && agent.stateReason) {
+    const cause = shortBlockedCause(agent.stateReason) || `${agent.provider ?? "unknown"} · BLOCKED`;
+    return theme.fg("error", truncateToWidth(`✖ ${agent.label ?? "Unknown role"} · ${cause}`, SHELL_SIDEBAR_COLUMNS, "…"));
+  }
+  return herdAgentLine(agent, theme, SHELL_SIDEBAR_COLUMNS);
+}
+
+/** The fullscreen sidebar's lines — project header, then AGENTS
+ * (blocked-first, fail-closed unknown), reusing the HERD panel's
+ * glyph/order rules (see herdAgentLine/sortedHerdAgents above) with two
+ * S2 differences: the header names the current project (Kairo has no
+ * multiproject SPACES nav — the old SPACES section is gone) and blocked
+ * rows name their proven cause (see shellAgentLine). Session identity is
+ * never repeated here (status bar owns it). EVERY line is truncated to
+ * the sidebar's real SHELL_SIDEBAR_COLUMNS (28) budget with an
+ * ellipsis — never a silent cut, and never the bordered-panel `cardInnerWidth` deduction (24), which
  * doesn't apply here since the sidebar draws no border (native review R2
  * WARNING, 2026-09-25: the doc said 28 but truncation used 24).
  * @param {object} snapshot
@@ -452,16 +473,13 @@ function appendExtraLines(theme, truncate, extraLines) {
  */
 export function renderShellSidebarLines(snapshot, theme, { routeUnavailable = false, extraLines = [] } = {}) {
   const truncate = (line) => truncateToWidth(line, SHELL_SIDEBAR_COLUMNS, "…");
-  const spaceLines = herdSpacesLines(snapshot)
-    .filter((line) => !isSessionIdentityLine(line))
-    .map((line) => theme.fg("text", truncate(line)));
+  const projectName = snapshot.project?.label ?? snapshot.project?.root ?? "unknown";
   const agents = snapshot.agents ?? [];
   const agentLines = agents.length
-    ? sortedHerdAgents(agents).map((agent) => herdAgentLine(agent, theme, SHELL_SIDEBAR_COLUMNS))
+    ? sortedHerdAgents(agents).map((agent) => shellAgentLine(agent, theme))
     : [noTeamHintLine(theme, truncate, routeUnavailable)];
   return [
-    theme.bold(truncate("SPACES")),
-    ...spaceLines,
+    theme.bold(truncate(`${HERD_PROJECT_GLYPH} ${projectName}`)),
     ...(routeUnavailable ? routeUnavailableLines(theme, truncate) : []),
     theme.bold(truncate("AGENTS")),
     ...agentLines,
@@ -470,8 +488,9 @@ export function renderShellSidebarLines(snapshot, theme, { routeUnavailable = fa
 }
 
 /** The fullscreen bottom strip's lines — the same USAGE gauges as the
- * overview's USAGE panel. Session identity is never repeated here (see
- * isSessionIdentityLine's own doc); the strip only ever shows real content
+ * overview's USAGE panel. Session identity is never repeated here (the
+ * status bar owns it — see the sidebar-header note above); the strip only
+ * ever shows real content
  * at SHELL_SIDEBAR_MIN_COLUMNS or more (its own createShellBottomStripWidget
  * factory decides that live — see below), so USAGE appears exactly once
  * across the whole fullscreen surface — never also folded into the compact
@@ -500,7 +519,11 @@ export function renderShellBottomStripLines(snapshot, theme, { extraLines = [] }
 function compactAttentionLine(snapshot, theme, routeUnavailable) {
   const agents = snapshot.agents ?? [];
   const blocked = agents.filter((agent) => agent.state === "blocked");
-  if (blocked.length === 1) return theme.fg("error", `✖ ${blocked[0].label ?? "Unknown role"} blocked`);
+  if (blocked.length === 1) {
+    const [only] = blocked;
+    const cause = only.stateReason ? shortBlockedCause(only.stateReason) : null;
+    return theme.fg("error", `✖ ${only.label ?? "Unknown role"} · ${cause || "blocked"}`);
+  }
   if (blocked.length > 1) {
     return theme.fg("error", `✖ ${blocked.length} blocked: ${blocked.map((agent) => agent.label ?? "Unknown role").join(", ")}`);
   }
@@ -557,7 +580,7 @@ const DEFAULT_COMPACT_WIDTH = SHELL_SIDEBAR_MIN_COLUMNS - 1;
  * it, see compactAttentionLine's own doc), one usage line, any transient
  * extraLines, and (when routing has no automatic team) the same short
  * route notice the sidebar folds in at wider columns. Never the shared
- * session-identity line (see isSessionIdentityLine's own doc) and never
+ * session-identity line (status bar owns it) and never
  * the old "unavailable-routes" widget's full text (its own KAIRO ROUTES/
  * KAIRO TEAM headings) — only its two essential facts.
  * @param {object} snapshot
