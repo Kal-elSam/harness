@@ -806,23 +806,42 @@ export function createCompactShellSummaryWidget(snapshot, { getColumns, routeUna
 // text, so it never scrolls into history and never counts as a real
 // conversation turn.
 
-/** The welcome lines themselves — the project name plus one short hint
- * pointing at the sidebar/USAGE facts, never a fabricated status. Kept to
- * 2 lines: a real welcome, not a second overview widget. */
-export function renderShellWelcomeLines(projectLabel, theme) {
+/** The welcome lines themselves — the project name plus one short hint,
+ * never a fabricated status. Below SHELL_SIDEBAR_MIN_COLUMNS there is no
+ * sidebar at all (H8/isWideEnoughForSidebar) and USAGE never lives in the
+ * sidebar at any width (it is in the bottom strip, or folded into the
+ * compact summary below the threshold) — a real PTY run (2026-09-26) found
+ * the old fixed copy ("AGENTS and USAGE live in the sidebar") false at both
+ * widths, so the sidebar hint is now only added when the sidebar is
+ * actually visible at the current live width. Kept to 2 lines: a real
+ * welcome, not a second overview widget.
+ * @param {string} projectLabel
+ * @param {{fg(role:string,text:string):string, bold(text:string):string}} theme
+ * @param {{getColumns?: () => number}} [options]
+ */
+export function renderShellWelcomeLines(projectLabel, theme, { getColumns } = {}) {
+  const hint = isWideEnoughForSidebar(getColumns)
+    ? "Type a message to start. Agents are on the left."
+    : "Type a message to start.";
   return [
     theme.bold(`${HERD_PROJECT_GLYPH} Welcome to Kairo — ${projectLabel ?? "unknown"}`),
-    theme.fg("muted", "Type a message to start. AGENTS and USAGE live in the sidebar.")
+    theme.fg("muted", hint)
   ];
 }
 
 /** Component factory for the header slot — mirrors the other shell slot
  * factories' `(tui, theme) => Component` shape (see
- * createShellSidebarWidget), so it is installed and tested the same way. */
-export function createShellWelcomeWidget(projectLabel) {
+ * createShellSidebarWidget), so it is installed and tested the same way.
+ * `getColumns` is read live inside `render()` (see isWideEnoughForSidebar's
+ * own doc) so the sidebar hint reflects a live resize, not a value
+ * captured once when the header was installed.
+ * @param {string} projectLabel
+ * @param {{getColumns?: () => number}} [options]
+ */
+export function createShellWelcomeWidget(projectLabel, { getColumns } = {}) {
   return (_tui, theme) => ({
     render() {
-      return renderShellWelcomeLines(projectLabel, theme);
+      return renderShellWelcomeLines(projectLabel, theme, { getColumns });
     }
   });
 }

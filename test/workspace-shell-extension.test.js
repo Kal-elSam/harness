@@ -1619,3 +1619,45 @@ test("P2 the first turn_start clears the Kairo welcome header back to Pi's own d
   await events.get("turn_start")({ type: "turn_start", turnIndex: 1, timestamp: Date.now() }, ctx);
   assert.equal(headerCalls.length, 0, "a later turn never re-touches the header");
 });
+
+// --- A2 (found in a real PTY, 2026-09-26): with no model configured, Pi
+// prints "No models available"/"No API key" errors into the transcript but
+// never fires turn_start, so the welcome header stayed visible above those
+// errors. The fork's "input" event fires as soon as the user submits text,
+// before any agent/turn processing, even when there is no model at all —
+// use it to clear the welcome header immediately on submit.
+test("A2 submitting input clears the Kairo welcome header even when turn_start never fires (no model configured)", async () => {
+  const { pi, events } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    loadRouteModels: async () => [],
+    getColumns: () => 100,
+    getTuiMode: () => "fullscreen"
+  });
+  const { ctx, headerCalls } = fakeShellCtxWithHeader({ entries: [] });
+  await events.get("session_start")({ reason: "startup" }, ctx);
+  assert.ok(headerCalls.length > 0, "welcome header installed while empty");
+
+  assert.equal(typeof events.get("input"), "function", "extension must listen for input to clear the welcome without waiting on turn_start");
+  await events.get("input")({ type: "input", text: "hola", source: "interactive" }, ctx);
+  assert.equal(headerCalls.at(-1)[0], undefined, "submitting input clears the welcome header back to Pi's built-in default");
+});
+
+test("A2 submitting input outside the fullscreen shell never touches the header", async () => {
+  const { pi, events } = fakePi();
+  createKairoWorkspaceExtension(pi, {
+    loadSnapshot: async () => snapshot,
+    loadRouteModels: async () => [],
+    getColumns: () => 100,
+    getTuiMode: () => "regular"
+  });
+  const headerCalls = [];
+  const ctx = {
+    cwd: "/repo",
+    sessionManager: { getEntries: () => [] },
+    ui: { setStatus: () => {}, setWidget: () => {}, setHeader: (...args) => headerCalls.push(args), notify: () => {} }
+  };
+  await events.get("session_start")({ reason: "startup" }, ctx);
+  await events.get("input")?.({ type: "input", text: "hola", source: "interactive" }, ctx);
+  assert.equal(headerCalls.length, 0, "regular mode never installs or clears the Kairo welcome header");
+});

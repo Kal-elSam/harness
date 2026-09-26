@@ -375,7 +375,7 @@ function recoveryNotice(result) {
  * `turn_start` handler below at the first turn — it is never a transcript
  * message, so it never needs clearing from session history itself.
  */
-function updateWelcomeHeader(ctxBag, snapshot, getTuiMode) {
+function updateWelcomeHeader(ctxBag, snapshot, getTuiMode, getColumns) {
   if (!isShellActive(ctxBag, getTuiMode)) return;
   const entries = ctxBag?.sessionManager?.getEntries?.() ?? [];
   // A brand-new session already carries non-message bookkeeping entries
@@ -386,7 +386,7 @@ function updateWelcomeHeader(ctxBag, snapshot, getTuiMode) {
   const hasMessages = entries.some((entry) => entry?.type === "message");
   if (hasMessages) return;
   const projectLabel = snapshot.project?.label ?? snapshot.project?.root ?? "unknown";
-  ctxBag?.ui?.setHeader?.(createShellWelcomeWidget(projectLabel));
+  ctxBag?.ui?.setHeader?.(createShellWelcomeWidget(projectLabel, { getColumns }));
 }
 
 /**
@@ -716,7 +716,7 @@ export function createKairoWorkspaceExtension(pi, {
     if (routeState === "unavailable" && isCurrent()) {
       setWorkspaceWidget(ctxBag, snapshot, "unavailable-routes", [], { getColumns, getTuiMode, selection: shellSelection });
     }
-    if (isCurrent()) updateWelcomeHeader(ctxBag, snapshot, getTuiMode);
+    if (isCurrent()) updateWelcomeHeader(ctxBag, snapshot, getTuiMode, getColumns);
 
     // Phase 2 (P01.2 split): usage (the three usage readers, ~5s combined)
     // and team availability (the full conversation-service snapshot probe,
@@ -794,6 +794,20 @@ export function createKairoWorkspaceExtension(pi, {
   // and never fires again on a later turn.
   pi.on("turn_start", (event, ctx) => {
     if (event?.turnIndex === 0 && isShellActive(ctx, getTuiMode)) {
+      ctx?.ui?.setHeader?.(undefined);
+    }
+  });
+
+  // A2 polish (2026-09-26): a real PTY run found that with no model
+  // configured, submitting text prints "No models available"/"No API key"
+  // errors straight into the transcript, but `turn_start` never fires (Pi
+  // never starts a turn when it has no model), so the welcome header above
+  // stayed visible over those errors. The fork's "input" event fires as
+  // soon as user input is received, before any agent/turn processing, even
+  // in that no-model case — clear the welcome header there too, so it never
+  // outlives the first thing the user actually typed.
+  pi.on("input", (_event, ctx) => {
+    if (isShellActive(ctx, getTuiMode)) {
       ctx?.ui?.setHeader?.(undefined);
     }
   });

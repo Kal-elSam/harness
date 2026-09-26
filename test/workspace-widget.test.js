@@ -732,3 +732,25 @@ test("P2 createShellWelcomeWidget renders the welcome lines through the same fac
   const lines = component.render(60);
   assert.ok(lines.join("\n").includes("agentic-harness"));
 });
+
+// --- Welcome copy accuracy (found in a real PTY, 2026-09-26): the sidebar
+// is only visible at SHELL_SIDEBAR_MIN_COLUMNS or more, and USAGE lives in
+// the bottom strip, never the sidebar — the old copy ("AGENTS and USAGE
+// live in the sidebar") was false at both widths.
+test("A1 renderShellWelcomeLines only claims the sidebar when it is actually visible at the current width", () => {
+  const wide = renderShellWelcomeLines("agentic-harness", IDENTITY_THEME, { getColumns: () => 100 }).join("\n");
+  assert.ok(/left|sidebar/i.test(wide), "wide welcome should hint agents are on the left/sidebar");
+  assert.ok(!/usage.*sidebar|sidebar.*usage/i.test(wide), "USAGE never lives in the sidebar, at any width");
+
+  const narrow = renderShellWelcomeLines("agentic-harness", IDENTITY_THEME, { getColumns: () => 60 }).join("\n");
+  assert.ok(!/sidebar/i.test(narrow), "narrow welcome must not claim a sidebar that isn't shown below the threshold");
+  assert.ok(/type a message to start/i.test(narrow), "narrow welcome keeps the short core instruction");
+});
+
+test("A1 createShellWelcomeWidget forwards getColumns so the hint reflects the live width", () => {
+  let columns = 60;
+  const component = createShellWelcomeWidget("agentic-harness", { getColumns: () => columns })(undefined, IDENTITY_THEME);
+  assert.ok(!/sidebar/i.test(component.render(60).join("\n")), "narrow render must not mention the sidebar");
+  columns = 100;
+  assert.ok(/left|sidebar/i.test(component.render(100).join("\n")), "wide render should mention the sidebar hint");
+});
