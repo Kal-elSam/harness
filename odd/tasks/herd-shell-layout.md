@@ -552,3 +552,12 @@ Orden confirmado (2026-09-26): kairo carga Pi .3 (slots ausentes -> fallback HER
 - S3: pendiente
 - S4: pendiente (bloqueado hasta autorizacion remota explicita)
 
+## Local installed-command trial (authorized 2026-09-26)
+
+Objective: let the user run the current `.4` shell through a local `kairo` command now, without npm publish, global package replacement, or weakening the pending review gate.
+
+- [x] L1 Built `.4` (`npm run build:offline`) and staged an isolated Kairo runtime at `/private/tmp/kairo-herd-local/stage/package`. Its package version is `0.35.1-herd-local.0`, its Pi dependency and launcher constant are `.4`, and its `bin/kairo` shadows the global binary only when PATH is explicitly prefixed. The global 0.35.1/`.3` installation and tracked source remain untouched. Route: inline, no tracked source change; user explicitly authorized the local trial after the publication gate blocked visual acceptance.
+- [x] L2 Verified `env PATH="/private/tmp/kairo-herd-local/bin:$PATH" kairo --version` -> `0.35.1-herd-local.0`, while bare `kairo --version` -> `0.35.1`. Real PTY at 100 columns showed `◈ agentic-harness`, AGENTS sidebar, center Pi chat, and bottom USAGE; at 60 columns it showed the compact agent/USAGE summary with chat full-width. Isolated `HARNESS_HOME` copied only the project strategy, so usage was correctly unknown; a separately authorized 100-column run against the real home showed measured Codex/Claude/Go usage. Trial sessions were exited cleanly. Fork tests 39/39; host-focused tests 134 pass, 1 skip. First fork-test attempt failed solely because the ambient npm cache is unwritable; rerunning with `npm_config_cache=/private/tmp/kairo-herd-npm-cache` passed. Rollback: exit trial and run bare `kairo`; no global files need restoration.
+- [ ] L3 Present the runnable local command and capture evidence to the user; await their visual verdict. This is a local trial, not a published release or native review approval; S3-2/S4 stay open.
+
+Checks: fork `test/kairo`; focused host tests; package/version resolution; real PTY render; `git status` leaves the three pre-existing untracked files untouched.
