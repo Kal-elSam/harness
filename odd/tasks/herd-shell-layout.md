@@ -91,6 +91,10 @@ User plan "Kairo shell con sidebar real" (2026-09-25) authorizes H6–H10 on bra
   4. (R2 WARNING) Readability: sidebar truncation budget (24, via `cardInnerWidth`) doesn't match its documented 28 columns, and headers/route lines aren't truncated at all; `getTuiMode`'s missing-value default (fullscreen) is the inverse of the fork's own rule (regular); `setWorkspaceWidget`'s doc is stale.
   5. (R3 suggestion) Launcher tests must assert both `--tui-mode <mode>` in argv and `KAIRO_TUI_MODE` in the child env, for fullscreen and for regular.
   6. (parent PTY review) "Run /project analyze" is duplicated (ROUTES line + AGENTS empty-state) in the sidebar and compact summary — show it once. The narrow (60-col) compact USAGE line shows only the first provider even though more fits — include every provider that fits the width, ellipsis otherwise.
+- [x] H8c-1 Regression found by a real PTY run of the `.4` local fork build at 60×30: the sidebar column still reserved 28 of the fork's `HStack` columns even though the extension deliberately rendered an empty sidebar below its own 90-column threshold, leaving the chat only 32 columns and truncating the status bar enough to hide the session id (100×30 was already correct). Fixed:
+  1. Fork (`shell-viewport.ts`): `CollapsibleSidebarLayout` replaces the generic `HStack` sidebar/main split — it reserves the sidebar's fixed basis only when the sidebar actually renders at least one line at the current width; an empty sidebar collapses the reserved column to zero and the main column gets the full width. Re-evaluated on every `render()`, so a live resize (not just a fresh extension refresh) reflows immediately.
+  2. Kairo (`extension/index.js`): the bottom-strip side of the same class of bug was already closed by H8b (the strip clears below 90 cols); confirmed still correct after the fork change (no fork-side "empty bottom strip still reserves height" bug exists — `VStack`'s own `basis: "auto"` sizing already collapses an empty strip to zero rows, verified by a dedicated fork unit test).
+  3. Kairo (`extension/index.js`): unrelated perf fix bundled in the same pass — `readLiveKairoTuiMode` did a `readFileSync` + `JSON.parse` on every `getTuiMode()` call, which runs on every render (Pi repaints the fullscreen surface on every streamed token). `createLiveTuiModeReader` caches the parsed mode by the settings file's `mtimeMs` (via `statSync`), only re-reading the body when the mtime actually changes; a missing/unreadable file is never cached.
 - [ ] H9-1 Integrate fork version into harness pin (after authorized publish — **blocked until remote auth**)
 - [ ] H10-1 Suites both repos + interactive TTY captures @100/@60; record RDD; reopen checklist above only when TTY passes
 
@@ -239,6 +243,53 @@ User plan "Kairo shell con sidebar real" (2026-09-25) authorizes H6–H10 on bra
   - **After editing `settings.json` to `"regular"` + `/reload`**: sidebar is GONE; the chat column now shows the classic `KAIRO ROUTES · unavailable / KAIRO TEAM · not_analyzed / ... / session: unbound` widget — the exact regular-mode fallback — with NO new extension instance, proving the live read.
   - **After editing back to `"fullscreen"` + `/reload`**: sidebar (SPACES/AGENTS/ROUTES unavailable/No agents yet.) is back beside the chat column (which now also shows an unrelated "No models available" Pi startup notice, expected in this no-provider test environment and unrelated to the shell fix).
 
+- H8c (2026-09-25): a real PTY run of the `.4` local fork build at 60×30 found the sidebar column still reserved 28 columns even though the extension rendered it empty below 90 columns — the fork's `HStack` always reserves an entry's fixed `basis` regardless of what that entry actually renders. Fixed in `45a75aaac` (fork): `CollapsibleSidebarLayout` replaces the `HStack` sidebar/main split in `shell-viewport.ts` — it collapses the reserved sidebar column to zero whenever the sidebar renders no lines at the current width, re-evaluated on every `render()` call. A separate perf-only fix landed in `c6ba46507` (Kairo): `createLiveTuiModeReader` caches `getTuiMode()`'s parsed result by the settings file's `mtimeMs`, since the uncached `readLiveKairoTuiMode` was doing a `readFileSync` + `JSON.parse` on every render.
+  - RED (fork, `shell-viewport.test.ts`, source reverted to pre-fix while keeping the new tests): 5 failed / 5 passed — `CollapsibleSidebarLayout is not a constructor` / `instanceof` failures. GREEN after restoring the fix: fork `npx vitest --run test/kairo` (after `npm ci` + `npm run build:offline`) → 7 files / 36 tests passed / 0 failed (includes `packaging-files.test.ts`).
+  - RED (Kairo, `workspace-shell-extension.test.js`'s new `createLiveTuiModeReader` spy tests, source reverted to the pre-H8c `HEAD` version): import failure (`createLiveTuiModeReader` does not exist yet) — 0 pass / 1 fail. GREEN after restoring the fix: `node --test test/workspace-shell-extension.test.js` → 46 pass / 0 fail (2 new tests use injected `statImpl`/`readFileImpl` spies to prove an unchanged mtime never re-reads/re-parses, a changed mtime re-reads exactly once, and a missing settings file is never falsely cached).
+  - Scoped 4-file suite: `node --test test/host-launch.test.js test/workspace-shell-extension.test.js test/workspace-widget.test.js test/ecosystem-degrade.test.js` → 118 pass / 0 fail / 1 skip. Full `npm test` (log saved) → 2278 pass / 0 fail / 1 skip.
+  - Real PTY evidence (LAUNCHER-EQUIVALENT setup — fresh `HARNESS_HOME` per capture, `HARNESS_HOME/.harness/pi-agent/settings.json` = `{"quietStartup": true, "tuiMode": "fullscreen"}`, `PI_CODING_AGENT_DIR`/`KAIRO_PI_EMPTY_SESSIONS=1`/`PI_SKIP_VERSION_CHECK=1`/`KAIRO_TUI_MODE=fullscreen`, `node third_party/pi/packages/coding-agent/dist/bundle/cli.js -e src/global/host/extension/ --no-extensions --no-skills --no-prompt-templates --no-themes --no-context-files --tui-mode fullscreen`, cwd = repo root, `tty_driver.py`):
+
+    **100×30, `.4` local fork build (unchanged from before H8c — sidebar reserves its 28 columns):**
+    ```
+    |SPACES
+    |◈ agentic-harness           USAGE
+    |ROUTES unavailable          Codex  5h   ━━━━━━━━━━ 100%
+    |Run /project analyze.              W    ━━━━────── 35%
+    |AGENTS                      Claude S    ━━━━━━──── 64%
+    |No agents yet.                     W    ━───────── 9%
+    |                            Go     usage unknown
+    |Kairo · agentic-harness · session: unbound
+    |To resume this session: pi --session 01a0dbe0-e716-7364-84e5-8b37fdf071c3
+    ```
+
+    **60×30, `.4` local fork build (the H8c fix — sidebar column fully collapsed):**
+    ```
+    |USAGE Codex 5h 100% / W 35% │ Claude S 64% / W 9% LOW…
+    |ROUTES unavailable
+    |Run /project analyze.
+    |~/Desktop/agentic-harness (feat/herd-shell-layout)
+    |0.0%/0 (auto)                                        unknown
+    |Kairo · agentic-harness · session: unbound
+    |To resume this session: pi --session 01a0dbe1-29f7-75c9-be03
+    |-a10c0e4163f8
+    ```
+    The chat/USAGE content starts at column 0 (no reserved blank sidebar gutter) and the status bar shows the complete `Kairo · agentic-harness · session: unbound` text — the session id is no longer hidden by truncation.
+
+    **100×30, real `node ./bin/kairo.js` launcher, pinned `.3` (unaffected by H8c — no `setSidebar`/`setBottomStrip` API, classic widget fallback):**
+    ```
+    |KAIRO ROUTES · unavailable
+    |No verified automatic route is available for this project.
+    |Next: run kairo --legacy-cockpit, then /project analyze.
+    |USAGE · Codex 5h 100% / W 35% │ Claude S 64% / W 9% LOW │ Go usage unknown
+    |KAIRO TEAM · not_analyzed
+    |Run /project analyze to build this project's team.
+    |session: 98fce01b · ask
+    |~/Desktop/agentic-harness (feat/herd-shell-layout)
+    |Kairo · agentic-harness · session: 98fce01b · ask
+    |To resume this session: pi --session 01a0dbe1-b68f-72c8-a863-e7a63dac6736
+    ```
+    Confirms the `.3` pin path (no shell-slot API) is unchanged by the H8c fork fix, as expected.
+
 ## Next step
 
-H9/H10 remain open: H9 (integrate fork version into harness pin) is blocked on explicit remote/publish authorization; H10 (full evidence record + reopening the acceptance checklist) should follow once H9 is authorized. No push/PR/npm publish was performed.
+H9/H10 remain open: H9 (integrate fork version into harness pin) is blocked on explicit remote/publish authorization; H10 (full evidence record + reopening the acceptance checklist) should follow once H9 is authorized. No push/PR/npm publish was performed. H8c (sidebar-column-reservation regression) is closed with RED/GREEN and real PTY evidence above.
