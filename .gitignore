@@ -7,3 +7,7 @@ graphify-out/
 .codegraph/
 .pnpm-store/
 packages/kairo-vscode/dist/
+
+# Rust
+crates/kairo-ui/target/
+
