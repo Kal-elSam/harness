@@ -7,7 +7,8 @@ import {
 } from "../workspace-snapshot.js";
 import {
   availabilityNotices, createCompactShellSummaryWidget, createKairoTextWidget, createKairoWorkspaceWidget,
-  createShellBottomStripWidget, createShellSidebarWidget, createShellWelcomeWidget, formatSessionIdentity
+  createShellBottomStripWidget, createShellSidebarWidget, createShellWelcomeWidget, formatSessionIdentity,
+  TEAM_SETUP_NEXT_STEP
 } from "../workspace-widget.js";
 import { MAX_RECOVERY_ATTEMPTS } from "../../conversation/team-recovery.js";
 import { resolveHomeDir } from "../../paths.js";
@@ -129,7 +130,7 @@ function linesForView(snapshot, view) {
       return [
         "KAIRO ROUTES · unavailable",
         "No verified automatic route is available for this project.",
-        "Next: run kairo --legacy-cockpit, then /project analyze.",
+        TEAM_SETUP_NEXT_STEP,
         subscriptionsLine(snapshot.subscriptions),
         ...teamDetailLines(snapshot.team)
       ];
@@ -350,13 +351,13 @@ function recoveryNotice(result) {
   if (result?.outcome === "kept-previous" || result?.outcome === "error") {
     return {
       level: "warning",
-      message: `Kairo could not recover the project team (${result.reason ?? "unknown reason"}). The current team stays active and Kairo retries on a later refresh. To recover now: run kairo --legacy-cockpit, then /project analyze.`
+      message: `Kairo could not recover the project team (${result.reason ?? "unknown reason"}). The current team stays active and Kairo retries on a later refresh. To recover now: ${TEAM_SETUP_NEXT_STEP}`
     };
   }
   if (result?.outcome === "skipped" && result.reason === "retries-exhausted") {
     return {
       level: "warning",
-      message: `Kairo stopped retrying team recovery after ${MAX_RECOVERY_ATTEMPTS} attempts (last: ${result.lastOutcome ?? "unknown"}). Next: run kairo --legacy-cockpit, then /project analyze.`
+      message: `Kairo stopped retrying team recovery after ${MAX_RECOVERY_ATTEMPTS} attempts (last: ${result.lastOutcome ?? "unknown"}). ${TEAM_SETUP_NEXT_STEP}`
     };
   }
   return null;
