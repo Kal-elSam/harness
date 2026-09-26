@@ -50,6 +50,24 @@ test("--legacy-cockpit routes to the conversation cockpit", () => {
   assert.equal(routeInteractiveHost({ command, options }), "cockpit");
 });
 
+test("--ratatui routes bare kairo to the experimental ratatui host", () => {
+  const { command, options } = parseArgs(["--ratatui"]);
+  assert.equal(options.ratatui, true);
+  assert.equal(routeInteractiveHost({ command, options, env: {} }), "ratatui");
+});
+
+test("KAIRO_UI_HOST=ratatui routes bare kairo to ratatui without the flag", () => {
+  assert.equal(
+    routeInteractiveHost({ command: "host", options: {}, env: { KAIRO_UI_HOST: "ratatui" } }),
+    "ratatui"
+  );
+});
+
+test("--legacy-cockpit wins over --ratatui for bare kairo routing", () => {
+  const { command, options } = parseArgs(["--legacy-cockpit", "--ratatui"]);
+  assert.equal(routeInteractiveHost({ command, options, env: { KAIRO_UI_HOST: "ratatui" } }), "cockpit");
+});
+
 test("bare kairo creates and binds a real Kairo session, same path as kairo start", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-implicit-host-home-"));
   const projectRoot = await realRepo();

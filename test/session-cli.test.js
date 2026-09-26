@@ -44,6 +44,22 @@ test("kairo start launches the host with a session binding and does not write a 
   assert.equal(launches[0].cwd, "/repo");
 });
 
+test("kairo start with --ratatui launches the ratatui host with session binding", async () => {
+  const launches = [];
+  await runKairoStart({ cwd: "/repo", ratatui: true }, {
+    resolveProjectRoot: async () => "/repo",
+    createSession: async () => ({ id: "aaaaaaaa-0000-4000-8000-0000000000aa" }),
+    launchRatatuiHost: async (opts) => { launches.push(opts); return {}; },
+    launchGentleShell: async () => {
+      throw new Error("Pi host must not launch when ratatui is selected");
+    },
+    ensureHostMetadata: async () => ({})
+  });
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].sessionId, "aaaaaaaa-0000-4000-8000-0000000000aa");
+  assert.equal(launches[0].cwd, "/repo");
+});
+
 test("kairo resume launches the host bound to the resolved session", async () => {
   const launches = [];
   await runKairoResume({ cwd: "/repo", sessionRef: "abc" }, {

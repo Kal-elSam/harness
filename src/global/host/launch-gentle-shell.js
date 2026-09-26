@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isValidSessionId } from "../conversation/session-registry.js";
 import { resolveHomeDir } from "../paths.js";
+import { resolveUiHost } from "./launch-ratatui-host.js";
 
 // Kairo runs its own Kairo-only Pi fork by path — never a "pi" resolved
 // from PATH — because the standalone Pi launcher explicitly prepends its
@@ -44,10 +45,13 @@ export function buildKairoPiResourceArgs(extensionDir) {
 // bypass this seam, comes from test/helpers/launch-write-probe.mjs.
 const defaultFsImpl = { mkdirSync, writeFileSync };
 
-export function routeInteractiveHost({ command, options = {} }) {
+export function routeInteractiveHost({ command, options = {}, env = process.env }) {
   if (options.legacyCockpit) return "cockpit";
-  if (command === "host") return "pi";
   if (command === "shell") return "shell";
+  if (command === "host") {
+    const uiHost = resolveUiHost({ options, env });
+    return uiHost === "cockpit" ? "cockpit" : uiHost;
+  }
   return null;
 }
 

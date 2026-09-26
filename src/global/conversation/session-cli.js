@@ -12,6 +12,7 @@ import { dirname, resolve } from "node:path";
 import { createSession, ensureHostMetadata, listSessions, resolveSessionRef } from "./session-registry.js";
 import { runCockpitCli } from "../cockpit/cli.js";
 import { launchGentleShell } from "../host/launch-gentle-shell.js";
+import { launchRatatuiHost, resolveUiHost } from "../host/launch-ratatui-host.js";
 import { commandHeader } from "../brand/index.js";
 import { formatCliCommand } from "../brand/cli.js";
 import { printJson } from "../json-output.js";
@@ -119,6 +120,19 @@ async function launchBoundSession(options, session, deps, homeDir, projectRoot) 
     return runCockpit({ ...options, sessionId: session.id }, {
       runCockpitApp: deps.runCockpitApp,
       interactive: deps.interactive
+    });
+  }
+  const uiHost = resolveUiHost({ options, env: deps.env ?? process.env });
+  if (uiHost === "ratatui") {
+    const launch = deps.launchRatatuiHost ?? launchRatatuiHost;
+    if (deps.ensureHostMetadata !== undefined || deps.launchRatatuiHost === undefined) {
+      const ensure = deps.ensureHostMetadata ?? ensureHostMetadata;
+      await ensure(homeDir, projectRoot, session.id);
+    }
+    return launch({
+      cwd: projectRoot,
+      sessionId: session.id,
+      interactive: options.interactive
     });
   }
   const launch = deps.launchGentleShell ?? launchGentleShell;
