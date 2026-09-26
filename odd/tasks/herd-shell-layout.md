@@ -510,6 +510,8 @@ Engram mirror: `odd/herd-shell-layout/tasks` SYNCED via CLI (#4007; MCP save amb
 - Review riesgo alto (tu decision 2026-09-26): untracked excluidos (`docs/assets/…png`, `report.json`, `inspect-opencode-tier.sh` — preexistentes, no del commit). Recomendado hacerlo ahora; NO lanzado (autorizacion tuya pendiente, sin adivinar preflight JSON) y workers reviewers sin fondos registrado (2 delegaciones fallidas `Insufficient account funds`).
 - [x] S2-1b Click abre detalle + equivalencia teclado (2026-09-26): fork verificado — `dispatchMouseToLayout` routea a slots con `handleMouse` propio (hitboxes del layout real, sin cambios fork). `agentRowHitboxes` (recomputo por render/resize, contempla detalle abierto), bloque detalle (modelo, causa completa envuelta, next step), toggle al re-clic; seleccion en closure `shellSelection` con repaint guardado por `isShellActive`; `/kairo-team` misma info por teclado. Touches: `workspace-widget.js`, `extension/index.js` + tests. Route: inline (delegacion sin fondos, 3er intento registrado).
   - Evidence: RED 1+3 fail -> GREEN 102/102 (2 files); scoped 128/0/1; full `pnpm test` 2288/0/1. Commit: ver abajo.
+  - Commit `6fcb4a0d8`. RDD: assess high_risk/review_due true (acumulado rama). Review sigue pendiente de tu autorizacion + fondos.
+- [ ] S2-2 Captura TTY por cambio S2 + aprobado/rechazado
 - [ ] S2-2 Captura TTY por cambio S2 + aprobado/rechazado
 - [ ] S2-2 Captura TTY por cambio S2 + aprobado/rechazado
 - [ ] S3-1 RED/GREEN: propuesta sin activacion; ciclo perdida->motivo->propuesta->decision->team; salida ejecutable sin alternativa
