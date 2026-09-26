@@ -29,6 +29,8 @@ test("full help groups commands and documents advanced surfaces", () => {
   assert.match(text, /runs list/);
   assert.match(text, /Operations cockpit/);
   assert.match(text, /Unified Kairo workspace/);
+  assert.match(text, /ratatui default/);
+  assert.match(text, /--pi \/ KAIRO_UI_HOST=pi/);
   assert.match(text, /intelligence/);
   assert.match(text, /OPENROUTER_API_KEY/);
   assert.match(text, /Legacy aliases: harness/);

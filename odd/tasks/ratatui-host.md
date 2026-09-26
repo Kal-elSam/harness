@@ -2,7 +2,7 @@
 
 ## Objective
 
-Replace Kairo's interactive UI with one Rust/ratatui host. Pi keeps the agent, conversation, and sessions. Kairo keeps agents, routing, and USAGE. Pi-TUI shell and legacy cockpit stay temporary bridges only — not product alternatives. **Visual acceptance on a real TTY happens before packaging or changing the `kairo ui` default** — avoid repeating the Pi-TUI failure mode (functional but unsatisfying to look at).
+Replace Kairo's interactive UI with one Rust/ratatui host. Pi keeps the agent, conversation, and sessions. Kairo keeps agents, routing, and USAGE. Pi-TUI shell and legacy cockpit stay temporary bridges only — not product alternatives. **On this branch, daily `kairo` / `kairo ui` defaults to ratatui** (opt out with `--pi`); V3 visual acceptance still gates packaging / claiming product-done — avoid repeating the Pi-TUI failure mode (functional but unsatisfying to look at).
 
 ## Problem
 
@@ -16,7 +16,7 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 
 ### In
 
-- `kairo ui` eventually launches one terminal-owning process: ratatui (default **unchanged** until chat works **and** visual approval).
+- `kairo ui` launches the ratatui host by default on this branch (`feat/ratatui-host`). Opt out to Pi with `--pi` / `KAIRO_UI_HOST=pi`. `--legacy-cockpit` remains the browser escape hatch.
 - Node bridge: `kairo.workspace-shell/v1` + Pi `--mode rpc` JSONL.
 - Host draws full surfaces: sidebar, work area, USAGE — contrast, borders, spacing, selection, notices.
 - Layout: 28-col sidebar ≥90 cols; compact below; single chat center.
@@ -50,7 +50,7 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - [ ] Chat with model: prompt/stream/tools/cancel/scroll on those surfaces
 - [ ] Bridge: fail-open host; post-connect crash reflected; real no-model cold-start classified honestly (R4)
 - [ ] Install from package selects correct binary (after visual gate)
-- [ ] Default `kairo ui` → ratatui only after parity **and** visual approval
+- [ ] Default `kairo ui` → ratatui is live on this branch; R9 still covers stripping old UIs / packaging; V3 remains the visual gate before claiming product-done
 
 ## TDD
 
@@ -110,9 +110,12 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - (2026-09-26) **Daily opt-in launch** — `kairo ui --ratatui` (also `KAIRO_UI_HOST=ratatui`) launches `crates/kairo-ui` via `launchRatatuiHost` (`--bridge`, spawn cwd = project). Same opt-in on bare `kairo` / `start` / `resume` / `conversation`. Default without flag/env stays Pi via `launchGentleShell` until V3/R9. `--legacy-cockpit` still wins. Windows + non-TTY fail closed. Intent: ratatui becomes the sole UI after visual gate + cutover — not a permanent second product face.
   - Evidence: `node --test test/launch-ratatui-host.test.js test/cli-implicit-host.test.js`.
 
+- (2026-09-26) **Daily default = ratatui** — `resolveUiHost` now defaults to `ratatui` (no `--ratatui` required). Opt out: `--pi` / `--pi-host` / `KAIRO_UI_HOST=pi`. Precedence: `--legacy-cockpit` > pi flag/env > ratatui flag/env > default ratatui. R9 still owns stripping old UIs / packaging; V3 remains the visual gate before claiming product-done.
+  - Evidence: `node --test test/launch-ratatui-host.test.js test/cli-implicit-host.test.js test/cli-help.test.js`.
+
 ## Next step
 
-1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7). Live provider check only with a session you authorize. Use `node ./bin/kairo.js ui --ratatui --cwd …` for daily PTY work.
+1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7 packaging claim). Live provider check only with a session you authorize. Daily: `node ./bin/kairo.js ui` (ratatui default); `--pi` for old shell.
 2. **R6** extension-UI dialogs (RPC extension_ui only; no simulated tools).
 3. **R4 remainder:** publish Pi fork (user-authorized) so RPC no-model cold-start is runtime-active; then bind Kairo `kairo list` / `resume` session ids to Pi `switch_session` when product wants one picker (today: Pi files on disk only).
-4. **R9** cutover: default `kairo ui` → ratatui only after V3 approval (remote auth).
+4. **R9** cutover cleanup: strip old UIs / packaging after V3 approval (remote auth); daily default is already ratatui on this branch.

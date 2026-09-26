@@ -516,7 +516,7 @@ export function buildMcpCliOptions(options = {}, extras = {}) {
   };
 }
 
-/** Default Pi host, or experimental ratatui when `--ratatui` / `KAIRO_UI_HOST=ratatui`. */
+/** Default ratatui host; `--pi` / `KAIRO_UI_HOST=pi` opts into the Pi shell. */
 async function launchInteractiveWorkspace(options) {
   if (resolveUiHost({ options }) === "ratatui") {
     await launchRatatuiHost({
@@ -636,7 +636,8 @@ export function parseArgs(argv) {
     cloudConsent: false,
     port: null,
     legacyCockpit: false,
-    ratatui: false
+    ratatui: false,
+    piHost: false
   };
 
   if (command === "components") {
@@ -836,6 +837,7 @@ export function parseArgs(argv) {
     }
     else if (arg === "--legacy-cockpit") options.legacyCockpit = true;
     else if (arg === "--ratatui") options.ratatui = true;
+    else if (arg === "--pi" || arg === "--pi-host") options.piHost = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--all") options.helpAll = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
