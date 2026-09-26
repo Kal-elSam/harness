@@ -94,6 +94,8 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - (2026-09-26) **R5** — `apply_workspace_snapshot` maps `kairo.workspace-shell/v1` agents (idle/blocked/unknown only; `working`/`done` → unknown), project label, and USAGE via extension `subscriptionsLine` (`ready` → segments with ` │ `; else honest state). Applied on `ready`/`snapshot`; sidecar `reload_snapshot`. Follow-up `eb5f13c66` fixed segment gate/join. No change to default `kairo ui`.
   - Evidence: `cargo test` → **22/22**; `kairo-ui-rpc-stdio` → **3/3**; `pi-rpc-bridge` → **8/8**. Commits: `35ba2fa30`, `eb5f13c66`.
 
+- (2026-09-26) **Theme** — sober hacker palette: work `#090F0E`, sidebar `#111A18`, USAGE `#13211C`; accent `#5EE6A8` only for brand/focus/selection; text `#E8F5EF` / muted `#9AB2A5`; ERROR red, WARN/TOOL amber, USER blue; assistant label not accent green. Contrast + semantic paint tests. Layout/data unchanged; no matrix rain. Visual verdict still blocks R7.
+
 ## Next step
 
-With `--bridge`, confirm sidebar agents + USAGE come from snapshot (often `USAGE · checking|cached|unknown` until subscriptions are `ready`). Then V3: color captures @60/100/160 with a real Pi reply when a model is available. R4/R6 still pending.
+PTY TrueColor @60/100/160 with `--bridge` (agents/USAGE from snapshot + conversation when model available) — your visual verdict. R4/R6 still pending.
