@@ -440,14 +440,15 @@ function shortBlockedCause(stateReason) {
 
 /** One sidebar agent row — blocked rows with a captured cause name it
  * (e.g. "Cursor Models quota exhausted") instead of a generic word;
- * blocked rows with no captured cause say access is unavailable without
- * inventing one (the next step lives in `/kairo-team`, never here);
- * every other row matches the HERD panel. Always within the sidebar's
+ * blocked rows with no captured cause say Unavailable without inventing
+ * one (short on purpose: the 28-column budget truncates longer tails,
+ * and the next step lives in `/kairo-team`, never here); every other row
+ * matches the HERD panel. Always within the sidebar's
  * SHELL_SIDEBAR_COLUMNS budget. */
 function shellAgentLine(agent, theme) {
   if (agent.state === "blocked") {
     const cause = agent.stateReason ? shortBlockedCause(agent.stateReason) : null;
-    const tail = cause || "Access unavailable";
+    const tail = cause || "Unavailable";
     return theme.fg("error", truncateToWidth(`✖ ${agent.label ?? "Unknown role"} · ${tail}`, SHELL_SIDEBAR_COLUMNS, "…"));
   }
   return herdAgentLine(agent, theme, SHELL_SIDEBAR_COLUMNS);
@@ -524,10 +525,10 @@ function compactAttentionLine(snapshot, theme, routeUnavailable) {
   if (blocked.length === 1) {
     const [only] = blocked;
     const cause = only.stateReason ? shortBlockedCause(only.stateReason) : null;
-    return theme.fg("error", `✖ ${only.label ?? "Unknown role"} · ${cause || "Access unavailable"}`);
+    return theme.fg("error", `✖ ${only.label ?? "Unknown role"} · ${cause || "Unavailable"}`);
   }
   if (blocked.length > 1) {
-    return theme.fg("error", `✖ ${blocked.length} blocked: ${blocked.map((agent) => agent.label ?? "Unknown role").join(", ")}`);
+    return theme.fg("error", `✖ ${blocked.length} unavailable: ${blocked.map((agent) => agent.label ?? "Unknown role").join(", ")}`);
   }
   const [first] = sortedHerdAgents(agents);
   if (!first) return routeUnavailable ? null : theme.fg("muted", "Run /project analyze to build this project's team.");

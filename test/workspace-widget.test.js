@@ -588,7 +588,7 @@ test("S2 sidebar blocked row without a captured reason says access is unavailabl
   }), IDENTITY_THEME);
   const shortJoined = short.join("\n");
   assert.ok(!shortJoined.includes("BLOCKED"), "no generic BLOCKED word without a proven cause");
-  assert.ok(shortJoined.includes("Access unavailable"), "honest fallback without inventing a cause");
+  assert.ok(shortJoined.includes("Unavailable"), "honest fallback without inventing a cause");
   const long = renderShellSidebarLines(fixtureSnapshot({
     agents: [
       { id: "b", label: "Builder", role: "Builder", provider: "codex", model: "M", state: "blocked", stateReason: null }
@@ -612,5 +612,5 @@ test("S2 compact summary without a captured reason says access is unavailable, n
   }), IDENTITY_THEME, { width: 60 });
   const joined = lines.join("\n");
   assert.ok(!joined.toLowerCase().includes("blocked"), "no generic blocked word without a proven cause");
-  assert.ok(joined.includes("Access unavailable"), "honest fallback without inventing a cause");
+  assert.ok(joined.includes("Unavailable"), "honest fallback without inventing a cause");
 });
