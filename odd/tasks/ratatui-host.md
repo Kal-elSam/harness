@@ -67,7 +67,7 @@ User-accepted plan "Kairo: un solo host visual con ratatui" (2026-09-26). Supers
 
 - [x] R0 Feature doc + mark herd-shell visual path superseded (bridge-only)
 - [x] R1 Rust toolchain + `crates/kairo-ui` scaffold: three-region layout (28 / grow / strip), 90-col collapse, no RPC yet
-- [ ] R2 Node bridge: spawn Pi `--mode rpc`, JSONL framing, feed `kairo.workspace-shell/v1`
+- [x] R2 Node bridge: spawn Pi `--mode rpc`, JSONL framing, feed `kairo.workspace-shell/v1`
 - [ ] R3 Chat parity: prompt, stream, tools/errors, cancel, scroll, editor send
 - [ ] R4 Session continuity: resume / create / fork; model switch; no-model honest block + retry
 - [ ] R5 Kairo chrome data: agents sidebar (blocked-first), agent select, USAGE strip, notices
@@ -85,6 +85,9 @@ User-accepted plan "Kairo: un solo host visual con ratatui" (2026-09-26). Supers
   - Work-unit commit: `77595cfef`.
   - Note: Cursor sandbox may redirect `CARGO_TARGET_DIR`; local runs should `unset CARGO_TARGET_DIR` before `cargo run --release`.
 
+- (2026-09-26) **R2 closed** — `src/global/host/pi-rpc-bridge.js`: `openPiRpcBridge` loads `kairo.workspace-shell/v1` first, always returns `hostOpen: true`; spawns Pi with `--mode rpc` JSONL (LF-only framing); `engine.status` is `connected` | `no_model` | `unavailable`. Spawn / get_state / missing-model failures never throw out of open. No `kairo ui` default change; no ratatui polish.
+  - Evidence: `node --test test/pi-rpc-bridge.test.js` → **5/5 pass** (spawn fail, no_model, connected, get_state fail, classify). Work-unit commit: _(filled after commit)_.
+
 ## Next step
 
-R2 only: Node bridge → Pi `--mode rpc` JSONL + feed `kairo.workspace-shell/v1`. Ratatui owns all UI. Pi startup failure (including no model) must not prevent Kairo from opening. No visual polish in R2.
+R3: chat parity over the bridge (prompt/stream/tools/cancel/scroll/editor) — ratatui still owns paint; still no default cutover.
