@@ -115,6 +115,25 @@ impl BridgeClient {
         self.send_op("abort", Value::Null)
     }
 
+    pub fn cycle_model(&mut self) -> std::io::Result<()> {
+        self.send_op("cycle_model", Value::Null)
+    }
+
+    pub fn compact_session(&mut self) -> std::io::Result<()> {
+        self.send_op("compact", Value::Null)
+    }
+
+    pub fn new_session(&mut self) -> std::io::Result<()> {
+        self.send_op("new_session", Value::Null)
+    }
+
+    pub fn switch_session_index(&mut self, index: usize) -> std::io::Result<()> {
+        self.send_op(
+            "switch_session_index",
+            serde_json::json!({ "index": index }),
+        )
+    }
+
     pub fn stop(&mut self) -> std::io::Result<()> {
         let _ = self.send_op("stop", Value::Null);
         let _ = self.child.wait();

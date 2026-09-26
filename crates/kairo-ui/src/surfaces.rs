@@ -75,6 +75,8 @@ pub struct ShellViewModel {
     pub work_title: String,
     pub notice: Option<String>,
     pub usage_line: String,
+    /// Engine model / Pi session (second row of USAGE strip when bridge is on).
+    pub engine_line: String,
 }
 
 impl Default for ShellViewModel {
@@ -97,6 +99,7 @@ impl Default for ShellViewModel {
             work_title: "Chat".into(),
             notice: None,
             usage_line: "USAGE · waiting for bridge".into(),
+            engine_line: "MODEL · (local mock without --bridge)".into(),
         }
     }
 }
@@ -292,12 +295,21 @@ fn render_usage(buf: &mut Buffer, area: Rect, model: &ShellViewModel) {
     if inner.height == 0 || inner.width == 0 {
         return;
     }
-    Paragraph::new(padded_span(
+    let line_style = Style::default().fg(tone::TEXT).bg(tone::USAGE_BG);
+    let muted = Style::default().fg(tone::MUTED).bg(tone::USAGE_BG);
+    let mut lines = vec![Line::from(padded_span(
         &format!(" {} ", model.usage_line),
         inner.width,
-        Style::default().fg(tone::TEXT).bg(tone::USAGE_BG),
-    ))
-    .render(inner, buf);
+        line_style,
+    ))];
+    if inner.height > 1 && !model.engine_line.is_empty() {
+        lines.push(Line::from(padded_span(
+            &format!(" {} ", model.engine_line),
+            inner.width,
+            muted,
+        )));
+    }
+    Paragraph::new(lines).render(inner, buf);
 }
 
 /// One list/paragraph line padded to `width` so background fills the row.

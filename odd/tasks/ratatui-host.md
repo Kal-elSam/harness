@@ -71,9 +71,9 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - [x] V1-fix USAGE strip ≥2 rows (border+label visible) + full-row selection padding; content-visibility tests (not bg-only)
 - [x] V2 Wire `ratatui-textarea` editor into work surface (after V0)
 - [x] R3b Chat over surfaces: prompt, stream, tools, cancel, scroll (model available)
-- [ ] R4 Sessions / model switch / **real** Pi cold-start no-model
+- [ ] R4 Sessions / model switch / **real** Pi cold-start no-model (partial: Pi file list + new/switch + model cycle; Kairo session registry not wired)
 - [x] R5 Agents sidebar data + USAGE + notices (honest states)
-- [ ] R6 Commands/dialogs via RPC extension-UI
+- [ ] R6 Commands/dialogs via RPC extension-UI (partial: abort + compact via RPC; extension_ui dialogs pending)
 - [ ] V3 Visual gate: color captures @60/100/160 with conversation, agents, USAGE, error notice — **your approval** (blocks R7)
 - [ ] R7 Package binaries (darwin/linux); Windows `ui` error
 - [ ] R8 Final parity evidence
@@ -101,7 +101,11 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - (2026-09-26) **RPC engine wiring** — `openPiRpcBridge` spawns Pi with `buildKairoPiResourceArgs` (`-e` extension, `--no-extensions` …) + `--mode rpc --no-session` (parity with interactive host minus TUI). After `get_state`, loads `projectTeam` routes via `loadKairoProviderModels`, picks **Architect** (`selectArchitectKairoModel`), `set_model` `{ provider: "kairo", modelId }`, refresh `get_state`. Missing/non-launchable Architect → `hostOpen: true`, `engine.status: no_model`, reason names projectTeam/Architect (no fallback provider). Shared helper `buildKairoPiResourceArgs` exported from `launch-gentle-shell.js`. Sidecar `ready.engine.reason` surfaces missing route.
   - Evidence: `node --test test/pi-rpc-bridge.test.js test/kairo-ui-rpc-stdio.test.js` (see commit). Route: `direct inline` (bridge + tests + doc).
 
+- (2026-09-26) **R4 partial + commands** — Sidecar ops: `cycle_model` (Kairo `projectTeam` routes only via `set_model`), `new_session`, `switch_session` / `switch_session_index`, `compact`, `list_sessions`. Pi RPC has **no** `list_sessions`; host lists `.jsonl` under `PI_CODING_AGENT_DIR/sessions/<cwd-hash>/` honestly. `ready`/`engine`/`transcript` records; USAGE strip row 2 = `MODEL · … · session …`. Mock assistant only without `--bridge`; demo `n` notice gated off when bridge on. Keybindings (bridge): Ctrl+M model, Ctrl+N new session, Ctrl+[ / Ctrl+] prev/next on-disk session, Ctrl+K compact, Esc/abort unchanged.
+  - Evidence: `cargo test` (kairo-ui), `node --test test/pi-rpc-bridge.test.js test/kairo-ui-rpc-stdio.test.js test/pi-rpc-sessions.test.js test/pi-rpc-kairo-models.test.js test/pi-rpc-transcript.test.js`. Work-unit commit on `feat/ratatui-host`.
+
 ## Next step
 
-1. UI parity leftovers (sessions / model switch / commands) without fabricating stream/tool activity.
-2. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7). Live provider check only with a session you authorize. R4/R6 still pending for full functional parity.
+1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7). Live provider check only with a session you authorize.
+2. **R6** extension-UI dialogs (RPC extension_ui only; no simulated tools).
+3. **R4 remainder:** bind Kairo `kairo list` / `resume` session ids to Pi `switch_session` when product wants one picker (today: Pi files on disk only).

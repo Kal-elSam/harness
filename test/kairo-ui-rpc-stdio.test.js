@@ -295,3 +295,154 @@ test("sidecar stays alive and emits engine_unavailable after Pi exit", async () 
   stdin.end();
   await runPromise;
 });
+
+test("sidecar cycle_model calls set_model for next Kairo route", async () => {
+  const setModelCalls = [];
+  const models = [
+    architectModel,
+    {
+      id: "claude::m2",
+      kairoRoute: { role: "Builder", adapterId: "claude", modelId: "m2" }
+    }
+  ];
+  const stdout = new PassThrough();
+  const out = [];
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    loadKairoProviderModels: async () => models,
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: {
+                sessionId: "s1",
+                model: ctx?.activeModel ?? { id: architectModel.id }
+              }
+            };
+          }
+          if (cmd.type === "set_model") {
+            setModelCalls.push(cmd);
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, name: cmd.modelId });
+            return { type: "response", command: "set_model", success: true };
+          }
+          if (cmd.type === "get_messages") {
+            return {
+              type: "response",
+              command: "get_messages",
+              success: true,
+              data: { messages: [] }
+            };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => models,
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "cycle_model" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+  assert.ok(setModelCalls.length >= 1, "open + cycle should call set_model");
+  const last = setModelCalls.at(-1);
+  assert.equal(last.provider, "kairo");
+  assert.equal(last.modelId, "claude::m2");
+  assert.ok(out.some((r) => r.type === "engine"));
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar new_session reloads transcript from get_messages", async () => {
+  const stdout = new PassThrough();
+  const out = [];
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: {
+                sessionId: "fresh",
+                model: ctx?.activeModel ?? { id: architectModel.id }
+              }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId });
+            return { type: "response", command: "set_model", success: true };
+          }
+          if (cmd.type === "new_session") {
+            return {
+              type: "response",
+              command: "new_session",
+              success: true,
+              data: { cancelled: false }
+            };
+          }
+          if (cmd.type === "get_messages") {
+            return {
+              type: "response",
+              command: "get_messages",
+              success: true,
+              data: {
+                messages: [
+                  {
+                    role: "user",
+                    content: [{ type: "text", text: "after reset" }]
+                  }
+                ]
+              }
+            };
+          }
+          return null;
+        }
+      })
+    )
+  });
+
+  await new Promise((r) => setTimeout(r, 30));
+  stdin.write(`${JSON.stringify({ op: "new_session" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+  const transcript = out.find((r) => r.type === "transcript");
+  assert.ok(transcript);
+  assert.deepEqual(transcript.messages, [{ role: "user", content: "after reset" }]);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
