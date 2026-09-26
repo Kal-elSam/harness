@@ -95,7 +95,8 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
   - Evidence: `cargo test` → **22/22**; `kairo-ui-rpc-stdio` → **3/3**; `pi-rpc-bridge` → **8/8**. Commits: `35ba2fa30`, `eb5f13c66`.
 
 - (2026-09-26) **Theme** — sober hacker palette: work `#090F0E`, sidebar `#111A18`, USAGE `#13211C`; accent `#5EE6A8` only for brand/focus/selection; text `#E8F5EF` / muted `#9AB2A5`; ERROR red, WARN/TOOL amber, USER blue; assistant label not accent green. Contrast + semantic paint tests. Layout/data unchanged; no matrix rain. Visual verdict still blocks R7.
+  - Evidence: commits `a3dba57ce`, `a1768bc21`. `cargo test` → **28/28**. Only on worktree `feat/ratatui-host` (main checkout has no `crates/kairo-ui`). Rebuild before PTY: `unset CARGO_TARGET_DIR && cargo run --release`.
 
 ## Next step
 
-PTY TrueColor @60/100/160 with `--bridge` (agents/USAGE from snapshot + conversation when model available) — your visual verdict. R4/R6 still pending.
+V3 on **this** binary (graphite-green, not violet): TrueColor captures @60/100/160 with `--bridge`, agents + USAGE from snapshot (`checking`/`cached` OK if real), and a real Pi reply when a model is available — not mock. Your visual verdict blocks R7. R4/R6 still pending.
