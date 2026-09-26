@@ -79,6 +79,9 @@ pub struct ShellViewModel {
     pub usage_line: String,
     /// Engine model / Pi session (second row of USAGE strip when bridge is on).
     pub engine_line: String,
+    /// Snapshot `team.state` (`not_analyzed` / `suggested` / `active` / `stale`)
+    /// when the bridge reported one — drives the in-UI analyze/approve hints.
+    pub team_state: Option<String>,
 }
 
 impl Default for ShellViewModel {
@@ -93,7 +96,17 @@ impl Default for ShellViewModel {
             work_empty_hint: None,
             usage_line: "USAGE · waiting for bridge".into(),
             engine_line: "MODEL · (local mock without --bridge)".into(),
+            team_state: None,
         }
+    }
+}
+
+/// Second line of the empty AGENTS list: the key that fills it, in this UI.
+fn empty_team_key_hint(team_state: Option<&str>) -> &'static str {
+    if team_state == Some("suggested") {
+        "A = approve"
+    } else {
+        "a = analyze"
     }
 }
 
@@ -145,7 +158,7 @@ fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel, focus: F
         let empty_style = Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG);
         items.push(ListItem::new(padded_span("No team yet", row_width, empty_style)));
         items.push(ListItem::new(padded_span(
-            "Need project strategy",
+            empty_team_key_hint(model.team_state.as_deref()),
             row_width,
             empty_style,
         )));
@@ -710,11 +723,33 @@ mod tests {
         let hay = buffer_text(&buf);
         assert!(hay.contains("No team yet"), "empty AGENTS hint missing: {hay}");
         assert!(
-            hay.contains("Need project strategy"),
-            "strategy hint missing: {hay}"
+            hay.contains("a = analyze"),
+            "empty sidebar must name the in-UI analyze key: {hay}"
         );
         assert!(!hay.contains("Orchestrator"), "must not invent Orchestrator");
         assert!(!hay.contains("Builder"), "must not invent Builder");
+    }
+
+    #[test]
+    fn empty_sidebar_offers_approve_key_once_a_team_is_suggested() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut model = ShellViewModel::default();
+        model.team_state = Some("suggested".into());
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+        );
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("No team yet"));
+        assert!(
+            hay.contains("A = approve"),
+            "a suggested team needs approval, not another analysis: {hay}"
+        );
     }
 
     #[test]
@@ -726,7 +761,7 @@ mod tests {
         model.work_empty_hint = Some(vec![
             "Chat blocked: no_model — No active strategy with automatic launchable projectTeam routes"
                 .into(),
-            "Next: kairo --legacy-cockpit → /project analyze → approve team, then reopen.".into(),
+            "Next: press a to analyze project team, then A to approve.".into(),
         ]);
         render_shell(
             &mut buf,
@@ -741,8 +776,12 @@ mod tests {
             "actionable empty hint missing: {hay}"
         );
         assert!(
-            hay.contains("legacy-cockpit"),
-            "next-step hint missing: {hay}"
+            hay.contains("press a to analyze"),
+            "next-step hint must stay inside this UI: {hay}"
+        );
+        assert!(
+            !hay.contains("legacy-cockpit"),
+            "cockpit must never be the recommended path: {hay}"
         );
         assert!(
             !hay.contains("conversation streams"),

@@ -123,6 +123,16 @@ impl BridgeClient {
         self.send_op("compact", Value::Null)
     }
 
+    /// Analyze this project's team with the default analyst (headless).
+    pub fn analyze_project_team(&mut self) -> std::io::Result<()> {
+        self.send_op("project.analyze", Value::Null)
+    }
+
+    /// Approve the suggested team; the sidecar re-applies Architect after it.
+    pub fn approve_project_team(&mut self) -> std::io::Result<()> {
+        self.send_op("team.approve", Value::Null)
+    }
+
     pub fn new_session(&mut self) -> std::io::Result<()> {
         self.send_op("new_session", Value::Null)
     }

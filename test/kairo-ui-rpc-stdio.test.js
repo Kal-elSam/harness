@@ -546,6 +546,293 @@ test("sidecar new_session re-applies Architect set_model when get_state has no m
   await runPromise;
 });
 
+test("sidecar project.analyze notices progress then emits team summary and fresh snapshot", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+  const analyzeCalls = [];
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async ({ cwd }) => {
+      analyzeCalls.push(cwd);
+      return {
+        state: "suggested",
+        teamRows: 3,
+        roles: ["Architect", "Builder", "Reviewer"],
+        analyst: "codex · GPT-5",
+        projectRoot: cwd,
+        notice: null
+      };
+    },
+    loadSnapshot: async () =>
+      fakeSnapshot({ team: { state: "suggested", rows: [], assignments: [] } })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const before = out.length;
+  stdin.write(`${JSON.stringify({ op: "project.analyze" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  const after = out.slice(before);
+  assert.deepEqual(analyzeCalls, ["/project"]);
+  assert.match(
+    String(after.find((r) => r.type === "notice")?.message ?? ""),
+    /Analyzing project team/
+  );
+  const team = after.find((r) => r.type === "team");
+  assert.equal(team?.op, "project.analyze");
+  assert.equal(team?.ok, true);
+  assert.equal(team?.state, "suggested");
+  assert.equal(team?.teamRows, 3);
+  const snapshot = after.find((r) => r.type === "snapshot");
+  assert.equal(snapshot?.snapshot?.team?.state, "suggested");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar project.analyze reports a failure honestly and emits no team snapshot", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async () => {
+      throw new Error("No ask-capable analyst model in this project's catalog");
+    },
+    loadSnapshot: async () => {
+      throw new Error("snapshot must not be reloaded after a failed analysis");
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const before = out.length;
+  stdin.write(`${JSON.stringify({ op: "project.analyze" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  const after = out.slice(before);
+  assert.match(
+    String(after.find((r) => r.type === "error")?.message ?? ""),
+    /No ask-capable analyst model/
+  );
+  const team = after.find((r) => r.type === "team");
+  assert.equal(team?.ok, false);
+  assert.equal(
+    after.some((r) => r.type === "snapshot"),
+    false
+  );
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar team.approve re-applies Architect and republishes models plus snapshot", async () => {
+  const setModelCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+  // Before approval there is no launchable route; approval makes Architect real.
+  let routes = [];
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    loadKairoProviderModels: async () => routes,
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            setModelCalls.push(cmd);
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return {
+              type: "response",
+              command: "set_model",
+              success: true,
+              data: { id: cmd.modelId, provider: "kairo" }
+            };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => routes,
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    },
+    approveProjectTeam: async ({ cwd }) => {
+      routes = [architectModel];
+      return {
+        state: "active",
+        teamRows: 2,
+        roles: ["Architect", "Builder"],
+        analyst: "codex · GPT-5",
+        projectRoot: cwd
+      };
+    },
+    loadSnapshot: async () =>
+      fakeSnapshot({ team: { state: "active", rows: [], assignments: [] } })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const readyEngine = out.find((r) => r.type === "ready")?.engine;
+  assert.equal(readyEngine?.status, "no_model", "no route before approval");
+  const setModelsBefore = setModelCalls.length;
+
+  stdin.write(`${JSON.stringify({ op: "team.approve" })}\n`);
+  await new Promise((r) => setTimeout(r, 120));
+
+  assert.ok(
+    setModelCalls.length > setModelsBefore,
+    "approve must re-apply the Architect route via set_model"
+  );
+  assert.equal(setModelCalls.at(-1)?.provider, "kairo");
+  assert.equal(setModelCalls.at(-1)?.modelId, architectModel.id);
+  const engineAfter = [...out].reverse().find((r) => r.type === "engine");
+  assert.equal(engineAfter?.engine?.status, "connected");
+  const models = [...out].reverse().find((r) => r.type === "kairoModels");
+  assert.equal(models?.kairoModels?.[0]?.role, "Architect");
+  const snapshot = [...out].reverse().find((r) => r.type === "snapshot");
+  assert.equal(snapshot?.snapshot?.team?.state, "active");
+  const team = [...out].reverse().find((r) => r.type === "team");
+  assert.equal(team?.op, "team.approve");
+  assert.equal(team?.state, "active");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar team.approve failure never re-applies a model", async () => {
+  const setModelCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            setModelCalls.push(cmd);
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    approveProjectTeam: async () => {
+      throw new Error("No suggested project strategy yet");
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const before = setModelCalls.length;
+  stdin.write(`${JSON.stringify({ op: "team.approve" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  assert.equal(setModelCalls.length, before, "a failed approval must not touch the model");
+  assert.ok(
+    out.some((r) => r.type === "error" && /No suggested project strategy/.test(r.message)),
+    "failure must be reported"
+  );
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
 test("sidecar cycle_model does not re-apply Architect after the cycle", async () => {
   const setModelCalls = [];
   const models = [

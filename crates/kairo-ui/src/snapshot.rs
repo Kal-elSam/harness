@@ -24,6 +24,18 @@ pub fn apply_workspace_snapshot(view: &mut ShellViewModel, snapshot: &Value) {
     if let Some(subscriptions) = snapshot.get("subscriptions") {
         view.usage_line = subscriptions_usage_line(subscriptions);
     }
+
+    // `team.state` is Kairo's own persisted strategy status
+    // (`not_analyzed` / `suggested` / `active` / `stale`) — read, never
+    // inferred, so the analyze/approve hints follow real state.
+    if let Some(state) = snapshot
+        .pointer("/team/state")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        view.team_state = Some(state.to_string());
+    }
 }
 
 fn project_display_label(project: &Value) -> String {
@@ -212,6 +224,21 @@ mod tests {
             &json!({ "agents": [{ "label": "Only", "state": "idle" }] }),
         );
         assert_eq!(view.selected_agent, 0);
+    }
+
+    #[test]
+    fn reads_team_state_from_snapshot_without_inventing_one() {
+        let mut view = ShellViewModel::default();
+        assert_eq!(view.team_state, None);
+        apply_workspace_snapshot(&mut view, &json!({ "agents": [] }));
+        assert_eq!(view.team_state, None, "absent team state must stay unknown");
+        apply_workspace_snapshot(
+            &mut view,
+            &json!({ "team": { "state": "suggested", "rows": [] } }),
+        );
+        assert_eq!(view.team_state.as_deref(), Some("suggested"));
+        apply_workspace_snapshot(&mut view, &json!({ "team": { "state": "active" } }));
+        assert_eq!(view.team_state.as_deref(), Some("active"));
     }
 
     #[test]

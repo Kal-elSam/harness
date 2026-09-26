@@ -16,7 +16,8 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 
 ### In
 
-- `kairo ui` launches the ratatui host by default on this branch (`feat/ratatui-host`). Opt out to Pi with `--pi` / `KAIRO_UI_HOST=pi`. `--legacy-cockpit` remains the browser escape hatch.
+- `kairo ui` launches the ratatui host by default on this branch (`feat/ratatui-host`). Opt out to Pi with `--pi` / `KAIRO_UI_HOST=pi`. `--legacy-cockpit` stays temporary code until the R9 strip — it is **not** a user path, and never the way to set up a project team.
+- Team setup lives **inside** the ratatui host: `a` analyzes this project's team with the default analyst, `A` approves it, and the host re-applies Architect so chat unblocks in place. No cockpit, no Pi slash command, no restart.
 - Node bridge: `kairo.workspace-shell/v1` + Pi `--mode rpc` JSONL.
 - Host draws full surfaces: sidebar, work area, USAGE — contrast, borders, spacing, selection, notices.
 - Layout: 28-col sidebar ≥90 cols; compact below; single chat center.
@@ -73,6 +74,8 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - [x] R3b Chat over surfaces: prompt, stream, tools, cancel, scroll (model available)
 - [ ] R4 Sessions / model switch / **real** Pi cold-start no-model (partial: Pi file list + new/switch + model cycle; Architect reapply on session ops done; RPC no-model cold-start in third_party pending publish; Kairo session registry not wired)
 - [x] R5 Agents sidebar data + USAGE + notices (honest states)
+- [x] T1 In-UI project team: headless analyze with the default analyst (`a`) + approve (`A`) + Architect reapply, driven from ratatui — cockpit is never required or recommended
+- [ ] T2 In-UI team depth: analyst picker + per-role editor in ratatui (MVP ships default analyst only)
 - [ ] R6 Commands/dialogs via RPC extension-UI (partial: abort + compact via RPC; extension_ui dialogs pending)
 - [ ] V3 Visual gate: color captures @60/100/160 with conversation, agents, USAGE, error notice — **your approval** (blocks R7)
 - [ ] R7 Package binaries (darwin/linux); Windows `ui` error
@@ -113,12 +116,19 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - (2026-09-26) **Daily default = ratatui** — `resolveUiHost` now defaults to `ratatui` (no `--ratatui` required). Opt out: `--pi` / `--pi-host` / `KAIRO_UI_HOST=pi`. Precedence: `--legacy-cockpit` > pi flag/env > ratatui flag/env > default ratatui. R9 still owns stripping old UIs / packaging; V3 remains the visual gate before claiming product-done.
   - Evidence: `node --test test/launch-ratatui-host.test.js test/cli-implicit-host.test.js test/cli-help.test.js`.
 
-- (2026-09-26) **no-model UX honesty** — Real sidecar `ready` with `engine.status=no_model` + empty team + `subscriptions.state=cached` looked empty/confused because defaults invented Orchestrator/Builder and USAGE hid cached segments. Fix (UI only, no invented team): empty default agents + muted `No team yet` / `Need project strategy`; `work_empty_hint` from `open_notice` (`Chat blocked: no_model — …` + legacy-cockpit next step); `USAGE · cached · seg1 │ seg2` when cached/checking has segments; `ready` prefers engine notice over sessionsNote.
+- (2026-09-26) **no-model UX honesty** — Real sidecar `ready` with `engine.status=no_model` + empty team + `subscriptions.state=cached` looked empty/confused because defaults invented Orchestrator/Builder and USAGE hid cached segments. Fix (UI only, no invented team): empty default agents + muted `No team yet`; `work_empty_hint` from `open_notice` (`Chat blocked: no_model — …`); `USAGE · cached · seg1 │ seg2` when cached/checking has segments; `ready` prefers engine notice over sessionsNote. ~~Next step pointed at `kairo --legacy-cockpit` + `/project analyze`~~ — **superseded the same day by T1**: the next step is now the in-UI `a` / `A` keys, and no ratatui/host copy recommends the cockpit for team setup.
   - Evidence: `cargo test -q --manifest-path crates/kairo-ui/Cargo.toml` → **41/41**.
+
+- (2026-09-26) **T1 in-UI team setup (no cockpit)** — `project-team-sidecar.js` wraps `createConversationService({ enableProviderProbes: true })`: `analyzeProjectTeam` runs `preflightProject`, picks the default analyst (`pickDefaultAnalyst`: the catalog's own `recommendedModel` when available, else the first **available** entry — an unavailable-only or empty catalog throws instead of downgrading providers), runs `runBootstrapAnalysis`, and summarizes state / team rows / analyst. `approveProjectTeam` = `approveProjectStrategy` + summary. No role or model is synthesized here.
+  - Sidecar ops: `project.analyze` → progress notice, structured `{type:"team", ok, state, teamRows, roles, analyst}`, then snapshot reload (a failed analysis emits `team ok:false` + `error` and **no** snapshot). `team.approve` → approve, reload `kairoModels`, re-apply Architect via `resolveArchitectRouteForRpc` (same path as session ops), emit `engine` + `kairoModels` + `snapshot`. A failed approval never touches `set_model`.
+  - Ratatui: `a` analyze / `A` approve via `BridgeClient`; `team_keys_available` keeps every character in a compose box that can send (Editor focus needs an empty draft **and** a blocked engine; Sidebar/Transcript focus is never typing). `team.state` is read from the snapshot (`not_analyzed` / `suggested` / `active` / `stale`), never inferred. `work_empty_hint` = `Chat blocked: <status> — <reason>` + `Next: press a to analyze project team, then A to approve.` (becomes `press A to approve` once suggested). Empty sidebar: `No team yet` + `a = analyze` / `A = approve`.
+  - Evidence: `cargo test` → **46/46** (new: team hint keys, suggested-state hint, key-availability, snapshot team state, sidebar approve copy); `node --test test/project-team-sidecar.test.js test/kairo-ui-rpc-stdio.test.js …` → **56/56**. `rg 'legacy-cockpit|/project analyze' crates/kairo-ui` matches only the negative assertions that forbid that copy.
+  - Known gap: no analyst picker / role editor in the UI yet (T2); the CLI `--legacy-cockpit` flag still exists as code until R9.
 
 ## Next step
 
-1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7 packaging claim). Live provider check only with a session you authorize. Daily: `node ./bin/kairo.js ui` (ratatui default); `--pi` for old shell.
-2. **R6** extension-UI dialogs (RPC extension_ui only; no simulated tools).
-3. **R4 remainder:** publish Pi fork (user-authorized) so RPC no-model cold-start is runtime-active; then bind Kairo `kairo list` / `resume` session ids to Pi `switch_session` when product wants one picker (today: Pi files on disk only).
-4. **R9** cutover cleanup: strip old UIs / packaging after V3 approval (remote auth); daily default is already ratatui on this branch.
+1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7 packaging claim). Now reachable end to end in one UI: `kairo` → `a` (analyze) → `A` (approve) → chat. Live provider check only with a session you authorize.
+2. **T2** in-UI team depth: analyst picker + per-role editor (MVP is default analyst only).
+3. **R6** extension-UI dialogs (RPC extension_ui only; no simulated tools).
+4. **R4 remainder:** publish Pi fork (user-authorized) so RPC no-model cold-start is runtime-active; then bind Kairo `kairo list` / `resume` session ids to Pi `switch_session` when product wants one picker (today: Pi files on disk only).
+5. **R9** cutover cleanup: strip old UIs / packaging after V3 approval (remote auth); daily default is already ratatui on this branch.
