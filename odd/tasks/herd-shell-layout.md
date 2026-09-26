@@ -95,8 +95,9 @@ User plan "Kairo shell con sidebar real" (2026-09-25) authorizes H6–H10 on bra
   1. Fork (`shell-viewport.ts`): `CollapsibleSidebarLayout` replaces the generic `HStack` sidebar/main split — it reserves the sidebar's fixed basis only when the sidebar actually renders at least one line at the current width; an empty sidebar collapses the reserved column to zero and the main column gets the full width. Re-evaluated on every `render()`, so a live resize (not just a fresh extension refresh) reflows immediately.
   2. Kairo (`extension/index.js`): the bottom-strip side of the same class of bug was already closed by H8b (the strip clears below 90 cols); confirmed still correct after the fork change (no fork-side "empty bottom strip still reserves height" bug exists — `VStack`'s own `basis: "auto"` sizing already collapses an empty strip to zero rows, verified by a dedicated fork unit test).
   3. Kairo (`extension/index.js`): unrelated perf fix bundled in the same pass — `readLiveKairoTuiMode` did a `readFileSync` + `JSON.parse` on every `getTuiMode()` call, which runs on every render (Pi repaints the fullscreen surface on every streamed token). `createLiveTuiModeReader` caches the parsed mode by the settings file's `mtimeMs` (via `statSync`), only re-reading the body when the mtime actually changes; a missing/unreadable file is never cached.
-- [ ] H9-1 Integrate fork version into harness pin (after authorized publish — **blocked until remote auth**)
-- [ ] H10-1 Suites both repos + interactive TTY captures @100/@60; record RDD; reopen checklist above only when TTY passes
+- [x] H8d-1 Regression found by the parent with a real PTY run: H8c's `CollapsibleSidebarLayout` fixed the WIDTH bug but broke the VERTICAL layout — at 100x30 the editor, dock, and status bar disappeared entirely (only the USAGE strip survived, moved to the top of the main column); at 60x30 the whole screen went blank; a live resize also left the whole screen blank. Root cause: `CollapsibleSidebarLayout` implemented only `Component.render(width)` (no height parameter). The real fullscreen renderer (`TuiAltScreen`'s render loop, via `renderLayoutFrame(root, width, height, ...)` in `packages/tui/src/layout.ts`) never calls `render(width)` on the root component directly — it walks a `[LAYOUT_NODE]` component tree top-down, distributing a real height budget at every level so nested `VStack`s with `grow`/`basis: 0` entries (transcript, editor dock, footer) can flex. A component with no `[LAYOUT_NODE]()` is opaque to that walk: the engine treats it as one leaf and calls its bare `render(width)`, which has no height to distribute at all, so every nested `VStack` inside computes sizes with `availableSize: undefined` (see `VStack.render` in `packages/tui/src/components/v-stack.ts`) — a `basis: 0, grow: 1` entry (the transcript) collapses to zero, and so does the `basis: 0` chat-column entry inside the bottom-strip wrapper, dropping editor/dock/footer/status entirely. Fixed in `740b4aa86`: `CollapsibleSidebarLayout` now implements `[LAYOUT_NODE]()`, returning a transparent `hstack` node (sidebar entry with a live-computed basis — 0 when it renders no content at its fixed width, else its basis; main entry `basis: "auto", grow: 1`), so the real renderer walks it exactly like the pre-H8c generic `HStack` did, restoring correct height distribution while keeping the H8c zero-width collapse. `render(width)` is unchanged (still used by direct/opaque callers, e.g. `TuiAltScreen`'s fallback `render(width)` compat path and existing unit tests). `renderLayoutFrame`/`LayoutFrame` were exported from pi-tui's public index (`packages/tui/src/index.ts`) so this can be exercised from coding-agent tests without reaching into pi-tui internals.
+- [ ] H9-1 Integrate fork version into harness pin (after authorized publish — **blocked until remote auth**, unchanged by H8d)
+- [x] H10-1a Suites both repos + interactive TTY captures @100/@60 for the H8d fix specifically (fork `test/kairo` 39/39, Kairo `npm test` 2278/2278/1 skip, real PTY evidence below). H10 as a whole (final acceptance-checklist reopen tied to the eventual published/pinned fork version) stays open pending H9.
 
 ## Progress
 
@@ -290,6 +291,164 @@ User plan "Kairo shell con sidebar real" (2026-09-25) authorizes H6–H10 on bra
     ```
     Confirms the `.3` pin path (no shell-slot API) is unchanged by the H8c fork fix, as expected.
 
+- H8d (2026-09-25): a real PTY run by the parent (100x30 and 60x30, plus a live 100→60→100 resize) found the H8c fix broke the VERTICAL layout — see the H8d-1 task item above for the full root-cause analysis and fix summary. Fixed in `740b4aa86` (fork): `CollapsibleSidebarLayout` gains `[LAYOUT_NODE]()`, making it transparent to the real fullscreen renderer (`renderLayoutFrame`) the same way the pre-H8c generic `HStack` always was; `render(width)` is unchanged. `renderLayoutFrame`/`LayoutFrame` are now exported from `packages/tui/src/index.ts`'s public API. No harness (Kairo) source changes were needed — this is a fork-only fix, version stays `0.87.1-kairo.4` (still unpublished; H9 remains blocked on remote authorization).
+
+  **RED** (`test/kairo/shell-viewport-layout.test.ts`, three new tests, run against HEAD `8a6453b81` before the fix): all 3 failed —
+  ```
+  100x30 with a visible sidebar: ... > AssertionError: expected -1 to be greater than or equal to 0   (editorRow not found)
+  60x30 with an empty sidebar: ...    > AssertionError: expected -1 to be greater than or equal to 0   (editorRow not found)
+  a live resize 100 -> 60 -> 100 ...  > AssertionError: expected -1 to be greater than or equal to 0   (editorRow not found)
+  ```
+  These tests call `renderLayoutFrame(viewport.root, width, height, ...)` directly (the real fullscreen path, the only one with a height budget to distribute) instead of `.render(width)`, because the bug is invisible to any test that only calls `.render(width)` — that method never receives a height in the first place, real or broken.
+
+  **GREEN** after the fix (`npm ci && npm run build:offline`, then `npx vitest --run test/kairo` in `packages/coding-agent`): 8 files / 39 tests passed / 0 failed (36 pre-existing + 3 new). `npm run check` (biome + tsgo) is clean except 4 pre-existing `TS2554` errors in `test/kairo/shell-viewport.test.ts` (lines 170, 230, 231) confirmed via `git stash` to already exist on HEAD `8a6453b81` before this fix — unrelated to H8d, not touched.
+
+  **Kairo checks (unaffected)**: full `npm test` at the harness root (log saved) → 2278 pass / 0 fail / 1 skip — exactly matching the pre-H8d baseline; no harness source changes were made.
+
+  **Real PTY evidence** (launcher-equivalent setup — fresh `HARNESS_HOME` per run, `HARNESS_HOME/.harness/pi-agent/settings.json` = `{"quietStartup": true, "tuiMode": "fullscreen"}`, `PI_CODING_AGENT_DIR`/`KAIRO_PI_EMPTY_SESSIONS=1`/`PI_SKIP_VERSION_CHECK=1`/`KAIRO_TUI_MODE=fullscreen`, `node third_party/pi/packages/coding-agent/dist/bundle/cli.js -e src/global/host/extension/ --no-extensions --no-skills --no-prompt-templates --no-themes --no-context-files --tui-mode fullscreen`, cwd = repo root, `tty_driver.py`, PTY 100x30/60x30):
+
+    **Run 1 — same process, live resize 100 → 60 → 100** (spec: `["wait",15],["snap","a-100"],["resize",30,60,4],["snap","b-60"],["resize",30,100,4],["snap","c-100-again"]`):
+
+    **a-100 (100x30, initial)**:
+    ```
+    01|SPACES
+    02|◈ agentic-harness
+    03|ROUTES unavailable
+    04|Run /project analyze.
+    05|AGENTS
+    06|No agents yet.
+    07|
+    08|
+    09|
+    10|
+    11|
+    12|
+    13|
+    14|
+    15|
+    16|
+    17|
+    18|
+    19|                            ────────────────────────────────────────────────────────────────────────
+    20|
+    21|                            ────────────────────────────────────────────────────────────────────────
+    22|                            ~/Desktop/agentic-harness (feat/herd-shell-layout)
+    23|                            0.0%/0 (auto)                                                    unknown
+    24|                            Kairo · agentic-harness · session: unbound
+    25|                            USAGE
+    26|                            Codex  5h   ━━━━━━━━━━ 100%
+    27|                                   W    ━━━━────── 35%
+    28|                            Claude S    ━━━━━───── 54%
+    29|                                   W    ━───────── 8%
+    30|                            Go     usage unknown
+    ```
+
+    **b-60 (60x30, live resize from a-100, same process)**:
+    ```
+    01|
+    02| Warning: No models available. Use /login to log into a
+    03| provider via OAuth or API key. See:
+    04|
+    05| /Users/kal-el/Desktop/agentic-harness/third_party/pi/packa
+    06| ges/coding-agent/docs/providers.md
+    07|
+    08| /Users/kal-el/Desktop/agentic-harness/third_party/pi/packa
+    09| ges/coding-agent/docs/models.md
+    10|
+    11|
+    12|
+    13|
+    14|
+    15|
+    16|
+    17|
+    18|
+    19|
+    20|
+    21|
+    22|USAGE Codex 5h 100% / W 35% │ Claude S 54% / W 8% LOW…
+    23|ROUTES unavailable
+    24|Run /project analyze.
+    25|────────────────────────────────────────────────────────────
+    26|
+    27|────────────────────────────────────────────────────────────
+    28|~/Desktop/agentic-harness (feat/herd-shell-layout)
+    29|0.0%/0 (auto)                                        unknown
+    30|Kairo · agentic-harness · session: unbound
+    ```
+
+    **c-100-again (100x30, live resize back, same process)**:
+    ```
+    01|SPACES
+    02|◈ agentic-harness            Warning: No models available. Use /login to log into a provider via
+    03|ROUTES unavailable           OAuth or API key. See:
+    04|Run /project analyze.
+    05|AGENTS                       /Users/kal-el/Desktop/agentic-harness/third_party/pi/packages/coding-a
+    06|No agents yet.               gent/docs/providers.md
+    07|
+    08|                             /Users/kal-el/Desktop/agentic-harness/third_party/pi/packages/coding-a
+    09|                             gent/docs/models.md
+    10|
+    11|
+    12|
+    13|
+    14|
+    15|
+    16|
+    17|
+    18|
+    19|                            ────────────────────────────────────────────────────────────────────────
+    20|
+    21|                            ────────────────────────────────────────────────────────────────────────
+    22|                            ~/Desktop/agentic-harness (feat/herd-shell-layout)
+    23|                            0.0%/0 (auto)                                                    unknown
+    24|                            Kairo · agentic-harness · session: unbound
+    25|                            USAGE
+    26|                            Codex  5h   ━━━━━━━━━━ 100%
+    27|                                   W    ━━━━────── 35%
+    28|                            Claude S    ━━━━━───── 54%
+    29|                                   W    ━───────── 8%
+    30|                            Go     usage unknown
+    ```
+
+    **Run 2 — fresh process at 60x30** (separate `HARNESS_HOME`, spec: `["wait",15],["snap","d-fresh60"]`):
+    ```
+    01|
+    02|
+    03|
+    04|
+    05|
+    06|
+    07|
+    08|
+    09|
+    10|
+    11|
+    12|
+    13|
+    14|
+    15|
+    16|
+    17|
+    18|
+    19|
+    20|
+    21|
+    22|USAGE Codex 5h 100% / W 35% │ Claude S 54% / W 8% LOW…
+    23|ROUTES unavailable
+    24|Run /project analyze.
+    25|────────────────────────────────────────────────────────────
+    26|
+    27|────────────────────────────────────────────────────────────
+    28|~/Desktop/agentic-harness (feat/herd-shell-layout)
+    29|0.0%/0 (auto)                                        unknown
+    30|Kairo · agentic-harness · session: unbound
+    ```
+
+  **Facts observed in all four captures**: the editor separators, the cwd line, the model line, and the full `Kairo · agentic-harness · session: unbound` status-bar text are present and un-truncated in every capture, including immediately after both live resizes — no blank screen after resize, and no missing dock/status content at either width. At 100 cols the sidebar (SPACES/AGENTS, columns 0-27) sits beside the chat column; at 60 cols the sidebar is absent and the chat column gets the full width.
+
+  **Blank-after-resize verdict: app bug, not a driver artifact.** The task's own repro used the same `tty_driver.py`/`pyte` mechanism this evidence uses, and with the H8d fix applied, a live resize through that exact mechanism (`TIOCSWINSZ` + `SIGWINCH`, `pyte`'s `screen.resize`) now produces a fully correct redraw every time (see `b-60` and `c-100-again` above) — no blank screen, no stale content. Since the same driver, the same resize mechanism, and the same terminal library now render correctly once the layout bug is fixed, the previously observed "whole screen blank after resize" was caused by the same root cause as the static-render regression (an opaque `CollapsibleSidebarLayout` producing far fewer lines than the terminal height on every render, resize included), not by `pyte`'s `screen.resize` or the driver's `TIOCSWINSZ`/`SIGWINCH` mechanism.
+
 ## Next step
 
-H9/H10 remain open: H9 (integrate fork version into harness pin) is blocked on explicit remote/publish authorization; H10 (full evidence record + reopening the acceptance checklist) should follow once H9 is authorized. No push/PR/npm publish was performed. H8c (sidebar-column-reservation regression) is closed with RED/GREEN and real PTY evidence above.
+H9/H10 remain open: H9 (integrate fork version into harness pin) is blocked on explicit remote/publish authorization; H10 (full evidence record + reopening the acceptance checklist for the eventual pinned/published fork version) should follow once H9 is authorized. No push/PR/npm publish was performed. H8c (sidebar-column-reservation regression) and H8d (vertical-layout regression introduced by the H8c fix) are both closed with RED/GREEN and real PTY evidence above.
