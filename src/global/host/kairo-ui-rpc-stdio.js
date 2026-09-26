@@ -18,7 +18,12 @@
  * forwarded Pi session events, { type: "error", message }, and bridge engine_unavailable.
  */
 
-import { openPiRpcBridge, classifyPiEngineFromState } from "./pi-rpc-bridge.js";
+import { fileURLToPath } from "node:url";
+import {
+  openPiRpcBridge,
+  classifyPiEngineFromState,
+  resolveArchitectRouteForRpc
+} from "./pi-rpc-bridge.js";
 import { loadKairoWorkspaceSnapshot } from "./workspace-snapshot.js";
 import { loadKairoProviderModels } from "./kairo-route-provider.js";
 import { listPiSessionFilesForCwd } from "./pi-rpc-sessions.js";
@@ -51,12 +56,35 @@ export async function fetchTranscriptRows(bridge) {
 }
 
 /**
+ * Refresh host engine from Pi `get_state`.
+ * When `reapplyArchitect` is true (session create/switch only — never after
+ * `cycle_model`), re-select Architect via `resolveArchitectRouteForRpc`.
+ *
  * @param {object} bridge
  * @param {string} cwd
+ * @param {object} [options]
+ * @param {boolean} [options.reapplyArchitect]
+ * @param {(args: { cwd: string }) => Promise<object[]>} [options.loadKairoProviderModels]
+ * @param {number} [options.connectTimeoutMs]
  */
-export async function refreshHostEngine(bridge, cwd) {
+export async function refreshHostEngine(
+  bridge,
+  cwd,
+  {
+    reapplyArchitect = false,
+    loadKairoProviderModels: loadModels = loadKairoProviderModels,
+    connectTimeoutMs
+  } = {}
+) {
   const state = await bridge.request({ type: "get_state" });
-  const engine = classifyPiEngineFromState(state);
+  const engine = reapplyArchitect
+    ? await resolveArchitectRouteForRpc(bridge, {
+        cwd,
+        loadKairoProviderModels: loadModels,
+        connectTimeoutMs,
+        initialState: state
+      })
+    : classifyPiEngineFromState(state);
   bridge.engine = engine;
   return engine;
 }
@@ -120,8 +148,14 @@ export async function runKairoUiRpcStdio({
   let buffer = "";
   let stopped = false;
 
-  const applyEngineAndMaybeTranscript = async ({ reloadTranscript = false } = {}) => {
-    const engine = await refreshHostEngine(bridge, cwd);
+  const applyEngineAndMaybeTranscript = async ({
+    reloadTranscript = false,
+    reapplyArchitect = false
+  } = {}) => {
+    const engine = await refreshHostEngine(bridge, cwd, {
+      reapplyArchitect,
+      loadKairoProviderModels: loadModels
+    });
     writeOut({
       type: "engine",
       engine,
@@ -194,7 +228,10 @@ export async function runKairoUiRpcStdio({
             label
           }))
         });
-        await applyEngineAndMaybeTranscript({ reloadTranscript: true });
+        await applyEngineAndMaybeTranscript({
+          reloadTranscript: true,
+          reapplyArchitect: true
+        });
       } else if (op === "switch_session") {
         const sessionPath = typeof cmd.sessionPath === "string" ? cmd.sessionPath : "";
         if (!sessionPath) {
@@ -209,7 +246,10 @@ export async function runKairoUiRpcStdio({
           writeOut({ type: "notice", message: "Session switch cancelled by extension" });
           return;
         }
-        await applyEngineAndMaybeTranscript({ reloadTranscript: true });
+        await applyEngineAndMaybeTranscript({
+          reloadTranscript: true,
+          reapplyArchitect: true
+        });
       } else if (op === "switch_session_index") {
         sessionFiles = listPiSessionFilesForCwd({ cwd, env: process.env });
         const index = Number(cmd.index);
@@ -232,7 +272,10 @@ export async function runKairoUiRpcStdio({
           writeOut({ type: "notice", message: "Session switch cancelled by extension" });
           return;
         }
-        await applyEngineAndMaybeTranscript({ reloadTranscript: true });
+        await applyEngineAndMaybeTranscript({
+          reloadTranscript: true,
+          reapplyArchitect: true
+        });
       } else if (op === "list_sessions") {
         sessionFiles = listPiSessionFilesForCwd({ cwd, env: process.env });
         writeOut({
@@ -293,8 +336,6 @@ function parseArgvCwd(argv) {
   }
   return process.cwd();
 }
-
-import { fileURLToPath } from "node:url";
 
 const isMain =
   typeof process.argv[1] === "string" &&
