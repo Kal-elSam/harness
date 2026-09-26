@@ -452,3 +452,27 @@ User plan "Kairo shell con sidebar real" (2026-09-25) authorizes H6–H10 on bra
 ## Next step
 
 H9/H10 remain open: H9 (integrate fork version into harness pin) is blocked on explicit remote/publish authorization; H10 (full evidence record + reopening the acceptance checklist for the eventual pinned/published fork version) should follow once H9 is authorized. No push/PR/npm publish was performed. H8c (sidebar-column-reservation regression) and H8d (vertical-layout regression introduced by the H8c fix) are both closed with RED/GREEN and real PTY evidence above.
+
+### Parent verification of H8c/H8d (2026-09-26)
+
+- The parent's H8c PTY check (launcher-equivalent settings under
+  `$HARNESS_HOME/.harness/pi-agent`, row-numbered, blank rows kept) found
+  that `45a75aaac` hid the editor, separators, and status bar at 100x30
+  (the USAGE strip moved to the top of the chat column), and that a live
+  resize to 60 left the screen blank. The H8c writer's own captures had
+  filtered out blank rows, so they did not show it. H8d (`740b4aa86`)
+  fixed it with `[LAYOUT_NODE]`.
+- The parent re-ran the check on `daa785045` with a live resize
+  (TIOCSWINSZ + SIGWINCH), 100 → 60 → 100:
+  - Every screen has the editor separators, the cwd and model lines, and
+    the full `Kairo · agentic-harness · session: unbound` at rows 19–24
+    (at 100) and 25–30 (at 60).
+  - At 60 the chat starts at column 0 with the full width, and the
+    compact summary sits above the editor.
+  - The sidebar comes back after resizing to 100.
+- `daa785045` fixes 4 `tsgo` TS2554 errors in
+  `test/kairo/shell-viewport.test.ts`. They were introduced by our own
+  `45a75aaac` (the helper `render()` took no parameter), not by
+  upstream. After the fix: `npx tsgo --noEmit` has 0 errors, biome is
+  clean, and `npx vitest --run test/kairo` gives 8 files and 39/39.
+
