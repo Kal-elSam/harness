@@ -54,7 +54,7 @@ class FixedLinesComponent implements Component {
 	constructor(lines: string[]) {
 		this.lines = lines;
 	}
-	render(): string[] {
+	render(_width?: number): string[] {
 		return this.lines;
 	}
 	invalidate(): void {}
