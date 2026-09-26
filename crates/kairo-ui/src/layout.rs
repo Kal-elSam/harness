@@ -18,11 +18,32 @@ pub const SIDEBAR_MIN_COLUMNS: u16 = 90;
 /// only cell and hid the label (V1 PTY review, 2026-09-26).
 pub const USAGE_STRIP_ROWS: u16 = 2;
 
+/// Editor strip height inside the main work column (border + ~3 input lines).
+pub const EDITOR_ROWS: u16 = 5;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShellRegions {
     pub sidebar: Option<Rect>,
     pub main: Rect,
     pub usage: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkRegions {
+    pub transcript: Rect,
+    pub editor: Rect,
+}
+
+/// Split the main work column into transcript (flex) + editor (fixed rows).
+pub fn split_work_main(main: Rect) -> WorkRegions {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(EDITOR_ROWS)])
+        .split(main);
+    WorkRegions {
+        transcript: vertical[0],
+        editor: vertical[1],
+    }
 }
 
 /// Split a full-frame `area` into sidebar (optional), main work surface, and usage strip.
@@ -102,5 +123,15 @@ mod tests {
         let show = split_shell(Rect::new(0, 0, 90, 24));
         assert_eq!(show.sidebar.map(|r| r.width), Some(SIDEBAR_COLUMNS));
         assert_eq!(show.main.width, 90 - SIDEBAR_COLUMNS);
+    }
+
+    #[test]
+    fn work_main_reserves_editor_rows_at_bottom() {
+        let main = Rect::new(28, 0, 72, 20);
+        let work = split_work_main(main);
+        assert_eq!(work.editor.height, EDITOR_ROWS);
+        assert_eq!(work.editor.y, main.y + main.height - EDITOR_ROWS);
+        assert_eq!(work.transcript.height, main.height - EDITOR_ROWS);
+        assert_eq!(work.transcript.y, main.y);
     }
 }
