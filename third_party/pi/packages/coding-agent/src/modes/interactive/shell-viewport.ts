@@ -1,8 +1,47 @@
 import { type Component, compositeTuiLine, VStack } from "@earendil-works/pi-tui";
-import { createChatViewport, type ChatViewport, type ChatViewportOptions } from "./chat-viewport.ts";
+import { type ChatViewport, type ChatViewportOptions, createChatViewport } from "./chat-viewport.ts";
 
 /** Default fixed-ish sidebar column width (terminal cells). */
 export const SHELL_SIDEBAR_BASIS = 28;
+
+/**
+ * Well-known layout-node symbol from `@earendil-works/pi-tui` (see
+ * `packages/tui/src/layout-node.ts`). It is a global `Symbol.for(...)` key,
+ * not a class export, so any component can implement it without importing
+ * pi-tui's internal layout module — the same technique the fork's own
+ * shell-viewport tests already use to inspect layout nodes.
+ *
+ * A component that implements this symbol is "layout-transparent": the real
+ * fullscreen renderer (`renderLayoutFrame` in `packages/tui/src/layout.ts`,
+ * driving `TuiAltScreen`'s render loop) walks it top-down with a real height
+ * budget at every level, instead of treating it as an opaque leaf and calling
+ * its bare `render(width)` — which has no height parameter at all. Without
+ * this, every nested `VStack` with `grow`/`basis: 0` entries (the transcript,
+ * the editor dock, the footer) computes sizes with no available height to
+ * distribute (see `VStack.render` in `packages/tui/src/components/v-stack.ts`,
+ * which passes `availableSize: undefined` to `allocateStackSizes`), so those
+ * entries collapse to zero rows instead of flexing to fill the screen.
+ */
+const LAYOUT_NODE = Symbol.for("@earendil-works/pi-tui/layout-node");
+
+/** Minimal shape of pi-tui's internal `StackLayoutNode`/`StackLayoutEntry`
+ * (see `packages/tui/src/layout-node.ts`) — not exported from the package's
+ * public API, so declared locally to the fields `CollapsibleSidebarLayout`
+ * actually produces. */
+interface ShellStackLayoutEntry {
+	readonly component: Component;
+	readonly basis?: number | "auto";
+	readonly grow?: number;
+	readonly shrink?: number;
+	readonly minSize?: number;
+}
+
+interface ShellStackLayoutNode {
+	readonly type: "hstack";
+	readonly entries: readonly ShellStackLayoutEntry[];
+	readonly gap: number;
+	readonly align: "stretch";
+}
 
 /**
  * Two-column layout: a fixed-width sidebar next to a flexible main column,
@@ -58,6 +97,35 @@ export class CollapsibleSidebarLayout implements Component {
 	invalidate(): void {
 		this.sidebar.invalidate();
 		this.main.invalidate();
+	}
+
+	/**
+	 * Layout-transparent hstack: the real fullscreen renderer (see the
+	 * `LAYOUT_NODE` doc above) walks this tree top-down, distributing a real
+	 * height budget to `this.main` (a `VStack` whose transcript/dock entries
+	 * rely on that budget to flex). `render(width)` above is preserved for
+	 * direct/opaque callers (existing unit tests, and `TuiAltScreen`'s
+	 * fallback `render(width)` compat path) and produces the same visual
+	 * result, but it has no width-independent way to reproduce the real
+	 * renderer's height-aware layout — that only happens through this method.
+	 *
+	 * The sidebar's basis is computed the same way `render()` does: render it
+	 * once at its fixed basis width and collapse to zero columns if it comes
+	 * back empty, re-evaluated on every call (so a live resize or a live
+	 * content change reflows with no rebuild — same guarantee `render()`
+	 * already gives, now also honored by the real height-aware path).
+	 */
+	[LAYOUT_NODE](): ShellStackLayoutNode {
+		const basis = this.sidebar.render(Math.max(1, this.sidebarBasis)).length === 0 ? 0 : this.sidebarBasis;
+		return {
+			type: "hstack",
+			entries: [
+				{ component: this.sidebar, basis, grow: 0, shrink: 0, minSize: 0 },
+				{ component: this.main, basis: "auto", grow: 1, shrink: 1, minSize: 1 },
+			],
+			gap: this.gap,
+			align: "stretch",
+		};
 	}
 }
 

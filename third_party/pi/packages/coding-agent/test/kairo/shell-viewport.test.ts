@@ -2,10 +2,11 @@
  * Kairo shell slots (H6): fullscreen composition around createChatViewport.
  * Sidebar + bottom strip are extension-owned; chat column stays transcript + dock.
  */
-import { type Component, Container, HStack, ScrollView, stripTerminalSequences, VStack } from "@earendil-works/pi-tui";
+
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { type Component, Container, HStack, ScrollView, stripTerminalSequences, VStack } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
 import { createChatViewport } from "../../src/modes/interactive/chat-viewport.ts";
 import { CollapsibleSidebarLayout, createShellViewport } from "../../src/modes/interactive/shell-viewport.ts";
@@ -75,7 +76,6 @@ describe("createShellViewport (Kairo H6)", () => {
 		const lines = viewport.root.render(60);
 		expect(lines.some((line) => stripTerminalSequences(line).includes("SIDE"))).toBe(true);
 	});
-
 
 	test("without sidebar, root is chat-only (no HStack shell)", () => {
 		const viewport = createShellViewport(chatParts());
