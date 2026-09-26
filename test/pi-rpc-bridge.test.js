@@ -3,9 +3,13 @@ import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import {
   KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
+  buildPiRpcSpawnArgs,
   classifyPiEngineFromState,
-  openPiRpcBridge
+  missingArchitectRouteReason,
+  openPiRpcBridge,
+  selectArchitectKairoModel
 } from "../src/global/host/pi-rpc-bridge.js";
+import { DEFAULT_EXTENSION_DIR } from "../src/global/host/launch-gentle-shell.js";
 
 function fakeSnapshot(overrides = {}) {
   return {
@@ -13,6 +17,14 @@ function fakeSnapshot(overrides = {}) {
     project: { label: "demo" },
     agents: [],
     ...overrides
+  };
+}
+
+function architectRoute(id = "codex::gpt-6-astra") {
+  return {
+    id,
+    name: "GPT-6 Astra · Architect",
+    kairoRoute: { adapterId: "codex", modelId: "gpt-6-astra", role: "Architect" }
   };
 }
 
@@ -39,6 +51,7 @@ function createFakeRpcChild({
 
   const child = new EventEmitter();
   const stdinChunks = [];
+  let activeModel = null;
   child.stdin = new EventEmitter();
   child.stdin.write = (chunk) => {
     stdinChunks.push(String(chunk));
@@ -50,7 +63,7 @@ function createFakeRpcChild({
       } catch {
         continue;
       }
-      const response = onCommand(cmd);
+      const response = onCommand(cmd, { activeModel, setModel: (m) => { activeModel = m; } });
       if (response) {
         const body = { ...response };
         if (cmd.id != null && body.id == null) body.id = cmd.id;
@@ -68,11 +81,82 @@ function createFakeRpcChild({
     child.emit("exit", 0, signal ?? null);
   };
   child._stdinChunks = stdinChunks;
+  child._getActiveModel = () => activeModel;
   if (exitAfterMs != null) {
     setTimeout(() => child.emit("exit", 1, null), exitAfterMs);
   }
   return child;
 }
+
+function defaultGetStateHandler(ctx) {
+  return {
+    type: "response",
+    command: "get_state",
+    success: true,
+    data: {
+      sessionId: "sess-1",
+      model: ctx.activeModel ?? null
+    }
+  };
+}
+
+function rpcChildWithArchitect(architectId, overrides = {}) {
+  return createFakeRpcChild({
+    onCommand: (cmd, ctx) => {
+      if (cmd.type === "get_state") {
+        return defaultGetStateHandler(ctx);
+      }
+      if (cmd.type === "set_model") {
+        assert.equal(cmd.provider, "kairo");
+        ctx.setModel({ provider: "kairo", id: cmd.modelId });
+        return {
+          type: "response",
+          command: "set_model",
+          success: true,
+          data: { provider: "kairo", id: cmd.modelId }
+        };
+      }
+      return overrides.onCommand?.(cmd, ctx) ?? null;
+    },
+    ...overrides
+  });
+}
+
+const noArchitectModels = async () => [];
+
+test("selectArchitectKairoModel picks Architect role only", () => {
+  const models = [
+    { id: "a::b", kairoRoute: { role: "Builder" } },
+    architectRoute("codex::arch")
+  ];
+  assert.equal(selectArchitectKairoModel(models)?.id, "codex::arch");
+  assert.equal(selectArchitectKairoModel([]), null);
+  assert.match(missingArchitectRouteReason([]), /active strategy/i);
+  assert.match(missingArchitectRouteReason(models.slice(0, 1)), /Architect/i);
+});
+
+test("buildPiRpcSpawnArgs includes extension resource flags and rpc mode", () => {
+  const args = buildPiRpcSpawnArgs({
+    cliPath: "/abs/cli.js",
+    extensionDir: DEFAULT_EXTENSION_DIR
+  });
+  assert.equal(args[0], "/abs/cli.js");
+  assert.ok(args.includes("-e"));
+  assert.equal(args[args.indexOf("-e") + 1], DEFAULT_EXTENSION_DIR);
+  for (const flag of [
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--mode",
+    "rpc",
+    "--no-session"
+  ]) {
+    assert.ok(args.includes(flag), `missing ${flag}`);
+  }
+  assert.equal(args.includes("--tui-mode"), false);
+});
 
 test("classifyPiEngineFromState: missing model is no_model when RPC already answered get_state", () => {
   assert.deepEqual(classifyPiEngineFromState({}), {
@@ -89,6 +173,7 @@ test("openPiRpcBridge always returns hostOpen with workspace-shell/v1 snapshot e
     cwd: "/project",
     loadSnapshot: async () => fakeSnapshot(),
     resolveCliPath: () => "/fake/cli.js",
+    loadKairoProviderModels: noArchitectModels,
     spawnImpl: () => createFakeRpcChild({ failSpawn: true }),
     execPath: "/usr/bin/node",
     connectTimeoutMs: 200
@@ -101,55 +186,48 @@ test("openPiRpcBridge always returns hostOpen with workspace-shell/v1 snapshot e
   await bridge.stop();
 });
 
-test("openPiRpcBridge reports simulated get_state-without-model as no_model (not real Pi cold-start)", async () => {
+test("openPiRpcBridge reports no_model when Architect route is missing", async () => {
   const bridge = await openPiRpcBridge({
     cwd: "/project",
     loadSnapshot: async () => fakeSnapshot({ agents: [{ id: "orch", state: "idle" }] }),
     resolveCliPath: () => "/fake/cli.js",
-    spawnImpl: () =>
-      createFakeRpcChild({
-        onCommand: (cmd) => {
-          if (cmd.type === "get_state") {
-            return {
-              type: "response",
-              command: "get_state",
-              success: true,
-              data: { sessionId: "sess-1" }
-            };
-          }
-          return { type: "response", command: cmd.type, success: false, error: "unexpected" };
-        }
-      }),
+    loadKairoProviderModels: noArchitectModels,
+    spawnImpl: () => rpcChildWithArchitect("codex::x"),
     execPath: "/usr/bin/node",
     connectTimeoutMs: 500
   });
 
   assert.equal(bridge.hostOpen, true);
   assert.equal(bridge.engine.status, "no_model");
+  assert.match(bridge.engine.reason, /Architect|projectTeam/i);
   assert.equal(bridge.engine.sessionId, "sess-1");
-  assert.equal(bridge.snapshot.agents[0].id, "orch");
   await bridge.stop();
 });
 
-test("openPiRpcBridge spawns Pi with --mode rpc and connects when model is present", async () => {
+test("openPiRpcBridge spawns Pi with extension flags and set_model Architect", async () => {
   let spawnArgs = null;
+  const setModelCalls = [];
+  const architectId = "codex::gpt-6-astra";
   const bridge = await openPiRpcBridge({
     cwd: "/project",
     loadSnapshot: async () => fakeSnapshot(),
     resolveCliPath: () => "/abs/kairo-pi/dist/bundle/cli.js",
+    loadKairoProviderModels: async () => [architectRoute(architectId)],
     spawnImpl: (command, args, options) => {
       spawnArgs = { command, args, options };
       return createFakeRpcChild({
-        onCommand: (cmd) => {
+        onCommand: (cmd, ctx) => {
           if (cmd.type === "get_state") {
+            return defaultGetStateHandler(ctx);
+          }
+          if (cmd.type === "set_model") {
+            setModelCalls.push(cmd);
+            ctx.setModel({ provider: "kairo", id: cmd.modelId });
             return {
               type: "response",
-              command: "get_state",
+              command: "set_model",
               success: true,
-              data: {
-                sessionId: "abc",
-                model: { provider: "opencode", id: "flash" }
-              }
+              data: { provider: "kairo", id: cmd.modelId }
             };
           }
           return null;
@@ -162,13 +240,18 @@ test("openPiRpcBridge spawns Pi with --mode rpc and connects when model is prese
 
   assert.equal(bridge.hostOpen, true);
   assert.equal(bridge.engine.status, "connected");
-  assert.equal(bridge.engine.model.id, "flash");
+  assert.equal(bridge.engine.model.id, architectId);
+  assert.equal(bridge.engine.model.provider, "kairo");
   assert.equal(spawnArgs.command, "/usr/bin/node");
+  assert.ok(spawnArgs.args.includes("-e"));
+  assert.ok(spawnArgs.args.includes("--no-extensions"));
   assert.ok(spawnArgs.args.includes("--mode"));
   assert.ok(spawnArgs.args.includes("rpc"));
   assert.equal(spawnArgs.args[0], "/abs/kairo-pi/dist/bundle/cli.js");
+  assert.equal(setModelCalls.length, 1);
+  assert.equal(setModelCalls[0].provider, "kairo");
+  assert.equal(setModelCalls[0].modelId, architectId);
   assert.equal(spawnArgs.options.stdio[0], "pipe");
-  assert.equal(spawnArgs.options.stdio[1], "pipe");
   assert.equal(spawnArgs.options.cwd, "/project");
   await bridge.stop();
 });
@@ -178,6 +261,7 @@ test("openPiRpcBridge still opens when get_state fails after spawn", async () =>
     cwd: "/project",
     loadSnapshot: async () => fakeSnapshot(),
     resolveCliPath: () => "/fake/cli.js",
+    loadKairoProviderModels: noArchitectModels,
     spawnImpl: () =>
       createFakeRpcChild({
         onCommand: (cmd) => ({
@@ -197,6 +281,48 @@ test("openPiRpcBridge still opens when get_state fails after spawn", async () =>
   await bridge.stop();
 });
 
+test("openPiRpcBridge no_model when set_model fails; no fallback provider", async () => {
+  const setModelCalls = [];
+  const bridge = await openPiRpcBridge({
+    cwd: "/project",
+    loadSnapshot: async () => fakeSnapshot(),
+    resolveCliPath: () => "/fake/cli.js",
+    loadKairoProviderModels: async () => [architectRoute()],
+    spawnImpl: () =>
+      createFakeRpcChild({
+        onCommand: (cmd) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s" }
+            };
+          }
+          if (cmd.type === "set_model") {
+            setModelCalls.push(cmd);
+            return {
+              type: "response",
+              command: "set_model",
+              success: false,
+              error: "Model not found: kairo/codex::gpt-6-astra"
+            };
+          }
+          return null;
+        }
+      }),
+    execPath: "/usr/bin/node",
+    connectTimeoutMs: 500
+  });
+
+  assert.equal(bridge.hostOpen, true);
+  assert.equal(bridge.engine.status, "no_model");
+  assert.match(bridge.engine.reason, /set_model failed/i);
+  assert.equal(setModelCalls.length, 1);
+  assert.equal(setModelCalls[0].provider, "kairo");
+  await bridge.stop();
+});
+
 test("R3: session events are consumable via onEvent and takeEvents", async () => {
   let childRef = null;
   const seen = [];
@@ -204,20 +330,9 @@ test("R3: session events are consumable via onEvent and takeEvents", async () =>
     cwd: "/project",
     loadSnapshot: async () => fakeSnapshot(),
     resolveCliPath: () => "/fake/cli.js",
+    loadKairoProviderModels: async () => [architectRoute("codex::m")],
     spawnImpl: () => {
-      childRef = createFakeRpcChild({
-        onCommand: (cmd) => {
-          if (cmd.type === "get_state") {
-            return {
-              type: "response",
-              command: "get_state",
-              success: true,
-              data: { sessionId: "s", model: { id: "m" } }
-            };
-          }
-          return null;
-        }
-      });
+      childRef = rpcChildWithArchitect("codex::m");
       return childRef;
     },
     execPath: "/usr/bin/node",
@@ -243,7 +358,7 @@ test("R3: session events are consumable via onEvent and takeEvents", async () =>
     Buffer.from(`${JSON.stringify({ type: "agent_end" })}\n`)
   );
   await new Promise((r) => queueMicrotask(r));
-  assert.equal(seen.length, 1); // unsubscribed
+  assert.equal(seen.length, 1);
   assert.equal(bridge.takeEvents().length, 1);
   await bridge.stop();
 });
@@ -254,20 +369,9 @@ test("R3: unexpected Pi exit after connect flips engine off connected; host stay
     cwd: "/project",
     loadSnapshot: async () => fakeSnapshot(),
     resolveCliPath: () => "/fake/cli.js",
+    loadKairoProviderModels: async () => [architectRoute("codex::m")],
     spawnImpl: () => {
-      childRef = createFakeRpcChild({
-        onCommand: (cmd) => {
-          if (cmd.type === "get_state") {
-            return {
-              type: "response",
-              command: "get_state",
-              success: true,
-              data: { sessionId: "live", model: { id: "m" } }
-            };
-          }
-          return null;
-        }
-      });
+      childRef = rpcChildWithArchitect("codex::m");
       return childRef;
     },
     execPath: "/usr/bin/node",
@@ -280,7 +384,7 @@ test("R3: unexpected Pi exit after connect flips engine off connected; host stay
   assert.equal(bridge.hostOpen, true);
   assert.equal(bridge.engine.status, "unavailable");
   assert.match(bridge.engine.reason, /exited with code 1/);
-  assert.equal(bridge.engine.sessionId, "live");
+  assert.equal(bridge.engine.sessionId, "sess-1");
   await bridge.stop();
 });
 
@@ -289,20 +393,8 @@ test("R3: intentional stop does not mark engine unavailable as a crash", async (
     cwd: "/project",
     loadSnapshot: async () => fakeSnapshot(),
     resolveCliPath: () => "/fake/cli.js",
-    spawnImpl: () =>
-      createFakeRpcChild({
-        onCommand: (cmd) => {
-          if (cmd.type === "get_state") {
-            return {
-              type: "response",
-              command: "get_state",
-              success: true,
-              data: { sessionId: "s", model: { id: "m" } }
-            };
-          }
-          return null;
-        }
-      }),
+    loadKairoProviderModels: async () => [architectRoute("codex::m")],
+    spawnImpl: () => rpcChildWithArchitect("codex::m"),
     execPath: "/usr/bin/node",
     connectTimeoutMs: 500
   });

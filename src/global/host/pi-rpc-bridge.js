@@ -8,9 +8,10 @@
  * snapshot is loaded. Pi spawn / RPC failures surface on `engine` and never
  * prevent the host from opening.
  *
- * `engine.status === "no_model"` applies when RPC answered `get_state` without
- * a model. Real Pi often exits before RPC if no model is configured — that
- * cold-start is expected as `unavailable` until R4 verifies the real binary.
+ * `engine.status === "no_model"` applies when the Architect route from active
+ * `projectTeam` is missing or `set_model` failed. Spawn/RPC handshake failures
+ * stay `unavailable`. Real Pi may exit before RPC without extension — fixed by
+ * loading the Kairo extension on spawn (same flags as interactive host).
  */
 
 import { spawn } from "node:child_process";
@@ -23,9 +24,14 @@ import {
 } from "./workspace-snapshot.js";
 import {
   KAIRO_PI_PACKAGE_NAME,
-  KAIRO_PI_PACKAGE_VERSION
+  KAIRO_PI_PACKAGE_VERSION,
+  DEFAULT_EXTENSION_DIR,
+  buildKairoPiResourceArgs
 } from "./launch-gentle-shell.js";
+import { loadKairoProviderModels as loadKairoProviderModelsImpl } from "./kairo-route-provider.js";
 import { resolveHomeDir } from "../paths.js";
+
+const KAIRO_PROVIDER_ID = "kairo";
 
 export { KAIRO_WORKSPACE_SNAPSHOT_SCHEMA };
 
@@ -35,6 +41,109 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
  * @param {object|null|undefined} data - `get_state` response data
  * @returns {{ status: "connected"|"no_model", reason: string|null, sessionId: string|null, model: object|null }}
  */
+/**
+ * Pick the Architect route from models produced by `buildKairoProviderModels`.
+ * @param {object[]|null|undefined} models
+ * @returns {object|null}
+ */
+export function selectArchitectKairoModel(models) {
+  if (!Array.isArray(models) || models.length === 0) return null;
+  return models.find((model) => model?.kairoRoute?.role === "Architect") ?? null;
+}
+
+/**
+ * @param {object[]|null|undefined} models - launchable automatic projectTeam routes
+ * @returns {string}
+ */
+export function missingArchitectRouteReason(models) {
+  if (!Array.isArray(models) || models.length === 0) {
+    return "No active strategy with automatic launchable projectTeam routes";
+  }
+  return "No Architect assignment with automatic access and a launchable adapter in projectTeam";
+}
+
+/**
+ * @param {object} params
+ * @param {string} params.cliPath
+ * @param {string} [params.extensionDir]
+ * @param {string[]} [params.extraArgs]
+ * @returns {string[]}
+ */
+export function buildPiRpcSpawnArgs({
+  cliPath,
+  extensionDir = DEFAULT_EXTENSION_DIR,
+  extraArgs = []
+} = {}) {
+  if (typeof cliPath !== "string" || !cliPath.trim()) {
+    throw new Error("Pi CLI path is required");
+  }
+  return [
+    cliPath,
+    ...buildKairoPiResourceArgs(extensionDir),
+    "--mode",
+    "rpc",
+    "--no-session",
+    ...extraArgs
+  ];
+}
+
+/**
+ * @param {object} bridge
+ * @param {object} params
+ * @param {string} params.cwd
+ * @param {(args: { cwd: string }) => Promise<object[]>} params.loadKairoProviderModels
+ * @param {number} params.connectTimeoutMs
+ * @param {object|null} [params.initialState]
+ */
+export async function resolveArchitectRouteForRpc(
+  bridge,
+  { cwd, loadKairoProviderModels, connectTimeoutMs, initialState = null }
+) {
+  const sessionId =
+    typeof initialState?.sessionId === "string" ? initialState.sessionId : null;
+  let models;
+  try {
+    models = await loadKairoProviderModels({ cwd });
+  } catch (err) {
+    return {
+      status: "no_model",
+      reason: err?.message ?? String(err),
+      sessionId,
+      model: null
+    };
+  }
+
+  const architect = selectArchitectKairoModel(models);
+  if (!architect?.id) {
+    return {
+      status: "no_model",
+      reason: missingArchitectRouteReason(models),
+      sessionId,
+      model: null
+    };
+  }
+
+  try {
+    await bridge.request(
+      {
+        type: "set_model",
+        provider: KAIRO_PROVIDER_ID,
+        modelId: architect.id
+      },
+      connectTimeoutMs
+    );
+    const state = await bridge.request({ type: "get_state" }, connectTimeoutMs);
+    return classifyPiEngineFromState(state);
+  } catch (err) {
+    return {
+      status: "no_model",
+      reason: `Architect route is configured but set_model failed: ${err?.message ?? err}`,
+      sessionId,
+      model: null
+    };
+  }
+}
+
 export function classifyPiEngineFromState(data = {}) {
   const sessionId = typeof data?.sessionId === "string" ? data.sessionId : null;
   const model = data?.model && typeof data.model === "object" ? data.model : null;
@@ -66,6 +175,8 @@ export function classifyPiEngineFromState(data = {}) {
  * @param {string} [options.execPath]
  * @param {number} [options.connectTimeoutMs]
  * @param {string[]} [options.extraArgs] - appended after `--mode rpc`
+ * @param {string} [options.extensionDir]
+ * @param {(args: { cwd: string }) => Promise<object[]>} [options.loadKairoProviderModels]
  */
 export async function openPiRpcBridge({
   cwd = process.cwd(),
@@ -75,7 +186,9 @@ export async function openPiRpcBridge({
   spawnImpl = spawn,
   execPath = process.execPath,
   connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
-  extraArgs = []
+  extraArgs = [],
+  extensionDir = DEFAULT_EXTENSION_DIR,
+  loadKairoProviderModels = loadKairoProviderModelsImpl
 } = {}) {
   const snapshot = await loadSnapshot();
   assertWorkspaceSnapshot(snapshot);
@@ -106,7 +219,18 @@ export async function openPiRpcBridge({
   }
 
   const hostEnv = buildRpcChildEnv(env);
-  const args = [cliPath, "--mode", "rpc", "--no-session", ...extraArgs];
+  let args;
+  try {
+    args = buildPiRpcSpawnArgs({ cliPath, extensionDir, extraArgs });
+  } catch (err) {
+    bridge.engine = {
+      status: "unavailable",
+      reason: err?.message ?? String(err),
+      sessionId: null,
+      model: null
+    };
+    return bridge;
+  }
 
   let child;
   try {
@@ -131,7 +255,12 @@ export async function openPiRpcBridge({
   try {
     await waitForChildReady(bridge, connectTimeoutMs);
     const state = await bridge.request({ type: "get_state" }, connectTimeoutMs);
-    bridge.engine = classifyPiEngineFromState(state);
+    bridge.engine = await resolveArchitectRouteForRpc(bridge, {
+      cwd,
+      loadKairoProviderModels,
+      connectTimeoutMs,
+      initialState: state
+    });
   } catch (err) {
     bridge.engine = {
       status: "unavailable",

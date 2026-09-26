@@ -14,6 +14,30 @@ export const KAIRO_PI_PACKAGE_NAME = "@kal-elsam/kairo-pi-coding-agent";
 export const KAIRO_PI_PACKAGE_VERSION = "0.87.1-kairo.3";
 export const MIN_NODE_VERSION = "22.19.0";
 
+const __hostModuleDir = dirname(fileURLToPath(import.meta.url));
+/** Absolute path to the Kairo Pi extension (same as interactive `launchGentleShell`). */
+export const DEFAULT_EXTENSION_DIR = join(__hostModuleDir, "extension");
+
+/**
+ * Pi CLI flags that load only Kairo's extension and disable ambient resources.
+ * @param {string} extensionDir
+ * @returns {string[]}
+ */
+export function buildKairoPiResourceArgs(extensionDir) {
+  if (typeof extensionDir !== "string" || !extensionDir.startsWith("/")) {
+    throw new Error("Kairo extension path must be absolute.");
+  }
+  return [
+    "-e",
+    extensionDir,
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files"
+  ];
+}
+
 // Write seam for prepareKairoPiHome only (mkdirSync/writeFileSync); reads
 // still use the direct imports. Unit tests inject it to record write targets
 // in-process. The whole-module guarantee, which also covers writes that
@@ -76,16 +100,7 @@ export async function launchGentleShell({
   // fullscreen (see prepareKairoPiHome) but honors a regular mode the user
   // already chose (persisted in the fork's own settings.json), so
   // "--legacy-cockpit" is never the only way back to a non-fullscreen view.
-  const args = [
-    cliPath,
-    "-e", extensionDir,
-    "--no-extensions",
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--tui-mode", tuiMode
-  ];
+  const args = [cliPath, ...buildKairoPiResourceArgs(extensionDir), "--tui-mode", tuiMode];
   const hostEnv = {
     ...env,
     PI_CODING_AGENT_DIR: kairoPiHome,
