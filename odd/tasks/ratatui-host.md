@@ -90,7 +90,7 @@ User-accepted plan "Kairo: un solo host visual con ratatui" (2026-09-26). Supers
   - **Precision (2026-09-26, user-verified):** the `no_model` case in those tests is a **simulated** RPC peer that answers `get_state` without a model. Real Pi often **exits before RPC starts** when no model is available, so that cold-start today surfaces as `engine.status === "unavailable"`, not a verified `no_model`. Treating real cold-start classification as **pending R4** — do not claim it verified by R2.
   - `classifyPiEngineFromState` remains a unit helper for when RPC *did* start and `get_state` omitted `model`; it is not proof of real Pi no-model startup.
 - (2026-09-26) **R3 bridge slice** — `onEvent` / `takeEvents` consumable session flow; unexpected child exit after connect sets `engine.status` to `unavailable` (keeps `sessionId`, clears model) and emits `engine_unavailable`; intentional `stop()` → `stopped` (not crash). Host stays open. Prompt/stream/editor chat parity still open.
-  - Evidence: `node --test test/pi-rpc-bridge.test.js` → **8/8**; `cargo test --offline` in `crates/kairo-ui` → **3/3**. Work-unit commits: _(filled after commit)_.
+  - Evidence: `node --test test/pi-rpc-bridge.test.js` → **8/8**; `cargo test --offline` in `crates/kairo-ui` → **3/3**. Work-unit commits: `a7df783e9` (evidence), `3df30696c` (bridge).
 
 ## Next step
 
