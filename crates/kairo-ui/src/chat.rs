@@ -357,6 +357,7 @@ mod tests {
         assert!(!chat.is_streaming);
     }
 
+    #[test]
     fn cancel_empty_keeps_assistant_with_content() {
         let mut chat = ChatState::default();
         chat.begin_assistant_stream();
