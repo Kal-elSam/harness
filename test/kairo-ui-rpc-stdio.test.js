@@ -138,6 +138,48 @@ test("sidecar emits ready then forwards prompt stream and agent_settled", async 
   await runPromise;
 });
 
+test("sidecar ready carries unavailable engine reason when Pi CLI cannot resolve", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: async () =>
+      openPiRpcBridge({
+        cwd: "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => {
+          throw new Error("Cannot find package '@kal-elsam/kairo-pi-coding-agent'");
+        },
+        spawnImpl: () => {
+          throw new Error("spawn must not run when CLI resolve fails");
+        },
+        connectTimeoutMs: 200
+      })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(out[0]?.type, "ready");
+  assert.equal(out[0]?.engine?.status, "unavailable");
+  assert.match(
+    String(out[0]?.engine?.reason ?? ""),
+    /kairo-pi-coding-agent/
+  );
+  assert.equal(out[0]?.snapshot?.schema, KAIRO_WORKSPACE_SNAPSHOT_SCHEMA);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
 test("sidecar abort forwards abort command to Pi", async () => {
   const abortCalls = [];
   const stdout = new PassThrough();

@@ -96,7 +96,9 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 
 - (2026-09-26) **Theme** — sober hacker palette: work `#090F0E`, sidebar `#111A18`, USAGE `#13211C`; accent `#5EE6A8` only for brand/focus/selection; text `#E8F5EF` / muted `#9AB2A5`; ERROR red, WARN/TOOL amber, USER blue; assistant label not accent green. Contrast + semantic paint tests. Layout/data unchanged; no matrix rain. Visual verdict still blocks R7.
   - Evidence: commits `a3dba57ce`, `a1768bc21`. `cargo test` → **28/28**. Only on worktree `feat/ratatui-host` (main checkout has no `crates/kairo-ui`). Rebuild before PTY: `unset CARGO_TARGET_DIR && cargo run --release`.
+- (2026-09-26) **Unblock real chat** — `pnpm install --offline --frozen-lockfile` with **Node ≥22.19 + pnpm 10.34.5** (Homebrew pnpm 7 cannot read this lockfile). `EngineGate` from `ready.engine`: open notice shows real status/reason; Enter with bridge keeps draft and skips assistant when not `connected`; sidecar `error` / engine drop restores draft and drops empty streaming ghost. No `.4` bump, no publish.
+  - Evidence: `cargo test` → **37/37**; `kairo-ui-rpc-stdio`+`pi-rpc-bridge` → **12/12**. Live smoke: after install, `openPiRpcBridge` → `hostOpen` + `engine.status=connected`; prompt without provider auth returns honest `error` (No API key) — not a fabricated assistant turn. Real model reply still needs `/login` (or equivalent) before V3 conversation captures.
 
 ## Next step
 
-V3 on **this** binary (graphite-green, not violet): TrueColor captures @60/100/160 with `--bridge`, agents + USAGE from snapshot (`checking`/`cached` OK if real), and a real Pi reply when a model is available — not mock. Your visual verdict blocks R7. R4/R6 still pending.
+With provider auth configured: `--bridge` prompt → real Pi reply, then TrueColor captures @60/100/160 (theme + snapshot agents/USAGE + conversation). `checking`/`cached` USAGE OK if real. R7 still blocked. R4/R6 pending.
