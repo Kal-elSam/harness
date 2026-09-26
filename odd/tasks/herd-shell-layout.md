@@ -561,3 +561,42 @@ Objective: let the user run the current `.4` shell through a local `kairo` comma
 - [ ] L3 Present the runnable local command and capture evidence to the user; await their visual verdict. This is a local trial, not a published release or native review approval; S3-2/S4 stay open.
 
 Checks: fork `test/kairo`; focused host tests; package/version resolution; real PTY render; `git status` leaves the three pre-existing untracked files untouched.
+
+## Ownership and polish stage (2026-09-26)
+
+- The user moved branch ownership to the Claude Code session. Codex
+  (which added 13 commits overnight, 22:42–23:57, S2/S3) and Cursor are
+  to be closed. The `~/Desktop/agentic-harness-worktrees/s2-review`
+  worktree Codex created was removed: it was clean and detached, and the
+  Desktop holds only `agentic-harness`.
+- Review status: the grouped H8b–H8d candidate was declined by the user,
+  but the decline could not register because Codex's commits moved the
+  candidate. No review ran on `d5d467120..HEAD`. Codex's own attempts
+  were blocked by the lens context budget, so future reviews must use
+  smaller slices.
+- Polish plan (user, 2026-09-26): keep Pi as the host with a single
+  chat; use pi-tui only (no ratatui, no PTYs, no second renderer, no new
+  dependencies); Herdr-like hierarchy and quality with Kairo's own
+  identity.
+  - [ ] P1 Sidebar: subtle background and separator; the project on
+    top, AGENTS below. Each agent has a clear name row and a dimmed
+    status/model row. Mouse selection highlights the row and keeps the
+    S2 detail. Access causes stay concrete; never invent working/done.
+  - [ ] P2 Chat: a visual frame around the main area without replacing
+    the transcript, editor, or status bar. A Kairo welcome state appears
+    while the conversation is empty and disappears with the first
+    message; no fake messages.
+  - [ ] P3 USAGE and notices: a 1–2 line strip depending on the width;
+    the availability notice becomes a short signal, with the full
+    explanation in the agent detail and `/kairo-team`. Each fact in
+    exactly one place.
+  - [ ] P4 Responsive: the sidebar from 90 columns; below that, the
+    chat at full width; at 60 only the compact summary. Regular mode is
+    unchanged.
+  - [ ] P5 Evidence: RED/GREEN for layout, Unicode truncation, mouse
+    after resize, empty state, no duplicates, and honest states. Real
+    Kairo PTY captures at 100 and 60, with empty and active
+    conversations, plus a live resize, printed row-numbered with blank
+    rows kept. Visual acceptance comes from the user looking at the
+    captures.
+
