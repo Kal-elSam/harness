@@ -5,12 +5,15 @@
  *   { "op": "prompt", "message": "..." }
  *   { "op": "abort" }
  *   { "op": "stop" }
+ *   { "op": "reload_snapshot" }
  *
- * stdout records (JSONL): { type: "ready", engine, snapshot? }, forwarded Pi
+ * stdout records (JSONL): { type: "ready", engine, snapshot? }, { type:
+ * "snapshot", snapshot }, forwarded Pi
  * session events, { type: "error", message }, and bridge engine_unavailable.
  */
 
 import { openPiRpcBridge } from "./pi-rpc-bridge.js";
+import { loadKairoWorkspaceSnapshot } from "./workspace-snapshot.js";
 
 /**
  * @param {object} [options]
@@ -65,6 +68,9 @@ export async function runKairoUiRpcStdio({
         stopped = true;
         await bridge.stop();
         process.exitCode = 0;
+      } else if (op === "reload_snapshot") {
+        const snapshot = await loadKairoWorkspaceSnapshot({ cwd });
+        writeOut({ type: "snapshot", snapshot });
       } else {
         writeOut({ type: "error", message: `Unknown op: ${String(op)}` });
       }

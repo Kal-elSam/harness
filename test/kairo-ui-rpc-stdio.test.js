@@ -12,7 +12,8 @@ function fakeSnapshot(overrides = {}) {
   return {
     schema: KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
     project: { label: "demo" },
-    agents: [],
+    agents: [{ label: "Orchestrator", state: "idle", provider: "mock" }],
+    subscriptions: { state: "checking", segments: [] },
     ...overrides
   };
 }
@@ -117,6 +118,13 @@ test("sidecar emits ready then forwards prompt stream and agent_settled", async 
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(out[0]?.type, "ready");
   assert.equal(out[0]?.engine?.status, "connected");
+  assert.equal(out[0]?.snapshot?.schema, KAIRO_WORKSPACE_SNAPSHOT_SCHEMA);
+  assert.ok(Array.isArray(out[0]?.snapshot?.agents));
+  assert.equal(out[0]?.snapshot?.agents?.length, 1);
+  assert.deepEqual(out[0]?.snapshot?.subscriptions, {
+    state: "checking",
+    segments: []
+  });
 
   stdin.write(`${JSON.stringify({ op: "prompt", message: "hello" })}\n`);
   await new Promise((r) => setTimeout(r, 80));

@@ -28,11 +28,28 @@ pub mod tone {
     pub const TOOL: Color = Color::Rgb(200, 180, 120);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentState {
+    Idle,
+    Blocked,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidebarAgent {
     pub label: String,
     pub detail: String,
-    pub blocked: bool,
+    pub state: AgentState,
+}
+
+impl SidebarAgent {
+    fn glyph(&self) -> &'static str {
+        match self.state {
+            AgentState::Blocked => "✖",
+            AgentState::Idle => "○",
+            AgentState::Unknown => "?",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,12 +70,12 @@ impl Default for ShellViewModel {
                 SidebarAgent {
                     label: "Orchestrator".into(),
                     detail: "idle · placeholder".into(),
-                    blocked: false,
+                    state: AgentState::Idle,
                 },
                 SidebarAgent {
                     label: "Builder".into(),
                     detail: "blocked · placeholder".into(),
-                    blocked: true,
+                    state: AgentState::Blocked,
                 },
             ],
             selected_agent: 0,
@@ -115,13 +132,13 @@ fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel, focus: F
     )));
     for (i, agent) in model.agents.iter().enumerate() {
         let selected = i == model.selected_agent;
-        let glyph = if agent.blocked { "✖" } else { "○" };
+        let glyph = agent.glyph();
         let name_style = if selected {
             Style::default()
                 .fg(tone::TEXT)
                 .bg(tone::SELECT_BG)
                 .add_modifier(Modifier::BOLD)
-        } else if agent.blocked {
+        } else if agent.state == AgentState::Blocked {
             Style::default().fg(tone::ERROR).bg(tone::SIDEBAR_BG)
         } else {
             Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
@@ -439,6 +456,47 @@ mod tests {
 
         let hay = buffer_text(&buf);
         assert!(hay.contains("Pi engine unavailable"), "buffer missing notice: {hay}");
+    }
+
+    #[test]
+    fn workspace_snapshot_usage_replaces_bridge_placeholder() {
+        use crate::snapshot::apply_workspace_snapshot;
+        use serde_json::json;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut model = ShellViewModel::default();
+        apply_workspace_snapshot(
+            &mut model,
+            &json!({
+                "project": { "label": "demo-repo" },
+                "agents": [
+                    { "label": "Orchestrator", "state": "idle", "provider": "opencode" }
+                ],
+                "subscriptions": {
+                    "state": "ready",
+                    "segments": ["Codex 5h 96%", "Claude ok"]
+                }
+            }),
+        );
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+        );
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("Codex 5h 96%"),
+            "USAGE must show real subscription segment, not bridge placeholder: {hay}"
+        );
+        assert!(
+            !hay.contains("waiting for bridge"),
+            "placeholder USAGE must be replaced: {hay}"
+        );
+        assert!(hay.contains("demo-repo"));
     }
 
     #[test]
