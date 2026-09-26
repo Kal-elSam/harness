@@ -20,7 +20,11 @@ function fakeCrateRoot() {
   const crateDir = join(root, "crates", "kairo-ui");
   mkdirSync(crateDir, { recursive: true });
   writeFileSync(join(crateDir, "Cargo.toml"), "[package]\nname = \"kairo-ui\"\nversion = \"0.0.0\"\n");
-  return { packageRoot: root, crateDir };
+  const sidecarDir = join(root, "src", "global", "host");
+  mkdirSync(sidecarDir, { recursive: true });
+  const sidecarScript = join(sidecarDir, "kairo-ui-rpc-stdio.js");
+  writeFileSync(sidecarScript, "// test fixture\n");
+  return { packageRoot: root, crateDir, sidecarScript };
 }
 
 test("resolveUiHost defaults to pi without flag or env", () => {
@@ -70,7 +74,7 @@ test("routeInteractiveHost: KAIRO_UI_HOST=ratatui selects ratatui without flag",
 });
 
 test("launchRatatuiHost spawns release binary with --bridge and project cwd", async () => {
-  const { packageRoot, crateDir } = fakeCrateRoot();
+  const { packageRoot, crateDir, sidecarScript } = fakeCrateRoot();
   const binaryPath = resolveReleaseBinaryPath(crateDir, {});
   mkdirSync(join(crateDir, "target", "release"), { recursive: true });
   writeFileSync(binaryPath, "");
@@ -83,7 +87,8 @@ test("launchRatatuiHost spawns release binary with --bridge and project cwd", as
     platform: "darwin",
     packageRoot,
     crateDir,
-    existsSyncImpl: (p) => p === join(crateDir, "Cargo.toml") || p === binaryPath,
+    existsSyncImpl: (p) =>
+      p === join(crateDir, "Cargo.toml") || p === binaryPath || p === sidecarScript,
     statImpl: okStat,
     cargoBuildImpl: async () => {
       calls.push("cargo");
@@ -102,10 +107,12 @@ test("launchRatatuiHost spawns release binary with --bridge and project cwd", as
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.stdio, "inherit");
   assert.equal(calls[0].options.env.KAIRO_SESSION_ID, "aaaaaaaa-0000-4000-8000-000000000001");
+  assert.equal(calls[0].options.env.KAIRO_UI_RPC_SCRIPT, sidecarScript);
+  assert.equal(calls[0].options.env.KAIRO_UI_NODE, process.execPath);
 });
 
 test("launchRatatuiHost builds once when release binary is missing, then spawns", async () => {
-  const { packageRoot, crateDir } = fakeCrateRoot();
+  const { packageRoot, crateDir, sidecarScript } = fakeCrateRoot();
   const binaryPath = resolveReleaseBinaryPath(crateDir, {});
   const seen = { cargo: 0, spawn: 0, binaryPresent: false };
 
@@ -116,7 +123,7 @@ test("launchRatatuiHost builds once when release binary is missing, then spawns"
     packageRoot,
     crateDir,
     existsSyncImpl: (p) => {
-      if (p === join(crateDir, "Cargo.toml")) return true;
+      if (p === join(crateDir, "Cargo.toml") || p === sidecarScript) return true;
       if (p === binaryPath) return seen.binaryPresent;
       return false;
     },
@@ -142,7 +149,7 @@ test("launchRatatuiHost builds once when release binary is missing, then spawns"
 });
 
 test("launchRatatuiHost respects CARGO_TARGET_DIR for the release binary", async () => {
-  const { packageRoot, crateDir } = fakeCrateRoot();
+  const { packageRoot, crateDir, sidecarScript } = fakeCrateRoot();
   const cargoTarget = join(packageRoot, "custom-target");
   const binaryPath = resolveReleaseBinaryPath(crateDir, { CARGO_TARGET_DIR: cargoTarget });
   assert.equal(binaryPath, join(cargoTarget, "release", "kairo-ui"));
@@ -155,7 +162,8 @@ test("launchRatatuiHost respects CARGO_TARGET_DIR for the release binary", async
     env: { CARGO_TARGET_DIR: cargoTarget },
     packageRoot,
     crateDir,
-    existsSyncImpl: (p) => p === join(crateDir, "Cargo.toml") || p === binaryPath,
+    existsSyncImpl: (p) =>
+      p === join(crateDir, "Cargo.toml") || p === binaryPath || p === sidecarScript,
     statImpl: okStat,
     spawnImpl: async (command, args, options) => {
       spawned = { command, args, options };
@@ -163,6 +171,7 @@ test("launchRatatuiHost respects CARGO_TARGET_DIR for the release binary", async
     }
   });
   assert.equal(spawned.command, binaryPath);
+  assert.equal(spawned.options.env.KAIRO_UI_RPC_SCRIPT, sidecarScript);
 });
 
 test("launchRatatuiHost fails closed on Windows and non-TTY", async () => {

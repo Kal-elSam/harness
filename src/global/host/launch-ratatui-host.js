@@ -92,8 +92,21 @@ export async function launchRatatuiHost({
     }
   }
 
+  const sidecarScript = join(packageRoot, "src", "global", "host", "kairo-ui-rpc-stdio.js");
+  if (!existsSyncImpl(sidecarScript)) {
+    throw new Error(
+      `Ratatui sidecar is missing: "${sidecarScript}". ` +
+        "Omit --ratatui to use the default Pi host."
+    );
+  }
+  // Sidecar path must be absolute: spawn cwd is the *project*, not the package,
+  // so walking up from cwd would miss kairo-ui-rpc-stdio.js outside the worktree.
   const hostEnv = {
     ...env,
+    KAIRO_UI_RPC_SCRIPT: sidecarScript,
+    KAIRO_UI_NODE: typeof env?.KAIRO_UI_NODE === "string" && env.KAIRO_UI_NODE.trim() !== ""
+      ? env.KAIRO_UI_NODE
+      : process.execPath,
     ...(sessionId == null ? {} : { KAIRO_SESSION_ID: sessionId })
   };
   // main.rs enables the sidecar with `--bridge` (or KAIRO_UI_BRIDGE=1) and
