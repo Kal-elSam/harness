@@ -436,7 +436,9 @@ test("exhausted retries point to the manual next step; quiet outcomes stay quiet
   assert.equal(exhausted.notifications.length, 1);
   assert.match(exhausted.notifications[0][0], /stopped retrying/);
   assert.match(exhausted.notifications[0][0], /no-analyst/);
-  assert.match(exhausted.notifications[0][0], /project analyze/);
+  // The next step is the in-UI team keys, never the legacy cockpit.
+  assert.match(exhausted.notifications[0][0], /press a to analyze/);
+  assert.doesNotMatch(exhausted.notifications[0][0], /legacy-cockpit/);
 
   for (const reason of ["baseline", "already-handled", "retry-later", "analysis-in-progress", "no-active-team"]) {
     const quiet = await sessionWithRecovery(() => ({ outcome: reason === "baseline" ? "baseline" : "skipped", reason, fingerprint: "fp-c" }));
@@ -477,7 +479,7 @@ test("extension replaces a missing Pi route with an actionable Kairo state, but 
   assert.deepEqual(lines, [
     "KAIRO ROUTES · unavailable",
     "No verified automatic route is available for this project.",
-    "Next: run kairo --legacy-cockpit, then /project analyze.",
+    "Next: run kairo → press a to analyze, A to approve.",
     "USAGE · Codex 5h 58% / W 86% │ Claude S 34% / W 65% │ Go 100% / 100% / 96%",
     "KAIRO TEAM · active",
     "Builder · GPT-6 Terra · codex · checking",

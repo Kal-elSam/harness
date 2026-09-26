@@ -272,7 +272,8 @@ test("availabilityNotices groups blocked roles into one notice per provider and 
 
   const cursor = notices.find((notice) => notice.key.startsWith("cursor|"));
   assert.match(cursor.message, /Tester \(Fable\)/);
-  assert.match(cursor.message, /project analyze/, "a non-window block still points at the manual next step");
+  assert.match(cursor.message, /press a to analyze/, "a non-window block still points at the manual next step (in-UI keys, not the cockpit)");
+  assert.doesNotMatch(cursor.message, /legacy-cockpit/);
   assert.doesNotMatch(cursor.message, /recover the team automatically/);
 });
 

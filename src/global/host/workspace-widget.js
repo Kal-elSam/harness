@@ -20,6 +20,13 @@ import { CARD_TONE, cardInnerWidth, renderPanel } from "../cockpit/card.js";
 // defines "info"/"selection", which Pi's Theme class does not, so this
 // module never uses those two roles.
 
+// Team setup happens in the ratatui host (`kairo`), never in the legacy
+// cockpit: `a` analyzes this project's team with the default analyst and
+// `A` approves it. Any surface that needs to name the next step for a
+// missing / blocked / unrecoverable team uses this one sentence, so the
+// cockpit is never recommended as a product path again.
+export const TEAM_SETUP_NEXT_STEP = "Next: run kairo → press a to analyze, A to approve.";
+
 const GAUGE_CELLS = 10;
 const NAME_COLUMN_WIDTH = 7;
 const LABEL_COLUMN_WIDTH = 4;
@@ -870,6 +877,6 @@ export function availabilityNotices(team) {
     key,
     message: windowLimited
       ? `${warning} — affects ${roles.join(", ")}. Kairo will try to recover the team automatically.`
-      : `${warning} — affects ${roles.join(", ")}. Next: run kairo --legacy-cockpit, then /project analyze.`
+      : `${warning} — affects ${roles.join(", ")}. ${TEAM_SETUP_NEXT_STEP}`
   }));
 }
