@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { createKairoWorkspaceExtension } from "../src/global/host/extension/index.js";
+import { createKairoWorkspaceExtension, createLiveTuiModeReader } from "../src/global/host/extension/index.js";
 
 async function tmpHarnessHome() {
   return mkdtemp(join(tmpdir(), "kairo-shell-ext-harness-home-"));
@@ -15,6 +15,15 @@ function writeKairoPiSettings(harnessHome, settings) {
   const agentDir = join(harnessHome, ".harness", "pi-agent");
   mkdirSync(agentDir, { recursive: true });
   writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+}
+
+/** createLiveTuiModeReader caches getTuiMode() by the settings file's
+ * mtime; a real filesystem's mtime resolution can be coarser than the
+ * time two synchronous writes in a test take, so tests that write the
+ * settings file more than once and expect each write to be observed
+ * sleep a beat first to guarantee the mtime actually advances. */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const IDENTITY_THEME = { fg: (_role, text) => text, bold: (text) => text };
@@ -1251,6 +1260,7 @@ test("default getTuiMode reads the fork's live settings.json and reacts to a mod
   // Simulate the fork's own settings-selector persisting a live switch to
   // regular (SettingsManager.setTuiMode) — no new extension instance, same
   // process, same command dispatch mechanism, just the file on disk changing.
+  await sleep(5);
   writeKairoPiSettings(harnessHome, { quietStartup: true, tuiMode: "regular" });
   const widgetCalls2 = [];
   const sidebarCalls2 = [];
@@ -1262,6 +1272,7 @@ test("default getTuiMode reads the fork's live settings.json and reacts to a mod
   );
 
   // And back to fullscreen — the reverse direction.
+  await sleep(5);
   writeKairoPiSettings(harnessHome, { quietStartup: true, tuiMode: "fullscreen" });
   const sidebarCalls3 = [];
   await commands.get("kairo").handler("", fakeShellCtx({ sidebarCalls: sidebarCalls3 }));
@@ -1308,4 +1319,74 @@ test("a live availability-check-failed notice (extraLines) surfaces in the sideb
   const at60 = await sessionWithFailedAvailability(() => 60);
   const compactAt60 = renderWidgetCall(at60.widgetCalls.at(-1)[1], 60).join("\n");
   assert.match(compactAt60, /Live availability check/i, `expected the extraLines notice in the compact summary at 60 cols, got: ${compactAt60}`);
+});
+
+// --- createLiveTuiModeReader (native review R3 finding, 2026-09-25):
+// readLiveKairoTuiMode alone does a readFileSync + JSON.parse on EVERY
+// call, but getTuiMode() is invoked on every render and Pi repaints the
+// fullscreen widget/sidebar/strip on every streamed token — re-reading and
+// re-parsing the same unchanged settings.json dozens of times per second
+// is pure waste. createLiveTuiModeReader must only re-read the file body
+// when its mtime actually changed. These tests use injected statImpl/
+// readFileImpl spies (not a real filesystem + sleep) to prove the read
+// count directly, independent of any real mtime-resolution granularity.
+
+test("createLiveTuiModeReader re-reads and re-parses the settings file only when its mtime changes", async () => {
+  const harnessHome = await tmpHarnessHome();
+  writeKairoPiSettings(harnessHome, { quietStartup: true, tuiMode: "fullscreen" });
+  const env = { HARNESS_HOME: harnessHome };
+
+  let mtimeMs = 1000;
+  let statCalls = 0;
+  let readCalls = 0;
+  const statImpl = (path) => {
+    statCalls++;
+    return { mtimeMs };
+  };
+  const readFileImpl = (path, encoding) => {
+    readCalls++;
+    return readFileSync(path, encoding);
+  };
+
+  const getTuiMode = createLiveTuiModeReader(env, { statImpl, readFileImpl });
+
+  assert.strictEqual(getTuiMode(), "fullscreen");
+  assert.strictEqual(statCalls, 1, "stats once per call — statSync is cheap enough to always run");
+  assert.strictEqual(readCalls, 1, "first call always reads the file body");
+
+  // Same mtime, called again several times: the body must NOT be re-read.
+  getTuiMode();
+  getTuiMode();
+  assert.strictEqual(statCalls, 3, "stats on every call regardless of mtime");
+  assert.strictEqual(readCalls, 1, "unchanged mtime: the file body is not re-read or re-parsed");
+
+  // mtime changes (a real write): the body MUST be re-read and reflect it.
+  writeKairoPiSettings(harnessHome, { quietStartup: true, tuiMode: "regular" });
+  mtimeMs = 2000;
+  assert.strictEqual(getTuiMode(), "regular", "a changed mtime is picked up on the very next call");
+  assert.strictEqual(readCalls, 2, "changed mtime: the file body is re-read exactly once");
+
+  // Stable again at the new mtime: no further re-read.
+  getTuiMode();
+  assert.strictEqual(readCalls, 2, "stable at the new mtime: no further re-read");
+});
+
+test("createLiveTuiModeReader never caches a missing/unreadable settings file, so it keeps trying once the file appears", async () => {
+  const harnessHome = await tmpHarnessHome();
+  const env = { HARNESS_HOME: harnessHome };
+  let readCalls = 0;
+  const readFileImpl = (path, encoding) => {
+    readCalls++;
+    return readFileSync(path, encoding);
+  };
+
+  const getTuiMode = createLiveTuiModeReader(env, { readFileImpl });
+
+  assert.strictEqual(getTuiMode(), "regular", "missing settings file falls back to regular, never cached as fullscreen");
+  assert.strictEqual(getTuiMode(), "regular", "still falls back cleanly on a second call with no settings file");
+  assert.strictEqual(readCalls, 0, "statSync throws before any file body read is attempted");
+
+  writeKairoPiSettings(harnessHome, { quietStartup: true, tuiMode: "fullscreen" });
+  assert.strictEqual(getTuiMode(), "fullscreen", "once the file appears, it is picked up immediately — nothing was wrongly cached");
+  assert.strictEqual(readCalls, 1);
 });

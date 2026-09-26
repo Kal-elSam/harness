@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { createKernelService } from "../../kernel/service.js";
 import { resolveKairoPiSettingsPath } from "../launch-gentle-shell.js";
 import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-route-provider.js";
@@ -147,9 +147,9 @@ function workspaceStatus(snapshot) {
  * only worked by coincidence because Kairo's own launcher always writes an
  * explicit value first (native review R2 WARNING, 2026-09-25).
  */
-function readLiveKairoTuiMode(env) {
+function readLiveKairoTuiMode(env, readFileImpl = readFileSync) {
   try {
-    const parsed = JSON.parse(readFileSync(resolveKairoPiSettingsPath(env), "utf8"));
+    const parsed = JSON.parse(readFileImpl(resolveKairoPiSettingsPath(env), "utf8"));
     return parsed && typeof parsed === "object" && parsed.tuiMode === "fullscreen" ? "fullscreen" : "regular";
   } catch {
     // Missing, unreadable, or malformed settings file: mirror the fork's
@@ -157,6 +157,38 @@ function readLiveKairoTuiMode(env) {
     // never Kairo's own launch-time opinion (see prepareKairoPiHome).
     return "regular";
   }
+}
+
+/**
+ * Builds a `getTuiMode()` reader that only re-reads and re-parses
+ * settings.json when its mtime has actually changed. `readLiveKairoTuiMode`
+ * alone does a `readFileSync` plus `JSON.parse` on every call — cheap once,
+ * but `getTuiMode` runs on every `setWorkspaceWidget` call, and Pi repaints
+ * the fullscreen widget/sidebar/strip on every streamed token while a
+ * response is in flight, so re-reading and re-parsing the same unchanged
+ * file dozens of times per second is pure waste (native review R3 finding,
+ * 2026-09-25). `statSync` alone is far cheaper than reading the file body,
+ * so it runs on every call; the body is only re-read when `mtimeMs`
+ * differs from the last observed value. A missing/unreadable settings file
+ * is never cached (so it keeps trying once the file appears), mirroring
+ * `readLiveKairoTuiMode`'s own fallback.
+ */
+export function createLiveTuiModeReader(env, { statImpl = statSync, readFileImpl = readFileSync } = {}) {
+  let cachedMtimeMs = null;
+  let cachedMode = "regular";
+  return function getTuiMode() {
+    let mtimeMs;
+    try {
+      mtimeMs = statImpl(resolveKairoPiSettingsPath(env)).mtimeMs;
+    } catch {
+      cachedMtimeMs = null;
+      return "regular";
+    }
+    if (mtimeMs === cachedMtimeMs) return cachedMode;
+    cachedMtimeMs = mtimeMs;
+    cachedMode = readLiveKairoTuiMode(env, readFileImpl);
+    return cachedMode;
+  };
 }
 
 /**
@@ -355,12 +387,13 @@ export function createKairoWorkspaceExtension(pi, {
   recordPiBindingImpl = recordPiBinding,
   // H7/H8: the fork exposes no getter for its own TUI mode or terminal
   // width, so these default to the one honest, LIVE real source each has:
-  // the fork's own settings.json (see readLiveKairoTuiMode — read fresh on
-  // every call, so a live in-session mode switch is never stale) and the
-  // process's own stdout columns. Tests inject fixed values instead of a
-  // real TTY/settings file.
+  // the fork's own settings.json (see readLiveKairoTuiMode/
+  // createLiveTuiModeReader — mtime-cached, so a live in-session mode
+  // switch is never stale, but an unchanged file is not re-parsed on
+  // every render) and the process's own stdout columns. Tests inject
+  // fixed values instead of a real TTY/settings file.
   getColumns = () => process.stdout.columns,
-  getTuiMode = () => readLiveKairoTuiMode(env)
+  getTuiMode = createLiveTuiModeReader(env)
 } = {}) {
   let routeSignature = null;
   let routeState = "unknown";
