@@ -322,6 +322,24 @@ test("fresh live availability triggers one team recovery; an activated team re-s
   assert.match(message, /Builder → Claude Opus 5/);
 });
 
+test("a proposed recovery never re-syncs routes and says the cause, the alternative, and that nothing swapped", async () => {
+  const proposal = { status: "suggested", projectTeam: [{ role: "Builder", model: { displayName: "Claude Opus 5", adapterId: "claude", modelId: "claude-opus-5" } }] };
+  const proposed = () => ({
+    outcome: "proposed",
+    fingerprint: "claude=ok|opencode-go=limited:monthly",
+    proposal,
+    affected: [{ role: "Explorer", model: "GLM-5.3", reason: "OpenCode Go monthly window is rate-limited" }]
+  });
+  const { notifications, providers } = await sessionWithRecovery(proposed, { routeModels: () => [{ id: "opencode-go::glm", kairoRoute: { adapterId: "opencode-go", modelId: "glm" } }] });
+  assert.deepEqual(providers.get("kairo").models.map((model) => model.id), ["opencode-go::glm"], "no silent route swap on propose");
+  const [message, level] = notifications.at(-1);
+  assert.equal(level, "warning");
+  assert.match(message, /proposes a recovered team/);
+  assert.match(message, /rate-limited/);
+  assert.match(message, /Builder → Claude Opus 5/);
+  assert.match(message, /Nothing was activated/);
+});
+
 test("a recovery that keeps the previous team says why and what to do, once", async () => {
   const kept = await sessionWithRecovery(() => ({ outcome: "kept-previous", reason: "Bootstrap Analyst did not answer: timeout", fingerprint: "fp-a" }));
   assert.equal(kept.notifications.length, 1);

@@ -531,6 +531,11 @@ Engram mirror: `odd/herd-shell-layout/tasks` SYNCED via CLI (#4007; MCP save amb
 3. Review riesgo alto sin los 3 untracked, sin inventar JSON; fondos-impedido = pendiente, nunca aprobado.
 4. Publicar fork .4 + pin + instalacion SOLO con autorizacion explicita tuya (sesion indicada por vos). Sin auth = bloqueado.
 Criterio «listo»: kairo normal (no CLI fork) a 100/60 + resize + mouse/teclado + ciclo proponer->aprobar/rechazar, con capturas y resuites antes de tu veredicto final.
+Orden confirmado (2026-09-26): kairo carga Pi .3 (slots ausentes -> fallback HERD viejo con BLOCKED); sin mas capturas .3. Primero recuperacion con aprobacion, luego review, luego publicar/fijar/instalar .4; recien ahi veredicto visual.
+- [x] S3-1a RED/GREEN (2026-09-26): perdida de acceso genera PROPUESTA verificable, jamas activa. `runTeamRecovery` escribe `{outcome:proposed, proposal(suggested), affected[]}` en el record (con `proposal` persistido en el store); el archivo del team activo no se toca; `proposed/approved/rejected` cierran fingerprint (`activated` sigue terminal por records viejos). `approveRecoveryProposal` re-verifica routabilidad actual o rechaza por stale; `rejectRecoveryProposal` cierra sin tocar nada; servicio expone ambos; extension notifica causa + alternativa + "Nothing was activated" sin re-sincronizar rutas. Touches: `team-recovery.js`, `availability-recovery-store.js`, `service.js`, `extension/index.js` + 4 test files. Route: inline (delegacion sin fondos).
+  - Evidence: RED (imports + e2e + service) -> GREEN 169/169 (4 files); full `pnpm test` 2295/0/1. Commit: ver abajo.
+- [ ] S3-1b Approval surface: `/project` (legacy cockpit) muestra propuesta pendiente con aprobar/rechazar reales; sin ella el aviso no nombra salidas muertas
+- [ ] S3-2 Flujo proponer->aprobar/rechazar/sin-alternativa con kairo instalado + aprobado/rechazado
 - S2: pendiente
 - S3: pendiente
 - S4: pendiente (bloqueado hasta autorizacion remota explicita)

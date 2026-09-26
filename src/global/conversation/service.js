@@ -40,7 +40,7 @@ import { verifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/clau
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
 import { acquireProjectAnalysisLock } from "./project-analysis-lock.js";
 import { readAvailabilityRecovery, writeAvailabilityRecovery } from "./availability-recovery-store.js";
-import { runTeamRecovery } from "./team-recovery.js";
+import { approveRecoveryProposal, rejectRecoveryProposal, runTeamRecovery } from "./team-recovery.js";
 import { resolveProjectRoute } from "./project-router.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -1344,6 +1344,36 @@ export function createConversationService(deps = {}) {
         preflight: () => this.preflightProject({ cwd: projectRoot }),
         analyze: ({ profile, candidates, analyst }) => runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst, persist: false }),
         now
+      });
+    },
+    /**
+     * Approve a pending recovery proposal (see team-recovery.js): the
+     * proposal is re-verified against current eligibility and only then
+     * activated. A stale proposal throws instead of swapping in blocked
+     * models. Nothing is ever auto-approved — this is the explicit human
+     * act runTeamRecovery deliberately leaves out.
+     */
+    async approveRecoveryProposal({ cwd }) {
+      const projectRoot = await root(cwd);
+      return approveRecoveryProposal({
+        readRecord: () => readAvailabilityRecoveryImpl(homeDir, projectRoot),
+        writeRecord: (record) => writeAvailabilityRecoveryImpl(homeDir, projectRoot, record),
+        readStrategy: () => readProjectStrategyImpl(homeDir, projectRoot),
+        writeStrategy: (strategy) => writeProjectStrategyImpl(homeDir, projectRoot, strategy),
+        currentEligibility: async () => (await this.snapshot({ cwd: projectRoot })).modelIntelligence?.eligibility ?? {},
+        now
+      });
+    },
+    /**
+     * Reject a pending recovery proposal: the active team was never
+     * touched, so rejection only closes the fingerprint. Throws when
+     * there is nothing pending.
+     */
+    async rejectRecoveryProposal({ cwd }) {
+      const projectRoot = await root(cwd);
+      return rejectRecoveryProposal({
+        readRecord: () => readAvailabilityRecoveryImpl(homeDir, projectRoot),
+        writeRecord: (record) => writeAvailabilityRecoveryImpl(homeDir, projectRoot, record)
       });
     },
     /** `/project approve`: SUGGESTED -> ACTIVE. Requires a real suggested strategy to already exist — the Bootstrap Analyst choice is already locked in by the time a strategy exists at all (see runBootstrapAnalysis), so there's nothing left to confirm here. */

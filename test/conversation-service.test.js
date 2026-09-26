@@ -420,7 +420,7 @@ async function realScoredCandidates() {
   return { scoredAll, eligibility: { codex: { ok: true }, claude: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null };
 }
 
-test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit and activates it only after verifying — never persisting the suggestion over the active team", async () => {
+test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit into a proposal — never activating, never persisting over the active team", async () => {
   const base = await realScoredCandidates();
   const candidates = { ...base, scoredAll: base.scoredAll.map((model) => ({ ...model, accessMode: "automatic" })) };
   const goModel = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "automatic" };
@@ -457,15 +457,13 @@ test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit and act
   service.snapshot = async () => ({ modelIntelligence: candidates });
 
   const result = await service.recoverProjectTeam({ cwd: "/repo" });
-  assert.equal(result.outcome, "activated", result.reason);
+  assert.equal(result.outcome, "proposed", result.reason);
   assert.deepEqual(lockOwners, ["automatic-recovery"]);
   assert.equal(analyzedWith.length, 1);
   assert.ok(!analyzedWith[0].startsWith("opencode-go"), "the analyst is available right now");
-  assert.equal(writes.length, 1, "exactly one write: the verified ACTIVE team, never an intermediate suggestion");
-  assert.equal(writes[0].status, "active");
-  assert.equal(writes[0].activation.source, "automatic-recovery");
-  assert.ok(writes[0].projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no new assignment uses the unavailable provider");
-  assert.deepEqual(records.map((record) => record.outcome), ["started", "activated"]);
+  assert.equal(writes.length, 0, "no strategy write: the proposal lives on the record, the active team is untouched");
+  assert.ok(result.proposal.projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no proposed assignment uses the unavailable provider");
+  assert.deepEqual(records.map((record) => record.outcome), ["started", "proposed"]);
 
   const again = await service.recoverProjectTeam({ cwd: "/repo" });
   assert.equal(again.reason, "already-handled");

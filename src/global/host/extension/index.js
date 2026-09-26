@@ -334,6 +334,19 @@ function recoveryNotice(result) {
       .join(", ");
     return { level: "info", message: `Kairo recovered the project team after a provider availability change: ${team}. Pi routes are updated.` };
   }
+  // A proposal is NOT an activation: the previous team keeps serving until
+  // a human approves its replacement (see team-recovery.js). The notice
+  // names the cause and the verified alternative, and the approval surface
+  // (S3-1b) is the only executable exit — never a background swap.
+  if (result?.outcome === "proposed") {
+    const cause = (result.affected ?? [])
+      .map((entry) => `${entry.role} (${entry.model}: ${entry.reason})`)
+      .join(", ") || "a provider availability change";
+    const alternative = (result.proposal?.projectTeam ?? [])
+      .map((entry) => `${entry.role} → ${entry.model?.displayName ?? entry.model?.modelId ?? "no eligible option"}`)
+      .join(", ") || "no verified alternative yet";
+    return { level: "warning", message: `Kairo proposes a recovered team after ${cause}. Verified alternative: ${alternative}. Nothing was activated — approve or reject it from /project.` };
+  }
   if (result?.outcome === "kept-previous" || result?.outcome === "error") {
     return {
       level: "warning",

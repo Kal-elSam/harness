@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  decideTeamRecovery, pickRecoveryAnalyst, runTeamRecovery
+  approveRecoveryProposal, decideTeamRecovery, pickRecoveryAnalyst, rejectRecoveryProposal, runTeamRecovery
 } from "../src/global/conversation/team-recovery.js";
 import { availabilityFingerprint } from "../src/global/conversation/availability-fingerprint.js";
 
@@ -108,17 +108,17 @@ function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIM
   return { state, context };
 }
 
-test("recovery success: Go limited with Codex/Claude available activates a team without Go and records the fingerprint", async () => {
+test("recovery success: Go limited with Codex/Claude available proposes a team without Go and never activates it", async () => {
   const { state, context } = world();
   const result = await runTeamRecovery(context);
-  assert.equal(result.outcome, "activated");
-  assert.equal(state.writes.length, 1);
-  const active = state.writes[0];
-  assert.equal(active.status, "active");
-  assert.equal(active.approvedAt, "2026-09-23T12:00:00.000Z");
-  assert.deepEqual(active.activation, { source: "automatic-recovery", fingerprint: availabilityFingerprint(GO_LIMITED).key });
-  assert.ok(active.projectTeam.every((entry) => entry.model.adapterId !== "opencode-go"), "no new assignment uses the limited provider");
-  assert.deepEqual(state.records.map((r) => r.outcome), ["started", "activated"]);
+  assert.equal(result.outcome, "proposed");
+  assert.equal(state.writes.length, 0, "the active team file is never touched by a proposal");
+  assert.equal(state.strategy, goTeam, "the previous team stays active");
+  assert.deepEqual(state.records.map((r) => r.outcome), ["started", "proposed"]);
+  const record = state.records.at(-1);
+  assert.equal(record.proposal.status, "suggested", "the proposal is suggested, never active");
+  assert.ok(record.proposal.projectTeam.every((entry) => entry.model.adapterId !== "opencode-go"), "no proposed assignment uses the limited provider");
+  assert.deepEqual(result.affected, [{ role: "Builder", model: "GLM-5.3", reason: "OpenCode Go monthly window is rate-limited" }], "the cause rides along");
   assert.equal(state.released, true);
 });
 
@@ -186,8 +186,8 @@ test("a human override carries over into the recovered team — recovery never d
   ]);
   const { state, context } = world({ strategy: overridden });
   const result = await runTeamRecovery(context);
-  assert.equal(result.outcome, "activated");
-  const reviewer = state.writes[0].projectTeam.find((entry) => entry.role === "Reviewer");
+  assert.equal(result.outcome, "proposed");
+  const reviewer = state.records.at(-1).proposal.projectTeam.find((entry) => entry.role === "Reviewer");
   assert.equal(reviewer.assignmentSource, "override");
   assert.equal(reviewer.model.modelId, "human-pick");
 });
@@ -212,7 +212,7 @@ test("REGRESSION: a failed recovery is retried on a later refresh after a backof
   fail = false;
   state.clock += 10 * MINUTE;
   const retried = await runTeamRecovery(context);
-  assert.equal(retried.outcome, "activated");
+  assert.equal(retried.outcome, "proposed");
   assert.equal(state.analyzeCalls, 2);
   assert.equal(state.records.at(-1).attempts, 2);
 });
@@ -239,7 +239,7 @@ test("an attempt left 'started' by a crashed process is retried after the backof
   const fingerprint = availabilityFingerprint(GO_LIMITED).key;
   const { state, context } = world({ record: { fingerprint, outcome: "started", attempts: 1, updatedAt: "2026-09-23T11:00:00.000Z" } });
   const result = await runTeamRecovery(context);
-  assert.equal(result.outcome, "activated");
+  assert.equal(result.outcome, "proposed");
   assert.equal(state.records.at(-1).attempts, 2);
 });
 
@@ -248,9 +248,73 @@ test("decide: activated and baseline close a fingerprint; failures only defer it
   const at = (minutesAgo) => new Date(Date.parse("2026-09-23T12:00:00.000Z") - minutesAgo * MINUTE).toISOString();
   const now = Date.parse("2026-09-23T12:00:00.000Z");
   const decide = (record) => decideTeamRecovery({ strategy: goTeam, fingerprint, record: { fingerprint: fingerprint.key, ...record }, eligibility: GO_LIMITED, now });
+  assert.deepEqual(decide({ outcome: "proposed", attempts: 1, updatedAt: at(600) }), { action: "skip", reason: "already-handled" });
   assert.deepEqual(decide({ outcome: "activated", attempts: 1, updatedAt: at(600) }), { action: "skip", reason: "already-handled" });
   assert.deepEqual(decide({ outcome: "baseline", updatedAt: at(600) }), { action: "skip", reason: "already-handled" });
   assert.deepEqual(decide({ outcome: "no-usable-provider", attempts: 1, updatedAt: at(1) }), { action: "skip", reason: "retry-later" });
   assert.deepEqual(decide({ outcome: "no-usable-provider", attempts: 1, updatedAt: at(11) }), { action: "recover" });
   assert.deepEqual(decide({ outcome: "no-analyst", attempts: 3, updatedAt: at(600) }), { action: "skip", reason: "retries-exhausted", lastOutcome: "no-analyst" });
+});
+
+// A controllable world for approve/reject: one proposed record, observable writes.
+function proposalWorld({ recordOutcome = "proposed", eligibility = GO_LIMITED } = {}) {
+  const fingerprint = availabilityFingerprint(GO_LIMITED).key;
+  const proposal = {
+    status: "suggested", profileFingerprint: "fp-2",
+    projectTeam: [
+      { role: "Builder", model: CODEX, fallback: CLAUDE, assignmentSource: "recommended" },
+      { role: "Reviewer", model: CLAUDE, fallback: null, assignmentSource: "recommended" }
+    ]
+  };
+  const state = { strategy: goTeam, writes: [], records: [] };
+  const context = {
+    readRecord: async () => ({ fingerprint, outcome: recordOutcome, attempts: 1, ...(recordOutcome === "proposed" ? { proposal } : {}) }),
+    writeRecord: async (next) => { state.records.push(next); },
+    readStrategy: async () => state.strategy,
+    writeStrategy: async (next) => { state.writes.push(next); state.strategy = next; },
+    currentEligibility: async () => eligibility,
+    now: () => Date.parse("2026-09-23T12:00:00.000Z")
+  };
+  return { state, context, fingerprint, proposal };
+}
+
+test("approve activates the verified proposal and closes the fingerprint", async () => {
+  const { state, context, fingerprint } = proposalWorld();
+  const result = await approveRecoveryProposal(context);
+  assert.equal(result.outcome, "approved");
+  assert.equal(state.writes.length, 1);
+  assert.equal(state.writes[0].status, "active");
+  assert.deepEqual(state.writes[0].activation, { source: "recovery-approved", fingerprint });
+  assert.deepEqual(state.records, [{ fingerprint, outcome: "approved" }]);
+});
+
+test("approve refuses a stale proposal instead of activating unverified models", async () => {
+  const allDown = {
+    "opencode-go": GO_LIMITED["opencode-go"],
+    codex: { ok: false, reason: "Codex weekly window is limited" },
+    claude: { ok: false, reason: "Claude Current session window is limited" }
+  };
+  const { state, context } = proposalWorld({ eligibility: allDown });
+  await assert.rejects(() => approveRecoveryProposal(context), /stale/);
+  assert.equal(state.writes.length, 0, "a stale proposal is never activated");
+  assert.equal(state.records.length, 0, "the proposal stays pending for a fresh look");
+});
+
+test("approve without a pending proposal fails loudly", async () => {
+  const { context } = proposalWorld({ recordOutcome: "baseline" });
+  await assert.rejects(() => approveRecoveryProposal(context), /No proposed recovery/);
+});
+
+test("reject closes the fingerprint and never touches the active team", async () => {
+  const { state, context, fingerprint } = proposalWorld();
+  const result = await rejectRecoveryProposal(context);
+  assert.equal(result.outcome, "rejected");
+  assert.equal(state.writes.length, 0, "rejection never writes a strategy");
+  assert.equal(state.strategy, goTeam, "the previous team stays active");
+  assert.deepEqual(state.records, [{ fingerprint, outcome: "rejected" }]);
+});
+
+test("reject without a pending proposal fails loudly", async () => {
+  const { context } = proposalWorld({ recordOutcome: "rejected" });
+  await assert.rejects(() => rejectRecoveryProposal(context), /No proposed recovery/);
 });
