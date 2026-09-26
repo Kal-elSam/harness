@@ -74,7 +74,7 @@ function createFakeRpcChild({
   return child;
 }
 
-test("classifyPiEngineFromState: missing model is no_model, not unavailable", () => {
+test("classifyPiEngineFromState: missing model is no_model when RPC already answered get_state", () => {
   assert.deepEqual(classifyPiEngineFromState({}), {
     status: "no_model",
     reason: "No model selected",
@@ -101,7 +101,7 @@ test("openPiRpcBridge always returns hostOpen with workspace-shell/v1 snapshot e
   await bridge.stop();
 });
 
-test("openPiRpcBridge reports no_model without closing the host", async () => {
+test("openPiRpcBridge reports simulated get_state-without-model as no_model (not real Pi cold-start)", async () => {
   const bridge = await openPiRpcBridge({
     cwd: "/project",
     loadSnapshot: async () => fakeSnapshot({ agents: [{ id: "orch", state: "idle" }] }),
@@ -195,4 +195,120 @@ test("openPiRpcBridge still opens when get_state fails after spawn", async () =>
   assert.equal(bridge.engine.status, "unavailable");
   assert.match(bridge.engine.reason, /Model catalog empty|get_state/i);
   await bridge.stop();
+});
+
+test("R3: session events are consumable via onEvent and takeEvents", async () => {
+  let childRef = null;
+  const seen = [];
+  const bridge = await openPiRpcBridge({
+    cwd: "/project",
+    loadSnapshot: async () => fakeSnapshot(),
+    resolveCliPath: () => "/fake/cli.js",
+    spawnImpl: () => {
+      childRef = createFakeRpcChild({
+        onCommand: (cmd) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s", model: { id: "m" } }
+            };
+          }
+          return null;
+        }
+      });
+      return childRef;
+    },
+    execPath: "/usr/bin/node",
+    connectTimeoutMs: 500
+  });
+
+  assert.equal(bridge.engine.status, "connected");
+  const unsubscribe = bridge.onEvent((ev) => seen.push(ev));
+  childRef.stdout.emit(
+    "data",
+    Buffer.from(`${JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hi" } })}\n`)
+  );
+  await new Promise((r) => queueMicrotask(r));
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].type, "message_update");
+  const drained = bridge.takeEvents();
+  assert.equal(drained.length, 1);
+  assert.equal(drained[0].type, "message_update");
+  assert.deepEqual(bridge.takeEvents(), []);
+  unsubscribe();
+  childRef.stdout.emit(
+    "data",
+    Buffer.from(`${JSON.stringify({ type: "agent_end" })}\n`)
+  );
+  await new Promise((r) => queueMicrotask(r));
+  assert.equal(seen.length, 1); // unsubscribed
+  assert.equal(bridge.takeEvents().length, 1);
+  await bridge.stop();
+});
+
+test("R3: unexpected Pi exit after connect flips engine off connected; host stays open", async () => {
+  let childRef = null;
+  const bridge = await openPiRpcBridge({
+    cwd: "/project",
+    loadSnapshot: async () => fakeSnapshot(),
+    resolveCliPath: () => "/fake/cli.js",
+    spawnImpl: () => {
+      childRef = createFakeRpcChild({
+        onCommand: (cmd) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "live", model: { id: "m" } }
+            };
+          }
+          return null;
+        }
+      });
+      return childRef;
+    },
+    execPath: "/usr/bin/node",
+    connectTimeoutMs: 500
+  });
+
+  assert.equal(bridge.engine.status, "connected");
+  childRef.emit("exit", 1, null);
+  await new Promise((r) => queueMicrotask(r));
+  assert.equal(bridge.hostOpen, true);
+  assert.equal(bridge.engine.status, "unavailable");
+  assert.match(bridge.engine.reason, /exited with code 1/);
+  assert.equal(bridge.engine.sessionId, "live");
+  await bridge.stop();
+});
+
+test("R3: intentional stop does not mark engine unavailable as a crash", async () => {
+  const bridge = await openPiRpcBridge({
+    cwd: "/project",
+    loadSnapshot: async () => fakeSnapshot(),
+    resolveCliPath: () => "/fake/cli.js",
+    spawnImpl: () =>
+      createFakeRpcChild({
+        onCommand: (cmd) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s", model: { id: "m" } }
+            };
+          }
+          return null;
+        }
+      }),
+    execPath: "/usr/bin/node",
+    connectTimeoutMs: 500
+  });
+
+  assert.equal(bridge.engine.status, "connected");
+  await bridge.stop();
+  assert.equal(bridge.engine.status, "stopped");
+  assert.equal(bridge.hostOpen, true);
 });
