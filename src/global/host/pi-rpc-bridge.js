@@ -5,8 +5,12 @@
  * Does NOT own UI chrome (ratatui does). Does NOT change `kairo ui` default.
  *
  * Contract: `openPiRpcBridge` always resolves with `hostOpen: true` once the
- * snapshot is loaded. Pi spawn / RPC / missing-model failures surface on
- * `engine` and never prevent the host from opening.
+ * snapshot is loaded. Pi spawn / RPC failures surface on `engine` and never
+ * prevent the host from opening.
+ *
+ * `engine.status === "no_model"` applies when RPC answered `get_state` without
+ * a model. Real Pi often exits before RPC if no model is configured — that
+ * cold-start is expected as `unavailable` until R4 verifies the real binary.
  */
 
 import { spawn } from "node:child_process";
@@ -150,11 +154,13 @@ function assertWorkspaceSnapshot(snapshot) {
 
 function createBridgeShell({ snapshot }) {
   const pending = new Map();
+  const listeners = new Set();
   let nextId = 1;
   let stdoutBuffer = Buffer.alloc(0);
   let stopped = false;
   let child = null;
   let exitError = null;
+  const eventBuffer = [];
 
   const bridge = {
     /** Always true after openPiRpcBridge returns — UI may paint. */
@@ -166,7 +172,21 @@ function createBridgeShell({ snapshot }) {
       sessionId: null,
       model: null
     },
-    events: [],
+    /**
+     * Subscribe to session/protocol events (non-response records).
+     * @returns {() => void} unsubscribe
+     */
+    onEvent(listener) {
+      if (typeof listener !== "function") {
+        throw new TypeError("onEvent listener must be a function");
+      }
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    /** Drain buffered session events since the last take (FIFO). */
+    takeEvents() {
+      return eventBuffer.splice(0, eventBuffer.length);
+    },
     request(command, timeoutMs = DEFAULT_CONNECT_TIMEOUT_MS) {
       if (exitError) return Promise.reject(exitError);
       if (!child?.stdin) return Promise.reject(new Error("Pi RPC child has no stdin"));
@@ -203,6 +223,13 @@ function createBridgeShell({ snapshot }) {
         entry.reject(new Error("Pi RPC bridge stopped"));
       }
       pending.clear();
+      const previous = bridge.engine;
+      bridge.engine = {
+        status: "stopped",
+        reason: null,
+        sessionId: previous.sessionId ?? null,
+        model: previous.model ?? null
+      };
       if (!child) return;
       try {
         child.stdin?.end();
@@ -234,25 +261,49 @@ function createBridgeShell({ snapshot }) {
         } catch {
           continue;
         }
-        dispatchRecord(bridge, pending, record);
+        dispatchRecord(bridge, pending, eventBuffer, listeners, record);
       }
     },
     _setChild(c) {
       child = c;
     },
-    _setExitError(err) {
+    _setExitError(err, { intentional = false } = {}) {
       exitError = err;
       for (const [, entry] of pending) entry.reject(err);
       pending.clear();
+      if (intentional || stopped) return;
+      const previous = bridge.engine;
+      bridge.engine = {
+        status: "unavailable",
+        reason: err?.message ?? String(err),
+        sessionId: previous.sessionId ?? null,
+        model: null
+      };
+      const notice = {
+        type: "engine_unavailable",
+        reason: bridge.engine.reason,
+        sessionId: bridge.engine.sessionId
+      };
+      eventBuffer.push(notice);
+      for (const listener of listeners) {
+        try {
+          listener(notice);
+        } catch {
+          // Listener errors must not break the bridge.
+        }
+      }
     },
     _getExitError() {
       return exitError;
+    },
+    _isStopped() {
+      return stopped;
     }
   };
   return bridge;
 }
 
-function dispatchRecord(bridge, pending, record) {
+function dispatchRecord(bridge, pending, eventBuffer, listeners, record) {
   if (record?.type === "response" && record.id != null && pending.has(record.id)) {
     const entry = pending.get(record.id);
     pending.delete(record.id);
@@ -263,7 +314,14 @@ function dispatchRecord(bridge, pending, record) {
     entry.resolve(record.data ?? {});
     return;
   }
-  bridge.events.push(record);
+  eventBuffer.push(record);
+  for (const listener of listeners) {
+    try {
+      listener(record);
+    } catch {
+      // Listener errors must not break the bridge.
+    }
+  }
 }
 
 function attachChild(bridge, child) {
@@ -273,9 +331,15 @@ function attachChild(bridge, child) {
     // stderr is diagnostic only — never protocol
   });
   child.once("error", (err) => {
-    bridge._setExitError(new Error(`Agent process error: ${err.message}`));
+    bridge._setExitError(new Error(`Agent process error: ${err.message}`), {
+      intentional: bridge._isStopped()
+    });
   });
   child.once("exit", (code, signal) => {
+    if (bridge._isStopped()) {
+      bridge._setExitError(new Error("Pi RPC bridge stopped"), { intentional: true });
+      return;
+    }
     if (bridge._getExitError()) return;
     const detail =
       signal != null
