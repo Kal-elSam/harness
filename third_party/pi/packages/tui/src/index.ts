@@ -75,6 +75,15 @@ export {
 } from "./keys.ts";
 // LaTeX rendering
 export { type RenderLatexOptions, renderLatex } from "./latex.ts";
+// Full-screen layout engine (walks a [LAYOUT_NODE] component tree top-down
+// with a real height budget — the primary fullscreen render path; see
+// TuiAltScreen's own render loop).
+export {
+	type LayoutBox,
+	type LayoutFrame,
+	type LayoutRect,
+	renderLayoutFrame,
+} from "./layout.ts";
 // Native platform integration
 export { getNativeClipboard, type NativeClipboard } from "./native-platform.ts";
 // Input buffering for batch splitting
