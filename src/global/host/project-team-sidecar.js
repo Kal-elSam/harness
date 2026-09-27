@@ -101,22 +101,120 @@ function noAnalystError(analystCatalog) {
 }
 
 /**
- * Analyze this project's team headlessly with the default analyst.
- * Persists a SUGGESTED ProjectStrategy (the service does) — never active:
- * activation stays an explicit human act (`approveProjectTeam`).
+ * Re-validates a human's own picked analyst (the ratatui host's picker —
+ * see analyst-picker payload shape, matching the cockpit's own
+ * ProjectOverlay onSelect) against the FRESH catalog from this call's own
+ * preflight, never trusting a stale caller-supplied `available` flag.
+ * Returns null (never throws) when the requested candidate isn't in the
+ * catalog at all, or is there but not currently available — the caller
+ * decides how to fail closed.
+ *
+ * @param {{model?: {adapterId?: string, modelId?: string}}|null|undefined} requested
+ * @param {{recommendedModel?: {candidateKey?: string}|null, models?: object[]}|null|undefined} analystCatalog
+ */
+function resolveRequestedAnalyst(requested, analystCatalog) {
+  const adapterId = requested?.model?.adapterId ?? null;
+  const modelId = requested?.model?.modelId ?? null;
+  if (!adapterId || !modelId) return null;
+  const models = analystCatalog?.models ?? [];
+  const match = models.find((model) => model?.adapterId === adapterId && model?.modelId === modelId);
+  if (!match || match.available !== true) return null;
+  const recommendedKey = analystCatalog?.recommendedModel?.candidateKey ?? null;
+  const recommendationTags = match.recommendationTags ?? [];
+  return {
+    model: { adapterId: match.adapterId, modelId: match.modelId, displayName: match.displayName },
+    selectionSource: match.candidateKey === recommendedKey ? "recommended" : "manual",
+    recommendationTags,
+    choice: recommendationTags.includes("quality")
+      ? "quality"
+      : recommendationTags.includes("efficient")
+        ? "efficient"
+        : null
+  };
+}
+
+function requestedAnalystError(requested) {
+  const label = requested?.model?.displayName ?? requested?.model?.modelId ?? "The selected analyst";
+  return new Error(
+    `${label} is not an available analyst for this project right now — pick another model and try again.`
+  );
+}
+
+/**
+ * JSON-safe clone for values that cross the stdio sidecar boundary — drops
+ * functions/class methods rather than throwing, and fails to `null` (never
+ * a crash) on a genuinely circular value. `undefined` also becomes `null`
+ * so a caller always gets a concrete, serializable shape.
+ * @param {unknown} value
+ */
+function toSerializable(value) {
+  if (value === undefined) return null;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read-only preflight for the ratatui host's own analyst picker (T2) — the
+ * non-interactive equivalent of the cockpit's ProjectOverlay landing on
+ * SELECT_ANALYST. Local evidence only, no provider call, nothing persisted.
+ * `profile`/`candidates` are best-effort JSON-safe copies for a future
+ * caller; `analyzeProjectTeam` never depends on them (it re-preflights
+ * itself), so a serialization miss on either never blocks the picker.
  *
  * @param {{cwd?: string, createConversationService?: typeof createConversationService}} args
- * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null, notice: string|null}>}
+ * @returns {Promise<{analystCatalog: object, profile: object|null, candidates: object|null, projectRoot: string|null, unverifiedClaudeNotice: string|null}>}
  */
-export async function analyzeProjectTeam({
+export async function preflightProjectTeam({
   cwd,
   createConversationService: createService = createConversationService
 } = {}) {
   const projectCwd = requireCwd(cwd);
   const service = createService({ enableProviderProbes: true });
   const preflight = await service.preflightProject({ cwd: projectCwd });
-  const analyst = pickDefaultAnalyst(preflight.analystCatalog);
-  if (!analyst) throw noAnalystError(preflight.analystCatalog);
+  return {
+    analystCatalog: preflight.analystCatalog ?? { recommendedModel: null, models: [] },
+    profile: toSerializable(preflight.profile),
+    candidates: toSerializable(preflight.candidates),
+    projectRoot: preflight.projectRoot ?? null,
+    unverifiedClaudeNotice: preflight.unverifiedClaudeNotice ?? null
+  };
+}
+
+/**
+ * Analyze this project's team headlessly. Persists a SUGGESTED
+ * ProjectStrategy (the service does) — never active: activation stays an
+ * explicit human act (`approveProjectTeam`).
+ *
+ * `analyst` is an optional human pick from the ratatui host's own picker
+ * (T2) — the same clean modelRef shape the cockpit's ProjectOverlay
+ * onSelect builds (`{model, selectionSource, recommendationTags, choice}`).
+ * It is re-validated against THIS call's own fresh catalog (never trusted
+ * verbatim — availability can change between the picker's preflight and
+ * this analyze). Omitted or unresolvable → the catalog's own recommended
+ * default (`pickDefaultAnalyst`), same as before this option existed.
+ *
+ * @param {{cwd?: string, analyst?: object|null, createConversationService?: typeof createConversationService}} args
+ * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null, notice: string|null}>}
+ */
+export async function analyzeProjectTeam({
+  cwd,
+  analyst: requestedAnalyst = null,
+  createConversationService: createService = createConversationService
+} = {}) {
+  const projectCwd = requireCwd(cwd);
+  const service = createService({ enableProviderProbes: true });
+  const preflight = await service.preflightProject({ cwd: projectCwd });
+  let analyst;
+  if (requestedAnalyst) {
+    analyst = resolveRequestedAnalyst(requestedAnalyst, preflight.analystCatalog);
+    if (!analyst) throw requestedAnalystError(requestedAnalyst);
+  } else {
+    analyst = pickDefaultAnalyst(preflight.analystCatalog);
+    if (!analyst) throw noAnalystError(preflight.analystCatalog);
+  }
   const strategy = await service.runBootstrapAnalysis({
     cwd: projectCwd,
     profile: preflight.profile,

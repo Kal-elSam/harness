@@ -1,3 +1,4 @@
+mod analyst_picker;
 mod bridge;
 mod chat;
 mod engine;
@@ -18,6 +19,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::{Frame, Terminal};
 use ratatui_textarea::{Input, Key, TextArea};
 
+use analyst_picker::AnalystPickerState;
 use bridge::BridgeClient;
 use chat::{sidebar_accepts_selection_keys, ChatState, Focus};
 use engine::{
@@ -26,7 +28,7 @@ use engine::{
 };
 use layout::split_shell;
 use snapshot::apply_workspace_snapshot;
-use surfaces::{render_shell, ShellViewModel};
+use surfaces::{render_analyst_picker, render_shell, ShellViewModel};
 
 // Keybindings (V2 + R3b + R4):
 // - Tab: cycle focus Editor → Sidebar → Transcript
@@ -35,9 +37,10 @@ use surfaces::{render_shell, ShellViewModel};
 // - Transcript: PgUp/PgDn scroll
 // - q: quit when Editor is empty; Ctrl+C / Ctrl+Q always quit
 // - Bridge only: Ctrl+M cycle Kairo model; Ctrl+N new Pi session; Ctrl+[ / Ctrl+] prev/next session on disk; Ctrl+K compact
-// - Bridge only, team setup in this UI (no cockpit): `a` analyze this project's team
-//   (default analyst), `A` approve the suggestion. Offered while chat is blocked, or
-//   from Sidebar/Transcript focus — never stolen from a compose box that can send.
+// - Bridge only, team setup in this UI (no cockpit): `a` opens the analyst picker
+//   (T2 — j/k or arrows move, Enter confirms an available model, Esc cancels), `A`
+//   approves the suggestion. Offered while chat is blocked, or from Sidebar/
+//   Transcript focus — never stolen from a compose box that can send.
 // - n/c: demo notice clear (local, no bridge)
 
 /// The two in-UI team setup actions (`a` / `A`).
@@ -75,6 +78,10 @@ struct ShellApp {
     pending_prompt: Option<String>,
     /// A team op (analyze / approve) is in flight — one at a time.
     team_action_pending: bool,
+    /// `project.preflight` was sent; waiting on its `preflight` record.
+    preflight_pending: bool,
+    /// The open analyst picker modal (T2) — `Some` while it owns key input.
+    picker: Option<AnalystPickerState>,
 }
 
 impl ShellApp {
@@ -95,6 +102,8 @@ impl ShellApp {
             pi_session_index: 0,
             pending_prompt: None,
             team_action_pending: false,
+            preflight_pending: false,
+            picker: None,
         }
     }
 
@@ -206,6 +215,8 @@ impl ShellApp {
                 }
             } else if kind == Some("team") {
                 self.ingest_team_record(&record);
+            } else if kind == Some("preflight") {
+                self.ingest_preflight_record(&record);
             } else if kind == Some("sessions") {
                 self.ingest_sessions_record(&record);
             } else if kind == Some("transcript") {
@@ -278,6 +289,77 @@ impl ShellApp {
             }
             Err(err) => {
                 self.view.notice = Some(format!("{} failed: {err}", op.label()));
+            }
+        }
+    }
+
+    /// `a`: instead of analyzing immediately, fetch the real analyst
+    /// catalog and let the human pick — the whole point of T2 (no cockpit,
+    /// no invented models). One in-flight preflight/picker at a time.
+    fn request_analyst_preflight(&mut self) {
+        if self.team_action_pending || self.preflight_pending || self.picker.is_some() {
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.preflight_project_team() {
+            Ok(()) => {
+                self.preflight_pending = true;
+                self.view.notice = Some("Loading analyst catalog…".into());
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("Loading analyst catalog failed: {err}"));
+            }
+        }
+    }
+
+    /// Sidecar `preflight` record: open the picker on success (unless the
+    /// real catalog is empty — nothing to choose from), or report the real
+    /// failure reason. Never invents a model when the catalog is empty.
+    fn ingest_preflight_record(&mut self, record: &serde_json::Value) {
+        self.preflight_pending = false;
+        let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !ok {
+            let reason = record
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("preflight failed");
+            self.view.notice = Some(format!("Loading analyst catalog failed: {reason}"));
+            return;
+        }
+        let Some(catalog) = record.get("analystCatalog") else {
+            self.view.notice = Some("Preflight returned no analyst catalog.".into());
+            return;
+        };
+        let picker = AnalystPickerState::from_analyst_catalog(catalog);
+        if picker.is_empty() {
+            self.view.notice =
+                Some("No ask-capable analyst model available for this project.".into());
+            return;
+        }
+        self.view.notice = None;
+        self.picker = Some(picker);
+    }
+
+    /// Enter on an available picker row: send `project.analyze` with the
+    /// human's own chosen analyst (re-validated server-side, never trusted
+    /// blindly) and close the modal.
+    fn send_analyze_with_analyst(&mut self, analyst: serde_json::Value) {
+        if self.team_action_pending {
+            self.view.notice = Some("A project team action is already running…".into());
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.analyze_project_team_with(analyst) {
+            Ok(()) => {
+                self.team_action_pending = true;
+                self.view.notice = Some(TeamOp::Analyze.progress_notice().into());
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("{} failed: {err}", TeamOp::Analyze.label()));
             }
         }
     }
@@ -407,6 +489,13 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
     {
         return Ok(true);
     }
+    // The analyst picker owns every key while open — Ctrl+C/Q above still
+    // always quits, but nothing else falls through to chat/sidebar/bridge
+    // shortcuts until the modal closes (Enter/Esc).
+    if app.picker.is_some() {
+        handle_picker_key(app, key);
+        return Ok(false);
+    }
     if try_bridge_shortcut(app, key) {
         return Ok(false);
     }
@@ -525,7 +614,7 @@ fn try_team_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
     }
     match key.code {
         KeyCode::Char('a') if can_analyze_team(&app.engine) => {
-            app.request_team_op(TeamOp::Analyze);
+            app.request_analyst_preflight();
             true
         }
         KeyCode::Char('A') if can_approve_team(app.view.team_state.as_deref()) => {
@@ -533,6 +622,29 @@ fn try_team_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
             true
         }
         _ => false,
+    }
+}
+
+/// Key routing while the analyst picker modal is open — the picker owns
+/// every key (movement, confirm, cancel) until it closes.
+fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) {
+    let Some(picker) = app.picker.as_mut() else {
+        return;
+    };
+    match key.code {
+        KeyCode::Down | KeyCode::Char('j') => picker.move_down(),
+        KeyCode::Up | KeyCode::Char('k') => picker.move_up(),
+        KeyCode::Esc => {
+            app.picker = None;
+        }
+        KeyCode::Enter => {
+            if let Some(option) = picker.confirm() {
+                let payload = AnalystPickerState::analyst_payload(&option);
+                app.picker = None;
+                app.send_analyze_with_analyst(payload);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -635,7 +747,8 @@ fn crossterm_to_textarea(key: KeyEvent) -> Option<Input> {
 }
 
 fn draw(frame: &mut Frame, app: &ShellApp) {
-    let regions = split_shell(frame.area());
+    let area = frame.area();
+    let regions = split_shell(area);
     render_shell(
         frame.buffer_mut(),
         regions,
@@ -643,4 +756,7 @@ fn draw(frame: &mut Frame, app: &ShellApp) {
         &app.chat,
         &app.editor,
     );
+    if let Some(picker) = &app.picker {
+        render_analyst_picker(frame.buffer_mut(), area, picker);
+    }
 }

@@ -128,6 +128,17 @@ impl BridgeClient {
         self.send_op("project.analyze", Value::Null)
     }
 
+    /// Analyze with the human's own picked analyst (see `analyst_picker`) —
+    /// same clean modelRef shape `project-team-sidecar.js` expects.
+    pub fn analyze_project_team_with(&mut self, analyst: Value) -> std::io::Result<()> {
+        self.send_op("project.analyze", serde_json::json!({ "analyst": analyst }))
+    }
+
+    /// Read-only: fetch the real analyst catalog for the in-UI picker (T2).
+    pub fn preflight_project_team(&mut self) -> std::io::Result<()> {
+        self.send_op("project.preflight", Value::Null)
+    }
+
     /// Approve the suggested team; the sidecar re-applies Architect after it.
     pub fn approve_project_team(&mut self) -> std::io::Result<()> {
         self.send_op("team.approve", Value::Null)

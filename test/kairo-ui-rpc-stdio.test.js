@@ -682,6 +682,233 @@ test("sidecar project.analyze reports a failure honestly and emits no team snaps
   await runPromise;
 });
 
+test("sidecar project.preflight returns the real analyst catalog for the ratatui picker, without touching the engine", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+  const preflightCalls = [];
+  const catalog = {
+    recommendedModel: { candidateKey: "codex::gpt-5" },
+    models: [
+      { candidateKey: "codex::gpt-5", adapterId: "codex", modelId: "gpt-5", displayName: "GPT-5", available: true, recommendationTags: ["quality"] }
+    ]
+  };
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    preflightProjectTeam: async ({ cwd }) => {
+      preflightCalls.push(cwd);
+      return { analystCatalog: catalog, profile: { fp: "x" }, candidates: { scoredAll: [] }, projectRoot: cwd, unverifiedClaudeNotice: null };
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "project.preflight" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.deepEqual(preflightCalls, ["/project"]);
+  const preflight = out.find((r) => r.type === "preflight");
+  assert.equal(preflight?.ok, true);
+  assert.deepEqual(preflight?.analystCatalog, catalog);
+  assert.deepEqual(preflight?.profile, { fp: "x" });
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar project.preflight reports a real failure honestly, as ok:false — never a crash", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    preflightProjectTeam: async () => {
+      throw new Error("No provider CLI is authenticated");
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "project.preflight" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  const preflight = out.find((r) => r.type === "preflight");
+  assert.equal(preflight?.ok, false);
+  assert.match(preflight?.reason ?? "", /No provider CLI is authenticated/);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar project.analyze forwards the picker's chosen analyst payload verbatim", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+  const analyzeCalls = [];
+  const chosenAnalyst = {
+    model: { adapterId: "claude", modelId: "sonnet", displayName: "Claude Sonnet" },
+    selectionSource: "manual",
+    recommendationTags: ["efficient"],
+    choice: "efficient"
+  };
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async ({ cwd, analyst }) => {
+      analyzeCalls.push({ cwd, analyst });
+      return { state: "suggested", teamRows: 1, roles: ["Architect"], analyst: "claude · Claude Sonnet", projectRoot: cwd, notice: null };
+    },
+    loadSnapshot: async () => fakeSnapshot({ team: { state: "suggested", rows: [], assignments: [] } })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "project.analyze", analyst: chosenAnalyst })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  assert.equal(analyzeCalls.length, 1);
+  assert.equal(analyzeCalls[0].cwd, "/project");
+  assert.deepEqual(analyzeCalls[0].analyst, chosenAnalyst);
+  const team = out.find((r) => r.type === "team");
+  assert.equal(team?.ok, true);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar project.analyze without an analyst payload keeps the default-pick fallback (analyst omitted)", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+  const analyzeCalls = [];
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async ({ cwd, analyst }) => {
+      analyzeCalls.push({ cwd, analyst });
+      return { state: "suggested", teamRows: 1, roles: ["Architect"], analyst: "codex · GPT-5", projectRoot: cwd, notice: null };
+    },
+    loadSnapshot: async () => fakeSnapshot({ team: { state: "suggested", rows: [], assignments: [] } })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "project.analyze" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  assert.equal(analyzeCalls.length, 1);
+  assert.equal(analyzeCalls[0].analyst, null, "no picker payload means the default-analyst fallback stays intact");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
 test("sidecar team.approve re-applies Architect and republishes models plus snapshot", async () => {
   const setModelCalls = [];
   const out = [];

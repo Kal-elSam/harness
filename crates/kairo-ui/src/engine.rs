@@ -149,9 +149,9 @@ pub fn team_next_step_line(team_state: Option<&str>) -> String {
     match team_state {
         Some("suggested") => "Next: press A to approve the suggested team (a re-analyzes).".into(),
         Some("active") | Some("stale") => {
-            "Next: press a to re-analyze this project's team, then A to approve.".into()
+            "Next: press a to choose an analyst and re-analyze, then A to approve.".into()
         }
-        _ => "Next: press a to analyze project team, then A to approve.".into(),
+        _ => "Next: press a to choose an analyst and analyze, then A to approve.".into(),
     }
 }
 
