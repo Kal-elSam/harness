@@ -159,10 +159,9 @@ function toSerializable(value) {
 /**
  * Read-only preflight for the ratatui host's own analyst picker (T2) — the
  * non-interactive equivalent of the cockpit's ProjectOverlay landing on
- * SELECT_ANALYST. Local evidence only, no provider call, nothing persisted.
- * `profile`/`candidates` are best-effort JSON-safe copies for a future
- * caller; `analyzeProjectTeam` never depends on them (it re-preflights
- * itself), so a serialization miss on either never blocks the picker.
+ * SELECT_ANALYST. Uses `mode: "catalog"` so opening the modal waits on
+ * snapshot/probes only (no project-profile scan). Analyze re-runs a full
+ * preflight itself, so a serialization miss on profile never blocks the picker.
  *
  * @param {{cwd?: string, createConversationService?: typeof createConversationService}} args
  * @returns {Promise<{analystCatalog: object, profile: object|null, candidates: object|null, projectRoot: string|null, unverifiedClaudeNotice: string|null}>}
@@ -173,7 +172,7 @@ export async function preflightProjectTeam({
 } = {}) {
   const projectCwd = requireCwd(cwd);
   const service = createService({ enableProviderProbes: true });
-  const preflight = await service.preflightProject({ cwd: projectCwd });
+  const preflight = await service.preflightProject({ cwd: projectCwd, mode: "catalog" });
   return {
     analystCatalog: preflight.analystCatalog ?? { recommendedModel: null, models: [] },
     profile: toSerializable(preflight.profile),

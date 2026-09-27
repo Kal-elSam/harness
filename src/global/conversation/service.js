@@ -1186,14 +1186,29 @@ export function createConversationService(deps = {}) {
       return acquireSessionLockImpl(dir, { sessionId });
     },
     /**
-     * ProjectOverlay preflight: computes a real, read-only ProjectProfile
-     * and the full analyst catalog. No provider call or persistence occurs;
-     * the human selects and confirms a catalog entry before analysis runs.
+     * ProjectOverlay / ratatui picker preflight: computes a real, read-only
+     * ProjectProfile (full mode) and the full analyst catalog. No bootstrap
+     * provider call or strategy persistence occurs; the human selects and
+     * confirms a catalog entry before analysis runs.
+     *
+     * @param {{ cwd: string, mode?: "full"|"catalog" }} args
+     *   `mode: "catalog"` skips `computeProjectProfile` so the ratatui
+     *   picker can open after a single snapshot (usage/catalog/auth probes).
+     *   Analyze always uses `mode: "full"` (or omits mode) so profile exists.
      */
-    async preflightProject({ cwd }) {
+    async preflightProject({ cwd, mode = "full" } = {}) {
       const projectRoot = await root(cwd);
-      const profile = await computeProjectProfileImpl({ cwd: projectRoot });
-      const snap = await this.snapshot({ cwd: projectRoot });
+      const catalogOnly = mode === "catalog";
+      // profile (local git/Graphify read) and snapshot (usage/catalog/auth/
+      // cursor provider probes) are independent I/O — started together in
+      // full mode. Catalog-only mode skips profile so the picker modal is
+      // bounded by snapshot wall time alone (analyze re-runs full preflight).
+      const [profile, snap] = catalogOnly
+        ? [null, await this.snapshot({ cwd: projectRoot })]
+        : await Promise.all([
+            computeProjectProfileImpl({ cwd: projectRoot }),
+            this.snapshot({ cwd: projectRoot })
+          ]);
       const {
         scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null,
         providerCapacity = null, unscoredModels = [], claudeEntitlement = {}, cursorAccess = {}

@@ -52,10 +52,10 @@ function fakeService({
   calls = []
 } = {}) {
   return () => ({
-    async preflightProject({ cwd }) {
-      calls.push(["preflightProject", cwd]);
+    async preflightProject({ cwd, mode = "full" } = {}) {
+      calls.push(["preflightProject", cwd, mode]);
       return {
-        profile: { root: cwd, roleRequirements: [{ role: "Architect" }] },
+        profile: mode === "catalog" ? null : { root: cwd, roleRequirements: [{ role: "Architect" }] },
         candidates: { scoredAll: [], eligibility: {} },
         analystCatalog,
         projectRoot: cwd,
@@ -148,7 +148,7 @@ test("analyzeProjectTeam runs preflight then analysis with the default analyst",
       calls
     })
   });
-  assert.deepEqual(calls[0], ["preflightProject", "/project"]);
+  assert.deepEqual(calls[0], ["preflightProject", "/project", "full"]);
   const [, analysisArgs] = calls[1];
   assert.equal(analysisArgs.cwd, "/project");
   assert.equal(analysisArgs.analyst.model.modelId, "gpt-5");
@@ -254,10 +254,10 @@ test("preflightProjectTeam returns the real analyst catalog without persisting o
     cwd: "/project",
     createConversationService: fakeService({ analystCatalog: catalog, calls })
   });
-  assert.deepEqual(calls, [["preflightProject", "/project"]], "preflight must never run analysis or approval");
+  assert.deepEqual(calls, [["preflightProject", "/project", "catalog"]], "picker preflight uses catalog mode — never analysis or approval");
   assert.deepEqual(result.analystCatalog, catalog);
   assert.equal(result.projectRoot, "/project");
-  assert.deepEqual(result.profile, { root: "/project", roleRequirements: [{ role: "Architect" }] });
+  assert.equal(result.profile, null, "catalog mode skips project profile until analyze");
   assert.deepEqual(result.candidates, { scoredAll: [], eligibility: {} });
 });
 
