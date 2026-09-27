@@ -14,6 +14,7 @@ pub fn apply_workspace_snapshot(view: &mut ShellViewModel, snapshot: &Value) {
         let mut mapped: Vec<SidebarAgent> = agents.iter().map(map_agent).collect();
         sort_agents_blocked_first(&mut mapped);
         view.agents = mapped;
+        view.team_attention = blocked_team_attention(&view.agents);
         if view.agents.is_empty() {
             view.selected_agent = 0;
         } else if view.selected_agent >= view.agents.len() {
@@ -125,6 +126,32 @@ fn state_word(state: AgentState) -> &'static str {
     }
 }
 
+/// Sticky chat CTA when the live team has blocked roles (rate-limit, quota,
+/// entitlement, out of funds). Mirrors cockpit `availabilityNotices` intent
+/// without toast APIs — ratatui paints this in the work surface.
+pub fn blocked_team_attention(agents: &[SidebarAgent]) -> Option<String> {
+    let blocked: Vec<&SidebarAgent> = agents
+        .iter()
+        .filter(|agent| agent.state == AgentState::Blocked)
+        .collect();
+    if blocked.is_empty() {
+        return None;
+    }
+    let n = blocked.len();
+    let who = if n <= 3 {
+        blocked
+            .iter()
+            .map(|agent| agent.label.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        format!("{n} roles")
+    };
+    Some(format!(
+        "{who} unavailable (rate-limit / no funds). Type /analyze to reassign."
+    ))
+}
+
 fn state_rank(state: AgentState) -> u8 {
     match state {
         AgentState::Blocked => 0,
@@ -202,6 +229,47 @@ mod tests {
         let mut view = ShellViewModel::default();
         apply_workspace_snapshot(&mut view, &snapshot);
         assert_eq!(view.agents[0].detail, "OpenCode Go · unavailable");
+        let attention = view.team_attention.expect("blocked team needs CTA");
+        assert!(
+            attention.contains("/analyze"),
+            "attention must name /analyze: {attention}"
+        );
+        assert!(
+            attention.contains("Architect"),
+            "attention must name the blocked role: {attention}"
+        );
+        assert!(
+            attention.contains("rate-limit") || attention.contains("no funds"),
+            "attention must name the provider failure class: {attention}"
+        );
+    }
+
+    #[test]
+    fn clears_team_attention_when_no_agents_are_blocked() {
+        let snapshot = json!({
+            "agents": [
+                { "label": "Architect", "state": "idle", "provider": "codex", "model": "gpt" }
+            ]
+        });
+        let mut view = ShellViewModel::default();
+        view.team_attention = Some("stale".into());
+        apply_workspace_snapshot(&mut view, &snapshot);
+        assert_eq!(view.team_attention, None);
+    }
+
+    #[test]
+    fn blocked_team_attention_summarizes_many_roles_without_listing_all() {
+        let agents: Vec<SidebarAgent> = (0..5)
+            .map(|i| SidebarAgent {
+                label: format!("Role{i}"),
+                detail: "unavailable".into(),
+                state: AgentState::Blocked,
+            })
+            .collect();
+        let attention = blocked_team_attention(&agents).expect("CTA");
+        assert!(attention.contains("5 roles"));
+        assert!(!attention.contains("Role0"), "must not list every role when N>3");
+        assert!(attention.contains("/analyze"));
     }
 
     #[test]
