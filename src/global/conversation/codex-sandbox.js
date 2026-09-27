@@ -204,6 +204,13 @@ export async function runCodexSandboxedBootstrap({
         return;
       }
       let finished = false;
+      // Real sandbox-exec/codex stderr — captured so a missing output file
+      // (below) reports WHY the sandboxed run actually failed (denied
+      // subpath, real Codex error, a real model error), never just the
+      // raw ENOENT for a file that's missing BECAUSE the run failed, not
+      // the other way around. Mirrors quick-ask.js's askCodex.
+      let stderr = "";
+      child.stderr?.on("data", (chunk) => { stderr += chunk; });
       const timer = setTimeout(() => finish(unknown("sandboxed codex exec timed out")), timeoutMs);
       function finish(res) {
         if (finished) return;
@@ -213,13 +220,13 @@ export async function runCodexSandboxedBootstrap({
         resolve(res);
       }
       child.once?.("error", (error) => finish(unknown(error?.message ?? error)));
-      child.once?.("close", async () => {
+      child.once?.("close", async (code) => {
         try {
           const text = (await (deps.readFile ?? readFile)(outFile, "utf8")).trim();
-          if (!text) return finish(unknown("sandboxed codex exec produced no final message"));
+          if (!text) return finish(unknown(stderr.trim() || "sandboxed codex exec produced no final message"));
           finish({ status: "answered", answer: text, error: null });
-        } catch (error) {
-          finish(unknown(error?.message ?? error));
+        } catch {
+          finish(unknown(stderr.trim() || `sandboxed codex exec exited ${code} without writing its output file`));
         }
       });
     });

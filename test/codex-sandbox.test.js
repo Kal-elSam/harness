@@ -114,6 +114,43 @@ test("runCodexSandboxedBootstrap fails closed to error when the output file is n
   assert.equal(result.status, "error");
 });
 
+test("runCodexSandboxedBootstrap reports real captured stderr — never a raw ENOENT — when the output file is missing", async () => {
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.kill = () => {};
+    child.stderr = new EventEmitter();
+    setTimeout(() => {
+      child.stderr.emit("data", Buffer.from("codex: rate limit exceeded\n"));
+      child.emit("close", 1);
+    }, 0);
+    return child;
+  };
+  const result = await runCodexSandboxedBootstrap({
+    question: "q", snapshotRoot: "/tmp/kairo-snap-4b",
+    spawn, deps: { platform: "darwin", access: async () => {} }
+  });
+  assert.equal(result.status, "error");
+  assert.match(result.error, /rate limit exceeded/, "must surface the real stderr, not a bare ENOENT");
+  assert.doesNotMatch(result.error, /ENOENT/);
+});
+
+test("runCodexSandboxedBootstrap falls back to an honest exit-code message when the output file is missing and stderr is empty", async () => {
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.kill = () => {};
+    child.stderr = new EventEmitter();
+    setTimeout(() => child.emit("close", 7), 0);
+    return child;
+  };
+  const result = await runCodexSandboxedBootstrap({
+    question: "q", snapshotRoot: "/tmp/kairo-snap-4c",
+    spawn, deps: { platform: "darwin", access: async () => {} }
+  });
+  assert.equal(result.status, "error");
+  assert.match(result.error, /exited 7 without writing its output file/);
+  assert.doesNotMatch(result.error, /ENOENT/);
+});
+
 test("runCodexSandboxedBootstrap scrubs the child's env — a real secret in Kairo's own process env must never reach it", async () => {
   let seenEnv;
   const spawn = (cmd, args, options) => {
