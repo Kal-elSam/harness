@@ -65,6 +65,29 @@ impl TeamOp {
     }
 }
 
+/// Prefer sidecar `pickerNotice`; fall back to a compact Claude absence line
+/// when only the longer `unverifiedClaudeNotice` is present. Never invents
+/// billing / funds causes.
+fn preflight_picker_notice(record: &serde_json::Value) -> Option<String> {
+    if let Some(notice) = record
+        .get("pickerNotice")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Some(notice.to_string());
+    }
+    let has_unverified = record
+        .get("unverifiedClaudeNotice")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty());
+    if has_unverified {
+        return Some("Claude: no disponible para análisis ahora".into());
+    }
+    None
+}
+
 struct ShellApp {
     view: ShellViewModel,
     chat: ChatState,
@@ -316,6 +339,9 @@ impl ShellApp {
     /// Sidecar `preflight` record: open the picker on success (unless the
     /// real catalog is empty — nothing to choose from), or report the real
     /// failure reason. Never invents a model when the catalog is empty.
+    /// Sets `picker.notice` from `pickerNotice` (prefer) or a compact
+    /// fallback derived from `unverifiedClaudeNotice` — never clears it
+    /// when opening the modal.
     fn ingest_preflight_record(&mut self, record: &serde_json::Value) {
         self.preflight_pending = false;
         let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -331,12 +357,13 @@ impl ShellApp {
             self.view.notice = Some("Preflight returned no analyst catalog.".into());
             return;
         };
-        let picker = AnalystPickerState::from_analyst_catalog(catalog);
+        let mut picker = AnalystPickerState::from_analyst_catalog(catalog);
         if picker.is_empty() {
             self.view.notice =
                 Some("No ask-capable analyst model available for this project.".into());
             return;
         }
+        picker.notice = preflight_picker_notice(record);
         self.view.notice = None;
         self.picker = Some(picker);
     }

@@ -75,7 +75,7 @@ pub struct ShellViewModel {
     pub selected_agent: usize,
     pub work_title: String,
     pub notice: Option<String>,
-    /// Sticky CTA when ≥1 team agent is blocked (rate-limit / out of funds).
+    /// Sticky CTA when ≥1 team agent is blocked (honest unavailable copy).
     /// Independent of ephemeral `notice` so Pi/engine messages cannot hide it.
     /// One or two short lines so the chat column can paint the full CTA.
     pub team_attention: Option<Vec<String>>,
@@ -906,7 +906,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         let mut model = ShellViewModel::default();
         model.team_attention = Some(vec![
-            "5 roles unavailable (rate-limit / no funds).".into(),
+            "5 roles unavailable.".into(),
             "Type /analyze to reassign.".into(),
         ]);
         model.agents = vec![SidebarAgent {
@@ -927,8 +927,12 @@ mod tests {
             "blocked-team CTA missing from chat surface: {hay}"
         );
         assert!(
-            hay.contains("no funds") || hay.contains("rate-limit"),
-            "CTA must name the failure class: {hay}"
+            hay.contains("unavailable"),
+            "CTA must state unavailability: {hay}"
+        );
+        assert!(
+            !hay.contains("no funds") && !hay.contains("rate-limit"),
+            "CTA must not invent funds/rate-limit causes: {hay}"
         );
     }
 

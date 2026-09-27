@@ -126,9 +126,8 @@ fn state_word(state: AgentState) -> &'static str {
     }
 }
 
-/// Sticky chat CTA when the live team has blocked roles (rate-limit, quota,
-/// entitlement, out of funds). Mirrors cockpit `availabilityNotices` intent
-/// without toast APIs — ratatui paints this in the work surface.
+/// Sticky chat CTA when the live team has blocked roles. Honest short copy —
+/// never invents "rate-limit / no funds" without evidence.
 pub fn blocked_team_attention(agents: &[SidebarAgent]) -> Option<Vec<String>> {
     let blocked: Vec<&SidebarAgent> = agents
         .iter()
@@ -148,7 +147,7 @@ pub fn blocked_team_attention(agents: &[SidebarAgent]) -> Option<Vec<String>> {
         format!("{n} roles")
     };
     Some(vec![
-        format!("{who} unavailable (rate-limit / no funds)."),
+        format!("{who} unavailable."),
         "Type /analyze to reassign.".into(),
     ])
 }
@@ -241,8 +240,12 @@ mod tests {
             "attention must name the blocked role: {joined}"
         );
         assert!(
-            joined.contains("rate-limit") || joined.contains("no funds"),
-            "attention must name the provider failure class: {joined}"
+            joined.contains("unavailable"),
+            "attention must state unavailability honestly: {joined}"
+        );
+        assert!(
+            !joined.contains("no funds") && !joined.contains("rate-limit"),
+            "attention must not invent funds/rate-limit causes: {joined}"
         );
     }
 

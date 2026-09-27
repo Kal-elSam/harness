@@ -358,7 +358,9 @@ export async function runKairoUiRpcStdio({
             ok: true,
             analystCatalog: preflight.analystCatalog,
             profile: preflight.profile,
-            candidates: preflight.candidates
+            candidates: preflight.candidates,
+            pickerNotice: preflight.pickerNotice ?? null,
+            unverifiedClaudeNotice: preflight.unverifiedClaudeNotice ?? null
           });
         } catch (err) {
           writeOut({ type: "preflight", ok: false, reason: err?.message ?? String(err) });
