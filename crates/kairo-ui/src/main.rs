@@ -86,7 +86,7 @@ struct ShellApp {
 impl ShellApp {
     fn new(bridge: Option<BridgeClient>) -> Self {
         let mut editor = TextArea::default();
-        editor.set_placeholder_text("/analyze · /analyze · Message…");
+        editor.set_placeholder_text("/analyze · Message…");
         let mut view = ShellViewModel::default();
         if bridge.is_some() {
             view.engine_line = "MODEL · starting".into();
