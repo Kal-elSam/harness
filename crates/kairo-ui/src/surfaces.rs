@@ -368,9 +368,7 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
 
 /// The analyst picker (T2) — a centered modal over the work surface, the
 /// in-UI equivalent of the cockpit's ProjectOverlay SELECT_ANALYST screen.
-/// Every real catalog row is listed (available or not); only the selected
-/// row's own highlight and an honest inline notice communicate why an
-/// unavailable pick was refused — never a silently vanished option.
+/// Only **available** catalog rows are listed (unavailable adapters stay out).
 pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPickerState) {
     let row_count = picker.options.len().max(1) as u16;
     let has_notice = picker.notice.is_some();
@@ -947,7 +945,7 @@ mod tests {
     }
 
     #[test]
-    fn analyst_picker_modal_paints_title_and_every_real_catalog_row() {
+    fn analyst_picker_modal_paints_title_and_available_rows_only() {
         use crate::analyst_picker::AnalystPickerState;
 
         let area = Rect::new(0, 0, 100, 30);
@@ -964,8 +962,8 @@ mod tests {
         assert!(hay.contains("Select analyst"), "modal title missing: {hay}");
         assert!(hay.contains("GPT"), "recommended model row missing: {hay}");
         assert!(hay.contains("codex"), "adapter id must be visible: {hay}");
-        assert!(hay.contains("Cursor X"), "unavailable model must still be LISTED: {hay}");
-        assert!(hay.contains("(unavailable)"), "unavailable marker missing: {hay}");
+        assert!(!hay.contains("Cursor X"), "unavailable model must NOT be listed: {hay}");
+        assert!(!hay.contains("(unavailable)"), "unavailable marker must not appear: {hay}");
         assert!(hay.contains("recommended"), "recommended marker missing: {hay}");
     }
 
@@ -994,20 +992,21 @@ mod tests {
     }
 
     #[test]
-    fn analyst_picker_modal_shows_refusal_notice_in_warn_amber() {
+    fn analyst_picker_modal_all_unavailable_catalog_shows_empty_copy() {
         use crate::analyst_picker::AnalystPickerState;
 
         let area = Rect::new(0, 0, 100, 30);
-        let mut picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({
+        let picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({
             "models": [
                 { "candidateKey": "cursor::x", "adapterId": "cursor", "modelId": "x", "displayName": "Cursor X", "available": false, "recommendationTags": [] }
             ]
         }));
-        assert!(picker.confirm().is_none());
+        assert!(picker.is_empty());
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("not available right now"), "refusal notice missing: {hay}");
+        assert!(hay.contains("No ask-capable analyst"), "empty-catalog copy missing: {hay}");
+        assert!(!hay.contains("Cursor X"), "unavailable must not paint: {hay}");
     }
 
     #[test]

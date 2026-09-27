@@ -4,8 +4,9 @@
 //! No cockpit dependency: driven entirely by the ratatui host's own
 //! `project.preflight` sidecar op and its real `analystCatalog`.
 //!
-//! Never invents a model absent from the real catalog, and never silently
-//! auto-selects an unavailable one — see `confirm()`.
+//! Never invents a model absent from the real catalog. The modal lists
+//! **only available** models — unavailable adapters (rate-limited Go, etc.)
+//! stay out of the picker entirely.
 
 use serde_json::Value;
 
@@ -22,17 +23,12 @@ pub struct AnalystOption {
 }
 
 impl AnalystOption {
-    /// `<displayName>    <adapterId>` — model-first, matching the cockpit's
-    /// own row shape (project-overlay.js buildSelectList), never
-    /// provider-first. Recommended/unavailable get an honest suffix, never
-    /// a fabricated claim for a model that doesn't actually carry it.
+    /// `<displayName>    <adapterId>` — model-first, never provider-first.
+    /// Recommended gets an honest suffix; unavailable models are never listed.
     pub fn row_label(&self) -> String {
         let mut label = format!("{}    {}", self.display_name, self.adapter_id);
         if self.recommended {
             label.push_str("  ★ recommended");
-        }
-        if !self.available {
-            label.push_str("  (unavailable)");
         }
         label
     }
@@ -79,6 +75,11 @@ impl AnalystPickerState {
         let mut options: Vec<AnalystOption> = models
             .iter()
             .filter_map(|m| {
+                let available = m.get("available").and_then(|v| v.as_bool()).unwrap_or(false);
+                // Product rule: only usable analysts appear in the modal.
+                if !available {
+                    return None;
+                }
                 let candidate_key = m.get("candidateKey").and_then(|v| v.as_str())?.to_string();
                 let adapter_id = m.get("adapterId").and_then(|v| v.as_str())?.to_string();
                 let model_id = m.get("modelId").and_then(|v| v.as_str())?.to_string();
@@ -87,7 +88,6 @@ impl AnalystPickerState {
                     .and_then(|v| v.as_str())
                     .unwrap_or(model_id.as_str())
                     .to_string();
-                let available = m.get("available").and_then(|v| v.as_bool()).unwrap_or(false);
                 let tags: Vec<String> = m
                     .get("recommendationTags")
                     .and_then(|v| v.as_array())
@@ -103,7 +103,7 @@ impl AnalystPickerState {
                     adapter_id,
                     model_id,
                     display_name,
-                    available,
+                    available: true,
                     recommended,
                     tags,
                 })
@@ -111,6 +111,12 @@ impl AnalystPickerState {
             .collect();
         // Recommended first — same ordering the cockpit's own picker uses.
         options.sort_by_key(|o| !o.recommended);
+        // If the catalog's recommended row was unavailable (filtered out),
+        // promote the first remaining available option so the UI still has
+        // an honest ★ without inventing a model.
+        if !options.is_empty() && !options.iter().any(|o| o.recommended) {
+            options[0].recommended = true;
+        }
         Self {
             options,
             selected: 0,
@@ -122,8 +128,7 @@ impl AnalystPickerState {
         self.options.is_empty()
     }
 
-    /// Move highlight forward, wrapping. Every row is reachable —
-    /// including unavailable ones: "list all, only confirm available".
+    /// Move highlight forward, wrapping across available rows only.
     pub fn move_down(&mut self) {
         if self.options.is_empty() {
             return;
@@ -144,9 +149,9 @@ impl AnalystPickerState {
         self.options.get(self.selected)
     }
 
-    /// Enter: only an available model may be confirmed. An unavailable row
-    /// stays highlighted with an honest inline notice — never a silent
-    /// no-op, and never an auto-jump to a different row.
+    /// Enter: confirm the highlighted available model. Defense in depth —
+    /// unavailable rows are never listed, but a stale `available: false`
+    /// still refuses with an inline notice instead of a silent no-op.
     pub fn confirm(&mut self) -> Option<AnalystOption> {
         let message = match self.selected_option() {
             Some(option) if !option.available => Some(format!(
@@ -154,7 +159,7 @@ impl AnalystPickerState {
                 option.display_name
             )),
             Some(option) => return Some(option.clone()),
-            None => return None,
+            None => Some("No available analyst in the catalog right now.".into()),
         };
         self.notice = message;
         None
@@ -218,34 +223,35 @@ mod tests {
     #[test]
     fn recommended_model_sorts_first_and_is_flagged() {
         let picker = AnalystPickerState::from_analyst_catalog(&catalog());
-        assert_eq!(picker.options.len(), 3);
+        assert_eq!(picker.options.len(), 2, "unavailable Cursor X must be filtered out");
         assert_eq!(picker.options[0].adapter_id, "codex");
         assert!(picker.options[0].recommended);
         assert!(picker.options[0].row_label().contains("recommended"));
+        assert!(!picker.options.iter().any(|o| o.adapter_id == "cursor"));
     }
 
     #[test]
-    fn movement_wraps_and_covers_every_row_including_unavailable() {
+    fn unavailable_models_are_never_listed() {
+        let picker = AnalystPickerState::from_analyst_catalog(&catalog());
+        assert!(picker.options.iter().all(|o| o.available));
+        assert!(!picker
+            .options
+            .iter()
+            .any(|o| o.row_label().contains("(unavailable)")));
+    }
+
+    #[test]
+    fn movement_wraps_across_available_rows_only() {
         let mut picker = AnalystPickerState::from_analyst_catalog(&catalog());
+        assert_eq!(picker.options.len(), 2);
         assert_eq!(picker.selected, 0);
         picker.move_down();
-        picker.move_down();
-        assert_eq!(picker.selected, 2);
-        assert!(!picker.options[2].available);
+        assert_eq!(picker.selected, 1);
+        assert_eq!(picker.options[1].adapter_id, "claude");
         picker.move_down();
         assert_eq!(picker.selected, 0, "movement wraps forward");
         picker.move_up();
-        assert_eq!(picker.selected, 2, "movement wraps backward too");
-    }
-
-    #[test]
-    fn confirm_refuses_an_unavailable_model_and_keeps_it_selected() {
-        let mut picker = AnalystPickerState::from_analyst_catalog(&catalog());
-        picker.selected = 2;
-        assert!(picker.confirm().is_none());
-        assert!(picker.notice.is_some());
-        assert!(picker.notice.as_deref().unwrap().contains("Cursor X"));
-        assert_eq!(picker.selected, 2, "stays on the same row, never silently jumps");
+        assert_eq!(picker.selected, 1, "movement wraps backward too");
     }
 
     #[test]
@@ -257,13 +263,37 @@ mod tests {
     }
 
     #[test]
-    fn moving_after_a_refused_confirm_clears_the_stale_notice() {
-        let mut picker = AnalystPickerState::from_analyst_catalog(&catalog());
-        picker.selected = 2;
-        assert!(picker.confirm().is_none());
-        assert!(picker.notice.is_some());
-        picker.move_up();
-        assert_eq!(picker.notice, None, "a fresh selection must not carry a stale refusal notice");
+    fn all_unavailable_catalog_yields_empty_picker() {
+        let picker = AnalystPickerState::from_analyst_catalog(&json!({
+            "recommendedModel": { "candidateKey": "go::x" },
+            "models": [
+                {
+                    "candidateKey": "go::x", "adapterId": "opencode-go", "modelId": "x",
+                    "displayName": "Go X", "available": false, "recommendationTags": ["quality"]
+                }
+            ]
+        }));
+        assert!(picker.is_empty());
+    }
+
+    #[test]
+    fn when_recommended_is_unavailable_first_available_is_promoted() {
+        let picker = AnalystPickerState::from_analyst_catalog(&json!({
+            "recommendedModel": { "candidateKey": "go::x" },
+            "models": [
+                {
+                    "candidateKey": "go::x", "adapterId": "opencode-go", "modelId": "x",
+                    "displayName": "Go X", "available": false, "recommendationTags": ["quality"]
+                },
+                {
+                    "candidateKey": "claude::s", "adapterId": "claude", "modelId": "s",
+                    "displayName": "Claude S", "available": true, "recommendationTags": []
+                }
+            ]
+        }));
+        assert_eq!(picker.options.len(), 1);
+        assert_eq!(picker.options[0].adapter_id, "claude");
+        assert!(picker.options[0].recommended);
     }
 
     #[test]
