@@ -16,6 +16,69 @@
 
 import { createConversationService } from "../conversation/service.js";
 
+/** Adapters historically suited to long read-only Bootstrap Analyst runs. */
+const PREFERRED_ANALYST_ADAPTERS = new Set(["codex", "claude"]);
+
+/**
+ * Curate the full analyst catalog for the ratatui picker:
+ * - available only
+ * - scored (or quality/efficient tagged) — drop the unscored flood
+ * - prefer codex/claude when any of those remain; otherwise keep scored available
+ * - dedupe by displayName (case-insensitive), keeping recommended / tagged first
+ *
+ * Never invents models; never reintroduces unavailable adapters.
+ *
+ * @param {{recommendedModel?: object|null, models?: object[]}|null|undefined} analystCatalog
+ * @returns {{recommendedModel: object|null, models: object[]}}
+ */
+export function curateAnalystCatalogForPicker(analystCatalog) {
+  const incoming = Array.isArray(analystCatalog?.models) ? analystCatalog.models : [];
+  const available = incoming.filter((model) => model?.available === true);
+  const analysisCapable = available.filter((model) => {
+    const tags = model.recommendationTags ?? [];
+    if (tags.includes("quality") || tags.includes("efficient")) return true;
+    return model.evidenceStatus === "scored";
+  });
+  const preferred = analysisCapable.filter((model) => PREFERRED_ANALYST_ADAPTERS.has(model.adapterId));
+  const pool = preferred.length > 0 ? preferred : analysisCapable;
+
+  const recommendedKey = analystCatalog?.recommendedModel?.candidateKey ?? null;
+  const rank = (model) => {
+    const tags = model.recommendationTags ?? [];
+    if (model.candidateKey === recommendedKey) return 0;
+    if (tags.includes("quality")) return 1;
+    if (tags.includes("efficient")) return 2;
+    if (PREFERRED_ANALYST_ADAPTERS.has(model.adapterId)) return 3;
+    return 4;
+  };
+  const ordered = [...pool].sort((a, b) => {
+    const byRank = rank(a) - rank(b);
+    if (byRank !== 0) return byRank;
+    const nameA = String(a.displayName ?? a.modelId ?? "");
+    const nameB = String(b.displayName ?? b.modelId ?? "");
+    return nameA.localeCompare(nameB);
+  });
+
+  const seenNames = new Set();
+  const models = [];
+  for (const model of ordered) {
+    const nameKey = String(model.displayName ?? model.modelId ?? model.candidateKey ?? "")
+      .trim()
+      .toLowerCase();
+    if (!nameKey || seenNames.has(nameKey)) continue;
+    seenNames.add(nameKey);
+    models.push(model);
+  }
+
+  let recommendedModel = analystCatalog?.recommendedModel ?? null;
+  if (recommendedModel && !models.some((model) => model.candidateKey === recommendedModel.candidateKey)) {
+    recommendedModel = models.find((model) => (model.recommendationTags ?? []).includes("quality"))
+      ?? models[0]
+      ?? null;
+  }
+  return { recommendedModel, models };
+}
+
 /**
  * The default Bootstrap Analyst: the catalog's own recommended model when
  * it is currently available, otherwise the first available catalog entry
@@ -173,8 +236,11 @@ export async function preflightProjectTeam({
   const projectCwd = requireCwd(cwd);
   const service = createService({ enableProviderProbes: true });
   const preflight = await service.preflightProject({ cwd: projectCwd, mode: "catalog" });
+  const analystCatalog = curateAnalystCatalogForPicker(
+    preflight.analystCatalog ?? { recommendedModel: null, models: [] }
+  );
   return {
-    analystCatalog: preflight.analystCatalog ?? { recommendedModel: null, models: [] },
+    analystCatalog,
     profile: toSerializable(preflight.profile),
     candidates: toSerializable(preflight.candidates),
     projectRoot: preflight.projectRoot ?? null,

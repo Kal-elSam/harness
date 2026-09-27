@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   analyzeProjectTeam,
   approveProjectTeam,
+  curateAnalystCatalogForPicker,
   pickDefaultAnalyst,
   preflightProjectTeam,
   summarizeProjectStrategy
@@ -259,6 +260,95 @@ test("preflightProjectTeam returns the real analyst catalog without persisting o
   assert.equal(result.projectRoot, "/project");
   assert.equal(result.profile, null, "catalog mode skips project profile until analyze");
   assert.deepEqual(result.candidates, { scoredAll: [], eligibility: {} });
+});
+
+test("curateAnalystCatalogForPicker keeps scored preferred adapters and drops duplicate names / unscored flood", () => {
+  const curated = curateAnalystCatalogForPicker({
+    recommendedModel: { candidateKey: "codex::astra" },
+    models: [
+      catalogEntry({
+        candidateKey: "codex::astra",
+        adapterId: "codex",
+        modelId: "gpt-6-astra",
+        displayName: "GPT-6-Astra",
+        evidenceStatus: "scored",
+        recommendationTags: ["quality"],
+        available: true
+      }),
+      catalogEntry({
+        candidateKey: "cursor::opus-1",
+        adapterId: "cursor",
+        modelId: "opus-high",
+        displayName: "Claude Opus 5.5",
+        evidenceStatus: "scored",
+        available: true
+      }),
+      catalogEntry({
+        candidateKey: "cursor::opus-2",
+        adapterId: "cursor",
+        modelId: "opus-max",
+        displayName: "Claude Opus 5.5",
+        evidenceStatus: "scored",
+        available: true
+      }),
+      catalogEntry({
+        candidateKey: "cursor::unscored",
+        adapterId: "cursor",
+        modelId: "mystery",
+        displayName: "Mystery",
+        evidenceStatus: "unscored",
+        available: true
+      }),
+      catalogEntry({
+        candidateKey: "codex::blocked",
+        adapterId: "codex",
+        modelId: "old",
+        displayName: "Old Codex",
+        evidenceStatus: "scored",
+        available: false
+      })
+    ]
+  });
+  assert.equal(curated.models.length, 1, "codex preferred pool drops cursor flood when codex exists");
+  assert.equal(curated.models[0].displayName, "GPT-6-Astra");
+  assert.equal(curated.recommendedModel.candidateKey, "codex::astra");
+});
+
+test("curateAnalystCatalogForPicker falls back to scored cursor when no preferred adapter is available", () => {
+  const curated = curateAnalystCatalogForPicker({
+    recommendedModel: null,
+    models: [
+      catalogEntry({
+        candidateKey: "cursor::opus-1",
+        adapterId: "cursor",
+        modelId: "opus-high",
+        displayName: "Claude Opus 5.5",
+        evidenceStatus: "scored",
+        available: true
+      }),
+      catalogEntry({
+        candidateKey: "cursor::opus-2",
+        adapterId: "cursor",
+        modelId: "opus-max",
+        displayName: "Claude Opus 5.5",
+        evidenceStatus: "scored",
+        available: true
+      }),
+      catalogEntry({
+        candidateKey: "cursor::terra",
+        adapterId: "cursor",
+        modelId: "terra",
+        displayName: "GPT-5.6 Terra",
+        evidenceStatus: "scored",
+        available: true
+      })
+    ]
+  });
+  assert.equal(curated.models.length, 2);
+  assert.deepEqual(
+    curated.models.map((m) => m.displayName).sort(),
+    ["Claude Opus 5.5", "GPT-5.6 Terra"]
+  );
 });
 
 test("preflightProjectTeam surfaces the unverified Claude notice, honestly, without picking a fallback model", async () => {
