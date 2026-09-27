@@ -245,13 +245,15 @@ fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat:
         .render(inner, buf);
 }
 
+fn is_empty_work_placeholder(content: &str) -> bool {
+    content == "Type /analyze to choose an analyst · then chat below."
+        || content == "Work surface — conversation streams above; type below."
+}
+
 fn transcript_has_conversation(chat: &ChatState) -> bool {
     chat.messages.iter().any(|m| match m.role {
         MessageRole::User | MessageRole::Assistant | MessageRole::Tool => true,
-        MessageRole::System => {
-            !m.content.is_empty()
-                && m.content != "Type /analyze to choose an analyst · then chat below."
-        }
+        MessageRole::System => !m.content.is_empty() && !is_empty_work_placeholder(&m.content),
     })
 }
 

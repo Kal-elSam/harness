@@ -48,7 +48,7 @@ impl Default for ChatState {
         Self {
             messages: vec![ChatMessage {
                 role: MessageRole::System,
-                content: "Work surface — conversation streams above; type below.".into(),
+                content: "Type /analyze to choose an analyst · then chat below.".into(),
                 streaming: false,
             }],
             scroll_offset: 0,
@@ -103,7 +103,7 @@ impl ChatState {
     pub fn replace_from_sidecar_transcript(&mut self, rows: &[Value]) {
         let mut messages = vec![ChatMessage {
             role: MessageRole::System,
-            content: "Work surface — conversation streams above; type below.".into(),
+            content: "Type /analyze to choose an analyst · then chat below.".into(),
             streaming: false,
         }];
         for row in rows {
