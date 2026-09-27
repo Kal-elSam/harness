@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isValidSessionId } from "../conversation/session-registry.js";
@@ -26,7 +26,7 @@ export function resolveUiHost({ options = {}, env = process.env } = {}) {
 
 /**
  * Launch the experimental ratatui terminal host (`crates/kairo-ui`) with the JSONL bridge.
- * Prefer an existing release binary; otherwise `cargo build --release` once, then spawn.
+ * Build the release binary when it is missing or older than `crates/kairo-ui` sources, then spawn.
  * @param {object} args
  */
 export async function launchRatatuiHost({
@@ -73,7 +73,13 @@ export async function launchRatatuiHost({
     cargoBuildImpl ??
     ((args, opts) => spawnImpl("cargo", args, opts));
 
-  if (!existsSyncImpl(binaryPath)) {
+  const needsBuild = releaseBinaryNeedsRebuild({
+    binaryPath,
+    crateDir,
+    existsSyncImpl,
+    statImpl
+  });
+  if (needsBuild) {
     const buildResult = await runCargo(
       ["build", "--release", "--manifest-path", manifestPath],
       { cwd: packageRoot, env, shell: false, stdio: "inherit" }
@@ -137,6 +143,70 @@ export function resolveReleaseBinaryPath(crateDir, env = process.env) {
       ? env.CARGO_TARGET_DIR.trim()
       : join(crateDir, "target");
   return join(targetRoot, "release", "kairo-ui");
+}
+
+/**
+ * Cargo inputs that should trigger a release rebuild when newer than the binary.
+ * @param {string} crateDir
+ * @param {(path: string) => boolean} existsSyncImpl
+ * @returns {string[]}
+ */
+export function kairoUiRebuildWatchPaths(crateDir, existsSyncImpl = existsSync) {
+  const paths = [join(crateDir, "Cargo.toml"), join(crateDir, "Cargo.lock")];
+  const srcRoot = join(crateDir, "src");
+  if (existsSyncImpl(srcRoot)) {
+    collectSourceFilesRecursive(srcRoot, paths);
+  }
+  return paths.filter((p) => existsSyncImpl(p));
+}
+
+/**
+ * @param {string} binaryPath
+ * @param {string} crateDir
+ * @param {(path: string) => boolean} existsSyncImpl
+ * @param {(path: string) => import("node:fs").Stats} statImpl
+ * @returns {boolean}
+ */
+export function releaseBinaryNeedsRebuild({
+  binaryPath,
+  crateDir,
+  existsSyncImpl = existsSync,
+  statImpl = statSync
+}) {
+  if (!existsSyncImpl(binaryPath)) {
+    return true;
+  }
+  let binaryMtimeMs;
+  try {
+    binaryMtimeMs = statImpl(binaryPath).mtimeMs;
+  } catch {
+    return true;
+  }
+  for (const inputPath of kairoUiRebuildWatchPaths(crateDir, existsSyncImpl)) {
+    try {
+      if (statImpl(inputPath).mtimeMs > binaryMtimeMs) {
+        return true;
+      }
+    } catch {
+      // unreadable path — skip
+    }
+  }
+  return false;
+}
+
+/**
+ * @param {string} dir
+ * @param {string[]} out
+ */
+function collectSourceFilesRecursive(dir, out) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectSourceFilesRecursive(full, out);
+    } else if (entry.isFile()) {
+      out.push(full);
+    }
+  }
 }
 
 function assertDirectoryCwd(cwd, statImpl) {
