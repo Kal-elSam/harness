@@ -109,14 +109,9 @@ impl AnalystPickerState {
                 })
             })
             .collect();
-        // Recommended first — same ordering the cockpit's own picker uses.
+        // Recommended first when the catalog's own recommendedModel survived.
+        // Never auto-promote the first row — ★ only for a real recommendation.
         options.sort_by_key(|o| !o.recommended);
-        // If the catalog's recommended row was unavailable (filtered out),
-        // promote the first remaining available option so the UI still has
-        // an honest ★ without inventing a model.
-        if !options.is_empty() && !options.iter().any(|o| o.recommended) {
-            options[0].recommended = true;
-        }
         Self {
             options,
             selected: 0,
@@ -129,12 +124,12 @@ impl AnalystPickerState {
     }
 
     /// Move highlight forward, wrapping across available rows only.
+    /// Preserves `notice` (e.g. preflight provider-absence copy).
     pub fn move_down(&mut self) {
         if self.options.is_empty() {
             return;
         }
         self.selected = (self.selected + 1) % self.options.len();
-        self.notice = None;
     }
 
     pub fn move_up(&mut self) {
@@ -142,7 +137,6 @@ impl AnalystPickerState {
             return;
         }
         self.selected = (self.selected + self.options.len() - 1) % self.options.len();
-        self.notice = None;
     }
 
     pub fn selected_option(&self) -> Option<&AnalystOption> {
@@ -277,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn when_recommended_is_unavailable_first_available_is_promoted() {
+    fn when_recommended_is_unavailable_no_row_gets_auto_star() {
         let picker = AnalystPickerState::from_analyst_catalog(&json!({
             "recommendedModel": { "candidateKey": "go::x" },
             "models": [
@@ -293,7 +287,11 @@ mod tests {
         }));
         assert_eq!(picker.options.len(), 1);
         assert_eq!(picker.options[0].adapter_id, "claude");
-        assert!(picker.options[0].recommended);
+        assert!(
+            !picker.options[0].recommended,
+            "★ must never be invented when catalog recommendedModel is absent from listed rows"
+        );
+        assert!(!picker.options[0].row_label().contains("recommended"));
     }
 
     #[test]

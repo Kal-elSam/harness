@@ -16,19 +16,48 @@
 
 import { createConversationService } from "../conversation/service.js";
 
-/** Adapters historically suited to long read-only Bootstrap Analyst runs. */
-const PREFERRED_ANALYST_ADAPTERS = new Set(["codex", "claude"]);
-/** After preferred adapters, keep at most this many other scored names. */
-const OTHER_ADAPTER_PICKER_CAP = 8;
+/** After dedupe by displayName, keep at most this many picker rows. */
+const ANALYST_PICKER_CAP = 16;
+
+/** Short provider labels for compact absence notices — never invent causes. */
+const PROVIDER_PICKER_LABELS = Object.freeze({
+  claude: "Claude",
+  codex: "Codex",
+  cursor: "Cursor",
+  "opencode-go": "OpenCode Go",
+  "opencode-zen": "OpenCode Zen",
+  opencode: "OpenCode",
+  pi: "Pi"
+});
+
+function providerPickerLabel(adapterId) {
+  return PROVIDER_PICKER_LABELS[adapterId] ?? String(adapterId);
+}
+
+/**
+ * Fit rank for available analysis-capable models — NOT provider brand.
+ * recommendedKey → quality → efficient → scored → rest.
+ * @param {object} model
+ * @param {string|null} recommendedKey
+ */
+function analystFitRank(model, recommendedKey) {
+  const tags = model.recommendationTags ?? [];
+  if (model.candidateKey === recommendedKey) return 0;
+  if (tags.includes("quality")) return 1;
+  if (tags.includes("efficient")) return 2;
+  if (model.evidenceStatus === "scored") return 3;
+  return 4;
+}
 
 /**
  * Curate the full analyst catalog for the ratatui picker:
  * - available only
  * - scored (or quality/efficient tagged) — drop the unscored flood
- * - include every usable adapter (codex/claude/cursor/…), preferred first
- * - dedupe by displayName; cap non-preferred adapters to avoid Cursor flood
+ * - rank by analyst-profile fit (tags/scores), never preferred-adapter bias
+ * - dedupe by displayName; single global cap
  *
  * Never invents models; never reintroduces unavailable adapters.
+ * `recommendedModel` survives only when its candidateKey remains in `models`.
  *
  * @param {{recommendedModel?: object|null, models?: object[]}|null|undefined} analystCatalog
  * @returns {{recommendedModel: object|null, models: object[]}}
@@ -43,43 +72,82 @@ export function curateAnalystCatalogForPicker(analystCatalog) {
   });
 
   const recommendedKey = analystCatalog?.recommendedModel?.candidateKey ?? null;
-  const rank = (model) => {
-    const tags = model.recommendationTags ?? [];
-    if (model.candidateKey === recommendedKey) return 0;
-    if (tags.includes("quality")) return 1;
-    if (tags.includes("efficient")) return 2;
-    if (PREFERRED_ANALYST_ADAPTERS.has(model.adapterId)) return 3;
-    return 4;
-  };
   const ordered = [...analysisCapable].sort((a, b) => {
-    const byRank = rank(a) - rank(b);
+    const byRank = analystFitRank(a, recommendedKey) - analystFitRank(b, recommendedKey);
     if (byRank !== 0) return byRank;
+    const evidenceA = a.evidenceStatus === "scored" ? 0 : 1;
+    const evidenceB = b.evidenceStatus === "scored" ? 0 : 1;
+    if (evidenceA !== evidenceB) return evidenceA - evidenceB;
     const nameA = String(a.displayName ?? a.modelId ?? "");
     const nameB = String(b.displayName ?? b.modelId ?? "");
     return nameA.localeCompare(nameB);
   });
 
   const seenNames = new Set();
-  const preferred = [];
-  const others = [];
+  const models = [];
   for (const model of ordered) {
     const nameKey = String(model.displayName ?? model.modelId ?? model.candidateKey ?? "")
       .trim()
       .toLowerCase();
     if (!nameKey || seenNames.has(nameKey)) continue;
     seenNames.add(nameKey);
-    if (PREFERRED_ANALYST_ADAPTERS.has(model.adapterId)) preferred.push(model);
-    else others.push(model);
+    models.push(model);
+    if (models.length >= ANALYST_PICKER_CAP) break;
   }
-  const models = [...preferred, ...others.slice(0, OTHER_ADAPTER_PICKER_CAP)];
 
-  let recommendedModel = analystCatalog?.recommendedModel ?? null;
-  if (recommendedModel && !models.some((model) => model.candidateKey === recommendedModel.candidateKey)) {
-    recommendedModel = models.find((model) => (model.recommendationTags ?? []).includes("quality"))
-      ?? models[0]
-      ?? null;
-  }
+  const incomingRecommended = analystCatalog?.recommendedModel ?? null;
+  const recommendedModel =
+    incomingRecommended
+    && models.some((model) => model.candidateKey === incomingRecommended.candidateKey)
+      ? incomingRecommended
+      : null;
   return { recommendedModel, models };
+}
+
+/**
+ * Compact honest absence when a known provider contributed zero usable
+ * picker rows. Never invents billing / out-of-funds / credits causes.
+ *
+ * Built from raw catalog vs curated (unavailable/unscored filtered) and/or
+ * existing `unverifiedClaudeNotice` presence.
+ *
+ * @param {{models?: object[]}|null|undefined} rawCatalog
+ * @param {{models?: object[]}|null|undefined} curatedCatalog
+ * @param {string|null|undefined} unverifiedClaudeNotice
+ * @returns {string|null}
+ */
+export function buildAnalystPickerNotice(rawCatalog, curatedCatalog, unverifiedClaudeNotice = null) {
+  const rawModels = Array.isArray(rawCatalog?.models) ? rawCatalog.models : [];
+  const curatedModels = Array.isArray(curatedCatalog?.models) ? curatedCatalog.models : [];
+  const rawAdapters = new Set();
+  for (const model of rawModels) {
+    if (model?.adapterId) rawAdapters.add(model.adapterId);
+  }
+  const curatedAdapters = new Set();
+  for (const model of curatedModels) {
+    if (model?.adapterId) curatedAdapters.add(model.adapterId);
+  }
+
+  const parts = [];
+  const seenLabels = new Set();
+  const pushAbsence = (adapterId) => {
+    const label = providerPickerLabel(adapterId);
+    if (seenLabels.has(label)) return;
+    seenLabels.add(label);
+    parts.push(`${label}: no disponible para análisis ahora`);
+  };
+
+  for (const adapterId of [...rawAdapters].sort((a, b) =>
+    providerPickerLabel(a).localeCompare(providerPickerLabel(b))
+  )) {
+    if (!curatedAdapters.has(adapterId)) pushAbsence(adapterId);
+  }
+
+  if (unverifiedClaudeNotice && !curatedAdapters.has("claude")) {
+    pushAbsence("claude");
+  }
+
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /**
@@ -230,7 +298,7 @@ function toSerializable(value) {
  * preflight itself, so a serialization miss on profile never blocks the picker.
  *
  * @param {{cwd?: string, createConversationService?: typeof createConversationService}} args
- * @returns {Promise<{analystCatalog: object, profile: object|null, candidates: object|null, projectRoot: string|null, unverifiedClaudeNotice: string|null}>}
+ * @returns {Promise<{analystCatalog: object, profile: object|null, candidates: object|null, projectRoot: string|null, unverifiedClaudeNotice: string|null, pickerNotice: string|null}>}
  */
 export async function preflightProjectTeam({
   cwd,
@@ -239,15 +307,16 @@ export async function preflightProjectTeam({
   const projectCwd = requireCwd(cwd);
   const service = createService({ enableProviderProbes: true });
   const preflight = await service.preflightProject({ cwd: projectCwd, mode: "catalog" });
-  const analystCatalog = curateAnalystCatalogForPicker(
-    preflight.analystCatalog ?? { recommendedModel: null, models: [] }
-  );
+  const rawCatalog = preflight.analystCatalog ?? { recommendedModel: null, models: [] };
+  const analystCatalog = curateAnalystCatalogForPicker(rawCatalog);
+  const unverifiedClaudeNotice = preflight.unverifiedClaudeNotice ?? null;
   return {
     analystCatalog,
     profile: toSerializable(preflight.profile),
     candidates: toSerializable(preflight.candidates),
     projectRoot: preflight.projectRoot ?? null,
-    unverifiedClaudeNotice: preflight.unverifiedClaudeNotice ?? null
+    unverifiedClaudeNotice,
+    pickerNotice: buildAnalystPickerNotice(rawCatalog, analystCatalog, unverifiedClaudeNotice)
   };
 }
 
