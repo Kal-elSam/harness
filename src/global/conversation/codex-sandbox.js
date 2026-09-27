@@ -132,7 +132,7 @@ export async function buildCodexSandboxProfile({ snapshotRoot, codexHome = join(
 (allow file-read-metadata (subpath "/"))
 (allow file-read-data (literal "/"))
 (allow file-read*
-${subpathRules([...snapshotForms, ...codexHomeForms, ...readableExtra])}
+${subpathRules([...snapshotForms, ...codexHomeForms, ...readableExtra, "/private/var/folders", "/private/tmp"])}
   (literal "/dev/null")
   (literal "/dev/urandom")
   (literal "/dev/tty"))
@@ -183,12 +183,14 @@ export async function runCodexSandboxedBootstrap({
 
     // --skip-git-repo-check: snapshotRoot deliberately excludes .git.
     // --ephemeral: no session files persisted to disk for this run.
-    // --ignore-user-config: doesn't load $CODEX_HOME/config.toml (auth
-    // itself still resolves via CODEX_HOME, per `codex exec --help`).
+    // Do NOT pass --ignore-user-config: Codex must load $CODEX_HOME/config.toml
+    // (auth still resolves via CODEX_HOME). Ignoring user config caused
+    // thread/start "failed to load configuration" under sandbox-exec, then a
+    // misleading "Reading additional input from stdin..." fallback.
     const args = [
       "-f", profilePath, "codex", "exec",
       "--dangerously-bypass-approvals-and-sandbox",
-      "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
+      "--skip-git-repo-check", "--ephemeral",
       "-o", outFile
     ];
     if (model) args.push("--model", model);
@@ -198,7 +200,10 @@ export async function runCodexSandboxedBootstrap({
     const result = await new Promise((resolve) => {
       let child;
       try {
-        child = spawn("sandbox-exec", args, { cwd: snapshotRoot, env, stdio: ["ignore", "pipe", "pipe"] });
+        // Explicit pipe+end (not inherit): the ratatui sidecar's own stdin is
+        // the JSONL control channel — never let Codex read it as a prompt.
+        child = spawn("sandbox-exec", args, { cwd: snapshotRoot, env, stdio: ["pipe", "pipe", "pipe"] });
+        try { child.stdin?.end(); } catch { /* best effort */ }
       } catch (error) {
         resolve(unknown(error?.message ?? error));
         return;

@@ -77,7 +77,7 @@ fn agent_detail_line(entry: &Value, state: AgentState) -> String {
     if let Some(reason) = entry.get("stateReason").and_then(|v| v.as_str()) {
         let trimmed = reason.trim();
         if !trimmed.is_empty() {
-            return trimmed.to_string();
+            return shorten_agent_detail(trimmed);
         }
     }
     let provider = entry.get("provider").and_then(|v| v.as_str());
@@ -89,6 +89,32 @@ fn agent_detail_line(entry: &Value, state: AgentState) -> String {
         (Some(p), _) => p.to_string(),
         _ => state_word(state).to_string(),
     }
+}
+
+/// Collapse long provider outage sentences so the AGENTS column stays
+/// scannable (five identical "Unavailable — OpenCode Go monthly window…"
+/// rows were unreadable in the ratatui host).
+fn shorten_agent_detail(detail: &str) -> String {
+    let lower = detail.to_ascii_lowercase();
+    if lower.contains("opencode go") || lower.contains("opencode-go") {
+        return "OpenCode Go · unavailable".into();
+    }
+    if lower.contains("rate-limited") || lower.contains("rate limited") {
+        if let Some(provider) = detail.split(['—', '-', ':']).next() {
+            let p = provider.trim();
+            if !p.is_empty() && p.len() < 24 {
+                return format!("{p} · unavailable");
+            }
+        }
+        return "Rate-limited · unavailable".into();
+    }
+    const MAX: usize = 36;
+    if detail.chars().count() <= MAX {
+        return detail.to_string();
+    }
+    let mut out: String = detail.chars().take(MAX.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 fn state_word(state: AgentState) -> &'static str {
@@ -159,6 +185,23 @@ mod tests {
         assert_eq!(view.agents[0].detail, "No entitlement");
         assert_eq!(view.agents[1].label, "Builder");
         assert_eq!(view.agents[1].state, AgentState::Idle);
+    }
+
+    #[test]
+    fn shortens_opencode_go_outage_details_for_sidebar_scanability() {
+        let snapshot = json!({
+            "agents": [
+                {
+                    "label": "Architect",
+                    "state": "blocked",
+                    "provider": "opencode-go",
+                    "stateReason": "Unavailable — OpenCode Go monthly window is rate-limited (resets 2026-10-12T18:00:48.000Z)"
+                }
+            ]
+        });
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(&mut view, &snapshot);
+        assert_eq!(view.agents[0].detail, "OpenCode Go · unavailable");
     }
 
     #[test]

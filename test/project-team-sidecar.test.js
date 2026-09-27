@@ -262,7 +262,7 @@ test("preflightProjectTeam returns the real analyst catalog without persisting o
   assert.deepEqual(result.candidates, { scoredAll: [], eligibility: {} });
 });
 
-test("curateAnalystCatalogForPicker keeps scored preferred adapters and drops duplicate names / unscored flood", () => {
+test("curateAnalystCatalogForPicker keeps preferred first, includes other adapters, drops dupes / unscored", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: { candidateKey: "codex::astra" },
     models: [
@@ -309,8 +309,11 @@ test("curateAnalystCatalogForPicker keeps scored preferred adapters and drops du
       })
     ]
   });
-  assert.equal(curated.models.length, 1, "codex preferred pool drops cursor flood when codex exists");
+  assert.equal(curated.models.length, 2);
   assert.equal(curated.models[0].displayName, "GPT-6-Astra");
+  assert.equal(curated.models[0].adapterId, "codex");
+  assert.equal(curated.models[1].displayName, "Claude Opus 5.5");
+  assert.equal(curated.models[1].adapterId, "cursor");
   assert.equal(curated.recommendedModel.candidateKey, "codex::astra");
 });
 

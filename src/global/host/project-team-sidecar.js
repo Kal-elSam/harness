@@ -18,13 +18,15 @@ import { createConversationService } from "../conversation/service.js";
 
 /** Adapters historically suited to long read-only Bootstrap Analyst runs. */
 const PREFERRED_ANALYST_ADAPTERS = new Set(["codex", "claude"]);
+/** After preferred adapters, keep at most this many other scored names. */
+const OTHER_ADAPTER_PICKER_CAP = 8;
 
 /**
  * Curate the full analyst catalog for the ratatui picker:
  * - available only
  * - scored (or quality/efficient tagged) — drop the unscored flood
- * - prefer codex/claude when any of those remain; otherwise keep scored available
- * - dedupe by displayName (case-insensitive), keeping recommended / tagged first
+ * - include every usable adapter (codex/claude/cursor/…), preferred first
+ * - dedupe by displayName; cap non-preferred adapters to avoid Cursor flood
  *
  * Never invents models; never reintroduces unavailable adapters.
  *
@@ -39,8 +41,6 @@ export function curateAnalystCatalogForPicker(analystCatalog) {
     if (tags.includes("quality") || tags.includes("efficient")) return true;
     return model.evidenceStatus === "scored";
   });
-  const preferred = analysisCapable.filter((model) => PREFERRED_ANALYST_ADAPTERS.has(model.adapterId));
-  const pool = preferred.length > 0 ? preferred : analysisCapable;
 
   const recommendedKey = analystCatalog?.recommendedModel?.candidateKey ?? null;
   const rank = (model) => {
@@ -51,7 +51,7 @@ export function curateAnalystCatalogForPicker(analystCatalog) {
     if (PREFERRED_ANALYST_ADAPTERS.has(model.adapterId)) return 3;
     return 4;
   };
-  const ordered = [...pool].sort((a, b) => {
+  const ordered = [...analysisCapable].sort((a, b) => {
     const byRank = rank(a) - rank(b);
     if (byRank !== 0) return byRank;
     const nameA = String(a.displayName ?? a.modelId ?? "");
@@ -60,15 +60,18 @@ export function curateAnalystCatalogForPicker(analystCatalog) {
   });
 
   const seenNames = new Set();
-  const models = [];
+  const preferred = [];
+  const others = [];
   for (const model of ordered) {
     const nameKey = String(model.displayName ?? model.modelId ?? model.candidateKey ?? "")
       .trim()
       .toLowerCase();
     if (!nameKey || seenNames.has(nameKey)) continue;
     seenNames.add(nameKey);
-    models.push(model);
+    if (PREFERRED_ANALYST_ADAPTERS.has(model.adapterId)) preferred.push(model);
+    else others.push(model);
   }
+  const models = [...preferred, ...others.slice(0, OTHER_ADAPTER_PICKER_CAP)];
 
   let recommendedModel = analystCatalog?.recommendedModel ?? null;
   if (recommendedModel && !models.some((model) => model.candidateKey === recommendedModel.candidateKey)) {

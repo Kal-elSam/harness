@@ -73,6 +73,8 @@ test("runCodexSandboxedBootstrap wraps codex in sandbox-exec with its own sandbo
     const outFileIndex = args.indexOf("-o") + 1;
     const outFile = args[outFileIndex];
     const child = new EventEmitter();
+    child.stdin = { end() {} };
+    child.stderr = new EventEmitter();
     child.kill = () => {};
     setTimeout(async () => {
       await writeFile(outFile, "Real answer.\n", "utf8");
@@ -96,13 +98,15 @@ test("runCodexSandboxedBootstrap wraps codex in sandbox-exec with its own sandbo
   assert.equal(args.includes("--sandbox"), false, "Codex's own (non-confining) --sandbox read-only must never be combined with the external wrapper");
   assert.ok(args.includes("--skip-git-repo-check"));
   assert.ok(args.includes("--ephemeral"));
-  assert.ok(args.includes("--ignore-user-config"));
+  assert.equal(args.includes("--ignore-user-config"), false, "user config under CODEX_HOME must load inside the sandbox");
   assert.ok(args.includes("Investigate this project."));
 });
 
 test("runCodexSandboxedBootstrap fails closed to error when the output file is never written", async () => {
   const spawn = () => {
     const child = new EventEmitter();
+    child.stdin = { end() {} };
+    child.stderr = new EventEmitter();
     child.kill = () => {};
     setTimeout(() => child.emit("close", 0), 0);
     return child;
@@ -117,6 +121,8 @@ test("runCodexSandboxedBootstrap fails closed to error when the output file is n
 test("runCodexSandboxedBootstrap reports real captured stderr — never a raw ENOENT — when the output file is missing", async () => {
   const spawn = () => {
     const child = new EventEmitter();
+    child.stdin = { end() {} };
+    child.stderr = new EventEmitter();
     child.kill = () => {};
     child.stderr = new EventEmitter();
     setTimeout(() => {
@@ -137,6 +143,8 @@ test("runCodexSandboxedBootstrap reports real captured stderr — never a raw EN
 test("runCodexSandboxedBootstrap falls back to an honest exit-code message when the output file is missing and stderr is empty", async () => {
   const spawn = () => {
     const child = new EventEmitter();
+    child.stdin = { end() {} };
+    child.stderr = new EventEmitter();
     child.kill = () => {};
     child.stderr = new EventEmitter();
     setTimeout(() => child.emit("close", 7), 0);
@@ -158,6 +166,8 @@ test("runCodexSandboxedBootstrap scrubs the child's env — a real secret in Kai
     const outFileIndex = args.indexOf("-o") + 1;
     const outFile = args[outFileIndex];
     const child = new EventEmitter();
+    child.stdin = { end() {} };
+    child.stderr = new EventEmitter();
     child.kill = () => {};
     setTimeout(async () => { await writeFile(outFile, "ok\n", "utf8"); child.emit("close", 0); }, 0);
     return child;
