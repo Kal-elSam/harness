@@ -23,8 +23,8 @@ use analyst_picker::AnalystPickerState;
 use bridge::BridgeClient;
 use chat::{sidebar_accepts_selection_keys, ChatState, Focus};
 use engine::{
-    can_analyze_team, can_approve_team, decide_submit, team_keys_available, EngineGate,
-    SubmitDecision,
+    can_analyze_team, can_approve_team, decide_submit, parse_slash_command, team_keys_available,
+    EngineGate, SlashCommand, SubmitDecision,
 };
 use layout::split_shell;
 use snapshot::apply_workspace_snapshot;
@@ -37,10 +37,9 @@ use surfaces::{render_analyst_picker, render_shell, ShellViewModel};
 // - Transcript: PgUp/PgDn scroll
 // - q: quit when Editor is empty; Ctrl+C / Ctrl+Q always quit
 // - Bridge only: Ctrl+M cycle Kairo model; Ctrl+N new Pi session; Ctrl+[ / Ctrl+] prev/next session on disk; Ctrl+K compact
-// - Bridge only, team setup in this UI (no cockpit): `a` opens the analyst picker
-//   (T2 — j/k or arrows move, Enter confirms an available model, Esc cancels), `A`
-//   approves the suggestion. Offered while chat is blocked, or from Sidebar/
-//   Transcript focus — never stolen from a compose box that can send.
+// - Bridge only, team setup in this UI (no cockpit): type `/analyze` (or empty
+//   compose + `a`) to open the analyst picker; `/approve` or `A` when suggested.
+//   Esc cancels the picker; q / Ctrl+C quit (TTY restored before bridge kill).
 // - n/c: demo notice clear (local, no bridge)
 
 /// The two in-UI team setup actions (`a` / `A`).
@@ -87,7 +86,7 @@ struct ShellApp {
 impl ShellApp {
     fn new(bridge: Option<BridgeClient>) -> Self {
         let mut editor = TextArea::default();
-        editor.set_placeholder_text("Message…");
+        editor.set_placeholder_text("/analyze · /analyze · Message…");
         let mut view = ShellViewModel::default();
         if bridge.is_some() {
             view.engine_line = "MODEL · starting".into();
@@ -369,6 +368,29 @@ impl ShellApp {
         if text.trim().is_empty() {
             return;
         }
+        if let Some(cmd) = parse_slash_command(&text) {
+            self.clear_editor();
+            match cmd {
+                SlashCommand::Analyze => {
+                    if self.bridge.is_none() {
+                        self.view.notice = Some("No bridge — cannot run /analyze.".into());
+                        return;
+                    }
+                    self.request_analyst_preflight();
+                }
+                SlashCommand::Approve => {
+                    if !can_approve_team(self.view.team_state.as_deref()) {
+                        self.view.notice = Some(
+                            "Nothing to approve yet — run /analyze and wait for a suggested team."
+                                .into(),
+                        );
+                        return;
+                    }
+                    self.request_team_op(TeamOp::Approve);
+                }
+            }
+            return;
+        }
         let bridge_attached = self.bridge.is_some();
         match decide_submit(bridge_attached, &self.engine) {
             SubmitDecision::KeepDraft { notice } => {
@@ -408,13 +430,13 @@ impl ShellApp {
 
     fn clear_editor(&mut self) {
         self.editor = TextArea::default();
-        self.editor.set_placeholder_text("Message…");
+        self.editor.set_placeholder_text("/analyze · Message…");
     }
 
     fn restore_editor(&mut self, text: &str) {
         self.editor = TextArea::default();
         self.editor.insert_str(text);
-        self.editor.set_placeholder_text("Message…");
+        self.editor.set_placeholder_text("/analyze · Message…");
     }
 
     fn abort_stream(&mut self) {
@@ -453,13 +475,16 @@ fn main() -> io::Result<()> {
     let mut app = ShellApp::new(bridge);
     let result = run(&mut terminal, &mut app);
 
+    // Always restore the real TTY first — never leave the user staring at a
+    // frozen alternate screen while a wedged Node/Pi child is killed.
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = terminal.show_cursor();
+
     if let Some(mut bridge) = app.bridge.take() {
         let _ = bridge.stop();
     }
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
     result
 }
 

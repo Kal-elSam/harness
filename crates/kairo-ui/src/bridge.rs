@@ -34,6 +34,7 @@ pub struct BridgeClient {
     child: Child,
     stdin: std::process::ChildStdin,
     events: Receiver<Value>,
+    stopped: bool,
 }
 
 impl BridgeClient {
@@ -76,6 +77,7 @@ impl BridgeClient {
             child,
             stdin,
             events: rx,
+            stopped: false,
         })
     }
 
@@ -155,8 +157,15 @@ impl BridgeClient {
         )
     }
 
+    /// Force-stop the Node sidecar. Never block the TTY on a wedged child:
+    /// best-effort cooperative `stop`, then kill + wait. Idempotent for Drop.
     pub fn stop(&mut self) -> std::io::Result<()> {
+        if self.stopped {
+            return Ok(());
+        }
+        self.stopped = true;
         let _ = self.send_op("stop", Value::Null);
+        let _ = self.child.kill();
         let _ = self.child.wait();
         Ok(())
     }
