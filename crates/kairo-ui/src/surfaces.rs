@@ -388,7 +388,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         .border_style(Style::default().fg(tone::BORDER_FOCUS))
         .style(Style::default().bg(tone::SIDEBAR_BG))
         .title(Span::styled(
-            " Select analyst — j/k move · Enter confirm · Esc cancel ",
+            " Select analyst — j/k · Enter · Esc cancel · q/Ctrl+C quit ",
             Style::default().fg(tone::ACCENT).add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(popup);

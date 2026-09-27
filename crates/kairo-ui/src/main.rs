@@ -483,18 +483,26 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut ShellApp
     Ok(())
 }
 
+fn is_quit_chord(key: &KeyEvent) -> bool {
+    if !key.modifiers.contains(KeyModifiers::CONTROL) {
+        return false;
+    }
+    match key.code {
+        // Terminals may report Ctrl+C/Q as upper- or lower-case; both quit.
+        KeyCode::Char(c) => matches!(c.to_ascii_lowercase(), 'c' | 'q'),
+        _ => false,
+    }
+}
+
 fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
-    if key.modifiers.contains(KeyModifiers::CONTROL)
-        && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('q'))
-    {
+    if is_quit_chord(&key) {
         return Ok(true);
     }
     // The analyst picker owns every key while open — Ctrl+C/Q above still
     // always quits, but nothing else falls through to chat/sidebar/bridge
     // shortcuts until the modal closes (Enter/Esc).
     if app.picker.is_some() {
-        handle_picker_key(app, key);
-        return Ok(false);
+        return Ok(handle_picker_key(app, key));
     }
     if try_bridge_shortcut(app, key) {
         return Ok(false);
@@ -626,16 +634,21 @@ fn try_team_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
 }
 
 /// Key routing while the analyst picker modal is open — the picker owns
-/// every key (movement, confirm, cancel) until it closes.
-fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) {
+/// movement/confirm/cancel until it closes. Returns `true` when the host
+/// should quit (plain `q`; Ctrl+C/Q are handled before this runs).
+fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
     let Some(picker) = app.picker.as_mut() else {
-        return;
+        return false;
     };
     match key.code {
         KeyCode::Down | KeyCode::Char('j') => picker.move_down(),
         KeyCode::Up | KeyCode::Char('k') => picker.move_up(),
+        KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            return true;
+        }
         KeyCode::Esc => {
             app.picker = None;
+            app.view.notice = Some("Analyst picker cancelled.".into());
         }
         KeyCode::Enter => {
             if let Some(option) = picker.confirm() {
@@ -646,6 +659,7 @@ fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) {
         }
         _ => {}
     }
+    false
 }
 
 fn try_bridge_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
