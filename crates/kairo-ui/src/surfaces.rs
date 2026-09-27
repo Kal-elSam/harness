@@ -75,6 +75,9 @@ pub struct ShellViewModel {
     pub selected_agent: usize,
     pub work_title: String,
     pub notice: Option<String>,
+    /// Sticky CTA when ≥1 team agent is blocked (rate-limit / out of funds).
+    /// Independent of ephemeral `notice` so Pi/engine messages cannot hide it.
+    pub team_attention: Option<String>,
     /// Empty-chat copy when the engine cannot prompt (honest, not a fake conversation).
     pub work_empty_hint: Option<Vec<String>>,
     pub usage_line: String,
@@ -94,6 +97,7 @@ impl Default for ShellViewModel {
             selected_agent: 0,
             work_title: "Chat".into(),
             notice: None,
+            team_attention: None,
             work_empty_hint: None,
             usage_line: "USAGE · waiting for bridge".into(),
             engine_line: "MODEL · (local mock without --bridge)".into(),
@@ -229,6 +233,13 @@ fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat:
     block.render(area, buf);
 
     let mut lines: Vec<Line> = transcript_lines(chat, model);
+    if let Some(attention) = &model.team_attention {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("⚠ {attention}"),
+            Style::default().fg(tone::WARN).add_modifier(Modifier::BOLD),
+        )));
+    }
     if let Some(notice) = &model.notice {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -882,6 +893,38 @@ mod tests {
         assert!(
             !hay.contains("conversation streams"),
             "generic Work surface placeholder must not win: {hay}"
+        );
+    }
+
+    #[test]
+    fn team_attention_banner_paints_reanalyze_cta_when_roles_are_blocked() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut model = ShellViewModel::default();
+        model.team_attention = Some(
+            "5 roles unavailable (rate-limit / no funds). Type /analyze to reassign.".into(),
+        );
+        model.agents = vec![SidebarAgent {
+            label: "Architect".into(),
+            detail: "OpenCode Go · unavailable".into(),
+            state: AgentState::Blocked,
+        }];
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+        );
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("Type /analyze to reassign"),
+            "blocked-team CTA missing from chat surface: {hay}"
+        );
+        assert!(
+            hay.contains("no funds") || hay.contains("rate-limit"),
+            "CTA must name the failure class: {hay}"
         );
     }
 
