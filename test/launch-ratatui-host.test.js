@@ -6,7 +6,9 @@ import { test } from "node:test";
 import { parseArgs } from "../src/cli.js";
 import { routeInteractiveHost } from "../src/global/host/launch-gentle-shell.js";
 import {
+  kairoUiRebuildWatchPaths,
   launchRatatuiHost,
+  releaseBinaryNeedsRebuild,
   resolveReleaseBinaryPath,
   resolveUiHost
 } from "../src/global/host/launch-ratatui-host.js";
@@ -199,6 +201,92 @@ test("launchRatatuiHost respects CARGO_TARGET_DIR for the release binary", async
   });
   assert.equal(spawned.command, binaryPath);
   assert.equal(spawned.options.env.KAIRO_UI_RPC_SCRIPT, sidecarScript);
+});
+
+test("releaseBinaryNeedsRebuild is true when binary is missing", () => {
+  const { crateDir } = fakeCrateRoot();
+  const binaryPath = resolveReleaseBinaryPath(crateDir, {});
+  assert.equal(
+    releaseBinaryNeedsRebuild({
+      binaryPath,
+      crateDir,
+      existsSyncImpl: () => false
+    }),
+    true
+  );
+});
+
+test("releaseBinaryNeedsRebuild is true when Cargo.toml is newer than the binary", () => {
+  const { crateDir } = fakeCrateRoot();
+  const binaryPath = resolveReleaseBinaryPath(crateDir, {});
+  const manifestPath = join(crateDir, "Cargo.toml");
+  assert.equal(
+    releaseBinaryNeedsRebuild({
+      binaryPath,
+      crateDir,
+      existsSyncImpl: (p) => p === binaryPath || p === manifestPath,
+      statImpl: (p) => ({
+        isDirectory: () => false,
+        mtimeMs: p === binaryPath ? 1_000 : 2_000
+      })
+    }),
+    true
+  );
+});
+
+test("releaseBinaryNeedsRebuild is false when binary is newer than watch paths", () => {
+  const { crateDir } = fakeCrateRoot();
+  const binaryPath = resolveReleaseBinaryPath(crateDir, {});
+  const watchPaths = kairoUiRebuildWatchPaths(crateDir, (p) =>
+    p === join(crateDir, "Cargo.toml")
+  );
+  assert.deepEqual(watchPaths, [join(crateDir, "Cargo.toml")]);
+  assert.equal(
+    releaseBinaryNeedsRebuild({
+      binaryPath,
+      crateDir,
+      existsSyncImpl: (p) => p === binaryPath || p === join(crateDir, "Cargo.toml"),
+      statImpl: (p) => ({
+        isDirectory: () => false,
+        mtimeMs: p === binaryPath ? 5_000 : 1_000
+      })
+    }),
+    false
+  );
+});
+
+test("launchRatatuiHost rebuilds when release binary is stale vs crate sources", async () => {
+  const { packageRoot, crateDir, sidecarScript } = fakeCrateRoot();
+  const binaryPath = resolveReleaseBinaryPath(crateDir, {});
+  const manifestPath = join(crateDir, "Cargo.toml");
+  const seen = { cargo: 0, spawn: 0 };
+
+  await launchRatatuiHost({
+    cwd: "/abs/project",
+    interactive: true,
+    platform: "linux",
+    packageRoot,
+    crateDir,
+    existsSyncImpl: (p) =>
+      p === manifestPath || p === binaryPath || p === sidecarScript,
+    statImpl: (p) => ({
+      isDirectory: () => p === "/abs/project",
+      mtimeMs: p === binaryPath ? 1_000 : 2_000
+    }),
+    cargoBuildImpl: async () => {
+      seen.cargo += 1;
+      return { status: 0 };
+    },
+    spawnImpl: async (command, args) => {
+      seen.spawn += 1;
+      assert.equal(command, binaryPath);
+      assert.deepEqual(args, ["--bridge"]);
+      return { status: 0 };
+    }
+  });
+
+  assert.equal(seen.cargo, 1);
+  assert.equal(seen.spawn, 1);
 });
 
 test("launchRatatuiHost fails closed on Windows and non-TTY", async () => {

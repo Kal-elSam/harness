@@ -127,6 +127,15 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
   - Known gaps: no analyst picker / role editor in the UI yet (T2). The `--legacy-cockpit` CLI flag and the launch-failure fallbacks that name it stay until R9 (flag, not team setup). The Pi widget's own `Run /project analyze to build this project's team.` empty-team hints (`workspace-widget.js`, `extension/index.js`) are untouched: they never mention the cockpit, but the Pi extension registers no such command — fold them into the R9 strip or a Pi-parity follow-up.
   - Pre-existing on this branch, unrelated to T1: 9 failures in `test/session-cli.test.js` + `test/cli-default-entry.test.js` still assert the Pi host for bare `kairo` / `start` / `resume` after the ratatui default cutover (verified by stashing T1 and re-running).
 
+- (2026-09-26) **Stale release binary** — `launchRatatuiHost` no longer skips `cargo build --release` when `target/release/kairo-ui` exists but `crates/kairo-ui/src/**`, `Cargo.toml`, or `Cargo.lock` is newer (fixes USAGE segments / team keys missing after source edits without rebuild).
+  - Evidence: `node --test test/launch-ratatui-host.test.js`.
+
+## Quiet UX (keys)
+
+- Quit: `q` when the editor is empty or focus is sidebar/transcript; **Ctrl+C** / **Ctrl+Q** always quit.
+- Team (in host): **`a`** analyze · **`A`** approve (when suggested). Plan/ask modes are **not** in this slice.
+- USAGE row 2 (`engine_line`) stays for **MODEL · session** status — quit hints live here in docs, not on the strip.
+
 ## Next step
 
 1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7 packaging claim). Now reachable end to end in one UI: `kairo` → `a` (analyze) → `A` (approve) → chat. Live provider check only with a session you authorize.
