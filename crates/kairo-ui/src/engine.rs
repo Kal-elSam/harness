@@ -142,23 +142,25 @@ impl EngineGate {
     }
 }
 
-/// The in-UI next step for a blocked chat: `a` analyzes this project's team
-/// (default analyst, headless) and `A` approves the suggestion. Both run
-/// through the sidecar — no cockpit, no slash command, no second UI.
+/// The in-UI next step for a blocked chat. Prefer slash commands so compose
+/// never steals a bare `a`/`A` keystroke when the engine looks connected.
 pub fn team_next_step_line(team_state: Option<&str>) -> String {
     match team_state {
-        Some("suggested") => "Next: press A to approve the suggested team (a re-analyzes).".into(),
-        Some("active") | Some("stale") => {
-            "Next: press a to choose an analyst and re-analyze, then A to approve.".into()
+        Some("suggested") => {
+            "Next: type /approve (or press A) — /analyze re-runs the picker.".into()
         }
-        _ => "Next: press a to choose an analyst and analyze, then A to approve.".into(),
+        Some("active") | Some("stale") => {
+            "Next: type /analyze to choose an analyst and re-analyze, then /approve.".into()
+        }
+        _ => "Next: type /analyze to choose an analyst, then /approve.".into(),
     }
 }
 
-/// Whether `a` (analyze) is offered: only while chat is blocked, so a
-/// connected session never loses `a` as a typed character.
-pub fn can_analyze_team(engine: &EngineGate) -> bool {
-    !engine.can_prompt()
+/// Whether `a` may open the analyst picker. Always true when the bridge is
+/// up — re-analyze is valid even after chat connects. Compose only yields
+/// the bare key when the draft is empty (see `team_keys_available`).
+pub fn can_analyze_team(_engine: &EngineGate) -> bool {
+    true
 }
 
 /// Whether `A` (approve) is offered: a real suggested strategy must exist.
@@ -166,14 +168,35 @@ pub fn can_approve_team(team_state: Option<&str>) -> bool {
     team_state == Some("suggested")
 }
 
-/// Whether the `a` / `A` team keys may be read as keys at all. A compose box
-/// that can send keeps every character; Sidebar / Transcript focus is not
-/// typing, so the keys stay available there.
-pub fn team_keys_available(focus_is_editor: bool, editor_empty: bool, can_prompt: bool) -> bool {
+/// Bare `a` / `A` only fire from an empty compose (or non-editor focus).
+/// When the engine can prompt, empty-compose `a` still opens the picker so
+/// re-analyze stays reachable; non-empty drafts keep every character.
+pub fn team_keys_available(focus_is_editor: bool, editor_empty: bool, _can_prompt: bool) -> bool {
     if !focus_is_editor {
         return true;
     }
-    editor_empty && !can_prompt
+    editor_empty
+}
+
+/// Classify a compose submit that is a host slash command (not a Pi prompt).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlashCommand {
+    Analyze,
+    Approve,
+}
+
+/// Parse `/analyze`, `/project`, `/project analyze`, `/approve`, `/project approve`.
+pub fn parse_slash_command(raw: &str) -> Option<SlashCommand> {
+    let trimmed = raw.trim();
+    if !trimmed.starts_with('/') {
+        return None;
+    }
+    let body = trimmed.trim_start_matches('/').trim().to_ascii_lowercase();
+    match body.as_str() {
+        "analyze" | "project" | "project analyze" => Some(SlashCommand::Analyze),
+        "approve" | "project approve" => Some(SlashCommand::Approve),
+        _ => None,
+    }
 }
 
 /// Decide whether Enter may leave the editor / start an assistant stream.
@@ -233,11 +256,10 @@ mod tests {
         );
         let hint = gate.work_empty_hint_lines(None).expect("hint");
         assert_eq!(hint[0], "Chat blocked: no_model — No model selected");
-        // Team setup is in this UI: keys, never a cockpit round trip.
-        assert!(hint[1].contains("press a"));
-        assert!(hint[1].contains("A to approve"));
+        // Team setup is in this UI via slash commands (and empty-compose a/A).
+        assert!(hint[1].contains("/analyze"));
+        assert!(hint[1].contains("/approve"));
         assert!(!hint[1].contains("legacy-cockpit"));
-        assert!(!hint[1].contains("/project analyze"));
     }
 
     #[test]
@@ -247,7 +269,8 @@ mod tests {
             "reason": "No active strategy with launchable projectTeam routes"
         }));
         let hint = gate.work_empty_hint_lines(Some("suggested")).expect("hint");
-        assert!(hint[1].contains("press A to approve"));
+        assert!(hint[1].contains("/approve"));
+        assert!(hint[1].contains("/analyze"));
         assert!(can_approve_team(Some("suggested")));
         assert!(!can_approve_team(Some("not_analyzed")));
         assert!(!can_approve_team(None));
@@ -255,25 +278,41 @@ mod tests {
     }
 
     #[test]
-    fn analyze_key_is_not_offered_while_chat_works() {
+    fn analyze_key_stays_available_for_reanalyze_even_when_chat_works() {
         let connected = EngineGate::from_engine_value(&json!({
             "status": "connected",
             "model": { "id": "x" }
         }));
-        assert!(!can_analyze_team(&connected));
+        assert!(can_analyze_team(&connected));
     }
 
     #[test]
-    fn team_keys_never_steal_characters_from_a_working_compose_box() {
-        // Editor focus, chat works: 'a' is a character, not a command.
-        assert!(!team_keys_available(true, true, true));
-        assert!(!team_keys_available(true, false, true));
-        // Editor focus with a draft the engine cannot send: keep the draft.
-        assert!(!team_keys_available(true, false, false));
-        // Blocked chat, empty draft: the key is the only useful action.
+    fn team_keys_only_fire_from_an_empty_compose_or_non_editor_focus() {
+        // Empty compose: bare `a` may open the picker (even if chat works).
+        assert!(team_keys_available(true, true, true));
         assert!(team_keys_available(true, true, false));
+        // Non-empty draft: never steal characters.
+        assert!(!team_keys_available(true, false, true));
+        assert!(!team_keys_available(true, false, false));
         // Sidebar / transcript focus is never typing.
         assert!(team_keys_available(false, false, true));
+    }
+
+    #[test]
+    fn parse_slash_command_recognizes_analyze_and_approve_aliases() {
+        assert_eq!(parse_slash_command("/analyze"), Some(SlashCommand::Analyze));
+        assert_eq!(
+            parse_slash_command("  /Project Analyze  "),
+            Some(SlashCommand::Analyze)
+        );
+        assert_eq!(parse_slash_command("/project"), Some(SlashCommand::Analyze));
+        assert_eq!(parse_slash_command("/approve"), Some(SlashCommand::Approve));
+        assert_eq!(
+            parse_slash_command("/project approve"),
+            Some(SlashCommand::Approve)
+        );
+        assert_eq!(parse_slash_command("hello"), None);
+        assert_eq!(parse_slash_command("/unknown"), None);
     }
 
     #[test]

@@ -250,7 +250,7 @@ fn transcript_has_conversation(chat: &ChatState) -> bool {
         MessageRole::User | MessageRole::Assistant | MessageRole::Tool => true,
         MessageRole::System => {
             !m.content.is_empty()
-                && m.content != "Work surface — conversation streams above; type below."
+                && m.content != "Type /analyze to choose an analyst · then chat below."
         }
     })
 }
@@ -269,7 +269,7 @@ fn transcript_lines(chat: &ChatState, model: &ShellViewModel) -> Vec<Line<'stati
                 .collect();
         }
         return vec![Line::from(Span::styled(
-            "Work surface — conversation streams above; type below.".to_string(),
+            "Type /analyze to choose an analyst · then chat below.".to_string(),
             Style::default().fg(tone::MUTED),
         ))];
     }
@@ -854,7 +854,7 @@ mod tests {
         model.work_empty_hint = Some(vec![
             "Chat blocked: no_model — No active strategy with automatic launchable projectTeam routes"
                 .into(),
-            "Next: press a to analyze project team, then A to approve.".into(),
+            "Next: type /analyze to choose an analyst, then /approve.".into(),
         ]);
         render_shell(
             &mut buf,
@@ -869,8 +869,8 @@ mod tests {
             "actionable empty hint missing: {hay}"
         );
         assert!(
-            hay.contains("press a to analyze"),
-            "next-step hint must stay inside this UI: {hay}"
+            hay.contains("/analyze"),
+            "next-step hint must name /analyze: {hay}"
         );
         assert!(
             !hay.contains("legacy-cockpit"),
