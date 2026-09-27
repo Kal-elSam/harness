@@ -77,7 +77,8 @@ pub struct ShellViewModel {
     pub notice: Option<String>,
     /// Sticky CTA when ≥1 team agent is blocked (rate-limit / out of funds).
     /// Independent of ephemeral `notice` so Pi/engine messages cannot hide it.
-    pub team_attention: Option<String>,
+    /// One or two short lines so the chat column can paint the full CTA.
+    pub team_attention: Option<Vec<String>>,
     /// Empty-chat copy when the engine cannot prompt (honest, not a fake conversation).
     pub work_empty_hint: Option<Vec<String>>,
     pub usage_line: String,
@@ -235,10 +236,12 @@ fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat:
     let mut lines: Vec<Line> = transcript_lines(chat, model);
     if let Some(attention) = &model.team_attention {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            format!("⚠ {attention}"),
-            Style::default().fg(tone::WARN).add_modifier(Modifier::BOLD),
-        )));
+        for line in attention {
+            lines.push(Line::from(Span::styled(
+                format!("⚠ {line}"),
+                Style::default().fg(tone::WARN).add_modifier(Modifier::BOLD),
+            )));
+        }
     }
     if let Some(notice) = &model.notice {
         lines.push(Line::from(""));
@@ -902,9 +905,10 @@ mod tests {
         let regions = split_shell(area);
         let mut buf = Buffer::empty(area);
         let mut model = ShellViewModel::default();
-        model.team_attention = Some(
-            "5 roles unavailable (rate-limit / no funds). Type /analyze to reassign.".into(),
-        );
+        model.team_attention = Some(vec![
+            "5 roles unavailable (rate-limit / no funds).".into(),
+            "Type /analyze to reassign.".into(),
+        ]);
         model.agents = vec![SidebarAgent {
             label: "Architect".into(),
             detail: "OpenCode Go · unavailable".into(),

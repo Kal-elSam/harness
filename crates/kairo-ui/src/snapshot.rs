@@ -129,7 +129,7 @@ fn state_word(state: AgentState) -> &'static str {
 /// Sticky chat CTA when the live team has blocked roles (rate-limit, quota,
 /// entitlement, out of funds). Mirrors cockpit `availabilityNotices` intent
 /// without toast APIs — ratatui paints this in the work surface.
-pub fn blocked_team_attention(agents: &[SidebarAgent]) -> Option<String> {
+pub fn blocked_team_attention(agents: &[SidebarAgent]) -> Option<Vec<String>> {
     let blocked: Vec<&SidebarAgent> = agents
         .iter()
         .filter(|agent| agent.state == AgentState::Blocked)
@@ -147,9 +147,10 @@ pub fn blocked_team_attention(agents: &[SidebarAgent]) -> Option<String> {
     } else {
         format!("{n} roles")
     };
-    Some(format!(
-        "{who} unavailable (rate-limit / no funds). Type /analyze to reassign."
-    ))
+    Some(vec![
+        format!("{who} unavailable (rate-limit / no funds)."),
+        "Type /analyze to reassign.".into(),
+    ])
 }
 
 fn state_rank(state: AgentState) -> u8 {
@@ -230,17 +231,18 @@ mod tests {
         apply_workspace_snapshot(&mut view, &snapshot);
         assert_eq!(view.agents[0].detail, "OpenCode Go · unavailable");
         let attention = view.team_attention.expect("blocked team needs CTA");
+        let joined = attention.join(" ");
         assert!(
-            attention.contains("/analyze"),
-            "attention must name /analyze: {attention}"
+            joined.contains("/analyze"),
+            "attention must name /analyze: {joined}"
         );
         assert!(
-            attention.contains("Architect"),
-            "attention must name the blocked role: {attention}"
+            joined.contains("Architect"),
+            "attention must name the blocked role: {joined}"
         );
         assert!(
-            attention.contains("rate-limit") || attention.contains("no funds"),
-            "attention must name the provider failure class: {attention}"
+            joined.contains("rate-limit") || joined.contains("no funds"),
+            "attention must name the provider failure class: {joined}"
         );
     }
 
@@ -252,7 +254,7 @@ mod tests {
             ]
         });
         let mut view = ShellViewModel::default();
-        view.team_attention = Some("stale".into());
+        view.team_attention = Some(vec!["stale".into()]);
         apply_workspace_snapshot(&mut view, &snapshot);
         assert_eq!(view.team_attention, None);
     }
@@ -267,9 +269,10 @@ mod tests {
             })
             .collect();
         let attention = blocked_team_attention(&agents).expect("CTA");
-        assert!(attention.contains("5 roles"));
-        assert!(!attention.contains("Role0"), "must not list every role when N>3");
-        assert!(attention.contains("/analyze"));
+        let joined = attention.join(" ");
+        assert!(joined.contains("5 roles"));
+        assert!(!joined.contains("Role0"), "must not list every role when N>3");
+        assert!(joined.contains("/analyze"));
     }
 
     #[test]
