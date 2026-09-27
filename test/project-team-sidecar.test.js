@@ -4,6 +4,7 @@ import {
   analyzeProjectTeam,
   approveProjectTeam,
   pickDefaultAnalyst,
+  preflightProjectTeam,
   summarizeProjectStrategy
 } from "../src/global/host/project-team-sidecar.js";
 
@@ -241,4 +242,99 @@ test("approveProjectTeam propagates the service's own no-strategy error", async 
 
 test("approveProjectTeam requires a cwd", async () => {
   await assert.rejects(approveProjectTeam({}), /requires a project directory/i);
+});
+
+test("preflightProjectTeam returns the real analyst catalog without persisting or picking anything", async () => {
+  const calls = [];
+  const catalog = {
+    recommendedModel: { candidateKey: "codex::gpt-5" },
+    models: [catalogEntry({ recommendationTags: ["quality"] })]
+  };
+  const result = await preflightProjectTeam({
+    cwd: "/project",
+    createConversationService: fakeService({ analystCatalog: catalog, calls })
+  });
+  assert.deepEqual(calls, [["preflightProject", "/project"]], "preflight must never run analysis or approval");
+  assert.deepEqual(result.analystCatalog, catalog);
+  assert.equal(result.projectRoot, "/project");
+  assert.deepEqual(result.profile, { root: "/project", roleRequirements: [{ role: "Architect" }] });
+  assert.deepEqual(result.candidates, { scoredAll: [], eligibility: {} });
+});
+
+test("preflightProjectTeam surfaces the unverified Claude notice, honestly, without picking a fallback model", async () => {
+  const result = await preflightProjectTeam({
+    cwd: "/project",
+    createConversationService: fakeService({
+      analystCatalog: { recommendedModel: null, models: [] },
+      unverifiedClaudeNotice: "2 Claude models are unverified"
+    })
+  });
+  assert.equal(result.unverifiedClaudeNotice, "2 Claude models are unverified");
+  assert.deepEqual(result.analystCatalog, { recommendedModel: null, models: [] });
+});
+
+test("preflightProjectTeam requires a cwd", async () => {
+  await assert.rejects(preflightProjectTeam({}), /requires a project directory/i);
+});
+
+test("analyzeProjectTeam uses a human-picked analyst when its adapterId/modelId matches a currently available catalog entry", async () => {
+  const calls = [];
+  const result = await analyzeProjectTeam({
+    cwd: "/project",
+    analyst: {
+      model: { adapterId: "claude", modelId: "sonnet", displayName: "stale label" },
+      selectionSource: "manual",
+      recommendationTags: [],
+      choice: null
+    },
+    createConversationService: fakeService({
+      analystCatalog: {
+        recommendedModel: { candidateKey: "codex::gpt-5" },
+        models: [
+          catalogEntry({ recommendationTags: ["quality"] }),
+          catalogEntry({
+            candidateKey: "claude::sonnet",
+            adapterId: "claude",
+            modelId: "sonnet",
+            displayName: "Claude Sonnet",
+            recommendationTags: ["efficient"]
+          })
+        ]
+      },
+      calls
+    })
+  });
+  const [, analysisArgs] = calls[1];
+  // Re-validated against the FRESH catalog, not a stale caller-supplied label.
+  assert.equal(analysisArgs.analyst.model.displayName, "Claude Sonnet");
+  assert.equal(analysisArgs.analyst.model.adapterId, "claude");
+  assert.equal(analysisArgs.analyst.selectionSource, "manual");
+  assert.equal(analysisArgs.analyst.choice, "efficient");
+  assert.equal(result.state, "suggested");
+});
+
+test("analyzeProjectTeam fails closed when the requested analyst is not in the fresh catalog at all", async () => {
+  await assert.rejects(
+    analyzeProjectTeam({
+      cwd: "/project",
+      analyst: { model: { adapterId: "cursor", modelId: "nope" } },
+      createConversationService: fakeService({
+        analystCatalog: { recommendedModel: null, models: [catalogEntry()] }
+      })
+    }),
+    /not an available analyst/i
+  );
+});
+
+test("analyzeProjectTeam fails closed when the requested analyst exists but is no longer available", async () => {
+  await assert.rejects(
+    analyzeProjectTeam({
+      cwd: "/project",
+      analyst: { model: { adapterId: "codex", modelId: "gpt-5", displayName: "GPT-5" } },
+      createConversationService: fakeService({
+        analystCatalog: { recommendedModel: null, models: [catalogEntry({ available: false })] }
+      })
+    }),
+    /GPT-5 is not an available analyst/i
+  );
 });

@@ -4,9 +4,10 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget};
 use ratatui_textarea::TextArea;
 
+use crate::analyst_picker::AnalystPickerState;
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
 use crate::layout::{split_work_main, ShellRegions};
 
@@ -353,6 +354,100 @@ fn render_usage(buf: &mut Buffer, area: Rect, model: &ShellViewModel) {
         )));
     }
     Paragraph::new(lines).render(inner, buf);
+}
+
+/// Centered popup rect, clamped to the real frame so it never panics on a
+/// tiny terminal — `width`/`height` are upper bounds, not guarantees.
+fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    Rect::new(x, y, width, height)
+}
+
+/// The analyst picker (T2) — a centered modal over the work surface, the
+/// in-UI equivalent of the cockpit's ProjectOverlay SELECT_ANALYST screen.
+/// Every real catalog row is listed (available or not); only the selected
+/// row's own highlight and an honest inline notice communicate why an
+/// unavailable pick was refused — never a silently vanished option.
+pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPickerState) {
+    let row_count = picker.options.len().max(1) as u16;
+    let has_notice = picker.notice.is_some();
+    let height = row_count
+        .saturating_mul(2)
+        .saturating_add(if has_notice { 4 } else { 3 })
+        .min(area.height);
+    let width = area.width.saturating_sub(6).clamp(30, 70);
+    let popup = centered_rect(area, width, height);
+    if popup.width == 0 || popup.height == 0 {
+        return;
+    }
+
+    Clear.render(popup, buf);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .title(Span::styled(
+            " Select analyst — j/k move · Enter confirm · Esc cancel ",
+            Style::default().fg(tone::ACCENT).add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    if picker.options.is_empty() {
+        lines.push(padded_span(
+            "No ask-capable analyst model available for this project.",
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
+    } else {
+        for (i, option) in picker.options.iter().enumerate() {
+            let selected = i == picker.selected;
+            let row_style = if selected {
+                Style::default()
+                    .fg(tone::TEXT)
+                    .bg(tone::SELECT_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else if !option.available {
+                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
+            } else {
+                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+            };
+            let marker = if selected { "› " } else { "  " };
+            lines.push(padded_span(
+                &format!("{marker}{}", option.row_label()),
+                inner.width,
+                row_style,
+            ));
+            let desc = option.description();
+            if !desc.is_empty() {
+                let desc_style = if selected {
+                    Style::default().fg(tone::MUTED).bg(tone::SELECT_BG)
+                } else {
+                    Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
+                };
+                lines.push(padded_span(&format!("    {desc}"), inner.width, desc_style));
+            }
+        }
+    }
+    if let Some(notice) = &picker.notice {
+        lines.push(Line::from(Span::styled(
+            format!("⚠ {notice}"),
+            Style::default()
+                .fg(tone::WARN)
+                .add_modifier(Modifier::BOLD)
+                .bg(tone::SIDEBAR_BG),
+        )));
+    }
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .render(inner, buf);
 }
 
 /// One list/paragraph line padded to `width` so background fills the row.
@@ -849,5 +944,81 @@ mod tests {
             "notice glyph/text must use WARN amber, not ERROR or ACCENT"
         );
         assert_ne!(tone::WARN, tone::ERROR);
+    }
+
+    #[test]
+    fn analyst_picker_modal_paints_title_and_every_real_catalog_row() {
+        use crate::analyst_picker::AnalystPickerState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({
+            "recommendedModel": { "candidateKey": "codex::gpt" },
+            "models": [
+                { "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt", "displayName": "GPT", "available": true, "recommendationTags": ["quality"] },
+                { "candidateKey": "cursor::x", "adapterId": "cursor", "modelId": "x", "displayName": "Cursor X", "available": false, "recommendationTags": [] }
+            ]
+        }));
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Select analyst"), "modal title missing: {hay}");
+        assert!(hay.contains("GPT"), "recommended model row missing: {hay}");
+        assert!(hay.contains("codex"), "adapter id must be visible: {hay}");
+        assert!(hay.contains("Cursor X"), "unavailable model must still be LISTED: {hay}");
+        assert!(hay.contains("(unavailable)"), "unavailable marker missing: {hay}");
+        assert!(hay.contains("recommended"), "recommended marker missing: {hay}");
+    }
+
+    #[test]
+    fn analyst_picker_modal_highlights_the_selected_row_with_select_bg() {
+        use crate::analyst_picker::AnalystPickerState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({
+            "models": [
+                { "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt", "displayName": "GPT", "available": true, "recommendationTags": [] },
+                { "candidateKey": "claude::s", "adapterId": "claude", "modelId": "s", "displayName": "Claude S", "available": true, "recommendationTags": [] }
+            ]
+        }));
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+
+        let popup = centered_rect(area, area.width.saturating_sub(6).clamp(30, 70), 7);
+        let inner_y = popup.y + 1;
+        let far_x = popup.x + popup.width - 2;
+        assert_eq!(
+            cell_bg(&buf, far_x, inner_y),
+            tone::SELECT_BG,
+            "the first (selected) row must paint the full-width selection background"
+        );
+    }
+
+    #[test]
+    fn analyst_picker_modal_shows_refusal_notice_in_warn_amber() {
+        use crate::analyst_picker::AnalystPickerState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let mut picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({
+            "models": [
+                { "candidateKey": "cursor::x", "adapterId": "cursor", "modelId": "x", "displayName": "Cursor X", "available": false, "recommendationTags": [] }
+            ]
+        }));
+        assert!(picker.confirm().is_none());
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("not available right now"), "refusal notice missing: {hay}");
+    }
+
+    #[test]
+    fn analyst_picker_modal_on_an_empty_catalog_says_so_honestly() {
+        use crate::analyst_picker::AnalystPickerState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({ "models": [] }));
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("No ask-capable analyst"), "empty-catalog copy missing: {hay}");
     }
 }

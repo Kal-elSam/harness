@@ -11,14 +11,17 @@
  *   { "op": "switch_session_index", "index": 0 }
  *   { "op": "list_sessions" }
  *   { "op": "reload_snapshot" }
- *   { "op": "project.analyze" }
+ *   { "op": "project.preflight" }
+ *   { "op": "project.analyze", "analyst"?: { model, selectionSource, recommendationTags, choice } }
  *   { "op": "team.approve" }
  *   { "op": "stop" }
  *
  * stdout records (JSONL): { type: "ready", engine, snapshot?, kairoModels?, sessions? },
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
  * { type: "kairoModels", kairoModels }, { type: "team", op, ok, state, teamRows, roles, analyst },
- * forwarded Pi session events, { type: "error", message }, and bridge engine_unavailable.
+ * { type: "preflight", ok, analystCatalog?, profile?, candidates?, reason? } (the ratatui host's own
+ * analyst picker — T2, no cockpit), forwarded Pi session events, { type: "error", message }, and
+ * bridge engine_unavailable.
  */
 
 import { fileURLToPath } from "node:url";
@@ -31,7 +34,8 @@ import { loadKairoWorkspaceSnapshot } from "./workspace-snapshot.js";
 import { loadKairoProviderModels } from "./kairo-route-provider.js";
 import {
   analyzeProjectTeam as analyzeProjectTeamImpl,
-  approveProjectTeam as approveProjectTeamImpl
+  approveProjectTeam as approveProjectTeamImpl,
+  preflightProjectTeam as preflightProjectTeamImpl
 } from "./project-team-sidecar.js";
 import { listPiSessionFilesForCwd } from "./pi-rpc-sessions.js";
 import { mapPiMessagesToTranscriptRows } from "./pi-rpc-transcript.js";
@@ -116,6 +120,7 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut) {
  * @param {(args: { cwd: string }) => Promise<object>} [options.loadSnapshot]
  * @param {typeof analyzeProjectTeamImpl} [options.analyzeProjectTeam]
  * @param {typeof approveProjectTeamImpl} [options.approveProjectTeam]
+ * @param {typeof preflightProjectTeamImpl} [options.preflightProjectTeam]
  */
 export async function runKairoUiRpcStdio({
   stdin = process.stdin,
@@ -125,7 +130,8 @@ export async function runKairoUiRpcStdio({
   loadKairoProviderModels: loadModels = loadKairoProviderModels,
   loadSnapshot = loadKairoWorkspaceSnapshot,
   analyzeProjectTeam = analyzeProjectTeamImpl,
-  approveProjectTeam = approveProjectTeamImpl
+  approveProjectTeam = approveProjectTeamImpl,
+  preflightProjectTeam = preflightProjectTeamImpl
 } = {}) {
   const bridge = await openBridge({ cwd });
   let kairoModels = [];
@@ -340,15 +346,37 @@ export async function runKairoUiRpcStdio({
         process.exitCode = 0;
       } else if (op === "reload_snapshot") {
         await emitSnapshot();
+      } else if (op === "project.preflight") {
+        // Read-only: the ratatui host's own analyst picker (T2, no
+        // cockpit) — lists the real catalog so a human can choose which
+        // Bootstrap Analyst runs `project.analyze`, before anything is
+        // sent to a provider. Never persists, never picks for the human.
+        try {
+          const preflight = await preflightProjectTeam({ cwd });
+          writeOut({
+            type: "preflight",
+            ok: true,
+            analystCatalog: preflight.analystCatalog,
+            profile: preflight.profile,
+            candidates: preflight.candidates
+          });
+        } catch (err) {
+          writeOut({ type: "preflight", ok: false, reason: err?.message ?? String(err) });
+        }
       } else if (op === "project.analyze") {
-        // Team setup lives here, in the ratatui host: default analyst,
-        // real read-only analysis, SUGGESTED strategy. Never active — that
-        // stays the explicit `team.approve` act.
+        // Team setup lives here, in the ratatui host: default analyst
+        // (or the human's own pick from `project.preflight`'s catalog,
+        // via `cmd.analyst` — same clean modelRef shape the cockpit's
+        // ProjectOverlay onSelect builds), real read-only analysis,
+        // SUGGESTED strategy. Never active — that stays `team.approve`.
+        const requestedAnalyst = cmd?.analyst ?? null;
         writeOut({
           type: "notice",
           message: "Analyzing project team… (real read-only provider call, can take a minute)"
         });
-        const summary = await runTeamOp("project.analyze", () => analyzeProjectTeam({ cwd }));
+        const summary = await runTeamOp("project.analyze", () =>
+          analyzeProjectTeam({ cwd, analyst: requestedAnalyst })
+        );
         if (summary.notice) writeOut({ type: "notice", message: summary.notice });
         await emitSnapshot();
         writeOut({
