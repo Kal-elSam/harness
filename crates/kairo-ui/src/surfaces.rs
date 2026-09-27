@@ -2,7 +2,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget};
 use ratatui_textarea::TextArea;
@@ -372,13 +372,14 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
 /// in-UI equivalent of the cockpit's ProjectOverlay SELECT_ANALYST screen.
 /// Only **available** catalog rows are listed (unavailable adapters stay out).
 pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPickerState) {
-    let row_count = picker.options.len().max(1) as u16;
     let has_notice = picker.notice.is_some();
-    let height = row_count
-        .saturating_mul(2)
+    // One row per option (label only) — empty description lines used to
+    // inflate the modal with blank space.
+    let content_rows = picker.options.len().max(1) as u16;
+    let height = content_rows
         .saturating_add(if has_notice { 4 } else { 3 })
-        .min(area.height);
-    let width = area.width.saturating_sub(6).clamp(30, 70);
+        .min(area.height.saturating_sub(2).max(5));
+    let width = area.width.saturating_sub(6).clamp(36, 72);
     let popup = centered_rect(area, width, height);
     if popup.width == 0 || popup.height == 0 {
         return;
@@ -983,7 +984,11 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
 
-        let popup = centered_rect(area, area.width.saturating_sub(6).clamp(30, 70), 7);
+        let popup = centered_rect(
+            area,
+            area.width.saturating_sub(6).clamp(36, 72),
+            5, // 2 options + 3 chrome (single-line rows)
+        );
         let inner_y = popup.y + 1;
         let far_x = popup.x + popup.width - 2;
         assert_eq!(
