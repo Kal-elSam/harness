@@ -112,8 +112,8 @@ Neutral adapters needed before porting: `ink/use-orchestrator-data.js` (hook-bou
 
 | Capability | Now | Acceptance |
 |---|---|---|
-| Binary | built on demand with `cargo build --release` (`launch-ratatui-host.js`) | Clean install without Cargo launches |
-| darwin/linux × arm64/x64 selection | none | Correct prebuilt binary auto-selected; source build dev-only |
+| Binary | prebuilt under `dist/kairo-ui/<platform-arch>/kairo-ui`; cargo release is **dev-only fallback** when prebuilt missing | Clean install without Cargo launches |
+| darwin/linux × arm64/x64 selection | `resolvePrebuiltBinary` auto-selects; JS tests cover all 4 keys; host arch built locally; other keys CI/cross placeholders | Correct prebuilt binary auto-selected; source build dev-only |
 | Windows | explicit error (done) | Non-interactive CLI only |
 
 ### Phase 7 — retirement
@@ -166,7 +166,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] T2 In-UI team depth: analyst picker + per-role SUGGESTED editor (U4d)
 - [x] R6 Commands/dialogs via RPC extension-UI (abort + compact + extension_ui dialogs U3b)
 - [x] V3 Visual gate: fixture captures @60/100/160 reviewed OK by human (`2d2f834f9`) — **fixture mock only**; does **not** certify live provider runtime, packaging, or native RDD. Still gates R7 packaging claim until those are separate.
-- [ ] R7 Package binaries (darwin/linux); Windows `ui` error
+- [x] R7 Package binaries (darwin/linux); Windows `ui` error
 - [ ] R8 Final parity evidence
 - [ ] R9 Cutover default + strip Pi-TUI/cockpit as product UIs (**remote auth**)
 
@@ -181,7 +181,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
 - [x] U4 Workspace: **U4a+U4b+U4c+U4d done** (modes + plans + execute/cancel/handoff + slash + Work/Project/Tasks/Sessions + per-role SUGGESTED editor)
 - [x] U5 Operations + Settings views — U5a read-only Ops hub `5` + U5b mutations/Settings `6` (sync/rollback/runs cancel/alerts dismiss/reviews list; setup honest stub)
-- [ ] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
+- [x] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
 - [ ] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
 
 ## Progress
@@ -397,10 +397,17 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **Fixtures**: `60x30-ops` + `60x30-settings` in v3_capture (mock only).
   - **Verification (observed)**: `node --test test/ops-mutations.test.js test/settings-sidecar.test.js test/ops-sidecar.test.js test/kairo-ui-rpc-stdio.test.js` → **81/81**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **161/161**.
 
+- (2026-09-28) **U6 Packaging (STRICT TDD)** — Prebuilt host binaries + launch selection; no second UI host; no providers.
+  - **Resolver**: `src/global/host/kairo-ui-prebuilt.js` — `resolvePrebuiltBinary(platform, arch)` → `dist/kairo-ui/<darwin|linux>-<arm64|x64>/kairo-ui`.
+  - **Launch**: `launchRatatuiHost` prefers prebuilt (no Cargo.toml required) over `cargo build --release` (dev-only fallback when prebuilt missing). Windows `ui` error unchanged.
+  - **Build**: `scripts/build-kairo-ui-binaries.sh` (+ `npm run build:kairo-ui`); npm `files` includes `dist/kairo-ui`. Host arch built locally; other triples skipped honestly without cross toolchains (CI matrix documented in `dist/kairo-ui/README.md`).
+  - **PTY**: `scripts/kairo-ui-pty-e2e.py` runs 60×30 / 100×30 / 160×48 via real PTY + `TIOCSWINSZ`; mock sidecar; alt-screen enter/leave restore. Evidence: `/tmp/kairo-pty-u6/` (`SUMMARY.txt`, per-size `.typescript` + `.mock.log`).
+  - **Verification (observed)**: `node --test test/kairo-ui-prebuilt.test.js test/launch-ratatui-host.test.js` → **26/26**. `python3 scripts/kairo-ui-pty-e2e.py` → **PASS** all three sizes. Built binary: `dist/kairo-ui/darwin-arm64/kairo-ui` (others selection-tested only).
+
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + **U5 (a+b)**. Next: **visual check (Ops/Settings@60) → U6 → U7**. U2a/U2b wait for publish/auth. Full suite still not green (9 entry-host failures).
+**Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + U5 + **U6**. Next: **U7 retirement**.
 
-1. **Visual check** Ops@60 / Settings@60 fixtures (human).
-2. **U6** packaging binaries + PTY sizes; **U7** retirement after U6.
-3. **U2a/U2b** when publish / provider auth available.
+1. **U7** entries → ratatui only; strip `--pi` / `--legacy-cockpit` + exclusive Ink/cockpit/Pi-TUI deps; fix 9 stale entry-host tests.
+2. **U2a/U2b** when publish / provider auth available.
+3. Ops/Settings@60 human visual check remains optional (narrow paint WIP may still be local).

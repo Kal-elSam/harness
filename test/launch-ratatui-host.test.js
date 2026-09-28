@@ -289,6 +289,78 @@ test("launchRatatuiHost rebuilds when release binary is stale vs crate sources",
   assert.equal(seen.spawn, 1);
 });
 
+test("launchRatatuiHost prefers prebuilt over cargo when present", async () => {
+  const { packageRoot, crateDir, sidecarScript } = fakeCrateRoot();
+  const releasePath = resolveReleaseBinaryPath(crateDir, {});
+  const prebuiltRel = join("dist", "kairo-ui", "darwin-arm64", "kairo-ui");
+  const prebuiltPath = join(packageRoot, prebuiltRel);
+  mkdirSync(join(prebuiltPath, ".."), { recursive: true });
+  writeFileSync(prebuiltPath, "");
+
+  const calls = [];
+  await launchRatatuiHost({
+    cwd: "/abs/project",
+    interactive: true,
+    platform: "darwin",
+    arch: "arm64",
+    packageRoot,
+    crateDir,
+    existsSyncImpl: (p) =>
+      p === join(crateDir, "Cargo.toml") ||
+      p === releasePath ||
+      p === prebuiltPath ||
+      p === sidecarScript,
+    statImpl: okStat,
+    cargoBuildImpl: async () => {
+      calls.push("cargo");
+      return { status: 0 };
+    },
+    spawnImpl: async (command, args) => {
+      calls.push({ command, args });
+      return { status: 0 };
+    }
+  });
+
+  assert.deepEqual(calls, [{ command: prebuiltPath, args: ["--bridge"] }]);
+});
+
+test("launchRatatuiHost launches prebuilt without Cargo.toml (clean install)", async () => {
+  const root = mkdtempSync(join(tmpdir(), "kairo-ratatui-clean-"));
+  const sidecarDir = join(root, "src", "global", "host");
+  mkdirSync(sidecarDir, { recursive: true });
+  const sidecarScript = join(sidecarDir, "kairo-ui-rpc-stdio.js");
+  writeFileSync(sidecarScript, "// fixture\n");
+  const prebuiltPath = join(root, "dist", "kairo-ui", "linux-x64", "kairo-ui");
+  mkdirSync(join(prebuiltPath, ".."), { recursive: true });
+  writeFileSync(prebuiltPath, "");
+
+  let spawned = null;
+  let cargoCalls = 0;
+  await launchRatatuiHost({
+    cwd: "/abs/project",
+    interactive: true,
+    platform: "linux",
+    arch: "x64",
+    packageRoot: root,
+    crateDir: join(root, "crates", "kairo-ui"),
+    existsSyncImpl: (p) => p === prebuiltPath || p === sidecarScript,
+    statImpl: okStat,
+    cargoBuildImpl: async () => {
+      cargoCalls += 1;
+      return { status: 0 };
+    },
+    spawnImpl: async (command, args, options) => {
+      spawned = { command, args, options };
+      return { status: 0 };
+    }
+  });
+
+  assert.equal(cargoCalls, 0);
+  assert.equal(spawned.command, prebuiltPath);
+  assert.deepEqual(spawned.args, ["--bridge"]);
+  assert.equal(spawned.options.env.KAIRO_UI_RPC_SCRIPT, sidecarScript);
+});
+
 test("launchRatatuiHost fails closed on Windows and non-TTY", async () => {
   await assert.rejects(
     () => launchRatatuiHost({
