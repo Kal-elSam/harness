@@ -30,10 +30,25 @@ impl WorkspaceView {
     }
 
     pub fn chrome_title(self) -> String {
-        format!(
-            " 1 Work · 2 Project · 3 Tasks · 4 Sessions · 5 Ops · 6 Settings  · {} ",
-            self.label()
-        )
+        self.chrome_title_for_width(160)
+    }
+
+    /// Width-aware chrome so the active view and `6 Settings` stay visible at 60 cols.
+    /// Active label comes first — Block titles clip from the right.
+    pub fn chrome_title_for_width(self, width: u16) -> String {
+        let active = self.label();
+        let budget = (width.saturating_sub(2) as usize).max(8);
+        let wide = format!(
+            " 1 Work · 2 Project · 3 Tasks · 4 Sessions · 5 Ops · 6 Settings  · {active} "
+        );
+        if wide.chars().count() <= budget {
+            return wide;
+        }
+        let mid = format!(" {active} · 1 Work · 2 Proj · 3 Tasks · 4 Sess · 5 Ops · 6 Set ");
+        if mid.chars().count() <= budget {
+            return mid;
+        }
+        format!(" {active} · 1·2·3·4 · 5 Ops · 6 Set ")
     }
 }
 
@@ -101,5 +116,19 @@ mod tests {
         assert!(title.contains("5 Ops"));
         assert!(title.contains("6 Settings"));
         assert!(title.contains("Operations"));
+    }
+
+    #[test]
+    fn chrome_at_60_keeps_active_and_settings_key() {
+        let ops = WorkspaceView::Operations.chrome_title_for_width(60);
+        assert!(ops.starts_with(" Operations") || ops.contains("Operations"));
+        assert!(ops.contains("5 Ops"));
+        assert!(ops.contains("6 Set"));
+        assert!(ops.chars().count() <= 58);
+
+        let settings = WorkspaceView::Settings.chrome_title_for_width(60);
+        assert!(settings.contains("Settings"));
+        assert!(settings.contains("6 Set"));
+        assert!(settings.chars().count() <= 58);
     }
 }

@@ -1,0 +1,32 @@
+# FIXTURE mock — not live provider
+# size/scenario: 60x30-settings
+┌ Settings · 1·2·3·4 · 5 Ops · 6 Set ──────────────────────┐
+│Profile                                                   │
+│  PROFILE                                                 │
+│  applyMode · prompt                                      │
+│  tokenBudget · 4000                                      │
+│                                                          │
+│Integrations                                              │
+│  available · Pi usage widget · 0.2.1 · MIT               │
+│  selected · pi-usage-widget (Enter confirm intent)       │
+│                                                          │
+│Connections                                               │
+│  ok · Cursor MCP (fixture)                               │
+│                                                          │
+│Setup                                                     │
+│  [not wired] use `kairo setup` (UI not wired)            │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│Esc → Work · ↑↓ browse · Enter preview · y/n confirm      │
+└──────────────────────────────────────────────────────────┘

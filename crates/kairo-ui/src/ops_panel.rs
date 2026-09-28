@@ -381,6 +381,59 @@ fn push_section(out: &mut Vec<String>, title: &str, lines: &[String]) {
     }
 }
 
+/// Wrap panel body text to `width` without a line cap (unlike footer hints).
+pub fn wrap_panel_body_line(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+    if text.chars().count() <= width {
+        return vec![text.to_string()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+        if candidate.chars().count() > width && !current.is_empty() {
+            out.push(std::mem::take(&mut current));
+            if word.chars().count() > width {
+                let mut chunk = String::new();
+                for ch in word.chars() {
+                    if chunk.chars().count() >= width {
+                        out.push(std::mem::take(&mut chunk));
+                    }
+                    chunk.push(ch);
+                }
+                current = chunk;
+            } else {
+                current = word.to_string();
+            }
+        } else if word.chars().count() > width && current.is_empty() {
+            let mut chunk = String::new();
+            for ch in word.chars() {
+                if chunk.chars().count() >= width {
+                    out.push(std::mem::take(&mut chunk));
+                }
+                chunk.push(ch);
+            }
+            current = chunk;
+        } else {
+            current = candidate;
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
 /// Wrap action hints on ` · ` (≤2 lines) so Esc/refresh stay visible at 60 cols.
 pub fn wrap_ops_hint_lines(hints: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
