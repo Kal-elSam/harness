@@ -5,6 +5,10 @@
  *   { "op": "prompt", "message": "..." }  — U4a: routes through service.submitTask
  *     with the active session's WorkMode (ask|plan|agent); never Pi `prompt`
  *   { "op": "set_mode", "mode": "ask"|"plan"|"agent" }  — persist under activeKairoSessionId
+ *   { "op": "plans.list" }  — U4b: timeline via service.snapshot (session-scoped)
+ *   { "op": "plans.show", "taskId": "..." }  — U4b: showPlan (taskMarkdown+planMarkdown)
+ *   { "op": "plans.decide", "taskId": "...", "decision": "approved"|"rejected" }
+ *     — U4b: decidePlan + refresh list; never executePlan / planExecution
  *   { "op": "abort" }
  *   { "op": "compact" }
  *   { "op": "cycle_model" }
@@ -51,6 +55,9 @@
  * stdout records (JSONL): { type: "ready", engine, snapshot?, kairoModels?, sessions?, draft? },
  * { type: "mode", mode } (ask|plan|agent — emitted on ready/switch/new/fork/set_mode),
  * { type: "task_result", kind: "answer"|"plan", ... } (U4a submitTask outcome; never execute),
+ * { type: "plans", timeline } (U4b list / post-decide / post-plan refresh),
+ * { type: "plan_detail", taskId, taskMarkdown, planMarkdown, state, ... } (U4b show),
+ * { type: "plan_decision", taskId, decision, state, ... } (U4b decide),
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
  * { type: "draft", text, kairoSessionId }, { type: "kairoModels", kairoModels },
  * { type: "team", op, ok, state, teamRows, roles, analyst },
@@ -112,6 +119,16 @@ import { createConversationService } from "../conversation/service.js";
 
 /** Fail-closed WorkMode values — same set as session-registry / cockpit. */
 const WORK_MODES = new Set(["ask", "plan", "agent"]);
+
+/** U4b: decidePlan only accepts these — never execute / handoff. */
+const PLAN_DECISIONS = new Set(["approved", "rejected"]);
+
+/**
+ * Notice after a PLAN/AGENT submitTask plan outcome. Uses y/n (not `a`) so
+ * ratatui team analyze (`a`) / approve (`A`) never clash with plan decide.
+ */
+export const PLAN_REQUESTED_NOTICE =
+  "Plan requested from Codex. Press p for plans, then y to approve or n to reject.";
 
 /**
  * @param {unknown} mode
@@ -222,6 +239,9 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut) {
  * @param {typeof saveDraftDefault} [options.saveDraft]
  * @param {(args: { cwd: string, mode: "ask"|"plan"|"agent", sessionId?: string|null }) => Promise<object>} [options.setMode]
  * @param {(args: { cwd: string, task: string, mode?: string|null, sessionId?: string|null }) => Promise<object>} [options.submitTask]
+ * @param {(args: { cwd: string, sessionId?: string|null }) => Promise<object>} [options.snapshot]
+ * @param {(args: { cwd: string, taskId: string, sessionId?: string|null }) => Promise<object>} [options.showPlan]
+ * @param {(args: { cwd: string, taskId: string, decision: "approved"|"rejected", sessionId?: string|null }) => Promise<object>} [options.decidePlan]
  */
 export async function runKairoUiRpcStdio({
   stdin = process.stdin,
@@ -248,7 +268,10 @@ export async function runKairoUiRpcStdio({
   loadDraft: loadDraftImpl = loadDraftDefault,
   saveDraft: saveDraftImpl = saveDraftDefault,
   setMode: setModeImpl = (args) => defaultConversation().setMode(args),
-  submitTask: submitTaskImpl = (args) => defaultConversation().submitTask(args)
+  submitTask: submitTaskImpl = (args) => defaultConversation().submitTask(args),
+  snapshot: snapshotImpl = (args) => defaultConversation().snapshot(args),
+  showPlan: showPlanImpl = (args) => defaultConversation().showPlan(args),
+  decidePlan: decidePlanImpl = (args) => defaultConversation().decidePlan(args)
 } = {}) {
   const bridge = await openBridge({ cwd });
   let kairoModels = [];
@@ -478,6 +501,17 @@ export async function runKairoUiRpcStdio({
     }
   };
 
+  /** Emit session-scoped plan timeline (U4b). */
+  const emitPlansList = async () => {
+    const snap = await snapshotImpl({
+      cwd,
+      sessionId: activeKairoSessionId
+    });
+    const timeline = Array.isArray(snap?.timeline) ? snap.timeline : [];
+    writeOut({ type: "plans", timeline });
+    return timeline;
+  };
+
   const handleLine = async (line) => {
     if (!line.trim() || stopped) return;
     let cmd;
@@ -523,8 +557,17 @@ export async function runKairoUiRpcStdio({
           });
           writeOut({
             type: "notice",
-            message: "Plan requested from Codex. Review it below, then press a to approve."
+            message: PLAN_REQUESTED_NOTICE
           });
+          // U4b: refresh the plan/timeline list so the host can open it.
+          try {
+            await emitPlansList();
+          } catch (listErr) {
+            writeOut({
+              type: "error",
+              message: `plans.list after plan failed: ${listErr?.message ?? listErr}`
+            });
+          }
         }
       } else if (op === "set_mode") {
         const raw = cmd?.mode;
@@ -545,6 +588,65 @@ export async function runKairoUiRpcStdio({
             message: `Mode change not saved: ${err?.message ?? String(err)}`
           });
         }
+      } else if (op === "plans.list") {
+        await emitPlansList();
+      } else if (op === "plans.show") {
+        const taskId = typeof cmd.taskId === "string" ? cmd.taskId : "";
+        if (!taskId) {
+          writeOut({ type: "error", message: "plans.show requires taskId" });
+          return;
+        }
+        const plan = await showPlanImpl({
+          cwd,
+          taskId,
+          sessionId: activeKairoSessionId
+        });
+        writeOut({
+          type: "plan_detail",
+          taskId: plan?.taskId ?? taskId,
+          state: plan?.state ?? null,
+          approval: plan?.approval ?? null,
+          taskMarkdown: plan?.taskMarkdown ?? null,
+          planMarkdown: plan?.planMarkdown ?? null,
+          planReady: plan?.planReady ?? false,
+          sessionId: plan?.sessionId ?? null
+        });
+      } else if (op === "plans.decide") {
+        const taskId = typeof cmd.taskId === "string" ? cmd.taskId : "";
+        const decision = cmd?.decision;
+        if (!taskId) {
+          writeOut({ type: "error", message: "plans.decide requires taskId" });
+          return;
+        }
+        if (!PLAN_DECISIONS.has(decision)) {
+          writeOut({
+            type: "error",
+            message: 'Decision must be "approved" or "rejected".'
+          });
+          return;
+        }
+        const decided = await decidePlanImpl({
+          cwd,
+          taskId,
+          decision,
+          sessionId: activeKairoSessionId
+        });
+        writeOut({
+          type: "plan_decision",
+          taskId: decided?.taskId ?? taskId,
+          decision,
+          state: decided?.state ?? decision,
+          approval: decided?.approval ?? null,
+          sessionId: decided?.sessionId ?? null
+        });
+        writeOut({
+          type: "notice",
+          message:
+            decision === "approved"
+              ? `Plan ${taskId} approved.`
+              : `Plan ${taskId} rejected.`
+        });
+        await emitPlansList();
       } else if (op === "abort") {
         await bridge.request({ type: "abort" });
       } else if (op === "compact") {

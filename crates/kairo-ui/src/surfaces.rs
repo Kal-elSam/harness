@@ -11,6 +11,7 @@ use crate::analyst_picker::AnalystPickerState;
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
 use crate::extension_ui::{ExtensionUiDialog, ExtensionUiMethod};
 use crate::layout::{split_work_main, ShellRegions};
+use crate::plan_list::PlanListState;
 use crate::recovery_picker::RecoveryPreviewState;
 use crate::session_picker::SessionPickerState;
 
@@ -811,6 +812,147 @@ pub fn render_recovery_preview(buf: &mut Buffer, area: Rect, preview: &RecoveryP
         }
     }
     if let Some(notice) = &preview.notice {
+        let notice_style = Style::default()
+            .fg(tone::WARN)
+            .add_modifier(Modifier::BOLD)
+            .bg(tone::SIDEBAR_BG);
+        lines.extend(wrap_notice(notice, inner.width, notice_style));
+    }
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .render(inner, buf);
+}
+
+/// U4b: plans / timeline list + optional Markdown detail. Footer hints come
+/// from `PlanListState::footer_hints` (y/n, never `a` for approve).
+pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, work_mode: &str) {
+    let width = area.width.saturating_sub(4).clamp(44, 84);
+    let hints = plans.footer_hints(work_mode);
+    let notice_rows = plans
+        .notice
+        .as_deref()
+        .map(|n| wrap_notice(n, width.saturating_sub(2), Style::default()).len() as u16)
+        .unwrap_or(0);
+
+    if let Some(detail) = &plans.detail {
+        let md_lines: Vec<&str> = detail.markdown.lines().collect();
+        let content_rows = (md_lines.len().max(1) as u16).saturating_add(2);
+        let height = content_rows
+            .saturating_add(3 + notice_rows)
+            .min(area.height.saturating_sub(2).max(8));
+        let popup = centered_rect(area, width, height);
+        if popup.width == 0 || popup.height == 0 {
+            return;
+        }
+        Clear.render(popup, buf);
+        let title = format!(
+            " Plan {} · {} — Esc close detail ",
+            detail.task_id.chars().take(8).collect::<String>(),
+            detail.state
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(tone::BORDER_FOCUS))
+            .style(Style::default().bg(tone::SIDEBAR_BG))
+            .title(Span::styled(
+                title,
+                Style::default()
+                    .fg(tone::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        let inner = block.inner(popup);
+        block.render(popup, buf);
+        if inner.height == 0 || inner.width == 0 {
+            return;
+        }
+        let mut lines: Vec<Line> = Vec::new();
+        for line in md_lines.iter().take(inner.height.saturating_sub(1) as usize) {
+            lines.push(padded_span(
+                line,
+                inner.width,
+                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+            ));
+        }
+        if lines.is_empty() {
+            lines.push(padded_span(
+                "(empty)",
+                inner.width,
+                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            ));
+        }
+        if let Some(notice) = &plans.notice {
+            let notice_style = Style::default()
+                .fg(tone::WARN)
+                .add_modifier(Modifier::BOLD)
+                .bg(tone::SIDEBAR_BG);
+            lines.extend(wrap_notice(notice, inner.width, notice_style));
+        }
+        // Keep one footer hint row when space remains.
+        if (lines.len() as u16) < inner.height {
+            lines.push(padded_span(
+                &hints,
+                inner.width,
+                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            ));
+        }
+        Paragraph::new(lines)
+            .style(Style::default().bg(tone::SIDEBAR_BG))
+            .render(inner, buf);
+        return;
+    }
+
+    let content_rows = plans.rows.len().max(1) as u16;
+    let height = content_rows
+        .saturating_add(4 + notice_rows)
+        .min(area.height.saturating_sub(2).max(6));
+    let popup = centered_rect(area, width, height);
+    if popup.width == 0 || popup.height == 0 {
+        return;
+    }
+    Clear.render(popup, buf);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .title(Span::styled(
+            format!(" Plans / tasks — {hints} "),
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    if plans.rows.is_empty() {
+        lines.push(padded_span(
+            "No plans for this session yet.",
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
+    } else {
+        for (i, row) in plans.rows.iter().enumerate() {
+            let selected = i == plans.selected;
+            let row_style = if selected {
+                Style::default()
+                    .fg(tone::TEXT)
+                    .bg(tone::SELECT_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+            };
+            let marker = if selected { "› " } else { "  " };
+            lines.push(padded_span(
+                &format!("{marker}{}", row.row_label()),
+                inner.width,
+                row_style,
+            ));
+        }
+    }
+    if let Some(notice) = &plans.notice {
         let notice_style = Style::default()
             .fg(tone::WARN)
             .add_modifier(Modifier::BOLD)
