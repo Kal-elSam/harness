@@ -11,6 +11,7 @@ use crate::analyst_picker::AnalystPickerState;
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
 use crate::extension_ui::{ExtensionUiDialog, ExtensionUiMethod};
 use crate::layout::{split_work_main, ShellRegions};
+use crate::execution_flow::{ConfirmExecuteState, RoleSelectState};
 use crate::plan_list::PlanListState;
 use crate::recovery_picker::RecoveryPreviewState;
 use crate::session_picker::SessionPickerState;
@@ -1016,6 +1017,123 @@ fn wrap_text_segment(segment: &str, width: usize) -> Vec<String> {
 /// is indented by 2 spaces, so the wrapped block still reads as one
 /// visual unit and no cause is clipped at the pane width. Returns owned
 /// `Line`s so scroll offsets and popup sizing count real screen rows.
+
+/// U4c: role picker before planExecution preview.
+pub fn render_role_select(buf: &mut Buffer, area: Rect, state: &RoleSelectState) {
+    let width = area.width.saturating_sub(6).clamp(36, 64);
+    let content_rows = (state.roles.len().max(1) as u16).saturating_add(2);
+    let height = content_rows
+        .saturating_add(3)
+        .min(area.height.saturating_sub(2).max(6));
+    let popup = centered_rect(area, width, height);
+    if popup.width == 0 || popup.height == 0 {
+        return;
+    }
+    Clear.render(popup, buf);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .title(Span::styled(
+            " Which role is this task for? ",
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, role) in state.roles.iter().enumerate() {
+        let marker = if i == state.selected { "> " } else { "  " };
+        let style = if i == state.selected {
+            Style::default()
+                .fg(tone::ACCENT)
+                .bg(tone::SELECT_BG)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+        };
+        lines.push(padded_span(&format!("{marker}{role}"), inner.width, style));
+    }
+    if lines.is_empty() {
+        lines.push(padded_span(
+            "(no roles)",
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
+    }
+    lines.push(padded_span(
+        state.footer_hints(),
+        inner.width,
+        Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+    ));
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .render(inner, buf);
+}
+
+/// U4c: confirm-execute nested modal — owns y/n so list approve/reject never fires.
+pub fn render_confirm_execute(buf: &mut Buffer, area: Rect, state: &ConfirmExecuteState) {
+    let width = area.width.saturating_sub(6).clamp(40, 76);
+    let prompt = state.prompt_lines();
+    let content_rows = prompt.len().max(1) as u16;
+    let height = content_rows
+        .saturating_add(3)
+        .min(area.height.saturating_sub(2).max(6));
+    let popup = centered_rect(area, width, height);
+    if popup.width == 0 || popup.height == 0 {
+        return;
+    }
+    Clear.render(popup, buf);
+    let title = if state.can_confirm() {
+        " Confirm execute "
+    } else {
+        " Cannot auto-execute "
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, line) in prompt.iter().enumerate() {
+        let style = if i == 0 {
+            Style::default()
+                .fg(if state.can_confirm() {
+                    tone::WARN
+                } else {
+                    tone::ERROR
+                })
+                .add_modifier(Modifier::BOLD)
+                .bg(tone::SIDEBAR_BG)
+        } else {
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
+        };
+        lines.push(padded_span(line, inner.width, style));
+    }
+    lines.push(padded_span(
+        state.footer_hints(),
+        inner.width,
+        Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+    ));
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .render(inner, buf);
+}
+
 fn wrap_notice(notice: &str, inner_width: u16, style: Style) -> Vec<Line<'static>> {
     // "⚠ " and "  " are both 2 columns, so the wrap width is the same
     // whether a line is the leading prefix or a continuation indent.

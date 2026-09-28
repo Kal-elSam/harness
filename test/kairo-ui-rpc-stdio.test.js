@@ -3430,3 +3430,476 @@ test("U4b: plans.decide rejects invalid decision without calling decidePlan", as
   stdin.end();
   await runPromise;
 });
+
+// ---------------------------------------------------------------------------
+// U4c: role → planExecution preview → confirm execute / cancel / MANUAL_HANDOFF
+// ---------------------------------------------------------------------------
+
+const CONFIRM_TARGET = {
+  role: "Builder",
+  selection: "assigned",
+  strategyFingerprint: "fp-1",
+  candidateKey: "codex::gpt-6-astra"
+};
+
+function openBridgeWithModel() {
+  return mockOpenBridge(() =>
+    createFakeRpcChild({
+      onCommand: (cmd, ctx) => {
+        if (cmd.type === "get_state") {
+          return {
+            type: "response",
+            command: "get_state",
+            success: true,
+            data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+          };
+        }
+        if (cmd.type === "set_model") {
+          if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+          return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+        }
+        return null;
+      }
+    })
+  );
+}
+
+test("U4c: plans.preview calls planExecution with role+sessionId and emits plan_preview", async () => {
+  const previewCalls = [];
+  const executeCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "agent" }),
+    planExecution: async (args) => {
+      previewCalls.push(args);
+      return {
+        decision: "ROUTED",
+        role: "Builder",
+        provider: "codex",
+        model: "gpt-6-astra",
+        why: "reasoning task",
+        confirmationTarget: CONFIRM_TARGET,
+        taskPrompt: null
+      };
+    },
+    executePlan: async (args) => {
+      executeCalls.push(args);
+      return { taskId: args.taskId };
+    },
+    openBridge: openBridgeWithModel()
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.preview", taskId: "task-1", role: "Builder" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.deepEqual(previewCalls, [
+    { cwd: "/project", taskId: "task-1", role: "Builder", sessionId: KAIRO_ID_A }
+  ]);
+  assert.equal(executeCalls.length, 0, "ROUTED preview must never auto-execute");
+  const preview = out.find((r) => r.type === "plan_preview");
+  assert.ok(preview, "plans.preview must emit plan_preview");
+  assert.equal(preview.decision, "ROUTED");
+  assert.equal(preview.taskId, "task-1");
+  assert.deepEqual(preview.confirmationTarget, CONFIRM_TARGET);
+  assert.equal(preview.autoExecuted, false);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4c: WAIT_FOR_PROJECT_TEAM + suggested-alternative auto-executes without y/n gate", async () => {
+  const altTarget = {
+    role: "Builder",
+    selection: "suggested-alternative",
+    strategyFingerprint: "fp-1",
+    candidateKey: "claude::claude-opus-5"
+  };
+  const executeCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "agent" }),
+    planExecution: async () => ({
+      decision: "WAIT_FOR_PROJECT_TEAM",
+      role: "Builder",
+      provider: null,
+      model: null,
+      why: "assigned unavailable",
+      confirmationTarget: altTarget,
+      blockedAssignment: { provider: "codex", model: { displayName: "GPT-6 Astra" } },
+      suggestedAlternative: { provider: "claude", model: { displayName: "Claude Opus" } },
+      taskPrompt: null
+    }),
+    executePlan: async (args) => {
+      executeCalls.push(args);
+      return {
+        taskId: args.taskId,
+        execution: { state: "starting", active: true, runId: "run-1" }
+      };
+    },
+    snapshot: async () => ({
+      timeline: [
+        fakePlanRow({
+          taskId: "task-1",
+          state: "approved",
+          approval: "approved",
+          execution: { state: "starting", active: true, runId: "run-1", provider: "claude" }
+        })
+      ],
+      projectStrategy: {
+        status: "active",
+        projectTeam: [{ role: "Builder" }, { role: "Reviewer" }]
+      }
+    }),
+    openBridge: openBridgeWithModel()
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.preview", taskId: "task-1", role: "Builder" })}\n`);
+  await new Promise((r) => setTimeout(r, 100));
+
+  assert.equal(executeCalls.length, 1, "suggested-alternative must auto-executePlan");
+  assert.deepEqual(executeCalls[0].confirmationTarget, altTarget);
+  const preview = out.find((r) => r.type === "plan_preview");
+  assert.equal(preview?.autoExecuted, true);
+  assert.ok(out.some((r) => r.type === "plan_execute"));
+  assert.ok(
+    out.some((r) => r.type === "notice" && /falling back/i.test(r.message ?? "")),
+    "must narrate the automatic fallback"
+  );
+  assert.ok(out.some((r) => r.type === "plans"), "must refresh plans after auto-execute");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4c: MANUAL_HANDOFF preview emits taskPrompt and never calls executePlan", async () => {
+  const executeCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "agent" }),
+    planExecution: async () => ({
+      decision: "MANUAL_HANDOFF",
+      role: "Builder",
+      provider: "cursor",
+      model: "cursor-model",
+      why: "cursor isn't executable by Kairo automatically",
+      confirmationTarget: null,
+      taskPrompt: "# Plan\n\nImplement the explicitly approved architecture plan\n",
+      modelRef: { displayName: "Cursor Composer" }
+    }),
+    executePlan: async (args) => {
+      executeCalls.push(args);
+      return {};
+    },
+    openBridge: openBridgeWithModel()
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.preview", taskId: "task-1", role: "Builder" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.equal(executeCalls.length, 0);
+  const preview = out.find((r) => r.type === "plan_preview");
+  assert.equal(preview?.decision, "MANUAL_HANDOFF");
+  assert.equal(preview?.confirmationTarget, null);
+  assert.match(preview?.taskPrompt ?? "", /# Plan/);
+  assert.equal(preview?.autoExecuted, false);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4c: plans.execute requires confirmationTarget; stale reject surfaces error; success refreshes plans", async () => {
+  const executeCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "agent" }),
+    executePlan: async (args) => {
+      executeCalls.push(args);
+      if (!args.confirmationTarget) {
+        throw new Error("confirmationTarget from a fresh planExecution is required");
+      }
+      if (args.confirmationTarget.strategyFingerprint === "stale") {
+        throw new Error("confirmationTarget no longer matches the current route");
+      }
+      return {
+        taskId: args.taskId,
+        execution: { state: "starting", active: true, runId: "run-9" }
+      };
+    },
+    snapshot: async () => ({
+      timeline: [
+        fakePlanRow({
+          taskId: "task-1",
+          state: "approved",
+          approval: "approved",
+          execution: { state: "starting", active: true, runId: "run-9", provider: "codex" }
+        })
+      ],
+      projectStrategy: { status: "active", projectTeam: [{ role: "Builder" }] }
+    }),
+    openBridge: openBridgeWithModel()
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.execute", taskId: "task-1" })}\n`);
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(executeCalls.length, 0);
+  assert.match(
+    [...out].reverse().find((r) => r.type === "error")?.message ?? "",
+    /confirmationTarget/i
+  );
+
+  stdin.write(
+    `${JSON.stringify({
+      op: "plans.execute",
+      taskId: "task-1",
+      confirmationTarget: { ...CONFIRM_TARGET, strategyFingerprint: "stale" }
+    })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(executeCalls.length, 1);
+  assert.match(
+    [...out].reverse().find((r) => r.type === "error")?.message ?? "",
+    /no longer matches|confirmationTarget/i
+  );
+
+  stdin.write(
+    `${JSON.stringify({
+      op: "plans.execute",
+      taskId: "task-1",
+      confirmationTarget: CONFIRM_TARGET
+    })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 80));
+  assert.equal(executeCalls.length, 2);
+  assert.deepEqual(executeCalls[1], {
+    cwd: "/project",
+    taskId: "task-1",
+    confirmationTarget: CONFIRM_TARGET,
+    sessionId: KAIRO_ID_A
+  });
+  assert.ok(out.some((r) => r.type === "plan_execute" && r.taskId === "task-1"));
+  assert.ok(out.some((r) => r.type === "plans"));
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4c: plans.cancel calls cancelExecution and refreshes plans", async () => {
+  const cancelCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "agent" }),
+    cancelExecution: async (args) => {
+      cancelCalls.push(args);
+      return { taskId: args.taskId, execution: { state: "cancelled", active: false } };
+    },
+    snapshot: async () => ({
+      timeline: [
+        fakePlanRow({
+          taskId: "task-1",
+          state: "approved",
+          approval: "approved",
+          execution: { state: "cancelled", active: false, provider: "claude" }
+        })
+      ],
+      projectStrategy: { status: "active", projectTeam: [{ role: "Builder" }] }
+    }),
+    openBridge: openBridgeWithModel()
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.cancel", taskId: "task-1" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  assert.deepEqual(cancelCalls, [{ cwd: "/project", taskId: "task-1" }]);
+  assert.ok(out.some((r) => r.type === "plan_cancel" && r.taskId === "task-1"));
+  assert.ok(out.some((r) => r.type === "plans"));
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4c: plans.transcript tails readRunTranscript entries", async () => {
+  const transcriptCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "agent" }),
+    readRunTranscript: async (args) => {
+      transcriptCalls.push(args);
+      return {
+        runId: args.runId,
+        nextIndex: 2,
+        entries: [
+          { provider: "claude", timestamp: "t1", text: "line one" },
+          { provider: "claude", timestamp: "t2", text: "line two" }
+        ]
+      };
+    },
+    openBridge: openBridgeWithModel()
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.transcript", runId: "run-1", sinceIndex: 0 })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.deepEqual(transcriptCalls, [{ runId: "run-1", sinceIndex: 0 }]);
+  const tr = out.find((r) => r.type === "run_transcript");
+  assert.ok(tr);
+  assert.equal(tr.runId, "run-1");
+  assert.equal(tr.nextIndex, 2);
+  assert.equal(tr.entries.length, 2);
+  assert.equal(tr.entries[0].text, "line one");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4c: plans.list includes projectTeamRoles from active strategy", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "agent" }),
+    snapshot: async () => ({
+      timeline: [fakePlanRow({ state: "approved", approval: "approved" })],
+      projectStrategy: {
+        status: "active",
+        projectTeam: [{ role: "Builder" }, { role: "Reviewer" }]
+      }
+    }),
+    openBridge: openBridgeWithModel()
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.list" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  const plans = out.find((r) => r.type === "plans");
+  assert.deepEqual(plans?.projectTeamRoles, ["Builder", "Reviewer"]);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4c: plans.preview requires taskId and role", async () => {
+  const previewCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    planExecution: async (args) => {
+      previewCalls.push(args);
+      return {};
+    },
+    openBridge: openBridgeWithModel()
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.preview", taskId: "task-1" })}\n`);
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(previewCalls.length, 0);
+  assert.match([...out].reverse().find((r) => r.type === "error")?.message ?? "", /role/i);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
