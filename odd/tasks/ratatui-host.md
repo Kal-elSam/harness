@@ -185,7 +185,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - [x] U6a CI artifacts + assemble: `host-v3-capture` uploads `kairo-ui-bin-<key>-<github.sha>`; `assemble` (needs matrix) places 4 binaries, `chmod +x`, `npm pack`, asserts 4 keys via `tar -tzf`, uploads `kairo-ui-package-<github.sha>` — **authored + statically tested** (`test/kairo-ui-packaged-verify.test.js`); **not run on GitHub runners**
   - [x] U6b Native-runner package verification: `verify-package` matrix (4 runner/key pairs, needs `assemble`) runs `scripts/verify-kairo-ui-packaged.sh` on the extracted tarball; script proven locally on darwin-arm64 against a real `npm pack` (selection, no-cargo launch, `--v3-capture` 52 files, PTY 60x30/100x30/160x48). Workflow execution on other runners **pending / unverified**
   - [x] U6c Docs/header: stale "not wired" comment in `scripts/build-kairo-ui-binaries.sh` fixed; `dist/kairo-ui/README.md` describes the pipeline honestly (authored, not yet observed green)
-  - [ ] U6d Observe `kairo-ui-prebuilt.yml` green on all four GitHub runners (needs a user-authorized `workflow_dispatch`)
+  - [x] U6d Observe `kairo-ui-prebuilt.yml` green on all four GitHub runners (run 36486806394, sha 1ee2c28c8)
 - [x] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
 
 ## Progress
@@ -463,3 +463,5 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   | linux-arm64 | ~1.3M ELF aarch64 | PASS (selection + npm-pack) | GAP locally; CI `ubuntu-24.04-arm` in matrix (manual dispatch) |
 
 - (2026-09-28) **U6a/U6b/U6c review assessment** — range `b365bb5cd..449de9639`: tier **high** (`executable_mode`, `process_boundary`, `shell_source`), 449 lines. Native consent envelope presented; user chose **Skip this time** (`declined_this_candidate`). No review record created; workflow still **not observed on GitHub runners** (U6d pending, needs `workflow_dispatch` authorization).
+
+- (2026-09-28) **U6d observed** — workflow registered on `main` via minimal PR #354 (only `kairo-ui-prebuilt.yml`, squash-merged after CI green on Node 22/24), then dispatched with `--ref feat/ratatui-host`. Run `36486806394` on `1ee2c28c8`: 4 build jobs, `Assemble npm package`, and 4 `Verify packaged host` jobs all **success**. Each native runner (darwin-arm64, darwin-x64, linux-x64, linux-arm64) logged selection from the extracted tarball, launch without cargo OK, `v3-capture: 52 files`, and PTY mock-sidecar PASS at 60x30/100x30/160x48 with terminal restore. Scope: mock sidecar only — does NOT prove real providers. **U6 packaging checked; total product parity still NOT declared** (U2a/U2b, setup-in-ratatui, runs/reviews detail, R9 remain open). Non-blocking: Node 20 deprecation annotation on `upload/download-artifact@v4`.
