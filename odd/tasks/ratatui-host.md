@@ -165,7 +165,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] T1 In-UI project team: headless analyze with the default analyst (`a`) + approve (`A`) + Architect reapply, driven from ratatui — cockpit is never required or recommended
 - [~] T2 In-UI team depth: analyst picker in ratatui done (this slice); per-role editor still out
 - [x] R6 Commands/dialogs via RPC extension-UI (abort + compact + extension_ui dialogs U3b)
-- [ ] V3 Visual gate: color captures @60/100/160 with conversation, agents, USAGE, error notice — **your approval** (blocks R7)
+- [ ] V3 Visual gate: color captures @60/100/160 with conversation, agents, USAGE, error notice — **captures produced, pending human review** (blocks R7; **not approved**)
 - [ ] R7 Package binaries (darwin/linux); Windows `ui` error
 - [ ] R8 Final parity evidence
 - [ ] R9 Cutover default + strip Pi-TUI/cockpit as product UIs (**remote auth**)
@@ -367,9 +367,15 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **Verification (observed)**: `node --test test/kairo-ui-rpc-stdio.test.js` → **63/63**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **148/148**.
   - Out of scope (still open): V3 visual; U5 ops views.
 
+- (2026-09-28) **V3 visual captures produced (NOT approved)** — Deterministic Buffer dumps at 60×30 / 100×30 / 160×48 for conversation, tools, plans, dialog, error. FIXTURE mock — not live provider. Sidebar collapsed note at 60 cols; agents+USAGE when ≥90.
+  - Artifacts: `docs/assets/v3-visual-fixtures/<size>-<scenario>.{ansi,txt,html}` + README.
+  - Harness: `crates/kairo-ui/src/v3_capture.rs` via `kairo-ui --v3-capture`; regenerate with `scripts/kairo-ui-v3-capture`. Optional sidecar `scripts/fixtures/kairo-ui-v3-visual-mock-sidecar.mjs` (never contacts Pi).
+  - Checkbox **[ ] V3** stays unchecked — awaiting human review. Do not reopen U4.
+  - Verification (observed): `cargo test v3_capture` → pass; capture exits 0 and writes 46 files; spot-check `.txt` cues for conversation/tool/plan/dialog/error.
+
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 + **U4 closed**. Next: V3 visual polish and/or U5 operations views. U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green (9 entry-host failures).
+**Plan 2026-09-28 (amended):** Phase 3 + **U4 closed**. **V3 captures ready for human review** (not approved). Next: human V3 verdict and/or U5 operations views. U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green (9 entry-host failures).
 
-1. **V3** visual polish @60/100/160 (or **U5** ops views).
+1. **Human review of V3** fixtures @60/100/160 (or **U5** ops views in parallel).
 2. **U2a/U2b** when publish / provider auth available; **U5→U6→U7** under `feature-branch-chain`.

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Regenerate V3 visual fixture captures (Buffer dump — not live provider).
+# V3 is NOT approved by running this; artifacts await human review.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OUT="${1:-$ROOT/docs/assets/v3-visual-fixtures}"
+cd "$ROOT/crates/kairo-ui"
+unset CARGO_TARGET_DIR
+cargo run --release -- --v3-capture "$OUT"
+echo "V3 fixtures ready under $OUT (NOT approved — awaiting human review)"

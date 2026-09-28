@@ -1,0 +1,32 @@
+# FIXTURE mock — not live provider
+# size/scenario: 100x30-tools
+ ◈ V3-FIXTURE ─────────────┐┌ Chat ────────────────────────────────────────────────────────────────┐
+AGENTS                     ││you: FIXTURE: outline the auth plan                                   │
+○ Architect                ││thinking: FIXTURE thinking — weighing OAuth vs session cookies        │
+  idle                     ││assistant: FIXTURE assistant — propose OAuth login with refresh tokens│
+✖ Builder                  ││tool: ✓ ReadFIXTURE tool ok — src/auth/oauth.ts                       │
+  rate limited             ││tool: ✓ GrepFIXTURE tool ok — 3 matches                               │
+                           ││                                                                      │
+                           ││⚠ FIXTURE mock — not live provider · V3-FIXTURE                       │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           │└──────────────────────────────────────────────────────────────────────┘
+                           │┌ Message Kairo · PLAN ────────────────────────────────────────────────┐
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+───────────────────────────┘└──────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ USAGE · Codex mock 96% │ Claude mock 80%                                                           
