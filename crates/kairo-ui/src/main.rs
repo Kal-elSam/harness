@@ -378,303 +378,335 @@ impl ShellApp {
         };
         let events = bridge.drain_events();
         for record in events {
-            let kind = record.get("type").and_then(|v| v.as_str());
-            if kind == Some("engine_unavailable") {
-                let reason = record
-                    .get("reason")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("engine unavailable");
-                self.engine.status = "unavailable".into();
-                self.engine.reason = Some(reason.to_string());
-                self.view.notice = Some(format!("Pi engine unavailable: {reason}"));
-                self.revert_failed_prompt();
-                // U3b: release every open/queued dialog locally — Pi is gone,
-                // so do not attempt cancelled writes (would go nowhere).
-                let _ = self.extension_ui.release_all(false);
+            self.ingest_record(record);
+        }
+    }
+
+    /// Reduce one sidecar / Pi record into host state (also the test seam).
+    fn ingest_record(&mut self, record: serde_json::Value) {
+        let kind = record.get("type").and_then(|v| v.as_str());
+        if kind == Some("engine_unavailable") {
+            let reason = record
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("engine unavailable");
+            self.engine.status = "unavailable".into();
+            self.engine.reason = Some(reason.to_string());
+            self.view.notice = Some(format!("Pi engine unavailable: {reason}"));
+            self.revert_failed_prompt();
+            // U3b: release every open/queued dialog locally — Pi is gone,
+            // so do not attempt cancelled writes (would go nowhere).
+            let _ = self.extension_ui.release_all(false);
+        }
+        if kind == Some("ready") {
+            self.engine = EngineGate::from_ready_record(&record);
+            self.sync_engine_line();
+            self.ingest_sessions_record(&record);
+            self.restore_draft_once(&record);
+            // Snapshot before the hint: the blocked-chat next step names
+            // the team key that matches this record's real team state.
+            if let Some(snap) = record.get("snapshot") {
+                apply_workspace_snapshot(&mut self.view, snap);
             }
-            if kind == Some("ready") {
-                self.engine = EngineGate::from_ready_record(&record);
-                self.sync_engine_line();
-                self.ingest_sessions_record(&record);
-                self.restore_draft_once(&record);
-                // Snapshot before the hint: the blocked-chat next step names
-                // the team key that matches this record's real team state.
-                if let Some(snap) = record.get("snapshot") {
-                    apply_workspace_snapshot(&mut self.view, snap);
+            self.sync_empty_hint();
+            // Prefer engine open_notice over sessionsNote when chat cannot prompt.
+            if let Some(notice) = self.engine.open_notice() {
+                self.view.notice = Some(notice);
+            } else if let Some(note) = record.get("sessionsNote").and_then(|v| v.as_str()) {
+                if self.pi_session_count == 0 {
+                    self.view.notice = Some(note.to_string());
                 }
-                self.sync_empty_hint();
-                // Prefer engine open_notice over sessionsNote when chat cannot prompt.
-                if let Some(notice) = self.engine.open_notice() {
-                    self.view.notice = Some(notice);
-                } else if let Some(note) = record.get("sessionsNote").and_then(|v| v.as_str()) {
-                    if self.pi_session_count == 0 {
-                        self.view.notice = Some(note.to_string());
-                    }
-                } else if self
-                    .view
-                    .notice
-                    .as_deref()
-                    .is_some_and(|n| n.starts_with("Pi engine "))
-                {
-                    self.view.notice = None;
-                }
-            } else if kind == Some("engine") {
-                self.engine = EngineGate::from_sidecar_engine_record(&record);
-                self.sync_engine_line();
-                self.ingest_sessions_record(&record);
-                self.sync_empty_hint();
-                if let Some(notice) = self.engine.open_notice() {
-                    self.view.notice = Some(notice);
-                }
-            } else if kind == Some("snapshot") {
-                if let Some(snap) = record.get("snapshot") {
-                    apply_workspace_snapshot(&mut self.view, snap);
-                    self.sync_empty_hint();
-                }
-            } else if kind == Some("team") {
-                self.ingest_team_record(&record);
-            } else if kind == Some("preflight") {
-                self.ingest_preflight_record(&record);
-            } else if kind == Some("availability") {
-                self.ingest_availability_record(&record);
-            } else if kind == Some("recovery") {
-                self.ingest_recovery_record(&record);
-            } else if kind == Some("sessions") {
-                self.ingest_sessions_record(&record);
-            } else if kind == Some("draft") {
-                self.apply_draft_record(&record);
-            } else if kind == Some("mode") {
-                // U4a: restore / confirm WorkMode from the active Kairo session.
-                if let Some(mode) = record.get("mode").and_then(|v| v.as_str()) {
-                    self.view.work_mode = normalize_work_mode(mode).to_string();
-                }
-            } else if kind == Some("task_result") {
-                self.ingest_task_result(&record);
-            } else if kind == Some("plans") {
-                self.ingest_plans_record(&record);
-            } else if kind == Some("plan_detail") {
-                self.ingest_plan_detail_record(&record);
-            } else if kind == Some("plan_decision") {
-                self.plans_action_pending = false;
-            } else if kind == Some("plan_preview") {
-                self.ingest_plan_preview_record(&record);
-            } else if kind == Some("plan_execute") {
-                self.ingest_plan_execute_record(&record);
-            } else if kind == Some("plan_cancel") {
-                self.plans_action_pending = false;
-                self.execution_modal = None;
-            } else if kind == Some("run_transcript") {
-                self.ingest_run_transcript_record(&record);
-            } else if kind == Some("slash_lines") {
-                if let Some(lines) = record.get("lines").and_then(|v| v.as_array()) {
-                    for line in lines {
-                        if let Some(text) = line.as_str() {
-                            self.chat.push_kairo_reply(text.to_string());
-                        }
-                    }
-                }
-            } else if kind == Some("ops_snapshot") {
-                self.ops_panel = Some(OpsPanelState::from_ops_record(&record));
-                if self.workspace_view == WorkspaceView::Operations {
-                    self.view.notice = Some("Operations snapshot updated.".into());
-                }
-            } else if kind == Some("ops_sync_preview") {
-                if let Some(ops) = self.ops_panel.as_mut() {
-                    if record.get("ok").and_then(|v| v.as_bool()) == Some(false) {
-                        ops.confirm = None;
-                        self.view.notice = Some(format!(
-                            "Sync preview failed: {}",
-                            record
-                                .get("error")
-                                .or_else(|| record.get("reason"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown")
-                        ));
-                    } else if record.get("hasChanges").and_then(|v| v.as_bool()) == Some(false) {
-                        ops.confirm = None;
-                        self.view.notice = Some("No pending governance changes.".into());
-                    } else {
-                        ops.confirm = Some(OpsConfirmState::sync_apply(record.clone()));
-                    }
-                }
-            } else if kind == Some("ops_sync_result") {
-                if let Some(ops) = self.ops_panel.as_mut() {
-                    ops.confirm = None;
-                }
-                let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-                let reason = record
-                    .get("reason")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(if ok { "ok" } else { "failed" });
-                self.view.notice = Some(format!("Sync · {reason}"));
-                self.request_ops_snapshot();
-            } else if kind == Some("ops_rollback_preview") {
-                if let Some(ops) = self.ops_panel.as_mut() {
-                    if record.get("ok").and_then(|v| v.as_bool()) == Some(false) {
-                        ops.confirm = None;
-                        self.view.notice = Some(format!(
-                            "Rollback preview failed: {}",
-                            record
-                                .get("error")
-                                .or_else(|| record.get("reason"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown")
-                        ));
-                    } else {
-                        ops.pick_mode = OpsPickMode::None;
-                        ops.confirm = Some(OpsConfirmState::rollback_apply(record.clone()));
-                    }
-                }
-            } else if kind == Some("ops_rollback_result") {
-                if let Some(ops) = self.ops_panel.as_mut() {
-                    ops.confirm = None;
-                }
-                let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-                let reason = record
-                    .get("reason")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(if ok { "ok" } else { "failed" });
-                self.view.notice = Some(format!("Rollback · {reason}"));
-                self.request_ops_snapshot();
-            } else if kind == Some("ops_run_cancel") {
-                if let Some(ops) = self.ops_panel.as_mut() {
-                    ops.confirm = None;
-                    ops.pick_mode = OpsPickMode::None;
-                }
-                let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-                let run_id = record
-                    .get("runId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                self.view.notice = Some(if ok {
-                    format!("Cancelled {run_id}")
-                } else {
-                    format!(
-                        "Cancel failed: {}",
-                        record
-                            .get("reason")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("error")
-                    )
-                });
-                self.request_ops_snapshot();
-            } else if kind == Some("ops_alert_dismiss") {
-                if let Some(ops) = self.ops_panel.as_mut() {
-                    ops.confirm = None;
-                    ops.pick_mode = OpsPickMode::None;
-                }
-                let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-                self.view.notice = Some(if ok {
-                    "Alert dismissed".into()
-                } else {
-                    format!(
-                        "Dismiss failed: {}",
-                        record
-                            .get("reason")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("error")
-                    )
-                });
-                self.request_ops_snapshot();
-            } else if kind == Some("settings_snapshot") {
-                self.settings_panel = Some(SettingsPanelState::from_settings_record(&record));
-                if self.workspace_view == WorkspaceView::Settings {
-                    self.view.notice = Some("Settings snapshot updated.".into());
-                }
-            } else if kind == Some("settings_integration_result") {
-                if let Some(settings) = self.settings_panel.as_mut() {
-                    settings.clear_integration_confirm();
-                }
-                let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-                let wrote = record
-                    .get("wroteFiles")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                self.view.notice = Some(if ok {
-                    format!(
-                        "Integration intent recorded · wroteFiles={wrote}"
-                    )
-                } else {
-                    format!(
-                        "Integration confirm failed: {}",
-                        record
-                            .get("reason")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("error")
-                    )
-                });
-            } else if kind == Some("team_edit_catalog") {
-                match RoleEditorState::from_catalog_record(&record) {
-                    Some(editor) => self.role_editor = Some(editor),
-                    None => {
-                        self.role_editor = None;
-                        self.view.notice =
-                            Some("Edit catalog returned no usable models.".into());
-                    }
-                }
-            } else if kind == Some("team_edit_saved") {
-                self.role_editor = None;
-                if let Some(state) = record.get("state").and_then(|v| v.as_str()) {
-                    self.view.team_state = Some(state.to_string());
-                }
-                self.sync_empty_hint();
-            } else if kind == Some("transcript") {
-                if let Some(rows) = record.get("messages").and_then(|v| v.as_array()) {
-                    self.chat.replace_from_sidecar_transcript(rows);
-                    self.pending_prompt = None;
-                }
-            } else if kind == Some("notice") {
-                if let Some(msg) = record.get("message").and_then(|v| v.as_str()) {
-                    self.view.notice = Some(msg.to_string());
-                }
-            } else if kind == Some("extension_ui_request") {
-                self.ingest_extension_ui_request(&record);
+            } else if self
+                .view
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.starts_with("Pi engine "))
+            {
+                self.view.notice = None;
             }
-            if kind == Some("error") {
-                let msg = record
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("bridge error");
+        } else if kind == Some("engine") {
+            self.engine = EngineGate::from_sidecar_engine_record(&record);
+            self.sync_engine_line();
+            self.ingest_sessions_record(&record);
+            self.sync_empty_hint();
+            if let Some(notice) = self.engine.open_notice() {
+                self.view.notice = Some(notice);
+            }
+        } else if kind == Some("snapshot") {
+            if let Some(snap) = record.get("snapshot") {
+                apply_workspace_snapshot(&mut self.view, snap);
+                self.sync_empty_hint();
+            }
+        } else if kind == Some("team") {
+            self.ingest_team_record(&record);
+        } else if kind == Some("preflight") {
+            self.ingest_preflight_record(&record);
+        } else if kind == Some("availability") {
+            self.ingest_availability_record(&record);
+        } else if kind == Some("recovery") {
+            self.ingest_recovery_record(&record);
+        } else if kind == Some("sessions") {
+            self.ingest_sessions_record(&record);
+        } else if kind == Some("draft") {
+            self.apply_draft_record(&record);
+        } else if kind == Some("mode") {
+            // U4a: restore / confirm WorkMode from the active Kairo session.
+            if let Some(mode) = record.get("mode").and_then(|v| v.as_str()) {
+                self.view.work_mode = normalize_work_mode(mode).to_string();
+            }
+        } else if kind == Some("provider_event") {
+            self.ingest_provider_event(&record);
+        } else if kind == Some("task_result") {
+            self.ingest_task_result(&record);
+        } else if kind == Some("plans") {
+            self.ingest_plans_record(&record);
+        } else if kind == Some("plan_detail") {
+            self.ingest_plan_detail_record(&record);
+        } else if kind == Some("plan_decision") {
+            self.plans_action_pending = false;
+        } else if kind == Some("plan_preview") {
+            self.ingest_plan_preview_record(&record);
+        } else if kind == Some("plan_execute") {
+            self.ingest_plan_execute_record(&record);
+        } else if kind == Some("plan_cancel") {
+            self.plans_action_pending = false;
+            self.execution_modal = None;
+        } else if kind == Some("run_transcript") {
+            self.ingest_run_transcript_record(&record);
+        } else if kind == Some("slash_lines") {
+            if let Some(lines) = record.get("lines").and_then(|v| v.as_array()) {
+                for line in lines {
+                    if let Some(text) = line.as_str() {
+                        self.chat.push_kairo_reply(text.to_string());
+                    }
+                }
+            }
+        } else if kind == Some("ops_snapshot") {
+            self.ops_panel = Some(OpsPanelState::from_ops_record(&record));
+            if self.workspace_view == WorkspaceView::Operations {
+                self.view.notice = Some("Operations snapshot updated.".into());
+            }
+        } else if kind == Some("ops_sync_preview") {
+            if let Some(ops) = self.ops_panel.as_mut() {
+                if record.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+                    ops.confirm = None;
+                    self.view.notice = Some(format!(
+                        "Sync preview failed: {}",
+                        record
+                            .get("error")
+                            .or_else(|| record.get("reason"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                    ));
+                } else if record.get("hasChanges").and_then(|v| v.as_bool()) == Some(false) {
+                    ops.confirm = None;
+                    self.view.notice = Some("No pending governance changes.".into());
+                } else {
+                    ops.confirm = Some(OpsConfirmState::sync_apply(record.clone()));
+                }
+            }
+        } else if kind == Some("ops_sync_result") {
+            if let Some(ops) = self.ops_panel.as_mut() {
+                ops.confirm = None;
+            }
+            let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let reason = record
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or(if ok { "ok" } else { "failed" });
+            self.view.notice = Some(format!("Sync · {reason}"));
+            self.request_ops_snapshot();
+        } else if kind == Some("ops_rollback_preview") {
+            if let Some(ops) = self.ops_panel.as_mut() {
+                if record.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+                    ops.confirm = None;
+                    self.view.notice = Some(format!(
+                        "Rollback preview failed: {}",
+                        record
+                            .get("error")
+                            .or_else(|| record.get("reason"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                    ));
+                } else {
+                    ops.pick_mode = OpsPickMode::None;
+                    ops.confirm = Some(OpsConfirmState::rollback_apply(record.clone()));
+                }
+            }
+        } else if kind == Some("ops_rollback_result") {
+            if let Some(ops) = self.ops_panel.as_mut() {
+                ops.confirm = None;
+            }
+            let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let reason = record
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or(if ok { "ok" } else { "failed" });
+            self.view.notice = Some(format!("Rollback · {reason}"));
+            self.request_ops_snapshot();
+        } else if kind == Some("ops_run_cancel") {
+            if let Some(ops) = self.ops_panel.as_mut() {
+                ops.confirm = None;
+                ops.pick_mode = OpsPickMode::None;
+            }
+            let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let run_id = record
+                .get("runId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            self.view.notice = Some(if ok {
+                format!("Cancelled {run_id}")
+            } else {
+                format!(
+                    "Cancel failed: {}",
+                    record
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("error")
+                )
+            });
+            self.request_ops_snapshot();
+        } else if kind == Some("ops_alert_dismiss") {
+            if let Some(ops) = self.ops_panel.as_mut() {
+                ops.confirm = None;
+                ops.pick_mode = OpsPickMode::None;
+            }
+            let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            self.view.notice = Some(if ok {
+                "Alert dismissed".into()
+            } else {
+                format!(
+                    "Dismiss failed: {}",
+                    record
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("error")
+                )
+            });
+            self.request_ops_snapshot();
+        } else if kind == Some("settings_snapshot") {
+            self.settings_panel = Some(SettingsPanelState::from_settings_record(&record));
+            if self.workspace_view == WorkspaceView::Settings {
+                self.view.notice = Some("Settings snapshot updated.".into());
+            }
+        } else if kind == Some("settings_integration_result") {
+            if let Some(settings) = self.settings_panel.as_mut() {
+                settings.clear_integration_confirm();
+            }
+            let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let wrote = record
+                .get("wroteFiles")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            self.view.notice = Some(if ok {
+                format!(
+                    "Integration intent recorded · wroteFiles={wrote}"
+                )
+            } else {
+                format!(
+                    "Integration confirm failed: {}",
+                    record
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("error")
+                )
+            });
+        } else if kind == Some("team_edit_catalog") {
+            match RoleEditorState::from_catalog_record(&record) {
+                Some(editor) => self.role_editor = Some(editor),
+                None => {
+                    self.role_editor = None;
+                    self.view.notice =
+                        Some("Edit catalog returned no usable models.".into());
+                }
+            }
+        } else if kind == Some("team_edit_saved") {
+            self.role_editor = None;
+            if let Some(state) = record.get("state").and_then(|v| v.as_str()) {
+                self.view.team_state = Some(state.to_string());
+            }
+            self.sync_empty_hint();
+        } else if kind == Some("transcript") {
+            if let Some(rows) = record.get("messages").and_then(|v| v.as_array()) {
+                self.chat.replace_from_sidecar_transcript(rows);
+                self.pending_prompt = None;
+            }
+        } else if kind == Some("notice") {
+            if let Some(msg) = record.get("message").and_then(|v| v.as_str()) {
                 self.view.notice = Some(msg.to_string());
-                self.team_action_pending = false;
-                self.availability_action_pending = false;
-                self.recovery_action_pending = false;
-                self.plans_action_pending = false;
-                self.revert_failed_prompt();
             }
-            // Real deltas mean the prompt was accepted — drop restore token.
-            if kind == Some("message_update")
-                && record
-                    .pointer("/assistantMessageEvent/delta")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|d| !d.is_empty())
-            {
-                self.pending_prompt = None;
+        } else if kind == Some("extension_ui_request") {
+            self.ingest_extension_ui_request(&record);
+        }
+        if kind == Some("error") {
+            let msg = record
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("bridge error");
+            self.view.notice = Some(msg.to_string());
+            // A rejected second prompt leaves the first ASK running.
+            if msg != "A previous request is still running" {
+                self.chat.ask_in_flight = false;
             }
-            if kind == Some("agent_settled") {
-                self.pending_prompt = None;
-            }
-            if kind != Some("transcript")
-                && kind != Some("draft")
-                && kind != Some("mode")
-                && kind != Some("task_result")
-                && kind != Some("plans")
-                && kind != Some("plan_detail")
-                && kind != Some("plan_decision")
-                && kind != Some("plan_preview")
-                && kind != Some("plan_execute")
-                && kind != Some("plan_cancel")
-                && kind != Some("run_transcript")
-                && kind != Some("extension_ui_request")
-            {
-                self.chat.apply_sidecar_event(&record);
-            }
+            self.team_action_pending = false;
+            self.availability_action_pending = false;
+            self.recovery_action_pending = false;
+            self.plans_action_pending = false;
+            self.revert_failed_prompt();
+        }
+        // Real deltas mean the prompt was accepted — drop restore token.
+        if kind == Some("message_update")
+            && record
+                .pointer("/assistantMessageEvent/delta")
+                .and_then(|v| v.as_str())
+                .is_some_and(|d| !d.is_empty())
+        {
+            self.pending_prompt = None;
+        }
+        if kind == Some("agent_settled") {
+            self.pending_prompt = None;
+            self.chat.ask_in_flight = false;
+        }
+        if kind != Some("transcript")
+            && kind != Some("draft")
+            && kind != Some("mode")
+            && kind != Some("task_result")
+            && kind != Some("provider_event")
+            && kind != Some("plans")
+            && kind != Some("plan_detail")
+            && kind != Some("plan_decision")
+            && kind != Some("plan_preview")
+            && kind != Some("plan_execute")
+            && kind != Some("plan_cancel")
+            && kind != Some("run_transcript")
+            && kind != Some("extension_ui_request")
+        {
+            self.chat.apply_sidecar_event(&record);
+        }
+    }
+
+    /// A3: one ASK `provider_event` (progress / text / tools / terminals).
+    fn ingest_provider_event(&mut self, record: &serde_json::Value) {
+        if !self.chat.apply_provider_event(record) {
+            return;
+        }
+        // Any applied event proves the sidecar accepted the prompt.
+        self.pending_prompt = None;
+        if !self.chat.ask_in_flight
+            && self
+                .view
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.starts_with("Submitting") || n == "Cancelling…")
+        {
+            self.view.notice = None;
         }
     }
 
     /// U4a: ASK answer or PLAN notice from sidecar submitTask — never Pi stream.
     fn ingest_task_result(&mut self, record: &serde_json::Value) {
         self.pending_prompt = None;
+        self.chat.ask_in_flight = false;
         let kind = record.get("kind").and_then(|v| v.as_str()).unwrap_or("");
         match kind {
             "answer" => {
@@ -688,7 +720,13 @@ impl ShellApp {
                     Some(m) if !m.is_empty() => format!("{provider} · {m}: {answer}"),
                     _ => format!("{provider}: {answer}"),
                 };
-                self.chat.push_kairo_reply(label);
+                // `text` provider events already showed the answer: rendering
+                // it again would duplicate it. Claude/Cursor turns only send
+                // progress + final, so they (and legacy sidecars with no
+                // provider events) still render the answer from here.
+                if !self.chat.ask_answer_already_shown() {
+                    self.chat.push_kairo_reply(label);
+                }
             }
             "plan" => {
                 // U4b: y/n (not `a`) — team analyze still owns bare `a`.
@@ -1345,6 +1383,11 @@ impl ShellApp {
                     Ok(()) => {
                         // U4a: sidecar routes through submitTask — no Pi assistant stream.
                         self.pending_prompt = Some(text.trim().to_string());
+                        // Rust knows the WorkMode: only ASK prompts run the
+                        // provider path that emits `provider_event`s.
+                        if self.view.work_mode == "ask" {
+                            self.chat.begin_ask();
+                        }
                         let mode = self.view.work_mode.to_uppercase();
                         self.view.notice = Some(format!("Submitting · {mode}…"));
                     }
@@ -1634,6 +1677,19 @@ impl ShellApp {
         self.editor.set_placeholder_text("/analyze · Message…");
     }
 
+    /// Esc during an in-flight ASK: ask the sidecar to cancel it. The flag is
+    /// cleared only by the terminal `cancelled` record (or `task_result` /
+    /// `error`), so a late answer cannot slip in unnoticed.
+    fn cancel_ask(&mut self) {
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.abort() {
+            Ok(()) => self.view.notice = Some("Cancelling…".into()),
+            Err(err) => self.view.notice = Some(format!("Cancel failed: {err}")),
+        }
+    }
+
     fn abort_stream(&mut self) {
         if self.chat.is_streaming {
             if let Some(bridge) = self.bridge.as_mut() {
@@ -1871,7 +1927,9 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
             if key.code == KeyCode::Esc {
-                if app.chat.is_streaming {
+                if app.chat.ask_in_flight {
+                    app.cancel_ask();
+                } else if app.chat.is_streaming {
                     app.abort_stream();
                 } else {
                     app.chat.focus = Focus::Sidebar;
@@ -3172,5 +3230,180 @@ mod tests {
             .messages
             .iter()
             .any(|m| m.content.contains("Do the thing")));
+    }
+
+    // ---- A3: ASK provider events, in-flight flag, Esc cancel ---------
+
+    fn recorder_app(mode: &str) -> (ShellApp, PathBuf) {
+        let path = env::temp_dir().join(format!(
+            "kairo-ui-a3-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let bridge = BridgeClient::spawn_recorder(&path).expect("recorder");
+        let mut app = ShellApp::new(Some(bridge));
+        app.view.work_mode = mode.into();
+        (app, path)
+    }
+
+    fn recorded_ops(path: &PathBuf, want: usize) -> String {
+        for _ in 0..200 {
+            let text = std::fs::read_to_string(path).unwrap_or_default();
+            if text.lines().count() >= want {
+                return text;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        std::fs::read_to_string(path).unwrap_or_default()
+    }
+
+    fn pe(turn: &str, seq: u64, kind: &str, extra: serde_json::Value) -> serde_json::Value {
+        let mut v = json!({ "type": "provider_event", "turnId": turn, "sessionId": "s",
+            "seq": seq, "provider": "codex", "kind": kind });
+        if let (Some(o), Some(e)) = (v.as_object_mut(), extra.as_object()) {
+            for (k, val) in e {
+                o.insert(k.clone(), val.clone());
+            }
+        }
+        v
+    }
+
+    fn esc() -> KeyEvent {
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn ask_mode_send_sets_ask_in_flight_and_other_modes_do_not() {
+        let (mut app, path) = recorder_app("ask");
+        app.editor.insert_str("hello");
+        app.submit_editor();
+        assert!(app.chat.ask_in_flight);
+        assert!(!app.chat.is_streaming);
+        assert!(recorded_ops(&path, 1).contains("\"prompt\""));
+        let _ = std::fs::remove_file(&path);
+
+        let (mut app, path) = recorder_app("plan");
+        app.editor.insert_str("hello");
+        app.submit_editor();
+        assert!(!app.chat.ask_in_flight, "PLAN prompts never set the ASK flag");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn esc_with_ask_in_flight_sends_abort_and_keeps_waiting_for_the_terminal() {
+        let (mut app, path) = recorder_app("ask");
+        app.chat.begin_ask();
+        handle_key(&mut app, esc()).expect("esc");
+        assert!(recorded_ops(&path, 1).contains("\"abort\""));
+        assert_eq!(app.view.notice.as_deref(), Some("Cancelling…"));
+        assert!(app.chat.ask_in_flight, "cleared only by the terminal record");
+        assert_eq!(app.chat.focus, Focus::Editor);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn esc_while_pi_streaming_still_aborts_the_stream() {
+        let (mut app, path) = recorder_app("ask");
+        app.chat.is_streaming = true;
+        handle_key(&mut app, esc()).expect("esc");
+        assert!(recorded_ops(&path, 1).contains("\"abort\""));
+        assert!(!app.chat.is_streaming);
+        assert!(app.view.notice.as_deref() != Some("Cancelling…"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn esc_when_idle_moves_focus_and_sends_nothing() {
+        let (mut app, path) = recorder_app("ask");
+        handle_key(&mut app, esc()).expect("esc");
+        assert_eq!(app.chat.focus, Focus::Sidebar);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!recorded_ops(&path, 0).contains("abort"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn provider_events_render_and_are_kept_out_of_the_pi_reducer() {
+        let mut app = ShellApp::new(None);
+        app.chat.begin_ask();
+        app.pending_prompt = Some("q".into());
+        app.ingest_record(pe("t1", 1, "progress", json!({ "summary": "Working" })));
+        app.ingest_record(pe("t1", 2, "text", json!({ "text": "Hi" })));
+        app.ingest_record(pe("t1", 3, "tool_start", json!({ "id": "a", "name": "sh" })));
+        app.ingest_record(pe("t1", 4, "tool_end", json!({ "id": "a", "name": "sh", "ok": true })));
+        assert!(app.pending_prompt.is_none());
+        assert!(app.chat.ask_in_flight);
+        let roles: Vec<_> = app.chat.messages.iter().map(|m| m.role.clone()).collect();
+        assert!(roles.contains(&chat::MessageRole::Assistant));
+        assert!(roles.contains(&chat::MessageRole::Tool));
+        assert!(!app.chat.is_streaming, "Pi reducer must not see provider_event");
+        app.ingest_record(pe("t1", 5, "done", json!({})));
+        assert!(!app.chat.ask_in_flight);
+    }
+
+    #[test]
+    fn cancelled_terminal_clears_flag_and_notice() {
+        let mut app = ShellApp::new(None);
+        app.chat.begin_ask();
+        app.view.notice = Some("Cancelling…".into());
+        app.ingest_record(pe("t1", 1, "cancelled", json!({})));
+        assert!(!app.chat.ask_in_flight);
+        assert_eq!(app.chat.messages.last().unwrap().content, "Cancelled");
+        assert_ne!(app.view.notice.as_deref(), Some("Cancelling…"));
+    }
+
+    #[test]
+    fn task_result_after_streamed_text_is_not_rendered_twice() {
+        let mut app = ShellApp::new(None);
+        app.chat.begin_ask();
+        app.ingest_record(pe("t1", 1, "text", json!({ "text": "The answer" })));
+        let before = app.chat.messages.len();
+        app.ingest_record(json!({ "type": "task_result", "kind": "answer",
+            "provider": "codex", "model": "m", "answer": "The answer" }));
+        assert_eq!(app.chat.messages.len(), before, "no duplicate answer row");
+        assert!(!app.chat.ask_in_flight, "task_result clears the flag");
+    }
+
+    #[test]
+    fn task_result_without_text_events_still_renders_the_answer() {
+        let mut app = ShellApp::new(None);
+        app.chat.begin_ask();
+        app.ingest_record(pe("t1", 1, "progress", json!({ "summary": "Working" })));
+        app.ingest_record(json!({ "type": "task_result", "kind": "answer",
+            "provider": "claude", "model": "m", "answer": "Final" }));
+        assert!(app
+            .chat
+            .messages
+            .iter()
+            .any(|m| m.content.contains("claude · m: Final")));
+        // legacy path: no provider events at all
+        let mut legacy = ShellApp::new(None);
+        legacy.ingest_record(json!({ "type": "task_result", "kind": "answer",
+            "provider": "claude", "answer": "Old" }));
+        assert!(legacy.chat.messages.iter().any(|m| m.content == "claude: Old"));
+    }
+
+    #[test]
+    fn error_record_clears_ask_flag_but_rejected_second_prompt_does_not() {
+        let mut app = ShellApp::new(None);
+        app.chat.begin_ask();
+        app.ingest_record(json!({ "type": "error", "message": "A previous request is still running" }));
+        assert!(app.chat.ask_in_flight, "the first ASK is still running");
+        app.ingest_record(json!({ "type": "error", "message": "boom" }));
+        assert!(!app.chat.ask_in_flight);
+    }
+
+    #[test]
+    fn agent_settled_and_transcript_clear_the_ask_flag() {
+        let mut app = ShellApp::new(None);
+        app.chat.begin_ask();
+        app.ingest_record(json!({ "type": "agent_settled" }));
+        assert!(!app.chat.ask_in_flight);
+        app.chat.begin_ask();
+        app.ingest_record(json!({ "type": "transcript", "messages": [] }));
+        assert!(!app.chat.ask_in_flight);
     }
 }
