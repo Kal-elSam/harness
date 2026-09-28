@@ -409,7 +409,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **Build**: `scripts/build-kairo-ui-binaries.sh` prefers `cargo zigbuild` for non-host Linux when `cargo-zigbuild`+`zig` exist; honest skip otherwise. Documented in `dist/kairo-ui/README.md`.
   - **Clean-install**: `scripts/verify-kairo-ui-clean-install.sh` + `test/kairo-ui-clean-install.test.js` stage crate-less root (no `crates/` / `Cargo.toml`); `launchRatatuiHost` selects matching prebuilt for all 4 keys with **zero** cargo calls; host `--v3-capture` exit 0 + fixture files; foreign triples assert `file` magic; **foreign exec status 0 → diagnostic foreign-exec PASS** (Rosetta/emulation OK, not a failure); non-zero/spawn error → honest gap diagnostic. Never invent PASS without observed status 0.
   - **npm pack install**: `test/kairo-ui-npm-pack-install.test.js` + `npm run verify:kairo-ui-npm-pack-install` — real `npm pack` tarball (gitignored binaries still packed via `files: ["dist/kairo-ui"]`) → extract → assert all 4 `dist/kairo-ui/*/kairo-ui`, no `crates/`, launch selection without cargo, host `--v3-capture` from that install root. Verify script runs both suites.
-  - **CI matrix**: `.github/workflows/kairo-ui-prebuilt.yml` is **`workflow_dispatch` only** (not on PRs). Matrix: macos-14 → darwin-arm64, macos-13 → darwin-x64, ubuntu-24.04 → linux-x64, ubuntu-24.04-arm → linux-arm64; each builds host-only + `--v3-capture`. Local Mac still has no Docker/Rosetta → do **not** fake multiplatform exec until those runners observe status 0.
+  - **CI matrix**: `.github/workflows/kairo-ui-prebuilt.yml` is **`workflow_dispatch` only** (not on PRs). Matrix: macos-14 → darwin-arm64, macos-15-intel → darwin-x64, ubuntu-24.04 → linux-x64, ubuntu-24.04-arm → linux-arm64; each builds host-only + `--v3-capture`. Local Mac still has no Docker/Rosetta → do **not** fake multiplatform exec until those runners observe status 0.
   - **Evidence scope honesty**: npm-pack / clean-install tests run real host `--v3-capture`; `launchRatatuiHost` `--bridge` path remains **mocked** (spawn stub) — selection without Cargo, not a live bridge session.
   - **Per-triple**: see Progress matrix below / verify script output.
   - **U6 remains PARTIAL** — pack+host proven; foreign exec gaps (and optional matrix green) still open.
@@ -447,6 +447,6 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   | Triple | Artifact | Clean-install launch (no cargo) | Exec `--v3-capture` |
   |---|---|---|---|
   | darwin-arm64 | ~1.6M Mach-O arm64 | PASS | PASS (host) |
-  | darwin-x64 | ~1.6M Mach-O x86_64 | PASS (selection + npm-pack) | GAP locally (no Rosetta); CI `macos-13` skeleton; status 0 under Rosetta = foreign-exec PASS diagnostic |
+  | darwin-x64 | ~1.6M Mach-O x86_64 | PASS (selection + npm-pack) | GAP locally (no Rosetta); CI `macos-15-intel` (macos-13 retired); status 0 under Rosetta = foreign-exec PASS diagnostic |
   | linux-x64 | ~1.4M ELF x86-64 | PASS (selection + npm-pack) | GAP locally; CI `ubuntu-24.04` skeleton |
   | linux-arm64 | ~1.3M ELF aarch64 | PASS (selection + npm-pack) | GAP locally; CI `ubuntu-24.04-arm` in matrix (manual dispatch) |
