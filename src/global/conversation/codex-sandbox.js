@@ -56,16 +56,34 @@ const SAFE_ENV_KEYS = Object.freeze([
   "http_proxy", "https_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS"
 ]);
 
-function buildSandboxedCodexEnv(sourceEnv = process.env) {
+function buildSandboxedCodexEnv(sourceEnv = process.env, resolvedCodexHome) {
   const env = Object.create(null);
   for (const key of SAFE_ENV_KEYS) {
+    if (key === "CODEX_HOME") continue; // set below from the single resolved value
     if (sourceEnv[key] != null && sourceEnv[key] !== "") env[key] = sourceEnv[key];
   }
+  // Always set explicitly — never independently re-derived from sourceEnv —
+  // so the child env can never disagree with the SBPL profile's CODEX_HOME.
+  env.CODEX_HOME = resolvedCodexHome;
   return env;
 }
 
 function unknown(error) {
   return { status: "error", answer: null, error: String(error) };
+}
+
+/**
+ * Single source of truth for which CODEX_HOME this run uses — resolved
+ * ONCE by the caller and then reused for both the SBPL profile
+ * (buildCodexSandboxProfile) and the child's env (buildSandboxedCodexEnv),
+ * so Codex and the sandbox boundary can never disagree on the path.
+ * Precedence: an explicit non-empty `codexHome` arg, then a non-empty
+ * `sourceEnv.CODEX_HOME`, then the default `~/.codex`.
+ */
+export function resolveCodexHome({ codexHome, sourceEnv = process.env } = {}) {
+  if (codexHome != null && codexHome !== "") return codexHome;
+  if (sourceEnv?.CODEX_HOME != null && sourceEnv.CODEX_HOME !== "") return sourceEnv.CODEX_HOME;
+  return join(homedir(), ".codex");
 }
 
 export async function isCodexSandboxSupported(deps = {}) {
@@ -160,13 +178,17 @@ ${subpathRules([...snapshotForms, ...codexHomeForms, "/private/var/folders", "/p
  * @param {string} [args.codexHome]
  */
 export async function runCodexSandboxedBootstrap({
-  question, model = null, snapshotRoot, codexHome = join(homedir(), ".codex"),
+  question, model = null, snapshotRoot, codexHome,
   spawn = defaultSpawn, timeoutMs = DEFAULT_TIMEOUT_MS, sourceEnv = process.env, deps = {}
 }) {
   const isolation = await getCodexIsolationStatus(deps);
   if (!isolation.available) {
     return { status: "error", answer: null, error: "isolation_unavailable", isolation };
   }
+
+  // Resolved ONCE and reused for both the SBPL profile and the child env —
+  // Codex and the sandbox boundary must never disagree on CODEX_HOME.
+  const resolvedCodexHome = resolveCodexHome({ codexHome, sourceEnv });
 
   let workDir;
   try {
@@ -178,7 +200,7 @@ export async function runCodexSandboxedBootstrap({
   const outFile = join(workDir, "answer.txt");
 
   try {
-    const profile = await buildCodexSandboxProfile({ snapshotRoot, codexHome }, deps);
+    const profile = await buildCodexSandboxProfile({ snapshotRoot, codexHome: resolvedCodexHome }, deps);
     await (deps.writeFile ?? writeFile)(profilePath, profile, "utf8");
 
     // --skip-git-repo-check: snapshotRoot deliberately excludes .git.
@@ -196,7 +218,7 @@ export async function runCodexSandboxedBootstrap({
     if (model) args.push("--model", model);
     args.push(question);
 
-    const env = buildSandboxedCodexEnv(sourceEnv);
+    const env = buildSandboxedCodexEnv(sourceEnv, resolvedCodexHome);
     const result = await new Promise((resolve) => {
       let child;
       try {
@@ -216,7 +238,13 @@ export async function runCodexSandboxedBootstrap({
       // the other way around. Mirrors quick-ask.js's askCodex.
       let stderr = "";
       child.stderr?.on("data", (chunk) => { stderr += chunk; });
-      const timer = setTimeout(() => finish(unknown("sandboxed codex exec timed out")), timeoutMs);
+      const timer = setTimeout(() => {
+        const trimmed = stderr.trim();
+        const message = trimmed
+          ? `sandboxed codex exec timed out after ${timeoutMs}ms\n${trimmed}`
+          : `sandboxed codex exec timed out after ${timeoutMs}ms`;
+        finish(unknown(message));
+      }, timeoutMs);
       function finish(res) {
         if (finished) return;
         finished = true;
