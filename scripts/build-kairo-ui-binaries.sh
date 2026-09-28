@@ -5,9 +5,13 @@
 #   darwin-arm64  darwin-x64  linux-arm64  linux-x64
 #
 # On a typical Apple Silicon Mac only darwin-arm64 builds natively.
-# Other targets are attempted via cargo --target when the toolchain is
-# installed; otherwise they are skipped honestly (layout + JS resolver
-# tests still cover all four selection keys).
+# Cross strategy (honest skips when toolchains are missing):
+#   - Same-OS foreign arch (e.g. darwin-x64 on arm64): cargo --target when
+#     the rustup target is installed.
+#   - Linux targets from a non-Linux host (or when plain cargo cross fails):
+#     prefer `cargo zigbuild` when both `cargo-zigbuild` and `zig` are on PATH.
+#   - Otherwise skip and leave the key missing (JS selection tests still cover
+#     all four keys; CI/native runners fill shippable artifacts).
 #
 # CI matrix placeholder (not wired in this repo yet):
 #   - macos-14  → darwin-arm64 (+ optional darwin-x64 cross)
@@ -85,8 +89,20 @@ rust_target_for() {
   esac
 }
 
+key_os() {
+  case "$1" in
+    darwin-*) printf '%s\n' "darwin" ;;
+    linux-*) printf '%s\n' "linux" ;;
+    *) return 1 ;;
+  esac
+}
+
 has_rust_target() {
   rustup target list --installed 2>/dev/null | grep -qx "$1"
+}
+
+has_zigbuild() {
+  command -v cargo-zigbuild >/dev/null 2>&1 && command -v zig >/dev/null 2>&1
 }
 
 copy_built() {
@@ -99,10 +115,32 @@ copy_built() {
   printf 'built %s → %s\n' "$key" "$dest_dir/kairo-ui"
 }
 
+try_cargo_target() {
+  local key="$1"
+  local rust_target="$2"
+  (
+    cd "$ROOT"
+    unset CARGO_TARGET_DIR
+    cargo build --release --manifest-path "$MANIFEST" --target "$rust_target"
+  )
+}
+
+try_zigbuild_target() {
+  local key="$1"
+  local rust_target="$2"
+  (
+    cd "$ROOT"
+    unset CARGO_TARGET_DIR
+    cargo zigbuild --release --manifest-path "$MANIFEST" --target "$rust_target"
+  )
+}
+
 build_one() {
   local key="$1"
   local rust_target
+  local target_os
   rust_target="$(rust_target_for "$key")" || die "unknown target key: $key"
+  target_os="$(key_os "$key")" || die "unknown target key: $key"
 
   if [ "$key" = "$host_key" ]; then
     (
@@ -124,16 +162,33 @@ build_one() {
     return 0
   fi
 
-  if ! (
-    cd "$ROOT"
-    unset CARGO_TARGET_DIR
-    cargo build --release --manifest-path "$MANIFEST" --target "$rust_target"
-  ); then
-    printf 'skip %s — cargo cross-build for %s failed (linker/toolchain)\n' "$key" "$rust_target"
-    return 0
+  local candidate="$CRATE/target/$rust_target/release/kairo-ui"
+  local used_zigbuild=0
+
+  # Prefer zigbuild for non-host Linux targets when tools exist (mac→linux, or
+  # linux→other-arch without a native linker). Fall back to plain cargo --target.
+  if [ "$target_os" = "linux" ] && [ "$key" != "$host_key" ] && has_zigbuild; then
+    if try_zigbuild_target "$key" "$rust_target"; then
+      used_zigbuild=1
+    else
+      printf 'warn %s — cargo zigbuild for %s failed; trying plain cargo --target\n' \
+        "$key" "$rust_target"
+    fi
   fi
 
-  local candidate="$CRATE/target/$rust_target/release/kairo-ui"
+  if [ "$used_zigbuild" -eq 0 ]; then
+    if ! try_cargo_target "$key" "$rust_target"; then
+      if [ "$target_os" = "linux" ] && ! has_zigbuild; then
+        printf 'skip %s — cargo cross-build for %s failed (install cargo-zigbuild + zig, or use a Linux CI runner)\n' \
+          "$key" "$rust_target"
+      else
+        printf 'skip %s — cargo cross-build for %s failed (linker/toolchain)\n' \
+          "$key" "$rust_target"
+      fi
+      return 0
+    fi
+  fi
+
   if [ ! -f "$candidate" ]; then
     printf 'skip %s — expected binary missing after build: %s\n' "$key" "$candidate"
     return 0
