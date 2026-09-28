@@ -4,6 +4,7 @@ mod chat;
 mod engine;
 mod extension_ui;
 mod layout;
+mod plan_list;
 mod recovery_picker;
 mod session_picker;
 mod snapshot;
@@ -31,12 +32,13 @@ use engine::{
 };
 use extension_ui::{ExtensionUiEvent, ExtensionUiMethod, ExtensionUiState};
 use layout::split_shell;
+use plan_list::{PlanListState, PLAN_REQUESTED_HOST_COPY};
 use recovery_picker::RecoveryPreviewState;
 use session_picker::SessionPickerState;
 use snapshot::apply_workspace_snapshot;
 use surfaces::{
-    render_analyst_picker, render_extension_ui, render_recovery_preview, render_session_picker,
-    render_shell, ShellViewModel,
+    render_analyst_picker, render_extension_ui, render_plan_list, render_recovery_preview,
+    render_session_picker, render_shell, ShellViewModel,
 };
 
 // Keybindings (V2 + R3b + R4):
@@ -66,6 +68,12 @@ use surfaces::{
 //   eligibility — a stale preview is refused and mutates nothing), `x`
 //   explicitly rejects (closes the proposal, current team stays active),
 //   Esc cancels locally (no server call at all).
+// - Bridge only, plans / tasks (U4b): empty-compose `p` opens the session
+//   plan list (also auto-opens after a PLAN/AGENT task_result). List-focus
+//   owns keys so team `a`/`A` never clash: ↑/↓ select, Enter Markdown
+//   detail, Esc closes detail then list locally, `y` approve / `n` reject
+//   only when awaiting_approval and WorkMode ≠ ask. No execute/cancel/
+//   handoff here (U4c).
 // - Bridge only, extension UI dialogs (U3b): Pi `extension_ui_request` opens
 //   a one-at-a-time modal (FIFO queue for concurrent ids). Esc → cancelled
 //   response with the same id; Enter confirms (select/confirm/input/editor);
@@ -179,6 +187,11 @@ struct ShellApp {
     pi_sessions: Vec<serde_json::Value>,
     /// The open session picker modal (U3a) — `Some` while it owns key input.
     session_picker: Option<SessionPickerState>,
+    /// U4b: open plans / timeline list — `Some` while it owns key input
+    /// (list-focus gates y/n so team `a`/`A` never clash).
+    plan_list: Option<PlanListState>,
+    /// True while `plans.list` / `plans.show` / `plans.decide` is in flight.
+    plans_action_pending: bool,
     /// Pi extension_ui dialogs (U3b): one modal + FIFO queue, correlated by id.
     extension_ui: ExtensionUiState,
     /// The `ready` record's `draft` (if any) has been applied to the editor
@@ -211,6 +224,8 @@ impl ShellApp {
             recovery_action_pending: false,
             pi_sessions: Vec::new(),
             session_picker: None,
+            plan_list: None,
+            plans_action_pending: false,
             extension_ui: ExtensionUiState::default(),
             draft_restored: false,
         }
@@ -396,6 +411,12 @@ impl ShellApp {
                 }
             } else if kind == Some("task_result") {
                 self.ingest_task_result(&record);
+            } else if kind == Some("plans") {
+                self.ingest_plans_record(&record);
+            } else if kind == Some("plan_detail") {
+                self.ingest_plan_detail_record(&record);
+            } else if kind == Some("plan_decision") {
+                self.plans_action_pending = false;
             } else if kind == Some("transcript") {
                 if let Some(rows) = record.get("messages").and_then(|v| v.as_array()) {
                     self.chat.replace_from_sidecar_transcript(rows);
@@ -417,6 +438,7 @@ impl ShellApp {
                 self.team_action_pending = false;
                 self.availability_action_pending = false;
                 self.recovery_action_pending = false;
+                self.plans_action_pending = false;
                 self.revert_failed_prompt();
             }
             // Real deltas mean the prompt was accepted — drop restore token.
@@ -435,6 +457,9 @@ impl ShellApp {
                 && kind != Some("draft")
                 && kind != Some("mode")
                 && kind != Some("task_result")
+                && kind != Some("plans")
+                && kind != Some("plan_detail")
+                && kind != Some("plan_decision")
                 && kind != Some("extension_ui_request")
             {
                 self.chat.apply_sidecar_event(&record);
@@ -461,11 +486,36 @@ impl ShellApp {
                 self.chat.push_kairo_reply(label);
             }
             "plan" => {
-                self.chat.push_kairo_reply(
-                    "Plan requested from Codex. Review it below, then press a to approve.".into(),
-                );
+                // U4b: y/n (not `a`) — team analyze still owns bare `a`.
+                self.chat.push_kairo_reply(PLAN_REQUESTED_HOST_COPY.into());
+                // Sidecar also emits `plans` after a plan task_result; open
+                // the list as soon as that arrives (ingest_plans_record).
+                self.view.notice = Some(PLAN_REQUESTED_HOST_COPY.into());
             }
             _ => {}
+        }
+    }
+
+    /// U4b: apply / refresh the plans list modal from a `plans` record.
+    fn ingest_plans_record(&mut self, record: &serde_json::Value) {
+        self.plans_action_pending = false;
+        match self.plan_list.as_mut() {
+            Some(list) => list.refresh_from_plans_record(record),
+            None => {
+                self.plan_list = Some(PlanListState::from_plans_record(record));
+            }
+        }
+    }
+
+    /// U4b: Markdown detail from `plans.show`.
+    fn ingest_plan_detail_record(&mut self, record: &serde_json::Value) {
+        self.plans_action_pending = false;
+        if let Some(list) = self.plan_list.as_mut() {
+            list.apply_plan_detail(record);
+        } else {
+            let mut list = PlanListState::default();
+            list.apply_plan_detail(record);
+            self.plan_list = Some(list);
         }
     }
 
@@ -768,6 +818,97 @@ impl ShellApp {
         }
     }
 
+    /// U4b: open (or refresh) the plans list via `plans.list`.
+    fn request_plans_list(&mut self) {
+        if self.plans_action_pending {
+            self.view.notice = Some("A plans request is already running…".into());
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.plans_list() {
+            Ok(()) => {
+                self.plans_action_pending = true;
+                self.view.notice = Some("Loading plans…".into());
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("plans.list failed: {err}"));
+            }
+        }
+    }
+
+    /// U4b: Enter on a list row → Markdown detail via `plans.show`.
+    fn request_plan_show(&mut self) {
+        let Some(task_id) = self
+            .plan_list
+            .as_ref()
+            .and_then(|l| l.selected_row())
+            .map(|r| r.task_id.clone())
+        else {
+            return;
+        };
+        if self.plans_action_pending {
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.plans_show(&task_id) {
+            Ok(()) => {
+                self.plans_action_pending = true;
+                self.view.notice = Some(format!("Opening plan {task_id}…"));
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("plans.show failed: {err}"));
+            }
+        }
+    }
+
+    /// U4b: `y`/`n` while list-focused — never executePlan.
+    fn request_plan_decide(&mut self, decision: &str) {
+        if !self
+            .plan_list
+            .as_ref()
+            .is_some_and(|l| l.can_decide(&self.view.work_mode))
+        {
+            if self.view.work_mode == "ask" {
+                self.view.notice = Some("ASK mode is read-only — switch to PLAN or AGENT to decide.".into());
+            }
+            return;
+        }
+        let Some(task_id) = self
+            .plan_list
+            .as_ref()
+            .and_then(|l| l.selected_row())
+            .map(|r| r.task_id.clone())
+        else {
+            return;
+        };
+        if self.plans_action_pending {
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.plans_decide(&task_id, decision) {
+            Ok(()) => {
+                self.plans_action_pending = true;
+                self.view.notice = Some(format!(
+                    "{} plan {task_id}…",
+                    if decision == "approved" {
+                        "Approving"
+                    } else {
+                        "Rejecting"
+                    }
+                ));
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("plans.decide failed: {err}"));
+            }
+        }
+    }
+
     fn submit_editor(&mut self) {
         let text = self.editor.lines().join("\n");
         if text.trim().is_empty() {
@@ -957,6 +1098,10 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
     if app.session_picker.is_some() {
         return Ok(handle_session_picker_key(app, key));
     }
+    // U4b: plan list owns keys while open — team `a`/`A` never reach here.
+    if app.plan_list.is_some() {
+        return Ok(handle_plan_list_key(app, key));
+    }
     if try_bridge_shortcut(app, key) {
         return Ok(false);
     }
@@ -964,6 +1109,9 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
     if try_recovery_shortcut(app, key) {
+        return Ok(false);
+    }
+    if try_plan_shortcut(app, key) {
         return Ok(false);
     }
 
@@ -1102,6 +1250,83 @@ fn try_team_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
         }
         _ => false,
     }
+}
+
+/// `p` opens the plans / timeline list (U4b). Same empty-compose gate as
+/// team setup so a typed character is never stolen. While the list is open,
+/// `handle_plan_list_key` owns input — including `y`/`n` — so team `a`/`A`
+/// cannot clash.
+fn try_plan_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
+    if app.bridge.is_none()
+        || key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return false;
+    }
+    if !team_keys_available(
+        app.chat.focus == Focus::Editor,
+        app.editor.lines().join("").trim().is_empty(),
+        app.engine.can_prompt(),
+    ) {
+        return false;
+    }
+    match key.code {
+        KeyCode::Char('p') => {
+            app.request_plans_list();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// U4b: key routing while the plans list is open. ↑/↓ select, Enter detail,
+/// Esc closes detail then list locally, `y` approve / `n` reject when
+/// awaiting_approval and mode ≠ ask. Bare `a`/`A` are ignored here (team
+/// shortcuts never run while list-focused).
+fn handle_plan_list_key(app: &mut ShellApp, key: KeyEvent) -> bool {
+    if app.plan_list.is_none() {
+        return false;
+    }
+    match key.code {
+        KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            return true;
+        }
+        KeyCode::Esc => {
+            let close_list = app
+                .plan_list
+                .as_mut()
+                .map(|l| l.close_detail_or_list())
+                .unwrap_or(true);
+            if close_list {
+                app.plan_list = None;
+                app.view.notice = Some("Plans list closed.".into());
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if let Some(list) = app.plan_list.as_mut() {
+                list.move_down();
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if let Some(list) = app.plan_list.as_mut() {
+                list.move_up();
+            }
+        }
+        KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.request_plan_show();
+        }
+        KeyCode::Char('y') => {
+            app.request_plan_decide("approved");
+        }
+        KeyCode::Char('n') => {
+            app.request_plan_decide("rejected");
+        }
+        // Explicitly ignore team keys while list-focused — never fall through.
+        KeyCode::Char('a') | KeyCode::Char('A') => {}
+        _ => {}
+    }
+    false
 }
 
 /// `r` = revalidate availability on demand, `R` = preview a strategy
@@ -1509,6 +1734,9 @@ fn draw(frame: &mut Frame, app: &ShellApp) {
     if let Some(picker) = &app.session_picker {
         render_session_picker(frame.buffer_mut(), area, picker);
     }
+    if let Some(plans) = &app.plan_list {
+        render_plan_list(frame.buffer_mut(), area, plans, &app.view.work_mode);
+    }
     if let Some(dialog) = &app.extension_ui.active {
         render_extension_ui(frame.buffer_mut(), area, dialog);
     }
@@ -1562,5 +1790,56 @@ mod tests {
         }));
         let should_quit = handle_key(&mut app, press('q')).expect("key");
         assert!(should_quit, "plain q must still quit select dialogs");
+    }
+
+    #[test]
+    fn plan_list_focus_uses_y_n_not_a_and_esc_closes_locally() {
+        let mut app = ShellApp::new(None);
+        app.view.work_mode = "plan".into();
+        app.view.team_state = Some("suggested".into());
+        app.plan_list = Some(PlanListState::from_plans_record(&json!({
+            "timeline": [{
+                "taskId": "task-1",
+                "taskText": "Add OAuth",
+                "state": "awaiting_approval",
+                "approval": "not_decided",
+                "planReady": true
+            }]
+        })));
+        // Bare `a` must NOT close the list or trigger team analyze while focused.
+        let should_quit = handle_key(&mut app, press('a')).expect("key");
+        assert!(!should_quit);
+        assert!(app.plan_list.is_some(), "a must be ignored in list-focus");
+        assert!(app.picker.is_none(), "a must not open analyst picker");
+
+        // Esc closes list locally with no bridge.
+        let should_quit = handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .expect("esc");
+        assert!(!should_quit);
+        assert!(app.plan_list.is_none());
+    }
+
+    #[test]
+    fn plan_list_ask_mode_blocks_approve_reject() {
+        let mut app = ShellApp::new(None);
+        app.view.work_mode = "ask".into();
+        app.plan_list = Some(PlanListState::from_plans_record(&json!({
+            "timeline": [{
+                "taskId": "task-1",
+                "state": "awaiting_approval",
+                "approval": "not_decided",
+                "planReady": true
+            }]
+        })));
+        let _ = handle_key(&mut app, press('y')).expect("y");
+        assert!(
+            app.view
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains("ASK") || n.contains("read-only")),
+            "ASK must refuse decide: {:?}",
+            app.view.notice
+        );
+        assert!(!app.plans_action_pending);
     }
 }

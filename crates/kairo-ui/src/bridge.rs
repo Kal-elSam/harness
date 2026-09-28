@@ -227,6 +227,24 @@ impl BridgeClient {
         self.send_op("extension_ui_response", extra)
     }
 
+    /// U4b: session-scoped plan timeline (`service.snapshot` → timeline).
+    pub fn plans_list(&mut self) -> std::io::Result<()> {
+        self.send_op("plans.list", Value::Null)
+    }
+
+    /// U4b: Markdown detail for one plan (`showPlan`).
+    pub fn plans_show(&mut self, task_id: &str) -> std::io::Result<()> {
+        self.send_op("plans.show", serde_json::json!({ "taskId": task_id }))
+    }
+
+    /// U4b: approve or reject (`decidePlan`) — never execute.
+    pub fn plans_decide(&mut self, task_id: &str, decision: &str) -> std::io::Result<()> {
+        self.send_op(
+            "plans.decide",
+            serde_json::json!({ "taskId": task_id, "decision": decision }),
+        )
+    }
+
     /// Force-stop the Node sidecar. Never block the TTY on a wedged child:
     /// best-effort cooperative `stop`, then kill + wait. Idempotent for Drop.
     pub fn stop(&mut self) -> std::io::Result<()> {

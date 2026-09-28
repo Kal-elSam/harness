@@ -3081,3 +3081,352 @@ test("U4a: invalid mode on set_mode fails closed to ask semantics and never pers
   stdin.end();
   await runPromise;
 });
+
+// ---------------------------------------------------------------------------
+// U4b: plans list / show / decide (conversation service; never execute)
+// ---------------------------------------------------------------------------
+
+function fakePlanRow(overrides = {}) {
+  return {
+    taskId: "task-1",
+    taskText: "Add OAuth",
+    state: "awaiting_approval",
+    provider: "codex",
+    model: null,
+    sessionId: KAIRO_ID_A,
+    planReady: true,
+    approval: "not_decided",
+    execution: { state: "not_started", provider: "claude", message: "Approval is required before execution." },
+    ...overrides
+  };
+}
+
+test("U4b: plans.list returns timeline via snapshot scoped to activeKairoSessionId", async () => {
+  const snapshotCalls = [];
+  const timeline = [fakePlanRow(), fakePlanRow({ taskId: "task-2", state: "approved", approval: "approved" })];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "plan" }),
+    snapshot: async (args) => {
+      snapshotCalls.push(args);
+      return { timeline };
+    },
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      })
+    )
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.list" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.deepEqual(snapshotCalls, [{ cwd: "/project", sessionId: KAIRO_ID_A }]);
+  const plans = out.find((r) => r.type === "plans");
+  assert.ok(plans, "plans.list must emit a plans record");
+  assert.equal(plans.timeline.length, 2);
+  assert.equal(plans.timeline[0].taskId, "task-1");
+  assert.equal(plans.timeline[0].state, "awaiting_approval");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4b: plans.show returns taskMarkdown+planMarkdown with sessionId ownership", async () => {
+  const showCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "plan" }),
+    showPlan: async (args) => {
+      showCalls.push(args);
+      return {
+        ...fakePlanRow({ taskId: args.taskId }),
+        taskMarkdown: "# Task\n\nAdd OAuth\n",
+        planMarkdown: "# Plan\n\n1. Wire auth\n"
+      };
+    },
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      })
+    )
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.show", taskId: "task-1" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.deepEqual(showCalls, [{ cwd: "/project", taskId: "task-1", sessionId: KAIRO_ID_A }]);
+  const detail = out.find((r) => r.type === "plan_detail");
+  assert.ok(detail, "plans.show must emit plan_detail");
+  assert.equal(detail.taskId, "task-1");
+  assert.equal(detail.taskMarkdown, "# Task\n\nAdd OAuth\n");
+  assert.equal(detail.planMarkdown, "# Plan\n\n1. Wire auth\n");
+  assert.equal(detail.state, "awaiting_approval");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4b: plans.decide approved|rejected then refreshes plans list; never executePlan", async () => {
+  const decideCalls = [];
+  const snapshotCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "agent" }),
+    decidePlan: async (args) => {
+      decideCalls.push(args);
+      return fakePlanRow({
+        taskId: args.taskId,
+        state: args.decision,
+        approval: args.decision === "approved" ? "approved" : "rejected"
+      });
+    },
+    snapshot: async (args) => {
+      snapshotCalls.push(args);
+      return {
+        timeline: [
+          fakePlanRow({
+            taskId: "task-1",
+            state: decideCalls.at(-1)?.decision ?? "awaiting_approval",
+            approval:
+              decideCalls.at(-1)?.decision === "approved"
+                ? "approved"
+                : decideCalls.at(-1)?.decision === "rejected"
+                  ? "rejected"
+                  : "not_decided"
+          })
+        ]
+      };
+    },
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      })
+    )
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.decide", taskId: "task-1", decision: "approved" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  assert.deepEqual(decideCalls, [
+    { cwd: "/project", taskId: "task-1", decision: "approved", sessionId: KAIRO_ID_A }
+  ]);
+  const decision = out.find((r) => r.type === "plan_decision");
+  assert.ok(decision, "plans.decide must emit plan_decision");
+  assert.equal(decision.taskId, "task-1");
+  assert.equal(decision.decision, "approved");
+  assert.equal(decision.state, "approved");
+  assert.ok(
+    out.some((r) => r.type === "plans" && r.timeline?.[0]?.state === "approved"),
+    "decide must refresh plans list"
+  );
+  assert.equal(snapshotCalls.length, 1);
+  assert.ok(!out.some((r) => /execute/i.test(JSON.stringify(r))));
+
+  stdin.write(`${JSON.stringify({ op: "plans.decide", taskId: "task-1", decision: "rejected" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+  assert.equal(decideCalls.at(-1)?.decision, "rejected");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4b: plan task_result refreshes plans list and advertises y/n keys (not a)", async () => {
+  const snapshotCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "plan" }),
+    submitTask: async () => ({ kind: "plan", taskId: "task-99" }),
+    snapshot: async (args) => {
+      snapshotCalls.push(args);
+      return { timeline: [fakePlanRow({ taskId: "task-99" })] };
+    },
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          if (cmd.type === "prompt") {
+            return { type: "response", command: "prompt", success: true };
+          }
+          return null;
+        }
+      })
+    )
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "prompt", message: "Add OAuth" })}\n`);
+  await new Promise((r) => setTimeout(r, 100));
+
+  assert.equal(out.find((r) => r.type === "task_result")?.taskId, "task-99");
+  assert.ok(snapshotCalls.length >= 1, "plan task_result must refresh plans via snapshot");
+  const plans = [...out].reverse().find((r) => r.type === "plans");
+  assert.ok(plans, "plan task_result must emit plans");
+  assert.equal(plans.timeline[0].taskId, "task-99");
+  const notice = [...out].reverse().find((r) => r.type === "notice" && /Plan requested/i.test(r.message ?? ""));
+  assert.match(notice?.message ?? "", /y to approve/i);
+  assert.match(notice?.message ?? "", /n to reject/i);
+  assert.doesNotMatch(notice?.message ?? "", /press a to approve/i);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4b: plans.decide rejects invalid decision without calling decidePlan", async () => {
+  const decideCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    decidePlan: async (args) => {
+      decideCalls.push(args);
+      return fakePlanRow();
+    },
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      })
+    )
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "plans.decide", taskId: "task-1", decision: "execute" })}\n`);
+  await new Promise((r) => setTimeout(r, 40));
+
+  assert.equal(decideCalls.length, 0);
+  const err = [...out].reverse().find((r) => r.type === "error");
+  assert.match(err?.message ?? "", /approved|rejected/i);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
