@@ -491,8 +491,9 @@ async function askCodex({ question, model, cwd, spawn, timeoutMs, env, control }
  * @param {string} args.cwd
  * @param {AbortSignal} [args.signal] abort terminates the provider process
  *   tree (SIGTERM to the group, SIGKILL after `killGraceMs`); the call then
- *   resolves `{status:"cancelled", answer:null, error:null}` once the child
- *   closed. Already aborted => resolves cancelled without spawning.
+ *   resolves `{status:"cancelled", answer:null, error:null}` on child close, or
+ *   right after SIGKILL if it has not closed by then (reaping is not awaited).
+ *   Already aborted => resolves cancelled without spawning.
  * @param {(event:object) => void} [args.onEvent] provider progress events
  *   (`progress|text|tool_start|tool_end|error|final`); exceptions are ignored.
  * @param {number} [args.killGraceMs] TERM -> KILL grace (default 2000)
