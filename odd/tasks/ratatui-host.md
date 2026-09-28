@@ -423,7 +423,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **Implemented**: workflow gains artifact upload, `assemble`, `verify-package`; new `scripts/verify-kairo-ui-packaged.sh` (extract tarball, resolver + launcher from the package with cargo stripped from PATH, `--v3-capture` >= 10 files, PTY via `kairo-ui-pty-e2e.py` with `KAIRO_UI_BINARY` -> packaged binary); `npm run verify:kairo-ui-packaged`.
   - **GREEN (observed, host darwin-arm64)**: `test/kairo-ui-packaged-verify.test.js` 8/8; the script against a real `npm pack` tarball printed `selection: darwin-arm64`, `launch without cargo: OK`, `v3-capture: 52 files`, `PTY e2e PASS: 60x30, 100x30, 160x48`, `Packaged verification PASS`.
   - **Not observed**: workflow authored and statically tested; **not run on GitHub runners**. Foreign-key runtime exec (darwin-x64, linux-x64, linux-arm64) remains unproven until a user-authorized `workflow_dispatch` is green. The PTY mock sidecar does NOT prove real providers.
-  - **Commits**: COMMITS_PLACEHOLDER
+  - **Commits**: 7a08623a7 (ci(kairo-ui): assemble and verify the packaged host on native runners)
 
 ## Next step
 
