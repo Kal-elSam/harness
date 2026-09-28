@@ -7,9 +7,11 @@ mod extension_ui;
 mod layout;
 mod plan_list;
 mod recovery_picker;
+mod role_editor;
 mod session_picker;
 mod snapshot;
 mod surfaces;
+mod workspace_nav;
 
 use std::collections::HashMap;
 use std::env;
@@ -30,20 +32,23 @@ use bridge::BridgeClient;
 use chat::{sidebar_accepts_selection_keys, ChatState, Focus};
 use engine::{
     can_analyze_team, can_approve_team, decide_submit, next_work_mode, normalize_work_mode,
-    parse_slash_command, team_keys_available, EngineGate, SlashCommand, SubmitDecision,
+    parse_slash_command, slash_help_text, team_keys_available, EngineGate, SlashCommand,
+    SubmitDecision,
 };
 use execution_flow::{ConfirmExecuteState, ExecutionModal, RoleSelectState};
 use extension_ui::{ExtensionUiEvent, ExtensionUiMethod, ExtensionUiState};
 use layout::split_shell;
 use plan_list::{PlanListState, PLAN_REQUESTED_HOST_COPY};
 use recovery_picker::RecoveryPreviewState;
+use role_editor::{can_edit_team_roles, RoleEditPhase, RoleEditorState};
 use session_picker::SessionPickerState;
 use snapshot::apply_workspace_snapshot;
 use surfaces::{
     render_analyst_picker, render_confirm_execute, render_extension_ui, render_plan_list,
-    render_recovery_preview, render_role_select, render_session_picker, render_shell,
-    ShellViewModel,
+    render_project_view, render_recovery_preview, render_role_editor, render_role_select,
+    render_session_picker, render_shell, ShellViewModel,
 };
+use workspace_nav::{escape_to_work, view_from_digit, WorkspaceView};
 
 // Keybindings (V2 + R3b + R4):
 // - Tab: cycle focus Editor → Sidebar → Transcript
@@ -72,12 +77,14 @@ use surfaces::{
 //   eligibility — a stale preview is refused and mutates nothing), `x`
 //   explicitly rejects (closes the proposal, current team stays active),
 //   Esc cancels locally (no server call at all).
-// - Bridge only, plans / tasks (U4b): empty-compose `p` opens the session
-//   plan list (also auto-opens after a PLAN/AGENT task_result). List-focus
-//   owns keys so team `a`/`A` never clash: ↑/↓ select, Enter Markdown
-//   detail, Esc closes detail then list locally, `y` approve / `n` reject
-//   only when awaiting_approval and WorkMode ≠ ask. No execute/cancel/
-//   handoff here (U4c).
+// - Bridge only, plans / tasks (U4b+U4d): empty-compose `p` or `3` opens the
+//   Tasks view (plan list owns execute keys). Empty-compose `1`–`4` switch
+//   Work|Project|Tasks|Sessions; Esc returns to Work. Ctrl+L or `4` opens
+//   Sessions. Bare `/project` → Project view; Enter on a SUGGESTED role opens
+//   the per-role editor (ACTIVE/STALE refused).
+// - Bridge only, slash set (U4d): /help /usage /providers /status
+//   /models[--evidence|--verify-access[--refresh]] /why /clear /quit|/exit
+//   /plan <task>; keep /analyze|/approve; unknown `/…` never goes to chat.
 // - Bridge only, extension UI dialogs (U3b): Pi `extension_ui_request` opens
 //   a one-at-a-time modal (FIFO queue for concurrent ids). Esc → cancelled
 //   response with the same id; Enter confirms (select/confirm/input/editor);
@@ -205,6 +212,12 @@ struct ShellApp {
     /// The `ready` record's `draft` (if any) has been applied to the editor
     /// exactly once — never re-applied on a later `ready`/`engine` record.
     draft_restored: bool,
+    /// U4d: Work | Project | Tasks | Sessions chrome.
+    workspace_view: WorkspaceView,
+    /// U4d: per-role editor modal on Project (SUGGESTED only).
+    role_editor: Option<RoleEditorState>,
+    /// U4d: `/quit`/`/exit` requested from slash handling.
+    quit_requested: bool,
 }
 
 impl ShellApp {
@@ -238,6 +251,9 @@ impl ShellApp {
             run_transcript_cursors: HashMap::new(),
             extension_ui: ExtensionUiState::default(),
             draft_restored: false,
+            workspace_view: WorkspaceView::Work,
+            role_editor: None,
+            quit_requested: false,
         }
     }
 
@@ -436,6 +452,29 @@ impl ShellApp {
                 self.execution_modal = None;
             } else if kind == Some("run_transcript") {
                 self.ingest_run_transcript_record(&record);
+            } else if kind == Some("slash_lines") {
+                if let Some(lines) = record.get("lines").and_then(|v| v.as_array()) {
+                    for line in lines {
+                        if let Some(text) = line.as_str() {
+                            self.chat.push_kairo_reply(text.to_string());
+                        }
+                    }
+                }
+            } else if kind == Some("team_edit_catalog") {
+                match RoleEditorState::from_catalog_record(&record) {
+                    Some(editor) => self.role_editor = Some(editor),
+                    None => {
+                        self.role_editor = None;
+                        self.view.notice =
+                            Some("Edit catalog returned no usable models.".into());
+                    }
+                }
+            } else if kind == Some("team_edit_saved") {
+                self.role_editor = None;
+                if let Some(state) = record.get("state").and_then(|v| v.as_str()) {
+                    self.view.team_state = Some(state.to_string());
+                }
+                self.sync_empty_hint();
             } else if kind == Some("transcript") {
                 if let Some(rows) = record.get("messages").and_then(|v| v.as_array()) {
                     self.chat.replace_from_sidecar_transcript(rows);
@@ -1143,25 +1182,7 @@ impl ShellApp {
         }
         if let Some(cmd) = parse_slash_command(&text) {
             self.clear_editor();
-            match cmd {
-                SlashCommand::Analyze => {
-                    if self.bridge.is_none() {
-                        self.view.notice = Some("No bridge — cannot run /analyze.".into());
-                        return;
-                    }
-                    self.request_analyst_preflight();
-                }
-                SlashCommand::Approve => {
-                    if !can_approve_team(self.view.team_state.as_deref()) {
-                        self.view.notice = Some(
-                            "Nothing to approve yet — run /analyze and wait for a suggested team."
-                                .into(),
-                        );
-                        return;
-                    }
-                    self.request_team_op(TeamOp::Approve);
-                }
-            }
+            self.dispatch_slash(cmd);
             return;
         }
         let bridge_attached = self.bridge.is_some();
@@ -1190,6 +1211,199 @@ impl ShellApp {
                         self.view.notice = Some(format!("Failed to send prompt: {err}"));
                     }
                 }
+            }
+        }
+    }
+
+    /// U4d: host slash commands — never fall through to chat for unknown `/…`.
+    fn dispatch_slash(&mut self, cmd: SlashCommand) {
+        match cmd {
+            SlashCommand::Help => {
+                self.chat.push_kairo_reply(slash_help_text().into());
+            }
+            SlashCommand::Quit => {
+                self.quit_requested = true;
+            }
+            SlashCommand::Clear => {
+                self.chat.messages.clear();
+                if let Some(bridge) = self.bridge.as_mut() {
+                    if let Err(err) = bridge.clear_transcript() {
+                        self.view.notice = Some(format!("/clear failed: {err}"));
+                    }
+                } else {
+                    self.view.notice = Some("Transcript cleared (local).".into());
+                }
+            }
+            SlashCommand::ProjectView => {
+                self.set_workspace_view(WorkspaceView::Project);
+            }
+            SlashCommand::Analyze => {
+                if self.bridge.is_none() {
+                    self.view.notice = Some("No bridge — cannot run /analyze.".into());
+                    return;
+                }
+                self.request_analyst_preflight();
+            }
+            SlashCommand::Approve => {
+                if !can_approve_team(self.view.team_state.as_deref()) {
+                    self.view.notice = Some(
+                        "Nothing to approve yet — run /analyze and wait for a suggested team."
+                            .into(),
+                    );
+                    return;
+                }
+                self.request_team_op(TeamOp::Approve);
+            }
+            SlashCommand::ProjectStatus => {
+                if let Some(bridge) = self.bridge.as_mut() {
+                    if let Err(err) = bridge.project_status() {
+                        self.view.notice = Some(format!("/project status failed: {err}"));
+                    }
+                } else {
+                    self.view.notice = Some("No bridge — cannot run /project status.".into());
+                }
+            }
+            SlashCommand::ProjectRefresh => {
+                if let Some(bridge) = self.bridge.as_mut() {
+                    if let Err(err) = bridge.project_refresh() {
+                        self.view.notice = Some(format!("/project refresh failed: {err}"));
+                    } else {
+                        self.view.notice = Some("Refreshing project strategy…".into());
+                    }
+                } else {
+                    self.view.notice = Some("No bridge — cannot run /project refresh.".into());
+                }
+            }
+            SlashCommand::Usage => self.request_slash_info("usage", serde_json::json!({})),
+            SlashCommand::Providers => {
+                self.request_slash_info("providers", serde_json::json!({}))
+            }
+            SlashCommand::Status => self.request_slash_info("status", serde_json::json!({})),
+            SlashCommand::Why => self.request_slash_info("why", serde_json::json!({})),
+            SlashCommand::Models {
+                evidence,
+                verify_access,
+                refresh,
+            } => self.request_slash_info(
+                "models",
+                serde_json::json!({
+                    "evidence": evidence,
+                    "verifyAccess": verify_access,
+                    "refresh": refresh
+                }),
+            ),
+            SlashCommand::Plan { task } => {
+                if task.trim().is_empty() {
+                    self.chat
+                        .push_kairo_reply("Usage: /plan <task description>".into());
+                    return;
+                }
+                if self.view.work_mode != "plan" {
+                    self.view.work_mode = "plan".into();
+                    if let Some(bridge) = self.bridge.as_mut() {
+                        if let Err(err) = bridge.set_mode("plan") {
+                            self.view.notice =
+                                Some(format!("Mode change not saved: {err}"));
+                        }
+                    }
+                }
+                if self.bridge.is_none() {
+                    self.chat.submit_user(format!("/plan {task}"));
+                    self.chat
+                        .push_kairo_reply("No bridge — cannot submit /plan.".into());
+                    return;
+                }
+                self.chat.submit_user(format!("/plan {task}"));
+                match self.bridge.as_mut().expect("bridge").prompt(task.trim()) {
+                    Ok(()) => {
+                        self.pending_prompt = Some(task.trim().to_string());
+                        self.view.notice = Some("Submitting · PLAN…".into());
+                    }
+                    Err(err) => {
+                        self.chat.pop_last_user_if_matches(&format!("/plan {task}"));
+                        self.view.notice = Some(format!("/plan failed: {err}"));
+                    }
+                }
+            }
+            SlashCommand::Unknown { command } => {
+                self.chat.push_kairo_reply(format!(
+                    "Unknown command: {command}. Try /help."
+                ));
+            }
+        }
+    }
+
+    fn request_slash_info(&mut self, kind: &str, flags: serde_json::Value) {
+        let Some(bridge) = self.bridge.as_mut() else {
+            self.view.notice = Some(format!("No bridge — cannot run /{kind}."));
+            return;
+        };
+        if let Err(err) = bridge.slash_info(kind, flags) {
+            self.view.notice = Some(format!("/{kind} failed: {err}"));
+        }
+    }
+
+    fn set_workspace_view(&mut self, view: WorkspaceView) {
+        self.workspace_view = view;
+        self.view.work_title = view.label().into();
+        match view {
+            WorkspaceView::Work => {
+                // Keep plan_list/session_picker if they were opened as modals from
+                // Tasks/Sessions — closing the view clears them.
+                self.plan_list = None;
+                self.session_picker = None;
+                self.role_editor = None;
+                self.view.notice = Some("View: Work".into());
+            }
+            WorkspaceView::Project => {
+                self.plan_list = None;
+                self.session_picker = None;
+                self.view.notice = Some(
+                    "View: Project · Enter edits a SUGGESTED role · Esc → Work".into(),
+                );
+            }
+            WorkspaceView::Tasks => {
+                self.session_picker = None;
+                self.role_editor = None;
+                if self.bridge.is_some() {
+                    self.request_plans_list();
+                }
+                self.view.notice = Some("View: Tasks".into());
+            }
+            WorkspaceView::Sessions => {
+                self.plan_list = None;
+                self.role_editor = None;
+                if self.bridge.is_some() {
+                    self.open_session_picker();
+                }
+                self.view.notice = Some("View: Sessions".into());
+            }
+        }
+    }
+
+    fn begin_role_edit_for_selected(&mut self) {
+        if !can_edit_team_roles(self.view.team_state.as_deref()) {
+            self.view.notice = Some(
+                "Role edit only while the team is SUGGESTED (ACTIVE/STALE are read-only)."
+                    .into(),
+            );
+            return;
+        }
+        let Some(agent) = self.view.agents.get(self.view.selected_agent) else {
+            self.view.notice = Some("No role selected.".into());
+            return;
+        };
+        let role = agent.label.clone();
+        let Some(bridge) = self.bridge.as_mut() else {
+            self.view.notice = Some("No bridge — cannot edit roles.".into());
+            return;
+        };
+        match bridge.team_edit_catalog(&role) {
+            Ok(()) => {
+                self.role_editor = Some(RoleEditorState::loading(role));
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("Edit catalog failed: {err}"));
             }
         }
     }
@@ -1308,6 +1522,9 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
     if is_quit_chord(&key) {
         return Ok(true);
     }
+    if app.quit_requested {
+        return Ok(true);
+    }
     // U3b: extension_ui modal owns every key while open (above other pickers)
     // so chat compose is never the path that answers a dialog.
     if app.extension_ui.is_open() {
@@ -1322,6 +1539,10 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
     if app.recovery_preview.is_some() {
         return Ok(handle_recovery_key(app, key));
     }
+    // U4d: role editor owns keys above Sessions/Tasks.
+    if app.role_editor.is_some() {
+        return Ok(handle_role_editor_key(app, key));
+    }
     if app.session_picker.is_some() {
         return Ok(handle_session_picker_key(app, key));
     }
@@ -1335,6 +1556,9 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
         return Ok(handle_plan_list_key(app, key));
     }
     if try_bridge_shortcut(app, key) {
+        return Ok(false);
+    }
+    if try_view_shortcut(app, key) {
         return Ok(false);
     }
     if try_team_shortcut(app, key) {
@@ -1355,6 +1579,17 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
+    // U4d: Esc from Project (no modal) → Work.
+    if key.code == KeyCode::Esc
+        && app.workspace_view == WorkspaceView::Project
+        && app.role_editor.is_none()
+    {
+        if let Some(next) = escape_to_work(app.workspace_view) {
+            app.set_workspace_view(next);
+            return Ok(false);
+        }
+    }
+
     match app.chat.focus {
         Focus::Editor => {
             if key.code == KeyCode::Tab {
@@ -1371,7 +1606,7 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
             }
             if key.code == KeyCode::Enter && !key.modifiers.contains(KeyModifiers::SHIFT) {
                 app.submit_editor();
-                return Ok(false);
+                return Ok(app.quit_requested);
             }
             if key.code == KeyCode::Char('q') && app.editor.lines().join("").trim().is_empty() {
                 return Ok(true);
@@ -1392,7 +1627,16 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
         Focus::Sidebar => {
             match key.code {
                 KeyCode::Tab => app.chat.focus = app.chat.focus.next(),
-                KeyCode::Esc => app.chat.focus = Focus::Editor,
+                KeyCode::Esc => {
+                    if app.workspace_view == WorkspaceView::Project {
+                        app.set_workspace_view(WorkspaceView::Work);
+                    } else {
+                        app.chat.focus = Focus::Editor;
+                    }
+                }
+                KeyCode::Enter if app.workspace_view == WorkspaceView::Project => {
+                    app.begin_role_edit_for_selected();
+                }
                 KeyCode::Char('q') => return Ok(true),
                 KeyCode::Down | KeyCode::Char('j')
                     if sidebar_accepts_selection_keys(app.chat.focus) =>
@@ -1484,7 +1728,32 @@ fn try_team_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
     }
 }
 
-/// `p` opens the plans / timeline list (U4b). Same empty-compose gate as
+/// U4d: empty-compose `1`–`4` switch Work|Project|Tasks|Sessions.
+fn try_view_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT)
+    {
+        return false;
+    }
+    if !team_keys_available(
+        app.chat.focus == Focus::Editor,
+        app.editor.lines().join("").trim().is_empty(),
+        app.engine.can_prompt(),
+    ) {
+        return false;
+    }
+    let KeyCode::Char(c) = key.code else {
+        return false;
+    };
+    let Some(view) = view_from_digit(c) else {
+        return false;
+    };
+    app.set_workspace_view(view);
+    true
+}
+
+/// `p` opens Tasks view / plans list (U4b+U4d). Same empty-compose gate as
 /// team setup so a typed character is never stolen. While the list is open,
 /// `handle_plan_list_key` owns input — including `y`/`n` — so team `a`/`A`
 /// cannot clash.
@@ -1505,7 +1774,7 @@ fn try_plan_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
     }
     match key.code {
         KeyCode::Char('p') => {
-            app.request_plans_list();
+            app.set_workspace_view(WorkspaceView::Tasks);
             true
         }
         _ => false,
@@ -1513,9 +1782,9 @@ fn try_plan_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
 }
 
 /// U4b: key routing while the plans list is open. ↑/↓ select, Enter detail,
-/// Esc closes detail then list locally, `y` approve / `n` reject when
-/// awaiting_approval and mode ≠ ask. Bare `a`/`A` are ignored here (team
-/// shortcuts never run while list-focused).
+/// Esc closes detail then list locally (and returns Tasks → Work), `y` approve
+/// / `n` reject when awaiting_approval and mode ≠ ask. Bare `a`/`A` are
+/// ignored here (team shortcuts never run while list-focused).
 fn handle_plan_list_key(app: &mut ShellApp, key: KeyEvent) -> bool {
     if app.plan_list.is_none() {
         return false;
@@ -1532,7 +1801,11 @@ fn handle_plan_list_key(app: &mut ShellApp, key: KeyEvent) -> bool {
                 .unwrap_or(true);
             if close_list {
                 app.plan_list = None;
-                app.view.notice = Some("Plans list closed.".into());
+                if app.workspace_view == WorkspaceView::Tasks {
+                    app.set_workspace_view(WorkspaceView::Work);
+                } else {
+                    app.view.notice = Some("Plans list closed.".into());
+                }
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
@@ -1563,6 +1836,63 @@ fn handle_plan_list_key(app: &mut ShellApp, key: KeyEvent) -> bool {
         // Explicitly ignore team keys while list-focused — never fall through.
         KeyCode::Char('a') | KeyCode::Char('A') => {}
         _ => {}
+    }
+    false
+}
+
+/// U4d: per-role editor key owner on Project.
+fn handle_role_editor_key(app: &mut ShellApp, key: KeyEvent) -> bool {
+    let Some(editor) = app.role_editor.as_mut() else {
+        return false;
+    };
+    match editor.phase {
+        RoleEditPhase::Loading | RoleEditPhase::Saving => {
+            if key.code == KeyCode::Esc {
+                app.role_editor = None;
+                app.view.notice = Some("Role edit cancelled.".into());
+            }
+        }
+        RoleEditPhase::ModelSearch => match key.code {
+            KeyCode::Esc => {
+                app.role_editor = None;
+                app.view.notice = Some("Role edit cancelled.".into());
+            }
+            KeyCode::Down => editor.move_down(),
+            KeyCode::Up => editor.move_up(),
+            KeyCode::Char('j') if editor.query.is_empty() => editor.move_down(),
+            KeyCode::Char('k') if editor.query.is_empty() => editor.move_up(),
+            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+                editor.begin_confirm();
+            }
+            KeyCode::Backspace => {
+                let mut q = editor.query.clone();
+                q.pop();
+                editor.set_query(q);
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let mut q = editor.query.clone();
+                q.push(c);
+                editor.set_query(q);
+            }
+            _ => {}
+        },
+        RoleEditPhase::Confirm => match key.code {
+            KeyCode::Esc => editor.back_to_search(),
+            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+                let role = editor.role.clone();
+                let Some(key_str) = editor.pending_key.clone() else {
+                    return false;
+                };
+                editor.begin_saving();
+                if let Some(bridge) = app.bridge.as_mut() {
+                    if let Err(err) = bridge.team_edit_assign(&role, &key_str) {
+                        app.role_editor = None;
+                        app.view.notice = Some(format!("Save failed: {err}"));
+                    }
+                }
+            }
+            _ => {}
+        },
     }
     false
 }
@@ -1809,7 +2139,11 @@ fn handle_session_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
         }
         KeyCode::Esc => {
             app.session_picker = None;
-            app.view.notice = Some("Session picker cancelled.".into());
+            if app.workspace_view == WorkspaceView::Sessions {
+                app.set_workspace_view(WorkspaceView::Work);
+            } else {
+                app.view.notice = Some("Session picker cancelled.".into());
+            }
         }
         KeyCode::Enter => {
             if let Some(index) = picker.confirm() {
@@ -1866,7 +2200,7 @@ fn try_bridge_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
     // — handled here, before taking the bridge borrow below.
     match key.code {
         KeyCode::Char('l') => {
-            app.open_session_picker();
+            app.set_workspace_view(WorkspaceView::Sessions);
             return true;
         }
         KeyCode::Char('r') => {
@@ -2006,13 +2340,25 @@ fn crossterm_to_textarea(key: KeyEvent) -> Option<Input> {
 fn draw(frame: &mut Frame, app: &ShellApp) {
     let area = frame.area();
     let regions = split_shell(area);
-    render_shell(
-        frame.buffer_mut(),
-        regions,
-        &app.view,
-        &app.chat,
-        &app.editor,
-    );
+    // U4d: Project view replaces the Work chat column with the team/result surface.
+    if app.workspace_view == WorkspaceView::Project && app.plan_list.is_none() {
+        render_project_view(
+            frame.buffer_mut(),
+            regions,
+            &app.view,
+            &app.chat,
+            &app.editor,
+            app.workspace_view,
+        );
+    } else {
+        render_shell(
+            frame.buffer_mut(),
+            regions,
+            &app.view,
+            &app.chat,
+            &app.editor,
+        );
+    }
     if let Some(picker) = &app.picker {
         render_analyst_picker(frame.buffer_mut(), area, picker);
     }
@@ -2024,6 +2370,9 @@ fn draw(frame: &mut Frame, app: &ShellApp) {
     }
     if let Some(plans) = &app.plan_list {
         render_plan_list(frame.buffer_mut(), area, plans, &app.view.work_mode);
+    }
+    if let Some(editor) = &app.role_editor {
+        render_role_editor(frame.buffer_mut(), area, editor);
     }
     match &app.execution_modal {
         Some(ExecutionModal::RoleSelect(state)) => {

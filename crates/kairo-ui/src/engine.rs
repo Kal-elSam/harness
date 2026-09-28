@@ -179,24 +179,97 @@ pub fn team_keys_available(focus_is_editor: bool, editor_empty: bool, _can_promp
 }
 
 /// Classify a compose submit that is a host slash command (not a Pi prompt).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// U4d: any leading `/` is a host command — including unknown ones, which must
+/// never fall through to chat. Bare `/project` opens the Project view (analyze
+/// stays `/analyze` or `/project analyze`).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
+    Help,
+    Usage,
+    Providers,
+    Status,
+    Models {
+        evidence: bool,
+        verify_access: bool,
+        refresh: bool,
+    },
+    Why,
+    Clear,
+    Quit,
+    /// `/plan <task>` — empty task means show usage (do not submit).
+    Plan {
+        task: String,
+    },
+    /// Bare `/project` → Project workspace view.
+    ProjectView,
+    ProjectStatus,
+    ProjectRefresh,
     Analyze,
     Approve,
+    /// Unknown `/…` — host shows help hint; never sends as chat.
+    Unknown {
+        command: String,
+    },
 }
 
-/// Parse `/analyze`, `/project`, `/project analyze`, `/approve`, `/project approve`.
+/// Parse the full slash set. Returns `None` only when the text is not a slash
+/// command (no leading `/`). Every other `/…` returns `Some`, including
+/// [`SlashCommand::Unknown`].
 pub fn parse_slash_command(raw: &str) -> Option<SlashCommand> {
     let trimmed = raw.trim();
     if !trimmed.starts_with('/') {
         return None;
     }
-    let body = trimmed.trim_start_matches('/').trim().to_ascii_lowercase();
-    match body.as_str() {
-        "analyze" | "project" | "project analyze" => Some(SlashCommand::Analyze),
-        "approve" | "project approve" => Some(SlashCommand::Approve),
-        _ => None,
+    let without_slash = trimmed.trim_start_matches('/').trim();
+    let (head, rest) = match without_slash.split_once(char::is_whitespace) {
+        Some((h, r)) => (h, r.trim()),
+        None => (without_slash, ""),
+    };
+    let cmd = head.to_ascii_lowercase();
+    match cmd.as_str() {
+        "help" => Some(SlashCommand::Help),
+        "usage" => Some(SlashCommand::Usage),
+        "providers" => Some(SlashCommand::Providers),
+        "status" => Some(SlashCommand::Status),
+        "models" => {
+            let flags: Vec<&str> = rest.split_whitespace().collect();
+            Some(SlashCommand::Models {
+                evidence: flags.iter().any(|f| *f == "--evidence"),
+                verify_access: flags.iter().any(|f| *f == "--verify-access"),
+                refresh: flags.iter().any(|f| *f == "--refresh"),
+            })
+        }
+        "why" => Some(SlashCommand::Why),
+        "clear" => Some(SlashCommand::Clear),
+        "quit" | "exit" => Some(SlashCommand::Quit),
+        "plan" => Some(SlashCommand::Plan {
+            task: rest.to_string(),
+        }),
+        "analyze" => Some(SlashCommand::Analyze),
+        "approve" => Some(SlashCommand::Approve),
+        "project" => {
+            let sub = rest.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+            match sub.as_str() {
+                "" => Some(SlashCommand::ProjectView),
+                "analyze" => Some(SlashCommand::Analyze),
+                "approve" => Some(SlashCommand::Approve),
+                "status" => Some(SlashCommand::ProjectStatus),
+                "refresh" => Some(SlashCommand::ProjectRefresh),
+                _ => Some(SlashCommand::Unknown {
+                    command: format!("/project {}", rest.split_whitespace().next().unwrap_or("")),
+                }),
+            }
+        }
+        other => Some(SlashCommand::Unknown {
+            command: format!("/{other}"),
+        }),
     }
+}
+
+/// Static `/help` copy (cockpit parity, ratatui view keys included).
+pub fn slash_help_text() -> &'static str {
+    "Shift+Tab cycles ASK/PLAN/AGENT · views 1 Work · 2 Project · 3 Tasks · 4 Sessions (Esc→Work) · /project opens Project (analyze/approve/status/refresh subcommands) · /plan <task> · /usage · /providers · /status · /models [--evidence|--verify-access[--refresh]] · /why · /clear · /quit"
 }
 
 /// Decide whether Enter may leave the editor / start an assistant stream.
@@ -319,20 +392,68 @@ mod tests {
     }
 
     #[test]
-    fn parse_slash_command_recognizes_analyze_and_approve_aliases() {
+    fn parse_slash_command_full_u4d_set() {
+        assert_eq!(parse_slash_command("/help"), Some(SlashCommand::Help));
+        assert_eq!(parse_slash_command("/usage"), Some(SlashCommand::Usage));
+        assert_eq!(
+            parse_slash_command("/providers"),
+            Some(SlashCommand::Providers)
+        );
+        assert_eq!(parse_slash_command("/status"), Some(SlashCommand::Status));
+        assert_eq!(parse_slash_command("/why"), Some(SlashCommand::Why));
+        assert_eq!(parse_slash_command("/clear"), Some(SlashCommand::Clear));
+        assert_eq!(parse_slash_command("/quit"), Some(SlashCommand::Quit));
+        assert_eq!(parse_slash_command("/exit"), Some(SlashCommand::Quit));
+        assert_eq!(
+            parse_slash_command("/plan ship it"),
+            Some(SlashCommand::Plan {
+                task: "ship it".into()
+            })
+        );
+        assert_eq!(
+            parse_slash_command("/plan"),
+            Some(SlashCommand::Plan { task: "".into() })
+        );
+        assert_eq!(
+            parse_slash_command("/models --evidence --verify-access --refresh"),
+            Some(SlashCommand::Models {
+                evidence: true,
+                verify_access: true,
+                refresh: true
+            })
+        );
         assert_eq!(parse_slash_command("/analyze"), Some(SlashCommand::Analyze));
         assert_eq!(
             parse_slash_command("  /Project Analyze  "),
             Some(SlashCommand::Analyze)
         );
-        assert_eq!(parse_slash_command("/project"), Some(SlashCommand::Analyze));
+        // Bare /project opens Project view — analyze stays /analyze or /project analyze.
+        assert_eq!(
+            parse_slash_command("/project"),
+            Some(SlashCommand::ProjectView)
+        );
+        assert_eq!(
+            parse_slash_command("/project status"),
+            Some(SlashCommand::ProjectStatus)
+        );
+        assert_eq!(
+            parse_slash_command("/project refresh"),
+            Some(SlashCommand::ProjectRefresh)
+        );
         assert_eq!(parse_slash_command("/approve"), Some(SlashCommand::Approve));
         assert_eq!(
             parse_slash_command("/project approve"),
             Some(SlashCommand::Approve)
         );
         assert_eq!(parse_slash_command("hello"), None);
-        assert_eq!(parse_slash_command("/unknown"), None);
+        // Unknown `/…` is still a host command — never None (never falls to chat).
+        assert_eq!(
+            parse_slash_command("/unknown"),
+            Some(SlashCommand::Unknown {
+                command: "/unknown".into()
+            })
+        );
+        assert!(slash_help_text().contains("/help") || slash_help_text().contains("Shift+Tab"));
     }
 
     #[test]

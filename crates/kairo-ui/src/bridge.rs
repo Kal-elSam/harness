@@ -281,6 +281,47 @@ impl BridgeClient {
         )
     }
 
+    /// U4d: slash diagnostics (`/usage` `/providers` `/status` `/models` `/why`).
+    pub fn slash_info(&mut self, kind: &str, flags: Value) -> std::io::Result<()> {
+        let mut extra = serde_json::json!({ "kind": kind });
+        if let Some(obj) = extra.as_object_mut() {
+            if let Some(map) = flags.as_object() {
+                for (k, v) in map {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        self.send_op("slash.info", extra)
+    }
+
+    /// U4d: clear persisted transcript for the active session.
+    pub fn clear_transcript(&mut self) -> std::io::Result<()> {
+        self.send_op("slash.clear", Value::Null)
+    }
+
+    /// U4d: `/project status` text lines.
+    pub fn project_status(&mut self) -> std::io::Result<()> {
+        self.send_op("slash.project_status", Value::Null)
+    }
+
+    /// U4d: `/project refresh` → refreshProjectStrategy.
+    pub fn project_refresh(&mut self) -> std::io::Result<()> {
+        self.send_op("project.refresh", Value::Null)
+    }
+
+    /// U4d: read-only edit catalog for one SUGGESTED role.
+    pub fn team_edit_catalog(&mut self, role: &str) -> std::io::Result<()> {
+        self.send_op("team.edit.catalog", serde_json::json!({ "role": role }))
+    }
+
+    /// U4d: persist a SUGGESTED role assignment (ACTIVE/STALE refused by service).
+    pub fn team_edit_assign(&mut self, role: &str, candidate_key: &str) -> std::io::Result<()> {
+        self.send_op(
+            "team.edit.assign",
+            serde_json::json!({ "role": role, "candidateKey": candidate_key }),
+        )
+    }
+
     /// Force-stop the Node sidecar. Never block the TTY on a wedged child:
     /// best-effort cooperative `stop`, then kill + wait. Idempotent for Drop.
     pub fn stop(&mut self) -> std::io::Result<()> {

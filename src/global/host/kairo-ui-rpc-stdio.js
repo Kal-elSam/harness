@@ -14,6 +14,13 @@
  *   { "op": "plans.execute", "taskId": "...", "confirmationTarget": {...} }  — U4c: executePlan
  *   { "op": "plans.cancel", "taskId": "..." }  — U4c: cancelExecution
  *   { "op": "plans.transcript", "runId": "...", "sinceIndex"?: number }  — U4c: readRunTranscript
+ *   { "op": "slash.info", "kind": "usage"|"providers"|"status"|"models"|"why",
+ *     "evidence"?: bool, "verifyAccess"?: bool, "refresh"?: bool }  — U4d diagnostics
+ *   { "op": "slash.clear" }  — U4d: clearTranscript for active session
+ *   { "op": "slash.project_status" }  — U4d: /project status lines
+ *   { "op": "project.refresh" }  — U4d: refreshProjectStrategy
+ *   { "op": "team.edit.catalog", "role": "..." }  — U4d: getProjectTeamEditCatalog
+ *   { "op": "team.edit.assign", "role": "...", "candidateKey": "..." }  — U4d: setProjectTeamAssignment (SUGGESTED only)
  *   { "op": "abort" }
  *   { "op": "compact" }
  *   { "op": "cycle_model" }
@@ -67,6 +74,9 @@
  * { type: "plan_execute", taskId, execution?, autoExecuted?, ... } (U4c),
  * { type: "plan_cancel", taskId, ... } (U4c),
  * { type: "run_transcript", runId, nextIndex, entries } (U4c),
+ * { type: "slash_lines", kind, lines } (U4d),
+ * { type: "team_edit_catalog", role, models, currentCandidateKey?, recommendedCandidateKey? } (U4d),
+ * { type: "team_edit_saved", role, strategy } (U4d),
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
  * { type: "draft", text, kairoSessionId }, { type: "kairoModels", kairoModels },
  * { type: "team", op, ok, state, teamRows, roles, analyst },
@@ -125,9 +135,73 @@ import {
   saveDraft as saveDraftDefault
 } from "../conversation/session-registry.js";
 import { createConversationService } from "../conversation/service.js";
+import { CockpitView } from "../cockpit/view.js";
 
 /** Fail-closed WorkMode values — same set as session-registry / cockpit. */
 const WORK_MODES = new Set(["ask", "plan", "agent"]);
+
+/** Stub actions so CockpitView formatters work without a TUI (U4d slash). */
+const SLASH_VIEW_ACTIONS = {
+  onShowPlan() {},
+  onApprove() {},
+  onReject() {},
+  onRequestExecute() {},
+  onExecute() {},
+  onCancel() {},
+  onRefresh() {},
+  onQuit() {}
+};
+
+/**
+ * Build cockpit-parity diagnostic lines from a conversation snapshot.
+ * @param {object|null|undefined} snap
+ * @param {"usage"|"providers"|"status"|"models"|"why"|"models_evidence"} kind
+ * @returns {string[]}
+ */
+export function slashDiagnosticLines(snap, kind) {
+  const view = new CockpitView({ actions: SLASH_VIEW_ACTIONS });
+  view.snapshot = snap ?? {};
+  switch (kind) {
+    case "usage":
+      return view.usageLines();
+    case "providers":
+      return view.providerLines();
+    case "status":
+      return [...view.providerLines(), view.integrationsLine()];
+    case "models_evidence":
+      return view.aiTeamDetailLines();
+    case "models":
+      return view.modelsExplainLines();
+    case "why":
+      return view.fitWhyLines();
+    default:
+      return [`Unknown slash diagnostics kind: ${kind}`];
+  }
+}
+
+/**
+ * `/project status` lines from a conversation snapshot.
+ * @param {object|null|undefined} snap
+ * @returns {string[]}
+ */
+export function projectStatusLines(snap) {
+  const strategy = snap?.projectStrategy;
+  if (!strategy) {
+    return ["Project not analyzed. Use /project analyze for a real, project-specific team."];
+  }
+  const approvedNote = strategy.approvedAt ? ` (approved ${strategy.approvedAt})` : "";
+  const lines = [`Status: ${String(strategy.status).toUpperCase()}${approvedNote}`];
+  const team = strategy.projectTeam ?? strategy.qualityTeam ?? [];
+  for (const entry of team) {
+    const model = entry?.model;
+    const label = model?.displayName ?? model?.modelId ?? model?.id ?? "no eligible option";
+    const provider = model?.adapterId ?? model?.provider ?? "";
+    lines.push(
+      provider ? `${entry.role}: ${provider} · ${label}` : `${entry.role}: ${label}`
+    );
+  }
+  return lines;
+}
 
 /** U4b: decidePlan only accepts these — never execute / handoff. */
 const PLAN_DECISIONS = new Set(["approved", "rejected"]);
@@ -270,6 +344,11 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut) {
  * @param {(args: { cwd: string, taskId: string, confirmationTarget: object, sessionId?: string|null }) => Promise<object>} [options.executePlan]
  * @param {(args: { cwd: string, taskId: string }) => Promise<object>} [options.cancelExecution]
  * @param {(args: { runId: string, sinceIndex?: number }) => Promise<object>} [options.readRunTranscript]
+ * @param {(args: { cwd: string, role: string }) => Promise<object>} [options.getProjectTeamEditCatalog]
+ * @param {(args: { cwd: string, role: string, candidateKey: string }) => Promise<object>} [options.setProjectTeamAssignment]
+ * @param {(args: { cwd: string, sessionId?: string|null }) => Promise<void>} [options.clearTranscript]
+ * @param {(args: { cwd: string, refresh?: boolean, beforeProbe?: Function, onProgress?: Function }) => Promise<object>} [options.verifyClaudeEntitlements]
+ * @param {(args: { cwd: string }) => Promise<object|null>} [options.refreshProjectStrategy]
  */
 export async function runKairoUiRpcStdio({
   stdin = process.stdin,
@@ -303,7 +382,16 @@ export async function runKairoUiRpcStdio({
   planExecution: planExecutionImpl = (args) => defaultConversation().planExecution(args),
   executePlan: executePlanImpl = (args) => defaultConversation().executePlan(args),
   cancelExecution: cancelExecutionImpl = (args) => defaultConversation().cancelExecution(args),
-  readRunTranscript: readRunTranscriptImpl = (args) => defaultConversation().readRunTranscript(args)
+  readRunTranscript: readRunTranscriptImpl = (args) => defaultConversation().readRunTranscript(args),
+  getProjectTeamEditCatalog: getProjectTeamEditCatalogImpl = (args) =>
+    defaultConversation().getProjectTeamEditCatalog(args),
+  setProjectTeamAssignment: setProjectTeamAssignmentImpl = (args) =>
+    defaultConversation().setProjectTeamAssignment(args),
+  clearTranscript: clearTranscriptImpl = (args) => defaultConversation().clearTranscript(args),
+  verifyClaudeEntitlements: verifyClaudeEntitlementsImpl = (args) =>
+    defaultConversation().verifyClaudeEntitlements(args),
+  refreshProjectStrategy: refreshProjectStrategyImpl = (args) =>
+    defaultConversation().refreshProjectStrategy(args)
 } = {}) {
   const bridge = await openBridge({ cwd });
   let kairoModels = [];
@@ -830,6 +918,112 @@ export async function runKairoUiRpcStdio({
           nextIndex: result?.nextIndex ?? sinceIndex,
           entries: Array.isArray(result?.entries) ? result.entries : []
         });
+      } else if (op === "slash.info") {
+        // U4d: /usage /providers /status /models[/flags] /why
+        const kind = typeof cmd.kind === "string" ? cmd.kind : "";
+        const snap = await snapshotImpl({
+          cwd,
+          sessionId: activeKairoSessionId
+        });
+        if (kind === "models" && cmd.verifyAccess === true) {
+          const refresh = cmd.refresh === true;
+          const summary = await verifyClaudeEntitlementsImpl({
+            cwd,
+            refresh,
+            beforeProbe: ({ costStatement }) => {
+              writeOut({ type: "slash_lines", kind: "models_verify", lines: [costStatement] });
+            }
+          });
+          const allowed = summary.results.filter((r) => r.status === "allowed").length;
+          const denied = summary.results.filter((r) => r.status === "denied").length;
+          const unverified = summary.results.filter((r) => r.status === "unverified").length;
+          const lines =
+            summary.probed.length === 0
+              ? [
+                  "Claude access already verified for the current catalog (use --refresh to re-probe)."
+                ]
+              : [
+                  `Claude access check: ${summary.probed.length} probed · ${allowed} allowed · ${denied} denied · ${unverified} unverified${summary.persisted ? " · cache updated" : " · cache unchanged"}.`
+                ];
+          writeOut({ type: "slash_lines", kind: "models_verify", lines });
+          return;
+        }
+        const diagKind =
+          kind === "models" && cmd.evidence === true ? "models_evidence" : kind;
+        const lines = slashDiagnosticLines(snap, diagKind);
+        writeOut({ type: "slash_lines", kind: diagKind, lines });
+      } else if (op === "slash.clear") {
+        await clearTranscriptImpl({ cwd, sessionId: activeKairoSessionId });
+        writeOut({ type: "slash_lines", kind: "clear", lines: ["Transcript cleared."] });
+        writeOut({ type: "transcript", messages: [] });
+      } else if (op === "slash.project_status") {
+        const snap = await snapshotImpl({
+          cwd,
+          sessionId: activeKairoSessionId
+        });
+        writeOut({
+          type: "slash_lines",
+          kind: "project_status",
+          lines: projectStatusLines(snap)
+        });
+      } else if (op === "project.refresh") {
+        const result = await refreshProjectStrategyImpl({ cwd });
+        writeOut({
+          type: "notice",
+          message: result
+            ? `Project strategy is now ${String(result.status).toUpperCase()}.`
+            : "Nothing to refresh yet — use /project analyze first."
+        });
+        await emitSnapshot();
+      } else if (op === "team.edit.catalog") {
+        const role = typeof cmd.role === "string" ? cmd.role : "";
+        if (!role) {
+          writeOut({ type: "error", message: "team.edit.catalog requires role" });
+          return;
+        }
+        const catalog = await getProjectTeamEditCatalogImpl({ cwd, role });
+        const snap = await snapshotImpl({
+          cwd,
+          sessionId: activeKairoSessionId
+        });
+        const entry = snap?.projectStrategy?.projectTeam?.find((e) => e.role === role);
+        writeOut({
+          type: "team_edit_catalog",
+          role,
+          models: Array.isArray(catalog?.models) ? catalog.models : [],
+          currentCandidateKey: entry?.model?.candidateKey ?? null,
+          recommendedCandidateKey:
+            entry?.recommendedAssignment?.model?.candidateKey ??
+            entry?.model?.candidateKey ??
+            null
+        });
+      } else if (op === "team.edit.assign") {
+        const role = typeof cmd.role === "string" ? cmd.role : "";
+        const candidateKey =
+          typeof cmd.candidateKey === "string" ? cmd.candidateKey : "";
+        if (!role || !candidateKey) {
+          writeOut({
+            type: "error",
+            message: "team.edit.assign requires role and candidateKey"
+          });
+          return;
+        }
+        const strategy = await setProjectTeamAssignmentImpl({
+          cwd,
+          role,
+          candidateKey
+        });
+        writeOut({
+          type: "team_edit_saved",
+          role,
+          strategy,
+          state: strategy?.status ?? null
+        });
+        writeOut({
+          type: "notice",
+          message: `Updated ${role} assignment (SUGGESTED).`
+        });
+        await emitSnapshot();
       } else if (op === "abort") {
         await bridge.request({ type: "abort" });
       } else if (op === "compact") {

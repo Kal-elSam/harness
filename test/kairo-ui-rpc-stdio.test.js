@@ -6,7 +6,7 @@ import {
   KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
   openPiRpcBridge
 } from "../src/global/host/pi-rpc-bridge.js";
-import { runKairoUiRpcStdio } from "../src/global/host/kairo-ui-rpc-stdio.js";
+import { runKairoUiRpcStdio, slashDiagnosticLines, projectStatusLines } from "../src/global/host/kairo-ui-rpc-stdio.js";
 
 function fakeSnapshot(overrides = {}) {
   return {
@@ -3899,6 +3899,191 @@ test("U4c: plans.preview requires taskId and role", async () => {
   assert.equal(previewCalls.length, 0);
   assert.match([...out].reverse().find((r) => r.type === "error")?.message ?? "", /role/i);
 
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4d: slashDiagnosticLines formats usage/providers/why from a snapshot", () => {
+  const snap = {
+    usage: {
+      codex: { windows: [{ name: "5h", remainingPercent: 80 }], source: "measured" },
+      claude: { windows: [] },
+      opencode: { go: { windows: [{ name: "daily", remainingPercent: 10, status: "ok" }], source: "measured" } }
+    },
+    providers: { Cursor: { status: "READY" } },
+    integrations: { engram: { status: "available" } },
+    modelIntelligence: { coverage: [] }
+  };
+  const usage = slashDiagnosticLines(snap, "usage").join("\n");
+  assert.match(usage, /Codex/);
+  assert.match(usage, /Go/);
+  const providers = slashDiagnosticLines(snap, "providers").join("\n");
+  assert.match(providers, /Cursor/);
+  const status = slashDiagnosticLines(snap, "status").join("\n");
+  assert.match(status, /Engram/);
+});
+
+test("U4d: projectStatusLines reports not-analyzed and SUGGESTED team", () => {
+  assert.match(projectStatusLines({}).join("\n"), /not analyzed/i);
+  const lines = projectStatusLines({
+    projectStrategy: {
+      status: "suggested",
+      projectTeam: [{ role: "Builder", model: { displayName: "GPT", adapterId: "codex" } }]
+    }
+  });
+  assert.match(lines.join("\n"), /SUGGESTED/);
+  assert.match(lines.join("\n"), /Builder/);
+});
+
+test("U4d: slash.info emits slash_lines for usage", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "ask" }),
+    snapshot: async () => ({
+      usage: { codex: { windows: [{ name: "5h", remainingPercent: 50 }], source: "measured" } },
+      providers: {},
+      integrations: {}
+    }),
+    openBridge: openBridgeWithModel()
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "slash.info", kind: "usage" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+  const lines = out.find((r) => r.type === "slash_lines");
+  assert.equal(lines?.kind, "usage");
+  assert.ok(Array.isArray(lines?.lines) && lines.lines.length > 0);
+  assert.match(lines.lines.join("\n"), /Codex/);
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4d: team.edit.catalog returns models; team.edit.assign persists SUGGESTED only", async () => {
+  const assignCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "ask" }),
+    snapshot: async () => ({
+      projectStrategy: {
+        status: "suggested",
+        projectTeam: [
+          {
+            role: "Builder",
+            model: { candidateKey: "codex::a", displayName: "A", adapterId: "codex" },
+            recommendedAssignment: { model: { candidateKey: "codex::a" } }
+          }
+        ]
+      }
+    }),
+    getProjectTeamEditCatalog: async ({ role }) => ({
+      role,
+      models: [
+        { candidateKey: "codex::a", displayName: "A", adapterId: "codex" },
+        { candidateKey: "claude::b", displayName: "B", adapterId: "claude" }
+      ]
+    }),
+    setProjectTeamAssignment: async (args) => {
+      assignCalls.push(args);
+      return { status: "suggested", projectTeam: [{ role: args.role }] };
+    },
+    loadSnapshot: async () => fakeSnapshot(),
+    openBridge: openBridgeWithModel()
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "team.edit.catalog", role: "Builder" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+  const catalog = out.find((r) => r.type === "team_edit_catalog");
+  assert.equal(catalog?.role, "Builder");
+  assert.equal(catalog?.models?.length, 2);
+  assert.equal(catalog?.currentCandidateKey, "codex::a");
+
+  stdin.write(
+    `${JSON.stringify({ op: "team.edit.assign", role: "Builder", candidateKey: "claude::b" })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(assignCalls, [
+    { cwd: "/project", role: "Builder", candidateKey: "claude::b" }
+  ]);
+  assert.ok(out.some((r) => r.type === "team_edit_saved" && r.role === "Builder"));
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4d: team.edit.assign refuses ACTIVE/STALE via service error", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    setProjectTeamAssignment: async () => {
+      throw new Error("Cannot edit a ACTIVE project strategy — only a SUGGESTED one is editable.");
+    },
+    openBridge: openBridgeWithModel()
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(
+    `${JSON.stringify({ op: "team.edit.assign", role: "Builder", candidateKey: "codex::a" })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 60));
+  assert.match(
+    [...out].reverse().find((r) => r.type === "error")?.message ?? "",
+    /ACTIVE|SUGGESTED/
+  );
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4d: slash.clear clears transcript via DI", async () => {
+  const clearCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "ask" }),
+    clearTranscript: async (args) => {
+      clearCalls.push(args);
+    },
+    openBridge: openBridgeWithModel()
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "slash.clear" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(clearCalls, [{ cwd: "/project", sessionId: KAIRO_ID_A }]);
+  assert.ok(out.some((r) => r.type === "transcript" && Array.isArray(r.messages) && r.messages.length === 0));
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();
   await runPromise;

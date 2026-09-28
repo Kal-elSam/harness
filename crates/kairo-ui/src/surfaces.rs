@@ -14,7 +14,9 @@ use crate::layout::{split_work_main, ShellRegions};
 use crate::execution_flow::{ConfirmExecuteState, RoleSelectState};
 use crate::plan_list::PlanListState;
 use crate::recovery_picker::RecoveryPreviewState;
+use crate::role_editor::RoleEditorState;
 use crate::session_picker::SessionPickerState;
+use crate::workspace_nav::WorkspaceView;
 
 /// Kairo sober hacker palette — graphite greens; accent green only for
 /// brand / focus / selection. Semantic red / amber / user-blue stay distinct.
@@ -1126,6 +1128,186 @@ pub fn render_confirm_execute(buf: &mut Buffer, area: Rect, state: &ConfirmExecu
     }
     lines.push(padded_span(
         state.footer_hints(),
+        inner.width,
+        Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+    ));
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .render(inner, buf);
+}
+
+/// U4d: Project view — team/result surface with chrome that names the active view.
+pub fn render_project_view(
+    buf: &mut Buffer,
+    regions: ShellRegions,
+    model: &ShellViewModel,
+    chat: &ChatState,
+    editor: &TextArea<'_>,
+    workspace: WorkspaceView,
+) {
+    if let Some(sidebar) = regions.sidebar {
+        render_sidebar(buf, sidebar, model, chat.focus);
+    }
+    let work = split_work_main(regions.main);
+    let border = if chat.focus == Focus::Transcript {
+        tone::BORDER_FOCUS
+    } else {
+        tone::BORDER
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border))
+        .style(Style::default().bg(tone::WORK_BG))
+        .title(Span::styled(
+            workspace.chrome_title(),
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(work.transcript);
+    block.render(work.transcript, buf);
+    let mut lines: Vec<Line> = Vec::new();
+    let state = model.team_state.as_deref().unwrap_or("not_analyzed");
+    lines.push(padded_span(
+        &format!("Project team · {}", state.to_ascii_uppercase()),
+        inner.width,
+        Style::default()
+            .fg(tone::TEXT)
+            .add_modifier(Modifier::BOLD)
+            .bg(tone::WORK_BG),
+    ));
+    if model.agents.is_empty() {
+        lines.push(padded_span(
+            "No roles yet — /analyze (or a) to suggest a team.",
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::WORK_BG),
+        ));
+    } else {
+        for (i, agent) in model.agents.iter().enumerate() {
+            let selected = i == model.selected_agent;
+            let style = if selected {
+                Style::default()
+                    .fg(tone::TEXT)
+                    .bg(tone::SELECT_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(tone::TEXT).bg(tone::WORK_BG)
+            };
+            let marker = if selected { "› " } else { "  " };
+            lines.push(padded_span(
+                &format!("{marker}{} — {}", agent.label, agent.detail),
+                inner.width,
+                style,
+            ));
+        }
+        let hint = if state == "suggested" {
+            "Enter = edit selected role · A = approve · Esc → Work"
+        } else {
+            "ACTIVE/STALE are read-only · /analyze to re-suggest · Esc → Work"
+        };
+        lines.push(padded_span(
+            hint,
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::WORK_BG),
+        ));
+    }
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::WORK_BG))
+        .render(inner, buf);
+    render_editor(buf, work.editor, chat.focus, editor, &model.work_mode);
+    render_usage(buf, regions.usage, model);
+}
+
+/// U4d: per-role model search / confirm modal.
+pub fn render_role_editor(buf: &mut Buffer, area: Rect, editor: &RoleEditorState) {
+    let width = area.width.saturating_sub(6).clamp(40, 76);
+    let rows = editor.filtered.len().max(1) as u16;
+    let height = rows
+        .saturating_add(5)
+        .min(area.height.saturating_sub(2).max(8));
+    let popup = centered_rect(area, width, height);
+    if popup.width == 0 || popup.height == 0 {
+        return;
+    }
+    Clear.render(popup, buf);
+    let title = match editor.phase {
+        crate::role_editor::RoleEditPhase::Loading => format!(" Edit {} · loading ", editor.role),
+        crate::role_editor::RoleEditPhase::Saving => format!(" Edit {} · saving ", editor.role),
+        crate::role_editor::RoleEditPhase::Confirm => format!(" Edit {} · confirm ", editor.role),
+        crate::role_editor::RoleEditPhase::ModelSearch => {
+            format!(" Edit {} · search ", editor.role)
+        }
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+    let mut lines: Vec<Line> = Vec::new();
+    if !editor.query.is_empty()
+        || matches!(
+            editor.phase,
+            crate::role_editor::RoleEditPhase::ModelSearch
+        )
+    {
+        lines.push(padded_span(
+            &format!("filter: {}", editor.query),
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
+    }
+    if editor.filtered.is_empty() {
+        lines.push(padded_span(
+            "(no candidates)",
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
+    } else {
+        for (i, &cand_idx) in editor.filtered.iter().enumerate() {
+            let Some(c) = editor.candidates.get(cand_idx) else {
+                continue;
+            };
+            let selected = i == editor.selected;
+            let style = if selected {
+                Style::default()
+                    .fg(tone::TEXT)
+                    .bg(tone::SELECT_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+            };
+            let marker = if selected { "› " } else { "  " };
+            let tag = if c.tag.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", c.tag)
+            };
+            lines.push(padded_span(
+                &format!("{marker}{}  {}{tag}", c.display_name, c.adapter_id),
+                inner.width,
+                style,
+            ));
+        }
+    }
+    if let Some(notice) = &editor.notice {
+        lines.push(padded_span(
+            notice,
+            inner.width,
+            Style::default().fg(tone::WARN).bg(tone::SIDEBAR_BG),
+        ));
+    }
+    lines.push(padded_span(
+        editor.footer_hints(),
         inner.width,
         Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
     ));
