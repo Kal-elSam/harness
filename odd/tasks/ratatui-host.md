@@ -320,10 +320,14 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
 
 ## Next step
 
-**Plan 2026-09-28 (amended):** U3b closed → U4 workspace (modes/plans/slash/views) or V3 visual gate; full suite (known 9 entry failures + flake), then RDD assess per protocol. U2a/U2b wait for publish / provider authorization.
+**Plan 2026-09-28 (amended):** Phase 3 functionally closed (U3a/U3b/U3c) → next U4 workspace or V3 visual gate. U2a/U2b wait for publish / provider authorization. U7 blocked until U6.
 
-1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7 packaging claim). Now reachable end to end in one UI: `kairo` → `a` (analyze) → `A` (approve) → chat. Live provider check only with a session you authorize.
-2. **U4** Workspace: ASK/PLAN/AGENT, plans/tasks, slash commands, views.
-3. **T2 remainder** per-role editor (analyst picker done).
-4. **R4 remainder:** publish Pi fork (user-authorized) so RPC no-model cold-start is runtime-active.
-5. **R9** cutover cleanup after V3 approval (remote auth); daily default is already ratatui on this branch.
+- (2026-09-28) **Phase 3 close evidence (full suite, not focused-only)** — After U3a+U3c+U3b on `feat/ratatui-host`:
+  - Focused: stdio+transcript+bridge+registry → **85/85**; `cargo test` → **115/115**.
+  - Full `npm test` → **2439 pass / 10 fail / 1 skip** (2450). Baseline only: **9** entry-host (`session-cli`×8 + `cli-default-entry`×1) + **1** flake (`engine_unavailable after Pi exit`). **Not green.**
+  - RDD assess (`--base-ref 499a99bdc --committed-only`): `high` / `review_due` because Cursor is **unassessable** for immutable receipts (supported: claude-code, opencode, codex). Functional proof done; no review consent granted here.
+  - Commits: `26fe516e1` (doc reopen), `2b712dfe1` (U3a), `ca641694d` (U3c), `1b22de709` (U3b). PTY end-to-end not run this pass (unit coverage only).
+
+1. **U4** Workspace modes/plans/slash/views (or **V3** visual captures if paint is prioritized).
+2. **U2a/U2b** when publish / provider auth available.
+3. **U5→U6→U7** under `feature-branch-chain`; U7 not before U6.
