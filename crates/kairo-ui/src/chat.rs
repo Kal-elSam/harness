@@ -626,6 +626,11 @@ mod tests {
             .expect("ok tool");
         assert!(ok.content.contains('✓'));
         assert!(ok.content.contains("hello from file"));
+        assert!(
+            ok.content.contains("✓ Read\nhello from file"),
+            "tool name and result body must stay separated by a newline: {}",
+            ok.content
+        );
         assert!(!ok.is_error);
 
         let mut chat_err = ChatState::default();

@@ -2,13 +2,13 @@
 # size/scenario: 60x30-conversation
 ┌ Chat ────────────────────────────────────────────────────┐
 │you: FIXTURE: outline the auth plan                       │
-│thinking: FIXTURE thinking — weighing OAuth vs session coo│
-│assistant: FIXTURE assistant — propose OAuth login with re│
+│thinking: FIXTURE thinking — weighing OAuth vs session    │
+│          cookies                                         │
+│assistant: FIXTURE assistant — propose OAuth login with   │
+│           refresh tokens.                                │
 │                                                          │
 │⚠ FIXTURE mock — not live provider · V3-FIXTURE · sidebar │
 │  collapsed (<90 cols)                                    │
-│                                                          │
-│                                                          │
 │                                                          │
 │                                                          │
 │                                                          │

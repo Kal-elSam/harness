@@ -3,14 +3,14 @@
  ◈ V3-FIXTURE ─────────────┐┌ Chat ────────────────────────────────────────────────────────────────┐
 AGENTS                     ││you: FIXTURE: outline the auth plan                                   │
 ○ Architect                ││thinking: FIXTURE thinking — weighing OAuth vs session cookies        │
-  idle                     ││assistant: FIXTURE assistant — propose OAuth login with refresh tokens│
-✖ Builder                  ││tool: ✓ ReadFIXTURE tool ok — src/auth/oauth.ts                       │
-  rate limited             ││tool: ✓ GrepFIXTURE tool ok — 3 matches                               │
+  idle                     ││assistant: FIXTURE assistant — propose OAuth login with refresh       │
+✖ Builder                  ││           tokens.                                                    │
+  rate limited             ││tool: ✓ Read                                                          │
+                           ││      FIXTURE tool ok — src/auth/oauth.ts                             │
+                           ││tool: ✓ Grep                                                          │
+                           ││      FIXTURE tool ok — 3 matches                                     │
                            ││                                                                      │
                            ││⚠ FIXTURE mock — not live provider · V3-FIXTURE                       │
-                           ││                                                                      │
-                           ││                                                                      │
-                           ││                                                                      │
                            ││                                                                      │
                            ││                                                                      │
                            ││                                                                      │

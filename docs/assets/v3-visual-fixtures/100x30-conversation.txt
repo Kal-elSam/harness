@@ -3,10 +3,10 @@
  ◈ V3-FIXTURE ─────────────┐┌ Chat ────────────────────────────────────────────────────────────────┐
 AGENTS                     ││you: FIXTURE: outline the auth plan                                   │
 ○ Architect                ││thinking: FIXTURE thinking — weighing OAuth vs session cookies        │
-  idle                     ││assistant: FIXTURE assistant — propose OAuth login with refresh tokens│
-✖ Builder                  ││                                                                      │
-  rate limited             ││⚠ FIXTURE mock — not live provider · V3-FIXTURE                       │
-                           ││                                                                      │
+  idle                     ││assistant: FIXTURE assistant — propose OAuth login with refresh       │
+✖ Builder                  ││           tokens.                                                    │
+  rate limited             ││                                                                      │
+                           ││⚠ FIXTURE mock — not live provider · V3-FIXTURE                       │
                            ││                                                                      │
                            ││                                                                      │
                            ││                                                                      │

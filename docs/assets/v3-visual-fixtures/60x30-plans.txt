@@ -2,21 +2,21 @@
 # size/scenario: 60x30-plans
 ┌ Chat ────────────────────────────────────────────────────┐
 │you: FIXTURE: outline the auth plan                       │
-│thinking: FIXTURE thinking — weighing OAuth vs session coo│
-│assistant: FIXTURE assistant — propose OAuth login with re│
+│thinking: FIXTURE thinking — weighing OAuth vs session    │
+│          cookies                                         │
+│assistant: FIXTURE assistant — propose OAuth login with   │
+│           refresh tokens.                                │
 │                                                          │
 │⚠ FIXTURE mock — not live provider · V3-FIXTURE · sidebar │
 │  collapsed (<90 cols)                                    │
 │                                                          │
 │                                                          │
 │                                                          │
-│                                                          │
-│                                                          │
-│ ┌ Plans / tasks — ↑/↓ select · Enter open · Esc close ·┐ │
+│ ┌ Plans / tasks ───────────────────────────────────────┐ │
 │ │› v3-plan-… · awaiting_approval — FIXTURE plan — OAuth│ │
 │ │  v3-plan-… · approved — FIXTURE plan — approved earli│ │
-│ │                                                      │ │
-│ │                                                      │ │
+│ │↑/↓ select · Enter open · Esc close · y approve       │ │
+│ │n reject                                              │ │
 │ └──────────────────────────────────────────────────────┘ │
 │                                                          │
 │                                                          │

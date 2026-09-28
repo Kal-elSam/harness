@@ -265,7 +265,7 @@ fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat:
     let inner = block.inner(area);
     block.render(area, buf);
 
-    let mut lines: Vec<Line> = transcript_lines(chat, model);
+    let mut lines: Vec<Line> = transcript_lines(chat, model, inner.width);
     if let Some(attention) = &model.team_attention {
         lines.push(Line::from(""));
         for line in attention {
@@ -309,7 +309,7 @@ fn transcript_has_conversation(chat: &ChatState) -> bool {
     })
 }
 
-fn transcript_lines(chat: &ChatState, model: &ShellViewModel) -> Vec<Line<'static>> {
+fn transcript_lines(chat: &ChatState, model: &ShellViewModel, width: u16) -> Vec<Line<'static>> {
     if !transcript_has_conversation(chat) {
         if let Some(hint) = &model.work_empty_hint {
             return hint
@@ -324,10 +324,16 @@ fn transcript_lines(chat: &ChatState, model: &ShellViewModel) -> Vec<Line<'stati
             Style::default().fg(tone::MUTED),
         ))];
     }
-    chat.messages.iter().flat_map(message_to_lines).collect()
+    chat.messages
+        .iter()
+        .flat_map(|msg| message_to_lines(msg, width))
+        .collect()
 }
 
-fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
+/// Paint one chat row as one or more screen lines: hard `\n` splits stay
+/// separate (tool name vs result), and each segment word/char-wraps to
+/// `width` so narrow terminals scroll instead of silently truncating.
+fn message_to_lines(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
     // Reuse the existing sober-hacker tone constants only: `Tool` already
     // distinguishes error vs success via `is_error` -> ERROR (never a new
     // color); `Thinking` reuses MUTED (System's own tone) plus ITALIC so it
@@ -353,32 +359,62 @@ fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
     } else {
         msg.content.clone()
     };
-    if prefix.is_empty() {
-        vec![Line::from(Span::styled(body, Style::default().fg(color)))]
-    } else if msg.role == MessageRole::Thinking {
-        // Distinct from Assistant not just by prefix but by style: italic,
-        // muted — reads as "the model's scratch space", never as its answer.
-        vec![Line::from(vec![
-            Span::styled(
-                format!("{prefix}: "),
-                Style::default()
-                    .fg(color)
-                    .add_modifier(Modifier::BOLD | Modifier::ITALIC),
-            ),
-            Span::styled(
-                body,
-                Style::default().fg(color).add_modifier(Modifier::ITALIC),
-            ),
-        ])]
+
+    let width = (width as usize).max(1);
+    let prefix_text = if prefix.is_empty() {
+        String::new()
     } else {
-        vec![Line::from(vec![
-            Span::styled(
-                format!("{prefix}: "),
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(body, Style::default().fg(tone::TEXT)),
-        ])]
+        format!("{prefix}: ")
+    };
+    let prefix_cols = prefix_text.chars().count();
+    let wrap_width = if prefix.is_empty() {
+        width
+    } else {
+        width.saturating_sub(prefix_cols).max(1)
+    };
+
+    let thinking = msg.role == MessageRole::Thinking;
+    let prefix_style = if thinking {
+        Style::default()
+            .fg(color)
+            .add_modifier(Modifier::BOLD | Modifier::ITALIC)
+    } else if prefix.is_empty() {
+        Style::default().fg(color)
+    } else {
+        Style::default().fg(color).add_modifier(Modifier::BOLD)
+    };
+    let body_style = if thinking {
+        Style::default().fg(color).add_modifier(Modifier::ITALIC)
+    } else if prefix.is_empty() {
+        Style::default().fg(color)
+    } else {
+        Style::default().fg(tone::TEXT)
+    };
+
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let mut is_first = true;
+    for segment in body.split('\n') {
+        for chunk in wrap_text_segment(segment, wrap_width) {
+            if is_first {
+                if prefix.is_empty() {
+                    out.push(Line::from(Span::styled(chunk, body_style)));
+                } else {
+                    out.push(Line::from(vec![
+                        Span::styled(prefix_text.clone(), prefix_style),
+                        Span::styled(chunk, body_style),
+                    ]));
+                }
+                is_first = false;
+            } else {
+                let indent = " ".repeat(prefix_cols);
+                out.push(Line::from(Span::styled(
+                    format!("{indent}{chunk}"),
+                    body_style,
+                )));
+            }
+        }
     }
+    out
 }
 
 fn render_editor(buf: &mut Buffer, area: Rect, focus: Focus, editor: &TextArea<'_>, work_mode: &str) {
@@ -826,11 +862,15 @@ pub fn render_recovery_preview(buf: &mut Buffer, area: Rect, preview: &RecoveryP
         .render(inner, buf);
 }
 
-/// U4b: plans / timeline list + optional Markdown detail. Footer hints come
-/// from `PlanListState::footer_hints` (y/n, never `a` for approve).
+/// U4b: plans / timeline list + optional Markdown detail. Action hints live
+/// in a footer that may wrap to two lines (never only in the title — a
+/// 60-col title silently drops `y approve` / `n reject`).
 pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, work_mode: &str) {
     let width = area.width.saturating_sub(4).clamp(44, 84);
     let hints = plans.footer_hints(work_mode);
+    let inner_w = width.saturating_sub(2).max(1);
+    let footer_text_lines = wrap_hint_lines(&hints, inner_w as usize);
+    let footer_rows = footer_text_lines.len().max(1) as u16;
     let notice_rows = plans
         .notice
         .as_deref()
@@ -841,7 +881,7 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
         let md_lines: Vec<&str> = detail.markdown.lines().collect();
         let content_rows = (md_lines.len().max(1) as u16).saturating_add(2);
         let height = content_rows
-            .saturating_add(3 + notice_rows)
+            .saturating_add(2 + notice_rows + footer_rows)
             .min(area.height.saturating_sub(2).max(8));
         let popup = centered_rect(area, width, height);
         if popup.width == 0 || popup.height == 0 {
@@ -868,8 +908,11 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
         if inner.height == 0 || inner.width == 0 {
             return;
         }
+        let footer = wrap_hint_lines(&hints, inner.width as usize);
+        let footer_budget = footer.len().min(2).max(1) as u16;
+        let body_budget = inner.height.saturating_sub(footer_budget);
         let mut lines: Vec<Line> = Vec::new();
-        for line in md_lines.iter().take(inner.height.saturating_sub(1) as usize) {
+        for line in md_lines.iter().take(body_budget.saturating_sub(notice_rows) as usize) {
             lines.push(padded_span(
                 line,
                 inner.width,
@@ -890,10 +933,13 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
                 .bg(tone::SIDEBAR_BG);
             lines.extend(wrap_notice(notice, inner.width, notice_style));
         }
-        // Keep one footer hint row when space remains.
-        if (lines.len() as u16) < inner.height {
+        // Footer may use up to two wrapped hint lines so approve/reject stay visible.
+        for hint_line in footer.iter().take(2) {
+            if (lines.len() as u16) >= inner.height {
+                break;
+            }
             lines.push(padded_span(
-                &hints,
+                hint_line,
                 inner.width,
                 Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
             ));
@@ -906,7 +952,7 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
 
     let content_rows = plans.rows.len().max(1) as u16;
     let height = content_rows
-        .saturating_add(4 + notice_rows)
+        .saturating_add(2 + notice_rows + footer_rows)
         .min(area.height.saturating_sub(2).max(6));
     let popup = centered_rect(area, width, height);
     if popup.width == 0 || popup.height == 0 {
@@ -918,7 +964,7 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
         .border_style(Style::default().fg(tone::BORDER_FOCUS))
         .style(Style::default().bg(tone::SIDEBAR_BG))
         .title(Span::styled(
-            format!(" Plans / tasks — {hints} "),
+            " Plans / tasks ",
             Style::default()
                 .fg(tone::ACCENT)
                 .add_modifier(Modifier::BOLD),
@@ -929,6 +975,7 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
         return;
     }
 
+    let footer = wrap_hint_lines(&hints, inner.width as usize);
     let mut lines: Vec<Line> = Vec::new();
     if plans.rows.is_empty() {
         lines.push(padded_span(
@@ -962,9 +1009,50 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
             .bg(tone::SIDEBAR_BG);
         lines.extend(wrap_notice(notice, inner.width, notice_style));
     }
+    for hint_line in footer.iter().take(2) {
+        lines.push(padded_span(
+            hint_line,
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
+    }
     Paragraph::new(lines)
         .style(Style::default().bg(tone::SIDEBAR_BG))
         .render(inner, buf);
+}
+
+/// Wrap plan/action hint strings on ` · ` boundaries first so tokens like
+/// `y approve` / `n reject` stay intact at narrow widths; fall back to
+/// character wrap only when a single token exceeds `width`.
+fn wrap_hint_lines(hints: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for part in hints.split(" · ") {
+        let candidate = if current.is_empty() {
+            part.to_string()
+        } else {
+            format!("{current} · {part}")
+        };
+        if candidate.chars().count() > width && !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+            current = part.to_string();
+        } else {
+            current = candidate;
+        }
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    let mut out: Vec<String> = Vec::new();
+    for line in lines {
+        if line.chars().count() <= width {
+            out.push(line);
+        } else {
+            out.extend(wrap_text_segment(&line, width));
+        }
+    }
+    out
 }
 
 /// Word-wraps one segment (no `\n` inside it) to at most `width` visible
@@ -1447,8 +1535,8 @@ mod tests {
             is_error: false,
             tool_call_id: None,
         };
-        let assistant_line = &message_to_lines(&assistant)[0];
-        let thinking_line = &message_to_lines(&thinking)[0];
+        let assistant_line = &message_to_lines(&assistant, 120)[0];
+        let thinking_line = &message_to_lines(&thinking, 120)[0];
 
         let assistant_prefix = assistant_line.spans[0].content.to_string();
         let thinking_prefix = thinking_line.spans[0].content.to_string();
@@ -1484,8 +1572,8 @@ mod tests {
             is_error: true,
             tool_call_id: None,
         };
-        let ok_color = message_to_lines(&ok)[0].spans[0].style.fg;
-        let err_color = message_to_lines(&err)[0].spans[0].style.fg;
+        let ok_color = message_to_lines(&ok, 120)[0].spans[0].style.fg;
+        let err_color = message_to_lines(&err, 120)[0].spans[0].style.fg;
         assert_eq!(ok_color, Some(tone::TOOL));
         assert_eq!(err_color, Some(tone::ERROR));
         assert_ne!(
@@ -1503,9 +1591,160 @@ mod tests {
             is_error: true,
             tool_call_id: None,
         };
-        let line = &message_to_lines(&err)[0];
+        let line = &message_to_lines(&err, 120)[0];
         assert_eq!(line.spans[0].style.fg, Some(tone::ERROR));
         assert!(line.spans[0].content.contains("error"));
+    }
+
+    fn line_plain(line: &Line<'_>) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn message_to_lines_wraps_long_thinking_and_assistant_at_narrow_width() {
+        let thinking_body =
+            "FIXTURE thinking — weighing OAuth vs session cookies and refresh tokens carefully";
+        let assistant_body =
+            "FIXTURE assistant — propose OAuth login with refresh tokens and short-lived access.";
+        let thinking = ChatMessage {
+            role: MessageRole::Thinking,
+            content: thinking_body.into(),
+            streaming: false,
+            is_error: false,
+            tool_call_id: None,
+        };
+        let assistant = ChatMessage {
+            role: MessageRole::Assistant,
+            content: assistant_body.into(),
+            streaming: false,
+            is_error: false,
+            tool_call_id: None,
+        };
+        // Inner chat width at 60 cols is typically ~58; use 50 to force wrap.
+        let width = 50u16;
+        let thinking_lines = message_to_lines(&thinking, width);
+        let assistant_lines = message_to_lines(&assistant, width);
+        assert!(
+            thinking_lines.len() > 1,
+            "long thinking must wrap to multiple screen lines, got {}",
+            thinking_lines.len()
+        );
+        assert!(
+            assistant_lines.len() > 1,
+            "long assistant must wrap to multiple screen lines, got {}",
+            assistant_lines.len()
+        );
+        for line in thinking_lines.iter().chain(assistant_lines.iter()) {
+            assert!(
+                line_plain(line).chars().count() <= width as usize,
+                "wrapped line must not exceed pane width: {}",
+                line_plain(line)
+            );
+        }
+        let thinking_rejoined: String = thinking_lines
+            .iter()
+            .map(|l| {
+                let s = line_plain(l);
+                s.strip_prefix("thinking: ")
+                    .unwrap_or(s.trim_start())
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        // Spaces between wrap chunks match wrap_text_segment word breaks.
+        let thinking_compact: String = thinking_rejoined.split_whitespace().collect();
+        let expected_t: String = thinking_body.split_whitespace().collect();
+        assert_eq!(
+            thinking_compact, expected_t,
+            "wrap must not drop thinking tokens"
+        );
+        assert!(
+            thinking_rejoined.contains("cookies") || thinking_compact.contains("cookies"),
+            "final thinking tokens must remain reachable after wrap"
+        );
+        let assistant_joined: String = assistant_lines
+            .iter()
+            .map(|l| {
+                let s = line_plain(l);
+                s.strip_prefix("assistant: ")
+                    .unwrap_or(s.trim_start())
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let assistant_compact: String = assistant_joined.split_whitespace().collect();
+        let expected_a: String = assistant_body.split_whitespace().collect();
+        assert_eq!(
+            assistant_compact, expected_a,
+            "wrap must not drop assistant tokens"
+        );
+    }
+
+    #[test]
+    fn tool_message_separates_name_from_result_body() {
+        let msg = ChatMessage {
+            role: MessageRole::Tool,
+            content: "✓ Read\nFIXTURE tool ok — src/auth/oauth.ts".into(),
+            streaming: false,
+            is_error: false,
+            tool_call_id: Some("call_1".into()),
+        };
+        let lines = message_to_lines(&msg, 80);
+        assert!(
+            lines.len() >= 2,
+            "tool name and result must paint as separate lines, got {}",
+            lines.len()
+        );
+        let first = line_plain(&lines[0]);
+        let second = line_plain(&lines[1]);
+        assert!(
+            first.contains("✓ Read") && !first.contains("FIXTURE"),
+            "first line is the tool name only: {first}"
+        );
+        assert!(
+            second.contains("FIXTURE tool ok") && !second.contains("✓ Read"),
+            "second line is the result body: {second}"
+        );
+        let hay: String = lines.iter().map(line_plain).collect();
+        assert!(
+            !hay.contains("ReadFIXTURE"),
+            "name and result must not concatenate: {hay}"
+        );
+    }
+
+    #[test]
+    fn plan_list_footer_keeps_approve_reject_visible_at_60_cols() {
+        use serde_json::json;
+        let plans = PlanListState::from_plans_record(&json!({
+            "type": "plans",
+            "timeline": [{
+                "taskId": "v3-plan-aaaaaaaa-1111",
+                "taskText": "FIXTURE plan — OAuth login flow",
+                "state": "awaiting_approval",
+                "approval": "not_decided",
+                "planReady": true,
+                "execution": { "state": "not_started", "active": false }
+            }],
+            "projectTeamRoles": ["Architect"]
+        }));
+        assert!(plans.can_decide("plan"));
+        let area = Rect::new(0, 0, 60, 30);
+        let mut buf = Buffer::empty(area);
+        render_plan_list(&mut buf, area, &plans, "plan");
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("y approve"),
+            "60-col plans footer must keep approve hint: {hay}"
+        );
+        assert!(
+            hay.contains("n reject"),
+            "60-col plans footer must keep reject hint: {hay}"
+        );
+        // Title stays short — hints belong in the footer, not the clipped title.
+        assert!(
+            hay.contains("Plans / tasks"),
+            "plans title must remain: {hay}"
+        );
     }
 
     #[test]
