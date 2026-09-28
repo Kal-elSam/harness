@@ -331,6 +331,8 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - Observed **PASS**: alt-screen enter `?1049h` + leave `?1049l` (terminal restore); mock log `out ready` + auto `extension_ui_request` + `tool_execution_{start,update,end}`; host replied `extension_ui_response id=pty-dialog-1 cancelled=false value=Allow`; Ctrl+L session-picker chord then Esc (local cancel); `q` quit exit 0.
   - Separate evidence from unit suites and from native RDD. Not a substitute for U6 visual captures @60/100/160.
 
+- (2026-09-28) **U4 native RDD** — Assess high / review_due on `defcc77b9..27f3ec2fb` (12 files, 5265 lines, lineage `review-4ead496a802fde90`). User answered **Skip this time** (`declined_this_candidate`); no review record; RDD stays enabled. Functional U4 proof (JS 63/63, cargo 148/148) ≠ native review.
+
 - (2026-09-28) **Phase 3 native RDD** — Consent granted on candidate including PTY (`lineage review-50be35ef8f70df28`, `--agent=codex`). Four lenses + bounded correction for CRITICAL `R3-dialog-q` (commit `f469ac753`: plain `q` no longer quits input/editor dialogs). Targeted validation approved; `acknowledge-approved` burned authority. Advisory WARNINGs remain informational only (draft-save loss, PTY assertion strength, dialog viewport). Functional close ≠ PTY e2e ≠ native review — all three now recorded.
 
 - (2026-09-28) **U4a ASK/PLAN/AGENT work modes (STRICT TDD)** — Persisted WorkMode in the ratatui host matching cockpit contract.
