@@ -404,3 +404,76 @@ test("R3: intentional stop does not mark engine unavailable as a crash", async (
   assert.equal(bridge.engine.status, "stopped");
   assert.equal(bridge.hostOpen, true);
 });
+
+// ---------------------------------------------------------------------------
+// U3b: extension_ui_response is fire-and-forget stdin — never bridge.request
+// ---------------------------------------------------------------------------
+
+test("U3b: bridge.sendRaw writes a line without registering a pending request id", async () => {
+  let childRef = null;
+  const bridge = await openPiRpcBridge({
+    cwd: "/project",
+    loadSnapshot: async () => fakeSnapshot(),
+    resolveCliPath: () => "/fake/cli.js",
+    loadKairoProviderModels: async () => [architectRoute("codex::m")],
+    spawnImpl: () => {
+      childRef = rpcChildWithArchitect("codex::m");
+      return childRef;
+    },
+    execPath: "/usr/bin/node",
+    connectTimeoutMs: 500
+  });
+
+  assert.equal(typeof bridge.sendRaw, "function", "bridge must expose sendRaw for one-way writes");
+  const before = childRef._stdinChunks.length;
+  bridge.sendRaw({
+    type: "extension_ui_response",
+    id: "uuid-ext-1",
+    value: "Allow"
+  });
+  const written = childRef._stdinChunks.slice(before).join("");
+  const lines = written.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  assert.equal(lines.length, 1);
+  assert.deepEqual(lines[0], {
+    type: "extension_ui_response",
+    id: "uuid-ext-1",
+    value: "Allow"
+  });
+  // Must NOT mint a kairo-* request id or wait for a response envelope.
+  assert.equal(lines[0].id, "uuid-ext-1");
+  assert.ok(!String(lines[0].id).startsWith("kairo-"));
+
+  // An unrelated pending request must still be resolvable after sendRaw.
+  const pending = bridge.request({ type: "get_state" }, 500);
+  const settled = await pending;
+  assert.ok(settled == null || typeof settled === "object");
+  await bridge.stop();
+});
+
+test("U3b: bridge.sendRaw cancelled response preserves the exact request id", async () => {
+  let childRef = null;
+  const bridge = await openPiRpcBridge({
+    cwd: "/project",
+    loadSnapshot: async () => fakeSnapshot(),
+    resolveCliPath: () => "/fake/cli.js",
+    loadKairoProviderModels: async () => [architectRoute("codex::m")],
+    spawnImpl: () => {
+      childRef = rpcChildWithArchitect("codex::m");
+      return childRef;
+    },
+    execPath: "/usr/bin/node",
+    connectTimeoutMs: 500
+  });
+
+  bridge.sendRaw({
+    type: "extension_ui_response",
+    id: "keep-me-id",
+    cancelled: true
+  });
+  const last = childRef._stdinChunks.at(-1);
+  const parsed = JSON.parse(String(last).trim());
+  assert.equal(parsed.id, "keep-me-id");
+  assert.equal(parsed.cancelled, true);
+  assert.equal(parsed.type, "extension_ui_response");
+  await bridge.stop();
+});

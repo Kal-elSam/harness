@@ -20,6 +20,7 @@
  *   { "op": "team.recovery.reject" }
  *   { "op": "rename_session", "name": "..." }
  *   { "op": "fork_session", "draft"?: "<...>" }
+ *   { "op": "extension_ui_response", "id": "<same id as extension_ui_request>", "value"|"confirmed"|"cancelled": ... }
  *   { "op": "stop", "draft"?: "<unsent editor text, saved under the active Kairo session id>" }
  *
  * Sessions (U3a): each entry in `sessions` / the `ready.sessions` array
@@ -54,8 +55,14 @@
  * `team.revalidate`, followed by a fresh `snapshot`), { type: "recovery", op: "preview"|"apply"|"reject",
  * outcome, ...} (team-recovery.js's own outcomes — "proposed"/"activated"/"approved"/"rejected"/
  * "kept-previous"/"skipped"/"baseline"/"error" — never invented; a stale/refused apply comes back as
- * outcome:"error" and touches nothing), forwarded Pi session events, { type: "error", message }, and
- * bridge engine_unavailable.
+ * outcome:"error" and touches nothing), forwarded Pi session events (including
+ * `extension_ui_request`), { type: "error", message }, and bridge engine_unavailable.
+ *
+ * Extension UI (U3b): Pi dialog methods emit `extension_ui_request` (forwarded
+ * verbatim). The host answers with `{ op: "extension_ui_response", id, ... }` —
+ * written to Pi stdin via `bridge.sendRaw` (never `bridge.request`), preserving
+ * the original request `id`. Notify / setStatus / setTitle are fire-and-forget
+ * (no response required).
  */
 
 import { fileURLToPath } from "node:url";
@@ -751,6 +758,41 @@ export async function runKairoUiRpcStdio({
         if (result?.outcome === "rejected") {
           await emitSnapshot();
         }
+      } else if (op === "extension_ui_response") {
+        // U3b: one-way stdin write back to Pi. Must preserve the host's
+        // request id exactly and must NOT go through bridge.request (that
+        // would mint a kairo-* id and wait for a typed response envelope).
+        const id = typeof cmd.id === "string" ? cmd.id : "";
+        if (!id) {
+          writeOut({
+            type: "error",
+            message: "extension_ui_response requires a non-empty id matching the request"
+          });
+          return;
+        }
+        const payload = { type: "extension_ui_response", id };
+        if (cmd.cancelled === true) {
+          payload.cancelled = true;
+        } else if (typeof cmd.confirmed === "boolean") {
+          payload.confirmed = cmd.confirmed;
+        } else if (typeof cmd.value === "string") {
+          payload.value = cmd.value;
+        } else {
+          writeOut({
+            type: "error",
+            message:
+              "extension_ui_response needs cancelled:true, confirmed:boolean, or value:string"
+          });
+          return;
+        }
+        if (typeof bridge.sendRaw !== "function") {
+          writeOut({
+            type: "error",
+            message: "Pi bridge does not support sendRaw for extension_ui_response"
+          });
+          return;
+        }
+        bridge.sendRaw(payload);
       } else {
         writeOut({ type: "error", message: `Unknown op: ${String(op)}` });
       }

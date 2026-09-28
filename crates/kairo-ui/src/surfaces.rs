@@ -9,6 +9,7 @@ use ratatui_textarea::TextArea;
 
 use crate::analyst_picker::AnalystPickerState;
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
+use crate::extension_ui::{ExtensionUiDialog, ExtensionUiMethod};
 use crate::layout::{split_work_main, ShellRegions};
 use crate::recovery_picker::RecoveryPreviewState;
 use crate::session_picker::SessionPickerState;
@@ -578,6 +579,140 @@ pub fn render_session_picker(buf: &mut Buffer, area: Rect, picker: &SessionPicke
             ));
         }
     }
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .render(inner, buf);
+}
+
+/// Pi `extension_ui` dialog modal (U3b): select / confirm / input / editor.
+/// One at a time; Esc cancels with the same request id. Notify never uses
+/// this renderer (it becomes a notice strip only).
+pub fn render_extension_ui(buf: &mut Buffer, area: Rect, dialog: &ExtensionUiDialog) {
+    let headline = dialog.headline();
+    let width = area.width.saturating_sub(6).clamp(36, 76);
+    let content_rows: u16 = match dialog.request.method {
+        ExtensionUiMethod::Select => dialog.request.options.len().max(1) as u16 + 1,
+        ExtensionUiMethod::Confirm => 3,
+        ExtensionUiMethod::Input | ExtensionUiMethod::Editor => {
+            let draft_rows = dialog.draft.lines().count().max(1) as u16;
+            draft_rows.saturating_add(2)
+        }
+        ExtensionUiMethod::Notify | ExtensionUiMethod::FireAndForget { .. } => 1,
+    };
+    let height = content_rows
+        .saturating_add(3)
+        .min(area.height.saturating_sub(2).max(5));
+    let popup = centered_rect(area, width, height);
+    if popup.width == 0 || popup.height == 0 {
+        return;
+    }
+
+    Clear.render(popup, buf);
+    let title = match dialog.request.method {
+        ExtensionUiMethod::Select => " Extension · select — j/k · Enter · Esc cancel ",
+        ExtensionUiMethod::Confirm => " Extension · confirm — y/n · Enter · Esc cancel ",
+        ExtensionUiMethod::Input => " Extension · input — Enter submit · Esc cancel ",
+        ExtensionUiMethod::Editor => {
+            " Extension · editor — Enter submit · Shift+Enter newline · Esc "
+        }
+        ExtensionUiMethod::Notify | ExtensionUiMethod::FireAndForget { .. } => " Extension ",
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(padded_span(
+        &headline,
+        inner.width,
+        Style::default()
+            .fg(tone::TEXT)
+            .bg(tone::SIDEBAR_BG)
+            .add_modifier(Modifier::BOLD),
+    ));
+
+    match dialog.request.method {
+        ExtensionUiMethod::Select => {
+            if dialog.request.options.is_empty() {
+                lines.push(padded_span(
+                    "(no options)",
+                    inner.width,
+                    Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+                ));
+            } else {
+                for (i, option) in dialog.request.options.iter().enumerate() {
+                    let selected = i == dialog.selected;
+                    let row_style = if selected {
+                        Style::default()
+                            .fg(tone::TEXT)
+                            .bg(tone::SELECT_BG)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                    };
+                    let marker = if selected { "› " } else { "  " };
+                    lines.push(padded_span(
+                        &format!("{marker}{option}"),
+                        inner.width,
+                        row_style,
+                    ));
+                }
+            }
+        }
+        ExtensionUiMethod::Confirm => {
+            for (i, label) in dialog.confirm_labels().iter().enumerate() {
+                let selected = i == dialog.selected;
+                let row_style = if selected {
+                    Style::default()
+                        .fg(tone::TEXT)
+                        .bg(tone::SELECT_BG)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                };
+                let marker = if selected { "› " } else { "  " };
+                lines.push(padded_span(
+                    &format!("{marker}{label}"),
+                    inner.width,
+                    row_style,
+                ));
+            }
+        }
+        ExtensionUiMethod::Input | ExtensionUiMethod::Editor => {
+            let draft = if dialog.draft.is_empty() {
+                dialog
+                    .request
+                    .placeholder
+                    .as_deref()
+                    .unwrap_or("(type…)")
+                    .to_string()
+            } else {
+                dialog.draft.clone()
+            };
+            let style = if dialog.draft.is_empty() {
+                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
+            } else {
+                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+            };
+            for line in draft.lines() {
+                lines.push(padded_span(line, inner.width, style));
+            }
+        }
+        ExtensionUiMethod::Notify | ExtensionUiMethod::FireAndForget { .. } => {}
+    }
+
     Paragraph::new(lines)
         .style(Style::default().bg(tone::SIDEBAR_BG))
         .render(inner, buf);
@@ -1715,5 +1850,55 @@ mod tests {
             hay.contains("No ask-capable analyst"),
             "empty-catalog copy missing: {hay}"
         );
+    }
+
+    #[test]
+    fn extension_ui_select_modal_shows_title_and_options() {
+        use crate::extension_ui::{ExtensionUiDialog, ExtensionUiRequest};
+
+        let area = Rect::new(0, 0, 100, 30);
+        let dialog = ExtensionUiDialog::from_request(
+            ExtensionUiRequest::from_record(&serde_json::json!({
+                "type": "extension_ui_request",
+                "id": "sel-1",
+                "method": "select",
+                "title": "Allow dangerous command?",
+                "options": ["Allow", "Block"]
+            }))
+            .expect("parse"),
+        );
+        let mut buf = Buffer::empty(area);
+        render_extension_ui(&mut buf, area, &dialog);
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("Allow dangerous command?"),
+            "title missing: {hay}"
+        );
+        assert!(hay.contains("Allow"), "option missing: {hay}");
+        assert!(hay.contains("Block"), "option missing: {hay}");
+        assert!(hay.contains("select"), "modal chrome missing: {hay}");
+    }
+
+    #[test]
+    fn extension_ui_confirm_modal_shows_yes_no() {
+        use crate::extension_ui::ExtensionUiDialog;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let dialog = ExtensionUiDialog::from_request(
+            crate::extension_ui::ExtensionUiRequest::from_record(&serde_json::json!({
+                "type": "extension_ui_request",
+                "id": "c-1",
+                "method": "confirm",
+                "title": "Clear session?",
+                "message": "All messages will be lost."
+            }))
+            .expect("parse"),
+        );
+        let mut buf = Buffer::empty(area);
+        render_extension_ui(&mut buf, area, &dialog);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Clear session?"), "title missing: {hay}");
+        assert!(hay.contains("Yes"), "Yes missing: {hay}");
+        assert!(hay.contains("No"), "No missing: {hay}");
     }
 }

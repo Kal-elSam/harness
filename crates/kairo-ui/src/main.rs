@@ -2,6 +2,7 @@ mod analyst_picker;
 mod bridge;
 mod chat;
 mod engine;
+mod extension_ui;
 mod layout;
 mod recovery_picker;
 mod session_picker;
@@ -28,13 +29,14 @@ use engine::{
     can_analyze_team, can_approve_team, decide_submit, parse_slash_command, team_keys_available,
     EngineGate, SlashCommand, SubmitDecision,
 };
+use extension_ui::{ExtensionUiEvent, ExtensionUiMethod, ExtensionUiState};
 use layout::split_shell;
 use recovery_picker::RecoveryPreviewState;
 use session_picker::SessionPickerState;
 use snapshot::apply_workspace_snapshot;
 use surfaces::{
-    render_analyst_picker, render_recovery_preview, render_session_picker, render_shell,
-    ShellViewModel,
+    render_analyst_picker, render_extension_ui, render_recovery_preview, render_session_picker,
+    render_shell, ShellViewModel,
 };
 
 // Keybindings (V2 + R3b + R4):
@@ -63,6 +65,11 @@ use surfaces::{
 //   eligibility — a stale preview is refused and mutates nothing), `x`
 //   explicitly rejects (closes the proposal, current team stays active),
 //   Esc cancels locally (no server call at all).
+// - Bridge only, extension UI dialogs (U3b): Pi `extension_ui_request` opens
+//   a one-at-a-time modal (FIFO queue for concurrent ids). Esc → cancelled
+//   response with the same id; Enter confirms (select/confirm/input/editor);
+//   j/k move select/confirm; notify is a notice only (no response). Engine
+//   death / quit releases every open dialog so the host is never stuck.
 // - n/c: demo notice clear (local, no bridge)
 
 /// The two in-UI team setup actions (`a` / `A`).
@@ -171,6 +178,8 @@ struct ShellApp {
     pi_sessions: Vec<serde_json::Value>,
     /// The open session picker modal (U3a) — `Some` while it owns key input.
     session_picker: Option<SessionPickerState>,
+    /// Pi extension_ui dialogs (U3b): one modal + FIFO queue, correlated by id.
+    extension_ui: ExtensionUiState,
     /// The `ready` record's `draft` (if any) has been applied to the editor
     /// exactly once — never re-applied on a later `ready`/`engine` record.
     draft_restored: bool,
@@ -201,6 +210,7 @@ impl ShellApp {
             recovery_action_pending: false,
             pi_sessions: Vec::new(),
             session_picker: None,
+            extension_ui: ExtensionUiState::default(),
             draft_restored: false,
         }
     }
@@ -323,6 +333,9 @@ impl ShellApp {
                 self.engine.reason = Some(reason.to_string());
                 self.view.notice = Some(format!("Pi engine unavailable: {reason}"));
                 self.revert_failed_prompt();
+                // U3b: release every open/queued dialog locally — Pi is gone,
+                // so do not attempt cancelled writes (would go nowhere).
+                let _ = self.extension_ui.release_all(false);
             }
             if kind == Some("ready") {
                 self.engine = EngineGate::from_ready_record(&record);
@@ -384,6 +397,8 @@ impl ShellApp {
                 if let Some(msg) = record.get("message").and_then(|v| v.as_str()) {
                     self.view.notice = Some(msg.to_string());
                 }
+            } else if kind == Some("extension_ui_request") {
+                self.ingest_extension_ui_request(&record);
             }
             if kind == Some("error") {
                 let msg = record
@@ -408,9 +423,54 @@ impl ShellApp {
             if kind == Some("agent_settled") {
                 self.pending_prompt = None;
             }
-            if kind != Some("transcript") && kind != Some("draft") {
+            if kind != Some("transcript")
+                && kind != Some("draft")
+                && kind != Some("extension_ui_request")
+            {
                 self.chat.apply_sidecar_event(&record);
             }
+        }
+    }
+
+    /// U3b: ingest a forwarded `extension_ui_request`. Notify becomes a
+    /// notice; dialog methods open/queue the modal. Never invents an id.
+    fn ingest_extension_ui_request(&mut self, record: &serde_json::Value) {
+        match self.extension_ui.ingest(record) {
+            Some(ExtensionUiEvent::Notice(text)) => {
+                self.view.notice = Some(text);
+            }
+            Some(ExtensionUiEvent::DialogOpened) => {
+                // Modal owns keys; clear a stale notice so the title reads clean.
+                if self
+                    .view
+                    .notice
+                    .as_deref()
+                    .is_some_and(|n| n.starts_with('['))
+                {
+                    // Keep notify notices; dialog open itself needs no notice.
+                }
+            }
+            Some(ExtensionUiEvent::DialogClosed { .. }) => {}
+            None => {}
+        }
+    }
+
+    /// Send a correlated one-way `extension_ui_response` (same id) via the
+    /// sidecar — never through a typed RPC wait.
+    fn send_extension_ui_response(&mut self, payload: serde_json::Value) {
+        if let Some(bridge) = self.bridge.as_mut() {
+            if let Err(err) = bridge.extension_ui_response(payload) {
+                self.view.notice = Some(format!("extension_ui_response failed: {err}"));
+            }
+        }
+    }
+
+    /// Host quit / intentional teardown: cancel every open dialog while the
+    /// bridge is still writable, then clear local state.
+    fn release_extension_ui_on_quit(&mut self) {
+        let payloads = self.extension_ui.release_all(true);
+        for payload in payloads {
+            self.send_extension_ui_response(payload);
         }
     }
 
@@ -780,6 +840,9 @@ fn main() -> io::Result<()> {
     // U3a: whatever is still in the compose box on quit is the draft to
     // restore on the next `kairo resume` of this session — captured before
     // the bridge (and the sidecar behind it) goes away.
+    // U3b: cancel any open extension_ui dialogs first (same-id cancelled
+    // responses) so Pi is never left blocked waiting on a dead host.
+    app.release_extension_ui_on_quit();
     let draft_text = app.editor.lines().join("\n");
     if let Some(mut bridge) = app.bridge.take() {
         let _ = bridge.stop_with_draft(&draft_text);
@@ -825,6 +888,11 @@ fn is_quit_chord(key: &KeyEvent) -> bool {
 fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
     if is_quit_chord(&key) {
         return Ok(true);
+    }
+    // U3b: extension_ui modal owns every key while open (above other pickers)
+    // so chat compose is never the path that answers a dialog.
+    if app.extension_ui.is_open() {
+        return Ok(handle_extension_ui_key(app, key));
     }
     // The analyst picker owns every key while open — Ctrl+C/Q above still
     // always quits, but nothing else falls through to chat/sidebar/bridge
@@ -1006,6 +1074,114 @@ fn try_recovery_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
         }
         _ => false,
     }
+}
+
+/// U3b: key routing while an extension_ui dialog is open. Esc cancels with
+/// the active id only; Enter confirms; j/k move select/confirm; input/editor
+/// type into the dialog's own draft (never the chat compose box).
+fn handle_extension_ui_key(app: &mut ShellApp, key: KeyEvent) -> bool {
+    let Some(dialog) = app.extension_ui.active.as_mut() else {
+        return false;
+    };
+    let method = dialog.request.method.clone();
+    match key.code {
+        KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            return true;
+        }
+        KeyCode::Esc => {
+            if let Some(ExtensionUiEvent::DialogClosed {
+                response: Some(payload),
+            }) = app.extension_ui.cancel_active()
+            {
+                app.send_extension_ui_response(payload);
+            }
+            return false;
+        }
+        KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+            if let Some(ExtensionUiEvent::DialogClosed {
+                response: Some(payload),
+            }) = app.extension_ui.confirm_active()
+            {
+                app.send_extension_ui_response(payload);
+            }
+            return false;
+        }
+        KeyCode::Down | KeyCode::Char('j')
+            if matches!(
+                method,
+                ExtensionUiMethod::Select | ExtensionUiMethod::Confirm
+            ) =>
+        {
+            if let Some(d) = app.extension_ui.active.as_mut() {
+                d.move_down();
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k')
+            if matches!(
+                method,
+                ExtensionUiMethod::Select | ExtensionUiMethod::Confirm
+            ) =>
+        {
+            if let Some(d) = app.extension_ui.active.as_mut() {
+                d.move_up();
+            }
+        }
+        KeyCode::Char('y') if matches!(method, ExtensionUiMethod::Confirm) => {
+            if let Some(d) = app.extension_ui.active.as_mut() {
+                d.selected = 0;
+            }
+            if let Some(ExtensionUiEvent::DialogClosed {
+                response: Some(payload),
+            }) = app.extension_ui.confirm_active()
+            {
+                app.send_extension_ui_response(payload);
+            }
+        }
+        KeyCode::Char('n') if matches!(method, ExtensionUiMethod::Confirm) => {
+            if let Some(d) = app.extension_ui.active.as_mut() {
+                d.selected = 1;
+            }
+            if let Some(ExtensionUiEvent::DialogClosed {
+                response: Some(payload),
+            }) = app.extension_ui.confirm_active()
+            {
+                app.send_extension_ui_response(payload);
+            }
+        }
+        KeyCode::Backspace
+            if matches!(method, ExtensionUiMethod::Input | ExtensionUiMethod::Editor) =>
+        {
+            if let Some(d) = app.extension_ui.active.as_mut() {
+                d.draft.pop();
+            }
+        }
+        KeyCode::Char(c)
+            if matches!(method, ExtensionUiMethod::Input | ExtensionUiMethod::Editor)
+                && !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            if let Some(d) = app.extension_ui.active.as_mut() {
+                if matches!(method, ExtensionUiMethod::Editor)
+                    && key.modifiers.contains(KeyModifiers::SHIFT)
+                    && c == '\n'
+                {
+                    d.draft.push('\n');
+                } else {
+                    d.draft.push(c);
+                }
+            }
+        }
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            // Shift+Enter inserts a newline in editor mode only.
+            if matches!(method, ExtensionUiMethod::Editor) {
+                if let Some(d) = app.extension_ui.active.as_mut() {
+                    d.draft.push('\n');
+                }
+            }
+        }
+        _ => {}
+    }
+    false
 }
 
 /// Key routing while the recovery-preview modal is open — it owns every key
@@ -1266,5 +1442,8 @@ fn draw(frame: &mut Frame, app: &ShellApp) {
     }
     if let Some(picker) = &app.session_picker {
         render_session_picker(frame.buffer_mut(), area, picker);
+    }
+    if let Some(dialog) = &app.extension_ui.active {
+        render_extension_ui(frame.buffer_mut(), area, dialog);
     }
 }

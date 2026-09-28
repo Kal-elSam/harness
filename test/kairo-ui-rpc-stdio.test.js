@@ -2454,3 +2454,299 @@ test("U3a close: binding failure after clone emits error, does not fall back to 
     "fail-closed: do not save the post-fork editor under the previous Kairo id"
   );
 });
+
+// ---------------------------------------------------------------------------
+// U3b: extension_ui_request forward + one-way extension_ui_response (not RPC)
+// ---------------------------------------------------------------------------
+
+test("U3b: sidecar forwards extension_ui_request from Pi to host stdout verbatim", async () => {
+  let childRef = null;
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() => {
+      childRef = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? { id: "m" } }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      });
+      const origWrite = childRef.stdin.write;
+      childRef._stdinChunks = [];
+      childRef.stdin.write = (chunk) => {
+        childRef._stdinChunks.push(String(chunk));
+        return origWrite.call(childRef.stdin, chunk);
+      };
+      return childRef;
+    })
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(out[0]?.type, "ready");
+
+  childRef.stdout.emit(
+    "data",
+    Buffer.from(
+      `${JSON.stringify({
+        type: "extension_ui_request",
+        id: "uuid-select-1",
+        method: "select",
+        title: "Allow?",
+        options: ["Allow", "Block"]
+      })}\n`
+    )
+  );
+  await new Promise((r) => setTimeout(r, 40));
+
+  const req = out.find((r) => r.type === "extension_ui_request");
+  assert.ok(req, "host must see extension_ui_request");
+  assert.equal(req.id, "uuid-select-1");
+  assert.equal(req.method, "select");
+  assert.deepEqual(req.options, ["Allow", "Block"]);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U3b: extension_ui_response op writes to Pi stdin with the same id via sendRaw (never bridge.request)", async () => {
+  let childRef = null;
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() => {
+      childRef = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? { id: "m" } }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          // If someone mistakenly used bridge.request for extension_ui_response,
+          // Pi would get a kairo-* id and this handler would fire — we assert that
+          // never happens by recording raw stdin instead.
+          return null;
+        }
+      });
+      childRef._stdinChunks = [];
+      const origWrite = childRef.stdin.write;
+      childRef.stdin.write = (chunk) => {
+        childRef._stdinChunks.push(String(chunk));
+        return origWrite.call(childRef.stdin, chunk);
+      };
+      return childRef;
+    })
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  const baseline = childRef._stdinChunks.length;
+
+  stdin.write(
+    `${JSON.stringify({
+      op: "extension_ui_response",
+      id: "uuid-select-1",
+      value: "Allow"
+    })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 40));
+
+  const written = childRef._stdinChunks
+    .slice(baseline)
+    .join("")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+  const response = written.find((r) => r.type === "extension_ui_response");
+  assert.ok(response, "Pi stdin must receive extension_ui_response");
+  assert.equal(response.id, "uuid-select-1", "response must preserve the original request id");
+  assert.equal(response.value, "Allow");
+  assert.ok(
+    !String(response.id).startsWith("kairo-"),
+    "must not mint a bridge.request pending id"
+  );
+  assert.ok(
+    !out.some((r) => r.type === "error" && /Unknown op/i.test(r.message ?? "")),
+    "extension_ui_response must be a known sidecar op"
+  );
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U3b: cancel response correlates by id and does not invent another id", async () => {
+  let childRef = null;
+  const stdout = new PassThrough();
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() => {
+      childRef = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { model: ctx?.activeModel ?? { id: "m" } }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      });
+      childRef._stdinChunks = [];
+      const origWrite = childRef.stdin.write;
+      childRef.stdin.write = (chunk) => {
+        childRef._stdinChunks.push(String(chunk));
+        return origWrite.call(childRef.stdin, chunk);
+      };
+      return childRef;
+    })
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  const baseline = childRef._stdinChunks.length;
+
+  stdin.write(
+    `${JSON.stringify({
+      op: "extension_ui_response",
+      id: "dialog-a",
+      cancelled: true
+    })}\n`
+  );
+  stdin.write(
+    `${JSON.stringify({
+      op: "extension_ui_response",
+      id: "dialog-b",
+      confirmed: false
+    })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 50));
+
+  const written = childRef._stdinChunks
+    .slice(baseline)
+    .join("")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+    .filter((r) => r.type === "extension_ui_response");
+
+  assert.equal(written.length, 2);
+  assert.equal(written[0].id, "dialog-a");
+  assert.equal(written[0].cancelled, true);
+  assert.equal(written[1].id, "dialog-b");
+  assert.equal(written[1].confirmed, false);
+  assert.notEqual(written[0].id, written[1].id);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U3b: notify extension_ui_request is forwarded without requiring a host response", async () => {
+  let childRef = null;
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() => {
+      childRef = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { model: ctx?.activeModel ?? { id: "m" } }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      });
+      return childRef;
+    })
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  childRef.stdout.emit(
+    "data",
+    Buffer.from(
+      `${JSON.stringify({
+        type: "extension_ui_request",
+        id: "uuid-notify-1",
+        method: "notify",
+        message: "Command blocked",
+        notifyType: "warning"
+      })}\n`
+    )
+  );
+  await new Promise((r) => setTimeout(r, 40));
+
+  const notify = out.find((r) => r.type === "extension_ui_request" && r.method === "notify");
+  assert.ok(notify);
+  assert.equal(notify.id, "uuid-notify-1");
+  assert.equal(notify.message, "Command blocked");
+  // Host is free to display; no extension_ui_response is required for notify.
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
