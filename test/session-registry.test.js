@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  conversationsDir, createSession, ensureHostMetadata, getSession, listSessions, migrateLegacySessionIfNeeded, resolveSessionRef,
-  SESSION_SCHEMA_V2, sessionDirFor, updateSessionMode
+  conversationsDir, createSession, ensureHostMetadata, getSession, listSessions, loadDraft, migrateLegacySessionIfNeeded,
+  resolveSessionRef, saveDraft, SESSION_SCHEMA_V2, sessionDirFor, updateSessionMode
 } from "../src/global/conversation/session-registry.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
@@ -210,6 +210,41 @@ test("ensureHostMetadata writes host.json without changing session.json or trans
   assert.equal(host.schema, "kairo.host-binding/v1");
   assert.equal(host.host, "pi");
   assert.equal(host.sessionId, session.id);
+});
+
+test("U3a: saveDraft then loadDraft round-trips the real unsent editor text", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const session = await createSession(homeDir, projectRoot, {});
+  await saveDraft(homeDir, projectRoot, session.id, "unsent message body");
+  assert.equal(await loadDraft(homeDir, projectRoot, session.id), "unsent message body");
+});
+
+test("U3a: loadDraft returns null when no draft was ever saved — never throws", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const session = await createSession(homeDir, projectRoot, {});
+  assert.equal(await loadDraft(homeDir, projectRoot, session.id), null);
+});
+
+test("U3a: loadDraft returns null for an unknown session id instead of throwing", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  assert.equal(await loadDraft(homeDir, projectRoot, "aaaaaaaa-0000-0000-0000-000000000000"), null);
+});
+
+test("U3a: saveDraft with empty text clears a previously saved draft", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const session = await createSession(homeDir, projectRoot, {});
+  await saveDraft(homeDir, projectRoot, session.id, "will be cleared");
+  await saveDraft(homeDir, projectRoot, session.id, "");
+  assert.equal(await loadDraft(homeDir, projectRoot, session.id), null);
+});
+
+test("U3a: saveDraft never touches session.json", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const session = await createSession(homeDir, projectRoot, { title: "Keep me" });
+  const before = await readFile(join(sessionDirFor(homeDir, projectRoot, session.id), "session.json"));
+  await saveDraft(homeDir, projectRoot, session.id, "hello");
+  const after = await readFile(join(sessionDirFor(homeDir, projectRoot, session.id), "session.json"));
+  assert.deepEqual(before, after);
 });
 
 test("conversationsDir nests cleanly under the existing per-project sessions path, never colliding with project-strategy.json", async () => {

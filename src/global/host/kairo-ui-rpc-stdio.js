@@ -18,9 +18,22 @@
  *   { "op": "team.recovery.preview" }
  *   { "op": "team.recovery.apply" }
  *   { "op": "team.recovery.reject" }
- *   { "op": "stop" }
+ *   { "op": "rename_session", "name": "..." }
+ *   { "op": "fork_session" }
+ *   { "op": "stop", "draft"?: "<unsent editor text, saved when KAIRO_SESSION_ID is set>" }
  *
- * stdout records (JSONL): { type: "ready", engine, snapshot?, kairoModels?, sessions? },
+ * Sessions (U3a): each entry in `sessions` / the `ready.sessions` array
+ * carries `kairoSessionId` — the real Kairo session id (`kairo list` /
+ * `kairo resume`'s own id, from `pi-session-bindings.js`) bound to that Pi
+ * session file, or `null` when it was never bound (e.g. created outside
+ * `kairo start`/`resume`). On startup, when `KAIRO_SESSION_ID` names a real
+ * session bound to one of these Pi files, the sidecar switches Pi to that
+ * exact file before emitting `ready` — `kairo resume <id>` reopens the same
+ * transcript the picker/labels agree is bound to that id, not a fresh
+ * no-session Pi start. `ready.draft` carries any unsent editor text saved
+ * for that same Kairo session (see `saveDraft`/`loadDraft`), or `null`.
+ *
+ * stdout records (JSONL): { type: "ready", engine, snapshot?, kairoModels?, sessions?, draft? },
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
  * { type: "kairoModels", kairoModels }, { type: "team", op, ok, state, teamRows, roles, analyst },
  * { type: "preflight", ok, analystCatalog?, profile?, candidates?, reason? } (the ratatui host's own
@@ -58,6 +71,10 @@ import {
   kairoSetModelCommand,
   pickNextKairoModel
 } from "./pi-rpc-kairo-models.js";
+import { resolveHomeDir } from "../paths.js";
+import { resolveProjectRoot as resolveProjectRootDefault } from "../architect/architect-store.js";
+import { lookupPiBinding as lookupPiBindingDefault } from "../conversation/pi-session-bindings.js";
+import { isValidSessionId, loadDraft as loadDraftDefault, saveDraft as saveDraftDefault } from "../conversation/session-registry.js";
 
 /**
  * @param {object[]} models
@@ -139,11 +156,19 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut) {
  * @param {typeof recoverProjectTeamImpl} [options.recoverProjectTeam]
  * @param {typeof approveRecoveryProposalImpl} [options.approveRecoveryProposal]
  * @param {typeof rejectRecoveryProposalImpl} [options.rejectRecoveryProposal]
+ * @param {NodeJS.ProcessEnv} [options.env]
+ * @param {typeof listPiSessionFilesForCwd} [options.listPiSessionFilesForCwd]
+ * @param {typeof resolveHomeDir} [options.resolveHomeDir]
+ * @param {typeof resolveProjectRootDefault} [options.resolveProjectRoot]
+ * @param {typeof lookupPiBindingDefault} [options.lookupPiBinding]
+ * @param {typeof loadDraftDefault} [options.loadDraft]
+ * @param {typeof saveDraftDefault} [options.saveDraft]
  */
 export async function runKairoUiRpcStdio({
   stdin = process.stdin,
   stdout = process.stdout,
   cwd = process.cwd(),
+  env = process.env,
   openBridge = openPiRpcBridge,
   loadKairoProviderModels: loadModels = loadKairoProviderModels,
   loadSnapshot = loadKairoWorkspaceSnapshot,
@@ -153,7 +178,13 @@ export async function runKairoUiRpcStdio({
   revalidateTeamAvailability = revalidateTeamAvailabilityImpl,
   recoverProjectTeam = recoverProjectTeamImpl,
   approveRecoveryProposal = approveRecoveryProposalImpl,
-  rejectRecoveryProposal = rejectRecoveryProposalImpl
+  rejectRecoveryProposal = rejectRecoveryProposalImpl,
+  listPiSessionFilesForCwd: listSessionFilesImpl = listPiSessionFilesForCwd,
+  resolveHomeDir: resolveHomeDirImpl = resolveHomeDir,
+  resolveProjectRoot: resolveProjectRootImpl = resolveProjectRootDefault,
+  lookupPiBinding: lookupPiBindingImpl = lookupPiBindingDefault,
+  loadDraft: loadDraftImpl = loadDraftDefault,
+  saveDraft: saveDraftImpl = saveDraftDefault
 } = {}) {
   const bridge = await openBridge({ cwd });
   let kairoModels = [];
@@ -162,7 +193,85 @@ export async function runKairoUiRpcStdio({
   } catch {
     kairoModels = [];
   }
-  let sessionFiles = listPiSessionFilesForCwd({ cwd, env: process.env });
+  let sessionFiles = listSessionFilesImpl({ cwd, env });
+
+  // Kairo session id <-> Pi file binding (U3a). `projectRoot` may fail to
+  // resolve (no Git repo, a test cwd that doesn't exist) — every
+  // binding-dependent feature below degrades to "unbound" rather than
+  // crashing the host over it.
+  const homeDir = resolveHomeDirImpl(env);
+  let projectRoot = null;
+  try {
+    projectRoot = await resolveProjectRootImpl(cwd);
+  } catch {
+    projectRoot = null;
+  }
+  const envSessionId =
+    typeof env?.KAIRO_SESSION_ID === "string" && isValidSessionId(env.KAIRO_SESSION_ID)
+      ? env.KAIRO_SESSION_ID
+      : null;
+
+  /** Attach the real bound Kairo session id (or null) to each Pi file entry. */
+  const annotateSessions = async (files) => {
+    if (!projectRoot) {
+      return files.map(({ path, sessionId, label }) => ({ path, sessionId, label, kairoSessionId: null }));
+    }
+    const out = [];
+    for (const { path, sessionId, label } of files) {
+      let kairoSessionId = null;
+      if (sessionId) {
+        try {
+          kairoSessionId = await lookupPiBindingImpl(homeDir, projectRoot, sessionId);
+        } catch {
+          kairoSessionId = null;
+        }
+      }
+      out.push({ path, sessionId, label, kairoSessionId });
+    }
+    return out;
+  };
+
+  // `kairo resume <id>` (or `start`) launches this host with
+  // `KAIRO_SESSION_ID` set. If one of the real Pi files on disk is already
+  // bound to that exact Kairo id, switch Pi to it before `ready` — the host
+  // reopens the same transcript the picker/labels agree is bound to that
+  // id, instead of always starting from Pi's own fresh `--no-session` run.
+  if (envSessionId && projectRoot) {
+    for (const file of sessionFiles) {
+      if (!file.sessionId) continue;
+      let bound = null;
+      try {
+        bound = await lookupPiBindingImpl(homeDir, projectRoot, file.sessionId);
+      } catch {
+        bound = null;
+      }
+      if (bound !== envSessionId) continue;
+      if (bridge.engine?.sessionId !== file.sessionId) {
+        try {
+          const result = await bridge.request({ type: "switch_session", sessionPath: file.path });
+          if (!result?.cancelled) {
+            bridge.engine = await refreshHostEngine(bridge, cwd, {
+              reapplyArchitect: true,
+              loadKairoProviderModels: loadModels
+            });
+          }
+        } catch {
+          // Leave the fresh no-model session active — never crash the host
+          // over a failed auto-bind switch.
+        }
+      }
+      break;
+    }
+  }
+
+  let draft = null;
+  if (envSessionId && projectRoot) {
+    try {
+      draft = await loadDraftImpl(homeDir, projectRoot, envSessionId);
+    } catch {
+      draft = null;
+    }
+  }
 
   const writeOut = (record) => {
     stdout.write(`${JSON.stringify(record)}\n`);
@@ -173,15 +282,12 @@ export async function runKairoUiRpcStdio({
     engine: bridge.engine,
     snapshot: bridge.snapshot,
     kairoModels: serializeKairoModelsForHost(kairoModels),
-    sessions: sessionFiles.map(({ path, sessionId, label }) => ({
-      path,
-      sessionId,
-      label
-    })),
+    sessions: await annotateSessions(sessionFiles),
     sessionsNote:
       sessionFiles.length === 0
         ? "No Pi session files on disk for this cwd (RPC has no list_sessions; use new_session or create via Pi)."
-        : null
+        : null,
+    draft
   });
 
   bridge.onEvent((ev) => writeOut(ev));
@@ -291,14 +397,10 @@ export async function runKairoUiRpcStdio({
           writeOut({ type: "notice", message: "New session cancelled by extension" });
           return;
         }
-        sessionFiles = listPiSessionFilesForCwd({ cwd, env: process.env });
+        sessionFiles = listSessionFilesImpl({ cwd, env });
         writeOut({
           type: "sessions",
-          sessions: sessionFiles.map(({ path, sessionId, label }) => ({
-            path,
-            sessionId,
-            label
-          }))
+          sessions: await annotateSessions(sessionFiles)
         });
         await applyEngineAndMaybeTranscript({
           reloadTranscript: true,
@@ -323,7 +425,7 @@ export async function runKairoUiRpcStdio({
           reapplyArchitect: true
         });
       } else if (op === "switch_session_index") {
-        sessionFiles = listPiSessionFilesForCwd({ cwd, env: process.env });
+        sessionFiles = listSessionFilesImpl({ cwd, env });
         const index = Number(cmd.index);
         if (!Number.isInteger(index) || index < 0 || index >= sessionFiles.length) {
           writeOut({
@@ -349,20 +451,61 @@ export async function runKairoUiRpcStdio({
           reapplyArchitect: true
         });
       } else if (op === "list_sessions") {
-        sessionFiles = listPiSessionFilesForCwd({ cwd, env: process.env });
+        sessionFiles = listSessionFilesImpl({ cwd, env });
         writeOut({
           type: "sessions",
-          sessions: sessionFiles.map(({ path, sessionId, label }) => ({
-            path,
-            sessionId,
-            label
-          })),
+          sessions: await annotateSessions(sessionFiles),
           sessionsNote:
             sessionFiles.length === 0
               ? "No Pi session files on disk for this cwd (RPC has no list_sessions)."
               : null
         });
+      } else if (op === "rename_session") {
+        // Pi RPC's `set_session_name` renames the CURRENTLY active session
+        // only (no sessionPath) — persisted into that session file's own
+        // header, so a fresh `listPiSessionFilesForCwd` picks up the new
+        // label. Never invents a name when the human sent an empty one.
+        const name = typeof cmd.name === "string" ? cmd.name.trim() : "";
+        if (!name) {
+          writeOut({ type: "error", message: "rename_session requires a non-empty name" });
+          return;
+        }
+        await bridge.request({ type: "set_session_name", name });
+        sessionFiles = listSessionFilesImpl({ cwd, env });
+        writeOut({ type: "sessions", sessions: await annotateSessions(sessionFiles) });
+        writeOut({ type: "notice", message: `Session renamed to "${name}"` });
+      } else if (op === "fork_session") {
+        // Pi RPC's `fork` takes an `entryId` and edits/regenerates history
+        // from a specific past message (its response is `{text, cancelled}`,
+        // not a new session) — not what "fork the whole session" means here.
+        // `clone` is the dedicated RPC command for exactly that: it forks at
+        // the CURRENT leaf, creating a new session file distinct from the
+        // source (the source file is never touched) and switches Pi's live
+        // session to the new one. This fork is Pi-level only in this slice
+        // — it is not yet bound to a new Kairo session id (decision gap:
+        // no product spec named whether a fork should get its own `kairo
+        // list` entry; binding it is a follow-up once product decides).
+        const result = await bridge.request({ type: "clone" });
+        if (result?.cancelled) {
+          writeOut({ type: "notice", message: "Fork cancelled by extension" });
+          return;
+        }
+        sessionFiles = listSessionFilesImpl({ cwd, env });
+        writeOut({ type: "sessions", sessions: await annotateSessions(sessionFiles) });
+        await applyEngineAndMaybeTranscript({
+          reloadTranscript: true,
+          reapplyArchitect: true
+        });
+        writeOut({ type: "notice", message: "Session forked — now on the new copy." });
       } else if (op === "stop") {
+        if (envSessionId && projectRoot) {
+          const draftText = typeof cmd.draft === "string" ? cmd.draft : "";
+          try {
+            await saveDraftImpl(homeDir, projectRoot, envSessionId, draftText);
+          } catch {
+            // Best-effort — never block shutdown over a failed draft save.
+          }
+        }
         stopped = true;
         await bridge.stop();
         process.exitCode = 0;

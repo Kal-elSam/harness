@@ -240,6 +240,55 @@ export async function resolveSessionRef(homeDir, projectRoot, ref, deps = {}) {
   return prefixMatches[0] ?? null;
 }
 
+export const SESSION_DRAFT_SCHEMA = "kairo.session-draft/v1";
+
+function draftPath(sessionDir) {
+  return join(sessionDir, "draft.json");
+}
+
+/**
+ * Persists the unsent editor text for one real session (U3a: draft survives
+ * quit -> resume). Empty/whitespace-only text clears any previously saved
+ * draft rather than persisting a blank placeholder — `loadDraft` reports
+ * "no draft" the same way whether nothing was ever saved or the last save
+ * was empty (e.g. the human sent their message before quitting).
+ * @param {string} homeDir
+ * @param {string} projectRoot
+ * @param {string} sessionId
+ * @param {string} text
+ */
+export async function saveDraft(homeDir, projectRoot, sessionId, text, deps = {}) {
+  const dir = sessionDirFor(homeDir, projectRoot, sessionId);
+  const mkdirImpl = deps.mkdir ?? mkdir;
+  const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
+  await mkdirImpl(dir, { recursive: true });
+  const value = typeof text === "string" ? text : "";
+  await writeJson(draftPath(dir), {
+    schema: SESSION_DRAFT_SCHEMA,
+    text: value,
+    updatedAt: new Date().toISOString()
+  });
+}
+
+/**
+ * The real unsent draft text for one session, or null when there is none —
+ * no file, a malformed file, a non-string `text`, or an explicitly cleared
+ * (empty) draft. Never throws: mirrors this module's "unusable is exactly
+ * as unremarkable as absent" convention (see `lookupPiBinding`).
+ * @param {string} homeDir
+ * @param {string} projectRoot
+ * @param {string} sessionId
+ */
+export async function loadDraft(homeDir, projectRoot, sessionId, deps = {}) {
+  if (!isValidSessionId(sessionId)) return null;
+  const dir = sessionDirFor(homeDir, projectRoot, sessionId);
+  const doc = await readJsonOrNull(draftPath(dir), deps);
+  if (!doc || doc.schema !== SESSION_DRAFT_SCHEMA || typeof doc.text !== "string" || doc.text === "") {
+    return null;
+  }
+  return doc.text;
+}
+
 export async function ensureHostMetadata(homeDir, projectRoot, sessionId, deps = {}) {
   const dir = sessionDirFor(homeDir, projectRoot, sessionId);
   const path = join(dir, "host.json");
