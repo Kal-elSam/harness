@@ -10,6 +10,7 @@ use ratatui_textarea::TextArea;
 use crate::analyst_picker::AnalystPickerState;
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
 use crate::layout::{split_work_main, ShellRegions};
+use crate::recovery_picker::RecoveryPreviewState;
 
 /// Kairo sober hacker palette — graphite greens; accent green only for
 /// brand / focus / selection. Semantic red / amber / user-blue stay distinct.
@@ -485,6 +486,106 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         .render(inner, buf);
 }
 
+/// Strategy recovery preview modal (U2c): "what changed" (real cause rows)
+/// and "what we'd switch to" (the already-verified proposal), never
+/// invented. Enter/`y` apply, `x` reject, Esc cancels locally (mutates
+/// nothing — no server call is made on Esc).
+pub fn render_recovery_preview(buf: &mut Buffer, area: Rect, preview: &RecoveryPreviewState) {
+    let cause_lines = preview.cause_lines();
+    let replacement_lines = preview.replacement_lines();
+    let width = area.width.saturating_sub(6).clamp(40, 76);
+    let notice_rows = preview
+        .notice
+        .as_deref()
+        .map(|n| wrap_notice(n, width.saturating_sub(2), Style::default()).len() as u16)
+        .unwrap_or(0);
+    // Header rows: "Why" + "Proposed" section titles, one row per cause,
+    // one per replacement, plus the optional notice.
+    let content_rows = 2 + cause_lines.len().max(1) as u16 + replacement_lines.len().max(1) as u16;
+    let height = content_rows
+        .saturating_add(3 + notice_rows)
+        .min(area.height.saturating_sub(2).max(6));
+    let popup = centered_rect(area, width, height);
+    if popup.width == 0 || popup.height == 0 {
+        return;
+    }
+
+    Clear.render(popup, buf);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .title(Span::styled(
+            " Recovered team — Enter/y apply · x reject · Esc cancel ",
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(padded_span(
+        "Why:",
+        inner.width,
+        Style::default()
+            .fg(tone::MUTED)
+            .bg(tone::SIDEBAR_BG)
+            .add_modifier(Modifier::BOLD),
+    ));
+    if cause_lines.is_empty() {
+        lines.push(padded_span(
+            "  (no cause reported)",
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
+    } else {
+        for line in &cause_lines {
+            lines.push(padded_span(
+                &format!("  {line}"),
+                inner.width,
+                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+            ));
+        }
+    }
+    lines.push(padded_span(
+        "Proposed:",
+        inner.width,
+        Style::default()
+            .fg(tone::MUTED)
+            .bg(tone::SIDEBAR_BG)
+            .add_modifier(Modifier::BOLD),
+    ));
+    if replacement_lines.is_empty() {
+        lines.push(padded_span(
+            "  (no verified alternative)",
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
+    } else {
+        for line in &replacement_lines {
+            lines.push(padded_span(
+                &format!("  {line}"),
+                inner.width,
+                Style::default().fg(tone::ACCENT).bg(tone::SIDEBAR_BG),
+            ));
+        }
+    }
+    if let Some(notice) = &preview.notice {
+        let notice_style = Style::default()
+            .fg(tone::WARN)
+            .add_modifier(Modifier::BOLD)
+            .bg(tone::SIDEBAR_BG);
+        lines.extend(wrap_notice(notice, inner.width, notice_style));
+    }
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .render(inner, buf);
+}
+
 /// Word-wraps one segment (no `\n` inside it) to at most `width` visible
 /// columns, falling back to character-wrapping a single word that alone
 /// exceeds `width` (never truncated, never overrun). Always returns at
@@ -820,6 +921,78 @@ mod tests {
             hay.contains("FINAL_SUFFIX_TOKEN"),
             "picker's long notice must wrap (and the popup grow to fit) so the final token is visible: {hay}"
         );
+    }
+
+    #[test]
+    fn recovery_preview_modal_shows_the_real_cause_and_the_proposed_replacement() {
+        use crate::recovery_picker::{
+            RecoveryCauseRow, RecoveryPreviewState, RecoveryReplacementRow,
+        };
+
+        let area = Rect::new(0, 0, 100, 30);
+        let preview = RecoveryPreviewState {
+            causes: vec![RecoveryCauseRow {
+                role: "Orchestrator".into(),
+                model: "Kimi K3".into(),
+                reason: "OpenCode Go monthly window is rate-limited".into(),
+            }],
+            replacements: vec![RecoveryReplacementRow {
+                role: "Orchestrator".into(),
+                model: "GPT-6 Terra".into(),
+            }],
+            notice: None,
+        };
+        let mut buf = Buffer::empty(area);
+        render_recovery_preview(&mut buf, area, &preview);
+
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Orchestrator"));
+        assert!(hay.contains("rate-limited"));
+        assert!(
+            !hay.to_lowercase().contains("quota"),
+            "must never show an invented quota cause: {hay}"
+        );
+        assert!(hay.contains("GPT-6"));
+        assert!(hay.contains("apply"));
+        assert!(hay.contains("reject"));
+    }
+
+    #[test]
+    fn recovery_preview_modal_grows_to_fit_a_long_wrapped_refusal_notice() {
+        use crate::recovery_picker::RecoveryPreviewState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let long_notice = format!(
+            "{}FINAL_SUFFIX_TOKEN",
+            "The active team changed since the proposal was built ".repeat(4)
+        );
+        let preview = RecoveryPreviewState {
+            causes: vec![],
+            replacements: vec![],
+            notice: Some(long_notice),
+        };
+        let mut buf = Buffer::empty(area);
+        render_recovery_preview(&mut buf, area, &preview);
+
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("FINAL_SUFFIX_TOKEN"),
+            "a stale-apply refusal notice must wrap (and the popup grow) so the final token is visible: {hay}"
+        );
+    }
+
+    #[test]
+    fn recovery_preview_modal_never_invents_rows_when_the_record_had_none() {
+        use crate::recovery_picker::RecoveryPreviewState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let preview = RecoveryPreviewState::default();
+        let mut buf = Buffer::empty(area);
+        render_recovery_preview(&mut buf, area, &preview);
+
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("no cause reported"));
+        assert!(hay.contains("no verified alternative"));
     }
 
     #[test]

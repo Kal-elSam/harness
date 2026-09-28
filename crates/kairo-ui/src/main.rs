@@ -3,6 +3,7 @@ mod bridge;
 mod chat;
 mod engine;
 mod layout;
+mod recovery_picker;
 mod snapshot;
 mod surfaces;
 
@@ -27,8 +28,9 @@ use engine::{
     EngineGate, SlashCommand, SubmitDecision,
 };
 use layout::split_shell;
+use recovery_picker::RecoveryPreviewState;
 use snapshot::apply_workspace_snapshot;
-use surfaces::{render_analyst_picker, render_shell, ShellViewModel};
+use surfaces::{render_analyst_picker, render_recovery_preview, render_shell, ShellViewModel};
 
 // Keybindings (V2 + R3b + R4):
 // - Tab: cycle focus Editor → Sidebar → Transcript
@@ -40,6 +42,14 @@ use surfaces::{render_analyst_picker, render_shell, ShellViewModel};
 // - Bridge only, team setup in this UI (no cockpit): type `/analyze` (or empty
 //   compose + `a`) to open the analyst picker; `/approve` or `A` when suggested.
 //   Esc cancels the picker; q / Ctrl+C quit (TTY restored before bridge kill).
+// - Bridge only, availability + recovery (U2c): empty-compose `r` re-probes
+//   provider availability on demand (sidebar/CTA update from real evidence,
+//   never an invented quota/funds cause); empty-compose `R` builds a
+//   strategy-recovery preview when the team is stale/blocked. In the
+//   preview modal: Enter/`y` applies (re-verified against CURRENT
+//   eligibility — a stale preview is refused and mutates nothing), `x`
+//   explicitly rejects (closes the proposal, current team stays active),
+//   Esc cancels locally (no server call at all).
 // - n/c: demo notice clear (local, no bridge)
 
 /// The two in-UI team setup actions (`a` / `A`).
@@ -88,6 +98,34 @@ fn preflight_picker_notice(record: &serde_json::Value) -> Option<String> {
     None
 }
 
+/// Honest text for a `recovery` record outcome that does NOT (or no longer)
+/// keep the preview modal open — never invents a cause; only the sidecar's
+/// own `reason` is ever quoted (see `team-recovery.js`'s own outcomes).
+fn recovery_preview_notice(outcome: &str, record: &serde_json::Value) -> String {
+    let reason = record.get("reason").and_then(|v| v.as_str());
+    match outcome {
+        "baseline" => "Team availability baseline recorded — nothing blocked.".into(),
+        "activated" => "Team recovered automatically — routes updated.".into(),
+        "approved" => "Recovery applied — the recovered team is now active.".into(),
+        "rejected" => "Recovery proposal rejected — the current team stays active.".into(),
+        "skipped" => match reason {
+            Some(r) => format!("No recovery needed right now ({r})."),
+            None => "No recovery needed right now.".into(),
+        },
+        "kept-previous" => match reason {
+            Some(r) => {
+                format!("Could not recover the project team ({r}). The current team stays active.")
+            }
+            None => "Could not recover the project team. The current team stays active.".into(),
+        },
+        "error" => match reason {
+            Some(r) => format!("Recovery action refused: {r}"),
+            None => "Recovery action refused.".into(),
+        },
+        other => format!("Recovery outcome: {other}"),
+    }
+}
+
 struct ShellApp {
     view: ShellViewModel,
     chat: ChatState,
@@ -104,6 +142,16 @@ struct ShellApp {
     preflight_pending: bool,
     /// The open analyst picker modal (T2) — `Some` while it owns key input.
     picker: Option<AnalystPickerState>,
+    /// `team.revalidate` or `team.recovery.preview` was sent; a second one
+    /// is refused with a notice instead of silently piling up.
+    availability_action_pending: bool,
+    /// The open strategy-recovery preview modal (U2c) — `Some` while it owns
+    /// key input. Built only from an `outcome: "proposed"` `recovery`
+    /// record, never invented.
+    recovery_preview: Option<RecoveryPreviewState>,
+    /// `team.recovery.apply` / `.reject` was sent; a second one is refused
+    /// with a notice instead of racing the first.
+    recovery_action_pending: bool,
 }
 
 impl ShellApp {
@@ -126,6 +174,9 @@ impl ShellApp {
             team_action_pending: false,
             preflight_pending: false,
             picker: None,
+            availability_action_pending: false,
+            recovery_preview: None,
+            recovery_action_pending: false,
         }
     }
 
@@ -239,6 +290,10 @@ impl ShellApp {
                 self.ingest_team_record(&record);
             } else if kind == Some("preflight") {
                 self.ingest_preflight_record(&record);
+            } else if kind == Some("availability") {
+                self.ingest_availability_record(&record);
+            } else if kind == Some("recovery") {
+                self.ingest_recovery_record(&record);
             } else if kind == Some("sessions") {
                 self.ingest_sessions_record(&record);
             } else if kind == Some("transcript") {
@@ -258,6 +313,8 @@ impl ShellApp {
                     .unwrap_or("bridge error");
                 self.view.notice = Some(msg.to_string());
                 self.team_action_pending = false;
+                self.availability_action_pending = false;
+                self.recovery_action_pending = false;
                 self.revert_failed_prompt();
             }
             // Real deltas mean the prompt was accepted — drop restore token.
@@ -386,6 +443,139 @@ impl ShellApp {
             }
             Err(err) => {
                 self.view.notice = Some(format!("{} failed: {err}", TeamOp::Analyze.label()));
+            }
+        }
+    }
+
+    /// `r`: on-demand availability re-probe — the same real
+    /// conversation-service probe a normal refresh eventually shows,
+    /// forced now instead of waiting. One in flight at a time.
+    fn request_revalidate(&mut self) {
+        if self.availability_action_pending {
+            self.view.notice = Some("Already revalidating availability…".into());
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.revalidate_team_availability() {
+            Ok(()) => {
+                self.availability_action_pending = true;
+                self.view.notice = Some("Revalidating provider availability…".into());
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("Revalidate failed: {err}"));
+            }
+        }
+    }
+
+    /// Sidecar `availability` record (`team.revalidate`): tracks only
+    /// pending state and an honest failure notice — the real per-role
+    /// evidence arrives on the `snapshot` record that follows, never
+    /// synthesized here.
+    fn ingest_availability_record(&mut self, record: &serde_json::Value) {
+        self.availability_action_pending = false;
+        let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !ok {
+            let reason = record
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("live availability probe failed");
+            self.view.notice = Some(reason.to_string());
+        }
+    }
+
+    /// `R`: build (and persist) a strategy-recovery proposal for a
+    /// stale/blocked team — never activates on its own. One in flight at a
+    /// time; refuses while the preview modal is already open.
+    fn request_recovery_preview(&mut self) {
+        if self.recovery_action_pending || self.recovery_preview.is_some() {
+            self.view.notice = Some("A recovery preview is already open or running…".into());
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.recovery_preview() {
+            Ok(()) => {
+                self.recovery_action_pending = true;
+                self.view.notice = Some("Checking for a recovered team…".into());
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("Recovery preview failed: {err}"));
+            }
+        }
+    }
+
+    /// Sidecar `recovery` record. `op: "preview"` opens the modal only on a
+    /// real `outcome: "proposed"` — any other outcome (baseline, skipped,
+    /// kept-previous, activated, error) is reported as a plain notice, never
+    /// a fabricated modal. `op: "apply"` / `"reject"` always close the modal
+    /// and report the real outcome — a stale/refused apply never re-opens
+    /// itself silently; the human presses `R` again for a fresh preview.
+    fn ingest_recovery_record(&mut self, record: &serde_json::Value) {
+        let op = record.get("op").and_then(|v| v.as_str()).unwrap_or("");
+        let outcome = record.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
+        match op {
+            "preview" => {
+                self.recovery_action_pending = false;
+                if outcome == "proposed" {
+                    if let Some(preview) = RecoveryPreviewState::from_recovery_record(record) {
+                        self.view.notice = None;
+                        self.recovery_preview = Some(preview);
+                        return;
+                    }
+                }
+                self.recovery_preview = None;
+                self.view.notice = Some(recovery_preview_notice(outcome, record));
+            }
+            "apply" | "reject" => {
+                self.recovery_action_pending = false;
+                self.recovery_preview = None;
+                self.view.notice = Some(recovery_preview_notice(outcome, record));
+            }
+            _ => {}
+        }
+    }
+
+    /// `x` while the preview modal is open: explicit reject — closes the
+    /// proposal on the sidecar (the fingerprint), the current team is never
+    /// touched.
+    fn send_recovery_reject(&mut self) {
+        if self.recovery_action_pending {
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.recovery_reject() {
+            Ok(()) => {
+                self.recovery_action_pending = true;
+                self.view.notice = Some("Rejecting recovery proposal…".into());
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("Recovery reject failed: {err}"));
+            }
+        }
+    }
+
+    /// Enter/`y` while the preview modal is open: apply — the sidecar
+    /// re-verifies against CURRENT eligibility before activating; a stale
+    /// proposal comes back as an honest error and touches nothing.
+    fn send_recovery_apply(&mut self) {
+        if self.recovery_action_pending {
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.recovery_apply() {
+            Ok(()) => {
+                self.recovery_action_pending = true;
+                self.view.notice = Some("Applying recovered team…".into());
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("Recovery apply failed: {err}"));
             }
         }
     }
@@ -556,10 +746,16 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
     if app.picker.is_some() {
         return Ok(handle_picker_key(app, key));
     }
+    if app.recovery_preview.is_some() {
+        return Ok(handle_recovery_key(app, key));
+    }
     if try_bridge_shortcut(app, key) {
         return Ok(false);
     }
     if try_team_shortcut(app, key) {
+        return Ok(false);
+    }
+    if try_recovery_shortcut(app, key) {
         return Ok(false);
     }
 
@@ -683,6 +879,65 @@ fn try_team_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
         }
         _ => false,
     }
+}
+
+/// `r` = revalidate availability on demand, `R` = preview a strategy
+/// recovery. Same empty-compose-or-non-editor-focus gate as team setup
+/// (`team_keys_available`) — bare keys never steal a typed character.
+fn try_recovery_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
+    if app.bridge.is_none()
+        || key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return false;
+    }
+    if !team_keys_available(
+        app.chat.focus == Focus::Editor,
+        app.editor.lines().join("").trim().is_empty(),
+        app.engine.can_prompt(),
+    ) {
+        return false;
+    }
+    match key.code {
+        KeyCode::Char('r') => {
+            app.request_revalidate();
+            true
+        }
+        KeyCode::Char('R') => {
+            app.request_recovery_preview();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Key routing while the recovery-preview modal is open — it owns every key
+/// until it closes. Enter/`y` apply, `x` explicit reject, Esc cancels
+/// LOCALLY (no server call at all — cancel mutates nothing by construction).
+/// Returns `true` when the host should quit (plain `q`; Ctrl+C/Q handled
+/// before this runs).
+fn handle_recovery_key(app: &mut ShellApp, key: KeyEvent) -> bool {
+    if app.recovery_preview.is_none() {
+        return false;
+    }
+    match key.code {
+        KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            return true;
+        }
+        KeyCode::Esc => {
+            app.recovery_preview = None;
+            app.view.notice = Some("Recovery preview cancelled.".into());
+        }
+        KeyCode::Enter | KeyCode::Char('y') => {
+            app.send_recovery_apply();
+        }
+        KeyCode::Char('x') => {
+            app.send_recovery_reject();
+        }
+        _ => {}
+    }
+    false
 }
 
 /// Key routing while the analyst picker modal is open — the picker owns
@@ -824,5 +1079,8 @@ fn draw(frame: &mut Frame, app: &ShellApp) {
     );
     if let Some(picker) = &app.picker {
         render_analyst_picker(frame.buffer_mut(), area, picker);
+    }
+    if let Some(preview) = &app.recovery_preview {
+        render_recovery_preview(frame.buffer_mut(), area, preview);
     }
 }
