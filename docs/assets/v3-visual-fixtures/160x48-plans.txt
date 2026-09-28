@@ -21,12 +21,12 @@ AGENTS                     ││you: FIXTURE: outline the auth plan            
                            ││                                                                                                                                  │
                            ││                                                                                                                                  │
                            ││                                                                                                                                  │
-                           ││         ┌ Plans / tasks — ↑/↓ select · Enter open · Esc close · y approve · n reject ──────┐                                     │
+                           ││         ┌ Plans / tasks ───────────────────────────────────────────────────────────────────┐                                     │
                            ││         │› v3-plan-… · awaiting_approval — FIXTURE plan — OAuth login flow                 │                                     │
                            ││         │  v3-plan-… · approved — FIXTURE plan — approved earlier                          │                                     │
-                           ││         │                                                                                  │                                     │
-                           ││         │                                                                                  │                                     │
+                           ││         │↑/↓ select · Enter open · Esc close · y approve · n reject                        │                                     │
                            ││         └──────────────────────────────────────────────────────────────────────────────────┘                                     │
+                           ││                                                                                                                                  │
                            ││                                                                                                                                  │
                            ││                                                                                                                                  │
                            ││                                                                                                                                  │

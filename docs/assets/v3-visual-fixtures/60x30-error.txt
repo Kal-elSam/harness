@@ -2,14 +2,14 @@
 # size/scenario: 60x30-error
 ┌ Chat ────────────────────────────────────────────────────┐
 │you: FIXTURE: outline the auth plan                       │
-│thinking: FIXTURE thinking — weighing OAuth vs session coo│
-│assistant: FIXTURE assistant — propose OAuth login with re│
+│thinking: FIXTURE thinking — weighing OAuth vs session    │
+│          cookies                                         │
+│assistant: FIXTURE assistant — propose OAuth login with   │
+│           refresh tokens.                                │
 │error: FIXTURE error — provider timeout (mock)            │
 │                                                          │
 │⚠ FIXTURE mock — not live provider · ERROR notice —       │
 │  sidecar unavailable (mock)                              │
-│                                                          │
-│                                                          │
 │                                                          │
 │                                                          │
 │                                                          │

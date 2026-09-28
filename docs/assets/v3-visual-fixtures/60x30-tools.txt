@@ -2,17 +2,17 @@
 # size/scenario: 60x30-tools
 ┌ Chat ────────────────────────────────────────────────────┐
 │you: FIXTURE: outline the auth plan                       │
-│thinking: FIXTURE thinking — weighing OAuth vs session coo│
-│assistant: FIXTURE assistant — propose OAuth login with re│
-│tool: ✓ ReadFIXTURE tool ok — src/auth/oauth.ts           │
-│tool: ✓ GrepFIXTURE tool ok — 3 matches                   │
+│thinking: FIXTURE thinking — weighing OAuth vs session    │
+│          cookies                                         │
+│assistant: FIXTURE assistant — propose OAuth login with   │
+│           refresh tokens.                                │
+│tool: ✓ Read                                              │
+│      FIXTURE tool ok — src/auth/oauth.ts                 │
+│tool: ✓ Grep                                              │
+│      FIXTURE tool ok — 3 matches                         │
 │                                                          │
 │⚠ FIXTURE mock — not live provider · V3-FIXTURE · sidebar │
 │  collapsed (<90 cols)                                    │
-│                                                          │
-│                                                          │
-│                                                          │
-│                                                          │
 │                                                          │
 │                                                          │
 │                                                          │

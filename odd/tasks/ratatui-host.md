@@ -373,9 +373,17 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - Checkbox **[ ] V3** stays unchecked — awaiting human review. Do not reopen U4.
   - Verification (observed): `cargo test v3_capture` → pass; capture exits 0 and writes 46 files; spot-check `.txt` cues for conversation/tool/plan/dialog/error.
 
+- (2026-09-28) **V3 narrow-width presentation blockers fixed (still NOT approved)** — Human review @60 cols found silent truncation and clipped plan hints; fixed paint only, no provider/Pi work.
+  - **Chat wrap**: `message_to_lines(width)` word/char-wraps thinking/assistant (and other roles) to the transcript pane width so tokens like `cookies` / `refresh tokens.` remain reachable with scroll — never ellipsis-only clip.
+  - **Plans footer**: action hints moved out of the title into a footer that wraps on ` · ` (up to two lines) so `y approve` / `n reject` stay visible at 60 cols.
+  - **Tool name/result**: hard `\n` in tool payloads paint as separate lines (`✓ Read` then result body) — no more `ReadFIXTURE` concatenation.
+  - **Tests (observed GREEN)**: `message_to_lines_wraps_long_thinking_and_assistant_at_narrow_width`, `plan_list_footer_keeps_approve_reject_visible_at_60_cols`, `tool_message_separates_name_from_result_body` (+ chat newline assert); full `cargo test` → **152/152**.
+  - **Fixtures**: regenerated once via `scripts/kairo-ui-v3-capture` (46 files). Spot-check 60x30 conversation/plans/tools (+ shared paint on 100/160).
+  - Checkbox **[ ] V3** remains unchecked — awaiting human re-review. Do not mark approved.
+
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 + **U4 closed**. **V3 captures ready for human review** (not approved). Next: human V3 verdict and/or U5 operations views. U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green (9 entry-host failures).
+**Plan 2026-09-28 (amended):** Phase 3 + **U4 closed**. **V3 fixtures regenerated after narrow-width wrap/footer/tool-sep fixes — still not approved**. Next: human V3 re-review and/or U5 ops views. U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green (9 entry-host failures).
 
-1. **Human review of V3** fixtures @60/100/160 (or **U5** ops views in parallel).
+1. **Human re-review of V3** fixtures @60/100/160 (or **U5** ops views in parallel).
 2. **U2a/U2b** when publish / provider auth available; **U5→U6→U7** under `feature-branch-chain`.
