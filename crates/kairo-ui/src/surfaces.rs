@@ -51,11 +51,28 @@ pub enum AgentState {
     Unknown,
 }
 
+/// Evidenced reason a role is blocked, classified from the ORIGINAL
+/// `stateReason` — never invented. `Unavailable` covers ambiguous evidence
+/// (e.g. billing/entitlement wording with no explicit funds statement) and
+/// is also the aggregate result when blocked roles disagree on cause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BlockCause {
+    #[default]
+    Unavailable,
+    RateLimited,
+    QuotaExhausted,
+    NoFunds,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidebarAgent {
     pub label: String,
     pub detail: String,
     pub state: AgentState,
+    /// Classified from the original `stateReason`, not from `detail` — so
+    /// aggregation (e.g. the chat CTA) never re-derives from already
+    /// shortened/truncated text.
+    pub cause: BlockCause,
 }
 
 impl SidebarAgent {
@@ -686,6 +703,7 @@ mod tests {
             label: "Orchestrator".into(),
             detail: "idle".into(),
             state: AgentState::Idle,
+            cause: BlockCause::Unavailable,
         }];
         model.selected_agent = 0;
         let mut chat = ChatState::default();
@@ -958,11 +976,13 @@ mod tests {
                 label: "Orchestrator".into(),
                 detail: "idle".into(),
                 state: AgentState::Idle,
+                cause: BlockCause::Unavailable,
             },
             SidebarAgent {
                 label: "Builder".into(),
                 detail: "blocked".into(),
                 state: AgentState::Blocked,
+                cause: BlockCause::Unavailable,
             },
         ];
         model.selected_agent = 0;
@@ -1084,13 +1104,14 @@ mod tests {
         let mut buf = Buffer::empty(area);
         let mut model = ShellViewModel::default();
         model.team_attention = Some(vec![
-            "5 roles unavailable.".into(),
+            "5 roles blocked — rate-limited.".into(),
             "Type /analyze to reassign.".into(),
         ]);
         model.agents = vec![SidebarAgent {
             label: "Architect".into(),
-            detail: "OpenCode Go · unavailable".into(),
+            detail: "OpenCode Go · rate-limited · /analyze".into(),
             state: AgentState::Blocked,
+            cause: BlockCause::RateLimited,
         }];
         render_shell(
             &mut buf,
@@ -1105,12 +1126,16 @@ mod tests {
             "blocked-team CTA missing from chat surface: {hay}"
         );
         assert!(
-            hay.contains("unavailable"),
-            "CTA must state unavailability: {hay}"
+            hay.contains("rate-limited"),
+            "CTA must explain the evidenced rate-limit cause: {hay}"
         );
         assert!(
-            !hay.contains("no funds") && !hay.contains("rate-limit"),
-            "CTA must not invent funds/rate-limit causes: {hay}"
+            hay.contains("OpenCode Go"),
+            "sidebar must keep naming the provider: {hay}"
+        );
+        assert!(
+            !hay.contains("quota") && !hay.contains("funds"),
+            "rate-limit evidence must never render as quota/funds: {hay}"
         );
     }
 
