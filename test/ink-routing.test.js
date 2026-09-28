@@ -31,7 +31,7 @@ async function createFakeHome({ withCursorConfig = false } = {}) {
   return homeDir;
 }
 
-function createMockInkRunner({ cancelled = false, agents = ["cursor", "codex"], components = ["orchestrator", "sdd-core"] } = {}) {
+function createMockWizardRunner({ cancelled = false, agents = ["cursor", "codex"], components = ["orchestrator", "sdd-core"] } = {}) {
   return async () => ({
     cancelled,
     usedWizard: true,
@@ -42,7 +42,7 @@ function createMockInkRunner({ cancelled = false, agents = ["cursor", "codex"], 
   });
 }
 
-test("runHarnessSetup mocked Ink applies and marks usedInk", async () => {
+test("runHarnessSetup interactive routes to the Clack wizard and never reports Ink (U7)", async () => {
   const homeDir = await createFakeHome({ withCursorConfig: true });
   const paths = harnessHomePaths(homeDir);
 
@@ -50,17 +50,16 @@ test("runHarnessSetup mocked Ink applies and marks usedInk", async () => {
     ...baseOptions,
     homeDir,
     interactive: true,
-    inkCapable: true,
-    runSetupInkImpl: createMockInkRunner()
+    runSetupWizardImpl: createMockWizardRunner()
   });
 
-  assert.equal(outcome.usedInk, true);
+  assert.equal(outcome.usedInk, false);
   assert.equal(outcome.usedWizard, true);
   assert.equal(outcome.cancelled, false);
   assert.ok(existsSync(paths.statePath));
 });
 
-test("runHarnessSetup mocked Ink cancel writes nothing", async () => {
+test("runHarnessSetup Clack wizard cancel writes nothing (U7)", async () => {
   const homeDir = await createFakeHome({ withCursorConfig: true });
   const paths = harnessHomePaths(homeDir);
 
@@ -68,12 +67,12 @@ test("runHarnessSetup mocked Ink cancel writes nothing", async () => {
     ...baseOptions,
     homeDir,
     interactive: true,
-    inkCapable: true,
-    runSetupInkImpl: createMockInkRunner({ cancelled: true })
+    runSetupWizardImpl: createMockWizardRunner({ cancelled: true })
   });
 
   assert.equal(outcome.cancelled, true);
-  assert.equal(outcome.usedInk, true);
+  assert.equal(outcome.usedWizard, true);
+  assert.equal(outcome.usedInk, undefined);
   assert.equal(existsSync(paths.statePath), false);
 });
 
