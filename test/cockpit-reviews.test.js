@@ -7,11 +7,9 @@ import {
   selectReviewFromList
 } from "../src/global/ink/cockpit-reviews.js";
 import {
-  createCockpitUiState,
-  reduceCockpitUi,
   isContentInteractiveView,
   canTabBetweenRegions
-} from "../src/global/ink/cockpit-controller.js";
+} from "../src/global/ink/cockpit-focus.js";
 import { COCKPIT_REGIONS, buildFooterModel } from "../src/global/ink/cockpit-models.js";
 import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
@@ -62,30 +60,28 @@ test("review list and detail formatters stay secret-free and readable", () => {
   assert.equal(selectReviewFromList([], 0), null);
 });
 
-test("Runs hub exposes Reviews and Esc returns from review detail", () => {
+test("Runs hub exposes Reviews and focus rules treat review views as content-interactive", () => {
   assert.ok(RUNS_HUB_ITEMS.some((item) => item.id === "reviews"));
   assert.equal(resolveRunsHubItem(2)?.view, ORCHESTRATOR_VIEWS.REVIEWS);
   assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.REVIEWS), true);
   assert.equal(isContentInteractiveView(ORCHESTRATOR_VIEWS.REVIEW_DETAIL), true);
 
-  let state = createCockpitUiState({
-    layoutMode: LAYOUT_MODES.COMPACT,
-    view: ORCHESTRATOR_VIEWS.REVIEWS,
-    region: COCKPIT_REGIONS.CONTENT,
-    navIndex: 5
-  });
-  assert.equal(canTabBetweenRegions(state), true);
-
-  state = reduceCockpitUi(state, {
-    type: "set-view",
-    view: ORCHESTRATOR_VIEWS.REVIEW_DETAIL,
-    returnView: ORCHESTRATOR_VIEWS.REVIEWS
-  });
-  assert.equal(canTabBetweenRegions(state), false);
-  state = reduceCockpitUi(state, { type: "escape" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.REVIEWS);
-  state = reduceCockpitUi(state, { type: "escape" });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.RUNS);
+  assert.equal(
+    canTabBetweenRegions({
+      layoutMode: LAYOUT_MODES.COMPACT,
+      view: ORCHESTRATOR_VIEWS.REVIEWS,
+      region: COCKPIT_REGIONS.CONTENT
+    }),
+    true
+  );
+  assert.equal(
+    canTabBetweenRegions({
+      layoutMode: LAYOUT_MODES.COMPACT,
+      view: ORCHESTRATOR_VIEWS.REVIEW_DETAIL,
+      region: COCKPIT_REGIONS.CONTENT
+    }),
+    false
+  );
 
   const footer = buildFooterModel({
     view: ORCHESTRATOR_VIEWS.REVIEWS,

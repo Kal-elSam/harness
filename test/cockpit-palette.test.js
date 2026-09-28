@@ -7,10 +7,8 @@ import {
   PALETTE_KINDS,
   resolvePaletteDestination
 } from "../src/global/ink/cockpit-palette.js";
-import { createCockpitUiState, reduceCockpitUi } from "../src/global/ink/cockpit-controller.js";
 import { buildFooterModel, COCKPIT_NAV, COCKPIT_SECONDARY } from "../src/global/ink/cockpit-models.js";
 import { ORCHESTRATOR_VIEWS } from "../src/global/ink/orchestrator-state.js";
-import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 
 test("palette model: CTA optional, nav+secondary destinations, Alerts, Refresh, Help; no writes", () => {
   const base = buildPaletteActions();
@@ -44,42 +42,15 @@ test("palette model: CTA optional, nav+secondary destinations, Alerts, Refresh, 
   assert.equal(canOpenPalette({}), true);
 });
 
-test("palette reducer + integration: open, clamp, Esc, resize, navigate/refresh/help", () => {
+test("palette model: selection resolves destinations and footer hints (reducer retired by U7)", () => {
   const actions = buildPaletteActions();
-  let state = createCockpitUiState({ view: ORCHESTRATOR_VIEWS.USAGE, navIndex: 0 });
-  state = reduceCockpitUi(state, { type: "toggle-palette" });
-  assert.equal(state.paletteOpen, true);
-  state = reduceCockpitUi(state, { type: "palette-arrow", direction: "up", listLength: 8 });
-  assert.equal(state.paletteIndex, 0);
-  state = reduceCockpitUi(state, { type: "palette-arrow", direction: "down", listLength: 2 });
-  assert.equal(state.paletteIndex, 1);
-  state = reduceCockpitUi(state, { type: "resize", layoutMode: LAYOUT_MODES.WIDE });
-  assert.equal(state.paletteOpen, true);
-  state = reduceCockpitUi(state, { type: "escape" });
-  assert.equal(state.paletteOpen, false);
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.USAGE);
   assert.match(buildFooterModel({ paletteOpen: true, unicode: false }).text, /Select.*Run.*Close/);
-
-  state = reduceCockpitUi(state, { type: "toggle-palette" });
-  // Skip Home, Settings, History → Governance is index 3
-  state = reduceCockpitUi(state, { type: "palette-arrow", direction: "down", listLength: actions.length });
-  state = reduceCockpitUi(state, { type: "palette-arrow", direction: "down", listLength: actions.length });
-  state = reduceCockpitUi(state, { type: "palette-arrow", direction: "down", listLength: actions.length });
-  const selected = buildPaletteModel({ actions, index: state.paletteIndex }).selected;
+  // Skip Home, Settings, History -> Governance is index 3
+  const selected = buildPaletteModel({ actions, index: 3 }).selected;
   assert.equal(selected.id, "governance");
-  state = reduceCockpitUi(state, { type: "run-palette", kind: selected.kind, view: selected.view });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES);
-  assert.equal(state.paletteOpen, false);
-
-  state = reduceCockpitUi(state, { type: "toggle-palette" });
-  state = reduceCockpitUi(state, { type: "run-palette", kind: PALETTE_KINDS.REFRESH });
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.CHANGES);
-  state = reduceCockpitUi(state, { type: "toggle-palette" });
-  state = reduceCockpitUi(state, {
-    type: "run-palette",
-    kind: PALETTE_KINDS.HELP,
-    view: ORCHESTRATOR_VIEWS.HELP
-  });
-  assert.equal(state.helpOpen, true);
-  assert.equal(state.view, ORCHESTRATOR_VIEWS.HELP);
+  assert.equal(selected.kind, PALETTE_KINDS.NAVIGATE);
+  assert.equal(selected.view, ORCHESTRATOR_VIEWS.CHANGES);
+  // Out-of-range indexes clamp to a valid action instead of throwing.
+  assert.ok(buildPaletteModel({ actions, index: 999 }).selected);
+  assert.ok(buildPaletteModel({ actions, index: -5 }).selected);
 });
