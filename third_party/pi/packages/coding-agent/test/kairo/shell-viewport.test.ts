@@ -231,9 +231,9 @@ describe("createShellViewport (Kairo H6)", () => {
 		expect(withNonEmptyStrip.render(60)).toEqual([...chatLike.render(60), ...nonEmptyStrip.render(60)]);
 	});
 
-	test("package version is 0.87.1-kairo.4", () => {
+	test("package version is 0.87.1-kairo.5", () => {
 		const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
 		const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
-		expect(pkg.version).toBe("0.87.1-kairo.4");
+		expect(pkg.version).toBe("0.87.1-kairo.5");
 	});
 });
