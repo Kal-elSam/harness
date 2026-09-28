@@ -2,7 +2,9 @@
  * Thin JSONL sidecar: Rust kairo-ui ↔ openPiRpcBridge ↔ Pi RPC.
  *
  * stdin commands (one JSON object per LF-terminated line):
- *   { "op": "prompt", "message": "..." }
+ *   { "op": "prompt", "message": "..." }  — U4a: routes through service.submitTask
+ *     with the active session's WorkMode (ask|plan|agent); never Pi `prompt`
+ *   { "op": "set_mode", "mode": "ask"|"plan"|"agent" }  — persist under activeKairoSessionId
  *   { "op": "abort" }
  *   { "op": "compact" }
  *   { "op": "cycle_model" }
@@ -47,6 +49,8 @@
  * (not the boot env alone).
  *
  * stdout records (JSONL): { type: "ready", engine, snapshot?, kairoModels?, sessions?, draft? },
+ * { type: "mode", mode } (ask|plan|agent — emitted on ready/switch/new/fork/set_mode),
+ * { type: "task_result", kind: "answer"|"plan", ... } (U4a submitTask outcome; never execute),
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
  * { type: "draft", text, kairoSessionId }, { type: "kairoModels", kairoModels },
  * { type: "team", op, ok, state, teamRows, roles, analyst },
@@ -104,6 +108,27 @@ import {
   loadDraft as loadDraftDefault,
   saveDraft as saveDraftDefault
 } from "../conversation/session-registry.js";
+import { createConversationService } from "../conversation/service.js";
+
+/** Fail-closed WorkMode values — same set as session-registry / cockpit. */
+const WORK_MODES = new Set(["ask", "plan", "agent"]);
+
+/**
+ * @param {unknown} mode
+ * @returns {"ask"|"plan"|"agent"}
+ */
+export function normalizeWorkMode(mode) {
+  return WORK_MODES.has(mode) ? mode : "ask";
+}
+
+/** Lazy default conversation service — reused so probes stay cached. */
+let defaultConversationService = null;
+function defaultConversation() {
+  if (!defaultConversationService) {
+    defaultConversationService = createConversationService({ enableProviderProbes: true });
+  }
+  return defaultConversationService;
+}
 
 /**
  * @param {object[]} models
@@ -195,6 +220,8 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut) {
  * @param {typeof getSessionDefault} [options.getSession]
  * @param {typeof loadDraftDefault} [options.loadDraft]
  * @param {typeof saveDraftDefault} [options.saveDraft]
+ * @param {(args: { cwd: string, mode: "ask"|"plan"|"agent", sessionId?: string|null }) => Promise<object>} [options.setMode]
+ * @param {(args: { cwd: string, task: string, mode?: string|null, sessionId?: string|null }) => Promise<object>} [options.submitTask]
  */
 export async function runKairoUiRpcStdio({
   stdin = process.stdin,
@@ -219,7 +246,9 @@ export async function runKairoUiRpcStdio({
   createSession: createSessionImpl = createSessionDefault,
   getSession: getSessionImpl = getSessionDefault,
   loadDraft: loadDraftImpl = loadDraftDefault,
-  saveDraft: saveDraftImpl = saveDraftDefault
+  saveDraft: saveDraftImpl = saveDraftDefault,
+  setMode: setModeImpl = (args) => defaultConversation().setMode(args),
+  submitTask: submitTaskImpl = (args) => defaultConversation().submitTask(args)
 } = {}) {
   const bridge = await openBridge({ cwd });
   let kairoModels = [];
@@ -249,6 +278,9 @@ export async function runKairoUiRpcStdio({
   // the boot env (after the resume auto-switch below) and only moves on a
   // successful switch / new / fork — never on a cancelled transition.
   let activeKairoSessionId = envSessionId;
+  // Live WorkMode for prompt routing (U4a). Fail-closed default; restored
+  // from the active session document on ready/switch/new/fork.
+  let currentMode = "ask";
 
   /** Attach the real bound Kairo session id (or null) to each Pi file entry. */
   const annotateSessions = async (files) => {
@@ -310,6 +342,27 @@ export async function runKairoUiRpcStdio({
     });
   };
 
+  /** Resolve WorkMode for the active Kairo session — fail-closed to ask. */
+  const resolveActiveMode = async () => {
+    if (!activeKairoSessionId || !projectRoot) return "ask";
+    try {
+      const session = await getSessionImpl(homeDir, projectRoot, activeKairoSessionId);
+      return normalizeWorkMode(session?.mode);
+    } catch {
+      return "ask";
+    }
+  };
+
+  const emitMode = (mode) => {
+    const next = normalizeWorkMode(mode);
+    currentMode = next;
+    writeOut({ type: "mode", mode: next });
+  };
+
+  const restoreAndEmitMode = async () => {
+    emitMode(await resolveActiveMode());
+  };
+
   // `kairo resume <id>` (or `start`) launches this host with
   // `KAIRO_SESSION_ID` set. If one of the real Pi files on disk is already
   // bound to that exact Kairo id, switch Pi to it before `ready` — the host
@@ -368,6 +421,7 @@ export async function runKairoUiRpcStdio({
         : null,
     draft
   });
+  await restoreAndEmitMode();
 
   bridge.onEvent((ev) => writeOut(ev));
 
@@ -439,8 +493,58 @@ export async function runKairoUiRpcStdio({
     const op = cmd?.op;
     try {
       if (op === "prompt") {
+        // U4a: ASK/PLAN/AGENT route through conversation submitTask — never
+        // Pi `prompt` (ASK answers; PLAN/AGENT produce a plan only).
         const message = typeof cmd.message === "string" ? cmd.message : "";
-        await bridge.request({ type: "prompt", message });
+        const mode = normalizeWorkMode(cmd.mode ?? currentMode);
+        const result = await submitTaskImpl({
+          cwd,
+          task: message,
+          mode,
+          sessionId: activeKairoSessionId
+        });
+        if (result?.kind === "answer") {
+          writeOut({
+            type: "task_result",
+            kind: "answer",
+            provider: result.provider ?? null,
+            model: result.model ?? null,
+            answer: result.answer ?? ""
+          });
+          writeOut({
+            type: "notice",
+            message: `${result.provider ?? "kairo"}${result.model ? ` · ${result.model}` : ""}: ${result.answer ?? ""}`
+          });
+        } else {
+          writeOut({
+            type: "task_result",
+            kind: "plan",
+            taskId: result?.taskId ?? null
+          });
+          writeOut({
+            type: "notice",
+            message: "Plan requested from Codex. Review it below, then press a to approve."
+          });
+        }
+      } else if (op === "set_mode") {
+        const raw = cmd?.mode;
+        if (!WORK_MODES.has(raw)) {
+          writeOut({
+            type: "error",
+            message: `Unknown work mode "${raw ?? ""}"`
+          });
+          return;
+        }
+        const mode = raw;
+        try {
+          await setModeImpl({ cwd, mode, sessionId: activeKairoSessionId });
+          emitMode(mode);
+        } catch (err) {
+          writeOut({
+            type: "notice",
+            message: `Mode change not saved: ${err?.message ?? String(err)}`
+          });
+        }
       } else if (op === "abort") {
         await bridge.request({ type: "abort" });
       } else if (op === "compact") {
@@ -491,6 +595,7 @@ export async function runKairoUiRpcStdio({
         // draft is always empty.
         activeKairoSessionId = await lookupKairoIdForPi(bridge.engine?.sessionId ?? null);
         await emitActiveDraft({ text: "" });
+        await restoreAndEmitMode();
       } else if (op === "switch_session") {
         const sessionPath = typeof cmd.sessionPath === "string" ? cmd.sessionPath : "";
         if (!sessionPath) {
@@ -515,6 +620,7 @@ export async function runKairoUiRpcStdio({
           matched?.sessionId ?? bridge.engine?.sessionId ?? null
         );
         await emitActiveDraft();
+        await restoreAndEmitMode();
       } else if (op === "switch_session_index") {
         sessionFiles = listSessionFilesImpl({ cwd, env });
         const index = Number(cmd.index);
@@ -544,6 +650,7 @@ export async function runKairoUiRpcStdio({
         });
         activeKairoSessionId = await lookupKairoIdForPi(target.sessionId ?? null);
         await emitActiveDraft();
+        await restoreAndEmitMode();
       } else if (op === "list_sessions") {
         sessionFiles = listSessionFilesImpl({ cwd, env });
         writeOut({
@@ -633,6 +740,7 @@ export async function runKairoUiRpcStdio({
         sessionFiles = listSessionFilesImpl({ cwd, env });
         writeOut({ type: "sessions", sessions: await annotateSessions(sessionFiles) });
         await emitActiveDraft({ text: "" });
+        await restoreAndEmitMode();
         writeOut({ type: "notice", message: "Session forked — now on the new copy." });
       } else if (op === "stop") {
         if (activeKairoSessionId && projectRoot) {

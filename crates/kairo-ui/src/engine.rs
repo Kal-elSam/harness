@@ -204,23 +204,43 @@ pub fn parse_slash_command(raw: &str) -> Option<SlashCommand> {
 pub enum SubmitDecision {
     /// No bridge: local mock path (explicit non-Pi mode).
     LocalMock,
-    /// Bridge ready and engine connected — send prompt.
+    /// Bridge attached — send `prompt` op to the sidecar (U4a: routes through
+    /// `submitTask` for ASK/PLAN/AGENT; never requires Pi `can_prompt`).
     SendToPi,
-    /// Bridge present but engine cannot take the prompt — keep draft, no ghost reply.
+    /// Bridge present but the host must keep the draft (reserved; U4a work
+    /// modes no longer gate Enter on engine status).
     KeepDraft { notice: String },
 }
 
-pub fn decide_submit(bridge_attached: bool, engine: &EngineGate) -> SubmitDecision {
+pub fn decide_submit(bridge_attached: bool, _engine: &EngineGate) -> SubmitDecision {
     if !bridge_attached {
         return SubmitDecision::LocalMock;
     }
-    if engine.can_prompt() {
-        SubmitDecision::SendToPi
-    } else {
-        SubmitDecision::KeepDraft {
-            notice: engine.reject_reason(),
-        }
+    SubmitDecision::SendToPi
+}
+
+/// Fail-closed WorkMode values — ask | plan | agent.
+pub fn normalize_work_mode(mode: &str) -> &'static str {
+    match mode {
+        "ask" => "ask",
+        "plan" => "plan",
+        "agent" => "agent",
+        _ => "ask",
     }
+}
+
+/// Shift+Tab cycle: ask → plan → agent → ask (plain Tab stays focus).
+pub fn next_work_mode(mode: &str) -> &'static str {
+    match normalize_work_mode(mode) {
+        "ask" => "plan",
+        "plan" => "agent",
+        _ => "ask",
+    }
+}
+
+/// Compose chrome title matching cockpit: `Message Kairo · ASK`.
+pub fn compose_chrome_title(mode: &str) -> String {
+    format!(" Message Kairo · {} ", normalize_work_mode(mode).to_uppercase())
 }
 
 #[cfg(test)]
@@ -329,31 +349,51 @@ mod tests {
     }
 
     #[test]
-    fn disconnected_bridge_keeps_draft_decision() {
+    fn u4a_bridge_submit_does_not_require_pi_can_prompt() {
+        let gate = EngineGate::from_engine_value(&json!({
+            "status": "no_model",
+            "reason": "No model selected"
+        }));
+        assert!(!gate.can_prompt());
+        // ASK/PLAN/AGENT go through submitTask on the sidecar — Enter still sends.
+        assert_eq!(decide_submit(true, &gate), SubmitDecision::SendToPi);
+        assert_eq!(decide_submit(false, &gate), SubmitDecision::LocalMock);
+    }
+
+    #[test]
+    fn next_work_mode_cycles_ask_plan_agent() {
+        assert_eq!(next_work_mode("ask"), "plan");
+        assert_eq!(next_work_mode("plan"), "agent");
+        assert_eq!(next_work_mode("agent"), "ask");
+        assert_eq!(next_work_mode("yolo"), "plan", "invalid fails closed to ask then cycles");
+        assert_eq!(normalize_work_mode("yolo"), "ask");
+        assert_eq!(normalize_work_mode("agent"), "agent");
+    }
+
+    #[test]
+    fn compose_chrome_title_shows_live_mode() {
+        assert_eq!(compose_chrome_title("ask"), " Message Kairo · ASK ");
+        assert_eq!(compose_chrome_title("plan"), " Message Kairo · PLAN ");
+        assert_eq!(compose_chrome_title("agent"), " Message Kairo · AGENT ");
+        assert_eq!(compose_chrome_title("nope"), " Message Kairo · ASK ");
+    }
+
+    #[test]
+    fn disconnected_bridge_still_routes_submit_via_sidecar() {
         let gate = EngineGate::from_engine_value(&json!({
             "status": "unavailable",
             "reason": "Pi CLI path is empty"
         }));
-        match decide_submit(true, &gate) {
-            SubmitDecision::KeepDraft { notice } => {
-                assert!(notice.contains("unavailable"));
-                assert!(notice.contains("Pi CLI path is empty"));
-            }
-            other => panic!("expected KeepDraft, got {other:?}"),
-        }
+        // U4a: work-mode Enter is not gated on Pi engine health.
+        assert_eq!(decide_submit(true, &gate), SubmitDecision::SendToPi);
     }
 
     #[test]
-    fn before_ready_keeps_draft_while_starting() {
+    fn before_ready_still_allows_sidecar_submit() {
         let gate = EngineGate::default();
         assert_eq!(gate.status, "starting");
         assert!(!gate.can_prompt());
-        match decide_submit(true, &gate) {
-            SubmitDecision::KeepDraft { notice } => {
-                assert!(notice.contains("starting"));
-            }
-            other => panic!("expected KeepDraft, got {other:?}"),
-        }
+        assert_eq!(decide_submit(true, &gate), SubmitDecision::SendToPi);
     }
 
     #[test]

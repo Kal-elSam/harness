@@ -107,6 +107,8 @@ pub struct ShellViewModel {
     /// Snapshot `team.state` (`not_analyzed` / `suggested` / `active` / `stale`)
     /// when the bridge reported one — drives the in-UI analyze/approve hints.
     pub team_state: Option<String>,
+    /// U4a WorkMode: ask | plan | agent (fail-closed default ask).
+    pub work_mode: String,
 }
 
 impl Default for ShellViewModel {
@@ -123,6 +125,7 @@ impl Default for ShellViewModel {
             usage_line: "USAGE · waiting for bridge".into(),
             engine_line: "MODEL · (local mock without --bridge)".into(),
             team_state: None,
+            work_mode: "ask".into(),
         }
     }
 }
@@ -238,7 +241,7 @@ fn render_work(
 ) {
     let work = split_work_main(area);
     render_transcript(buf, work.transcript, model, chat);
-    render_editor(buf, work.editor, chat.focus, editor);
+    render_editor(buf, work.editor, chat.focus, editor, &model.work_mode);
 }
 
 fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat: &ChatState) {
@@ -374,17 +377,18 @@ fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
     }
 }
 
-fn render_editor(buf: &mut Buffer, area: Rect, focus: Focus, editor: &TextArea<'_>) {
+fn render_editor(buf: &mut Buffer, area: Rect, focus: Focus, editor: &TextArea<'_>, work_mode: &str) {
     let border = if focus == Focus::Editor {
         tone::BORDER_FOCUS
     } else {
         tone::BORDER
     };
+    let title = crate::engine::compose_chrome_title(work_mode);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border))
         .style(Style::default().bg(tone::WORK_BG))
-        .title(Span::styled(" compose ", Style::default().fg(tone::MUTED)));
+        .title(Span::styled(title, Style::default().fg(tone::MUTED)));
     let inner = block.inner(area);
     block.render(area, buf);
     let mut area_editor = editor.clone();
@@ -1074,10 +1078,33 @@ mod tests {
             &ChatState::default(),
             &default_editor(),
         );
+        let hay = buffer_text(&buf);
         assert!(
-            buffer_text(&buf).contains("compose"),
-            "editor strip should be labeled"
+            hay.contains("Message Kairo") && hay.contains("ASK"),
+            "compose chrome must show live WorkMode like cockpit: {hay}"
         );
+    }
+
+    #[test]
+    fn compose_chrome_reflects_work_mode_change() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut model = ShellViewModel::default();
+        model.work_mode = "agent".into();
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+        );
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("AGENT"),
+            "compose title must update when WorkMode changes: {hay}"
+        );
+        assert!(!hay.contains(" ASK "), "must not still show ASK when mode is agent");
     }
 
     #[test]
