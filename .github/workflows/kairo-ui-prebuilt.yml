@@ -1,0 +1,70 @@
+name: Kairo UI prebuilt (matrix skeleton)
+
+# Local/CI skeleton for per-runner host --v3-capture proof.
+# Does NOT fake multiplatform exec on a single Mac. Foreign triples stay
+# gaps until the matching runner observes status 0.
+#
+# Trigger manually until U6 foreign-exec gaps close; keep off the default
+# PR path so ordinary CI stays lean.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/kairo-ui/**"
+      - "scripts/build-kairo-ui-binaries.sh"
+      - "scripts/verify-kairo-ui-clean-install.sh"
+      - "test/kairo-ui-*.js"
+      - "src/global/host/kairo-ui-prebuilt.js"
+      - "src/global/host/launch-ratatui-host.js"
+      - ".github/workflows/kairo-ui-prebuilt.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  host-v3-capture:
+    name: Build + --v3-capture (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            key: darwin-arm64
+          - os: macos-13
+            key: darwin-x64
+          - os: ubuntu-24.04
+            key: linux-x64
+          # When GitHub exposes a stable arm64 Linux runner label for this
+          # org, add it here (e.g. ubuntu-24.04-arm). Until then linux-arm64
+          # stays a zigbuild/qemu gap recorded in odd/tasks/ratatui-host.md.
+          # - os: ubuntu-24.04-arm
+          #   key: linux-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build host kairo-ui prebuilt
+        run: bash scripts/build-kairo-ui-binaries.sh --host-only
+
+      - name: Assert expected host key exists
+        run: |
+          bin="dist/kairo-ui/${{ matrix.key }}/kairo-ui"
+          test -x "$bin"
+          file "$bin"
+
+      - name: Host --v3-capture
+        run: |
+          out="$(mktemp -d)"
+          "dist/kairo-ui/${{ matrix.key }}/kairo-ui" --v3-capture "$out"
+          test "$(find "$out" -type f | wc -l | tr -d ' ')" -ge 10
