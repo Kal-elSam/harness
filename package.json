@@ -79,7 +79,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
-    "@kal-elsam/kairo-pi-coding-agent": "0.87.1-kairo.3",
+    "@kal-elsam/kairo-pi-coding-agent": "0.87.1-kairo.5",
     "@modelcontextprotocol/server": "2.0.0",
     "ansi-escapes": "^7.3.0",
     "zod": "4.4.3"
