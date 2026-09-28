@@ -1488,3 +1488,453 @@ test("sidecar team.recovery.reject only closes the proposal, mutating nothing el
   stdin.end();
   await runPromise;
 });
+
+// -----------------------------------------------------------------------
+// U3a: Kairo session id <-> Pi file binding, visible selector data, rename,
+// fork, and draft persistence across quit/resume.
+// -----------------------------------------------------------------------
+
+const KAIRO_ID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const KAIRO_ID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+
+test("U3a: sidecar annotates each listed Pi session with its bound Kairo session id", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "pi-fresh", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [architectModel],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [
+      { path: "/x/pi-fresh.jsonl", sessionId: "pi-fresh", label: "Fresh" },
+      { path: "/x/pi-old.jsonl", sessionId: "pi-old", label: "Old" }
+    ],
+    lookupPiBinding: async (_home, _root, piSessionId) =>
+      piSessionId === "pi-old" ? KAIRO_ID_A : null
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const ready = out.find((r) => r.type === "ready");
+  assert.ok(ready);
+  assert.deepEqual(
+    ready.sessions.map((s) => [s.sessionId, s.kairoSessionId]),
+    [["pi-fresh", null], ["pi-old", KAIRO_ID_A]]
+  );
+
+  stdin.write(`${JSON.stringify({ op: "list_sessions" })}\n`);
+  await new Promise((r) => setTimeout(r, 40));
+  const sessions = [...out].reverse().find((r) => r.type === "sessions");
+  assert.deepEqual(
+    sessions.sessions.map((s) => [s.sessionId, s.kairoSessionId]),
+    [["pi-fresh", null], ["pi-old", KAIRO_ID_A]]
+  );
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U3a: sidecar without a resolvable project root reports every session unbound instead of crashing", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: async (opts) =>
+      openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [architectModel],
+        spawnImpl: () => createFakeRpcChild({
+          onCommand: (cmd, ctx) => {
+            if (cmd.type === "get_state") {
+              return { type: "response", command: "get_state", success: true, data: { sessionId: "s1", model: ctx?.activeModel ?? null } };
+            }
+            if (cmd.type === "set_model") {
+              if (ctx?.setModel) ctx.setModel({ id: cmd.modelId });
+              return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+            }
+            return null;
+          }
+        }),
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      }),
+    resolveProjectRoot: async () => {
+      throw new Error("not a git repo");
+    },
+    listPiSessionFilesForCwd: () => [{ path: "/x/a.jsonl", sessionId: "pi-a", label: "A" }]
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const ready = out.find((r) => r.type === "ready");
+  assert.equal(ready.sessions[0].kairoSessionId, null);
+  assert.equal(ready.draft, null);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U3a: `kairo resume <id>` (KAIRO_SESSION_ID) auto-switches Pi to the bound session file before ready", async () => {
+  const switchCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [
+      { path: "/x/bound.jsonl", sessionId: "pi-bound", label: "Bound" }
+    ],
+    lookupPiBinding: async (_home, _root, piSessionId) =>
+      piSessionId === "pi-bound" ? KAIRO_ID_A : null,
+    openBridge: async (opts) => {
+      let currentSessionId = "pi-fresh";
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: currentSessionId, model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "switch_session") {
+            switchCalls.push(cmd.sessionPath);
+            currentSessionId = "pi-bound";
+            return { type: "response", command: "switch_session", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [architectModel],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(switchCalls, ["/x/bound.jsonl"]);
+  const ready = out.find((r) => r.type === "ready");
+  assert.equal(ready.engine.sessionId, "pi-bound");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U3a: rename_session sends set_session_name and re-emits sessions with the updated label", async () => {
+  const renameCalls = [];
+  let relistLabel = "Original";
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [{ path: "/x/s1.jsonl", sessionId: "s1", label: relistLabel }],
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return { type: "response", command: "get_state", success: true, data: { sessionId: "s1", model: ctx?.activeModel ?? null } };
+          }
+          if (cmd.type === "set_session_name") {
+            renameCalls.push(cmd.name);
+            relistLabel = cmd.name;
+            return { type: "response", command: "set_session_name", success: true };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "rename_session", name: "Investigate the flaky test" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.deepEqual(renameCalls, ["Investigate the flaky test"]);
+  const sessions = [...out].reverse().find((r) => r.type === "sessions");
+  assert.equal(sessions.sessions[0].label, "Investigate the flaky test");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U3a: rename_session with an empty/blank name refuses instead of calling Pi", async () => {
+  const renameCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    listPiSessionFilesForCwd: () => [],
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd) => {
+          if (cmd.type === "get_state") return { type: "response", command: "get_state", success: true, data: { sessionId: "s1", model: null } };
+          if (cmd.type === "set_session_name") {
+            renameCalls.push(cmd.name);
+            return { type: "response", command: "set_session_name", success: true };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "rename_session", name: "   " })}\n`);
+  await new Promise((r) => setTimeout(r, 40));
+
+  assert.deepEqual(renameCalls, []);
+  const error = [...out].reverse().find((r) => r.type === "error");
+  assert.match(error?.message ?? "", /non-empty name/);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U3a: fork_session sends clone (never fork/entryId), refreshes engine + transcript + sessions, source untouched", async () => {
+  let cloneCalls = 0;
+  let currentSessionId = "s1-source";
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    listPiSessionFilesForCwd: () => [
+      { path: "/x/source.jsonl", sessionId: "s1-source", label: "Source" },
+      ...(cloneCalls > 0 ? [{ path: "/x/fork.jsonl", sessionId: "s1-fork", label: "Fork" }] : [])
+    ],
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return { type: "response", command: "get_state", success: true, data: { sessionId: currentSessionId, model: ctx?.activeModel ?? null } };
+          }
+          if (cmd.type === "clone") {
+            cloneCalls += 1;
+            currentSessionId = "s1-fork";
+            return { type: "response", command: "clone", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "fork") {
+            throw new Error("must never send the entry-based `fork` command for a whole-session fork");
+          }
+          if (cmd.type === "get_messages") {
+            return { type: "response", command: "get_messages", success: true, data: { messages: [] } };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "fork_session" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.equal(cloneCalls, 1);
+  const sessions = [...out].reverse().find((r) => r.type === "sessions");
+  assert.deepEqual(
+    sessions.sessions.map((s) => s.sessionId).sort(),
+    ["s1-fork", "s1-source"],
+    "the fork is a new session distinct from the source — the source stays listed, untouched"
+  );
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U3a: stop persists a non-empty draft for the bound Kairo session before exiting", async () => {
+  const saveCalls = [];
+  const stdout = new PassThrough();
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_B },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    saveDraft: async (homeDir, projectRoot, sessionId, text) => {
+      saveCalls.push({ homeDir, projectRoot, sessionId, text });
+    },
+    openBridge: async (opts) =>
+      openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [],
+        spawnImpl: () => createFakeRpcChild({
+          onCommand: (cmd) =>
+            cmd.type === "get_state"
+              ? { type: "response", command: "get_state", success: true, data: { sessionId: "s1", model: null } }
+              : null
+        }),
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "stop", draft: "unsent draft text" })}\n`);
+  stdin.end();
+  await runPromise;
+
+  assert.equal(saveCalls.length, 1);
+  assert.equal(saveCalls[0].sessionId, KAIRO_ID_B);
+  assert.equal(saveCalls[0].text, "unsent draft text");
+});
+
+test("U3a: ready surfaces a previously saved draft for the bound Kairo session", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    loadDraft: async (_homeDir, _projectRoot, sessionId) =>
+      sessionId === KAIRO_ID_A ? "resume me" : null,
+    openBridge: async (opts) =>
+      openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [],
+        spawnImpl: () => createFakeRpcChild({
+          onCommand: (cmd) =>
+            cmd.type === "get_state"
+              ? { type: "response", command: "get_state", success: true, data: { sessionId: "s1", model: null } }
+              : null
+        }),
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const ready = out.find((r) => r.type === "ready");
+  assert.equal(ready.draft, "resume me");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
