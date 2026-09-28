@@ -3,9 +3,18 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isValidSessionId } from "../conversation/session-registry.js";
+import { resolvePrebuiltBinary } from "./kairo-ui-prebuilt.js";
+
+export {
+  KAIRO_UI_PREBUILT_TARGETS,
+  normalizePrebuiltArch,
+  prebuiltBinaryKey,
+  prebuiltBinaryRelativePath,
+  resolvePrebuiltBinary
+} from "./kairo-ui-prebuilt.js";
 
 const __hostModuleDir = dirname(fileURLToPath(import.meta.url));
-/** Repo / package root that contains `crates/kairo-ui`. */
+/** Repo / package root that contains `crates/kairo-ui` and/or `dist/kairo-ui`. */
 export const DEFAULT_PACKAGE_ROOT = resolve(__hostModuleDir, "../../..");
 export const DEFAULT_KAIRO_UI_CRATE_DIR = join(DEFAULT_PACKAGE_ROOT, "crates", "kairo-ui");
 
@@ -25,8 +34,13 @@ export function resolveUiHost({ options = {}, env = process.env } = {}) {
 }
 
 /**
- * Launch the experimental ratatui terminal host (`crates/kairo-ui`) with the JSONL bridge.
- * Build the release binary when it is missing or older than `crates/kairo-ui` sources, then spawn.
+ * Launch the ratatui terminal host (`kairo-ui`) with the JSONL bridge.
+ *
+ * Preference order:
+ * 1. Shipped prebuilt under `dist/kairo-ui/<platform-arch>/kairo-ui` (clean install, no Cargo)
+ * 2. Dev fallback: `cargo build --release` when the crate is present and the release binary
+ *    is missing or older than crate sources
+ *
  * @param {object} args
  */
 export async function launchRatatuiHost({
@@ -35,12 +49,14 @@ export async function launchRatatuiHost({
   interactive = true,
   env = process.env,
   platform = process.platform,
+  arch = process.arch,
   spawnImpl = defaultSpawn,
   cargoBuildImpl = null,
   existsSyncImpl = existsSync,
   statImpl = statSync,
   packageRoot = DEFAULT_PACKAGE_ROOT,
-  crateDir = join(packageRoot, "crates", "kairo-ui")
+  crateDir = join(packageRoot, "crates", "kairo-ui"),
+  resolvePrebuiltBinaryImpl = resolvePrebuiltBinary
 } = {}) {
   if (platform === "win32") {
     throw new Error(
@@ -60,44 +76,6 @@ export async function launchRatatuiHost({
     throw new Error(`Invalid session id "${sessionId}" — refusing to spawn.`);
   }
 
-  const manifestPath = join(crateDir, "Cargo.toml");
-  if (!existsSyncImpl(manifestPath)) {
-    throw new Error(
-      `Ratatui host crate is missing: "${manifestPath}" does not exist. ` +
-        "Use --pi for the Pi shell, or use --legacy-cockpit for the previous cockpit."
-    );
-  }
-
-  const binaryPath = resolveReleaseBinaryPath(crateDir, env);
-  const runCargo =
-    cargoBuildImpl ??
-    ((args, opts) => spawnImpl("cargo", args, opts));
-
-  const needsBuild = releaseBinaryNeedsRebuild({
-    binaryPath,
-    crateDir,
-    existsSyncImpl,
-    statImpl
-  });
-  if (needsBuild) {
-    const buildResult = await runCargo(
-      ["build", "--release", "--manifest-path", manifestPath],
-      { cwd: packageRoot, env, shell: false, stdio: "inherit" }
-    );
-    if (buildResult && Number.isInteger(buildResult.status) && buildResult.status !== 0) {
-      throw new Error(
-        `cargo build --release for kairo-ui exited ${buildResult.status}. ` +
-          "Fix the Rust build, or use --pi for the Pi shell."
-      );
-    }
-    if (!existsSyncImpl(binaryPath)) {
-      throw new Error(
-        `Ratatui host binary is still missing after cargo build: "${binaryPath}". ` +
-          "Use --pi for the Pi shell."
-      );
-    }
-  }
-
   const sidecarScript = join(packageRoot, "src", "global", "host", "kairo-ui-rpc-stdio.js");
   if (!existsSyncImpl(sidecarScript)) {
     throw new Error(
@@ -105,6 +83,57 @@ export async function launchRatatuiHost({
         "Use --pi for the Pi shell."
     );
   }
+
+  const prebuiltPath = resolvePrebuiltBinaryImpl({
+    platform,
+    arch,
+    packageRoot,
+    existsSyncImpl
+  });
+
+  let binaryPath = prebuiltPath;
+  if (binaryPath == null) {
+    const manifestPath = join(crateDir, "Cargo.toml");
+    if (!existsSyncImpl(manifestPath)) {
+      throw new Error(
+        `Ratatui host binary is missing for ${platform}/${arch} ` +
+          `(expected prebuilt under dist/kairo-ui/) and crate is missing: ` +
+          `"${manifestPath}" does not exist. ` +
+          "Use --pi for the Pi shell, or use --legacy-cockpit for the previous cockpit."
+      );
+    }
+
+    binaryPath = resolveReleaseBinaryPath(crateDir, env);
+    const runCargo =
+      cargoBuildImpl ??
+      ((args, opts) => spawnImpl("cargo", args, opts));
+
+    const needsBuild = releaseBinaryNeedsRebuild({
+      binaryPath,
+      crateDir,
+      existsSyncImpl,
+      statImpl
+    });
+    if (needsBuild) {
+      const buildResult = await runCargo(
+        ["build", "--release", "--manifest-path", manifestPath],
+        { cwd: packageRoot, env, shell: false, stdio: "inherit" }
+      );
+      if (buildResult && Number.isInteger(buildResult.status) && buildResult.status !== 0) {
+        throw new Error(
+          `cargo build --release for kairo-ui exited ${buildResult.status}. ` +
+            "Fix the Rust build, or use --pi for the Pi shell."
+        );
+      }
+      if (!existsSyncImpl(binaryPath)) {
+        throw new Error(
+          `Ratatui host binary is still missing after cargo build: "${binaryPath}". ` +
+            "Use --pi for the Pi shell."
+        );
+      }
+    }
+  }
+
   // Sidecar path must be absolute: spawn cwd is the *project*, not the package,
   // so walking up from cwd would miss kairo-ui-rpc-stdio.js outside the worktree.
   const hostEnv = {
