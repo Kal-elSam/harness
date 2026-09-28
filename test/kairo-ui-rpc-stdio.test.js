@@ -4136,3 +4136,170 @@ test("U5a: ops.snapshot emits ops_snapshot with honest fleet label", async () =>
   stdin.end();
   await runPromise;
 });
+
+test("U5b: ops.sync.preview/apply and ops.runs.cancel wire through DI", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const syncCalls = [];
+  const cancelCalls = [];
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "ask" }),
+    previewOpsSync: async () => {
+      syncCalls.push("preview");
+      return {
+        ok: true,
+        fingerprint: "fp-1",
+        hasChanges: true,
+        changes: [{ action: "write", target: "x" }]
+      };
+    },
+    applyOpsSync: async ({ preview }) => {
+      syncCalls.push(preview?.fingerprint);
+      return { ok: true, reason: "repaired", wrote: true, receipt: { action: "repaired" } };
+    },
+    cancelOpsRun: async ({ runId }) => {
+      cancelCalls.push(runId);
+      return { ok: true, reason: "cancelled", runId, state: "cancelled" };
+    },
+    openBridge: openBridgeWithModel()
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "ops.sync.preview" })}\n`);
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(
+    `${JSON.stringify({
+      op: "ops.sync.apply",
+      preview: { fingerprint: "fp-1", hasChanges: true }
+    })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "ops.runs.cancel", runId: "run-9" })}\n`);
+  await new Promise((r) => setTimeout(r, 40));
+  assert.deepEqual(syncCalls, ["preview", "fp-1"]);
+  assert.deepEqual(cancelCalls, ["run-9"]);
+  assert.equal(out.find((r) => r.type === "ops_sync_preview")?.fingerprint, "fp-1");
+  assert.equal(out.find((r) => r.type === "ops_sync_result")?.ok, true);
+  assert.equal(out.find((r) => r.type === "ops_run_cancel")?.runId, "run-9");
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U5b: ops.alerts.dismiss refuses without confirmed; settings.snapshot + integration confirm", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const dismissCalls = [];
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "ask" }),
+    dismissOpsAlert: async (args) => {
+      dismissCalls.push(args);
+      if (!args.confirmed) return { ok: false, reason: "confirm-required" };
+      return { ok: true, reason: "dismissed", alert: { alertId: args.alertId } };
+    },
+    buildSettingsSnapshot: async () => ({
+      ok: true,
+      error: null,
+      profile: ["PROFILE", "applyMode · prompt"],
+      integrations: ["CURATED", "available · Pi usage widget"],
+      connections: ["CONNECTIONS", "ok · Cursor MCP"],
+      catalog: [],
+      setup: { wired: false, label: "Interactive setup · not wired — use `kairo setup`" },
+      hints: "Esc → Work · ↑↓ browse"
+    }),
+    openBridge: openBridgeWithModel()
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(
+    `${JSON.stringify({ op: "ops.alerts.dismiss", alertId: "alt-aaaaaaaaaaaaaaaa" })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(
+    `${JSON.stringify({
+      op: "ops.alerts.dismiss",
+      alertId: "alt-aaaaaaaaaaaaaaaa",
+      confirmed: true
+    })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "settings.snapshot" })}\n`);
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(
+    `${JSON.stringify({ op: "settings.integration.confirm", id: "pi-usage-widget" })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(dismissCalls[0]?.confirmed, false);
+  assert.equal(dismissCalls[1]?.confirmed, true);
+  const denied = out.filter((r) => r.type === "ops_alert_dismiss");
+  assert.equal(denied[0]?.ok, false);
+  assert.equal(denied[1]?.ok, true);
+  const settings = out.find((r) => r.type === "settings_snapshot");
+  assert.equal(settings?.ok, true);
+  assert.match(settings?.setup?.label ?? "", /not wired/);
+  assert.match(settings?.profile?.join("\n") ?? "", /applyMode/);
+  const intent = out.find((r) => r.type === "settings_integration_result");
+  assert.equal(intent?.ok, true);
+  assert.equal(intent?.wroteFiles, false);
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U5b: ops.rollback.preview/apply wire through DI", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "ask" }),
+    previewOpsRollback: async ({ snapshot }) => ({
+      ok: true,
+      fingerprint: "fp-rb",
+      snapshot,
+      files: [{ displayPath: "~/.cursor/AGENTS.md" }]
+    }),
+    applyOpsRollback: async ({ preview }) => ({
+      ok: true,
+      reason: "applied",
+      wrote: true,
+      receipt: { action: "rollback", snapshot: preview.snapshot }
+    }),
+    openBridge: openBridgeWithModel()
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "ops.rollback.preview", snapshot: "snap-a" })}\n`);
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(
+    `${JSON.stringify({
+      op: "ops.rollback.apply",
+      preview: { fingerprint: "fp-rb", snapshot: "snap-a" }
+    })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(out.find((r) => r.type === "ops_rollback_preview")?.snapshot, "snap-a");
+  assert.equal(out.find((r) => r.type === "ops_rollback_result")?.ok, true);
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});

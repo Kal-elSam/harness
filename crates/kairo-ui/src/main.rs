@@ -5,11 +5,13 @@ mod engine;
 mod execution_flow;
 mod extension_ui;
 mod layout;
+mod ops_flow;
 mod ops_panel;
 mod plan_list;
 mod recovery_picker;
 mod role_editor;
 mod session_picker;
+mod settings_panel;
 mod snapshot;
 mod surfaces;
 mod v3_capture;
@@ -40,11 +42,13 @@ use engine::{
 use execution_flow::{ConfirmExecuteState, ExecutionModal, RoleSelectState};
 use extension_ui::{ExtensionUiEvent, ExtensionUiMethod, ExtensionUiState};
 use layout::split_shell;
-use ops_panel::OpsPanelState;
+use ops_flow::{OpsConfirmKind, OpsConfirmState};
+use ops_panel::{OpsPanelState, OpsPickMode};
 use plan_list::{PlanListState, PLAN_REQUESTED_HOST_COPY};
 use recovery_picker::RecoveryPreviewState;
 use role_editor::{can_edit_team_roles, RoleEditPhase, RoleEditorState};
 use session_picker::SessionPickerState;
+use settings_panel::SettingsPanelState;
 use snapshot::apply_workspace_snapshot;
 use surfaces::{
     render_analyst_picker, render_confirm_execute, render_extension_ui, render_operations_view,
@@ -215,12 +219,14 @@ struct ShellApp {
     /// The `ready` record's `draft` (if any) has been applied to the editor
     /// exactly once — never re-applied on a later `ready`/`engine` record.
     draft_restored: bool,
-    /// U4d: Work | Project | Tasks | Sessions | Operations (+ Settings stub).
+    /// U4d: Work | Project | Tasks | Sessions | Operations | Settings.
     workspace_view: WorkspaceView,
     /// U4d: per-role editor modal on Project (SUGGESTED only).
     role_editor: Option<RoleEditorState>,
-    /// U5a: Operations hub state (None until first visit / snapshot).
+    /// U5a/U5b: Operations hub state (None until first visit / snapshot).
     ops_panel: Option<OpsPanelState>,
+    /// U5b: Settings panel state.
+    settings_panel: Option<SettingsPanelState>,
     /// U4d: `/quit`/`/exit` requested from slash handling.
     quit_requested: bool,
 }
@@ -259,6 +265,7 @@ impl ShellApp {
             workspace_view: WorkspaceView::Work,
             role_editor: None,
             ops_panel: None,
+            settings_panel: None,
             quit_requested: false,
         }
     }
@@ -471,6 +478,131 @@ impl ShellApp {
                 if self.workspace_view == WorkspaceView::Operations {
                     self.view.notice = Some("Operations snapshot updated.".into());
                 }
+            } else if kind == Some("ops_sync_preview") {
+                if let Some(ops) = self.ops_panel.as_mut() {
+                    if record.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+                        ops.confirm = None;
+                        self.view.notice = Some(format!(
+                            "Sync preview failed: {}",
+                            record
+                                .get("error")
+                                .or_else(|| record.get("reason"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                        ));
+                    } else if record.get("hasChanges").and_then(|v| v.as_bool()) == Some(false) {
+                        ops.confirm = None;
+                        self.view.notice = Some("No pending governance changes.".into());
+                    } else {
+                        ops.confirm = Some(OpsConfirmState::sync_apply(record.clone()));
+                    }
+                }
+            } else if kind == Some("ops_sync_result") {
+                if let Some(ops) = self.ops_panel.as_mut() {
+                    ops.confirm = None;
+                }
+                let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                let reason = record
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(if ok { "ok" } else { "failed" });
+                self.view.notice = Some(format!("Sync · {reason}"));
+                self.request_ops_snapshot();
+            } else if kind == Some("ops_rollback_preview") {
+                if let Some(ops) = self.ops_panel.as_mut() {
+                    if record.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+                        ops.confirm = None;
+                        self.view.notice = Some(format!(
+                            "Rollback preview failed: {}",
+                            record
+                                .get("error")
+                                .or_else(|| record.get("reason"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                        ));
+                    } else {
+                        ops.pick_mode = OpsPickMode::None;
+                        ops.confirm = Some(OpsConfirmState::rollback_apply(record.clone()));
+                    }
+                }
+            } else if kind == Some("ops_rollback_result") {
+                if let Some(ops) = self.ops_panel.as_mut() {
+                    ops.confirm = None;
+                }
+                let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                let reason = record
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(if ok { "ok" } else { "failed" });
+                self.view.notice = Some(format!("Rollback · {reason}"));
+                self.request_ops_snapshot();
+            } else if kind == Some("ops_run_cancel") {
+                if let Some(ops) = self.ops_panel.as_mut() {
+                    ops.confirm = None;
+                    ops.pick_mode = OpsPickMode::None;
+                }
+                let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                let run_id = record
+                    .get("runId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                self.view.notice = Some(if ok {
+                    format!("Cancelled {run_id}")
+                } else {
+                    format!(
+                        "Cancel failed: {}",
+                        record
+                            .get("reason")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("error")
+                    )
+                });
+                self.request_ops_snapshot();
+            } else if kind == Some("ops_alert_dismiss") {
+                if let Some(ops) = self.ops_panel.as_mut() {
+                    ops.confirm = None;
+                    ops.pick_mode = OpsPickMode::None;
+                }
+                let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                self.view.notice = Some(if ok {
+                    "Alert dismissed".into()
+                } else {
+                    format!(
+                        "Dismiss failed: {}",
+                        record
+                            .get("reason")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("error")
+                    )
+                });
+                self.request_ops_snapshot();
+            } else if kind == Some("settings_snapshot") {
+                self.settings_panel = Some(SettingsPanelState::from_settings_record(&record));
+                if self.workspace_view == WorkspaceView::Settings {
+                    self.view.notice = Some("Settings snapshot updated.".into());
+                }
+            } else if kind == Some("settings_integration_result") {
+                if let Some(settings) = self.settings_panel.as_mut() {
+                    settings.clear_integration_confirm();
+                }
+                let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                let wrote = record
+                    .get("wroteFiles")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                self.view.notice = Some(if ok {
+                    format!(
+                        "Integration intent recorded · wroteFiles={wrote}"
+                    )
+                } else {
+                    format!(
+                        "Integration confirm failed: {}",
+                        record
+                            .get("reason")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("error")
+                    )
+                });
             } else if kind == Some("team_edit_catalog") {
                 match RoleEditorState::from_catalog_record(&record) {
                     Some(editor) => self.role_editor = Some(editor),
@@ -1365,6 +1497,7 @@ impl ShellApp {
                 self.session_picker = None;
                 self.role_editor = None;
                 self.ops_panel = None;
+                self.settings_panel = None;
                 self.view.notice = Some("View: Work".into());
             }
             WorkspaceView::Project => {
@@ -1394,17 +1527,19 @@ impl ShellApp {
                 self.plan_list = None;
                 self.session_picker = None;
                 self.role_editor = None;
+                self.settings_panel = None;
                 self.request_ops_snapshot();
                 self.view.notice =
-                    Some("View: Operations · read-only hub · Esc → Work".into());
+                    Some("View: Operations · s/b/c/d/v · Esc → Work".into());
             }
             WorkspaceView::Settings => {
                 self.plan_list = None;
                 self.session_picker = None;
                 self.role_editor = None;
                 self.ops_panel = None;
+                self.request_settings_snapshot();
                 self.view.notice =
-                    Some("View: Settings stub (U5b) · Esc → Work".into());
+                    Some("View: Settings · Enter confirm intent · Esc → Work".into());
             }
         }
     }
@@ -1425,6 +1560,30 @@ impl ShellApp {
         };
         if let Err(err) = bridge.ops_snapshot() {
             self.view.notice = Some(format!("ops.snapshot failed: {err}"));
+        }
+    }
+
+    fn request_settings_snapshot(&mut self) {
+        self.settings_panel = Some(SettingsPanelState::loading());
+        let Some(bridge) = self.bridge.as_mut() else {
+            self.settings_panel = Some(SettingsPanelState::from_settings_record(
+                &serde_json::json!({
+                    "ok": false,
+                    "error": "No bridge — cannot load settings.",
+                    "profile": ["Profile unavailable."],
+                    "integrations": ["Integrations unavailable."],
+                    "connections": ["Connections unavailable."],
+                    "setup": {
+                        "wired": false,
+                        "label": "Interactive setup · not wired — use `kairo setup`"
+                    },
+                    "hints": "Esc → Work"
+                }),
+            ));
+            return;
+        };
+        if let Err(err) = bridge.settings_snapshot() {
+            self.view.notice = Some(format!("settings.snapshot failed: {err}"));
         }
     }
 
@@ -1654,7 +1813,8 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
-    // U4d/U5a: Esc from Project/Operations/Settings (no modal) → Work.
+    // U4d/U5b: Esc from Project/Operations/Settings (no modal) → Work.
+    // Nested ops/settings confirms own Esc first.
     if key.code == KeyCode::Esc
         && matches!(
             app.workspace_view,
@@ -1662,36 +1822,45 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
         )
         && app.role_editor.is_none()
     {
+        if app.workspace_view == WorkspaceView::Operations {
+            if let Some(ops) = app.ops_panel.as_mut() {
+                if ops.confirm.is_some() {
+                    ops.confirm = None;
+                    app.view.notice = Some("Cancelled — no mutation.".into());
+                    return Ok(false);
+                }
+                if ops.pick_mode != OpsPickMode::None {
+                    ops.pick_mode = OpsPickMode::None;
+                    return Ok(false);
+                }
+            }
+        }
+        if app.workspace_view == WorkspaceView::Settings {
+            if let Some(settings) = app.settings_panel.as_mut() {
+                if settings.pending_integration_id.is_some() {
+                    settings.clear_integration_confirm();
+                    app.view.notice = Some("Cancelled — no files written.".into());
+                    return Ok(false);
+                }
+            }
+        }
         if let Some(next) = escape_to_work(app.workspace_view) {
             app.set_workspace_view(next);
             return Ok(false);
         }
     }
 
-    // U5a: Operations owns ↑/↓ scroll and `r` refresh while visible.
+    // U5b: Operations owns scroll/refresh + mutation keys while visible.
     if app.workspace_view == WorkspaceView::Operations && app.ops_panel.is_some() {
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(ops) = app.ops_panel.as_mut() {
-                    ops.scroll_by(-1, 12);
-                }
-                return Ok(false);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(ops) = app.ops_panel.as_mut() {
-                    ops.scroll_by(1, 12);
-                }
-                return Ok(false);
-            }
-            KeyCode::Char('r')
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT) =>
-            {
-                app.request_ops_snapshot();
-                return Ok(false);
-            }
-            _ => {}
+        if handle_ops_keys(app, key) {
+            return Ok(false);
+        }
+    }
+
+    // U5b: Settings owns scroll / integration confirm while visible.
+    if app.workspace_view == WorkspaceView::Settings && app.settings_panel.is_some() {
+        if handle_settings_keys(app, key) {
+            return Ok(false);
         }
     }
 
@@ -1827,6 +1996,273 @@ fn try_team_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
         }
         KeyCode::Char('A') if can_approve_team(app.view.team_state.as_deref()) => {
             app.request_team_op(TeamOp::Approve);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// U5b: Operations mutation keys + nested confirm (owns y/n while confirm open).
+fn handle_ops_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
+    let Some(ops) = app.ops_panel.as_mut() else {
+        return false;
+    };
+
+    // Nested confirm owns y/n first.
+    if ops.confirm.is_some() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let confirm = ops.confirm.clone();
+                let Some(confirm) = confirm else {
+                    return true;
+                };
+                match confirm.kind {
+                    OpsConfirmKind::SyncApply => {
+                        let Some(preview) = confirm.preview.clone() else {
+                            ops.confirm = None;
+                            app.view.notice = Some("Sync confirm missing preview.".into());
+                            return true;
+                        };
+                        if let Some(bridge) = app.bridge.as_mut() {
+                            if let Err(err) = bridge.ops_sync_apply(&preview) {
+                                app.view.notice = Some(format!("ops.sync.apply failed: {err}"));
+                            } else {
+                                app.view.notice = Some("Applying sync…".into());
+                            }
+                        }
+                    }
+                    OpsConfirmKind::RollbackApply => {
+                        let Some(preview) = confirm.preview.clone() else {
+                            ops.confirm = None;
+                            app.view.notice = Some("Rollback confirm missing preview.".into());
+                            return true;
+                        };
+                        if let Some(bridge) = app.bridge.as_mut() {
+                            if let Err(err) = bridge.ops_rollback_apply(&preview) {
+                                app.view.notice =
+                                    Some(format!("ops.rollback.apply failed: {err}"));
+                            } else {
+                                app.view.notice = Some("Applying rollback…".into());
+                            }
+                        }
+                    }
+                    OpsConfirmKind::CancelRun { run_id } => {
+                        if let Some(bridge) = app.bridge.as_mut() {
+                            if let Err(err) = bridge.ops_runs_cancel(&run_id) {
+                                app.view.notice =
+                                    Some(format!("ops.runs.cancel failed: {err}"));
+                            } else {
+                                app.view.notice = Some(format!("Cancelling {run_id}…"));
+                            }
+                        }
+                    }
+                    OpsConfirmKind::DismissAlert { alert_id } => {
+                        if let Some(bridge) = app.bridge.as_mut() {
+                            if let Err(err) = bridge.ops_alerts_dismiss(&alert_id) {
+                                app.view.notice =
+                                    Some(format!("ops.alerts.dismiss failed: {err}"));
+                            } else {
+                                app.view.notice = Some("Dismissing alert…".into());
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                ops.confirm = None;
+                app.view.notice = Some("Cancelled — no mutation.".into());
+                return true;
+            }
+            _ => return true, // swallow other keys while confirm open
+        }
+    }
+
+    // Pick-mode Enter selects the target.
+    if ops.pick_mode != OpsPickMode::None {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                ops.scroll_by(-1, 12);
+                return true;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                ops.scroll_by(1, 12);
+                return true;
+            }
+            KeyCode::Enter => {
+                match ops.pick_mode {
+                    OpsPickMode::Run => {
+                        if let Some(run_id) = ops.selected_cancellable_run_id().map(str::to_string)
+                        {
+                            ops.confirm = Some(OpsConfirmState::cancel_run(run_id));
+                        } else {
+                            app.view.notice =
+                                Some("Selected run is not cancellable.".into());
+                        }
+                    }
+                    OpsPickMode::Alert => {
+                        if let Some(alert_id) = ops.selected_alert_id().map(str::to_string) {
+                            ops.confirm = Some(OpsConfirmState::dismiss_alert(alert_id));
+                        } else {
+                            app.view.notice = Some("No alert selected.".into());
+                        }
+                    }
+                    OpsPickMode::Backup => {
+                        if let Some(name) = ops.selected_backup_name().map(str::to_string) {
+                            if let Some(bridge) = app.bridge.as_mut() {
+                                if let Err(err) = bridge.ops_rollback_preview(&name) {
+                                    app.view.notice =
+                                        Some(format!("ops.rollback.preview failed: {err}"));
+                                } else {
+                                    app.view.notice =
+                                        Some(format!("Previewing rollback · {name}…"));
+                                }
+                            }
+                        } else {
+                            app.view.notice = Some("No backup selected.".into());
+                        }
+                    }
+                    OpsPickMode::None => {}
+                }
+                return true;
+            }
+            _ => {}
+        }
+    }
+
+    let plain = !key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT);
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            ops.scroll_by(-1, 12);
+            true
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            ops.scroll_by(1, 12);
+            true
+        }
+        KeyCode::Char('r') if plain => {
+            app.request_ops_snapshot();
+            true
+        }
+        KeyCode::Char('s') if plain => {
+            if let Some(bridge) = app.bridge.as_mut() {
+                if let Err(err) = bridge.ops_sync_preview() {
+                    app.view.notice = Some(format!("ops.sync.preview failed: {err}"));
+                } else {
+                    app.view.notice = Some("Building sync preview…".into());
+                }
+            } else {
+                app.view.notice = Some("No bridge — cannot sync.".into());
+            }
+            true
+        }
+        KeyCode::Char('b') if plain => {
+            if ops.backups.is_empty() {
+                app.view.notice = Some("No backups available for rollback.".into());
+            } else {
+                ops.pick_mode = OpsPickMode::Backup;
+                ops.selected_backup = 0;
+                app.view.notice = Some("Select backup · Enter preview · Esc clear".into());
+            }
+            true
+        }
+        KeyCode::Char('c') if plain => {
+            let cancellable: Vec<_> = ops
+                .runs
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.cancellable)
+                .collect();
+            if cancellable.is_empty() {
+                app.view.notice = Some("No cancellable runs.".into());
+            } else {
+                ops.pick_mode = OpsPickMode::Run;
+                ops.selected_run = cancellable[0].0;
+                app.view.notice = Some("Select run · Enter confirm cancel · Esc clear".into());
+            }
+            true
+        }
+        KeyCode::Char('d') if plain => {
+            if ops.alerts.is_empty() {
+                app.view.notice = Some("No alerts to dismiss.".into());
+            } else {
+                ops.pick_mode = OpsPickMode::Alert;
+                ops.selected_alert = 0;
+                app.view.notice =
+                    Some("Select alert · Enter confirm dismiss · Esc clear".into());
+            }
+            true
+        }
+        KeyCode::Char('v') if plain => {
+            let n = ops.reviews.len();
+            app.view.notice = Some(if n == 0 {
+                "No review receipts.".into()
+            } else {
+                format!("{n} review receipt(s) listed (read-only).")
+            });
+            true
+        }
+        _ => false,
+    }
+}
+
+/// U5b: Settings scroll + curated integration intent confirm.
+fn handle_settings_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
+    let Some(settings) = app.settings_panel.as_mut() else {
+        return false;
+    };
+
+    if settings.pending_integration_id.is_some() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let id = settings.pending_integration_id.clone().unwrap_or_default();
+                if let Some(bridge) = app.bridge.as_mut() {
+                    if let Err(err) = bridge.settings_integration_confirm(&id) {
+                        app.view.notice =
+                            Some(format!("settings.integration.confirm failed: {err}"));
+                    } else {
+                        app.view.notice = Some("Recording integration intent…".into());
+                    }
+                }
+                return true;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                settings.clear_integration_confirm();
+                app.view.notice = Some("Cancelled — no files written.".into());
+                return true;
+            }
+            _ => return true,
+        }
+    }
+
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            settings.move_selection(-1);
+            settings.scroll_by(-1, 12);
+            true
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            settings.move_selection(1);
+            settings.scroll_by(1, 12);
+            true
+        }
+        KeyCode::Enter => {
+            if settings.begin_integration_confirm() {
+                app.view.notice =
+                    Some("Confirm install intent? y confirm · n/Esc cancel".into());
+            } else {
+                app.view.notice = Some("No curated integration selected.".into());
+            }
+            true
+        }
+        KeyCode::Char('r')
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT) =>
+        {
+            app.request_settings_snapshot();
             true
         }
         _ => false,
@@ -2473,11 +2909,17 @@ fn draw(frame: &mut Frame, app: &ShellApp) {
             );
         }
         WorkspaceView::Settings => {
+            let settings = app
+                .settings_panel
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(SettingsPanelState::loading);
             render_settings_view(
                 frame.buffer_mut(),
                 regions,
                 &app.view,
                 &app.chat,
+                &settings,
                 app.workspace_view,
             );
         }

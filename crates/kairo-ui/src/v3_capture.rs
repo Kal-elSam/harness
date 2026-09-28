@@ -16,11 +16,14 @@ use serde_json::json;
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
 use crate::extension_ui::{ExtensionUiDialog, ExtensionUiRequest};
 use crate::layout::split_shell;
+use crate::ops_panel::{render_ops_panel, OpsPanelState};
 use crate::plan_list::PlanListState;
+use crate::settings_panel::{render_settings_panel, SettingsPanelState};
 use crate::surfaces::{
     render_extension_ui, render_plan_list, render_shell, AgentState, BlockCause, ShellViewModel,
     SidebarAgent,
 };
+use crate::workspace_nav::WorkspaceView;
 
 const FIXTURE_BANNER: &str = "FIXTURE mock — not live provider";
 
@@ -60,9 +63,59 @@ fn run_capture_inner(out_dir: &Path) -> io::Result<usize> {
             written += 3;
         }
     }
+    // U5b cheap visual: Ops@60 and Settings@60 only (not every size matrix).
+    for &(scenario, paint) in &[
+        ("ops", paint_ops_fixture as fn(&mut Buffer, Rect)),
+        ("settings", paint_settings_fixture as fn(&mut Buffer, Rect)),
+    ] {
+        let area = Rect::new(0, 0, 60, 30);
+        let mut buf = Buffer::empty(area);
+        paint(&mut buf, area);
+        let stem = format!("60x30-{scenario}");
+        write_ansi(out_dir, &stem, &buf, area)?;
+        write_txt(out_dir, &stem, &buf, area)?;
+        write_html(out_dir, &stem, &buf, area)?;
+        written += 3;
+    }
     write_readme(out_dir)?;
     written += 1;
     Ok(written)
+}
+
+fn paint_ops_fixture(buf: &mut Buffer, area: Rect) {
+    let state = OpsPanelState::from_ops_record(&json!({
+        "ok": true,
+        "health": ["Control plane · HEALTHY (FIXTURE)"],
+        "fleet": [
+            "Fleet topology (kairo fleet) — not slash /providers",
+            "opencode · fixture-orchestrator"
+        ],
+        "usage": ["Provider usage (/usage)", "Codex mock · 96%"],
+        "diagnostics": ["Agents", "Detected: 1/1 (fixture)"],
+        "runs": [{ "runId": "run-fixture", "state": "running", "agentId": "codex", "cancellable": true }],
+        "alerts": [{ "alertId": "alt-fixture00000001", "state": "open", "title": "fixture alert" }],
+        "reviews": [{ "reviewId": "rev-fixture", "state": "pass" }],
+        "backups": ["fixture-snap-1"],
+        "hints": "Esc → Work · r refresh · s sync · b rollback · c cancel · d dismiss · v reviews"
+    }));
+    let title = WorkspaceView::Operations.chrome_title();
+    render_ops_panel(buf, area, &state, &title);
+}
+
+fn paint_settings_fixture(buf: &mut Buffer, area: Rect) {
+    let state = SettingsPanelState::from_settings_record(&json!({
+        "ok": true,
+        "profile": ["PROFILE", "applyMode · prompt", "tokenBudget · 4000"],
+        "integrations": ["available · Pi usage widget · 0.2.1 · MIT"],
+        "connections": ["ok · Cursor MCP (fixture)"],
+        "setup": {
+            "wired": false,
+            "label": "Interactive setup · not wired — use `kairo setup`"
+        },
+        "hints": "Esc → Work · ↑↓ browse · Enter preview · y/n confirm"
+    }));
+    let title = WorkspaceView::Settings.chrome_title();
+    render_settings_panel(buf, area, &state, &title);
 }
 
 fn fixture_model(width: u16) -> ShellViewModel {
@@ -353,6 +406,10 @@ fn write_readme(out_dir: &Path) -> io::Result<()> {
                 "- `{size}-{scenario}.ansi` / `.txt` / `.html`\n"
             ));
         }
+        if w == 60 {
+            matrix.push_str("- `60x30-ops.ansi` / `.txt` / `.html` (U5b)\n");
+            matrix.push_str("- `60x30-settings.ansi` / `.txt` / `.html` (U5b)\n");
+        }
         matrix.push('\n');
     }
     let body = format!(
@@ -409,7 +466,8 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&dir);
         let n = run_capture_inner(&dir).expect("capture ok");
-        assert!(n >= 15 * 3 + 1, "expected matrix + readme, got {n}");
+        // 3 sizes × 5 scenarios × 3 formats + Ops@60 + Settings@60 × 3 + readme
+        assert!(n >= 15 * 3 + 6 + 1, "expected matrix + u5b + readme, got {n}");
         let sample = fs::read_to_string(dir.join("100x30-conversation.txt")).unwrap();
         assert!(sample.contains("FIXTURE"));
         assert!(sample.contains("assistant") || sample.contains("you"));
@@ -423,6 +481,10 @@ mod tests {
         assert!(error.contains("ERROR") || error.contains("error") || error.contains("timeout"));
         let narrow = fs::read_to_string(dir.join("60x30-conversation.txt")).unwrap();
         assert!(narrow.contains("collapsed") || narrow.contains("V3-FIXTURE"));
+        let ops = fs::read_to_string(dir.join("60x30-ops.txt")).unwrap();
+        assert!(ops.contains("Health") || ops.contains("kairo fleet") || ops.contains("Ops"));
+        let settings = fs::read_to_string(dir.join("60x30-settings.txt")).unwrap();
+        assert!(settings.contains("not wired") || settings.contains("Profile"));
         let _ = fs::remove_dir_all(&dir);
     }
 }
