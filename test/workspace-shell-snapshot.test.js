@@ -5,7 +5,8 @@ import {
   buildKairoWorkspaceSnapshot,
   loadKairoWorkspaceSnapshot,
   loadKairoLiveData,
-  loadKairoUsageData
+  loadKairoUsageData,
+  revalidateKairoTeamAvailability
 } from "../src/global/host/workspace-snapshot.js";
 
 const FULL_STRATEGY = {
@@ -196,6 +197,59 @@ test("loadKairoLiveData never reports available when the snapshot has no real el
   });
 
   assert.equal(liveData, null);
+});
+
+test("revalidateKairoTeamAvailability re-probes live and rebuilds the snapshot from that real evidence, verbatim reason text included", async () => {
+  const result = await revalidateKairoTeamAvailability({ cwd: "/repo" }, {
+    resolveProjectRoot: async () => "/repo",
+    resolveHomeDir: () => "/home/kairo",
+    readProjectStrategy: async () => FULL_STRATEGY,
+    getSession: async () => null,
+    listProviderUsage: async () => [],
+    inspectEngramIntegration: () => ({ status: "unknown" }),
+    createConversationService: () => ({
+      snapshot: async () => ({
+        modelIntelligence: {
+          eligibility: {
+            codex: { ok: true },
+            "opencode-go": { ok: false, reason: "OpenCode Go monthly window is rate-limited" }
+          },
+          claudeEntitlement: {},
+          cursorAccess: {}
+        },
+        usage: {},
+        providers: {}
+      })
+    })
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, null);
+  const orchestrator = result.snapshot.team.rows.find((row) => row.role === "Orchestrator");
+  assert.equal(orchestrator.availability.state, "blocked");
+  // Exact provider evidence, never rewritten into a fabricated quota/funds cause.
+  assert.ok(orchestrator.availability.warning.includes("OpenCode Go monthly window is rate-limited"));
+  assert.ok(!/quota|funds|billing/i.test(orchestrator.availability.warning));
+});
+
+test("revalidateKairoTeamAvailability fails closed (ok:false, real reason) when the live probe cannot run, without inventing availability", async () => {
+  const result = await revalidateKairoTeamAvailability({ cwd: "/repo" }, {
+    resolveProjectRoot: async () => "/repo",
+    resolveHomeDir: () => "/home/kairo",
+    readProjectStrategy: async () => FULL_STRATEGY,
+    getSession: async () => null,
+    listProviderUsage: async () => [],
+    inspectEngramIntegration: () => ({ status: "unknown" }),
+    createConversationService: () => ({
+      snapshot: async () => { throw new Error("provider probe failed"); }
+    })
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /Live availability/);
+  for (const row of result.snapshot.team.rows) {
+    assert.equal(row.availability.state, "unknown", "a failed revalidation never claims availability");
+  }
 });
 
 test("workspace snapshot subscriptions default to checking, then real segments, then unknown on failure", () => {

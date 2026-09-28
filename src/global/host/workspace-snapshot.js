@@ -419,6 +419,39 @@ export async function readPendingKairoRecovery({ cwd = process.cwd() } = {}, dep
   }
 }
 
+/**
+ * On-demand availability revalidation for the ratatui host (U2c): re-runs
+ * the SAME real conversation-service probe `loadKairoLiveData` uses, then
+ * rebuilds the workspace snapshot from that fresh evidence — so the
+ * sidebar/CTA reflect real provider state instead of the last-known cache.
+ * Never invents a cause of its own: every row's `availability.warning`
+ * comes straight from the real `eligibility[...].reason` text this call
+ * received (see workspaceTeamRows / assignment-availability.js), the same
+ * evidence a normal refresh would eventually show.
+ *
+ * Fails closed: a failed probe (`loadKairoLiveData` returns null) still
+ * rebuilds the snapshot — from whatever last-known cache already exists —
+ * and reports `ok: false` with a real reason, never a fabricated
+ * "available" or a synthesized quota/funds cause.
+ * @param {{cwd: string}} args
+ * @param {object} [deps] - forwarded to both loadKairoLiveData and
+ *   loadKairoWorkspaceSnapshot (their own DI shapes).
+ * @returns {Promise<{ok: boolean, reason: string|null, snapshot: object}>}
+ */
+export async function revalidateKairoTeamAvailability({ cwd } = {}, deps = {}) {
+  const loadLive = deps.loadKairoLiveData ?? loadKairoLiveData;
+  const loadSnap = deps.loadKairoWorkspaceSnapshot ?? loadKairoWorkspaceSnapshot;
+  const live = await loadLive({ cwd }, deps);
+  const snapshot = await loadSnap({ cwd, intelligence: live }, deps);
+  return {
+    ok: live !== null,
+    reason: live === null
+      ? "Live availability probe failed — team status shown from the last-known state."
+      : null,
+    snapshot
+  };
+}
+
 export async function loadKairoLiveData({ cwd } = {}, deps = {}) {
   const createService = deps.createConversationService ?? createConversationService;
   try {

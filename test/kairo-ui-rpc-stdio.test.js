@@ -1123,3 +1123,368 @@ test("sidecar cycle_model does not re-apply Architect after the cycle", async ()
   stdin.end();
   await runPromise;
 });
+
+test("sidecar team.revalidate re-probes availability and emits a fresh snapshot from real evidence", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId, provider: "kairo" } };
+          }
+          return null;
+        }
+      })
+    ),
+    revalidateTeamAvailability: async ({ cwd }) => ({
+      ok: true,
+      reason: null,
+      snapshot: fakeSnapshot({ team: { state: "active", rows: [], assignments: [] }, project: { label: cwd } })
+    })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "team.revalidate" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  const availability = [...out].reverse().find((r) => r.type === "availability");
+  assert.equal(availability?.ok, true);
+  assert.equal(availability?.reason, null);
+  const snapshot = [...out].reverse().find((r) => r.type === "snapshot");
+  assert.equal(snapshot?.snapshot?.team?.state, "active");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar team.revalidate reports a failed probe honestly (ok:false, real reason)", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId, provider: "kairo" } };
+          }
+          return null;
+        }
+      })
+    ),
+    revalidateTeamAvailability: async () => ({
+      ok: false,
+      reason: "Live availability probe failed — team status shown from the last-known state.",
+      snapshot: fakeSnapshot()
+    })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "team.revalidate" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  const availability = [...out].reverse().find((r) => r.type === "availability");
+  assert.equal(availability?.ok, false);
+  assert.match(availability?.reason ?? "", /Live availability/);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar team.recovery.preview surfaces a proposal and refreshes the snapshot", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId, provider: "kairo" } };
+          }
+          return null;
+        }
+      })
+    ),
+    recoverProjectTeam: async () => ({
+      outcome: "proposed",
+      fingerprint: "fp-1",
+      affected: [{ role: "Orchestrator", model: "Kimi K3", reason: "rate-limited" }],
+      proposal: { projectTeam: [{ role: "Orchestrator", model: { displayName: "GPT-6" } }] }
+    }),
+    loadSnapshot: async () => fakeSnapshot({ team: { state: "stale", rows: [], assignments: [] } })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "team.recovery.preview" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  const recovery = [...out].reverse().find((r) => r.type === "recovery" && r.op === "preview");
+  assert.equal(recovery?.outcome, "proposed");
+  assert.equal(recovery?.fingerprint, "fp-1");
+  assert.equal(recovery?.affected?.[0]?.role, "Orchestrator");
+  const snapshot = [...out].reverse().find((r) => r.type === "snapshot");
+  assert.equal(snapshot?.snapshot?.team?.state, "stale");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar team.recovery.apply activates a fresh proposal, re-applies Architect and refreshes routes", async () => {
+  const setModelCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+  let routes = [];
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    loadKairoProviderModels: async () => routes,
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            setModelCalls.push(cmd);
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId, provider: "kairo" } };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => routes,
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    },
+    approveRecoveryProposal: async () => {
+      routes = [architectModel];
+      return { outcome: "approved", fingerprint: "fp-1", strategy: { projectTeam: [] } };
+    },
+    loadSnapshot: async () => fakeSnapshot({ team: { state: "active", rows: [], assignments: [] } })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "team.recovery.apply" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  const recovery = [...out].reverse().find((r) => r.type === "recovery" && r.op === "apply");
+  assert.equal(recovery?.outcome, "approved");
+  assert.ok(setModelCalls.length > 0, "apply must re-apply Architect via set_model");
+  assert.equal(setModelCalls.at(-1)?.provider, "kairo");
+  const engineAfter = [...out].reverse().find((r) => r.type === "engine");
+  assert.equal(engineAfter?.engine?.status, "connected");
+  const snapshot = [...out].reverse().find((r) => r.type === "snapshot");
+  assert.equal(snapshot?.snapshot?.team?.state, "active");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar team.recovery.apply refuses a stale proposal and mutates nothing (no set_model, no reactivation)", async () => {
+  const setModelCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            setModelCalls.push(cmd);
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    },
+    // The real workspace-snapshot.js wrapper never throws — a stale
+    // proposal comes back as {outcome: "error", reason} (see
+    // team-recovery.js's approveRecoveryProposal staleness checks).
+    approveRecoveryProposal: async () => ({
+      outcome: "error",
+      reason: "The active team changed since the proposal was built — run a fresh recovery analysis instead of approving."
+    })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "team.recovery.apply" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  const recovery = [...out].reverse().find((r) => r.type === "recovery" && r.op === "apply");
+  assert.equal(recovery?.outcome, "error");
+  assert.match(recovery?.reason ?? "", /changed since the proposal was built/);
+  assert.equal(setModelCalls.length, 0, "a stale/refused apply must never touch the model");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar team.recovery.reject only closes the proposal, mutating nothing else", async () => {
+  const setModelCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            setModelCalls.push(cmd);
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    },
+    rejectRecoveryProposal: async () => ({ outcome: "rejected", fingerprint: "fp-1" }),
+    loadSnapshot: async () => fakeSnapshot({ team: { state: "active", rows: [], assignments: [] } })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "team.recovery.reject" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  const recovery = [...out].reverse().find((r) => r.type === "recovery" && r.op === "reject");
+  assert.equal(recovery?.outcome, "rejected");
+  assert.equal(setModelCalls.length, 0, "reject must never touch the model");
+  const snapshot = [...out].reverse().find((r) => r.type === "snapshot");
+  assert.ok(snapshot, "reject still refreshes the snapshot (closing the fingerprint is a real state change)");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});

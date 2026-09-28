@@ -14,13 +14,21 @@
  *   { "op": "project.preflight" }
  *   { "op": "project.analyze", "analyst"?: { model, selectionSource, recommendationTags, choice } }
  *   { "op": "team.approve" }
+ *   { "op": "team.revalidate" }
+ *   { "op": "team.recovery.preview" }
+ *   { "op": "team.recovery.apply" }
+ *   { "op": "team.recovery.reject" }
  *   { "op": "stop" }
  *
  * stdout records (JSONL): { type: "ready", engine, snapshot?, kairoModels?, sessions? },
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
  * { type: "kairoModels", kairoModels }, { type: "team", op, ok, state, teamRows, roles, analyst },
  * { type: "preflight", ok, analystCatalog?, profile?, candidates?, reason? } (the ratatui host's own
- * analyst picker — T2, no cockpit), forwarded Pi session events, { type: "error", message }, and
+ * analyst picker — T2, no cockpit), { type: "availability", ok, reason? } (real re-probe result for
+ * `team.revalidate`, followed by a fresh `snapshot`), { type: "recovery", op: "preview"|"apply"|"reject",
+ * outcome, ...} (team-recovery.js's own outcomes — "proposed"/"activated"/"approved"/"rejected"/
+ * "kept-previous"/"skipped"/"baseline"/"error" — never invented; a stale/refused apply comes back as
+ * outcome:"error" and touches nothing), forwarded Pi session events, { type: "error", message }, and
  * bridge engine_unavailable.
  */
 
@@ -30,7 +38,13 @@ import {
   classifyPiEngineFromState,
   resolveArchitectRouteForRpc
 } from "./pi-rpc-bridge.js";
-import { loadKairoWorkspaceSnapshot } from "./workspace-snapshot.js";
+import {
+  loadKairoWorkspaceSnapshot,
+  revalidateKairoTeamAvailability as revalidateTeamAvailabilityImpl,
+  recoverKairoProjectTeam as recoverProjectTeamImpl,
+  approveKairoRecovery as approveRecoveryProposalImpl,
+  rejectKairoRecovery as rejectRecoveryProposalImpl
+} from "./workspace-snapshot.js";
 import { loadKairoProviderModels } from "./kairo-route-provider.js";
 import {
   analyzeProjectTeam as analyzeProjectTeamImpl,
@@ -121,6 +135,10 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut) {
  * @param {typeof analyzeProjectTeamImpl} [options.analyzeProjectTeam]
  * @param {typeof approveProjectTeamImpl} [options.approveProjectTeam]
  * @param {typeof preflightProjectTeamImpl} [options.preflightProjectTeam]
+ * @param {typeof revalidateTeamAvailabilityImpl} [options.revalidateTeamAvailability]
+ * @param {typeof recoverProjectTeamImpl} [options.recoverProjectTeam]
+ * @param {typeof approveRecoveryProposalImpl} [options.approveRecoveryProposal]
+ * @param {typeof rejectRecoveryProposalImpl} [options.rejectRecoveryProposal]
  */
 export async function runKairoUiRpcStdio({
   stdin = process.stdin,
@@ -131,7 +149,11 @@ export async function runKairoUiRpcStdio({
   loadSnapshot = loadKairoWorkspaceSnapshot,
   analyzeProjectTeam = analyzeProjectTeamImpl,
   approveProjectTeam = approveProjectTeamImpl,
-  preflightProjectTeam = preflightProjectTeamImpl
+  preflightProjectTeam = preflightProjectTeamImpl,
+  revalidateTeamAvailability = revalidateTeamAvailabilityImpl,
+  recoverProjectTeam = recoverProjectTeamImpl,
+  approveRecoveryProposal = approveRecoveryProposalImpl,
+  rejectRecoveryProposal = rejectRecoveryProposalImpl
 } = {}) {
   const bridge = await openBridge({ cwd });
   let kairoModels = [];
@@ -408,6 +430,54 @@ export async function runKairoUiRpcStdio({
           type: "notice",
           message: `Team active: ${summary.teamRows} role${summary.teamRows === 1 ? "" : "s"}.`
         });
+      } else if (op === "team.revalidate") {
+        // On-demand re-probe (U2c): same real conversation-service snapshot
+        // call the second render phase uses, never a synthesized cause. The
+        // sidebar/CTA update from whatever this returns — real evidence, or
+        // an honest failure — never a fabricated "available".
+        writeOut({ type: "notice", message: "Revalidating provider availability…" });
+        const result = await revalidateTeamAvailability({ cwd });
+        writeOut({ type: "availability", ok: result.ok, reason: result.reason ?? null });
+        writeOut({ type: "snapshot", snapshot: result.snapshot });
+      } else if (op === "team.recovery.preview") {
+        // Builds (and persists) a SUGGESTED recovery proposal — never
+        // activates (see team-recovery.js's runTeamRecovery). The human's
+        // own explicit team.recovery.apply / .reject is the only path that
+        // ever mutates the active team.
+        writeOut({ type: "notice", message: "Checking for a recovered team…" });
+        const result = await recoverProjectTeam({ cwd });
+        writeOut({ type: "recovery", op: "preview", ...result });
+        if (result?.outcome === "proposed" || result?.outcome === "activated") {
+          await emitSnapshot();
+        }
+      } else if (op === "team.recovery.apply") {
+        // Re-verifies the pending proposal against CURRENT eligibility
+        // before activating (see approveRecoveryProposal) — a stale
+        // proposal, or none at all, comes back as outcome:"error" and
+        // never touches the model or the strategy file.
+        const result = await approveRecoveryProposal({ cwd });
+        writeOut({ type: "recovery", op: "apply", ...result });
+        if (result?.outcome === "approved") {
+          try {
+            kairoModels = await loadModels({ cwd });
+          } catch {
+            kairoModels = [];
+          }
+          writeOut({
+            type: "kairoModels",
+            kairoModels: serializeKairoModelsForHost(kairoModels)
+          });
+          await applyEngineAndMaybeTranscript({ reapplyArchitect: true });
+          await emitSnapshot();
+        }
+      } else if (op === "team.recovery.reject") {
+        // The active team was never touched by the proposal — rejection
+        // only closes the fingerprint record (see rejectRecoveryProposal).
+        const result = await rejectRecoveryProposal({ cwd });
+        writeOut({ type: "recovery", op: "reject", ...result });
+        if (result?.outcome === "rejected") {
+          await emitSnapshot();
+        }
       } else {
         writeOut({ type: "error", message: `Unknown op: ${String(op)}` });
       }
