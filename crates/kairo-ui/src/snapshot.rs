@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use crate::surfaces::{AgentState, ShellViewModel, SidebarAgent};
+use crate::surfaces::{AgentState, BlockCause, ShellViewModel, SidebarAgent};
 
 /// Apply workspace snapshot fields to the painted shell model.
 pub fn apply_workspace_snapshot(view: &mut ShellViewModel, snapshot: &Value) {
@@ -67,11 +67,25 @@ fn map_agent(entry: &Value) -> SidebarAgent {
         .to_string();
     let state = parse_agent_state(entry.get("state").and_then(|v| v.as_str()));
     let detail = agent_detail_line(entry, state);
+    let cause = agent_block_cause(entry);
     SidebarAgent {
         label,
         detail,
         state,
+        cause,
     }
+}
+
+/// Classify from the ORIGINAL `stateReason` (never from the already
+/// shortened `detail`), so aggregation across roles sees real evidence.
+fn agent_block_cause(entry: &Value) -> BlockCause {
+    if let Some(reason) = entry.get("stateReason").and_then(|v| v.as_str()) {
+        let trimmed = reason.trim();
+        if !trimmed.is_empty() {
+            return classify_block_cause(&trimmed.to_ascii_lowercase());
+        }
+    }
+    BlockCause::Unavailable
 }
 
 fn agent_detail_line(entry: &Value, state: AgentState) -> String {
@@ -92,28 +106,100 @@ fn agent_detail_line(entry: &Value, state: AgentState) -> String {
     }
 }
 
+/// Classify a blocked `stateReason` from real evidence only — never invent
+/// quota/funds wording when the provider did not say so.
+///
+/// A rate-limit is not an exhausted quota: "monthly window is rate-limited"
+/// classifies as `RateLimited`, never `QuotaExhausted`. Only an explicit
+/// quota-exhausted statement ("quota exhausted", "out of quota") without
+/// rate-limit wording earns the quota classification. "billing" / an
+/// entitlement message alone is ambiguous, not evidenced funds — it falls
+/// through to `Unavailable`.
+fn classify_block_cause(lower: &str) -> BlockCause {
+    let rate_limited_evidence = lower.contains("rate-limited")
+        || lower.contains("rate limited")
+        || lower.contains("monthly window");
+    if rate_limited_evidence {
+        return BlockCause::RateLimited;
+    }
+    let quota_exhausted_evidence =
+        lower.contains("quota exhausted") || lower.contains("out of quota");
+    if quota_exhausted_evidence {
+        return BlockCause::QuotaExhausted;
+    }
+    let funds_evidence = lower.contains("no funds")
+        || lower.contains("out of funds")
+        || lower.contains("out of credit")
+        || lower.contains("insufficient credit")
+        || lower.contains("insufficient funds");
+    if funds_evidence {
+        return BlockCause::NoFunds;
+    }
+    BlockCause::Unavailable
+}
+
+fn known_provider_label(lower: &str) -> Option<&'static str> {
+    if lower.contains("opencode go") || lower.contains("opencode-go") {
+        return Some("OpenCode Go");
+    }
+    if lower.contains("codex") {
+        return Some("Codex");
+    }
+    if lower.contains("claude") {
+        return Some("Claude");
+    }
+    None
+}
+
+fn owned_provider_head(detail: &str) -> Option<String> {
+    let head = detail.split(['—', '–', ':']).next()?.trim();
+    let cleaned = head
+        .trim_start_matches("Unavailable")
+        .trim()
+        .trim_matches(|c: char| c == '-' || c.is_whitespace());
+    if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("unavailable") || cleaned.len() >= 24 {
+        return None;
+    }
+    Some(cleaned.to_string())
+}
+
 /// Collapse long provider outage sentences so the AGENTS column stays
-/// scannable (five identical "Unavailable — OpenCode Go monthly window…"
-/// rows were unreadable in the ratatui host).
+/// scannable, but keep an actionable next step (re-analyze) when the
+/// reason is a spent subscription quota or similar outage.
 fn shorten_agent_detail(detail: &str) -> String {
     let lower = detail.to_ascii_lowercase();
-    if lower.contains("opencode go") || lower.contains("opencode-go") {
-        return "OpenCode Go · unavailable".into();
-    }
-    if lower.contains("rate-limited") || lower.contains("rate limited") {
-        if let Some(provider) = detail.split(['—', '-', ':']).next() {
-            let p = provider.trim();
-            if !p.is_empty() && p.len() < 24 {
-                return format!("{p} · unavailable");
-            }
+    let cause = classify_block_cause(&lower);
+    let provider = known_provider_label(&lower)
+        .map(str::to_string)
+        .or_else(|| owned_provider_head(detail));
+
+    match (provider.as_deref(), cause) {
+        (Some(p), BlockCause::RateLimited) => format!("{p} · rate-limited · /analyze"),
+        (Some(p), BlockCause::QuotaExhausted) => format!("{p} · quota spent · /analyze"),
+        (Some(p), BlockCause::NoFunds) => format!("{p} · no funds · /analyze"),
+        (None, BlockCause::RateLimited) => "Rate-limited · /analyze".into(),
+        (None, BlockCause::QuotaExhausted) => "Quota spent · /analyze".into(),
+        (None, BlockCause::NoFunds) => "No funds · /analyze".into(),
+        (Some(p), BlockCause::Unavailable) if looks_like_provider_outage(&lower) => {
+            format!("{p} · unavailable · /analyze")
         }
-        return "Rate-limited · unavailable".into();
+        _ => truncate_detail(detail, 36),
     }
-    const MAX: usize = 36;
-    if detail.chars().count() <= MAX {
+}
+
+fn looks_like_provider_outage(lower: &str) -> bool {
+    lower.starts_with("unavailable")
+        || lower.contains("unavailable —")
+        || lower.contains("unavailable -")
+        || lower.contains("is rate-limited")
+        || lower.contains("is blocked")
+}
+
+fn truncate_detail(detail: &str, max: usize) -> String {
+    if detail.chars().count() <= max {
         return detail.to_string();
     }
-    let mut out: String = detail.chars().take(MAX.saturating_sub(1)).collect();
+    let mut out: String = detail.chars().take(max.saturating_sub(1)).collect();
     out.push('…');
     out
 }
@@ -126,8 +212,9 @@ fn state_word(state: AgentState) -> &'static str {
     }
 }
 
-/// Sticky chat CTA when the live team has blocked roles. Honest short copy —
-/// never invents "rate-limit / no funds" without evidence.
+/// Sticky chat CTA when the live team has blocked roles. Names the evidenced
+/// cause (quota / funds) when `stateReason` already said so; always points at
+/// `/analyze` so the human can reassign — never invents a cause.
 pub fn blocked_team_attention(agents: &[SidebarAgent]) -> Option<Vec<String>> {
     let blocked: Vec<&SidebarAgent> = agents
         .iter()
@@ -146,10 +233,31 @@ pub fn blocked_team_attention(agents: &[SidebarAgent]) -> Option<Vec<String>> {
     } else {
         format!("{n} roles")
     };
-    Some(vec![
-        format!("{who} unavailable."),
-        "Type /analyze to reassign.".into(),
-    ])
+    let cause = team_block_cause(&blocked);
+    let line1 = match cause {
+        BlockCause::RateLimited => format!("{who} blocked — rate-limited."),
+        BlockCause::QuotaExhausted => format!("{who} blocked — quota exhausted."),
+        BlockCause::NoFunds => format!("{who} blocked — out of funds."),
+        BlockCause::Unavailable => format!("{who} unavailable."),
+    };
+    Some(vec![line1, "Type /analyze to reassign.".into()])
+}
+
+/// Aggregate the ORIGINAL evidenced cause of every blocked role (from the
+/// `cause` field set at snapshot mapping time, never re-derived from the
+/// already-shortened `detail` text). Roles that disagree on cause fall
+/// through to `Unavailable` rather than picking one role's cause for all.
+fn team_block_cause(blocked: &[&SidebarAgent]) -> BlockCause {
+    let mut causes = blocked.iter().map(|agent| agent.cause);
+    let first = match causes.next() {
+        Some(c) => c,
+        None => return BlockCause::Unavailable,
+    };
+    if causes.all(|c| c == first) {
+        first
+    } else {
+        BlockCause::Unavailable
+    }
 }
 
 fn state_rank(state: AgentState) -> u8 {
@@ -210,8 +318,42 @@ mod tests {
         assert_eq!(view.agents[0].label, "Reviewer");
         assert_eq!(view.agents[0].state, AgentState::Blocked);
         assert_eq!(view.agents[0].detail, "No entitlement");
+        assert!(
+            !view.agents[0].detail.to_ascii_lowercase().contains("funds"),
+            "an entitlement message alone must never invent a funds cause: {}",
+            view.agents[0].detail
+        );
+        assert_eq!(view.agents[0].cause, BlockCause::Unavailable);
         assert_eq!(view.agents[1].label, "Builder");
         assert_eq!(view.agents[1].state, AgentState::Idle);
+    }
+
+    #[test]
+    fn rate_limited_evidence_never_renders_as_quota_or_funds() {
+        let snapshot = json!({
+            "agents": [
+                {
+                    "label": "Builder",
+                    "state": "blocked",
+                    "provider": "codex",
+                    "stateReason": "Unavailable — Codex is rate-limited until tomorrow"
+                }
+            ]
+        });
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(&mut view, &snapshot);
+        assert_eq!(view.agents[0].detail, "Codex · rate-limited · /analyze");
+        assert_eq!(view.agents[0].cause, BlockCause::RateLimited);
+        let joined = view.team_attention.expect("CTA").join(" ");
+        assert!(
+            joined.contains("rate-limited"),
+            "CTA must name rate-limited: {joined}"
+        );
+        assert!(
+            !joined.to_ascii_lowercase().contains("quota")
+                && !joined.to_ascii_lowercase().contains("funds"),
+            "rate-limit evidence must not be labeled quota/funds: {joined}"
+        );
     }
 
     #[test]
@@ -228,7 +370,11 @@ mod tests {
         });
         let mut view = ShellViewModel::default();
         apply_workspace_snapshot(&mut view, &snapshot);
-        assert_eq!(view.agents[0].detail, "OpenCode Go · unavailable");
+        assert_eq!(
+            view.agents[0].detail,
+            "OpenCode Go · rate-limited · /analyze"
+        );
+        assert_eq!(view.agents[0].cause, BlockCause::RateLimited);
         let attention = view.team_attention.expect("blocked team needs CTA");
         let joined = attention.join(" ");
         assert!(
@@ -240,12 +386,208 @@ mod tests {
             "attention must name the blocked role: {joined}"
         );
         assert!(
-            joined.contains("unavailable"),
-            "attention must state unavailability honestly: {joined}"
+            joined.contains("rate-limited"),
+            "a rate limit must be named rate-limited, not quota: {joined}"
         );
         assert!(
-            !joined.contains("no funds") && !joined.contains("rate-limit"),
-            "attention must not invent funds/rate-limit causes: {joined}"
+            !joined.to_ascii_lowercase().contains("quota"),
+            "'monthly window is rate-limited' must not be classified as quota: {joined}"
+        );
+        assert!(
+            !joined.contains("no funds") && !joined.to_ascii_lowercase().contains("out of funds"),
+            "rate-limit evidence must not be labeled as no funds: {joined}"
+        );
+    }
+
+    #[test]
+    fn explicit_quota_exhausted_statement_may_say_quota() {
+        let snapshot = json!({
+            "agents": [
+                {
+                    "label": "Architect",
+                    "state": "blocked",
+                    "provider": "opencode-go",
+                    "stateReason": "Unavailable — OpenCode Go quota exhausted for this cycle"
+                }
+            ]
+        });
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(&mut view, &snapshot);
+        assert_eq!(
+            view.agents[0].detail,
+            "OpenCode Go · quota spent · /analyze"
+        );
+        assert_eq!(view.agents[0].cause, BlockCause::QuotaExhausted);
+    }
+
+    #[test]
+    fn funds_outage_detail_names_no_funds_and_analyze() {
+        let snapshot = json!({
+            "agents": [
+                {
+                    "label": "Builder",
+                    "state": "blocked",
+                    "provider": "codex",
+                    "stateReason": "Unavailable — Codex is out of funds for this window"
+                }
+            ]
+        });
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(&mut view, &snapshot);
+        assert_eq!(view.agents[0].detail, "Codex · no funds · /analyze");
+        assert_eq!(view.agents[0].cause, BlockCause::NoFunds);
+        let joined = view.team_attention.expect("CTA").join(" ");
+        assert!(
+            joined.contains("out of funds"),
+            "funds CTA missing: {joined}"
+        );
+        assert!(joined.contains("/analyze"), "analyze CTA missing: {joined}");
+    }
+
+    #[test]
+    fn insufficient_credits_is_evidenced_funds() {
+        let snapshot = json!({
+            "agents": [
+                {
+                    "label": "Builder",
+                    "state": "blocked",
+                    "provider": "claude",
+                    "stateReason": "Unavailable — Claude has insufficient credits for this workspace"
+                }
+            ]
+        });
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(&mut view, &snapshot);
+        assert_eq!(view.agents[0].detail, "Claude · no funds · /analyze");
+        assert_eq!(view.agents[0].cause, BlockCause::NoFunds);
+    }
+
+    #[test]
+    fn billing_issue_alone_is_unavailable_not_funds() {
+        let snapshot = json!({
+            "agents": [
+                {
+                    "label": "Builder",
+                    "state": "blocked",
+                    "provider": "opencode-go",
+                    "stateReason": "Unavailable — OpenCode Go billing issue on this account"
+                }
+            ]
+        });
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(&mut view, &snapshot);
+        assert_eq!(view.agents[0].cause, BlockCause::Unavailable);
+        assert!(
+            !view.agents[0].detail.to_ascii_lowercase().contains("funds"),
+            "'billing' alone must never be labeled as funds: {}",
+            view.agents[0].detail
+        );
+        let joined = view.team_attention.expect("CTA").join(" ");
+        assert!(
+            !joined.to_ascii_lowercase().contains("funds"),
+            "billing-only CTA must not invent funds: {joined}"
+        );
+    }
+
+    #[test]
+    fn no_entitlement_is_unavailable_not_funds() {
+        let snapshot = json!({
+            "agents": [
+                {
+                    "label": "Reviewer",
+                    "state": "blocked",
+                    "provider": "claude",
+                    "stateReason": "No entitlement"
+                }
+            ]
+        });
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(&mut view, &snapshot);
+        assert_eq!(view.agents[0].cause, BlockCause::Unavailable);
+        let joined = view.team_attention.expect("CTA").join(" ");
+        assert!(
+            !joined.to_ascii_lowercase().contains("funds"),
+            "'No entitlement' alone must never be labeled as funds: {joined}"
+        );
+    }
+
+    #[test]
+    fn mixed_causes_across_blocked_roles_yield_unavailable_cta_but_keep_per_role_evidence() {
+        let snapshot = json!({
+            "agents": [
+                {
+                    "label": "Architect",
+                    "state": "blocked",
+                    "provider": "opencode-go",
+                    "stateReason": "Unavailable — OpenCode Go monthly window is rate-limited (resets soon)"
+                },
+                {
+                    "label": "Builder",
+                    "state": "blocked",
+                    "provider": "codex",
+                    "stateReason": "Unavailable — Codex is out of funds for this window"
+                }
+            ]
+        });
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(&mut view, &snapshot);
+        // Each row keeps its own evidenced cause.
+        let architect = view
+            .agents
+            .iter()
+            .find(|a| a.label == "Architect")
+            .expect("architect row");
+        let builder = view
+            .agents
+            .iter()
+            .find(|a| a.label == "Builder")
+            .expect("builder row");
+        assert_eq!(architect.cause, BlockCause::RateLimited);
+        assert_eq!(architect.detail, "OpenCode Go · rate-limited · /analyze");
+        assert_eq!(builder.cause, BlockCause::NoFunds);
+        assert_eq!(builder.detail, "Codex · no funds · /analyze");
+        // Aggregate CTA must not pick either cause when roles disagree.
+        let joined = view.team_attention.expect("CTA").join(" ");
+        assert!(
+            joined.contains("unavailable"),
+            "mixed causes across roles must fall back to unavailable: {joined}"
+        );
+        assert!(
+            !joined.to_ascii_lowercase().contains("rate-limited")
+                && !joined.to_ascii_lowercase().contains("quota")
+                && !joined.to_ascii_lowercase().contains("funds"),
+            "mixed-cause CTA must not pick one role's cause for all: {joined}"
+        );
+        assert!(joined.contains("/analyze"), "analyze CTA missing: {joined}");
+    }
+
+    #[test]
+    fn classification_uses_original_state_reason_not_truncated_detail() {
+        // The keyword sits well past the 36-char truncation point used for
+        // the unevidenced fallback path, so a naive re-classification of
+        // the shortened `detail` (rather than the original `stateReason`)
+        // would miss it entirely.
+        let long_reason = "Unavailable — OpenCode Go connection has been degraded for a while and now the monthly window is rate-limited (resets later)";
+        assert!(
+            long_reason.chars().count() > 60,
+            "fixture must exceed the 36-char truncation window"
+        );
+        let snapshot = json!({
+            "agents": [
+                {
+                    "label": "Architect",
+                    "state": "blocked",
+                    "provider": "opencode-go",
+                    "stateReason": long_reason
+                }
+            ]
+        });
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(&mut view, &snapshot);
+        assert_eq!(view.agents[0].cause, BlockCause::RateLimited);
+        assert_eq!(
+            view.agents[0].detail,
+            "OpenCode Go · rate-limited · /analyze"
         );
     }
 
@@ -267,15 +609,23 @@ mod tests {
         let agents: Vec<SidebarAgent> = (0..5)
             .map(|i| SidebarAgent {
                 label: format!("Role{i}"),
-                detail: "unavailable".into(),
+                detail: "blocked".into(),
                 state: AgentState::Blocked,
+                cause: BlockCause::Unavailable,
             })
             .collect();
         let attention = blocked_team_attention(&agents).expect("CTA");
         let joined = attention.join(" ");
         assert!(joined.contains("5 roles"));
-        assert!(!joined.contains("Role0"), "must not list every role when N>3");
+        assert!(
+            !joined.contains("Role0"),
+            "must not list every role when N>3"
+        );
         assert!(joined.contains("/analyze"));
+        assert!(
+            joined.contains("unavailable"),
+            "generic/ambiguous block must say unavailable, not invent a cause: {joined}"
+        );
     }
 
     #[test]
