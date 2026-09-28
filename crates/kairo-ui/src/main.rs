@@ -11,6 +11,7 @@ mod role_editor;
 mod session_picker;
 mod snapshot;
 mod surfaces;
+mod v3_capture;
 mod workspace_nav;
 
 use std::collections::HashMap;
@@ -1448,7 +1449,35 @@ fn bridge_enabled_from_env() -> bool {
             .unwrap_or(false)
 }
 
+/// `--v3-capture [outdir]` — deterministic Buffer dumps for visual review.
+/// Never opens a TTY / alternate screen; never contacts Pi.
+fn v3_capture_outdir_from_args() -> Option<PathBuf> {
+    let mut args = env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--v3-capture" {
+            let out = args
+                .next()
+                .filter(|a| !a.starts_with('-'))
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../docs/assets/v3-visual-fixtures")
+                });
+            return Some(out);
+        }
+    }
+    None
+}
+
 fn main() -> io::Result<()> {
+    if let Some(out_dir) = v3_capture_outdir_from_args() {
+        let code = v3_capture::run_capture(out_dir);
+        if code == 0 {
+            return Ok(());
+        }
+        std::process::exit(code);
+    }
+
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout());
