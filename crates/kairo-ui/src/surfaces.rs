@@ -291,7 +291,11 @@ fn is_empty_work_placeholder(content: &str) -> bool {
 
 fn transcript_has_conversation(chat: &ChatState) -> bool {
     chat.messages.iter().any(|m| match m.role {
-        MessageRole::User | MessageRole::Assistant | MessageRole::Tool => true,
+        MessageRole::User
+        | MessageRole::Assistant
+        | MessageRole::Thinking
+        | MessageRole::Tool
+        | MessageRole::Error => true,
         MessageRole::System => !m.content.is_empty() && !is_empty_work_placeholder(&m.content),
     })
 }
@@ -315,10 +319,24 @@ fn transcript_lines(chat: &ChatState, model: &ShellViewModel) -> Vec<Line<'stati
 }
 
 fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
+    // Reuse the existing sober-hacker tone constants only: `Tool` already
+    // distinguishes error vs success via `is_error` -> ERROR (never a new
+    // color); `Thinking` reuses MUTED (System's own tone) plus ITALIC so it
+    // never reads as ordinary assistant text or as a plain system line;
+    // `Error` reuses the same ERROR red a failed tool row uses.
     let (prefix, color) = match msg.role {
         MessageRole::User => ("you", tone::USER),
         MessageRole::Assistant => ("assistant", tone::ASSISTANT),
-        MessageRole::Tool => ("tool", tone::TOOL),
+        MessageRole::Thinking => ("thinking", tone::MUTED),
+        MessageRole::Tool => (
+            "tool",
+            if msg.is_error {
+                tone::ERROR
+            } else {
+                tone::TOOL
+            },
+        ),
+        MessageRole::Error => ("error", tone::ERROR),
         MessageRole::System => ("", tone::MUTED),
     };
     let body = if msg.streaming && msg.content.is_empty() {
@@ -328,6 +346,21 @@ fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
     };
     if prefix.is_empty() {
         vec![Line::from(Span::styled(body, Style::default().fg(color)))]
+    } else if msg.role == MessageRole::Thinking {
+        // Distinct from Assistant not just by prefix but by style: italic,
+        // muted — reads as "the model's scratch space", never as its answer.
+        vec![Line::from(vec![
+            Span::styled(
+                format!("{prefix}: "),
+                Style::default()
+                    .fg(color)
+                    .add_modifier(Modifier::BOLD | Modifier::ITALIC),
+            ),
+            Span::styled(
+                body,
+                Style::default().fg(color).add_modifier(Modifier::ITALIC),
+            ),
+        ])]
     } else {
         vec![Line::from(vec![
             Span::styled(
@@ -751,6 +784,78 @@ mod tests {
             hay.contains("hello kairo"),
             "submitted user text must appear in transcript: {hay}"
         );
+    }
+
+    #[test]
+    fn thinking_row_renders_distinct_from_assistant_row() {
+        let assistant = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "hi there".into(),
+            streaming: false,
+            is_error: false,
+        };
+        let thinking = ChatMessage {
+            role: MessageRole::Thinking,
+            content: "pondering the question".into(),
+            streaming: false,
+            is_error: false,
+        };
+        let assistant_line = &message_to_lines(&assistant)[0];
+        let thinking_line = &message_to_lines(&thinking)[0];
+
+        let assistant_prefix = assistant_line.spans[0].content.to_string();
+        let thinking_prefix = thinking_line.spans[0].content.to_string();
+        assert!(assistant_prefix.contains("assistant"));
+        assert!(thinking_prefix.contains("thinking"));
+        assert_ne!(
+            assistant_prefix, thinking_prefix,
+            "thinking must never render under the assistant prefix"
+        );
+
+        // Distinct style, not just distinct label: thinking is italic, the
+        // assistant body is not — so a thinking row never reads as the
+        // model's actual answer even at a glance.
+        let thinking_body_style = thinking_line.spans[1].style;
+        let assistant_body_style = assistant_line.spans[1].style;
+        assert!(thinking_body_style.add_modifier.contains(Modifier::ITALIC));
+        assert!(!assistant_body_style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn tool_error_row_is_visually_distinct_from_tool_success_row() {
+        let ok = ChatMessage {
+            role: MessageRole::Tool,
+            content: "✓ Read".into(),
+            streaming: false,
+            is_error: false,
+        };
+        let err = ChatMessage {
+            role: MessageRole::Tool,
+            content: "✖ Read".into(),
+            streaming: false,
+            is_error: true,
+        };
+        let ok_color = message_to_lines(&ok)[0].spans[0].style.fg;
+        let err_color = message_to_lines(&err)[0].spans[0].style.fg;
+        assert_eq!(ok_color, Some(tone::TOOL));
+        assert_eq!(err_color, Some(tone::ERROR));
+        assert_ne!(
+            ok_color, err_color,
+            "a failed tool result must not share the successful-tool color"
+        );
+    }
+
+    #[test]
+    fn assistant_stream_error_row_uses_error_tone() {
+        let err = ChatMessage {
+            role: MessageRole::Error,
+            content: "provider timeout".into(),
+            streaming: false,
+            is_error: true,
+        };
+        let line = &message_to_lines(&err)[0];
+        assert_eq!(line.spans[0].style.fg, Some(tone::ERROR));
+        assert!(line.spans[0].content.contains("error"));
     }
 
     #[test]

@@ -24,7 +24,16 @@ impl Focus {
 pub enum MessageRole {
     User,
     Assistant,
+    /// Assistant "thinking" content — always its own row, never merged into
+    /// `Assistant` text (Pi RPC's `thinking_start`/`thinking_delta`/
+    /// `thinking_end` `assistantMessageEvent`s, mirroring `text_*`).
+    Thinking,
     Tool,
+    /// An assistant-stream-level error (`assistantMessageEvent.type ==
+    /// "error"`, or a replayed message with `stopReason` `"error"`/
+    /// `"aborted"`) — distinct from a failed *tool* result, which stays a
+    /// `Tool` row with `is_error: true`.
+    Error,
     System,
 }
 
@@ -33,6 +42,10 @@ pub struct ChatMessage {
     pub role: MessageRole,
     pub content: String,
     pub streaming: bool,
+    /// Set on a `Tool` row whose result was `isError: true`. Never set on
+    /// other roles today; `MessageRole::Error` already carries the failure
+    /// in its role, not this flag.
+    pub is_error: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +63,7 @@ impl Default for ChatState {
                 role: MessageRole::System,
                 content: "Type /analyze to choose an analyst · then chat below.".into(),
                 streaming: false,
+                is_error: false,
             }],
             scroll_offset: 0,
             is_streaming: false,
@@ -68,6 +82,7 @@ impl ChatState {
             role: MessageRole::User,
             content: trimmed.to_string(),
             streaming: false,
+            is_error: false,
         });
     }
 
@@ -96,43 +111,92 @@ impl ChatState {
             role: MessageRole::Assistant,
             content: format!("(local mock) Received: {user_text}"),
             streaming: false,
+            is_error: false,
         });
     }
 
-    /// Replace chat with Pi transcript rows from the sidecar (`get_messages` mapping).
+    /// Append `delta` to the current streaming row for `role`, starting a new
+    /// row when the last message isn't already an open streaming row of the
+    /// same role. This is what keeps `Thinking` and `Assistant` text as
+    /// separate rows even while both stream concurrently — a `thinking_delta`
+    /// never appends onto an in-flight `Assistant` row and vice versa.
+    fn append_streaming(&mut self, role: MessageRole, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        if let Some(last) = self.messages.last_mut() {
+            if last.role == role && last.streaming {
+                last.content.push_str(delta);
+                self.is_streaming = true;
+                return;
+            }
+        }
+        self.is_streaming = true;
+        self.messages.push(ChatMessage {
+            role,
+            content: delta.to_string(),
+            streaming: true,
+            is_error: false,
+        });
+    }
+
+    /// Push a replay-only user/system row (see `pi-rpc-transcript.js`'s
+    /// `user_message`/`system_message` markers).
+    fn push_replay_message(&mut self, role: MessageRole, content: &str) {
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.messages.push(ChatMessage {
+            role,
+            content: trimmed.to_string(),
+            streaming: false,
+            is_error: false,
+        });
+    }
+
+    /// Replace chat with a restored session's history.
+    ///
+    /// `rows` are shaped exactly like the live sidecar/bridge events
+    /// `apply_sidecar_event` already reduces (`message_update` with a
+    /// `text_delta`/`thinking_delta`/`error` assistantMessageEvent,
+    /// `tool_execution_start`/`tool_execution_end`, `agent_settled`), plus
+    /// two replay-only markers a live stream never emits itself:
+    /// `user_message` and `system_message` (`pi-rpc-transcript.js`'s own
+    /// output shape). Feeding every non-replay-only row through the SAME
+    /// reducer the live stream uses is what makes restored history render
+    /// identically to live — text, thinking, tool rows, and errors can never
+    /// diverge between the two paths because they share one implementation.
     pub fn replace_from_sidecar_transcript(&mut self, rows: &[Value]) {
-        let mut messages = vec![ChatMessage {
+        self.messages = vec![ChatMessage {
             role: MessageRole::System,
             content: "Type /analyze to choose an analyst · then chat below.".into(),
             streaming: false,
+            is_error: false,
         }];
-        for row in rows {
-            let Some(obj) = row.as_object() else {
-                continue;
-            };
-            let content = obj
-                .get("content")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            let Some(content) = content else {
-                continue;
-            };
-            let role = match obj.get("role").and_then(|v| v.as_str()) {
-                Some("user") => MessageRole::User,
-                Some("assistant") => MessageRole::Assistant,
-                Some("system") => MessageRole::System,
-                _ => continue,
-            };
-            messages.push(ChatMessage {
-                role,
-                content: content.to_string(),
-                streaming: false,
-            });
-        }
-        self.messages = messages;
         self.scroll_offset = 0;
         self.is_streaming = false;
+        for row in rows {
+            match row.get("type").and_then(|v| v.as_str()) {
+                Some("user_message") => {
+                    if let Some(content) = row.get("content").and_then(|v| v.as_str()) {
+                        self.push_replay_message(MessageRole::User, content);
+                    }
+                }
+                Some("system_message") => {
+                    if let Some(content) = row.get("content").and_then(|v| v.as_str()) {
+                        self.push_replay_message(MessageRole::System, content);
+                    }
+                }
+                _ => self.apply_sidecar_event(row),
+            }
+        }
+        // A restored session is never mid-stream — close every row so no
+        // ghost "…" placeholder survives the switch.
+        self.is_streaming = false;
+        for msg in &mut self.messages {
+            msg.streaming = false;
+        }
     }
 
     pub fn begin_assistant_stream(&mut self) {
@@ -141,6 +205,7 @@ impl ChatState {
             role: MessageRole::Assistant,
             content: String::new(),
             streaming: true,
+            is_error: false,
         });
     }
 
@@ -160,18 +225,54 @@ impl ChatState {
         };
         match kind {
             "message_update" => {
-                if let Some(delta) = record
-                    .pointer("/assistantMessageEvent/delta")
+                match record
+                    .pointer("/assistantMessageEvent/type")
                     .and_then(|v| v.as_str())
                 {
-                    if !self.is_streaming {
-                        self.begin_assistant_stream();
-                    }
-                    if let Some(last) = self.messages.last_mut() {
-                        if last.role == MessageRole::Assistant && last.streaming {
-                            last.content.push_str(delta);
+                    // `thinking_delta` shares the same `{delta}` shape as
+                    // `text_delta` (see Pi RPC's `AssistantMessageEvent`
+                    // union) but must land on its own `Thinking` row — never
+                    // appended onto the streaming `Assistant` text row.
+                    Some("thinking_delta") => {
+                        if let Some(delta) = record
+                            .pointer("/assistantMessageEvent/delta")
+                            .and_then(|v| v.as_str())
+                        {
+                            self.append_streaming(MessageRole::Thinking, delta);
                         }
                     }
+                    Some("text_delta") => {
+                        if let Some(delta) = record
+                            .pointer("/assistantMessageEvent/delta")
+                            .and_then(|v| v.as_str())
+                        {
+                            self.append_streaming(MessageRole::Assistant, delta);
+                        }
+                    }
+                    // `{ type: "error", error: { errorMessage } }` — a
+                    // stream-level failure (aborted/errored turn), distinct
+                    // from a failed tool result. Previously dropped entirely
+                    // (no `delta` field, so the old delta-only check ignored
+                    // it) — the transcript went silent on a real failure.
+                    Some("error") => {
+                        let message = record
+                            .pointer("/assistantMessageEvent/error/errorMessage")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("assistant error");
+                        self.is_streaming = false;
+                        for msg in &mut self.messages {
+                            if msg.streaming {
+                                msg.streaming = false;
+                            }
+                        }
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::Error,
+                            content: message.to_string(),
+                            streaming: false,
+                            is_error: true,
+                        });
+                    }
+                    _ => {}
                 }
             }
             "tool_execution_start" => {
@@ -183,6 +284,7 @@ impl ChatState {
                     role: MessageRole::Tool,
                     content: format!("▶ {name} …"),
                     streaming: false,
+                    is_error: false,
                 });
             }
             "tool_execution_end" => {
@@ -190,12 +292,16 @@ impl ChatState {
                     .get("toolName")
                     .and_then(|v| v.as_str())
                     .unwrap_or("tool");
-                let err = record.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
+                let err = record
+                    .get("isError")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let glyph = if err { "✖" } else { "✓" };
                 self.messages.push(ChatMessage {
                     role: MessageRole::Tool,
                     content: format!("{glyph} {name}"),
                     streaming: false,
+                    is_error: err,
                 });
             }
             "agent_settled" => {
@@ -291,11 +397,10 @@ mod tests {
     fn local_submit_adds_user_message() {
         let mut chat = ChatState::default();
         chat.submit_user("  hi there  ".into());
-        assert!(
-            chat.messages
-                .iter()
-                .any(|m| m.role == MessageRole::User && m.content == "hi there")
-        );
+        assert!(chat
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::User && m.content == "hi there"));
     }
 
     #[test]
@@ -321,12 +426,10 @@ mod tests {
         assert!(chat.is_streaming);
         chat.cancel_empty_assistant_stream();
         assert!(!chat.is_streaming);
-        assert!(
-            !chat
-                .messages
-                .iter()
-                .any(|m| m.role == MessageRole::Assistant)
-        );
+        assert!(!chat
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::Assistant));
     }
 
     #[test]
@@ -334,27 +437,171 @@ mod tests {
         let mut chat = ChatState::default();
         chat.submit_user("old".into());
         chat.replace_from_sidecar_transcript(&[
-            json!({ "role": "user", "content": "hello" }),
-            json!({ "role": "assistant", "content": "hi" }),
+            json!({ "type": "user_message", "content": "hello" }),
+            json!({
+                "type": "message_update",
+                "assistantMessageEvent": { "type": "text_delta", "delta": "hi" }
+            }),
+            json!({ "type": "agent_settled" }),
         ]);
-        assert!(
-            chat.messages
-                .iter()
-                .any(|m| m.role == MessageRole::User && m.content == "hello")
-        );
-        assert!(
-            chat.messages
-                .iter()
-                .any(|m| m.role == MessageRole::Assistant && m.content == "hi")
-        );
-        assert!(
-            !chat
-                .messages
-                .iter()
-                .any(|m| m.role == MessageRole::User && m.content == "old")
-        );
+        assert!(chat
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::User && m.content == "hello"));
+        assert!(chat
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::Assistant && m.content == "hi"));
+        assert!(!chat
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::User && m.content == "old"));
         assert_eq!(chat.scroll_offset, 0);
         assert!(!chat.is_streaming);
+    }
+
+    #[test]
+    fn thinking_delta_creates_distinct_row_never_merged_into_text() {
+        let mut chat = ChatState::default();
+        chat.apply_sidecar_event(&json!({
+            "type": "message_update",
+            "assistantMessageEvent": { "type": "thinking_delta", "delta": "Let me think" }
+        }));
+        chat.apply_sidecar_event(&json!({
+            "type": "message_update",
+            "assistantMessageEvent": { "type": "text_delta", "delta": "Answer" }
+        }));
+        let thinking: Vec<_> = chat
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Thinking)
+            .collect();
+        let assistant: Vec<_> = chat
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Assistant)
+            .collect();
+        assert_eq!(thinking.len(), 1);
+        assert_eq!(thinking[0].content, "Let me think");
+        assert_eq!(assistant.len(), 1);
+        assert_eq!(assistant[0].content, "Answer");
+        assert!(
+            !assistant[0].content.contains("Let me think"),
+            "thinking must never be concatenated into assistant text"
+        );
+    }
+
+    #[test]
+    fn assistant_stream_error_becomes_distinct_error_row() {
+        let mut chat = ChatState::default();
+        chat.begin_assistant_stream();
+        chat.apply_sidecar_event(&json!({
+            "type": "message_update",
+            "assistantMessageEvent": {
+                "type": "error",
+                "reason": "error",
+                "error": { "errorMessage": "provider timeout" }
+            }
+        }));
+        assert!(chat
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::Error && m.content.contains("provider timeout")));
+        assert!(
+            !chat.is_streaming,
+            "an assistant-stream error must close streaming"
+        );
+    }
+
+    #[test]
+    fn tool_execution_end_marks_error_flag_distinctly() {
+        let mut chat = ChatState::default();
+        chat.apply_sidecar_event(&json!({ "type": "tool_execution_start", "toolName": "Bash" }));
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_end",
+            "toolName": "Bash",
+            "isError": true
+        }));
+        let last = chat.messages.last().expect("tool row");
+        assert_eq!(last.role, MessageRole::Tool);
+        assert!(
+            last.is_error,
+            "a failed tool result must be flagged distinctly"
+        );
+        assert!(last.content.starts_with('✖'));
+
+        let mut chat_ok = ChatState::default();
+        chat_ok.apply_sidecar_event(&json!({ "type": "tool_execution_start", "toolName": "Bash" }));
+        chat_ok.apply_sidecar_event(&json!({
+            "type": "tool_execution_end",
+            "toolName": "Bash",
+            "isError": false
+        }));
+        let ok_last = chat_ok.messages.last().expect("tool row");
+        assert!(!ok_last.is_error);
+    }
+
+    #[test]
+    fn replayed_history_matches_live_event_sequence_for_mixed_turn() {
+        // A single live sidecar/bridge event sequence covering every distinct
+        // event category this slice cares about: thinking, text, tool-call,
+        // tool-result, and an assistant-stream error.
+        let live_events = vec![
+            json!({
+                "type": "message_update",
+                "assistantMessageEvent": { "type": "thinking_delta", "delta": "Considering options" }
+            }),
+            json!({
+                "type": "message_update",
+                "assistantMessageEvent": { "type": "text_delta", "delta": "Here is the plan" }
+            }),
+            json!({ "type": "tool_execution_start", "toolName": "Read" }),
+            json!({ "type": "tool_execution_end", "toolName": "Read", "isError": false }),
+            json!({
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "error",
+                    "error": { "errorMessage": "provider timeout" }
+                }
+            }),
+            json!({ "type": "agent_settled" }),
+        ];
+
+        let mut live = ChatState::default();
+        for ev in &live_events {
+            live.apply_sidecar_event(ev);
+        }
+
+        // Replay the SAME events through the sidecar-transcript entry point
+        // (this is what `switch_session`/`new_session` feeds on session
+        // restore) and confirm it reduces to an identical row sequence.
+        let mut replay = ChatState::default();
+        replay.replace_from_sidecar_transcript(&live_events);
+
+        let strip_system = |chat: &ChatState| -> Vec<(MessageRole, String, bool)> {
+            chat.messages
+                .iter()
+                .filter(|m| m.role != MessageRole::System)
+                .map(|m| (m.role.clone(), m.content.clone(), m.is_error))
+                .collect()
+        };
+        let live_rows = strip_system(&live);
+        let replay_rows = strip_system(&replay);
+        assert_eq!(
+            live_rows, replay_rows,
+            "restored history must render the same ordered row sequence as it did live"
+        );
+
+        // Sanity: every distinct category from the brief is actually present,
+        // not just coincidentally empty on both sides.
+        assert!(live_rows
+            .iter()
+            .any(|(r, _, _)| *r == MessageRole::Thinking));
+        assert!(live_rows
+            .iter()
+            .any(|(r, _, _)| *r == MessageRole::Assistant));
+        assert!(live_rows.iter().any(|(r, _, _)| *r == MessageRole::Tool));
+        assert!(live_rows.iter().any(|(r, _, _)| *r == MessageRole::Error));
     }
 
     #[test]
