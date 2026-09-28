@@ -67,7 +67,7 @@ Workflow: `.github/workflows/kairo-ui-prebuilt.yml` — **`workflow_dispatch` on
 | Runner | Expected key |
 |---|---|
 | macos-14 (Apple Silicon) | `darwin-arm64` (exec) |
-| macos-13 x64 | `darwin-x64` (exec) |
+| macos-15-intel | `darwin-x64` (exec) |
 | ubuntu-24.04 x64 | `linux-x64` (exec) |
 | ubuntu-24.04-arm | `linux-arm64` (exec) |
 

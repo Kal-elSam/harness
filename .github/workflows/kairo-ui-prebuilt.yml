@@ -23,7 +23,7 @@ jobs:
         include:
           - os: macos-14
             key: darwin-arm64
-          - os: macos-13
+          - os: macos-15-intel
             key: darwin-x64
           - os: ubuntu-24.04
             key: linux-x64
