@@ -112,7 +112,7 @@ Neutral adapters needed before porting: `ink/use-orchestrator-data.js` (hook-bou
 
 | Capability | Now | Acceptance |
 |---|---|---|
-| Binary | **PARTIAL** — all **4** prebuilts present under `dist/kairo-ui/` (darwin-arm64 ~1.6M, darwin-x64 ~1.6M, linux-x64 ~1.4M, linux-arm64 ~1.3M). Clean-install-without-Cargo proven for **host** (`darwin-arm64` `--v3-capture`). Foreign triples: selection + `file` magic; runtime exec needs Rosetta / Linux CI / Docker (not faked). Do **not** claim complete distribution | Clean install without Cargo launches **per triple**; foreign exec on matching runners |
+| Binary | **VERIFIED (mock sidecar only)** — all **4** prebuilts present under `dist/kairo-ui/` (darwin-arm64 ~1.6M, darwin-x64 ~1.6M, linux-x64 ~1.4M, linux-arm64 ~1.3M). Observed on native runners: run `36486806394` on `1ee2c28c8` (see 2026-09-28 U6d entry) — extracted-tarball selection, launch without Cargo, `--v3-capture` 52 files, PTY mock-sidecar PASS at 60x30/100x30/160x48 on all four triples. Does **not** prove real providers or total product parity | Clean install without Cargo launches **per triple**; foreign exec on matching runners |
 | darwin/linux × arm64/x64 selection | `resolvePrebuiltBinary` auto-selects; JS + clean-install tests cover all 4 keys against real staged artifacts; cargo never invoked when prebuilt present | Correct prebuilt binary auto-selected; source build dev-only |
 | Windows | explicit error (done) | Non-interactive CLI only |
 
@@ -136,7 +136,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [ ] Color TTY @60/100/160: distinguishable sidebar, work surface, USAGE (your approval) — **before R7** — V3 + Ops/Settings@60 fixtures OK (fixture-only); live chat visual still open
 - [ ] Chat with model: prompt/stream/tools/cancel/scroll on those surfaces — functional path exists; **live provider visual** not certified
 - [ ] Bridge: fail-open host; post-connect crash reflected; real no-model cold-start classified honestly (R4) — **U2a publish blocked**
-- [~] Install from package selects correct binary (after visual gate) — **U6 partial**: all 4 artifacts present; clean-install launch+no-Cargo for all 4 (mocked platform/arch); host `--v3-capture` exec proven; foreign exec gaps (Rosetta/CI/Docker)
+- [x] Install from package selects correct binary (after visual gate) — **U6 VERIFIED (mock sidecar only)**: run `36486806394` on `1ee2c28c8`, 9/9 jobs success; each of the 4 native runners logged selection from the extracted tarball, launch without cargo OK, `v3-capture: 52 files`, PTY PASS at 60x30/100x30/160x48. Does not prove real providers
 - [ ] Default `kairo ui` → ratatui is live on this branch; R9 still covers stripping old UIs / packaging; V3 remains the visual gate before claiming product-done — U7 local entries done; **R9 remote + total parity NOT claimed**
 
 ## TDD
@@ -166,8 +166,8 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] T2 In-UI team depth: analyst picker + per-role SUGGESTED editor (U4d)
 - [x] R6 Commands/dialogs via RPC extension-UI (abort + compact + extension_ui dialogs U3b)
 - [x] V3 Visual gate: fixture captures @60/100/160 reviewed OK by human (`ff5dfd0fc`) — **fixture mock only**; does **not** certify live provider runtime, packaging, or native RDD. Still gates R7 packaging claim until those are separate.
-- [x] R7 Package binaries (darwin/linux); Windows `ui` error — **code path**; full U6 ship proof still open (see U6 partial)
-- [~] R8 Final parity evidence pack (**partial**, 2026-09-28) — inventory only; **does NOT declare total parity**. Visual legible ≠ functional parity; binary selection ≠ packaging verified. See Progress → R8 evidence matrix
+- [x] R7 Package binaries (darwin/linux); Windows `ui` error — **code path**; U6 ship proof now observed on native runners (mock sidecar only; see U6 / 2026-09-28 U6d entry)
+- [~] R8 Final parity evidence pack (**partial**, updated 2026-09-28) — evidence pack only; **does NOT declare total parity**. U6 closed does not imply total product parity. Still open: U2a, U2b, live chat visual, in-host interactive setup (delegated to `kairo setup`), runs detail / reviews depth (U5 partial), R9, native RDD (U6a-c candidate declined). See Progress → R8 evidence matrix
 - [ ] R9 Cutover default + strip Pi-TUI/cockpit as product UIs (**remote auth**)
 
 ### Plan 2026-09-28 (ratatui as the only UI) — supersedes open R4/R6/T2/R7–R9 scope above
@@ -181,10 +181,10 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
 - [x] U4 Workspace: **U4a+U4b+U4c+U4d done** (modes + plans + execute/cancel/handoff + slash + Work/Project/Tasks/Sessions + per-role SUGGESTED editor)
 - [x] U5 Operations + Settings views — U5a read-only Ops hub `5` + U5b mutations/Settings `6` (sync/rollback/runs cancel/alerts dismiss/reviews list; setup honest stub → still **delegated** to `kairo setup`). Runs detail + reviews remain dashboard/list-backed (**partial** depth)
-- [~] U6 Packaging (**PARTIAL**): all 4 prebuilts built; hand-staged + **npm pack** clean-install prove launch without Cargo + host `--v3-capture`; foreign-exec classification fixed (status 0 = diagnostic PASS, else gap); CI matrix skeleton added; foreign exec still needs matching runners (Docker/Rosetta unavailable locally). PTY 60×30 / 100×30 / 160×48 on host. Do **not** declare complete / U6 done
-  - [x] U6a CI artifacts + assemble: `host-v3-capture` uploads `kairo-ui-bin-<key>-<github.sha>`; `assemble` (needs matrix) places 4 binaries, `chmod +x`, `npm pack`, asserts 4 keys via `tar -tzf`, uploads `kairo-ui-package-<github.sha>` — **authored + statically tested** (`test/kairo-ui-packaged-verify.test.js`); **not run on GitHub runners**
-  - [x] U6b Native-runner package verification: `verify-package` matrix (4 runner/key pairs, needs `assemble`) runs `scripts/verify-kairo-ui-packaged.sh` on the extracted tarball; script proven locally on darwin-arm64 against a real `npm pack` (selection, no-cargo launch, `--v3-capture` 52 files, PTY 60x30/100x30/160x48). Workflow execution on other runners **pending / unverified**
-  - [x] U6c Docs/header: stale "not wired" comment in `scripts/build-kairo-ui-binaries.sh` fixed; `dist/kairo-ui/README.md` describes the pipeline honestly (authored, not yet observed green)
+- [x] U6 Packaging (**VERIFIED, limited to mock sidecar**, 2026-09-28): all 4 prebuilts built; hand-staged + `npm pack` clean-install locally, and the `kairo-ui-prebuilt.yml` pipeline observed green on all four native runners (run `36486806394`, SHA `1ee2c28c8`, 9/9 jobs success). Does **not** prove real providers. U6 closed does not imply total product parity; total parity NOT declared
+  - [x] U6a CI artifacts + assemble: `host-v3-capture` uploads `kairo-ui-bin-<key>-<github.sha>`; `assemble` (needs matrix) places 4 binaries, `chmod +x`, `npm pack`, asserts 4 keys via `tar -tzf`, uploads `kairo-ui-package-<github.sha>` — statically tested (`test/kairo-ui-packaged-verify.test.js`) and observed on GitHub runners (run `36486806394`)
+  - [x] U6b Native-runner package verification: `verify-package` matrix (4 runner/key pairs, needs `assemble`) runs `scripts/verify-kairo-ui-packaged.sh` on the extracted tarball; observed success on all four native runners (run `36486806394`, SHA `1ee2c28c8`)
+  - [x] U6c Docs/header: stale "not wired" comment in `scripts/build-kairo-ui-binaries.sh` fixed; `dist/kairo-ui/README.md` describes the pipeline and now records the observed green run
   - [x] U6d Observe `kairo-ui-prebuilt.yml` green on all four GitHub runners (run 36486806394, sha 1ee2c28c8)
 - [x] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
 
@@ -401,14 +401,14 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **Fixtures**: `60x30-ops` + `60x30-settings` in v3_capture (mock only).
   - **Verification (observed)**: `node --test test/ops-mutations.test.js test/settings-sidecar.test.js test/ops-sidecar.test.js test/kairo-ui-rpc-stdio.test.js` → **81/81**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **161/161**.
 
-- (2026-09-28) **U6 Packaging (STRICT TDD) — PARTIAL / open packaging debt** — Prebuilt host binaries + launch selection; no second UI host; no providers. **Do not treat as complete distribution.**
+- (2026-09-28) **U6 Packaging (STRICT TDD) — PARTIAL / open packaging debt** _(historical; superseded by the "2026-09-28 U6d observed" entry below)_ — Prebuilt host binaries + launch selection; no second UI host; no providers. **Do not treat as complete distribution.**
   - **Resolver**: `src/global/host/kairo-ui-prebuilt.js` — `resolvePrebuiltBinary(platform, arch)` → `dist/kairo-ui/<darwin|linux>-<arm64|x64>/kairo-ui`.
   - **Launch**: `launchRatatuiHost` prefers prebuilt (no Cargo.toml required) over `cargo build --release` (dev-only fallback when prebuilt missing). Windows `ui` error unchanged.
   - **Build**: `scripts/build-kairo-ui-binaries.sh` (+ `npm run build:kairo-ui`); npm `files` includes `dist/kairo-ui`. **Only host arch (`darwin-arm64`) built locally** with ship/launch evidence; other triples skipped honestly without cross toolchains (CI matrix documented in `dist/kairo-ui/README.md`) — **selection-tested only**.
   - **PTY**: `scripts/kairo-ui-pty-e2e.py` runs 60×30 / 100×30 / 160×48 via real PTY + `TIOCSWINSZ`; mock sidecar; alt-screen enter/leave restore. Evidence: `/tmp/kairo-pty-u6/` (`SUMMARY.txt`, per-size `.typescript` + `.mock.log`).
   - **Verification (observed)**: `node --test test/kairo-ui-prebuilt.test.js test/launch-ratatui-host.test.js` → **26/26**. `python3 scripts/kairo-ui-pty-e2e.py` → **PASS** all three sizes. Built binary: `dist/kairo-ui/darwin-arm64/kairo-ui` only.
 
-- (2026-09-28) **U6 packaging closure (4 artifacts + clean-install)** — HEAD after trailer rewrite `879d01fdd`+; **still PARTIAL** (foreign exec gaps). Total product parity **NOT** declared.
+- (2026-09-28) **U6 packaging closure (4 artifacts + clean-install)** — HEAD after trailer rewrite `879d01fdd`+; **still PARTIAL** (foreign exec gaps) _(historical; superseded by the "2026-09-28 U6d observed" entry below)_. Total product parity **NOT** declared.
   - **Artifacts** (gitignored): `darwin-arm64` ~1.6M Mach-O arm64; `darwin-x64` ~1.6M Mach-O x86_64; `linux-x64` ~1.4M ELF x86-64; `linux-arm64` ~1.3M ELF aarch64.
   - **Build**: `scripts/build-kairo-ui-binaries.sh` prefers `cargo zigbuild` for non-host Linux when `cargo-zigbuild`+`zig` exist; honest skip otherwise. Documented in `dist/kairo-ui/README.md`.
   - **Clean-install**: `scripts/verify-kairo-ui-clean-install.sh` + `test/kairo-ui-clean-install.test.js` stage crate-less root (no `crates/` / `Cargo.toml`); `launchRatatuiHost` selects matching prebuilt for all 4 keys with **zero** cargo calls; host `--v3-capture` exit 0 + fixture files; foreign triples assert `file` magic; **foreign exec status 0 → diagnostic foreign-exec PASS** (Rosetta/emulation OK, not a failure); non-zero/spawn error → honest gap diagnostic. Never invent PASS without observed status 0.
@@ -416,23 +416,25 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **CI matrix**: `.github/workflows/kairo-ui-prebuilt.yml` is **`workflow_dispatch` only** (not on PRs). Matrix: macos-14 → darwin-arm64, macos-15-intel → darwin-x64, ubuntu-24.04 → linux-x64, ubuntu-24.04-arm → linux-arm64; each builds host-only + `--v3-capture`. Local Mac still has no Docker/Rosetta → do **not** fake multiplatform exec until those runners observe status 0.
   - **Evidence scope honesty**: npm-pack / clean-install tests run real host `--v3-capture`; `launchRatatuiHost` `--bridge` path remains **mocked** (spawn stub) — selection without Cargo, not a live bridge session.
   - **Per-triple**: see Progress matrix below / verify script output.
-  - **U6 remains PARTIAL** — pack+host proven; foreign exec gaps (and optional matrix green) still open.
+  - **U6 remains PARTIAL** — pack+host proven; foreign exec gaps (and optional matrix green) still open. _(Historical; superseded by the "2026-09-28 U6d observed" entry below.)_
 
-- (2026-09-28) **U6 packaged-artifact verification (U6a/U6b/U6c)** — **still PARTIAL**; parity NOT declared. Route: delegated direct (single bounded writer; trigger: 2+ non-trivial files), STRICT TDD via `node --test`.
+- (2026-09-28) **U6 packaged-artifact verification (U6a/U6b/U6c)** — **still PARTIAL** _(historical; superseded by the "2026-09-28 U6d observed" entry below)_; parity NOT declared. Route: delegated direct (single bounded writer; trigger: 2+ non-trivial files), STRICT TDD via `node --test`.
   - **RED**: `node --test test/kairo-ui-packaged-verify.test.js` before implementation -> 1 pass / 7 fail (workflow lacked upload/assemble/verify-package; script missing).
   - **Implemented**: workflow gains artifact upload, `assemble`, `verify-package`; new `scripts/verify-kairo-ui-packaged.sh` (extract tarball, resolver + launcher from the package with cargo stripped from PATH, `--v3-capture` >= 10 files, PTY via `kairo-ui-pty-e2e.py` with `KAIRO_UI_BINARY` -> packaged binary); `npm run verify:kairo-ui-packaged`.
   - **GREEN (observed, host darwin-arm64)**: `test/kairo-ui-packaged-verify.test.js` 8/8; the script against a real `npm pack` tarball printed `selection: darwin-arm64`, `launch without cargo: OK`, `v3-capture: 52 files`, `PTY e2e PASS: 60x30, 100x30, 160x48`, `Packaged verification PASS`.
-  - **Not observed**: workflow authored and statically tested; **not run on GitHub runners**. Foreign-key runtime exec (darwin-x64, linux-x64, linux-arm64) remains unproven until a user-authorized `workflow_dispatch` is green. The PTY mock sidecar does NOT prove real providers.
+  - **Not observed** _(at the time; superseded by the "2026-09-28 U6d observed" entry below)_: workflow authored and statically tested; **not run on GitHub runners**. Foreign-key runtime exec (darwin-x64, linux-x64, linux-arm64) remains unproven until a user-authorized `workflow_dispatch` is green. The PTY mock sidecar does NOT prove real providers.
   - **Commits**: 7a08623a7 (ci(kairo-ui): assemble and verify the packaged host on native runners)
 
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + U5 + U7 local retirement done. **U6 packaging PARTIAL** (4 artifacts + host clean-install; foreign exec gaps). **R8 = evidence pack only — total parity NOT declared.**
+**Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + U5 + U7 local retirement done. **U6 packaging VERIFIED (mock sidecar only)** on four native runners (run `36486806394`, SHA `1ee2c28c8`). **R8 = evidence pack only (`[~]` partial) — U6 closed does not imply total product parity; total parity NOT declared.**
 
-1. **U6 foreign-exec proof (still open — U6 PARTIAL)** — the `kairo-ui-prebuilt.yml` pipeline (build -> assemble -> verify-package) is authored but unrun; a user-authorized `workflow_dispatch` must be observed green (U6d). Original note: — Rosetta (darwin-x64) and Linux CI/Docker (linux-x64 / linux-arm64) `--v3-capture` / PTY on matching runners (`kairo-ui-prebuilt.yml` skeleton). Local Mac: Docker/Rosetta unavailable → gaps stay honest; status-0 under emulation is diagnostic PASS only, never invented.
-2. **U2a / U2b** when publish / provider auth available.
+1. **U6 foreign-exec proof: closed** (2026-09-28 U6d entry). Remaining packaging caveat: verification used the mock sidecar; real providers are not proven by it.
+2. **U2a / U2b** when publish / provider auth available; live chat visual with a real provider.
 3. **R9** remote-auth cutover (separate from U7 local retirement).
-4. R8 evidence pack stays honest; do not greenwash gaps or declare total product parity.
+4. Depth gaps: in-host interactive setup (delegated to `kairo setup`), runs detail / reviews receipt depth (U5 partial).
+5. Native RDD: the U6a-c candidate was declined (not reviewed); PR #354 merged on CI checks only. Ask consent again on the next medium/high candidate.
+6. R8 evidence pack stays honest; do not greenwash gaps or declare total product parity.
 
 - (2026-09-28) **U7 Retirement** — Ratatui is the only interactive product UI.
   - Entries `kairo` / `start` / `resume` / `ui` / `shell` → ratatui; `--pi` / `--pi-host` / `KAIRO_UI_HOST=pi` / `--legacy-cockpit` throw clear migration errors (no hidden fallback).
@@ -447,21 +449,31 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 
   | Bucket | Evidence |
   |---|---|
-  | **Proven** | V3 fixture visual OK @60/100/160 (`ff5dfd0fc`); Ops+Settings @60 fixture visual OK (`c7036ddaa`); unit + PTY e2e on **darwin-arm64** (mock sidecar); U7 local retirement (entries → ratatui only, migration errors, exclusive UI deps removed); **U6 host clean-install**: crate-less `--v3-capture` on `darwin-arm64` + launch selection without Cargo for all 4 staged prebuilts |
-  | **Partial** | **U6**: all 4 artifacts present + `file` magic; foreign **runtime exec** still needs Rosetta / Linux CI / Docker; **setup**: honest stub → `kairo setup` (not in-host); **U5**: runs detail still dashboard-backed; reviews list read-only (not full receipt UX) |
-  | **Blocked** | **U2a** publish (RPC no-model runtime-active); **U2b** Bootstrap real provider answer; **R9** remote-auth cutover; **live chat visual** (provider runtime, not fixture); **native RDD** on remaining candidates; **U6 foreign exec** on matching runners |
+  | **Proven** | V3 fixture visual OK @60/100/160 (`ff5dfd0fc`); Ops+Settings @60 fixture visual OK (`c7036ddaa`); unit + PTY e2e on **darwin-arm64** (mock sidecar); U7 local retirement (entries → ratatui only, migration errors, exclusive UI deps removed); **U6 packaging VERIFIED (mock sidecar only)**: run `36486806394` on `1ee2c28c8`, 9/9 jobs success (4 build, `Assemble npm package`, 4 `Verify packaged host`); each native runner (darwin-arm64, darwin-x64, linux-x64, linux-arm64) logged selection from the extracted tarball, launch without cargo OK, `v3-capture: 52 files`, PTY PASS at 60x30/100x30/160x48 with terminal restore |
+  | **Partial** | **setup**: honest stub → `kairo setup` (not in-host); **U5**: runs detail still dashboard-backed; reviews list read-only (not full receipt UX); **U6 scope**: mock sidecar only, does not prove real providers |
+  | **Blocked / open** | **U2a** publish (RPC no-model runtime-active); **U2b** Bootstrap real provider answer; **R9** remote-auth cutover; **live chat visual** (provider runtime, not fixture); **native RDD**: U6a-c candidate (`b365bb5cd..449de9639`, tier high) consent DECLINED (`declined_this_candidate`) — not reviewed, not approved; PR #354 merged on CI checks only, no native review |
 
-  Explicit: **total product parity is NOT declared.** R8 checkbox stays `[~]` until foreign-exec gaps + blocked auth/remote items close or are explicitly accepted as out-of-scope cut lines.
+  Explicit: **U6 closed does not imply total product parity; total parity NOT declared.** R8 checkbox stays `[~]` until the open items above close or are explicitly accepted as out-of-scope cut lines.
 
-  **U6 per-triple (local Apple Silicon host, 2026-09-28):**
+  **U6 per-triple (native GitHub runners, run `36486806394`, SHA `1ee2c28c8`, 2026-09-28; supersedes the earlier local-host-only table):**
 
-  | Triple | Artifact | Clean-install launch (no cargo) | Exec `--v3-capture` |
+  | Triple | Artifact | Runner | Verify packaged host (extracted tarball) |
   |---|---|---|---|
-  | darwin-arm64 | ~1.6M Mach-O arm64 | PASS | PASS (host) |
-  | darwin-x64 | ~1.6M Mach-O x86_64 | PASS (selection + npm-pack) | GAP locally (no Rosetta); CI `macos-15-intel` (macos-13 retired); status 0 under Rosetta = foreign-exec PASS diagnostic |
-  | linux-x64 | ~1.4M ELF x86-64 | PASS (selection + npm-pack) | GAP locally; CI `ubuntu-24.04` skeleton |
-  | linux-arm64 | ~1.3M ELF aarch64 | PASS (selection + npm-pack) | GAP locally; CI `ubuntu-24.04-arm` in matrix (manual dispatch) |
+  | darwin-arm64 | ~1.6M Mach-O arm64 | macos-14 | PASS: selection, launch without cargo OK, `v3-capture: 52 files`, PTY 60x30/100x30/160x48 + terminal restore |
+  | darwin-x64 | ~1.6M Mach-O x86_64 | macos-15-intel | PASS: same checks |
+  | linux-x64 | ~1.4M ELF x86-64 | ubuntu-24.04 | PASS: same checks |
+  | linux-arm64 | ~1.3M ELF aarch64 | ubuntu-24.04-arm | PASS: same checks |
 
-- (2026-09-28) **U6a/U6b/U6c review assessment** — range `b365bb5cd..449de9639`: tier **high** (`executable_mode`, `process_boundary`, `shell_source`), 449 lines. Native consent envelope presented; user chose **Skip this time** (`declined_this_candidate`). No review record created; workflow still **not observed on GitHub runners** (U6d pending, needs `workflow_dispatch` authorization).
+  Scope: mock sidecar only. Non-blocking: Node 20 deprecation annotation on `upload/download-artifact@v4`. _(Historical local-only status for this entry — foreign exec GAP, CI skeleton, "R8 stays `[~]` until foreign-exec gaps close" — is superseded by the "2026-09-28 R8 update" entry below.)_
+
+- (2026-09-28) **U6a/U6b/U6c review assessment** — range `b365bb5cd..449de9639`: tier **high** (`executable_mode`, `process_boundary`, `shell_source`), 449 lines. Native consent envelope presented; user chose **Skip this time** (`declined_this_candidate`). No review record created (candidate declined, not approved/reviewed). _(At the time the workflow was not yet observed on GitHub runners; superseded by the "2026-09-28 U6d observed" entry below.)_
 
 - (2026-09-28) **U6d observed** — workflow registered on `main` via minimal PR #354 (only `kairo-ui-prebuilt.yml`, squash-merged after CI green on Node 22/24), then dispatched with `--ref feat/ratatui-host`. Run `36486806394` on `1ee2c28c8`: 4 build jobs, `Assemble npm package`, and 4 `Verify packaged host` jobs all **success**. Each native runner (darwin-arm64, darwin-x64, linux-x64, linux-arm64) logged selection from the extracted tarball, launch without cargo OK, `v3-capture: 52 files`, and PTY mock-sidecar PASS at 60x30/100x30/160x48 with terminal restore. Scope: mock sidecar only — does NOT prove real providers. **U6 packaging checked; total product parity still NOT declared** (U2a/U2b, setup-in-ratatui, runs/reviews detail, R9 remain open). Non-blocking: Node 20 deprecation annotation on `upload/download-artifact@v4`.
+
+- (2026-09-28) **R8 evidence pack update (docs only; R8 stays `[~]` PARTIAL)** — Route: delegated writer (trigger: 2+ files). Changed:
+  - U6 marked **VERIFIED (limited to mock sidecar)** in the Tasks list, Phase 6 table, and the "Install from package" acceptance criterion; R7 line now points to the observed run.
+  - R8 evidence matrix and the per-triple table rewritten around the native-runner evidence: run `36486806394`, SHA `1ee2c28c8`, 9/9 jobs success; workflow registered on `main` via minimal PR #354 and dispatched with `--ref feat/ratatui-host`.
+  - Next step: U6 foreign-exec proof closed; open items restated (U2a, U2b, live chat visual, in-host interactive setup delegated to `kairo setup`, runs detail / reviews depth, R9, native RDD).
+  - Native RDD recorded plainly: U6a-c candidate (`b365bb5cd..449de9639`, tier high) consent DECLINED (`declined_this_candidate`), not approved/reviewed; PR #354 merged after CI checks only, no native review.
+  - Historical Progress entries kept; superseded U6 statements carry a "superseded by" pointer.
+  - **U6 closed does not imply total product parity. Total parity NOT declared.** Companion: `dist/kairo-ui/README.md` status updated. Engram mirror handled by the parent.
