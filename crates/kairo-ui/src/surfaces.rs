@@ -142,7 +142,10 @@ fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel, focus: F
         .border_style(Style::default().fg(border))
         .style(Style::default().bg(tone::SIDEBAR_BG))
         .title(Span::styled(
-            format!(" ◈ {} ", truncate(&model.project, (area.width.saturating_sub(4)) as usize)),
+            format!(
+                " ◈ {} ",
+                truncate(&model.project, (area.width.saturating_sub(4)) as usize)
+            ),
             Style::default()
                 .fg(tone::ACCENT)
                 .add_modifier(Modifier::BOLD),
@@ -162,7 +165,11 @@ fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel, focus: F
     )));
     if model.agents.is_empty() {
         let empty_style = Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG);
-        items.push(ListItem::new(padded_span("No team yet", row_width, empty_style)));
+        items.push(ListItem::new(padded_span(
+            "No team yet",
+            row_width,
+            empty_style,
+        )));
         items.push(ListItem::new(padded_span(
             empty_team_key_hint(model.team_state.as_deref()),
             row_width,
@@ -226,9 +233,7 @@ fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat:
         .style(Style::default().bg(tone::WORK_BG))
         .title(Span::styled(
             format!(" {} ", model.work_title),
-            Style::default()
-                .fg(tone::TEXT)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(tone::TEXT).add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(area);
     block.render(area, buf);
@@ -245,14 +250,16 @@ fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat:
     }
     if let Some(notice) = &model.notice {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            format!("⚠ {notice}"),
-            Style::default().fg(tone::WARN).add_modifier(Modifier::BOLD),
-        )));
+        let notice_style = Style::default().fg(tone::WARN).add_modifier(Modifier::BOLD);
+        lines.extend(wrap_notice(notice, inner.width, notice_style));
     }
     let total = lines.len();
-    let start = chat.scroll_offset.min(total);
     let visible = inner.height as usize;
+    // Clamp to the LAST reachable window, not just `total`: a scroll offset
+    // at or past the end must show the final `visible` rows (the real
+    // cause of a wrapped notice), never an all-skipped blank pane.
+    let max_start = total.saturating_sub(visible);
+    let start = chat.scroll_offset.min(max_start);
     let slice: Vec<Line> = lines.into_iter().skip(start).take(visible).collect();
     Paragraph::new(slice)
         .style(Style::default().bg(tone::WORK_BG))
@@ -277,10 +284,7 @@ fn transcript_lines(chat: &ChatState, model: &ShellViewModel) -> Vec<Line<'stati
             return hint
                 .iter()
                 .map(|line| {
-                    Line::from(Span::styled(
-                        line.clone(),
-                        Style::default().fg(tone::MUTED),
-                    ))
+                    Line::from(Span::styled(line.clone(), Style::default().fg(tone::MUTED)))
                 })
                 .collect();
         }
@@ -289,10 +293,7 @@ fn transcript_lines(chat: &ChatState, model: &ShellViewModel) -> Vec<Line<'stati
             Style::default().fg(tone::MUTED),
         ))];
     }
-    chat.messages
-        .iter()
-        .flat_map(message_to_lines)
-        .collect()
+    chat.messages.iter().flat_map(message_to_lines).collect()
 }
 
 fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
@@ -313,9 +314,7 @@ fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
         vec![Line::from(vec![
             Span::styled(
                 format!("{prefix}: "),
-                Style::default()
-                    .fg(color)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
             ),
             Span::styled(body, Style::default().fg(tone::TEXT)),
         ])]
@@ -332,10 +331,7 @@ fn render_editor(buf: &mut Buffer, area: Rect, focus: Focus, editor: &TextArea<'
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border))
         .style(Style::default().bg(tone::WORK_BG))
-        .title(Span::styled(
-            " compose ",
-            Style::default().fg(tone::MUTED),
-        ));
+        .title(Span::styled(" compose ", Style::default().fg(tone::MUTED)));
     let inner = block.inner(area);
     block.render(area, buf);
     let mut area_editor = editor.clone();
@@ -386,14 +382,21 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
 /// in-UI equivalent of the cockpit's ProjectOverlay SELECT_ANALYST screen.
 /// Only **available** catalog rows are listed (unavailable adapters stay out).
 pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPickerState) {
-    let has_notice = picker.notice.is_some();
     // One row per option (label only) — empty description lines used to
     // inflate the modal with blank space.
     let content_rows = picker.options.len().max(1) as u16;
-    let height = content_rows
-        .saturating_add(if has_notice { 4 } else { 3 })
-        .min(area.height.saturating_sub(2).max(5));
     let width = area.width.saturating_sub(6).clamp(36, 72);
+    // Grow the popup to fit every wrapped notice row (not just one fixed
+    // row) so a long or multiline notice's final cause stays visible
+    // instead of being clipped at the modal's edge.
+    let notice_rows = picker
+        .notice
+        .as_deref()
+        .map(|n| wrap_notice(n, width.saturating_sub(2), Style::default()).len() as u16)
+        .unwrap_or(0);
+    let height = content_rows
+        .saturating_add(3 + notice_rows)
+        .min(area.height.saturating_sub(2).max(5));
     let popup = centered_rect(area, width, height);
     if popup.width == 0 || popup.height == 0 {
         return;
@@ -406,7 +409,9 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         .style(Style::default().bg(tone::SIDEBAR_BG))
         .title(Span::styled(
             " Select analyst — j/k · Enter · Esc cancel · q/Ctrl+C quit ",
-            Style::default().fg(tone::ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(popup);
     block.render(popup, buf);
@@ -452,17 +457,87 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         }
     }
     if let Some(notice) = &picker.notice {
-        lines.push(Line::from(Span::styled(
-            format!("⚠ {notice}"),
-            Style::default()
-                .fg(tone::WARN)
-                .add_modifier(Modifier::BOLD)
-                .bg(tone::SIDEBAR_BG),
-        )));
+        let notice_style = Style::default()
+            .fg(tone::WARN)
+            .add_modifier(Modifier::BOLD)
+            .bg(tone::SIDEBAR_BG);
+        lines.extend(wrap_notice(notice, inner.width, notice_style));
     }
     Paragraph::new(lines)
         .style(Style::default().bg(tone::SIDEBAR_BG))
         .render(inner, buf);
+}
+
+/// Word-wraps one segment (no `\n` inside it) to at most `width` visible
+/// columns, falling back to character-wrapping a single word that alone
+/// exceeds `width` (never truncated, never overrun). Always returns at
+/// least one entry, including an empty one for a blank segment (an empty
+/// line between two `\n`s in the source notice) so line counts stay
+/// faithful to the original text.
+fn wrap_text_segment(segment: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in segment.split(' ') {
+        if word.chars().count() > width {
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            let mut chunk = String::new();
+            for ch in word.chars() {
+                if chunk.chars().count() >= width {
+                    lines.push(std::mem::take(&mut chunk));
+                }
+                chunk.push(ch);
+            }
+            current = chunk;
+            continue;
+        }
+        let candidate_len = if current.is_empty() {
+            word.chars().count()
+        } else {
+            current.chars().count() + 1 + word.chars().count()
+        };
+        if candidate_len > width {
+            lines.push(std::mem::take(&mut current));
+            current = word.to_string();
+        } else {
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+/// Splits a notice on `\n`, then word/char-wraps each segment to
+/// `inner_width` — the first output line overall is prefixed `⚠ `, every
+/// other line (whether wrapped within a segment or a later `\n` segment)
+/// is indented by 2 spaces, so the wrapped block still reads as one
+/// visual unit and no cause is clipped at the pane width. Returns owned
+/// `Line`s so scroll offsets and popup sizing count real screen rows.
+fn wrap_notice(notice: &str, inner_width: u16, style: Style) -> Vec<Line<'static>> {
+    // "⚠ " and "  " are both 2 columns, so the wrap width is the same
+    // whether a line is the leading prefix or a continuation indent.
+    let avail = (inner_width as usize).saturating_sub(2).max(1);
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let mut is_first = true;
+    for segment in notice.split('\n') {
+        for wrapped in wrap_text_segment(segment, avail) {
+            let text = if is_first {
+                format!("⚠ {wrapped}")
+            } else {
+                format!("  {wrapped}")
+            };
+            out.push(Line::from(Span::styled(text, style)));
+            is_first = false;
+        }
+    }
+    out
 }
 
 /// One list/paragraph line padded to `width` so background fills the row.
@@ -501,7 +576,10 @@ mod tests {
     }
 
     fn buffer_text(buf: &Buffer) -> String {
-        buf.content().iter().map(|c| c.symbol().to_string()).collect()
+        buf.content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect()
     }
 
     fn default_editor() -> TextArea<'static> {
@@ -522,8 +600,14 @@ mod tests {
         );
 
         let sidebar = regions.sidebar.expect("sidebar");
-        assert_eq!(cell_bg(&buf, sidebar.x + 1, sidebar.y + 1), tone::SIDEBAR_BG);
-        assert_eq!(cell_bg(&buf, regions.main.x + 2, regions.main.y + 2), tone::WORK_BG);
+        assert_eq!(
+            cell_bg(&buf, sidebar.x + 1, sidebar.y + 1),
+            tone::SIDEBAR_BG
+        );
+        assert_eq!(
+            cell_bg(&buf, regions.main.x + 2, regions.main.y + 2),
+            tone::WORK_BG
+        );
         assert_eq!(
             cell_bg(&buf, regions.usage.x + 1, regions.usage.y + 1),
             tone::USAGE_BG
@@ -606,13 +690,7 @@ mod tests {
         model.selected_agent = 0;
         let mut chat = ChatState::default();
         chat.focus = Focus::Sidebar;
-        render_shell(
-            &mut buf,
-            regions,
-            &model,
-            &chat,
-            &default_editor(),
-        );
+        render_shell(&mut buf, regions, &model, &chat, &default_editor());
 
         let inner_y = sidebar.y + 1;
         let name_y = inner_y + 1;
@@ -640,7 +718,90 @@ mod tests {
         );
 
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Pi engine unavailable"), "buffer missing notice: {hay}");
+        assert!(
+            hay.contains("Pi engine unavailable"),
+            "buffer missing notice: {hay}"
+        );
+    }
+
+    #[test]
+    fn work_surface_wraps_multiline_notice_showing_every_line() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut model = ShellViewModel::default();
+        model.notice = Some("first line of notice\nsecond line of notice\nTHIRD_LINE_TOKEN".into());
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+        );
+
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("first"),
+            "buffer missing first notice line: {hay}"
+        );
+        assert!(
+            hay.contains("second"),
+            "buffer missing second notice line: {hay}"
+        );
+        assert!(
+            hay.contains("THIRD_LINE_TOKEN"),
+            "buffer missing final notice line — multiline notices must not clip the last line: {hay}"
+        );
+    }
+
+    #[test]
+    fn work_surface_wraps_long_notice_in_narrow_area_and_reaches_final_token_when_scrolled() {
+        let area = Rect::new(0, 0, 30, 24);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut model = ShellViewModel::default();
+        let long_notice = format!("{}FINAL_SUFFIX_TOKEN", "word ".repeat(40));
+        model.notice = Some(long_notice);
+        let mut chat = ChatState::default();
+        // Scroll to the end so the final wrapped row (the real cause) is
+        // reachable, not just proven to exist off-screen.
+        chat.scroll_offset = usize::MAX / 2;
+        render_shell(&mut buf, regions, &model, &chat, &default_editor());
+
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("FINAL_SUFFIX_TOKEN"),
+            "long single-line notice must word-wrap in a narrow area so its final token is reachable: {hay}"
+        );
+    }
+
+    #[test]
+    fn analyst_picker_modal_grows_to_fit_and_shows_a_long_wrapped_notice() {
+        use crate::analyst_picker::{AnalystOption, AnalystPickerState};
+
+        let area = Rect::new(0, 0, 100, 30);
+        let long_notice = format!("{}FINAL_SUFFIX_TOKEN", "word ".repeat(30));
+        let picker = AnalystPickerState {
+            options: vec![AnalystOption {
+                candidate_key: "codex::gpt".into(),
+                adapter_id: "codex".into(),
+                model_id: "gpt".into(),
+                display_name: "GPT".into(),
+                available: true,
+                recommended: false,
+                tags: vec![],
+            }],
+            selected: 0,
+            notice: Some(long_notice),
+        };
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("FINAL_SUFFIX_TOKEN"),
+            "picker's long notice must wrap (and the popup grow to fit) so the final token is visible: {hay}"
+        );
     }
 
     #[test]
@@ -697,7 +858,10 @@ mod tests {
             &ChatState::default(),
             &default_editor(),
         );
-        assert_eq!(cell_bg(&buf, regions.main.x + 2, regions.main.y + 2), tone::WORK_BG);
+        assert_eq!(
+            cell_bg(&buf, regions.main.x + 2, regions.main.y + 2),
+            tone::WORK_BG
+        );
         assert_eq!(
             cell_bg(&buf, regions.usage.x + 1, regions.usage.y + 1),
             tone::USAGE_BG
@@ -751,7 +915,12 @@ mod tests {
 
     #[test]
     fn text_on_surfaces_meets_wcag_aa_contrast() {
-        for bg in [tone::WORK_BG, tone::SIDEBAR_BG, tone::USAGE_BG, tone::SELECT_BG] {
+        for bg in [
+            tone::WORK_BG,
+            tone::SIDEBAR_BG,
+            tone::USAGE_BG,
+            tone::SELECT_BG,
+        ] {
             let ratio = contrast_ratio(tone::TEXT, bg);
             assert!(
                 ratio >= 4.5,
@@ -822,7 +991,10 @@ mod tests {
         let regions = split_shell(area);
         let mut buf = Buffer::empty(area);
         let model = ShellViewModel::default();
-        assert!(model.agents.is_empty(), "default must not invent team roles");
+        assert!(
+            model.agents.is_empty(),
+            "default must not invent team roles"
+        );
         render_shell(
             &mut buf,
             regions,
@@ -831,12 +1003,18 @@ mod tests {
             &default_editor(),
         );
         let hay = buffer_text(&buf);
-        assert!(hay.contains("No team yet"), "empty AGENTS hint missing: {hay}");
+        assert!(
+            hay.contains("No team yet"),
+            "empty AGENTS hint missing: {hay}"
+        );
         assert!(
             hay.contains("a = analyze"),
             "empty sidebar must name the in-UI analyze key: {hay}"
         );
-        assert!(!hay.contains("Orchestrator"), "must not invent Orchestrator");
+        assert!(
+            !hay.contains("Orchestrator"),
+            "must not invent Orchestrator"
+        );
         assert!(!hay.contains("Builder"), "must not invent Builder");
     }
 
@@ -954,7 +1132,10 @@ mod tests {
         );
         // Editor top border cell should be focus accent.
         let work = crate::layout::split_work_main(regions.main);
-        let border_cell = buf[(work.editor.x, work.editor.y)].style().fg.unwrap_or(Color::Reset);
+        let border_cell = buf[(work.editor.x, work.editor.y)]
+            .style()
+            .fg
+            .unwrap_or(Color::Reset);
         assert_eq!(border_cell, tone::BORDER_FOCUS);
 
         // Assistant prefix must not use accent green (chat not tinted).
@@ -1016,9 +1197,18 @@ mod tests {
         assert!(hay.contains("Select analyst"), "modal title missing: {hay}");
         assert!(hay.contains("GPT"), "recommended model row missing: {hay}");
         assert!(hay.contains("codex"), "adapter id must be visible: {hay}");
-        assert!(!hay.contains("Cursor X"), "unavailable model must NOT be listed: {hay}");
-        assert!(!hay.contains("(unavailable)"), "unavailable marker must not appear: {hay}");
-        assert!(hay.contains("recommended"), "recommended marker missing: {hay}");
+        assert!(
+            !hay.contains("Cursor X"),
+            "unavailable model must NOT be listed: {hay}"
+        );
+        assert!(
+            !hay.contains("(unavailable)"),
+            "unavailable marker must not appear: {hay}"
+        );
+        assert!(
+            hay.contains("recommended"),
+            "recommended marker missing: {hay}"
+        );
     }
 
     #[test]
@@ -1063,8 +1253,14 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("No ask-capable analyst"), "empty-catalog copy missing: {hay}");
-        assert!(!hay.contains("Cursor X"), "unavailable must not paint: {hay}");
+        assert!(
+            hay.contains("No ask-capable analyst"),
+            "empty-catalog copy missing: {hay}"
+        );
+        assert!(
+            !hay.contains("Cursor X"),
+            "unavailable must not paint: {hay}"
+        );
     }
 
     #[test]
@@ -1076,6 +1272,9 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("No ask-capable analyst"), "empty-catalog copy missing: {hay}");
+        assert!(
+            hay.contains("No ask-capable analyst"),
+            "empty-catalog copy missing: {hay}"
+        );
     }
 }
