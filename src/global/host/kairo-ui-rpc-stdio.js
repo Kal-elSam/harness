@@ -18,7 +18,15 @@
  *     "evidence"?: bool, "verifyAccess"?: bool, "refresh"?: bool }  — U4d diagnostics
  *   { "op": "slash.clear" }  — U4d: clearTranscript for active session
  *   { "op": "slash.project_status" }  — U4d: /project status lines
- *   { "op": "ops.snapshot" }  — U5a: read-only Operations hub (health/fleet/usage/diagnostics)
+ *   { "op": "ops.snapshot" }  — U5a/U5b: Operations hub (+ runs/alerts/reviews/backups)
+ *   { "op": "ops.sync.preview" }  — U5b: governance sync dry-run preview
+ *   { "op": "ops.sync.apply", "preview": {...} }  — U5b: apply confirmed sync preview
+ *   { "op": "ops.rollback.preview", "snapshot": "..." }  — U5b: rollback preview
+ *   { "op": "ops.rollback.apply", "preview": {...} }  — U5b: apply confirmed rollback
+ *   { "op": "ops.runs.cancel", "runId": "..." }  — U5b: cancel a cancellable run
+ *   { "op": "ops.alerts.dismiss", "alertId": "...", "confirmed": true }  — U5b
+ *   { "op": "settings.snapshot" }  — U5b: profile/integrations/connections (+ setup stub)
+ *   { "op": "settings.integration.confirm", "id": "..." }  — U5b: curated intent receipt (no install)
  *   { "op": "project.refresh" }  — U4d: refreshProjectStrategy
  *   { "op": "team.edit.catalog", "role": "..." }  — U4d: getProjectTeamEditCatalog
  *   { "op": "team.edit.assign", "role": "...", "candidateKey": "..." }  — U4d: setProjectTeamAssignment (SUGGESTED only)
@@ -76,7 +84,9 @@
  * { type: "plan_cancel", taskId, ... } (U4c),
  * { type: "run_transcript", runId, nextIndex, entries } (U4c),
  * { type: "slash_lines", kind, lines } (U4d),
- * { type: "ops_snapshot", ok, error, health, fleet, usage, diagnostics, hints } (U5a),
+ * { type: "ops_snapshot", ok, error, health, fleet, usage, diagnostics, runs, alerts, reviews, backups, hints } (U5a/U5b),
+ * { type: "ops_sync_preview"|"ops_sync_result"|"ops_rollback_preview"|"ops_rollback_result"|"ops_run_cancel"|"ops_alert_dismiss", ... } (U5b),
+ * { type: "settings_snapshot"|"settings_integration_result", ... } (U5b),
  * { type: "team_edit_catalog", role, models, currentCandidateKey?, recommendedCandidateKey? } (U4d),
  * { type: "team_edit_saved", role, strategy } (U4d),
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
@@ -117,6 +127,20 @@ import {
   preflightProjectTeam as preflightProjectTeamImpl
 } from "./project-team-sidecar.js";
 import { buildOpsSnapshot } from "./ops-sidecar.js";
+import {
+  applyOpsRollback,
+  applyOpsSync,
+  cancelOpsRun,
+  dismissOpsAlert,
+  previewOpsRollback,
+  previewOpsSync
+} from "./ops-mutations.js";
+import { buildSettingsSnapshot } from "./settings-sidecar.js";
+import {
+  getCuratedIntegration,
+  reduceSettingsAction,
+  createSettingsActionState
+} from "../ink/cockpit-settings.js";
 import { listPiSessionFilesForCwd } from "./pi-rpc-sessions.js";
 import { mapPiMessagesToTranscriptRows } from "./pi-rpc-transcript.js";
 import {
@@ -353,6 +377,13 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut) {
  * @param {(args: { cwd: string, refresh?: boolean, beforeProbe?: Function, onProgress?: Function }) => Promise<object>} [options.verifyClaudeEntitlements]
  * @param {(args: { cwd: string }) => Promise<object|null>} [options.refreshProjectStrategy]
  * @param {(args?: object) => Promise<object>} [options.buildOpsSnapshot]
+ * @param {(args?: object) => Promise<object>} [options.previewOpsSync]
+ * @param {(args?: object) => Promise<object>} [options.applyOpsSync]
+ * @param {(args?: object) => Promise<object>} [options.previewOpsRollback]
+ * @param {(args?: object) => Promise<object>} [options.applyOpsRollback]
+ * @param {(args?: object) => Promise<object>} [options.cancelOpsRun]
+ * @param {(args?: object) => Promise<object>} [options.dismissOpsAlert]
+ * @param {(args?: object) => Promise<object>} [options.buildSettingsSnapshot]
  */
 export async function runKairoUiRpcStdio({
   stdin = process.stdin,
@@ -396,7 +427,14 @@ export async function runKairoUiRpcStdio({
     defaultConversation().verifyClaudeEntitlements(args),
   refreshProjectStrategy: refreshProjectStrategyImpl = (args) =>
     defaultConversation().refreshProjectStrategy(args),
-  buildOpsSnapshot: buildOpsSnapshotImpl = buildOpsSnapshot
+  buildOpsSnapshot: buildOpsSnapshotImpl = buildOpsSnapshot,
+  previewOpsSync: previewOpsSyncImpl = previewOpsSync,
+  applyOpsSync: applyOpsSyncImpl = applyOpsSync,
+  previewOpsRollback: previewOpsRollbackImpl = previewOpsRollback,
+  applyOpsRollback: applyOpsRollbackImpl = applyOpsRollback,
+  cancelOpsRun: cancelOpsRunImpl = cancelOpsRun,
+  dismissOpsAlert: dismissOpsAlertImpl = dismissOpsAlert,
+  buildSettingsSnapshot: buildSettingsSnapshotImpl = buildSettingsSnapshot
 } = {}) {
   const bridge = await openBridge({ cwd });
   let kairoModels = [];
@@ -972,7 +1010,7 @@ export async function runKairoUiRpcStdio({
           lines: projectStatusLines(snap)
         });
       } else if (op === "ops.snapshot") {
-        // U5a: read-only Operations hub — health / fleet / usage / diagnostics.
+        // U5a/U5b: Operations hub — health/fleet/usage/diagnostics + actionable lists.
         let conversationSnap = null;
         try {
           conversationSnap = await snapshotImpl({
@@ -997,8 +1035,101 @@ export async function runKairoUiRpcStdio({
           diagnostics: Array.isArray(ops.diagnostics)
             ? ops.diagnostics
             : ["Diagnostics unavailable."],
+          runs: Array.isArray(ops.runs) ? ops.runs : [],
+          alerts: Array.isArray(ops.alerts) ? ops.alerts : [],
+          reviews: Array.isArray(ops.reviews) ? ops.reviews : [],
+          backups: Array.isArray(ops.backups) ? ops.backups : [],
           hints: typeof ops.hints === "string" ? ops.hints : "Esc → Work"
         });
+      } else if (op === "ops.sync.preview") {
+        const preview = await previewOpsSyncImpl({
+          homeDir,
+          workspaceRoot: projectRoot ?? cwd
+        });
+        writeOut({ type: "ops_sync_preview", ...preview });
+      } else if (op === "ops.sync.apply") {
+        const preview = cmd.preview && typeof cmd.preview === "object" ? cmd.preview : null;
+        const result = await applyOpsSyncImpl({
+          preview,
+          homeDir,
+          workspaceRoot: projectRoot ?? cwd
+        });
+        writeOut({ type: "ops_sync_result", ...result });
+      } else if (op === "ops.rollback.preview") {
+        const snapshotName = typeof cmd.snapshot === "string" ? cmd.snapshot : "";
+        const preview = await previewOpsRollbackImpl({
+          homeDir,
+          snapshot: snapshotName
+        });
+        writeOut({ type: "ops_rollback_preview", ...preview });
+      } else if (op === "ops.rollback.apply") {
+        const preview = cmd.preview && typeof cmd.preview === "object" ? cmd.preview : null;
+        const result = await applyOpsRollbackImpl({
+          preview,
+          homeDir
+        });
+        writeOut({ type: "ops_rollback_result", ...result });
+      } else if (op === "ops.runs.cancel") {
+        const runId = typeof cmd.runId === "string" ? cmd.runId : "";
+        const result = await cancelOpsRunImpl({ homeDir, runId });
+        writeOut({ type: "ops_run_cancel", ...result });
+      } else if (op === "ops.alerts.dismiss") {
+        const alertId = typeof cmd.alertId === "string" ? cmd.alertId : "";
+        const result = await dismissOpsAlertImpl({
+          alertId,
+          confirmed: cmd.confirmed === true,
+          homeDir
+        });
+        writeOut({ type: "ops_alert_dismiss", ...result });
+      } else if (op === "settings.snapshot") {
+        const settings = await buildSettingsSnapshotImpl({
+          homeDir,
+          workspaceRoot: projectRoot ?? cwd
+        });
+        writeOut({
+          type: "settings_snapshot",
+          ok: settings.ok !== false,
+          error: settings.error ?? null,
+          profile: Array.isArray(settings.profile) ? settings.profile : ["Profile unavailable."],
+          integrations: Array.isArray(settings.integrations)
+            ? settings.integrations
+            : ["Integrations unavailable."],
+          connections: Array.isArray(settings.connections)
+            ? settings.connections
+            : ["Connections unavailable."],
+          catalog: Array.isArray(settings.catalog) ? settings.catalog : [],
+          setup: settings.setup ?? {
+            wired: false,
+            label: "Interactive setup · not wired"
+          },
+          hints: typeof settings.hints === "string" ? settings.hints : "Esc → Work"
+        });
+      } else if (op === "settings.integration.confirm") {
+        // Curated intent receipt only — never installs files (cockpit-settings).
+        const id = typeof cmd.id === "string" ? cmd.id : "";
+        const entry = getCuratedIntegration(id);
+        if (!entry) {
+          writeOut({
+            type: "settings_integration_result",
+            ok: false,
+            reason: "not-found",
+            wroteFiles: false,
+            receipt: null
+          });
+        } else {
+          let state = createSettingsActionState();
+          state = reduceSettingsAction(state, { type: "preview", id });
+          state = reduceSettingsAction(state, { type: "confirm-prompt" });
+          state = reduceSettingsAction(state, { type: "confirm" });
+          writeOut({
+            type: "settings_integration_result",
+            ok: true,
+            reason: "intent-recorded",
+            wroteFiles: false,
+            receipt: state.receipt,
+            message: state.message
+          });
+        }
       } else if (op === "project.refresh") {
         const result = await refreshProjectStrategyImpl({ cwd });
         writeOut({

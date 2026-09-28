@@ -9,10 +9,11 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
+use crate::ops_flow::OpsConfirmState;
 use crate::surfaces::tone;
 
-/// Read-only Operations hub lines from the Node sidecar.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// Read-only Operations hub lines from the Node sidecar (+ U5b actionable lists).
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct OpsPanelState {
     pub loading: bool,
     pub ok: bool,
@@ -21,9 +22,49 @@ pub struct OpsPanelState {
     pub fleet: Vec<String>,
     pub usage: Vec<String>,
     pub diagnostics: Vec<String>,
+    pub runs: Vec<OpsRunRow>,
+    pub alerts: Vec<OpsAlertRow>,
+    pub reviews: Vec<OpsReviewRow>,
+    pub backups: Vec<String>,
     pub hints: String,
     /// Scroll offset into the flattened body lines.
     pub scroll: usize,
+    pub selected_run: usize,
+    pub selected_alert: usize,
+    pub selected_backup: usize,
+    pub confirm: Option<OpsConfirmState>,
+    /// When set, ↑↓ moves this list instead of scrolling the body.
+    pub pick_mode: OpsPickMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OpsPickMode {
+    #[default]
+    None,
+    Run,
+    Alert,
+    Backup,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpsRunRow {
+    pub run_id: String,
+    pub state: String,
+    pub agent_id: Option<String>,
+    pub cancellable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpsAlertRow {
+    pub alert_id: String,
+    pub state: String,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpsReviewRow {
+    pub review_id: String,
+    pub state: String,
 }
 
 impl OpsPanelState {
@@ -36,8 +77,17 @@ impl OpsPanelState {
             fleet: Vec::new(),
             usage: Vec::new(),
             diagnostics: Vec::new(),
+            runs: Vec::new(),
+            alerts: Vec::new(),
+            reviews: Vec::new(),
+            backups: Vec::new(),
             hints: "Esc → Work".into(),
             scroll: 0,
+            selected_run: 0,
+            selected_alert: 0,
+            selected_backup: 0,
+            confirm: None,
+            pick_mode: OpsPickMode::None,
         }
     }
 
@@ -62,8 +112,95 @@ impl OpsPanelState {
         let hints = record
             .get("hints")
             .and_then(|v| v.as_str())
-            .unwrap_or("Esc → Work · r refresh")
+            .unwrap_or(
+                "Esc → Work · r refresh · s sync · b rollback · c cancel · d dismiss · v reviews",
+            )
             .to_string();
+        let runs = record
+            .get("runs")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        let run_id = v.get("runId")?.as_str()?.to_string();
+                        Some(OpsRunRow {
+                            run_id,
+                            state: v
+                                .get("state")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("unknown")
+                                .to_string(),
+                            agent_id: v
+                                .get("agentId")
+                                .and_then(|s| s.as_str())
+                                .map(str::to_string),
+                            cancellable: v
+                                .get("cancellable")
+                                .and_then(|b| b.as_bool())
+                                .unwrap_or(false),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let alerts = record
+            .get("alerts")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        let alert_id = v.get("alertId")?.as_str()?.to_string();
+                        Some(OpsAlertRow {
+                            alert_id,
+                            state: v
+                                .get("state")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("open")
+                                .to_string(),
+                            title: v
+                                .get("title")
+                                .and_then(|s| s.as_str())
+                                .map(str::to_string),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let reviews = record
+            .get("reviews")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        let review_id = v.get("reviewId")?.as_str()?.to_string();
+                        Some(OpsReviewRow {
+                            review_id,
+                            state: v
+                                .get("state")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("unknown")
+                                .to_string(),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let backups = record
+            .get("backups")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        if let Some(s) = v.as_str() {
+                            return Some(s.to_string());
+                        }
+                        v.get("name")
+                            .and_then(|n| n.as_str())
+                            .map(str::to_string)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         Self {
             loading: false,
             ok: record.get("ok").and_then(|v| v.as_bool()).unwrap_or(true),
@@ -72,8 +209,17 @@ impl OpsPanelState {
             fleet: lines("fleet", "Fleet unavailable."),
             usage: lines("usage", "Usage unavailable."),
             diagnostics: lines("diagnostics", "Diagnostics unavailable."),
+            runs,
+            alerts,
+            reviews,
+            backups,
             hints,
             scroll: 0,
+            selected_run: 0,
+            selected_alert: 0,
+            selected_backup: 0,
+            confirm: None,
+            pick_mode: OpsPickMode::None,
         }
     }
 
@@ -88,26 +234,136 @@ impl OpsPanelState {
         push_section(&mut out, "Providers / fleet", &self.fleet);
         push_section(&mut out, "Usage", &self.usage);
         push_section(&mut out, "Diagnostics", &self.diagnostics);
+
+        out.push(String::new());
+        out.push("Runs".into());
+        if self.runs.is_empty() {
+            out.push("  (none)".into());
+        } else {
+            for (i, run) in self.runs.iter().enumerate() {
+                let mark = if self.pick_mode == OpsPickMode::Run && i == self.selected_run {
+                    "›"
+                } else {
+                    " "
+                };
+                let agent = run.agent_id.as_deref().unwrap_or("?");
+                let cancel = if run.cancellable { " · cancellable" } else { "" };
+                out.push(format!(
+                    "{mark} {} · {} · {}{cancel}",
+                    run.run_id, run.state, agent
+                ));
+            }
+        }
+
+        out.push(String::new());
+        out.push("Alerts".into());
+        if self.alerts.is_empty() {
+            out.push("  (none)".into());
+        } else {
+            for (i, alert) in self.alerts.iter().enumerate() {
+                let mark = if self.pick_mode == OpsPickMode::Alert && i == self.selected_alert {
+                    "›"
+                } else {
+                    " "
+                };
+                let title = alert.title.as_deref().unwrap_or("");
+                out.push(format!(
+                    "{mark} {} · {} · {title}",
+                    alert.alert_id, alert.state
+                ));
+            }
+        }
+
+        out.push(String::new());
+        out.push("Reviews (read-only)".into());
+        if self.reviews.is_empty() {
+            out.push("  (none)".into());
+        } else {
+            for review in &self.reviews {
+                out.push(format!("  {} · {}", review.review_id, review.state));
+            }
+        }
+
+        out.push(String::new());
+        out.push("Backups".into());
+        if self.backups.is_empty() {
+            out.push("  (none)".into());
+        } else {
+            for (i, name) in self.backups.iter().enumerate() {
+                let mark = if self.pick_mode == OpsPickMode::Backup && i == self.selected_backup {
+                    "›"
+                } else {
+                    " "
+                };
+                out.push(format!("{mark} {name}"));
+            }
+        }
         out
     }
 
     pub fn footer_hints(&self) -> &str {
-        if self.hints.is_empty() {
-            "Esc → Work · r refresh"
-        } else {
-            &self.hints
+        if self.confirm.is_some() {
+            return "y confirm · n/Esc cancel";
+        }
+        match self.pick_mode {
+            OpsPickMode::Run => "↑↓ select run · Enter confirm cancel · Esc clear",
+            OpsPickMode::Alert => "↑↓ select alert · Enter confirm dismiss · Esc clear",
+            OpsPickMode::Backup => "↑↓ select backup · Enter preview rollback · Esc clear",
+            OpsPickMode::None => {
+                if self.hints.is_empty() {
+                    "Esc → Work · r refresh"
+                } else {
+                    &self.hints
+                }
+            }
         }
     }
 
     pub fn scroll_by(&mut self, delta: isize, viewport_rows: usize) {
-        let total = self.body_lines().len();
-        if total == 0 {
-            self.scroll = 0;
-            return;
+        match self.pick_mode {
+            OpsPickMode::Run if !self.runs.is_empty() => {
+                let len = self.runs.len() as isize;
+                let next = self.selected_run as isize + delta;
+                self.selected_run = next.rem_euclid(len) as usize;
+            }
+            OpsPickMode::Alert if !self.alerts.is_empty() => {
+                let len = self.alerts.len() as isize;
+                let next = self.selected_alert as isize + delta;
+                self.selected_alert = next.rem_euclid(len) as usize;
+            }
+            OpsPickMode::Backup if !self.backups.is_empty() => {
+                let len = self.backups.len() as isize;
+                let next = self.selected_backup as isize + delta;
+                self.selected_backup = next.rem_euclid(len) as usize;
+            }
+            _ => {
+                let total = self.body_lines().len();
+                if total == 0 {
+                    self.scroll = 0;
+                    return;
+                }
+                let max_scroll = total.saturating_sub(viewport_rows.max(1));
+                let next = self.scroll as isize + delta;
+                self.scroll = next.clamp(0, max_scroll as isize) as usize;
+            }
         }
-        let max_scroll = total.saturating_sub(viewport_rows.max(1));
-        let next = self.scroll as isize + delta;
-        self.scroll = next.clamp(0, max_scroll as isize) as usize;
+    }
+
+    pub fn selected_cancellable_run_id(&self) -> Option<&str> {
+        self.runs
+            .get(self.selected_run)
+            .filter(|r| r.cancellable)
+            .map(|r| r.run_id.as_str())
+    }
+
+    pub fn selected_alert_id(&self) -> Option<&str> {
+        self.alerts
+            .get(self.selected_alert)
+            .map(|a| a.alert_id.as_str())
+    }
+
+    pub fn selected_backup_name(&self) -> Option<&str> {
+        self.backups.get(self.selected_backup).map(String::as_str)
     }
 }
 
@@ -224,7 +480,14 @@ pub fn render_ops_panel(buf: &mut Buffer, area: Rect, state: &OpsPanelState, chr
     for (i, text) in visible.enumerate() {
         let is_heading = matches!(
             text.as_str(),
-            "Health" | "Providers / fleet" | "Usage" | "Diagnostics"
+            "Health"
+                | "Providers / fleet"
+                | "Usage"
+                | "Diagnostics"
+                | "Runs"
+                | "Alerts"
+                | "Reviews (read-only)"
+                | "Backups"
         ) || text.starts_with("Error ·");
         let style = if is_heading {
             Style::default()
@@ -253,9 +516,58 @@ pub fn render_ops_panel(buf: &mut Buffer, area: Rect, state: &OpsPanelState, chr
     Paragraph::new(lines)
         .style(Style::default().bg(tone::WORK_BG))
         .render(inner, buf);
+
+    if let Some(confirm) = &state.confirm {
+        render_ops_confirm(buf, area, confirm);
+    }
+}
+
+fn render_ops_confirm(buf: &mut Buffer, area: Rect, confirm: &OpsConfirmState) {
+    use ratatui::widgets::Clear;
+    let width = area.width.saturating_sub(6).clamp(40, 76);
+    let rows = confirm.prompt_lines().len() as u16;
+    let height = rows
+        .saturating_add(2)
+        .min(area.height.saturating_sub(2).max(6));
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    let popup = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+    if popup.width == 0 || popup.height == 0 {
+        return;
+    }
+    Clear.render(popup, buf);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .title(Span::styled(
+            confirm.title.clone(),
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    let mut lines: Vec<Line> = Vec::new();
+    for text in confirm.prompt_lines() {
+        lines.push(padded_span(
+            &text,
+            inner.width,
+            Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+        ));
+    }
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .render(inner, buf);
 }
 
 /// Paint Settings stub (U5a chrome only — full Settings is U5b).
+#[deprecated(note = "use settings_panel::render_settings_panel")]
 pub fn render_settings_stub(buf: &mut Buffer, area: Rect, chrome_title: &str) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -277,17 +589,12 @@ pub fn render_settings_stub(buf: &mut Buffer, area: Rect, chrome_title: &str) {
     }
     let lines = vec![
         padded_span(
-            "Settings — U5b",
+            "Settings",
             inner.width,
             Style::default()
                 .fg(tone::TEXT)
                 .add_modifier(Modifier::BOLD)
                 .bg(tone::WORK_BG),
-        ),
-        padded_span(
-            "Profile edits, integrations, and interactive setup land in U5b.",
-            inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::WORK_BG),
         ),
         padded_span(
             "Esc → Work",

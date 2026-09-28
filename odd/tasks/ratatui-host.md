@@ -97,14 +97,14 @@ Legend: done / partial / missing. Source: read-only mapping of `feat/ratatui-hos
 | Health / readiness / diagnostics | `ink/orchestrator-app.js` DIAGNOSTICS | **U5a done** | Ops view `5`; `ops.snapshot` |
 | Providers | PROVIDERS view, `fleet-probe.js` | **U5a done** | Matches `kairo fleet` (≠ slash `/providers`) |
 | Usage drill-down | USAGE view | **U5a done** | Full detail in Ops hub |
-| Sync / drift preview → confirm → receipt | `use-orchestrator-data.js` changes fns, `runGlobalSync` | missing | Receipt matches `kairo sync` |
-| Rollback preview → confirm → receipt | CHANGES view, `runGlobalRollback` | missing | Same pattern |
-| Runs (active/recent/detail/cancel) | RUNS views, `run-cli.js` | missing | List, detail, cancel |
-| Alerts | ALERTS view, `alert-cli.js` | missing | Visible + transition |
-| Review receipts | REVIEWS views, `review-cli.js` | missing | Matches `kairo reviews` |
-| Profiles / settings | PROFILE, SETTINGS | missing | Edit persists |
-| Integrations / connections | `connections.js` | missing | Same list |
-| Interactive setup | `ink/setup-app.js`, `setup-routing.js` (+ Clack) | missing | First run opens ratatui setup |
+| Sync / drift preview → confirm → receipt | `use-orchestrator-data.js` changes fns, `runGlobalSync` | **U5b done** | `ops.sync.preview` / `ops.sync.apply` + nested confirm |
+| Rollback preview → confirm → receipt | CHANGES view, `runGlobalRollback` | **U5b done** | `ops.rollback.preview` / `ops.rollback.apply` |
+| Runs (active/recent/detail/cancel) | RUNS views, `run-cli.js` | **U5b partial** | List + cancel confirm (detail stays dashboard-backed) |
+| Alerts | ALERTS view, `alert-cli.js` | **U5b done** | List + dismiss confirm (`controlledDismissAlert`) |
+| Review receipts | REVIEWS views, `review-cli.js` | **U5b partial** | Read-only list in Ops (`listReviewReceipts`) |
+| Profiles / settings | PROFILE, SETTINGS | **U5b done** | Settings `6` profile/integrations/connections surface |
+| Integrations / connections | `connections.js` | **U5b done** | Read-only connections list |
+| Interactive setup | `ink/setup-app.js`, `setup-routing.js` (+ Clack) | **honest stub** | Label: not wired — use `kairo setup` |
 
 Neutral adapters needed before porting: `ink/use-orchestrator-data.js` (hook-bound ops), mode/handoff logic in `cockpit/app.js`, setup step/state in `ink/setup-*.js`. Extract plain modules only; no React in Rust.
 
@@ -180,7 +180,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] U3b extension_ui: select / confirm / input / editor / notify with correlated one-way responses and safe cancel (cancel/timeout/engine death/quit)
 - [x] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
 - [x] U4 Workspace: **U4a+U4b+U4c+U4d done** (modes + plans + execute/cancel/handoff + slash + Work/Project/Tasks/Sessions + per-role SUGGESTED editor)
-- [ ] U5 Operations + Settings views — **U5a partial** (read-only Ops hub `5` + Settings stub `6`); U5b still open (sync/rollback/runs/alerts/reviews/settings/setup)
+- [x] U5 Operations + Settings views — U5a read-only Ops hub `5` + U5b mutations/Settings `6` (sync/rollback/runs cancel/alerts dismiss/reviews list; setup honest stub)
 - [ ] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
 - [ ] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
 
@@ -390,10 +390,17 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **Verification (observed)**: `node --test test/ops-sidecar.test.js test/kairo-ui-rpc-stdio.test.js` → **68/68**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **157/157**.
   - Out of scope (U5b): sync/rollback, runs cancel, alerts dismiss, Settings profile edits, interactive setup.
 
+- (2026-09-28) **U5b Ops mutations + Settings (STRICT TDD)** — Closes U5 after U5a.
+  - **JS**: `ops-mutations.js` (sync/rollback/cancel/dismiss/reviews via governance-actions + runtime); `settings-sidecar.js` (profile/integrations/connections + setup stub); RPC ops `ops.sync.*` / `ops.rollback.*` / `ops.runs.cancel` / `ops.alerts.dismiss` / `settings.snapshot` / `settings.integration.confirm`; `ops.snapshot` enriched with runs/alerts/reviews/backups.
+  - **Rust**: `ops_flow` nested confirms; Ops keys `s/b/c/d/v`; `settings_panel` view `6`; footer wrap ≤2 @60; Esc→Work (confirm owns Esc first).
+  - **Honest stub**: interactive setup not wired (`kairo setup`); curated integration confirm = intent only (`wroteFiles:false`); reviews read-only.
+  - **Fixtures**: `60x30-ops` + `60x30-settings` in v3_capture (mock only).
+  - **Verification (observed)**: `node --test test/ops-mutations.test.js test/settings-sidecar.test.js test/ops-sidecar.test.js test/kairo-ui-rpc-stdio.test.js` → **81/81**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **161/161**.
+
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + **U5a**. Next: **U5b → U6 → U7**. U2a/U2b wait for publish/auth. Full suite still not green (9 entry-host failures).
+**Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + **U5 (a+b)**. Next: **visual check (Ops/Settings@60) → U6 → U7**. U2a/U2b wait for publish/auth. Full suite still not green (9 entry-host failures).
 
-1. **U5b** Settings + mutating ops (sync/rollback/runs/alerts/reviews/setup).
+1. **Visual check** Ops@60 / Settings@60 fixtures (human).
 2. **U6** packaging binaries + PTY sizes; **U7** retirement after U6.
 3. **U2a/U2b** when publish / provider auth available.

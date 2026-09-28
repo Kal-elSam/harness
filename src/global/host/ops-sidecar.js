@@ -23,12 +23,20 @@ import { resolveHomeDir } from "../paths.js";
 import { buildRuntimeDashboardData } from "../runtime/run-cli.js";
 import { buildFleetReport, formatFleetText } from "../observability/fleet-probe.js";
 import { CockpitView } from "../cockpit/view.js";
+import { listRecoverySnapshots } from "../ink/cockpit-recovery.js";
+import {
+  listOpsAlerts,
+  listOpsReviews,
+  listOpsRuns
+} from "./ops-mutations.js";
 
 /** First fleet line — must never be confused with slash `/providers`. */
 export const FLEET_SECTION_TITLE =
   "Fleet topology (kairo fleet) — not slash /providers";
 
-export const OPS_HINTS = "Esc → Work · r refresh";
+/** U5b: wrap-safe action hints (≤2 lines at 60 cols via host wrap). */
+export const OPS_HINTS =
+  "Esc → Work · r refresh · s sync · b rollback · c cancel · d dismiss · v reviews";
 
 const require = createRequire(import.meta.url);
 const DEFAULT_PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -88,7 +96,11 @@ export function formatOpsHealthLines(snapshot) {
  *   fleet: string[],
  *   usage: string[],
  *   diagnostics: string[],
- *   hints: string
+ *   hints: string,
+ *   runs: object[],
+ *   alerts: object[],
+ *   reviews: object[],
+ *   backups: string[]
  * }>}
  */
 export async function buildOpsSnapshot({
@@ -100,7 +112,10 @@ export async function buildOpsSnapshot({
   loadScanBundle = null,
   buildFleet = buildFleetReport,
   slashUsageLines = null,
-  conversationSnapshot = null
+  conversationSnapshot = null,
+  listRuns = listOpsRuns,
+  listAlertsFn = listOpsAlerts,
+  listReviewsFn = listOpsReviews
 } = {}) {
   const identity = readPackageIdentity(packageRoot);
   const resolvedName = packageName ?? identity.packageName;
@@ -187,6 +202,34 @@ export async function buildOpsSnapshot({
     // else keep usageFromBundle — slash failure alone is non-fatal
   }
 
+  let runs = [];
+  try {
+    const listed = await listRuns({ homeDir, workspaceRoot, cliVersion });
+    runs = Array.isArray(listed?.runs) ? listed.runs : [];
+  } catch {
+    runs = [];
+  }
+
+  let alerts = [];
+  try {
+    const listed = await listAlertsFn({ homeDir });
+    alerts = Array.isArray(listed?.alerts) ? listed.alerts : [];
+  } catch {
+    alerts = [];
+  }
+
+  let reviews = [];
+  try {
+    const listed = await listReviewsFn({ homeDir });
+    reviews = Array.isArray(listed?.reviews) ? listed.reviews : [];
+  } catch {
+    reviews = [];
+  }
+
+  const backups = listRecoverySnapshots(bundle?.snapshot).map((entry) =>
+    typeof entry === "string" ? entry : (entry?.name ?? entry?.id ?? String(entry))
+  );
+
   const ok = !bundleError;
   return {
     ok,
@@ -199,6 +242,10 @@ export async function buildOpsSnapshot({
     fleet,
     usage,
     diagnostics,
+    runs,
+    alerts,
+    reviews,
+    backups,
     hints: OPS_HINTS
   };
 }

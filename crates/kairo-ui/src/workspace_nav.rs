@@ -1,6 +1,6 @@
-//! U4d/U5a: Work | Project | Tasks | Sessions | Operations (+ Settings stub).
+//! U4d/U5b: Work | Project | Tasks | Sessions | Operations | Settings.
 //!
-//! Empty-compose digits `1`–`5` switch views (`6` = Settings stub for U5b).
+//! Empty-compose digits `1`–`6` switch views.
 //! Esc from a non-Work view returns to Work.
 
 /// Which primary surface owns the main column.
@@ -13,7 +13,7 @@ pub enum WorkspaceView {
     Sessions,
     /// U5a: read-only Operations hub (health / fleet / usage / diagnostics).
     Operations,
-    /// U5b stub — chrome label only until Settings is implemented.
+    /// Settings — profile / integrations / connections (U5b).
     Settings,
 }
 
@@ -37,7 +37,7 @@ impl WorkspaceView {
     }
 }
 
-/// Empty-compose digit → view. `1`–`5` are live; `6` is the Settings stub.
+/// Empty-compose digit → view. `1`–`6` are live (Ops + Settings).
 pub fn view_from_digit(c: char) -> Option<WorkspaceView> {
     match c {
         '1' => Some(WorkspaceView::Work),

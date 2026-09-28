@@ -322,9 +322,61 @@ impl BridgeClient {
         )
     }
 
-    /// U5a: read-only Operations hub snapshot.
+    /// U5a/U5b: Operations hub snapshot (includes runs/alerts/reviews/backups).
     pub fn ops_snapshot(&mut self) -> std::io::Result<()> {
         self.send_op("ops.snapshot", Value::Null)
+    }
+
+    /// U5b: governance sync dry-run preview.
+    pub fn ops_sync_preview(&mut self) -> std::io::Result<()> {
+        self.send_op("ops.sync.preview", Value::Null)
+    }
+
+    /// U5b: apply a confirmed sync preview.
+    pub fn ops_sync_apply(&mut self, preview: &Value) -> std::io::Result<()> {
+        self.send_op("ops.sync.apply", serde_json::json!({ "preview": preview }))
+    }
+
+    /// U5b: rollback preview for one snapshot name.
+    pub fn ops_rollback_preview(&mut self, snapshot: &str) -> std::io::Result<()> {
+        self.send_op(
+            "ops.rollback.preview",
+            serde_json::json!({ "snapshot": snapshot }),
+        )
+    }
+
+    /// U5b: apply a confirmed rollback preview.
+    pub fn ops_rollback_apply(&mut self, preview: &Value) -> std::io::Result<()> {
+        self.send_op(
+            "ops.rollback.apply",
+            serde_json::json!({ "preview": preview }),
+        )
+    }
+
+    /// U5b: cancel a cancellable run.
+    pub fn ops_runs_cancel(&mut self, run_id: &str) -> std::io::Result<()> {
+        self.send_op("ops.runs.cancel", serde_json::json!({ "runId": run_id }))
+    }
+
+    /// U5b: dismiss an alert (requires confirmed:true after UI confirm).
+    pub fn ops_alerts_dismiss(&mut self, alert_id: &str) -> std::io::Result<()> {
+        self.send_op(
+            "ops.alerts.dismiss",
+            serde_json::json!({ "alertId": alert_id, "confirmed": true }),
+        )
+    }
+
+    /// U5b: Settings snapshot (profile / integrations / connections / setup stub).
+    pub fn settings_snapshot(&mut self) -> std::io::Result<()> {
+        self.send_op("settings.snapshot", Value::Null)
+    }
+
+    /// U5b: curated integration intent receipt (no install).
+    pub fn settings_integration_confirm(&mut self, id: &str) -> std::io::Result<()> {
+        self.send_op(
+            "settings.integration.confirm",
+            serde_json::json!({ "id": id }),
+        )
     }
 
     /// Force-stop the Node sidecar. Never block the TTY on a wedged child:
