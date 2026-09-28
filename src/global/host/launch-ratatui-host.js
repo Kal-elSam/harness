@@ -18,18 +18,42 @@ const __hostModuleDir = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_PACKAGE_ROOT = resolve(__hostModuleDir, "../../..");
 export const DEFAULT_KAIRO_UI_CRATE_DIR = join(DEFAULT_PACKAGE_ROOT, "crates", "kairo-ui");
 
+/** Clear migration copy when retired product-UI opt-outs are requested. */
+export const RETIRED_PRODUCT_UI_MESSAGE =
+  "The Pi shell and legacy cockpit were retired. Use `kairo` / `kairo ui` / `kairo start` / `kairo resume` (ratatui). " +
+  "Non-interactive CLI and `kairo setup` still work.";
+
 /**
- * Choose the interactive UI host for daily work paths.
- * Precedence: `--legacy-cockpit` > `--pi` / `KAIRO_UI_HOST=pi` >
- * `--ratatui` / `KAIRO_UI_HOST=ratatui` > default `ratatui`.
+ * Fail closed on retired product-UI opt-outs — no hidden fallback.
+ * @param {{ options?: { legacyCockpit?: boolean, piHost?: boolean }, env?: NodeJS.ProcessEnv }} args
+ */
+export function assertProductUiNotRetired({ options = {}, env = process.env } = {}) {
+  if (options.legacyCockpit === true) {
+    throw new Error(`--legacy-cockpit is no longer supported. ${RETIRED_PRODUCT_UI_MESSAGE}`);
+  }
+  if (options.piHost === true) {
+    throw new Error(`--pi / --pi-host is no longer supported. ${RETIRED_PRODUCT_UI_MESSAGE}`);
+  }
+  const fromEnv = typeof env?.KAIRO_UI_HOST === "string" ? env.KAIRO_UI_HOST.trim().toLowerCase() : "";
+  if (fromEnv === "pi") {
+    throw new Error(`KAIRO_UI_HOST=pi is no longer supported. ${RETIRED_PRODUCT_UI_MESSAGE}`);
+  }
+  if (fromEnv !== "" && fromEnv !== "ratatui") {
+    throw new Error(
+      `KAIRO_UI_HOST=${JSON.stringify(env.KAIRO_UI_HOST)} is not supported. ` +
+        RETIRED_PRODUCT_UI_MESSAGE
+    );
+  }
+}
+
+/**
+ * Interactive product UI is ratatui only (U7).
+ * Retired opt-outs (`--pi`, `--legacy-cockpit`, `KAIRO_UI_HOST=pi`) throw a migration error.
  * @param {{ options?: { legacyCockpit?: boolean, piHost?: boolean, ratatui?: boolean }, env?: NodeJS.ProcessEnv }} args
- * @returns {"ratatui"|"pi"|"cockpit"}
+ * @returns {"ratatui"}
  */
 export function resolveUiHost({ options = {}, env = process.env } = {}) {
-  if (options.legacyCockpit === true) return "cockpit";
-  const fromEnv = typeof env?.KAIRO_UI_HOST === "string" ? env.KAIRO_UI_HOST.trim().toLowerCase() : "";
-  if (options.piHost === true || fromEnv === "pi") return "pi";
-  if (options.ratatui === true || fromEnv === "ratatui") return "ratatui";
+  assertProductUiNotRetired({ options, env });
   return "ratatui";
 }
 
@@ -61,14 +85,13 @@ export async function launchRatatuiHost({
   if (platform === "win32") {
     throw new Error(
       "The ratatui host is not supported on Windows yet. " +
-        "Use --pi (or KAIRO_UI_HOST=pi) for the Pi shell, " +
-        "or use --legacy-cockpit for the previous cockpit."
+        "Use the non-interactive CLI (`kairo help --all`) or `kairo setup`."
     );
   }
   if (interactive === false) {
     throw new Error(
       "The Kairo ratatui host requires an interactive terminal (TTY). " +
-        "Use --pi for the Pi shell, or use --legacy-cockpit for the previous cockpit."
+        "Use the non-interactive CLI (`kairo help --all`) or `kairo setup`."
     );
   }
   assertDirectoryCwd(cwd, statImpl);
@@ -79,8 +102,7 @@ export async function launchRatatuiHost({
   const sidecarScript = join(packageRoot, "src", "global", "host", "kairo-ui-rpc-stdio.js");
   if (!existsSyncImpl(sidecarScript)) {
     throw new Error(
-      `Ratatui sidecar is missing: "${sidecarScript}". ` +
-        "Use --pi for the Pi shell."
+      `Ratatui sidecar is missing: "${sidecarScript}". Reinstall Kairo.`
     );
   }
 
@@ -98,8 +120,7 @@ export async function launchRatatuiHost({
       throw new Error(
         `Ratatui host binary is missing for ${platform}/${arch} ` +
           `(expected prebuilt under dist/kairo-ui/) and crate is missing: ` +
-          `"${manifestPath}" does not exist. ` +
-          "Use --pi for the Pi shell, or use --legacy-cockpit for the previous cockpit."
+          `"${manifestPath}" does not exist. Reinstall Kairo or build crates/kairo-ui.`
       );
     }
 
@@ -121,14 +142,12 @@ export async function launchRatatuiHost({
       );
       if (buildResult && Number.isInteger(buildResult.status) && buildResult.status !== 0) {
         throw new Error(
-          `cargo build --release for kairo-ui exited ${buildResult.status}. ` +
-            "Fix the Rust build, or use --pi for the Pi shell."
+          `cargo build --release for kairo-ui exited ${buildResult.status}. Fix the Rust build.`
         );
       }
       if (!existsSyncImpl(binaryPath)) {
         throw new Error(
-          `Ratatui host binary is still missing after cargo build: "${binaryPath}". ` +
-            "Use --pi for the Pi shell."
+          `Ratatui host binary is still missing after cargo build: "${binaryPath}".`
         );
       }
     }
@@ -153,10 +172,7 @@ export async function launchRatatuiHost({
     stdio: "inherit"
   });
   if (result && Number.isInteger(result.status) && result.status !== 0) {
-    throw new Error(
-      `kairo-ui exited ${result.status}. Use --pi for the Pi shell, ` +
-        "or use --legacy-cockpit for the previous cockpit."
-    );
+    throw new Error(`kairo-ui exited ${result.status}.`);
   }
   return result ?? { status: 0 };
 }

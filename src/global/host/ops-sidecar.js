@@ -22,7 +22,7 @@ import { formatSystemHealthLines } from "../ink/orchestrator-state.js";
 import { resolveHomeDir } from "../paths.js";
 import { buildRuntimeDashboardData } from "../runtime/run-cli.js";
 import { buildFleetReport, formatFleetText } from "../observability/fleet-probe.js";
-import { CockpitView } from "../cockpit/view.js";
+import { formatSlashUsageLines } from "../conversation/usage-summary.js";
 import { listRecoverySnapshots } from "../ink/cockpit-recovery.js";
 import {
   listOpsAlerts,
@@ -41,15 +41,10 @@ export const OPS_HINTS =
 const require = createRequire(import.meta.url);
 const DEFAULT_PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 
-/** Stub actions so CockpitView usageLines work without a TUI. */
-const SLASH_VIEW_ACTIONS = Object.freeze({
-  onApprove() {},
-  onReject() {},
-  onExecute() {},
-  onCancel() {},
-  onRefresh() {},
-  onQuit() {}
-});
+/** Slash `/usage` lines from a conversation snapshot (same formatter as U4d). */
+export function slashUsageLinesFromSnapshot(snap) {
+  return formatSlashUsageLines(snap);
+}
 
 function readPackageIdentity(packageRoot = DEFAULT_PACKAGE_ROOT) {
   try {
@@ -66,13 +61,6 @@ function readPackageIdentity(packageRoot = DEFAULT_PACKAGE_ROOT) {
 function errorLines(section, error) {
   const detail = error instanceof Error ? error.message : String(error ?? "unavailable");
   return [`${section} unavailable.`, detail];
-}
-
-/** Slash `/usage` lines from a conversation snapshot (same formatter as U4d). */
-export function slashUsageLinesFromSnapshot(snap) {
-  const view = new CockpitView({ actions: SLASH_VIEW_ACTIONS });
-  view.snapshot = snap ?? {};
-  return view.usageLines();
 }
 
 /**

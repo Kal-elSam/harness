@@ -89,7 +89,7 @@ test("non-interactive terminal fails closed before resolving or spawning the hos
         return { status: 0 };
       }
     }),
-    /interactive terminal[\s\S]*--legacy-cockpit/
+    /interactive terminal|TTY/i
   );
   assert.deepEqual(calls, []);
 });
@@ -164,7 +164,7 @@ test("no package.json with the fork's name is found while walking up: fails clos
         throw new Error("should not spawn");
       }
     }),
-    /Could not find[\s\S]*package\.json[\s\S]*--legacy-cockpit/
+    /Could not find[\s\S]*package\.json/
   );
 });
 
@@ -202,7 +202,7 @@ test("missing dist/bundle/cli.js fails closed with an explicit error before spaw
         throw new Error("should not spawn");
       }
     }),
-    (err) => err.message.includes(fixture.cliPath) && /--legacy-cockpit/.test(err.message)
+    (err) => err.message.includes(fixture.cliPath)
   );
 });
 

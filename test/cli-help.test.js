@@ -27,10 +27,10 @@ test("full help groups commands and documents advanced surfaces", () => {
   assert.match(text, /kairo run --agent/);
   assert.match(text, /--workspace-bound --cwd/);
   assert.match(text, /runs list/);
-  assert.match(text, /Operations cockpit/);
+  assert.match(text, /Unified workspace \(ops: press 5/);
   assert.match(text, /Unified Kairo workspace/);
-  assert.match(text, /ratatui default/);
-  assert.match(text, /--pi \/ KAIRO_UI_HOST=pi/);
+  assert.match(text, /ratatui only/);
+  assert.doesNotMatch(text, /--pi \/ KAIRO_UI_HOST=pi/);
   assert.match(text, /intelligence/);
   assert.match(text, /OPENROUTER_API_KEY/);
   assert.match(text, /Legacy aliases: harness/);

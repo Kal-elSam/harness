@@ -9,7 +9,7 @@ import {
   availabilityNotices, createCompactShellSummaryWidget, createKairoTextWidget, createKairoWorkspaceWidget,
   createShellBottomStripWidget, createShellSidebarWidget, createShellWelcomeWidget, formatSessionIdentity,
   TEAM_SETUP_NEXT_STEP
-} from "../workspace-widget.js";
+} from "../workspace-shell-text.js";
 import { MAX_RECOVERY_ATTEMPTS } from "../../conversation/team-recovery.js";
 import { resolveHomeDir } from "../../paths.js";
 import { resolveProjectRoot } from "../../architect/architect-store.js";

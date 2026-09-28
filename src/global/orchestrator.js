@@ -1,16 +1,10 @@
 import { stdin as input, stdout as output } from "node:process";
-import { resolveHomeDir } from "./paths.js";
 import { canUseOrchestratorShell } from "./ink/orchestrator-state.js";
-import { runOrchestratorInk as defaultRunOrchestratorInk } from "./ink/run-orchestrator-ink.js";
-import { createFullscreenSession } from "./ink/fullscreen-session.js";
 import { formatCliCommand } from "./brand/cli.js";
 import { BRAND } from "./brand/index.js";
 import { buildReadOnlyDiagnostics, shouldExecutePlan } from "./action-planner.js";
-import { runHarnessSetup as defaultRunHarnessSetup } from "./setup.js";
-import {
-  INITIAL_EXPERIENCE,
-  hasConfiguredGlobalState
-} from "./initial-experience.js";
+import { launchRatatuiHost, assertProductUiNotRetired } from "./host/launch-ratatui-host.js";
+import { INITIAL_EXPERIENCE } from "./initial-experience.js";
 
 export { canUseOrchestratorShell };
 
@@ -24,110 +18,27 @@ export function shouldOpenOrchestratorShell({
   return canUseOrchestratorShell({ interactive });
 }
 
+/**
+ * U7: `kairo shell` opens the ratatui host (Operations is key 5 inside).
+ * Ink orchestrator shell is retired.
+ */
 export async function runOrchestratorShell({
-  packageRoot,
-  packageManifest,
   workspaceRoot,
   interactive = Boolean(input.isTTY && output.isTTY),
-  initialMode = INITIAL_EXPERIENCE.DASHBOARD,
-  shellCapable = canUseOrchestratorShell({ interactive }),
-  runOrchestratorInkImpl = defaultRunOrchestratorInk,
-  runHarnessSetupImpl = defaultRunHarnessSetup,
-  fullscreenSession = null,
-  stdout = output
-}) {
+  options = {},
+  env = process.env,
+  launchRatatuiHostImpl = launchRatatuiHost
+} = {}) {
+  assertProductUiNotRetired({ options, env });
   if (!interactive) {
     throw new Error(
       `Non-interactive shell requires an explicit command. Try ${formatCliCommand("help")} or ${formatCliCommand("runs list")}.`
     );
   }
-
-  if (!shellCapable) {
-    throw new Error(
-      `Interactive shell requires a capable TTY. Use ${formatCliCommand("runs list")} or explicit commands.`
-    );
-  }
-
-  const homeDir = resolveHomeDir();
-  const ownsSession = !fullscreenSession;
-  const session = fullscreenSession ?? createFullscreenSession({
-    stdout,
-    enabled: Boolean(stdout?.isTTY)
+  return launchRatatuiHostImpl({
+    cwd: workspaceRoot,
+    interactive
   });
-
-  if (ownsSession) {
-    session.enter();
-  }
-
-  let setupOutcome = null;
-
-  try {
-    if (initialMode === INITIAL_EXPERIENCE.ONBOARDING) {
-      setupOutcome = await runHarnessSetupImpl({
-        packageRoot,
-        packageName: packageManifest.name,
-        cliVersion: packageManifest.version,
-        homeDir,
-        workspaceRoot,
-        onboarding: true,
-        interactive: true,
-        fullscreenSession: session
-      });
-
-      if (setupOutcome?.cancelled) {
-        return {
-          cancelled: true,
-          wrote: false,
-          action: null,
-          initialMode,
-          setup: setupOutcome
-        };
-      }
-    }
-
-    for (;;) {
-      const outcome = await runOrchestratorInkImpl({
-        homeDir,
-        workspaceRoot,
-        packageRoot,
-        packageName: packageManifest.name,
-        cliVersion: packageManifest.version,
-        hasGlobalState: hasConfiguredGlobalState(homeDir),
-        fullscreenSession: session
-      });
-
-      if (outcome.error) {
-        throw outcome.error;
-      }
-
-      if (outcome?.action === "setup") {
-        const mid = await runHarnessSetupImpl({
-          packageRoot,
-          packageName: packageManifest.name,
-          cliVersion: packageManifest.version,
-          homeDir,
-          workspaceRoot,
-          onboarding: false,
-          interactive: true,
-          fullscreenSession: session
-        });
-        if (!mid?.cancelled) setupOutcome = mid;
-        continue;
-      }
-
-      return {
-        cancelled: Boolean(outcome.cancelled),
-        wrote: Boolean(setupOutcome && !setupOutcome.cancelled),
-        action: outcome.action ?? null,
-        initialMode,
-        setup: setupOutcome
-      };
-    }
-  } finally {
-    if (ownsSession) {
-      session.leave();
-    }
-  }
 }
 
 export async function runOrchestratorDiagnostics({
@@ -190,3 +101,5 @@ export function assertPlanExecution(plan, { confirmed = false } = {}) {
     throw new Error("Plan declined. No writes or installations were performed.");
   }
 }
+
+export { INITIAL_EXPERIENCE };

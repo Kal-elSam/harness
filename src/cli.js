@@ -38,16 +38,18 @@ import { runSelfUpdate } from "./global/self-update.js";
 import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
 import { resolveHomeDir } from "./global/paths.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
-import { runOrchestratorDiagnostics, runOrchestratorShell } from "./global/orchestrator.js";
+import { runOrchestratorDiagnostics } from "./global/orchestrator.js";
 import { runIntelligenceCli } from "./global/intelligence-cli.js";
 import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runArchitectCli, runPlansCli } from "./global/architect/architect-cli.js";
 import { runConversationCli } from "./global/conversation/cli.js";
-import { runUiCli } from "./global/conversation/ui.js";
 import { runKairoResume, runKairoSessionsList, runKairoStart } from "./global/conversation/session-cli.js";
-import { runCockpitCli } from "./global/cockpit/cli.js";
-import { launchGentleShell, routeInteractiveHost } from "./global/host/launch-gentle-shell.js";
-import { launchRatatuiHost, resolveUiHost } from "./global/host/launch-ratatui-host.js";
+import {
+  assertProductUiNotRetired,
+  launchRatatuiHost,
+  RETIRED_PRODUCT_UI_MESSAGE,
+  resolveUiHost
+} from "./global/host/launch-ratatui-host.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
 import { runGlobalAlerts } from "./global/runtime/alerts/alert-cli.js";
@@ -58,11 +60,6 @@ import {
   maybeWarnLegacyCli,
   resolveSuggestedInvocation
 } from "./global/brand/cli.js";
-import {
-  INITIAL_EXPERIENCE,
-  hasConfiguredGlobalState,
-  resolveInitialExperience
-} from "./global/initial-experience.js";
 import { printHelp } from "./global/cli-help.js";
 
 export { resolveSuggestedInvocation };
@@ -92,31 +89,17 @@ export async function runCli(argv) {
 
   switch (command) {
     case "host": {
-      const hostRoute = routeInteractiveHost({ command: "host", options: optionsWithPolicy });
-      if (hostRoute === "cockpit") {
-        await runCockpitCli(optionsWithPolicy);
-        return;
-      }
+      assertProductUiNotRetired({ options: optionsWithPolicy });
       // Bare `kairo` (implicit "host") always creates and binds a real
       // Kairo session, the same path as `kairo start` — never an unbound
-      // launch. `--legacy-cockpit` is handled above and stays untouched.
+      // launch.
       await runKairoStart(optionsWithPolicy);
       return;
     }
     case "shell": {
-      const homeDir = resolveHomeDir();
-      const resolvedMode = resolveInitialExperience({
-        interactive: optionsWithPolicy.interactive,
-        isImplicitCommand,
-        hasGlobalState: hasConfiguredGlobalState(homeDir)
-      });
-      await runOrchestratorShell({
-        packageRoot,
-        packageManifest,
-        workspaceRoot: optionsWithPolicy.cwd,
-        interactive: optionsWithPolicy.interactive,
-        initialMode: resolvedMode ?? INITIAL_EXPERIENCE.DASHBOARD
-      });
+      assertProductUiNotRetired({ options: optionsWithPolicy });
+      // U7: Operations live inside ratatui (key 5). Launch the unified host.
+      await launchInteractiveWorkspace(optionsWithPolicy);
       return;
     }
     case "orchestrator":
@@ -143,21 +126,15 @@ export async function runCli(argv) {
       return;
     case "conversation":
       if (!optionsWithPolicy.conversationActionExplicit) {
-        if (optionsWithPolicy.legacyCockpit) {
-          await runCockpitCli(optionsWithPolicy);
-          return;
-        }
+        assertProductUiNotRetired({ options: optionsWithPolicy });
         await launchInteractiveWorkspace(optionsWithPolicy);
         return;
       }
       await runConversationCli(optionsWithPolicy);
       return;
     case "ui":
-      if (!optionsWithPolicy.legacyCockpit) {
-        await launchInteractiveWorkspace(optionsWithPolicy);
-        return;
-      }
-      await runUiCli(optionsWithPolicy);
+      assertProductUiNotRetired({ options: optionsWithPolicy });
+      await launchInteractiveWorkspace(optionsWithPolicy);
       return;
     case "start":
       await runKairoStart(optionsWithPolicy);
@@ -516,18 +493,11 @@ export function buildMcpCliOptions(options = {}, extras = {}) {
   };
 }
 
-/** Default ratatui host; `--pi` / `KAIRO_UI_HOST=pi` opts into the Pi shell. */
+/** Ratatui is the only interactive product UI (U7). */
 async function launchInteractiveWorkspace(options) {
-  if (resolveUiHost({ options }) === "ratatui") {
-    await launchRatatuiHost({
-      cwd: options.cwd,
-      interactive: options.interactive
-    });
-    return;
-  }
-  await launchGentleShell({
+  resolveUiHost({ options });
+  await launchRatatuiHost({
     cwd: options.cwd,
-    extensionDir: resolve(__dirname, "global/host/extension"),
     interactive: options.interactive
   });
 }
@@ -835,9 +805,13 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--fail-on=")) {
       options.failOn = requireFlagValue("--fail-on", arg.slice("--fail-on=".length));
     }
-    else if (arg === "--legacy-cockpit") options.legacyCockpit = true;
+    else if (arg === "--legacy-cockpit") {
+      throw new Error(`--legacy-cockpit is no longer supported. ${RETIRED_PRODUCT_UI_MESSAGE}`);
+    }
     else if (arg === "--ratatui") options.ratatui = true;
-    else if (arg === "--pi" || arg === "--pi-host") options.piHost = true;
+    else if (arg === "--pi" || arg === "--pi-host") {
+      throw new Error(`--pi / --pi-host is no longer supported. ${RETIRED_PRODUCT_UI_MESSAGE}`);
+    }
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--all") options.helpAll = true;
     else if (arg === "--version" || arg === "-v") options.version = true;

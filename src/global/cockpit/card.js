@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "../text-width.js";
 
 // Rounded-frame card rendering, ported from gentle-pi's lib/shell-card.ts
 // (MIT) and simplified for the cockpit's plain-JS, single-frame use case:
