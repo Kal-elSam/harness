@@ -71,10 +71,11 @@ Legend: done / partial / missing. Source: read-only mapping of `feat/ratatui-hos
 | Restored history fidelity | Pi-TUI reload | done | `pi-rpc-transcript.js` reconstructs text/thinking/tool-call/tool-result/error rows in live order; `replace_from_sidecar_transcript` replays them through the same `apply_sidecar_event` reducer the live stream uses (U3c) |
 | Session selector (visible list) | Pi-TUI / cockpit | done | Ctrl+L opens `session_picker.rs`; j/k · Enter switch via `switch_session_index`; Esc cancels locally, mutates nothing. Ctrl+[ / ] still cycle unchanged |
 | New / switch | Pi RPC | done | Ctrl+N; Architect re-applied |
-| Kairo session id ↔ Pi file binding | `session-registry.js`, `KAIRO_SESSION_ID` | done | Sidecar annotates every `sessions` entry with `kairoSessionId` (`lookupPiBinding`); `kairo resume <id>` auto-switches Pi to the bound file before `ready`, so the picker/labels show the SAME id `kairo list`/`resume` use |
-| Rename / fork | Pi RPC `set_session_name` / `clone` | done | Ctrl+R renames the current session from the compose box; Ctrl+F forks via RPC `clone` (not the entry-based `fork`, which edits/regenerates history from a past message and returns text, not a new session) — new session distinct from source, source untouched. Fork not yet bound to a new Kairo id (decision gap, product TBD) |
-| Persist draft, history, active mode | cockpit | done (draft + session id) | Unsent compose-box text saved on quit (`stop_with_draft` → `saveDraft`) and restored once from `ready.draft` on resume. "Active mode" here = which session is bound/active, covered by the id-binding row above; Pi's own transcript already persists server-side |
-| extension_ui select / confirm / input / editor / notify | Pi `extension_ui_request` | missing (notify: parallel local notice only) | Correlated responses; cancel returns `cancelled` and mutates nothing |
+| Kairo session id ↔ Pi file binding | `session-registry.js`, `KAIRO_SESSION_ID` | partial | Lookup/annotate + resume auto-switch exist. **Reopened (U3a close):** active-session id (not boot env alone) must own drafts; fork must create **new** Kairo+Pi ids, appear in `kairo list`, and resume independently; cancelled transitions keep prior identity; binding failure surfaces error and never saves under the previous id as fallback |
+| Rename / fork | Pi RPC `set_session_name` / `clone` | partial | Rename done. Fork clones Pi file but **does not** yet mint/bind a new Kairo session id — required for Phase 3 close |
+| Persist draft, history, active mode | cockpit | partial | Quit saves draft under boot `KAIRO_SESSION_ID` only. **Reopened:** on switch/new/fork/resume, save outgoing draft under the **active** id before transition; after success load destination draft + history + mode; New → empty draft; Fork → copy history/mode, empty draft, source untouched |
+| Tool progress / result / error fidelity | Pi-TUI | partial | Live start/end rows exist; **reopened (U3c close):** correlate by `toolCallId`, process `tool_execution_update`, preserve result/error **content** (not name/status only); shared reducer for live + restore; replay final result only — never invent intermediate progress Pi did not persist |
+| extension_ui select / confirm / input / editor / notify | Pi `extension_ui_request` | missing (notify: parallel local notice only) | Correlated one-way `extension_ui_response` preserving request id (not ordinary request/response); cancel/timeout/engine death/quit release dialog without resolving another request or blocking the host |
 
 ### Phase 4 — conversational workspace
 
@@ -175,9 +176,9 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
 - [ ] U2a Pi RPC start: runtime-active no-model fix in the consumed package; keep startup stderr + JSONL errors (publish needs auth)
 - [ ] U2b Bootstrap: real fresh-session answer with confinement (provider auth) — `bootstrap-analyst-start.md` T4
 - [x] U2c Team: cause wording fixed (commit `6f91b8d6c`); availability revalidation + strategy recovery preview/apply/reject wired in ratatui (commits `5a3535566`, `307e9349e`)
-- [x] U3a Sessions: Kairo id ↔ Pi file binding; visible selector; rename / new / resume / fork; persist draft, history, mode (draft + active-session-id persistence; forked sessions not yet bound to a new Kairo id — decision gap)
-- [ ] U3b extension_ui: select / confirm / input / editor / notify with correlated responses and safe cancel
-- [x] U3c Chat events: separate text / thinking / tools; results, errors, progress; restored history == live
+- [ ] U3a Sessions (**reopened to close Phase 3**): keep prior commits; finish active-session draft ownership across switch/new/fork/resume; fork mints new Kairo+Pi ids + `kairo list`/resume; cancel keeps prior identity; binding failure never falls back to previous id. Evidence: A→B→quit→resume B keeps both drafts; cancelled new/fork/switch keep bindings/history correct
+- [ ] U3b extension_ui: select / confirm / input / editor / notify with correlated one-way responses and safe cancel (cancel/timeout/engine death/quit)
+- [ ] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
 - [ ] U4 Workspace: ASK/PLAN/AGENT, plans/tasks approve/reject, role → preview → confirm execute/cancel, transcript, manual handoff, per-role editor, slash commands, Work/Project/Tasks/Sessions views
 - [ ] U5 Operations + Settings views (health, providers, usage, diagnostics, sync/rollback receipts, runs, alerts, reviews, profiles, integrations, setup) via extracted neutral adapters
 - [ ] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
@@ -297,7 +298,9 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
 
 ## Next step
 
-**Plan 2026-09-28:** ~~U2c~~ → ~~U3c~~ → ~~U3a~~ → U3b → U4 → U5 → U6 → U7. U2a/U2b wait for publish / provider authorization. Route per task: delegated writer (JS sidecar + Rust, 2+ non-trivial files). The list below is the earlier plan, kept for history.
+**Plan 2026-09-28 (amended):** U3a/U3c reopen to finish Phase 3 acceptances → U3b → then U4→U5→U6→U7 under `feature-branch-chain`. U2a/U2b wait for publish / provider authorization. Native review is separate from functional proof; this plan does not grant or decline review consent. Route per task: delegated writer (JS sidecar + Rust, 2+ non-trivial files).
+
+- (2026-09-28) **Phase 3 close plan accepted** — Doc reopen only for unmet U3a/U3c acceptances; prior commits/tests preserved. Functional results stay separate from native review. Next: U3a identity/draft/fork → U3c tool fidelity → U3b dialogs → full suite (including known 9 entry failures + flake), work-unit commits, then RDD assess per protocol.
 
 1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7 packaging claim). Now reachable end to end in one UI: `kairo` → `a` (analyze) → `A` (approve) → chat. Live provider check only with a session you authorize.
 2. **T2** in-UI team depth: analyst picker + per-role editor (MVP is default analyst only).
