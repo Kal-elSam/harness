@@ -143,6 +143,15 @@ export async function buildCodexSandboxProfile({ snapshotRoot, codexHome = join(
   const readableExtra = [
     "/usr", "/System", "/bin", "/sbin", "/private/var/db/dyld", "/Library", "/opt", "/private/etc"
   ];
+  // CoreFoundation preferences (cfprefs) read shared memory published by the
+  // user's cfprefsd; without it the sandboxed Codex process gets a Sandbox
+  // denial on ipc-posix-shm-read-data. Read-only, exactly these two names.
+  const getuid = "getuid" in deps ? deps.getuid : process.getuid?.bind(process);
+  const uid = typeof getuid === "function" ? getuid() : null;
+  const cfprefsNames = [
+    ...(uid != null ? [`apple.cfprefs.${uid}v1`] : []),
+    "apple.cfprefs.daemonv1"
+  ].map((n) => `(ipc-posix-name "${n}")`).join(" ");
   return `(version 1)
 (deny default)
 (allow process-fork)
@@ -162,6 +171,7 @@ ${subpathRules([...snapshotForms, ...codexHomeForms, "/private/var/folders", "/p
 (allow signal (target self))
 (allow network*)
 (allow system-socket)
+(allow ipc-posix-shm-read-data ${cfprefsNames})
 `;
 }
 
