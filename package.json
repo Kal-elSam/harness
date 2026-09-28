@@ -46,6 +46,7 @@
     "release:check": "node scripts/check-release-commit.mjs",
     "release:published": "node scripts/check-published-release.mjs",
     "verify:kairo-ui-clean-install": "bash scripts/verify-kairo-ui-clean-install.sh",
+    "verify:kairo-ui-packaged": "node --test test/kairo-ui-packaged-verify.test.js",
     "verify:kairo-ui-npm-pack-install": "node --test test/kairo-ui-npm-pack-install.test.js"
   },
   "keywords": [
