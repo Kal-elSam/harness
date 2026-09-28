@@ -6,9 +6,9 @@
  *   { "op": "abort" }
  *   { "op": "compact" }
  *   { "op": "cycle_model" }
- *   { "op": "new_session" }
- *   { "op": "switch_session", "sessionPath": "..." }
- *   { "op": "switch_session_index", "index": 0 }
+ *   { "op": "new_session", "draft"?: "<unsent editor text for the current active Kairo id>" }
+ *   { "op": "switch_session", "sessionPath": "...", "draft"?: "<...>" }
+ *   { "op": "switch_session_index", "index": 0, "draft"?: "<...>" }
  *   { "op": "list_sessions" }
  *   { "op": "reload_snapshot" }
  *   { "op": "project.preflight" }
@@ -19,8 +19,8 @@
  *   { "op": "team.recovery.apply" }
  *   { "op": "team.recovery.reject" }
  *   { "op": "rename_session", "name": "..." }
- *   { "op": "fork_session" }
- *   { "op": "stop", "draft"?: "<unsent editor text, saved when KAIRO_SESSION_ID is set>" }
+ *   { "op": "fork_session", "draft"?: "<...>" }
+ *   { "op": "stop", "draft"?: "<unsent editor text, saved under the active Kairo session id>" }
  *
  * Sessions (U3a): each entry in `sessions` / the `ready.sessions` array
  * carries `kairoSessionId` — the real Kairo session id (`kairo list` /
@@ -33,9 +33,22 @@
  * no-session Pi start. `ready.draft` carries any unsent editor text saved
  * for that same Kairo session (see `saveDraft`/`loadDraft`), or `null`.
  *
+ * Active identity (U3a close): `activeKairoSessionId` starts from env
+ * `KAIRO_SESSION_ID` (after the resume auto-switch above) and updates only
+ * on a successful switch/new/fork. Outgoing `draft` on those ops is saved
+ * under the *current* active id BEFORE the transition. After success the
+ * sidecar emits `{ type: "draft", text, kairoSessionId }` (empty text for
+ * New/Fork; destination load for Switch). Cancel keeps the prior active
+ * id and never loads a destination draft. Fork mints a new Kairo session
+ * + `recordPiBinding`; a binding failure after clone is fail-closed:
+ * active becomes unbound (`null`) — never falls back to saving the fork's
+ * editor under the previous id. `stop` always persists under the active id
+ * (not the boot env alone).
+ *
  * stdout records (JSONL): { type: "ready", engine, snapshot?, kairoModels?, sessions?, draft? },
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
- * { type: "kairoModels", kairoModels }, { type: "team", op, ok, state, teamRows, roles, analyst },
+ * { type: "draft", text, kairoSessionId }, { type: "kairoModels", kairoModels },
+ * { type: "team", op, ok, state, teamRows, roles, analyst },
  * { type: "preflight", ok, analystCatalog?, profile?, candidates?, reason? } (the ratatui host's own
  * analyst picker — T2, no cockpit), { type: "availability", ok, reason? } (real re-probe result for
  * `team.revalidate`, followed by a fresh `snapshot`), { type: "recovery", op: "preview"|"apply"|"reject",
@@ -73,8 +86,17 @@ import {
 } from "./pi-rpc-kairo-models.js";
 import { resolveHomeDir } from "../paths.js";
 import { resolveProjectRoot as resolveProjectRootDefault } from "../architect/architect-store.js";
-import { lookupPiBinding as lookupPiBindingDefault } from "../conversation/pi-session-bindings.js";
-import { isValidSessionId, loadDraft as loadDraftDefault, saveDraft as saveDraftDefault } from "../conversation/session-registry.js";
+import {
+  lookupPiBinding as lookupPiBindingDefault,
+  recordPiBinding as recordPiBindingDefault
+} from "../conversation/pi-session-bindings.js";
+import {
+  createSession as createSessionDefault,
+  getSession as getSessionDefault,
+  isValidSessionId,
+  loadDraft as loadDraftDefault,
+  saveDraft as saveDraftDefault
+} from "../conversation/session-registry.js";
 
 /**
  * @param {object[]} models
@@ -161,6 +183,9 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut) {
  * @param {typeof resolveHomeDir} [options.resolveHomeDir]
  * @param {typeof resolveProjectRootDefault} [options.resolveProjectRoot]
  * @param {typeof lookupPiBindingDefault} [options.lookupPiBinding]
+ * @param {typeof recordPiBindingDefault} [options.recordPiBinding]
+ * @param {typeof createSessionDefault} [options.createSession]
+ * @param {typeof getSessionDefault} [options.getSession]
  * @param {typeof loadDraftDefault} [options.loadDraft]
  * @param {typeof saveDraftDefault} [options.saveDraft]
  */
@@ -183,6 +208,9 @@ export async function runKairoUiRpcStdio({
   resolveHomeDir: resolveHomeDirImpl = resolveHomeDir,
   resolveProjectRoot: resolveProjectRootImpl = resolveProjectRootDefault,
   lookupPiBinding: lookupPiBindingImpl = lookupPiBindingDefault,
+  recordPiBinding: recordPiBindingImpl = recordPiBindingDefault,
+  createSession: createSessionImpl = createSessionDefault,
+  getSession: getSessionImpl = getSessionDefault,
   loadDraft: loadDraftImpl = loadDraftDefault,
   saveDraft: saveDraftImpl = saveDraftDefault
 } = {}) {
@@ -210,6 +238,10 @@ export async function runKairoUiRpcStdio({
     typeof env?.KAIRO_SESSION_ID === "string" && isValidSessionId(env.KAIRO_SESSION_ID)
       ? env.KAIRO_SESSION_ID
       : null;
+  // Active Kairo identity owns drafts for this sidecar process. Starts from
+  // the boot env (after the resume auto-switch below) and only moves on a
+  // successful switch / new / fork — never on a cancelled transition.
+  let activeKairoSessionId = envSessionId;
 
   /** Attach the real bound Kairo session id (or null) to each Pi file entry. */
   const annotateSessions = async (files) => {
@@ -229,6 +261,46 @@ export async function runKairoUiRpcStdio({
       out.push({ path, sessionId, label, kairoSessionId });
     }
     return out;
+  };
+
+  /** Best-effort save of the host's live editor text under the current active id. */
+  const persistOutgoingDraft = async (draftField) => {
+    if (!activeKairoSessionId || !projectRoot) return;
+    const draftText = typeof draftField === "string" ? draftField : "";
+    try {
+      await saveDraftImpl(homeDir, projectRoot, activeKairoSessionId, draftText);
+    } catch {
+      // Best-effort — never block a session transition over a failed draft save.
+    }
+  };
+
+  const lookupKairoIdForPi = async (piSessionId) => {
+    if (!projectRoot || !piSessionId) return null;
+    try {
+      return await lookupPiBindingImpl(homeDir, projectRoot, piSessionId);
+    } catch {
+      return null;
+    }
+  };
+
+  /** Emit the draft the host should show for the (new) active Kairo id. */
+  const emitActiveDraft = async ({ text = undefined } = {}) => {
+    let draftText = text;
+    if (draftText === undefined) {
+      draftText = "";
+      if (activeKairoSessionId && projectRoot) {
+        try {
+          draftText = (await loadDraftImpl(homeDir, projectRoot, activeKairoSessionId)) ?? "";
+        } catch {
+          draftText = "";
+        }
+      }
+    }
+    writeOut({
+      type: "draft",
+      text: typeof draftText === "string" ? draftText : "",
+      kairoSessionId: activeKairoSessionId
+    });
   };
 
   // `kairo resume <id>` (or `start`) launches this host with
@@ -392,6 +464,7 @@ export async function runKairoUiRpcStdio({
           });
         }
       } else if (op === "new_session") {
+        await persistOutgoingDraft(cmd.draft);
         const result = await bridge.request({ type: "new_session" });
         if (result?.cancelled) {
           writeOut({ type: "notice", message: "New session cancelled by extension" });
@@ -406,12 +479,18 @@ export async function runKairoUiRpcStdio({
           reloadTranscript: true,
           reapplyArchitect: true
         });
+        // Extension (when loaded) may already have minted+bound; otherwise
+        // the new Pi file stays unbound. Never invent an id here — New's
+        // draft is always empty.
+        activeKairoSessionId = await lookupKairoIdForPi(bridge.engine?.sessionId ?? null);
+        await emitActiveDraft({ text: "" });
       } else if (op === "switch_session") {
         const sessionPath = typeof cmd.sessionPath === "string" ? cmd.sessionPath : "";
         if (!sessionPath) {
           writeOut({ type: "error", message: "switch_session requires sessionPath" });
           return;
         }
+        await persistOutgoingDraft(cmd.draft);
         const result = await bridge.request({
           type: "switch_session",
           sessionPath
@@ -424,6 +503,11 @@ export async function runKairoUiRpcStdio({
           reloadTranscript: true,
           reapplyArchitect: true
         });
+        const matched = sessionFiles.find((f) => f.path === sessionPath);
+        activeKairoSessionId = await lookupKairoIdForPi(
+          matched?.sessionId ?? bridge.engine?.sessionId ?? null
+        );
+        await emitActiveDraft();
       } else if (op === "switch_session_index") {
         sessionFiles = listSessionFilesImpl({ cwd, env });
         const index = Number(cmd.index);
@@ -437,6 +521,7 @@ export async function runKairoUiRpcStdio({
           });
           return;
         }
+        await persistOutgoingDraft(cmd.draft);
         const target = sessionFiles[index];
         const result = await bridge.request({
           type: "switch_session",
@@ -450,6 +535,8 @@ export async function runKairoUiRpcStdio({
           reloadTranscript: true,
           reapplyArchitect: true
         });
+        activeKairoSessionId = await lookupKairoIdForPi(target.sessionId ?? null);
+        await emitActiveDraft();
       } else if (op === "list_sessions") {
         sessionFiles = listSessionFilesImpl({ cwd, env });
         writeOut({
@@ -481,27 +568,70 @@ export async function runKairoUiRpcStdio({
         // `clone` is the dedicated RPC command for exactly that: it forks at
         // the CURRENT leaf, creating a new session file distinct from the
         // source (the source file is never touched) and switches Pi's live
-        // session to the new one. This fork is Pi-level only in this slice
-        // — it is not yet bound to a new Kairo session id (decision gap:
-        // no product spec named whether a fork should get its own `kairo
-        // list` entry; binding it is a follow-up once product decides).
+        // session to the new one. After a successful clone we mint a NEW
+        // Kairo session id and bind it to the new Pi file so the fork
+        // appears in `kairo list` / annotateSessions independently of the
+        // source (source bindings + drafts stay untouched).
+        const priorActive = activeKairoSessionId;
+        await persistOutgoingDraft(cmd.draft);
         const result = await bridge.request({ type: "clone" });
         if (result?.cancelled) {
           writeOut({ type: "notice", message: "Fork cancelled by extension" });
           return;
         }
-        sessionFiles = listSessionFilesImpl({ cwd, env });
-        writeOut({ type: "sessions", sessions: await annotateSessions(sessionFiles) });
         await applyEngineAndMaybeTranscript({
           reloadTranscript: true,
           reapplyArchitect: true
         });
+        const newPiSessionId = bridge.engine?.sessionId ?? null;
+
+        if (projectRoot && newPiSessionId) {
+          try {
+            let mode = "ask";
+            if (priorActive) {
+              try {
+                const previous = await getSessionImpl(homeDir, projectRoot, priorActive);
+                if (previous?.mode) mode = previous.mode;
+              } catch {
+                mode = "ask";
+              }
+            }
+            const session = await createSessionImpl(homeDir, projectRoot, { mode });
+            await recordPiBindingImpl(homeDir, projectRoot, newPiSessionId, session.id);
+            activeKairoSessionId = session.id;
+          } catch (err) {
+            // Fail-closed: Pi already moved to the fork, but we have no
+            // honest Kairo id for it. Do NOT keep priorActive (that would
+            // make stop/draft saves for the fork contaminate the source
+            // identity) and do NOT invent a fallback binding under the
+            // previous id.
+            activeKairoSessionId = null;
+            writeOut({
+              type: "error",
+              message: `Fork Kairo binding failed: ${err?.message ?? err}`
+            });
+            sessionFiles = listSessionFilesImpl({ cwd, env });
+            writeOut({
+              type: "sessions",
+              sessions: await annotateSessions(sessionFiles)
+            });
+            return;
+          }
+        } else {
+          // No project root (or Pi gave no session id) — degrade to unbound
+          // rather than crashing; the Pi fork itself still succeeded.
+          activeKairoSessionId = null;
+        }
+
+        sessionFiles = listSessionFilesImpl({ cwd, env });
+        writeOut({ type: "sessions", sessions: await annotateSessions(sessionFiles) });
+        await emitActiveDraft({ text: "" });
         writeOut({ type: "notice", message: "Session forked — now on the new copy." });
       } else if (op === "stop") {
-        if (envSessionId && projectRoot) {
+        if (activeKairoSessionId && projectRoot) {
           const draftText = typeof cmd.draft === "string" ? cmd.draft : "";
           try {
-            await saveDraftImpl(homeDir, projectRoot, envSessionId, draftText);
+            await saveDraftImpl(homeDir, projectRoot, activeKairoSessionId, draftText);
           } catch {
             // Best-effort — never block shutdown over a failed draft save.
           }

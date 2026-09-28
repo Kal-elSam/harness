@@ -98,19 +98,15 @@ impl BridgeClient {
                 }
             }
         }
-        let line = serde_json::to_string(&payload).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })?;
+        let line = serde_json::to_string(&payload)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
         writeln!(self.stdin, "{line}")?;
         self.stdin.flush()?;
         Ok(())
     }
 
     pub fn prompt(&mut self, message: &str) -> std::io::Result<()> {
-        self.send_op(
-            "prompt",
-            serde_json::json!({ "message": message }),
-        )
+        self.send_op("prompt", serde_json::json!({ "message": message }))
     }
 
     pub fn abort(&mut self) -> std::io::Result<()> {
@@ -173,13 +169,30 @@ impl BridgeClient {
     }
 
     pub fn new_session(&mut self) -> std::io::Result<()> {
-        self.send_op("new_session", Value::Null)
+        self.new_session_with_draft("")
+    }
+
+    /// Same as `new_session`, but also hands the sidecar the live compose-box
+    /// text so it can save that draft under the *current* active Kairo id
+    /// before the transition (U3a close).
+    pub fn new_session_with_draft(&mut self, draft: &str) -> std::io::Result<()> {
+        self.send_op("new_session", serde_json::json!({ "draft": draft }))
     }
 
     pub fn switch_session_index(&mut self, index: usize) -> std::io::Result<()> {
+        self.switch_session_index_with_draft(index, "")
+    }
+
+    /// Switch with the live compose-box draft so the sidecar can persist it
+    /// under the outgoing active Kairo id before moving (U3a close).
+    pub fn switch_session_index_with_draft(
+        &mut self,
+        index: usize,
+        draft: &str,
+    ) -> std::io::Result<()> {
         self.send_op(
             "switch_session_index",
-            serde_json::json!({ "index": index }),
+            serde_json::json!({ "index": index, "draft": draft }),
         )
     }
 
@@ -193,7 +206,13 @@ impl BridgeClient {
     /// source (source untouched) — see the sidecar's own `fork_session`
     /// handler for why this uses RPC `clone`, not the entry-based `fork`.
     pub fn fork_session(&mut self) -> std::io::Result<()> {
-        self.send_op("fork_session", Value::Null)
+        self.fork_session_with_draft("")
+    }
+
+    /// Fork and save the live compose-box draft under the source's active
+    /// Kairo id before the clone (U3a close). Destination draft is empty.
+    pub fn fork_session_with_draft(&mut self, draft: &str) -> std::io::Result<()> {
+        self.send_op("fork_session", serde_json::json!({ "draft": draft }))
     }
 
     /// Force-stop the Node sidecar. Never block the TTY on a wedged child:

@@ -1938,3 +1938,519 @@ test("U3a: ready surfaces a previously saved draft for the bound Kairo session",
   stdin.end();
   await runPromise;
 });
+
+// -----------------------------------------------------------------------
+// U3a close: activeKairoSessionId owns drafts; fork mints+binds; cancel
+// and binding-failure stay fail-closed.
+// -----------------------------------------------------------------------
+
+const KAIRO_ID_C = "cccccccc-0000-4000-8000-000000000003";
+
+function draftsStore() {
+  /** @type {Map<string, string>} */
+  const map = new Map();
+  return {
+    map,
+    saveDraft: async (_h, _p, sessionId, text) => {
+      map.set(sessionId, text);
+    },
+    loadDraft: async (_h, _p, sessionId) => (map.has(sessionId) ? map.get(sessionId) : null)
+  };
+}
+
+test("U3a close: switch saves outgoing draft under active id then loads destination draft; stop uses active not boot env", async () => {
+  const drafts = draftsStore();
+  drafts.map.set(KAIRO_ID_A, "draft-A");
+  drafts.map.set(KAIRO_ID_B, "draft-B");
+  const saveCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  let currentSessionId = "pi-a";
+  const bindings = new Map([
+    ["pi-a", KAIRO_ID_A],
+    ["pi-b", KAIRO_ID_B]
+  ]);
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [
+      { path: "/x/a.jsonl", sessionId: "pi-a", label: "A" },
+      { path: "/x/b.jsonl", sessionId: "pi-b", label: "B" }
+    ],
+    lookupPiBinding: async (_h, _r, piId) => bindings.get(piId) ?? null,
+    saveDraft: async (h, p, sessionId, text) => {
+      saveCalls.push({ sessionId, text });
+      return drafts.saveDraft(h, p, sessionId, text);
+    },
+    loadDraft: drafts.loadDraft,
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: currentSessionId, model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "switch_session") {
+            currentSessionId = cmd.sessionPath.includes("b.jsonl") ? "pi-b" : "pi-a";
+            return { type: "response", command: "switch_session", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "get_messages") {
+            return { type: "response", command: "get_messages", success: true, data: { messages: [] } };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [architectModel],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 60));
+  // Switch A → B, carrying the live editor draft for A.
+  stdin.write(
+    `${JSON.stringify({ op: "switch_session_index", index: 1, draft: "draft-A-edited" })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 80));
+
+  assert.ok(
+    saveCalls.some((c) => c.sessionId === KAIRO_ID_A && c.text === "draft-A-edited"),
+    "outgoing draft must be saved under the prior active id before switch"
+  );
+  const draftEvt = [...out].reverse().find((r) => r.type === "draft");
+  assert.ok(draftEvt, "destination draft must be emitted after a successful switch");
+  assert.equal(draftEvt.kairoSessionId, KAIRO_ID_B);
+  assert.equal(draftEvt.text, "draft-B");
+
+  // Stop must persist under the NEW active id (B), not the boot env (A).
+  const stopSavesBefore = saveCalls.length;
+  stdin.write(`${JSON.stringify({ op: "stop", draft: "draft-B-final" })}\n`);
+  stdin.end();
+  await runPromise;
+  const stopSaves = saveCalls.slice(stopSavesBefore);
+  assert.equal(stopSaves.length, 1);
+  assert.equal(stopSaves[0].sessionId, KAIRO_ID_B);
+  assert.equal(stopSaves[0].text, "draft-B-final");
+  assert.equal(drafts.map.get(KAIRO_ID_A), "draft-A-edited", "A's draft stays isolated");
+});
+
+test("U3a close: new_session saves prior draft under active id and emits empty draft; prior preserved", async () => {
+  const drafts = draftsStore();
+  const saveCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  let currentSessionId = "pi-a";
+  let listed = [
+    { path: "/x/a.jsonl", sessionId: "pi-a", label: "A" }
+  ];
+  const bindings = new Map([["pi-a", KAIRO_ID_A]]);
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => listed,
+    lookupPiBinding: async (_h, _r, piId) => bindings.get(piId) ?? null,
+    saveDraft: async (h, p, sessionId, text) => {
+      saveCalls.push({ sessionId, text });
+      return drafts.saveDraft(h, p, sessionId, text);
+    },
+    loadDraft: drafts.loadDraft,
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: currentSessionId, model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "new_session") {
+            currentSessionId = "pi-new";
+            listed = [
+              { path: "/x/a.jsonl", sessionId: "pi-a", label: "A" },
+              { path: "/x/new.jsonl", sessionId: "pi-new", label: "New" }
+            ];
+            return { type: "response", command: "new_session", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "switch_session") {
+            currentSessionId = "pi-a";
+            return { type: "response", command: "switch_session", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "get_messages") {
+            return { type: "response", command: "get_messages", success: true, data: { messages: [] } };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [architectModel],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 60));
+  stdin.write(`${JSON.stringify({ op: "new_session", draft: "keep-me-on-A" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  assert.ok(saveCalls.some((c) => c.sessionId === KAIRO_ID_A && c.text === "keep-me-on-A"));
+  const draftEvt = [...out].reverse().find((r) => r.type === "draft");
+  assert.ok(draftEvt);
+  assert.equal(draftEvt.text, "");
+  assert.equal(drafts.map.get(KAIRO_ID_A), "keep-me-on-A");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U3a close: fork_session mints+binds a new Kairo id; source binding/draft untouched; fork draft empty", async () => {
+  const drafts = draftsStore();
+  drafts.map.set(KAIRO_ID_A, "source-draft");
+  const saveCalls = [];
+  const createCalls = [];
+  const recordCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  let currentSessionId = "pi-a";
+  let cloneCalls = 0;
+  const bindings = new Map([["pi-a", KAIRO_ID_A]]);
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [
+      { path: "/x/a.jsonl", sessionId: "pi-a", label: "A" },
+      ...(cloneCalls > 0 ? [{ path: "/x/fork.jsonl", sessionId: "pi-fork", label: "Fork" }] : [])
+    ],
+    lookupPiBinding: async (_h, _r, piId) => bindings.get(piId) ?? null,
+    createSession: async (_h, _p, opts) => {
+      createCalls.push(opts ?? {});
+      return { id: KAIRO_ID_C, mode: opts?.mode ?? "ask" };
+    },
+    recordPiBinding: async (_h, _p, piSessionId, kairoSessionId) => {
+      recordCalls.push({ piSessionId, kairoSessionId });
+      bindings.set(piSessionId, kairoSessionId);
+    },
+    getSession: async (_h, _p, sessionId) =>
+      sessionId === KAIRO_ID_A ? { id: KAIRO_ID_A, mode: "agent" } : null,
+    saveDraft: async (h, p, sessionId, text) => {
+      saveCalls.push({ sessionId, text });
+      return drafts.saveDraft(h, p, sessionId, text);
+    },
+    loadDraft: drafts.loadDraft,
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: currentSessionId, model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "clone") {
+            cloneCalls += 1;
+            currentSessionId = "pi-fork";
+            return { type: "response", command: "clone", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "fork") {
+            throw new Error("must never send entry-based fork");
+          }
+          if (cmd.type === "switch_session") {
+            currentSessionId = "pi-a";
+            return { type: "response", command: "switch_session", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "get_messages") {
+            return { type: "response", command: "get_messages", success: true, data: { messages: [] } };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [architectModel],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 60));
+  stdin.write(`${JSON.stringify({ op: "fork_session", draft: "source-outgoing" })}\n`);
+  await new Promise((r) => setTimeout(r, 100));
+
+  assert.ok(saveCalls.some((c) => c.sessionId === KAIRO_ID_A && c.text === "source-outgoing"));
+  assert.equal(createCalls.length, 1);
+  assert.equal(createCalls[0].mode, "agent", "fork inherits prior Kairo session mode");
+  assert.deepEqual(recordCalls, [{ piSessionId: "pi-fork", kairoSessionId: KAIRO_ID_C }]);
+  assert.equal(bindings.get("pi-a"), KAIRO_ID_A, "source binding untouched");
+  assert.equal(drafts.map.get(KAIRO_ID_A), "source-outgoing", "source draft preserved under A");
+
+  const sessions = [...out].reverse().find((r) => r.type === "sessions");
+  const forkRow = sessions.sessions.find((s) => s.sessionId === "pi-fork");
+  assert.equal(forkRow?.kairoSessionId, KAIRO_ID_C);
+
+  const draftEvt = [...out].reverse().find((r) => r.type === "draft");
+  assert.equal(draftEvt?.text, "");
+  assert.equal(draftEvt?.kairoSessionId, KAIRO_ID_C);
+
+  stdin.write(`${JSON.stringify({ op: "stop", draft: "fork-typed" })}\n`);
+  stdin.end();
+  await runPromise;
+  assert.ok(
+    saveCalls.some((c) => c.sessionId === KAIRO_ID_C && c.text === "fork-typed"),
+    "stop after fork saves under the new active Kairo id"
+  );
+});
+
+test("U3a close: cancelled switch keeps prior active id and does not load destination draft", async () => {
+  const drafts = draftsStore();
+  drafts.map.set(KAIRO_ID_B, "should-not-load");
+  const saveCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  let currentSessionId = "pi-a";
+  const bindings = new Map([
+    ["pi-a", KAIRO_ID_A],
+    ["pi-b", KAIRO_ID_B]
+  ]);
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [
+      { path: "/x/a.jsonl", sessionId: "pi-a", label: "A" },
+      { path: "/x/b.jsonl", sessionId: "pi-b", label: "B" }
+    ],
+    lookupPiBinding: async (_h, _r, piId) => bindings.get(piId) ?? null,
+    saveDraft: async (h, p, sessionId, text) => {
+      saveCalls.push({ sessionId, text });
+      return drafts.saveDraft(h, p, sessionId, text);
+    },
+    loadDraft: drafts.loadDraft,
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: currentSessionId, model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "switch_session") {
+            // Cancelled: Pi stays on A.
+            return { type: "response", command: "switch_session", success: true, data: { cancelled: true } };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [architectModel],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 60));
+  stdin.write(
+    `${JSON.stringify({ op: "switch_session_index", index: 1, draft: "still-on-A" })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 80));
+
+  assert.ok(saveCalls.some((c) => c.sessionId === KAIRO_ID_A && c.text === "still-on-A"));
+  assert.equal(
+    out.filter((r) => r.type === "draft").length,
+    0,
+    "cancelled switch must not emit destination draft"
+  );
+
+  stdin.write(`${JSON.stringify({ op: "stop", draft: "final-A" })}\n`);
+  stdin.end();
+  await runPromise;
+  assert.ok(
+    saveCalls.some((c) => c.sessionId === KAIRO_ID_A && c.text === "final-A"),
+    "after cancel, stop still saves under the prior active id"
+  );
+});
+
+test("U3a close: binding failure after clone emits error, does not fall back to prior id for the fork, leaves active unbound", async () => {
+  const drafts = draftsStore();
+  const saveCalls = [];
+  const recordCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  let currentSessionId = "pi-a";
+  let cloneCalls = 0;
+  const bindings = new Map([["pi-a", KAIRO_ID_A]]);
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [
+      { path: "/x/a.jsonl", sessionId: "pi-a", label: "A" },
+      ...(cloneCalls > 0 ? [{ path: "/x/fork.jsonl", sessionId: "pi-fork", label: "Fork" }] : [])
+    ],
+    lookupPiBinding: async (_h, _r, piId) => bindings.get(piId) ?? null,
+    createSession: async () => ({ id: KAIRO_ID_C, mode: "ask" }),
+    recordPiBinding: async (_h, _p, piSessionId, kairoSessionId) => {
+      recordCalls.push({ piSessionId, kairoSessionId });
+      throw new Error("disk full");
+    },
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "ask" }),
+    saveDraft: async (h, p, sessionId, text) => {
+      saveCalls.push({ sessionId, text });
+      return drafts.saveDraft(h, p, sessionId, text);
+    },
+    loadDraft: drafts.loadDraft,
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: currentSessionId, model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "clone") {
+            cloneCalls += 1;
+            currentSessionId = "pi-fork";
+            return { type: "response", command: "clone", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "switch_session") {
+            currentSessionId = "pi-a";
+            return { type: "response", command: "switch_session", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "get_messages") {
+            return { type: "response", command: "get_messages", success: true, data: { messages: [] } };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [architectModel],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 60));
+  stdin.write(`${JSON.stringify({ op: "fork_session", draft: "pre-fork" })}\n`);
+  await new Promise((r) => setTimeout(r, 100));
+
+  assert.ok(saveCalls.some((c) => c.sessionId === KAIRO_ID_A && c.text === "pre-fork"));
+  assert.equal(recordCalls.length, 1);
+  const err = [...out].reverse().find((r) => r.type === "error");
+  assert.match(err?.message ?? "", /disk full|binding/i);
+  assert.equal(bindings.get("pi-a"), KAIRO_ID_A, "source binding never overwritten as fallback");
+  assert.equal(bindings.has("pi-fork"), false, "failed bind must not leave a destination mapping");
+
+  // Fail-closed: active is unbound — stop must NOT save under A as if the
+  // fork still owned A's identity.
+  const beforeStop = saveCalls.length;
+  stdin.write(`${JSON.stringify({ op: "stop", draft: "orphan-editor" })}\n`);
+  stdin.end();
+  await runPromise;
+  const after = saveCalls.slice(beforeStop);
+  assert.equal(
+    after.filter((c) => c.sessionId === KAIRO_ID_A).length,
+    0,
+    "fail-closed: do not save the post-fork editor under the previous Kairo id"
+  );
+});
