@@ -345,6 +345,25 @@ function createBridgeShell({ snapshot }) {
         }
       });
     },
+    /**
+     * One-way stdin write (U3b): used for `extension_ui_response` and any
+     * other record that must NOT register in `pending` / wait for a typed
+     * `response` envelope. Caller supplies the full JSON object (including
+     * its own `id` when correlating an extension UI dialog).
+     * @param {object} record
+     */
+    sendRaw(record) {
+      if (exitError) throw exitError;
+      if (!child?.stdin) throw new Error("Pi RPC child has no stdin");
+      if (record == null || typeof record !== "object") {
+        throw new TypeError("sendRaw record must be an object");
+      }
+      child.stdin.write(`${JSON.stringify(record)}\n`);
+    },
+    /** Alias for {@link sendRaw} — same fire-and-forget contract. */
+    writeLine(record) {
+      return bridge.sendRaw(record);
+    },
     async stop() {
       if (stopped) return;
       stopped = true;

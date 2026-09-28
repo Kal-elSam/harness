@@ -75,7 +75,7 @@ Legend: done / partial / missing. Source: read-only mapping of `feat/ratatui-hos
 | Rename / fork | Pi RPC `set_session_name` / `clone` | done | Rename done. Fork: RPC `clone` then mint+bind new Kairo id; source bindings/drafts untouched; fork draft empty; appears via `listSessions` / annotateSessions |
 | Persist draft, history, active mode | cockpit | done (draft + active id) | Outgoing draft saved under **active** id before switch/new/fork; after success emit `{type:"draft",text,kairoSessionId}` (load dest / empty for New / empty for Fork); `stop` saves under active (not boot env alone). History/mode still via Pi transcript + Architect re-apply |
 | Tool progress / result / error fidelity | Pi-TUI | done | Correlate by `toolCallId`; `tool_execution_update` rewrites the matching in-progress row; `tool_execution_end` preserves result/error text; shared `apply_sidecar_event` for live + restore; restore emits final start/end only (no invented progress) (U3c) |
-| extension_ui select / confirm / input / editor / notify | Pi `extension_ui_request` | missing (notify: parallel local notice only) | Correlated one-way `extension_ui_response` preserving request id (not ordinary request/response); cancel/timeout/engine death/quit release dialog without resolving another request or blocking the host |
+| extension_ui select / confirm / input / editor / notify | Pi `extension_ui_request` | done | Correlated one-way `extension_ui_response` preserving request id (not ordinary request/response); cancel/timeout/engine death/quit release dialog without resolving another request or blocking the host. One modal at a time + FIFO queue by id (U3b) |
 
 ### Phase 4 — conversational workspace
 
@@ -129,7 +129,7 @@ Neutral adapters needed before porting: `ink/use-orchestrator-data.js` (hook-bou
 
 ### Sidecar protocol today
 
-Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_session`, `switch_session_index`, `list_sessions`, `reload_snapshot`, `project.preflight`, `project.analyze`, `team.approve`, `stop`. Records: `ready`, `engine`, `transcript`, `sessions`, `kairoModels`, `team`, `preflight`, `snapshot`, `notice`, `error` + forwarded Pi events. Unused Pi RPC surface relevant here: `fork`, `set_session_name`, `get_messages` (full blocks), thinking-level ops, `extension_ui_request/response`.
+Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_session`, `switch_session_index`, `list_sessions`, `rename_session`, `fork_session`, `reload_snapshot`, `project.preflight`, `project.analyze`, `team.approve`, `team.revalidate`, `team.recovery.*`, `extension_ui_response`, `stop`. Records: `ready`, `engine`, `transcript`, `sessions`, `draft`, `kairoModels`, `team`, `preflight`, `snapshot`, `notice`, `error` + forwarded Pi events (including `extension_ui_request`).
 
 ## Acceptance criteria
 
@@ -164,7 +164,7 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
 - [x] R5 Agents sidebar data + USAGE + notices (honest states)
 - [x] T1 In-UI project team: headless analyze with the default analyst (`a`) + approve (`A`) + Architect reapply, driven from ratatui — cockpit is never required or recommended
 - [~] T2 In-UI team depth: analyst picker in ratatui done (this slice); per-role editor still out
-- [ ] R6 Commands/dialogs via RPC extension-UI (partial: abort + compact via RPC; extension_ui dialogs pending)
+- [x] R6 Commands/dialogs via RPC extension-UI (abort + compact + extension_ui dialogs U3b)
 - [ ] V3 Visual gate: color captures @60/100/160 with conversation, agents, USAGE, error notice — **your approval** (blocks R7)
 - [ ] R7 Package binaries (darwin/linux); Windows `ui` error
 - [ ] R8 Final parity evidence
@@ -177,7 +177,7 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
 - [ ] U2b Bootstrap: real fresh-session answer with confinement (provider auth) — `bootstrap-analyst-start.md` T4
 - [x] U2c Team: cause wording fixed (commit `6f91b8d6c`); availability revalidation + strategy recovery preview/apply/reject wired in ratatui (commits `5a3535566`, `307e9349e`)
 - [x] U3a Sessions (**reopened to close Phase 3**): keep prior commits; finish active-session draft ownership across switch/new/fork/resume; fork mints new Kairo+Pi ids + `kairo list`/resume; cancel keeps prior identity; binding failure never falls back to previous id. Evidence: A→B→quit→resume B keeps both drafts; cancelled new/fork/switch keep bindings/history correct
-- [ ] U3b extension_ui: select / confirm / input / editor / notify with correlated one-way responses and safe cancel (cancel/timeout/engine death/quit)
+- [x] U3b extension_ui: select / confirm / input / editor / notify with correlated one-way responses and safe cancel (cancel/timeout/engine death/quit)
 - [x] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
 - [ ] U4 Workspace: ASK/PLAN/AGENT, plans/tasks approve/reject, role → preview → confirm execute/cancel, transcript, manual handoff, per-role editor, slash commands, Work/Project/Tasks/Sessions views
 - [ ] U5 Operations + Settings views (health, providers, usage, diagnostics, sync/rollback receipts, runs, alerts, reviews, profiles, integrations, setup) via extracted neutral adapters
@@ -311,14 +311,19 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
   - **Verification (observed)**: `node --test test/pi-rpc-transcript.test.js test/kairo-ui-rpc-stdio.test.js` → **42/42**. `cd crates/kairo-ui && cargo test` → **107/107**.
   - Commit: `feat(kairo-ui): toolCallId progress and result content (U3c)`.
 
+- (2026-09-28) **U3b extension_ui dialogs (delegated writer, STRICT TDD)** — Pi `extension_ui_request` / one-way `extension_ui_response` with correlated ids:
+  - **JS**: `pi-rpc-bridge.js` gains `sendRaw`/`writeLine` (stdin write, **no** pending map). Sidecar op `extension_ui_response` forwards `{type,id,value|confirmed|cancelled}` via `sendRaw`. `extension_ui_request` already forwarded via `onEvent`.
+  - **Rust**: new `extension_ui.rs` — one modal at a time + FIFO queue by id; select/confirm/input/editor; notify → notice (no response). Esc → cancelled same id; engine_unavailable clears locally; host quit sends cancelled then stop. Modal owns keys (own draft buffer — never chat compose).
+  - **Policy**: concurrent dialogs never mix ids; cancel of active only cancels that id; queued promote after close.
+  - **Verification**: `node --test test/pi-rpc-bridge.test.js test/kairo-ui-rpc-stdio.test.js test/pi-rpc-transcript.test.js` → **59/59**. `cd crates/kairo-ui && cargo test` → **115/115**.
+  - Commit: `feat(kairo-ui): extension_ui dialogs with correlated responses (U3b)`.
+
 ## Next step
 
-**Plan 2026-09-28 (amended):** U3c tool fidelity closed → U3b dialogs → full suite (including known 9 entry failures + flake), work-unit commits, then RDD assess per protocol. U2a/U2b wait for publish / provider authorization. Native review is separate from functional proof.
-
-- (2026-09-28) **Phase 3 close plan accepted** — Doc reopen only for unmet U3a/U3c acceptances; prior commits/tests preserved. Functional results stay separate from native review. Next: U3a identity/draft/fork → U3c tool fidelity → U3b dialogs → full suite (including known 9 entry failures + flake), work-unit commits, then RDD assess per protocol.
+**Plan 2026-09-28 (amended):** U3b closed → U4 workspace (modes/plans/slash/views) or V3 visual gate; full suite (known 9 entry failures + flake), then RDD assess per protocol. U2a/U2b wait for publish / provider authorization.
 
 1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7 packaging claim). Now reachable end to end in one UI: `kairo` → `a` (analyze) → `A` (approve) → chat. Live provider check only with a session you authorize.
-2. **T2** in-UI team depth: analyst picker + per-role editor (MVP is default analyst only).
-3. **R6** extension-UI dialogs (RPC extension_ui only; no simulated tools).
-4. **R4 remainder:** publish Pi fork (user-authorized) so RPC no-model cold-start is runtime-active; then bind Kairo `kairo list` / `resume` session ids to Pi `switch_session` when product wants one picker (today: Pi files on disk only).
-5. **R9** cutover cleanup: strip old UIs / packaging after V3 approval (remote auth); daily default is already ratatui on this branch.
+2. **U4** Workspace: ASK/PLAN/AGENT, plans/tasks, slash commands, views.
+3. **T2 remainder** per-role editor (analyst picker done).
+4. **R4 remainder:** publish Pi fork (user-authorized) so RPC no-model cold-start is runtime-active.
+5. **R9** cutover cleanup after V3 approval (remote auth); daily default is already ratatui on this branch.

@@ -215,6 +215,13 @@ impl BridgeClient {
         self.send_op("fork_session", serde_json::json!({ "draft": draft }))
     }
 
+    /// U3b: one-way `extension_ui_response` — `extra` must carry the original
+    /// request `id` plus `value` / `confirmed` / `cancelled`. Never waits for
+    /// a typed RPC response envelope.
+    pub fn extension_ui_response(&mut self, extra: Value) -> std::io::Result<()> {
+        self.send_op("extension_ui_response", extra)
+    }
+
     /// Force-stop the Node sidecar. Never block the TTY on a wedged child:
     /// best-effort cooperative `stop`, then kill + wait. Idempotent for Drop.
     pub fn stop(&mut self) -> std::io::Result<()> {
