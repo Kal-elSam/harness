@@ -2,6 +2,7 @@ mod analyst_picker;
 mod bridge;
 mod chat;
 mod engine;
+mod execution_flow;
 mod extension_ui;
 mod layout;
 mod plan_list;
@@ -10,6 +11,7 @@ mod session_picker;
 mod snapshot;
 mod surfaces;
 
+use std::collections::HashMap;
 use std::env;
 use std::io::{self, stdout};
 use std::path::PathBuf;
@@ -30,6 +32,7 @@ use engine::{
     can_analyze_team, can_approve_team, decide_submit, next_work_mode, normalize_work_mode,
     parse_slash_command, team_keys_available, EngineGate, SlashCommand, SubmitDecision,
 };
+use execution_flow::{ConfirmExecuteState, ExecutionModal, RoleSelectState};
 use extension_ui::{ExtensionUiEvent, ExtensionUiMethod, ExtensionUiState};
 use layout::split_shell;
 use plan_list::{PlanListState, PLAN_REQUESTED_HOST_COPY};
@@ -37,8 +40,9 @@ use recovery_picker::RecoveryPreviewState;
 use session_picker::SessionPickerState;
 use snapshot::apply_workspace_snapshot;
 use surfaces::{
-    render_analyst_picker, render_extension_ui, render_plan_list, render_recovery_preview,
-    render_session_picker, render_shell, ShellViewModel,
+    render_analyst_picker, render_confirm_execute, render_extension_ui, render_plan_list,
+    render_recovery_preview, render_role_select, render_session_picker, render_shell,
+    ShellViewModel,
 };
 
 // Keybindings (V2 + R3b + R4):
@@ -190,8 +194,12 @@ struct ShellApp {
     /// U4b: open plans / timeline list — `Some` while it owns key input
     /// (list-focus gates y/n so team `a`/`A` never clash).
     plan_list: Option<PlanListState>,
-    /// True while `plans.list` / `plans.show` / `plans.decide` is in flight.
+    /// True while `plans.list` / `plans.show` / `plans.decide` / U4c exec ops are in flight.
     plans_action_pending: bool,
+    /// U4c: nested role-select / confirm-execute modal (owns keys above list).
+    execution_modal: Option<ExecutionModal>,
+    /// U4c: per-run transcript cursor (`runId` → nextIndex).
+    run_transcript_cursors: HashMap<String, u64>,
     /// Pi extension_ui dialogs (U3b): one modal + FIFO queue, correlated by id.
     extension_ui: ExtensionUiState,
     /// The `ready` record's `draft` (if any) has been applied to the editor
@@ -226,6 +234,8 @@ impl ShellApp {
             session_picker: None,
             plan_list: None,
             plans_action_pending: false,
+            execution_modal: None,
+            run_transcript_cursors: HashMap::new(),
             extension_ui: ExtensionUiState::default(),
             draft_restored: false,
         }
@@ -417,6 +427,15 @@ impl ShellApp {
                 self.ingest_plan_detail_record(&record);
             } else if kind == Some("plan_decision") {
                 self.plans_action_pending = false;
+            } else if kind == Some("plan_preview") {
+                self.ingest_plan_preview_record(&record);
+            } else if kind == Some("plan_execute") {
+                self.ingest_plan_execute_record(&record);
+            } else if kind == Some("plan_cancel") {
+                self.plans_action_pending = false;
+                self.execution_modal = None;
+            } else if kind == Some("run_transcript") {
+                self.ingest_run_transcript_record(&record);
             } else if kind == Some("transcript") {
                 if let Some(rows) = record.get("messages").and_then(|v| v.as_array()) {
                     self.chat.replace_from_sidecar_transcript(rows);
@@ -460,6 +479,10 @@ impl ShellApp {
                 && kind != Some("plans")
                 && kind != Some("plan_detail")
                 && kind != Some("plan_decision")
+                && kind != Some("plan_preview")
+                && kind != Some("plan_execute")
+                && kind != Some("plan_cancel")
+                && kind != Some("run_transcript")
                 && kind != Some("extension_ui_request")
             {
                 self.chat.apply_sidecar_event(&record);
@@ -496,7 +519,7 @@ impl ShellApp {
         }
     }
 
-    /// U4b: apply / refresh the plans list modal from a `plans` record.
+    /// U4b/U4c: apply / refresh the plans list modal from a `plans` record.
     fn ingest_plans_record(&mut self, record: &serde_json::Value) {
         self.plans_action_pending = false;
         match self.plan_list.as_mut() {
@@ -505,6 +528,7 @@ impl ShellApp {
                 self.plan_list = Some(PlanListState::from_plans_record(record));
             }
         }
+        self.request_active_run_transcripts();
     }
 
     /// U4b: Markdown detail from `plans.show`.
@@ -909,6 +933,209 @@ impl ShellApp {
         }
     }
 
+    /// U4c: `x` under list-focus — open role select when AGENT+approved+not_started.
+    fn begin_execute_role_select(&mut self) {
+        if !self
+            .plan_list
+            .as_ref()
+            .is_some_and(|l| l.can_execute(&self.view.work_mode))
+        {
+            if self.view.work_mode != "agent" {
+                self.view.notice =
+                    Some("Switch to AGENT mode to execute an approved plan.".into());
+            }
+            return;
+        }
+        let Some(list) = self.plan_list.as_ref() else {
+            return;
+        };
+        let Some(row) = list.selected_row() else {
+            return;
+        };
+        let task_id = row.task_id.clone();
+        let roles = list.project_team_roles.clone();
+        if roles.is_empty() {
+            self.view.notice = Some(
+                "No active project team — analyze and approve one before executing.".into(),
+            );
+            return;
+        }
+        self.execution_modal = Some(ExecutionModal::RoleSelect(RoleSelectState::new(
+            task_id, roles,
+        )));
+        self.view.notice = Some("Select a role for execution.".into());
+    }
+
+    /// U4c: `c` under list-focus — cancel active execution (never mode-gated).
+    fn request_plan_cancel(&mut self) {
+        if !self.plan_list.as_ref().is_some_and(|l| l.can_cancel()) {
+            return;
+        }
+        let Some(task_id) = self
+            .plan_list
+            .as_ref()
+            .and_then(|l| l.selected_row())
+            .map(|r| r.task_id.clone())
+        else {
+            return;
+        };
+        if self.plans_action_pending {
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.plans_cancel(&task_id) {
+            Ok(()) => {
+                self.plans_action_pending = true;
+                self.view.notice = Some(format!("Cancelling run for {task_id}…"));
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("plans.cancel failed: {err}"));
+            }
+        }
+    }
+
+    /// U4c: Enter on role select → `plans.preview`.
+    fn request_plan_preview(&mut self, task_id: &str, role: &str) {
+        if self.plans_action_pending {
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.plans_preview(task_id, role) {
+            Ok(()) => {
+                self.plans_action_pending = true;
+                self.view.notice = Some(format!("Asking PROJECT TEAM who should execute {task_id}…"));
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("plans.preview failed: {err}"));
+            }
+        }
+    }
+
+    /// U4c: apply `plan_preview` — open confirm modal, or skip if auto-executed.
+    fn ingest_plan_preview_record(&mut self, record: &serde_json::Value) {
+        self.plans_action_pending = false;
+        if record.get("autoExecuted").and_then(|v| v.as_bool()) == Some(true) {
+            self.execution_modal = None;
+            return;
+        }
+        if let Some(confirm) = ConfirmExecuteState::from_plan_preview(record) {
+            if confirm.is_manual_handoff() {
+                if let Some(prompt) = confirm.task_prompt.as_deref() {
+                    let provider = confirm.provider.as_deref().unwrap_or("provider");
+                    let model = confirm
+                        .model_ref_label
+                        .as_deref()
+                        .or(confirm.model.as_deref())
+                        .unwrap_or("the assigned model");
+                    self.chat.push_kairo_reply(format!(
+                        "{provider} · {model} can't be launched automatically — paste this into its chat:\n\n{prompt}"
+                    ));
+                }
+            }
+            self.execution_modal = Some(ExecutionModal::Confirm(confirm));
+        } else {
+            self.execution_modal = None;
+        }
+    }
+
+    /// U4c: y on confirm → `plans.execute` with the exact confirmationTarget.
+    fn request_plan_execute_confirm(&mut self) {
+        let Some(ExecutionModal::Confirm(confirm)) = self.execution_modal.as_ref() else {
+            return;
+        };
+        if !confirm.can_confirm() {
+            return;
+        }
+        let task_id = confirm.task_id.clone();
+        let Some(target) = confirm.confirmation_target.clone() else {
+            return;
+        };
+        if self.plans_action_pending {
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.plans_execute(&task_id, &target) {
+            Ok(()) => {
+                self.plans_action_pending = true;
+                self.view.notice = Some(format!("Executing {task_id}…"));
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("plans.execute failed: {err}"));
+            }
+        }
+    }
+
+    fn ingest_plan_execute_record(&mut self, record: &serde_json::Value) {
+        self.plans_action_pending = false;
+        self.execution_modal = None;
+        if let Some(run_id) = record
+            .pointer("/execution/runId")
+            .and_then(|v| v.as_str())
+        {
+            self.run_transcript_cursors.entry(run_id.to_string()).or_insert(0);
+            self.request_run_transcript(run_id, 0);
+        }
+    }
+
+    fn ingest_run_transcript_record(&mut self, record: &serde_json::Value) {
+        let run_id = record
+            .get("runId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if let Some(next) = record.get("nextIndex").and_then(|v| v.as_u64()) {
+            if !run_id.is_empty() {
+                self.run_transcript_cursors.insert(run_id.to_string(), next);
+            }
+        }
+        if let Some(entries) = record.get("entries").and_then(|v| v.as_array()) {
+            for entry in entries {
+                let text = entry.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                if text.is_empty() {
+                    continue;
+                }
+                let provider = entry.get("provider").and_then(|v| v.as_str());
+                let line = match provider {
+                    Some(p) if !p.is_empty() => format!("[{p}] {text}"),
+                    _ => text.to_string(),
+                };
+                self.chat.push_kairo_reply(line);
+            }
+        }
+    }
+
+    fn request_run_transcript(&mut self, run_id: &str, since_index: u64) {
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        let _ = bridge.plans_transcript(run_id, since_index);
+    }
+
+    /// Poll active run transcripts after a plans refresh.
+    fn request_active_run_transcripts(&mut self) {
+        let Some(list) = self.plan_list.as_ref() else {
+            return;
+        };
+        let targets: Vec<(String, u64)> = list
+            .rows
+            .iter()
+            .filter(|r| r.exec_active)
+            .filter_map(|r| {
+                let run_id = r.run_id.as_ref()?;
+                let since = *self.run_transcript_cursors.get(run_id).unwrap_or(&0);
+                Some((run_id.clone(), since))
+            })
+            .collect();
+        for (run_id, since) in targets {
+            self.request_run_transcript(&run_id, since);
+        }
+    }
+
     fn submit_editor(&mut self) {
         let text = self.editor.lines().join("\n");
         if text.trim().is_empty() {
@@ -1097,6 +1324,11 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
     }
     if app.session_picker.is_some() {
         return Ok(handle_session_picker_key(app, key));
+    }
+    // U4c: nested role/confirm owns keys ABOVE the plan list so list y/n
+    // (approve/reject) never fires during confirm.
+    if app.execution_modal.is_some() {
+        return Ok(handle_execution_modal_key(app, key));
     }
     // U4b: plan list owns keys while open — team `a`/`A` never reach here.
     if app.plan_list.is_some() {
@@ -1322,11 +1554,67 @@ fn handle_plan_list_key(app: &mut ShellApp, key: KeyEvent) -> bool {
         KeyCode::Char('n') => {
             app.request_plan_decide("rejected");
         }
+        KeyCode::Char('x') => {
+            app.begin_execute_role_select();
+        }
+        KeyCode::Char('c') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.request_plan_cancel();
+        }
         // Explicitly ignore team keys while list-focused — never fall through.
         KeyCode::Char('a') | KeyCode::Char('A') => {}
         _ => {}
     }
     false
+}
+
+/// U4c: nested role-select / confirm-execute key owner. Esc cancels locally
+/// (no server). `y`/`n` here decide execute confirm — never plan approve/reject.
+/// Team `a`/`A` swallowed while open.
+fn handle_execution_modal_key(app: &mut ShellApp, key: KeyEvent) -> bool {
+    match app.execution_modal.as_mut() {
+        Some(ExecutionModal::RoleSelect(state)) => match key.code {
+            KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => true,
+            KeyCode::Esc => {
+                app.execution_modal = None;
+                app.view.notice = Some("Execution cancelled.".into());
+                false
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                state.move_down();
+                false
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.move_up();
+                false
+            }
+            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+                let task_id = state.task_id.clone();
+                let role = state.selected_role().map(str::to_string);
+                app.execution_modal = None;
+                if let Some(role) = role {
+                    app.request_plan_preview(&task_id, &role);
+                }
+                false
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => false,
+            _ => false,
+        },
+        Some(ExecutionModal::Confirm(_)) => match key.code {
+            KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => true,
+            KeyCode::Esc | KeyCode::Char('n') => {
+                app.execution_modal = None;
+                app.view.notice = Some("Execution cancelled.".into());
+                false
+            }
+            KeyCode::Char('y') => {
+                app.request_plan_execute_confirm();
+                false
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => false,
+            _ => false,
+        },
+        None => false,
+    }
 }
 
 /// `r` = revalidate availability on demand, `R` = preview a strategy
@@ -1737,6 +2025,15 @@ fn draw(frame: &mut Frame, app: &ShellApp) {
     if let Some(plans) = &app.plan_list {
         render_plan_list(frame.buffer_mut(), area, plans, &app.view.work_mode);
     }
+    match &app.execution_modal {
+        Some(ExecutionModal::RoleSelect(state)) => {
+            render_role_select(frame.buffer_mut(), area, state);
+        }
+        Some(ExecutionModal::Confirm(state)) => {
+            render_confirm_execute(frame.buffer_mut(), area, state);
+        }
+        None => {}
+    }
     if let Some(dialog) = &app.extension_ui.active {
         render_extension_ui(frame.buffer_mut(), area, dialog);
     }
@@ -1841,5 +2138,116 @@ mod tests {
             app.view.notice
         );
         assert!(!app.plans_action_pending);
+    }
+
+    #[test]
+    fn u4c_confirm_modal_owns_y_n_so_list_decide_never_fires() {
+        let mut app = ShellApp::new(None);
+        app.view.work_mode = "agent".into();
+        app.plan_list = Some(PlanListState::from_plans_record(&json!({
+            "timeline": [{
+                "taskId": "task-1",
+                "state": "awaiting_approval",
+                "approval": "not_decided",
+                "planReady": true
+            }],
+            "projectTeamRoles": ["Builder"]
+        })));
+        app.execution_modal = Some(ExecutionModal::Confirm(
+            ConfirmExecuteState::from_plan_preview(&json!({
+                "taskId": "task-1",
+                "decision": "ROUTED",
+                "provider": "codex",
+                "model": "gpt-6-astra",
+                "why": "ok",
+                "confirmationTarget": {
+                    "role": "Builder",
+                    "selection": "assigned",
+                    "strategyFingerprint": "fp-1",
+                    "candidateKey": "codex::gpt-6-astra"
+                },
+                "autoExecuted": false
+            }))
+            .unwrap(),
+        ));
+        // y goes to execute confirm path (pending) — list still awaiting_approval
+        // so if y leaked to list it would set plans_action_pending via decide.
+        // Without a bridge, request_plan_execute_confirm returns early; modal stays.
+        let _ = handle_key(&mut app, press('y')).expect("y");
+        assert!(
+            matches!(app.execution_modal, Some(ExecutionModal::Confirm(_))),
+            "confirm modal must still own the flow without a bridge"
+        );
+        assert!(!app.plans_action_pending, "list decide must not fire under confirm");
+
+        let _ = handle_key(&mut app, press('a')).expect("a");
+        assert!(app.picker.is_none(), "team a swallowed during confirm");
+        assert!(app.execution_modal.is_some());
+
+        let _ = handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).expect("esc");
+        assert!(app.execution_modal.is_none());
+        assert!(
+            app.view
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains("cancelled")),
+            "Esc cancels locally: {:?}",
+            app.view.notice
+        );
+        assert!(app.plan_list.is_some(), "Esc on confirm must not close the plan list");
+    }
+
+    #[test]
+    fn u4c_x_opens_role_select_only_for_agent_approved_not_started() {
+        let mut app = ShellApp::new(None);
+        app.view.work_mode = "agent".into();
+        app.plan_list = Some(PlanListState::from_plans_record(&json!({
+            "timeline": [{
+                "taskId": "task-1",
+                "state": "approved",
+                "approval": "approved",
+                "execution": { "state": "not_started", "active": false }
+            }],
+            "projectTeamRoles": ["Builder", "Reviewer"]
+        })));
+        let _ = handle_key(&mut app, press('x')).expect("x");
+        assert!(matches!(
+            app.execution_modal,
+            Some(ExecutionModal::RoleSelect(_))
+        ));
+        // team A swallowed
+        let _ = handle_key(&mut app, press('A')).expect("A");
+        assert!(app.picker.is_none());
+        assert!(matches!(
+            app.execution_modal,
+            Some(ExecutionModal::RoleSelect(_))
+        ));
+        let _ = handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).expect("esc");
+        assert!(app.execution_modal.is_none());
+    }
+
+    #[test]
+    fn u4c_manual_handoff_ingest_pushes_task_prompt_and_blocks_confirm() {
+        let mut app = ShellApp::new(None);
+        app.ingest_plan_preview_record(&json!({
+            "type": "plan_preview",
+            "taskId": "task-1",
+            "decision": "MANUAL_HANDOFF",
+            "role": "Builder",
+            "provider": "cursor",
+            "model": "cursor-model",
+            "confirmationTarget": null,
+            "taskPrompt": "# Plan\n\nDo the thing\n",
+            "autoExecuted": false
+        }));
+        let Some(ExecutionModal::Confirm(confirm)) = &app.execution_modal else {
+            panic!("expected confirm modal for manual handoff");
+        };
+        assert!(!confirm.can_confirm());
+        assert!(app
+            .chat
+            .messages
+            .iter()
+            .any(|m| m.content.contains("Do the thing")));
     }
 }

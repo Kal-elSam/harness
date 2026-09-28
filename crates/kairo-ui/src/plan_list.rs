@@ -1,11 +1,14 @@
-//! Plan / timeline list (U4b): session-scoped tasks from the sidecar's
-//! `plans` record (`service.snapshot` timeline). Detail is Markdown from
-//! `plan_detail` (`showPlan`). Approve/reject go through `plans.decide`
-//! only — never `planExecution` / `executePlan`.
+//! Plan / timeline list (U4b + U4c gates): session-scoped tasks from the
+//! sidecar's `plans` record (`service.snapshot` timeline). Detail is Markdown
+//! from `plan_detail` (`showPlan`). Approve/reject go through `plans.decide`
+//! only. Execute/cancel are gated here (`x`/`c`) but routed through the
+//! nested U4c execution modals / `plans.execute` / `plans.cancel`.
 //!
 //! Keybindings (list-focus only — never clash with team `a`/`A`):
 //! ↑/↓ move · Enter open Markdown detail · Esc close detail then list ·
-//! `y` approve / `n` reject when `awaiting_approval` and WorkMode ≠ ask.
+//! `y` approve / `n` reject when `awaiting_approval` and WorkMode ≠ ask ·
+//! `x` request execute when AGENT + approved + not_started ·
+//! `c` cancel when execActive.
 
 use serde_json::Value;
 
@@ -17,6 +20,9 @@ pub struct PlanRow {
     pub task_text: Option<String>,
     pub approval: String,
     pub plan_ready: bool,
+    pub exec_state: String,
+    pub exec_active: bool,
+    pub run_id: Option<String>,
 }
 
 impl PlanRow {
@@ -36,11 +42,24 @@ impl PlanRow {
                 }
             })
             .unwrap_or_else(|| "(no task text)".into());
-        format!("{} · {} — {}", short_task_id(&self.task_id), self.state, preview)
+        format!(
+            "{} · {} — {}",
+            short_task_id(&self.task_id),
+            self.state,
+            preview
+        )
     }
 
     pub fn is_awaiting_approval(&self) -> bool {
         self.state == "awaiting_approval"
+    }
+
+    pub fn is_approved(&self) -> bool {
+        self.state == "approved" || self.approval == "approved"
+    }
+
+    pub fn is_not_started(&self) -> bool {
+        self.exec_state == "not_started"
     }
 }
 
@@ -68,11 +87,13 @@ pub struct PlanListState {
     pub selected: usize,
     pub detail: Option<PlanDetail>,
     pub notice: Option<String>,
+    /// Active ProjectStrategy roles from the sidecar (`projectTeamRoles`).
+    pub project_team_roles: Vec<String>,
 }
 
 impl PlanListState {
-    /// Build from `{ type: "plans", timeline: [...] }`. Rows missing
-    /// `taskId` are dropped rather than half-rendered.
+    /// Build from `{ type: "plans", timeline: [...], projectTeamRoles?: [...] }`.
+    /// Rows missing `taskId` are dropped rather than half-rendered.
     pub fn from_plans_record(record: &Value) -> Self {
         let rows: Vec<PlanRow> = record
             .get("timeline")
@@ -99,14 +120,40 @@ impl PlanListState {
                             .get("planReady")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false);
+                        let exec = entry.get("execution");
+                        let exec_state = exec
+                            .and_then(|e| e.get("state"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("not_started")
+                            .to_string();
+                        let exec_active = exec
+                            .and_then(|e| e.get("active"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let run_id = exec
+                            .and_then(|e| e.get("runId"))
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string);
                         Some(PlanRow {
                             task_id,
                             state,
                             task_text,
                             approval,
                             plan_ready,
+                            exec_state,
+                            exec_active,
+                            run_id,
                         })
                     })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let project_team_roles = record
+            .get("projectTeamRoles")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
                     .collect()
             })
             .unwrap_or_default();
@@ -115,6 +162,7 @@ impl PlanListState {
             selected: 0,
             detail: None,
             notice: None,
+            project_team_roles,
         }
     }
 
@@ -124,6 +172,7 @@ impl PlanListState {
         let previous_id = self.selected_row().map(|r| r.task_id.clone());
         let next = Self::from_plans_record(record);
         self.rows = next.rows;
+        self.project_team_roles = next.project_team_roles;
         if self.rows.is_empty() {
             self.selected = 0;
             self.detail = None;
@@ -180,6 +229,22 @@ impl PlanListState {
         }
         self.selected_row()
             .is_some_and(PlanRow::is_awaiting_approval)
+    }
+
+    /// Execute only in AGENT mode for an approved, not-yet-started plan
+    /// (cockpit `isActionAvailable("execute")` parity). Cancel is separate.
+    pub fn can_execute(&self, work_mode: &str) -> bool {
+        if work_mode != "agent" {
+            return false;
+        }
+        self.selected_row()
+            .is_some_and(|r| r.is_approved() && r.is_not_started() && !r.exec_active)
+    }
+
+    /// Cancel whenever the selected row has an active execution — never
+    /// mode-gated (safety action).
+    pub fn can_cancel(&self) -> bool {
+        self.selected_row().is_some_and(|r| r.exec_active)
     }
 
     /// Prefer planMarkdown; fall back to taskMarkdown; honest empty copy.
@@ -245,6 +310,12 @@ impl PlanListState {
             parts.push("n reject".into());
         } else if work_mode == "ask" {
             parts.push("ASK: read-only".into());
+        }
+        if self.can_execute(work_mode) {
+            parts.push("x execute".into());
+        }
+        if self.can_cancel() {
+            parts.push("c cancel".into());
         }
         parts.join(" · ")
     }
@@ -377,7 +448,10 @@ mod tests {
         let mut state = PlanListState::from_plans_record(&timeline_record());
         state.selected = 1;
         state.refresh_from_plans_record(&timeline_record());
-        assert_eq!(state.selected_row().map(|r| r.task_id.as_str()), Some("task-2"));
+        assert_eq!(
+            state.selected_row().map(|r| r.task_id.as_str()),
+            Some("task-2")
+        );
     }
 
     #[test]
@@ -392,6 +466,44 @@ mod tests {
     }
 
     #[test]
+    fn can_execute_requires_agent_approved_not_started() {
+        let mut state = PlanListState::from_plans_record(&json!({
+            "timeline": [{
+                "taskId": "t",
+                "state": "approved",
+                "approval": "approved",
+                "planReady": true,
+                "execution": { "state": "not_started", "active": false }
+            }],
+            "projectTeamRoles": ["Builder"]
+        }));
+        assert!(!state.can_execute("ask"));
+        assert!(!state.can_execute("plan"));
+        assert!(state.can_execute("agent"));
+        assert!(!state.can_cancel());
+        state.rows[0].exec_active = true;
+        state.rows[0].exec_state = "running".into();
+        assert!(!state.can_execute("agent"));
+        assert!(state.can_cancel());
+        assert_eq!(state.project_team_roles, vec!["Builder".to_string()]);
+    }
+
+    #[test]
+    fn footer_hints_advertise_x_and_c_when_gated() {
+        let state = PlanListState::from_plans_record(&json!({
+            "timeline": [{
+                "taskId": "t",
+                "state": "approved",
+                "approval": "approved",
+                "execution": { "state": "not_started", "active": false }
+            }]
+        }));
+        let hints = state.footer_hints("agent");
+        assert!(hints.contains("x execute"));
+        assert!(!hints.contains("c cancel"));
+    }
+
+    #[test]
     fn drops_malformed_rows_without_task_id() {
         let state = PlanListState::from_plans_record(&json!({
             "timeline": [
@@ -401,5 +513,6 @@ mod tests {
         }));
         assert_eq!(state.rows.len(), 1);
         assert_eq!(state.rows[0].task_id, "ok");
+        assert_eq!(state.rows[0].exec_state, "not_started");
     }
 }

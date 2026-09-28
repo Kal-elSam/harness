@@ -85,8 +85,8 @@ Legend: done / partial / missing. Source: read-only mapping of `feat/ratatui-hos
 | Model cycle / compact | cockpit, Pi-TUI | done | Ctrl+M / Ctrl+K |
 | ASK / PLAN / AGENT modes | `cockpit/app.js` Shift+Tab, `service.setMode` | done (U4a) | Mode visible + persisted per active Kairo session; ASK answers, PLAN/AGENT produce plans only (never execute; never Pi `prompt`) |
 | Plans (Markdown), tasks, approve/reject | cockpit | done (U4b) | List + Markdown detail + approve/reject via `plans.list`/`show`/`decide` → conversation service; ASK read-only; keys `y`/`n` (not `a`) under list-focus |
-| Role selection → preview → confirm execute / cancel | cockpit `service.planExecution` | missing | No execution without explicit confirmation; stale preview rejected |
-| Execution transcript, cancel, manual handoff | `cockpit/app.js:242-258` | missing | Non-launchable role shows paste-prompt handoff |
+| Role selection → preview → confirm execute / cancel | cockpit `service.planExecution` | done (U4c) | No execution without explicit confirmation; stale preview rejected |
+| Execution transcript, cancel, manual handoff | `cockpit/app.js:242-258` | done (U4c) | Non-launchable role shows paste-prompt handoff |
 | Slash commands (`/models`, `/providers`, `/why`, `/usage`, `/clear`) | `cockpit/app.js:300-375` | missing | `/x` parsed as command, never sent as chat |
 | Views Work / Project / Tasks / Sessions | cockpit views | missing (Work only) | Navigable inside current chrome |
 
@@ -129,7 +129,7 @@ Neutral adapters needed before porting: `ink/use-orchestrator-data.js` (hook-bou
 
 ### Sidecar protocol today
 
-Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list` / `plans.show` / `plans.decide` (U4b; never executePlan), `abort`, `compact`, `cycle_model`, `new_session`, `switch_session`, `switch_session_index`, `list_sessions`, `rename_session`, `fork_session`, `reload_snapshot`, `project.preflight`, `project.analyze`, `team.approve`, `team.revalidate`, `team.recovery.*`, `extension_ui_response`, `stop`. Records: `ready`, `mode`, `task_result`, `plans`, `plan_detail`, `plan_decision`, `engine`, `transcript`, `sessions`, `draft`, `kairoModels`, `team`, `preflight`, `snapshot`, `notice`, `error` + forwarded Pi events (including `extension_ui_request`).
+Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list` / `plans.show` / `plans.decide` (U4b; never executePlan), `plans.preview` / `plans.execute` / `plans.cancel` / `plans.transcript` (U4c), `abort`, `compact`, `cycle_model`, `new_session`, `switch_session`, `switch_session_index`, `list_sessions`, `rename_session`, `fork_session`, `reload_snapshot`, `project.preflight`, `project.analyze`, `team.approve`, `team.revalidate`, `team.recovery.*`, `extension_ui_response`, `stop`. Records: `ready`, `mode`, `task_result`, `plans`, `plan_detail`, `plan_decision`, `plan_preview`, `plan_execute`, `plan_cancel`, `run_transcript`, `engine`, `transcript`, `sessions`, `draft`, `kairoModels`, `team`, `preflight`, `snapshot`, `notice`, `error` + forwarded Pi events (including `extension_ui_request`).
 
 ## Acceptance criteria
 
@@ -179,7 +179,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] U3a Sessions (**reopened to close Phase 3**): keep prior commits; finish active-session draft ownership across switch/new/fork/resume; fork mints new Kairo+Pi ids + `kairo list`/resume; cancel keeps prior identity; binding failure never falls back to previous id. Evidence: A→B→quit→resume B keeps both drafts; cancelled new/fork/switch keep bindings/history correct
 - [x] U3b extension_ui: select / confirm / input / editor / notify with correlated one-way responses and safe cancel (cancel/timeout/engine death/quit)
 - [x] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
-- [~] U4 Workspace: **U4a+U4b done** (modes + plans list/Markdown/approve/reject via service). Still open: role → preview → confirm execute/cancel (U4c), transcript/manual handoff, per-role editor, slash commands, Work/Project/Tasks/Sessions views (U4d)
+- [~] U4 Workspace: **U4a+U4b+U4c done** (modes + plans list/Markdown/approve/reject + role→preview→confirm execute/cancel/MANUAL_HANDOFF + run transcript). Still open: per-role editor, slash commands, Work/Project/Tasks/Sessions views (U4d)
 - [ ] U5 Operations + Settings views (health, providers, usage, diagnostics, sync/rollback receipts, runs, alerts, reviews, profiles, integrations, setup) via extracted neutral adapters
 - [ ] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
 - [ ] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
@@ -264,7 +264,8 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 
 - Quit: `q` when the editor is empty or focus is sidebar/transcript; **Ctrl+C** / **Ctrl+Q** always quit.
 - WorkMode (U4a): **Shift+Tab** cycles ASK → PLAN → AGENT → ASK (persisted via `service.setMode` under active Kairo session). Plain **Tab** stays focus cycling. Compose chrome shows `Message Kairo · ASK|PLAN|AGENT`. Enter routes through `submitTask` (ASK answers; PLAN/AGENT plan only — never execute, never Pi `prompt`).
-- Plans / tasks (U4b, bridge only): empty-compose **`p`** opens the session plan list (also auto-opens after a PLAN/AGENT plan). List-focus owns keys so team `a`/`A` never clash: **↑/↓** select · **Enter** Markdown detail · **Esc** closes detail then list locally · **`y` approve / `n` reject** only when `awaiting_approval` and WorkMode ≠ ask. No execute (U4c).
+- Plans / tasks (U4b, bridge only): empty-compose **`p`** opens the session plan list (also auto-opens after a PLAN/AGENT plan). List-focus owns keys so team `a`/`A` never clash: **↑/↓** select · **Enter** Markdown detail · **Esc** closes detail then list locally · **`y` approve / `n` reject** only when `awaiting_approval` and WorkMode ≠ ask.
+- Execute / cancel / handoff (U4c, bridge only, under plan-list): **`x`** request execute when AGENT + approved + not_started → nested **role select** (↑/↓ · Enter preview · Esc local cancel) → nested **confirm** owns **`y`/`n`** so list approve/reject never fires · **`c`** cancel when `execActive` (never mode-gated). WAIT_FOR_PROJECT_TEAM + suggested-alternative auto-executes (no y/n). MANUAL_HANDOFF pastes `taskPrompt` into the transcript (no launch). Esc on role/confirm is local-only. Team **`a`/`A` swallowed** while plan list OR exec modals are open.
 - Team (in host): **`a`** analyze · **`A`** approve (when suggested).
 - Availability + recovery (in host): **`r`** revalidate provider availability on demand · **`R`** preview a strategy recovery when the team is stale/blocked. In the recovery preview modal: **Enter**/**`y`** apply (re-verified against current eligibility; a stale proposal refuses and mutates nothing) · **`x`** explicitly reject (closes the proposal only) · **Esc** cancel locally (no server call at all).
 - Sessions (U3a, bridge only): **Ctrl+L** opens the visible session picker (real rows, labeled by the bound Kairo session id when one exists) — j/k or arrows move, **Enter** switches, **Esc** cancels locally (no server call). **Ctrl+[** / **Ctrl+]** still cycle sessions on disk unchanged. **Ctrl+R** renames the current session to whatever is in the compose box (then clears it). **Ctrl+F** forks the current session (RPC `clone`) into a new one, source untouched. These keybindings were not specified by a product spec — chosen by analogy with the existing Ctrl+M/N/K bridge shortcuts; flag for product review before calling final UX.
@@ -347,9 +348,17 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **Verification (observed)**: `node --test test/kairo-ui-rpc-stdio.test.js` → **49/49**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **132/132**.
   - Out of scope (still open): U4c execute/cancel/handoff; U4d slash/views; V3 visual.
 
+- (2026-09-28) **U4c role → preview → confirm execute / cancel / MANUAL_HANDOFF (STRICT TDD)** — Cockpit parity for plan execution inside ratatui; U4a/U4b untouched (`y`/`n` approve/reject stay list-focus).
+  - **Contract**: `plans.preview` → `planExecution({role})`; WAIT_FOR + `suggested-alternative` auto-`executePlan` (no y/n); ROUTED/other confirmable targets open a nested confirm modal; MANUAL_HANDOFF emits `taskPrompt` into the chat transcript (no launch); `plans.execute` requires the exact `confirmationTarget` (stale rejected by service); `plans.cancel` → `cancelExecution`; `plans.transcript` → `readRunTranscript`. `plans.list` also emits `projectTeamRoles` from an active strategy.
+  - **Key design**: Confirm is a nested modal that owns keys so list `y`/`n` never decidePlan during confirm. Under plan-list: **`x`** execute (agent+approved+not_started) · **`c`** cancel when execActive. Esc on role/confirm = local cancel (no server). Team `a`/`A` swallowed while plan list OR exec modals open.
+  - **JS**: DI `planExecution`/`executePlan`/`cancelExecution`/`readRunTranscript`; ops `plans.preview|execute|cancel|transcript`.
+  - **Rust**: `execution_flow.rs` (RoleSelect + ConfirmExecute); plan_list gates `can_execute`/`can_cancel`; bridge ops; main nested handlers; surfaces role/confirm modals; run transcript rows into chat.
+  - **Verification (observed)**: `node --test test/kairo-ui-rpc-stdio.test.js` → **57/57**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **142/142**.
+  - Out of scope (still open): U4d slash/views; per-role editor; V3 visual.
+
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 closed; **U4a+U4b done**. Next: **U4c** role → preview → confirm execute/cancel. U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green (9 entry-host failures).
+**Plan 2026-09-28 (amended):** Phase 3 closed; **U4a+U4b+U4c done**. Next: **U4d** slash commands + Work/Project/Tasks/Sessions views. U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green (9 entry-host failures).
 
-1. **U4c** role → preview → confirm execute/cancel + handoff; **U4d** `/` commands + views.
+1. **U4d** `/` commands + views.
 2. **U2a/U2b** when publish / provider auth available; **U5→U6→U7** under `feature-branch-chain`.

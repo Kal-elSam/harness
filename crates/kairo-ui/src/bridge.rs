@@ -245,6 +245,42 @@ impl BridgeClient {
         )
     }
 
+    /// U4c: role → `planExecution` preview (may auto-execute suggested alt).
+    pub fn plans_preview(&mut self, task_id: &str, role: &str) -> std::io::Result<()> {
+        self.send_op(
+            "plans.preview",
+            serde_json::json!({ "taskId": task_id, "role": role }),
+        )
+    }
+
+    /// U4c: confirm execute with the exact fresh `confirmationTarget`.
+    pub fn plans_execute(
+        &mut self,
+        task_id: &str,
+        confirmation_target: &serde_json::Value,
+    ) -> std::io::Result<()> {
+        self.send_op(
+            "plans.execute",
+            serde_json::json!({
+                "taskId": task_id,
+                "confirmationTarget": confirmation_target
+            }),
+        )
+    }
+
+    /// U4c: cancel an active execution.
+    pub fn plans_cancel(&mut self, task_id: &str) -> std::io::Result<()> {
+        self.send_op("plans.cancel", serde_json::json!({ "taskId": task_id }))
+    }
+
+    /// U4c: tail a run's transcript since `since_index`.
+    pub fn plans_transcript(&mut self, run_id: &str, since_index: u64) -> std::io::Result<()> {
+        self.send_op(
+            "plans.transcript",
+            serde_json::json!({ "runId": run_id, "sinceIndex": since_index }),
+        )
+    }
+
     /// Force-stop the Node sidecar. Never block the TTY on a wedged child:
     /// best-effort cooperative `stop`, then kill + wait. Idempotent for Drop.
     pub fn stop(&mut self) -> std::io::Result<()> {

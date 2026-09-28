@@ -9,6 +9,11 @@
  *   { "op": "plans.show", "taskId": "..." }  — U4b: showPlan (taskMarkdown+planMarkdown)
  *   { "op": "plans.decide", "taskId": "...", "decision": "approved"|"rejected" }
  *     — U4b: decidePlan + refresh list; never executePlan / planExecution
+ *   { "op": "plans.preview", "taskId": "...", "role": "..." }  — U4c: planExecution preview
+ *     WAIT_FOR_PROJECT_TEAM + suggested-alternative auto-calls executePlan (cockpit parity)
+ *   { "op": "plans.execute", "taskId": "...", "confirmationTarget": {...} }  — U4c: executePlan
+ *   { "op": "plans.cancel", "taskId": "..." }  — U4c: cancelExecution
+ *   { "op": "plans.transcript", "runId": "...", "sinceIndex"?: number }  — U4c: readRunTranscript
  *   { "op": "abort" }
  *   { "op": "compact" }
  *   { "op": "cycle_model" }
@@ -55,9 +60,13 @@
  * stdout records (JSONL): { type: "ready", engine, snapshot?, kairoModels?, sessions?, draft? },
  * { type: "mode", mode } (ask|plan|agent — emitted on ready/switch/new/fork/set_mode),
  * { type: "task_result", kind: "answer"|"plan", ... } (U4a submitTask outcome; never execute),
- * { type: "plans", timeline } (U4b list / post-decide / post-plan refresh),
+ * { type: "plans", timeline, projectTeamRoles? } (U4b/U4c list / post-decide / post-exec refresh),
  * { type: "plan_detail", taskId, taskMarkdown, planMarkdown, state, ... } (U4b show),
  * { type: "plan_decision", taskId, decision, state, ... } (U4b decide),
+ * { type: "plan_preview", taskId, decision, confirmationTarget, taskPrompt, autoExecuted, ... } (U4c),
+ * { type: "plan_execute", taskId, execution?, autoExecuted?, ... } (U4c),
+ * { type: "plan_cancel", taskId, ... } (U4c),
+ * { type: "run_transcript", runId, nextIndex, entries } (U4c),
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
  * { type: "draft", text, kairoSessionId }, { type: "kairoModels", kairoModels },
  * { type: "team", op, ok, state, teamRows, roles, analyst },
@@ -136,6 +145,21 @@ export const PLAN_REQUESTED_NOTICE =
  */
 export function normalizeWorkMode(mode) {
   return WORK_MODES.has(mode) ? mode : "ask";
+}
+
+/**
+ * Active ProjectStrategy roles only — same gate as cockpit `projectTeamRoles()`.
+ * @param {object|null|undefined} snap
+ * @returns {string[]}
+ */
+export function projectTeamRolesFromSnapshot(snap) {
+  const strategy = snap?.projectStrategy;
+  if (!strategy || strategy.status !== "active" || !Array.isArray(strategy.projectTeam)) {
+    return [];
+  }
+  return strategy.projectTeam
+    .map((entry) => (typeof entry?.role === "string" ? entry.role : null))
+    .filter(Boolean);
 }
 
 /** Lazy default conversation service — reused so probes stay cached. */
@@ -242,6 +266,10 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut) {
  * @param {(args: { cwd: string, sessionId?: string|null }) => Promise<object>} [options.snapshot]
  * @param {(args: { cwd: string, taskId: string, sessionId?: string|null }) => Promise<object>} [options.showPlan]
  * @param {(args: { cwd: string, taskId: string, decision: "approved"|"rejected", sessionId?: string|null }) => Promise<object>} [options.decidePlan]
+ * @param {(args: { cwd: string, taskId: string, role: string, sessionId?: string|null }) => Promise<object>} [options.planExecution]
+ * @param {(args: { cwd: string, taskId: string, confirmationTarget: object, sessionId?: string|null }) => Promise<object>} [options.executePlan]
+ * @param {(args: { cwd: string, taskId: string }) => Promise<object>} [options.cancelExecution]
+ * @param {(args: { runId: string, sinceIndex?: number }) => Promise<object>} [options.readRunTranscript]
  */
 export async function runKairoUiRpcStdio({
   stdin = process.stdin,
@@ -271,7 +299,11 @@ export async function runKairoUiRpcStdio({
   submitTask: submitTaskImpl = (args) => defaultConversation().submitTask(args),
   snapshot: snapshotImpl = (args) => defaultConversation().snapshot(args),
   showPlan: showPlanImpl = (args) => defaultConversation().showPlan(args),
-  decidePlan: decidePlanImpl = (args) => defaultConversation().decidePlan(args)
+  decidePlan: decidePlanImpl = (args) => defaultConversation().decidePlan(args),
+  planExecution: planExecutionImpl = (args) => defaultConversation().planExecution(args),
+  executePlan: executePlanImpl = (args) => defaultConversation().executePlan(args),
+  cancelExecution: cancelExecutionImpl = (args) => defaultConversation().cancelExecution(args),
+  readRunTranscript: readRunTranscriptImpl = (args) => defaultConversation().readRunTranscript(args)
 } = {}) {
   const bridge = await openBridge({ cwd });
   let kairoModels = [];
@@ -501,15 +533,38 @@ export async function runKairoUiRpcStdio({
     }
   };
 
-  /** Emit session-scoped plan timeline (U4b). */
+  /** Emit session-scoped plan timeline (U4b/U4c). */
   const emitPlansList = async () => {
     const snap = await snapshotImpl({
       cwd,
       sessionId: activeKairoSessionId
     });
     const timeline = Array.isArray(snap?.timeline) ? snap.timeline : [];
-    writeOut({ type: "plans", timeline });
+    writeOut({
+      type: "plans",
+      timeline,
+      projectTeamRoles: projectTeamRolesFromSnapshot(snap)
+    });
     return timeline;
+  };
+
+  /** Serialize a planExecution preview for the host (U4c). */
+  const emitPlanPreview = (taskId, decision, { autoExecuted = false } = {}) => {
+    writeOut({
+      type: "plan_preview",
+      taskId,
+      decision: decision?.decision ?? null,
+      role: decision?.role ?? null,
+      provider: decision?.provider ?? null,
+      model: decision?.model ?? null,
+      why: decision?.why ?? null,
+      confirmationTarget: decision?.confirmationTarget ?? null,
+      taskPrompt: decision?.taskPrompt ?? null,
+      blockedAssignment: decision?.blockedAssignment ?? null,
+      suggestedAlternative: decision?.suggestedAlternative ?? null,
+      modelRef: decision?.modelRef ?? null,
+      autoExecuted: autoExecuted === true
+    });
   };
 
   const handleLine = async (line) => {
@@ -647,6 +702,134 @@ export async function runKairoUiRpcStdio({
               : `Plan ${taskId} rejected.`
         });
         await emitPlansList();
+      } else if (op === "plans.preview") {
+        // U4c: role → planExecution. WAIT_FOR + suggested-alternative auto-
+        // executes (cockpit parity). Everything else waits for host confirm.
+        const taskId = typeof cmd.taskId === "string" ? cmd.taskId : "";
+        const role = typeof cmd.role === "string" ? cmd.role : "";
+        if (!taskId) {
+          writeOut({ type: "error", message: "plans.preview requires taskId" });
+          return;
+        }
+        if (!role) {
+          writeOut({ type: "error", message: "plans.preview requires role" });
+          return;
+        }
+        const decision = await planExecutionImpl({
+          cwd,
+          taskId,
+          role,
+          sessionId: activeKairoSessionId
+        });
+        const isAutoFallback =
+          decision?.decision === "WAIT_FOR_PROJECT_TEAM" &&
+          decision?.confirmationTarget?.selection === "suggested-alternative";
+        if (isAutoFallback) {
+          const blockedLabel =
+            decision.blockedAssignment?.model?.displayName ??
+            decision.blockedAssignment?.model?.modelId ??
+            decision.blockedAssignment?.provider ??
+            "the assigned model";
+          const alt = decision.suggestedAlternative;
+          const altLabel =
+            alt?.model?.displayName ?? alt?.model?.modelId ?? "unknown model";
+          emitPlanPreview(taskId, decision, { autoExecuted: true });
+          writeOut({
+            type: "notice",
+            message: `${blockedLabel} is unavailable for ${decision.role} — automatically falling back to ${alt?.provider} · ${altLabel}.`
+          });
+          const executed = await executePlanImpl({
+            cwd,
+            taskId,
+            confirmationTarget: decision.confirmationTarget,
+            sessionId: activeKairoSessionId
+          });
+          writeOut({
+            type: "plan_execute",
+            taskId: executed?.taskId ?? taskId,
+            execution: executed?.execution ?? null,
+            reused: executed?.reused ?? false,
+            autoExecuted: true
+          });
+          await emitPlansList();
+          return;
+        }
+        emitPlanPreview(taskId, decision, { autoExecuted: false });
+        if (decision?.decision === "MANUAL_HANDOFF" && decision?.taskPrompt) {
+          const modelLabel =
+            decision.modelRef?.displayName ?? decision.model ?? "the assigned model";
+          writeOut({
+            type: "notice",
+            message: `${decision.provider} · ${modelLabel} can't be launched automatically — paste this into its chat:\n\n${decision.taskPrompt}`
+          });
+        }
+      } else if (op === "plans.execute") {
+        const taskId = typeof cmd.taskId === "string" ? cmd.taskId : "";
+        const confirmationTarget = cmd?.confirmationTarget;
+        if (!taskId) {
+          writeOut({ type: "error", message: "plans.execute requires taskId" });
+          return;
+        }
+        if (!confirmationTarget || typeof confirmationTarget !== "object") {
+          writeOut({
+            type: "error",
+            message:
+              "plans.execute requires confirmationTarget from a fresh planExecution preview"
+          });
+          return;
+        }
+        const executed = await executePlanImpl({
+          cwd,
+          taskId,
+          confirmationTarget,
+          sessionId: activeKairoSessionId
+        });
+        writeOut({
+          type: "plan_execute",
+          taskId: executed?.taskId ?? taskId,
+          execution: executed?.execution ?? null,
+          reused: executed?.reused ?? false,
+          autoExecuted: false
+        });
+        writeOut({
+          type: "notice",
+          message: executed?.execution?.message
+            ?? `Execution started for ${taskId}.`
+        });
+        await emitPlansList();
+      } else if (op === "plans.cancel") {
+        const taskId = typeof cmd.taskId === "string" ? cmd.taskId : "";
+        if (!taskId) {
+          writeOut({ type: "error", message: "plans.cancel requires taskId" });
+          return;
+        }
+        const cancelled = await cancelExecutionImpl({ cwd, taskId });
+        writeOut({
+          type: "plan_cancel",
+          taskId: cancelled?.taskId ?? taskId,
+          execution: cancelled?.execution ?? null
+        });
+        writeOut({
+          type: "notice",
+          message: `Cancelled run for ${taskId}.`
+        });
+        await emitPlansList();
+      } else if (op === "plans.transcript") {
+        const runId = typeof cmd.runId === "string" ? cmd.runId : "";
+        if (!runId) {
+          writeOut({ type: "error", message: "plans.transcript requires runId" });
+          return;
+        }
+        const sinceIndex = Number.isFinite(Number(cmd.sinceIndex))
+          ? Number(cmd.sinceIndex)
+          : 0;
+        const result = await readRunTranscriptImpl({ runId, sinceIndex });
+        writeOut({
+          type: "run_transcript",
+          runId: result?.runId ?? runId,
+          nextIndex: result?.nextIndex ?? sinceIndex,
+          entries: Array.isArray(result?.entries) ? result.entries : []
+        });
       } else if (op === "abort") {
         await bridge.request({ type: "abort" });
       } else if (op === "compact") {
