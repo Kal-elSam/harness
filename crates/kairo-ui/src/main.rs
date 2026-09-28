@@ -4,6 +4,7 @@ mod chat;
 mod engine;
 mod layout;
 mod recovery_picker;
+mod session_picker;
 mod snapshot;
 mod surfaces;
 
@@ -29,8 +30,12 @@ use engine::{
 };
 use layout::split_shell;
 use recovery_picker::RecoveryPreviewState;
+use session_picker::SessionPickerState;
 use snapshot::apply_workspace_snapshot;
-use surfaces::{render_analyst_picker, render_recovery_preview, render_shell, ShellViewModel};
+use surfaces::{
+    render_analyst_picker, render_recovery_preview, render_session_picker, render_shell,
+    ShellViewModel,
+};
 
 // Keybindings (V2 + R3b + R4):
 // - Tab: cycle focus Editor → Sidebar → Transcript
@@ -39,6 +44,14 @@ use surfaces::{render_analyst_picker, render_recovery_preview, render_shell, She
 // - Transcript: PgUp/PgDn scroll
 // - q: quit when Editor is empty; Ctrl+C / Ctrl+Q always quit
 // - Bridge only: Ctrl+M cycle Kairo model; Ctrl+N new Pi session; Ctrl+[ / Ctrl+] prev/next session on disk; Ctrl+K compact
+// - Bridge only, session management (U3a): Ctrl+L opens a visible, labeled
+//   session picker (j/k or arrows, Enter switches, Esc cancels locally — no
+//   server call at all on cancel) instead of blind Ctrl+[/] cycling, which
+//   still works unchanged. Ctrl+R renames the CURRENT session to whatever
+//   is typed in the compose box (then clears it). Ctrl+F forks the CURRENT
+//   session into a new one (RPC `clone`) — the source session is untouched.
+//   Any unsent draft in the compose box is saved on quit and restored on
+//   the next `kairo resume` of the same session.
 // - Bridge only, team setup in this UI (no cockpit): type `/analyze` (or empty
 //   compose + `a`) to open the analyst picker; `/approve` or `A` when suggested.
 //   Esc cancels the picker; q / Ctrl+C quit (TTY restored before bridge kill).
@@ -152,6 +165,15 @@ struct ShellApp {
     /// `team.recovery.apply` / `.reject` was sent; a second one is refused
     /// with a notice instead of racing the first.
     recovery_action_pending: bool,
+    /// The real `sessions` rows last reported by the sidecar (path,
+    /// sessionId, label, kairoSessionId) — the session picker (U3a) is
+    /// built from this, never invented.
+    pi_sessions: Vec<serde_json::Value>,
+    /// The open session picker modal (U3a) — `Some` while it owns key input.
+    session_picker: Option<SessionPickerState>,
+    /// The `ready` record's `draft` (if any) has been applied to the editor
+    /// exactly once — never re-applied on a later `ready`/`engine` record.
+    draft_restored: bool,
 }
 
 impl ShellApp {
@@ -177,6 +199,9 @@ impl ShellApp {
             availability_action_pending: false,
             recovery_preview: None,
             recovery_action_pending: false,
+            pi_sessions: Vec::new(),
+            session_picker: None,
+            draft_restored: false,
         }
     }
 
@@ -196,6 +221,7 @@ impl ShellApp {
         let Some(list) = record.get("sessions").and_then(|v| v.as_array()) else {
             return;
         };
+        self.pi_sessions = list.clone();
         self.pi_session_count = list.len();
         if self.pi_session_index >= self.pi_session_count {
             self.pi_session_index = self.pi_session_count.saturating_sub(1);
@@ -212,6 +238,36 @@ impl ShellApp {
                 }
             }
         }
+    }
+
+    /// U3a: applies the sidecar's `ready.draft` (unsent editor text saved
+    /// on a previous quit for this exact Kairo session) exactly once. Never
+    /// clobbers text the human already typed before `ready` arrived, and
+    /// never re-applies on a later `ready` (e.g. after a reconnect).
+    fn restore_draft_once(&mut self, record: &serde_json::Value) {
+        if self.draft_restored {
+            return;
+        }
+        self.draft_restored = true;
+        if let Some(draft) = record.get("draft").and_then(|v| v.as_str()) {
+            if !draft.is_empty() && self.editor.lines().join("").is_empty() {
+                self.restore_editor(draft);
+            }
+        }
+    }
+
+    /// `Ctrl+L`: open the visible session picker (U3a) — real rows from the
+    /// sidecar's last `sessions`/`ready` record, never invented. Refuses
+    /// with a notice instead of opening an empty modal when nothing is
+    /// known yet.
+    fn open_session_picker(&mut self) {
+        let picker = SessionPickerState::from_sessions(&self.pi_sessions, self.pi_session_index);
+        if picker.is_empty() {
+            self.view.notice =
+                Some("No Pi session files for this project yet (RPC has no list_sessions)".into());
+            return;
+        }
+        self.session_picker = Some(picker);
     }
 
     fn step_pi_session(&mut self, delta: i32) {
@@ -252,6 +308,7 @@ impl ShellApp {
                 self.engine = EngineGate::from_ready_record(&record);
                 self.sync_engine_line();
                 self.ingest_sessions_record(&record);
+                self.restore_draft_once(&record);
                 // Snapshot before the hint: the blocked-chat next step names
                 // the team key that matches this record's real team state.
                 if let Some(snap) = record.get("snapshot") {
@@ -698,8 +755,12 @@ fn main() -> io::Result<()> {
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
     let _ = terminal.show_cursor();
 
+    // U3a: whatever is still in the compose box on quit is the draft to
+    // restore on the next `kairo resume` of this session — captured before
+    // the bridge (and the sidecar behind it) goes away.
+    let draft_text = app.editor.lines().join("\n");
     if let Some(mut bridge) = app.bridge.take() {
-        let _ = bridge.stop();
+        let _ = bridge.stop_with_draft(&draft_text);
     }
 
     result
@@ -748,6 +809,9 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
     }
     if app.recovery_preview.is_some() {
         return Ok(handle_recovery_key(app, key));
+    }
+    if app.session_picker.is_some() {
+        return Ok(handle_session_picker_key(app, key));
     }
     if try_bridge_shortcut(app, key) {
         return Ok(false);
@@ -940,6 +1004,42 @@ fn handle_recovery_key(app: &mut ShellApp, key: KeyEvent) -> bool {
     false
 }
 
+/// Key routing while the session picker modal is open (U3a) — it owns every
+/// key until it closes. Enter switches to the highlighted real session; Esc
+/// cancels LOCALLY (no server call at all — mutates nothing by
+/// construction, same guarantee as the recovery-preview modal's cancel).
+/// Returns `true` when the host should quit (plain `q`; Ctrl+C/Q handled
+/// before this runs).
+fn handle_session_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
+    let Some(picker) = app.session_picker.as_mut() else {
+        return false;
+    };
+    match key.code {
+        KeyCode::Down | KeyCode::Char('j') => picker.move_down(),
+        KeyCode::Up | KeyCode::Char('k') => picker.move_up(),
+        KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            return true;
+        }
+        KeyCode::Esc => {
+            app.session_picker = None;
+            app.view.notice = Some("Session picker cancelled.".into());
+        }
+        KeyCode::Enter => {
+            if let Some(index) = picker.confirm() {
+                app.session_picker = None;
+                app.pi_session_index = index;
+                if let Some(bridge) = app.bridge.as_mut() {
+                    if let Err(err) = bridge.switch_session_index(index) {
+                        app.view.notice = Some(format!("Session switch failed: {err}"));
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
 /// Key routing while the analyst picker modal is open — the picker owns
 /// movement/confirm/cancel until it closes. Returns `true` when the host
 /// should quit (plain `q`; Ctrl+C/Q are handled before this runs).
@@ -972,6 +1072,42 @@ fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
 fn try_bridge_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
     if app.bridge.is_none() || !key.modifiers.contains(KeyModifiers::CONTROL) {
         return false;
+    }
+    // U3a: session picker / rename / fork need `&mut app` themselves
+    // (picker) or read the compose box before touching the bridge (rename)
+    // — handled here, before taking the bridge borrow below.
+    match key.code {
+        KeyCode::Char('l') => {
+            app.open_session_picker();
+            return true;
+        }
+        KeyCode::Char('r') => {
+            let name = app.editor.lines().join("\n").trim().to_string();
+            if name.is_empty() {
+                app.view.notice = Some(
+                    "Type a name in the compose box, then Ctrl+R to rename the session.".into(),
+                );
+                return true;
+            }
+            let result = app.bridge.as_mut().expect("bridge").rename_session(&name);
+            match result {
+                Ok(()) => {
+                    app.clear_editor();
+                    app.view.notice = Some("Renaming session…".into());
+                }
+                Err(err) => app.view.notice = Some(format!("Rename failed: {err}")),
+            }
+            return true;
+        }
+        KeyCode::Char('f') => {
+            if let Err(err) = app.bridge.as_mut().expect("bridge").fork_session() {
+                app.view.notice = Some(format!("Fork failed: {err}"));
+            } else {
+                app.view.notice = Some("Forking session…".into());
+            }
+            return true;
+        }
+        _ => {}
     }
     let Some(bridge) = app.bridge.as_mut() else {
         return false;
@@ -1082,5 +1218,8 @@ fn draw(frame: &mut Frame, app: &ShellApp) {
     }
     if let Some(preview) = &app.recovery_preview {
         render_recovery_preview(frame.buffer_mut(), area, preview);
+    }
+    if let Some(picker) = &app.session_picker {
+        render_session_picker(frame.buffer_mut(), area, picker);
     }
 }
