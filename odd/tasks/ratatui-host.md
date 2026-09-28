@@ -145,6 +145,8 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
 ## Delivery
 
 - Strategy: `ask-on-risk`. No publish/push without remote auth. Default cutover is a separate gate after visual approval.
+- (2026-09-28) Chain strategy for the U-plan: `feature-branch-chain`. Cuts follow coherent work units accumulated on `feat/ratatui-host` (this worktree); only the tracker branch merges to `main`. **U7 (retirement) does not merge to `main` before U6 (packaging/parity) is verified.** This choice authorizes no push, PR, or merge — those remain separate user decisions.
+- (2026-09-28) RDD correction: the user's "keep and fix" instruction for U2c's uncommitted WIP was a code decision, separate from native-review consent. RDD stays **on by default** (verified: `gentle-ai review mode status` → on, decided by default). Three already-committed candidates (Bootstrap CODEX_HOME `918249227`+`0613fdd4d`; block-cause fix `6f91b8d6c`; revalidation/recovery `5a3535566`+`307e9349e`) were genuinely declined via the presented consent envelope (`declined_this_candidate` each); user chose to leave them as-is rather than re-review. From here on, grant consent (don't skip) on the next medium/high-risk candidate.
 
 ## Tasks
 
