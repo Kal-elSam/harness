@@ -163,9 +163,9 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [ ] R4 Sessions / model switch / **real** Pi cold-start no-model (partial: Pi file list + new/switch + model cycle; Architect reapply on session ops done; RPC no-model cold-start in third_party pending publish; Kairo session registry not wired)
 - [x] R5 Agents sidebar data + USAGE + notices (honest states)
 - [x] T1 In-UI project team: headless analyze with the default analyst (`a`) + approve (`A`) + Architect reapply, driven from ratatui — cockpit is never required or recommended
-- [~] T2 In-UI team depth: analyst picker in ratatui done (this slice); per-role editor still out
+- [x] T2 In-UI team depth: analyst picker + per-role SUGGESTED editor (U4d)
 - [x] R6 Commands/dialogs via RPC extension-UI (abort + compact + extension_ui dialogs U3b)
-- [ ] V3 Visual gate: color captures @60/100/160 with conversation, agents, USAGE, error notice — **captures produced, pending human review** (blocks R7; **not approved**)
+- [x] V3 Visual gate: fixture captures @60/100/160 reviewed OK by human (`2d2f834f9`) — **fixture mock only**; does **not** certify live provider runtime, packaging, or native RDD. Still gates R7 packaging claim until those are separate.
 - [ ] R7 Package binaries (darwin/linux); Windows `ui` error
 - [ ] R8 Final parity evidence
 - [ ] R9 Cutover default + strip Pi-TUI/cockpit as product UIs (**remote auth**)
@@ -370,7 +370,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - (2026-09-28) **V3 visual captures produced (NOT approved)** — Deterministic Buffer dumps at 60×30 / 100×30 / 160×48 for conversation, tools, plans, dialog, error. FIXTURE mock — not live provider. Sidebar collapsed note at 60 cols; agents+USAGE when ≥90.
   - Artifacts: `docs/assets/v3-visual-fixtures/<size>-<scenario>.{ansi,txt,html}` + README.
   - Harness: `crates/kairo-ui/src/v3_capture.rs` via `kairo-ui --v3-capture`; regenerate with `scripts/kairo-ui-v3-capture`. Optional sidecar `scripts/fixtures/kairo-ui-v3-visual-mock-sidecar.mjs` (never contacts Pi).
-  - Checkbox **[ ] V3** stays unchecked — awaiting human review. Do not reopen U4.
+  - Follow-up: human OK recorded below (fixture scope only). Do not reopen U4.
   - Verification (observed): `cargo test v3_capture` → pass; capture exits 0 and writes 46 files; spot-check `.txt` cues for conversation/tool/plan/dialog/error.
 
 - (2026-09-28) **V3 narrow-width presentation blockers fixed (still NOT approved)** — Human review @60 cols found silent truncation and clipped plan hints; fixed paint only, no provider/Pi work.
@@ -379,11 +379,14 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **Tool name/result**: hard `\n` in tool payloads paint as separate lines (`✓ Read` then result body) — no more `ReadFIXTURE` concatenation.
   - **Tests (observed GREEN)**: `message_to_lines_wraps_long_thinking_and_assistant_at_narrow_width`, `plan_list_footer_keeps_approve_reject_visible_at_60_cols`, `tool_message_separates_name_from_result_body` (+ chat newline assert); full `cargo test` → **152/152**.
   - **Fixtures**: regenerated once via `scripts/kairo-ui-v3-capture` (46 files). Spot-check 60x30 conversation/plans/tools (+ shared paint on 100/160).
-  - Checkbox **[ ] V3** remains unchecked — awaiting human re-review. Do not mark approved.
+  - Follow-up: human OK recorded below (fixture scope only).
+
+- (2026-09-28) **V3 fixture visual OK (human)** — User approved the regenerated fixtures at 60×30 on `2d2f834f9` (chat wrap, plans y/n footer, tool name/result split). Scope: **FIXTURE mock only** — does not certify live provider runtime, packaging, or native RDD review.
 
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 + **U4 closed**. **V3 fixtures regenerated after narrow-width wrap/footer/tool-sep fixes — still not approved**. Next: human V3 re-review and/or U5 ops views. U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green (9 entry-host failures).
+**Plan 2026-09-28 (amended):** Phase 3 + U4 + **V3 fixture visual OK**. Next: **U5 → U6 → U7** (with visual validation of new ops/settings chrome). U2a/U2b wait for publish/auth. Full suite still not green (9 entry-host failures).
 
-1. **Human re-review of V3** fixtures @60/100/160 (or **U5** ops views in parallel).
-2. **U2a/U2b** when publish / provider auth available; **U5→U6→U7** under `feature-branch-chain`.
+1. **U5** Operations + Settings views (then visual check of that chrome).
+2. **U6** packaging binaries + PTY sizes; **U7** retirement after U6.
+3. **U2a/U2b** when publish / provider auth available.
