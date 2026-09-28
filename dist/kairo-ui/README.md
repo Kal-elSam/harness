@@ -63,7 +63,14 @@ Asserts:
 ## CI matrix and packaged verification
 
 Workflow: `.github/workflows/kairo-ui-prebuilt.yml` — **`workflow_dispatch` only** (not on PRs).
-**Status: authored and statically tested (`test/kairo-ui-packaged-verify.test.js`); not yet run on GitHub runners, so not observed green.**
+A dispatch-only workflow must exist on `main` to be dispatchable; this one was registered
+via PR #354 and is run against a branch with `gh workflow run kairo-ui-prebuilt.yml --ref <branch>`.
+**Status: observed green.** Run `36486806394` on SHA `1ee2c28c8` (`--ref feat/ratatui-host`):
+9/9 jobs success (4 build, `Assemble npm package`, 4 `Verify packaged host`). Each native
+runner (darwin-arm64, darwin-x64, linux-x64, linux-arm64) logged selection from the extracted
+tarball, launch without cargo OK, `v3-capture: 52 files`, and PTY PASS at 60x30/100x30/160x48
+with terminal restore. Scope: mock sidecar only; this does **not** prove real providers.
+Non-blocking: Node 20 deprecation annotation on `upload/download-artifact@v4`.
 
 | Job | What it does |
 |---|---|
@@ -87,4 +94,5 @@ the host platform. The mock sidecar comes from the repo checkout and does
 **NOT** prove real providers.
 
 Binaries are gitignored; this README and `.gitkeep` markers stay in source control.
-U6 stays **partial** until the workflow is observed green on all four runners.
+U6 packaging is verified on all four native runners (mock sidecar only). This does not imply
+total product parity, and it does not prove real providers.
