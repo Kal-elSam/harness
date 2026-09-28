@@ -6,7 +6,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
-use crate::ops_panel::wrap_ops_hint_lines;
+use crate::ops_panel::{wrap_ops_hint_lines, wrap_panel_body_line};
 use crate::surfaces::tone;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -34,7 +34,7 @@ impl SettingsPanelState {
             loading: true,
             ok: true,
             hints: "Esc → Work".into(),
-            setup_label: "Interactive setup · not wired".into(),
+            setup_label: "use `kairo setup` (UI not wired)".into(),
             setup_wired: false,
             profile: vec!["Loading settings…".into()],
             ..Self::default()
@@ -62,7 +62,7 @@ impl SettingsPanelState {
         let setup_label = setup
             .and_then(|v| v.get("label"))
             .and_then(|v| v.as_str())
-            .unwrap_or("Interactive setup · not wired")
+            .unwrap_or("use `kairo setup` (UI not wired)")
             .to_string();
         let integration_ids = record
             .get("integrations")
@@ -247,16 +247,22 @@ pub fn render_settings_panel(
 
     let body_budget = inner.height.saturating_sub(footer_rows).max(1) as usize;
     let body = state.body_lines();
-    let start = state.scroll.min(body.len().saturating_sub(1).max(0));
-    let visible = body.iter().skip(start).take(body_budget);
-
-    let mut lines: Vec<Line> = Vec::new();
-    for text in visible {
+    let mut wrapped_body: Vec<(String, bool)> = Vec::new();
+    for text in &body {
         let is_heading = matches!(
             text.as_str(),
             "Profile" | "Integrations" | "Connections" | "Setup"
         ) || text.starts_with("Error ·");
-        let style = if is_heading {
+        for piece in wrap_panel_body_line(text, inner.width as usize) {
+            wrapped_body.push((piece, is_heading));
+        }
+    }
+    let start = state.scroll.min(wrapped_body.len().saturating_sub(1).max(0));
+    let visible = wrapped_body.iter().skip(start).take(body_budget);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (text, is_heading) in visible {
+        let style = if *is_heading {
             Style::default()
                 .fg(tone::TEXT)
                 .add_modifier(Modifier::BOLD)
@@ -350,15 +356,22 @@ mod tests {
             "profile": ["PROFILE", "applyMode · prompt"],
             "integrations": ["available · Pi usage widget · 0.2.1 · MIT"],
             "connections": ["ok · Cursor MCP"],
-            "setup": { "wired": false, "label": "Interactive setup · not wired — use `kairo setup`" },
+            "setup": { "wired": false, "label": "use `kairo setup` (UI not wired)" },
             "hints": "Esc → Work · ↑↓ browse · Enter preview · y/n confirm"
         }));
         assert!(!state.setup_wired);
-        assert!(state.setup_label.contains("not wired"));
+        assert!(state.setup_label.contains("kairo setup"));
         let body = state.body_lines().join("\n");
         assert!(body.contains("Profile"));
         assert!(body.contains("Connections"));
         assert!(body.contains("not wired"));
+        assert!(body.contains("kairo setup"));
+        let wrapped = wrap_panel_body_line(
+            "  [not wired] Interactive setup · not wired — use `kairo setup` in a terminal",
+            40,
+        );
+        assert!(wrapped.iter().any(|l| l.contains("kairo") || l.contains("setup")));
+        assert!(wrapped.iter().all(|l| l.chars().count() <= 40));
         let hints = wrap_ops_hint_lines(state.footer_hints(), 60);
         assert!(hints.len() <= 2);
         assert!(hints.iter().any(|l| l.contains("Esc")));

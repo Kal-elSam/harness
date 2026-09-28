@@ -98,7 +98,7 @@ fn paint_ops_fixture(buf: &mut Buffer, area: Rect) {
         "backups": ["fixture-snap-1"],
         "hints": "Esc → Work · r refresh · s sync · b rollback · c cancel · d dismiss · v reviews"
     }));
-    let title = WorkspaceView::Operations.chrome_title();
+    let title = WorkspaceView::Operations.chrome_title_for_width(area.width);
     render_ops_panel(buf, area, &state, &title);
 }
 
@@ -110,11 +110,11 @@ fn paint_settings_fixture(buf: &mut Buffer, area: Rect) {
         "connections": ["ok · Cursor MCP (fixture)"],
         "setup": {
             "wired": false,
-            "label": "Interactive setup · not wired — use `kairo setup`"
+            "label": "use `kairo setup` (UI not wired)"
         },
         "hints": "Esc → Work · ↑↓ browse · Enter preview · y/n confirm"
     }));
-    let title = WorkspaceView::Settings.chrome_title();
+    let title = WorkspaceView::Settings.chrome_title_for_width(area.width);
     render_settings_panel(buf, area, &state, &title);
 }
 

@@ -1249,7 +1249,7 @@ pub fn render_project_view(
         .border_style(Style::default().fg(border))
         .style(Style::default().bg(tone::WORK_BG))
         .title(Span::styled(
-            workspace.chrome_title(),
+            workspace.chrome_title_for_width(work.transcript.width),
             Style::default()
                 .fg(tone::ACCENT)
                 .add_modifier(Modifier::BOLD),
@@ -1320,7 +1320,12 @@ pub fn render_operations_view(
     if let Some(sidebar) = regions.sidebar {
         render_sidebar(buf, sidebar, model, chat.focus);
     }
-    render_ops_panel(buf, regions.main, ops, &workspace.chrome_title());
+    render_ops_panel(
+        buf,
+        regions.main,
+        ops,
+        &workspace.chrome_title_for_width(regions.main.width),
+    );
     render_usage(buf, regions.usage, model);
 }
 
@@ -1336,7 +1341,12 @@ pub fn render_settings_view(
     if let Some(sidebar) = regions.sidebar {
         render_sidebar(buf, sidebar, model, chat.focus);
     }
-    render_settings_panel(buf, regions.main, settings, &workspace.chrome_title());
+    render_settings_panel(
+        buf,
+        regions.main,
+        settings,
+        &workspace.chrome_title_for_width(regions.main.width),
+    );
     render_usage(buf, regions.usage, model);
 }
 

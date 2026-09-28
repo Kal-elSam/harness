@@ -32,6 +32,8 @@ no TTY / `script(1)` flakiness.
 - `60x30-plans.ansi` / `.txt` / `.html`
 - `60x30-dialog.ansi` / `.txt` / `.html`
 - `60x30-error.ansi` / `.txt` / `.html`
+- `60x30-ops.ansi` / `.txt` / `.html` (U5b)
+- `60x30-settings.ansi` / `.txt` / `.html` (U5b)
 
 ### 100x30 (100×30) — sidebar visible (agents + USAGE)
 

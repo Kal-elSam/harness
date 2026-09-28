@@ -18,9 +18,8 @@ import { resolveProfile } from "../profile.js";
 import { buildRuntimeDashboardData } from "../runtime/run-cli.js";
 import { PACKAGE_NAME } from "../brand/cli.js";
 
-/** Honest label — no interactive setup chrome in ratatui yet. */
-export const SETUP_NOT_WIRED_LABEL =
-  "Interactive setup · not wired — use `kairo setup` in a terminal";
+/** Honest label — no interactive setup chrome in ratatui yet. Keep short for 60-col wrap. */
+export const SETUP_NOT_WIRED_LABEL = "use `kairo setup` (UI not wired)";
 
 export const SETTINGS_HINTS_DEFAULT =
   "Esc → Work · ↑↓ browse · Enter preview · y/n confirm";
