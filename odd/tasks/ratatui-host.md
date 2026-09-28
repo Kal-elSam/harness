@@ -99,12 +99,12 @@ Legend: done / partial / missing. Source: read-only mapping of `feat/ratatui-hos
 | Usage drill-down | USAGE view | **U5a done** | Full detail in Ops hub |
 | Sync / drift preview → confirm → receipt | `use-orchestrator-data.js` changes fns, `runGlobalSync` | **U5b done** | `ops.sync.preview` / `ops.sync.apply` + nested confirm |
 | Rollback preview → confirm → receipt | CHANGES view, `runGlobalRollback` | **U5b done** | `ops.rollback.preview` / `ops.rollback.apply` |
-| Runs (active/recent/detail/cancel) | RUNS views, `run-cli.js` | **U5b partial** | List + cancel confirm (detail stays dashboard-backed) |
+| Runs (active/recent/detail/cancel) | RUNS views, `run-cli.js` | **U5b partial** | List + cancel confirm (detail stays dashboard-backed) — open depth vs full cockpit runs UX |
 | Alerts | ALERTS view, `alert-cli.js` | **U5b done** | List + dismiss confirm (`controlledDismissAlert`) |
-| Review receipts | REVIEWS views, `review-cli.js` | **U5b partial** | Read-only list in Ops (`listReviewReceipts`) |
+| Review receipts | REVIEWS views, `review-cli.js` | **U5b partial** | Read-only list in Ops (`listReviewReceipts`) — not full receipt drill-down |
 | Profiles / settings | PROFILE, SETTINGS | **U5b done** | Settings `6` profile/integrations/connections surface |
 | Integrations / connections | `connections.js` | **U5b done** | Read-only connections list |
-| Interactive setup | `ink/setup-app.js`, `setup-routing.js` (+ Clack) | **honest stub** | Label: not wired — use `kairo setup` |
+| Interactive setup | `ink/setup-app.js`, `setup-routing.js` (+ Clack) | **honest stub (delegated)** | Label: not wired — use `kairo setup` (in-host setup still out of ratatui) |
 
 Neutral adapters needed before porting: `ink/use-orchestrator-data.js` (hook-bound ops), mode/handoff logic in `cockpit/app.js`, setup step/state in `ink/setup-*.js`. Extract plain modules only; no React in Rust.
 
@@ -112,8 +112,8 @@ Neutral adapters needed before porting: `ink/use-orchestrator-data.js` (hook-bou
 
 | Capability | Now | Acceptance |
 |---|---|---|
-| Binary | prebuilt under `dist/kairo-ui/<platform-arch>/kairo-ui`; cargo release is **dev-only fallback** when prebuilt missing | Clean install without Cargo launches |
-| darwin/linux × arm64/x64 selection | `resolvePrebuiltBinary` auto-selects; JS tests cover all 4 keys; host arch built locally; other keys CI/cross placeholders | Correct prebuilt binary auto-selected; source build dev-only |
+| Binary | **PARTIAL** — prebuilt path + resolver exist; only **`darwin-arm64`** has a locally built shippable binary + launch evidence. Other triples are selection-tested only (no shipped artifact / no clean-install-without-Cargo proof). Open packaging debt until all 4 triples ship (or CI artifacts) and each proves clean install without Cargo | Clean install without Cargo launches **per triple** |
+| darwin/linux × arm64/x64 selection | `resolvePrebuiltBinary` auto-selects; JS tests cover all 4 keys; **host arch built locally**; other keys remain CI/cross placeholders — **not** distribution-verified | Correct prebuilt binary auto-selected; source build dev-only |
 | Windows | explicit error (done) | Non-interactive CLI only |
 
 ### Phase 7 — retirement
@@ -133,11 +133,11 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 
 ## Acceptance criteria
 
-- [ ] Color TTY @60/100/160: distinguishable sidebar, work surface, USAGE (your approval) — **before R7**
-- [ ] Chat with model: prompt/stream/tools/cancel/scroll on those surfaces
-- [ ] Bridge: fail-open host; post-connect crash reflected; real no-model cold-start classified honestly (R4)
-- [ ] Install from package selects correct binary (after visual gate)
-- [ ] Default `kairo ui` → ratatui is live on this branch; R9 still covers stripping old UIs / packaging; V3 remains the visual gate before claiming product-done
+- [ ] Color TTY @60/100/160: distinguishable sidebar, work surface, USAGE (your approval) — **before R7** — V3 + Ops/Settings@60 fixtures OK (fixture-only); live chat visual still open
+- [ ] Chat with model: prompt/stream/tools/cancel/scroll on those surfaces — functional path exists; **live provider visual** not certified
+- [ ] Bridge: fail-open host; post-connect crash reflected; real no-model cold-start classified honestly (R4) — **U2a publish blocked**
+- [ ] Install from package selects correct binary (after visual gate) — **U6 partial**: selection tested for 4; ship/clean-install proven for `darwin-arm64` only
+- [ ] Default `kairo ui` → ratatui is live on this branch; R9 still covers stripping old UIs / packaging; V3 remains the visual gate before claiming product-done — U7 local entries done; **R9 remote + total parity NOT claimed**
 
 ## TDD
 
@@ -166,8 +166,8 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] T2 In-UI team depth: analyst picker + per-role SUGGESTED editor (U4d)
 - [x] R6 Commands/dialogs via RPC extension-UI (abort + compact + extension_ui dialogs U3b)
 - [x] V3 Visual gate: fixture captures @60/100/160 reviewed OK by human (`2d2f834f9`) — **fixture mock only**; does **not** certify live provider runtime, packaging, or native RDD. Still gates R7 packaging claim until those are separate.
-- [x] R7 Package binaries (darwin/linux); Windows `ui` error
-- [ ] R8 Final parity evidence
+- [x] R7 Package binaries (darwin/linux); Windows `ui` error — **code path**; full U6 ship proof still open (see U6 partial)
+- [~] R8 Final parity evidence pack (**partial**, 2026-09-28) — inventory only; **does NOT declare total parity**. Visual legible ≠ functional parity; binary selection ≠ packaging verified. See Progress → R8 evidence matrix
 - [ ] R9 Cutover default + strip Pi-TUI/cockpit as product UIs (**remote auth**)
 
 ### Plan 2026-09-28 (ratatui as the only UI) — supersedes open R4/R6/T2/R7–R9 scope above
@@ -180,8 +180,8 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] U3b extension_ui: select / confirm / input / editor / notify with correlated one-way responses and safe cancel (cancel/timeout/engine death/quit)
 - [x] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
 - [x] U4 Workspace: **U4a+U4b+U4c+U4d done** (modes + plans + execute/cancel/handoff + slash + Work/Project/Tasks/Sessions + per-role SUGGESTED editor)
-- [x] U5 Operations + Settings views — U5a read-only Ops hub `5` + U5b mutations/Settings `6` (sync/rollback/runs cancel/alerts dismiss/reviews list; setup honest stub)
-- [x] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
+- [x] U5 Operations + Settings views — U5a read-only Ops hub `5` + U5b mutations/Settings `6` (sync/rollback/runs cancel/alerts dismiss/reviews list; setup honest stub → still **delegated** to `kairo setup`). Runs detail + reviews remain dashboard/list-backed (**partial** depth)
+- [~] U6 Packaging (**PARTIAL / open packaging debt**): resolver + launch prefer prebuilt; JS selection tests cover 4 keys; **only `darwin-arm64` has build/distribution evidence**; linux-arm64 / darwin-x64 / linux-x64 selection-tested only — **not** clean-install-without-Cargo proven per triple (need CI artifacts or local cross builds). PTY 60×30 / 100×30 / 160×48 + terminal restore proven on host arch with mock sidecar. Do **not** treat U6 as complete distribution
 - [x] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
 
 ## Progress
@@ -397,20 +397,21 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **Fixtures**: `60x30-ops` + `60x30-settings` in v3_capture (mock only).
   - **Verification (observed)**: `node --test test/ops-mutations.test.js test/settings-sidecar.test.js test/ops-sidecar.test.js test/kairo-ui-rpc-stdio.test.js` → **81/81**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **161/161**.
 
-- (2026-09-28) **U6 Packaging (STRICT TDD)** — Prebuilt host binaries + launch selection; no second UI host; no providers.
+- (2026-09-28) **U6 Packaging (STRICT TDD) — PARTIAL / open packaging debt** — Prebuilt host binaries + launch selection; no second UI host; no providers. **Do not treat as complete distribution.**
   - **Resolver**: `src/global/host/kairo-ui-prebuilt.js` — `resolvePrebuiltBinary(platform, arch)` → `dist/kairo-ui/<darwin|linux>-<arm64|x64>/kairo-ui`.
   - **Launch**: `launchRatatuiHost` prefers prebuilt (no Cargo.toml required) over `cargo build --release` (dev-only fallback when prebuilt missing). Windows `ui` error unchanged.
-  - **Build**: `scripts/build-kairo-ui-binaries.sh` (+ `npm run build:kairo-ui`); npm `files` includes `dist/kairo-ui`. Host arch built locally; other triples skipped honestly without cross toolchains (CI matrix documented in `dist/kairo-ui/README.md`).
+  - **Build**: `scripts/build-kairo-ui-binaries.sh` (+ `npm run build:kairo-ui`); npm `files` includes `dist/kairo-ui`. **Only host arch (`darwin-arm64`) built locally** with ship/launch evidence; other triples skipped honestly without cross toolchains (CI matrix documented in `dist/kairo-ui/README.md`) — **selection-tested only**.
   - **PTY**: `scripts/kairo-ui-pty-e2e.py` runs 60×30 / 100×30 / 160×48 via real PTY + `TIOCSWINSZ`; mock sidecar; alt-screen enter/leave restore. Evidence: `/tmp/kairo-pty-u6/` (`SUMMARY.txt`, per-size `.typescript` + `.mock.log`).
-  - **Verification (observed)**: `node --test test/kairo-ui-prebuilt.test.js test/launch-ratatui-host.test.js` → **26/26**. `python3 scripts/kairo-ui-pty-e2e.py` → **PASS** all three sizes. Built binary: `dist/kairo-ui/darwin-arm64/kairo-ui` (others selection-tested only).
+  - **Verification (observed)**: `node --test test/kairo-ui-prebuilt.test.js test/launch-ratatui-host.test.js` → **26/26**. `python3 scripts/kairo-ui-pty-e2e.py` → **PASS** all three sizes. Built binary: `dist/kairo-ui/darwin-arm64/kairo-ui` only.
 
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + U5 + U6 + **U7 done**.
+**Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + U5 + U7 local retirement done. **U6 packaging incomplete** (open debt). **R8 = evidence pack only — total parity NOT declared.**
 
-1. **U2a/U2b** when publish / provider auth available.
-2. **R8** final parity evidence / optional Ops@60 human visual check.
+1. **Remaining U6 packaging triples** — ship + clean-install-without-Cargo proof for linux-arm64, darwin-x64, linux-x64 (or CI artifacts), not selection tests alone.
+2. **U2a / U2b** when publish / provider auth available.
 3. **R9** remote-auth cutover (separate from U7 local retirement).
+4. R8 evidence pack is committed in this doc; do not greenwash gaps.
 
 - (2026-09-28) **U7 Retirement** — Ratatui is the only interactive product UI.
   - Entries `kairo` / `start` / `resume` / `ui` / `shell` → ratatui; `--pi` / `--pi-host` / `KAIRO_UI_HOST=pi` / `--legacy-cockpit` throw clear migration errors (no hidden fallback).
@@ -418,3 +419,15 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - Kept sidecar adapters under `ink/` (scan/settings/control-center/…) + `cockpit/view|card|theme|rows` (slash formatters via local `text-width.js`).
   - Deps removed: `ink`, `react`, `@earendil-works/pi-tui`. Kept `@clack/prompts` for `kairo setup`.
   - Verification: entry/host/ops/settings/sidecar targeted `node --test` → **187/187** (+ cockpit-view **81/81**); no push.
+
+- (2026-09-28) **Ops/Settings @60 fixture visual OK (human)** — User approved regenerated Ops (`5`) + Settings (`6`) fixtures at 60×30 (HTML reviewed; no blocking clips) on paint fix commit `8a6d1fb25`. Scope: **FIXTURE mock only**, same gate class as V3 — does **not** certify live provider runtime, packaging, interactive setup, or native RDD.
+
+- (2026-09-28) **R8 Final parity evidence pack (PARTIAL — not total parity)** — Honest inventory only. Visual legible ≠ functional parity; binary selection ≠ packaging verified. Interactive setup remains **delegated** to `kairo setup` (Settings honest stub).
+
+  | Bucket | Evidence |
+  |---|---|
+  | **Proven** | V3 fixture visual OK @60/100/160 (`2d2f834f9`); Ops+Settings @60 fixture visual OK (`8a6d1fb25`); unit + PTY e2e on **darwin-arm64** (mock sidecar); U7 local retirement (entries → ratatui only, migration errors, exclusive UI deps removed) |
+  | **Partial** | **U6**: selection for 4 keys + ship/launch proven only for `darwin-arm64` — other triples open packaging debt; **setup**: honest stub → `kairo setup` (not in-host); **U5**: runs detail still dashboard-backed; reviews list read-only (not full receipt UX) |
+  | **Blocked** | **U2a** publish (RPC no-model runtime-active); **U2b** Bootstrap real provider answer; **R9** remote-auth cutover; **live chat visual** (provider runtime, not fixture); **native RDD** on remaining candidates |
+
+  Explicit: **total product parity is NOT declared.** R8 checkbox stays `[~]` until packaging triples + blocked auth/remote items close or are explicitly accepted as out-of-scope cut lines.
