@@ -440,7 +440,7 @@ test("sidecar new_session reloads transcript from get_messages", async () => {
   await new Promise((r) => setTimeout(r, 80));
   const transcript = out.find((r) => r.type === "transcript");
   assert.ok(transcript);
-  assert.deepEqual(transcript.messages, [{ role: "user", content: "after reset" }]);
+  assert.deepEqual(transcript.messages, [{ type: "user_message", content: "after reset" }]);
 
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();
