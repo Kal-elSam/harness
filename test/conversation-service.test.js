@@ -2430,3 +2430,66 @@ test("preflightProject surfaces the unverified Claude notice when live entitleme
   const result = await service.preflightProject({ cwd: "/repo" });
   assert.equal(result.unverifiedClaudeNotice, buildUnverifiedClaudePreflightNotice(2));
 });
+
+// ---- A2: ASK cancellation and provider events ---------------------------------
+
+function askServiceWith({ askProvider, appendCalls = [], spawnGuard = null } = {}) {
+  return createConversationService({
+    resolveRoot: async () => "/repo",
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
+    readAskHistory: async () => [],
+    askProvider,
+    appendAskHistoryEntry: async (...args) => { appendCalls.push(args); }
+  });
+}
+
+test("A2: askQuestion forwards signal and onEvent to the ASK provider call only when given", async () => {
+  const askCalls = [];
+  const service = askServiceWith({ askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "ok" }; } });
+  const controller = new AbortController();
+  const seen = [];
+  await service.askQuestion({ cwd: "/repo", task: "hi", signal: controller.signal, onEvent: (e) => seen.push(e) });
+  assert.equal(askCalls[0].signal, controller.signal);
+  askCalls[0].onEvent({ kind: "progress", summary: "s" });
+  assert.deepEqual(seen, [{ provider: "claude", kind: "progress", summary: "s" }]);
+});
+
+test("A2: askQuestion without options passes no signal/onEvent keys (byte-identical provider args)", async () => {
+  const askCalls = [];
+  const service = askServiceWith({ askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "ok" }; } });
+  await service.askQuestion({ cwd: "/repo", task: "hi" });
+  assert.deepEqual(Object.keys(askCalls[0]).sort(), ["cwd", "model", "provider", "question"]);
+});
+
+test("A2: a cancelled provider result resolves {kind:'cancelled'}, appends no history and returns no answer", async () => {
+  const appendCalls = [];
+  const service = askServiceWith({
+    appendCalls,
+    askProvider: async () => ({ status: "cancelled", answer: null, error: "cancelled" })
+  });
+  const result = await service.submitTask({ cwd: "/repo", task: "hi", mode: "ask", signal: new AbortController().signal });
+  assert.deepEqual(result, { kind: "cancelled" });
+  assert.equal(appendCalls.length, 0);
+});
+
+test("A2: an already-aborted signal never reaches the provider nor appends history", async () => {
+  const appendCalls = [];
+  let called = 0;
+  const service = askServiceWith({ appendCalls, askProvider: async () => { called += 1; return { status: "answered", answer: "x" }; } });
+  const controller = new AbortController();
+  controller.abort();
+  const result = await service.submitTask({ cwd: "/repo", task: "hi", mode: "ask", signal: controller.signal });
+  assert.deepEqual(result, { kind: "cancelled" });
+  assert.equal(called, 0);
+  assert.equal(appendCalls.length, 0);
+});
+
+test("A2: submitTask ignores signal/onEvent on the PLAN path", async () => {
+  const service = createConversationService({ resolveRoot: async () => "/repo" });
+  let seen = null;
+  service.submitArchitecture = async (args) => { seen = args; return { taskId: "t1" }; };
+  const result = await service.submitTask({ cwd: "/repo", task: "do", mode: "plan", signal: new AbortController().signal, onEvent: () => {} });
+  assert.equal(result.kind, "plan");
+  assert.deepEqual(Object.keys(seen).sort(), ["cwd", "sessionId", "task"]);
+});

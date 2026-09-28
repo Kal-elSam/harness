@@ -1082,9 +1082,15 @@ export function createConversationService(deps = {}) {
      * actually available/quota-healthy — no task, no plan, no approval
      * gate. Throws (never returns a fabricated answer) if no provider can
      * answer or the call itself fails.
-     * @param {{cwd: string, task: string, sessionId?: string|null}} args
+     * Optional `signal` / `onEvent` are forwarded to the provider call only
+     * when given (no-options calls are byte-identical). A cancelled provider
+     * run (or an already-aborted signal) resolves `{kind: "cancelled"}`: no
+     * history is appended and no answer is returned. Non-cancel failures
+     * still throw.
+     * @param {{cwd: string, task: string, sessionId?: string|null, signal?: AbortSignal, onEvent?: Function}} args
      */
-    async askQuestion({ cwd, task, sessionId = null }) {
+    async askQuestion({ cwd, task, sessionId = null, signal, onEvent }) {
+      if (signal?.aborted) return { kind: "cancelled" };
       const { decision, projectRoot } = await this.planAsk({ cwd, task });
       if (decision.decision !== "ROUTED") throw new Error(`Cannot answer: ${decision.why}`);
       // Real conversation continuity: every provider call here is otherwise
@@ -1094,7 +1100,13 @@ export function createConversationService(deps = {}) {
       // below, never this enriched version (so it never compounds).
       const history = await readAskHistoryImpl(homeDir, projectRoot, sessionId).catch(() => []);
       const question = buildAskPromptWithHistory(history, task);
-      const result = await askProviderImpl({ provider: decision.provider, question, model: decision.model, cwd: projectRoot });
+      if (signal?.aborted) return { kind: "cancelled" };
+      const askArgs = { provider: decision.provider, question, model: decision.model, cwd: projectRoot };
+      if (signal) askArgs.signal = signal;
+      // Tag every event with the routed provider so hosts need not guess it.
+      if (onEvent) askArgs.onEvent = (event) => onEvent({ provider: decision.provider, ...event });
+      const result = await askProviderImpl(askArgs);
+      if (result.status === "cancelled" || signal?.aborted) return { kind: "cancelled" };
       if (result.status !== "answered") throw new Error(result.error ?? `${decision.provider} gave no answer.`);
       await appendAskHistoryImpl(homeDir, projectRoot, {
         question: task, answer: result.answer, provider: decision.provider, model: decision.model
@@ -1115,10 +1127,11 @@ export function createConversationService(deps = {}) {
      * @param {"ask"|"plan"|"agent"|null} [args.mode]
      * @param {string|null} [args.sessionId]
      */
-    async submitTask({ cwd, task, mode = null, sessionId = null }) {
+    async submitTask({ cwd, task, mode = null, sessionId = null, signal, onEvent }) {
       const isQuestion = mode ? mode === "ask" : isLikelyQuestion(task);
       if (isQuestion) {
-        const answer = await this.askQuestion({ cwd, task, sessionId });
+        const answer = await this.askQuestion({ cwd, task, sessionId, signal, onEvent });
+        if (answer.kind === "cancelled") return { kind: "cancelled" };
         return { kind: "answer", ...answer };
       }
       const plan = await this.submitArchitecture({ cwd, task, sessionId });
