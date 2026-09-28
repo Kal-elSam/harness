@@ -3,6 +3,16 @@ name: Kairo UI prebuilt (matrix)
 # Per-runner host --v3-capture proof for each packaging triple.
 # Does NOT fake multiplatform exec on a single Mac.
 #
+# Pipeline: build (per native runner) -> assemble (one npm pack tarball with all
+# four binaries) -> verify-package (extract the tarball on each native runner and
+# run scripts/verify-kairo-ui-packaged.sh against the PACKAGED binary).
+# All artifacts are named with github.sha so the four binaries and the tarball
+# belong to the same commit.
+#
+# The PTY step uses a mock sidecar; it does NOT prove real providers.
+# Status: authored and statically tested only; not yet observed green on GitHub
+# runners.
+#
 # Manual only (workflow_dispatch). Kept off PR/push so ordinary CI stays lean.
 # Activate from Actions → "Kairo UI prebuilt" → Run workflow when closing U6
 # foreign-exec gaps.
@@ -56,3 +66,97 @@ jobs:
           out="$(mktemp -d)"
           "dist/kairo-ui/${{ matrix.key }}/kairo-ui" --v3-capture "$out"
           test "$(find "$out" -type f | wc -l | tr -d ' ')" -ge 10
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kairo-ui-bin-${{ matrix.key }}-${{ github.sha }}
+          path: dist/kairo-ui/${{ matrix.key }}/kairo-ui
+          if-no-files-found: error
+          retention-days: 7
+
+  assemble:
+    name: Assemble npm package
+    needs: host-v3-capture
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Download the four binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kairo-ui-bin-*-${{ github.sha }}
+          path: artifacts
+
+      - name: Place binaries and npm pack
+        run: |
+          set -eu
+          for key in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            src="artifacts/kairo-ui-bin-${key}-${{ github.sha }}/kairo-ui"
+            test -f "$src"
+            mkdir -p "dist/kairo-ui/${key}"
+            cp "$src" "dist/kairo-ui/${key}/kairo-ui"
+            chmod +x "dist/kairo-ui/${key}/kairo-ui"
+          done
+          mkdir -p package-out
+          npm pack --silent --pack-destination package-out
+          tarball="$(printf '%s\n' package-out/*.tgz)"
+          test "$(printf '%s\n' package-out/*.tgz | wc -l | tr -d ' ')" = 1
+          listing="$(tar -tzf "$tarball")"
+          for key in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            printf '%s\n' "$listing" | grep -q "^package/dist/kairo-ui/${key}/kairo-ui$"
+          done
+          mv "$tarball" package-out/kairo-ui-package.tgz
+
+      - name: Upload package tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: kairo-ui-package-${{ github.sha }}
+          path: package-out/kairo-ui-package.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  verify-package:
+    name: Verify packaged host (${{ matrix.key }})
+    needs: assemble
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            key: darwin-arm64
+          - os: macos-15-intel
+            key: darwin-x64
+          - os: ubuntu-24.04
+            key: linux-x64
+          - os: ubuntu-24.04-arm
+            key: linux-arm64
+
+    steps:
+      # Checkout supplies only the mock sidecar fixture and the PTY driver.
+      # The binary, resolver and launcher under test come from the tarball.
+      - name: Checkout (fixtures and scripts only)
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Download package tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: kairo-ui-package-${{ github.sha }}
+          path: package-in
+
+      # No Rust toolchain is installed here; the script also strips cargo from PATH.
+      # The mock sidecar does NOT prove real providers.
+      - name: Verify packaged binary on native runner
+        run: bash scripts/verify-kairo-ui-packaged.sh package-in/kairo-ui-package.tgz "${{ matrix.key }}"

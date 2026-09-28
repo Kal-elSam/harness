@@ -182,6 +182,10 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] U4 Workspace: **U4a+U4b+U4c+U4d done** (modes + plans + execute/cancel/handoff + slash + Work/Project/Tasks/Sessions + per-role SUGGESTED editor)
 - [x] U5 Operations + Settings views — U5a read-only Ops hub `5` + U5b mutations/Settings `6` (sync/rollback/runs cancel/alerts dismiss/reviews list; setup honest stub → still **delegated** to `kairo setup`). Runs detail + reviews remain dashboard/list-backed (**partial** depth)
 - [~] U6 Packaging (**PARTIAL**): all 4 prebuilts built; hand-staged + **npm pack** clean-install prove launch without Cargo + host `--v3-capture`; foreign-exec classification fixed (status 0 = diagnostic PASS, else gap); CI matrix skeleton added; foreign exec still needs matching runners (Docker/Rosetta unavailable locally). PTY 60×30 / 100×30 / 160×48 on host. Do **not** declare complete / U6 done
+  - [x] U6a CI artifacts + assemble: `host-v3-capture` uploads `kairo-ui-bin-<key>-<github.sha>`; `assemble` (needs matrix) places 4 binaries, `chmod +x`, `npm pack`, asserts 4 keys via `tar -tzf`, uploads `kairo-ui-package-<github.sha>` — **authored + statically tested** (`test/kairo-ui-packaged-verify.test.js`); **not run on GitHub runners**
+  - [x] U6b Native-runner package verification: `verify-package` matrix (4 runner/key pairs, needs `assemble`) runs `scripts/verify-kairo-ui-packaged.sh` on the extracted tarball; script proven locally on darwin-arm64 against a real `npm pack` (selection, no-cargo launch, `--v3-capture` 52 files, PTY 60x30/100x30/160x48). Workflow execution on other runners **pending / unverified**
+  - [x] U6c Docs/header: stale "not wired" comment in `scripts/build-kairo-ui-binaries.sh` fixed; `dist/kairo-ui/README.md` describes the pipeline honestly (authored, not yet observed green)
+  - [ ] U6d Observe `kairo-ui-prebuilt.yml` green on all four GitHub runners (needs a user-authorized `workflow_dispatch`)
 - [x] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
 
 ## Progress
@@ -414,11 +418,18 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **Per-triple**: see Progress matrix below / verify script output.
   - **U6 remains PARTIAL** — pack+host proven; foreign exec gaps (and optional matrix green) still open.
 
+- (2026-09-28) **U6 packaged-artifact verification (U6a/U6b/U6c)** — **still PARTIAL**; parity NOT declared. Route: delegated direct (single bounded writer; trigger: 2+ non-trivial files), STRICT TDD via `node --test`.
+  - **RED**: `node --test test/kairo-ui-packaged-verify.test.js` before implementation -> 1 pass / 7 fail (workflow lacked upload/assemble/verify-package; script missing).
+  - **Implemented**: workflow gains artifact upload, `assemble`, `verify-package`; new `scripts/verify-kairo-ui-packaged.sh` (extract tarball, resolver + launcher from the package with cargo stripped from PATH, `--v3-capture` >= 10 files, PTY via `kairo-ui-pty-e2e.py` with `KAIRO_UI_BINARY` -> packaged binary); `npm run verify:kairo-ui-packaged`.
+  - **GREEN (observed, host darwin-arm64)**: `test/kairo-ui-packaged-verify.test.js` 8/8; the script against a real `npm pack` tarball printed `selection: darwin-arm64`, `launch without cargo: OK`, `v3-capture: 52 files`, `PTY e2e PASS: 60x30, 100x30, 160x48`, `Packaged verification PASS`.
+  - **Not observed**: workflow authored and statically tested; **not run on GitHub runners**. Foreign-key runtime exec (darwin-x64, linux-x64, linux-arm64) remains unproven until a user-authorized `workflow_dispatch` is green. The PTY mock sidecar does NOT prove real providers.
+  - **Commits**: COMMITS_PLACEHOLDER
+
 ## Next step
 
 **Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + U5 + U7 local retirement done. **U6 packaging PARTIAL** (4 artifacts + host clean-install; foreign exec gaps). **R8 = evidence pack only — total parity NOT declared.**
 
-1. **U6 foreign-exec proof (still open — U6 PARTIAL)** — Rosetta (darwin-x64) and Linux CI/Docker (linux-x64 / linux-arm64) `--v3-capture` / PTY on matching runners (`kairo-ui-prebuilt.yml` skeleton). Local Mac: Docker/Rosetta unavailable → gaps stay honest; status-0 under emulation is diagnostic PASS only, never invented.
+1. **U6 foreign-exec proof (still open — U6 PARTIAL)** — the `kairo-ui-prebuilt.yml` pipeline (build -> assemble -> verify-package) is authored but unrun; a user-authorized `workflow_dispatch` must be observed green (U6d). Original note: — Rosetta (darwin-x64) and Linux CI/Docker (linux-x64 / linux-arm64) `--v3-capture` / PTY on matching runners (`kairo-ui-prebuilt.yml` skeleton). Local Mac: Docker/Rosetta unavailable → gaps stay honest; status-0 under emulation is diagnostic PASS only, never invented.
 2. **U2a / U2b** when publish / provider auth available.
 3. **R9** remote-auth cutover (separate from U7 local retirement).
 4. R8 evidence pack stays honest; do not greenwash gaps or declare total product parity.

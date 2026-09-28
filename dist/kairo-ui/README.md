@@ -60,17 +60,31 @@ Asserts:
 - Host-arch binary actually runs `--v3-capture` (exit 0 + output files) from a crate-less root
 - Foreign triples: `file` magic always; **observed status 0 → foreign-exec PASS (diagnostic)**; non-zero/spawn error → honest gap. Never invent PASS.
 
-## CI matrix
+## CI matrix and packaged verification
 
 Workflow: `.github/workflows/kairo-ui-prebuilt.yml` — **`workflow_dispatch` only** (not on PRs).
+**Status: authored and statically tested (`test/kairo-ui-packaged-verify.test.js`); not yet run on GitHub runners, so not observed green.**
+
+| Job | What it does |
+|---|---|
+| `host-v3-capture` (matrix) | Build the host binary, `--v3-capture`, upload `kairo-ui-bin-<key>-<github.sha>` |
+| `assemble` | Download the four binaries, place them under `dist/kairo-ui/<key>/kairo-ui` (exec bit), `npm pack`, assert all four are in the tarball, upload `kairo-ui-package-<github.sha>` |
+| `verify-package` (matrix, needs `assemble`) | Extract the tarball on each native runner and run `scripts/verify-kairo-ui-packaged.sh` (no Rust toolchain) |
 
 | Runner | Expected key |
 |---|---|
-| macos-14 (Apple Silicon) | `darwin-arm64` (exec) |
-| macos-15-intel | `darwin-x64` (exec) |
-| ubuntu-24.04 x64 | `linux-x64` (exec) |
-| ubuntu-24.04-arm | `linux-arm64` (exec) |
+| macos-14 (Apple Silicon) | `darwin-arm64` |
+| macos-15-intel | `darwin-x64` |
+| ubuntu-24.04 x64 | `linux-x64` |
+| ubuntu-24.04-arm | `linux-arm64` |
 
-Attach built artifacts under this directory before `npm pack` / publish.
+`scripts/verify-kairo-ui-packaged.sh <tarball> [key]` checks, using the binary,
+resolver and launcher from the extracted package: key selection, launch
+selection with no Cargo (restricted PATH, no `crates/`), `--v3-capture` >= 10
+files, and a PTY run (60x30, 100x30, 160x48) asserting bridge connection,
+output and alt-screen enter/leave. Run it locally against `npm pack` output on
+the host platform. The mock sidecar comes from the repo checkout and does
+**NOT** prove real providers.
+
 Binaries are gitignored; this README and `.gitkeep` markers stay in source control.
-U6 stays **partial** until foreign-exec gaps close on matching runners.
+U6 stays **partial** until the workflow is observed green on all four runners.

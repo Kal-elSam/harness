@@ -13,12 +13,12 @@
 #   - Otherwise skip and leave the key missing (JS selection tests still cover
 #     all four keys; CI/native runners fill shippable artifacts).
 #
-# CI matrix placeholder (not wired in this repo yet):
-#   - macos-14  → darwin-arm64 (+ optional darwin-x64 cross)
-#   - ubuntu-22.04 (x64) → linux-x64
-#   - ubuntu-22.04-arm / qemu → linux-arm64
-# Produce artifacts under dist/kairo-ui/<key>/kairo-ui and attach to the
-# npm pack step before publish.
+# CI matrix: .github/workflows/kairo-ui-prebuilt.yml (workflow_dispatch only)
+# builds each key on a native runner, uploads the binaries (named by key and
+# commit SHA), assembles one npm pack tarball, and verifies that tarball on the
+# four native runners via scripts/verify-kairo-ui-packaged.sh. The workflow is
+# authored and statically tested; it has not yet been observed green on GitHub
+# runners.
 #
 # Usage:
 #   scripts/build-kairo-ui-binaries.sh
