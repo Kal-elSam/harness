@@ -76,9 +76,11 @@ function mockOpenBridge(factory) {
   };
 }
 
-test("sidecar emits ready then forwards prompt stream and agent_settled", async () => {
+test("sidecar emits ready then routes prompt via submitTask (never Pi prompt)", async () => {
   let childRef = null;
   const out = [];
+  const submitted = [];
+  const piPromptCalls = [];
   const stdout = new PassThrough();
   stdout.on("data", (chunk) => {
     for (const line of String(chunk).split("\n").filter(Boolean)) {
@@ -91,6 +93,10 @@ test("sidecar emits ready then forwards prompt stream and agent_settled", async 
     stdin,
     stdout,
     cwd: "/project",
+    submitTask: async (args) => {
+      submitted.push(args);
+      return { kind: "answer", provider: "claude", model: "opus", answer: "ok" };
+    },
     openBridge: mockOpenBridge(() => {
       childRef = createFakeRpcChild({
         onCommand: (cmd, ctx) => {
@@ -115,21 +121,7 @@ test("sidecar emits ready then forwards prompt stream and agent_settled", async 
             };
           }
           if (cmd.type === "prompt") {
-            queueMicrotask(() => {
-              childRef.stdout.emit(
-                "data",
-                Buffer.from(
-                  `${JSON.stringify({
-                    type: "message_update",
-                    assistantMessageEvent: { type: "text_delta", delta: "ok" }
-                  })}\n`
-                )
-              );
-              childRef.stdout.emit(
-                "data",
-                Buffer.from(`${JSON.stringify({ type: "agent_settled" })}\n`)
-              );
-            });
+            piPromptCalls.push(cmd);
             return { type: "response", command: "prompt", success: true };
           }
           return null;
@@ -149,13 +141,19 @@ test("sidecar emits ready then forwards prompt stream and agent_settled", async 
     state: "checking",
     segments: []
   });
+  const modeEvt = out.find((r) => r.type === "mode");
+  assert.equal(modeEvt?.mode, "ask", "fail-closed default mode on ready");
 
   stdin.write(`${JSON.stringify({ op: "prompt", message: "hello" })}\n`);
   await new Promise((r) => setTimeout(r, 80));
 
-  const types = out.map((r) => r.type);
-  assert.ok(types.includes("message_update"));
-  assert.ok(types.includes("agent_settled"));
+  assert.equal(piPromptCalls.length, 0, "U4a: never forward Enter to Pi prompt");
+  assert.deepEqual(submitted, [
+    { cwd: "/project", task: "hello", mode: "ask", sessionId: null }
+  ]);
+  const result = out.find((r) => r.type === "task_result");
+  assert.equal(result?.kind, "answer");
+  assert.equal(result?.answer, "ok");
 
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();
@@ -2745,6 +2743,339 @@ test("U3b: notify extension_ui_request is forwarded without requiring a host res
   assert.equal(notify.id, "uuid-notify-1");
   assert.equal(notify.message, "Command blocked");
   // Host is free to display; no extension_ui_response is required for notify.
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+// ---------------------------------------------------------------------------
+// U4a: ASK/PLAN/AGENT work modes (persisted per active Kairo session)
+// ---------------------------------------------------------------------------
+
+test("U4a: set_mode persists via service.setMode under activeKairoSessionId and emits mode", async () => {
+  const modeCalls = [];
+  const sessions = new Map([[KAIRO_ID_A, { id: KAIRO_ID_A, mode: "ask" }]]);
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async (_h, _p, id) => sessions.get(id) ?? null,
+    setMode: async (args) => {
+      modeCalls.push(args);
+      sessions.set(args.sessionId, { id: args.sessionId, mode: args.mode });
+      return { mode: args.mode };
+    },
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      })
+    )
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "set_mode", mode: "plan" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.deepEqual(modeCalls, [{ cwd: "/project", mode: "plan", sessionId: KAIRO_ID_A }]);
+  const modes = out.filter((r) => r.type === "mode").map((r) => r.mode);
+  assert.ok(modes.includes("ask"), "ready emits fail-closed ask (or restored)");
+  assert.equal(modes.at(-1), "plan");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4a: set_mode persist failure emits cockpit-style notice and does not claim success", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "ask" }),
+    setMode: async () => {
+      throw new Error("disk full");
+    },
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      })
+    )
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  const before = out.filter((r) => r.type === "mode").length;
+  stdin.write(`${JSON.stringify({ op: "set_mode", mode: "agent" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  const notice = [...out].reverse().find((r) => r.type === "notice");
+  assert.match(notice?.message ?? "", /Mode change not saved:.*disk full/i);
+  assert.equal(
+    out.filter((r) => r.type === "mode").length,
+    before,
+    "failed persist must not emit a successful mode record"
+  );
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4a: ready restores persisted mode for active Kairo session; switch re-emits destination mode", async () => {
+  const sessions = new Map([
+    [KAIRO_ID_A, { id: KAIRO_ID_A, mode: "agent" }],
+    [KAIRO_ID_B, { id: KAIRO_ID_B, mode: "plan" }]
+  ]);
+  const bindings = new Map([
+    ["pi-a", KAIRO_ID_A],
+    ["pi-b", KAIRO_ID_B]
+  ]);
+  let currentSessionId = "pi-a";
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [
+      { path: "/x/a.jsonl", sessionId: "pi-a", label: "A" },
+      { path: "/x/b.jsonl", sessionId: "pi-b", label: "B" }
+    ],
+    lookupPiBinding: async (_h, _r, piId) => bindings.get(piId) ?? null,
+    getSession: async (_h, _p, id) => sessions.get(id) ?? null,
+    loadDraft: async () => "",
+    saveDraft: async () => {},
+    openBridge: async (opts) => {
+      const child = createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: currentSessionId, model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "switch_session") {
+            currentSessionId = cmd.sessionPath.includes("b.jsonl") ? "pi-b" : "pi-a";
+            return { type: "response", command: "switch_session", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "get_messages") {
+            return { type: "response", command: "get_messages", success: true, data: { messages: [] } };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      });
+      return openPiRpcBridge({
+        cwd: opts?.cwd ?? "/project",
+        loadSnapshot: async () => fakeSnapshot(),
+        resolveCliPath: () => "/fake/cli.js",
+        loadKairoProviderModels: async () => [architectModel],
+        spawnImpl: () => child,
+        execPath: "/usr/bin/node",
+        connectTimeoutMs: 500
+      });
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 80));
+  const readyModes = out.filter((r) => r.type === "mode");
+  assert.equal(readyModes[0]?.mode, "agent");
+
+  stdin.write(`${JSON.stringify({ op: "switch_session_index", index: 1, draft: "" })}\n`);
+  await new Promise((r) => setTimeout(r, 100));
+
+  const afterSwitch = out.filter((r) => r.type === "mode").at(-1);
+  assert.equal(afterSwitch?.mode, "plan");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4a: prompt in PLAN/AGENT calls submitTask with that mode and never Pi prompt", async () => {
+  const submitted = [];
+  const piPromptCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => [],
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "plan" }),
+    setMode: async ({ mode }) => ({ mode }),
+    submitTask: async (args) => {
+      submitted.push(args);
+      return { kind: "plan", taskId: "task-42" };
+    },
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          if (cmd.type === "prompt") {
+            piPromptCalls.push(cmd);
+            return { type: "response", command: "prompt", success: true };
+          }
+          return null;
+        }
+      })
+    )
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(out.find((r) => r.type === "mode")?.mode, "plan");
+
+  stdin.write(`${JSON.stringify({ op: "prompt", message: "Add OAuth" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  assert.equal(piPromptCalls.length, 0);
+  assert.deepEqual(submitted, [
+    { cwd: "/project", task: "Add OAuth", mode: "plan", sessionId: KAIRO_ID_A }
+  ]);
+  const result = out.find((r) => r.type === "task_result");
+  assert.equal(result?.kind, "plan");
+  assert.equal(result?.taskId, "task-42");
+  assert.match(
+    out.find((r) => r.type === "notice" && /Plan requested/i.test(r.message ?? ""))?.message ?? "",
+    /Plan requested from Codex/
+  );
+
+  stdin.write(`${JSON.stringify({ op: "set_mode", mode: "agent" })}\n`);
+  await new Promise((r) => setTimeout(r, 40));
+  stdin.write(`${JSON.stringify({ op: "prompt", message: "What next?" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  assert.equal(submitted.at(-1)?.mode, "agent");
+  assert.equal(piPromptCalls.length, 0);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U4a: invalid mode on set_mode fails closed to ask semantics and never persists garbage", async () => {
+  const modeCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    setMode: async (args) => {
+      modeCalls.push(args);
+      return { mode: args.mode };
+    },
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true, data: { id: cmd.modelId } };
+          }
+          return null;
+        }
+      })
+    )
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "set_mode", mode: "yolo" })}\n`);
+  await new Promise((r) => setTimeout(r, 40));
+
+  assert.equal(modeCalls.length, 0);
+  const err = [...out].reverse().find((r) => r.type === "error");
+  assert.match(err?.message ?? "", /Unknown work mode|invalid/i);
 
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();

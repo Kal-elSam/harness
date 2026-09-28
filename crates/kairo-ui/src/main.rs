@@ -26,8 +26,8 @@ use analyst_picker::AnalystPickerState;
 use bridge::BridgeClient;
 use chat::{sidebar_accepts_selection_keys, ChatState, Focus};
 use engine::{
-    can_analyze_team, can_approve_team, decide_submit, parse_slash_command, team_keys_available,
-    EngineGate, SlashCommand, SubmitDecision,
+    can_analyze_team, can_approve_team, decide_submit, next_work_mode, normalize_work_mode,
+    parse_slash_command, team_keys_available, EngineGate, SlashCommand, SubmitDecision,
 };
 use extension_ui::{ExtensionUiEvent, ExtensionUiMethod, ExtensionUiState};
 use layout::split_shell;
@@ -41,7 +41,8 @@ use surfaces::{
 
 // Keybindings (V2 + R3b + R4):
 // - Tab: cycle focus Editor → Sidebar → Transcript
-// - Editor: type in textarea; Enter submits prompt; Esc aborts stream or moves focus to Sidebar
+// - Shift+Tab: cycle WorkMode ASK → PLAN → AGENT → ASK (U4a; plain Tab stays focus)
+// - Editor: type in textarea; Enter submits via sidecar submitTask (ASK answer / PLAN|AGENT plan); Esc aborts stream or moves focus to Sidebar
 // - Sidebar: j/k or arrows move agent selection
 // - Transcript: PgUp/PgDn scroll
 // - q: quit when Editor is empty; Ctrl+C / Ctrl+Q always quit
@@ -388,6 +389,13 @@ impl ShellApp {
                 self.ingest_sessions_record(&record);
             } else if kind == Some("draft") {
                 self.apply_draft_record(&record);
+            } else if kind == Some("mode") {
+                // U4a: restore / confirm WorkMode from the active Kairo session.
+                if let Some(mode) = record.get("mode").and_then(|v| v.as_str()) {
+                    self.view.work_mode = normalize_work_mode(mode).to_string();
+                }
+            } else if kind == Some("task_result") {
+                self.ingest_task_result(&record);
             } else if kind == Some("transcript") {
                 if let Some(rows) = record.get("messages").and_then(|v| v.as_array()) {
                     self.chat.replace_from_sidecar_transcript(rows);
@@ -425,10 +433,51 @@ impl ShellApp {
             }
             if kind != Some("transcript")
                 && kind != Some("draft")
+                && kind != Some("mode")
+                && kind != Some("task_result")
                 && kind != Some("extension_ui_request")
             {
                 self.chat.apply_sidecar_event(&record);
             }
+        }
+    }
+
+    /// U4a: ASK answer or PLAN notice from sidecar submitTask — never Pi stream.
+    fn ingest_task_result(&mut self, record: &serde_json::Value) {
+        self.pending_prompt = None;
+        let kind = record.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        match kind {
+            "answer" => {
+                let provider = record
+                    .get("provider")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("kairo");
+                let model = record.get("model").and_then(|v| v.as_str());
+                let answer = record.get("answer").and_then(|v| v.as_str()).unwrap_or("");
+                let label = match model {
+                    Some(m) if !m.is_empty() => format!("{provider} · {m}: {answer}"),
+                    _ => format!("{provider}: {answer}"),
+                };
+                self.chat.push_kairo_reply(label);
+            }
+            "plan" => {
+                self.chat.push_kairo_reply(
+                    "Plan requested from Codex. Review it below, then press a to approve.".into(),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    /// U4a: optimistic Shift+Tab cycle; persist via sidecar; notice on write failure.
+    fn cycle_work_mode(&mut self) {
+        let next = next_work_mode(&self.view.work_mode).to_string();
+        self.view.work_mode = next.clone();
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        if let Err(err) = bridge.set_mode(&next) {
+            self.view.notice = Some(format!("Mode change not saved: {err}"));
         }
     }
 
@@ -762,8 +811,10 @@ impl ShellApp {
                 self.clear_editor();
                 match self.bridge.as_mut().expect("bridge").prompt(text.trim()) {
                     Ok(()) => {
+                        // U4a: sidecar routes through submitTask — no Pi assistant stream.
                         self.pending_prompt = Some(text.trim().to_string());
-                        self.chat.begin_assistant_stream();
+                        let mode = self.view.work_mode.to_uppercase();
+                        self.view.notice = Some(format!("Submitting · {mode}…"));
                     }
                     Err(err) => {
                         self.chat.pop_last_user_if_matches(text.trim());
@@ -913,6 +964,14 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
     if try_recovery_shortcut(app, key) {
+        return Ok(false);
+    }
+
+    // U4a: Shift+Tab cycles WorkMode from any focus; plain Tab stays focus.
+    if key.code == KeyCode::BackTab
+        || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT))
+    {
+        app.cycle_work_mode();
         return Ok(false);
     }
 

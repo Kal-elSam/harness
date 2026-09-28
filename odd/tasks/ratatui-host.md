@@ -83,7 +83,7 @@ Legend: done / partial / missing. Source: read-only mapping of `feat/ratatui-hos
 |---|---|---|---|
 | Sidebar agents + USAGE strip | cockpit, Pi-TUI widgets | done | Captures @60/100/160 |
 | Model cycle / compact | cockpit, Pi-TUI | done | Ctrl+M / Ctrl+K |
-| ASK / PLAN / AGENT modes | `cockpit/app.js` Shift+Tab, `service.setMode` | missing | Mode visible + persisted; ASK answers, PLAN/AGENT produce plans only |
+| ASK / PLAN / AGENT modes | `cockpit/app.js` Shift+Tab, `service.setMode` | done (U4a) | Mode visible + persisted per active Kairo session; ASK answers, PLAN/AGENT produce plans only (never execute; never Pi `prompt`) |
 | Plans (Markdown), tasks, approve/reject | cockpit | missing | Approve/reject through service APIs |
 | Role selection → preview → confirm execute / cancel | cockpit `service.planExecution` | missing | No execution without explicit confirmation; stale preview rejected |
 | Execution transcript, cancel, manual handoff | `cockpit/app.js:242-258` | missing | Non-launchable role shows paste-prompt handoff |
@@ -129,7 +129,7 @@ Neutral adapters needed before porting: `ink/use-orchestrator-data.js` (hook-bou
 
 ### Sidecar protocol today
 
-Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_session`, `switch_session_index`, `list_sessions`, `rename_session`, `fork_session`, `reload_snapshot`, `project.preflight`, `project.analyze`, `team.approve`, `team.revalidate`, `team.recovery.*`, `extension_ui_response`, `stop`. Records: `ready`, `engine`, `transcript`, `sessions`, `draft`, `kairoModels`, `team`, `preflight`, `snapshot`, `notice`, `error` + forwarded Pi events (including `extension_ui_request`).
+Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_session`, `switch_session_index`, `list_sessions`, `rename_session`, `fork_session`, `reload_snapshot`, `project.preflight`, `project.analyze`, `team.approve`, `team.revalidate`, `team.recovery.*`, `extension_ui_response`, `stop`. Records: `ready`, `mode`, `task_result`, `engine`, `transcript`, `sessions`, `draft`, `kairoModels`, `team`, `preflight`, `snapshot`, `notice`, `error` + forwarded Pi events (including `extension_ui_request`).
 
 ## Acceptance criteria
 
@@ -179,7 +179,7 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
 - [x] U3a Sessions (**reopened to close Phase 3**): keep prior commits; finish active-session draft ownership across switch/new/fork/resume; fork mints new Kairo+Pi ids + `kairo list`/resume; cancel keeps prior identity; binding failure never falls back to previous id. Evidence: A→B→quit→resume B keeps both drafts; cancelled new/fork/switch keep bindings/history correct
 - [x] U3b extension_ui: select / confirm / input / editor / notify with correlated one-way responses and safe cancel (cancel/timeout/engine death/quit)
 - [x] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
-- [ ] U4 Workspace: ASK/PLAN/AGENT, plans/tasks approve/reject, role → preview → confirm execute/cancel, transcript, manual handoff, per-role editor, slash commands, Work/Project/Tasks/Sessions views
+- [~] U4 Workspace: **U4a done** (ASK/PLAN/AGENT persisted + Shift+Tab + submitTask routing). Still open: plans/tasks approve/reject (U4b), role → preview → confirm execute/cancel (U4c), transcript/manual handoff, per-role editor, slash commands, Work/Project/Tasks/Sessions views (U4d)
 - [ ] U5 Operations + Settings views (health, providers, usage, diagnostics, sync/rollback receipts, runs, alerts, reviews, profiles, integrations, setup) via extracted neutral adapters
 - [ ] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
 - [ ] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
@@ -263,7 +263,8 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
 ## Quiet UX (keys)
 
 - Quit: `q` when the editor is empty or focus is sidebar/transcript; **Ctrl+C** / **Ctrl+Q** always quit.
-- Team (in host): **`a`** analyze · **`A`** approve (when suggested). Plan/ask modes are **not** in this slice.
+- WorkMode (U4a): **Shift+Tab** cycles ASK → PLAN → AGENT → ASK (persisted via `service.setMode` under active Kairo session). Plain **Tab** stays focus cycling. Compose chrome shows `Message Kairo · ASK|PLAN|AGENT`. Enter routes through `submitTask` (ASK answers; PLAN/AGENT plan only — never execute, never Pi `prompt`).
+- Team (in host): **`a`** analyze · **`A`** approve (when suggested).
 - Availability + recovery (in host): **`r`** revalidate provider availability on demand · **`R`** preview a strategy recovery when the team is stale/blocked. In the recovery preview modal: **Enter**/**`y`** apply (re-verified against current eligibility; a stale proposal refuses and mutates nothing) · **`x`** explicitly reject (closes the proposal only) · **Esc** cancel locally (no server call at all).
 - Sessions (U3a, bridge only): **Ctrl+L** opens the visible session picker (real rows, labeled by the bound Kairo session id when one exists) — j/k or arrows move, **Enter** switches, **Esc** cancels locally (no server call). **Ctrl+[** / **Ctrl+]** still cycle sessions on disk unchanged. **Ctrl+R** renames the current session to whatever is in the compose box (then clears it). **Ctrl+F** forks the current session (RPC `clone`) into a new one, source untouched. These keybindings were not specified by a product spec — chosen by analogy with the existing Ctrl+M/N/K bridge shortcuts; flag for product review before calling final UX.
 - USAGE row 2 (`engine_line`) stays for **MODEL · session** status — quit hints live here in docs, not on the strip.
@@ -318,8 +319,6 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
   - **Verification**: `node --test test/pi-rpc-bridge.test.js test/kairo-ui-rpc-stdio.test.js test/pi-rpc-transcript.test.js` → **59/59**. `cd crates/kairo-ui && cargo test` → **115/115**.
   - Commit: `feat(kairo-ui): extension_ui dialogs with correlated responses (U3b)`.
 
-## Next step
-
 - (2026-09-28) **Phase 3 close evidence (full suite, not focused-only)** — After U3a+U3c+U3b on `feat/ratatui-host`:
   - Focused: stdio+transcript+bridge+registry → **85/85**; `cargo test` → **115/115**.
   - Full `npm test` → **2439 pass / 10 fail / 1 skip** (2450). Baseline only: **9** entry-host (`session-cli`×8 + `cli-default-entry`×1) + **1** flake (`engine_unavailable after Pi exit`). **Not green.**
@@ -332,7 +331,17 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
 
 - (2026-09-28) **Phase 3 native RDD** — Consent granted on candidate including PTY (`lineage review-50be35ef8f70df28`, `--agent=codex`). Four lenses + bounded correction for CRITICAL `R3-dialog-q` (commit `f469ac753`: plain `q` no longer quits input/editor dialogs). Targeted validation approved; `acknowledge-approved` burned authority. Advisory WARNINGs remain informational only (draft-save loss, PTY assertion strength, dialog viewport). Functional close ≠ PTY e2e ≠ native review — all three now recorded.
 
-**Plan 2026-09-28 (amended):** Phase 3 functional + PTY + native RDD closed. Next: **U4** capabilities (not V3 visual). U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green.
+- (2026-09-28) **U4a ASK/PLAN/AGENT work modes (STRICT TDD)** — Persisted WorkMode in the ratatui host matching cockpit contract.
+  - **Contract**: values `ask`|`plan`|`agent`, default `ask` (fail-closed); Shift+Tab cycles ask→plan→agent→ask; plain Tab stays focus; scope = active `activeKairoSessionId` via `service.setMode`/`getSession`; restore on ready/switch/new/fork; emit `{type:"mode", mode}`; Enter → `submitTask({cwd,task,mode,sessionId})` — ASK answer, PLAN/AGENT plan only (never execute; never Pi `prompt`); compose chrome `Message Kairo · ASK`; optimistic UI + cockpit-style notice on persist failure.
+  - **JS (`kairo-ui-rpc-stdio.js`)**: DI `setMode`/`submitTask` (defaults wrap `createConversationService`); op `set_mode`; prompt routes through `submitTask` + `{type:"task_result"}` + notice; `mode` emitted on ready/switch/new/fork/set_mode. No new store.
+  - **Rust**: `next_work_mode`/`normalize_work_mode`/`compose_chrome_title`; `BridgeClient::set_mode`; Shift+Tab / BackTab; `ShellViewModel.work_mode`; compose title live; `task_result` → System chat row; Enter no longer starts Pi assistant stream.
+  - **Verification (observed)**: `node --test test/kairo-ui-rpc-stdio.test.js` → **44/44**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **121/121**.
+  - Out of scope (still open): U4b plans approve/reject/tasks UI; U4c role preview/confirm/exec; U4d slash/views; V3 visual.
 
-1. **U4** in order: ASK/PLAN/AGENT persisted → plans/approve/reject/tasks → role→preview→confirm→exec/cancel/handoff → per-role editor + `/` commands + navigation.
-2. **U2a/U2b** when publish / provider auth available; **U5→U6→U7** under `feature-branch-chain`.
+## Next step
+
+**Plan 2026-09-28 (amended):** Phase 3 closed; **U4a done**. Next: **U4b** plans approve/reject/tasks UI. U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green (9 entry-host failures).
+
+1. **U4b** plans (Markdown), tasks, approve/reject through service APIs.
+2. **U4c** role → preview → confirm execute/cancel + handoff; **U4d** `/` commands + views.
+3. **U2a/U2b** when publish / provider auth available; **U5→U6→U7** under `feature-branch-chain`.

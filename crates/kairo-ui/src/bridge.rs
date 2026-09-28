@@ -109,6 +109,11 @@ impl BridgeClient {
         self.send_op("prompt", serde_json::json!({ "message": message }))
     }
 
+    /// U4a: persist WorkMode under the active Kairo session (sidecar → service.setMode).
+    pub fn set_mode(&mut self, mode: &str) -> std::io::Result<()> {
+        self.send_op("set_mode", serde_json::json!({ "mode": mode }))
+    }
+
     pub fn abort(&mut self) -> std::io::Result<()> {
         self.send_op("abort", Value::Null)
     }

@@ -171,6 +171,22 @@ impl ChatState {
         });
     }
 
+    /// U4a: append a Kairo submitTask outcome (ASK answer or PLAN notice) as
+    /// a System row — never starts a Pi assistant stream.
+    pub fn push_kairo_reply(&mut self, text: String) {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.messages.push(ChatMessage {
+            role: MessageRole::System,
+            content: trimmed.to_string(),
+            streaming: false,
+            is_error: false,
+            tool_call_id: None,
+        });
+    }
+
     /// Append `delta` to the current streaming row for `role`, starting a new
     /// row when the last message isn't already an open streaming row of the
     /// same role. This is what keeps `Thinking` and `Assistant` text as
