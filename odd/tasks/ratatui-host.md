@@ -44,6 +44,91 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 
 - Plan "Kairo: un solo host visual con ratatui" (2026-09-26).
 - Plan "validar el producto visual antes del corte" (2026-09-26) — reorder: surfaces + visual gate before R7.
+- Plan "Ratatui como única interfaz de Kairo" (2026-09-28) — migrate every product capability of the cockpit, the Ink shell/ops/setup, and the Pi-TUI host into ratatui, then remove their entries, renderers, and exclusive deps. Pi stays the internal RPC engine only. ASK/PLAN/AGENT kept (ASK answers; PLAN/AGENT produce plans; execution needs explicit confirmation). Prebuilt binaries for darwin/linux × arm64/x64 without requiring Cargo. Reuse the kernel and shared service; no new router or task store. Publish, push, and provider-invoking tests need separate authorization. Windows keeps the non-interactive CLI only.
+
+## Parity matrix (2026-09-28)
+
+Legend: done / partial / missing. Source: read-only mapping of `feat/ratatui-host` @ `de42ea7cd` (codegraph + rg). Sidecar = `src/global/host/kairo-ui-rpc-stdio.js`. Each row is closed only by its acceptance test, not by this table.
+
+### Phase 2 — engine, analyst, team
+
+| Capability | Legacy | Ratatui | Acceptance |
+|---|---|---|---|
+| Pi RPC no-model cold start | vendored fork `third_party/pi/.../main.ts` (unpublished) | partial | Real RPC start without `session.model` → host stays open, `no_model` shown; startup stderr + JSONL errors surfaced verbatim |
+| Bootstrap Analyst (sandboxed Codex) | cockpit ProjectOverlay | partial | `918249227`/`0613fdd4d` unify CODEX_HOME + full diagnostics (mocked). Closes only on a real fresh-session answer with confinement intact (provider auth required) — see `odd/tasks/bootstrap-analyst-start.md` |
+| Analyze / analyst picker / approve | `cockpit/project-overlay.js` | done | `a` → picker → `project.analyze`; `A` → `team.approve` re-applies Architect |
+| Team availability revalidation + reassignment | cockpit / Pi extension notices | partial | Blocked roles show only the cause present in `stateReason`; `/analyze` reassign path works. Uncommitted WIP in `snapshot.rs`/`surfaces.rs` from another agent is **unreviewed**: it maps any "limited" text to "a subscription ran out of quota" and inverts the no-invented-cause test — conflicts with this plan |
+| Per-role model editor | `project-overlay.js` EDIT_* states | missing | Override one role's model in ratatui; persists via service |
+| Strategy recovery preview/approve/reject | `ink/use-orchestrator-data.js` recovery fns; extension `kairo-team-approve/reject` | missing | Stale team → preview → approve/reject updates snapshot; cancel mutates nothing |
+
+### Phase 3 — sessions, chat, dialogs
+
+| Capability | Legacy | Ratatui | Acceptance |
+|---|---|---|---|
+| Prompt / stream / cancel / scroll | cockpit, Pi-TUI | done | Stream renders; Esc aborts |
+| Tool events distinct from text | Pi-TUI | done (live) | Tool row separate from assistant text |
+| Thinking distinct from text | Pi-TUI | missing | Thinking deltas render in their own style |
+| Restored history fidelity | Pi-TUI reload | partial | `pi-rpc-transcript.js` keeps only `text` blocks; replay must show tool/thinking/error rows like live |
+| Session selector (visible list) | Pi-TUI / cockpit | partial | Ctrl+[ / ] blind cycle only; need labeled list |
+| New / switch | Pi RPC | done | Ctrl+N; Architect re-applied |
+| Kairo session id ↔ Pi file binding | `session-registry.js`, `KAIRO_SESSION_ID` | missing | `kairo list` id appears in the picker bound to its Pi file; old sessions kept, never shown empty |
+| Rename / fork | Pi RPC `set_session_name` / `fork` | missing | Renamed/forked session appears in list |
+| Persist draft, history, active mode | cockpit | missing | Start → chat → quit → resume restores same session, draft, mode |
+| extension_ui select / confirm / input / editor / notify | Pi `extension_ui_request` | missing (notify: parallel local notice only) | Correlated responses; cancel returns `cancelled` and mutates nothing |
+
+### Phase 4 — conversational workspace
+
+| Capability | Legacy | Ratatui | Acceptance |
+|---|---|---|---|
+| Sidebar agents + USAGE strip | cockpit, Pi-TUI widgets | done | Captures @60/100/160 |
+| Model cycle / compact | cockpit, Pi-TUI | done | Ctrl+M / Ctrl+K |
+| ASK / PLAN / AGENT modes | `cockpit/app.js` Shift+Tab, `service.setMode` | missing | Mode visible + persisted; ASK answers, PLAN/AGENT produce plans only |
+| Plans (Markdown), tasks, approve/reject | cockpit | missing | Approve/reject through service APIs |
+| Role selection → preview → confirm execute / cancel | cockpit `service.planExecution` | missing | No execution without explicit confirmation; stale preview rejected |
+| Execution transcript, cancel, manual handoff | `cockpit/app.js:242-258` | missing | Non-launchable role shows paste-prompt handoff |
+| Slash commands (`/models`, `/providers`, `/why`, `/usage`, `/clear`) | `cockpit/app.js:300-375` | missing | `/x` parsed as command, never sent as chat |
+| Views Work / Project / Tasks / Sessions | cockpit views | missing (Work only) | Navigable inside current chrome |
+
+### Phase 5 — operations & setup
+
+| Capability | Legacy | Ratatui | Acceptance |
+|---|---|---|---|
+| Health / readiness / diagnostics | `ink/orchestrator-app.js` DIAGNOSTICS | missing | Same fields as `kairo orchestrator --json` |
+| Providers | PROVIDERS view, `fleet-probe.js` | missing | Matches `kairo fleet` |
+| Usage drill-down | USAGE view | partial (strip only) | Full detail view |
+| Sync / drift preview → confirm → receipt | `use-orchestrator-data.js` changes fns, `runGlobalSync` | missing | Receipt matches `kairo sync` |
+| Rollback preview → confirm → receipt | CHANGES view, `runGlobalRollback` | missing | Same pattern |
+| Runs (active/recent/detail/cancel) | RUNS views, `run-cli.js` | missing | List, detail, cancel |
+| Alerts | ALERTS view, `alert-cli.js` | missing | Visible + transition |
+| Review receipts | REVIEWS views, `review-cli.js` | missing | Matches `kairo reviews` |
+| Profiles / settings | PROFILE, SETTINGS | missing | Edit persists |
+| Integrations / connections | `connections.js` | missing | Same list |
+| Interactive setup | `ink/setup-app.js`, `setup-routing.js` (+ Clack) | missing | First run opens ratatui setup |
+
+Neutral adapters needed before porting: `ink/use-orchestrator-data.js` (hook-bound ops), mode/handoff logic in `cockpit/app.js`, setup step/state in `ink/setup-*.js`. Extract plain modules only; no React in Rust.
+
+### Phase 6 — packaging
+
+| Capability | Now | Acceptance |
+|---|---|---|
+| Binary | built on demand with `cargo build --release` (`launch-ratatui-host.js`) | Clean install without Cargo launches |
+| darwin/linux × arm64/x64 selection | none | Correct prebuilt binary auto-selected; source build dev-only |
+| Windows | explicit error (done) | Non-interactive CLI only |
+
+### Phase 7 — retirement
+
+| Entry / asset | Now | Target |
+|---|---|---|
+| `kairo`, `start`, `resume` | ratatui default via `resolveUiHost`; **9 failing tests** in `session-cli.test.js` + `cli-default-entry.test.js` still assert Pi host (re-run 2026-09-28: 10 pass / 9 fail) | Ratatui only; tests updated |
+| `kairo ui` | ratatui; `--legacy-cockpit` → `runUiCli` | Ratatui only |
+| `kairo shell` | Ink `runOrchestratorShell` | Ratatui Operations view |
+| `--pi` / `--pi-host` / `KAIRO_UI_HOST=pi`, `--legacy-cockpit` | active opt-outs | Removed with migration message, no hidden fallback |
+| Exclusive code | `src/global/cockpit/*` (8 files), `src/global/ink/*` (28), Pi-TUI widget code in `host/extension/index.js` | Deleted after parity; APIs, non-interactive CLI, adapters, bindings, RPC engine kept |
+| Exclusive deps | `ink`, `react`, `@clack/prompts`, `@earendil-works/pi-tui` | Removed from `package.json` |
+
+### Sidecar protocol today
+
+Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_session`, `switch_session_index`, `list_sessions`, `reload_snapshot`, `project.preflight`, `project.analyze`, `team.approve`, `stop`. Records: `ready`, `engine`, `transcript`, `sessions`, `kairoModels`, `team`, `preflight`, `snapshot`, `notice`, `error` + forwarded Pi events. Unused Pi RPC surface relevant here: `fork`, `set_session_name`, `get_messages` (full blocks), thinking-level ops, `extension_ui_request/response`.
 
 ## Acceptance criteria
 
@@ -81,6 +166,20 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - [ ] R7 Package binaries (darwin/linux); Windows `ui` error
 - [ ] R8 Final parity evidence
 - [ ] R9 Cutover default + strip Pi-TUI/cockpit as product UIs (**remote auth**)
+
+### Plan 2026-09-28 (ratatui as the only UI) — supersedes open R4/R6/T2/R7–R9 scope above
+
+- [x] U1 Parity matrix recorded (this doc); Bootstrap fixes reconciled as committed-but-unproven
+- [ ] U2a Pi RPC start: runtime-active no-model fix in the consumed package; keep startup stderr + JSONL errors (publish needs auth)
+- [ ] U2b Bootstrap: real fresh-session answer with confinement (provider auth) — `bootstrap-analyst-start.md` T4
+- [ ] U2c Team: review/replace the uncommitted quota WIP; revalidate availability; recovery/reassign without invented causes; strategy recovery preview/approve/reject
+- [ ] U3a Sessions: Kairo id ↔ Pi file binding; visible selector; rename / new / resume / fork; persist draft, history, mode
+- [ ] U3b extension_ui: select / confirm / input / editor / notify with correlated responses and safe cancel
+- [ ] U3c Chat events: separate text / thinking / tools; results, errors, progress; restored history == live
+- [ ] U4 Workspace: ASK/PLAN/AGENT, plans/tasks approve/reject, role → preview → confirm execute/cancel, transcript, manual handoff, per-role editor, slash commands, Work/Project/Tasks/Sessions views
+- [ ] U5 Operations + Settings views (health, providers, usage, diagnostics, sync/rollback receipts, runs, alerts, reviews, profiles, integrations, setup) via extracted neutral adapters
+- [ ] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
+- [ ] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
 
 ## Progress
 
@@ -144,6 +243,8 @@ Pi RPC separates agent from UI; RPC does not transport chrome. Ratatui owns surf
 - USAGE row 2 (`engine_line`) stays for **MODEL · session** status — quit hints live here in docs, not on the strip.
 
 ## Next step
+
+**Plan 2026-09-28:** U2c (team WIP decision) → U3c → U3a → U3b → U4 → U5 → U6 → U7. U2a/U2b wait for publish / provider authorization. Route per task: delegated writer (JS sidecar + Rust, 2+ non-trivial files). The list below is the earlier plan, kept for history.
 
 1. **V3** TrueColor @60/100/160 with real conversation + team data — your visual verdict (blocks R7 packaging claim). Now reachable end to end in one UI: `kairo` → `a` (analyze) → `A` (approve) → chat. Live provider check only with a session you authorize.
 2. **T2** in-UI team depth: analyst picker + per-role editor (MVP is default analyst only).
