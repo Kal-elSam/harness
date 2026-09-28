@@ -322,6 +322,11 @@ impl BridgeClient {
         )
     }
 
+    /// U5a: read-only Operations hub snapshot.
+    pub fn ops_snapshot(&mut self) -> std::io::Result<()> {
+        self.send_op("ops.snapshot", Value::Null)
+    }
+
     /// Force-stop the Node sidecar. Never block the TTY on a wedged child:
     /// best-effort cooperative `stop`, then kill + wait. Idempotent for Drop.
     pub fn stop(&mut self) -> std::io::Result<()> {

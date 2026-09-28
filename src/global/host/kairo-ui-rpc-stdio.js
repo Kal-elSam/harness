@@ -18,6 +18,7 @@
  *     "evidence"?: bool, "verifyAccess"?: bool, "refresh"?: bool }  — U4d diagnostics
  *   { "op": "slash.clear" }  — U4d: clearTranscript for active session
  *   { "op": "slash.project_status" }  — U4d: /project status lines
+ *   { "op": "ops.snapshot" }  — U5a: read-only Operations hub (health/fleet/usage/diagnostics)
  *   { "op": "project.refresh" }  — U4d: refreshProjectStrategy
  *   { "op": "team.edit.catalog", "role": "..." }  — U4d: getProjectTeamEditCatalog
  *   { "op": "team.edit.assign", "role": "...", "candidateKey": "..." }  — U4d: setProjectTeamAssignment (SUGGESTED only)
@@ -75,6 +76,7 @@
  * { type: "plan_cancel", taskId, ... } (U4c),
  * { type: "run_transcript", runId, nextIndex, entries } (U4c),
  * { type: "slash_lines", kind, lines } (U4d),
+ * { type: "ops_snapshot", ok, error, health, fleet, usage, diagnostics, hints } (U5a),
  * { type: "team_edit_catalog", role, models, currentCandidateKey?, recommendedCandidateKey? } (U4d),
  * { type: "team_edit_saved", role, strategy } (U4d),
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
@@ -114,6 +116,7 @@ import {
   approveProjectTeam as approveProjectTeamImpl,
   preflightProjectTeam as preflightProjectTeamImpl
 } from "./project-team-sidecar.js";
+import { buildOpsSnapshot } from "./ops-sidecar.js";
 import { listPiSessionFilesForCwd } from "./pi-rpc-sessions.js";
 import { mapPiMessagesToTranscriptRows } from "./pi-rpc-transcript.js";
 import {
@@ -349,6 +352,7 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut) {
  * @param {(args: { cwd: string, sessionId?: string|null }) => Promise<void>} [options.clearTranscript]
  * @param {(args: { cwd: string, refresh?: boolean, beforeProbe?: Function, onProgress?: Function }) => Promise<object>} [options.verifyClaudeEntitlements]
  * @param {(args: { cwd: string }) => Promise<object|null>} [options.refreshProjectStrategy]
+ * @param {(args?: object) => Promise<object>} [options.buildOpsSnapshot]
  */
 export async function runKairoUiRpcStdio({
   stdin = process.stdin,
@@ -391,7 +395,8 @@ export async function runKairoUiRpcStdio({
   verifyClaudeEntitlements: verifyClaudeEntitlementsImpl = (args) =>
     defaultConversation().verifyClaudeEntitlements(args),
   refreshProjectStrategy: refreshProjectStrategyImpl = (args) =>
-    defaultConversation().refreshProjectStrategy(args)
+    defaultConversation().refreshProjectStrategy(args),
+  buildOpsSnapshot: buildOpsSnapshotImpl = buildOpsSnapshot
 } = {}) {
   const bridge = await openBridge({ cwd });
   let kairoModels = [];
@@ -965,6 +970,34 @@ export async function runKairoUiRpcStdio({
           type: "slash_lines",
           kind: "project_status",
           lines: projectStatusLines(snap)
+        });
+      } else if (op === "ops.snapshot") {
+        // U5a: read-only Operations hub — health / fleet / usage / diagnostics.
+        let conversationSnap = null;
+        try {
+          conversationSnap = await snapshotImpl({
+            cwd,
+            sessionId: activeKairoSessionId
+          });
+        } catch {
+          conversationSnap = null;
+        }
+        const ops = await buildOpsSnapshotImpl({
+          homeDir,
+          workspaceRoot: projectRoot ?? cwd,
+          conversationSnapshot: conversationSnap
+        });
+        writeOut({
+          type: "ops_snapshot",
+          ok: ops.ok !== false,
+          error: ops.error ?? null,
+          health: Array.isArray(ops.health) ? ops.health : ["Health unavailable."],
+          fleet: Array.isArray(ops.fleet) ? ops.fleet : ["Fleet unavailable."],
+          usage: Array.isArray(ops.usage) ? ops.usage : ["Usage unavailable."],
+          diagnostics: Array.isArray(ops.diagnostics)
+            ? ops.diagnostics
+            : ["Diagnostics unavailable."],
+          hints: typeof ops.hints === "string" ? ops.hints : "Esc → Work"
         });
       } else if (op === "project.refresh") {
         const result = await refreshProjectStrategyImpl({ cwd });
