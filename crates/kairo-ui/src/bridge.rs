@@ -146,6 +146,32 @@ impl BridgeClient {
         self.send_op("team.approve", Value::Null)
     }
 
+    /// On-demand availability re-probe (U2c): real re-probe through the
+    /// existing shared service, never a local guess. Answers with an
+    /// `availability` record followed by a fresh `snapshot`.
+    pub fn revalidate_team_availability(&mut self) -> std::io::Result<()> {
+        self.send_op("team.revalidate", Value::Null)
+    }
+
+    /// Build (and persist) a SUGGESTED strategy-recovery proposal — never
+    /// activates. Answers with a `recovery` record (`op: "preview"`).
+    pub fn recovery_preview(&mut self) -> std::io::Result<()> {
+        self.send_op("team.recovery.preview", Value::Null)
+    }
+
+    /// Approve the pending recovery proposal. The sidecar re-verifies it
+    /// against CURRENT eligibility first — a stale proposal comes back as
+    /// `outcome: "error"` and never touches the model or the strategy.
+    pub fn recovery_apply(&mut self) -> std::io::Result<()> {
+        self.send_op("team.recovery.apply", Value::Null)
+    }
+
+    /// Reject the pending recovery proposal — only closes the fingerprint;
+    /// the active team was never touched by the proposal.
+    pub fn recovery_reject(&mut self) -> std::io::Result<()> {
+        self.send_op("team.recovery.reject", Value::Null)
+    }
+
     pub fn new_session(&mut self) -> std::io::Result<()> {
         self.send_op("new_session", Value::Null)
     }
