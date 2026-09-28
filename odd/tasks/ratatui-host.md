@@ -181,7 +181,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
 - [x] U4 Workspace: **U4a+U4b+U4c+U4d done** (modes + plans + execute/cancel/handoff + slash + Work/Project/Tasks/Sessions + per-role SUGGESTED editor)
 - [x] U5 Operations + Settings views — U5a read-only Ops hub `5` + U5b mutations/Settings `6` (sync/rollback/runs cancel/alerts dismiss/reviews list; setup honest stub → still **delegated** to `kairo setup`). Runs detail + reviews remain dashboard/list-backed (**partial** depth)
-- [~] U6 Packaging (**PARTIAL**): all 4 prebuilts built (host + cargo `--target` darwin-x64 + `cargo zigbuild` linux); clean-install stage proves launch selection without Cargo for all 4 + host `--v3-capture` exec; foreign exec still needs Rosetta/CI/Docker. PTY 60×30 / 100×30 / 160×48 + terminal restore on host. Do **not** declare total product parity / complete distribution
+- [~] U6 Packaging (**PARTIAL**): all 4 prebuilts built; hand-staged + **npm pack** clean-install prove launch without Cargo + host `--v3-capture`; foreign-exec classification fixed (status 0 = diagnostic PASS, else gap); CI matrix skeleton added; foreign exec still needs matching runners (Docker/Rosetta unavailable locally). PTY 60×30 / 100×30 / 160×48 on host. Do **not** declare complete / U6 done
 - [x] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
 
 ## Progress
@@ -407,14 +407,17 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - (2026-09-28) **U6 packaging closure (4 artifacts + clean-install)** — HEAD after trailer rewrite `879d01fdd`+; **still PARTIAL** (foreign exec gaps). Total product parity **NOT** declared.
   - **Artifacts** (gitignored): `darwin-arm64` ~1.6M Mach-O arm64; `darwin-x64` ~1.6M Mach-O x86_64; `linux-x64` ~1.4M ELF x86-64; `linux-arm64` ~1.3M ELF aarch64.
   - **Build**: `scripts/build-kairo-ui-binaries.sh` prefers `cargo zigbuild` for non-host Linux when `cargo-zigbuild`+`zig` exist; honest skip otherwise. Documented in `dist/kairo-ui/README.md`.
-  - **Clean-install**: `scripts/verify-kairo-ui-clean-install.sh` + `test/kairo-ui-clean-install.test.js` stage crate-less root (no `crates/` / `Cargo.toml`); `launchRatatuiHost` selects matching prebuilt for all 4 keys with **zero** cargo calls; host `--v3-capture` exit 0 + fixture files; foreign triples assert `file` magic and record exec needs Rosetta/CI/Docker (no fake PASS).
+  - **Clean-install**: `scripts/verify-kairo-ui-clean-install.sh` + `test/kairo-ui-clean-install.test.js` stage crate-less root (no `crates/` / `Cargo.toml`); `launchRatatuiHost` selects matching prebuilt for all 4 keys with **zero** cargo calls; host `--v3-capture` exit 0 + fixture files; foreign triples assert `file` magic; **foreign exec status 0 → diagnostic foreign-exec PASS** (Rosetta/emulation OK, not a failure); non-zero/spawn error → honest gap diagnostic. Never invent PASS without observed status 0.
+  - **npm pack install**: `test/kairo-ui-npm-pack-install.test.js` + `npm run verify:kairo-ui-npm-pack-install` — real `npm pack` tarball (gitignored binaries still packed via `files: ["dist/kairo-ui"]`) → extract → assert all 4 `dist/kairo-ui/*/kairo-ui`, no `crates/`, launch selection without cargo, host `--v3-capture` from that install root. Verify script runs both suites.
+  - **CI skeleton**: `.github/workflows/kairo-ui-prebuilt.yml` (workflow_dispatch + path-filtered PR) builds host-only and runs `--v3-capture` per runner OS/arch. Local Mac still has no Docker/Rosetta → do **not** fake multiplatform exec. `linux-arm64` runner label commented until available.
   - **Per-triple**: see Progress matrix below / verify script output.
+  - **U6 remains PARTIAL** — pack+host proven; foreign exec gaps (and optional matrix green) still open.
 
 ## Next step
 
 **Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + U5 + U7 local retirement done. **U6 packaging PARTIAL** (4 artifacts + host clean-install; foreign exec gaps). **R8 = evidence pack only — total parity NOT declared.**
 
-1. **U6 foreign-exec proof** — Rosetta (darwin-x64) and Linux CI/Docker (linux-x64 / linux-arm64) `--v3-capture` / PTY when those runners are available; do not fake PASS locally.
+1. **U6 foreign-exec proof (still open — U6 PARTIAL)** — Rosetta (darwin-x64) and Linux CI/Docker (linux-x64 / linux-arm64) `--v3-capture` / PTY on matching runners (`kairo-ui-prebuilt.yml` skeleton). Local Mac: Docker/Rosetta unavailable → gaps stay honest; status-0 under emulation is diagnostic PASS only, never invented.
 2. **U2a / U2b** when publish / provider auth available.
 3. **R9** remote-auth cutover (separate from U7 local retirement).
 4. R8 evidence pack stays honest; do not greenwash gaps or declare total product parity.
@@ -443,6 +446,6 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   | Triple | Artifact | Clean-install launch (no cargo) | Exec `--v3-capture` |
   |---|---|---|---|
   | darwin-arm64 | ~1.6M Mach-O arm64 | PASS | PASS (host) |
-  | darwin-x64 | ~1.6M Mach-O x86_64 | PASS (selection) | GAP — needs Rosetta / x64 mac |
-  | linux-x64 | ~1.4M ELF x86-64 | PASS (selection) | GAP — needs Linux CI / Docker |
-  | linux-arm64 | ~1.3M ELF aarch64 | PASS (selection) | GAP — needs Linux CI / Docker / qemu |
+  | darwin-x64 | ~1.6M Mach-O x86_64 | PASS (selection + npm-pack) | GAP locally (no Rosetta); CI `macos-13` skeleton; status 0 under Rosetta = foreign-exec PASS diagnostic |
+  | linux-x64 | ~1.4M ELF x86-64 | PASS (selection + npm-pack) | GAP locally; CI `ubuntu-24.04` skeleton |
+  | linux-arm64 | ~1.3M ELF aarch64 | PASS (selection + npm-pack) | GAP — needs arm64 Linux runner / qemu (not wired) |

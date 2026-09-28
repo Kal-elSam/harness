@@ -45,7 +45,8 @@
     "smoke:kairo-ui-pty": "python3 scripts/kairo-ui-pty-e2e.py",
     "release:check": "node scripts/check-release-commit.mjs",
     "release:published": "node scripts/check-published-release.mjs",
-    "verify:kairo-ui-clean-install": "bash scripts/verify-kairo-ui-clean-install.sh"
+    "verify:kairo-ui-clean-install": "bash scripts/verify-kairo-ui-clean-install.sh",
+    "verify:kairo-ui-npm-pack-install": "node --test test/kairo-ui-npm-pack-install.test.js"
   },
   "keywords": [
     "ai",

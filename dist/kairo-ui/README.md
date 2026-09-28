@@ -42,25 +42,35 @@ Missing toolchains / linkers are skipped honestly (no fake PASS). JS unit tests 
 
 ```bash
 scripts/verify-kairo-ui-clean-install.sh
-# or:
+# or separately:
 node --test test/kairo-ui-clean-install.test.js
+npm run verify:kairo-ui-npm-pack-install
 ```
 
-Stages a package root with all four prebuilts + a minimal sidecar path and **no**
-`crates/` / `Cargo.toml`. Asserts:
+1. **Hand-staged** crate-less root (all four prebuilts + minimal sidecar, **no**
+   `crates/` / `Cargo.toml`).
+2. **Real `npm pack`**: binaries are gitignored but still packed via
+   `package.json` `files: ["dist/kairo-ui"]`. Extract the tarball and assert
+   all four `dist/kairo-ui/*/kairo-ui` paths, launch selection without cargo,
+   and host `--v3-capture` from that install root.
+
+Asserts:
 
 - `launchRatatuiHost` selects the matching prebuilt for each of the four keys and never invokes cargo
-- Host-arch binary actually runs `--v3-capture` (exit 0 + output files) from that crate-less root
-- Foreign triples: `file` magic (Mach-O x86_64 / ELF x86-64 / ELF aarch64) + launch selection; runtime exec needs Rosetta / Linux CI / Docker (not faked)
+- Host-arch binary actually runs `--v3-capture` (exit 0 + output files) from a crate-less root
+- Foreign triples: `file` magic always; **observed status 0 → foreign-exec PASS (diagnostic)**; non-zero/spawn error → honest gap. Never invent PASS.
 
-## CI matrix (placeholder)
+## CI matrix skeleton
+
+Workflow: `.github/workflows/kairo-ui-prebuilt.yml` (`workflow_dispatch` + path filter).
 
 | Runner | Expected key |
 |---|---|
 | macos-14 (Apple Silicon) | `darwin-arm64` |
-| macos-13/14 x64 or Rosetta | `darwin-x64` (exec) |
-| ubuntu-22.04 x64 | `linux-x64` |
-| ubuntu arm64 / qemu / zigbuild | `linux-arm64` |
+| macos-13 x64 | `darwin-x64` (exec) |
+| ubuntu-24.04 x64 | `linux-x64` |
+| arm64 Linux / qemu / zigbuild | `linux-arm64` (gap until runner wired) |
 
 Attach built artifacts under this directory before `npm pack` / publish.
 Binaries are gitignored; this README and `.gitkeep` markers stay in source control.
+U6 stays **partial** until foreign-exec gaps close on matching runners.

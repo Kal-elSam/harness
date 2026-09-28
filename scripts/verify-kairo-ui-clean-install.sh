@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Stage a crate-less package root from dist/kairo-ui and run clean-install checks.
+# Also prove a real npm pack → extract install root (not only a hand-staged tmp dir).
 #
 # Requires all four prebuilts:
 #   dist/kairo-ui/{darwin-arm64,darwin-x64,linux-arm64,linux-x64}/kairo-ui
@@ -57,4 +58,7 @@ export KAIRO_UI_VERIFY_CLEAN_INSTALL=1
 cd "$ROOT"
 node --test test/kairo-ui-clean-install.test.js
 
-printf '\nClean-install verification PASS (host exec + 4-way selection; foreign exec gaps recorded in test).\n'
+printf '\n--- npm pack → extract install proof ---\n'
+node --test test/kairo-ui-npm-pack-install.test.js
+
+printf '\nClean-install verification PASS (hand-staged + npm-pack extract; host exec + 4-way selection; foreign exec classified as PASS-or-gap).\n'
