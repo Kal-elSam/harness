@@ -330,8 +330,9 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
   - Observed **PASS**: alt-screen enter `?1049h` + leave `?1049l` (terminal restore); mock log `out ready` + auto `extension_ui_request` + `tool_execution_{start,update,end}`; host replied `extension_ui_response id=pty-dialog-1 cancelled=false value=Allow`; Ctrl+L session-picker chord then Esc (local cancel); `q` quit exit 0.
   - Separate evidence from unit suites and from native RDD. Not a substitute for U6 visual captures @60/100/160.
 
-**Plan 2026-09-28 (amended):** Phase 3 functional + PTY integrated acceptance done; **RDD consent pending** (do not record granted/declined here). Next after consent resolution: **U4** (capabilities first, V3 visual later). U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green.
+- (2026-09-28) **Phase 3 native RDD** — Consent granted on candidate including PTY (`lineage review-50be35ef8f70df28`, `--agent=codex`). Four lenses + bounded correction for CRITICAL `R3-dialog-q` (commit `f469ac753`: plain `q` no longer quits input/editor dialogs). Targeted validation approved; `acknowledge-approved` burned authority. Advisory WARNINGs remain informational only (draft-save loss, PTY assertion strength, dialog viewport). Functional close ≠ PTY e2e ≠ native review — all three now recorded.
 
-1. **RDD consent** for Phase 3 candidate (Codex agent, lineage `review-1e77db9134a5b6ff`) — human chooses granted or declined.
-2. **U4** in order: ASK/PLAN/AGENT persisted → plans/approve/reject/tasks → role→preview→confirm→exec/cancel/handoff → per-role editor + `/` commands + navigation.
-3. **U2a/U2b** when publish / provider auth available; **U5→U6→U7** under `feature-branch-chain`.
+**Plan 2026-09-28 (amended):** Phase 3 functional + PTY + native RDD closed. Next: **U4** capabilities (not V3 visual). U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green.
+
+1. **U4** in order: ASK/PLAN/AGENT persisted → plans/approve/reject/tasks → role→preview→confirm→exec/cancel/handoff → per-role editor + `/` commands + navigation.
+2. **U2a/U2b** when publish / provider auth available; **U5→U6→U7** under `feature-branch-chain`.
