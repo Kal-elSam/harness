@@ -56,15 +56,65 @@ test("mapPiMessagesToTranscriptRows reconstructs tool-call/tool-result pairs and
       role: "toolResult",
       toolCallId: "call-1",
       toolName: "Read",
-      content: [],
+      content: [{ type: "text", text: "ENOENT: missing" }],
       isError: true
     }
   ]);
   assert.deepEqual(rows, [
-    { type: "tool_execution_start", toolName: "Read" },
-    { type: "tool_execution_end", toolName: "Read", isError: true },
+    { type: "tool_execution_start", toolCallId: "call-1", toolName: "Read" },
+    {
+      type: "tool_execution_end",
+      toolCallId: "call-1",
+      toolName: "Read",
+      isError: true,
+      result: { content: [{ type: "text", text: "ENOENT: missing" }] }
+    },
     { type: "agent_settled" }
   ]);
+  assert.ok(
+    !rows.some((r) => r.type === "tool_execution_update"),
+    "restore must not invent intermediate progress Pi did not persist"
+  );
+});
+
+test("mapPiMessagesToTranscriptRows restores final tool result content by toolCallId", () => {
+  const rows = mapPiMessagesToTranscriptRows([
+    {
+      role: "assistant",
+      content: [
+        { type: "toolCall", id: "a", name: "Read", arguments: {} },
+        { type: "toolCall", id: "b", name: "Bash", arguments: {} }
+      ]
+    },
+    {
+      role: "toolResult",
+      toolCallId: "a",
+      toolName: "Read",
+      content: [{ type: "text", text: "file-a" }],
+      isError: false
+    },
+    {
+      role: "toolResult",
+      toolCallId: "b",
+      toolName: "Bash",
+      content: [{ type: "text", text: "bash-b" }],
+      isError: false
+    }
+  ]);
+  const starts = rows.filter((r) => r.type === "tool_execution_start");
+  const ends = rows.filter((r) => r.type === "tool_execution_end");
+  assert.deepEqual(
+    starts.map((r) => r.toolCallId),
+    ["a", "b"]
+  );
+  assert.deepEqual(
+    ends.map((r) => ({ id: r.toolCallId, text: r.result.content[0].text })),
+    [
+      { id: "a", text: "file-a" },
+      { id: "b", text: "bash-b" }
+    ]
+  );
+  assert.ok(!rows.some((r) => r.type === "tool_execution_update"));
 });
 
 test("mapPiMessagesToTranscriptRows surfaces a terminal assistant error distinctly", () => {

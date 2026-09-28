@@ -79,15 +79,25 @@ export function mapPiMessagesToTranscriptRows(messages) {
           wroteRow = true;
         }
       } else if (block.type === "toolCall" && typeof block.name === "string") {
-        rows.push({ type: "tool_execution_start", toolName: block.name });
+        const toolCallId = typeof block.id === "string" ? block.id : undefined;
+        const start = { type: "tool_execution_start", toolName: block.name };
+        if (toolCallId) start.toolCallId = toolCallId;
+        rows.push(start);
         wroteRow = true;
-        const result = toolResultsByCallId.get(block.id);
+        const result = toolCallId ? toolResultsByCallId.get(toolCallId) : undefined;
         if (result) {
-          rows.push({
+          // Replay final settlement only — never invent tool_execution_update
+          // progress frames Pi did not persist in the transcript.
+          const end = {
             type: "tool_execution_end",
             toolName: block.name,
             isError: Boolean(result.isError)
-          });
+          };
+          if (toolCallId) end.toolCallId = toolCallId;
+          if (Array.isArray(result.content) || typeof result.content === "string") {
+            end.result = { content: result.content };
+          }
+          rows.push(end);
         }
       }
     }

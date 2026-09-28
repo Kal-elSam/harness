@@ -46,6 +46,59 @@ pub struct ChatMessage {
     /// other roles today; `MessageRole::Error` already carries the failure
     /// in its role, not this flag.
     pub is_error: bool,
+    /// Pi `toolCallId` for `Tool` rows — correlates start/update/end so
+    /// concurrent tools never clobber each other. `None` for every other role.
+    pub tool_call_id: Option<String>,
+}
+
+/// Extract plain text from a Pi tool `result` / `partialResult` value.
+///
+/// Wire shapes (from vendored Pi JSON docs): `{ content: [{ type:"text",
+/// text }] }`, a bare content array, a string, or `{ content: "…" }`.
+fn tool_payload_text(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    if let Some(s) = value.as_str() {
+        return s.trim().to_string();
+    }
+    let content = value.get("content").unwrap_or(value);
+    if let Some(s) = content.as_str() {
+        return s.trim().to_string();
+    }
+    let Some(blocks) = content.as_array() else {
+        return String::new();
+    };
+    blocks
+        .iter()
+        .filter_map(|block| {
+            if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                block.get("text").and_then(|t| t.as_str())
+            } else {
+                None
+            }
+        })
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_tool_running(name: &str, progress: &str) -> String {
+    if progress.is_empty() {
+        format!("▶ {name} …")
+    } else {
+        format!("▶ {name} …\n{progress}")
+    }
+}
+
+fn format_tool_done(name: &str, is_error: bool, result: &str) -> String {
+    let glyph = if is_error { "✖" } else { "✓" };
+    if result.is_empty() {
+        format!("{glyph} {name}")
+    } else {
+        format!("{glyph} {name}\n{result}")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +117,7 @@ impl Default for ChatState {
                 content: "Type /analyze to choose an analyst · then chat below.".into(),
                 streaming: false,
                 is_error: false,
+                tool_call_id: None,
             }],
             scroll_offset: 0,
             is_streaming: false,
@@ -83,6 +137,7 @@ impl ChatState {
             content: trimmed.to_string(),
             streaming: false,
             is_error: false,
+            tool_call_id: None,
         });
     }
 
@@ -112,6 +167,7 @@ impl ChatState {
             content: format!("(local mock) Received: {user_text}"),
             streaming: false,
             is_error: false,
+            tool_call_id: None,
         });
     }
 
@@ -137,6 +193,7 @@ impl ChatState {
             content: delta.to_string(),
             streaming: true,
             is_error: false,
+            tool_call_id: None,
         });
     }
 
@@ -152,7 +209,15 @@ impl ChatState {
             content: trimmed.to_string(),
             streaming: false,
             is_error: false,
+            tool_call_id: None,
         });
+    }
+
+    /// Find the open `Tool` row for `tool_call_id`, if any.
+    fn find_tool_row_mut(&mut self, tool_call_id: &str) -> Option<&mut ChatMessage> {
+        self.messages.iter_mut().rev().find(|m| {
+            m.role == MessageRole::Tool && m.tool_call_id.as_deref() == Some(tool_call_id)
+        })
     }
 
     /// Replace chat with a restored session's history.
@@ -173,6 +238,7 @@ impl ChatState {
             content: "Type /analyze to choose an analyst · then chat below.".into(),
             streaming: false,
             is_error: false,
+            tool_call_id: None,
         }];
         self.scroll_offset = 0;
         self.is_streaming = false;
@@ -206,6 +272,7 @@ impl ChatState {
             content: String::new(),
             streaming: true,
             is_error: false,
+            tool_call_id: None,
         });
     }
 
@@ -270,6 +337,7 @@ impl ChatState {
                             content: message.to_string(),
                             streaming: false,
                             is_error: true,
+                            tool_call_id: None,
                         });
                     }
                     _ => {}
@@ -280,12 +348,40 @@ impl ChatState {
                     .get("toolName")
                     .and_then(|v| v.as_str())
                     .unwrap_or("tool");
+                let tool_call_id = record
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                // If Pi re-emits start for an existing id, refresh that row
+                // instead of stacking a duplicate concurrent ghost.
+                if let Some(id) = tool_call_id.as_deref() {
+                    if let Some(row) = self.find_tool_row_mut(id) {
+                        row.content = format_tool_running(name, "");
+                        row.is_error = false;
+                        return;
+                    }
+                }
                 self.messages.push(ChatMessage {
                     role: MessageRole::Tool,
-                    content: format!("▶ {name} …"),
+                    content: format_tool_running(name, ""),
                     streaming: false,
                     is_error: false,
+                    tool_call_id,
                 });
+            }
+            "tool_execution_update" => {
+                let Some(id) = record.get("toolCallId").and_then(|v| v.as_str()) else {
+                    return;
+                };
+                let name = record
+                    .get("toolName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tool");
+                let progress = tool_payload_text(record.get("partialResult"));
+                if let Some(row) = self.find_tool_row_mut(id) {
+                    row.content = format_tool_running(name, &progress);
+                    row.is_error = false;
+                }
             }
             "tool_execution_end" => {
                 let name = record
@@ -296,12 +392,30 @@ impl ChatState {
                     .get("isError")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                let glyph = if err { "✖" } else { "✓" };
+                let result_text = tool_payload_text(record.get("result"));
+                let content = format_tool_done(name, err, &result_text);
+                if let Some(id) = record.get("toolCallId").and_then(|v| v.as_str()) {
+                    if let Some(row) = self.find_tool_row_mut(id) {
+                        row.content = content;
+                        row.is_error = err;
+                        return;
+                    }
+                    self.messages.push(ChatMessage {
+                        role: MessageRole::Tool,
+                        content,
+                        streaming: false,
+                        is_error: err,
+                        tool_call_id: Some(id.to_string()),
+                    });
+                    return;
+                }
+                // No toolCallId: push a final row (legacy / incomplete events).
                 self.messages.push(ChatMessage {
                     role: MessageRole::Tool,
-                    content: format!("{glyph} {name}"),
+                    content,
                     streaming: false,
                     is_error: err,
+                    tool_call_id: None,
                 });
             }
             "agent_settled" => {
@@ -370,10 +484,12 @@ mod tests {
         let mut chat = ChatState::default();
         chat.apply_sidecar_event(&json!({
             "type": "tool_execution_start",
+            "toolCallId": "call-1",
             "toolName": "Read"
         }));
         chat.apply_sidecar_event(&json!({
             "type": "tool_execution_end",
+            "toolCallId": "call-1",
             "toolName": "Read",
             "isError": false
         }));
@@ -383,7 +499,184 @@ mod tests {
             .filter(|m| m.role == MessageRole::Tool)
             .map(|m| m.content.as_str())
             .collect();
-        assert_eq!(tools, vec!["▶ Read …", "✓ Read"]);
+        // Start + end correlate by toolCallId into ONE row (in-place update).
+        assert_eq!(tools, vec!["✓ Read"]);
+    }
+
+    #[test]
+    fn concurrent_tools_correlate_progress_and_result_by_tool_call_id() {
+        let mut chat = ChatState::default();
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_start",
+            "toolCallId": "a",
+            "toolName": "Read"
+        }));
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_start",
+            "toolCallId": "b",
+            "toolName": "Bash"
+        }));
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_update",
+            "toolCallId": "a",
+            "toolName": "Read",
+            "partialResult": { "content": [{ "type": "text", "text": "partial-a" }] }
+        }));
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_update",
+            "toolCallId": "b",
+            "toolName": "Bash",
+            "partialResult": { "content": [{ "type": "text", "text": "partial-b" }] }
+        }));
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_end",
+            "toolCallId": "b",
+            "toolName": "Bash",
+            "isError": true,
+            "result": { "content": [{ "type": "text", "text": "bash failed" }] }
+        }));
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_end",
+            "toolCallId": "a",
+            "toolName": "Read",
+            "isError": false,
+            "result": { "content": [{ "type": "text", "text": "file contents" }] }
+        }));
+
+        let tools: Vec<_> = chat
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Tool)
+            .cloned()
+            .collect();
+        assert_eq!(tools.len(), 2, "concurrent tools must keep distinct rows");
+        assert_eq!(tools[0].tool_call_id.as_deref(), Some("a"));
+        assert!(tools[0].content.contains("✓ Read"));
+        assert!(tools[0].content.contains("file contents"));
+        assert!(!tools[0].is_error);
+        assert!(!tools[0].content.contains("partial-b"));
+        assert!(!tools[0].content.contains("bash failed"));
+        assert_eq!(tools[1].tool_call_id.as_deref(), Some("b"));
+        assert!(tools[1].content.contains("✖ Bash"));
+        assert!(tools[1].content.contains("bash failed"));
+        assert!(tools[1].is_error);
+        assert!(!tools[1].content.contains("file contents"));
+    }
+
+    #[test]
+    fn tool_execution_update_rewrites_matching_in_progress_row() {
+        let mut chat = ChatState::default();
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_start",
+            "toolCallId": "call-1",
+            "toolName": "Bash"
+        }));
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_update",
+            "toolCallId": "call-1",
+            "toolName": "Bash",
+            "partialResult": { "content": [{ "type": "text", "text": "line 1" }] }
+        }));
+        let tools: Vec<_> = chat
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Tool)
+            .collect();
+        assert_eq!(tools.len(), 1);
+        assert!(tools[0].content.starts_with('▶'));
+        assert!(tools[0].content.contains("Bash"));
+        assert!(tools[0].content.contains("line 1"));
+    }
+
+    #[test]
+    fn tool_execution_end_preserves_result_and_error_content() {
+        let mut chat = ChatState::default();
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_start",
+            "toolCallId": "ok",
+            "toolName": "Read"
+        }));
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_end",
+            "toolCallId": "ok",
+            "toolName": "Read",
+            "isError": false,
+            "result": { "content": [{ "type": "text", "text": "hello from file" }] }
+        }));
+        let ok = chat
+            .messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("ok"))
+            .expect("ok tool");
+        assert!(ok.content.contains('✓'));
+        assert!(ok.content.contains("hello from file"));
+        assert!(!ok.is_error);
+
+        let mut chat_err = ChatState::default();
+        chat_err.apply_sidecar_event(&json!({
+            "type": "tool_execution_start",
+            "toolCallId": "err",
+            "toolName": "Bash"
+        }));
+        chat_err.apply_sidecar_event(&json!({
+            "type": "tool_execution_end",
+            "toolCallId": "err",
+            "toolName": "Bash",
+            "isError": true,
+            "result": { "content": [{ "type": "text", "text": "permission denied" }] }
+        }));
+        let err = chat_err
+            .messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("err"))
+            .expect("err tool");
+        assert!(err.content.contains('✖'));
+        assert!(err.content.contains("permission denied"));
+        assert!(err.is_error);
+    }
+
+    #[test]
+    fn replay_restores_final_tool_result_without_invented_progress() {
+        // Transcript restore emits start+end only — never fabricated updates.
+        let events = vec![
+            json!({
+                "type": "tool_execution_start",
+                "toolCallId": "call-1",
+                "toolName": "Read"
+            }),
+            json!({
+                "type": "tool_execution_end",
+                "toolCallId": "call-1",
+                "toolName": "Read",
+                "isError": false,
+                "result": { "content": [{ "type": "text", "text": "restored body" }] }
+            }),
+        ];
+        assert!(
+            events
+                .iter()
+                .all(|e| e.get("type").and_then(|t| t.as_str()) != Some("tool_execution_update")),
+            "fixture must not invent intermediate progress"
+        );
+
+        let mut live = ChatState::default();
+        for ev in &events {
+            live.apply_sidecar_event(ev);
+        }
+        let mut replay = ChatState::default();
+        replay.replace_from_sidecar_transcript(&events);
+
+        let tool_rows = |chat: &ChatState| -> Vec<(Option<String>, String, bool)> {
+            chat.messages
+                .iter()
+                .filter(|m| m.role == MessageRole::Tool)
+                .map(|m| (m.tool_call_id.clone(), m.content.clone(), m.is_error))
+                .collect()
+        };
+        assert_eq!(tool_rows(&live), tool_rows(&replay));
+        assert_eq!(tool_rows(&replay).len(), 1);
+        assert!(tool_rows(&replay)[0].1.contains("restored body"));
+        assert!(tool_rows(&replay)[0].1.contains('✓'));
     }
 
     #[test]
@@ -516,9 +809,14 @@ mod tests {
     #[test]
     fn tool_execution_end_marks_error_flag_distinctly() {
         let mut chat = ChatState::default();
-        chat.apply_sidecar_event(&json!({ "type": "tool_execution_start", "toolName": "Bash" }));
+        chat.apply_sidecar_event(&json!({
+            "type": "tool_execution_start",
+            "toolCallId": "err",
+            "toolName": "Bash"
+        }));
         chat.apply_sidecar_event(&json!({
             "type": "tool_execution_end",
+            "toolCallId": "err",
             "toolName": "Bash",
             "isError": true
         }));
@@ -531,9 +829,14 @@ mod tests {
         assert!(last.content.starts_with('✖'));
 
         let mut chat_ok = ChatState::default();
-        chat_ok.apply_sidecar_event(&json!({ "type": "tool_execution_start", "toolName": "Bash" }));
+        chat_ok.apply_sidecar_event(&json!({
+            "type": "tool_execution_start",
+            "toolCallId": "ok",
+            "toolName": "Bash"
+        }));
         chat_ok.apply_sidecar_event(&json!({
             "type": "tool_execution_end",
+            "toolCallId": "ok",
             "toolName": "Bash",
             "isError": false
         }));
@@ -555,8 +858,18 @@ mod tests {
                 "type": "message_update",
                 "assistantMessageEvent": { "type": "text_delta", "delta": "Here is the plan" }
             }),
-            json!({ "type": "tool_execution_start", "toolName": "Read" }),
-            json!({ "type": "tool_execution_end", "toolName": "Read", "isError": false }),
+            json!({
+                "type": "tool_execution_start",
+                "toolCallId": "call-read",
+                "toolName": "Read"
+            }),
+            json!({
+                "type": "tool_execution_end",
+                "toolCallId": "call-read",
+                "toolName": "Read",
+                "isError": false,
+                "result": { "content": [{ "type": "text", "text": "file ok" }] }
+            }),
             json!({
                 "type": "message_update",
                 "assistantMessageEvent": {
