@@ -320,14 +320,18 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
 
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 functionally closed (U3a/U3b/U3c) → next U4 workspace or V3 visual gate. U2a/U2b wait for publish / provider authorization. U7 blocked until U6.
-
 - (2026-09-28) **Phase 3 close evidence (full suite, not focused-only)** — After U3a+U3c+U3b on `feat/ratatui-host`:
   - Focused: stdio+transcript+bridge+registry → **85/85**; `cargo test` → **115/115**.
   - Full `npm test` → **2439 pass / 10 fail / 1 skip** (2450). Baseline only: **9** entry-host (`session-cli`×8 + `cli-default-entry`×1) + **1** flake (`engine_unavailable after Pi exit`). **Not green.**
-  - RDD assess (`--base-ref 499a99bdc --committed-only`): `high` / `review_due` because Cursor is **unassessable** for immutable receipts (supported: claude-code, opencode, codex). Functional proof done; no review consent granted here.
-  - Commits: `26fe516e1` (doc reopen), `2b712dfe1` (U3a), `ca641694d` (U3c), `1b22de709` (U3b). PTY end-to-end not run this pass (unit coverage only).
+  - RDD assess (`--base-ref 499a99bdc --committed-only`): Cursor is **unassessable**; with `--agent=codex` the same range is `high` / `review_due` and status preflight returns `action: start` + consent relay (see Progress entry below). Functional proof ≠ native review.
+  - Commits: `26fe516e1` (doc reopen), `2b712dfe1` (U3a), `ca641694d` (U3c), `1b22de709` (U3b).
 
-1. **U4** Workspace modes/plans/slash/views (or **V3** visual captures if paint is prioritized).
-2. **U2a/U2b** when publish / provider auth available.
-3. **U5→U6→U7** under `feature-branch-chain`; U7 not before U6.
+- (2026-09-28) **Phase 3 PTY end-to-end (integrated acceptance)** — `python3 scripts/kairo-ui-pty-e2e.py` under real `script(1)` PTY + mock sidecar `scripts/fixtures/kairo-ui-pty-mock-sidecar.mjs` (no Pi/providers):
+  - Observed **PASS**: alt-screen enter `?1049h` + leave `?1049l` (terminal restore); mock log `out ready` + auto `extension_ui_request` + `tool_execution_{start,update,end}`; host replied `extension_ui_response id=pty-dialog-1 cancelled=false value=Allow`; Ctrl+L session-picker chord then Esc (local cancel); `q` quit exit 0.
+  - Separate evidence from unit suites and from native RDD. Not a substitute for U6 visual captures @60/100/160.
+
+**Plan 2026-09-28 (amended):** Phase 3 functional + PTY integrated acceptance done; **RDD consent pending** (do not record granted/declined here). Next after consent resolution: **U4** (capabilities first, V3 visual later). U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green.
+
+1. **RDD consent** for Phase 3 candidate (Codex agent, lineage `review-1e77db9134a5b6ff`) — human chooses granted or declined.
+2. **U4** in order: ASK/PLAN/AGENT persisted → plans/approve/reject/tasks → role→preview→confirm→exec/cancel/handoff → per-role editor + `/` commands + navigation.
+3. **U2a/U2b** when publish / provider auth available; **U5→U6→U7** under `feature-branch-chain`.
