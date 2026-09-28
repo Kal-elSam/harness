@@ -58,7 +58,7 @@ Legend: done / partial / missing. Source: read-only mapping of `feat/ratatui-hos
 | Bootstrap Analyst (sandboxed Codex) | cockpit ProjectOverlay | partial | `918249227`/`0613fdd4d` unify CODEX_HOME + full diagnostics (mocked). Closes only on a real fresh-session answer with confinement intact (provider auth required) — see `odd/tasks/bootstrap-analyst-start.md` |
 | Analyze / analyst picker / approve | `cockpit/project-overlay.js` | done | `a` → picker → `project.analyze`; `A` → `team.approve` re-applies Architect |
 | Team availability revalidation + reassignment | cockpit / Pi extension notices | done | Blocked roles show only the cause present in `stateReason`; `/analyze` reassign path works. `snapshot.rs`/`surfaces.rs` cause classification fixed on this branch (commit `6f91b8d6c`). On-demand `r` revalidate + `R` recovery preview/apply/reject wired in ratatui (this slice), reusing `workspace-snapshot.js`'s existing `recoverKairoProjectTeam`/`approveKairoRecovery`/`rejectKairoRecovery` (already used by the Pi extension's `kairo-team-approve`/`-reject`) — no new neutral module needed, it already existed |
-| Per-role model editor | `project-overlay.js` EDIT_* states | missing | Override one role's model in ratatui; persists via service |
+| Per-role model editor | `project-overlay.js` EDIT_* states | done (U4d) | Override one role's model in ratatui; persists via `getProjectTeamEditCatalog`/`setProjectTeamAssignment`; SUGGESTED only (ACTIVE/STALE refused) |
 | Strategy recovery preview/approve/reject | extension `kairo-team-approve/reject` (`conversation/team-recovery.js`) | done | Stale team → `R` preview → Enter/`y` apply or `x` reject updates snapshot; Esc cancels locally, mutates nothing. Note: `ink/use-orchestrator-data.js`'s `previewRecovery`/`confirmApplyRecovery`/`rescanRecovery` are governance-rollback snapshot recovery (`governance-actions.js`), unrelated to team strategy recovery — the real logic lives in `conversation/team-recovery.js`, already exposed non-React via `workspace-snapshot.js` |
 
 ### Phase 3 — sessions, chat, dialogs
@@ -87,8 +87,8 @@ Legend: done / partial / missing. Source: read-only mapping of `feat/ratatui-hos
 | Plans (Markdown), tasks, approve/reject | cockpit | done (U4b) | List + Markdown detail + approve/reject via `plans.list`/`show`/`decide` → conversation service; ASK read-only; keys `y`/`n` (not `a`) under list-focus |
 | Role selection → preview → confirm execute / cancel | cockpit `service.planExecution` | done (U4c) | No execution without explicit confirmation; stale preview rejected |
 | Execution transcript, cancel, manual handoff | `cockpit/app.js:242-258` | done (U4c) | Non-launchable role shows paste-prompt handoff |
-| Slash commands (`/models`, `/providers`, `/why`, `/usage`, `/clear`) | `cockpit/app.js:300-375` | missing | `/x` parsed as command, never sent as chat |
-| Views Work / Project / Tasks / Sessions | cockpit views | missing (Work only) | Navigable inside current chrome |
+| Slash commands (`/models`, `/providers`, `/why`, `/usage`, `/clear`) | `cockpit/app.js:300-375` | done (U4d) | Full slash set parsed as host commands; unknown `/…` never sent as chat |
+| Views Work / Project / Tasks / Sessions | cockpit views | done (U4d) | Chrome `1`–`4`; Esc→Work; `p`/Ctrl+L enter Tasks/Sessions |
 
 ### Phase 5 — operations & setup
 
@@ -179,7 +179,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] U3a Sessions (**reopened to close Phase 3**): keep prior commits; finish active-session draft ownership across switch/new/fork/resume; fork mints new Kairo+Pi ids + `kairo list`/resume; cancel keeps prior identity; binding failure never falls back to previous id. Evidence: A→B→quit→resume B keeps both drafts; cancelled new/fork/switch keep bindings/history correct
 - [x] U3b extension_ui: select / confirm / input / editor / notify with correlated one-way responses and safe cancel (cancel/timeout/engine death/quit)
 - [x] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
-- [~] U4 Workspace: **U4a+U4b+U4c done** (modes + plans list/Markdown/approve/reject + role→preview→confirm execute/cancel/MANUAL_HANDOFF + run transcript). Still open: per-role editor, slash commands, Work/Project/Tasks/Sessions views (U4d)
+- [x] U4 Workspace: **U4a+U4b+U4c+U4d done** (modes + plans + execute/cancel/handoff + slash + Work/Project/Tasks/Sessions + per-role SUGGESTED editor)
 - [ ] U5 Operations + Settings views (health, providers, usage, diagnostics, sync/rollback receipts, runs, alerts, reviews, profiles, integrations, setup) via extracted neutral adapters
 - [ ] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
 - [ ] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
@@ -356,9 +356,18 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   - **Verification (observed)**: `node --test test/kairo-ui-rpc-stdio.test.js` → **57/57**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **142/142**.
   - Out of scope (still open): U4d slash/views; per-role editor; V3 visual.
 
+- (2026-09-28) **U4d slash + Work/Project/Tasks/Sessions + per-role editor (STRICT TDD)** — Close remaining U4 workspace chrome.
+  - **Slash**: `/help` `/usage` `/providers` `/status` `/models[--evidence|--verify-access[--refresh]]` `/why` `/clear` `/quit`|/`exit` `/plan <task>`; keep `/analyze`|/`approve` (+ `/project analyze|approve|status|refresh`); **bare `/project` → Project view** (not analyze); unknown `/…` never goes to chat.
+  - **Views**: `WorkspaceView` Work|Project|Tasks|Sessions; empty-compose **`1`–`4`**; Esc→Work; **`p`** / **Ctrl+L** enter Tasks/Sessions; plan-list execute keys stay Tasks-owned.
+  - **Role editor**: Project Enter → EDIT_LOADING→EDIT_MODEL_SEARCH→EDIT_CONFIRM→EDIT_SAVING→RESULT via `team.edit.catalog`/`team.edit.assign`; SUGGESTED only; ACTIVE/STALE refused.
+  - **JS**: `slash.info`/`slash.clear`/`slash.project_status`/`project.refresh`/`team.edit.*`; CockpitView formatters reused for diagnostics lines.
+  - **Rust**: `workspace_nav.rs`, `role_editor.rs`; expanded `parse_slash_command`; Project surface + editor modal.
+  - **Verification (observed)**: `node --test test/kairo-ui-rpc-stdio.test.js` → **63/63**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **148/148**.
+  - Out of scope (still open): V3 visual; U5 ops views.
+
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 closed; **U4a+U4b+U4c done**. Next: **U4d** slash commands + Work/Project/Tasks/Sessions views. U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green (9 entry-host failures).
+**Plan 2026-09-28 (amended):** Phase 3 + **U4 closed**. Next: V3 visual polish and/or U5 operations views. U2a/U2b wait for publish/auth. U7 blocked until U6. Full suite still not green (9 entry-host failures).
 
-1. **U4d** `/` commands + views.
+1. **V3** visual polish @60/100/160 (or **U5** ops views).
 2. **U2a/U2b** when publish / provider auth available; **U5→U6→U7** under `feature-branch-chain`.
