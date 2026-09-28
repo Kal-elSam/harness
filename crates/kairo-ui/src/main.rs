@@ -256,6 +256,26 @@ impl ShellApp {
         }
     }
 
+    /// U3a close: apply a mid-session `{ type: "draft", text }` record from
+    /// the sidecar after a successful switch/new/fork. Empty text clears the
+    /// compose box (New/Fork); non-empty replaces it with the destination's
+    /// saved draft (Switch). Cancelled transitions never emit this record,
+    /// so the live editor stays as the human left it.
+    fn apply_draft_record(&mut self, record: &serde_json::Value) {
+        let text = record.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        if text.is_empty() {
+            self.clear_editor();
+        } else {
+            self.restore_editor(text);
+        }
+    }
+
+    /// Current compose-box contents — handed to the sidecar on
+    /// switch/new/fork/stop so drafts land under the *active* Kairo id.
+    fn editor_draft_text(&self) -> String {
+        self.editor.lines().join("\n")
+    }
+
     /// `Ctrl+L`: open the visible session picker (U3a) — real rows from the
     /// sidecar's last `sessions`/`ready` record, never invented. Refuses
     /// with a notice instead of opening an empty modal when nothing is
@@ -272,16 +292,16 @@ impl ShellApp {
 
     fn step_pi_session(&mut self, delta: i32) {
         if self.pi_session_count == 0 {
-            self.view.notice = Some(
-                "No Pi session files for this project (RPC has no list_sessions)".into(),
-            );
+            self.view.notice =
+                Some("No Pi session files for this project (RPC has no list_sessions)".into());
             return;
         }
         let count = self.pi_session_count as i32;
         let next = (self.pi_session_index as i32 + delta).rem_euclid(count) as usize;
         self.pi_session_index = next;
+        let draft = self.editor_draft_text();
         if let Some(bridge) = self.bridge.as_mut() {
-            if let Err(err) = bridge.switch_session_index(next) {
+            if let Err(err) = bridge.switch_session_index_with_draft(next, &draft) {
                 self.view.notice = Some(format!("Session switch failed: {err}"));
             }
         }
@@ -353,6 +373,8 @@ impl ShellApp {
                 self.ingest_recovery_record(&record);
             } else if kind == Some("sessions") {
                 self.ingest_sessions_record(&record);
+            } else if kind == Some("draft") {
+                self.apply_draft_record(&record);
             } else if kind == Some("transcript") {
                 if let Some(rows) = record.get("messages").and_then(|v| v.as_array()) {
                     self.chat.replace_from_sidecar_transcript(rows);
@@ -386,7 +408,7 @@ impl ShellApp {
             if kind == Some("agent_settled") {
                 self.pending_prompt = None;
             }
-            if kind != Some("transcript") {
+            if kind != Some("transcript") && kind != Some("draft") {
                 self.chat.apply_sidecar_event(&record);
             }
         }
@@ -766,7 +788,10 @@ fn main() -> io::Result<()> {
     result
 }
 
-fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut ShellApp) -> io::Result<()> {
+fn run(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut ShellApp,
+) -> io::Result<()> {
     loop {
         app.poll_bridge();
         terminal.draw(|frame| draw(frame, app))?;
@@ -862,20 +887,26 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
                 KeyCode::Tab => app.chat.focus = app.chat.focus.next(),
                 KeyCode::Esc => app.chat.focus = Focus::Editor,
                 KeyCode::Char('q') => return Ok(true),
-                KeyCode::Down | KeyCode::Char('j') if sidebar_accepts_selection_keys(app.chat.focus) => {
+                KeyCode::Down | KeyCode::Char('j')
+                    if sidebar_accepts_selection_keys(app.chat.focus) =>
+                {
                     if !app.view.agents.is_empty() {
                         app.view.selected_agent =
                             (app.view.selected_agent + 1) % app.view.agents.len();
                     }
                 }
-                KeyCode::Up | KeyCode::Char('k') if sidebar_accepts_selection_keys(app.chat.focus) => {
+                KeyCode::Up | KeyCode::Char('k')
+                    if sidebar_accepts_selection_keys(app.chat.focus) =>
+                {
                     if !app.view.agents.is_empty() {
-                        app.view.selected_agent = (app.view.selected_agent + app.view.agents.len() - 1)
+                        app.view.selected_agent = (app.view.selected_agent + app.view.agents.len()
+                            - 1)
                             % app.view.agents.len();
                     }
                 }
                 KeyCode::Char('n') if app.bridge.is_none() => {
-                    app.view.notice = Some("Demo notice: engine unavailable (bridge not wired)".into());
+                    app.view.notice =
+                        Some("Demo notice: engine unavailable (bridge not wired)".into());
                 }
                 KeyCode::Char('c') => app.view.notice = None,
                 _ => {}
@@ -903,7 +934,8 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
                     app.chat.scroll_page_down(inner_h.max(1), total);
                 }
                 KeyCode::Char('n') if app.bridge.is_none() => {
-                    app.view.notice = Some("Demo notice: engine unavailable (bridge not wired)".into());
+                    app.view.notice =
+                        Some("Demo notice: engine unavailable (bridge not wired)".into());
                 }
                 KeyCode::Char('c') => app.view.notice = None,
                 _ => {}
@@ -1028,8 +1060,9 @@ fn handle_session_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
             if let Some(index) = picker.confirm() {
                 app.session_picker = None;
                 app.pi_session_index = index;
+                let draft = app.editor_draft_text();
                 if let Some(bridge) = app.bridge.as_mut() {
-                    if let Err(err) = bridge.switch_session_index(index) {
+                    if let Err(err) = bridge.switch_session_index_with_draft(index, &draft) {
                         app.view.notice = Some(format!("Session switch failed: {err}"));
                     }
                 }
@@ -1100,10 +1133,28 @@ fn try_bridge_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
             return true;
         }
         KeyCode::Char('f') => {
-            if let Err(err) = app.bridge.as_mut().expect("bridge").fork_session() {
+            let draft = app.editor_draft_text();
+            if let Err(err) = app
+                .bridge
+                .as_mut()
+                .expect("bridge")
+                .fork_session_with_draft(&draft)
+            {
                 app.view.notice = Some(format!("Fork failed: {err}"));
             } else {
                 app.view.notice = Some("Forking session…".into());
+            }
+            return true;
+        }
+        KeyCode::Char('n') => {
+            let draft = app.editor_draft_text();
+            if let Err(err) = app
+                .bridge
+                .as_mut()
+                .expect("bridge")
+                .new_session_with_draft(&draft)
+            {
+                app.view.notice = Some(format!("New session failed: {err}"));
             }
             return true;
         }
@@ -1116,12 +1167,6 @@ fn try_bridge_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
         KeyCode::Char('m') => {
             if let Err(err) = bridge.cycle_model() {
                 app.view.notice = Some(format!("Model switch failed: {err}"));
-            }
-            true
-        }
-        KeyCode::Char('n') => {
-            if let Err(err) = bridge.new_session() {
-                app.view.notice = Some(format!("New session failed: {err}"));
             }
             true
         }
