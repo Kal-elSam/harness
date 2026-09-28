@@ -461,3 +461,5 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
   | darwin-x64 | ~1.6M Mach-O x86_64 | PASS (selection + npm-pack) | GAP locally (no Rosetta); CI `macos-15-intel` (macos-13 retired); status 0 under Rosetta = foreign-exec PASS diagnostic |
   | linux-x64 | ~1.4M ELF x86-64 | PASS (selection + npm-pack) | GAP locally; CI `ubuntu-24.04` skeleton |
   | linux-arm64 | ~1.3M ELF aarch64 | PASS (selection + npm-pack) | GAP locally; CI `ubuntu-24.04-arm` in matrix (manual dispatch) |
+
+- (2026-09-28) **U6a/U6b/U6c review assessment** — range `b365bb5cd..449de9639`: tier **high** (`executable_mode`, `process_boundary`, `shell_source`), 449 lines. Native consent envelope presented; user chose **Skip this time** (`declined_this_candidate`). No review record created; workflow still **not observed on GitHub runners** (U6d pending, needs `workflow_dispatch` authorization).
