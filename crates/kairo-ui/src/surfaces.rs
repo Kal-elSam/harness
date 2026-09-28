@@ -857,12 +857,14 @@ mod tests {
             content: "hi there".into(),
             streaming: false,
             is_error: false,
+            tool_call_id: None,
         };
         let thinking = ChatMessage {
             role: MessageRole::Thinking,
             content: "pondering the question".into(),
             streaming: false,
             is_error: false,
+            tool_call_id: None,
         };
         let assistant_line = &message_to_lines(&assistant)[0];
         let thinking_line = &message_to_lines(&thinking)[0];
@@ -892,12 +894,14 @@ mod tests {
             content: "✓ Read".into(),
             streaming: false,
             is_error: false,
+            tool_call_id: None,
         };
         let err = ChatMessage {
             role: MessageRole::Tool,
             content: "✖ Read".into(),
             streaming: false,
             is_error: true,
+            tool_call_id: None,
         };
         let ok_color = message_to_lines(&ok)[0].spans[0].style.fg;
         let err_color = message_to_lines(&err)[0].spans[0].style.fg;
@@ -916,6 +920,7 @@ mod tests {
             content: "provider timeout".into(),
             streaming: false,
             is_error: true,
+            tool_call_id: None,
         };
         let line = &message_to_lines(&err)[0];
         assert_eq!(line.spans[0].style.fg, Some(tone::ERROR));

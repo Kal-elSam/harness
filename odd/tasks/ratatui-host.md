@@ -74,7 +74,7 @@ Legend: done / partial / missing. Source: read-only mapping of `feat/ratatui-hos
 | Kairo session id ↔ Pi file binding | `session-registry.js`, `KAIRO_SESSION_ID` | done | Lookup/annotate + resume auto-switch; `activeKairoSessionId` owns drafts across switch/new/fork/stop; fork mints+binds a new Kairo id (`createSession` + `recordPiBinding`); cancel keeps prior identity; binding failure after clone is fail-closed (`active = null`, error emitted, never saves under the previous id) |
 | Rename / fork | Pi RPC `set_session_name` / `clone` | done | Rename done. Fork: RPC `clone` then mint+bind new Kairo id; source bindings/drafts untouched; fork draft empty; appears via `listSessions` / annotateSessions |
 | Persist draft, history, active mode | cockpit | done (draft + active id) | Outgoing draft saved under **active** id before switch/new/fork; after success emit `{type:"draft",text,kairoSessionId}` (load dest / empty for New / empty for Fork); `stop` saves under active (not boot env alone). History/mode still via Pi transcript + Architect re-apply |
-| Tool progress / result / error fidelity | Pi-TUI | partial | Live start/end rows exist; **reopened (U3c close):** correlate by `toolCallId`, process `tool_execution_update`, preserve result/error **content** (not name/status only); shared reducer for live + restore; replay final result only — never invent intermediate progress Pi did not persist |
+| Tool progress / result / error fidelity | Pi-TUI | done | Correlate by `toolCallId`; `tool_execution_update` rewrites the matching in-progress row; `tool_execution_end` preserves result/error text; shared `apply_sidecar_event` for live + restore; restore emits final start/end only (no invented progress) (U3c) |
 | extension_ui select / confirm / input / editor / notify | Pi `extension_ui_request` | missing (notify: parallel local notice only) | Correlated one-way `extension_ui_response` preserving request id (not ordinary request/response); cancel/timeout/engine death/quit release dialog without resolving another request or blocking the host |
 
 ### Phase 4 — conversational workspace
@@ -178,7 +178,7 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
 - [x] U2c Team: cause wording fixed (commit `6f91b8d6c`); availability revalidation + strategy recovery preview/apply/reject wired in ratatui (commits `5a3535566`, `307e9349e`)
 - [x] U3a Sessions (**reopened to close Phase 3**): keep prior commits; finish active-session draft ownership across switch/new/fork/resume; fork mints new Kairo+Pi ids + `kairo list`/resume; cancel keeps prior identity; binding failure never falls back to previous id. Evidence: A→B→quit→resume B keeps both drafts; cancelled new/fork/switch keep bindings/history correct
 - [ ] U3b extension_ui: select / confirm / input / editor / notify with correlated one-way responses and safe cancel (cancel/timeout/engine death/quit)
-- [ ] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
+- [x] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
 - [ ] U4 Workspace: ASK/PLAN/AGENT, plans/tasks approve/reject, role → preview → confirm execute/cancel, transcript, manual handoff, per-role editor, slash commands, Work/Project/Tasks/Sessions views
 - [ ] U5 Operations + Settings views (health, providers, usage, diagnostics, sync/rollback receipts, runs, alerts, reviews, profiles, integrations, setup) via extracted neutral adapters
 - [ ] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
@@ -303,9 +303,17 @@ Commands: `prompt`, `abort`, `compact`, `cycle_model`, `new_session`, `switch_se
   - **Verification (observed)**: `node --test test/kairo-ui-rpc-stdio.test.js test/session-registry.test.js` → **61/61** (35 rpc-stdio + 26 session-registry). `cd crates/kairo-ui && cargo test` → **103/103**.
   - Commit: `feat(kairo-ui): active-session drafts and fork Kairo binding (U3a)`.
 
+- (2026-09-28) **U3c tool fidelity close (delegated writer, STRICT TDD)** — Prior thinking/text/shared-reducer work preserved. Closed the remaining tool gaps:
+  - **Wire (vendored Pi)**: `tool_execution_start|update|end` carry `toolCallId` + `toolName`; update has `partialResult`; end has `isError` + `result` (`{ content: [{type:"text", text}] }`).
+  - **Rust (`chat.rs`)**: `ChatMessage.tool_call_id`; start/update/end correlate by id (in-place row rewrite so concurrent tools never clobber); `tool_payload_text` extracts result/error text into the row body (`✓/✖ name\ncontent`); shared `apply_sidecar_event` still owns live + `replace_from_sidecar_transcript`.
+  - **JS (`pi-rpc-transcript.js`)**: restored rows include `toolCallId` + `result.content` from `toolResult` messages; **never** invents `tool_execution_update` on replay.
+  - **RED→GREEN (observed)**: JS 5 pass / 2 fail (missing toolCallId + result) → impl → 7/7. Rust compile-fail on missing `tool_call_id` → field + wrong-behavior until assertions → GREEN chat 16/16.
+  - **Verification (observed)**: `node --test test/pi-rpc-transcript.test.js test/kairo-ui-rpc-stdio.test.js` → **42/42**. `cd crates/kairo-ui && cargo test` → **107/107**.
+  - Commit: `feat(kairo-ui): toolCallId progress and result content (U3c)`.
+
 ## Next step
 
-**Plan 2026-09-28 (amended):** U3a closed → U3c tool fidelity → U3b dialogs → full suite (including known 9 entry failures + flake), work-unit commits, then RDD assess per protocol. U2a/U2b wait for publish / provider authorization. Native review is separate from functional proof.
+**Plan 2026-09-28 (amended):** U3c tool fidelity closed → U3b dialogs → full suite (including known 9 entry failures + flake), work-unit commits, then RDD assess per protocol. U2a/U2b wait for publish / provider authorization. Native review is separate from functional proof.
 
 - (2026-09-28) **Phase 3 close plan accepted** — Doc reopen only for unmet U3a/U3c acceptances; prior commits/tests preserved. Functional results stay separate from native review. Next: U3a identity/draft/fork → U3c tool fidelity → U3b dialogs → full suite (including known 9 entry failures + flake), work-unit commits, then RDD assess per protocol.
 
