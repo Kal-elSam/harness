@@ -183,14 +183,36 @@ impl BridgeClient {
         )
     }
 
+    /// Rename the CURRENTLY active session (Pi RPC's `set_session_name` has
+    /// no sessionPath — it always applies to whichever session is live).
+    pub fn rename_session(&mut self, name: &str) -> std::io::Result<()> {
+        self.send_op("rename_session", serde_json::json!({ "name": name }))
+    }
+
+    /// Fork the CURRENTLY active session into a new one, distinct from the
+    /// source (source untouched) — see the sidecar's own `fork_session`
+    /// handler for why this uses RPC `clone`, not the entry-based `fork`.
+    pub fn fork_session(&mut self) -> std::io::Result<()> {
+        self.send_op("fork_session", Value::Null)
+    }
+
     /// Force-stop the Node sidecar. Never block the TTY on a wedged child:
     /// best-effort cooperative `stop`, then kill + wait. Idempotent for Drop.
     pub fn stop(&mut self) -> std::io::Result<()> {
+        self.stop_with_draft("")
+    }
+
+    /// Same as `stop`, but also asks the sidecar to persist `draft` (the
+    /// unsent editor text) for the bound Kairo session before exiting —
+    /// U3a: draft survives quit -> resume. An empty `draft` still reaches
+    /// the sidecar so a previously saved draft gets cleared once the human
+    /// sent their message and quit with an empty compose box.
+    pub fn stop_with_draft(&mut self, draft: &str) -> std::io::Result<()> {
         if self.stopped {
             return Ok(());
         }
         self.stopped = true;
-        let _ = self.send_op("stop", Value::Null);
+        let _ = self.send_op("stop", serde_json::json!({ "draft": draft }));
         let _ = self.child.kill();
         let _ = self.child.wait();
         Ok(())

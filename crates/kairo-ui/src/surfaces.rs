@@ -11,6 +11,7 @@ use crate::analyst_picker::AnalystPickerState;
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
 use crate::layout::{split_work_main, ShellRegions};
 use crate::recovery_picker::RecoveryPreviewState;
+use crate::session_picker::SessionPickerState;
 
 /// Kairo sober hacker palette — graphite greens; accent green only for
 /// brand / focus / selection. Semantic red / amber / user-blue stay distinct.
@@ -513,6 +514,69 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
             .add_modifier(Modifier::BOLD)
             .bg(tone::SIDEBAR_BG);
         lines.extend(wrap_notice(notice, inner.width, notice_style));
+    }
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .render(inner, buf);
+}
+
+/// Visible session picker (U3a) — a centered modal listing the real Pi
+/// session files for this cwd, labeled by their bound Kairo session id
+/// (the same id `kairo list`/`resume` use) when one exists. Replaces blind
+/// Ctrl+[ / Ctrl+] cycling with an explicit choice.
+pub fn render_session_picker(buf: &mut Buffer, area: Rect, picker: &SessionPickerState) {
+    let content_rows = picker.options.len().max(1) as u16;
+    let width = area.width.saturating_sub(6).clamp(36, 76);
+    let height = content_rows
+        .saturating_add(3)
+        .min(area.height.saturating_sub(2).max(5));
+    let popup = centered_rect(area, width, height);
+    if popup.width == 0 || popup.height == 0 {
+        return;
+    }
+
+    Clear.render(popup, buf);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .title(Span::styled(
+            " Switch session — j/k · Enter · Esc cancel · q/Ctrl+C quit ",
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    if picker.options.is_empty() {
+        lines.push(padded_span(
+            "No Pi session files on disk for this project yet.",
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
+    } else {
+        for (i, option) in picker.options.iter().enumerate() {
+            let selected = i == picker.selected;
+            let row_style = if selected {
+                Style::default()
+                    .fg(tone::TEXT)
+                    .bg(tone::SELECT_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+            };
+            let marker = if selected { "› " } else { "  " };
+            lines.push(padded_span(
+                &format!("{marker}{}", option.row_label()),
+                inner.width,
+                row_style,
+            ));
+        }
     }
     Paragraph::new(lines)
         .style(Style::default().bg(tone::SIDEBAR_BG))
@@ -1539,6 +1603,73 @@ mod tests {
             cell_bg(&buf, far_x, inner_y),
             tone::SELECT_BG,
             "the first (selected) row must paint the full-width selection background"
+        );
+    }
+
+    #[test]
+    fn session_picker_modal_shows_the_kairo_id_for_a_bound_session_and_the_pi_label_for_an_unbound_one(
+    ) {
+        use crate::session_picker::SessionPickerState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let picker = SessionPickerState::from_sessions(
+            &[
+                serde_json::json!({ "path": "/x/a.jsonl", "sessionId": "pi-a", "label": "Fresh session", "kairoSessionId": null }),
+                serde_json::json!({ "path": "/x/b.jsonl", "sessionId": "pi-b", "label": "B", "kairoSessionId": "aaaaaaaa-0000-0000-0000-000000000001" }),
+            ],
+            0,
+        );
+        let mut buf = Buffer::empty(area);
+        render_session_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Switch session"), "modal title missing: {hay}");
+        assert!(
+            hay.contains("Fresh session"),
+            "unbound row's Pi label missing: {hay}"
+        );
+        assert!(
+            hay.contains("aaaaaaaa"),
+            "bound row must show the real Kairo id: {hay}"
+        );
+    }
+
+    #[test]
+    fn session_picker_modal_highlights_the_selected_row_with_select_bg() {
+        use crate::session_picker::SessionPickerState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let picker = SessionPickerState::from_sessions(
+            &[
+                serde_json::json!({ "path": "/x/a.jsonl", "sessionId": "pi-a", "label": "A" }),
+                serde_json::json!({ "path": "/x/b.jsonl", "sessionId": "pi-b", "label": "B" }),
+            ],
+            0,
+        );
+        let mut buf = Buffer::empty(area);
+        render_session_picker(&mut buf, area, &picker);
+
+        let popup = centered_rect(area, area.width.saturating_sub(6).clamp(36, 76), 5);
+        let inner_y = popup.y + 1;
+        let far_x = popup.x + popup.width - 2;
+        assert_eq!(
+            cell_bg(&buf, far_x, inner_y),
+            tone::SELECT_BG,
+            "the selected row must paint the full-width selection background"
+        );
+    }
+
+    #[test]
+    fn session_picker_modal_on_an_empty_list_says_so_honestly() {
+        use crate::session_picker::SessionPickerState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let picker = SessionPickerState::from_sessions(&[], 0);
+        let mut buf = Buffer::empty(area);
+        render_session_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("No Pi session files"),
+            "empty picker must say so honestly, never invent a row: {hay}"
         );
     }
 
