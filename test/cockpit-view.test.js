@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, visibleWidth } from "../src/global/text-width.js";
 import { CockpitView, explainTeamDecision, resolveAssignmentAvailability } from "../src/global/cockpit/view.js";
 
 const ROWS = [

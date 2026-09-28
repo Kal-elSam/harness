@@ -5,7 +5,6 @@ import {
   SOFT_LINK_WINDOW_MS, softLinkReviewToRun, buildCompanionSnapshot, summarizeCompanionProbes
 } from "../src/global/observability/build-companion-snapshot.js";
 import { buildControlCenterModel } from "../src/global/ink/cockpit-control-center.js";
-import { adaptControlCenterToOverview } from "../src/global/ink/ux/live-overview.js";
 import { loadCockpitScanBundle } from "../src/global/ink/cockpit-scan.js";
 
 const t0 = Date.parse("2026-08-03T12:00:00.000Z");
@@ -114,7 +113,7 @@ test("companion fail-soft, isolated provider errors, stale informational", async
   ]).graphify.graphStatus, "ok");
 });
 
-test("overview keeps governance health+CTA; compact primary unchanged", async () => {
+test("control-center model keeps governance health+CTA; scan bundle fail-softs companion", async () => {
   const companion = await buildCompanionSnapshot({
     controlPlaneHealth: CONTROL_PLANE_HEALTH.ACTION_REQUIRED,
     buildObservability: async () => ({ probes: [{ id: "gentle", state: "missing", evidence: [] }] }),
@@ -135,15 +134,6 @@ test("overview keeps governance health+CTA; compact primary unchanged", async ()
   assert.equal(model.health.kind, CONTROL_PLANE_HEALTH.ACTION_REQUIRED);
   assert.equal(model.cta.destination, "changes");
   assert.equal(model.nextAction.destination, "changes");
-  const view = adaptControlCenterToOverview(model);
-  assert.match(view.primary.label, /Fix drift|repair|Review/i);
-  assert.match(view.purpose, /coordina/i);
-  // Machine/probe noise stays in Details; Engram missing becomes a plain need.
-  assert.ok(
-    view.metrics.some((m) => /Memory not ready|Engram/i.test(m.label))
-    || view.details.some((l) => /Gentle|Graphify|Engram/i.test(l))
-  );
-  assert.ok(!view.metrics.some((m) => /^Gentle|^Graphify|^System/i.test(m.label)));
 
   const bundle = await loadCockpitScanBundle({
     homeDir: "/tmp", workspaceRoot: "/tmp", packageName: "x", packageRoot: "/tmp", cliVersion: "0",

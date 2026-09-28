@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isValidSessionId } from "../conversation/session-registry.js";
 import { resolveHomeDir } from "../paths.js";
-import { resolveUiHost } from "./launch-ratatui-host.js";
+import { assertProductUiNotRetired } from "./launch-ratatui-host.js";
 
 // Kairo runs its own Kairo-only Pi fork by path — never a "pi" resolved
 // from PATH — because the standalone Pi launcher explicitly prepends its
@@ -46,12 +46,8 @@ export function buildKairoPiResourceArgs(extensionDir) {
 const defaultFsImpl = { mkdirSync, writeFileSync };
 
 export function routeInteractiveHost({ command, options = {}, env = process.env }) {
-  if (options.legacyCockpit) return "cockpit";
-  if (command === "shell") return "shell";
-  if (command === "host") {
-    const uiHost = resolveUiHost({ options, env });
-    return uiHost === "cockpit" ? "cockpit" : uiHost;
-  }
+  assertProductUiNotRetired({ options, env });
+  if (command === "shell" || command === "host") return "ratatui";
   return null;
 }
 
@@ -70,7 +66,8 @@ export async function launchGentleShell({
 } = {}) {
   if (interactive === false) {
     throw new Error(
-      "The Kairo workspace requires an interactive terminal (TTY). Use --legacy-cockpit for the previous cockpit."
+      "The Kairo workspace requires an interactive terminal (TTY). " +
+        "Use the non-interactive CLI (`kairo help --all`) or `kairo setup`."
     );
   }
   assertDirectoryCwd(cwd, statImpl);
@@ -91,7 +88,7 @@ export async function launchGentleShell({
   if (!existsSync(cliPath)) {
     throw new Error(
       `Kairo-only Pi fork bundle is missing: "${cliPath}" does not exist. ` +
-      "Reinstall the Kairo-only Pi fork, or use --legacy-cockpit for the previous cockpit."
+      "Reinstall the Kairo-only Pi fork."
     );
   }
 
@@ -102,8 +99,7 @@ export async function launchGentleShell({
   // --tui-mode is the fork's own CLI flag (cli/args.ts) for its
   // fullscreen/regular InteractiveMode layout (H6); Kairo defaults it to
   // fullscreen (see prepareKairoPiHome) but honors a regular mode the user
-  // already chose (persisted in the fork's own settings.json), so
-  // "--legacy-cockpit" is never the only way back to a non-fullscreen view.
+  // already chose (persisted in the fork's own settings.json).
   const args = [cliPath, ...buildKairoPiResourceArgs(extensionDir), "--tui-mode", tuiMode];
   const hostEnv = {
     ...env,
@@ -130,7 +126,7 @@ export async function launchGentleShell({
   };
   const result = await spawnImpl(execPath, args, { cwd, env: hostEnv, shell: false, stdio: "inherit" });
   if (result && Number.isInteger(result.status) && result.status !== 0) {
-    throw new Error(`Pi exited ${result.status}. Use --legacy-cockpit for the previous cockpit.`);
+    throw new Error(`Pi exited ${result.status}.`);
   }
   return result ?? { status: 0 };
 }
@@ -155,7 +151,7 @@ function assertNodeVersion(nodeVersion) {
   if (!/^\d+\.\d+\.\d+/.test(version) || compareSemver(version, MIN_NODE_VERSION) < 0) {
     throw new Error(
       `The Kairo-only Pi fork requires Node >= ${MIN_NODE_VERSION} (found "${nodeVersion}"). ` +
-      "Upgrade Node, or use --legacy-cockpit for the previous cockpit."
+      "Upgrade Node"
     );
   }
 }
@@ -171,7 +167,7 @@ function resolveKairoPiPackageRoot(resolveEntryImpl) {
   if (typeof entryPath !== "string" || entryPath.trim() === "") {
     throw new Error(
       `Kairo-only Pi fork "${KAIRO_PI_PACKAGE_NAME}"@${KAIRO_PI_PACKAGE_VERSION} is not installed. ` +
-      "Install it, or use --legacy-cockpit for the previous cockpit." +
+      "Install it" +
       (resolveError ? ` (${resolveError.message})` : "")
     );
   }
@@ -180,14 +176,13 @@ function resolveKairoPiPackageRoot(resolveEntryImpl) {
   if (!found) {
     throw new Error(
       `Could not find the "${KAIRO_PI_PACKAGE_NAME}" package.json walking up from "${entryPath}". ` +
-      "Install the Kairo-only Pi fork, or use --legacy-cockpit for the previous cockpit."
+      "Install the Kairo-only Pi fork"
     );
   }
   if (found.pkg.version !== KAIRO_PI_PACKAGE_VERSION) {
     throw new Error(
       `Kairo-only Pi fork version mismatch: found "${found.pkg.version}" at "${found.dir}", ` +
-      `expected "${KAIRO_PI_PACKAGE_VERSION}". Reinstall the exact version, or use --legacy-cockpit ` +
-      "for the previous cockpit."
+      `expected "${KAIRO_PI_PACKAGE_VERSION}". Reinstall the exact version.`
     );
   }
   return found.dir;

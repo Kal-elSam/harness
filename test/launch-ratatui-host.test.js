@@ -34,10 +34,9 @@ test("resolveUiHost defaults to ratatui without flag or env", () => {
   assert.equal(resolveUiHost({ options: { ratatui: false, piHost: false }, env: {} }), "ratatui");
 });
 
-test("resolveUiHost opts into pi via --pi or KAIRO_UI_HOST=pi", () => {
-  assert.equal(resolveUiHost({ options: { piHost: true }, env: {} }), "pi");
-  assert.equal(resolveUiHost({ options: {}, env: { KAIRO_UI_HOST: "pi" } }), "pi");
-  assert.equal(resolveUiHost({ options: {}, env: { KAIRO_UI_HOST: " Pi " } }), "pi");
+test("resolveUiHost rejects retired --pi / KAIRO_UI_HOST=pi", () => {
+  assert.throws(() => resolveUiHost({ options: { piHost: true }, env: {} }), /--pi \/ --pi-host is no longer supported/);
+  assert.throws(() => resolveUiHost({ options: {}, env: { KAIRO_UI_HOST: "pi" } }), /KAIRO_UI_HOST=pi is no longer supported/);
 });
 
 test("resolveUiHost selects ratatui from --ratatui or KAIRO_UI_HOST", () => {
@@ -46,23 +45,13 @@ test("resolveUiHost selects ratatui from --ratatui or KAIRO_UI_HOST", () => {
   assert.equal(resolveUiHost({ options: {}, env: { KAIRO_UI_HOST: " Ratatui " } }), "ratatui");
 });
 
-test("resolveUiHost: --pi wins over --ratatui and env=ratatui", () => {
-  assert.equal(
-    resolveUiHost({
-      options: { piHost: true, ratatui: true },
-      env: { KAIRO_UI_HOST: "ratatui" }
-    }),
-    "pi"
-  );
-});
-
-test("resolveUiHost: --legacy-cockpit wins over --pi, --ratatui and env", () => {
-  assert.equal(
-    resolveUiHost({
+test("resolveUiHost rejects --legacy-cockpit", () => {
+  assert.throws(
+    () => resolveUiHost({
       options: { legacyCockpit: true, piHost: true, ratatui: true },
       env: { KAIRO_UI_HOST: "pi" }
     }),
-    "cockpit"
+    /--legacy-cockpit is no longer supported/
   );
 });
 
@@ -73,28 +62,23 @@ test("parseArgs accepts --ratatui; routeInteractiveHost returns ratatui for bare
   assert.equal(routeInteractiveHost({ command, options, env: {} }), "ratatui");
 });
 
-test("parseArgs accepts --pi / --pi-host; default ui routes to ratatui", () => {
+test("parseArgs rejects --pi / --pi-host; default ui routes to ratatui", () => {
   assert.equal(parseArgs(["ui", "--ratatui"]).options.ratatui, true);
   assert.equal(parseArgs(["ui"]).options.ratatui, false);
   assert.equal(parseArgs(["ui"]).options.piHost, false);
-  assert.equal(parseArgs(["ui", "--pi"]).options.piHost, true);
-  assert.equal(parseArgs(["ui", "--pi-host"]).options.piHost, true);
+  assert.throws(() => parseArgs(["ui", "--pi"]), /--pi \/ --pi-host is no longer supported/);
+  assert.throws(() => parseArgs(["ui", "--pi-host"]), /--pi \/ --pi-host is no longer supported/);
   assert.equal(routeInteractiveHost({ command: "host", options: {}, env: {} }), "ratatui");
-  assert.equal(
-    routeInteractiveHost({ command: "host", options: { piHost: true }, env: {} }),
-    "pi"
-  );
 });
 
-test("routeInteractiveHost: --legacy-cockpit wins over --ratatui", () => {
-  const { command, options } = parseArgs(["--legacy-cockpit", "--ratatui"]);
-  assert.equal(routeInteractiveHost({ command, options, env: { KAIRO_UI_HOST: "ratatui" } }), "cockpit");
+test("routeInteractiveHost rejects --legacy-cockpit", () => {
+  assert.throws(() => parseArgs(["--legacy-cockpit", "--ratatui"]), /--legacy-cockpit is no longer supported/);
 });
 
-test("routeInteractiveHost: KAIRO_UI_HOST=pi selects pi; env ratatui stays ratatui", () => {
-  assert.equal(
-    routeInteractiveHost({ command: "host", options: {}, env: { KAIRO_UI_HOST: "pi" } }),
-    "pi"
+test("routeInteractiveHost: KAIRO_UI_HOST=pi rejected; env ratatui stays ratatui", () => {
+  assert.throws(
+    () => routeInteractiveHost({ command: "host", options: {}, env: { KAIRO_UI_HOST: "pi" } }),
+    /KAIRO_UI_HOST=pi is no longer supported/
   );
   assert.equal(
     routeInteractiveHost({ command: "host", options: {}, env: { KAIRO_UI_HOST: "ratatui" } }),

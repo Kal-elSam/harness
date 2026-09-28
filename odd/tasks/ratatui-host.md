@@ -120,12 +120,12 @@ Neutral adapters needed before porting: `ink/use-orchestrator-data.js` (hook-bou
 
 | Entry / asset | Now | Target |
 |---|---|---|
-| `kairo`, `start`, `resume` | ratatui default via `resolveUiHost`; **9 failing tests** in `session-cli.test.js` + `cli-default-entry.test.js` still assert Pi host (re-run 2026-09-28: 10 pass / 9 fail) | Ratatui only; tests updated |
-| `kairo ui` | ratatui; `--legacy-cockpit` → `runUiCli` | Ratatui only |
-| `kairo shell` | Ink `runOrchestratorShell` | Ratatui Operations view |
-| `--pi` / `--pi-host` / `KAIRO_UI_HOST=pi`, `--legacy-cockpit` | active opt-outs | Removed with migration message, no hidden fallback |
-| Exclusive code | `src/global/cockpit/*` (8 files), `src/global/ink/*` (28), Pi-TUI widget code in `host/extension/index.js` | Deleted after parity; APIs, non-interactive CLI, adapters, bindings, RPC engine kept |
-| Exclusive deps | `ink`, `react`, `@clack/prompts`, `@earendil-works/pi-tui` | Removed from `package.json` |
+| `kairo`, `start`, `resume` | **U7 done** — ratatui only; entry tests updated | Ratatui only; tests updated |
+| `kairo ui` | **U7 done** — ratatui only | Ratatui only |
+| `kairo shell` | **U7 done** — launches ratatui (ops: key 5) | Ratatui Operations view |
+| `--pi` / `--pi-host` / `KAIRO_UI_HOST=pi`, `--legacy-cockpit` | **U7 done** — migration error, no fallback | Removed with migration message, no hidden fallback |
+| Exclusive code | Product UI deleted; adapters kept under `ink/` + `cockpit/view|card|theme|rows`; Pi widgets → `workspace-shell-text.js` stubs | Deleted after parity; APIs, non-interactive CLI, adapters, bindings, RPC engine kept |
+| Exclusive deps | Removed `ink`, `react`, `@earendil-works/pi-tui`; kept `@clack/prompts` for `kairo setup` | Removed from `package.json` |
 
 ### Sidecar protocol today
 
@@ -182,7 +182,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] U4 Workspace: **U4a+U4b+U4c+U4d done** (modes + plans + execute/cancel/handoff + slash + Work/Project/Tasks/Sessions + per-role SUGGESTED editor)
 - [x] U5 Operations + Settings views — U5a read-only Ops hub `5` + U5b mutations/Settings `6` (sync/rollback/runs cancel/alerts dismiss/reviews list; setup honest stub)
 - [x] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
-- [ ] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
+- [x] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
 
 ## Progress
 
@@ -406,8 +406,15 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + U5 + **U6**. Next: **U7 retirement**.
+**Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + U5 + U6 + **U7 done**.
 
-1. **U7** entries → ratatui only; strip `--pi` / `--legacy-cockpit` + exclusive Ink/cockpit/Pi-TUI deps; fix 9 stale entry-host tests.
-2. **U2a/U2b** when publish / provider auth available.
-3. Ops/Settings@60 human visual check remains optional (narrow paint WIP may still be local).
+1. **U2a/U2b** when publish / provider auth available.
+2. **R8** final parity evidence / optional Ops@60 human visual check.
+3. **R9** remote-auth cutover (separate from U7 local retirement).
+
+- (2026-09-28) **U7 Retirement** — Ratatui is the only interactive product UI.
+  - Entries `kairo` / `start` / `resume` / `ui` / `shell` → ratatui; `--pi` / `--pi-host` / `KAIRO_UI_HOST=pi` / `--legacy-cockpit` throw clear migration errors (no hidden fallback).
+  - Deleted exclusive Ink/React product UI + cockpit app/cli/overlay + `workspace-widget.js`; extension keeps commands with no-op widget stubs in `workspace-shell-text.js`.
+  - Kept sidecar adapters under `ink/` (scan/settings/control-center/…) + `cockpit/view|card|theme|rows` (slash formatters via local `text-width.js`).
+  - Deps removed: `ink`, `react`, `@earendil-works/pi-tui`. Kept `@clack/prompts` for `kairo setup`.
+  - Verification: entry/host/ops/settings/sidecar targeted `node --test` → **187/187** (+ cockpit-view **81/81**); no push.
