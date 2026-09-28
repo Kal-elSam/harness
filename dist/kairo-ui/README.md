@@ -60,16 +60,16 @@ Asserts:
 - Host-arch binary actually runs `--v3-capture` (exit 0 + output files) from a crate-less root
 - Foreign triples: `file` magic always; **observed status 0 → foreign-exec PASS (diagnostic)**; non-zero/spawn error → honest gap. Never invent PASS.
 
-## CI matrix skeleton
+## CI matrix
 
-Workflow: `.github/workflows/kairo-ui-prebuilt.yml` (`workflow_dispatch` + path filter).
+Workflow: `.github/workflows/kairo-ui-prebuilt.yml` — **`workflow_dispatch` only** (not on PRs).
 
 | Runner | Expected key |
 |---|---|
-| macos-14 (Apple Silicon) | `darwin-arm64` |
+| macos-14 (Apple Silicon) | `darwin-arm64` (exec) |
 | macos-13 x64 | `darwin-x64` (exec) |
-| ubuntu-24.04 x64 | `linux-x64` |
-| arm64 Linux / qemu / zigbuild | `linux-arm64` (gap until runner wired) |
+| ubuntu-24.04 x64 | `linux-x64` (exec) |
+| ubuntu-24.04-arm | `linux-arm64` (exec) |
 
 Attach built artifacts under this directory before `npm pack` / publish.
 Binaries are gitignored; this README and `.gitkeep` markers stay in source control.
