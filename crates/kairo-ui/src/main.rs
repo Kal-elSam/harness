@@ -1079,13 +1079,20 @@ fn try_recovery_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
 /// U3b: key routing while an extension_ui dialog is open. Esc cancels with
 /// the active id only; Enter confirms; j/k move select/confirm; input/editor
 /// type into the dialog's own draft (never the chat compose box).
+/// Plain `q` quits only on select/confirm — never while typing into input/editor.
 fn handle_extension_ui_key(app: &mut ShellApp, key: KeyEvent) -> bool {
     let Some(dialog) = app.extension_ui.active.as_mut() else {
         return false;
     };
     let method = dialog.request.method.clone();
     match key.code {
-        KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char('q')
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(
+                    method,
+                    ExtensionUiMethod::Select | ExtensionUiMethod::Confirm
+                ) =>
+        {
             return true;
         }
         KeyCode::Esc => {
@@ -1445,5 +1452,56 @@ fn draw(frame: &mut Frame, app: &ShellApp) {
     }
     if let Some(dialog) = &app.extension_ui.active {
         render_extension_ui(frame.buffer_mut(), area, dialog);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn press(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn input_dialog_types_word_with_q_without_quitting() {
+        let mut app = ShellApp::new(None);
+        app.extension_ui.ingest(&json!({
+            "type": "extension_ui_request",
+            "id": "input-1",
+            "method": "input",
+            "title": "Name",
+            "placeholder": "type here"
+        }));
+        assert!(app.extension_ui.is_open());
+
+        for c in ['r', 'e', 'q', 'u', 'e', 's', 't'] {
+            let should_quit = handle_key(&mut app, press(c)).expect("key");
+            assert!(!should_quit, "plain '{c}' must not quit an input dialog");
+        }
+
+        let draft = app
+            .extension_ui
+            .active
+            .as_ref()
+            .map(|d| d.draft.as_str())
+            .unwrap_or("");
+        assert_eq!(draft, "request");
+        assert!(app.extension_ui.is_open());
+    }
+
+    #[test]
+    fn select_dialog_plain_q_still_quits() {
+        let mut app = ShellApp::new(None);
+        app.extension_ui.ingest(&json!({
+            "type": "extension_ui_request",
+            "id": "select-1",
+            "method": "select",
+            "title": "Pick",
+            "options": ["A", "B"]
+        }));
+        let should_quit = handle_key(&mut app, press('q')).expect("key");
+        assert!(should_quit, "plain q must still quit select dialogs");
     }
 }
