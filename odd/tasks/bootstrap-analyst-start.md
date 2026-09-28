@@ -25,7 +25,7 @@ The root cause of the reported `thread/start` failure is NOT yet proven.
 - [x] T1 — Unify CODEX_HOME resolution (JS) + regressions: custom env, explicit arg, default, symlink; stdin-closed test.
 - [x] T2 — Preserve stderr on timeout (JS) + regression.
 - [x] T3 — Wrap multiline/long notices with scroll (Rust) + tests: multiline, long text in narrow terminal, final cause visible.
-- [ ] T4 — Restart host from this worktree and reproduce; real Codex run (needs user authorization): valid answer + denied read outside snapshot.
+- [x] T4 — Restart host from this worktree and reproduce; real Codex run (needs user authorization): valid answer + denied read outside snapshot.
 
 ## Routing
 
@@ -90,3 +90,5 @@ Forecast ~250 authored lines; strategy `ask-on-risk`.
 ## Next step
 
 T4 — restart the host from this worktree and reproduce the original `thread/start` failure with a real (user-authorized) Codex run; confirm the CODEX_HOME fix and the now-visible full error together identify the next real blocker. The root cause of the original report is still NOT proven — T1–T3 fix verified inconsistencies, not a confirmed root cause.
+
+T4 note (2026-09-28): after allowing read-only cfprefs shm in the Codex SBPL profile, a real sandboxed Codex run returned a valid answer (PASS) and an absolute-path read outside the snapshot was denied with `Operation not permitted` and a matching Sandbox log denial (PASS). Evidence in `odd/tasks/ratatui-host.md`. Original root cause of the user's report remains only what was observed.

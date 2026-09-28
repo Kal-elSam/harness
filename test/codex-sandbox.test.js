@@ -389,3 +389,28 @@ test("runCodexSandboxedBootstrap: a multiline config error on stderr with no out
   assert.match(result.error, /invalid TOML at line 3/);
   assert.match(result.error, /unexpected character '#'/);
 });
+
+test("buildCodexSandboxProfile allows read-only cfprefs shm for the dynamic uid and the daemon, nothing broader", async () => {
+  const profile = await buildCodexSandboxProfile(
+    { snapshotRoot: "/tmp/kairo-snap-shm", codexHome: "/Users/x/.codex" },
+    { realpath: async (p) => p, getuid: () => 4242 }
+  );
+  assert.ok(
+    profile.includes('(allow ipc-posix-shm-read-data (ipc-posix-name "apple.cfprefs.4242v1") (ipc-posix-name "apple.cfprefs.daemonv1"))'),
+    "exact read-only cfprefs rule with the dynamic uid and the daemon name"
+  );
+  assert.doesNotMatch(profile, /ipc-posix-shm-write/, "no shm write variant");
+  assert.doesNotMatch(profile, /ipc-posix-name-(prefix|regex)/, "no prefix/regex shm matcher");
+  assert.doesNotMatch(profile, /ipc-posix-shm(?!-read-data)/, "only the read-data shm operation appears");
+  assert.equal((profile.match(/ipc-posix-name/g) ?? []).length, 2, "exactly two shm names");
+  assert.doesNotMatch(profile, /\*\)?\s*\(ipc-posix-name/, "no wildcard on the shm operation");
+});
+
+test("buildCodexSandboxProfile omits the uid-specific cfprefs name when getuid is unavailable, never hardcoding a uid", async () => {
+  const profile = await buildCodexSandboxProfile(
+    { snapshotRoot: "/tmp/kairo-snap-nouid", codexHome: "/Users/x/.codex" },
+    { realpath: async (p) => p, getuid: undefined }
+  );
+  assert.ok(profile.includes('(allow ipc-posix-shm-read-data (ipc-posix-name "apple.cfprefs.daemonv1"))'));
+  assert.doesNotMatch(profile, /apple\.cfprefs\.\d/);
+});
