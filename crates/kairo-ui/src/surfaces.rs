@@ -16,6 +16,7 @@ use crate::plan_list::PlanListState;
 use crate::recovery_picker::RecoveryPreviewState;
 use crate::role_editor::RoleEditorState;
 use crate::session_picker::SessionPickerState;
+use crate::ops_panel::{render_ops_panel, render_settings_stub, OpsPanelState};
 use crate::workspace_nav::WorkspaceView;
 
 /// Kairo sober hacker palette — graphite greens; accent green only for
@@ -1303,6 +1304,37 @@ pub fn render_project_view(
         .style(Style::default().bg(tone::WORK_BG))
         .render(inner, buf);
     render_editor(buf, work.editor, chat.focus, editor, &model.work_mode);
+    render_usage(buf, regions.usage, model);
+}
+
+/// U5a: Operations hub — sidebar + USAGE preserved; main column is read-only ops.
+pub fn render_operations_view(
+    buf: &mut Buffer,
+    regions: ShellRegions,
+    model: &ShellViewModel,
+    chat: &ChatState,
+    ops: &OpsPanelState,
+    workspace: WorkspaceView,
+) {
+    if let Some(sidebar) = regions.sidebar {
+        render_sidebar(buf, sidebar, model, chat.focus);
+    }
+    render_ops_panel(buf, regions.main, ops, &workspace.chrome_title());
+    render_usage(buf, regions.usage, model);
+}
+
+/// U5a: Settings stub chrome (full Settings = U5b).
+pub fn render_settings_view(
+    buf: &mut Buffer,
+    regions: ShellRegions,
+    model: &ShellViewModel,
+    chat: &ChatState,
+    workspace: WorkspaceView,
+) {
+    if let Some(sidebar) = regions.sidebar {
+        render_sidebar(buf, sidebar, model, chat.focus);
+    }
+    render_settings_stub(buf, regions.main, &workspace.chrome_title());
     render_usage(buf, regions.usage, model);
 }
 

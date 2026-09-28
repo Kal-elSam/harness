@@ -5,6 +5,7 @@ mod engine;
 mod execution_flow;
 mod extension_ui;
 mod layout;
+mod ops_panel;
 mod plan_list;
 mod recovery_picker;
 mod role_editor;
@@ -39,15 +40,16 @@ use engine::{
 use execution_flow::{ConfirmExecuteState, ExecutionModal, RoleSelectState};
 use extension_ui::{ExtensionUiEvent, ExtensionUiMethod, ExtensionUiState};
 use layout::split_shell;
+use ops_panel::OpsPanelState;
 use plan_list::{PlanListState, PLAN_REQUESTED_HOST_COPY};
 use recovery_picker::RecoveryPreviewState;
 use role_editor::{can_edit_team_roles, RoleEditPhase, RoleEditorState};
 use session_picker::SessionPickerState;
 use snapshot::apply_workspace_snapshot;
 use surfaces::{
-    render_analyst_picker, render_confirm_execute, render_extension_ui, render_plan_list,
-    render_project_view, render_recovery_preview, render_role_editor, render_role_select,
-    render_session_picker, render_shell, ShellViewModel,
+    render_analyst_picker, render_confirm_execute, render_extension_ui, render_operations_view,
+    render_plan_list, render_project_view, render_recovery_preview, render_role_editor,
+    render_role_select, render_session_picker, render_settings_view, render_shell, ShellViewModel,
 };
 use workspace_nav::{escape_to_work, view_from_digit, WorkspaceView};
 
@@ -213,10 +215,12 @@ struct ShellApp {
     /// The `ready` record's `draft` (if any) has been applied to the editor
     /// exactly once — never re-applied on a later `ready`/`engine` record.
     draft_restored: bool,
-    /// U4d: Work | Project | Tasks | Sessions chrome.
+    /// U4d: Work | Project | Tasks | Sessions | Operations (+ Settings stub).
     workspace_view: WorkspaceView,
     /// U4d: per-role editor modal on Project (SUGGESTED only).
     role_editor: Option<RoleEditorState>,
+    /// U5a: Operations hub state (None until first visit / snapshot).
+    ops_panel: Option<OpsPanelState>,
     /// U4d: `/quit`/`/exit` requested from slash handling.
     quit_requested: bool,
 }
@@ -254,6 +258,7 @@ impl ShellApp {
             draft_restored: false,
             workspace_view: WorkspaceView::Work,
             role_editor: None,
+            ops_panel: None,
             quit_requested: false,
         }
     }
@@ -460,6 +465,11 @@ impl ShellApp {
                             self.chat.push_kairo_reply(text.to_string());
                         }
                     }
+                }
+            } else if kind == Some("ops_snapshot") {
+                self.ops_panel = Some(OpsPanelState::from_ops_record(&record));
+                if self.workspace_view == WorkspaceView::Operations {
+                    self.view.notice = Some("Operations snapshot updated.".into());
                 }
             } else if kind == Some("team_edit_catalog") {
                 match RoleEditorState::from_catalog_record(&record) {
@@ -1354,6 +1364,7 @@ impl ShellApp {
                 self.plan_list = None;
                 self.session_picker = None;
                 self.role_editor = None;
+                self.ops_panel = None;
                 self.view.notice = Some("View: Work".into());
             }
             WorkspaceView::Project => {
@@ -1379,6 +1390,41 @@ impl ShellApp {
                 }
                 self.view.notice = Some("View: Sessions".into());
             }
+            WorkspaceView::Operations => {
+                self.plan_list = None;
+                self.session_picker = None;
+                self.role_editor = None;
+                self.request_ops_snapshot();
+                self.view.notice =
+                    Some("View: Operations · read-only hub · Esc → Work".into());
+            }
+            WorkspaceView::Settings => {
+                self.plan_list = None;
+                self.session_picker = None;
+                self.role_editor = None;
+                self.ops_panel = None;
+                self.view.notice =
+                    Some("View: Settings stub (U5b) · Esc → Work".into());
+            }
+        }
+    }
+
+    fn request_ops_snapshot(&mut self) {
+        self.ops_panel = Some(OpsPanelState::loading());
+        let Some(bridge) = self.bridge.as_mut() else {
+            self.ops_panel = Some(OpsPanelState::from_ops_record(&serde_json::json!({
+                "ok": false,
+                "error": "No bridge — cannot load operations.",
+                "health": ["Health unavailable."],
+                "fleet": ["Fleet topology (kairo fleet) — not slash /providers", "Fleet unavailable."],
+                "usage": ["Usage unavailable."],
+                "diagnostics": ["Diagnostics unavailable."],
+                "hints": "Esc → Work"
+            })));
+            return;
+        };
+        if let Err(err) = bridge.ops_snapshot() {
+            self.view.notice = Some(format!("ops.snapshot failed: {err}"));
         }
     }
 
@@ -1608,14 +1654,44 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
-    // U4d: Esc from Project (no modal) → Work.
+    // U4d/U5a: Esc from Project/Operations/Settings (no modal) → Work.
     if key.code == KeyCode::Esc
-        && app.workspace_view == WorkspaceView::Project
+        && matches!(
+            app.workspace_view,
+            WorkspaceView::Project | WorkspaceView::Operations | WorkspaceView::Settings
+        )
         && app.role_editor.is_none()
     {
         if let Some(next) = escape_to_work(app.workspace_view) {
             app.set_workspace_view(next);
             return Ok(false);
+        }
+    }
+
+    // U5a: Operations owns ↑/↓ scroll and `r` refresh while visible.
+    if app.workspace_view == WorkspaceView::Operations && app.ops_panel.is_some() {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(ops) = app.ops_panel.as_mut() {
+                    ops.scroll_by(-1, 12);
+                }
+                return Ok(false);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(ops) = app.ops_panel.as_mut() {
+                    ops.scroll_by(1, 12);
+                }
+                return Ok(false);
+            }
+            KeyCode::Char('r')
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT) =>
+            {
+                app.request_ops_snapshot();
+                return Ok(false);
+            }
+            _ => {}
         }
     }
 
@@ -1757,7 +1833,7 @@ fn try_team_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
     }
 }
 
-/// U4d: empty-compose `1`–`4` switch Work|Project|Tasks|Sessions.
+/// U4d/U5a: empty-compose `1`–`6` switch Work|Project|Tasks|Sessions|Ops|Settings.
 fn try_view_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
     if key
         .modifiers
@@ -2369,24 +2445,51 @@ fn crossterm_to_textarea(key: KeyEvent) -> Option<Input> {
 fn draw(frame: &mut Frame, app: &ShellApp) {
     let area = frame.area();
     let regions = split_shell(area);
-    // U4d: Project view replaces the Work chat column with the team/result surface.
-    if app.workspace_view == WorkspaceView::Project && app.plan_list.is_none() {
-        render_project_view(
-            frame.buffer_mut(),
-            regions,
-            &app.view,
-            &app.chat,
-            &app.editor,
-            app.workspace_view,
-        );
-    } else {
-        render_shell(
-            frame.buffer_mut(),
-            regions,
-            &app.view,
-            &app.chat,
-            &app.editor,
-        );
+    // U4d/U5a: non-Work chrome views replace the Work chat column.
+    match app.workspace_view {
+        WorkspaceView::Project if app.plan_list.is_none() => {
+            render_project_view(
+                frame.buffer_mut(),
+                regions,
+                &app.view,
+                &app.chat,
+                &app.editor,
+                app.workspace_view,
+            );
+        }
+        WorkspaceView::Operations => {
+            let ops = app
+                .ops_panel
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(OpsPanelState::loading);
+            render_operations_view(
+                frame.buffer_mut(),
+                regions,
+                &app.view,
+                &app.chat,
+                &ops,
+                app.workspace_view,
+            );
+        }
+        WorkspaceView::Settings => {
+            render_settings_view(
+                frame.buffer_mut(),
+                regions,
+                &app.view,
+                &app.chat,
+                app.workspace_view,
+            );
+        }
+        _ => {
+            render_shell(
+                frame.buffer_mut(),
+                regions,
+                &app.view,
+                &app.chat,
+                &app.editor,
+            );
+        }
     }
     if let Some(picker) = &app.picker {
         render_analyst_picker(frame.buffer_mut(), area, picker);

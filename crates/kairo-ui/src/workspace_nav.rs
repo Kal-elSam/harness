@@ -1,8 +1,7 @@
-//! U4d: first-class Work | Project | Tasks | Sessions chrome.
+//! U4d/U5a: Work | Project | Tasks | Sessions | Operations (+ Settings stub).
 //!
-//! Empty-compose digits `1`–`4` switch views. Esc from a non-Work view returns
-//! to Work. `p` / Ctrl+L may also enter Tasks / Sessions (plan-list execute
-//! keys stay owned by the Tasks surface).
+//! Empty-compose digits `1`–`5` switch views (`6` = Settings stub for U5b).
+//! Esc from a non-Work view returns to Work.
 
 /// Which primary surface owns the main column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -12,6 +11,10 @@ pub enum WorkspaceView {
     Project,
     Tasks,
     Sessions,
+    /// U5a: read-only Operations hub (health / fleet / usage / diagnostics).
+    Operations,
+    /// U5b stub — chrome label only until Settings is implemented.
+    Settings,
 }
 
 impl WorkspaceView {
@@ -21,35 +24,41 @@ impl WorkspaceView {
             WorkspaceView::Project => "Project",
             WorkspaceView::Tasks => "Tasks",
             WorkspaceView::Sessions => "Sessions",
+            WorkspaceView::Operations => "Operations",
+            WorkspaceView::Settings => "Settings",
         }
     }
 
     pub fn chrome_title(self) -> String {
         format!(
-            " 1 Work · 2 Project · 3 Tasks · 4 Sessions  · {} ",
+            " 1 Work · 2 Project · 3 Tasks · 4 Sessions · 5 Ops · 6 Settings  · {} ",
             self.label()
         )
     }
 }
 
-/// Empty-compose digit → view. Prefer `1`–`4` (documented product choice).
+/// Empty-compose digit → view. `1`–`5` are live; `6` is the Settings stub.
 pub fn view_from_digit(c: char) -> Option<WorkspaceView> {
     match c {
         '1' => Some(WorkspaceView::Work),
         '2' => Some(WorkspaceView::Project),
         '3' => Some(WorkspaceView::Tasks),
         '4' => Some(WorkspaceView::Sessions),
+        '5' => Some(WorkspaceView::Operations),
+        '6' => Some(WorkspaceView::Settings),
         _ => None,
     }
 }
 
-/// Esc from Project/Tasks/Sessions → Work. Esc on Work is a no-op here.
+/// Esc from any non-Work view → Work. Esc on Work is a no-op here.
 pub fn escape_to_work(current: WorkspaceView) -> Option<WorkspaceView> {
     match current {
         WorkspaceView::Work => None,
-        WorkspaceView::Project | WorkspaceView::Tasks | WorkspaceView::Sessions => {
-            Some(WorkspaceView::Work)
-        }
+        WorkspaceView::Project
+        | WorkspaceView::Tasks
+        | WorkspaceView::Sessions
+        | WorkspaceView::Operations
+        | WorkspaceView::Settings => Some(WorkspaceView::Work),
     }
 }
 
@@ -58,36 +67,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn digits_map_to_four_views() {
+    fn digits_map_to_six_views() {
         assert_eq!(view_from_digit('1'), Some(WorkspaceView::Work));
         assert_eq!(view_from_digit('2'), Some(WorkspaceView::Project));
         assert_eq!(view_from_digit('3'), Some(WorkspaceView::Tasks));
         assert_eq!(view_from_digit('4'), Some(WorkspaceView::Sessions));
-        assert_eq!(view_from_digit('5'), None);
+        assert_eq!(view_from_digit('5'), Some(WorkspaceView::Operations));
+        assert_eq!(view_from_digit('6'), Some(WorkspaceView::Settings));
+        assert_eq!(view_from_digit('7'), None);
         assert_eq!(view_from_digit('p'), None);
     }
 
     #[test]
-    fn esc_returns_to_work_from_other_views() {
+    fn esc_returns_to_work_from_ops_and_settings() {
         assert_eq!(escape_to_work(WorkspaceView::Work), None);
         assert_eq!(
+            escape_to_work(WorkspaceView::Operations),
+            Some(WorkspaceView::Work)
+        );
+        assert_eq!(
+            escape_to_work(WorkspaceView::Settings),
+            Some(WorkspaceView::Work)
+        );
+        assert_eq!(
             escape_to_work(WorkspaceView::Project),
-            Some(WorkspaceView::Work)
-        );
-        assert_eq!(
-            escape_to_work(WorkspaceView::Tasks),
-            Some(WorkspaceView::Work)
-        );
-        assert_eq!(
-            escape_to_work(WorkspaceView::Sessions),
             Some(WorkspaceView::Work)
         );
     }
 
     #[test]
-    fn chrome_names_active_view() {
-        let title = WorkspaceView::Tasks.chrome_title();
-        assert!(title.contains("3 Tasks"));
-        assert!(title.contains("Tasks"));
+    fn chrome_names_ops_and_settings_stub() {
+        let title = WorkspaceView::Operations.chrome_title();
+        assert!(title.contains("5 Ops"));
+        assert!(title.contains("6 Settings"));
+        assert!(title.contains("Operations"));
     }
 }

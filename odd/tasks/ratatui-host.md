@@ -94,9 +94,9 @@ Legend: done / partial / missing. Source: read-only mapping of `feat/ratatui-hos
 
 | Capability | Legacy | Ratatui | Acceptance |
 |---|---|---|---|
-| Health / readiness / diagnostics | `ink/orchestrator-app.js` DIAGNOSTICS | missing | Same fields as `kairo orchestrator --json` |
-| Providers | PROVIDERS view, `fleet-probe.js` | missing | Matches `kairo fleet` |
-| Usage drill-down | USAGE view | partial (strip only) | Full detail view |
+| Health / readiness / diagnostics | `ink/orchestrator-app.js` DIAGNOSTICS | **U5a done** | Ops view `5`; `ops.snapshot` |
+| Providers | PROVIDERS view, `fleet-probe.js` | **U5a done** | Matches `kairo fleet` (≠ slash `/providers`) |
+| Usage drill-down | USAGE view | **U5a done** | Full detail in Ops hub |
 | Sync / drift preview → confirm → receipt | `use-orchestrator-data.js` changes fns, `runGlobalSync` | missing | Receipt matches `kairo sync` |
 | Rollback preview → confirm → receipt | CHANGES view, `runGlobalRollback` | missing | Same pattern |
 | Runs (active/recent/detail/cancel) | RUNS views, `run-cli.js` | missing | List, detail, cancel |
@@ -129,7 +129,7 @@ Neutral adapters needed before porting: `ink/use-orchestrator-data.js` (hook-bou
 
 ### Sidecar protocol today
 
-Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list` / `plans.show` / `plans.decide` (U4b; never executePlan), `plans.preview` / `plans.execute` / `plans.cancel` / `plans.transcript` (U4c), `abort`, `compact`, `cycle_model`, `new_session`, `switch_session`, `switch_session_index`, `list_sessions`, `rename_session`, `fork_session`, `reload_snapshot`, `project.preflight`, `project.analyze`, `team.approve`, `team.revalidate`, `team.recovery.*`, `extension_ui_response`, `stop`. Records: `ready`, `mode`, `task_result`, `plans`, `plan_detail`, `plan_decision`, `plan_preview`, `plan_execute`, `plan_cancel`, `run_transcript`, `engine`, `transcript`, `sessions`, `draft`, `kairoModels`, `team`, `preflight`, `snapshot`, `notice`, `error` + forwarded Pi events (including `extension_ui_request`).
+Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list` / `plans.show` / `plans.decide` (U4b; never executePlan), `plans.preview` / `plans.execute` / `plans.cancel` / `plans.transcript` (U4c), `slash.*` / `team.edit.*` (U4d), `ops.snapshot` (U5a), `abort`, `compact`, `cycle_model`, `new_session`, `switch_session`, `switch_session_index`, `list_sessions`, `rename_session`, `fork_session`, `reload_snapshot`, `project.preflight`, `project.analyze`, `team.approve`, `team.revalidate`, `team.recovery.*`, `extension_ui_response`, `stop`. Records: `ready`, `mode`, `task_result`, `plans`, `plan_detail`, `plan_decision`, `plan_preview`, `plan_execute`, `plan_cancel`, `run_transcript`, `slash_lines`, `ops_snapshot`, `engine`, `transcript`, `sessions`, `draft`, `kairoModels`, `team`, `preflight`, `snapshot`, `notice`, `error` + forwarded Pi events (including `extension_ui_request`).
 
 ## Acceptance criteria
 
@@ -180,7 +180,7 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 - [x] U3b extension_ui: select / confirm / input / editor / notify with correlated one-way responses and safe cancel (cancel/timeout/engine death/quit)
 - [x] U3c Chat events (**reopened to close Phase 3**): keep thinking/text/shared-reducer work; finish `toolCallId`-correlated progress + result/error **content**; restore final tool results without inventing intermediate progress
 - [x] U4 Workspace: **U4a+U4b+U4c+U4d done** (modes + plans + execute/cancel/handoff + slash + Work/Project/Tasks/Sessions + per-role SUGGESTED editor)
-- [ ] U5 Operations + Settings views (health, providers, usage, diagnostics, sync/rollback receipts, runs, alerts, reviews, profiles, integrations, setup) via extracted neutral adapters
+- [ ] U5 Operations + Settings views — **U5a partial** (read-only Ops hub `5` + Settings stub `6`); U5b still open (sync/rollback/runs/alerts/reviews/settings/setup)
 - [ ] U6 Packaging: 4 prebuilt binaries, auto-select, clean install without Cargo; PTY 60×30 / 100×30 / 160×48 + terminal restore
 - [ ] U7 Retirement: entries → ratatui only; remove `--pi` / `--legacy-cockpit` with migration message; delete cockpit/Ink/Pi-TUI renderers + exclusive deps; fix the 9 stale entry tests
 
@@ -383,10 +383,17 @@ Commands: `prompt` (U4a: `submitTask`, never Pi prompt), `set_mode`, `plans.list
 
 - (2026-09-28) **V3 fixture visual OK (human)** — User approved the regenerated fixtures at 60×30 on `2d2f834f9` (chat wrap, plans y/n footer, tool name/result split). Scope: **FIXTURE mock only** — does not certify live provider runtime, packaging, or native RDD review.
 
+- (2026-09-28) **U5a Operations read-only hub (STRICT TDD)** — First U5 slice only; U5b (mutations/settings/setup) still open.
+  - **Nav**: `WorkspaceView` + Operations (`5`) + Settings stub (`6`); Esc→Work; chrome lists Ops/Settings.
+  - **Sidecar**: `ops.snapshot` → `ops_snapshot` via `ops-sidecar.js` reusing `loadCockpitScanBundle` / `buildFleetReport` / slash usage / `buildReadOnlyDiagnostics`; fail-closed empty/error lines; honest fleet label ≠ `/providers`.
+  - **Rust**: `ops_panel.rs` + surfaces paint; footer hints wrap ≤2 lines @60 cols; `r` refresh; ↑↓ scroll.
+  - **Verification (observed)**: `node --test test/ops-sidecar.test.js test/kairo-ui-rpc-stdio.test.js` → **68/68**. `cd crates/kairo-ui && unset CARGO_TARGET_DIR && cargo test` → **157/157**.
+  - Out of scope (U5b): sync/rollback, runs cancel, alerts dismiss, Settings profile edits, interactive setup.
+
 ## Next step
 
-**Plan 2026-09-28 (amended):** Phase 3 + U4 + **V3 fixture visual OK**. Next: **U5 → U6 → U7** (with visual validation of new ops/settings chrome). U2a/U2b wait for publish/auth. Full suite still not green (9 entry-host failures).
+**Plan 2026-09-28 (amended):** Phase 3 + U4 + V3 fixture OK + **U5a**. Next: **U5b → U6 → U7**. U2a/U2b wait for publish/auth. Full suite still not green (9 entry-host failures).
 
-1. **U5** Operations + Settings views (then visual check of that chrome).
+1. **U5b** Settings + mutating ops (sync/rollback/runs/alerts/reviews/setup).
 2. **U6** packaging binaries + PTY sizes; **U7** retirement after U6.
 3. **U2a/U2b** when publish / provider auth available.

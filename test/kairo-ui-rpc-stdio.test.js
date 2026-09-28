@@ -4088,3 +4088,51 @@ test("U4d: slash.clear clears transcript via DI", async () => {
   stdin.end();
   await runPromise;
 });
+
+test("U5a: ops.snapshot emits ops_snapshot with honest fleet label", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "ask" }),
+    snapshot: async () => ({
+      usage: { codex: { windows: [{ name: "5h", remainingPercent: 40 }], source: "measured" } }
+    }),
+    buildOpsSnapshot: async () => ({
+      ok: true,
+      error: null,
+      health: ["Control plane · HEALTHY"],
+      fleet: [
+        "Fleet topology (kairo fleet) — not slash /providers",
+        "",
+        "Fleet floor",
+        "opencode · gentle-orchestrator · deepseek"
+      ],
+      usage: ["Provider usage (/usage)", "Codex · 40%"],
+      diagnostics: ["Agents", "Detected: 1/1"],
+      hints: "Esc → Work · r refresh"
+    }),
+    openBridge: openBridgeWithModel()
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "ops.snapshot" })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+  const ops = out.find((r) => r.type === "ops_snapshot");
+  assert.equal(ops?.ok, true);
+  assert.equal(ops?.health?.[0], "Control plane · HEALTHY");
+  assert.match(ops?.fleet?.[0] ?? "", /kairo fleet/);
+  assert.doesNotMatch(ops?.fleet?.[0] ?? "", /^\/providers/);
+  assert.match(ops?.usage?.join("\n") ?? "", /Codex|usage/i);
+  assert.match(ops?.diagnostics?.join("\n") ?? "", /Agents/);
+  assert.match(ops?.hints ?? "", /Esc/);
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
