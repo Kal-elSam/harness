@@ -333,8 +333,20 @@ function groupChild(pid = 4242) {
 }
 
 function stubSpawn(child, seen = []) {
-  return (cmd, args, options) => { seen.push({ cmd, args, options }); return child; };
+  return (cmd, args, options) => { seen.push({ cmd, args, options }); child.spawned = true; return child; };
 }
+
+// Polls until `condition()` holds. Replaces fixed sleeps that only *assumed* an
+// event (the spawn, the group kill) had already happened.
+async function waitFor(condition, what, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+const spawned = (child) => waitFor(() => child.spawned === true, "the provider to spawn");
 
 const ADAPTERS = [
   { provider: "claude", cmd: "claude", model: "m", ensure: false },
@@ -397,7 +409,7 @@ test("a signal makes the child a process-group leader (detached: true); everythi
       ensureOpencodeAskAgent: async () => {},
       killProcess: (pid, sig) => { kills.push([pid, sig]); setImmediate(() => child.emit("close", null)); }
     });
-    await new Promise((r) => setTimeout(r, 15));
+    await spawned(child);
     assert.equal(seen[0].options.detached, true, a.provider);
     assert.deepEqual(seen[0].options.stdio, ["ignore", "pipe", "pipe"]);
     ac.abort();
@@ -417,9 +429,9 @@ test("abort mid-run: SIGTERM goes to the process GROUP (-pid); cancelled resolve
   });
   let settled = false;
   pending.then(() => { settled = true; });
-  await new Promise((r) => setTimeout(r, 5));
+  await spawned(child);
   ac.abort();
-  await new Promise((r) => setTimeout(r, 5));
+  await waitFor(() => kills.length > 0, "the group SIGTERM");
   assert.deepEqual(kills, [[-777, "SIGTERM"]]);
   assert.equal(settled, false, "must not resolve before the child has closed");
   closed = true;
@@ -438,7 +450,7 @@ test("abort: a child that ignores SIGTERM is SIGKILLed after killGraceMs, then c
     provider: "cursor", question: "q", cwd: "/repo", signal: ac.signal, killGraceMs: 20, spawn: stubSpawn(child),
     killProcess: (pid, sig) => { kills.push([pid, sig]); } // never closes the child
   });
-  await new Promise((r) => setTimeout(r, 5));
+  await spawned(child);
   ac.abort();
   const res = await pending;
   assert.equal(res.status, "cancelled");
@@ -452,7 +464,7 @@ test("group kill failure falls back to the direct child kill", async () => {
     provider: "claude", question: "q", cwd: "/repo", signal: ac.signal, killGraceMs: 10, spawn: stubSpawn(child),
     killProcess: () => { throw Object.assign(new Error("ESRCH"), { code: "ESRCH" }); }
   });
-  await new Promise((r) => setTimeout(r, 5));
+  await spawned(child);
   ac.abort();
   const res = await pending;
   assert.equal(res.status, "cancelled");
@@ -469,7 +481,7 @@ test("a cancelled turn is never returned as answered even if the child already w
       setImmediate(() => child.emit("close", 0));
     }
   });
-  await new Promise((r) => setTimeout(r, 5));
+  await spawned(child);
   ac.abort();
   const res = await pending;
   assert.equal(res.status, "cancelled");
@@ -484,7 +496,7 @@ test("finish is idempotent: a normal close then a late abort does not kill or do
     provider: "claude", question: "q", cwd: "/repo", signal: ac.signal, spawn: stubSpawn(child),
     killProcess: (pid, sig) => { kills.push([pid, sig]); }
   });
-  await new Promise((r) => setTimeout(r, 5));
+  await spawned(child);
   child.stdout.emit("data", JSON.stringify({ result: "done" }));
   child.emit("close", 0);
   const res = await pending;
@@ -528,9 +540,9 @@ test("codex events: fragmented JSONL is correlated by item id, invalid lines are
   const events = [];
   const child = groupChild();
   let outFile;
-  const spawn = (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; return child; };
+  const spawn = (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; child.spawned = true; return child; };
   const pending = askProvider({ provider: "codex", question: "q", cwd: "/repo", spawn, onEvent: (e) => events.push(e) });
-  await new Promise((r) => setTimeout(r, 15));
+  await spawned(child);
   const start = JSON.stringify({ type: "item.started", item: { id: "item_1", type: "command_execution", command: "ls -la", status: "in_progress" } });
   child.stdout.emit("data", start.slice(0, 20));
   assert.deepEqual(events, [], "a partial line emits nothing yet");
@@ -560,9 +572,9 @@ test("codex: a failed command maps to tool_end ok:false; a turn.failed maps to a
   let outFile;
   const pending = askProvider({
     provider: "codex", question: "q", cwd: "/repo", onEvent: (e) => events.push(e),
-    spawn: (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; return child; }
+    spawn: (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; child.spawned = true; return child; }
   });
-  await new Promise((r) => setTimeout(r, 15));
+  await spawned(child);
   child.stdout.emit("data", JSON.stringify({ type: "item.started", item: { id: "i9", type: "command_execution", command: "false" } }) + "\n");
   child.stdout.emit("data", JSON.stringify({ type: "item.completed", item: { id: "i9", type: "command_execution", command: "false", exit_code: 1, status: "failed" } }) + "\n");
   child.stdout.emit("data", JSON.stringify({ type: "turn.failed", error: { message: "model exploded" } }) + "\n");
@@ -584,10 +596,10 @@ test("cancelled codex never reads the -o file (even if it holds an answer), remo
   let outFile;
   const pending = askProvider({
     provider: "codex", question: "q", cwd: "/repo", signal: ac.signal, onEvent: (e) => events.push(e),
-    spawn: (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; return child; },
+    spawn: (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; child.spawned = true; return child; },
     killProcess: () => {}
   });
-  await new Promise((r) => setTimeout(r, 15));
+  await spawned(child);
   child.stdout.emit("data", JSON.stringify({ type: "item.started", item: { id: "a", type: "command_execution", command: "ls" } }) + "\n");
   ac.abort();
   await writeFile(outFile, "SHOULD NOT BE USED", "utf8");
@@ -606,7 +618,7 @@ test("opencode: text and error parts are emitted incrementally as chunks arrive"
     provider: "opencode-go", question: "q", cwd: "/repo", spawn: stubSpawn(child),
     ensureOpencodeAskAgent: async () => {}, onEvent: (e) => events.push(e)
   });
-  await new Promise((r) => setTimeout(r, 10));
+  await spawned(child);
   const l1 = JSON.stringify({ type: "text", part: { text: "Hel" } });
   child.stdout.emit("data", l1.slice(0, 10));
   assert.deepEqual(events, []);
@@ -624,7 +636,7 @@ test("opencode: text and error parts are emitted incrementally as chunks arrive"
     provider: "opencode-go", question: "q", cwd: "/repo", spawn: stubSpawn(child2),
     ensureOpencodeAskAgent: async () => {}, onEvent: (e) => errEvents.push(e)
   });
-  await new Promise((r) => setTimeout(r, 10));
+  await spawned(child2);
   child2.stdout.emit("data", JSON.stringify({ type: "error", error: { data: { message: "quota" } } }) + "\n");
   child2.emit("close", 1);
   assert.equal((await p2).status, "error");
@@ -636,7 +648,7 @@ test("claude and cursor: no fake streaming — one progress marker, then the sin
     const events = [];
     const child = groupChild();
     const pending = askProvider({ provider, question: "q", cwd: "/repo", spawn: stubSpawn(child), onEvent: (e) => events.push(e) });
-    await new Promise((r) => setTimeout(r, 5));
+    await spawned(child);
     child.stdout.emit("data", JSON.stringify({ result: "ans" }));
     child.emit("close", 0);
     assert.equal((await pending).answer, "ans");
@@ -652,7 +664,7 @@ test("an onEvent that throws (or rejects) never breaks the run", async () => {
       provider: "opencode-go", question: "q", cwd: "/repo", spawn: stubSpawn(child),
       ensureOpencodeAskAgent: async () => {}, onEvent
     });
-    await new Promise((r) => setTimeout(r, 10));
+    await spawned(child);
     child.stdout.emit("data", JSON.stringify({ type: "text", part: { text: "fine" } }) + "\n");
     child.emit("close", 0);
     assert.deepEqual(await pending, { status: "answered", answer: "fine", error: null });
