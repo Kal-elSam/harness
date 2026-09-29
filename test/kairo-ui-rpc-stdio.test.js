@@ -4642,3 +4642,352 @@ test("A2: PLAN prompts get no signal/onEvent and emit no provider events", async
   assert.equal(providerEvents(sc.out).length, 0);
   await sc.stop();
 });
+
+// ---- A4: persist + restore ASK turns (ask-events.jsonl) ---------------------
+
+const ASK_SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const ASK_SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const PI_MESSAGES = [
+  { role: "user", content: "pi question" },
+  { role: "assistant", content: [{ type: "text", text: "pi answer" }] }
+];
+// What mapPiMessagesToTranscriptRows yields for PI_MESSAGES (3 rows).
+const PI_ROWS = [
+  { type: "user_message", content: "pi question" },
+  { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "pi answer" } },
+  { type: "agent_settled" }
+];
+
+async function startPersistSidecar({
+  submitTask,
+  home,
+  envSessionId = ASK_SID_A,
+  piMessages = { "pi-a": PI_MESSAGES, "pi-b": [] },
+  clearTranscript,
+  sessionFiles = [
+    { path: "/x/a.jsonl", sessionId: "pi-a", label: "A" },
+    { path: "/x/b.jsonl", sessionId: "pi-b", label: "B" }
+  ],
+  bindings = new Map([["pi-a", ASK_SID_A], ["pi-b", ASK_SID_B]]),
+  getMessagesFails = false
+}) {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const homeDir = home ?? (await mkdtemp(join(tmpdir(), "ask-sidecar-")));
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  let currentPi = "pi-a";
+  const piLog = [];
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: envSessionId ? { KAIRO_SESSION_ID: envSessionId } : {},
+    resolveHomeDir: () => homeDir,
+    resolveProjectRoot: async () => "/project",
+    listPiSessionFilesForCwd: () => sessionFiles,
+    lookupPiBinding: async (_h, _r, piId) => bindings.get(piId) ?? null,
+    recordPiBinding: async (_h, _r, piId, kairoId) => {
+      bindings.set(piId, kairoId);
+    },
+    createSession: async () => ({ id: ASK_SID_B }),
+    getSession: async () => ({ mode: "ask" }),
+    loadDraft: async () => "",
+    saveDraft: async () => {},
+    submitTask,
+    ...(clearTranscript ? { clearTranscript } : {}),
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          piLog.push(cmd.type);
+          if (cmd.type === "get_state") {
+            return { type: "response", command: "get_state", success: true, data: { sessionId: currentPi, model: ctx?.activeModel ?? { id: architectModel.id } } };
+          }
+          if (cmd.type === "set_model") {
+            ctx?.setModel?.({ id: cmd.modelId });
+            return { type: "response", command: "set_model", success: true };
+          }
+          if (cmd.type === "switch_session") {
+            currentPi = cmd.sessionPath.includes("b.jsonl") ? "pi-b" : "pi-a";
+            return { type: "response", command: "switch_session", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "clone") {
+            currentPi = "pi-fork";
+            piMessages["pi-fork"] = piMessages["pi-a"];
+            return { type: "response", command: "clone", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "abort") return { type: "response", command: "abort", success: true };
+          if (cmd.type === "get_messages") {
+            if (getMessagesFails) return { type: "response", command: "get_messages", success: false, error: "boom" };
+            return { type: "response", command: "get_messages", success: true, data: { messages: piMessages[currentPi] ?? [] } };
+          }
+          return null;
+        }
+      })
+    )
+  });
+  const send = (cmd) => stdin.write(`${JSON.stringify(cmd)}\n`);
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const waitFor = async (pred, ms = 2000) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (pred()) return true;
+      await wait(10);
+    }
+    return pred();
+  };
+  const stop = async () => {
+    send({ op: "stop" });
+    stdin.end();
+    await runPromise;
+  };
+  return { out, send, wait, waitFor, stop, homeDir, piLog };
+}
+
+async function readEventsFile(homeDir, sessionId) {
+  const { readFile } = await import("node:fs/promises");
+  const { askEventsPath } = await import("../src/global/conversation/ask-events-store.js");
+  try {
+    const raw = await readFile(askEventsPath(homeDir, "/project", sessionId), "utf8");
+    return raw.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  } catch {
+    return null;
+  }
+}
+
+const lastTranscript = (out) => [...out].reverse().find((r) => r.type === "transcript");
+const askText = (delta) => ({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta } });
+
+test("A4: an ASK turn is persisted (start with piAnchor, events with seq, one turn_end) and restored after a session switch", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = await startPersistSidecar({ submitTask });
+  await sc.wait(60);
+  sc.send({ op: "prompt", message: "  what is up ", mode: "ask" });
+  await sc.waitFor(() => state.onEvent);
+  state.onEvent({ provider: "codex", kind: "text", text: "Hel" });
+  state.onEvent({ provider: "codex", kind: "text", text: "lo" });
+  state.onEvent({ provider: "codex", kind: "tool_start", id: "1", name: "shell" });
+  state.onEvent({ provider: "codex", kind: "tool_end", id: "1", name: "shell", ok: true });
+  state.resolveAnswer({ kind: "answer", provider: "codex", model: "m", answer: "Hello" });
+  await sc.waitFor(() => providerEvents(sc.out).some((e) => e.kind === "done"));
+  sc.send({ op: "switch_session", sessionPath: "/x/a.jsonl" });
+  await sc.waitFor(() => lastTranscript(sc.out));
+
+  const recs = await readEventsFile(sc.homeDir, ASK_SID_A);
+  assert.deepEqual(recs.map((r) => r.type), ["turn_start", "event", "event", "event", "event", "turn_end"]);
+  assert.equal(recs[0].prompt, "  what is up ");
+  assert.equal(recs[0].piAnchor, 3);
+  assert.deepEqual(recs.slice(1, 5).map((r) => [r.kind, r.seq]), [["text", 1], ["text", 2], ["tool_start", 3], ["tool_end", 4]]);
+  assert.ok(!recs.some((r) => r.kind === "answer"), "text events already carried the answer");
+  assert.equal(recs.at(-1).status, "done");
+  assert.equal(recs.at(-1).seq, 5);
+  assert.equal(new Set(recs.map((r) => r.turnId)).size, 1);
+
+  assert.deepEqual(lastTranscript(sc.out).messages, [
+    ...PI_ROWS,
+    { type: "user_message", content: "what is up" },
+    askText("Hello"),
+    { type: "tool_execution_start", toolName: "shell", toolCallId: "1" },
+    { type: "tool_execution_end", toolName: "shell", toolCallId: "1", isError: false },
+    { type: "agent_settled" }
+  ]);
+  await sc.stop();
+});
+
+test("A4: an answer-only turn stores an answer event and restores as the push_kairo_reply row", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = await startPersistSidecar({ submitTask });
+  await sc.wait(60);
+  sc.send({ op: "prompt", message: "q", mode: "ask" });
+  await sc.waitFor(() => state.onEvent);
+  state.onEvent({ provider: "claude", kind: "progress", summary: "thinking" });
+  state.onEvent({ provider: "claude", kind: "final" });
+  state.resolveAnswer({ kind: "answer", provider: "claude", model: "sonnet", answer: "42" });
+  await sc.waitFor(() => providerEvents(sc.out).some((e) => e.kind === "done"));
+  sc.send({ op: "switch_session", sessionPath: "/x/a.jsonl" });
+  await sc.waitFor(() => lastTranscript(sc.out));
+  const recs = await readEventsFile(sc.homeDir, ASK_SID_A);
+  const answer = recs.find((r) => r.kind === "answer");
+  assert.deepEqual([answer.provider, answer.model, answer.text], ["claude", "sonnet", "42"]);
+  assert.deepEqual(lastTranscript(sc.out).messages.slice(3), [
+    { type: "user_message", content: "q" },
+    { type: "system_message", content: "claude · sonnet: 42" }
+  ]);
+  await sc.stop();
+});
+
+test("A4: a cancelled turn persists partial text and a cancelled turn_end, never a success answer", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = await startPersistSidecar({ submitTask });
+  await sc.wait(60);
+  sc.send({ op: "prompt", message: "long one", mode: "ask" });
+  await sc.waitFor(() => state.onEvent);
+  state.onEvent({ provider: "codex", kind: "text", text: "partial" });
+  sc.send({ op: "abort" });
+  await sc.waitFor(() => providerEvents(sc.out).some((e) => e.kind === "cancelled"));
+  // A late success from a provider that ignored the abort must not be stored.
+  state.resolveAnswer?.({ kind: "answer", provider: "codex", model: "m", answer: "too late" });
+  await sc.wait(40);
+  sc.send({ op: "switch_session", sessionPath: "/x/a.jsonl" });
+  await sc.waitFor(() => lastTranscript(sc.out));
+  const recs = await readEventsFile(sc.homeDir, ASK_SID_A);
+  assert.deepEqual(recs.map((r) => r.type), ["turn_start", "event", "turn_end"]);
+  assert.equal(recs.at(-1).status, "cancelled");
+  assert.ok(!JSON.stringify(recs).includes("too late"));
+  assert.deepEqual(lastTranscript(sc.out).messages.slice(3), [
+    { type: "user_message", content: "long one" },
+    askText("partial"),
+    { type: "system_message", content: "Cancelled" },
+    { type: "agent_settled" }
+  ]);
+  await sc.stop();
+});
+
+test("A4: a failed turn persists a failed turn_end with the message; early failure restores without the user row", async () => {
+  const submitTask = async () => {
+    throw new Error("spawn exploded");
+  };
+  const sc = await startPersistSidecar({ submitTask });
+  await sc.wait(60);
+  sc.send({ op: "prompt", message: "q", mode: "ask" });
+  await sc.waitFor(() => providerEvents(sc.out).some((e) => e.kind === "failed"));
+  sc.send({ op: "switch_session", sessionPath: "/x/a.jsonl" });
+  await sc.waitFor(() => lastTranscript(sc.out));
+  const recs = await readEventsFile(sc.homeDir, ASK_SID_A);
+  assert.deepEqual(recs.map((r) => r.type), ["turn_start", "turn_end"]);
+  assert.equal(recs[1].status, "failed");
+  assert.equal(recs[1].message, "spawn exploded");
+  assert.deepEqual(lastTranscript(sc.out).messages.slice(3), [
+    { type: "message_update", assistantMessageEvent: { type: "error", error: { errorMessage: "spawn exploded" } } }
+  ]);
+  await sc.stop();
+});
+
+test("A4: no session id, PLAN and AGENT turns write nothing", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const { state, submitTask } = hangingAsk();
+  const noSession = await startPersistSidecar({ submitTask, envSessionId: null });
+  await noSession.wait(60);
+  noSession.send({ op: "prompt", message: "q", mode: "ask" });
+  await noSession.waitFor(() => state.onEvent);
+  state.onEvent({ provider: "codex", kind: "text", text: "x" });
+  state.resolveAnswer({ kind: "answer", provider: "codex", model: null, answer: "x" });
+  await noSession.waitFor(() => providerEvents(noSession.out).some((e) => e.kind === "done"));
+  assert.deepEqual(await readdir(noSession.homeDir), []);
+  await noSession.stop();
+
+  const calls = [];
+  const planSidecar = await startPersistSidecar({
+    submitTask: async (args) => {
+      calls.push(args.mode);
+      return { kind: "plan", taskId: "t1" };
+    }
+  });
+  await planSidecar.wait(60);
+  planSidecar.send({ op: "prompt", message: "do it", mode: "plan" });
+  planSidecar.send({ op: "prompt", message: "do it", mode: "agent" });
+  await planSidecar.waitFor(() => calls.length === 2);
+  await planSidecar.wait(30);
+  assert.equal(await readEventsFile(planSidecar.homeDir, ASK_SID_A), null);
+  await planSidecar.stop();
+});
+
+test("A4: turns belong to their Kairo session; switching to another session shows none of them", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = await startPersistSidecar({ submitTask });
+  await sc.wait(60);
+  sc.send({ op: "prompt", message: "for A", mode: "ask" });
+  await sc.waitFor(() => state.onEvent);
+  state.resolveAnswer({ kind: "answer", provider: "codex", model: null, answer: "a" });
+  await sc.waitFor(() => providerEvents(sc.out).some((e) => e.kind === "done"));
+  sc.send({ op: "switch_session", sessionPath: "/x/b.jsonl" });
+  await sc.waitFor(() => lastTranscript(sc.out));
+  assert.deepEqual(lastTranscript(sc.out).messages, []);
+  const before = sc.out.filter((r) => r.type === "transcript").length;
+  sc.send({ op: "switch_session", sessionPath: "/x/a.jsonl" });
+  await sc.waitFor(() => sc.out.filter((r) => r.type === "transcript").length > before);
+  assert.deepEqual(lastTranscript(sc.out).messages.slice(3), [
+    { type: "user_message", content: "for A" },
+    { type: "system_message", content: "codex: a" }
+  ]);
+  await sc.stop();
+});
+
+test("A4: when Pi rows can not be counted the anchor is null and the turn is appended after the Pi rows", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = await startPersistSidecar({ submitTask, getMessagesFails: true });
+  await sc.wait(60);
+  sc.send({ op: "prompt", message: "q", mode: "ask" });
+  await sc.waitFor(() => state.onEvent);
+  state.resolveAnswer({ kind: "answer", provider: "codex", model: null, answer: "a" });
+  await sc.waitFor(() => providerEvents(sc.out).some((e) => e.kind === "done"));
+  await sc.wait(30);
+  const recs = await readEventsFile(sc.homeDir, ASK_SID_A);
+  assert.equal(recs[0].piAnchor, null);
+  await sc.stop();
+});
+
+test("A4: /clear removes ask-events.jsonl for the session and leaves ask-history.json alone", async () => {
+  const { readAskHistory, appendAskHistoryEntry } = await import("../src/global/conversation/ask-history-store.js");
+  const { state, submitTask } = hangingAsk();
+  const cleared = [];
+  const sc = await startPersistSidecar({ submitTask, clearTranscript: async (args) => { cleared.push(args.sessionId); } });
+  await appendAskHistoryEntry(sc.homeDir, "/project", { question: "q", answer: "a", provider: "codex" }, ASK_SID_A);
+  await sc.wait(60);
+  sc.send({ op: "prompt", message: "q", mode: "ask" });
+  await sc.waitFor(() => state.onEvent);
+  state.resolveAnswer({ kind: "answer", provider: "codex", model: null, answer: "a" });
+  await sc.waitFor(() => providerEvents(sc.out).some((e) => e.kind === "done"));
+  await sc.wait(30);
+  assert.ok(await readEventsFile(sc.homeDir, ASK_SID_A));
+  sc.send({ op: "slash.clear" });
+  await sc.waitFor(() => cleared.length === 1);
+  await sc.wait(30);
+  assert.equal(await readEventsFile(sc.homeDir, ASK_SID_A), null);
+  assert.equal((await readAskHistory(sc.homeDir, "/project", ASK_SID_A)).length, 1, "ask-history.json is the service's; the sidecar does not touch it");
+  await sc.stop();
+});
+
+test("A4: fork does not copy ask-events (same as ask-history.json): the fork starts empty, the source keeps its turns", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = await startPersistSidecar({ submitTask });
+  await sc.wait(60);
+  sc.send({ op: "prompt", message: "q", mode: "ask" });
+  await sc.waitFor(() => state.onEvent);
+  state.resolveAnswer({ kind: "answer", provider: "codex", model: null, answer: "a" });
+  await sc.waitFor(() => providerEvents(sc.out).some((e) => e.kind === "done"));
+  await sc.wait(30);
+  sc.send({ op: "fork_session" });
+  await sc.waitFor(() => sc.out.some((r) => r.type === "notice" && /forked/i.test(r.message)));
+  assert.deepEqual(lastTranscript(sc.out).messages, PI_ROWS, "the fork shows only the cloned Pi rows");
+  assert.equal(await readEventsFile(sc.homeDir, ASK_SID_B), null);
+  assert.ok(await readEventsFile(sc.homeDir, ASK_SID_A), "source events untouched");
+  await sc.stop();
+});
+
+test("A4: resuming a bound session (KAIRO_SESSION_ID) emits a transcript with its stored ASK turns after ready", async () => {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { appendAskRecord } = await import("../src/global/conversation/ask-events-store.js");
+  const home = await mkdtemp(join(tmpdir(), "ask-resume-"));
+  await appendAskRecord(home, "/project", ASK_SID_A, { type: "turn_start", turnId: "t1", seq: 0, at: "a", prompt: "old q", piAnchor: 1 });
+  await appendAskRecord(home, "/project", ASK_SID_A, { type: "event", turnId: "t1", seq: 1, at: "a", kind: "answer", provider: "codex", model: null, text: "old a" });
+  await appendAskRecord(home, "/project", ASK_SID_A, { type: "turn_end", turnId: "t1", seq: 1, at: "a", status: "done" });
+  const sc = await startPersistSidecar({ submitTask: async () => ({ kind: "plan", taskId: "t" }), home });
+  await sc.waitFor(() => lastTranscript(sc.out));
+  assert.ok(sc.out.findIndex((r) => r.type === "ready") < sc.out.findIndex((r) => r.type === "transcript"));
+  assert.deepEqual(lastTranscript(sc.out).messages, [
+    PI_ROWS[0],
+    { type: "user_message", content: "old q" },
+    { type: "system_message", content: "codex: old a" },
+    PI_ROWS[1],
+    PI_ROWS[2]
+  ]);
+  await sc.stop();
+});
