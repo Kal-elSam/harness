@@ -161,6 +161,7 @@ fn conversation_chat() -> ChatState {
         scroll_offset: 0,
         is_streaming: false,
         focus: Focus::Transcript,
+        ..ChatState::default()
     };
     chat.messages.push(ChatMessage {
         role: MessageRole::User,

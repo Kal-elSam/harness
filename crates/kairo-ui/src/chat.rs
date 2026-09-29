@@ -101,12 +101,39 @@ fn format_tool_done(name: &str, is_error: bool, result: &str) -> String {
     }
 }
 
+/// Stable content of the `System` row shown for a cancelled ASK turn. It is a
+/// plain `system_message` on replay, so restored history reproduces it.
+pub const CANCELLED_MARKER: &str = "Cancelled";
+
+/// Prefix of the single per-turn ASK activity (`progress`) row.
+const ACTIVITY_PREFIX: &str = "… ";
+
+/// Turns remembered as finished so their late events are dropped.
+const FINISHED_TURNS_CAP: usize = 16;
+
+/// Bookkeeping for the ASK turn whose `provider_event`s are being rendered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderTurn {
+    id: String,
+    last_seq: u64,
+    /// A non-empty `text` event already produced an Assistant row.
+    has_text: bool,
+    /// Index of this turn's single activity row, if any.
+    activity_row: Option<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatState {
     pub messages: Vec<ChatMessage>,
     pub scroll_offset: usize,
     pub is_streaming: bool,
     pub focus: Focus,
+    /// An ASK-mode prompt was sent and its turn has not reached a terminal
+    /// (`done|cancelled|error`), `task_result`, `error` or session replace.
+    /// Deliberately NOT `is_streaming`: that flag gates Pi-stream behaviour.
+    pub ask_in_flight: bool,
+    pub(crate) provider_turn: Option<ProviderTurn>,
+    pub(crate) finished_turns: Vec<String>,
 }
 
 impl Default for ChatState {
@@ -122,6 +149,9 @@ impl Default for ChatState {
             scroll_offset: 0,
             is_streaming: false,
             focus: Focus::Editor,
+            ask_in_flight: false,
+            provider_turn: None,
+            finished_turns: Vec::new(),
         }
     }
 }
@@ -258,6 +288,9 @@ impl ChatState {
         }];
         self.scroll_offset = 0;
         self.is_streaming = false;
+        // A session replace ends any ASK turn; its late events are dropped.
+        self.ask_in_flight = false;
+        self.retire_provider_turn();
         for row in rows {
             match row.get("type").and_then(|v| v.as_str()) {
                 Some("user_message") => {
@@ -279,6 +312,207 @@ impl ChatState {
         for msg in &mut self.messages {
             msg.streaming = false;
         }
+    }
+
+    /// An ASK-mode prompt was sent. Starts a fresh turn; a no-op while a turn
+    /// is already in flight (the sidecar rejects a second prompt, and the
+    /// running turn must keep its correlation state).
+    pub fn begin_ask(&mut self) {
+        if self.ask_in_flight {
+            return;
+        }
+        self.retire_provider_turn();
+        self.ask_in_flight = true;
+    }
+
+    /// Forget the current turn and remember its id so late events are dropped.
+    fn retire_provider_turn(&mut self) {
+        if let Some(turn) = self.provider_turn.take() {
+            self.finished_turns.push(turn.id);
+            if self.finished_turns.len() > FINISHED_TURNS_CAP {
+                self.finished_turns.remove(0);
+            }
+        }
+    }
+
+    /// True when `text` events already showed this turn's answer, so the
+    /// `task_result` answer must not be pushed a second time.
+    pub fn ask_answer_already_shown(&self) -> bool {
+        self.provider_turn.as_ref().is_some_and(|t| t.has_text)
+    }
+
+    /// Apply one sidecar `provider_event` (see `kairo-ui-rpc-stdio.js`).
+    /// Returns whether the event was applied. Events are dropped when no ASK
+    /// is in flight and no turn is active, for a foreign or finished turn,
+    /// for a finished turn, or when `seq` is not strictly increasing.
+    pub fn apply_provider_event(&mut self, ev: &Value) -> bool {
+        let (Some(turn_id), Some(seq), Some(kind)) = (
+            ev.get("turnId").and_then(|v| v.as_str()),
+            ev.get("seq").and_then(|v| v.as_u64()),
+            ev.get("kind").and_then(|v| v.as_str()),
+        ) else {
+            return false;
+        };
+        if self.finished_turns.iter().any(|t| t == turn_id) {
+            return false;
+        }
+        match self.provider_turn.as_mut() {
+            Some(turn) if turn.id != turn_id || seq <= turn.last_seq => {
+                return false;
+            }
+            Some(turn) => turn.last_seq = seq,
+            None => {
+                if !self.ask_in_flight {
+                    return false;
+                }
+                self.provider_turn = Some(ProviderTurn {
+                    id: turn_id.to_string(),
+                    last_seq: seq,
+                    has_text: false,
+                    activity_row: None,
+                });
+            }
+        }
+        match kind {
+            "text" => {
+                let text = ev.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                if !text.is_empty() {
+                    self.append_ask_text(text);
+                }
+            }
+            "progress" => {
+                let summary = ev.get("summary").and_then(|v| v.as_str()).unwrap_or("").trim();
+                if !summary.is_empty() {
+                    self.set_activity(format!("{ACTIVITY_PREFIX}{summary}"));
+                }
+            }
+            "tool_start" => self.apply_ask_tool(ev, None),
+            "tool_end" => {
+                let ok = ev.get("ok").and_then(|v| v.as_bool()).unwrap_or(true);
+                self.apply_ask_tool(ev, Some(!ok));
+            }
+            "error" => {
+                let message = ev
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .filter(|m| !m.trim().is_empty())
+                    .unwrap_or("provider error")
+                    .to_string();
+                self.finish_provider_turn();
+                self.messages.push(ChatMessage {
+                    role: MessageRole::Error,
+                    content: message,
+                    streaming: false,
+                    is_error: true,
+                    tool_call_id: None,
+                });
+            }
+            "cancelled" => {
+                self.finish_provider_turn();
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: CANCELLED_MARKER.to_string(),
+                    streaming: false,
+                    is_error: false,
+                    tool_call_id: None,
+                });
+            }
+            "done" => self.finish_provider_turn(),
+            // `final` carries no text (the answer travels in `task_result`);
+            // unknown kinds are ignored.
+            _ => {}
+        }
+        true
+    }
+
+    /// Text goes to the open Assistant row or starts one. Only the row's own
+    /// `streaming` flag is set — `is_streaming` stays untouched.
+    fn append_ask_text(&mut self, text: &str) {
+        if let Some(turn) = self.provider_turn.as_mut() {
+            turn.has_text = true;
+        }
+        if let Some(last) = self.messages.last_mut() {
+            if last.role == MessageRole::Assistant && last.streaming {
+                last.content.push_str(text);
+                return;
+            }
+        }
+        self.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: text.to_string(),
+            streaming: true,
+            is_error: false,
+            tool_call_id: None,
+        });
+    }
+
+    /// Update (or create) the turn's single activity row.
+    fn set_activity(&mut self, content: String) {
+        let existing = self
+            .provider_turn
+            .as_ref()
+            .and_then(|t| t.activity_row)
+            .filter(|&i| {
+                self.messages
+                    .get(i)
+                    .is_some_and(|m| m.role == MessageRole::System && m.content.starts_with(ACTIVITY_PREFIX))
+            });
+        if let Some(i) = existing {
+            self.messages[i].content = content;
+            return;
+        }
+        self.messages.push(ChatMessage {
+            role: MessageRole::System,
+            content,
+            streaming: false,
+            is_error: false,
+            tool_call_id: None,
+        });
+        let idx = self.messages.len() - 1;
+        if let Some(turn) = self.provider_turn.as_mut() {
+            turn.activity_row = Some(idx);
+        }
+    }
+
+    /// `tool_start` (`failed == None`) / `tool_end` (`Some(failed)`), keyed by id.
+    fn apply_ask_tool(&mut self, ev: &Value, failed: Option<bool>) {
+        let name = ev.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+        let id = ev.get("id").and_then(|v| v.as_str()).map(str::to_string);
+        let (content, is_error) = match failed {
+            None => (format_tool_running(name, ""), false),
+            Some(err) => (format_tool_done(name, err, ""), err),
+        };
+        if let Some(id) = id.as_deref() {
+            if let Some(row) = self.find_tool_row_mut(id) {
+                row.content = content;
+                row.is_error = is_error;
+                return;
+            }
+        }
+        self.messages.push(ChatMessage {
+            role: MessageRole::Tool,
+            content,
+            streaming: false,
+            is_error,
+            tool_call_id: id,
+        });
+    }
+
+    /// Terminal bookkeeping shared by `done|cancelled|error`: close open
+    /// rows, drop the activity row, mark the turn finished, clear the flag.
+    fn finish_provider_turn(&mut self) {
+        for msg in &mut self.messages {
+            msg.streaming = false;
+        }
+        if let Some(turn) = self.provider_turn.as_mut() {
+            if let Some(i) = turn.activity_row.take() {
+                if self.messages.get(i).is_some_and(|m| m.content.starts_with(ACTIVITY_PREFIX)) {
+                    self.messages.remove(i);
+                }
+            }
+        }
+        self.retire_provider_turn();
+        self.ask_in_flight = false;
     }
 
     pub fn begin_assistant_stream(&mut self) {
@@ -954,5 +1188,193 @@ mod tests {
                 .map(|m| m.content.as_str()),
             Some("partial")
         );
+    }
+
+    // ---- A3: ASK provider events -------------------------------------
+
+    fn pev(turn: &str, seq: u64, kind: &str, extra: Value) -> Value {
+        let mut v = json!({ "type": "provider_event", "turnId": turn, "sessionId": "s1",
+            "seq": seq, "provider": "codex", "kind": kind });
+        if let (Some(o), Some(e)) = (v.as_object_mut(), extra.as_object()) {
+            for (k, val) in e {
+                o.insert(k.clone(), val.clone());
+            }
+        }
+        v
+    }
+
+    fn rows(chat: &ChatState, role: MessageRole) -> Vec<&ChatMessage> {
+        chat.messages.iter().filter(|m| m.role == role).collect()
+    }
+
+    #[test]
+    fn provider_text_events_build_one_assistant_row_without_touching_is_streaming() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        assert!(chat.ask_in_flight);
+        chat.apply_provider_event(&pev("t1", 1, "text", json!({ "text": "Hel" })));
+        chat.apply_provider_event(&pev("t1", 2, "text", json!({ "text": "lo" })));
+        let a = rows(&chat, MessageRole::Assistant);
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].content, "Hello");
+        assert!(a[0].streaming);
+        assert!(!chat.is_streaming, "ASK must not reuse is_streaming");
+        assert!(chat.ask_answer_already_shown());
+        chat.apply_provider_event(&pev("t1", 3, "done", json!({})));
+        assert!(!rows(&chat, MessageRole::Assistant)[0].streaming);
+        assert!(!chat.ask_in_flight);
+    }
+
+    #[test]
+    fn provider_tool_events_correlate_by_id_and_mark_failures() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "tool_start", json!({ "id": "a", "name": "shell" })));
+        chat.apply_provider_event(&pev("t1", 2, "tool_start", json!({ "id": "b", "name": "read" })));
+        chat.apply_provider_event(&pev("t1", 3, "tool_end", json!({ "id": "b", "name": "read", "ok": false })));
+        chat.apply_provider_event(&pev("t1", 4, "tool_end", json!({ "id": "a", "name": "shell", "ok": true })));
+        let t = rows(&chat, MessageRole::Tool);
+        assert_eq!(t.len(), 2);
+        let a = t.iter().find(|m| m.tool_call_id.as_deref() == Some("a")).unwrap();
+        let b = t.iter().find(|m| m.tool_call_id.as_deref() == Some("b")).unwrap();
+        assert!(!a.is_error && a.content.starts_with('\u{2713}'));
+        assert!(b.is_error && b.content.starts_with('\u{2716}'));
+    }
+
+    #[test]
+    fn provider_tool_end_without_start_still_renders_a_row() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "tool_end", json!({ "id": "z", "name": "x", "ok": true })));
+        assert_eq!(rows(&chat, MessageRole::Tool).len(), 1);
+    }
+
+    #[test]
+    fn provider_progress_updates_a_single_activity_row_and_it_is_removed_on_done() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        let base = chat.messages.len();
+        chat.apply_provider_event(&pev("t1", 1, "progress", json!({ "id": "p1", "summary": "Thinking" })));
+        chat.apply_provider_event(&pev("t1", 2, "progress", json!({ "id": "p2", "summary": "Reading files" })));
+        chat.apply_provider_event(&pev("t1", 3, "progress", json!({ "summary": "Writing" })));
+        assert_eq!(chat.messages.len(), base + 1, "progress must not spam rows");
+        assert!(chat.messages.last().unwrap().content.contains("Writing"));
+        assert!(!chat.ask_answer_already_shown(), "progress is not an answer");
+        chat.apply_provider_event(&pev("t1", 4, "final", json!({})));
+        chat.apply_provider_event(&pev("t1", 5, "done", json!({})));
+        assert_eq!(chat.messages.len(), base, "activity row is dropped at the terminal");
+    }
+
+    #[test]
+    fn provider_error_terminal_shows_error_row_and_clears_flags() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "text", json!({ "text": "par" })));
+        chat.apply_provider_event(&pev("t1", 2, "error", json!({ "message": "boom" })));
+        let e = rows(&chat, MessageRole::Error);
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].content, "boom");
+        assert!(e[0].is_error);
+        assert!(!chat.ask_in_flight);
+        assert!(chat.messages.iter().all(|m| !m.streaming));
+        // a duplicate terminal error for the same turn adds nothing
+        chat.apply_provider_event(&pev("t1", 3, "error", json!({ "message": "boom" })));
+        assert_eq!(rows(&chat, MessageRole::Error).len(), 1);
+    }
+
+    #[test]
+    fn provider_cancelled_terminal_shows_cancelled_row_and_ignores_late_events() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "text", json!({ "text": "par" })));
+        chat.apply_provider_event(&pev("t1", 2, "cancelled", json!({})));
+        let last = chat.messages.last().unwrap();
+        assert_eq!(last.role, MessageRole::System);
+        assert_eq!(last.content, CANCELLED_MARKER);
+        assert!(!chat.ask_in_flight);
+        assert!(chat.messages.iter().all(|m| !m.streaming));
+        let n = chat.messages.len();
+        assert!(!chat.apply_provider_event(&pev("t1", 3, "text", json!({ "text": "late" }))));
+        assert!(!chat.apply_provider_event(&pev("t1", 4, "done", json!({}))));
+        assert_eq!(chat.messages.len(), n);
+    }
+
+    #[test]
+    fn late_events_of_a_cancelled_turn_do_not_leak_into_the_next_turn() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "cancelled", json!({})));
+        chat.begin_ask();
+        assert!(!chat.apply_provider_event(&pev("t1", 9, "text", json!({ "text": "late" }))));
+        assert!(chat.ask_in_flight, "old turn must not end the new one");
+        assert!(chat.apply_provider_event(&pev("t2", 1, "text", json!({ "text": "new" }))));
+    }
+
+    #[test]
+    fn foreign_turn_duplicate_and_out_of_order_events_are_ignored() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        assert!(chat.apply_provider_event(&pev("t1", 2, "text", json!({ "text": "a" }))));
+        assert!(!chat.apply_provider_event(&pev("t1", 2, "text", json!({ "text": "dup" }))));
+        assert!(!chat.apply_provider_event(&pev("t1", 1, "text", json!({ "text": "old" }))));
+        assert!(!chat.apply_provider_event(&pev("other", 3, "text", json!({ "text": "x" }))));
+        assert!(!chat.apply_provider_event(&pev("other", 4, "cancelled", json!({}))));
+        assert!(chat.ask_in_flight);
+        assert_eq!(rows(&chat, MessageRole::Assistant)[0].content, "a");
+    }
+
+    #[test]
+    fn provider_events_without_an_ask_in_flight_are_ignored() {
+        let mut chat = ChatState::default();
+        let n = chat.messages.len();
+        assert!(!chat.apply_provider_event(&pev("t1", 1, "text", json!({ "text": "x" }))));
+        assert_eq!(chat.messages.len(), n);
+    }
+
+    #[test]
+    fn begin_ask_while_in_flight_keeps_the_active_turn() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "text", json!({ "text": "a" })));
+        chat.begin_ask(); // rejected second prompt path
+        assert!(chat.apply_provider_event(&pev("t1", 2, "text", json!({ "text": "b" }))));
+        assert_eq!(rows(&chat, MessageRole::Assistant)[0].content, "ab");
+    }
+
+    #[test]
+    fn transcript_replace_clears_ask_state_and_ignores_the_old_turn() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "text", json!({ "text": "a" })));
+        chat.replace_from_sidecar_transcript(&[]);
+        assert!(!chat.ask_in_flight);
+        assert!(!chat.apply_provider_event(&pev("t1", 2, "cancelled", json!({}))));
+        chat.begin_ask();
+        assert!(!chat.apply_provider_event(&pev("t1", 3, "text", json!({ "text": "late" }))));
+    }
+
+    #[test]
+    fn cancelled_row_round_trips_through_transcript_replay() {
+        let mut live = ChatState::default();
+        live.begin_ask();
+        live.apply_provider_event(&pev("t1", 1, "cancelled", json!({})));
+        let stored: Vec<Value> = live
+            .messages
+            .iter()
+            .skip(1)
+            .map(|m| json!({ "type": "system_message", "content": m.content }))
+            .collect();
+        let mut restored = ChatState::default();
+        restored.replace_from_sidecar_transcript(&stored);
+        assert_eq!(restored.messages, live.messages);
+    }
+
+    #[test]
+    fn task_result_dedup_only_when_text_events_showed_the_answer() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        assert!(!chat.ask_answer_already_shown());
+        chat.apply_provider_event(&pev("t1", 1, "text", json!({ "text": "hi" })));
+        assert!(chat.ask_answer_already_shown());
     }
 }

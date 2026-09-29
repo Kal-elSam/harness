@@ -81,6 +81,28 @@ impl BridgeClient {
         })
     }
 
+    /// Test double: a bridge whose "sidecar" appends every op line it receives
+    /// to `out` (no Node, no provider).
+    #[cfg(test)]
+    pub fn spawn_recorder(out: &Path) -> std::io::Result<Self> {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(format!("cat >> '{}'", out.display()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let _ = child.stdout.take();
+        let (_tx, rx) = mpsc::channel();
+        let stdin = child.stdin.take().expect("stdin");
+        Ok(Self {
+            child,
+            stdin,
+            events: rx,
+            stopped: false,
+        })
+    }
+
     pub fn drain_events(&self) -> Vec<Value> {
         let mut out = Vec::new();
         while let Ok(v) = self.events.try_recv() {
