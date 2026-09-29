@@ -163,6 +163,12 @@ import {
 } from "../conversation/session-registry.js";
 import { createConversationService } from "../conversation/service.js";
 import { CockpitView } from "../cockpit/view.js";
+import {
+  appendAskRecord,
+  clearAskEvents,
+  readAskTurns
+} from "../conversation/ask-events-store.js";
+import { mergeAskTurnsIntoRows } from "../conversation/ask-events-restore.js";
 
 /** Fail-closed WorkMode values — same set as session-registry / cockpit. */
 const WORK_MODES = new Set(["ask", "plan", "agent"]);
@@ -332,8 +338,17 @@ export async function refreshHostEngine(
  * @param {string} cwd
  * @param {(record: object) => void} writeOut
  */
-export async function emitTranscriptFromPi(bridge, cwd, writeOut) {
-  const rows = await fetchTranscriptRows(bridge);
+export async function emitTranscriptFromPi(bridge, cwd, writeOut, { mergeRows } = {}) {
+  let rows = await fetchTranscriptRows(bridge);
+  if (mergeRows) {
+    // Best-effort: a failing merge (e.g. unreadable ASK store) must never cost
+    // the human their Pi history.
+    try {
+      rows = await mergeRows(rows);
+    } catch {
+      // keep the plain Pi rows
+    }
+  }
   writeOut({ type: "transcript", messages: rows });
 }
 
@@ -596,6 +611,56 @@ export async function runKairoUiRpcStdio({
     stdout.write(`${JSON.stringify(record)}\n`);
   };
 
+  // ---- ASK persistence (A4) ---------------------------------------------
+  // ASK turns are appended to `<sessionDir>/ask-events.jsonl` as they are
+  // emitted (see ask-events-store.js) and merged into the Pi rows whenever a
+  // transcript is emitted. Writes run on one serial chain so lines keep their
+  // order; every step is best-effort and never rejects into the ASK flow.
+  let askWrites = Promise.resolve();
+  const enqueueAskWrite = (fn) => {
+    askWrites = askWrites.then(fn).catch(() => {});
+  };
+  // Pi rows in the last transcript emitted/fetched: the fallback anchor when a
+  // fresh count is not available at submit time.
+  let lastPiRowCount = null;
+  const PI_ANCHOR_TIMEOUT_MS = 1500;
+  const currentPiRowCount = async () => {
+    let timer = null;
+    try {
+      const rows = await Promise.race([
+        fetchTranscriptRows(bridge),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("timeout")), PI_ANCHOR_TIMEOUT_MS);
+          timer.unref?.();
+        })
+      ]);
+      lastPiRowCount = rows.length;
+      return rows.length;
+    } catch {
+      return lastPiRowCount;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+  const persistAsk = (sessionId, record) => {
+    if (!sessionId || !projectRoot) return;
+    enqueueAskWrite(() =>
+      appendAskRecord(homeDir, projectRoot, sessionId, { ...record, at: new Date().toISOString() })
+    );
+  };
+  // Emits the Pi transcript with the given Kairo session's stored ASK turns
+  // merged in (`kairoSessionId` null/undefined => Pi rows only).
+  const emitTranscript = async (kairoSessionId) => {
+    await emitTranscriptFromPi(bridge, cwd, writeOut, {
+      mergeRows: async (piRows) => {
+        lastPiRowCount = piRows.length;
+        if (!kairoSessionId || !projectRoot) return piRows;
+        await askWrites;
+        return mergeAskTurnsIntoRows(piRows, await readAskTurns(homeDir, projectRoot, kairoSessionId));
+      }
+    });
+  };
+
   writeOut({
     type: "ready",
     engine: bridge.engine,
@@ -611,6 +676,19 @@ export async function runKairoUiRpcStdio({
   await restoreAndEmitMode();
 
   bridge.onEvent((ev) => writeOut(ev));
+
+  // `kairo resume <id>`: rebuild the visible history (Pi rows + stored ASK
+  // turns) only when the session actually has ASK turns; a session without
+  // any keeps today's behavior (no startup transcript).
+  if (envSessionId && projectRoot) {
+    try {
+      if ((await readAskTurns(homeDir, projectRoot, envSessionId)).length > 0) {
+        await emitTranscript(activeKairoSessionId);
+      }
+    } catch {
+      // Best-effort restore; the host still starts.
+    }
+  }
 
   let buffer = "";
   let stopped = false;
@@ -638,6 +716,25 @@ export async function runKairoUiRpcStdio({
       kind,
       ...fields
     });
+    // Terminal kinds close the stored turn; everything else is one event.
+    if (ASK_TERMINAL_KINDS.has(kind)) {
+      persistAsk(ask.sessionId, {
+        type: "turn_end",
+        turnId: ask.turnId,
+        seq: ask.seq,
+        status: kind,
+        ...(typeof fields.message === "string" ? { message: fields.message } : {})
+      });
+    } else {
+      persistAsk(ask.sessionId, {
+        ...fields,
+        type: "event",
+        turnId: ask.turnId,
+        seq: ask.seq,
+        provider: fields.provider ?? ask.provider,
+        kind
+      });
+    }
   };
 
   const finishAsk = (ask, kind, fields = {}) => {
@@ -674,10 +771,24 @@ export async function runKairoUiRpcStdio({
       seq: 0,
       provider: null,
       emitted: false,
+      hasText: false,
       closed: false,
       promise: null
     };
     activeAsk = ask;
+    if (ask.sessionId && projectRoot) {
+      const anchor = currentPiRowCount();
+      enqueueAskWrite(async () =>
+        appendAskRecord(homeDir, projectRoot, ask.sessionId, {
+          type: "turn_start",
+          turnId: ask.turnId,
+          seq: 0,
+          at: new Date().toISOString(),
+          prompt: message,
+          piAnchor: (await anchor) ?? null
+        })
+      );
+    }
     const onEvent = (event) => {
       if (ask.closed || activeAsk !== ask || ask.controller.signal.aborted) return;
       if (!event || typeof event.kind !== "string") return;
@@ -689,6 +800,7 @@ export async function runKairoUiRpcStdio({
       // The final answer travels in `task_result`; never repeat its text here.
       if (kind === "final") delete rest.text;
       ask.emitted = true;
+      if (kind === "text" && typeof rest.text === "string" && rest.text !== "") ask.hasText = true;
       emitAskRecord(ask, kind, rest);
     };
     ask.promise = (async () =>
@@ -721,6 +833,19 @@ export async function runKairoUiRpcStdio({
     }
     if (result?.provider) ask.provider = result.provider;
     if (result?.kind === "answer") {
+      // Mirror the host's dedup rule: the answer is stored on its own only
+      // when no non-empty `text` event already carried it.
+      if (!ask.hasText) {
+        persistAsk(ask.sessionId, {
+          type: "event",
+          turnId: ask.turnId,
+          seq: ask.seq,
+          kind: "answer",
+          provider: result.provider ?? null,
+          model: result.model ?? null,
+          text: result.answer ?? ""
+        });
+      }
       writeOut({
         type: "task_result",
         kind: "answer",
@@ -741,9 +866,15 @@ export async function runKairoUiRpcStdio({
     finishAsk(ask, "done");
   };
 
+  // `resolveSession` (optional) resolves the Kairo session the transcript
+  // belongs to AFTER the engine refresh, so a switch merges the destination
+  // session's ASK turns, not the outgoing one's. `mergeAsk: false` (fork)
+  // emits Pi rows only: a fork starts with no ASK turns.
   const applyEngineAndMaybeTranscript = async ({
     reloadTranscript = false,
-    reapplyArchitect = false
+    reapplyArchitect = false,
+    resolveSession = null,
+    mergeAsk = true
   } = {}) => {
     const engine = await refreshHostEngine(bridge, cwd, {
       reapplyArchitect,
@@ -754,8 +885,9 @@ export async function runKairoUiRpcStdio({
       engine,
       modelLabel: formatEngineModelLabel(engine.model)
     });
+    if (resolveSession) activeKairoSessionId = await resolveSession();
     if (reloadTranscript) {
-      await emitTranscriptFromPi(bridge, cwd, writeOut);
+      await emitTranscript(mergeAsk ? activeKairoSessionId : null);
     }
     return engine;
   };
@@ -1132,6 +1264,12 @@ export async function runKairoUiRpcStdio({
         writeOut({ type: "slash_lines", kind: diagKind, lines });
       } else if (op === "slash.clear") {
         await clearTranscriptImpl({ cwd, sessionId: activeKairoSessionId });
+        if (activeKairoSessionId && projectRoot) {
+          // ask-history.json (prompt context) is cleared by the service; the
+          // display log is ours. Wait for in-flight appends so none lands after.
+          await askWrites;
+          await clearAskEvents(homeDir, projectRoot, activeKairoSessionId);
+        }
         writeOut({ type: "slash_lines", kind: "clear", lines: ["Transcript cleared."] });
         writeOut({ type: "transcript", messages: [] });
       } else if (op === "slash.project_status") {
@@ -1367,14 +1505,14 @@ export async function runKairoUiRpcStdio({
           type: "sessions",
           sessions: await annotateSessions(sessionFiles)
         });
-        await applyEngineAndMaybeTranscript({
-          reloadTranscript: true,
-          reapplyArchitect: true
-        });
         // Extension (when loaded) may already have minted+bound; otherwise
         // the new Pi file stays unbound. Never invent an id here — New's
         // draft is always empty.
-        activeKairoSessionId = await lookupKairoIdForPi(bridge.engine?.sessionId ?? null);
+        await applyEngineAndMaybeTranscript({
+          reloadTranscript: true,
+          reapplyArchitect: true,
+          resolveSession: () => lookupKairoIdForPi(bridge.engine?.sessionId ?? null)
+        });
         await emitActiveDraft({ text: "" });
         await restoreAndEmitMode();
       } else if (op === "switch_session") {
@@ -1393,14 +1531,13 @@ export async function runKairoUiRpcStdio({
           writeOut({ type: "notice", message: "Session switch cancelled by extension" });
           return;
         }
+        const matched = sessionFiles.find((f) => f.path === sessionPath);
         await applyEngineAndMaybeTranscript({
           reloadTranscript: true,
-          reapplyArchitect: true
+          reapplyArchitect: true,
+          resolveSession: () =>
+            lookupKairoIdForPi(matched?.sessionId ?? bridge.engine?.sessionId ?? null)
         });
-        const matched = sessionFiles.find((f) => f.path === sessionPath);
-        activeKairoSessionId = await lookupKairoIdForPi(
-          matched?.sessionId ?? bridge.engine?.sessionId ?? null
-        );
         await emitActiveDraft();
         await restoreAndEmitMode();
       } else if (op === "switch_session_index") {
@@ -1429,9 +1566,9 @@ export async function runKairoUiRpcStdio({
         }
         await applyEngineAndMaybeTranscript({
           reloadTranscript: true,
-          reapplyArchitect: true
+          reapplyArchitect: true,
+          resolveSession: () => lookupKairoIdForPi(target.sessionId ?? null)
         });
-        activeKairoSessionId = await lookupKairoIdForPi(target.sessionId ?? null);
         await emitActiveDraft();
         await restoreAndEmitMode();
       } else if (op === "list_sessions") {
@@ -1477,9 +1614,12 @@ export async function runKairoUiRpcStdio({
           writeOut({ type: "notice", message: "Fork cancelled by extension" });
           return;
         }
+        // A fork starts with no ASK turns (ask-history.json is not copied
+        // either): emit the cloned Pi rows only.
         await applyEngineAndMaybeTranscript({
           reloadTranscript: true,
-          reapplyArchitect: true
+          reapplyArchitect: true,
+          mergeAsk: false
         });
         const newPiSessionId = bridge.engine?.sessionId ?? null;
 
@@ -1537,6 +1677,7 @@ export async function runKairoUiRpcStdio({
           }
         }
         stopped = true;
+        await askWrites; // let the last ASK records reach disk
         await bridge.stop();
         process.exitCode = 0;
       } else if (op === "reload_snapshot") {
