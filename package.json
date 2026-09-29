@@ -43,6 +43,7 @@
     "smoke:installer": "bash scripts/installer-smoke-test.sh",
     "smoke:bridge": "bash scripts/bridge-smoke-test.sh",
     "smoke:kairo-ui-pty": "python3 scripts/kairo-ui-pty-e2e.py",
+    "smoke:kairo-ui-ask-pty": "python3 scripts/kairo-ui-ask-pty-e2e.py",
     "release:check": "node scripts/check-release-commit.mjs",
     "release:published": "node scripts/check-published-release.mjs",
     "verify:kairo-ui-clean-install": "bash scripts/verify-kairo-ui-clean-install.sh",
