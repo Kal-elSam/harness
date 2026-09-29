@@ -287,10 +287,24 @@ test("sidecar stays alive and emits engine_unavailable after Pi exit", async () 
     })
   });
 
-  await new Promise((r) => setTimeout(r, 30));
+  // Poll with a bound instead of fixed 30 ms sleeps: under the parallel full
+  // suite the sidecar can take longer than that to open the bridge / react.
+  const pollUntil = async (pred, ms = 3000) => {
+    const deadline = Date.now() + ms;
+    while (!pred() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    return pred();
+  };
+  // `ready` is emitted only after the bridge is open and its exit listener is
+  // attached, so emitting `exit` before it could be lost.
+  assert.ok(
+    await pollUntil(() => childRef !== null && out.some((r) => r.type === "ready")),
+    "sidecar is ready"
+  );
   childRef.emit("exit", 1, null);
-  await new Promise((r) => setTimeout(r, 30));
-  assert.ok(out.some((r) => r.type === "engine_unavailable"));
+  assert.ok(
+    await pollUntil(() => out.some((r) => r.type === "engine_unavailable")),
+    "engine_unavailable emitted after Pi exit"
+  );
 
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();
