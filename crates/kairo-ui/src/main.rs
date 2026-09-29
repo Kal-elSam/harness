@@ -3397,6 +3397,37 @@ mod tests {
     }
 
     #[test]
+    fn error_record_then_failed_still_renders_one_error_row() {
+        // The sidecar emits `{type:"error"}` (clears the flag) and then the
+        // terminal `failed`; the Error row must still appear exactly once.
+        let mut app = ShellApp::new(None);
+        app.chat.begin_ask();
+        app.ingest_record(json!({ "type": "error", "message": "boom" }));
+        assert!(!app.chat.ask_in_flight);
+        app.ingest_record(pe("t1", 1, "failed", json!({ "message": "boom" })));
+        let errs = app
+            .chat
+            .messages
+            .iter()
+            .filter(|m| m.role == chat::MessageRole::Error)
+            .count();
+        assert_eq!(errs, 1);
+        assert!(!app.chat.ask_in_flight);
+    }
+
+    #[test]
+    fn informational_error_keeps_esc_cancelling() {
+        let (mut app, path) = recorder_app("ask");
+        app.chat.begin_ask();
+        app.ingest_record(pe("t1", 1, "error", json!({ "message": "hiccup" })));
+        app.ingest_record(pe("t1", 2, "progress", json!({ "summary": "retrying" })));
+        assert!(app.chat.ask_in_flight);
+        handle_key(&mut app, esc()).expect("esc");
+        assert!(recorded_ops(&path, 1).contains("\"abort\""));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn agent_settled_and_transcript_clear_the_ask_flag() {
         let mut app = ShellApp::new(None);
         app.chat.begin_ask();
