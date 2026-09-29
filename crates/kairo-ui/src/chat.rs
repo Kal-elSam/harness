@@ -108,6 +108,15 @@ pub const CANCELLED_MARKER: &str = "Cancelled";
 /// Prefix of the single per-turn ASK activity (`progress`) row.
 const ACTIVITY_PREFIX: &str = "… ";
 
+/// Message of an `error`/`failed` provider event, with a stable fallback.
+fn provider_message(ev: &Value) -> String {
+    ev.get("message")
+        .and_then(|v| v.as_str())
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or("provider error")
+        .to_string()
+}
+
 /// Turns remembered as finished so their late events are dropped.
 const FINISHED_TURNS_CAP: usize = 16;
 
@@ -120,6 +129,9 @@ pub(crate) struct ProviderTurn {
     has_text: bool,
     /// Index of this turn's single activity row, if any.
     activity_row: Option<usize>,
+    /// Message of the most recent informational `error`, so a terminal
+    /// `failed` carrying the same message adds no second Error row.
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,7 +141,7 @@ pub struct ChatState {
     pub is_streaming: bool,
     pub focus: Focus,
     /// An ASK-mode prompt was sent and its turn has not reached a terminal
-    /// (`done|cancelled|error`), `task_result`, `error` or session replace.
+    /// (`done|cancelled|failed`), `task_result`, `error` or session replace.
     /// Deliberately NOT `is_streaming`: that flag gates Pi-stream behaviour.
     pub ask_in_flight: bool,
     pub(crate) provider_turn: Option<ProviderTurn>,
@@ -342,6 +354,8 @@ impl ChatState {
     }
 
     /// Apply one sidecar `provider_event` (see `kairo-ui-rpc-stdio.js`).
+    /// Terminal kinds are exactly `done`, `cancelled` and `failed`; `error`
+    /// is informational and leaves the turn in flight.
     /// Returns whether the event was applied. Events are dropped when no ASK
     /// is in flight and no turn is active, for a foreign or finished turn,
     /// for a finished turn, or when `seq` is not strictly increasing.
@@ -362,7 +376,9 @@ impl ChatState {
             }
             Some(turn) => turn.last_seq = seq,
             None => {
-                if !self.ask_in_flight {
+                // `failed` may arrive after a `{type:"error"}` record already
+                // cleared the flag; it is still that turn's terminal.
+                if !self.ask_in_flight && kind != "failed" {
                     return false;
                 }
                 self.provider_turn = Some(ProviderTurn {
@@ -370,6 +386,7 @@ impl ChatState {
                     last_seq: seq,
                     has_text: false,
                     activity_row: None,
+                    last_error: None,
                 });
             }
         }
@@ -391,21 +408,26 @@ impl ChatState {
                 let ok = ev.get("ok").and_then(|v| v.as_bool()).unwrap_or(true);
                 self.apply_ask_tool(ev, Some(!ok));
             }
+            // Informational: renders an Error row but the turn goes on.
             "error" => {
-                let message = ev
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .filter(|m| !m.trim().is_empty())
-                    .unwrap_or("provider error")
-                    .to_string();
+                let message = provider_message(ev);
+                self.push_error_row(message.clone());
+                if let Some(turn) = self.provider_turn.as_mut() {
+                    turn.last_error = Some(message);
+                }
+            }
+            // Terminal failure. Skips its Error row only when the turn's most
+            // recent informational `error` carried the very same message.
+            "failed" => {
+                let message = provider_message(ev);
+                let duplicate = self
+                    .provider_turn
+                    .as_ref()
+                    .is_some_and(|t| t.last_error.as_deref() == Some(message.as_str()));
                 self.finish_provider_turn();
-                self.messages.push(ChatMessage {
-                    role: MessageRole::Error,
-                    content: message,
-                    streaming: false,
-                    is_error: true,
-                    tool_call_id: None,
-                });
+                if !duplicate {
+                    self.push_error_row(message);
+                }
             }
             "cancelled" => {
                 self.finish_provider_turn();
@@ -423,6 +445,16 @@ impl ChatState {
             _ => {}
         }
         true
+    }
+
+    fn push_error_row(&mut self, content: String) {
+        self.messages.push(ChatMessage {
+            role: MessageRole::Error,
+            content,
+            streaming: false,
+            is_error: true,
+            tool_call_id: None,
+        });
     }
 
     /// Text goes to the open Assistant row or starts one. Only the row's own
@@ -1266,20 +1298,84 @@ mod tests {
     }
 
     #[test]
-    fn provider_error_terminal_shows_error_row_and_clears_flags() {
+    fn provider_error_is_informational_and_keeps_the_turn_in_flight() {
         let mut chat = ChatState::default();
         chat.begin_ask();
         chat.apply_provider_event(&pev("t1", 1, "text", json!({ "text": "par" })));
-        chat.apply_provider_event(&pev("t1", 2, "error", json!({ "message": "boom" })));
+        chat.apply_provider_event(&pev("t1", 2, "error", json!({ "message": "hiccup" })));
+        let e = rows(&chat, MessageRole::Error);
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].content, "hiccup");
+        assert!(e[0].is_error);
+        assert!(chat.ask_in_flight, "a non-terminal error must not end the turn");
+        // later events of the same turn are still applied
+        assert!(chat.apply_provider_event(&pev("t1", 3, "progress", json!({ "summary": "retrying" }))));
+        assert!(chat.apply_provider_event(&pev("t1", 4, "text", json!({ "text": "tial" }))));
+        assert!(chat.ask_in_flight);
+        assert!(chat.apply_provider_event(&pev("t1", 5, "done", json!({}))));
+        assert!(!chat.ask_in_flight);
+    }
+
+    #[test]
+    fn provider_failed_terminal_shows_error_row_clears_flags_and_ignores_late_events() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "text", json!({ "text": "par" })));
+        chat.apply_provider_event(&pev("t1", 2, "failed", json!({ "message": "boom" })));
         let e = rows(&chat, MessageRole::Error);
         assert_eq!(e.len(), 1);
         assert_eq!(e[0].content, "boom");
         assert!(e[0].is_error);
         assert!(!chat.ask_in_flight);
         assert!(chat.messages.iter().all(|m| !m.streaming));
-        // a duplicate terminal error for the same turn adds nothing
-        chat.apply_provider_event(&pev("t1", 3, "error", json!({ "message": "boom" })));
+        let n = chat.messages.len();
+        assert!(!chat.apply_provider_event(&pev("t1", 3, "failed", json!({ "message": "boom" }))));
+        assert!(!chat.apply_provider_event(&pev("t1", 4, "text", json!({ "text": "late" }))));
+        assert!(!chat.apply_provider_event(&pev("t1", 5, "done", json!({}))));
+        assert_eq!(chat.messages.len(), n);
+    }
+
+    #[test]
+    fn failed_after_an_identical_informational_error_adds_no_second_error_row() {
+        // Rule: `failed` skips its Error row only when the turn's most recent
+        // informational `error` carried the very same message.
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "error", json!({ "message": "boom" })));
+        chat.apply_provider_event(&pev("t1", 2, "failed", json!({ "message": "boom" })));
         assert_eq!(rows(&chat, MessageRole::Error).len(), 1);
+        assert!(!chat.ask_in_flight);
+
+        // A different terminal message still gets its own row.
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t2", 1, "error", json!({ "message": "hiccup" })));
+        chat.apply_provider_event(&pev("t2", 2, "failed", json!({ "message": "fatal" })));
+        let e = rows(&chat, MessageRole::Error);
+        assert_eq!(e.len(), 2);
+        assert_eq!(e[1].content, "fatal");
+    }
+
+    #[test]
+    fn esc_state_survives_an_informational_error_and_only_failed_clears_it() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "error", json!({ "message": "x" })));
+        chat.apply_provider_event(&pev("t1", 2, "progress", json!({ "summary": "still" })));
+        assert!(chat.ask_in_flight);
+        chat.apply_provider_event(&pev("t1", 3, "failed", json!({ "message": "x" })));
+        assert!(!chat.ask_in_flight);
+    }
+
+    #[test]
+    fn events_after_done_are_ignored() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "done", json!({})));
+        let n = chat.messages.len();
+        assert!(!chat.apply_provider_event(&pev("t1", 2, "error", json!({ "message": "late" }))));
+        assert!(!chat.apply_provider_event(&pev("t1", 3, "failed", json!({ "message": "late" }))));
+        assert_eq!(chat.messages.len(), n);
     }
 
     #[test]

@@ -4547,15 +4547,76 @@ test("A2: stop cancels the active ASK and waits before shutting the bridge down"
   assert.equal(sc.out.filter((r) => r.type === "task_result").length, 0);
 });
 
-test("A2: a failing ASK keeps the error record and closes the turn with a terminal error event", async () => {
+test("A4b: a failing ASK keeps the error record and closes the turn with a terminal failed event", async () => {
   const sc = startAskSidecar({ submitTask: async () => { throw new Error("boom"); } });
   await sc.wait(30);
   sc.send({ op: "prompt", message: "hello", mode: "ask" });
   await sc.wait(40);
   assert.ok(sc.out.some((r) => r.type === "error" && r.message === "boom"));
   const evs = providerEvents(sc.out);
-  assert.deepEqual(evs.map((e) => e.kind), ["error"]);
+  assert.deepEqual(evs.map((e) => e.kind), ["failed"]);
   assert.equal(evs[0].message, "boom");
+  const recordIdx = sc.out.findIndex((r) => r.type === "error" && r.message === "boom");
+  const failedIdx = sc.out.findIndex((r) => r.type === "provider_event" && r.kind === "failed");
+  assert.ok(recordIdx < failedIdx, "the {type:error} record precedes the terminal failed");
+  await sc.stop();
+});
+
+test("A4b: a non-terminal provider error stays informational; the turn continues to a single done", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = startAskSidecar({ submitTask });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "hello", mode: "ask" });
+  await sc.wait(30);
+  state.onEvent({ provider: "codex", kind: "error", message: "stream hiccup" });
+  state.onEvent({ provider: "codex", kind: "progress", summary: "retrying" });
+  state.resolveAnswer({ kind: "answer", provider: "codex", model: "m", answer: "ok" });
+  await sc.wait(30);
+  const evs = providerEvents(sc.out);
+  assert.deepEqual(evs.map((e) => e.kind), ["error", "progress", "done"]);
+  assert.deepEqual(evs.map((e) => e.seq), [1, 2, 3]);
+  assert.equal(evs[0].message, "stream hiccup");
+  const terminals = evs.filter((e) => ["done", "cancelled", "failed"].includes(e.kind));
+  assert.equal(terminals.length, 1);
+  assert.equal(evs.at(-1).kind, "done");
+  await sc.stop();
+});
+
+test("A4b: a provider error followed by a thrown failure ends with exactly one terminal failed and drops later events", async () => {
+  let emit;
+  let rejectRun;
+  const submitTask = (args) => {
+    if (!args.signal) return Promise.resolve({ kind: "plan", taskId: "t" });
+    emit = args.onEvent;
+    return new Promise((_, reject) => { rejectRun = reject; });
+  };
+  const sc = startAskSidecar({ submitTask });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "hello", mode: "ask" });
+  await sc.wait(30);
+  emit({ provider: "codex", kind: "error", message: "boom" });
+  rejectRun(new Error("boom"));
+  await sc.wait(30);
+  emit({ provider: "codex", kind: "text", text: "late" });
+  await sc.wait(20);
+  const evs = providerEvents(sc.out);
+  assert.deepEqual(evs.map((e) => e.kind), ["error", "failed"]);
+  assert.deepEqual(evs.map((e) => e.seq), [1, 2]);
+  assert.equal(JSON.stringify(sc.out).includes("late"), false);
+  await sc.stop();
+});
+
+test("A4b: a provider cannot smuggle a terminal kind through onEvent", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = startAskSidecar({ submitTask });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "hello", mode: "ask" });
+  await sc.wait(30);
+  state.onEvent({ provider: "codex", kind: "failed", message: "x" });
+  state.onEvent({ provider: "codex", kind: "done" });
+  state.resolveAnswer({ kind: "answer", provider: "codex", model: "m", answer: "ok" });
+  await sc.wait(30);
+  assert.deepEqual(providerEvents(sc.out).map((e) => e.kind), ["done"]);
   await sc.stop();
 });
 
