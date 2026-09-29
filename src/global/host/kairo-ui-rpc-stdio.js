@@ -621,6 +621,9 @@ export async function runKairoUiRpcStdio({
   // queued). Every provider_event / terminal record is written only while
   // its turn is still the active, unclosed one, so late or foreign events
   // are dropped. `finishAsk` is idempotent: the first terminal kind wins.
+  // Terminal kinds are exactly `done`, `cancelled` and `failed`; a provider's
+  // own `error` event is informational and never ends the turn.
+  const ASK_TERMINAL_KINDS = new Set(["done", "cancelled", "failed"]);
   let activeAsk = null;
   let askTurnCounter = 0;
 
@@ -678,6 +681,9 @@ export async function runKairoUiRpcStdio({
     const onEvent = (event) => {
       if (ask.closed || activeAsk !== ask || ask.controller.signal.aborted) return;
       if (!event || typeof event.kind !== "string") return;
+      // Terminal kinds are owned by the sidecar (finishAsk); a provider can
+      // only send informational events, including a non-terminal `error`.
+      if (ASK_TERMINAL_KINDS.has(event.kind)) return;
       if (event.provider) ask.provider = event.provider;
       const { kind, ...rest } = event;
       // The final answer travels in `task_result`; never repeat its text here.
@@ -705,7 +711,7 @@ export async function runKairoUiRpcStdio({
       }
       const message_ = err?.message ?? String(err);
       writeOut({ type: "error", message: message_ });
-      finishAsk(ask, "error", { message: message_ });
+      finishAsk(ask, "failed", { message: message_ });
       return;
     }
     if (ask.closed) return; // cancelled/timed out meanwhile: drop the late result
