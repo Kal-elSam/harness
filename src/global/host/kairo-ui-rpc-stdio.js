@@ -411,6 +411,7 @@ export async function runKairoUiRpcStdio({
   saveDraft: saveDraftImpl = saveDraftDefault,
   setMode: setModeImpl = (args) => defaultConversation().setMode(args),
   submitTask: submitTaskImpl = (args) => defaultConversation().submitTask(args),
+  askCancelWaitMs = 5000,
   snapshot: snapshotImpl = (args) => defaultConversation().snapshot(args),
   showPlan: showPlanImpl = (args) => defaultConversation().showPlan(args),
   decidePlan: decidePlanImpl = (args) => defaultConversation().decidePlan(args),
@@ -614,6 +615,126 @@ export async function runKairoUiRpcStdio({
   let buffer = "";
   let stopped = false;
 
+  // ---- ASK turn lifecycle (A2) ------------------------------------------
+  // Exactly one ASK runs at a time: {turnId, sessionId, controller, seq,
+  // provider, emitted, closed, promise}. A second `prompt` is rejected (not
+  // queued). Every provider_event / terminal record is written only while
+  // its turn is still the active, unclosed one, so late or foreign events
+  // are dropped. `finishAsk` is idempotent: the first terminal kind wins.
+  let activeAsk = null;
+  let askTurnCounter = 0;
+
+  const emitAskRecord = (ask, kind, fields = {}) => {
+    ask.seq += 1;
+    writeOut({
+      type: "provider_event",
+      turnId: ask.turnId,
+      sessionId: ask.sessionId,
+      seq: ask.seq,
+      provider: fields.provider ?? ask.provider,
+      kind,
+      ...fields
+    });
+  };
+
+  const finishAsk = (ask, kind, fields = {}) => {
+    if (ask.closed) return;
+    emitAskRecord(ask, kind, fields);
+    ask.closed = true;
+    if (activeAsk === ask) activeAsk = null;
+  };
+
+  // Abort the active ASK, wait (bounded) for its provider run to settle, then
+  // emit the terminal `cancelled` record. Safe to call with no active ASK.
+  const cancelActiveAsk = async () => {
+    const ask = activeAsk;
+    if (!ask) return false;
+    ask.controller.abort();
+    let timer = null;
+    await Promise.race([
+      ask.promise.catch(() => {}),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, askCancelWaitMs);
+        timer.unref?.();
+      })
+    ]);
+    if (timer) clearTimeout(timer);
+    finishAsk(ask, "cancelled");
+    return true;
+  };
+
+  const runAskTurn = async ({ message, mode }) => {
+    const ask = {
+      turnId: `ask-${Date.now().toString(36)}-${++askTurnCounter}`,
+      sessionId: activeKairoSessionId ?? null,
+      controller: new AbortController(),
+      seq: 0,
+      provider: null,
+      emitted: false,
+      closed: false,
+      promise: null
+    };
+    activeAsk = ask;
+    const onEvent = (event) => {
+      if (ask.closed || activeAsk !== ask || ask.controller.signal.aborted) return;
+      if (!event || typeof event.kind !== "string") return;
+      if (event.provider) ask.provider = event.provider;
+      const { kind, ...rest } = event;
+      // The final answer travels in `task_result`; never repeat its text here.
+      if (kind === "final") delete rest.text;
+      ask.emitted = true;
+      emitAskRecord(ask, kind, rest);
+    };
+    ask.promise = (async () =>
+      submitTaskImpl({
+        cwd,
+        task: message,
+        mode,
+        sessionId: ask.sessionId,
+        signal: ask.controller.signal,
+        onEvent
+      }))();
+    let result;
+    try {
+      result = await ask.promise;
+    } catch (err) {
+      if (ask.closed) return;
+      if (ask.controller.signal.aborted) {
+        finishAsk(ask, "cancelled");
+        return;
+      }
+      const message_ = err?.message ?? String(err);
+      writeOut({ type: "error", message: message_ });
+      finishAsk(ask, "error", { message: message_ });
+      return;
+    }
+    if (ask.closed) return; // cancelled/timed out meanwhile: drop the late result
+    if (result?.kind === "cancelled" || ask.controller.signal.aborted) {
+      finishAsk(ask, "cancelled");
+      return;
+    }
+    if (result?.provider) ask.provider = result.provider;
+    if (result?.kind === "answer") {
+      writeOut({
+        type: "task_result",
+        kind: "answer",
+        provider: result.provider ?? null,
+        model: result.model ?? null,
+        answer: result.answer ?? ""
+      });
+      // Turns that streamed provider_events already showed their activity;
+      // the legacy notice would repeat the answer text, so it is kept only
+      // for turns that emitted nothing.
+      if (!ask.emitted) {
+        writeOut({
+          type: "notice",
+          message: `${result.provider ?? "kairo"}${result.model ? ` · ${result.model}` : ""}: ${result.answer ?? ""}`
+        });
+      }
+    }
+    finishAsk(ask, "done");
+  };
+
   const applyEngineAndMaybeTranscript = async ({
     reloadTranscript = false,
     reapplyArchitect = false
@@ -717,6 +838,14 @@ export async function runKairoUiRpcStdio({
         // Pi `prompt` (ASK answers; PLAN/AGENT produce a plan only).
         const message = typeof cmd.message === "string" ? cmd.message : "";
         const mode = normalizeWorkMode(cmd.mode ?? currentMode);
+        if (mode === "ask") {
+          if (activeAsk) {
+            writeOut({ type: "error", message: "A previous request is still running" });
+            return;
+          }
+          await runAskTurn({ message, mode });
+          return;
+        }
         const result = await submitTaskImpl({
           cwd,
           task: message,
@@ -1189,7 +1318,9 @@ export async function runKairoUiRpcStdio({
         });
         await emitSnapshot();
       } else if (op === "abort") {
-        await bridge.request({ type: "abort" });
+        // An active ASK owns the abort; Pi's abort is only forwarded when no
+        // ASK is running (Pi-owned operations keep their own semantics).
+        if (!(await cancelActiveAsk())) await bridge.request({ type: "abort" });
       } else if (op === "compact") {
         await bridge.request({ type: "compact" });
         writeOut({ type: "notice", message: "Compaction requested" });
@@ -1218,6 +1349,7 @@ export async function runKairoUiRpcStdio({
           });
         }
       } else if (op === "new_session") {
+        await cancelActiveAsk();
         await persistOutgoingDraft(cmd.draft);
         const result = await bridge.request({ type: "new_session" });
         if (result?.cancelled) {
@@ -1240,6 +1372,7 @@ export async function runKairoUiRpcStdio({
         await emitActiveDraft({ text: "" });
         await restoreAndEmitMode();
       } else if (op === "switch_session") {
+        await cancelActiveAsk();
         const sessionPath = typeof cmd.sessionPath === "string" ? cmd.sessionPath : "";
         if (!sessionPath) {
           writeOut({ type: "error", message: "switch_session requires sessionPath" });
@@ -1265,6 +1398,7 @@ export async function runKairoUiRpcStdio({
         await emitActiveDraft();
         await restoreAndEmitMode();
       } else if (op === "switch_session_index") {
+        await cancelActiveAsk();
         sessionFiles = listSessionFilesImpl({ cwd, env });
         const index = Number(cmd.index);
         if (!Number.isInteger(index) || index < 0 || index >= sessionFiles.length) {
@@ -1319,6 +1453,7 @@ export async function runKairoUiRpcStdio({
         writeOut({ type: "sessions", sessions: await annotateSessions(sessionFiles) });
         writeOut({ type: "notice", message: `Session renamed to "${name}"` });
       } else if (op === "fork_session") {
+        await cancelActiveAsk();
         // Pi RPC's `fork` takes an `entryId` and edits/regenerates history
         // from a specific past message (its response is `{text, cancelled}`,
         // not a new session) — not what "fork the whole session" means here.
@@ -1386,6 +1521,7 @@ export async function runKairoUiRpcStdio({
         await restoreAndEmitMode();
         writeOut({ type: "notice", message: "Session forked — now on the new copy." });
       } else if (op === "stop") {
+        await cancelActiveAsk();
         if (activeKairoSessionId && projectRoot) {
           const draftText = typeof cmd.draft === "string" ? cmd.draft : "";
           try {

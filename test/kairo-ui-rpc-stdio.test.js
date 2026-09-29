@@ -148,9 +148,12 @@ test("sidecar emits ready then routes prompt via submitTask (never Pi prompt)", 
   await new Promise((r) => setTimeout(r, 80));
 
   assert.equal(piPromptCalls.length, 0, "U4a: never forward Enter to Pi prompt");
-  assert.deepEqual(submitted, [
-    { cwd: "/project", task: "hello", mode: "ask", sessionId: null }
-  ]);
+  // A2: ASK turns additionally carry the cancel signal and event sink.
+  assert.equal(submitted.length, 1);
+  const { signal, onEvent, ...rest } = submitted[0];
+  assert.deepEqual(rest, { cwd: "/project", task: "hello", mode: "ask", sessionId: null });
+  assert.ok(signal && typeof signal.aborted === "boolean");
+  assert.equal(typeof onEvent, "function");
   const result = out.find((r) => r.type === "task_result");
   assert.equal(result?.kind, "answer");
   assert.equal(result?.answer, "ok");
@@ -4302,4 +4305,279 @@ test("U5b: ops.rollback.preview/apply wire through DI", async () => {
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();
   await runPromise;
+});
+
+// ---- A2: ASK provider events and cancellation --------------------------------
+
+function startAskSidecar({ submitTask, askCancelWaitMs, piLog = [] }) {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    submitTask,
+    ...(askCancelWaitMs != null ? { askCancelWaitMs } : {}),
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          piLog.push({ type: cmd.type, atOutLen: out.length });
+          if (cmd.type === "get_state") {
+            return { type: "response", command: "get_state", success: true, data: { sessionId: "s1", model: ctx?.activeModel ?? { id: architectModel.id } } };
+          }
+          if (cmd.type === "set_model") {
+            ctx?.setModel?.({ id: cmd.modelId });
+            return { type: "response", command: "set_model", success: true };
+          }
+          if (cmd.type === "new_session") {
+            return { type: "response", command: "new_session", success: true, data: { cancelled: false } };
+          }
+          if (cmd.type === "abort") return { type: "response", command: "abort", success: true };
+          if (cmd.type === "get_messages") {
+            return { type: "response", command: "get_messages", success: true, data: { messages: [] } };
+          }
+          return null;
+        }
+      })
+    )
+  });
+  const send = (cmd) => stdin.write(`${JSON.stringify(cmd)}\n`);
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const stop = async () => {
+    send({ op: "stop" });
+    stdin.end();
+    await runPromise;
+  };
+  return { out, send, wait, stop, runPromise };
+}
+
+// A hanging fake provider: resolves {kind:"cancelled"} once its signal aborts,
+// exactly like the real conversation service does.
+function hangingAsk() {
+  const state = { calls: [], signal: null, onEvent: null };
+  const submitTask = (args) => {
+    state.calls.push(args);
+    if (!args.signal) return Promise.resolve({ kind: "plan", taskId: "t1" });
+    state.signal = args.signal;
+    state.onEvent = args.onEvent;
+    return new Promise((resolve) => {
+      args.signal.addEventListener("abort", () => resolve({ kind: "cancelled" }), { once: true });
+      state.resolveAnswer = (r) => resolve(r);
+    });
+  };
+  return { state, submitTask };
+}
+
+const providerEvents = (out) => out.filter((r) => r.type === "provider_event");
+
+test("A2: ASK forwards provider events with matching turnId/sessionId and strictly increasing seq, then done", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = startAskSidecar({ submitTask });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "hello", mode: "ask" });
+  await sc.wait(30);
+  state.onEvent({ provider: "codex", kind: "progress", summary: "thinking" });
+  state.onEvent({ provider: "codex", kind: "tool_start", id: "1", name: "shell" });
+  state.onEvent({ provider: "codex", kind: "tool_end", id: "1", name: "shell", ok: true });
+  state.resolveAnswer({ kind: "answer", provider: "codex", model: "m", answer: "final" });
+  await sc.wait(30);
+  const evs = providerEvents(sc.out);
+  assert.deepEqual(evs.map((e) => e.kind), ["progress", "tool_start", "tool_end", "done"]);
+  assert.deepEqual(evs.map((e) => e.seq), [1, 2, 3, 4]);
+  assert.equal(new Set(evs.map((e) => e.turnId)).size, 1);
+  assert.ok(evs[0].turnId);
+  assert.ok(evs.every((e) => e.sessionId === null));
+  assert.equal(evs[0].provider, "codex");
+  assert.equal(evs[0].summary, "thinking");
+  assert.equal(evs[3].provider, "codex");
+  assert.equal(sc.out.filter((r) => r.type === "task_result").length, 1);
+  assert.equal(sc.out.filter((r) => r.type === "notice" && /final/.test(r.message)).length, 0, "no duplicate notice when events were streamed");
+  await sc.stop();
+});
+
+test("A2: forwarded final event never repeats the answer text (task_result carries it once)", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = startAskSidecar({ submitTask });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "hello", mode: "ask" });
+  await sc.wait(30);
+  state.onEvent({ provider: "claude", kind: "final", text: "SECRET-ANSWER" });
+  state.resolveAnswer({ kind: "answer", provider: "claude", model: "m", answer: "SECRET-ANSWER" });
+  await sc.wait(30);
+  const occurrences = JSON.stringify(sc.out).split("SECRET-ANSWER").length - 1;
+  assert.equal(occurrences, 1);
+  await sc.stop();
+});
+
+test("A2: an ASK turn with no provider events keeps the legacy task_result + notice", async () => {
+  const sc = startAskSidecar({ submitTask: async () => ({ kind: "answer", provider: "claude", model: "opus", answer: "plain" }) });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "hello", mode: "ask" });
+  await sc.wait(40);
+  assert.equal(sc.out.filter((r) => r.type === "task_result").length, 1);
+  assert.equal(sc.out.filter((r) => r.type === "notice" && /plain/.test(r.message)).length, 1);
+  assert.deepEqual(providerEvents(sc.out).map((e) => e.kind), ["done"]);
+  await sc.stop();
+});
+
+test("A2: a second prompt while an ASK is active is rejected, not queued", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = startAskSidecar({ submitTask });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "one", mode: "ask" });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "two", mode: "ask" });
+  await sc.wait(30);
+  assert.equal(state.calls.length, 1);
+  assert.ok(sc.out.some((r) => r.type === "error" && /previous request is still running/i.test(r.message)));
+  await sc.stop();
+});
+
+test("A2: abort cancels the active ASK, emits cancelled and no task_result, and does not forward to Pi", async () => {
+  const { state, submitTask } = hangingAsk();
+  const piLog = [];
+  const sc = startAskSidecar({ submitTask, piLog });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "hello", mode: "ask" });
+  await sc.wait(30);
+  sc.send({ op: "abort" });
+  await sc.wait(50);
+  assert.equal(state.signal.aborted, true);
+  assert.deepEqual(providerEvents(sc.out).map((e) => e.kind), ["cancelled"]);
+  assert.equal(sc.out.filter((r) => r.type === "task_result").length, 0);
+  assert.equal(piLog.filter((c) => c.type === "abort").length, 0);
+  // The ASK slot is free again after cancel.
+  sc.send({ op: "prompt", message: "again", mode: "ask" });
+  await sc.wait(30);
+  assert.equal(state.calls.length, 2);
+  await sc.stop();
+});
+
+test("A2: late provider events after cancel are dropped", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = startAskSidecar({ submitTask });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "hello", mode: "ask" });
+  await sc.wait(30);
+  const lateEmit = state.onEvent;
+  sc.send({ op: "abort" });
+  await sc.wait(40);
+  lateEmit({ provider: "codex", kind: "text", text: "late" });
+  state.resolveAnswer?.({ kind: "answer", provider: "codex", model: "m", answer: "late answer" });
+  await sc.wait(30);
+  assert.deepEqual(providerEvents(sc.out).map((e) => e.kind), ["cancelled"]);
+  assert.equal(JSON.stringify(sc.out).includes("late"), false);
+  await sc.stop();
+});
+
+test("A2: an ASK that ignores abort is released after the bounded wait and its late result is dropped", async () => {
+  let resolveLate;
+  const submitTask = (args) => {
+    if (!args.signal) return Promise.resolve({ kind: "plan", taskId: "t" });
+    return new Promise((resolve) => { resolveLate = resolve; });
+  };
+  const sc = startAskSidecar({ submitTask, askCancelWaitMs: 40 });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "hello", mode: "ask" });
+  await sc.wait(30);
+  sc.send({ op: "abort" });
+  await sc.wait(120);
+  assert.deepEqual(providerEvents(sc.out).map((e) => e.kind), ["cancelled"]);
+  resolveLate({ kind: "answer", provider: "x", model: "m", answer: "too late" });
+  await sc.wait(30);
+  assert.equal(sc.out.filter((r) => r.type === "task_result").length, 0);
+  await sc.stop();
+});
+
+for (const [name, op, piType, extra] of [
+  ["new_session", "new_session", "new_session", {}],
+]) {
+  test(`A2: ${name} cancels the active ASK and waits for it before touching Pi`, async () => {
+    const { state, submitTask } = hangingAsk();
+    const piLog = [];
+    const sc = startAskSidecar({ submitTask, piLog });
+    await sc.wait(30);
+    sc.send({ op: "prompt", message: "hello", mode: "ask" });
+    await sc.wait(30);
+    sc.send({ op, ...extra });
+    await sc.wait(80);
+    assert.equal(state.signal.aborted, true);
+    const cancelledAt = sc.out.findIndex((r) => r.type === "provider_event" && r.kind === "cancelled");
+    assert.ok(cancelledAt >= 0);
+    const piCall = piLog.find((c) => c.type === piType);
+    assert.ok(piCall, `Pi ${piType} was called`);
+    assert.ok(piCall.atOutLen > cancelledAt, "Pi session switch happened after the cancelled record");
+    assert.equal(sc.out.filter((r) => r.type === "task_result").length, 0);
+    await sc.stop();
+  });
+}
+
+test("A2: switch_session, switch_session_index and fork_session cancel the active ASK first", async () => {
+  for (const cmd of [
+    { op: "switch_session", sessionPath: "/tmp/nope.jsonl" },
+    { op: "switch_session_index", index: 0 },
+    { op: "fork_session" }
+  ]) {
+    const { state, submitTask } = hangingAsk();
+    const sc = startAskSidecar({ submitTask });
+    await sc.wait(30);
+    sc.send({ op: "prompt", message: "hello", mode: "ask" });
+    await sc.wait(30);
+    sc.send(cmd);
+    await sc.wait(60);
+    assert.equal(state.signal.aborted, true, `${cmd.op} aborts the ASK`);
+    assert.deepEqual(providerEvents(sc.out).map((e) => e.kind), ["cancelled"], cmd.op);
+    await sc.stop();
+  }
+});
+
+test("A2: stop cancels the active ASK and waits before shutting the bridge down", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = startAskSidecar({ submitTask });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "hello", mode: "ask" });
+  await sc.wait(30);
+  await sc.stop();
+  assert.equal(state.signal.aborted, true);
+  assert.deepEqual(providerEvents(sc.out).map((e) => e.kind), ["cancelled"]);
+  assert.equal(sc.out.filter((r) => r.type === "task_result").length, 0);
+});
+
+test("A2: a failing ASK keeps the error record and closes the turn with a terminal error event", async () => {
+  const sc = startAskSidecar({ submitTask: async () => { throw new Error("boom"); } });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "hello", mode: "ask" });
+  await sc.wait(40);
+  assert.ok(sc.out.some((r) => r.type === "error" && r.message === "boom"));
+  const evs = providerEvents(sc.out);
+  assert.deepEqual(evs.map((e) => e.kind), ["error"]);
+  assert.equal(evs[0].message, "boom");
+  await sc.stop();
+});
+
+test("A2: abort with no active ASK still forwards to Pi", async () => {
+  const piLog = [];
+  const sc = startAskSidecar({ submitTask: async () => ({ kind: "answer", answer: "x" }), piLog });
+  await sc.wait(30);
+  sc.send({ op: "abort" });
+  await sc.wait(40);
+  assert.equal(piLog.filter((c) => c.type === "abort").length, 1);
+  assert.equal(providerEvents(sc.out).length, 0);
+  await sc.stop();
+});
+
+test("A2: PLAN prompts get no signal/onEvent and emit no provider events", async () => {
+  const { state, submitTask } = hangingAsk();
+  const sc = startAskSidecar({ submitTask });
+  await sc.wait(30);
+  sc.send({ op: "prompt", message: "do it", mode: "plan" });
+  await sc.wait(40);
+  assert.equal(state.calls[0].signal, undefined);
+  assert.equal(state.calls[0].onEvent, undefined);
+  assert.equal(providerEvents(sc.out).length, 0);
+  await sc.stop();
 });
