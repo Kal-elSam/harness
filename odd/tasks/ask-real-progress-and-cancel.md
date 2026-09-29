@@ -87,6 +87,8 @@ Keep the daily chat path `prompt -> service.submitTask -> askQuestion -> askProv
   - **Paths that restore**: every transcript emit (`switch_session`, `switch_session_index`, `new_session`, `compact`) merges the DESTINATION session's turns (the Kairo id is now resolved before emitting); `kairo resume <id>` emits a startup transcript only when that session has stored ASK turns (today's behavior is otherwise unchanged); `fork_session` emits Pi rows only (fork is not copied, same as `ask-history.json`, which `createSession` never copies); new sessions start empty. `/clear` (`slash.clear`) also removes `ask-events.jsonl`; `ask-history.json` keeps its service-owned behavior.
   - **Known limits**: `compact` shrinks Pi's rows so stored anchors clamp to the end; Pi live events between submit and a later fetch are counted by the submit-time fetch only.
 
+- (2026-09-29) **A4 review assessment** — commit `a01c48589` (cumulative range from `8ff8b4f5d`: A2+A3+A4b+A4): tier **high**, 12 files / 3287 lines. Native consent envelope presented with an explicit recommendation to review; user chose **Skip this time** (`declined_this_candidate`); no review record. Recorded as declined, not reviewed: A2, A3, A4b and A4 are all unreviewed (independent evidence only: JS 264/264 over six focused suites, `cargo test` 191/191). Reviewed boundary remains `8ff8b4f5d`. Accumulated unreviewed risk is now the largest item for delivery (R9): a reviewer will face ~3300 lines; slice PRs per S1/S2/S3.
+
 ## Next step
 
 A5 (PTY mock) next, then A6. A4 persists exactly the frozen terminal kinds `done|cancelled|failed`. Local commits only, strict TDD, no push, no provider calls; real validation and remote ops need separate authorization.
