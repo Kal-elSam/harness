@@ -29,7 +29,7 @@ Keep the daily chat path `prompt -> service.submitTask -> askQuestion -> askProv
 ## Delivery
 
 - Strategy: `feature-branch-chain` (already chosen for the U-plan); commits accumulate on `feat/ratatui-host`. Forecast: ~700-900 authored lines across A1-A5 (exceeds 400) -> slice boundaries below; each slice is a candidate for a later PR under the tracker branch. No push without a separate authorization.
-- Slices: S1 = A1+A2 (JS provider events + cancel plumbing); S2 = A3 (Rust reducer/Esc); S3 = A4+A5 (persistence/restore + PTY mock).
+- Slices (corrected 2026-09-29 to respect commit order and dependencies; the earlier grouping put B1/B2 before A5, but B1/B2 edits the PTY script A5 creates): **S1** = A1 + A2 (+ their docs), up to `1d2e8025b`; **S2** = A3 + A4b (Rust **and** JS), `e894f251d`..`5610d0a53`; **S3** = A4 + A5 + B1/B2 + test stabilization + A6 docs, `a01c48589`..`29418f76d`. 20 commits ahead of `origin/feat/ratatui-host` at `29418f76d` (nothing pushed). Native review boundary is `8ff8b4f5d` (A1 reviewed); reviewing per slice means base = previous slice end, head = slice end (needs a local branch or worktree at each slice end) and separate consent per slice.
 - Native RDD: after each work-unit commit run `gentle-ai review assess --base-ref <last reviewed boundary> --committed-only --json`; medium/high relays the consent envelope; record the assessed tier and outcome per task.
 
 ## Tasks
