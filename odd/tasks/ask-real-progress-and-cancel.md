@@ -40,7 +40,7 @@ Keep the daily chat path `prompt -> service.submitTask -> askQuestion -> askProv
 - [x] A3 Rust: `provider_event` branch in the ingest chain (+ exclusion list), `ChatState::apply_provider_event` reusing the existing reducer, `ask_in_flight` flag (not `is_streaming`), Esc sends `abort` during ASK, cancelled/error rows, final answer rendered once. Inline `#[cfg(test)]` tests
 - [x] A4b Distinct terminal error kind: the sidecar's non-terminal provider `error` event and the terminal `error` share `kind:"error"`, so Rust treats a non-fatal provider error as terminal and clears `ask_in_flight` early (Esc would then stop cancelling). Fix: terminal failure uses a distinct kind (e.g. `failed`), non-terminal `error` stays informational; update sidecar (JS) + Rust reducer + tests RED->GREEN — done 2026-09-29
 - [x] A4 Persistence/restore: per-Kairo-session append-only `ask-events.jsonl` (monotonic `seq`, `turnId`, `at`, Pi anchor), one user + one terminal record per turn, merged with Pi rows on restore without replacing or duplicating; `ask-history.json` stays the prompt-context source and `/clear` clears both. Restore reproduces the same visible sequence
-- [ ] A5 PTY mock: extend the mock sidecar with `prompt`/`abort`; cancel ends the child and restores the terminal (alt-screen leave, exit 0) at 60/100/160
+- [ ] A5 PTY mock: extend the mock sidecar with `prompt`/`abort`; cancel ends the child and restores the terminal (alt-screen leave, exit 0) at 60/100/160 — PARTIAL 2026-09-29: harness + 4 scenarios done and PASS at 60/100/160; NOT ticked because two proven product defects (B1 quit orphans the provider tree, B2 tool id reused across turns) fail acceptance (c); see Progress
 - [ ] A6 Close: full suite once (JS + Rust), update R8/acceptance wording in the parent doc, record tiers/outcomes; real Codex validation requires a separate authorization
 
 ## Acceptance criteria
@@ -89,9 +89,27 @@ Keep the daily chat path `prompt -> service.submitTask -> askQuestion -> askProv
 
 - (2026-09-29) **A4 review assessment** — commit `a01c48589` (cumulative range from `8ff8b4f5d`: A2+A3+A4b+A4): tier **high**, 12 files / 3287 lines. Native consent envelope presented with an explicit recommendation to review; user chose **Skip this time** (`declined_this_candidate`); no review record. Recorded as declined, not reviewed: A2, A3, A4b and A4 are all unreviewed (independent evidence only: JS 264/264 over six focused suites, `cargo test` 191/191). Reviewed boundary remains `8ff8b4f5d`. Accumulated unreviewed risk is now the largest item for delivery (R9): a reviewer will face ~3300 lines; slice PRs per S1/S2/S3.
 
+- (2026-09-29) A5 harness done, **task NOT ticked** (delegated writer; scripts/docs only, no product code touched). **Design**: the REAL chain Rust binary -> real `kairo-ui-rpc-stdio.js` (via wrapper `scripts/fixtures/kairo-ui-ask-e2e-sidecar.mjs`, which injects `openBridge`, `listPiSessionFilesForCwd`, `resolveProjectRoot`, `submitTask` and pins `planAsk` to provider `codex`) -> real `createConversationService.submitTask/askQuestion` -> real `askProvider` (quick-ask.js, real detached spawn + process-group TERM->KILL, real ask-events persistence) -> a FAKE provider script (`kairo-ui-ask-e2e-fake-provider.mjs`, emits Codex-shaped JSONL, spawns a grandchild in the same process group, writes pids to a pid file). The mock protocol sidecar was NOT extended. Runner: `scripts/kairo-ui-ask-pty-e2e.py` (reuses helpers of `kairo-ui-pty-e2e.py`; own minimal VT screen emulator since `pyte` is unavailable), npm `smoke:kairo-ui-ask-pty`. State in mkdtemp dirs with `HOME`/`HARNESS_HOME` redirected and a scrubbed env; no provider CLI, network or real home touched. **Does NOT prove**: any real provider/model, the real Codex `--json` schema, Pi itself.
+  - **Results** (`KAIRO_UI_BINARY=$PWD/crates/kairo-ui/target/release/kairo-ui KAIRO_ASK_PTY_SCENARIOS=progress,cancel,switch,restore,collide,quit npm run smoke:kairo-ui-ask-pty`; the default set is the first four):
+
+    | scenario | 60x30 | 100x30 | 160x48 |
+    |---|---|---|---|
+    | progress (progress row before answer, answer once on screen and one `task_result`, one terminal `done`, no duplicate notice, `?1049l`, cursor visible, exit 0) | PASS | PASS | PASS |
+    | cancel (Esc: child AND grandchild dead, "Cancelled" once, no answer, follow-up turn answered, exit 0) | PASS | PASS | PASS |
+    | cancel-stubborn (child ignores SIGTERM; KILL escalation ends the tree) | - | PASS | - |
+    | switch (Ctrl+N new_session and Ctrl+L picker `switch_session_index` during an ASK: tree dead, no old-turn event after the new transcript, old text absent, destination restores its own cancelled turn once, follow-up works, exit 0) | PASS | PASS | PASS |
+    | restore (relaunch same session: same visible sequence, each item once, in order) | PASS | PASS | PASS |
+    | collide (opt-in; same tool id on two turns) | FAIL | FAIL | FAIL |
+    | quit (opt-in; Ctrl+C during an ASK) | FAIL | FAIL | FAIL |
+
+    Two consecutive full runs were identical (deterministic). The stray check (`ps` for the unique marker) is empty after every PASSing scenario and after the whole run; the `quit` orphans were killed by the harness `finally`.
+  - **B1 (product defect, NOT fixed) quit during an ASK orphans the provider tree**: `BridgeClient::stop_with_draft` (`crates/kairo-ui/src/bridge.rs:415`) writes the `stop` op and immediately `child.kill()`s the sidecar, so `cancelActiveAsk` never runs (sidecar log never shows the `stop` handled, pid log shows no SIGTERM) and the detached provider group survives the exit (exit code 0, terminal restored, child + grandchild still alive). Violates acceptance "session switch/new/fork/quit during ASK cancel it without leaking children". Fix candidates (need authorization): wait a bounded time for the sidecar to exit after `stop` before `kill()`, or have the host signal the ASK process group.
+  - **B2 (product defect, NOT fixed) tool row collision across turns**: `ChatState::find_tool_row_mut` (`crates/kairo-ui/src/chat.rs:275`) matches a Tool row by `tool_call_id` over the whole history, so a later turn's `tool_start` with an id already used rewrites the earlier turn's row instead of adding one (turn 2 shows no tool row; turn 1's flips back to running). A fresh `codex exec` per ASK turn very likely restarts item ids (`item_0`...; UNVERIFIED against the real CLI), so this is likely real. Fix candidates: scope the lookup to rows after the current turn's user row, or key by turnId+id. The default fake uses per-turn unique ids; `collide` reproduces the defect with fixed ids.
+  - **Regression check**: `KAIRO_UI_BINARY=... npm run smoke:kairo-ui-pty` -> PASS at 60x30/100x30/160x48 (existing mock-sidecar smoke unchanged). `test/kairo-ui-rpc-stdio.test.js` was not rerun: no sidecar or shared fixture used by it was touched. Review assessment: not run yet for this commit.
+
 ## Next step
 
-A5 (PTY mock) next, then A6. A4 persists exactly the frozen terminal kinds `done|cancelled|failed`. Local commits only, strict TDD, no push, no provider calls; real validation and remote ops need separate authorization.
+Decide B1/B2 (need authorization to change product code; a bounded writer with RED tests from the opt-in `quit`/`collide` scenarios, then re-tick A5), then A6 (close: full suite once, R8 wording, tiers/outcomes). Local commits only, strict TDD, no push, no provider calls; real validation and remote ops need separate authorization.
 
 ## Route declaration
 

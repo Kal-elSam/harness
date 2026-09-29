@@ -93,6 +93,10 @@ output and alt-screen enter/leave. Run it locally against `npm pack` output on
 the host platform. The mock sidecar comes from the repo checkout and does
 **NOT** prove real providers.
 
+## ASK PTY end-to-end (real sidecar, fake provider)
+
+`npm run smoke:kairo-ui-ask-pty` (needs `python3`; use `KAIRO_UI_BINARY=<path>` to pin the binary) drives the built binary in a real PTY (60x30, 100x30, 160x48) through the **real** `kairo-ui-rpc-stdio.js`, the real conversation service and the real `askProvider`, with only the edges faked: Pi is an in-process fake bridge and the provider CLI is `scripts/fixtures/kairo-ui-ask-e2e-fake-provider.mjs` (JSONL events plus a grandchild process), wired by `scripts/fixtures/kairo-ui-ask-e2e-sidecar.mjs`. Default scenarios: `progress` (incremental rows, one answer, terminal restored), `cancel` (Esc kills the child **and** grandchild, also a SIGTERM-ignoring one; "Cancelled" row; UI stays responsive), `switch` (new session and picker switch during an ASK cancel it; nothing leaks into the next session), `restore` (relaunching the same session replays the same visible sequence once). Opt-in scenarios that currently **fail on product defects**: `quit` (quitting during an ASK orphans the provider tree) and `collide` (a tool id reused by a later turn overwrites the earlier turn's row); run them with `KAIRO_ASK_PTY_SCENARIOS=progress,cancel,switch,restore,collide,quit`. State lives in temp dirs (`HOME`/`HARNESS_HOME` redirected). **Not proven:** any real provider CLI or model, the real Codex `--json` schema (the fake emits the shape `mapCodexEvent` expects), Pi itself, or network behavior.
+
 Binaries are gitignored; this README and `.gitkeep` markers stay in source control.
 U6 packaging is verified on all four native runners (mock sidecar only). This does not imply
 total product parity, and it does not prove real providers.
