@@ -41,7 +41,7 @@ Keep the daily chat path `prompt -> service.submitTask -> askQuestion -> askProv
 - [x] A4b Distinct terminal error kind: the sidecar's non-terminal provider `error` event and the terminal `error` share `kind:"error"`, so Rust treats a non-fatal provider error as terminal and clears `ask_in_flight` early (Esc would then stop cancelling). Fix: terminal failure uses a distinct kind (e.g. `failed`), non-terminal `error` stays informational; update sidecar (JS) + Rust reducer + tests RED->GREEN — done 2026-09-29
 - [x] A4 Persistence/restore: per-Kairo-session append-only `ask-events.jsonl` (monotonic `seq`, `turnId`, `at`, Pi anchor), one user + one terminal record per turn, merged with Pi rows on restore without replacing or duplicating; `ask-history.json` stays the prompt-context source and `/clear` clears both. Restore reproduces the same visible sequence
 - [x] A5 PTY mock: extend the mock sidecar with `prompt`/`abort`; cancel ends the child and restores the terminal (alt-screen leave, exit 0) at 60/100/160 — DONE 2026-09-29: real-chain PTY e2e (fake provider) with progress, cancel, cancel-stubborn, switch, quit, restore, collide all PASS at 60/100/160 after the B1/B2 fixes; see Progress
-- [ ] A6 Close: full suite once (JS + Rust), update R8/acceptance wording in the parent doc, record tiers/outcomes; real Codex validation requires a separate authorization
+- [x] A6 Close: full suite once (JS + Rust), update R8/acceptance wording in the parent doc, record tiers/outcomes; real Codex validation requires a separate authorization — DONE with limits: see the 2026-09-29 A6 entry (real-provider validation NOT done)
 
 ## Acceptance criteria
 
@@ -123,9 +123,11 @@ Keep the daily chat path `prompt -> service.submitTask -> askQuestion -> askProv
 
     `npm run smoke:kairo-ui-pty` (same binary) -> PASS at all three widths. Marker `ps` check for `kairo-ask-e2e` empty after every run. `test/kairo-ui-rpc-stdio.test.js` not rerun (JS untouched).
 
+- (2026-09-29) **A6 close** — Full suite run once at the boundary, then once more after a test-only hardening. JS (`node --test --test-timeout=120000` over the `npm test` globs): first run 2235 tests, 2233 pass, **1 fail**, 1 skipped; the failure `sidecar stays alive and emits engine_unavailable after Pi exit` never reproduced in isolation (3/3), under CPU load (6/6) or as a whole file (6/6); it was a race in the test (two fixed 30 ms sleeps), hardened in `05bed7c42` to wait for `ready` with a bounded poll (cause not proven, evidence is the clean rerun). Rerun: **2235 tests, 2234 pass, 0 fail, 1 skipped** (`live direct Pi host ...`, needs `KAIRO_LIVE_PI_TEST=1`), exit 0. Rust: `cargo test` **197 passed, 0 failed**. PTY (`npm run smoke:kairo-ui-ask-pty`, real Rust binary + real sidecar/service/askProvider + FAKE provider CLI): progress, cancel, switch, quit, restore, collide PASS at 60x30/100x30/160x48; cancel-stubborn PASS at 100x30; `npm run smoke:kairo-ui-pty` PASS. Native RDD: cumulative range from `8ff8b4f5d` (A2..A6) tier **high**, 17 files / 4587 lines; consent envelope presented with a recommendation to review; user chose **Skip this time** (`declined_this_candidate`). **A1 is the only reviewed unit; A2, A3, A4, A4b, A5 and the B1/B2 fix are UNREVIEWED.** Not proven: any real provider (Codex `--json` schema still unverified, real Pi hung-shutdown path), real-provider streaming/tool rows. Real validation needs a separate authorization. R8 stays partial; total parity NOT declared. Non-blocking follow-ups: `failed` adoption of a foreign turn, advisory findings listed in the A1 review entry.
+
 ## Next step
 
-A6 (close: full suite once, R8 wording, tiers/outcomes, review assessment for the A5 + B1/B2 commits). Local commits only, no push, no provider calls; real validation and remote ops need separate authorization.
+A6 done. Remaining for this feature: (1) delivery via R9 with `feature-branch-chain` slices S1 (A1+A2), S2 (A3, A4b, B1/B2 Rust), S3 (A4+A5) — push/PR/merge need separate authorization; (2) optional real-provider validation (Codex `--json` schema + a real ASK turn) with separate authorization; (3) native review of the unreviewed slices if the user grants consent per slice.
 
 ## Route declaration
 
