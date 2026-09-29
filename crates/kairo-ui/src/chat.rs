@@ -132,6 +132,9 @@ pub(crate) struct ProviderTurn {
     /// Message of the most recent informational `error`, so a terminal
     /// `failed` carrying the same message adds no second Error row.
     last_error: Option<String>,
+    /// First message index of this turn: provider tool ids restart on every
+    /// ASK turn (fresh provider process), so id lookup never looks before it.
+    row_floor: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,6 +149,10 @@ pub struct ChatState {
     pub ask_in_flight: bool,
     pub(crate) provider_turn: Option<ProviderTurn>,
     pub(crate) finished_turns: Vec<String>,
+    /// During a transcript replay: index of the current replayed user turn's
+    /// first row, so a tool id reused by a later replayed ASK turn does not
+    /// rewrite an earlier turn's row. `None` outside a replay.
+    pub(crate) replay_floor: Option<usize>,
 }
 
 impl Default for ChatState {
@@ -164,6 +171,7 @@ impl Default for ChatState {
             ask_in_flight: false,
             provider_turn: None,
             finished_turns: Vec::new(),
+            replay_floor: None,
         }
     }
 }
@@ -271,9 +279,17 @@ impl ChatState {
         });
     }
 
-    /// Find the open `Tool` row for `tool_call_id`, if any.
+    /// Find the open `Tool` row for `tool_call_id` (Pi ids are globally
+    /// unique, so live this searches the whole history; a replay searches only
+    /// the current replayed user turn).
     fn find_tool_row_mut(&mut self, tool_call_id: &str) -> Option<&mut ChatMessage> {
-        self.messages.iter_mut().rev().find(|m| {
+        let floor = self.replay_floor.unwrap_or(0);
+        self.find_tool_row_from(tool_call_id, floor)
+    }
+
+    fn find_tool_row_from(&mut self, tool_call_id: &str, floor: usize) -> Option<&mut ChatMessage> {
+        let floor = floor.min(self.messages.len());
+        self.messages[floor..].iter_mut().rev().find(|m| {
             m.role == MessageRole::Tool && m.tool_call_id.as_deref() == Some(tool_call_id)
         })
     }
@@ -306,6 +322,7 @@ impl ChatState {
         for row in rows {
             match row.get("type").and_then(|v| v.as_str()) {
                 Some("user_message") => {
+                    self.replay_floor = Some(self.messages.len());
                     if let Some(content) = row.get("content").and_then(|v| v.as_str()) {
                         self.push_replay_message(MessageRole::User, content);
                     }
@@ -318,6 +335,7 @@ impl ChatState {
                 _ => self.apply_sidecar_event(row),
             }
         }
+        self.replay_floor = None;
         // A restored session is never mid-stream — close every row so no
         // ghost "…" placeholder survives the switch.
         self.is_streaming = false;
@@ -387,6 +405,7 @@ impl ChatState {
                     has_text: false,
                     activity_row: None,
                     last_error: None,
+                    row_floor: self.messages.len(),
                 });
             }
         }
@@ -515,7 +534,8 @@ impl ChatState {
             Some(err) => (format_tool_done(name, err, ""), err),
         };
         if let Some(id) = id.as_deref() {
-            if let Some(row) = self.find_tool_row_mut(id) {
+            let floor = self.provider_turn.as_ref().map_or(0, |t| t.row_floor);
+            if let Some(row) = self.find_tool_row_from(id, floor) {
                 row.content = content;
                 row.is_error = is_error;
                 return;
@@ -1271,6 +1291,60 @@ mod tests {
         let b = t.iter().find(|m| m.tool_call_id.as_deref() == Some("b")).unwrap();
         assert!(!a.is_error && a.content.starts_with('\u{2713}'));
         assert!(b.is_error && b.content.starts_with('\u{2716}'));
+    }
+
+    fn tool_states(chat: &ChatState) -> Vec<(String, bool)> {
+        rows(chat, MessageRole::Tool)
+            .iter()
+            .map(|m| (m.content.clone(), m.is_error))
+            .collect()
+    }
+
+    #[test]
+    fn a_tool_id_reused_by_a_later_ask_turn_makes_a_new_row() {
+        let mut chat = ChatState::default();
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t1", 1, "tool_start", json!({ "id": "item_0", "name": "shell" })));
+        chat.apply_provider_event(&pev("t1", 2, "tool_end", json!({ "id": "item_0", "name": "shell", "ok": true })));
+        chat.apply_provider_event(&pev("t1", 3, "done", json!({})));
+        chat.begin_ask();
+        chat.apply_provider_event(&pev("t2", 1, "tool_start", json!({ "id": "item_0", "name": "read" })));
+        let mid = tool_states(&chat);
+        assert_eq!(mid.len(), 2, "turn 2 must add its own row: {mid:?}");
+        assert!(mid[0].0.starts_with('\u{2713}'), "turn 1 row untouched: {mid:?}");
+        assert!(mid[1].0.starts_with('\u{25B6}'), "turn 2 row running: {mid:?}");
+        chat.apply_provider_event(&pev("t2", 2, "tool_end", json!({ "id": "item_0", "name": "read", "ok": false })));
+        let end = tool_states(&chat);
+        assert!(end[0].0.starts_with('\u{2713}') && !end[0].1, "turn 1 untouched by turn 2 end: {end:?}");
+        assert!(end[1].0.starts_with('\u{2716}') && end[1].1, "{end:?}");
+    }
+
+    #[test]
+    fn replayed_turns_reusing_a_tool_id_stay_separate_rows() {
+        let mut chat = ChatState::default();
+        chat.replace_from_sidecar_transcript(&[
+            json!({ "type": "user_message", "content": "one" }),
+            json!({ "type": "tool_execution_start", "toolName": "shell", "toolCallId": "item_0" }),
+            json!({ "type": "tool_execution_end", "toolName": "shell", "toolCallId": "item_0", "isError": false }),
+            json!({ "type": "user_message", "content": "two" }),
+            json!({ "type": "tool_execution_start", "toolName": "read", "toolCallId": "item_0" }),
+            json!({ "type": "tool_execution_end", "toolName": "read", "toolCallId": "item_0", "isError": true }),
+        ]);
+        let t = tool_states(&chat);
+        assert_eq!(t.len(), 2, "{t:?}");
+        assert!(t[0].0.starts_with('\u{2713}') && !t[0].1, "{t:?}");
+        assert!(t[1].0.starts_with('\u{2716}') && t[1].1, "{t:?}");
+    }
+
+    #[test]
+    fn pi_tool_execution_correlation_stays_global_by_tool_call_id() {
+        let mut chat = ChatState::default();
+        chat.apply_sidecar_event(&json!({ "type": "tool_execution_start", "toolName": "bash", "toolCallId": "p1" }));
+        chat.push_replay_message(MessageRole::User, "next");
+        chat.apply_sidecar_event(&json!({ "type": "tool_execution_end", "toolName": "bash", "toolCallId": "p1", "isError": false }));
+        let t = tool_states(&chat);
+        assert_eq!(t.len(), 1, "{t:?}");
+        assert!(t[0].0.starts_with('\u{2713}'), "{t:?}");
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -88,6 +89,27 @@ impl BridgeClient {
         let mut child = Command::new("sh")
             .arg("-c")
             .arg(format!("cat >> '{}'", out.display()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let _ = child.stdout.take();
+        let (_tx, rx) = mpsc::channel();
+        let stdin = child.stdin.take().expect("stdin");
+        Ok(Self {
+            child,
+            stdin,
+            events: rx,
+            stopped: false,
+        })
+    }
+
+    /// Test double: run `sh -c script` as the "sidecar" (stdin piped).
+    #[cfg(test)]
+    fn spawn_shell_script(script: &str) -> std::io::Result<Self> {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(script)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -418,14 +440,80 @@ impl BridgeClient {
         }
         self.stopped = true;
         let _ = self.send_op("stop", serde_json::json!({ "draft": draft }));
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.wait_or_kill(STOP_EXIT_BOUND);
         Ok(())
     }
+
+    /// Give the sidecar up to `bound` to exit on its own after `stop` (so an
+    /// active ASK's provider process tree is cancelled and reaped by the
+    /// sidecar), then kill it. Returns immediately once the child has exited.
+    fn wait_or_kill(&mut self, bound: Duration) {
+        let deadline = Instant::now() + bound;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => {}
+                Err(_) => break,
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(STOP_POLL);
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
+
+/// Upper bound on how long quit waits for the sidecar to exit after `stop`.
+/// The sidecar's ASK cancel waits up to `askCancelWaitMs` (5000 ms; provider
+/// TERM->KILL after 2000 ms fits inside it), plus draft save and Pi shutdown
+/// margin. The terminal is already restored when this runs.
+const STOP_EXIT_BOUND: Duration = Duration::from_millis(8000);
+const STOP_POLL: Duration = Duration::from_millis(10);
 
 impl Drop for BridgeClient {
     fn drop(&mut self) {
         let _ = self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_waits_for_a_cooperative_sidecar_to_exit_on_its_own() {
+        // Exits cleanly only after it read the `stop` line and "cleaned up".
+        let mut b = BridgeClient::spawn_shell_script("read l; sleep 0.4; exit 0").unwrap();
+        let t = Instant::now();
+        b.stop_with_draft("").unwrap();
+        let took = t.elapsed();
+        assert!(took >= Duration::from_millis(350), "must wait for cleanup: {took:?}");
+        assert!(took < Duration::from_secs(3), "{took:?}");
+        let status = b.child.try_wait().unwrap().expect("reaped");
+        assert!(status.success(), "exited on its own, not killed: {status:?}");
+    }
+
+    #[test]
+    fn stop_kills_a_hung_sidecar_after_the_bound() {
+        let mut b = BridgeClient::spawn_shell_script("trap '' TERM; while :; do sleep 1; done").unwrap();
+        let t = Instant::now();
+        b.send_op("stop", serde_json::json!({})).unwrap();
+        b.stopped = true;
+        b.wait_or_kill(Duration::from_millis(300));
+        let took = t.elapsed();
+        assert!(took >= Duration::from_millis(300), "{took:?}");
+        assert!(took < Duration::from_secs(3), "{took:?}");
+        assert!(b.child.try_wait().unwrap().is_some(), "killed and reaped");
+    }
+
+    #[test]
+    fn stop_does_not_wait_when_the_sidecar_already_exited() {
+        let mut b = BridgeClient::spawn_shell_script("exit 0").unwrap();
+        thread::sleep(Duration::from_millis(100));
+        let t = Instant::now();
+        b.stop_with_draft("x").unwrap();
+        assert!(t.elapsed() < Duration::from_millis(500), "{:?}", t.elapsed());
     }
 }

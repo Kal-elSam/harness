@@ -18,14 +18,15 @@ Scenarios (each at every requested size):
   quit      quitting (Ctrl+C) during an ASK leaves no orphan process, exit 0
   restore   after a completed + a cancelled turn, relaunching the same session
             replays the same visible sequence (each item exactly once, in order)
+  collide   a tool id reused by two ASK turns yields two independent Tool rows
 
 NOT proven here: real provider CLIs (none is invoked), the Codex `--json`
 schema (the fake emits the shape mapCodexEvent expects), Pi itself (fake bridge).
 No network. All state lives in a temp dir; HOME/HARNESS_HOME point into it.
 
 Env: KAIRO_UI_BINARY, KAIRO_PTY_SIZES ("60x30,100x30,160x48"),
-     KAIRO_ASK_PTY_SCENARIOS (default "progress,cancel,switch,restore"; the
-     opt-in "quit" and "collide" scenarios currently FAIL on product defects),
+     KAIRO_ASK_PTY_SCENARIOS (default: all of progress,cancel,switch,quit,
+     restore,collide),
      KAIRO_ASK_PTY_KEEP=1 to keep the temp dirs, KAIRO_PTY_EVIDENCE_DIR.
 """
 
@@ -62,15 +63,14 @@ EVIDENCE_DIR = Path(os.environ.get("KAIRO_PTY_EVIDENCE_DIR", "/tmp/kairo-pty-ask
 SESSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 ANSWER = "ZEBRA-ANSWER-"
 ALL_SCENARIOS = ("progress", "cancel", "switch", "quit", "restore", "collide")
-# Two scenarios currently FAIL on proven product defects and stay opt-in until
-# those are fixed, so the default smoke does not cry wolf:
-#   quit    : the Rust host SIGKILLs the sidecar right after writing `stop`, so
-#             cancelActiveAsk never runs and the detached provider tree is
-#             orphaned.
-#   collide : chat.rs `find_tool_row_mut` matches a Tool row by id across the
-#             WHOLE history, so a tool id reused by a later turn rewrites the
-#             earlier turn's row instead of adding one.
-DEFAULT_SCENARIOS = ("progress", "cancel", "switch", "restore")
+# Regression notes for the two scenarios that once exposed product defects
+# (both fixed; kept in the default set):
+#   quit    : the host used to SIGKILL the sidecar right after writing `stop`, so
+#             cancelActiveAsk never ran and the detached provider tree was
+#             orphaned; it now waits (bounded) for the sidecar to exit first.
+#   collide : a tool id reused by a later turn used to rewrite the earlier
+#             turn's Tool row; provider tool lookup is now scoped per turn.
+DEFAULT_SCENARIOS = ("progress", "cancel", "switch", "quit", "restore", "collide")
 
 
 def _load_base():
