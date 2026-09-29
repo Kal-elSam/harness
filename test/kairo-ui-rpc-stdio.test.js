@@ -76,6 +76,14 @@ function mockOpenBridge(factory) {
   };
 }
 
+// Poll with a bound instead of fixed sleeps: under the parallel full suite the
+// sidecar can take longer than a fixed delay to open the bridge / react.
+async function pollUntil(pred, ms = 3000) {
+  const deadline = Date.now() + ms;
+  while (!pred() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+  return pred();
+}
+
 test("sidecar emits ready then routes prompt via submitTask (never Pi prompt)", async () => {
   let childRef = null;
   const out = [];
@@ -131,7 +139,9 @@ test("sidecar emits ready then routes prompt via submitTask (never Pi prompt)", 
     })
   });
 
-  await new Promise((r) => setTimeout(r, 50));
+  // Wait for the event instead of a fixed 50 ms: under the parallel full suite the
+  // sidecar can take longer than that to open the bridge and emit `ready`.
+  assert.ok(await pollUntil(() => out.some((r) => r.type === "ready")), "ready emitted");
   assert.equal(out[0]?.type, "ready");
   assert.equal(out[0]?.engine?.status, "connected");
   assert.equal(out[0]?.snapshot?.schema, KAIRO_WORKSPACE_SNAPSHOT_SCHEMA);
@@ -145,7 +155,7 @@ test("sidecar emits ready then routes prompt via submitTask (never Pi prompt)", 
   assert.equal(modeEvt?.mode, "ask", "fail-closed default mode on ready");
 
   stdin.write(`${JSON.stringify({ op: "prompt", message: "hello" })}\n`);
-  await new Promise((r) => setTimeout(r, 80));
+  assert.ok(await pollUntil(() => out.some((r) => r.type === "task_result")), "task_result emitted");
 
   assert.equal(piPromptCalls.length, 0, "U4a: never forward Enter to Pi prompt");
   // A2: ASK turns additionally carry the cancel signal and event sink.
@@ -287,13 +297,6 @@ test("sidecar stays alive and emits engine_unavailable after Pi exit", async () 
     })
   });
 
-  // Poll with a bound instead of fixed 30 ms sleeps: under the parallel full
-  // suite the sidecar can take longer than that to open the bridge / react.
-  const pollUntil = async (pred, ms = 3000) => {
-    const deadline = Date.now() + ms;
-    while (!pred() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
-    return pred();
-  };
   // `ready` is emitted only after the bridge is open and its exit listener is
   // attached, so emitting `exit` before it could be lost.
   assert.ok(
