@@ -73,18 +73,13 @@ pub fn wrap_words(text: &str, width: usize) -> Vec<String> {
 
 impl AnalystOption {
     /// `<displayName> · <subscription>` — model AND subscription, so the same
-    /// model through two subscriptions is distinguishable. Recommended gets an
-    /// honest suffix.
+    /// model through two subscriptions is distinguishable. No star or rank.
     pub fn row_label(&self) -> String {
-        let mut label = format!("{} · {}", self.display_name, self.subscription);
-        if self.recommended {
-            label.push_str("  ★ recommended");
-        }
-        label
+        format!("{} · {}", self.display_name, self.subscription)
     }
 
     /// Secondary line: the sidecar's own plain-language explanation only,
-    /// never invented and never a number.
+    /// never invented and never a number. Flat list (T26) usually has none.
     pub fn description(&self) -> String {
         self.explanation
             .as_deref()
@@ -577,47 +572,39 @@ pub struct AnalystPickerState {
 }
 
 impl AnalystPickerState {
-    /// Build from the sidecar's `preflight` record's own `analystCatalog`
-    /// (`{ recommendedModel, models: [...] }`) — see
-    /// project-team-sidecar.js's `preflightProjectTeam`. An entry missing
-    /// its required fields is dropped rather than rendered half-invented;
-    /// an empty/absent catalog yields an empty picker.
+    /// Build from the sidecar's `preflight` `analystCatalog` (T26 flat list:
+    /// `{ recommendedModel: null, models: [...], alternatives: [] }`). An entry
+    /// missing required fields is dropped; an empty catalog yields an empty
+    /// picker. Legacy payloads that still send `alternatives` are merged into
+    /// the one list so nothing usable is lost; there is never a star.
     pub fn from_analyst_catalog(catalog: &Value) -> Self {
-        let recommended_key = catalog
-            .get("recommendedModel")
-            .and_then(|m| m.get("candidateKey"))
-            .and_then(|v| v.as_str());
-        let parse_list = |key: &str, allow_recommended: bool| -> Vec<AnalystOption> {
+        let parse_list = |key: &str| -> Vec<AnalystOption> {
             let models = catalog
                 .get(key)
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            // The sidecar already ranks across every subscription (one
-            // classification, T24): keep its order. Never auto-promote the
-            // first row — ★ only for a real recommendation.
-            models
-                .iter()
-                .filter_map(|m| Self::parse_option(m, recommended_key, allow_recommended))
-                .collect()
+            models.iter().filter_map(Self::parse_option).collect()
         };
+        let mut options = parse_list("models");
+        for row in parse_list("alternatives") {
+            if !options.iter().any(|o| o.candidate_key == row.candidate_key) {
+                options.push(row);
+            }
+        }
         Self {
-            options: parse_list("models", true),
-            // Manual alternatives are never starred, whatever the pointer says.
-            alternatives: parse_list("alternatives", false),
+            options,
+            alternatives: Vec::new(),
+            view: PickerView::Main,
             ..Self::default()
         }
     }
 
-    fn parse_option(
-        m: &Value,
-        recommended_key: Option<&str>,
-        allow_recommended: bool,
-    ) -> Option<AnalystOption> {
+    fn parse_option(m: &Value) -> Option<AnalystOption> {
         let available = m.get("available").and_then(|v| v.as_bool()).unwrap_or(false);
         let access_verified = m.get("accessVerified").and_then(|v| v.as_bool()).unwrap_or(true);
-        // Product rule (T23): only VERIFIED, available analysts are rows.
-        // Unknown access is reported separately, never listed.
+        // Only VERIFIED, available analysts are rows. Unknown access is
+        // reported separately, never listed.
         if !available || !access_verified {
             return None;
         }
@@ -641,7 +628,6 @@ impl AnalystPickerState {
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
             .unwrap_or_default();
-        let recommended = allow_recommended && recommended_key == Some(candidate_key.as_str());
         let explanation = m
             .get("explanation")
             .and_then(|v| v.as_str())
@@ -655,7 +641,7 @@ impl AnalystPickerState {
             display_name,
             subscription,
             available,
-            recommended,
+            recommended: false,
             tags,
             explanation,
         })
@@ -699,10 +685,11 @@ impl AnalystPickerState {
         true
     }
 
-    /// Footer text: outcome of a verification that just ran, the "N
-    /// subscriptions not verified" acknowledgement, per-provider cause lines
-    /// (when the sidecar sent them), then any other notice (`pickerNotice`
-    /// fallback, inline refusals).
+    /// Footer text: outcome counts of a verification that just ran, then at
+    /// most one compact partial-comparison / failed-check acknowledgement that
+    /// points to `d`. Per-provider cause lines live in the detail view — never
+    /// dumped into the list footer (T25). A leftover notice (no causes/details)
+    /// still paints in the footer so older sidecars keep a fallback.
     pub fn footer_text(&self) -> Option<String> {
         let mut parts: Vec<String> = self.outcome_lines.clone();
         if self.not_verified > 0 {
@@ -712,16 +699,20 @@ impl AnalystPickerState {
                 if self.not_verified == 1 { "" } else { "s" }
             ));
         }
-        if self.phase == PickerPhase::Ready && !self.details.is_empty() {
+        let detail_count = match self.phase {
+            PickerPhase::Ready => self.details.len() + self.causes.len(),
+            _ => 0,
+        };
+        if self.phase == PickerPhase::Ready && detail_count > 0 {
             parts.push(format!(
-                "{} check{} did not pass — d = details",
-                self.details.len(),
-                if self.details.len() == 1 { "" } else { "s" }
+                "{} detail line{} — d = details",
+                detail_count,
+                if detail_count == 1 { "" } else { "s" }
             ));
-        }
-        parts.extend(self.causes.iter().map(ExclusionCause::line));
-        if let Some(notice) = &self.notice {
-            parts.push(notice.clone());
+        } else if let Some(notice) = &self.notice {
+            if !notice.is_empty() {
+                parts.push(notice.clone());
+            }
         }
         if parts.is_empty() {
             None
@@ -731,11 +722,17 @@ impl AnalystPickerState {
     }
 
     /// The detail lines `d` shows in the current phase: the failed checks of
-    /// the live run while verifying, else those of the run that just ended.
+    /// the live run while verifying; otherwise failed checks of the run that
+    /// just ended plus per-provider exclusion causes. Notices stay in the
+    /// footer fallback path — never duplicated here.
     pub fn detail_source(&self) -> Vec<String> {
         match (&self.phase, &self.progress) {
             (PickerPhase::Verifying, Some(progress)) => progress.detail_lines(),
-            (PickerPhase::Ready, _) => self.details.clone(),
+            (PickerPhase::Ready, _) => {
+                let mut lines = self.details.clone();
+                lines.extend(self.causes.iter().map(ExclusionCause::line));
+                lines
+            }
             _ => Vec::new(),
         }
     }
@@ -763,19 +760,8 @@ impl AnalystPickerState {
         }
     }
 
-    /// `m`: switch between the top-three list and the remaining verified
-    /// options. Selection restarts at the top.
-    pub fn toggle_view(&mut self) {
-        if self.phase != PickerPhase::Ready {
-            return;
-        }
-        self.view = match self.view {
-            PickerView::Main => PickerView::Manual,
-            PickerView::Manual => PickerView::Main,
-        };
-        self.selected = 0;
-        self.scroll.set(0);
-    }
+    /// `m` is a no-op (T26): one flat list, no Other view.
+    pub fn toggle_view(&mut self) {}
 
     /// Move highlight forward, wrapping across the active view's rows.
     /// Preserves `notice` (e.g. preflight provider-absence copy).
@@ -857,27 +843,16 @@ impl AnalystPickerState {
     /// the cockpit's own ProjectOverlay onSelect
     /// (`{model, selectionSource, recommendationTags, choice}`).
     pub fn analyst_payload(option: &AnalystOption) -> Value {
-        let selection_source = if option.recommended {
-            "recommended"
-        } else {
-            "manual"
-        };
-        let choice: Option<&str> = if option.tags.iter().any(|t| t == "quality") {
-            Some("quality")
-        } else if option.tags.iter().any(|t| t == "efficient") {
-            Some("efficient")
-        } else {
-            None
-        };
+        // T26: every pick is an explicit human choice (never a star).
         serde_json::json!({
             "model": {
                 "adapterId": option.adapter_id,
                 "modelId": option.model_id,
                 "displayName": option.display_name,
             },
-            "selectionSource": selection_source,
-            "recommendationTags": option.tags,
-            "choice": choice,
+            "selectionSource": "manual",
+            "recommendationTags": [],
+            "choice": null,
         })
     }
 }
@@ -908,20 +883,19 @@ mod tests {
     }
 
     #[test]
-    fn recommended_model_is_flagged_and_unavailable_rows_are_filtered() {
-        // The sidecar already puts the star first (T24): the host keeps its order.
+    fn unavailable_rows_are_filtered_and_no_star_is_painted() {
         let picker = AnalystPickerState::from_analyst_catalog(&json!({
             "recommendedModel": { "candidateKey": "codex::gpt" },
             "models": [
-                { "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt", "displayName": "GPT", "available": true, "recommendationTags": ["quality"] },
-                { "candidateKey": "claude::sonnet", "adapterId": "claude", "modelId": "sonnet", "displayName": "Claude Sonnet", "available": true, "recommendationTags": [] },
-                { "candidateKey": "cursor::x", "adapterId": "cursor", "modelId": "x", "displayName": "Cursor X", "available": false, "recommendationTags": [] }
+                { "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt", "displayName": "GPT",
+                  "available": true, "accessVerified": true, "recommendationTags": ["quality"] },
+                { "candidateKey": "claude::down", "adapterId": "claude", "modelId": "down", "displayName": "Down",
+                  "available": false, "accessVerified": true }
             ]
         }));
-        assert_eq!(picker.options.len(), 2, "unavailable Cursor X must be filtered out");
-        assert_eq!(picker.options[0].adapter_id, "codex");
-        assert!(picker.options[0].recommended);
-        assert!(picker.options[0].row_label().contains("recommended"));
+        assert_eq!(picker.options.len(), 1);
+        assert!(!picker.options[0].recommended);
+        assert!(!picker.options[0].row_label().contains("recommended"));
         assert!(!picker.options.iter().any(|o| o.adapter_id == "cursor"));
     }
 
@@ -1012,9 +986,9 @@ mod tests {
         assert_eq!(payload["model"]["adapterId"], "codex");
         assert_eq!(payload["model"]["modelId"], "gpt");
         assert_eq!(payload["model"]["displayName"], "GPT");
-        assert_eq!(payload["selectionSource"], "recommended");
-        assert_eq!(payload["choice"], "quality");
-        assert_eq!(payload["recommendationTags"][0], "quality");
+        assert_eq!(payload["selectionSource"], "manual");
+        assert!(payload["choice"].is_null());
+        assert_eq!(payload["recommendationTags"], serde_json::json!([]));
     }
 
     #[test]
@@ -1132,10 +1106,13 @@ mod tests {
     }
 
     #[test]
-    fn footer_shows_causes_then_notice_and_falls_back_to_notice_alone() {
+    fn footer_keeps_compact_acknowledgement_and_moves_causes_behind_d() {
         let mut picker = AnalystPickerState::default();
-        picker.notice = Some("Claude: cuota agotada".into());
-        assert_eq!(picker.footer_text().as_deref(), Some("Claude: cuota agotada"));
+        picker.notice = Some("Comparación parcial — d = detalles".into());
+        assert_eq!(
+            picker.footer_text().as_deref(),
+            Some("Comparación parcial — d = detalles")
+        );
         picker.causes = vec![ExclusionCause {
             adapter_id: "codex".into(),
             provider: "codex".into(),
@@ -1145,8 +1122,12 @@ mod tests {
         }];
         assert_eq!(
             picker.footer_text().as_deref(),
-            Some("codex: no verificado — comparación parcial\nClaude: cuota agotada")
+            Some("1 detail line — d = details")
         );
+        assert!(picker
+            .detail_source()
+            .iter()
+            .any(|line| line.contains("no verificado")));
         assert_eq!(AnalystPickerState::default().footer_text(), None);
     }
 
@@ -1174,28 +1155,28 @@ mod tests {
     }
 
     #[test]
-    fn main_and_manual_views_are_separate_lists_and_the_star_only_lives_in_main() {
+    fn flat_list_merges_legacy_alternatives_and_never_stars_or_toggles_other() {
         let mut picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
         assert_eq!(picker.view, PickerView::Main);
-        assert_eq!(picker.options.len(), 3);
-        assert_eq!(picker.alternatives.len(), 1, "unusable and unverified rows are dropped; only the verified manual row stays");
-        assert!(picker.options[0].recommended);
-        assert!(picker.alternatives.iter().all(|o| !o.recommended));
+        assert_eq!(picker.alternatives.len(), 0);
+        assert!(picker.options.len() >= 3, "legacy alternatives fold into options");
+        assert!(picker.options.iter().all(|o| !o.recommended));
+        let before = picker.view;
         picker.toggle_view();
-        assert_eq!(picker.view, PickerView::Manual);
-        assert_eq!(picker.active().len(), 1);
-        assert_eq!(picker.selected, 0);
-        picker.toggle_view();
-        assert_eq!(picker.view, PickerView::Main);
+        assert_eq!(picker.view, before, "m is a no-op");
     }
 
+
     #[test]
-    fn rows_keep_the_sidecar_order_and_the_manual_view_lists_only_verified_rows() {
+    fn flat_list_keeps_sidecar_models_and_folds_verified_legacy_alternatives() {
         let picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
         let keys: Vec<&str> = picker.options.iter().map(|o| o.candidate_key.as_str()).collect();
-        assert_eq!(keys, vec!["codex::a", "claude::a", "codex::nofit"], "no host-side re-sort");
-        assert_eq!(picker.alternatives[0].model_id, "unscored", "unverified rows never list");
+        assert!(keys.contains(&"codex::a"));
+        assert!(keys.contains(&"cursor::unscored"), "legacy manual row folds in");
+        assert!(!keys.iter().any(|k| *k == "claude::unv"), "unverified never lists");
+        assert_eq!(picker.alternatives.len(), 0);
     }
+
 
     #[test]
     fn the_same_model_through_two_subscriptions_keeps_both_rows_keyed_by_candidate_key() {
@@ -1396,7 +1377,7 @@ mod tests {
     }
 
     #[test]
-    fn footer_order_is_outcomes_then_not_verified_then_causes_then_notice() {
+    fn footer_order_is_outcomes_then_not_verified_then_compact_details_pointer() {
         let picker = AnalystPickerState {
             outcome_lines: vec!["Cursor: 1 allowed · 0 denied · 0 unverified".into()],
             not_verified: 1,
@@ -1407,12 +1388,16 @@ mod tests {
                 models: 1,
                 reason: None,
             }],
-            notice: Some("extra".into()),
+            notice: Some("Comparación parcial — d = detalles".into()),
             ..Default::default()
         };
         assert_eq!(
             picker.footer_text().unwrap(),
-            "Cursor: 1 allowed · 0 denied · 0 unverified\n1 subscription not verified — the comparison is partial\nClaude: cuota agotada\nextra"
+            "Cursor: 1 allowed · 0 denied · 0 unverified\n1 subscription not verified — the comparison is partial\n1 detail line — d = details"
+        );
+        assert_eq!(
+            picker.detail_source(),
+            vec!["Claude: cuota agotada".to_string()]
         );
     }
 
@@ -1509,11 +1494,11 @@ mod tests {
     #[test]
     fn sidecar_order_is_authoritative_the_host_never_re_sorts_rows() {
         let picker = AnalystPickerState::from_analyst_catalog(&catalog_in_sidecar_order());
-        let order: Vec<&str> = picker.options.iter().map(|o| o.candidate_key.as_str()).collect();
-        assert_eq!(order, vec!["claude::sonnet", "codex::gpt"], "the host keeps the sidecar's order");
-        assert!(!picker.options[0].recommended);
-        assert!(picker.options[1].recommended, "the star stays on the row the sidecar pointed at");
+        let keys: Vec<&str> = picker.options.iter().map(|o| o.candidate_key.as_str()).collect();
+        assert_eq!(keys, vec!["claude::sonnet", "codex::gpt"], "host keeps sidecar order");
+        assert!(picker.options.iter().all(|o| !o.recommended));
     }
+
 
     fn catalog_in_sidecar_order() -> Value {
         json!({
@@ -1527,13 +1512,13 @@ mod tests {
 
     #[test]
     fn a_long_explanation_wraps_to_the_modal_width_and_the_row_height_follows() {
-        let long = "Recomendado para analizar este proyecto (Node.js): puesto 1 de 8 modelos distintos con evidencia comparable · lidera en código · razonamiento por debajo de GPT";
+        let long = "Recomendado para comprender este proyecto (Node.js) y proponer el equipo · destaca en código entre las opciones con evidencia comparable";
         let picker = AnalystPickerState::from_analyst_catalog(&json!({
             "models": [{ "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "displayName": "B", "available": true, "explanation": long }]
         }));
         let option = &picker.options[0];
         let lines = option.description_lines(40);
-        assert!(lines.len() >= 4, "{lines:?}");
+        assert!(lines.len() >= 3, "{lines:?}");
         assert!(lines.iter().all(|l| l.chars().count() <= 40), "{lines:?}");
         assert_eq!(lines.join(" "), long, "wrapping never drops or reorders words");
         assert_eq!(option.height_at(40), 1 + lines.len());

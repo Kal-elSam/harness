@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget};
 use ratatui_textarea::TextArea;
 
-use crate::analyst_picker::{AnalystPickerState, PickerPhase, PickerView};
+use crate::analyst_picker::{AnalystPickerState, PickerPhase};
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
 use crate::extension_ui::{ExtensionUiDialog, ExtensionUiMethod};
 use crate::layout::{split_work_main, ShellRegions};
@@ -535,16 +535,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         (PickerPhase::Verify, Some(plan)) => Some(plan.lines()),
         _ => None,
     };
-    let empty_copy = if picker.view == PickerView::Main && !picker.alternatives.is_empty() {
-        format!(
-            "No qualified analyst — press m for manual alternatives ({}).",
-            picker.alternatives.len()
-        )
-    } else if picker.view == PickerView::Manual {
-        "No manual alternatives for this project.".to_string()
-    } else {
-        "No ask-capable analyst model available for this project.".to_string()
-    };
+    let empty_copy = "No ask-capable analyst model available for this project.".to_string();
     let list_rows: u16 = picker
         .active()
         .iter()
@@ -620,17 +611,10 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     Clear.render(popup, buf);
     let title = match &picker.phase {
         PickerPhase::Ready if picker.show_details => " Verification details — d back · Esc close ".to_string(),
-        PickerPhase::Ready => match picker.view {
-            PickerView::Main => format!(
-                " Select analyst — top {} · m others ({}) · Enter · Esc · q quit ",
-                picker.options.len().max(1),
-                picker.alternatives.len()
-            ),
-            PickerView::Manual => format!(
-                " Other verified analysts — m top ({}) · Enter · Esc · q quit ",
-                picker.options.len()
-            ),
-        },
+        PickerPhase::Ready => format!(
+            " Select analyst — {} available · Enter · Esc · q quit ",
+            picker.options.len()
+        ),
         PickerPhase::Loading => " Select analyst — loading · Esc cancel · q/Ctrl+C quit ".to_string(),
         PickerPhase::Verify => " Verify access — Enter verify · Esc skip · q quit ".to_string(),
         PickerPhase::Verifying if picker.show_details => " Verification details — d back · Esc close (checks keep running) ".to_string(),
@@ -2798,9 +2782,10 @@ mod tests {
             "unavailable marker must not appear: {hay}"
         );
         assert!(
-            hay.contains("recommended"),
-            "recommended marker missing: {hay}"
+            !hay.contains("recommended") && !hay.contains("★"),
+            "flat list must not paint a star: {hay}"
         );
+        assert!(hay.contains("available"), "title reports how many are available: {hay}");
     }
 
     #[test]
@@ -2968,7 +2953,7 @@ mod tests {
     }
 
     #[test]
-    fn analyst_picker_modal_renders_each_exclusion_cause_with_distinct_wording() {
+    fn analyst_picker_modal_keeps_exclusion_causes_behind_d() {
         use crate::analyst_picker::{AnalystPickerState, ExclusionCause};
 
         let area = Rect::new(0, 0, 100, 30);
@@ -2985,10 +2970,16 @@ mod tests {
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
         assert!(hay.contains("No ask-capable analyst"), "empty message stays honest: {hay}");
-        assert!(hay.contains("claude: cuota agotada"), "{hay}");
-        assert!(hay.contains("codex: no verificado — comparación parcial"), "{hay}");
-        assert!(hay.contains("zed: sin benchmark (solo selección manual)"), "{hay}");
-        assert!(!hay.contains("no disponible"), "unknowns must not read as unavailable: {hay}");
+        assert!(hay.contains("d = details"), "footer points at details: {hay}");
+        assert!(!hay.contains("claude: cuota agotada"), "causes stay behind d: {hay}");
+        picker.toggle_details();
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let detail = buffer_text(&buf);
+        assert!(detail.contains("claude: cuota agotada"), "{detail}");
+        assert!(detail.contains("codex: no verificado — comparación parcial"), "{detail}");
+        assert!(detail.contains("zed: sin benchmark (solo selección manual)"), "{detail}");
+        assert!(!detail.contains("no disponible"), "unknowns must not read as unavailable: {detail}");
     }
 
     fn picker_with_views() -> crate::analyst_picker::AnalystPickerState {
@@ -3009,38 +3000,41 @@ mod tests {
     }
 
     #[test]
-    fn analyst_picker_main_view_shows_qualified_rows_with_explanation_and_advertises_the_manual_view() {
+    fn analyst_picker_flat_list_shows_verified_routes_without_other_or_star() {
         let area = Rect::new(0, 0, 100, 30);
         let picker = picker_with_views();
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
         assert!(hay.contains("Qualified Alpha"), "{hay}");
-        assert!(hay.contains("razonamiento excelente"), "per-row plain-language explanation missing: {hay}");
-        assert!(!hay.contains("0.80"), "decimals never reach the modal: {hay}");
-        assert!(hay.contains("Qualified Alpha · codex"), "rows are identified by model AND subscription: {hay}");
-        assert!(!hay.contains("Manual Unscored"), "manual rows stay out of the main view: {hay}");
-        assert!(hay.contains("m others (1)"), "the other verified options must be discoverable with their count: {hay}");
+        assert!(hay.contains("Manual Unscored"), "legacy alternatives fold into the one list: {hay}");
+        assert!(!hay.contains("Manual Unverified"), "unverified never lists: {hay}");
+        assert!(!hay.contains("m others"), "{hay}");
+        assert!(!hay.contains("recommended") && !hay.contains("★"), "{hay}");
+        assert!(hay.contains("available"), "{hay}");
     }
 
+
     #[test]
-    fn analyst_picker_manual_view_lists_only_verified_alternatives_and_points_back() {
+    fn analyst_picker_toggle_view_is_a_noop_on_the_flat_list() {
         let area = Rect::new(0, 0, 100, 30);
         let mut picker = picker_with_views();
+        let mut before_buf = Buffer::empty(area);
+        render_analyst_picker(&mut before_buf, area, &picker);
+        let before = buffer_text(&before_buf);
         picker.toggle_view();
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Other verified analysts"), "{hay}");
-        assert!(hay.contains("Manual Unscored"), "{hay}");
-        assert!(!hay.contains("Manual Unverified"), "unverified rows never list: {hay}");
-        assert!(!hay.contains("Qualified Alpha"), "{hay}");
-        assert!(!hay.contains("recommended"), "manual rows are never starred: {hay}");
-        assert!(hay.contains("m top (1)"), "{hay}");
+        assert!(!hay.contains("Other verified analysts"), "{hay}");
+        assert!(hay.contains("Qualified Alpha") && hay.contains("Manual Unscored"), "{hay}");
+        assert_eq!(picker.alternatives.len(), 0);
+        assert!(before.contains("available"));
     }
 
+
     #[test]
-    fn analyst_picker_empty_main_view_points_to_the_manual_alternatives() {
+    fn analyst_picker_legacy_alternatives_only_payload_still_lists_verified_rows() {
         let area = Rect::new(0, 0, 100, 30);
         let picker = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(&serde_json::json!({
             "models": [],
@@ -3052,9 +3046,11 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("No qualified analyst"), "{hay}");
-        assert!(hay.contains("manual alternatives"), "{hay}");
+        assert!(hay.contains("Manual Unscored"), "{hay}");
+        assert!(!hay.contains("No qualified analyst"), "{hay}");
+        assert!(hay.contains("1 available"), "{hay}");
     }
+
 
     fn progress_of(records: &[serde_json::Value]) -> crate::analyst_picker::VerificationProgress {
         let mut progress = crate::analyst_picker::VerificationProgress::default();
@@ -3128,7 +3124,7 @@ mod tests {
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
         assert!(hay.contains("Cursor: 0 allowed · 0 denied · 1 unverified"), "{hay}");
-        assert!(hay.contains("1 check did not pass — d = details"), "{hay}");
+        assert!(hay.contains("1 detail line — d = details"), "{hay}");
         assert!(!hay.contains("login required"), "the reason is not in the summary: {hay}");
         picker.toggle_details();
         let mut buf = Buffer::empty(area);
@@ -3141,20 +3137,20 @@ mod tests {
     #[test]
     fn analyst_picker_rows_wrap_their_long_explanations_so_the_whole_reason_is_visible() {
         let area = Rect::new(0, 0, 80, 30);
-        let long = "Recomendado para analizar este proyecto (Node.js): puesto 1 de 8 modelos distintos con evidencia comparable · lidera en código · razonamiento por debajo de GPT";
+        let long = "Recomendado para comprender este proyecto (Node.js) y proponer el equipo · destaca en código entre las opciones con evidencia comparable";
         let picker = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(&serde_json::json!({
             "recommendedModel": { "candidateKey": "a::b" },
             "models": [
                 { "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "displayName": "Alpha", "available": true,
                   "accessVerified": true, "explanation": long, "recommendationTags": ["quality"] },
                 { "candidateKey": "a::c", "adapterId": "a", "modelId": "c", "displayName": "Bravo", "available": true,
-                  "accessVerified": true, "explanation": "razonamiento por debajo de Alpha · lidera en código", "recommendationTags": [] }
+                  "accessVerified": true, "explanation": "También viable para esa tarea · destaca en código entre las opciones comparables", "recommendationTags": [] }
             ]
         }));
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        for needle in ["Recomendado para analizar este proyecto", "razonamiento por debajo de GPT", "Bravo", "lidera en código"] {
+        for needle in ["Recomendado para comprender este proyecto", "destaca en código", "Bravo", "También viable"] {
             assert!(hay.contains(needle), "missing {needle:?} in: {hay}");
         }
     }

@@ -15,7 +15,7 @@
  */
 
 import {
-  MAIN_VIEW_LIMIT, QUALIFICATION, classifyAnalystCatalog, compareAnalystRows, identityOf, recommendationQualifies
+  MAIN_VIEW_LIMIT, QUALIFICATION, recommendationQualifies
 } from "../conversation/analyst-qualification.js";
 import { computeProjectProfile } from "../conversation/project-profile.js";
 import { createConversationService } from "../conversation/service.js";
@@ -59,90 +59,49 @@ function subscriptionOf(model) {
 
 const labelOf = (model) => `${model.displayName ?? model.modelId} · ${subscriptionOf(model)}`;
 
-/**
- * How a capability of `row` compares with the other listed options, from the
- * catalog's own pool-relative percentiles (never recomputed, never shown as a
- * number): "leads" (strictly above every other), "level" (ties the best) or
- * "behind" (with who leads).
- */
-function compareCapability(row, others, capability) {
-  const mine = row.evaluation?.capabilities?.[capability];
-  const theirs = others.map((other) => ({ other, value: other.evaluation?.capabilities?.[capability] })).filter((entry) => typeof entry.value === "number");
-  if (typeof mine !== "number" || theirs.length === 0) return null;
-  const best = theirs.reduce((top, entry) => (entry.value > top.value ? entry : top));
-  if (mine > best.value) return { kind: "leads" };
-  if (mine === best.value) return { kind: "level" };
-  return { kind: "behind", leader: best.other };
-}
-
-function projectPhrase(projectContext) {
-  const stack = projectContext?.stack?.filter(Boolean).join(", ");
-  return stack ? ` para analizar este proyecto (${stack})` : " para analizar arquitectura y código";
-}
-
-/**
- * Per-row explanation: WHY this row is where it is and WHAT differs from the
- * other options. Built only from the row's own evaluation and its siblings'
- * (pool-relative ranks, benchmark counts, optional-evidence flag); no
- * percentages, no decimals, no model-specific claim that the data does not
- * carry. The project context only words the job, never a model advantage.
- */
-function explainRow(row, listing, { main, manual, projectContext, distinctQualified }, isStar = false) {
-  if (listing === "main") {
-    const others = main.filter((other) => other !== row);
-    const parts = [`puesto ${main.indexOf(row) + 1} de ${distinctQualified} modelos distintos con evidencia comparable`];
-    for (const capability of ["reasoning", "coding"]) {
-      const relation = compareCapability(row, others, capability);
-      if (relation?.kind === "leads") parts.push(`lidera en ${CAPABILITY_WORDS[capability]}`);
-      else if (relation?.kind === "behind") parts.push(`${CAPABILITY_WORDS[capability]} por debajo de ${relation.leader.displayName ?? relation.leader.modelId}`);
-    }
-    const optionalWith = others.filter((other) => other.evaluation?.optionalEvidence);
-    if (row.evaluation?.optionalEvidence && optionalWith.length === 0 && others.length > 0) parts.push(`única con evidencia de ${CAPABILITY_WORDS.instructionFollowing} (opcional)`);
-    if (!row.evaluation?.optionalEvidence && optionalWith.length > 0) parts.push(`sin evidencia de ${CAPABILITY_WORDS.instructionFollowing} (opcional, no penaliza)`);
-    const family = manual.filter((other) => identityOf(other) === identityOf(row));
-    const sameEvidence = family.filter((other) => row.evidenceKey != null && other.evidenceKey === row.evidenceKey);
-    const variants = family.filter((other) => !sameEvidence.includes(other) && other.qualification !== QUALIFICATION.NONE);
-    if (sameEvidence.length > 0) parts.push(`misma evidencia vía ${sameEvidence.map(subscriptionOf).join(", ")}`);
-    if (variants.length > 0) parts.push(`otras variantes de la misma familia en manual (${variants.map(labelOf).join(", ")})`);
-    if (parts.length === 1 && others.length > 0) parts.push("empate en razonamiento y código con las otras opciones; desempata un identificador estable");
-    const lead = parts.join(" · ");
-    return isStar
-      ? `Recomendado${projectPhrase(projectContext)}: ${lead}`
-      : lead.charAt(0).toUpperCase() + lead.slice(1);
-  }
-  const mainTwin = main.find((other) => identityOf(other) === identityOf(row));
-  if (mainTwin && row.evidenceKey != null && mainTwin.evidenceKey === row.evidenceKey) {
-    return `Misma evidencia que ${labelOf(mainTwin)} (otra suscripción) · solo manual`;
-  }
-  if (row.qualification === QUALIFICATION.NONE) {
-    return mainTwin ? `sin benchmark propio (misma familia que ${labelOf(mainTwin)}) · solo manual` : "sin benchmark · solo manual";
-  }
-  if (mainTwin && row.qualification === QUALIFICATION.QUALIFIED) {
-    return `otra variante de ${labelOf(mainTwin)} con su propia evidencia, que queda por detrás · solo manual`;
-  }
-  if (row.qualification === QUALIFICATION.INSUFFICIENT) {
-    const missing = (row.evaluation?.missing ?? []).map((capability) => CAPABILITY_WORDS[capability] ?? capability);
-    return `falta evidencia de ${missing.join(" y ") || "una capacidad requerida"} · solo manual`;
-  }
+/** Benchmark / certainty notes for `d` — never shown as a primary picker line. */
+function evidenceDetail(row) {
+  const counts = row.evaluation?.benchmarkCounts ?? {};
+  const parts = [];
   if (row.qualification === QUALIFICATION.PARTIAL) {
-    const reasoning = row.evaluation?.benchmarkCounts?.reasoning;
-    const coding = row.evaluation?.benchmarkCounts?.coding;
-    return `evidencia parcial (razonamiento con ${reasoning ?? 0} benchmark(s), código con ${coding ?? 0}) · ordenado tras las comparables · solo manual`;
+    parts.push("certeza de comparación: provisional (menos evidencia ≠ menor capacidad)");
+  } else if (row.qualification === QUALIFICATION.INSUFFICIENT) {
+    const missing = (row.evaluation?.missing ?? []).map((capability) => CAPABILITY_WORDS[capability] ?? capability);
+    parts.push(`faltan datos medidos de ${missing.join(" y ") || "capacidades requeridas"}`);
+  } else if (row.qualification === QUALIFICATION.NONE) {
+    parts.push("sin fila de benchmark vinculada");
+  } else if (row.qualification === QUALIFICATION.QUALIFIED) {
+    parts.push("certeza de comparación: evidencia comparable disponible");
   }
-  const leaders = main.map((other) => other.displayName ?? other.modelId).join(", ");
-  return `evidencia comparable, fuera del top ${MAIN_VIEW_LIMIT}${leaders ? ` (por detrás de ${leaders})` : ""} · solo manual`;
+  if (typeof counts.reasoning === "number") parts.push(`razonamiento: ${counts.reasoning} benchmark(s)`);
+  if (typeof counts.coding === "number") parts.push(`código: ${counts.coding} benchmark(s)`);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-/** Model AND subscription, so near-identical rows on two subscriptions stay distinguishable. */
-function decorate(model, listing, tags, context, isStar = false) {
-  const subscription = subscriptionOf(model);
+/**
+ * Flat picker order (T26): model name, then subscription, then route id.
+ * Never rank, provider preference, or benchmark volume.
+ */
+function comparePickerRows(a, b) {
+  const nameA = String(a?.displayName ?? a?.modelId ?? "");
+  const nameB = String(b?.displayName ?? b?.modelId ?? "");
+  const byName = nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
+  if (byName !== 0) return byName;
+  const bySub = subscriptionOf(a).localeCompare(subscriptionOf(b), undefined, { sensitivity: "base" });
+  if (bySub !== 0) return bySub;
+  return String(a?.candidateKey ?? "").localeCompare(String(b?.candidateKey ?? ""));
+}
+
+/** Model AND subscription, so the same model on two subscriptions stays distinguishable. */
+function decorate(model) {
   return {
     ...model,
-    recommendationTags: tags,
-    listing,
-    subscription,
+    recommendationTags: [],
+    listing: "main",
+    subscription: subscriptionOf(model),
     label: labelOf(model),
-    explanation: explainRow(model, listing, context, isStar)
+    explanation: null,
+    detail: evidenceDetail(model)
   };
 }
 
@@ -155,7 +114,7 @@ const PROJECT_RISK_WORDS = Object.freeze({
 /**
  * Compact, serializable project context for the picker, from the local
  * ProjectProfile (computeProjectProfile: read-only scan, no provider call).
- * It contextualizes the explanation text; it never influences the ranking.
+ * Contextual line only; it never influences picker order or team ranking.
  * @param {object|null|undefined} profile
  * @returns {{name: string|null, stack: string[], architecture: string|null, risks: string[], confidence: string|null, line: string}|null}
  */
@@ -176,43 +135,41 @@ export function summarizeProjectContext(profile) {
 }
 
 /**
- * Curate the full analyst catalog for the ratatui picker into two explicit
- * views of VERIFIED, available options only, WITHOUT recalculating anything:
- * the order (`rank`) and the evidence verdict (`qualification`) come from the
- * catalog (shared quality evaluator); `classifyAnalystCatalog` only filters,
- * groups by model identity and orders by that rank.
+ * Curate the analyst catalog for the ratatui picker as ONE flat list (T26).
+ * Every verified, currently available route appears — with many, few, or no
+ * benchmarks. Alphabetical by model · subscription · candidateKey. Same-route
+ * duplicates (identical candidateKey) collapse to one row; equivalent routes
+ * of the same model on different subscriptions stay separate.
  *
- * - `models` (MAIN view): up to THREE qualified, DISTINCT models. The same
- *   model through several subscriptions occupies ONE slot (its best-ranked
- *   route); never padded with insufficient candidates.
- * - `alternatives` (MANUAL view): every other verified, available candidate —
- *   the equivalent routes of a main model, qualified ones beyond the top
- *   three, and thin/insufficient/unscored ones.
- * - Unverified, denied, exhausted and unavailable candidates are in neither
- *   view; `buildAnalystExclusionCauses` reports them by subscription.
+ * - `models`: the full usable list (no artificial top-N).
+ * - `alternatives`: always `[]` (no Other view).
+ * - `recommendedModel`: always `null` (no star; the human chooses).
  *
- * `recommendedModel` (the star) is the FIRST main row — the same row the
- * catalog's own `recommendedModel` and `pickDefaultAnalyst` resolve to. Each
- * row gains additive `listing`, `subscription`, `label` and a plain-language
- * `explanation`. Never invents models.
+ * Unverified, denied, exhausted and unavailable candidates stay out of the
+ * list; `buildAnalystExclusionCauses` still reports them for `d`.
+ * Does not change the shared evaluator used later to form the project team.
  *
  * @param {{recommendedModel?: object|null, models?: object[]}|null|undefined} analystCatalog
  * @param {{projectContext?: object|null}} [options]
- * @returns {{recommendedModel: object|null, models: object[], alternatives: object[]}}
+ * @returns {{recommendedModel: null, models: object[], alternatives: []}}
  */
-export function curateAnalystCatalogForPicker(analystCatalog, { projectContext = null } = {}) {
+export function curateAnalystCatalogForPicker(analystCatalog, { projectContext: _projectContext = null } = {}) {
   const incoming = Array.isArray(analystCatalog?.models) ? analystCatalog.models : [];
-  const { main, manual } = classifyAnalystCatalog(incoming);
-  const distinctQualified = new Set([...main, ...manual].filter(recommendationQualifies).map(identityOf)).size;
-  const context = { main, manual, projectContext, distinctQualified };
-  const withoutQuality = (model) => (model.recommendationTags ?? []).filter((tag) => tag !== "quality");
-  const models = main.map((model, index) => decorate(
-    model, "main", index === 0 ? ["quality", ...withoutQuality(model)] : withoutQuality(model), context, index === 0
-  ));
-  const alternatives = manual.map((model) => decorate(model, "manual", [], context));
-  const first = models[0] ?? null;
-  const recommendedModel = first && recommendationQualifies(first) ? first : null;
-  return { recommendedModel, models, alternatives };
+  const seen = new Set();
+  const usable = [];
+  for (const model of incoming) {
+    if (model?.available !== true || model?.accessVerified === false) continue;
+    const key = model.candidateKey ?? `${model.adapterId}::${model.modelId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    usable.push(model);
+  }
+  usable.sort(comparePickerRows);
+  return {
+    recommendedModel: null,
+    models: usable.map(decorate),
+    alternatives: []
+  };
 }
 
 // Verifiable cause -> Spanish picker copy. Only causes backed by real
@@ -285,10 +242,9 @@ export function buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifi
 }
 
 /**
- * Compact honest notice naming, per subscription, every verifiable cause that
- * keeps candidates out of the picker (see buildAnalystExclusionCauses). Never
- * invents billing / out-of-funds / credits causes, and words unknown access as
- * a partial comparison, never as unavailability.
+ * Compact picker notice (T25): at most one partial-comparison acknowledgement.
+ * Per-provider exclusion causes stay in `exclusionCauses` for `d`, never dumped
+ * into the list footer. Never invents billing / out-of-funds causes.
  *
  * @param {{models?: object[], exclusions?: object[]}|null|undefined} rawCatalog
  * @param {{models?: object[], alternatives?: object[]}|null|undefined} curatedCatalog
@@ -296,14 +252,11 @@ export function buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifi
  * @returns {string|null}
  */
 export function buildAnalystPickerNotice(rawCatalog, curatedCatalog, unverifiedClaudeNotice = null) {
-  const byProvider = new Map();
-  for (const row of buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifiedClaudeNotice)) {
-    const copies = byProvider.get(row.provider) ?? [];
-    copies.push(CAUSE_COPY[row.cause]);
-    byProvider.set(row.provider, copies);
-  }
-  const parts = [...byProvider.entries()].map(([provider, copies]) => `${provider}: ${copies.join(", ")}`);
-  return parts.length > 0 ? parts.join(" · ") : null;
+  const causes = buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifiedClaudeNotice);
+  if (causes.length === 0) return null;
+  const hasPartial = causes.some((row) => row.cause === "access_unknown");
+  if (hasPartial) return "Comparación parcial — d = detalles";
+  return "Algunas suscripciones no aportan opciones — d = detalles";
 }
 
 /**

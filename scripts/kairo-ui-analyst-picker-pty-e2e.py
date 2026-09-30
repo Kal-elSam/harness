@@ -19,13 +19,13 @@ Scenario "picker" (each requested size):
      the sidecar log keeps receiving progress records and finishes, still one
      verify op), and a finished notice appears.
   4. `a` again; Esc on the remaining confirmation skips it; the picker opens
-     with the top three DISTINCT models, the star on the first, plain-language
-     explanations that say why/what differs, the project context line, the
-     partial-comparison acknowledgement and the denied-model cause.
-  5. `m` shows the equivalent route (same model via Cursor) under manual.
-  6. Enter on the star sends project.analyze with that exact model (the
-     analysis itself is stubbed: no provider is called), `q` quits with the
-     terminal restored.
+     as ONE flat list of every verified available route (alphabetical, no
+     top-three / star / Other), with the project context line, a compact
+     partial-comparison acknowledgement and denied-model causes behind `d`.
+  5. Navigate to a known model (gpt-5-6-sol via Codex); Enter sends
+     project.analyze with that exact model and selectionSource "manual"
+     (the analysis itself is stubbed: no provider is called), `q` quits with
+     the terminal restored.
 
 NOT proven here: real provider CLIs/accounts (every provider is simulated), the
 real Pi, the real local project scan (fixed profile), real probe latency.
@@ -208,40 +208,64 @@ def scenario_picker(run: Run, evidence: Path):
     again = p.wait_for(lambda: "Verify access before choosing an analyst" in flat(p), 20.0)
     run.check("the remaining unverified checks are offered again (2 pending)", again and "Makes 2 real provider calls" in flat(p), flat(p)[-400:])
     p.send(b"\x1b")
-    ready = p.wait_for(lambda: "Select analyst" in flat(p) and "recommended" in flat(p), 20.0)
+    ready = p.wait_for(lambda: "Select analyst" in flat(p) and "available" in flat(p), 20.0)
     screen = flat(p)
     snap("5-picker-main")
-    run.check("the picker opens with the star", ready, screen[-500:])
+    run.check("the picker opens as a flat available list", ready, screen[-500:])
+    run.check("no star / recommended marker", "★" not in screen and "recommended" not in screen.lower(), screen[:500])
+    run.check("no Other / m others split", "m others" not in screen and "Other verified analysts" not in screen, screen[-400:])
     if run.cols >= 100:
-        order = [screen.find(label) for label in ("gpt-5-6-sol · Codex", "kimi-k3 · OpenCode Go", "claude-opus-5 · Claude")]
-        run.check("top three DISTINCT models in catalog order", all(i >= 0 for i in order) and order == sorted(order), str(order))
-        run.check("the same model via Cursor is not a main row", "GPT-5.6 Sol · Cursor" not in screen, screen[-300:])
-        run.check("the star is the first row", re.search(r"gpt-5-6-sol · Codex\s+★ recommended", screen) is not None, screen[:500])
-        run.check("explanations say why and what differs", "puesto 1 de 7 modelos distintos" in screen and "lidera en razonamiento" in screen, screen[:900])
-        run.check("the explanation uses the project context, not a model claim", "para analizar este proyecto (Node.js)" in screen, screen[:900])
+        for label in ("gpt-5-6-sol · Codex", "GPT-5.6 Sol · Cursor", "kimi-k3 · OpenCode Go", "claude-opus-5 · Claude"):
+            run.check(f"verified route listed: {label}", label in screen, screen[:900])
+        run.check("project context line is present", "Proyecto" in screen or "Node.js" in screen, screen[:900])
     else:
-        run.check("narrow terminal still shows the star row", "gpt-5-6-sol · Codex" in screen, screen[-500:])
+        run.check("narrow terminal still lists a Sol Codex route", "gpt-5-6-sol · Codex" in screen, screen[-500:])
     run.check("the partial comparison is acknowledged", "2 subscriptions not verified" in screen and "partial" in screen, screen[-400:])
-    run.check("the denied model is reported as a per-subscription cause", "Claude: no disponible (verificado)" in screen, screen[-400:])
+    # Denied causes live behind d (compact footer may only point at details).
+    if "Claude: no disponible (verificado)" not in screen:
+        p.send(b"d")
+        details = p.wait_for(lambda: "Claude: no disponible (verificado)" in flat(p) or "d = details" in flat(p), 5.0)
+        run.check("denied cause is reachable via d", details and "Claude: no disponible (verificado)" in flat(p), flat(p)[-400:])
+        p.send(b"d")
+        p.wait_for(lambda: "Select analyst" in flat(p), 5.0)
+    else:
+        run.check("the denied model is reported as a per-subscription cause", True, "visible in footer")
 
-    # 5. manual view: the equivalent route.
-    p.send(b"m")
-    manual = p.wait_for(lambda: "Other verified analysts" in flat(p), 10.0)
-    screen = flat(p)
-    snap("6-picker-manual")
-    run.check("m opens the manual view", manual, screen[-300:])
-    run.check("the equivalent route says it carries the same evidence", "GPT-5.6 Sol · Cursor" in screen and "Misma evidencia que gpt-5-6-sol · Codex" in screen, screen[:700])
-    p.send(b"m")
-    p.wait_for(lambda: "Select analyst" in flat(p), 10.0)
+    # 5. Navigate to gpt-5-6-sol · Codex (alphabetical list; not necessarily first).
+    target = "gpt-5-6-sol · Codex"
+    found = False
+    for _ in range(40):
+        screen = flat(p)
+        # Selected row is marked with ›
+        if re.search(rf"›\s*{re.escape(target)}", screen) or (target in screen and "›" in screen and screen.find("›") < screen.find(target) < screen.find("›") + 120):
+            # Prefer an exact selected-row match when the terminal is wide enough.
+            if "›" in screen and target in screen:
+                # Walk until the selected marker sits on the target label in the painted buffer.
+                raw = "\n".join(p.screen.lines())
+                if any(target in line and "›" in line for line in p.screen.lines()):
+                    found = True
+                    break
+        p.send(b"j")
+        p.pump(0.05)
+    if not found:
+        # Fallback: accept that the label is on screen and keep navigating a few more times.
+        for _ in range(40):
+            if any(target in line and "›" in line for line in p.screen.lines()):
+                found = True
+                break
+            p.send(b"j")
+            p.pump(0.05)
+    snap("6-picker-on-sol")
+    run.check("navigated to gpt-5-6-sol via Codex", found, flat(p)[:700])
 
-    # 6. Enter on the star: project.analyze carries exactly that model.
+    # 6. Enter: project.analyze carries exactly that model as an explicit manual pick.
     p.send(b"\r")
     sent = p.wait_for(lambda: any(l.startswith("analyze ") for l in run.log_lines()), 15.0)
     run.check("Enter sends project.analyze", sent and "project.analyze" in run.ops(), str(run.ops()))
     analyze = next((l for l in run.log_lines() if l.startswith("analyze ")), "analyze {}")
     payload = json.loads(analyze[len("analyze "):])
-    run.check("the analyst sent is the star (gpt-5-6-sol via codex, recommended)",
-              payload.get("model", {}).get("modelId") == "gpt-5-6-sol" and payload["model"]["adapterId"] == "codex" and payload.get("selectionSource") == "recommended", analyze[:300])
+    run.check("the analyst sent is the selected Sol via Codex (manual)",
+              payload.get("model", {}).get("modelId") == "gpt-5-6-sol" and payload["model"]["adapterId"] == "codex" and payload.get("selectionSource") == "manual", analyze[:300])
     p.pump(0.5)
     p.send(b"q")
     code = p.wait_exit(10.0)

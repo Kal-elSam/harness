@@ -2948,9 +2948,7 @@ fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
         KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             return true;
         }
-        KeyCode::Char('m') if picker.phase == PickerPhase::Ready => {
-            picker.toggle_view();
-        }
+        // T26: no Other view — `m` is ignored.
         KeyCode::Char('d') if matches!(picker.phase, PickerPhase::Ready | PickerPhase::Verifying) => {
             picker.toggle_details();
         }
@@ -3431,7 +3429,7 @@ mod tests {
         let footer = picker.footer_text().unwrap();
         assert!(footer.contains("Cursor: 0 allowed · 0 denied · 1 unverified"), "{footer}");
         assert!(!footer.contains("login required"), "T24 (rewritten): the reason moved to the detail view: {footer}");
-        assert!(footer.contains("1 check did not pass — d = details"), "{footer}");
+        assert!(footer.contains("1 detail line — d = details"), "{footer}");
         assert_eq!(picker.details, vec!["Cursor · check — unverified: login required".to_string()]);
         assert!(footer.contains("2 subscriptions not verified"), "partial comparison stays acknowledged: {footer}");
         let _ = std::fs::remove_file(path);
@@ -3542,7 +3540,7 @@ mod tests {
     }
 
     #[test]
-    fn m_toggles_only_when_ready_not_while_loading_verifying_or_confirming() {
+    fn m_is_ignored_in_every_picker_phase() {
         let mut loading = ShellApp::new(None);
         loading.picker = Some(AnalystPickerState::loading());
         handle_picker_key(&mut loading, press('m'));
@@ -3552,7 +3550,7 @@ mod tests {
         app.picker = Some(AnalystPickerState::loading());
         app.ingest_preflight_record(&preflight_with_plan(json!([]), pending_plan()));
         handle_picker_key(&mut app, press('m'));
-        assert_eq!(app.picker.as_ref().unwrap().view, crate::analyst_picker::PickerView::Main, "m is ignored on the confirmation screen");
+        assert_eq!(app.picker.as_ref().unwrap().view, crate::analyst_picker::PickerView::Main, "m is ignored (no Other view)");
     }
 
     #[test]
@@ -3967,7 +3965,7 @@ mod tests {
         assert_eq!(picker.options.len(), 3, "the verified Cursor row joined after verification");
         assert!(picker.options.iter().all(|o| o.available));
         assert_eq!(picker.options[0].candidate_key, "claude::claude-a");
-        assert!(picker.options[0].recommended, "star = first ranked row");
+        assert!(picker.options.iter().all(|o| !o.recommended), "T26: no star");
         assert_eq!(picker.not_verified, 0);
         assert!(picker.footer_text().unwrap().contains("Cursor: 1 allowed"));
         let _ = std::fs::remove_file(path);
