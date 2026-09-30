@@ -11,10 +11,12 @@
 //! ones with an "acceso sin verificar" marker; they are never starred and the
 //! sidecar re-verifies access when one is confirmed (T20).
 
+use std::cell::Cell;
+
 use serde_json::Value;
 
 /// One real catalog entry (from `preflightProjectTeam`'s `analystCatalog`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AnalystOption {
     pub candidate_key: String,
     pub adapter_id: String,
@@ -26,6 +28,11 @@ pub struct AnalystOption {
     pub access_verified: bool,
     pub recommended: bool,
     pub tags: Vec<String>,
+    /// Analyst fit 0..1 when the catalog has real evidence; `None` = unknown
+    /// (absent or `null`), never an invented 0. A measured 0 stays `Some(0.0)`.
+    pub fit: Option<f64>,
+    /// Sidecar's short per-row explanation (real evidence only), if any.
+    pub explanation: Option<String>,
 }
 
 /// Marker for rows whose access is not verified yet.
@@ -46,9 +53,10 @@ impl AnalystOption {
         label
     }
 
-    /// Short secondary line — the real tag(s) only, never invented.
+    /// Short secondary line — the real tag(s) and the sidecar's own
+    /// explanation only, never invented.
     pub fn description(&self) -> String {
-        let tags = self
+        let mut parts: Vec<String> = self
             .tags
             .iter()
             .map(|t| match t.as_str() {
@@ -56,18 +64,33 @@ impl AnalystOption {
                 "efficient" => "Efficient fit".to_string(),
                 other => other.to_string(),
             })
-            .collect::<Vec<_>>()
-            .join(" · ");
-        if self.access_verified {
-            return tags;
+            .collect();
+        if let Some(explanation) = self.explanation.as_deref().filter(|e| !e.is_empty()) {
+            parts.push(explanation.to_string());
         }
-        let note = "se verifica al confirmar";
-        if tags.is_empty() {
-            note.to_string()
+        if !self.access_verified {
+            parts.push("se verifica al confirmar".to_string());
+        }
+        parts.join(" · ")
+    }
+
+    /// Lines this option takes in the list (label + optional description).
+    pub fn height(&self) -> usize {
+        if self.description().is_empty() {
+            1
         } else {
-            format!("{tags} · {note}")
+            2
         }
     }
+}
+
+/// Which list the modal shows: the qualified main view (default) or the
+/// explicit manual alternatives (no benchmark / unknown access).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerView {
+    #[default]
+    Main,
+    Manual,
 }
 
 /// Which body the modal shows: the modal opens in `Loading` the moment the
@@ -138,13 +161,24 @@ impl ExclusionCause {
 
 /// State machine for the modal: options + selection + an inline notice
 /// (e.g. "that model isn't available"), never a silent no-op.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct AnalystPickerState {
+    /// MAIN view rows (qualified candidates), in the sidecar's order.
     pub options: Vec<AnalystOption>,
+    /// MANUAL alternatives (no benchmark / unknown access): never starred,
+    /// never auto-selected. Empty for an older sidecar without the field.
+    pub alternatives: Vec<AnalystOption>,
+    pub view: PickerView,
+    /// Highlighted row inside the ACTIVE view.
     pub selected: usize,
+    /// First visible row of the active view (kept stable while scrolling).
+    pub scroll: Cell<usize>,
     pub notice: Option<String>,
     pub phase: PickerPhase,
     pub causes: Vec<ExclusionCause>,
+    /// `Some(option)` while the provider-call warning for an unknown-access
+    /// row waits for its explicit second confirmation.
+    pub warning: Option<AnalystOption>,
 }
 
 impl AnalystPickerState {
@@ -158,62 +192,79 @@ impl AnalystPickerState {
             .get("recommendedModel")
             .and_then(|m| m.get("candidateKey"))
             .and_then(|v| v.as_str());
-        let models = catalog
-            .get("models")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let mut options: Vec<AnalystOption> = models
-            .iter()
-            .filter_map(|m| {
-                let available = m.get("available").and_then(|v| v.as_bool()).unwrap_or(false);
-                let selectable = m.get("selectable").and_then(|v| v.as_bool()).unwrap_or(false);
-                let access_verified = m.get("accessVerified").and_then(|v| v.as_bool()).unwrap_or(true);
-                // Product rule: only usable analysts appear in the modal, plus
-                // selectable ones whose access is unverified (T20).
-                if !available && !(selectable && !access_verified) {
-                    return None;
-                }
-                let candidate_key = m.get("candidateKey").and_then(|v| v.as_str())?.to_string();
-                let adapter_id = m.get("adapterId").and_then(|v| v.as_str())?.to_string();
-                let model_id = m.get("modelId").and_then(|v| v.as_str())?.to_string();
-                let display_name = m
-                    .get("displayName")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(model_id.as_str())
-                    .to_string();
-                let tags: Vec<String> = m
-                    .get("recommendationTags")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|t| t.as_str().map(str::to_string))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let recommended = access_verified && recommended_key == Some(candidate_key.as_str());
-                Some(AnalystOption {
-                    candidate_key,
-                    adapter_id,
-                    model_id,
-                    display_name,
-                    available,
-                    access_verified,
-                    recommended,
-                    tags,
-                })
-            })
-            .collect();
-        // Recommended first when the catalog's own recommendedModel survived.
-        // Never auto-promote the first row — ★ only for a real recommendation.
-        options.sort_by_key(|o| !o.recommended);
+        let parse_list = |key: &str, allow_recommended: bool| -> Vec<AnalystOption> {
+            let models = catalog
+                .get(key)
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let mut options: Vec<AnalystOption> = models
+                .iter()
+                .filter_map(|m| Self::parse_option(m, recommended_key, allow_recommended))
+                .collect();
+            // Recommended first when the catalog's own recommendedModel
+            // survived; known fit before unknown fit (stable otherwise, so
+            // the sidecar's order is preserved). Never auto-promote the first
+            // row — ★ only for a real recommendation.
+            options.sort_by_key(|o| (!o.recommended, o.fit.is_none()));
+            options
+        };
         Self {
-            options,
-            selected: 0,
-            notice: None,
-            phase: PickerPhase::Ready,
-            causes: Vec::new(),
+            options: parse_list("models", true),
+            // Manual alternatives are never starred, whatever the pointer says.
+            alternatives: parse_list("alternatives", false),
+            ..Self::default()
         }
+    }
+
+    fn parse_option(
+        m: &Value,
+        recommended_key: Option<&str>,
+        allow_recommended: bool,
+    ) -> Option<AnalystOption> {
+        let available = m.get("available").and_then(|v| v.as_bool()).unwrap_or(false);
+        let selectable = m.get("selectable").and_then(|v| v.as_bool()).unwrap_or(false);
+        let access_verified = m.get("accessVerified").and_then(|v| v.as_bool()).unwrap_or(true);
+        // Product rule: only usable analysts appear in the modal, plus
+        // selectable ones whose access is unverified (T20).
+        if !available && !(selectable && !access_verified) {
+            return None;
+        }
+        let candidate_key = m.get("candidateKey").and_then(|v| v.as_str())?.to_string();
+        let adapter_id = m.get("adapterId").and_then(|v| v.as_str())?.to_string();
+        let model_id = m.get("modelId").and_then(|v| v.as_str())?.to_string();
+        let display_name = m
+            .get("displayName")
+            .and_then(|v| v.as_str())
+            .unwrap_or(model_id.as_str())
+            .to_string();
+        let tags: Vec<String> = m
+            .get("recommendationTags")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let recommended =
+            allow_recommended && access_verified && recommended_key == Some(candidate_key.as_str());
+        // null / absent / non-numeric fit = unknown (never coerced to 0).
+        let fit = m.get("fit").and_then(|v| v.as_f64()).filter(|f| f.is_finite());
+        let explanation = m
+            .get("explanation")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+            .map(str::to_string);
+        Some(AnalystOption {
+            candidate_key,
+            adapter_id,
+            model_id,
+            display_name,
+            available,
+            access_verified,
+            recommended,
+            tags,
+            fit,
+            explanation,
+        })
     }
 
     /// Modal shown while the preflight request is pending.
@@ -246,42 +297,108 @@ impl AnalystPickerState {
         }
     }
 
+    /// `true` when the ACTIVE view has no rows.
     pub fn is_empty(&self) -> bool {
-        self.options.is_empty()
+        self.active().is_empty()
     }
 
-    /// Move highlight forward, wrapping across available rows only.
-    /// Preserves `notice` (e.g. preflight provider-absence copy).
-    pub fn move_down(&mut self) {
-        if self.options.is_empty() {
+    /// Rows of the active view.
+    pub fn active(&self) -> &[AnalystOption] {
+        match self.view {
+            PickerView::Main => &self.options,
+            PickerView::Manual => &self.alternatives,
+        }
+    }
+
+    /// `m`: switch between the qualified list and the manual alternatives.
+    /// Clears any pending warning; selection restarts at the top.
+    pub fn toggle_view(&mut self) {
+        if self.phase != PickerPhase::Ready {
             return;
         }
-        self.selected = (self.selected + 1) % self.options.len();
+        self.view = match self.view {
+            PickerView::Main => PickerView::Manual,
+            PickerView::Manual => PickerView::Main,
+        };
+        self.selected = 0;
+        self.scroll.set(0);
+        self.warning = None;
+    }
+
+    /// Move highlight forward, wrapping across the active view's rows.
+    /// Preserves `notice` (e.g. preflight provider-absence copy).
+    pub fn move_down(&mut self) {
+        let len = self.active().len();
+        if len == 0 || self.warning.is_some() {
+            return;
+        }
+        self.selected = (self.selected + 1) % len;
     }
 
     pub fn move_up(&mut self) {
-        if self.options.is_empty() {
+        let len = self.active().len();
+        if len == 0 || self.warning.is_some() {
             return;
         }
-        self.selected = (self.selected + self.options.len() - 1) % self.options.len();
+        self.selected = (self.selected + len - 1) % len;
     }
 
     pub fn selected_option(&self) -> Option<&AnalystOption> {
-        self.options.get(self.selected)
+        self.active().get(self.selected)
     }
 
-    /// Enter: confirm the highlighted available model. Defense in depth —
-    /// unavailable rows are never listed, but a stale `available: false`
-    /// still refuses with an inline notice instead of a silent no-op.
+    /// Visible slice `[start, end)` of the active view for `rows` content
+    /// lines: the highlighted row is always inside it, and the window only
+    /// moves when the highlight would leave it.
+    pub fn visible_range(&self, rows: usize) -> std::ops::Range<usize> {
+        let options = self.active();
+        if options.is_empty() || rows == 0 {
+            return 0..0;
+        }
+        let selected = self.selected.min(options.len() - 1);
+        let mut start = self.scroll.get().min(selected);
+        let span = |from: usize| -> usize { options[from..=selected].iter().map(AnalystOption::height).sum() };
+        while start < selected && span(start) > rows {
+            start += 1;
+        }
+        self.scroll.set(start);
+        let mut end = start;
+        let mut used = 0;
+        while end < options.len() && used + options[end].height() <= rows.max(1) {
+            used += options[end].height();
+            end += 1;
+        }
+        start..end.max(selected + 1).min(options.len())
+    }
+
+    /// Esc while the provider-call warning is up: back to the list (the
+    /// picker stays open). Returns `true` when a warning was dismissed.
+    pub fn cancel_warning(&mut self) -> bool {
+        self.warning.take().is_some()
+    }
+
+    /// Enter: confirm the highlighted model. A verified, available row is
+    /// returned at once. An UNKNOWN-access row first raises a warning (the
+    /// verification calls the provider and may consume account) and returns
+    /// `None`; only a second Enter on that warning returns it. Unavailable
+    /// verified rows are refused with an inline notice (defense in depth).
     pub fn confirm(&mut self) -> Option<AnalystOption> {
         if self.phase != PickerPhase::Ready {
             return None;
+        }
+        if let Some(pending) = self.warning.take() {
+            return Some(pending);
         }
         let message = match self.selected_option() {
             Some(option) if !option.available && option.access_verified => Some(format!(
                 "{} is not available right now — pick another model.",
                 option.display_name
             )),
+            Some(option) if !option.access_verified => {
+                self.warning = Some(option.clone());
+                self.notice = None;
+                return None;
+            }
             Some(option) => return Some(option.clone()),
             None => Some("No available analyst in the catalog right now.".into()),
         };
@@ -306,7 +423,7 @@ impl AnalystPickerState {
         } else {
             None
         };
-        serde_json::json!({
+        let mut payload = serde_json::json!({
             "model": {
                 "adapterId": option.adapter_id,
                 "modelId": option.model_id,
@@ -315,7 +432,13 @@ impl AnalystPickerState {
             "selectionSource": selection_source,
             "recommendationTags": option.tags,
             "choice": choice,
-        })
+        });
+        // The payload is only ever built after the explicit second
+        // confirmation (see `confirm`), so an unknown-access pick carries it.
+        if !option.access_verified {
+            payload["accessCheckConfirmed"] = Value::Bool(true);
+        }
+        payload
     }
 }
 
@@ -435,6 +558,8 @@ mod tests {
             access_verified: true,
             recommended: true,
             tags: vec!["quality".into()],
+            fit: None,
+            explanation: None,
         };
         let payload = AnalystPickerState::analyst_payload(&option);
         assert_eq!(payload["model"]["adapterId"], "codex");
@@ -456,6 +581,8 @@ mod tests {
             access_verified: true,
             recommended: false,
             tags: vec![],
+            fit: None,
+            explanation: None,
         };
         let payload = AnalystPickerState::analyst_payload(&option);
         assert_eq!(payload["selectionSource"], "manual");
@@ -617,18 +744,194 @@ mod tests {
     }
 
     #[test]
-    fn confirming_an_unverified_row_returns_it_and_sends_the_manual_payload() {
+    fn confirming_an_unverified_row_warns_first_and_needs_a_second_confirmation() {
         let mut picker = AnalystPickerState::from_analyst_catalog(&unverified_catalog());
         picker.move_down();
-        let picked = picker.confirm().expect("unverified access is selectable");
-        assert_eq!(picked.model_id, "unv");
+        assert!(picker.confirm().is_none(), "first Enter must NOT send anything");
+        let warning = picker.warning.clone().expect("the provider-call warning is raised");
+        assert_eq!(warning.model_id, "unv");
         assert!(picker.notice.is_none());
+        let picked = picker.confirm().expect("second Enter confirms");
+        assert_eq!(picked.model_id, "unv");
+        assert!(picker.warning.is_none());
         let payload = AnalystPickerState::analyst_payload(&picked);
         assert_eq!(payload["selectionSource"], "manual");
         assert_eq!(payload["model"]["modelId"], "unv");
         assert_eq!(payload["model"]["adapterId"], "claude");
+        assert_eq!(payload["accessCheckConfirmed"], true);
     }
 
+    #[test]
+    fn esc_on_the_warning_returns_to_the_list_without_confirming() {
+        let mut picker = AnalystPickerState::from_analyst_catalog(&unverified_catalog());
+        picker.move_down();
+        assert!(picker.confirm().is_none());
+        assert!(picker.cancel_warning());
+        assert!(picker.warning.is_none());
+        assert!(!picker.cancel_warning(), "nothing left to cancel");
+        // A fresh Enter warns again (the confirmation is never remembered).
+        assert!(picker.confirm().is_none());
+        assert!(picker.warning.is_some());
+    }
+
+    #[test]
+    fn movement_is_frozen_while_the_warning_is_up_and_toggling_clears_it() {
+        let mut picker = AnalystPickerState::from_analyst_catalog(&unverified_catalog());
+        picker.move_down();
+        picker.confirm();
+        let at = picker.selected;
+        picker.move_down();
+        picker.move_up();
+        assert_eq!(picker.selected, at);
+        picker.toggle_view();
+        assert!(picker.warning.is_none());
+    }
+
+    #[test]
+    fn a_verified_payload_never_carries_the_access_confirmation_flag() {
+        let mut picker = AnalystPickerState::from_analyst_catalog(&catalog());
+        let picked = picker.confirm().unwrap();
+        let payload = AnalystPickerState::analyst_payload(&picked);
+        assert!(payload.get("accessCheckConfirmed").is_none());
+    }
+
+    fn views_catalog() -> Value {
+        json!({
+            "recommendedModel": { "candidateKey": "codex::a" },
+            "models": [
+                { "candidateKey": "codex::a", "adapterId": "codex", "modelId": "a", "displayName": "Alpha",
+                  "available": true, "accessVerified": true, "fit": 0.8, "explanation": "razonamiento 0.80 · código 0.70 · confianza 0.90",
+                  "recommendationTags": ["quality"], "listing": "main" },
+                { "candidateKey": "claude::a", "adapterId": "claude", "modelId": "a", "displayName": "Alpha",
+                  "available": true, "accessVerified": true, "fit": 0.0, "recommendationTags": [], "listing": "main" },
+                { "candidateKey": "codex::nofit", "adapterId": "codex", "modelId": "nofit", "displayName": "NoFit",
+                  "available": true, "accessVerified": true, "fit": null, "recommendationTags": [], "listing": "main" }
+            ],
+            "alternatives": [
+                { "candidateKey": "cursor::unscored", "adapterId": "cursor", "modelId": "unscored", "displayName": "Unscored",
+                  "available": true, "accessVerified": true, "fit": null, "recommendationTags": [], "listing": "manual" },
+                { "candidateKey": "claude::unv", "adapterId": "claude", "modelId": "unv", "displayName": "Unv",
+                  "available": false, "selectable": true, "accessVerified": false, "fit": 0.4, "recommendationTags": ["quality"], "listing": "manual" },
+                { "candidateKey": "cursor::down", "adapterId": "cursor", "modelId": "down", "displayName": "Down",
+                  "available": false, "selectable": false, "accessVerified": true, "recommendationTags": [] }
+            ]
+        })
+    }
+
+    #[test]
+    fn main_and_manual_views_are_separate_lists_and_the_star_only_lives_in_main() {
+        let mut picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
+        assert_eq!(picker.view, PickerView::Main);
+        assert_eq!(picker.options.len(), 3);
+        assert_eq!(picker.alternatives.len(), 2, "unusable row dropped, both manual rows kept");
+        assert!(picker.options[0].recommended);
+        assert!(picker.alternatives.iter().all(|o| !o.recommended));
+        picker.toggle_view();
+        assert_eq!(picker.view, PickerView::Manual);
+        assert_eq!(picker.active().len(), 2);
+        assert_eq!(picker.selected, 0);
+        picker.toggle_view();
+        assert_eq!(picker.view, PickerView::Main);
+    }
+
+    #[test]
+    fn a_null_fit_is_unknown_and_sorts_after_known_fits_while_a_measured_zero_stays_known() {
+        let picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
+        let fits: Vec<Option<f64>> = picker.options.iter().map(|o| o.fit).collect();
+        assert_eq!(fits, vec![Some(0.8), Some(0.0), None]);
+        // Absent (legacy) fit is also unknown, never 0.
+        let legacy = AnalystPickerState::from_analyst_catalog(&json!({
+            "models": [{ "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "available": true }]
+        }));
+        assert_eq!(legacy.options[0].fit, None);
+        // Manual view: known fit (Unv 0.4, unverified) precedes unknown (Unscored).
+        assert_eq!(picker.alternatives[0].model_id, "unv");
+        assert_eq!(picker.alternatives[1].model_id, "unscored");
+    }
+
+    #[test]
+    fn the_same_model_through_two_subscriptions_keeps_both_rows_keyed_by_candidate_key() {
+        let picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
+        let alphas: Vec<&str> = picker
+            .options
+            .iter()
+            .filter(|o| o.display_name == "Alpha")
+            .map(|o| o.candidate_key.as_str())
+            .collect();
+        assert_eq!(alphas.len(), 2);
+        assert!(alphas.contains(&"codex::a") && alphas.contains(&"claude::a"));
+    }
+
+    #[test]
+    fn explanation_is_part_of_the_row_description() {
+        let picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
+        assert!(picker.options[0].description().contains("razonamiento 0.80"));
+        assert!(picker.options[0].description().contains("Quality fit"));
+    }
+
+    #[test]
+    fn manual_unverified_rows_confirm_through_the_warning_too() {
+        let mut picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
+        picker.toggle_view();
+        assert_eq!(picker.selected_option().unwrap().model_id, "unv");
+        assert!(picker.confirm().is_none());
+        assert!(picker.warning.is_some());
+        // A manual but verified (unscored) row needs no warning.
+        picker.cancel_warning();
+        picker.move_down();
+        assert_eq!(picker.confirm().unwrap().model_id, "unscored");
+    }
+
+    fn many_options(n: usize) -> AnalystPickerState {
+        let models: Vec<Value> = (0..n)
+            .map(|i| {
+                json!({ "candidateKey": format!("x::m{i}"), "adapterId": "x", "modelId": format!("m{i}"),
+                        "displayName": format!("Model {i}"), "available": true, "accessVerified": true,
+                        "fit": 0.9 - (i as f64) / 1000.0, "recommendationTags": [] })
+            })
+            .collect();
+        AnalystPickerState::from_analyst_catalog(&json!({ "models": models }))
+    }
+
+    #[test]
+    fn there_is_no_row_cap_every_option_is_kept() {
+        assert_eq!(many_options(40).options.len(), 40);
+    }
+
+    #[test]
+    fn the_visible_window_follows_the_selection_and_never_hides_it() {
+        let mut picker = many_options(40);
+        // 10 content lines, every option is 1 line (no description).
+        assert_eq!(picker.visible_range(10), 0..10);
+        for _ in 0..25 {
+            picker.move_down();
+        }
+        let range = picker.visible_range(10);
+        assert!(range.contains(&picker.selected), "{range:?} must contain {}", picker.selected);
+        assert_eq!(range.len(), 10);
+        // Moving up inside the window does not scroll it.
+        picker.move_up();
+        assert_eq!(picker.visible_range(10), range);
+        // Wrapping to the top scrolls back to the first rows.
+        for _ in 0..(picker.selected) {
+            picker.move_up();
+        }
+        assert_eq!(picker.selected, 0);
+        assert_eq!(picker.visible_range(10), 0..10);
+        // Wrapping up from the top lands on the last row, visible.
+        picker.move_up();
+        assert_eq!(picker.selected, 39);
+        assert!(picker.visible_range(10).contains(&39));
+    }
+
+    #[test]
+    fn a_tiny_window_still_shows_the_selected_row() {
+        let mut picker = many_options(5);
+        picker.move_down();
+        picker.move_down();
+        let range = picker.visible_range(1);
+        assert!(range.contains(&2));
+    }
     #[test]
     fn a_stale_unavailable_verified_row_is_still_refused_and_absent_fields_stay_tolerant() {
         let mut stale = AnalystPickerState::from_analyst_catalog(&json!({

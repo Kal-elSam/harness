@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget};
 use ratatui_textarea::TextArea;
 
-use crate::analyst_picker::{AnalystPickerState, PickerPhase};
+use crate::analyst_picker::{AnalystPickerState, PickerPhase, PickerView};
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
 use crate::extension_ui::{ExtensionUiDialog, ExtensionUiMethod};
 use crate::layout::{split_work_main, ShellRegions};
@@ -511,21 +511,57 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
 
 /// The analyst picker (T2) — a centered modal over the work surface, the
 /// in-UI equivalent of the cockpit's ProjectOverlay SELECT_ANALYST screen.
-/// Only **available** catalog rows are listed (unavailable adapters stay out).
+/// Two explicit views: the qualified main list and the manual alternatives
+/// (`m` toggles). Only usable rows are listed; the list scrolls (no cap) and
+/// the highlighted row is always painted.
 pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPickerState) {
-    // One row per option (label only) — empty description lines used to
-    // inflate the modal with blank space.
     let width = area.width.saturating_sub(6).clamp(36, 72);
+    let text_width = width.saturating_sub(2);
     let error_text = match &picker.phase {
         PickerPhase::Error(reason) => Some(format!("Loading analyst catalog failed: {reason}")),
         _ => None,
     };
     let error_rows = error_text
         .as_deref()
-        .map(|e| wrap_notice(e, width.saturating_sub(2), Style::default()).len() as u16)
+        .map(|e| wrap_notice(e, text_width, Style::default()).len() as u16)
         .unwrap_or(0);
+    let warning_lines: Option<Vec<String>> = picker.warning.as_ref().map(|option| {
+        vec![
+            format!("Verify access to {}?", option.display_name),
+            "Verifying calls the provider and may consume account.".to_string(),
+            "Enter = verify and analyze · Esc = back".to_string(),
+        ]
+    });
+    let empty_copy = if picker.view == PickerView::Main && !picker.alternatives.is_empty() {
+        format!(
+            "No qualified analyst — press m for manual alternatives ({}).",
+            picker.alternatives.len()
+        )
+    } else if picker.view == PickerView::Manual {
+        "No manual alternatives for this project.".to_string()
+    } else {
+        "No ask-capable analyst model available for this project.".to_string()
+    };
+    let list_rows: u16 = picker
+        .active()
+        .iter()
+        .map(|o| o.height() as u16)
+        .sum::<u16>()
+        .max(1);
     let content_rows = match &picker.phase {
-        PickerPhase::Ready => picker.options.len().max(1) as u16,
+        _ if warning_lines.is_some() => warning_lines
+            .as_ref()
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|l| wrap_notice(l, text_width, Style::default()).len() as u16)
+                    .sum()
+            })
+            .unwrap_or(1),
+        PickerPhase::Ready if picker.is_empty() => {
+            wrap_notice(&empty_copy, text_width, Style::default()).len() as u16
+        }
+        PickerPhase::Ready => list_rows,
         PickerPhase::Loading => 1,
         PickerPhase::Error(_) => error_rows.max(1),
     };
@@ -535,7 +571,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     let footer = picker.footer_text();
     let notice_rows = footer
         .as_deref()
-        .map(|n| wrap_notice(n, width.saturating_sub(2), Style::default()).len() as u16)
+        .map(|n| wrap_notice(n, text_width, Style::default()).len() as u16)
         .unwrap_or(0);
     let height = content_rows
         .saturating_add(3 + notice_rows)
@@ -546,10 +582,23 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     }
 
     Clear.render(popup, buf);
-    let title = match &picker.phase {
-        PickerPhase::Ready => " Select analyst — j/k · Enter · Esc cancel · q/Ctrl+C quit ",
-        PickerPhase::Loading => " Select analyst — loading · Esc cancel · q/Ctrl+C quit ",
-        PickerPhase::Error(_) => " Select analyst — r retry · Esc close · q/Ctrl+C quit ",
+    let title = if warning_lines.is_some() {
+        " Confirm access check — Enter · Esc back ".to_string()
+    } else {
+        match &picker.phase {
+            PickerPhase::Ready => match picker.view {
+                PickerView::Main => format!(
+                    " Select analyst — qualified · m manual ({}) · Enter · Esc · q quit ",
+                    picker.alternatives.len()
+                ),
+                PickerView::Manual => format!(
+                    " Manual alternatives — m qualified ({}) · Enter · Esc · q quit ",
+                    picker.options.len()
+                ),
+            },
+            PickerPhase::Loading => " Select analyst — loading · Esc cancel · q/Ctrl+C quit ".to_string(),
+            PickerPhase::Error(_) => " Select analyst — r retry · Esc close · q/Ctrl+C quit ".to_string(),
+        }
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -567,8 +616,25 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         return;
     }
 
+    let notice_style = Style::default()
+        .fg(tone::WARN)
+        .add_modifier(Modifier::BOLD)
+        .bg(tone::SIDEBAR_BG);
+    let footer_lines: Vec<Line> = footer
+        .as_deref()
+        .map(|n| wrap_notice(n, inner.width, notice_style))
+        .unwrap_or_default();
     let mut lines: Vec<Line> = Vec::new();
-    if let Some(error) = &error_text {
+    if let Some(warning) = &warning_lines {
+        for (i, text) in warning.iter().enumerate() {
+            let style = if i == 0 {
+                notice_style
+            } else {
+                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+            };
+            lines.extend(wrap_notice(text, inner.width, style));
+        }
+    } else if let Some(error) = &error_text {
         let style = Style::default()
             .fg(tone::ERROR)
             .add_modifier(Modifier::BOLD)
@@ -581,14 +647,21 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
             Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
         ));
     } else if picker.is_empty() {
-        lines.push(padded_span(
-            "No ask-capable analyst model available for this project.",
+        lines.extend(wrap_notice(
+            &empty_copy,
             inner.width,
             Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
         ));
     } else {
-        for (i, option) in picker.options.iter().enumerate() {
-            let selected = i == picker.selected;
+        // The list window leaves room for the footer so a long list never
+        // pushes the provider causes / notices out of the modal.
+        let list_budget = (inner.height as usize)
+            .saturating_sub(footer_lines.len())
+            .max(1);
+        let range = picker.visible_range(list_budget);
+        let start = range.start;
+        for (offset, option) in picker.active()[range].iter().enumerate() {
+            let selected = start + offset == picker.selected;
             let row_style = if selected {
                 Style::default()
                     .fg(tone::TEXT)
@@ -616,13 +689,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
             }
         }
     }
-    if let Some(notice) = &footer {
-        let notice_style = Style::default()
-            .fg(tone::WARN)
-            .add_modifier(Modifier::BOLD)
-            .bg(tone::SIDEBAR_BG);
-        lines.extend(wrap_notice(notice, inner.width, notice_style));
-    }
+    lines.extend(footer_lines);
     Paragraph::new(lines)
         .style(Style::default().bg(tone::SIDEBAR_BG))
         .render(inner, buf);
@@ -2032,6 +2099,8 @@ mod tests {
                 access_verified: true,
                 recommended: false,
                 tags: vec![],
+                fit: None,
+                explanation: None,
             }],
             selected: 0,
             notice: Some(long_notice),
@@ -2823,6 +2892,147 @@ mod tests {
         assert!(hay.contains("codex: acceso sin verificar"), "{hay}");
         assert!(hay.contains("zed: sin benchmark (solo selección manual)"), "{hay}");
         assert!(!hay.contains("no disponible"), "unknowns must not read as unavailable: {hay}");
+    }
+
+    fn picker_with_views() -> crate::analyst_picker::AnalystPickerState {
+        crate::analyst_picker::AnalystPickerState::from_analyst_catalog(&serde_json::json!({
+            "models": [
+                { "candidateKey": "codex::a", "adapterId": "codex", "modelId": "a", "displayName": "Qualified Alpha",
+                  "available": true, "accessVerified": true, "fit": 0.8,
+                  "explanation": "razonamiento 0.80 · código 0.70 · confianza 0.90", "recommendationTags": [] }
+            ],
+            "alternatives": [
+                { "candidateKey": "cursor::u", "adapterId": "cursor", "modelId": "u", "displayName": "Manual Unscored",
+                  "available": true, "accessVerified": true, "fit": null,
+                  "explanation": "sin benchmark · solo manual", "recommendationTags": [] },
+                { "candidateKey": "claude::v", "adapterId": "claude", "modelId": "v", "displayName": "Manual Unverified",
+                  "available": false, "selectable": true, "accessVerified": false, "fit": 0.4, "recommendationTags": [] }
+            ]
+        }))
+    }
+
+    #[test]
+    fn analyst_picker_main_view_shows_qualified_rows_with_explanation_and_advertises_the_manual_view() {
+        let area = Rect::new(0, 0, 100, 30);
+        let picker = picker_with_views();
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Qualified Alpha"), "{hay}");
+        assert!(hay.contains("razonamiento 0.80"), "per-row explanation missing: {hay}");
+        assert!(!hay.contains("Manual Unscored"), "manual rows stay out of the main view: {hay}");
+        assert!(hay.contains("m manual (2)"), "the manual view must be discoverable with its count: {hay}");
+    }
+
+    #[test]
+    fn analyst_picker_manual_view_lists_only_alternatives_and_points_back() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut picker = picker_with_views();
+        picker.toggle_view();
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Manual alternatives"), "{hay}");
+        assert!(hay.contains("Manual Unscored") && hay.contains("Manual Unverified"), "{hay}");
+        assert!(!hay.contains("Qualified Alpha"), "{hay}");
+        assert!(!hay.contains("recommended"), "manual rows are never starred: {hay}");
+        assert!(hay.contains("m qualified (1)"), "{hay}");
+    }
+
+    #[test]
+    fn analyst_picker_empty_main_view_points_to_the_manual_alternatives() {
+        let area = Rect::new(0, 0, 100, 30);
+        let picker = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(&serde_json::json!({
+            "models": [],
+            "alternatives": [
+                { "candidateKey": "cursor::u", "adapterId": "cursor", "modelId": "u", "displayName": "Manual Unscored",
+                  "available": true, "accessVerified": true, "fit": null, "recommendationTags": [] }
+            ]
+        }));
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("No qualified analyst"), "{hay}");
+        assert!(hay.contains("manual alternatives"), "{hay}");
+    }
+
+    #[test]
+    fn analyst_picker_warning_states_the_provider_call_and_needs_a_second_enter() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut picker = picker_with_views();
+        picker.toggle_view(); // Manual Unverified sorts first (known fit)
+        assert!(picker.confirm().is_none());
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Manual Unverified"), "{hay}");
+        assert!(hay.contains("calls the provider"), "{hay}");
+        assert!(hay.contains("consume account"), "{hay}");
+        assert!(hay.contains("Enter"), "{hay}");
+        assert!(hay.contains("Esc"), "{hay}");
+    }
+
+    #[test]
+    fn analyst_picker_scrolls_so_the_selected_row_is_always_painted_with_no_cap() {
+        let models: Vec<serde_json::Value> = (0..40)
+            .map(|i| serde_json::json!({
+                "candidateKey": format!("x::m{i}"), "adapterId": "x", "modelId": format!("m{i}"),
+                "displayName": format!("Model {i:02}"), "available": true, "accessVerified": true,
+                "fit": 0.9 - (i as f64) / 1000.0, "recommendationTags": []
+            }))
+            .collect();
+        let mut picker = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(
+            &serde_json::json!({ "models": models }),
+        );
+        let area = Rect::new(0, 0, 100, 16);
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let top = buffer_text(&buf);
+        assert!(top.contains("Model 00"), "{top}");
+        assert!(!top.contains("Model 30"), "list must be windowed, not fully drawn: {top}");
+        for _ in 0..30 {
+            picker.move_down();
+        }
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let mid = buffer_text(&buf);
+        assert!(mid.contains("Model 30"), "the highlighted row must be visible: {mid}");
+        assert!(!mid.contains("Model 00"), "{mid}");
+        // Last row reachable (wrap up from the top).
+        let mut picker2 = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(
+            &serde_json::json!({ "models": (0..40).map(|i| serde_json::json!({
+                "candidateKey": format!("x::m{i}"), "adapterId": "x", "modelId": format!("m{i}"),
+                "displayName": format!("Model {i:02}"), "available": true, "accessVerified": true,
+                "fit": 0.9 - (i as f64) / 1000.0, "recommendationTags": [] })).collect::<Vec<_>>() }),
+        );
+        picker2.move_up();
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker2);
+        assert!(buffer_text(&buf).contains("Model 39"), "all 40 rows reachable");
+    }
+
+    #[test]
+    fn analyst_picker_keeps_the_footer_visible_when_the_list_scrolls() {
+        let models: Vec<serde_json::Value> = (0..40)
+            .map(|i| serde_json::json!({
+                "candidateKey": format!("x::m{i}"), "adapterId": "x", "modelId": format!("m{i}"),
+                "displayName": format!("Model {i:02}"), "available": true, "accessVerified": true,
+                "fit": 0.5, "recommendationTags": []
+            }))
+            .collect();
+        let mut picker = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(
+            &serde_json::json!({ "models": models }),
+        );
+        picker.notice = Some("FOOTER_TOKEN".into());
+        for _ in 0..20 {
+            picker.move_down();
+        }
+        let area = Rect::new(0, 0, 100, 14);
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("FOOTER_TOKEN"), "{hay}");
+        assert!(hay.contains("Model 20"), "{hay}");
     }
 
     #[test]

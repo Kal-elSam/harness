@@ -825,7 +825,9 @@ impl ShellApp {
         if !ok {
             if matches!(
                 record.get("status").and_then(|v| v.as_str()),
-                Some("analyst_selection_required") | Some("analyst_access_unverified")
+                Some("analyst_selection_required")
+                    | Some("analyst_access_unverified")
+                    | Some("analyst_access_confirmation_required")
             ) {
                 if let Some(reason) = record.get("reason").and_then(|v| v.as_str()) {
                     self.view.notice = Some(reason.to_string());
@@ -2799,9 +2801,16 @@ fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
         KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             return true;
         }
+        KeyCode::Char('m') if picker.phase == PickerPhase::Ready && picker.warning.is_none() => {
+            picker.toggle_view();
+        }
         KeyCode::Esc => {
-            app.picker = None;
-            app.view.notice = Some("Analyst picker cancelled.".into());
+            // Esc on the provider-call warning goes back to the list; a
+            // second Esc closes the modal.
+            if !picker.cancel_warning() {
+                app.picker = None;
+                app.view.notice = Some("Analyst picker cancelled.".into());
+            }
         }
         KeyCode::Char('r') if matches!(picker.phase, PickerPhase::Error(_)) => {
             // Retry: drop the failed modal; the request reopens it as Loading.
@@ -3098,6 +3107,64 @@ mod tests {
             Some("Access to Claude Opus could not be verified (probe timed out) — nothing was analyzed.")
         );
         assert!(app.view.team_state.is_none(), "no team state is invented");
+    }
+
+    #[test]
+    fn analyst_access_confirmation_required_team_record_shows_its_message_and_clears_pending() {
+        let mut app = ShellApp::new(None);
+        app.team_action_pending = true;
+        app.ingest_team_record(&json!({
+            "type": "team", "op": "project.analyze", "ok": false,
+            "status": "analyst_access_confirmation_required",
+            "reason": "Access to Claude Opus is unverified. Nothing was run."
+        }));
+        assert!(!app.team_action_pending);
+        assert_eq!(
+            app.view.notice.as_deref(),
+            Some("Access to Claude Opus is unverified. Nothing was run.")
+        );
+    }
+
+    fn manual_picker_app() -> ShellApp {
+        let mut app = ShellApp::new(None);
+        app.picker = Some(AnalystPickerState::from_analyst_catalog(&json!({
+            "models": [],
+            "alternatives": [{
+                "candidateKey": "claude::unv", "adapterId": "claude", "modelId": "unv",
+                "displayName": "Unv", "available": false, "selectable": true,
+                "accessVerified": false, "fit": null, "recommendationTags": []
+            }]
+        })));
+        app
+    }
+
+    #[test]
+    fn esc_on_the_access_warning_goes_back_to_the_list_then_a_second_esc_closes() {
+        let mut app = manual_picker_app();
+        handle_picker_key(&mut app, press('m'));
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.picker.as_ref().unwrap().warning.is_some());
+        handle_picker_key(&mut app, esc());
+        assert!(app.picker.is_some(), "first Esc only dismisses the warning");
+        assert!(app.picker.as_ref().unwrap().warning.is_none());
+        assert!(!app.team_action_pending);
+        handle_picker_key(&mut app, esc());
+        assert!(app.picker.is_none(), "second Esc closes the modal");
+    }
+
+    #[test]
+    fn m_does_not_toggle_the_view_while_loading_or_while_the_warning_is_up() {
+        let mut loading = ShellApp::new(None);
+        loading.picker = Some(AnalystPickerState::loading());
+        handle_picker_key(&mut loading, press('m'));
+        assert_eq!(loading.picker.as_ref().unwrap().view, crate::analyst_picker::PickerView::Main);
+
+        let mut app = manual_picker_app();
+        handle_picker_key(&mut app, press('m'));
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        handle_picker_key(&mut app, press('m'));
+        assert_eq!(app.picker.as_ref().unwrap().view, crate::analyst_picker::PickerView::Manual);
+        assert!(app.picker.as_ref().unwrap().warning.is_some(), "m is ignored on the warning");
     }
 
     #[test]
@@ -3471,17 +3538,29 @@ mod tests {
         app.ingest_record(preflight.clone());
         assert!(!app.preflight_pending);
         let picker = app.picker.as_ref().expect("modal open with the real catalog");
+        assert!(
+            picker.options.iter().all(|o| o.access_verified),
+            "the main view holds only verified, qualified rows"
+        );
+        assert!(!handle_picker_key(&mut app, press('m')), "m opens the manual alternatives");
+        let picker = app.picker.as_ref().unwrap();
+        assert_eq!(picker.view, crate::analyst_picker::PickerView::Manual);
         let unverified = picker
-            .options
+            .alternatives
             .iter()
             .position(|o| !o.access_verified)
-            .expect("unverified-access row is listed");
-        assert!(picker.options[unverified].row_label().contains("acceso sin verificar"));
-        assert!(!picker.options[unverified].recommended);
+            .expect("unverified-access row is listed in the manual view");
+        assert!(picker.alternatives[unverified].row_label().contains("acceso sin verificar"));
+        assert!(!picker.alternatives[unverified].recommended);
 
         for _ in 0..unverified {
             assert!(!handle_picker_key(&mut app, press('j')));
         }
+        // First Enter: warning only. Nothing is sent, the modal stays open.
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.picker.as_ref().is_some_and(|p| p.warning.is_some()));
+        assert!(!app.team_action_pending, "no analyze/probe request before the second confirmation");
+        // Second Enter: the confirmed request goes out.
         handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(app.picker.is_none() && app.team_action_pending);
 
