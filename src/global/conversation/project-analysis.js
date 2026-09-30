@@ -48,6 +48,10 @@ export function buildAnalystPrompt(profile) {
     `Workflow docs present: ${profile.workflowCapabilities.join(", ") || "none"}`,
     `Known risks: ${profile.risks.map((r) => r.detail).join("; ") || "none"}`,
     "",
+    "## Investigation",
+    "Before answering, investigate the real repository (read-only) for: the languages actually in use, the project structure and module boundaries, its dependencies, its constraints (tooling, runtime, compatibility, process), and its risks. Weigh the architecture and design of what you read, not only file names.",
+    "Justify the team you suggest (recommendedRoleNeeds) with repo evidence: each role need must say why this project needs it and cite the real files you read.",
+    "",
     "## Task",
     "Respond with ONLY one JSON object (no prose, no markdown fences) matching exactly this shape:",
     JSON.stringify({

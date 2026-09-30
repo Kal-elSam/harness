@@ -21,6 +21,15 @@ test("buildAnalystPrompt includes only real, already-collected evidence and expl
   assert.match(prompt, /never invent/);
 });
 
+test("buildAnalystPrompt asks for languages, structure, dependencies, constraints and risks and a repo-evidenced team justification", () => {
+  const prompt = buildAnalystPrompt(profile());
+  for (const topic of [/languages/i, /structure/i, /dependencies/i, /constraints/i, /risks/i]) assert.match(prompt, topic);
+  assert.match(prompt, /justif/i);
+  assert.match(prompt, /architecture/i);
+  assert.match(prompt, /design/i);
+  assert.match(prompt, /evidence/i);
+});
+
 test("parseProjectAnalysis accepts a real, complete, valid JSON response", () => {
   const raw = JSON.stringify({
     architectureTraits: ["monolithic"], complexitySignals: ["large src/ tree"], criticalAreas: ["auth"],

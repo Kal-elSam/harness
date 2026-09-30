@@ -66,7 +66,14 @@ export const BOOTSTRAP_ANALYST_PROFILE = {
   role: "BootstrapAnalyst",
   objective: "Investigate a real, not-yet-analyzed project read-only and return a structured, evidence-backed ProjectAnalysis Kairo can trust to derive this project's real role requirements from.",
   responsibility: "Read the real project (files, history, workflow docs already collected by project-profile.js, plus anything else it reads on its own) and report real architecture traits, real risks, and which of Kairo's six roles this specific project actually needs — never a boilerplate or generic answer.",
-  capabilities: { required: ["reasoning"], optional: ["instructionFollowing"] },
+  // The capability vocabulary (capability-scoring.js) has no "architecture"
+  // or "design" benchmark, so those are covered by the closest real scored
+  // capabilities: reasoning (architecture/design judgment) and coding
+  // (reading and weighing real code). `focusAreas` documents the intent;
+  // only `capabilities` gates ranking, for the picker AND team recovery
+  // (both consume computeBootstrapAnalystCatalog).
+  capabilities: { required: ["reasoning", "coding"], optional: ["instructionFollowing"] },
+  focusAreas: ["reasoning", "coding", "architecture", "design"],
   allowedActions: ["read files", "search/grep the repository", "run read-only inspection commands (e.g. git log, git blame)"],
   allowedActionIds: ["repo.read", "repo.search", "repo.inspect_history"],
   deliverable: "A valid ProjectAnalysis (see project-analysis.js's PROJECT_ANALYSIS_SCHEMA) — every field backed by a real file the analyst actually read, never an invented finding.",

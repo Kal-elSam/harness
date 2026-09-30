@@ -41,10 +41,33 @@ function analystChoice(choice, model) {
   return { choice, model };
 }
 
-test("BOOTSTRAP_ANALYST_PROFILE is a workflow shape, not a registered team role — reasoning required, instructionFollowing optional", () => {
+test("BOOTSTRAP_ANALYST_PROFILE is a workflow shape, not a registered team role — reasoning and coding required, instructionFollowing optional", () => {
   assert.equal(BOOTSTRAP_ANALYST_PROFILE.role, "BootstrapAnalyst");
-  assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.capabilities, { required: ["reasoning"], optional: ["instructionFollowing"] });
+  assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.capabilities, { required: ["reasoning", "coding"], optional: ["instructionFollowing"] });
   assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.allowedActionIds, ["repo.read", "repo.search", "repo.inspect_history"]);
+});
+
+test("BOOTSTRAP_ANALYST_PROFILE declares reasoning, coding, architecture and design as its focus; only real scored capabilities gate ranking", () => {
+  assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.focusAreas, ["reasoning", "coding", "architecture", "design"]);
+  // architecture/design have no benchmark in the capability vocabulary
+  // (capability-scoring.js), so they are expressed through reasoning+coding.
+  const gated = [...BOOTSTRAP_ANALYST_PROFILE.capabilities.required, ...BOOTSTRAP_ANALYST_PROFILE.capabilities.optional];
+  assert.ok(!gated.includes("architecture") && !gated.includes("design"));
+});
+
+test("computeBootstrapAnalystCatalog ranks with the unified profile: a reasoning-only leader without coding evidence does not win Quality", () => {
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "claude-model" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }, { id: "codex-small" }] }
+  ], [
+    { slug: "claude-model", name: "Reasoner", intelligenceIndex: 95, codingIndex: null, mathIndex: null },
+    { slug: "codex-model", name: "Balanced", intelligenceIndex: 80, codingIndex: 80, mathIndex: null },
+    { slug: "codex-small", name: "Small", intelligenceIndex: 60, codingIndex: 60, mathIndex: null }
+  ]);
+  const catalog = computeBootstrapAnalystCatalog({
+    scoredAll, eligibility: { claude: { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null
+  });
+  assert.equal(catalog.recommendedModel?.modelId, "codex-model");
 });
 
 test("computeBootstrapAnalystCatalog includes every real ask-supported scored candidate, not just the Quality/Efficient winners", () => {
