@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   approveRecoveryProposal, decideTeamRecovery, pickRecoveryAnalyst, rejectRecoveryProposal, runTeamRecovery
 } from "../src/global/conversation/team-recovery.js";
-import { MIN_RECOMMENDATION_CONFIDENCE } from "../src/global/conversation/analyst-qualification.js";
 import { availabilityFingerprint } from "../src/global/conversation/availability-fingerprint.js";
 
 const GO = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "automatic" };
@@ -52,7 +51,7 @@ test("decide: an affected team, or any later availability change, triggers one r
 });
 
 test("pickRecoveryAnalyst prefers the available quality pick, then efficient, then any scored available model — never an unavailable one", () => {
-  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, recommendationTags: [], ...extra });
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: [], ...extra });
   const quality = entry(CLAUDE, { recommendationTags: ["quality"] });
   assert.equal(pickRecoveryAnalyst({ recommendedModel: quality, models: [quality] }).model.modelId, "claude-opus-5");
 
@@ -68,28 +67,30 @@ test("pickRecoveryAnalyst prefers the available quality pick, then efficient, th
 });
 
 test("T21a: pickRecoveryAnalyst never blind-picks an untagged model", () => {
-  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, recommendationTags: [], ...extra });
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: [], ...extra });
   assert.equal(pickRecoveryAnalyst({ recommendedModel: null, models: [entry(CLAUDE), entry(CODEX)] }), null);
 });
 
-test("T21a: pickRecoveryAnalyst applies the shared confidence threshold", () => {
-  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, recommendationTags: ["quality"], ...extra });
-  const low = entry(CLAUDE, { confidence: MIN_RECOMMENDATION_CONFIDENCE - 0.01 });
-  assert.equal(pickRecoveryAnalyst({ recommendedModel: low, models: [low] }), null);
-  const ok = entry(CLAUDE, { confidence: MIN_RECOMMENDATION_CONFIDENCE });
+test("T21a (T24, rewritten from the confidence threshold): pickRecoveryAnalyst applies the shared qualification rule (qualified, comparable required evidence)", () => {
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: ["quality"], ...extra });
+  for (const qualification of ["partial_evidence", "insufficient_evidence", "no_evidence", undefined]) {
+    const thin = entry(CLAUDE, { qualification });
+    assert.equal(pickRecoveryAnalyst({ recommendedModel: thin, models: [thin] }), null, String(qualification));
+  }
+  const ok = entry(CLAUDE);
   assert.equal(pickRecoveryAnalyst({ recommendedModel: ok, models: [ok] }).model.modelId, "claude-opus-5");
-  const lowQuality = entry(CLAUDE, { confidence: 0.1 });
-  const okEfficient = entry(CODEX, { recommendationTags: ["efficient"], confidence: 0.9 });
-  assert.equal(pickRecoveryAnalyst({ recommendedModel: lowQuality, models: [lowQuality, okEfficient] }).model.modelId, "gpt-6-astra");
+  const thinQuality = entry(CLAUDE, { qualification: "partial_evidence" });
+  const okEfficient = entry(CODEX, { recommendationTags: ["efficient"] });
+  assert.equal(pickRecoveryAnalyst({ recommendedModel: thinQuality, models: [thinQuality, okEfficient] }).model.modelId, "gpt-6-astra");
 });
 
 test("T21a: pickRecoveryAnalyst skips accessVerified:false even when tagged and confident", () => {
-  const unverified = { ...CLAUDE, evidenceStatus: "scored", available: true, recommendationTags: ["quality"], confidence: 0.9, accessVerified: false };
+  const unverified = { ...CLAUDE, evidenceStatus: "scored", available: true, recommendationTags: ["quality"], qualification: "qualified", accessVerified: false };
   assert.equal(pickRecoveryAnalyst({ recommendedModel: unverified, models: [unverified] }), null);
 });
 
 test("T20: pickRecoveryAnalyst never picks an unverified-access model, however it is flagged or ranked", () => {
-  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, recommendationTags: [], ...extra });
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: [], ...extra });
   const shapes = [
     { entitlement: "unverified", available: false, selectable: true, accessVerified: false, cause: "access_unknown" },
     { entitlement: "unverified", available: true },
@@ -110,7 +111,7 @@ function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIM
   const state = { strategy, record, writes: [], records: [], released: false, analyzeCalls: 0, clock: Date.parse("2026-09-23T12:00:00.000Z") };
   let eligibilityCalls = 0;
   const nextEligibility = () => eligibilitySequence[Math.min(eligibilityCalls++, eligibilitySequence.length - 1)];
-  const catalogEntry = (model) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, recommendationTags: ["quality"] });
+  const catalogEntry = (model) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: ["quality"] });
   const context = {
     readStrategy: async () => state.strategy,
     writeStrategy: async (next) => { state.writes.push(next); state.strategy = next; },

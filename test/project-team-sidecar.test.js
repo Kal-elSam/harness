@@ -6,13 +6,24 @@ import {
   buildAnalystPickerNotice,
   buildAnalystExclusionCauses,
   curateAnalystCatalogForPicker,
-  MIN_RECOMMENDATION_CONFIDENCE,
   pickDefaultAnalyst,
   preflightProjectTeam,
   summarizeProjectStrategy
 } from "../src/global/host/project-team-sidecar.js";
 
+const EVALUATION = {
+  comparable: true, confidence: "medium", capabilities: { reasoning: 0.75, coding: 0.5 },
+  benchmarkCounts: { reasoning: 2, coding: 1 }, optionalEvidence: false, missing: []
+};
+const NO_EVALUATION = {
+  comparable: null, confidence: null, capabilities: { reasoning: null, coding: null },
+  benchmarkCounts: { reasoning: null, coding: null }, optionalEvidence: false, missing: ["reasoning", "coding"]
+};
+
+// A catalog row in the T24 shape: the order (`rank`) and verdict (`qualification`)
+// come from the catalog; identity defaults to the modelId.
 function catalogEntry(overrides = {}) {
+  const modelId = overrides.modelId ?? "gpt-5";
   return {
     candidateKey: "codex::gpt-5",
     adapterId: "codex",
@@ -23,13 +34,17 @@ function catalogEntry(overrides = {}) {
     entitlementReason: null,
     available: true,
     accessVerified: true,
-    fit: 0.5,
-    confidence: 0.7,
-    evidence: { reasoning: 0.7, coding: 0.6, coverage: 1 },
+    rank: 1,
+    qualification: "qualified",
+    identityKey: modelId,
+    evidenceKey: modelId,
+    evaluation: { ...EVALUATION },
     recommendationTags: [],
     ...overrides
   };
 }
+
+const unscoredFields = { evidenceStatus: "unscored", rank: null, qualification: "no_evidence", evidenceKey: null, evaluation: { ...NO_EVALUATION } };
 
 function suggestedStrategy(overrides = {}) {
   return {
@@ -142,28 +157,23 @@ test("pickDefaultAnalyst returns null when there is no recommendation, even with
   assert.equal(pickDefaultAnalyst({ models: [catalogEntry()] }), null);
 });
 
-test("pickDefaultAnalyst returns null when the recommendation is below the confidence floor", () => {
-  const low = MIN_RECOMMENDATION_CONFIDENCE - 0.01;
-  assert.equal(
-    pickDefaultAnalyst({
-      recommendedModel: { candidateKey: "codex::gpt-5" },
-      models: [catalogEntry({ confidence: low })]
-    }),
-    null
-  );
-  assert.equal(
-    pickDefaultAnalyst({
-      recommendedModel: { candidateKey: "codex::gpt-5", confidence: low },
-      models: [catalogEntry({ confidence: undefined })]
-    }),
-    null
-  );
+test("pickDefaultAnalyst (T24, rewritten from the confidence-floor test) returns null unless the recommendation has qualified, comparable required evidence", () => {
+  for (const qualification of ["partial_evidence", "insufficient_evidence", "no_evidence", undefined]) {
+    assert.equal(
+      pickDefaultAnalyst({
+        recommendedModel: { candidateKey: "codex::gpt-5" },
+        models: [catalogEntry({ qualification })]
+      }),
+      null,
+      String(qualification)
+    );
+  }
 });
 
-test("pickDefaultAnalyst still picks an explicit recommendation at or above the confidence floor", () => {
+test("pickDefaultAnalyst still picks an explicit recommendation with qualified evidence", () => {
   const analyst = pickDefaultAnalyst({
     recommendedModel: { candidateKey: "codex::gpt-5" },
-    models: [catalogEntry({ confidence: MIN_RECOMMENDATION_CONFIDENCE, recommendationTags: ["quality"] })]
+    models: [catalogEntry({ recommendationTags: ["quality"] })]
   });
   assert.equal(analyst?.model.modelId, "gpt-5");
   assert.equal(analyst?.selectionSource, "recommended");
@@ -239,7 +249,7 @@ test("analyzeProjectTeam returns analyst_selection_required without calling the 
     { recommendedModel: null, models: [catalogEntry()] },
     {
       recommendedModel: { candidateKey: "codex::gpt-5" },
-      models: [catalogEntry({ confidence: MIN_RECOMMENDATION_CONFIDENCE - 0.1 })]
+      models: [catalogEntry({ qualification: "partial_evidence" })]
     }
   ]) {
     const calls = [];
@@ -338,15 +348,15 @@ test("preflightProjectTeam returns the real analyst catalog without persisting o
   assert.deepEqual(result.candidates, { scoredAll: [], eligibility: {} });
 });
 
-test("curateAnalystCatalogForPicker ranks by numeric fit, not tags or brand; keeps same-name rows by candidateKey; unscored go to manual alternatives", () => {
+test("curateAnalystCatalogForPicker (T24, rewritten) orders by the catalog rank, not tags or brand; keeps same-name rows with distinct identities; unscored go to manual alternatives", () => {
   const curated = curateAnalystCatalogForPicker({
-    recommendedModel: { candidateKey: "codex::astra", confidence: 0.8 },
+    recommendedModel: { candidateKey: "codex::astra" },
     models: [
-      catalogEntry({ candidateKey: "cursor::opus-1", adapterId: "cursor", modelId: "opus-high", displayName: "Claude Opus 5.5", fit: 0.5, confidence: 0.7 }),
-      catalogEntry({ candidateKey: "cursor::opus-2", adapterId: "cursor", modelId: "opus-max", displayName: "Claude Opus 5.5", fit: 0.4, confidence: 0.7 }),
-      catalogEntry({ candidateKey: "cursor::unscored", adapterId: "cursor", modelId: "mystery", displayName: "Mystery", evidenceStatus: "unscored", fit: null, confidence: 0.25, evidence: { reasoning: null, coding: null, coverage: null } }),
-      catalogEntry({ candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", recommendationTags: ["quality"], fit: 0.6, confidence: 0.8 }),
-      catalogEntry({ candidateKey: "codex::blocked", adapterId: "codex", modelId: "old", displayName: "Old Codex", fit: 0.9, confidence: 0.9, available: false })
+      catalogEntry({ candidateKey: "cursor::opus-1", adapterId: "cursor", modelId: "opus-high", displayName: "Claude Opus 5.5", rank: 2 }),
+      catalogEntry({ candidateKey: "cursor::opus-2", adapterId: "cursor", modelId: "opus-max", displayName: "Claude Opus 5.5", rank: 3 }),
+      catalogEntry({ candidateKey: "cursor::unscored", adapterId: "cursor", modelId: "mystery", displayName: "Mystery", ...unscoredFields }),
+      catalogEntry({ candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", recommendationTags: ["quality"], rank: 1 }),
+      catalogEntry({ candidateKey: "codex::blocked", adapterId: "codex", modelId: "old", displayName: "Old Codex", rank: 0, available: false })
     ]
   });
   assert.deepEqual(curated.models.map((m) => m.displayName), ["GPT-6-Astra", "Claude Opus 5.5", "Claude Opus 5.5"]);
@@ -355,52 +365,52 @@ test("curateAnalystCatalogForPicker ranks by numeric fit, not tags or brand; kee
   assert.equal(curated.recommendedModel.candidateKey, "codex::astra");
 });
 
-test("curateAnalystCatalogForPicker orders a tagged low-fit model below a higher-fit untagged one (tags are not the primary key)", () => {
+test("curateAnalystCatalogForPicker orders a tagged lower-ranked model below a better-ranked untagged one (tags are not the primary key)", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: null,
     models: [
-      catalogEntry({ candidateKey: "codex::tagged", modelId: "tagged", displayName: "Tagged", recommendationTags: ["quality", "efficient"], fit: 0.2, confidence: 0.6 }),
-      catalogEntry({ candidateKey: "codex::plain", modelId: "plain", displayName: "Plain", fit: 0.7, confidence: 0.6 })
+      catalogEntry({ candidateKey: "codex::tagged", modelId: "tagged", displayName: "Tagged", recommendationTags: ["quality", "efficient"], rank: 2 }),
+      catalogEntry({ candidateKey: "codex::plain", modelId: "plain", displayName: "Plain", rank: 1 })
     ]
   });
   assert.deepEqual(curated.models.map((m) => m.displayName), ["Plain", "Tagged"]);
 });
 
-test("curateAnalystCatalogForPicker breaks fit ties by confidence, then by name", () => {
-  const curated = curateAnalystCatalogForPicker({
-    recommendedModel: null,
-    models: [
-      catalogEntry({ candidateKey: "a::b", modelId: "b", displayName: "Bravo", fit: 0.5, confidence: 0.5 }),
-      catalogEntry({ candidateKey: "a::a", modelId: "a", displayName: "Alpha", fit: 0.5, confidence: 0.5 }),
-      catalogEntry({ candidateKey: "a::c", modelId: "c", displayName: "Charlie", fit: 0.5, confidence: 0.9 })
-    ]
-  });
-  assert.deepEqual(curated.models.map((m) => m.displayName), ["Charlie", "Alpha", "Bravo"]);
+test("curateAnalystCatalogForPicker (T24, rewritten from the fit/confidence tie test) breaks equal ranks by candidateKey, never by input order", () => {
+  const rows = [
+    catalogEntry({ candidateKey: "a::b", modelId: "b", displayName: "Bravo", rank: 1 }),
+    catalogEntry({ candidateKey: "a::a", modelId: "a", displayName: "Alpha", rank: 1 }),
+    catalogEntry({ candidateKey: "a::c", modelId: "c", displayName: "Charlie", rank: 1 })
+  ];
+  for (const input of [rows, [...rows].reverse()]) {
+    const curated = curateAnalystCatalogForPicker({ recommendedModel: null, models: input });
+    assert.deepEqual(curated.models.map((m) => m.displayName), ["Alpha", "Bravo", "Charlie"]);
+  }
 });
 
 test("curateAnalystCatalogForPicker puts available unscored models (unknown fit) in the manual view, uncapped", () => {
   const models = Array.from({ length: 20 }, (_, i) => catalogEntry({
     candidateKey: `x::m${i}`, modelId: `m${i}`, displayName: `Model ${String(i).padStart(2, "0")}`,
-    evidenceStatus: "unscored", fit: null, confidence: 0.25, evidence: { reasoning: null, coding: null, coverage: null }
+    ...unscoredFields
   }));
-  models.push(catalogEntry({ candidateKey: "x::scored", modelId: "scored", displayName: "Scored", fit: 0.3, confidence: 0.6 }));
+  models.push(catalogEntry({ candidateKey: "x::scored", modelId: "scored", displayName: "Scored", rank: 1 }));
   const curated = curateAnalystCatalogForPicker({ recommendedModel: null, models });
   assert.deepEqual(curated.models.map((m) => m.displayName), ["Scored"]);
   assert.equal(curated.alternatives.length, 20, "no cap");
   assert.ok(curated.alternatives.every((m) => m.evidenceStatus === "unscored"));
 });
 
-test("curateAnalystCatalogForPicker drops the recommended star when its confidence is insufficient; the row stays selectable in the manual view", () => {
+test("curateAnalystCatalogForPicker drops the recommended star when its evidence is not qualified; the row stays selectable in the manual view", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: { candidateKey: "codex::thin" },
-    models: [catalogEntry({ candidateKey: "codex::thin", modelId: "thin", displayName: "Thin", recommendationTags: ["quality"], fit: 0.1, confidence: 0.4 })]
+    models: [catalogEntry({ candidateKey: "codex::thin", modelId: "thin", displayName: "Thin", recommendationTags: ["quality"], qualification: "partial_evidence" })]
   });
-  assert.equal(curated.models.length, 0, "confidence below the floor does not qualify for the main view");
+  assert.equal(curated.models.length, 0, "partial (provisional) evidence does not qualify for the main view");
   assert.equal(curated.alternatives.length, 1);
   assert.equal(curated.recommendedModel, null);
 });
 
-test("curateAnalystCatalogForPicker ranks eligible Claude above Codex by fit, not brand", () => {
+test("curateAnalystCatalogForPicker ranks eligible Claude above Codex by the catalog rank, not brand", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: { candidateKey: "claude::opus" },
     models: [
@@ -411,7 +421,7 @@ test("curateAnalystCatalogForPicker ranks eligible Claude above Codex by fit, no
         displayName: "GPT",
         evidenceStatus: "scored",
         recommendationTags: [],
-        fit: 0.3, confidence: 0.6,
+        rank: 2,
         available: true
       }),
       catalogEntry({
@@ -421,7 +431,7 @@ test("curateAnalystCatalogForPicker ranks eligible Claude above Codex by fit, no
         displayName: "Claude Opus",
         evidenceStatus: "scored",
         recommendationTags: ["quality"],
-        fit: 0.6, confidence: 0.7,
+        rank: 1,
         available: true
       })
     ]
@@ -706,21 +716,19 @@ function unverifiedEntry(overrides = {}) {
     selectable: true,
     accessVerified: false,
     cause: "access_unknown",
-    fit: 0.9,
-    confidence: 0.9,
     recommendationTags: [],
     ...overrides
   });
 }
 
-test("T23 curate (rewrote T20): unverified-access rows are in NEITHER view; verified rows keep fit order", () => {
+test("T23 curate (rewrote T20): unverified-access rows are in NEITHER view; verified rows keep the catalog rank order", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: null,
     models: [
-      unverifiedEntry({ candidateKey: "claude::unv-low", modelId: "unv-low", displayName: "Unv Low", fit: 0.2 }),
-      catalogEntry({ candidateKey: "codex::weak", modelId: "weak", displayName: "Weak Verified", fit: 0.1, confidence: 0.5 }),
-      unverifiedEntry({ candidateKey: "claude::unv-high", modelId: "unv-high", displayName: "Unv High", fit: 0.95 }),
-      catalogEntry({ candidateKey: "codex::strong", modelId: "strong", displayName: "Strong Verified", fit: 0.5, confidence: 0.6 })
+      unverifiedEntry({ candidateKey: "claude::unv-low", modelId: "unv-low", displayName: "Unv Low", rank: 4 }),
+      catalogEntry({ candidateKey: "codex::weak", modelId: "weak", displayName: "Weak Verified", rank: 3 }),
+      unverifiedEntry({ candidateKey: "claude::unv-high", modelId: "unv-high", displayName: "Unv High", rank: 1 }),
+      catalogEntry({ candidateKey: "codex::strong", modelId: "strong", displayName: "Strong Verified", rank: 2 })
     ]
   });
   assert.deepEqual(curated.models.map((m) => m.displayName), ["Strong Verified", "Weak Verified"]);
@@ -733,7 +741,7 @@ test("T23 curate (rewrote T20): a non-available row is dropped; same display nam
   });
   assert.equal(dropped.models.length + dropped.alternatives.length, 0);
   const deduped = curateAnalystCatalogForPicker({
-    models: [catalogEntry({ candidateKey: "codex::a", displayName: "Same Name", fit: 0.99 }), catalogEntry({ candidateKey: "codex::b", displayName: "Same Name", fit: 0.1 })]
+    models: [catalogEntry({ candidateKey: "codex::a", displayName: "Same Name", rank: 1 }), catalogEntry({ candidateKey: "codex::b", displayName: "Same Name", rank: 2 })]
   });
   assert.equal(deduped.models.length + deduped.alternatives.length, 2, "no display-name dedupe: identity is candidateKey");
   const many = curateAnalystCatalogForPicker({

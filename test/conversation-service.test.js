@@ -527,7 +527,8 @@ test("preflightProject lists an unscored UNVERIFIED model as a manual candidate 
   const row = result.analystCatalog.models.find((model) => model.modelId === "both");
   assert.equal(row?.accessVerified, false);
   assert.equal(row?.selectable, true);
-  assert.equal(row?.fit, null);
+  assert.equal(row?.rank, null);
+  assert.equal(row?.qualification, "no_evidence");
 });
 
 test("runBootstrapAnalysis refuses to start while another analysis holds the project lock, without touching the analyst", async () => {

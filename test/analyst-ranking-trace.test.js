@@ -26,25 +26,33 @@ test("trace reports identity, evidence, exclusion and final position for every c
   assert.match(formatAnalystTrace(trace), /claude::claude-opus-5/);
 });
 
-// T24 baseline: characterizes the ranking BEFORE the shared-evaluator rewrite.
-// Superseded (deliberately rewritten) by the T24 behaviour tests.
-test("BASELINE: Opus 5 has the strongest measured reasoning yet ranks outside the main view; the same Sol model takes two main slots", () => {
+// T24 (rewritten from the BASELINE tests that characterized the old fit = profileFit x confidence ranking).
+test("after T24: the same Sol model takes ONE main slot, Opus 5 is in the main view, nothing is starred by provider", () => {
   const trace = traceAnalystRanking({ ...CONTROLLED_TRACE_CATALOG, aaModels });
-  const opus = byKey(trace, "claude::claude-opus-5");
-  const sol = byKey(trace, "codex::gpt-5-6-sol");
-  assert.ok(opus.catalog.evidence.reasoning > sol.catalog.evidence.reasoning, "Opus 5 measured reasoning is higher");
-  assert.equal(opus.stage, "manual");
-  assert.equal(sol.starred, true);
-  const mainKeys = trace.rows.filter((row) => row.stage === "main").sort((a, b) => a.position - b.position).map((row) => row.candidateKey);
-  assert.deepEqual(mainKeys.slice(0, 2), ["codex::gpt-5-6-sol", "cursor::gpt-5-6-sol"], "same model through two subscriptions takes two slots");
+  const main = trace.rows.filter((row) => row.stage === "main").sort((a, b) => a.position - b.position);
+  assert.equal(main.length, 3);
+  assert.equal(new Set(main.map((row) => row.catalog.identityKey)).size, 3, "three DISTINCT models");
+  assert.ok(main.some((row) => row.candidateKey === "claude::claude-opus-5"), "Opus 5 is one of the three distinct models");
+  const solRoutes = trace.rows.filter((row) => row.catalog?.identityKey === "gpt-5-6-sol");
+  assert.ok(solRoutes.some((row) => row.stage === "main"));
+  assert.equal(solRoutes.filter((row) => row.stage === "main").length, 1, "the Sol model occupies one slot across Codex and Cursor");
+  assert.equal(byKey(trace, "cursor::gpt-5-6-sol").stage, "manual", "the equivalent route is manual");
+  assert.equal(byKey(trace, "codex::gpt-5-6-sol").catalog.evaluation.optionalEvidence, true);
 });
 
-test("BASELINE cause: the gap is the optional instructionFollowing data (ifBench), amplified by code — removing ifBench from every row lets Opus 5 into the main view", () => {
+test("after T24: the optional instructionFollowing datum no longer decides anything — removing ifBench from every row keeps the main three identical", () => {
   const withoutOptional = aaModels.map((row) => ({ ...row, ifBench: null }));
-  const trace = traceAnalystRanking({ ...CONTROLLED_TRACE_CATALOG, aaModels: withoutOptional });
-  assert.equal(byKey(trace, "claude::claude-opus-5").stage, "main");
-  const original = traceAnalystRanking({ ...CONTROLLED_TRACE_CATALOG, aaModels });
-  assert.notEqual(byKey(original, "claude::claude-opus-5").stage, "main");
-  const confidenceOf = (t, key) => byKey(t, key).catalog.confidence;
-  assert.ok(confidenceOf(original, "codex::gpt-5-6-sol") > confidenceOf(original, "claude::claude-opus-5"), "confidence (coverage incl. optional) is what separates them");
+  const mainOf = (t) => t.rows.filter((row) => row.stage === "main").sort((a, b) => a.position - b.position).map((row) => row.candidateKey);
+  const a = traceAnalystRanking({ ...CONTROLLED_TRACE_CATALOG, aaModels });
+  const b = traceAnalystRanking({ ...CONTROLLED_TRACE_CATALOG, aaModels: withoutOptional });
+  assert.deepEqual(new Set(mainOf(a)), new Set(mainOf(b)), "same three models with or without the optional benchmark");
+});
+
+test("after T24: the Cursor effort ids stay unscored (data gap) and are manual-only, never starred", () => {
+  const trace = traceAnalystRanking({ ...CONTROLLED_TRACE_CATALOG, aaModels });
+  for (const key of ["cursor::claude-opus-5-thinking-high", "cursor::claude-sonnet-5-thinking-high"]) {
+    assert.equal(byKey(trace, key).stage, "manual");
+    assert.equal(byKey(trace, key).catalog.qualification, "no_evidence");
+    assert.equal(byKey(trace, key).starred, false);
+  }
 });

@@ -16,14 +16,14 @@
 // and that model has already produced the real analysis this module
 // consumes. The analyst never picks the team; it only investigates.
 
-import { buildAiTeam, buildEfficientTeam, ensureRegistry } from "../intelligence/model-intelligence.js";
-import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
-import { computeCapabilityGapValue, computeRoleEvaluations } from "../intelligence/capability-scoring.js";
 import {
-  ANALYST_FIT_DEFAULT_WEIGHTS, BOOTSTRAP_ANALYST_PROFILE, SCORED_ANALYST_CONFIDENCE_FLOOR, UNSCORED_ANALYST_CONFIDENCE
-} from "./bootstrap-analyst-profile.js";
+  buildAiTeam, buildEfficientTeam, ensureRegistry, modelIdentityKey, rankCandidatesByRequirements
+} from "../intelligence/model-intelligence.js";
+import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
+import { computeRoleEvaluations } from "../intelligence/capability-scoring.js";
+import { BOOTSTRAP_ANALYST_PROFILE } from "./bootstrap-analyst-profile.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
-import { compareAnalystRows, qualifiesForMainView } from "./analyst-qualification.js";
+import { QUALIFICATION, classifyAnalystCatalog, compareAnalystRows } from "./analyst-qualification.js";
 
 // The Bootstrap Analyst investigates read-only via askProvider
 // (intelligence/quick-ask.js), which only actually supports these
@@ -126,65 +126,82 @@ function candidateKeyOf(model) {
 }
 
 /**
- * Composite analyst fit per scored model, from REAL evidence only.
- *  - profileFit = sum(weight_c * value_c over capabilities WITH evidence)
- *    / sum(weight_c over every profile capability). value_c is the model's
- *    own scale-normalized 0-1 capability magnitude (computeCapabilityGapValue,
- *    benchmark evidence). A capability with no data adds nothing to the
- *    numerator; no number is ever invented for it.
- *  - coverage = weight of capabilities with evidence / total weight.
- *  - benchmarkDepth = mean real benchmark coverage of the scored capabilities
- *    (0 when a capability only had the composite-index fallback).
- *  - confidence = SCORED floor + (1 - floor) * (coverage + benchmarkDepth) / 2.
- *  - fit = profileFit * confidence (thin evidence is discounted on purpose).
- * Weights: required 1, optional 0.5, overridable via profile.capabilityWeights.
- * Unscored models are handled by the caller: fit null, UNSCORED confidence.
- * A model with NO capability evidence at all gets `fit: null` (unknown), never
- * an invented 0; a measured 0 stays a number. `evidence` carries the real
- * reasoning/coding magnitudes (null when absent) and the weight coverage.
+ * The analyst order, from the SHARED quality evaluator (model-intelligence.js
+ * rankCandidatesByRequirements — the machinery every team role already uses):
+ * required capabilities first, comparable evidence before thin evidence,
+ * optional capabilities only as a tie-break, a stable identifier last. Quality
+ * is never multiplied by confidence and magnitudes of different benchmarks are
+ * never mixed.
+ *
+ * Evidence is counted ONCE: routes that carry the same benchmark row (same AA
+ * slug — the same model through several subscriptions) enter the comparison as
+ * a single entry, then every route inherits that entry's evaluation and gets an
+ * adjacent rank ordered by candidateKey.
+ *
+ * Returns, per candidateKey: `{rank, qualification, identityKey, evaluation}`.
+ * A row without sufficient REQUIRED evidence has `rank: null`; nothing is
+ * invented for it.
+ * @param {object[]} pool - every non-denied, ask-supported scored candidate
+ * @param {object|null} registry
+ * @param {typeof BOOTSTRAP_ANALYST_PROFILE} [profile]
+ * @returns {Map<string, {rank: number|null, qualification: string, identityKey: string, evaluation: object}>}
  */
-function computeAnalystFits(pool, registry, profile = BOOTSTRAP_ANALYST_PROFILE) {
+function evaluateAnalystPool(pool, registry, profile = BOOTSTRAP_ANALYST_PROFILE) {
+  const results = new Map();
+  if (!pool.length) return results;
   const { required, optional } = profile.capabilities;
-  const weightOf = (capability) => profile.capabilityWeights?.[capability]
-    ?? (required.includes(capability) ? ANALYST_FIT_DEFAULT_WEIGHTS.required : ANALYST_FIT_DEFAULT_WEIGHTS.optional);
-  const capabilities = [...required, ...optional];
-  const totalWeight = capabilities.reduce((sum, capability) => sum + weightOf(capability), 0);
-  const fits = new Map();
-  if (!pool.length || !totalWeight) return fits;
-  const gapValues = new Map(capabilities.map((capability) => [capability, computeCapabilityGapValue(registry, pool, capability)]));
-  // Reasoning and coding are always reported as evidence (the picker's main
-  // view needs both), even if a custom profile does not weigh them.
-  const evidenceValues = new Map(["reasoning", "coding"].map((capability) => [
-    capability, gapValues.get(capability) ?? computeCapabilityGapValue(registry, pool, capability)
-  ]));
-  const evaluations = computeRoleEvaluations(registry, pool, profile.role, capabilities);
-  for (const model of pool) {
-    const modelKey = `${model.adapterId}::${model.modelId}`;
-    let weighted = 0;
-    let coveredWeight = 0;
-    const depths = [];
-    for (const capability of capabilities) {
-      const value = gapValues.get(capability).get(modelKey);
-      if (value == null) continue;
-      weighted += weightOf(capability) * value;
-      coveredWeight += weightOf(capability);
-      depths.push(Math.min(1, evaluations.get(modelKey)?.benchmarkCoverage?.[capability] ?? 0));
-    }
-    const coverage = coveredWeight / totalWeight;
-    const evidence = {
-      reasoning: evidenceValues.get("reasoning").get(modelKey) ?? null,
-      coding: evidenceValues.get("coding").get(modelKey) ?? null,
-      coverage: coveredWeight > 0 ? coverage : null
-    };
-    const benchmarkDepth = depths.length ? depths.reduce((a, b) => a + b, 0) / depths.length : 0;
-    const confidence = SCORED_ANALYST_CONFIDENCE_FLOOR + (1 - SCORED_ANALYST_CONFIDENCE_FLOOR) * ((coverage + benchmarkDepth) / 2);
-    fits.set(modelKey, { fit: coveredWeight > 0 ? (weighted / totalWeight) * confidence : null, confidence, evidence });
+  const groups = new Map();
+  for (const model of [...pool].sort((a, b) => candidateKeyOf(a).localeCompare(candidateKeyOf(b)))) {
+    const evidenceKey = model.slug ?? candidateKeyOf(model);
+    groups.set(evidenceKey, [...(groups.get(evidenceKey) ?? []), model]);
   }
-  return fits;
+  const groupOf = new Map([...groups.values()].flatMap((routes) => routes.map((route) => [candidateKeyOf(route), routes])));
+  const representatives = [...groups.values()].map((routes) => routes[0]);
+  const { ranked, unranked } = rankCandidatesByRequirements(
+    representatives, ensureRegistry(representatives, registry), { role: profile.role, capabilities: { required, optional } }
+  );
+  const capabilityOrNull = (values, capability) => (typeof values?.[capability] === "number" ? values[capability] : null);
+  let nextRank = 1;
+  for (const entry of ranked) {
+    const evaluation = {
+      comparable: entry.comparable,
+      confidence: entry.confidence,
+      capabilities: { reasoning: capabilityOrNull(entry.capabilities, "reasoning"), coding: capabilityOrNull(entry.capabilities, "coding") },
+      benchmarkCounts: { reasoning: entry.benchmarkCounts?.reasoning ?? null, coding: entry.benchmarkCounts?.coding ?? null },
+      optionalEvidence: entry.optionalFit != null,
+      missing: []
+    };
+    for (const route of groupOf.get(candidateKeyOf(entry.model))) {
+      results.set(candidateKeyOf(route), {
+        rank: nextRank++,
+        qualification: entry.comparable ? QUALIFICATION.QUALIFIED : QUALIFICATION.PARTIAL,
+        identityKey: modelIdentityKey(route), evaluation
+      });
+    }
+  }
+  for (const entry of unranked) {
+    const evaluation = {
+      comparable: null, confidence: null,
+      capabilities: { reasoning: capabilityOrNull(entry.capabilities, "reasoning"), coding: capabilityOrNull(entry.capabilities, "coding") },
+      benchmarkCounts: { reasoning: entry.benchmarkCounts?.reasoning ?? null, coding: entry.benchmarkCounts?.coding ?? null },
+      optionalEvidence: false, missing: entry.missing
+    };
+    const hasAny = entry.missing.length < required.length;
+    for (const route of groupOf.get(candidateKeyOf(entry.model))) {
+      results.set(candidateKeyOf(route), {
+        rank: null, qualification: hasAny ? QUALIFICATION.INSUFFICIENT : QUALIFICATION.NONE,
+        identityKey: modelIdentityKey(route), evaluation
+      });
+    }
+  }
+  return results;
 }
 
-/** Evidence of a model with no benchmark at all: every field unknown. */
-const NO_ANALYST_EVIDENCE = Object.freeze({ reasoning: null, coding: null, coverage: null });
+/** Evaluation of a model with no benchmark at all: every field unknown. */
+const noEvaluation = () => ({
+  comparable: null, confidence: null, capabilities: { reasoning: null, coding: null },
+  benchmarkCounts: { reasoning: null, coding: null }, optionalEvidence: false, missing: [...BOOTSTRAP_ANALYST_PROFILE.capabilities.required]
+});
 
 function quotaFor(providerCapacity, adapterId) {
   return providerCapacity?.[adapterId]?.quotaRemainingPercent ?? null;
@@ -197,18 +214,18 @@ function quotaFor(providerCapacity, adapterId) {
  * picks. A real, unscored model (no Artificial Analysis match) is still
  * included — honestly marked `evidenceStatus: "unscored"` — so a human
  * can still pick it manually; Kairo just never recommends one on its own.
- * Ranking itself is the SAME real Pareto/risk-floor machinery every other
- * role uses (BOOTSTRAP_ANALYST_PROFILE.capabilities, under the "Explorer"
- * role bucket — see this module's own history for why that bucket name
- * is reused rather than a new one) — this function never invents a
- * second ranking formula, it only projects the real result into a richer
- * catalog shape and tags each real candidate that happens to be the
- * Quality and/or Efficient winner.
+ * The ORDER is the shared quality evaluator's (model-intelligence.js
+ * rankCandidatesByRequirements, the machinery every team role uses) applied to
+ * BOOTSTRAP_ANALYST_PROFILE.capabilities: required capabilities first,
+ * comparable evidence before thin evidence, optional capabilities only as a
+ * tie-break. This function never invents a second ranking formula; it projects
+ * that one result (`rank`, `qualification`, `evaluation`) into the catalog and
+ * only the "efficient" tag still comes from the Explorer efficiency balance.
  * @param {object} args - `scoredAll`, `eligibility`, `registry`,
  *   `providerCapacity`, plus
  *   `unscoredModels` (real catalog models with no AA match — see
  *   conversation/service.js's own `unscoredModels`).
- * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, cause: string|null, quota: number|null, fit: number|null, confidence: number, evidence: {reasoning: number|null, coding: number|null, coverage: number|null}, recommendationTags: string[]}>, exclusions: Array<{candidateKey: string, adapterId: string, modelId: string, cause: string, reason: string|null}>}}
+ * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, accessVerified: boolean, selectable: boolean, cause: string|null, quota: number|null, rank: number|null, qualification: "qualified"|"partial_evidence"|"insufficient_evidence"|"no_evidence", identityKey: string, evaluation: {comparable: boolean|null, confidence: "high"|"medium"|"low"|null, capabilities: {reasoning: number|null, coding: number|null}, benchmarkCounts: {reasoning: number|null, coding: number|null}, optionalEvidence: boolean, missing: string[]}, recommendationTags: string[]}>, exclusions: Array<{candidateKey: string, adapterId: string, modelId: string, cause: string, reason: string|null}>}}
  */
 export function computeBootstrapAnalystCatalog({
   scoredAll, manualSelectionScoredPool = scoredAll, eligibility, registry,
@@ -224,7 +241,6 @@ export function computeBootstrapAnalystCatalog({
   const askSupportedScoredAll = manualSelectionScoredPool.filter((model) => (
     ASK_SUPPORTED_ADAPTERS.has(model.adapterId) && !isAccessDenied(model)
   ));
-  const askSupportedScored = askSupportedScoredAll.filter((model) => !isAccessUnverified(model));
   // scoredAll (the Recommendation Pool) already excludes superseded
   // candidates (buildRecommendationPool); unscoredModels doesn't go
   // through that pool, so the same real "not superseded" rule is applied
@@ -237,14 +253,9 @@ export function computeBootstrapAnalystCatalog({
   ));
 
   const roleCapabilities = { Explorer: BOOTSTRAP_ANALYST_PROFILE.capabilities };
-  const fits = computeAnalystFits(askSupportedScored, ensureRegistry(askSupportedScored, registry));
-  // Verified models keep the fit they would have without any unverified
-  // model around (fit normalizes against its pool); unverified models are
-  // scored against the full pool, from the same real evidence.
-  const hasUnverified = askSupportedScoredAll.length > askSupportedScored.length;
-  const unverifiedFits = hasUnverified
-    ? computeAnalystFits(askSupportedScoredAll, ensureRegistry(askSupportedScoredAll, registry))
-    : fits;
+  // ONE comparison for every route, verified or not: verification changes who
+  // may be listed, never the order.
+  const evaluations = evaluateAnalystPool(askSupportedScoredAll, registry);
   const efficientTeam = buildEfficientTeam(askSupportedRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
   const efficient = efficientTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
   const efficientKey = efficient ? candidateKeyOf(efficient) : null;
@@ -284,7 +295,7 @@ export function computeBootstrapAnalystCatalog({
     // caller's recommendation pool says. The "quality" tag/star is assigned
     // below, from the unified ranking (never the old Explorer/Pareto pick).
     if (!unverified && key === efficientKey) recommendationTags.push("efficient");
-    const fitSource = unverified ? unverifiedFits : fits;
+    const verdict = evaluations.get(key);
     return {
       candidateKey: key, adapterId: model.adapterId, modelId: model.modelId,
       displayName: model.modelName ?? model.displayName ?? model.modelId,
@@ -297,9 +308,13 @@ export function computeBootstrapAnalystCatalog({
       selectable: providerOk,
       cause: !providerOk ? unavailableCause(model.adapterId) : unverified ? "access_unknown" : null,
       quota: quotaFor(providerCapacity, model.adapterId),
-      fit: fitSource.get(key)?.fit ?? null,
-      confidence: fitSource.get(key)?.confidence ?? SCORED_ANALYST_CONFIDENCE_FLOOR,
-      evidence: fitSource.get(key)?.evidence ?? { ...NO_ANALYST_EVIDENCE },
+      rank: verdict?.rank ?? null,
+      qualification: verdict?.qualification ?? QUALIFICATION.NONE,
+      identityKey: verdict?.identityKey ?? modelIdentityKey(model),
+      // The benchmark row the evidence comes from (AA slug): routes sharing it
+      // carry the same evidence, counted once.
+      evidenceKey: model.slug ?? null,
+      evaluation: verdict?.evaluation ?? noEvaluation(),
       recommendationTags
     };
   });
@@ -322,20 +337,19 @@ export function computeBootstrapAnalystCatalog({
     // the picker never hides why a whole provider is out.
     cause: !providerOk ? unavailableCause(model.adapterId) : unverified ? "access_unknown" : "unscored",
     quota: quotaFor(providerCapacity, model.adapterId),
-    // No benchmark exists: fit is unknown (null, never an invented 0) and
-    // confidence is the documented unscored constant. Nothing is invented;
-    // availability alone makes the model selectable.
-    fit: null, confidence: UNSCORED_ANALYST_CONFIDENCE, evidence: { ...NO_ANALYST_EVIDENCE },
+    // No benchmark exists: no rank, no evaluation, nothing invented.
+    // Availability alone makes the model selectable (manual view).
+    rank: null, qualification: QUALIFICATION.NONE, identityKey: modelIdentityKey(model), evidenceKey: null, evaluation: noEvaluation(),
     recommendationTags: []
     };
   });
 
-  const models = [...scoredEntries, ...unscoredEntries];
-  // ONE ranking across every subscription (shared comparator, shared profile
-  // fit): the star is the FIRST row of that ranking among candidates that
-  // qualify for the main view (verified, available, real evidence, enough
-  // confidence) — never a per-provider pick and never a name/stack preference.
-  const star = models.filter(qualifiesForMainView).sort(compareAnalystRows)[0] ?? null;
+  // Deterministic order (rank, then candidateKey), whatever the input order was.
+  const models = [...scoredEntries, ...unscoredEntries].sort(compareAnalystRows);
+  // The star: the first row of the ONE classification (same function the
+  // picker curation uses) — a qualified, verified, available row, never a
+  // per-provider pick and never a name/stack preference.
+  const { star } = classifyAnalystCatalog(models);
   if (star) star.recommendationTags = ["quality", ...star.recommendationTags.filter((tag) => tag !== "quality")];
   const recommendedModel = star;
   return { recommendedModel, models, exclusions };

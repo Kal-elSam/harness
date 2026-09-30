@@ -1,73 +1,111 @@
-// The single rule for "this recommendation qualifies as an analyst pick".
-// Neutral module (no imports) so the picker, the default pick and unattended
+// The single rule for "this row qualifies as an analyst pick", and the single
+// place that turns the catalog's ONE ranking into picker views. Neutral module
+// (no imports) so the catalog, the picker, the default pick and unattended
 // recovery share it without import cycles.
+//
+// The order itself (`rank`) and the evidence verdict (`qualification`) are
+// computed once, by the shared quality evaluator
+// (intelligence/model-intelligence.js rankCandidatesByRequirements, applied in
+// project-strategy.js computeBootstrapAnalystCatalog). Nothing here scores,
+// re-sorts by evidence or reads a magnitude: it only filters, groups by model
+// identity and orders by `rank`.
 
 /**
- * Minimum evidence confidence for the recommended star. The star is a claim
- * ("Kairo recommends this one"), so it needs real evidence behind it; the
- * row itself stays selectable either way.
+ * Evidence verdicts a catalog row can carry:
+ *  - "qualified": real, comparable evidence for every REQUIRED capability.
+ *  - "partial_evidence": real but thin evidence (provisional): ranked after
+ *    every comparable candidate, never starred.
+ *  - "insufficient_evidence": evidence exists but a required capability has none.
+ *  - "no_evidence": no benchmark at all (unscored).
  */
-export const MIN_RECOMMENDATION_CONFIDENCE = 0.5;
+export const QUALIFICATION = Object.freeze({
+  QUALIFIED: "qualified",
+  PARTIAL: "partial_evidence",
+  INSUFFICIENT: "insufficient_evidence",
+  NONE: "no_evidence"
+});
 
-function numericOr(value, fallback) {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+/** Main view size: the top three qualified, DISTINCT models. */
+export const MAIN_VIEW_LIMIT = 3;
+
+/** A row may be starred / picked automatically only with sufficient, comparable required evidence. */
+export function recommendationQualifies(model) {
+  return model?.qualification === QUALIFICATION.QUALIFIED;
 }
 
 /**
- * A recommendation keeps its star / may be picked automatically when its
- * evidence confidence (the model's own, else the recommendation's) reaches
- * MIN_RECOMMENDATION_CONFIDENCE. No confidence field = legacy entry, kept.
- */
-export function recommendationQualifies(model, recommendation) {
-  const confidence = model?.confidence ?? recommendation?.confidence ?? null;
-  return confidence == null || numericOr(confidence, 0) >= MIN_RECOMMENDATION_CONFIDENCE;
-}
-
-function isMeasured(value) {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-/** Valid confidence: a finite number in 0..1. Anything else is "no confidence", never a pass. */
-function hasValidConfidence(model) {
-  return isMeasured(model?.confidence) && model.confidence >= 0 && model.confidence <= 1;
-}
-
-/**
- * The analyst picker's MAIN view rule (one rule, no fit threshold): the
- * candidate is usable now (`available`), its access is verified, it has real
- * evidence for BOTH reasoning and coding, and its confidence is valid and
- * reaches MIN_RECOMMENDATION_CONFIDENCE. A measured 0 counts as evidence;
- * null/absent does not. Everything else that is still selectable belongs in
- * the manual alternatives view.
+ * The analyst picker's MAIN view rule: usable now (`available`), access
+ * verified and sufficient, comparable required evidence. Everything else that
+ * is still selectable belongs in the manual alternatives view.
  *
- * @param {{available?: boolean, accessVerified?: boolean, confidence?: number, evidence?: {reasoning?: number|null, coding?: number|null}}|null|undefined} model
+ * @param {{available?: boolean, accessVerified?: boolean, qualification?: string}|null|undefined} model
  */
 export function qualifiesForMainView(model) {
   return model?.available === true
     && model?.accessVerified !== false
-    && isMeasured(model?.evidence?.reasoning)
-    && isMeasured(model?.evidence?.coding)
-    && hasValidConfidence(model)
-    && model.confidence >= MIN_RECOMMENDATION_CONFIDENCE;
+    && recommendationQualifies(model);
+}
+
+const isRank = (value) => typeof value === "number" && Number.isFinite(value);
+
+/**
+ * Row order: the catalog's `rank` (ascending; unranked rows last), then the
+ * stable identifier `candidateKey`. Never evidence, provider, name or input
+ * order.
+ */
+export function compareAnalystRows(a, b) {
+  const rankA = isRank(a?.rank) ? a.rank : null;
+  const rankB = isRank(b?.rank) ? b.rank : null;
+  if (rankA === null || rankB === null) {
+    const unranked = Number(rankA === null) - Number(rankB === null);
+    if (unranked !== 0) return unranked;
+  } else if (rankA !== rankB) {
+    return rankA - rankB;
+  }
+  return String(a?.candidateKey ?? "").localeCompare(String(b?.candidateKey ?? ""));
+}
+
+/** Model identity of a row: the catalog's `identityKey` (same model through several subscriptions), else its own candidateKey. */
+export function identityOf(model) {
+  return model?.identityKey ?? model?.candidateKey ?? `${model?.adapterId}::${model?.modelId}`;
 }
 
 /**
- * The ONE analyst ranking order, shared by the catalog (star) and the picker
- * (row order): measured fit first (unknown fit last), then evidence
- * confidence, then display name. No provider, stack or name preference.
- * @param {{fit?: number|null, confidence?: number, displayName?: string, modelId?: string}} a
- * @param {{fit?: number|null, confidence?: number, displayName?: string, modelId?: string}} b
+ * The ONE classification of the catalog, derived from its order without any
+ * recalculation: star, default analyst and picker views all come from here.
+ *  - `main`: up to `limit` qualified rows, ONE per model identity (the same
+ *    model through several subscriptions occupies one slot: its best-ranked
+ *    available, verified route; ties were already broken by candidateKey).
+ *  - `manual`: every other verified, available row — the equivalent routes of
+ *    a main model, qualified rows beyond the limit and thin/unscored rows.
+ *  - `star`: the first main row.
+ * Unverified/unavailable rows are in neither list.
+ *
+ * @param {Array<object>} models
+ * @param {{limit?: number}} [options]
+ * @returns {{main: object[], manual: object[], star: object|null}}
  */
-export function compareAnalystRows(a, b) {
-  const fitA = isMeasured(a?.fit) ? a.fit : null;
-  const fitB = isMeasured(b?.fit) ? b.fit : null;
-  if (fitA === null || fitB === null) {
-    const unknown = Number(fitA === null) - Number(fitB === null);
-    if (unknown !== 0) return unknown;
-  } else if (fitA !== fitB) {
-    return fitB - fitA;
+export function classifyAnalystCatalog(models, { limit = MAIN_VIEW_LIMIT } = {}) {
+  const seen = new Set();
+  const verified = [];
+  for (const model of Array.isArray(models) ? models : []) {
+    if (model?.available !== true || model?.accessVerified === false) continue;
+    const key = model.candidateKey ?? `${model.adapterId}::${model.modelId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    verified.push(model);
   }
-  const byConfidence = numericOr(b?.confidence, 0) - numericOr(a?.confidence, 0);
-  if (byConfidence !== 0) return byConfidence;
-  return String(a?.displayName ?? a?.modelId ?? "").localeCompare(String(b?.displayName ?? b?.modelId ?? ""));
+  verified.sort(compareAnalystRows);
+  const main = [];
+  const mainIdentities = new Set();
+  for (const model of verified) {
+    if (main.length >= limit) break;
+    if (!qualifiesForMainView(model)) continue;
+    const identity = identityOf(model);
+    if (mainIdentities.has(identity)) continue;
+    mainIdentities.add(identity);
+    main.push(model);
+  }
+  const inMain = new Set(main);
+  return { main, manual: verified.filter((model) => !inMain.has(model)), star: main[0] ?? null };
 }

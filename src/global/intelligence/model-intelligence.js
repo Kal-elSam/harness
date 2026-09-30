@@ -883,6 +883,83 @@ function sortByCapabilityPriority(candidates, better, modelUsage, providerTechni
 }
 
 /**
+ * The model identity used to decide "same model": the existing concentration
+ * family (see canonicalModelFamily) — reasoning-effort/mode suffixes are not
+ * a different model, and the family is deliberately cross-adapter, so the same
+ * model reached through several subscriptions shares one identity. Nothing
+ * beyond that whitelist is ever collapsed.
+ * @param {{modelId: string}} model
+ * @returns {string}
+ */
+export function modelIdentityKey(model) {
+  return familyKey(model);
+}
+
+/**
+ * The shared quality evaluation, exposed for callers that need the WHOLE
+ * order instead of one role winner (the Bootstrap Analyst picker): the same
+ * machinery buildAiTeam/bestModelPerRoleGlobal run per role, with no
+ * portfolio coordination.
+ *  1. REQUIRED capabilities first: a candidate needs real evidence on every
+ *     required capability (buildAiTeamRoleDefinitions' compute gate); the
+ *     value is the required-only capability percentile (per-benchmark ranks,
+ *     never a mix of magnitudes from different benchmarks).
+ *  2. Comparable before provisional (preferComparableCandidates' rule): thin
+ *     evidence is ranked after every comparable candidate, never dropped.
+ *  3. Inside an exact tie: evidence confidence, then OPTIONAL fit (a pure
+ *     tiebreak: absent optional evidence never lowers a required-capability
+ *     lead), then a stable identifier (adapterId, modelId) — never input order.
+ * Quality is never multiplied by confidence.
+ *
+ * Callers must pass ONE entry per distinct piece of evidence: percentiles are
+ * pool-relative, so the same benchmark row listed twice counts twice.
+ * @param {Array<object>} models - scoreAvailableModels()-shaped candidates
+ * @param {object|null} registry
+ * @param {{role?: string, capabilities: {required: string[], optional?: string[]}}} requirements
+ * @returns {{ranked: Array<{model: object, value: number, comparable: boolean, confidence: "high"|"medium"|"low", optionalFit: number|null, capabilities: Record<string, number>, benchmarkCounts: Record<string, number>}>, unranked: Array<{model: object, missing: string[], capabilities: Record<string, number>, benchmarkCounts: Record<string, number>}>}}
+ */
+export function rankCandidatesByRequirements(models, registry = null, { role = "Evaluation", capabilities } = {}) {
+  const effectiveRegistry = ensureRegistry(models, registry);
+  const { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, { [role]: capabilities });
+  const { compute } = roleDefinitions[0];
+  const evaluations = evaluationsByRole[role];
+  const optionalEvaluations = optionalEvaluationsByRole[role];
+  const { required } = normalizeRoleCapabilities(capabilities);
+
+  const scored = rankBy(models, compute, "max");
+  const rankedKeys = new Set(scored.map((entry) => modelKey(entry.model)));
+  const comparableOf = (entry) => !evaluations.get(modelKey(entry.model))?.isProvisional;
+  const confidenceRank = (model) => CONFIDENCE_RANK[evaluations.get(modelKey(model))?.confidence] ?? 0;
+  const optionalRank = (model) => optionalEvaluations.get(modelKey(model))?.capabilityPercentile ?? 0;
+  const sortGroup = (group) => sortByCapabilityPriority(group, "max", new Map(), new Map(), confidenceRank, optionalRank);
+  const ordered = [
+    ...sortGroup(scored.filter(comparableOf)),
+    ...sortGroup(scored.filter((entry) => !comparableOf(entry)))
+  ];
+  const ranked = ordered.map((entry) => {
+    const evaluation = evaluations.get(modelKey(entry.model));
+    return {
+      model: entry.model, value: entry.value, comparable: comparableOf(entry),
+      confidence: evaluation.confidence,
+      optionalFit: optionalEvaluations.get(modelKey(entry.model))?.capabilityPercentile ?? null,
+      capabilities: { ...evaluation.capabilities },
+      benchmarkCounts: { ...evaluation.benchmarkCountsByCapability }
+    };
+  });
+  const unranked = models
+    .filter((model) => !rankedKeys.has(modelKey(model)))
+    .map((model) => {
+      const evaluation = evaluations.get(modelKey(model));
+      return {
+        model, missing: required.filter((capability) => evaluation?.capabilities?.[capability] == null),
+        capabilities: { ...(evaluation?.capabilities ?? {}) }, benchmarkCounts: { ...(evaluation?.benchmarkCountsByCapability ?? {}) }
+      };
+    })
+    .sort((a, b) => modelKey(a.model).localeCompare(modelKey(b.model)));
+  return { ranked, unranked };
+}
+
+/**
  * BEST FIT GLOBAL: el ganador de capability real por rol, sin ninguna
  * coordinación de portafolio — nunca cede un rol a otro modelo por límite
  * de familia, distribución por proveedor, o independencia Builder/

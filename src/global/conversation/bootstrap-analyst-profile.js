@@ -1,6 +1,6 @@
 // The ONE definition of what the Bootstrap Analyst job means. Both the
 // analyst prompt (project-analysis.js) and the ranking requirement
-// (project-strategy.js's computeBootstrapAnalystCatalog) read this object
+// (project-strategy.js's computeBootstrapAnalystCatalog, through the shared quality evaluator) read this object
 // at call time, so changing it changes both. It lives in its own module
 // so project-analysis.js and project-strategy.js can share it without an
 // import cycle.
@@ -19,19 +19,6 @@ export const FOCUS_AREA_CAPABILITIES = Object.freeze({
   architecture: Object.freeze(["reasoning", "coding"]),
   design: Object.freeze(["reasoning", "coding"])
 });
-
-/** Default weight of a capability in the fit: required 1, optional 0.5 (override via profile.capabilityWeights). */
-export const ANALYST_FIT_DEFAULT_WEIGHTS = Object.freeze({ required: 1, optional: 0.5 });
-
-/**
- * Confidence of a model with NO benchmark evidence (an available model
- * Artificial Analysis does not track). A documented constant, deliberately
- * below the floor of any scored model's confidence (see
- * SCORED_ANALYST_CONFIDENCE_FLOOR): absence of evidence is never scored.
- */
-export const UNSCORED_ANALYST_CONFIDENCE = 0.25;
-/** A scored model's confidence lies in [floor, 1], growing with evidence coverage and benchmark depth. */
-export const SCORED_ANALYST_CONFIDENCE_FLOOR = 0.4;
 
 /**
  * Real capability requirement derived from a profile's focus areas (in

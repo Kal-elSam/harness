@@ -107,7 +107,8 @@ export function traceAnalystRanking({ providerCatalogs, aaModels, eligibility = 
       entitlement: identity.entitlement,
       catalog: catalogRow ? {
         available: catalogRow.available, accessVerified: catalogRow.accessVerified, cause: catalogRow.cause,
-        fit: catalogRow.fit ?? null, confidence: catalogRow.confidence ?? null, evidence: catalogRow.evidence ?? null,
+        rank: catalogRow.rank ?? null, qualification: catalogRow.qualification ?? null,
+        identityKey: catalogRow.identityKey ?? null, evaluation: catalogRow.evaluation ?? null,
         tags: catalogRow.recommendationTags
       } : null,
       stage,
@@ -128,14 +129,16 @@ function cell(value) {
 export function formatAnalystTrace({ rows }) {
   const order = { main: 0, manual: 1, not_listed: 2, excluded: 3 };
   const sorted = [...rows].sort((a, b) => order[a.stage] - order[b.stage] || (a.position ?? 99) - (b.position ?? 99) || a.candidateKey.localeCompare(b.candidateKey));
-  const lines = ["stage      pos star candidateKey                         slug                      fit    conf  reasoning coding  evidence(gpqa/hle/sci/int/cod)  note"];
+  const lines = ["stage      pos star catalogRank candidateKey                          identity                 qualification         reason/coding(pool pct) confidence  evidence(gpqa/hle/sci/int/cod)  note"];
   for (const row of sorted) {
     const b = row.benchmarks;
+    const evaluation = row.catalog?.evaluation;
     lines.push([
       row.stage.padEnd(10), cell(row.position).padEnd(3), (row.starred ? "*" : " ").padEnd(4),
-      row.candidateKey.padEnd(36), cell(row.aaSlug).padEnd(25),
-      cell(row.catalog?.fit).padEnd(6), cell(row.catalog?.confidence).padEnd(5),
-      cell(row.catalog?.evidence?.reasoning).padEnd(9), cell(row.catalog?.evidence?.coding).padEnd(7),
+      cell(row.catalog?.rank).padEnd(11), row.candidateKey.padEnd(37),
+      cell(row.catalog?.identityKey).padEnd(24), cell(row.catalog?.qualification).padEnd(21),
+      `${cell(evaluation?.capabilities?.reasoning)}/${cell(evaluation?.capabilities?.coding)}`.padEnd(23),
+      cell(evaluation?.confidence).padEnd(11),
       `${cell(b.gpqa)}/${cell(b.hle)}/${cell(b.sciCode)}/${cell(b.intelligenceIndex)}/${cell(b.codingIndex)}`.padEnd(31),
       row.reason ?? (row.evidenceStatus === "unscored" ? "unscored (no AA match)" : "")
     ].join(" "));

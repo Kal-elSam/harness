@@ -5,24 +5,30 @@ import {
   curateAnalystCatalogForPicker,
   preflightProjectTeam
 } from "../src/global/host/project-team-sidecar.js";
-import { qualifiesForMainView, MIN_RECOMMENDATION_CONFIDENCE } from "../src/global/conversation/analyst-qualification.js";
+import { classifyAnalystCatalog, compareAnalystRows, qualifiesForMainView } from "../src/global/conversation/analyst-qualification.js";
 
-const EVIDENCE = { reasoning: 0.7, coding: 0.6, coverage: 1 };
+const EVALUATION = {
+  comparable: true, confidence: "medium", capabilities: { reasoning: 0.75, coding: 0.5 },
+  benchmarkCounts: { reasoning: 2, coding: 1 }, optionalEvidence: false, missing: []
+};
 
 function entry(overrides = {}) {
+  const modelId = overrides.modelId ?? "gpt-5";
   return {
-    candidateKey: "codex::gpt-5",
+    candidateKey: `codex::${modelId}`,
     adapterId: "codex",
-    modelId: "gpt-5",
+    modelId,
     displayName: "GPT-5",
     evidenceStatus: "scored",
     available: true,
     accessVerified: true,
     selectable: true,
     cause: null,
-    fit: 0.5,
-    confidence: 0.7,
-    evidence: { ...EVIDENCE },
+    rank: 1,
+    qualification: "qualified",
+    identityKey: modelId,
+    evidenceKey: modelId,
+    evaluation: { ...EVALUATION },
     recommendationTags: [],
     ...overrides
   };
@@ -30,96 +36,137 @@ function entry(overrides = {}) {
 
 const keys = (models) => models.map((m) => m.candidateKey);
 
-test("qualifiesForMainView needs available + verified access + reasoning AND coding evidence + confidence >= minimum", () => {
+test("qualifiesForMainView needs available + verified access + a qualified (sufficient, comparable) evaluation", () => {
   assert.equal(qualifiesForMainView(entry()), true);
   assert.equal(qualifiesForMainView(entry({ available: false })), false);
   assert.equal(qualifiesForMainView(entry({ accessVerified: false })), false);
-  assert.equal(qualifiesForMainView(entry({ evidence: { reasoning: 0.7, coding: null, coverage: 0.5 } })), false);
-  assert.equal(qualifiesForMainView(entry({ evidence: { reasoning: null, coding: 0.7, coverage: 0.5 } })), false);
-  assert.equal(qualifiesForMainView(entry({ evidence: undefined })), false);
-  assert.equal(qualifiesForMainView(entry({ confidence: MIN_RECOMMENDATION_CONFIDENCE - 0.01 })), false);
-  assert.equal(qualifiesForMainView(entry({ confidence: MIN_RECOMMENDATION_CONFIDENCE })), true);
-  assert.equal(qualifiesForMainView(entry({ confidence: undefined })), false, "no valid confidence is not qualifying");
-  assert.equal(qualifiesForMainView(entry({ confidence: Number.NaN })), false);
-  assert.equal(qualifiesForMainView(entry({ evidence: { reasoning: 0, coding: 0, coverage: 0.8 }, fit: 0 })), true, "a measured 0 is evidence");
+  for (const qualification of ["partial_evidence", "insufficient_evidence", "no_evidence", undefined]) {
+    assert.equal(qualifiesForMainView(entry({ qualification })), false, String(qualification));
+  }
 });
 
-test("main list holds only qualifying candidates; no fit threshold is invented (a low but real fit qualifies)", () => {
+test("main list holds only qualified rows, ordered by the catalog's rank; no threshold is invented", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: null,
     models: [
-      entry({ candidateKey: "a::low", modelId: "low", displayName: "Low", fit: 0.01 }),
-      entry({ candidateKey: "a::high", modelId: "high", displayName: "High", fit: 0.9 }),
-      entry({ candidateKey: "a::noevidence", modelId: "ne", displayName: "NoEvidence", fit: null, evidence: { reasoning: null, coding: null, coverage: null } }),
+      entry({ candidateKey: "a::second", modelId: "second", displayName: "Second", rank: 2 }),
+      entry({ candidateKey: "a::first", modelId: "first", displayName: "First", rank: 1 }),
+      entry({ candidateKey: "a::noevidence", modelId: "ne", displayName: "NoEvidence", rank: null, qualification: "no_evidence" }),
       entry({ candidateKey: "a::unverified", modelId: "unv", displayName: "Unverified", available: false, accessVerified: false, cause: "access_unknown" })
     ]
   });
-  assert.deepEqual(keys(curated.models), ["a::high", "a::low"]);
+  assert.deepEqual(keys(curated.models), ["a::first", "a::second"]);
   assert.deepEqual(curated.models.map((m) => m.listing), ["main", "main"]);
 });
 
-test("manual alternatives (T23, rewritten): only VERIFIED available candidates (no/partial benchmark); unknown access is excluded, never starred or tagged", () => {
+test("manual alternatives: only VERIFIED available rows (thin/partial/unscored); unknown access is excluded, never starred or tagged", () => {
   const curated = curateAnalystCatalogForPicker({
-    recommendedModel: { candidateKey: "a::unv", confidence: 0.9 },
+    recommendedModel: { candidateKey: "a::unv" },
     models: [
-      entry({ candidateKey: "a::ok", modelId: "ok", displayName: "Ok" }),
-      entry({ candidateKey: "a::unscored", modelId: "unscored", displayName: "Unscored", evidenceStatus: "unscored", fit: null, confidence: 0.25, cause: "unscored", evidence: { reasoning: null, coding: null, coverage: null } }),
-      entry({ candidateKey: "a::unv", modelId: "unv", displayName: "Unv", available: false, accessVerified: false, cause: "access_unknown", fit: 0.4, recommendationTags: ["quality"] }),
-      entry({ candidateKey: "a::both", modelId: "both", displayName: "Both", evidenceStatus: "unscored", available: false, accessVerified: false, cause: "access_unknown", fit: null, confidence: 0.25, evidence: { reasoning: null, coding: null, coverage: null } }),
-      entry({ candidateKey: "a::partial", modelId: "partial", displayName: "Partial", fit: 0.2, evidence: { reasoning: 0.5, coding: null, coverage: 0.5 } }),
+      entry({ candidateKey: "a::ok", modelId: "ok", displayName: "Ok", rank: 1 }),
+      entry({ candidateKey: "a::unscored", modelId: "unscored", displayName: "Unscored", evidenceStatus: "unscored", rank: null, qualification: "no_evidence", cause: "unscored" }),
+      entry({ candidateKey: "a::unv", modelId: "unv", displayName: "Unv", available: false, accessVerified: false, cause: "access_unknown", recommendationTags: ["quality"] }),
+      entry({ candidateKey: "a::both", modelId: "both", displayName: "Both", evidenceStatus: "unscored", available: false, accessVerified: false, cause: "access_unknown", rank: null, qualification: "no_evidence" }),
+      entry({ candidateKey: "a::partial", modelId: "partial", displayName: "Partial", rank: 2, qualification: "partial_evidence" }),
       entry({ candidateKey: "a::denied", modelId: "denied", displayName: "Denied", available: false, selectable: false, cause: "quota_exhausted" })
     ]
   });
   assert.deepEqual(keys(curated.models), ["a::ok"]);
-  assert.deepEqual(keys(curated.alternatives), ["a::partial", "a::unscored"]);
+  assert.deepEqual(keys(curated.alternatives), ["a::partial", "a::unscored"], "ranked partial first, unranked last");
   assert.ok(curated.alternatives.every((m) => m.listing === "manual"));
-  assert.equal(curated.recommendedModel.candidateKey, "a::ok", "the star is the first ranked row, not the incoming pointer");
+  assert.equal(curated.recommendedModel.candidateKey, "a::ok", "the star is the first main row, not the incoming pointer");
   assert.ok(curated.alternatives.every((m) => (m.recommendationTags ?? []).length === 0), "alternatives are never tagged");
 });
 
-test("identity is candidateKey (T23, rewritten): same model through two subscriptions keeps both rows across main+manual; no display-name dedupe", () => {
+test("identity (T24, rewritten from the T23 'both rows' test): the same model through two subscriptions takes ONE main slot; the equivalent route is manual", () => {
   const twins = [
-    entry({ candidateKey: "codex::gpt-5", adapterId: "codex", displayName: "GPT-5", fit: 0.6 }),
-    entry({ candidateKey: "opencode-go::gpt-5", adapterId: "opencode-go", displayName: "GPT-5", fit: 0.5 })
+    entry({ candidateKey: "codex::gpt-5", adapterId: "codex", rank: 1, identityKey: "gpt-5", evidenceKey: "gpt-5" }),
+    entry({ candidateKey: "opencode-go::gpt-5", adapterId: "opencode-go", rank: 2, identityKey: "gpt-5", evidenceKey: "gpt-5" })
   ];
   const many = Array.from({ length: 30 }, (_, i) => entry({
-    candidateKey: `x::m${i}`, modelId: `m${i}`, displayName: `Model ${i}`, fit: 0.3 + i / 1000
+    candidateKey: `x::m${i}`, modelId: `m${i}`, displayName: `Model ${i}`, rank: 3 + i, identityKey: `m${i}`, evidenceKey: `m${i}`
   }));
   const curated = curateAnalystCatalogForPicker({ recommendedModel: null, models: [...twins, ...many] });
-  assert.equal(curated.models.length, 3, "main view is the top three");
+  assert.deepEqual(keys(curated.models), ["codex::gpt-5", "x::m0", "x::m1"], "three DISTINCT models");
   assert.equal(curated.models.length + curated.alternatives.length, 32, "nothing is lost: the rest stays reachable in the manual view");
-  const all = [...curated.models, ...curated.alternatives];
-  assert.ok(all.some((m) => m.candidateKey === "codex::gpt-5"));
-  assert.ok(all.some((m) => m.candidateKey === "opencode-go::gpt-5"));
+  assert.equal(curated.alternatives[0].candidateKey, "opencode-go::gpt-5", "the equivalent route is the first manual row");
+  assert.match(curated.alternatives[0].explanation, /misma evidencia/i);
   const dupKey = curateAnalystCatalogForPicker({ recommendedModel: null, models: [twins[0], { ...twins[0] }] });
   assert.equal(dupKey.models.length, 1, "the same candidateKey twice is one row");
 });
 
-test("rows are sorted by fit then confidence then name across main then manual; every row carries a short plain explanation and the raw evidence (T23: top three + rest)", () => {
+test("rows follow the catalog order (rank, then candidateKey) whatever the input order; every explanation is plain text without digits or percentages", () => {
+  const rows = [
+    entry({ candidateKey: "a::b", modelId: "b", displayName: "Bravo", rank: 2, identityKey: "b", evaluation: { ...EVALUATION, capabilities: { reasoning: 0.5, coding: 0.75 } } }),
+    entry({ candidateKey: "a::a", modelId: "a", displayName: "Alpha", rank: 1, identityKey: "a", evaluation: { ...EVALUATION, capabilities: { reasoning: 0.75, coding: 0.5 } } }),
+    entry({ candidateKey: "a::c", modelId: "c", displayName: "Charlie", rank: 3, identityKey: "c", evaluation: { ...EVALUATION, capabilities: { reasoning: 0.25, coding: 0.25 } } }),
+    entry({ candidateKey: "a::z", modelId: "z", displayName: "Zulu", rank: 4, identityKey: "z" })
+  ];
+  for (const input of [rows, [...rows].reverse(), [rows[2], rows[0], rows[3], rows[1]]]) {
+    const curated = curateAnalystCatalogForPicker({ recommendedModel: null, models: input });
+    assert.deepEqual(keys(curated.models), ["a::a", "a::b", "a::c"]);
+    assert.deepEqual(keys(curated.alternatives), ["a::z"], "qualified beyond the top three stays reachable manually");
+    for (const row of [...curated.models, ...curated.alternatives]) {
+      assert.equal(typeof row.explanation, "string");
+      assert.ok(row.explanation.length > 0, "explanation present");
+      assert.doesNotMatch(row.explanation, /%|\d\.\d/, row.explanation);
+    }
+  }
+});
+
+test("each main row says WHY it is there and WHAT differs from the other options (no repeated generic label)", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: null,
     models: [
-      entry({ candidateKey: "a::b", displayName: "Bravo", fit: 0.5, confidence: 0.6 }),
-      entry({ candidateKey: "a::c", displayName: "Charlie", fit: 0.5, confidence: 0.9 }),
-      entry({ candidateKey: "a::a", displayName: "Alpha", fit: 0.5, confidence: 0.6 }),
-      entry({ candidateKey: "a::z", displayName: "Zulu", fit: 0.8, confidence: 0.55 })
+      entry({ candidateKey: "a::a", modelId: "a", displayName: "Alpha", rank: 1, identityKey: "a", evaluation: { ...EVALUATION, capabilities: { reasoning: 0.9, coding: 0.5 }, optionalEvidence: true } }),
+      entry({ candidateKey: "a::b", modelId: "b", displayName: "Bravo", rank: 2, identityKey: "b", evaluation: { ...EVALUATION, capabilities: { reasoning: 0.5, coding: 0.9 } } }),
+      entry({ candidateKey: "a::c", modelId: "c", displayName: "Charlie", rank: 3, identityKey: "c", evaluation: { ...EVALUATION, capabilities: { reasoning: 0.4, coding: 0.4 } } })
     ]
-  });
-  assert.deepEqual(keys(curated.models), ["a::z", "a::c", "a::a"]);
-  assert.deepEqual(keys(curated.alternatives), ["a::b"], "qualified beyond the top three stays reachable manually");
-  for (const row of [...curated.models, ...curated.alternatives]) {
-    assert.equal(typeof row.explanation, "string");
-    assert.ok(row.explanation.length > 0 && row.explanation.length <= 100, row.explanation);
-    assert.deepEqual(row.evidence, EVIDENCE);
-  }
+  }, { projectContext: { stack: ["Node.js"] } });
+  const [alpha, bravo, charlie] = curated.models.map((m) => m.explanation);
+  assert.match(alpha, /^Recomendado para analizar este proyecto \(Node\.js\)/);
+  assert.match(alpha, /lidera en razonamiento/);
+  assert.match(alpha, /código por debajo de Bravo/);
+  assert.match(alpha, /única con evidencia de seguimiento de instrucciones/);
+  assert.match(bravo, /lidera en código/);
+  assert.match(bravo, /razonamiento por debajo de Alpha/);
+  assert.match(charlie, /por debajo de/);
+  assert.equal(new Set([alpha, bravo, charlie]).size, 3, "no two rows share the same text");
+  assert.match(alpha, /puesto 1 de 3 modelos distintos/);
+});
+
+test("the project context only words the star's explanation; it never reorders rows", () => {
+  const models = [entry({ rank: 1 }), entry({ candidateKey: "a::b", modelId: "b", rank: 2, identityKey: "b" })];
+  const without = curateAnalystCatalogForPicker({ models });
+  const withContext = curateAnalystCatalogForPicker({ models }, { projectContext: { stack: ["Rust"], risks: ["sin script de test"] } });
+  assert.deepEqual(keys(withContext.models), keys(without.models));
+  assert.match(withContext.models[0].explanation, /\(Rust\)/);
+  assert.doesNotMatch(without.models[0].explanation, /Rust/);
 });
 
 test("recommended star survives only from the main list", () => {
   const curated = curateAnalystCatalogForPicker({
-    recommendedModel: { candidateKey: "a::ok", confidence: 0.8 },
+    recommendedModel: { candidateKey: "a::ok" },
     models: [entry({ candidateKey: "a::ok", recommendationTags: ["quality"] })]
   });
   assert.equal(curated.recommendedModel.candidateKey, "a::ok");
+});
+
+test("one classification: star, default analyst and main rows all come from the same catalog order (shuffle)", () => {
+  const rows = [
+    entry({ candidateKey: "a::a", modelId: "a", rank: 1, identityKey: "a" }),
+    entry({ candidateKey: "b::a", adapterId: "b", modelId: "a", rank: 2, identityKey: "a" }),
+    entry({ candidateKey: "a::b", modelId: "b", rank: 3, identityKey: "b" }),
+    entry({ candidateKey: "a::c", modelId: "c", rank: 4, identityKey: "c" })
+  ];
+  for (const input of [rows, [...rows].reverse(), [rows[2], rows[3], rows[1], rows[0]]]) {
+    const { main, manual, star } = classifyAnalystCatalog(input);
+    assert.deepEqual(keys(main), ["a::a", "a::b", "a::c"]);
+    assert.deepEqual(keys(manual), ["b::a"]);
+    assert.equal(star.candidateKey, "a::a");
+    assert.equal(curateAnalystCatalogForPicker({ models: input }).recommendedModel.candidateKey, "a::a");
+  }
+  assert.deepEqual([...rows].reverse().sort(compareAnalystRows).map((r) => r.candidateKey), keys(rows));
 });
 
 // ---- second confirmation before any provider probe ----
@@ -190,18 +237,20 @@ test("a verified pick needs no confirmation flag (no probe at all)", async () =>
   assert.deepEqual(calls.map((c) => c[0]), ["runBootstrapAnalysis"]);
 });
 
-test("preflight exposes main models and manual alternatives, keeps both subscriptions of one model, and reports unverified access separately (T23)", async () => {
+test("preflight exposes main models and manual alternatives, puts the equivalent route in manual, and reports unverified access separately (T24, rewritten from T23)", async () => {
   const raw = {
     recommendedModel: null,
     models: [
-      entry({ candidateKey: "codex::gpt-5", adapterId: "codex", displayName: "GPT-5" }),
-      entry({ candidateKey: "claude::gpt-5", adapterId: "claude", displayName: "GPT-5", fit: 0.4 }),
+      entry({ candidateKey: "codex::gpt-5", adapterId: "codex", displayName: "GPT-5", rank: 1 }),
+      entry({ candidateKey: "claude::gpt-5", adapterId: "claude", displayName: "GPT-5", rank: 2 }),
+      entry({ candidateKey: "claude::other", adapterId: "claude", modelId: "other", displayName: "Other", rank: 3, identityKey: "other" }),
       unverifiedCatalog.models[0]
     ],
     exclusions: []
   };
-  const result = await preflightProjectTeam({ cwd: "/p", createConversationService: fakeService({ analystCatalog: raw, verify: {}, calls: [] }) });
-  assert.deepEqual(keys(result.analystCatalog.models), ["codex::gpt-5", "claude::gpt-5"]);
-  assert.deepEqual(keys(result.analystCatalog.alternatives), [], "T23: unknown access is in neither list");
+  const result = await preflightProjectTeam({ cwd: "/p", createConversationService: fakeService({ analystCatalog: raw, verify: {}, calls: [] }), computeProfile: async () => null });
+  assert.deepEqual(keys(result.analystCatalog.models), ["codex::gpt-5", "claude::other"]);
+  assert.deepEqual(keys(result.analystCatalog.alternatives), ["claude::gpt-5"], "unknown access is in neither list; the equivalent route is manual");
   assert.deepEqual(result.unverifiedSubscriptions.map((row) => [row.adapterId, row.models]), [["claude", 1]]);
+  assert.equal(result.projectContext, null, "no scan result means no context, never a made-up one");
 });

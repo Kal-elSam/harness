@@ -22,20 +22,28 @@ import {
 
 const FIXTURE = fileURLToPath(new URL("../crates/kairo-ui/fixtures/verify-then-pick.ndjson", import.meta.url));
 
+const EVALUATION = {
+  comparable: true, confidence: "medium", capabilities: { reasoning: 0.75, coding: 0.5 },
+  benchmarkCounts: { reasoning: 2, coding: 1 }, optionalEvidence: false, missing: []
+};
+const evaluated = (rank, modelId) => ({ rank, qualification: "qualified", identityKey: modelId, evidenceKey: modelId, evaluation: { ...EVALUATION } });
+
+// The local project scan the sidecar contextualizes its explanations with (fixed, no real scan).
+const LOCAL_PROFILE = { projectName: "demo", stack: ["Node.js"], architecture: { pattern: "modular" }, risks: [{ kind: "no-test-command", detail: "x" }], confidence: "medium" };
+const computeProfile = async () => LOCAL_PROFILE;
+
 const CATALOG = {
   recommendedModel: null,
   models: [
     {
       candidateKey: "codex::gpt-5", adapterId: "codex", modelId: "gpt-5", displayName: "GPT-5",
       evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true,
-      accessVerified: true, selectable: true, recommendationTags: [], fit: 0.6, confidence: 0.9,
-      evidence: { reasoning: 0.7, coding: 0.6, coverage: 1 }
+      accessVerified: true, selectable: true, recommendationTags: [], ...evaluated(2, "gpt-5")
     },
     {
       candidateKey: "claude::opus-unv", adapterId: "claude", modelId: "opus-unv", displayName: "Claude Opus Unverified",
       evidenceStatus: "scored", entitlement: "unverified", entitlementReason: null, available: false,
-      selectable: true, accessVerified: false, cause: "access_unknown", recommendationTags: ["quality"], fit: 0.9, confidence: 0.9,
-      evidence: { reasoning: 0.9, coding: 0.9, coverage: 1 }
+      selectable: true, accessVerified: false, cause: "access_unknown", recommendationTags: ["quality"], ...evaluated(1, "opus-unv")
     }
   ]
 };
@@ -119,7 +127,7 @@ test("T21b safety net (T23: no longer the primary path, no Rust fixture): a craf
   const stdin = new PassThrough();
   const run = runKairoUiRpcStdio({
     stdin, stdout, cwd: "/project", openBridge,
-    preflightProjectTeam: (args) => preflightProjectTeamImpl({ ...args, createConversationService: () => service }),
+    preflightProjectTeam: (args) => preflightProjectTeamImpl({ ...args, createConversationService: () => service, computeProfile }),
     analyzeProjectTeam: (args) => analyzeProjectTeamImpl({ ...args, createConversationService: () => service }),
     loadSnapshot: async () => { spies.snapshotReloads += 1; throw new Error("no snapshot reload expected"); }
   });
@@ -165,10 +173,10 @@ const PLAN_PENDING = {
   ]
 };
 const PLAN_DONE = { pendingCount: 0, reusableCount: 2, mayConsumeQuota: false, costStatement: null, subscriptions: [] };
-const row = (adapterId, modelId, displayName, fit, extra = {}) => ({
+const row = (adapterId, modelId, displayName, rank, extra = {}) => ({
   candidateKey: `${adapterId}::${modelId}`, adapterId, modelId, displayName, evidenceStatus: "scored", entitlement: null,
-  entitlementReason: null, available: true, accessVerified: true, selectable: true, recommendationTags: [], fit, confidence: 0.9,
-  evidence: { reasoning: 0.7, coding: 0.6, coverage: 1 }, ...extra
+  entitlementReason: null, available: true, accessVerified: true, selectable: true, recommendationTags: [],
+  ...evaluated(rank, modelId), ...extra
 });
 
 test("T23 wire: preflight carries the plan; project.verify_access (confirmed) runs verification once, then re-emits a preflight with the verified rows", async () => {
@@ -178,9 +186,9 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
     async preflightProject({ cwd }) {
       spies.preflights += 1;
       const models = verified
-        ? [row("claude", "claude-a", "Claude A", 0.9), row("cursor", "gpt-5.4", "GPT 5.4", 0.8), row("codex", "gpt-5", "GPT-5", 0.6)]
-        : [row("claude", "claude-a", "Claude A", 0.9), row("codex", "gpt-5", "GPT-5", 0.6),
-          row("cursor", "gpt-5.4", "GPT 5.4", 0.8, { available: false, accessVerified: false, cause: "access_unknown", entitlement: "unverified" })];
+        ? [row("claude", "claude-a", "Claude A", 1), row("cursor", "gpt-5.4", "GPT 5.4", 2), row("codex", "gpt-5", "GPT-5", 3)]
+        : [row("claude", "claude-a", "Claude A", 1), row("codex", "gpt-5", "GPT-5", 3),
+          row("cursor", "gpt-5.4", "GPT 5.4", 2, { available: false, accessVerified: false, cause: "access_unknown", entitlement: "unverified" })];
       return {
         profile: { root: cwd }, candidates: { scoredAll: [], eligibility: {} }, projectRoot: cwd, unverifiedClaudeNotice: null,
         analystCatalog: { recommendedModel: null, models, exclusions: [] },
@@ -204,7 +212,7 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
   const stdin = new PassThrough();
   const run = runKairoUiRpcStdio({
     stdin, stdout, cwd: "/project", openBridge,
-    preflightProjectTeam: (args) => preflightProjectTeamImpl({ ...args, createConversationService: () => service }),
+    preflightProjectTeam: (args) => preflightProjectTeamImpl({ ...args, createConversationService: () => service, computeProfile }),
     verifyProjectTeamAccess: (args) => verifyProjectTeamAccessImpl({ ...args, createConversationService: () => service })
   });
   assert.ok(await pollUntil(() => out.some((r) => r.type === "ready" || r.type === "engine")), "sidecar came up");
