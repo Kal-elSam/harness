@@ -47,6 +47,72 @@ impl AnalystOption {
     }
 }
 
+/// Which body the modal shows: the modal opens in `Loading` the moment the
+/// preflight request is sent, then becomes `Ready` (catalog arrived) or
+/// `Error` (the request failed) — the failure stays inside the modal.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum PickerPhase {
+    #[default]
+    Ready,
+    Loading,
+    Error(String),
+}
+
+/// One per-provider exclusion row from the preflight record's additive
+/// `exclusionCauses` (see project-team-sidecar.js `buildAnalystExclusionCauses`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExclusionCause {
+    pub adapter_id: String,
+    pub provider: String,
+    pub cause: String,
+    pub models: u64,
+    pub reason: Option<String>,
+}
+
+impl ExclusionCause {
+    /// Tolerant parse: `None` when the field is absent (older sidecar) so the
+    /// caller keeps the `pickerNotice` fallback; malformed rows are dropped.
+    pub fn list_from_record(record: &Value) -> Option<Vec<Self>> {
+        let rows = record.get("exclusionCauses")?.as_array()?;
+        Some(
+            rows.iter()
+                .filter_map(|row| {
+                    let str_of = |k: &str| row.get(k).and_then(|v| v.as_str());
+                    let provider = str_of("provider").or_else(|| str_of("adapterId"))?;
+                    Some(Self {
+                        adapter_id: str_of("adapterId").unwrap_or(provider).to_string(),
+                        provider: provider.to_string(),
+                        cause: str_of("cause").unwrap_or("").to_string(),
+                        models: row.get("models").and_then(|v| v.as_u64()).unwrap_or(0),
+                        reason: str_of("reason")
+                            .map(str::trim)
+                            .filter(|r| !r.is_empty())
+                            .map(str::to_string),
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// One short line per provider. Wording is distinct per cause (same
+    /// Spanish register as the sidecar's own picker notices); unknown access
+    /// and missing benchmarks are never worded as "unavailable".
+    pub fn line(&self) -> String {
+        let what = match self.cause.as_str() {
+            "quota_exhausted" => "cuota agotada".to_string(),
+            "unavailable_verified" => "no disponible (verificado)".to_string(),
+            "policy_excluded" => "excluido por política".to_string(),
+            "access_unknown" => "acceso sin verificar".to_string(),
+            "unscored" => "sin benchmark (solo selección manual)".to_string(),
+            other => format!("excluido ({other})"),
+        };
+        match &self.reason {
+            Some(reason) => format!("{}: {what} — {reason}", self.provider),
+            None => format!("{}: {what}", self.provider),
+        }
+    }
+}
+
 /// State machine for the modal: options + selection + an inline notice
 /// (e.g. "that model isn't available"), never a silent no-op.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -54,6 +120,8 @@ pub struct AnalystPickerState {
     pub options: Vec<AnalystOption>,
     pub selected: usize,
     pub notice: Option<String>,
+    pub phase: PickerPhase,
+    pub causes: Vec<ExclusionCause>,
 }
 
 impl AnalystPickerState {
@@ -116,6 +184,38 @@ impl AnalystPickerState {
             options,
             selected: 0,
             notice: None,
+            phase: PickerPhase::Ready,
+            causes: Vec::new(),
+        }
+    }
+
+    /// Modal shown while the preflight request is pending.
+    pub fn loading() -> Self {
+        Self {
+            phase: PickerPhase::Loading,
+            ..Self::default()
+        }
+    }
+
+    /// Modal showing a preflight failure (retry / close).
+    pub fn failed(reason: impl Into<String>) -> Self {
+        Self {
+            phase: PickerPhase::Error(reason.into()),
+            ..Self::default()
+        }
+    }
+
+    /// Footer text: per-provider cause lines (when the sidecar sent them)
+    /// followed by any other notice (`pickerNotice` fallback, inline refusals).
+    pub fn footer_text(&self) -> Option<String> {
+        let mut parts: Vec<String> = self.causes.iter().map(ExclusionCause::line).collect();
+        if let Some(notice) = &self.notice {
+            parts.push(notice.clone());
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n"))
         }
     }
 
@@ -147,6 +247,9 @@ impl AnalystPickerState {
     /// unavailable rows are never listed, but a stale `available: false`
     /// still refuses with an inline notice instead of a silent no-op.
     pub fn confirm(&mut self) -> Option<AnalystOption> {
+        if self.phase != PickerPhase::Ready {
+            return None;
+        }
         let message = match self.selected_option() {
             Some(option) if !option.available => Some(format!(
                 "{} is not available right now — pick another model.",
@@ -353,5 +456,95 @@ mod tests {
         }));
         assert_eq!(picker.options.len(), 1);
         assert_eq!(picker.options[0].adapter_id, "claude");
+    }
+
+    fn record_with_causes(causes: Value) -> Value {
+        json!({ "ok": true, "exclusionCauses": causes })
+    }
+
+    #[test]
+    fn default_state_is_ready_and_loading_error_constructors_set_the_phase() {
+        assert_eq!(AnalystPickerState::default().phase, PickerPhase::Ready);
+        let loading = AnalystPickerState::loading();
+        assert_eq!(loading.phase, PickerPhase::Loading);
+        assert!(loading.options.is_empty());
+        let failed = AnalystPickerState::failed("sidecar timed out");
+        assert_eq!(failed.phase, PickerPhase::Error("sidecar timed out".into()));
+    }
+
+    #[test]
+    fn confirm_is_a_silent_noop_while_loading_or_failed() {
+        let mut loading = AnalystPickerState::loading();
+        assert!(loading.confirm().is_none());
+        assert_eq!(loading.notice, None, "loading must not invent a notice");
+        let mut failed = AnalystPickerState::failed("boom");
+        assert!(failed.confirm().is_none());
+        assert_eq!(failed.notice, None);
+    }
+
+    #[test]
+    fn every_cause_has_distinct_wording_and_never_says_unavailable_for_unknowns() {
+        let causes = ExclusionCause::list_from_record(&record_with_causes(json!([
+            { "adapterId": "claude", "provider": "claude", "cause": "quota_exhausted", "models": 2, "reason": null },
+            { "adapterId": "cursor", "provider": "cursor", "cause": "unavailable_verified", "models": 1, "reason": null },
+            { "adapterId": "go", "provider": "go", "cause": "policy_excluded", "models": 1, "reason": null },
+            { "adapterId": "codex", "provider": "codex", "cause": "access_unknown", "models": 1, "reason": null },
+            { "adapterId": "zed", "provider": "zed", "cause": "unscored", "models": 3, "reason": null }
+        ])))
+        .expect("field present");
+        let lines: Vec<String> = causes.iter().map(ExclusionCause::line).collect();
+        assert_eq!(lines[0], "claude: cuota agotada");
+        assert_eq!(lines[1], "cursor: no disponible (verificado)");
+        assert_eq!(lines[2], "go: excluido por política");
+        assert_eq!(lines[3], "codex: acceso sin verificar");
+        assert_eq!(lines[4], "zed: sin benchmark (solo selección manual)");
+        let unique: std::collections::HashSet<_> = lines.iter().map(|l| l.split(": ").nth(1).unwrap().to_string()).collect();
+        assert_eq!(unique.len(), 5, "wording must be distinct per cause");
+        assert!(!lines[3].contains("no disponible"));
+        assert!(!lines[4].contains("no disponible"));
+    }
+
+    #[test]
+    fn cause_reason_is_appended_and_unknown_cause_is_shown_verbatim_not_as_unavailable() {
+        let causes = ExclusionCause::list_from_record(&record_with_causes(json!([
+            { "adapterId": "claude", "provider": "claude", "cause": "quota_exhausted", "models": 1, "reason": "reset 5pm" },
+            { "adapterId": "x", "provider": "x", "cause": "brand_new", "models": 1, "reason": null }
+        ])))
+        .unwrap();
+        assert_eq!(causes[0].line(), "claude: cuota agotada — reset 5pm");
+        assert_eq!(causes[1].line(), "x: excluido (brand_new)");
+    }
+
+    #[test]
+    fn absent_field_yields_none_and_malformed_rows_are_dropped() {
+        assert!(ExclusionCause::list_from_record(&json!({ "ok": true })).is_none());
+        let causes = ExclusionCause::list_from_record(&record_with_causes(json!([
+            { "cause": "unscored" },
+            "junk",
+            { "provider": "zed", "cause": "unscored" }
+        ])))
+        .unwrap();
+        assert_eq!(causes.len(), 1);
+        assert_eq!(causes[0].provider, "zed");
+        assert_eq!(causes[0].models, 0, "missing models defaults, never invented");
+    }
+
+    #[test]
+    fn footer_shows_causes_then_notice_and_falls_back_to_notice_alone() {
+        let mut picker = AnalystPickerState::default();
+        picker.notice = Some("Claude: cuota agotada".into());
+        assert_eq!(picker.footer_text().as_deref(), Some("Claude: cuota agotada"));
+        picker.causes = vec![ExclusionCause {
+            adapter_id: "codex".into(),
+            provider: "codex".into(),
+            cause: "access_unknown".into(),
+            models: 1,
+            reason: None,
+        }];
+        assert_eq!(
+            picker.footer_text().as_deref(),
+            Some("codex: acceso sin verificar\nClaude: cuota agotada")
+        );
+        assert_eq!(AnalystPickerState::default().footer_text(), None);
     }
 }

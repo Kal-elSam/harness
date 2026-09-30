@@ -31,7 +31,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::{Frame, Terminal};
 use ratatui_textarea::{Input, Key, TextArea};
 
-use analyst_picker::AnalystPickerState;
+use analyst_picker::{AnalystPickerState, ExclusionCause, PickerPhase};
 use bridge::BridgeClient;
 use chat::{sidebar_accepts_selection_keys, ChatState, Focus};
 use engine::{
@@ -867,10 +867,13 @@ impl ShellApp {
         match bridge.preflight_project_team() {
             Ok(()) => {
                 self.preflight_pending = true;
-                self.view.notice = Some("Loading analyst catalog…".into());
+                self.view.notice = None;
+                // The modal opens immediately in an explicit loading state.
+                self.picker = Some(AnalystPickerState::loading());
             }
             Err(err) => {
-                self.view.notice = Some(format!("Loading analyst catalog failed: {err}"));
+                self.view.notice = None;
+                self.picker = Some(AnalystPickerState::failed(err.to_string()));
             }
         }
     }
@@ -883,26 +886,34 @@ impl ShellApp {
     /// when opening the modal.
     fn ingest_preflight_record(&mut self, record: &serde_json::Value) {
         self.preflight_pending = false;
+        // The human cancelled the loading modal: drop the late record rather
+        // than reopening a modal they closed.
+        if self.picker.is_none() {
+            return;
+        }
         let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
         if !ok {
             let reason = record
                 .get("reason")
                 .and_then(|v| v.as_str())
                 .unwrap_or("preflight failed");
-            self.view.notice = Some(format!("Loading analyst catalog failed: {reason}"));
+            self.picker = Some(AnalystPickerState::failed(reason));
             return;
         }
         let Some(catalog) = record.get("analystCatalog") else {
-            self.view.notice = Some("Preflight returned no analyst catalog.".into());
+            self.picker = Some(AnalystPickerState::failed(
+                "Preflight returned no analyst catalog.",
+            ));
             return;
         };
         let mut picker = AnalystPickerState::from_analyst_catalog(catalog);
-        if picker.is_empty() {
-            self.view.notice =
-                Some("No ask-capable analyst model available for this project.".into());
-            return;
+        // Per-provider causes replace the pickerNotice copy; an older sidecar
+        // without the field keeps the notice fallback. An empty catalog still
+        // opens the modal (honest empty message + why), never a bare toast.
+        match ExclusionCause::list_from_record(record) {
+            Some(causes) if !causes.is_empty() => picker.causes = causes,
+            _ => picker.notice = preflight_picker_notice(record),
         }
-        picker.notice = preflight_picker_notice(record);
         self.view.notice = None;
         self.picker = Some(picker);
     }
@@ -2778,6 +2789,12 @@ fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
             app.picker = None;
             app.view.notice = Some("Analyst picker cancelled.".into());
         }
+        KeyCode::Char('r') if matches!(picker.phase, PickerPhase::Error(_)) => {
+            // Retry: drop the failed modal; the request reopens it as Loading.
+            app.preflight_pending = false;
+            app.picker = None;
+            app.request_analyst_preflight();
+        }
         KeyCode::Enter => {
             if let Some(option) = picker.confirm() {
                 let payload = AnalystPickerState::analyst_payload(&option);
@@ -3027,6 +3044,95 @@ mod tests {
 
     fn press(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    fn arm_pending_preflight(app: &mut ShellApp) {
+        app.preflight_pending = true;
+        app.picker = Some(AnalystPickerState::loading());
+    }
+
+    #[test]
+    fn preflight_failure_lands_inside_the_open_modal_as_error_state() {
+        let mut app = ShellApp::new(None);
+        arm_pending_preflight(&mut app);
+        app.ingest_preflight_record(&json!({ "type": "preflight", "ok": false, "reason": "boom" }));
+        assert!(!app.preflight_pending);
+        let picker = app.picker.as_ref().expect("modal stays open on failure");
+        assert_eq!(picker.phase, PickerPhase::Error("boom".into()));
+    }
+
+    #[test]
+    fn preflight_success_with_causes_fills_modal_and_skips_the_notice_duplicate() {
+        let mut app = ShellApp::new(None);
+        arm_pending_preflight(&mut app);
+        app.ingest_preflight_record(&json!({
+            "type": "preflight", "ok": true,
+            "analystCatalog": { "models": [] },
+            "pickerNotice": "Claude: acceso sin verificar",
+            "exclusionCauses": [
+                { "adapterId": "claude", "provider": "claude", "cause": "access_unknown", "models": 1, "reason": null }
+            ]
+        }));
+        let picker = app.picker.as_ref().expect("empty catalog still shows causes in the modal");
+        assert_eq!(picker.phase, PickerPhase::Ready);
+        assert!(picker.is_empty());
+        assert_eq!(picker.causes.len(), 1);
+        assert_eq!(picker.notice, None, "causes replace the pickerNotice copy");
+    }
+
+    #[test]
+    fn preflight_success_without_causes_field_keeps_picker_notice() {
+        let mut app = ShellApp::new(None);
+        arm_pending_preflight(&mut app);
+        app.ingest_preflight_record(&json!({
+            "type": "preflight", "ok": true,
+            "analystCatalog": { "models": [
+                { "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt", "displayName": "GPT", "available": true, "recommendationTags": [] }
+            ] },
+            "pickerNotice": "Claude: cuota agotada"
+        }));
+        let picker = app.picker.as_ref().unwrap();
+        assert_eq!(picker.options.len(), 1);
+        assert!(picker.causes.is_empty());
+        assert_eq!(picker.notice.as_deref(), Some("Claude: cuota agotada"));
+    }
+
+    #[test]
+    fn preflight_record_after_the_modal_was_cancelled_is_dropped() {
+        let mut app = ShellApp::new(None);
+        arm_pending_preflight(&mut app);
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(app.picker.is_none());
+        app.ingest_preflight_record(&json!({
+            "type": "preflight", "ok": true, "analystCatalog": { "models": [
+                { "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt", "displayName": "GPT", "available": true, "recommendationTags": [] }
+            ] }
+        }));
+        assert!(app.picker.is_none(), "a late record must not reopen a cancelled modal");
+        assert!(!app.preflight_pending);
+    }
+
+    #[test]
+    fn loading_modal_ignores_enter_and_esc_closes_it() {
+        let mut app = ShellApp::new(None);
+        arm_pending_preflight(&mut app);
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        assert!(app.picker.is_some(), "Enter must not close or act while loading");
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(app.picker.is_none());
+    }
+
+    #[test]
+    fn error_modal_retry_key_closes_then_reissues_and_esc_closes() {
+        let mut app = ShellApp::new(None);
+        app.picker = Some(AnalystPickerState::failed("boom"));
+        // No bridge in this test: retry re-requests, finds nothing to send to,
+        // and leaves no stale error behind.
+        handle_key(&mut app, press('r')).unwrap();
+        assert!(app.picker.is_none());
+        app.picker = Some(AnalystPickerState::failed("boom"));
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(app.picker.is_none());
     }
 
     #[test]

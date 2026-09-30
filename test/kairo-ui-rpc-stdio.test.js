@@ -710,6 +710,9 @@ test("sidecar project.preflight returns the real analyst catalog for the ratatui
   });
   const stdin = new PassThrough();
   const preflightCalls = [];
+  const causes = [
+    { adapterId: "claude", provider: "claude", cause: "access_unknown", models: 2, reason: null }
+  ];
   const catalog = {
     recommendedModel: { candidateKey: "codex::gpt-5" },
     models: [
@@ -742,7 +745,7 @@ test("sidecar project.preflight returns the real analyst catalog for the ratatui
     ),
     preflightProjectTeam: async ({ cwd }) => {
       preflightCalls.push(cwd);
-      return { analystCatalog: catalog, profile: { fp: "x" }, candidates: { scoredAll: [] }, projectRoot: cwd, unverifiedClaudeNotice: null };
+      return { analystCatalog: catalog, profile: { fp: "x" }, candidates: { scoredAll: [] }, projectRoot: cwd, unverifiedClaudeNotice: null, exclusionCauses: causes };
     }
   });
 
@@ -755,6 +758,7 @@ test("sidecar project.preflight returns the real analyst catalog for the ratatui
   assert.equal(preflight?.ok, true);
   assert.deepEqual(preflight?.analystCatalog, catalog);
   assert.deepEqual(preflight?.profile, { fp: "x" });
+  assert.deepEqual(preflight?.exclusionCauses, causes, "exclusionCauses must pass through to the modal");
 
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();

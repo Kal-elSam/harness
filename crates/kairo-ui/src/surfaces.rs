@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget};
 use ratatui_textarea::TextArea;
 
-use crate::analyst_picker::AnalystPickerState;
+use crate::analyst_picker::{AnalystPickerState, PickerPhase};
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
 use crate::extension_ui::{ExtensionUiDialog, ExtensionUiMethod};
 use crate::layout::{split_work_main, ShellRegions};
@@ -483,13 +483,25 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
 pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPickerState) {
     // One row per option (label only) — empty description lines used to
     // inflate the modal with blank space.
-    let content_rows = picker.options.len().max(1) as u16;
     let width = area.width.saturating_sub(6).clamp(36, 72);
+    let error_text = match &picker.phase {
+        PickerPhase::Error(reason) => Some(format!("Loading analyst catalog failed: {reason}")),
+        _ => None,
+    };
+    let error_rows = error_text
+        .as_deref()
+        .map(|e| wrap_notice(e, width.saturating_sub(2), Style::default()).len() as u16)
+        .unwrap_or(0);
+    let content_rows = match &picker.phase {
+        PickerPhase::Ready => picker.options.len().max(1) as u16,
+        PickerPhase::Loading => 1,
+        PickerPhase::Error(_) => error_rows.max(1),
+    };
     // Grow the popup to fit every wrapped notice row (not just one fixed
     // row) so a long or multiline notice's final cause stays visible
     // instead of being clipped at the modal's edge.
-    let notice_rows = picker
-        .notice
+    let footer = picker.footer_text();
+    let notice_rows = footer
         .as_deref()
         .map(|n| wrap_notice(n, width.saturating_sub(2), Style::default()).len() as u16)
         .unwrap_or(0);
@@ -502,12 +514,17 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     }
 
     Clear.render(popup, buf);
+    let title = match &picker.phase {
+        PickerPhase::Ready => " Select analyst — j/k · Enter · Esc cancel · q/Ctrl+C quit ",
+        PickerPhase::Loading => " Select analyst — loading · Esc cancel · q/Ctrl+C quit ",
+        PickerPhase::Error(_) => " Select analyst — r retry · Esc close · q/Ctrl+C quit ",
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(tone::BORDER_FOCUS))
         .style(Style::default().bg(tone::SIDEBAR_BG))
         .title(Span::styled(
-            " Select analyst — j/k · Enter · Esc cancel · q/Ctrl+C quit ",
+            title,
             Style::default()
                 .fg(tone::ACCENT)
                 .add_modifier(Modifier::BOLD),
@@ -519,7 +536,19 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     }
 
     let mut lines: Vec<Line> = Vec::new();
-    if picker.options.is_empty() {
+    if let Some(error) = &error_text {
+        let style = Style::default()
+            .fg(tone::ERROR)
+            .add_modifier(Modifier::BOLD)
+            .bg(tone::SIDEBAR_BG);
+        lines.extend(wrap_notice(error, inner.width, style));
+    } else if picker.phase == PickerPhase::Loading {
+        lines.push(padded_span(
+            "Loading analyst catalog…",
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
+    } else if picker.is_empty() {
         lines.push(padded_span(
             "No ask-capable analyst model available for this project.",
             inner.width,
@@ -555,7 +584,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
             }
         }
     }
-    if let Some(notice) = &picker.notice {
+    if let Some(notice) = &footer {
         let notice_style = Style::default()
             .fg(tone::WARN)
             .add_modifier(Modifier::BOLD)
@@ -1973,6 +2002,7 @@ mod tests {
             }],
             selected: 0,
             notice: Some(long_notice),
+            ..Default::default()
         };
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
@@ -2602,6 +2632,72 @@ mod tests {
             hay.contains("No ask-capable analyst"),
             "empty-catalog copy missing: {hay}"
         );
+    }
+
+    #[test]
+    fn analyst_picker_modal_loading_state_is_explicit_with_cancel_hint() {
+        use crate::analyst_picker::AnalystPickerState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &AnalystPickerState::loading());
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Loading analyst catalog"), "loading copy missing: {hay}");
+        assert!(hay.contains("Esc cancel"), "cancel hint missing: {hay}");
+        assert!(
+            !hay.contains("No ask-capable analyst"),
+            "loading must not claim the catalog is empty: {hay}"
+        );
+    }
+
+    #[test]
+    fn analyst_picker_modal_error_state_shows_failure_and_retry_close_hints() {
+        use crate::analyst_picker::AnalystPickerState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &AnalystPickerState::failed("sidecar timed out"));
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("sidecar timed out"), "failure reason missing: {hay}");
+        assert!(hay.contains("r retry"), "retry hint missing: {hay}");
+        assert!(hay.contains("Esc close"), "close hint missing: {hay}");
+        assert!(!hay.contains("No ask-capable analyst"), "error is not an empty catalog: {hay}");
+    }
+
+    #[test]
+    fn analyst_picker_modal_renders_each_exclusion_cause_with_distinct_wording() {
+        use crate::analyst_picker::{AnalystPickerState, ExclusionCause};
+
+        let area = Rect::new(0, 0, 100, 30);
+        let mut picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({ "models": [] }));
+        picker.causes = ExclusionCause::list_from_record(&serde_json::json!({
+            "exclusionCauses": [
+                { "adapterId": "claude", "provider": "claude", "cause": "quota_exhausted", "models": 1, "reason": null },
+                { "adapterId": "codex", "provider": "codex", "cause": "access_unknown", "models": 1, "reason": null },
+                { "adapterId": "zed", "provider": "zed", "cause": "unscored", "models": 1, "reason": null }
+            ]
+        }))
+        .unwrap();
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("No ask-capable analyst"), "empty message stays honest: {hay}");
+        assert!(hay.contains("claude: cuota agotada"), "{hay}");
+        assert!(hay.contains("codex: acceso sin verificar"), "{hay}");
+        assert!(hay.contains("zed: sin benchmark (solo selección manual)"), "{hay}");
+        assert!(!hay.contains("no disponible"), "unknowns must not read as unavailable: {hay}");
+    }
+
+    #[test]
+    fn analyst_picker_modal_without_causes_keeps_the_picker_notice_fallback() {
+        use crate::analyst_picker::AnalystPickerState;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let mut picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({ "models": [] }));
+        picker.notice = Some("Claude: acceso sin verificar".into());
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        assert!(buffer_text(&buf).contains("Claude: acceso sin verificar"));
     }
 
     #[test]

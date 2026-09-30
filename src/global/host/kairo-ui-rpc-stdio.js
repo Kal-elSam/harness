@@ -1696,6 +1696,7 @@ export async function runKairoUiRpcStdio({
             profile: preflight.profile,
             candidates: preflight.candidates,
             pickerNotice: preflight.pickerNotice ?? null,
+            exclusionCauses: Array.isArray(preflight.exclusionCauses) ? preflight.exclusionCauses : [],
             unverifiedClaudeNotice: preflight.unverifiedClaudeNotice ?? null
           });
         } catch (err) {

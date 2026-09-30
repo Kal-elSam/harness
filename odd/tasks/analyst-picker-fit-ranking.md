@@ -41,7 +41,7 @@ Estimated delivery: ~600+ changed lines -> delivery strategy `ask-on-risk`; ask 
 - [x] T8 Unified analyst profile: `BOOTSTRAP_ANALYST_PROFILE` (project-strategy.js:65) = reasoning + coding + architecture + design; `buildAnalystPrompt` investigates languages/structure/deps/constraints/risks and justifies team with repo evidence. (commit 063071ba0). Finding: no `architecture`/`design` capability keys exist; mapped to reasoning+coding via focusAreas; a pool with thin coding evidence yields no recommendedModel.
 - [ ] T9 OpenCode Go bootstrap analyzer adapter (read-only constraints, honest isolation level, no silent provider substitution, no auto-activation).
 - [ ] T10 Exclusion causes (quota exhausted / unavailable verified -> exclude; unknown access and unscored != unavailable) plumbed into picker curation + notice.
-- [ ] T11 Rust modal: loading/error/exclusion states; cargo test.
+- [x] T11 Rust modal: loading/error/exclusion states; cargo test. Modal opens in Loading on request, Error state with r retry / Esc close, per-provider exclusion cause lines (pickerNotice fallback when field absent); rpc stdio now forwards exclusionCauses. (commit: "feat(kairo-ui): show loading, error and exclusion causes in analyst modal"; hash in report)
 - [ ] T12 Build binary+sidecar, PTY smoke; local `kairo` retarget ONLY with authorization + backup + rollback (currently symlinks to ratatui-host worktree).
 - [ ] T13 Human acceptance with real authorized provider (pending user; mocks never count as 100%).
 
