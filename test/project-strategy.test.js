@@ -627,25 +627,30 @@ test("computeBootstrapAnalystCatalog marks an unavailable model without a router
 
 // ---- Composite analyst fit (T15) ----
 
-test("every catalog entry exposes a numeric fit and confidence in 0..1 (additive fields)", () => {
+test("every catalog entry exposes fit (number 0..1 or null) and confidence in 0..1 (additive fields)", () => {
   const catalog = computeBootstrapAnalystCatalog({
     ...realCandidates(), unscoredModels: [{ adapterId: "codex", modelId: "mystery", displayName: "Mystery" }]
   });
   assert.ok(catalog.models.length >= 3);
   for (const model of catalog.models) {
-    assert.equal(typeof model.fit, "number", `${model.candidateKey} fit`);
+    if (model.evidenceStatus === "scored") {
+      assert.equal(typeof model.fit, "number", `${model.candidateKey} fit`);
+      assert.ok(model.fit >= 0 && model.fit <= 1, `${model.candidateKey} fit in range`);
+    } else {
+      assert.equal(model.fit, null, `${model.candidateKey} has no evidence: fit is unknown, not 0`);
+    }
     assert.equal(typeof model.confidence, "number", `${model.candidateKey} confidence`);
-    assert.ok(model.fit >= 0 && model.fit <= 1, `${model.candidateKey} fit in range`);
     assert.ok(model.confidence >= 0 && model.confidence <= 1, `${model.candidateKey} confidence in range`);
   }
 });
 
-test("an unscored model gets fit 0 (no invented benchmark) and a documented lower confidence than any scored model", () => {
+test("an unscored model gets fit null (no invented benchmark) and a documented lower confidence than any scored model", () => {
   const catalog = computeBootstrapAnalystCatalog({
     ...realCandidates(), unscoredModels: [{ adapterId: "codex", modelId: "mystery", displayName: "Mystery" }]
   });
   const unscored = catalog.models.find((m) => m.evidenceStatus === "unscored");
-  assert.equal(unscored.fit, 0);
+  assert.equal(unscored.fit, null);
+  assert.deepEqual(unscored.evidence, { reasoning: null, coding: null, coverage: null });
   assert.equal(unscored.confidence, UNSCORED_ANALYST_CONFIDENCE);
   for (const scored of catalog.models.filter((m) => m.evidenceStatus === "scored")) {
     assert.ok(scored.confidence > unscored.confidence);
@@ -668,7 +673,7 @@ test("fit follows the profile: the balanced model outranks a reasoning-only lead
   assert.ok(byId["codex-model"].confidence > byId["claude-model"].confidence, "more capability coverage means more confidence");
 });
 
-test("missing capability data contributes nothing: a model with no capability evidence has fit 0, not a fabricated number", () => {
+test("missing capability data contributes nothing: a model with no capability evidence has fit null (unknown), not a fabricated 0", () => {
   const scoredAll = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "blank-model" }] }], [
     { slug: "blank-model", name: "Blank", intelligenceIndex: null, codingIndex: null, mathIndex: null }
   ]);
@@ -676,7 +681,40 @@ test("missing capability data contributes nothing: a model with no capability ev
     scoredAll, eligibility: { codex: { ok: true } }, registry: createCapabilityRegistry()
   });
   assert.equal(catalog.models[0].evidenceStatus, "scored");
-  assert.equal(catalog.models[0].fit, 0);
+  assert.equal(catalog.models[0].fit, null);
+  assert.deepEqual(catalog.models[0].evidence, { reasoning: null, coding: null, coverage: null });
+});
+
+test("evidence carries the real reasoning/coding values and coverage; a measured 0 stays distinguishable from missing", () => {
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "claude-model" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }] }
+  ], [
+    { slug: "claude-model", name: "Reasoner", intelligenceIndex: 95, codingIndex: null, mathIndex: null },
+    { slug: "codex-model", name: "Balanced", intelligenceIndex: 80, codingIndex: 80, mathIndex: null }
+  ]);
+  const catalog = computeBootstrapAnalystCatalog({
+    scoredAll, eligibility: { claude: { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry()
+  });
+  const byId = Object.fromEntries(catalog.models.map((m) => [m.modelId, m]));
+  assert.equal(typeof byId["codex-model"].evidence.reasoning, "number");
+  assert.equal(typeof byId["codex-model"].evidence.coding, "number");
+  assert.ok(byId["codex-model"].evidence.coverage > 0);
+  assert.equal(typeof byId["claude-model"].evidence.reasoning, "number");
+  assert.equal(byId["claude-model"].evidence.coding, null, "no coding benchmark: null, never 0");
+});
+
+test("a measured 0 is a number, not null: zero-valued benchmarks keep fit 0 and evidence 0", () => {
+  const scoredAll = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "zero-model" }] }], [
+    { slug: "zero-model", name: "Zero", intelligenceIndex: 0, codingIndex: 0, mathIndex: null }
+  ]);
+  const catalog = computeBootstrapAnalystCatalog({
+    scoredAll, eligibility: { codex: { ok: true } }, registry: createCapabilityRegistry()
+  });
+  const entry = catalog.models[0];
+  assert.equal(entry.evidence.reasoning, 0);
+  assert.equal(entry.evidence.coding, 0);
+  assert.equal(entry.fit, 0, "measured 0 is not missing evidence");
 });
 
 test("availability gates usability only: an unavailable scored model still carries its real fit plus its cause", () => {

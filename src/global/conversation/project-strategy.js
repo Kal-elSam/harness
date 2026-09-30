@@ -137,7 +137,10 @@ function candidateKeyOf(model) {
  *  - confidence = SCORED floor + (1 - floor) * (coverage + benchmarkDepth) / 2.
  *  - fit = profileFit * confidence (thin evidence is discounted on purpose).
  * Weights: required 1, optional 0.5, overridable via profile.capabilityWeights.
- * Unscored models are handled by the caller: fit 0, UNSCORED confidence.
+ * Unscored models are handled by the caller: fit null, UNSCORED confidence.
+ * A model with NO capability evidence at all gets `fit: null` (unknown), never
+ * an invented 0; a measured 0 stays a number. `evidence` carries the real
+ * reasoning/coding magnitudes (null when absent) and the weight coverage.
  */
 function computeAnalystFits(pool, registry, profile = BOOTSTRAP_ANALYST_PROFILE) {
   const { required, optional } = profile.capabilities;
@@ -148,6 +151,11 @@ function computeAnalystFits(pool, registry, profile = BOOTSTRAP_ANALYST_PROFILE)
   const fits = new Map();
   if (!pool.length || !totalWeight) return fits;
   const gapValues = new Map(capabilities.map((capability) => [capability, computeCapabilityGapValue(registry, pool, capability)]));
+  // Reasoning and coding are always reported as evidence (the picker's main
+  // view needs both), even if a custom profile does not weigh them.
+  const evidenceValues = new Map(["reasoning", "coding"].map((capability) => [
+    capability, gapValues.get(capability) ?? computeCapabilityGapValue(registry, pool, capability)
+  ]));
   const evaluations = computeRoleEvaluations(registry, pool, profile.role, capabilities);
   for (const model of pool) {
     const modelKey = `${model.adapterId}::${model.modelId}`;
@@ -162,12 +170,20 @@ function computeAnalystFits(pool, registry, profile = BOOTSTRAP_ANALYST_PROFILE)
       depths.push(Math.min(1, evaluations.get(modelKey)?.benchmarkCoverage?.[capability] ?? 0));
     }
     const coverage = coveredWeight / totalWeight;
+    const evidence = {
+      reasoning: evidenceValues.get("reasoning").get(modelKey) ?? null,
+      coding: evidenceValues.get("coding").get(modelKey) ?? null,
+      coverage: coveredWeight > 0 ? coverage : null
+    };
     const benchmarkDepth = depths.length ? depths.reduce((a, b) => a + b, 0) / depths.length : 0;
     const confidence = SCORED_ANALYST_CONFIDENCE_FLOOR + (1 - SCORED_ANALYST_CONFIDENCE_FLOOR) * ((coverage + benchmarkDepth) / 2);
-    fits.set(modelKey, { fit: (weighted / totalWeight) * confidence, confidence });
+    fits.set(modelKey, { fit: coveredWeight > 0 ? (weighted / totalWeight) * confidence : null, confidence, evidence });
   }
   return fits;
 }
+
+/** Evidence of a model with no benchmark at all: every field unknown. */
+const NO_ANALYST_EVIDENCE = Object.freeze({ reasoning: null, coding: null, coverage: null });
 
 function quotaFor(providerCapacity, adapterId) {
   return providerCapacity?.[adapterId]?.quotaRemainingPercent ?? null;
@@ -191,7 +207,7 @@ function quotaFor(providerCapacity, adapterId) {
  *   `providerCapacity`, plus
  *   `unscoredModels` (real catalog models with no AA match — see
  *   conversation/service.js's own `unscoredModels`).
- * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, cause: string|null, quota: number|null, fit: number, confidence: number, recommendationTags: string[]}>, exclusions: Array<{candidateKey: string, adapterId: string, modelId: string, cause: string, reason: string|null}>}}
+ * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, cause: string|null, quota: number|null, fit: number|null, confidence: number, evidence: {reasoning: number|null, coding: number|null, coverage: number|null}, recommendationTags: string[]}>, exclusions: Array<{candidateKey: string, adapterId: string, modelId: string, cause: string, reason: string|null}>}}
  */
 export function computeBootstrapAnalystCatalog({
   scoredAll, manualSelectionScoredPool = scoredAll, eligibility, registry,
@@ -283,8 +299,9 @@ export function computeBootstrapAnalystCatalog({
       selectable: providerOk,
       cause: !providerOk ? unavailableCause(model.adapterId) : unverified ? "access_unknown" : null,
       quota: quotaFor(providerCapacity, model.adapterId),
-      fit: fitSource.get(key)?.fit ?? 0,
+      fit: fitSource.get(key)?.fit ?? null,
       confidence: fitSource.get(key)?.confidence ?? SCORED_ANALYST_CONFIDENCE_FLOOR,
+      evidence: fitSource.get(key)?.evidence ?? { ...NO_ANALYST_EVIDENCE },
       recommendationTags
     };
   });
@@ -302,10 +319,10 @@ export function computeBootstrapAnalystCatalog({
     // the picker never hides why a whole provider is out.
     cause: eligibility[model.adapterId]?.ok === true ? "unscored" : unavailableCause(model.adapterId),
     quota: quotaFor(providerCapacity, model.adapterId),
-    // No benchmark exists: fit stays 0 and confidence is the documented
-    // unscored constant. Nothing is invented; availability alone makes the
-    // model selectable.
-    fit: 0, confidence: UNSCORED_ANALYST_CONFIDENCE,
+    // No benchmark exists: fit is unknown (null, never an invented 0) and
+    // confidence is the documented unscored constant. Nothing is invented;
+    // availability alone makes the model selectable.
+    fit: null, confidence: UNSCORED_ANALYST_CONFIDENCE, evidence: { ...NO_ANALYST_EVIDENCE },
     recommendationTags: []
   }));
 
