@@ -62,6 +62,15 @@ Assumptions (recorded): unscored-but-available models are selectable (lower evid
 - [x] T21b.2 (commit d35715bae) Wire-record proof, NOT a full end-to-end. Node side (`test/analyst-preflight-analyze-wire.test.js`) runs the real `runKairoUiRpcStdio` op loop with the real `preflightProjectTeam`/`analyzeProjectTeam` over PassThrough streams; the conversation service (catalog, revalidation probe, analysis spy) and the Pi child are fakes. The NDJSON is frozen in `crates/kairo-ui/fixtures/preflight-analyze-unverified.ndjson` (drift fails the Node test). Rust side (`preflight_then_analyze_wire_fixture_roundtrips_through_the_host`) drives the real host code: `request_analyst_preflight` and the picker Enter path write through `BridgeClient::send_op` into a recorder process (asserted equal to the fixture requests) and the fixture records go through `ingest_record`. Mutation check observed on the fixture. Unexercised: the real Rust-spawned Node process (stdio between them), a PTY/terminal render, and any real provider.
 - [x] T22 (user-approved 2026-09-30) Selector fit/coherence pass. Commits: b81ee69cc, 788c9f627, 39c39d654, a967c20ed, f658eded6. Observed limits are listed under "T22 acceptance" below.
 - [x] T23 (user-approved 2026-09-30, 'verify first') Discovery vs verification, consent, one ranking, top-three picker. Units: e5e1142db (discovery/verification split), d58fa1b64 (unified ranking/star), 74956c5ed (curation, plan, RPC op), 3477d7002 (Rust modal). Details and observed limits under "T23 acceptance".
+- [ ] T24 (user-approved 2026-09-30) Correct the analyst recommendation: up to THREE DISTINCT models compared across every available subscription by aptitude for analyzing architecture and code; quality over cost/speed. Sub-items:
+  - [x] T24.1 Explain the current ranking first (trace module + script + tests; finding in "T24 ranking trace").
+  - [ ] T24.2 Shared evaluator replaces the analyst's own fit (required capabilities, comparable evidence, optional tie-break only; no quality x confidence).
+  - [ ] T24.3 Project context from the existing local profile scan, used only to contextualize the explanation text.
+  - [ ] T24.4 One classification: star, default and top-three distinct models derived from the catalog order without recalculation; equivalent routes to manual.
+  - [ ] T24.5 Experience: why/what-differs explanations, probe progress in the Rust modal, per-subscription error summary, close-does-not-cancel.
+  - [ ] T24.6 Behavioural tests (shuffle, optional data, duplicates, before/after verification, wire fixtures).
+  - [ ] T24.7 PTY smoke that opens the analyst picker.
+  - [ ] T24.8 Delivery: backup prev3, rebuild, identity check, suites Node 22/24 and cargo.
 - [ ] T18 Node 24 run, list the 6 skipped tests, re-run build + PTY.
 - [ ] T9/T10 re-accepted only after T14/T15 pass.
 
@@ -108,3 +117,34 @@ Assumptions (recorded): unscored-but-available models are selectable (lower evid
 - Behaviour change to know: Cursor evidence older than 15 minutes (or never verified) is now `unverified`/`stale` everywhere a snapshot is read, including routing and the team sidebar, until a verification runs; nothing re-probes it in the background any more. Claude already behaved this way.
 - Superseded tests rewritten on purpose: conversation-service (Cursor pool probes now run concurrently inside `verifyAccess`; snapshot polls never probe), analyst-picker-views (manual view, identity/no cap, sort, preflight expectations), project-team-sidecar (copy `no verificado — comparación parcial`, star derived from ranking, four T20 curate/causes tests), analyst-preflight-analyze-wire (T21b test kept as the safety-net check without a fixture; new verify fixture), and in Rust the warning/second-confirmation/unverified-marker tests plus the `preflight-analyze-unverified.ndjson` fixture (deleted, replaced by `verify-then-pick.ndjson`).
 - NOT observed: any real provider/probe/account; the picker rendered in a real terminal or PTY (the PTY smoke does not open it); the real Rust-spawned sidecar talking to the real service. Wire proof is a replayed fixture plus unit tests.
+
+## T24 ranking trace (observed 2026-09-30, BEFORE any ranking change)
+Reproduce: `node scripts/trace-analyst-ranking.mjs` (real pipeline: `scoreAvailableModels` -> candidate catalog/pools -> `computeBootstrapAnalystCatalog` -> `curateAnalystCatalogForPicker`; no provider call, no probe). Benchmarks are the local Artificial Analysis snapshot fetched 2026-09-27..30 (`~/.harness/model-intelligence.json`, read-only); the controlled catalog (`CONTROLLED_TRACE_CATALOG`) mirrors real shapes: Codex, Claude Opus/Sonnet/Fable, Cursor effort re-exposures, the same model via Codex and Cursor, OpenCode Go. Access is stated (Fable denied, the rest allowed), never probed. Tests: `test/analyst-ranking-trace.test.js` with a verbatim excerpt of that snapshot (`test/fixtures/analyst-aa-excerpt.json`). Limit: the trace scores with the AA rows only (the product's registry may hold extra sources such as the Hugging Face leaderboard for some identities).
+
+```
+stage      pos star candidateKey                         slug                      fit    conf  reasoning coding  evidence(gpqa/hle/sci/int/cod)  note
+main       1   *    codex::gpt-5-6-sol                   gpt-5-6-sol               0.606  0.917 0.718     0.571   0.941/0.495/0.571/47/77.4       
+main       2        cursor::gpt-5-6-sol                  gpt-5-6-sol               0.606  0.917 0.718     0.571   0.941/0.495/0.571/47/77.4       
+main       3        codex::gpt-5-5                       gpt-5-5                   0.599  0.917 0.697     0.558   0.935/0.458/0.558/38.4/74.9     
+manual     1        cursor::gpt-5-6-sol-high             gpt-5-6-sol-high          0.593  0.917 0.694     0.578   0.928/0.46/0.578/42.3/77.2      
+manual     2        codex::gpt-5-6-terra                 gpt-5-6-terra             0.58   0.917 0.677     0.55    0.925/0.429/0.55/42.1/76.7      
+manual     3        claude::claude-opus-5                claude-opus-5             0.425  0.815 0.741     0.564   0.932/0.549/0.564/50.8/78       
+manual     4        opencode-go::kimi-k3                 kimi-k3                   0.423  0.815 0.702     0.595   0.935/0.469/0.595/43.6/76.2     
+manual     5        opencode-go::glm-5-3                 glm-5-3                   0.411  0.815 0.67      0.59    0.917/0.423/0.59/44.8/74.8      
+manual     6        claude::claude-sonnet-5              claude-sonnet-5           0.393  0.815 0.662     0.543   0.911/0.413/0.543/38.2/71.5     
+manual     7        opencode-go::deepseek-v4-pro         deepseek-v4-pro           0.384  0.815 0.669     0.51    0.928/0.41/0.51/36/68.8         
+manual     8        cursor::claude-opus-5-thinking-high  -                         -      0.25  -         -       -/-/-/-/-                       unscored (no AA match)
+manual     9        cursor::claude-sonnet-5-thinking-high -                         -      0.25  -         -       -/-/-/-/-                       unscored (no AA match)
+excluded   -        claude::claude-fable-5-1             claude-fable-5-1          -      -     -         -       0.937/0.591/0.631/53.4/81.6     access denied (verified)
+excluded   -        claude::claude-opus-4-8              claude-opus-4-8           -      -     -         -       0.92/0.487/0.544/41.8/74.3      superseded by a newer generation in the same lineage
+```
+
+Findings (each verified by the trace or a counterfactual test, not assumed):
+1. **Opus 5 / Sonnet 5 are not low on capability.** Claude Opus 5 has the highest measured reasoning magnitude in the controlled set (0.741 vs 0.718 for Codex Sol) and coding 0.564 vs 0.571; yet it ends 6th overall (manual #3), Sonnet 5 9th. The only input that separates them is `fit = profileFit x confidence`: confidence is 0.917 for the Codex rows and 0.815 for Claude/OpenCode rows.
+2. **Cause = data trigger + code amplification.** Data: AA publishes `ifBench` (the optional `instructionFollowing` capability in `BOOTSTRAP_ANALYST_PROFILE`) for the Codex models only (Sol 0.727, 5.5 0.759, Terra 0.712); it is null for Opus 5, Sonnet 5, Kimi K3, GLM 5.3 and DeepSeek V4 Pro. Code (`computeAnalystFits`, project-strategy.js): a missing OPTIONAL capability (a) lowers `coverage` and therefore `confidence`, (b) stays in the `totalWeight` denominator so it also lowers `profileFit`, and (c) `fit = profileFit x confidence` multiplies both, plus it averages absolute magnitudes of different benchmarks. So an absent optional datum is punished like incapacity twice. Counterfactual test (`BASELINE cause`): nulling `ifBench` on every row moves Opus 5 into the main view.
+3. **Duplicated evidence takes two slots.** `codex::gpt-5-6-sol` and `cursor::gpt-5-6-sol` carry the identical AA row (same slug, same numbers) and occupy main positions 1 and 2, so the "top three" contains two models. Code: `curateAnalystCatalogForPicker` dedupes by `candidateKey`, which differs by adapter; nothing collapses the same model across subscriptions, and the percentile/fit pool counts the duplicated evidence twice.
+4. **Data gap, not code: Cursor's `claude-opus-5-thinking-high` / `claude-sonnet-5-thinking-high` are UNSCORED** (no AA slug match for those ids), so they can only be manual. The repo does not define them as equivalent to AA's `claude-opus-5-high`; no equivalence was invented.
+5. Correct exclusions (code is right): `claude-fable-5-1` denied (verified), `claude-opus-4-8` superseded by generation 5 of the same lineage.
+6. Not a cause: availability, access verification, Codex-over-Claude preference (none exists), input order.
+
+Conclusion: the main cause is CODE (optional data penalized, magnitudes mixed and multiplied by confidence, no cross-subscription identity), triggered by an asymmetric DATA gap; the Cursor effort ids are a pure data gap. T24.2-T24.4 address the code causes only.
