@@ -2029,6 +2029,7 @@ mod tests {
                 model_id: "gpt".into(),
                 display_name: "GPT".into(),
                 available: true,
+                access_verified: true,
                 recommended: false,
                 tags: vec![],
             }],
@@ -2044,6 +2045,27 @@ mod tests {
             hay.contains("FINAL_SUFFIX_TOKEN"),
             "picker's long notice must wrap (and the popup grow to fit) so the final token is visible: {hay}"
         );
+    }
+
+    #[test]
+    fn analyst_picker_modal_renders_the_unverified_access_marker_on_those_rows_only() {
+        use crate::analyst_picker::AnalystPickerState;
+        use serde_json::json;
+
+        let area = Rect::new(0, 0, 100, 30);
+        let picker = AnalystPickerState::from_analyst_catalog(&json!({
+            "models": [
+                { "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt",
+                  "displayName": "GPT Verified", "available": true, "accessVerified": true, "selectable": true },
+                { "candidateKey": "claude::unv", "adapterId": "claude", "modelId": "unv",
+                  "displayName": "Claude Unverified", "available": false, "accessVerified": false, "selectable": true }
+            ]
+        }));
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Claude Unverified"), "{hay}");
+        assert_eq!(hay.matches("acceso sin verificar").count(), 1, "marker only on the unverified row: {hay}");
     }
 
     #[test]

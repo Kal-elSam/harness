@@ -5,8 +5,11 @@
 //! `project.preflight` sidecar op and its real `analystCatalog`.
 //!
 //! Never invents a model absent from the real catalog. The modal lists
-//! **only available** models — unavailable adapters (rate-limited Go, etc.)
-//! stay out of the picker entirely.
+//! **usable** models — unavailable adapters (rate-limited Go, etc.) stay out
+//! of the picker entirely. Models whose access is UNVERIFIED (catalog
+//! `accessVerified: false`, `selectable: true`) are listed after the verified
+//! ones with an "acceso sin verificar" marker; they are never starred and the
+//! sidecar re-verifies access when one is confirmed (T20).
 
 use serde_json::Value;
 
@@ -18,9 +21,15 @@ pub struct AnalystOption {
     pub model_id: String,
     pub display_name: String,
     pub available: bool,
+    /// `false` when the catalog says access is unverified (selectable, never
+    /// starred, revalidated by the sidecar on confirm). Absent = verified.
+    pub access_verified: bool,
     pub recommended: bool,
     pub tags: Vec<String>,
 }
+
+/// Marker for rows whose access is not verified yet.
+pub const ACCESS_UNVERIFIED_MARKER: &str = "acceso sin verificar";
 
 impl AnalystOption {
     /// `<displayName>    <adapterId>` — model-first, never provider-first.
@@ -30,12 +39,17 @@ impl AnalystOption {
         if self.recommended {
             label.push_str("  ★ recommended");
         }
+        if !self.access_verified {
+            label.push_str("  · ");
+            label.push_str(ACCESS_UNVERIFIED_MARKER);
+        }
         label
     }
 
     /// Short secondary line — the real tag(s) only, never invented.
     pub fn description(&self) -> String {
-        self.tags
+        let tags = self
+            .tags
             .iter()
             .map(|t| match t.as_str() {
                 "quality" => "Quality fit".to_string(),
@@ -43,7 +57,16 @@ impl AnalystOption {
                 other => other.to_string(),
             })
             .collect::<Vec<_>>()
-            .join(" · ")
+            .join(" · ");
+        if self.access_verified {
+            return tags;
+        }
+        let note = "se verifica al confirmar";
+        if tags.is_empty() {
+            note.to_string()
+        } else {
+            format!("{tags} · {note}")
+        }
     }
 }
 
@@ -144,8 +167,11 @@ impl AnalystPickerState {
             .iter()
             .filter_map(|m| {
                 let available = m.get("available").and_then(|v| v.as_bool()).unwrap_or(false);
-                // Product rule: only usable analysts appear in the modal.
-                if !available {
+                let selectable = m.get("selectable").and_then(|v| v.as_bool()).unwrap_or(false);
+                let access_verified = m.get("accessVerified").and_then(|v| v.as_bool()).unwrap_or(true);
+                // Product rule: only usable analysts appear in the modal, plus
+                // selectable ones whose access is unverified (T20).
+                if !available && !(selectable && !access_verified) {
                     return None;
                 }
                 let candidate_key = m.get("candidateKey").and_then(|v| v.as_str())?.to_string();
@@ -165,13 +191,14 @@ impl AnalystPickerState {
                             .collect()
                     })
                     .unwrap_or_default();
-                let recommended = recommended_key == Some(candidate_key.as_str());
+                let recommended = access_verified && recommended_key == Some(candidate_key.as_str());
                 Some(AnalystOption {
                     candidate_key,
                     adapter_id,
                     model_id,
                     display_name,
-                    available: true,
+                    available,
+                    access_verified,
                     recommended,
                     tags,
                 })
@@ -251,7 +278,7 @@ impl AnalystPickerState {
             return None;
         }
         let message = match self.selected_option() {
-            Some(option) if !option.available => Some(format!(
+            Some(option) if !option.available && option.access_verified => Some(format!(
                 "{} is not available right now — pick another model.",
                 option.display_name
             )),
@@ -405,6 +432,7 @@ mod tests {
             model_id: "gpt".into(),
             display_name: "GPT".into(),
             available: true,
+            access_verified: true,
             recommended: true,
             tags: vec!["quality".into()],
         };
@@ -425,6 +453,7 @@ mod tests {
             model_id: "sonnet".into(),
             display_name: "Claude Sonnet".into(),
             available: true,
+            access_verified: true,
             recommended: false,
             tags: vec![],
         };
@@ -546,5 +575,68 @@ mod tests {
             Some("codex: acceso sin verificar\nClaude: cuota agotada")
         );
         assert_eq!(AnalystPickerState::default().footer_text(), None);
+    }
+
+    fn unverified_catalog() -> Value {
+        json!({
+            "recommendedModel": { "candidateKey": "claude::unv" },
+            "models": [
+                {
+                    "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt",
+                    "displayName": "GPT", "available": true, "accessVerified": true,
+                    "selectable": true, "recommendationTags": []
+                },
+                {
+                    "candidateKey": "claude::unv", "adapterId": "claude", "modelId": "unv",
+                    "displayName": "Claude Unverified", "available": false, "accessVerified": false,
+                    "selectable": true, "cause": "access_unknown", "recommendationTags": ["quality"]
+                },
+                {
+                    "candidateKey": "cursor::down", "adapterId": "cursor", "modelId": "down",
+                    "displayName": "Cursor Down", "available": false, "accessVerified": true,
+                    "selectable": false, "cause": "quota_exhausted", "recommendationTags": []
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn unverified_access_rows_are_listed_marked_and_never_starred() {
+        let picker = AnalystPickerState::from_analyst_catalog(&unverified_catalog());
+        assert_eq!(picker.options.len(), 2, "selectable unverified row kept; unusable Cursor row dropped");
+        let unv = picker.options.iter().find(|o| o.adapter_id == "claude").expect("unverified row");
+        assert!(!unv.access_verified);
+        assert!(!unv.available);
+        assert!(!unv.recommended, "a catalog pointer must never star an unverified row");
+        assert!(unv.row_label().contains("acceso sin verificar"), "{}", unv.row_label());
+        assert!(!unv.row_label().contains("recommended"));
+        let verified = picker.options.iter().find(|o| o.adapter_id == "codex").unwrap();
+        assert!(verified.access_verified);
+        assert!(!verified.row_label().contains("sin verificar"));
+        assert_eq!(picker.options[0].adapter_id, "codex", "verified rows stay ahead (sidecar order preserved)");
+    }
+
+    #[test]
+    fn confirming_an_unverified_row_returns_it_and_sends_the_manual_payload() {
+        let mut picker = AnalystPickerState::from_analyst_catalog(&unverified_catalog());
+        picker.move_down();
+        let picked = picker.confirm().expect("unverified access is selectable");
+        assert_eq!(picked.model_id, "unv");
+        assert!(picker.notice.is_none());
+        let payload = AnalystPickerState::analyst_payload(&picked);
+        assert_eq!(payload["selectionSource"], "manual");
+        assert_eq!(payload["model"]["modelId"], "unv");
+        assert_eq!(payload["model"]["adapterId"], "claude");
+    }
+
+    #[test]
+    fn a_stale_unavailable_verified_row_is_still_refused_and_absent_fields_stay_tolerant() {
+        let mut stale = AnalystPickerState::from_analyst_catalog(&json!({
+            "models": [{ "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "available": true }]
+        }));
+        assert!(stale.options[0].access_verified, "absent accessVerified means verified/legacy");
+        stale.options[0].available = false;
+        assert!(stale.confirm().is_none());
+        assert!(stale.notice.as_deref().unwrap_or("").contains("not available"));
     }
 }

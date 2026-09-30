@@ -823,7 +823,10 @@ impl ShellApp {
         self.team_action_pending = false;
         let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
         if !ok {
-            if record.get("status").and_then(|v| v.as_str()) == Some("analyst_selection_required") {
+            if matches!(
+                record.get("status").and_then(|v| v.as_str()),
+                Some("analyst_selection_required") | Some("analyst_access_unverified")
+            ) {
                 if let Some(reason) = record.get("reason").and_then(|v| v.as_str()) {
                     self.view.notice = Some(reason.to_string());
                 }
@@ -3076,6 +3079,34 @@ mod tests {
             app.view.notice.as_deref(),
             Some("No analyst qualifies — open the analyst picker and choose one.")
         );
+    }
+
+    #[test]
+    fn analyst_access_unverified_team_record_shows_its_message_and_clears_pending() {
+        let mut app = ShellApp::new(None);
+        app.team_action_pending = true;
+        app.ingest_team_record(&json!({
+            "type": "team", "op": "project.analyze", "ok": false,
+            "status": "analyst_access_unverified",
+            "accessStatus": "unverified",
+            "analyst": { "adapterId": "claude", "modelId": "opus", "displayName": "Claude Opus" },
+            "reason": "Access to Claude Opus could not be verified (probe timed out) — nothing was analyzed."
+        }));
+        assert!(!app.team_action_pending);
+        assert_eq!(
+            app.view.notice.as_deref(),
+            Some("Access to Claude Opus could not be verified (probe timed out) — nothing was analyzed.")
+        );
+        assert!(app.view.team_state.is_none(), "no team state is invented");
+    }
+
+    #[test]
+    fn unrelated_failed_team_record_without_status_keeps_the_previous_behaviour() {
+        let mut app = ShellApp::new(None);
+        app.team_action_pending = true;
+        app.ingest_team_record(&json!({ "type": "team", "op": "project.analyze", "ok": false, "reason": "boom" }));
+        assert!(!app.team_action_pending);
+        assert_eq!(app.view.notice, None);
     }
 
     #[test]
