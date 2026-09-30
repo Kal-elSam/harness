@@ -913,7 +913,9 @@ export async function runKairoUiRpcStdio({
         writeOut({ type: "team", op, ok: false, status: summary.status, reason: summary.message });
         return summary;
       }
-      if (summary?.status === "analyst_access_unverified") {
+      if (summary?.status === "analyst_access_unverified" || summary?.status === "analyst_access_confirmation_required") {
+        // `analyst_access_confirmation_required`: the provider probe was NOT run
+        // (no explicit second confirmation); same non-result shape.
         // T20: the chosen analyst's access could not be confirmed on demand.
         // Nothing ran, nothing changed, nothing was substituted; `reason`
         // carries the honest message, the structured fields let the host
@@ -1733,7 +1735,7 @@ export async function runKairoUiRpcStdio({
         const summary = await runTeamOp("project.analyze", () =>
           analyzeProjectTeam({ cwd, analyst: requestedAnalyst })
         );
-        if (summary.status !== "analyst_selection_required" && summary.status !== "analyst_access_unverified") {
+        if (!["analyst_selection_required", "analyst_access_unverified", "analyst_access_confirmation_required"].includes(summary.status)) {
           if (summary.notice) writeOut({ type: "notice", message: summary.notice });
           await emitSnapshot();
           writeOut({
