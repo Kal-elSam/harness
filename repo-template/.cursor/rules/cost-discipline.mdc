@@ -1,0 +1,11 @@
+---
+description: Cost discipline for Cursor implementation sessions
+alwaysApply: true
+---
+
+# Cost discipline (all projects)
+
+- Single-thread by default: work in the main thread, no parallel/background subagents unless the user explicitly asks.
+- One task per message: implement only what was asked, then stop and report. Never chain test+review+next-task unprompted.
+- Reviewers (@review-*, judgment-day, SDD phases) run only at work-unit close when the user asks, never after every task.
+- Prefer directed searches over broad exploration; do not re-read files already read in this chat.
