@@ -22,6 +22,7 @@ docs/ai/harness.md
 | IA/Evals | `docs/ai/evals.md`, `docs/skills/evals.md` |
 | Arquitectura | `docs/ai/architecture.md`, `docs/skills/architecture.md` |
 | Git/checkpoint | `docs/ai/git-workflow.md`, `docs/skills/git-workflow.md` |
+| Session handoff | `docs/ai/session-handoff.md` |
 | Memoria | `docs/ai/memory.md` |
 | Graph | `docs/ai/context-graph.md`, `docs/skills/context-graph.md` |
 | Model selection | `docs/ai/model-policy.md`, `docs/ai/provider-routing.md` |
@@ -34,6 +35,8 @@ docs/ai/harness.md
 - No cargar archivos grandes sin necesidad.
 - Reportar qué contexto fue usado.
 - Si falta contexto, pedir solo lo mínimo.
+- En modo plan (cualquier modelo): AGENTS.md + el docs/ai relevante, máximo 10 archivos, sin auditoría general. Si falta contexto, máximo 3 preguntas.
+- Cerca del 60% de la ventana, al cambiar de tarea o antes de compactar, escribir `handoff.md` según `docs/ai/session-handoff.md`. No pegar la conversación anterior.
 
 ## Adapter parity context rule
 

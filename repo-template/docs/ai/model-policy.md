@@ -73,6 +73,16 @@ Escalar a modelo fuerte o humano si:
 - hay riesgo de pérdida de datos
 - se requiere decisión de producto
 
+## Plan-mode default
+
+Plan mode is model-agnostic. Whatever model is selected, plan behaves as
+read-only architect with bounded context (max 10 files, max 8 steps).
+
+- Default plan effort is medium (Standard class).
+- Escalate to Strong only on the escalation triggers above.
+- Never hardcode a model ID into the plan contract. Model rotation must not
+  change plan behavior.
+
 ## Regla final
 
 El modelo ejecuta. El harness controla. El humano aprueba impacto.
