@@ -1652,9 +1652,12 @@ impl ShellApp {
     }
 
     fn begin_role_edit_for_selected(&mut self) {
-        if !self.view.roles_visible {
+        // The sidebar hides the roles of an incomplete/blocked team, but the
+        // Project view (key 2) is the explicit team editor: it lists the
+        // roles in its own pane, so editing is allowed there.
+        if !self.view.roles_visible && self.workspace_view != WorkspaceView::Project {
             self.view.notice = Some(
-                "Roles are hidden until the team is complete — re-analyze (a) first.".into(),
+                "Roles are hidden until the team is complete — open the team editor (2) or re-analyze (a).".into(),
             );
             return;
         }
@@ -3612,6 +3615,52 @@ mod tests {
         app.submit_editor();
         assert!(app.preflight_pending);
         assert!(recorded_ops(&path, 1).contains("project.preflight"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn hidden_suggested_team_app(view: WorkspaceView) -> (ShellApp, PathBuf) {
+        let (mut app, path) = recorder_app("ask");
+        app.view.team_state = Some("suggested".into());
+        app.view.agents = vec![crate::surfaces::SidebarAgent {
+            label: "Builder".into(),
+            detail: "codex".into(),
+            state: crate::surfaces::AgentState::Idle,
+            cause: Default::default(),
+        }];
+        app.view.team_presentation = Some("incomplete".into());
+        app.view.roles_visible = false;
+        app.workspace_view = view;
+        (app, path)
+    }
+
+    #[test]
+    fn the_project_view_is_the_separate_team_editor_and_edits_a_hidden_suggested_team() {
+        let (mut app, path) = hidden_suggested_team_app(WorkspaceView::Project);
+        app.begin_role_edit_for_selected();
+        assert!(app.role_editor.is_some(), "explicit Project view may edit while the sidebar hides roles");
+        assert!(recorded_ops(&path, 1).contains("team.edit.catalog"));
+        assert!(!app.view.roles_visible, "the sidebar list stays hidden");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn outside_the_project_view_a_hidden_team_points_to_the_team_editor() {
+        let (mut app, path) = hidden_suggested_team_app(WorkspaceView::Work);
+        app.begin_role_edit_for_selected();
+        assert!(app.role_editor.is_none());
+        let notice = app.view.notice.clone().unwrap_or_default();
+        assert!(notice.contains("hidden") && notice.contains('2'), "{notice}");
+        assert_eq!(recorded_ops(&path, 1).trim(), "", "no bridge op sent");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_hidden_team_that_is_not_suggested_is_still_not_editable_in_the_project_view() {
+        let (mut app, path) = hidden_suggested_team_app(WorkspaceView::Project);
+        app.view.team_state = Some("active".into());
+        app.begin_role_edit_for_selected();
+        assert!(app.role_editor.is_none());
+        assert!(app.view.notice.as_deref().is_some_and(|n| n.contains("SUGGESTED")));
         let _ = std::fs::remove_file(&path);
     }
 

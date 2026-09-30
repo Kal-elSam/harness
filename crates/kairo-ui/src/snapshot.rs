@@ -14,7 +14,6 @@ pub fn apply_workspace_snapshot(view: &mut ShellViewModel, snapshot: &Value) {
         let mut mapped: Vec<SidebarAgent> = agents.iter().map(map_agent).collect();
         sort_agents_blocked_first(&mut mapped);
         view.agents = mapped;
-        view.team_attention = blocked_team_attention(&view.agents);
         if view.agents.is_empty() {
             view.selected_agent = 0;
         } else if view.selected_agent >= view.agents.len() {
@@ -40,6 +39,34 @@ pub fn apply_workspace_snapshot(view: &mut ShellViewModel, snapshot: &Value) {
 
     if snapshot.get("team").is_some() {
         apply_team_presentation(view, snapshot.pointer("/team/presentation"));
+    }
+
+    // One source of truth: the chat banner derives from the SAME
+    // `team.presentation` state the sidebar uses (legacy per-role CTA only
+    // when no presentation state is known).
+    if snapshot.get("agents").is_some() || snapshot.get("team").is_some() {
+        view.team_attention = derive_team_attention(view);
+    }
+}
+
+/// Chat banner for the current presentation state. Compact and single-line
+/// whenever the team is not `complete`: it never enumerates roles or models
+/// and never claims quota/blocking while verification is still running.
+fn derive_team_attention(view: &ShellViewModel) -> Option<Vec<String>> {
+    match view.team_presentation.as_deref() {
+        Some("complete") => None,
+        Some("verifying") => Some(vec!["Verifying team access…".to_string()]),
+        Some(state @ ("incomplete" | "blocked")) => {
+            let head = if state == "blocked" { "Team blocked" } else { "Team incomplete" };
+            // The suggested team can be edited in the Project view (key 2).
+            let edit = if view.team_state.as_deref() == Some("suggested") {
+                " · 2 to edit"
+            } else {
+                ""
+            };
+            Some(vec![format!("{head} — a to re-analyze{edit}")])
+        }
+        _ => blocked_team_attention(&view.agents),
     }
 }
 
@@ -380,6 +407,91 @@ mod tests {
         );
         assert_eq!(view.team_presentation, None);
         assert!(view.roles_visible);
+    }
+
+    fn five_blocked_agents_snapshot(presentation: serde_json::Value) -> serde_json::Value {
+        let agents: Vec<serde_json::Value> = ["Architect", "Builder", "Reviewer", "Explorer", "Tester"]
+            .iter()
+            .map(|label| json!({
+                "label": label, "state": "blocked", "provider": "codex",
+                "stateReason": "Unavailable — Codex quota exhausted (GPT-6-Astra)"
+            }))
+            .collect();
+        json!({ "agents": agents, "team": { "state": "suggested", "presentation": presentation } })
+    }
+
+    #[test]
+    fn chat_banner_follows_the_verifying_presentation_and_never_enumerates_or_blames_quota() {
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(
+            &mut view,
+            &five_blocked_agents_snapshot(json!({ "state": "verifying", "rolesVisible": false, "reason": "availability_pending" })),
+        );
+        let banner = view.team_attention.expect("a compact notice exists while verifying");
+        assert_eq!(banner.len(), 1, "single line: {banner:?}");
+        let line = banner[0].to_ascii_lowercase();
+        assert!(line.contains("verif"), "{line}");
+        for forbidden in ["blocked", "quota", "funds", "rate-limit", "architect", "builder", "reviewer", "gpt", "codex", "/analyze"] {
+            assert!(!line.contains(forbidden), "{forbidden} leaked into the verifying banner: {line}");
+        }
+    }
+
+    #[test]
+    fn chat_banner_for_an_incomplete_or_blocked_team_is_one_compact_line_without_roles_or_models() {
+        for (state, expected) in [
+            ("incomplete", "Team incomplete — a to re-analyze · 2 to edit"),
+            ("blocked", "Team blocked — a to re-analyze · 2 to edit"),
+        ] {
+            let mut view = ShellViewModel::default();
+            apply_workspace_snapshot(
+                &mut view,
+                &five_blocked_agents_snapshot(json!({ "state": state, "rolesVisible": false, "reason": "x" })),
+            );
+            assert_eq!(view.team_attention, Some(vec![expected.to_string()]), "{state}");
+        }
+    }
+
+    #[test]
+    fn chat_banner_without_a_suggested_team_omits_the_edit_hint() {
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(
+            &mut view,
+            &json!({ "agents": [], "team": { "state": "not_analyzed", "presentation": { "state": "incomplete", "rolesVisible": false } } }),
+        );
+        assert_eq!(view.team_attention, Some(vec!["Team incomplete — a to re-analyze".to_string()]));
+    }
+
+    #[test]
+    fn chat_banner_is_cleared_for_a_complete_team_and_legacy_blocked_roles_keep_their_cta() {
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(
+            &mut view,
+            &five_blocked_agents_snapshot(json!({ "state": "complete", "rolesVisible": true })),
+        );
+        assert_eq!(view.team_attention, None, "the presentation state is the single source");
+        // No presentation field (older sidecar): the legacy per-role CTA stays.
+        let mut legacy = ShellViewModel::default();
+        apply_workspace_snapshot(
+            &mut legacy,
+            &json!({ "agents": [{ "label": "Builder", "state": "blocked", "provider": "codex",
+                "stateReason": "Unavailable — Codex is rate-limited until tomorrow" }] }),
+        );
+        assert!(legacy.team_attention.unwrap().join(" ").contains("/analyze"));
+    }
+
+    #[test]
+    fn a_later_agents_only_snapshot_does_not_resurrect_the_role_banner() {
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(
+            &mut view,
+            &five_blocked_agents_snapshot(json!({ "state": "verifying", "rolesVisible": false })),
+        );
+        apply_workspace_snapshot(
+            &mut view,
+            &json!({ "agents": [{ "label": "Builder", "state": "blocked", "provider": "codex", "stateReason": "Unavailable — Codex quota exhausted" }] }),
+        );
+        let banner = view.team_attention.expect("still verifying");
+        assert!(banner[0].to_ascii_lowercase().contains("verif"), "{banner:?}");
     }
 
     #[test]

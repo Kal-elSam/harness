@@ -158,6 +158,7 @@ fn hidden_team_notice_lines(model: &ShellViewModel) -> Vec<&'static str> {
     // never by Pi RPC, so the hint is always honest.
     if model.team_state.as_deref() == Some("suggested") {
         lines.push("A = approve");
+        lines.push("2 = edit team");
     }
     lines.push("a = re-analyze");
     lines
@@ -2528,6 +2529,27 @@ mod tests {
             hay.contains("A = approve"),
             "a suggested team needs approval, not another analysis: {hay}"
         );
+    }
+
+    #[test]
+    fn hidden_suggested_team_sidebar_points_to_the_team_editor_without_listing_roles() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut model = ShellViewModel::default();
+        model.team_presentation = Some("incomplete".into());
+        model.roles_visible = false;
+        model.team_state = Some("suggested".into());
+        model.agents = vec![SidebarAgent {
+            label: "SecretRoleName".into(),
+            detail: "codex".into(),
+            state: AgentState::Idle,
+            cause: Default::default(),
+        }];
+        render_shell(&mut buf, regions, &model, &ChatState::default(), &default_editor());
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("2 = edit team"), "{hay}");
+        assert!(!hay.contains("SecretRoleName"), "the sidebar must not list roles: {hay}");
     }
 
     #[test]
