@@ -29,12 +29,46 @@ pub struct AnalystOption {
     pub available: bool,
     pub recommended: bool,
     pub tags: Vec<String>,
-    /// Analyst fit 0..1 when the catalog has real evidence; `None` = unknown
-    /// (absent or `null`), never an invented 0. Kept for ordering only — the
-    /// modal shows the plain-language `explanation`, never the number.
-    pub fit: Option<f64>,
-    /// Sidecar's short plain-language per-row explanation, if any.
+    /// Sidecar's plain-language per-row explanation (why it is here and what
+    /// differs from the other options), if any. The catalog order (`rank`)
+    /// stays in the sidecar: the host neither scores nor re-sorts rows.
     pub explanation: Option<String>,
+}
+
+/// Greedy word wrap to `width` characters; a word longer than the width is
+/// hard-split. Never drops or reorders text.
+pub fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let mut word: Vec<char> = word.chars().collect();
+        loop {
+            let used = current.chars().count();
+            let needed = word.len() + usize::from(used > 0);
+            if used + needed <= width {
+                if used > 0 {
+                    current.push(' ');
+                }
+                current.extend(word.iter());
+                break;
+            }
+            if used > 0 {
+                lines.push(std::mem::take(&mut current));
+                continue;
+            }
+            // A single word wider than the line: hard split.
+            let head: String = word.drain(..width).collect();
+            lines.push(head);
+            if word.is_empty() {
+                break;
+            }
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 impl AnalystOption {
@@ -59,15 +93,21 @@ impl AnalystOption {
             .to_string()
     }
 
-    /// Lines this option takes in the list (label + optional description).
-    pub fn height(&self) -> usize {
-        if self.description().is_empty() {
-            1
-        } else {
-            2
-        }
+    /// The explanation wrapped to `width` characters (empty when there is none).
+    pub fn description_lines(&self, width: usize) -> Vec<String> {
+        wrap_words(&self.description(), width)
+    }
+
+    /// Lines this option takes in the list at `width`: its label plus the
+    /// wrapped explanation.
+    pub fn height_at(&self, width: usize) -> usize {
+        1 + self.description_lines(width).len()
     }
 }
+
+/// Width (in characters) an explanation line gets when the modal width is not
+/// known yet (before the first render).
+pub const DEFAULT_DESCRIPTION_WIDTH: usize = 64;
 
 /// Which list the modal shows: the qualified main view (default) or the
 /// explicit manual alternatives (no benchmark / unknown access).
@@ -224,8 +264,9 @@ impl VerificationPlan {
 }
 
 /// One line per verified subscription from a `verification` record's
-/// `outcomes` (allowed / denied / unverified with the real reason). Never
-/// invents a result.
+/// `outcomes`: counts only (allowed / denied / unverified). The real reasons of
+/// the failed checks stay in `outcome_details` (the detail view). Never invents
+/// a result.
 pub fn outcome_lines(outcomes: &Value) -> Vec<String> {
     let Some(rows) = outcomes.as_array() else {
         return Vec::new();
@@ -237,29 +278,206 @@ pub fn outcome_lines(outcomes: &Value) -> Vec<String> {
                 .or_else(|| row.get("adapterId"))
                 .and_then(|v| v.as_str())?;
             let count = |k: &str| row["counts"].get(k).and_then(|v| v.as_u64()).unwrap_or(0);
-            let mut reasons: Vec<String> = Vec::new();
-            for result in row.get("results").and_then(|v| v.as_array()).into_iter().flatten() {
-                if result.get("status").and_then(|v| v.as_str()) == Some("unverified") {
-                    if let Some(reason) = result.get("reason").and_then(|v| v.as_str()) {
-                        let reason = reason.trim();
-                        if !reason.is_empty() && !reasons.iter().any(|r| r == reason) {
-                            reasons.push(reason.to_string());
-                        }
-                    }
-                }
-            }
-            let mut line = format!(
+            Some(format!(
                 "{provider}: {} allowed · {} denied · {} unverified",
                 count("allowed"),
                 count("denied"),
                 count("unverified")
-            );
-            if !reasons.is_empty() {
-                line.push_str(&format!(" — {}", reasons.join("; ")));
-            }
-            Some(line)
+            ))
         })
         .collect()
+}
+
+/// One detail line per failed (denied / unverified) check of a `verification`
+/// record, with its real reason: `Provider · label — status: reason`.
+pub fn outcome_details(outcomes: &Value) -> Vec<String> {
+    let Some(rows) = outcomes.as_array() else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    for row in rows {
+        let Some(provider) = row
+            .get("provider")
+            .or_else(|| row.get("adapterId"))
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        for result in row.get("results").and_then(|v| v.as_array()).into_iter().flatten() {
+            let status = result.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if status != "denied" && status != "unverified" {
+                continue;
+            }
+            let label = result
+                .get("label")
+                .or_else(|| result.get("modelId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("check");
+            lines.push(issue_line(
+                provider,
+                label,
+                status,
+                result.get("reason").and_then(|v| v.as_str()),
+            ));
+        }
+    }
+    lines
+}
+
+fn issue_line(provider: &str, label: &str, status: &str, reason: Option<&str>) -> String {
+    match reason.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(reason) => format!("{provider} · {label} — {status}: {reason}"),
+        None => format!("{provider} · {label} — {status}"),
+    }
+}
+
+/// A check that did not come back allowed (real status and reason).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgressIssue {
+    pub provider: String,
+    pub label: String,
+    pub status: String,
+    pub reason: Option<String>,
+}
+
+/// Live state of a consented verification, from the sidecar's additive
+/// `verification_progress` records: completed/total, the active checks and the
+/// failed checks so far. It is tracked by the host independently of the modal:
+/// closing the modal never cancels the run (nothing is sent to the sidecar).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct VerificationProgress {
+    pub completed: usize,
+    pub total: usize,
+    /// `label · provider` of each check in flight.
+    pub active: Vec<String>,
+    pub issues: Vec<ProgressIssue>,
+}
+
+impl VerificationProgress {
+    /// Tolerant update from one `verification_progress` record: a malformed
+    /// field leaves the previous value (never a panic, never an invented count).
+    pub fn apply_record(&mut self, record: &Value) {
+        if let Some(total) = record.get("total").and_then(|v| v.as_u64()) {
+            self.total = total as usize;
+        }
+        if let Some(completed) = record.get("completed").and_then(|v| v.as_u64()) {
+            self.completed = completed as usize;
+        }
+        if let Some(active) = record.get("active").and_then(|v| v.as_array()) {
+            self.active = active
+                .iter()
+                .filter_map(|check| {
+                    let label = check.get("label").and_then(|v| v.as_str())?;
+                    let provider = check.get("provider").and_then(|v| v.as_str());
+                    Some(match provider {
+                        Some(provider) => format!("{label} · {provider}"),
+                        None => label.to_string(),
+                    })
+                })
+                .collect();
+        }
+        if let Some(done) = record.get("done").filter(|d| d.is_object()) {
+            let status = done.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if status == "denied" || status == "unverified" {
+                self.issues.push(ProgressIssue {
+                    provider: done
+                        .get("provider")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("provider")
+                        .to_string(),
+                    label: done
+                        .get("label")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("check")
+                        .to_string(),
+                    status: status.to_string(),
+                    reason: done
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|r| !r.is_empty())
+                        .map(str::to_string),
+                });
+            }
+        }
+    }
+
+    pub fn headline(&self) -> String {
+        if self.total == 0 {
+            "Verifying access… starting".to_string()
+        } else {
+            format!("Verifying access… {}/{} checks", self.completed, self.total)
+        }
+    }
+
+    /// `Now: a · Claude, b · Cursor` (at most three, then `+N more`).
+    pub fn active_line(&self) -> Option<String> {
+        if self.active.is_empty() {
+            return None;
+        }
+        let shown: Vec<&str> = self.active.iter().take(3).map(String::as_str).collect();
+        let extra = self.active.len().saturating_sub(3);
+        let mut line = format!("Now: {}", shown.join(", "));
+        if extra > 0 {
+            line.push_str(&format!(" (+{extra} more)"));
+        }
+        Some(line)
+    }
+
+    /// One short summary per subscription (counts only); the reasons live in
+    /// the detail view.
+    pub fn issue_summary(&self) -> Option<String> {
+        if self.issues.is_empty() {
+            return None;
+        }
+        let mut providers: Vec<&str> = Vec::new();
+        for issue in &self.issues {
+            if !providers.contains(&issue.provider.as_str()) {
+                providers.push(issue.provider.as_str());
+            }
+        }
+        let parts: Vec<String> = providers
+            .iter()
+            .map(|provider| {
+                let count = |status: &str| {
+                    self.issues
+                        .iter()
+                        .filter(|i| i.provider == *provider && i.status == status)
+                        .count()
+                };
+                let mut bits = Vec::new();
+                for status in ["denied", "unverified"] {
+                    let n = count(status);
+                    if n > 0 {
+                        bits.push(format!("{n} {status}"));
+                    }
+                }
+                format!("{provider} {}", bits.join(", "))
+            })
+            .collect();
+        Some(format!("Problems: {} — d = details", parts.join(" · ")))
+    }
+
+    /// One line per failed check with its real reason (the detail view).
+    pub fn detail_lines(&self) -> Vec<String> {
+        self.issues
+            .iter()
+            .map(|i| issue_line(&i.provider, &i.label, &i.status, i.reason.as_deref()))
+            .collect()
+    }
+
+    /// The waiting-screen body: headline, active checks, problem summary and
+    /// the statement that closing the window does not cancel anything.
+    pub fn lines(&self) -> Vec<String> {
+        let mut lines = vec![self.headline()];
+        lines.extend(self.active_line());
+        lines.extend(self.issue_summary());
+        lines.push(
+            "Closing this window does not cancel the running checks; they finish in the background."
+                .to_string(),
+        );
+        lines
+    }
 }
 
 /// One per-provider exclusion row from the preflight record's additive
@@ -341,8 +559,21 @@ pub struct AnalystPickerState {
     /// Subscriptions whose access could not be verified — a partial
     /// comparison is never presented as complete.
     pub not_verified: usize,
-    /// Per-subscription outcome of a verification that just ran.
+    /// Per-subscription outcome of a verification that just ran (counts only).
     pub outcome_lines: Vec<String>,
+    /// Failed checks of the verification that just ran, with real reasons
+    /// (shown on `d`, never in the summary).
+    pub details: Vec<String>,
+    /// Live progress while the consented verification runs.
+    pub progress: Option<VerificationProgress>,
+    /// `d`: the detail view replaces the body.
+    pub show_details: bool,
+    /// Local project context line (stack, architecture, risks) from the
+    /// sidecar's local scan; it only contextualizes the explanations.
+    pub project_line: Option<String>,
+    /// Characters available for one explanation line; set by the renderer so
+    /// row heights and scrolling follow the real modal width.
+    pub description_width: Cell<usize>,
 }
 
 impl AnalystPickerState {
@@ -362,16 +593,13 @@ impl AnalystPickerState {
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            let mut options: Vec<AnalystOption> = models
+            // The sidecar already ranks across every subscription (one
+            // classification, T24): keep its order. Never auto-promote the
+            // first row — ★ only for a real recommendation.
+            models
                 .iter()
                 .filter_map(|m| Self::parse_option(m, recommended_key, allow_recommended))
-                .collect();
-            // The sidecar already ranks across every subscription: keep its
-            // order, only moving the recommended row (the first ranked one)
-            // up and known fit ahead of unknown. Never auto-promote the first
-            // row — ★ only for a real recommendation.
-            options.sort_by_key(|o| (!o.recommended, o.fit.is_none()));
-            options
+                .collect()
         };
         Self {
             options: parse_list("models", true),
@@ -414,8 +642,6 @@ impl AnalystPickerState {
             .map(|arr| arr.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
             .unwrap_or_default();
         let recommended = allow_recommended && recommended_key == Some(candidate_key.as_str());
-        // null / absent / non-numeric fit = unknown (never coerced to 0).
-        let fit = m.get("fit").and_then(|v| v.as_f64()).filter(|f| f.is_finite());
         let explanation = m
             .get("explanation")
             .and_then(|v| v.as_str())
@@ -431,7 +657,6 @@ impl AnalystPickerState {
             available,
             recommended,
             tags,
-            fit,
             explanation,
         })
     }
@@ -487,6 +712,13 @@ impl AnalystPickerState {
                 if self.not_verified == 1 { "" } else { "s" }
             ));
         }
+        if self.phase == PickerPhase::Ready && !self.details.is_empty() {
+            parts.push(format!(
+                "{} check{} did not pass — d = details",
+                self.details.len(),
+                if self.details.len() == 1 { "" } else { "s" }
+            ));
+        }
         parts.extend(self.causes.iter().map(ExclusionCause::line));
         if let Some(notice) = &self.notice {
             parts.push(notice.clone());
@@ -495,6 +727,26 @@ impl AnalystPickerState {
             None
         } else {
             Some(parts.join("\n"))
+        }
+    }
+
+    /// The detail lines `d` shows in the current phase: the failed checks of
+    /// the live run while verifying, else those of the run that just ended.
+    pub fn detail_source(&self) -> Vec<String> {
+        match (&self.phase, &self.progress) {
+            (PickerPhase::Verifying, Some(progress)) => progress.detail_lines(),
+            (PickerPhase::Ready, _) => self.details.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// `d`: switch between the normal body and the failed-check details. Does
+    /// nothing when there is nothing to show.
+    pub fn toggle_details(&mut self) {
+        if self.show_details {
+            self.show_details = false;
+        } else if !self.detail_source().is_empty() {
+            self.show_details = true;
         }
     }
 
@@ -547,6 +799,15 @@ impl AnalystPickerState {
         self.active().get(self.selected)
     }
 
+    /// Characters one explanation line gets (renderer-provided; a default
+    /// before the first render).
+    pub fn text_width(&self) -> usize {
+        match self.description_width.get() {
+            0 => DEFAULT_DESCRIPTION_WIDTH,
+            width => width,
+        }
+    }
+
     /// Visible slice `[start, end)` of the active view for `rows` content
     /// lines: the highlighted row is always inside it, and the window only
     /// moves when the highlight would leave it.
@@ -557,15 +818,16 @@ impl AnalystPickerState {
         }
         let selected = self.selected.min(options.len() - 1);
         let mut start = self.scroll.get().min(selected);
-        let span = |from: usize| -> usize { options[from..=selected].iter().map(AnalystOption::height).sum() };
+        let width = self.text_width();
+        let span = |from: usize| -> usize { options[from..=selected].iter().map(|o| o.height_at(width)).sum() };
         while start < selected && span(start) > rows {
             start += 1;
         }
         self.scroll.set(start);
         let mut end = start;
         let mut used = 0;
-        while end < options.len() && used + options[end].height() <= rows.max(1) {
-            used += options[end].height();
+        while end < options.len() && used + options[end].height_at(width) <= rows.max(1) {
+            used += options[end].height_at(width);
             end += 1;
         }
         start..end.max(selected + 1).min(options.len())
@@ -630,12 +892,12 @@ mod tests {
             "recommendedModel": { "candidateKey": "codex::gpt" },
             "models": [
                 {
-                    "candidateKey": "claude::sonnet", "adapterId": "claude", "modelId": "sonnet",
-                    "displayName": "Claude Sonnet", "available": true, "recommendationTags": []
-                },
-                {
                     "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt",
                     "displayName": "GPT", "available": true, "recommendationTags": ["quality"]
+                },
+                {
+                    "candidateKey": "claude::sonnet", "adapterId": "claude", "modelId": "sonnet",
+                    "displayName": "Claude Sonnet", "available": true, "recommendationTags": []
                 },
                 {
                     "candidateKey": "cursor::x", "adapterId": "cursor", "modelId": "x",
@@ -646,8 +908,16 @@ mod tests {
     }
 
     #[test]
-    fn recommended_model_sorts_first_and_is_flagged() {
-        let picker = AnalystPickerState::from_analyst_catalog(&catalog());
+    fn recommended_model_is_flagged_and_unavailable_rows_are_filtered() {
+        // The sidecar already puts the star first (T24): the host keeps its order.
+        let picker = AnalystPickerState::from_analyst_catalog(&json!({
+            "recommendedModel": { "candidateKey": "codex::gpt" },
+            "models": [
+                { "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt", "displayName": "GPT", "available": true, "recommendationTags": ["quality"] },
+                { "candidateKey": "claude::sonnet", "adapterId": "claude", "modelId": "sonnet", "displayName": "Claude Sonnet", "available": true, "recommendationTags": [] },
+                { "candidateKey": "cursor::x", "adapterId": "cursor", "modelId": "x", "displayName": "Cursor X", "available": false, "recommendationTags": [] }
+            ]
+        }));
         assert_eq!(picker.options.len(), 2, "unavailable Cursor X must be filtered out");
         assert_eq!(picker.options[0].adapter_id, "codex");
         assert!(picker.options[0].recommended);
@@ -736,7 +1006,6 @@ mod tests {
             subscription: "Codex".into(),
             recommended: true,
             tags: vec!["quality".into()],
-            fit: None,
             explanation: None,
         };
         let payload = AnalystPickerState::analyst_payload(&option);
@@ -759,7 +1028,6 @@ mod tests {
             subscription: "Codex".into(),
             recommended: false,
             tags: vec![],
-            fit: None,
             explanation: None,
         };
         let payload = AnalystPickerState::analyst_payload(&option);
@@ -922,17 +1190,11 @@ mod tests {
     }
 
     #[test]
-    fn a_null_fit_is_unknown_and_sorts_after_known_fits_while_a_measured_zero_stays_known() {
+    fn rows_keep_the_sidecar_order_and_the_manual_view_lists_only_verified_rows() {
         let picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
-        let fits: Vec<Option<f64>> = picker.options.iter().map(|o| o.fit).collect();
-        assert_eq!(fits, vec![Some(0.8), Some(0.0), None]);
-        // Absent (legacy) fit is also unknown, never 0.
-        let legacy = AnalystPickerState::from_analyst_catalog(&json!({
-            "models": [{ "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "available": true }]
-        }));
-        assert_eq!(legacy.options[0].fit, None);
-        // Manual view: the verified unscored row only (unverified rows never list).
-        assert_eq!(picker.alternatives[0].model_id, "unscored");
+        let keys: Vec<&str> = picker.options.iter().map(|o| o.candidate_key.as_str()).collect();
+        assert_eq!(keys, vec!["codex::a", "claude::a", "codex::nofit"], "no host-side re-sort");
+        assert_eq!(picker.alternatives[0].model_id, "unscored", "unverified rows never list");
     }
 
     #[test]
@@ -959,7 +1221,7 @@ mod tests {
         assert!(!picker.options[0].description().chars().any(|c| c.is_ascii_digit()));
         // A row without an explanation has no second line, never an invented one.
         assert_eq!(picker.options[1].description(), "");
-        assert_eq!(picker.options[1].height(), 1);
+        assert_eq!(picker.options[1].height_at(64), 1);
     }
 
     fn many_options(n: usize) -> AnalystPickerState {
@@ -1121,16 +1383,15 @@ mod tests {
     }
 
     #[test]
-    fn outcome_lines_report_each_subscription_with_real_reasons_and_invent_nothing() {
+    fn outcome_lines_report_each_subscription_with_counts_only_and_invent_nothing() {
+        // T24 (rewritten): reasons moved to the separate detail view.
         let lines = outcome_lines(&json!([
             { "provider": "Claude", "counts": { "allowed": 1, "denied": 1, "unverified": 0 }, "results": [] },
             { "provider": "Cursor", "counts": { "allowed": 0, "denied": 0, "unverified": 2 },
-              "results": [ { "status": "unverified", "reason": "login required" },
-                           { "status": "unverified", "reason": "login required" },
-                           { "status": "allowed", "reason": "ignored" } ] }
+              "results": [ { "status": "unverified", "reason": "login required" } ] }
         ]));
         assert_eq!(lines[0], "Claude: 1 allowed · 1 denied · 0 unverified");
-        assert_eq!(lines[1], "Cursor: 0 allowed · 0 denied · 2 unverified — login required");
+        assert_eq!(lines[1], "Cursor: 0 allowed · 0 denied · 2 unverified");
         assert!(outcome_lines(&json!(null)).is_empty());
     }
 
@@ -1153,5 +1414,165 @@ mod tests {
             picker.footer_text().unwrap(),
             "Cursor: 1 allowed · 0 denied · 0 unverified\n1 subscription not verified — the comparison is partial\nClaude: cuota agotada\nextra"
         );
+    }
+
+    // ---- T24: progress, error summary, details, explanations ----
+
+    fn progress_record(completed: u64, total: u64, active: Value, done: Value) -> Value {
+        json!({ "type": "verification_progress", "completed": completed, "total": total, "active": active, "done": done })
+    }
+
+    fn check(label: &str, provider: &str) -> Value {
+        json!({ "id": format!("{provider}::{label}"), "label": label, "adapterId": provider.to_lowercase(), "provider": provider })
+    }
+
+    #[test]
+    fn verification_progress_tracks_counts_the_active_check_and_failed_checks() {
+        let mut progress = VerificationProgress::default();
+        assert_eq!(progress.headline(), "Verifying access… starting");
+        progress.apply_record(&progress_record(0, 3, json!([check("Claude B", "Claude")]), Value::Null));
+        assert_eq!(progress.headline(), "Verifying access… 0/3 checks");
+        assert_eq!(progress.active_line().as_deref(), Some("Now: Claude B · Claude"));
+        let mut done = check("Claude B", "Claude");
+        done["status"] = json!("unverified");
+        done["reason"] = json!("probe timed out after 30000ms");
+        progress.apply_record(&progress_record(1, 3, json!([check("Pool A", "Cursor"), check("Pool B", "Cursor")]), done));
+        assert_eq!(progress.headline(), "Verifying access… 1/3 checks");
+        assert_eq!(progress.active_line().as_deref(), Some("Now: Pool A · Cursor, Pool B · Cursor"));
+        assert_eq!(progress.issues.len(), 1);
+        let mut ok = check("Pool A", "Cursor");
+        ok["status"] = json!("allowed");
+        progress.apply_record(&progress_record(2, 3, json!([check("Pool B", "Cursor")]), ok));
+        assert_eq!(progress.issues.len(), 1, "an allowed check is not a problem");
+        assert_eq!(progress.completed, 2);
+    }
+
+    #[test]
+    fn errors_are_summarized_per_subscription_and_the_details_stay_separate() {
+        let mut progress = VerificationProgress::default();
+        for (provider, label, status, reason) in [
+            ("Claude", "Claude A", "denied", "credits_required"),
+            ("Claude", "Claude B", "unverified", "probe timed out after 30000ms"),
+            ("Cursor", "Other models", "unverified", "login required"),
+        ] {
+            let mut done = check(label, provider);
+            done["status"] = json!(status);
+            done["reason"] = json!(reason);
+            progress.apply_record(&progress_record(1, 3, json!([]), done));
+        }
+        let summary = progress.issue_summary().expect("there are problems");
+        assert_eq!(summary, "Problems: Claude 1 denied, 1 unverified · Cursor 1 unverified — d = details");
+        assert!(!summary.contains("credits_required") && !summary.contains("timed out"), "reasons stay in the detail view: {summary}");
+        let details = progress.detail_lines();
+        assert_eq!(details[0], "Claude · Claude A — denied: credits_required");
+        assert_eq!(details[1], "Claude · Claude B — unverified: probe timed out after 30000ms");
+        assert_eq!(details[2], "Cursor · Other models — unverified: login required");
+        assert_eq!(VerificationProgress::default().issue_summary(), None);
+    }
+
+    #[test]
+    fn the_progress_body_says_that_closing_the_modal_does_not_cancel_the_checks() {
+        let body = VerificationProgress::default().lines().join("\n");
+        assert!(body.contains("Closing this window does not cancel"), "{body}");
+        assert!(body.contains("keep running") || body.contains("finish in the background"), "{body}");
+    }
+
+    #[test]
+    fn a_progress_record_with_a_bad_shape_never_panics_or_invents_counts() {
+        let mut progress = VerificationProgress::default();
+        progress.apply_record(&json!({ "type": "verification_progress" }));
+        assert_eq!((progress.completed, progress.total), (0, 0));
+        progress.apply_record(&json!({ "completed": "x", "total": -1, "active": "no", "done": 7 }));
+        assert_eq!((progress.completed, progress.total), (0, 0));
+        assert!(progress.active.is_empty() && progress.issues.is_empty());
+    }
+
+    #[test]
+    fn outcome_details_list_each_failed_check_with_its_real_reason() {
+        let outcomes = json!([
+            { "provider": "Claude", "counts": { "allowed": 1, "denied": 1, "unverified": 0 },
+              "results": [ { "label": "Claude A", "status": "allowed", "reason": null },
+                           { "label": "Claude B", "status": "denied", "reason": "credits_required" } ] },
+            { "provider": "Cursor", "counts": { "allowed": 0, "denied": 0, "unverified": 1 },
+              "results": [ { "label": "Other models", "status": "unverified", "reason": "login required" } ] }
+        ]);
+        assert_eq!(
+            outcome_details(&outcomes),
+            vec![
+                "Claude · Claude B — denied: credits_required".to_string(),
+                "Cursor · Other models — unverified: login required".to_string()
+            ]
+        );
+        assert!(outcome_details(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn sidecar_order_is_authoritative_the_host_never_re_sorts_rows() {
+        let picker = AnalystPickerState::from_analyst_catalog(&catalog_in_sidecar_order());
+        let order: Vec<&str> = picker.options.iter().map(|o| o.candidate_key.as_str()).collect();
+        assert_eq!(order, vec!["claude::sonnet", "codex::gpt"], "the host keeps the sidecar's order");
+        assert!(!picker.options[0].recommended);
+        assert!(picker.options[1].recommended, "the star stays on the row the sidecar pointed at");
+    }
+
+    fn catalog_in_sidecar_order() -> Value {
+        json!({
+            "recommendedModel": { "candidateKey": "codex::gpt" },
+            "models": [
+                { "candidateKey": "claude::sonnet", "adapterId": "claude", "modelId": "sonnet", "displayName": "Claude Sonnet", "available": true, "recommendationTags": [] },
+                { "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt", "displayName": "GPT", "available": true, "recommendationTags": ["quality"] }
+            ]
+        })
+    }
+
+    #[test]
+    fn a_long_explanation_wraps_to_the_modal_width_and_the_row_height_follows() {
+        let long = "Recomendado para analizar este proyecto (Node.js): puesto 1 de 8 modelos distintos con evidencia comparable · lidera en código · razonamiento por debajo de GPT";
+        let picker = AnalystPickerState::from_analyst_catalog(&json!({
+            "models": [{ "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "displayName": "B", "available": true, "explanation": long }]
+        }));
+        let option = &picker.options[0];
+        let lines = option.description_lines(40);
+        assert!(lines.len() >= 4, "{lines:?}");
+        assert!(lines.iter().all(|l| l.chars().count() <= 40), "{lines:?}");
+        assert_eq!(lines.join(" "), long, "wrapping never drops or reorders words");
+        assert_eq!(option.height_at(40), 1 + lines.len());
+        assert_eq!(option.height_at(400), 2, "a wide modal keeps it on one line");
+    }
+
+    #[test]
+    fn details_toggle_only_when_there_is_something_to_show() {
+        let mut picker = AnalystPickerState::default();
+        picker.toggle_details();
+        assert!(!picker.show_details, "no details, no toggle");
+        picker.details = vec!["Cursor · Other models — unverified: login required".into()];
+        picker.toggle_details();
+        assert!(picker.show_details);
+        picker.toggle_details();
+        assert!(!picker.show_details);
+        let mut verifying = AnalystPickerState { phase: PickerPhase::Verifying, ..Default::default() };
+        verifying.toggle_details();
+        assert!(!verifying.show_details, "nothing failed yet");
+        let mut progress = VerificationProgress::default();
+        let mut done = check("Pool", "Cursor");
+        done["status"] = json!("unverified");
+        progress.apply_record(&progress_record(1, 1, json!([]), done));
+        verifying.progress = Some(progress);
+        verifying.toggle_details();
+        assert!(verifying.show_details);
+    }
+
+    #[test]
+    fn the_outcome_summary_counts_only_and_points_at_the_details() {
+        let outcomes = json!([{ "provider": "Cursor", "counts": { "allowed": 0, "denied": 0, "unverified": 2 },
+            "results": [ { "label": "A", "status": "unverified", "reason": "login required" } ] }]);
+        let lines = outcome_lines(&outcomes);
+        assert_eq!(lines, vec!["Cursor: 0 allowed · 0 denied · 2 unverified".to_string()]);
+        let picker = AnalystPickerState {
+            outcome_lines: lines,
+            details: outcome_details(&outcomes),
+            ..Default::default()
+        };
+        assert!(picker.footer_text().unwrap().contains("d = details"));
     }
 }

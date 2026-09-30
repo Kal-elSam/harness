@@ -3,7 +3,8 @@ import { test } from "node:test";
 import {
   analyzeProjectTeam,
   curateAnalystCatalogForPicker,
-  preflightProjectTeam
+  preflightProjectTeam,
+  summarizeProjectContext
 } from "../src/global/host/project-team-sidecar.js";
 import { classifyAnalystCatalog, compareAnalystRows, qualifiesForMainView } from "../src/global/conversation/analyst-qualification.js";
 
@@ -253,4 +254,25 @@ test("preflight exposes main models and manual alternatives, puts the equivalent
   assert.deepEqual(keys(result.analystCatalog.alternatives), ["claude::gpt-5"], "unknown access is in neither list; the equivalent route is manual");
   assert.deepEqual(result.unverifiedSubscriptions.map((row) => [row.adapterId, row.models]), [["claude", 1]]);
   assert.equal(result.projectContext, null, "no scan result means no context, never a made-up one");
+});
+
+test("project context (T24): the local scan is summarized for the picker, never invented, and a failing scan never blocks the picker", async () => {
+  assert.equal(summarizeProjectContext(null), null);
+  assert.equal(summarizeProjectContext({ stack: ["Unknown"], risks: [] }), null, "an unknown stack with nothing else says nothing");
+  const context = summarizeProjectContext({
+    projectName: "demo", stack: ["Node.js"], architecture: { pattern: "modular" },
+    risks: [{ kind: "no-test-command" }, { kind: "something-new" }], confidence: "medium"
+  });
+  assert.equal(context.line, "Proyecto demo · Node.js · arquitectura modular · riesgos: sin script de test");
+  assert.deepEqual(context.risks, ["sin script de test"], "only risks Kairo can word are shown");
+
+  const raw = { recommendedModel: null, models: [entry({ rank: 1 }), entry({ candidateKey: "a::b", modelId: "b", identityKey: "b", rank: 2 })], exclusions: [] };
+  const service = fakeService({ analystCatalog: raw, verify: {}, calls: [] });
+  const ok = await preflightProjectTeam({ cwd: "/p", createConversationService: service, computeProfile: async () => ({ projectName: "demo", stack: ["Rust"] }) });
+  assert.match(ok.analystCatalog.recommendedModel.explanation, /\(Rust\)/);
+  assert.equal(ok.projectContext.stack[0], "Rust");
+  const failed = await preflightProjectTeam({ cwd: "/p", createConversationService: service, computeProfile: async () => { throw new Error("git exploded"); } });
+  assert.equal(failed.projectContext, null);
+  assert.deepEqual(keys(failed.analystCatalog.models), keys(ok.analystCatalog.models), "context never changes the picks");
+  assert.deepEqual(failed.analystCatalog.models.map((m) => m.recommendationTags), ok.analystCatalog.models.map((m) => m.recommendationTags));
 });

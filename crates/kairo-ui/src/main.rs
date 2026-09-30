@@ -31,7 +31,10 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::{Frame, Terminal};
 use ratatui_textarea::{Input, Key, TextArea};
 
-use analyst_picker::{outcome_lines, AnalystPickerState, ExclusionCause, PickerPhase, VerificationPlan};
+use analyst_picker::{
+    outcome_details, outcome_lines, AnalystPickerState, ExclusionCause, PickerPhase, VerificationPlan,
+    VerificationProgress,
+};
 use bridge::BridgeClient;
 use chat::{sidebar_accepts_selection_keys, ChatState, Focus};
 use engine::{
@@ -195,6 +198,13 @@ struct ShellApp {
     verification_ran: bool,
     /// Per-subscription outcome lines of that verification, shown in the footer.
     verification_outcome_lines: Vec<String>,
+    /// Failed checks (with real reasons) of the run that just ended, for the detail view.
+    verification_detail_lines: Vec<String>,
+    /// Live progress of the consented verification, tracked by the host
+    /// independently of the modal (closing the modal never cancels the run).
+    verification_progress: Option<VerificationProgress>,
+    /// A consented verification was sent and its `verification` record has not arrived.
+    verification_running: bool,
     /// `team.revalidate` or `team.recovery.preview` was sent; a second one
     /// is refused with a notice instead of silently piling up.
     availability_action_pending: bool,
@@ -259,6 +269,9 @@ impl ShellApp {
             picker: None,
             verification_ran: false,
             verification_outcome_lines: Vec::new(),
+            verification_detail_lines: Vec::new(),
+            verification_progress: None,
+            verification_running: false,
             availability_action_pending: false,
             recovery_preview: None,
             recovery_action_pending: false,
@@ -449,6 +462,8 @@ impl ShellApp {
             self.ingest_team_record(&record);
         } else if kind == Some("preflight") {
             self.ingest_preflight_record(&record);
+        } else if kind == Some("verification_progress") {
+            self.ingest_verification_progress(&record);
         } else if kind == Some("verification") {
             self.ingest_verification_record(&record);
         } else if kind == Some("availability") {
@@ -878,7 +893,20 @@ impl ShellApp {
     /// catalog and let the human pick — the whole point of T2 (no cockpit,
     /// no invented models). One in-flight preflight/picker at a time.
     fn request_analyst_preflight(&mut self) {
-        if self.team_action_pending || self.preflight_pending || self.picker.is_some() {
+        if self.team_action_pending || self.picker.is_some() {
+            return;
+        }
+        // A consented verification is still running (its modal was closed):
+        // reopen the modal on its live progress instead of starting anything.
+        if self.verification_running {
+            let mut picker = AnalystPickerState::default();
+            picker.phase = PickerPhase::Verifying;
+            picker.progress = self.verification_progress.clone();
+            self.picker = Some(picker);
+            self.view.notice = None;
+            return;
+        }
+        if self.preflight_pending {
             return;
         }
         let Some(bridge) = self.bridge.as_mut() else {
@@ -890,6 +918,7 @@ impl ShellApp {
                 self.view.notice = None;
                 self.verification_ran = false;
                 self.verification_outcome_lines.clear();
+                self.verification_detail_lines.clear();
                 // The modal opens immediately in an explicit loading state.
                 self.picker = Some(AnalystPickerState::loading());
             }
@@ -944,6 +973,14 @@ impl ShellApp {
             .map(Vec::len)
             .unwrap_or(0);
         picker.outcome_lines = std::mem::take(&mut self.verification_outcome_lines);
+        picker.details = std::mem::take(&mut self.verification_detail_lines);
+        picker.project_line = record
+            .get("projectContext")
+            .and_then(|c| c.get("line"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string);
         // Pending checks (and no verification yet for this picker): show the
         // concrete confirmation screen first. Nothing has been sent.
         if !self.verification_ran {
@@ -968,8 +1005,11 @@ impl ShellApp {
         match bridge.verify_project_access() {
             Ok(()) => {
                 self.preflight_pending = true;
+                self.verification_running = true;
+                self.verification_progress = Some(VerificationProgress::default());
                 if let Some(picker) = self.picker.as_mut() {
                     picker.begin_verifying();
+                    picker.progress = self.verification_progress.clone();
                 }
             }
             Err(err) => {
@@ -984,11 +1024,23 @@ impl ShellApp {
     /// waiting for the rebuilt `preflight` record and remembers its outcomes.
     fn ingest_verification_record(&mut self, record: &serde_json::Value) {
         let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        self.verification_running = false;
         if !ok {
             // No rebuilt preflight follows a run that did not happen.
             self.preflight_pending = false;
         }
         if self.picker.is_none() {
+            // The modal was closed while the checks ran (nothing was
+            // cancelled): say where it stands instead of dropping it silently.
+            self.view.notice = Some(if ok {
+                "Access verification finished — press a to choose an analyst.".to_string()
+            } else {
+                record
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Access verification did not run.")
+                    .to_string()
+            });
             return;
         }
         if !ok {
@@ -1001,6 +1053,23 @@ impl ShellApp {
         }
         self.verification_ran = true;
         self.verification_outcome_lines = outcome_lines(&record["outcomes"]);
+        self.verification_detail_lines = outcome_details(&record["outcomes"]);
+    }
+
+    /// Sidecar `verification_progress` record: completed/total, the active
+    /// checks and any failed check so far. Tracked by the host whether or not
+    /// the modal is open; an open modal shows it.
+    fn ingest_verification_progress(&mut self, record: &serde_json::Value) {
+        let progress = self
+            .verification_progress
+            .get_or_insert_with(VerificationProgress::default);
+        progress.apply_record(record);
+        let snapshot = progress.clone();
+        if let Some(picker) = self.picker.as_mut() {
+            if picker.phase == PickerPhase::Verifying {
+                picker.progress = Some(snapshot);
+            }
+        }
     }
 
     /// Enter on an available picker row: send `project.analyze` with the
@@ -2882,6 +2951,17 @@ fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
         KeyCode::Char('m') if picker.phase == PickerPhase::Ready => {
             picker.toggle_view();
         }
+        KeyCode::Char('d') if matches!(picker.phase, PickerPhase::Ready | PickerPhase::Verifying) => {
+            picker.toggle_details();
+        }
+        KeyCode::Esc if picker.phase == PickerPhase::Verifying => {
+            // Closing the window is NOT a cancel: nothing is sent, the sidecar
+            // keeps running the checks and the host keeps tracking them.
+            app.picker = None;
+            app.view.notice = Some(
+                "Analyst picker closed — the access checks keep running in the background (nothing was cancelled). Press a to reopen.".into(),
+            );
+        }
         KeyCode::Esc => {
             // Esc on the confirmation screen skips verification (nothing is
             // sent): the picker opens with the already-verified options only.
@@ -3349,9 +3429,116 @@ mod tests {
         assert_eq!(picker.phase, PickerPhase::Ready);
         assert_eq!(picker.options.len(), 1);
         let footer = picker.footer_text().unwrap();
-        assert!(footer.contains("Cursor: 0 allowed · 0 denied · 1 unverified — login required"), "{footer}");
+        assert!(footer.contains("Cursor: 0 allowed · 0 denied · 1 unverified"), "{footer}");
+        assert!(!footer.contains("login required"), "T24 (rewritten): the reason moved to the detail view: {footer}");
+        assert!(footer.contains("1 check did not pass — d = details"), "{footer}");
+        assert_eq!(picker.details, vec!["Cursor · check — unverified: login required".to_string()]);
         assert!(footer.contains("2 subscriptions not verified"), "partial comparison stays acknowledged: {footer}");
         let _ = std::fs::remove_file(path);
+    }
+
+    fn progress_record(completed: u64, total: u64, active: serde_json::Value, done: serde_json::Value) -> serde_json::Value {
+        json!({ "type": "verification_progress", "completed": completed, "total": total, "active": active, "done": done })
+    }
+
+    fn verifying_app() -> (ShellApp, PathBuf) {
+        let (mut app, path) = recorder_app("ask");
+        app.request_analyst_preflight();
+        app.ingest_preflight_record(&preflight_with_plan(json!([]), pending_plan()));
+        handle_picker_key(&mut app, enter());
+        assert_eq!(app.picker.as_ref().unwrap().phase, PickerPhase::Verifying);
+        (app, path)
+    }
+
+    #[test]
+    fn progress_records_update_the_open_modal_and_the_host_keeps_the_state() {
+        let (mut app, path) = verifying_app();
+        app.ingest_record(progress_record(0, 3, json!([{ "label": "Claude A", "provider": "Claude" }]), serde_json::Value::Null));
+        app.ingest_record(progress_record(
+            1, 3,
+            json!([{ "label": "Claude B", "provider": "Claude" }]),
+            json!({ "label": "Claude A", "provider": "Claude", "status": "denied", "reason": "credits_required" }),
+        ));
+        let progress = app.picker.as_ref().unwrap().progress.as_ref().expect("modal shows progress");
+        assert_eq!((progress.completed, progress.total), (1, 3));
+        assert_eq!(progress.active, vec!["Claude B · Claude".to_string()]);
+        assert_eq!(progress.issues.len(), 1);
+        assert_eq!(app.verification_progress.as_ref().unwrap().completed, 1, "tracked independently of the modal");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn closing_the_modal_while_verifying_sends_nothing_and_the_run_keeps_being_tracked() {
+        let (mut app, path) = verifying_app();
+        let before = recorded_ops(&path, 2).lines().count();
+        handle_picker_key(&mut app, esc());
+        assert!(app.picker.is_none(), "the modal closes");
+        let notice = app.view.notice.clone().unwrap_or_default();
+        assert!(notice.contains("keep running") && notice.contains("nothing was cancelled"), "{notice}");
+        assert!(app.verification_running, "the host still knows a run is in flight");
+        // Nothing went over the wire: no cancel, no second verify.
+        assert_eq!(recorded_ops(&path, 2).lines().count(), before);
+        assert!(!recorded_ops(&path, 2).contains("cancel"));
+        // The sidecar keeps reporting: the progress is tracked with the modal closed.
+        app.ingest_record(progress_record(2, 3, json!([]), json!({ "label": "Pool", "provider": "Cursor", "status": "allowed", "reason": null })));
+        assert_eq!(app.verification_progress.as_ref().unwrap().completed, 2);
+        assert!(app.picker.is_none(), "a late record never reopens a closed modal");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_verification_that_finishes_after_the_modal_was_closed_tells_the_user_where_it_stands() {
+        let (mut app, path) = verifying_app();
+        handle_picker_key(&mut app, esc());
+        app.ingest_verification_record(&json!({ "type": "verification", "ok": true, "status": "verified", "outcomes": [] }));
+        assert!(!app.verification_running);
+        let notice = app.view.notice.clone().unwrap_or_default();
+        assert!(notice.contains("Access verification finished") && notice.contains("press a"), "{notice}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reopening_the_picker_while_a_run_is_in_flight_shows_its_progress_and_sends_no_new_request() {
+        let (mut app, path) = verifying_app();
+        app.ingest_record(progress_record(1, 3, json!([{ "label": "Pool", "provider": "Cursor" }]), serde_json::Value::Null));
+        handle_picker_key(&mut app, esc());
+        let sent = recorded_ops(&path, 2).lines().count();
+        app.request_analyst_preflight();
+        let picker = app.picker.as_ref().expect("the modal reopens on the running checks");
+        assert_eq!(picker.phase, PickerPhase::Verifying);
+        assert_eq!(picker.progress.as_ref().unwrap().completed, 1);
+        assert_eq!(recorded_ops(&path, 2).lines().count(), sent, "no second preflight and no second verification");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn d_shows_the_failed_check_details_only_when_there_are_some() {
+        let (mut app, path) = verifying_app();
+        handle_picker_key(&mut app, press('d'));
+        assert!(!app.picker.as_ref().unwrap().show_details, "nothing failed yet");
+        app.ingest_record(progress_record(
+            1, 3, json!([]),
+            json!({ "label": "Claude A", "provider": "Claude", "status": "unverified", "reason": "probe timed out" }),
+        ));
+        handle_picker_key(&mut app, press('d'));
+        assert!(app.picker.as_ref().unwrap().show_details);
+        handle_picker_key(&mut app, press('d'));
+        assert!(!app.picker.as_ref().unwrap().show_details);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn the_preflight_record_carries_the_project_context_line_into_the_modal() {
+        let mut app = ShellApp::new(None);
+        arm_pending_preflight(&mut app);
+        app.ingest_preflight_record(&json!({
+            "type": "preflight", "ok": true, "analystCatalog": { "models": [] },
+            "projectContext": { "line": "Proyecto demo · Node.js · riesgos: sin script de test", "stack": ["Node.js"] }
+        }));
+        assert_eq!(
+            app.picker.as_ref().unwrap().project_line.as_deref(),
+            Some("Proyecto demo · Node.js · riesgos: sin script de test")
+        );
     }
 
     #[test]
@@ -3745,6 +3932,15 @@ mod tests {
         assert_eq!(picker.plan.as_ref().unwrap().pending, 1);
         assert!(picker.plan.as_ref().unwrap().lines().iter().any(|l| l.starts_with("Cursor: 1 pool check")));
         assert_eq!(picker.options.len(), 2, "only verified rows before verification");
+        assert_eq!(
+            picker.project_line.as_deref(),
+            Some("Proyecto demo · Node.js · arquitectura modular · riesgos: sin script de test"),
+            "the sidecar's local project scan contextualizes the picker"
+        );
+        assert!(
+            picker.options.iter().all(|o| o.description().chars().count() > 10),
+            "every row carries its own explanation from the sidecar"
+        );
 
         handle_picker_key(&mut app, enter());
         assert_eq!(app.picker.as_ref().unwrap().phase, PickerPhase::Verifying);
@@ -3754,6 +3950,14 @@ mod tests {
             .collect();
         assert_eq!(recorded, requests, "the host writes exactly the requests the sidecar was given");
 
+        let progress_records: Vec<&serde_json::Value> = records.iter().filter(|r| r["type"] == "verification_progress").collect();
+        assert_eq!(progress_records.len(), 2, "the sidecar reports the start and the finished check");
+        app.ingest_record(progress_records[0].clone());
+        let live = app.picker.as_ref().unwrap().progress.as_ref().expect("progress shows in the modal");
+        assert_eq!((live.completed, live.total), (0, 1));
+        assert_eq!(live.active, vec!["Other models · Cursor".to_string()]);
+        app.ingest_record(progress_records[1].clone());
+        assert_eq!(app.picker.as_ref().unwrap().progress.as_ref().unwrap().completed, 1);
         for record in records.iter().filter(|r| r["type"] == "verification") {
             app.ingest_record(record.clone());
         }

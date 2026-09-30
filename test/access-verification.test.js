@@ -269,3 +269,71 @@ test("after verification the next preflight sees the persisted evidence and stil
   assert.deepEqual(calls, { claude: [], cursor: [] }, "the unrelated first harness never ran anything");
   void service;
 });
+
+// ---- T24: progress records while a consented verification runs ----
+
+test("verifyAccess reports progress: completed/total plus the active check label; reusable evidence is not counted", async () => {
+  const { service } = harness({
+    claudeCache: claudeCacheDoc({ "claude-a": { status: "allowed", reason: null, probedAt: FRESH } })
+  });
+  const events = [];
+  await service.verifyAccess({ cwd: "/repo", confirmed: true, onProgress: (event) => events.push(structuredClone(event)) });
+  assert.ok(events.length >= 4, "a start event plus one per finished check");
+  assert.ok(events.every((event) => event.total === 3), "1 pending Claude model + 2 Cursor pools; the reusable Claude check is not a call");
+  assert.deepEqual(events[0], {
+    completed: 0, total: 3,
+    active: [{ id: "claude::claude-b", label: "Claude B", adapterId: "claude", provider: "Claude" }],
+    done: null
+  });
+  const completed = events.map((event) => event.completed);
+  assert.deepEqual([...completed].sort((a, b) => a - b), completed, "completed never goes backwards");
+  assert.equal(events.at(-1).completed, 3);
+  assert.deepEqual(events.at(-1).active, []);
+  const finished = events.filter((event) => event.done).map((event) => event.done);
+  assert.equal(finished.length, 3);
+  assert.deepEqual(finished.map((d) => d.status), ["allowed", "allowed", "allowed"]);
+  const cursorStart = events.find((event) => event.active.some((a) => a.adapterId === "cursor"));
+  assert.equal(cursorStart.active.length, 2, "Cursor pools run concurrently: both are active");
+  assert.ok(cursorStart.active.every((a) => a.provider === "Cursor" && a.label.length > 0));
+});
+
+test("verifyAccess progress carries the real status and reason of a failed check; a throwing listener never breaks the run", async () => {
+  const { service } = harness({
+    claudeProbe: async ({ modelIds }) => modelIds.map((modelId) => (
+      modelId === "claude-a"
+        ? { modelId, status: ENTITLEMENT.DENIED, reason: "credits_required", probedAt: iso(0) }
+        : { modelId, status: ENTITLEMENT.UNVERIFIED, reason: "probe timed out after 30000ms", probedAt: iso(0) }
+    ))
+  });
+  const events = [];
+  const result = await service.verifyAccess({
+    cwd: "/repo", confirmed: true,
+    onProgress: (event) => { events.push(structuredClone(event)); throw new Error("listener exploded"); }
+  });
+  assert.equal(result.ran, true, "the run is unaffected by the listener");
+  const failed = events.filter((event) => event.done && event.done.status !== "allowed").map((event) => [event.done.label, event.done.status, event.done.reason]);
+  assert.deepEqual(failed, [["Claude A", "denied", "credits_required"], ["Claude B", "unverified", "probe timed out after 30000ms"]]);
+});
+
+test("verifyAccess progress is live: a Claude model reported by the probe is visible before the probe batch finishes", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const events = [];
+  const { service } = harness({
+    cursorModels: [],
+    claudeProbe: async ({ modelIds, onProgress }) => {
+      onProgress?.({ modelId: modelIds[0], index: 0, total: modelIds.length, result: { modelId: modelIds[0], status: ENTITLEMENT.ALLOWED, reason: null } });
+      await gate;
+      return modelIds.map((modelId) => ({ modelId, status: ENTITLEMENT.ALLOWED, reason: null, probedAt: iso(0) }));
+    }
+  });
+  const run = service.verifyAccess({ cwd: "/repo", confirmed: true, onProgress: (event) => events.push(structuredClone(event)) });
+  for (let i = 0; i < 100 && !events.some((event) => event.completed === 1); i += 1) await new Promise((r) => setTimeout(r, 5));
+  const live = events.find((event) => event.completed === 1);
+  assert.ok(live, "first model reported while the batch is still running");
+  assert.equal(live.total, 2);
+  assert.deepEqual(live.active.map((a) => a.label), ["Claude B"], "the next Claude model is the active one");
+  release();
+  await run;
+  assert.equal(events.at(-1).completed, 2);
+});

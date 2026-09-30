@@ -520,6 +520,9 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
 pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPickerState) {
     let width = area.width.saturating_sub(6).clamp(36, 72);
     let text_width = width.saturating_sub(2);
+    // Explanations wrap to the real modal width (minus the 4-space indent), so
+    // row heights and scrolling follow what is actually painted.
+    picker.description_width.set(text_width.saturating_sub(4) as usize);
     let error_text = match &picker.phase {
         PickerPhase::Error(reason) => Some(format!("Loading analyst catalog failed: {reason}")),
         _ => None,
@@ -545,10 +548,42 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     let list_rows: u16 = picker
         .active()
         .iter()
-        .map(|o| o.height() as u16)
+        .map(|o| o.height_at(text_width.saturating_sub(4) as usize) as u16)
         .sum::<u16>()
         .max(1);
+    // Verifying body (progress) and the optional detail view (`d`): plain lines.
+    let detail_lines: Option<Vec<String>> = if picker.show_details {
+        let lines = picker.detail_source();
+        (!lines.is_empty()).then_some(lines)
+    } else {
+        None
+    };
+    let verifying_lines: Option<Vec<String>> = match (&picker.phase, &detail_lines) {
+        (PickerPhase::Verifying, None) => Some(
+            picker
+                .progress
+                .clone()
+                .unwrap_or_default()
+                .lines(),
+        ),
+        _ => None,
+    };
+    let project_rows: u16 = picker
+        .project_line
+        .as_deref()
+        .filter(|_| matches!(picker.phase, PickerPhase::Ready | PickerPhase::Verify))
+        .map(|line| wrap_notice(line, text_width, Style::default()).len() as u16)
+        .unwrap_or(0);
+    let plain_rows = |lines: &[String]| -> u16 {
+        lines
+            .iter()
+            .map(|l| wrap_notice(l, text_width, Style::default()).len() as u16)
+            .sum::<u16>()
+            .max(1)
+    };
     let content_rows = match &picker.phase {
+        _ if detail_lines.is_some() => plain_rows(detail_lines.as_deref().unwrap_or(&[])),
+        _ if verifying_lines.is_some() => plain_rows(verifying_lines.as_deref().unwrap_or(&[])),
         _ if verify_lines.is_some() => verify_lines
             .as_ref()
             .map(|lines| {
@@ -564,7 +599,8 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         PickerPhase::Ready => list_rows,
         PickerPhase::Loading | PickerPhase::Verifying | PickerPhase::Verify => 1,
         PickerPhase::Error(_) => error_rows.max(1),
-    };
+    }
+    .saturating_add(project_rows);
     // Grow the popup to fit every wrapped notice row (not just one fixed
     // row) so a long or multiline notice's final cause stays visible
     // instead of being clipped at the modal's edge.
@@ -583,6 +619,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
 
     Clear.render(popup, buf);
     let title = match &picker.phase {
+        PickerPhase::Ready if picker.show_details => " Verification details — d back · Esc close ".to_string(),
         PickerPhase::Ready => match picker.view {
             PickerView::Main => format!(
                 " Select analyst — top {} · m others ({}) · Enter · Esc · q quit ",
@@ -596,7 +633,8 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         },
         PickerPhase::Loading => " Select analyst — loading · Esc cancel · q/Ctrl+C quit ".to_string(),
         PickerPhase::Verify => " Verify access — Enter verify · Esc skip · q quit ".to_string(),
-        PickerPhase::Verifying => " Verifying access — Esc close · q/Ctrl+C quit ".to_string(),
+        PickerPhase::Verifying if picker.show_details => " Verification details — d back · Esc close (checks keep running) ".to_string(),
+        PickerPhase::Verifying => " Verifying access — Esc close (checks keep running) · d details · q quit ".to_string(),
         PickerPhase::Error(_) => " Select analyst — r retry · Esc close · q/Ctrl+C quit ".to_string(),
     };
     let block = Block::default()
@@ -624,7 +662,35 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         .map(|n| wrap_notice(n, inner.width, notice_style))
         .unwrap_or_default();
     let mut lines: Vec<Line> = Vec::new();
-    if let Some(verify) = &verify_lines {
+    if let Some(project) = picker
+        .project_line
+        .as_deref()
+        .filter(|_| matches!(picker.phase, PickerPhase::Ready | PickerPhase::Verify))
+    {
+        lines.extend(wrap_notice(
+            project,
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
+    }
+    if let Some(details) = &detail_lines {
+        for text in details {
+            lines.extend(wrap_notice(
+                text,
+                inner.width,
+                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+            ));
+        }
+    } else if let Some(progress) = &verifying_lines {
+        for (i, text) in progress.iter().enumerate() {
+            let style = if i == 0 {
+                notice_style
+            } else {
+                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+            };
+            lines.extend(wrap_notice(text, inner.width, style));
+        }
+    } else if let Some(verify) = &verify_lines {
         for (i, text) in verify.iter().enumerate() {
             let style = if i == 0 {
                 notice_style
@@ -633,12 +699,6 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
             };
             lines.extend(wrap_notice(text, inner.width, style));
         }
-    } else if picker.phase == PickerPhase::Verifying {
-        lines.push(padded_span(
-            "Verifying access… real provider calls, this can take a minute.",
-            inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
-        ));
     } else if let Some(error) = &error_text {
         let style = Style::default()
             .fg(tone::ERROR)
@@ -683,13 +743,12 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
                 inner.width,
                 row_style,
             ));
-            let desc = option.description();
-            if !desc.is_empty() {
-                let desc_style = if selected {
-                    Style::default().fg(tone::MUTED).bg(tone::SELECT_BG)
-                } else {
-                    Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
-                };
+            let desc_style = if selected {
+                Style::default().fg(tone::MUTED).bg(tone::SELECT_BG)
+            } else {
+                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
+            };
+            for desc in option.description_lines(picker.text_width()) {
                 lines.push(padded_span(&format!("    {desc}"), inner.width, desc_style));
             }
         }
@@ -2104,7 +2163,6 @@ mod tests {
                 subscription: "codex".into(),
                 recommended: false,
                 tags: vec![],
-                fit: None,
                 explanation: None,
             }],
             selected: 0,
@@ -2986,6 +3044,121 @@ mod tests {
         assert!(hay.contains("manual alternatives"), "{hay}");
     }
 
+    fn progress_of(records: &[serde_json::Value]) -> crate::analyst_picker::VerificationProgress {
+        let mut progress = crate::analyst_picker::VerificationProgress::default();
+        for record in records {
+            progress.apply_record(record);
+        }
+        progress
+    }
+
+    fn progress_record(completed: u64, total: u64, active: serde_json::Value, done: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "type": "verification_progress", "completed": completed, "total": total, "active": active, "done": done })
+    }
+
+    fn verifying_picker_with_problems() -> crate::analyst_picker::AnalystPickerState {
+        use crate::analyst_picker::{AnalystPickerState, PickerPhase};
+        let mut picker = AnalystPickerState::default();
+        picker.phase = PickerPhase::Verifying;
+        picker.progress = Some(progress_of(&[
+            progress_record(
+                1, 5,
+                serde_json::json!([{ "label": "Pool B", "provider": "Cursor" }]),
+                serde_json::json!({ "label": "Claude B", "provider": "Claude", "status": "unverified", "reason": "probe timed out after 30000ms" }),
+            ),
+            progress_record(
+                2, 5,
+                serde_json::json!([{ "label": "Pool B", "provider": "Cursor" }]),
+                serde_json::json!({ "label": "Claude A", "provider": "Claude", "status": "allowed", "reason": null }),
+            ),
+        ]));
+        picker
+    }
+
+    #[test]
+    fn analyst_picker_verifying_modal_shows_progress_the_active_check_a_problem_summary_and_the_no_cancel_statement() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &verifying_picker_with_problems());
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Verifying access… 2/5 checks"), "{hay}");
+        assert!(hay.contains("Now: Pool B · Cursor"), "{hay}");
+        assert!(hay.contains("Problems: Claude 1 unverified"), "{hay}");
+        assert!(hay.contains("d = details"), "{hay}");
+        assert!(hay.contains("Closing this window does not cancel"), "{hay}");
+        assert!(!hay.contains("probe timed out"), "the reason stays in the detail view: {hay}");
+        assert!(!hay.contains("Enter = verify"), "no second consent prompt while running: {hay}");
+    }
+
+    #[test]
+    fn analyst_picker_details_view_lists_each_failed_check_with_its_real_reason() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut picker = verifying_picker_with_problems();
+        picker.toggle_details();
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Claude · Claude B — unverified: probe timed out after 30000ms"), "{hay}");
+        assert!(!hay.contains("Now: Pool B"), "the detail view replaces the progress body: {hay}");
+        picker.toggle_details();
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        assert!(buffer_text(&buf).contains("Verifying access… 2/5 checks"));
+    }
+
+    #[test]
+    fn analyst_picker_ready_state_summarizes_failed_checks_and_opens_their_details_on_d() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut picker = picker_with_views();
+        picker.outcome_lines = vec!["Cursor: 0 allowed · 0 denied · 1 unverified".into()];
+        picker.details = vec!["Cursor · Other models — unverified: login required".into()];
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Cursor: 0 allowed · 0 denied · 1 unverified"), "{hay}");
+        assert!(hay.contains("1 check did not pass — d = details"), "{hay}");
+        assert!(!hay.contains("login required"), "the reason is not in the summary: {hay}");
+        picker.toggle_details();
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Cursor · Other models — unverified: login required"), "{hay}");
+        assert!(!hay.contains("Qualified Alpha"), "{hay}");
+    }
+
+    #[test]
+    fn analyst_picker_rows_wrap_their_long_explanations_so_the_whole_reason_is_visible() {
+        let area = Rect::new(0, 0, 80, 30);
+        let long = "Recomendado para analizar este proyecto (Node.js): puesto 1 de 8 modelos distintos con evidencia comparable · lidera en código · razonamiento por debajo de GPT";
+        let picker = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(&serde_json::json!({
+            "recommendedModel": { "candidateKey": "a::b" },
+            "models": [
+                { "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "displayName": "Alpha", "available": true,
+                  "accessVerified": true, "explanation": long, "recommendationTags": ["quality"] },
+                { "candidateKey": "a::c", "adapterId": "a", "modelId": "c", "displayName": "Bravo", "available": true,
+                  "accessVerified": true, "explanation": "razonamiento por debajo de Alpha · lidera en código", "recommendationTags": [] }
+            ]
+        }));
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        for needle in ["Recomendado para analizar este proyecto", "razonamiento por debajo de GPT", "Bravo", "lidera en código"] {
+            assert!(hay.contains(needle), "missing {needle:?} in: {hay}");
+        }
+    }
+
+    #[test]
+    fn analyst_picker_shows_the_local_project_context_line_without_affecting_rows() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut picker = picker_with_views();
+        picker.project_line = Some("Proyecto demo · Node.js · riesgos: sin script de test".into());
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Proyecto demo · Node.js · riesgos: sin script de test"), "{hay}");
+        assert!(hay.contains("Qualified Alpha"), "{hay}");
+    }
+
     fn verify_picker() -> crate::analyst_picker::AnalystPickerState {
         use crate::analyst_picker::{AnalystPickerState, PickerPhase, VerificationPlan};
         let record = serde_json::json!({ "verificationPlan": {
@@ -3025,8 +3198,8 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Verifying access"), "{hay}");
-        assert!(hay.contains("real provider calls"), "{hay}");
+        assert!(hay.contains("Verifying access… starting"), "{hay}");
+        assert!(hay.contains("Closing this window does not cancel"), "T24 (rewritten): the waiting screen says closing is not a cancel: {hay}");
         assert!(!hay.contains("Enter = verify"), "no second consent prompt while running: {hay}");
     }
 

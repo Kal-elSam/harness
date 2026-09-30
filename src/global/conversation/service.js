@@ -1410,10 +1410,15 @@ export function createConversationService(deps = {}) {
      * stores, and reports a per-subscription outcome. Never invents a
      * result, never substitutes another provider; a probe that throws or
      * cannot decide is `unverified` with its real reason.
-     * @param {{cwd: string, confirmed?: boolean}} args
+     * `onProgress` (optional, additive) receives
+     * `{completed, total, active: [{id, label, adapterId, provider}], done: null|{id, label, adapterId, provider, status, reason}}`:
+     * once when the run starts, then once per finished check. `total` counts
+     * pending checks only (reusable evidence makes no call). A throwing
+     * listener never affects the run.
+     * @param {{cwd: string, confirmed?: boolean, onProgress?: (event: object) => void}} args
      * @returns {Promise<{ran: boolean, status: "confirmation_required"|"verified", message?: string, persisted?: boolean, outcomes: Array<object>}>}
      */
-    async verifyAccess({ cwd, confirmed } = {}) {
+    async verifyAccess({ cwd, confirmed, onProgress = null } = {}) {
       if (confirmed !== true) {
         return {
           ran: false, status: "confirmation_required", outcomes: [],
@@ -1424,15 +1429,45 @@ export function createConversationService(deps = {}) {
       const plan = await this.planAccessVerification({ cwd: projectRoot });
       const outcomes = [];
       let persisted = false;
+      // Progress: counts only the checks this run will really make.
+      const runnable = plan.subscriptions.filter((sub) => sub.adapterId === "claude" || sub.adapterId === "cursor");
+      const total = runnable.reduce((sum, sub) => sum + sub.checks.filter((check) => check.state === "pending").length, 0);
+      let completed = 0;
+      const refOf = (subscription, check) => ({ id: check.id, label: check.label, adapterId: subscription.adapterId, provider: subscription.provider });
+      const emit = (active, done) => {
+        if (typeof onProgress !== "function") return;
+        try { onProgress({ completed, total, active, done }); } catch { /* a listener never breaks verification */ }
+      };
+      const reported = new Set();
+      const finish = (subscription, check, status, reason, nextActive) => {
+        if (reported.has(check.id)) return;
+        reported.add(check.id);
+        completed += 1;
+        emit(nextActive, { ...refOf(subscription, check), status, reason: reason ?? null });
+      };
       for (const subscription of plan.subscriptions) {
         const pending = subscription.checks.filter((check) => check.state === "pending");
         if (pending.length === 0) continue;
         let results;
         if (subscription.adapterId === "claude") {
           const ids = pending.map((check) => check.modelId);
+          const checkByModel = new Map(pending.map((check) => [check.modelId, check]));
+          emit([refOf(subscription, pending[0])], null);
+          // The next Claude model (sequential probes) is the active one.
+          const nextClaude = (modelId) => {
+            const index = pending.findIndex((check) => check.modelId === modelId);
+            const upcoming = pending[index + 1];
+            return upcoming ? [refOf(subscription, upcoming)] : [];
+          };
           let probed;
           try {
-            probed = await probeClaudeModelEntitlementsImpl({ modelIds: ids, maxProbes: CLAUDE_ENTITLEMENT_MAX_PROBES, cwd: projectRoot });
+            probed = await probeClaudeModelEntitlementsImpl({
+              modelIds: ids, maxProbes: CLAUDE_ENTITLEMENT_MAX_PROBES, cwd: projectRoot,
+              onProgress: ({ modelId, result } = {}) => {
+                const check = checkByModel.get(modelId);
+                if (check) finish(subscription, check, result?.status ?? ENTITLEMENT.UNVERIFIED, result?.reason ?? null, nextClaude(modelId));
+              }
+            });
           } catch (error) {
             probed = ids.map((modelId) => ({ modelId, status: ENTITLEMENT.UNVERIFIED, reason: error?.message ?? String(error) }));
           }
@@ -1442,10 +1477,10 @@ export function createConversationService(deps = {}) {
             const real = byModel.get(check.modelId);
             const status = real?.status ?? ENTITLEMENT.UNVERIFIED;
             if (isPersistableEntitlementStatus(status)) persistable.push(real);
-            return {
-              id: check.id, label: check.label, modelId: check.modelId, status,
-              reason: real ? (real.reason ?? null) : "The probe returned no result for this model"
-            };
+            const reason = real ? (real.reason ?? null) : "The probe returned no result for this model";
+            // Probes that did not report live are reported now, in order.
+            finish(subscription, check, status, reason, nextClaude(check.modelId));
+            return { id: check.id, label: check.label, modelId: check.modelId, status, reason };
           });
           if (persistable.length > 0) {
             let subscriptionType = null;
@@ -1456,12 +1491,19 @@ export function createConversationService(deps = {}) {
             persisted = true;
           }
         } else if (subscription.adapterId === "cursor") {
+          // Cursor pools run concurrently: every pending pool is active at once.
+          let inFlight = pending.map((check) => refOf(subscription, check));
+          emit(inFlight, null);
           const probed = await Promise.all(pending.map(async (check) => {
+            let real;
             try {
-              return await probeCursorPoolAccessImpl({ pool: check.pool, modelId: check.modelId, cwd: projectRoot });
+              real = await probeCursorPoolAccessImpl({ pool: check.pool, modelId: check.modelId, cwd: projectRoot });
             } catch (error) {
-              return { pool: check.pool, status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: error?.message ?? String(error) };
+              real = { pool: check.pool, status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: error?.message ?? String(error) };
             }
+            inFlight = inFlight.filter((ref) => ref.id !== check.id);
+            finish(subscription, check, cursorStatusToEntitlement(real?.status), real?.reason ?? null, [...inFlight]);
+            return real;
           }));
           let cache = await readCursorAccessCacheImpl(homeDir).catch(() => null);
           const before = cache;

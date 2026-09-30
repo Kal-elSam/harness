@@ -196,8 +196,11 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
       };
     },
     async verifyAccess(args) {
-      spies.verify.push(args);
+      spies.verify.push({ cwd: args.cwd, confirmed: args.confirmed, hasProgressListener: typeof args.onProgress === "function" });
+      const check = { id: "cursor::other_models", label: "Other models", adapterId: "cursor", provider: "Cursor" };
+      args.onProgress?.({ completed: 0, total: 1, active: [check], done: null });
       verified = true;
+      args.onProgress?.({ completed: 1, total: 1, active: [], done: { ...check, status: "allowed", reason: null } });
       return {
         ran: true, status: "verified", persisted: true,
         outcomes: [{ adapterId: "cursor", provider: "Cursor", granularity: "pool", counts: { allowed: 1, denied: 0, unverified: 0 },
@@ -222,6 +225,8 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
   assert.deepEqual(spies.verify, [], "preflight alone never verifies");
   const first = out.slice(mark).find((r) => r.type === "preflight");
   assert.equal(first.verificationPlan.pendingCount, 1);
+  assert.equal(first.projectContext.line, "Proyecto demo · Node.js · arquitectura modular · riesgos: sin script de test", "the local project scan reaches the host");
+  assert.ok(first.analystCatalog.models.every((row) => typeof row.explanation === "string" && row.explanation.length > 10), "every row carries its own explanation");
   assert.deepEqual(first.unverifiedSubscriptions.map((s) => s.adapterId), ["cursor"]);
 
   const mid = out.length;
@@ -231,7 +236,7 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
   stdin.end();
   await run;
 
-  assert.deepEqual(spies.verify, [{ cwd: "/project", confirmed: true }]);
+  assert.deepEqual(spies.verify, [{ cwd: "/project", confirmed: true, hasProgressListener: true }]);
   assert.equal(spies.analysis, 0);
   const after = out.slice(mid);
   const verification = after.find((r) => r.type === "verification");
@@ -240,6 +245,12 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
   assert.equal(verification.outcomes[0].results[0].status, "allowed");
   const types = after.map((r) => r.type);
   assert.ok(types.indexOf("verification") < types.indexOf("preflight"), "outcome first, then the rebuilt catalog");
+  const progress = after.filter((r) => r.type === "verification_progress");
+  assert.deepEqual(progress.map((r) => [r.completed, r.total, r.active.map((a) => a.label), r.done?.status ?? null]), [
+    [0, 1, ["Other models"], null],
+    [1, 1, [], "allowed"]
+  ]);
+  assert.ok(types.lastIndexOf("verification_progress") < types.indexOf("verification"), "progress comes before the outcome");
   const second = after.find((r) => r.type === "preflight");
   assert.deepEqual(second.analystCatalog.models.map((m) => m.candidateKey), ["claude::claude-a", "cursor::gpt-5.4", "codex::gpt-5"]);
   assert.equal(second.verificationPlan.pendingCount, 0);
@@ -249,7 +260,7 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
     { dir: "host->sidecar", record: REQUEST_PREFLIGHT },
     { dir: "sidecar->host", record: first },
     { dir: "host->sidecar", record: REQUEST_VERIFY },
-    ...after.filter((r) => ["verification", "preflight"].includes(r.type)).map((record) => ({ dir: "sidecar->host", record }))
+    ...after.filter((r) => ["verification_progress", "verification", "preflight"].includes(r.type)).map((record) => ({ dir: "sidecar->host", record }))
   ];
   const text = `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`;
   if (process.env.UPDATE_WIRE_FIXTURE === "1") await writeFile(FIXTURE, text);
@@ -287,4 +298,54 @@ test("T23 wire: project.verify_access without confirmed:true never verifies and 
   assert.equal(verification.status, "confirmation_required");
   assert.equal(spies.verify, 0);
   assert.equal(out.slice(mark).some((r) => r.type === "preflight"), false);
+});
+
+test("T24 wire: a verification in flight is not cancelled by anything the host does meanwhile (closing its modal sends nothing); it completes and persists", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const seen = { verifyArgs: null, finished: false };
+  const service = {
+    async preflightProject({ cwd }) {
+      return { profile: { root: cwd }, candidates: { scoredAll: [], eligibility: {} }, projectRoot: cwd, unverifiedClaudeNotice: null,
+        analystCatalog: { recommendedModel: null, models: [], exclusions: [] }, verificationPlan: PLAN_DONE };
+    },
+    async verifyAccess(args) {
+      seen.verifyArgs = args;
+      const check = { id: "claude::claude-a", label: "Claude A", adapterId: "claude", provider: "Claude" };
+      args.onProgress?.({ completed: 0, total: 1, active: [check], done: null });
+      await gate;
+      seen.finished = true;
+      args.onProgress?.({ completed: 1, total: 1, active: [], done: { ...check, status: "unverified", reason: "probe timed out" } });
+      return { ran: true, status: "verified", persisted: false, outcomes: [] };
+    }
+  };
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => { for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line)); });
+  const stdin = new PassThrough();
+  const run = runKairoUiRpcStdio({
+    stdin, stdout, cwd: "/project", openBridge,
+    preflightProjectTeam: (args) => preflightProjectTeamImpl({ ...args, createConversationService: () => service, computeProfile }),
+    verifyProjectTeamAccess: (args) => verifyProjectTeamAccessImpl({ ...args, createConversationService: () => service }),
+    loadSnapshot: async () => ({ ok: true })
+  });
+  assert.ok(await pollUntil(() => out.some((r) => r.type === "ready" || r.type === "engine")), "sidecar came up");
+  const mark = out.length;
+  stdin.write(`${JSON.stringify(REQUEST_VERIFY)}\n`);
+  assert.ok(await pollUntil(() => out.slice(mark).some((r) => r.type === "verification_progress")));
+  // The host closes its modal and keeps working: other ops are handled while the checks run.
+  stdin.write(`${JSON.stringify({ op: "reload_snapshot" })}\n`);
+  assert.ok(await pollUntil(() => out.slice(mark).some((r) => r.type === "snapshot")), "other ops are not blocked by the running checks");
+  assert.equal(seen.finished, false, "nothing aborted the run");
+  assert.equal("signal" in seen.verifyArgs, false, "no cancellation channel is offered to the service");
+  assert.equal(out.slice(mark).some((r) => r.type === "verification"), false, "still running");
+  release();
+  assert.ok(await pollUntil(() => out.slice(mark).some((r) => r.type === "verification")));
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await run;
+  const records = out.slice(mark);
+  assert.equal(seen.finished, true);
+  const last = records.filter((r) => r.type === "verification_progress").at(-1);
+  assert.deepEqual([last.completed, last.total, last.done.status, last.done.reason], [1, 1, "unverified", "probe timed out"]);
 });

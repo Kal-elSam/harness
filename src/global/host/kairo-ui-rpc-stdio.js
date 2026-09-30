@@ -40,6 +40,7 @@
  *   { "op": "reload_snapshot" }
  *   { "op": "project.preflight" }
  *   { "op": "project.verify_access", "confirmed": true }  — T23: explicit, consented provider verification; `confirmed` must be exactly `true`
+ *       (T24: answered by `verification_progress` records `{completed, total, active: [{label, provider}], done}` while it runs, then `verification`)
  *   { "op": "project.analyze", "analyst"?: { model, selectionSource, recommendationTags, choice } }
  *   { "op": "team.approve" }
  *   { "op": "team.revalidate" }
@@ -910,6 +911,9 @@ export async function runKairoUiRpcStdio({
         ok: true,
         analystCatalog: preflight.analystCatalog,
         profile: preflight.profile,
+        // T24: local project context (stack, architecture, risks) for the
+        // picker's explanation text; never part of the ranking.
+        projectContext: preflight.projectContext ?? null,
         candidates: preflight.candidates,
         pickerNotice: preflight.pickerNotice ?? null,
         exclusionCauses: Array.isArray(preflight.exclusionCauses) ? preflight.exclusionCauses : [],
@@ -1743,7 +1747,21 @@ export async function runKairoUiRpcStdio({
         if (confirmed) {
           writeOut({ type: "notice", message: "Verifying access… (real provider calls, may consume quota)" });
         }
-        const result = await verifyProjectTeamAccess({ cwd, confirmed });
+        // T24: progress records while the checks run (completed/total and the
+        // active check labels). Additive: a host that ignores them still gets
+        // the final `verification` record. Closing the host's modal sends
+        // nothing here, so a run in flight is never cancelled by the UI.
+        const result = await verifyProjectTeamAccess({
+          cwd,
+          confirmed,
+          onProgress: (progress) => writeOut({
+            type: "verification_progress",
+            completed: progress?.completed ?? 0,
+            total: progress?.total ?? 0,
+            active: Array.isArray(progress?.active) ? progress.active : [],
+            done: progress?.done ?? null
+          })
+        });
         writeOut({
           type: "verification",
           ok: result.ran === true,

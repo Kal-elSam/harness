@@ -545,12 +545,16 @@ export async function preflightProjectTeam({
  * per-subscription outcomes. Never touches the project strategy. A failure is
  * reported as `{ran: false, status: "failed", message}` with the real reason.
  *
- * @param {{cwd?: string, confirmed?: boolean, createConversationService?: typeof createConversationService}} args
+ * `onProgress` (additive) relays the service's progress events
+ * (`{completed, total, active, done}`) while the checks run.
+ *
+ * @param {{cwd?: string, confirmed?: boolean, onProgress?: (event: object) => void, createConversationService?: typeof createConversationService}} args
  * @returns {Promise<{ran: boolean, status: "confirmation_required"|"verified"|"failed"|"unavailable", message?: string, persisted?: boolean, outcomes: object[]}>}
  */
 export async function verifyProjectTeamAccess({
   cwd,
   confirmed,
+  onProgress = null,
   createConversationService: createService = createConversationService
 } = {}) {
   const projectCwd = requireCwd(cwd);
@@ -565,7 +569,9 @@ export async function verifyProjectTeamAccess({
     if (typeof service.verifyAccess !== "function") {
       return { ran: false, status: "unavailable", outcomes: [], message: "This build has no access verification entry point." };
     }
-    const result = await service.verifyAccess({ cwd: projectCwd, confirmed: true });
+    const result = await service.verifyAccess({
+      cwd: projectCwd, confirmed: true, ...(typeof onProgress === "function" ? { onProgress } : {})
+    });
     return toSerializable(result) ?? { ran: false, status: "failed", outcomes: [], message: "Verification returned no result." };
   } catch (error) {
     return { ran: false, status: "failed", outcomes: [], message: `Access verification failed: ${error?.message ?? String(error)}` };
