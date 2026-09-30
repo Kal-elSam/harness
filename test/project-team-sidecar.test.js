@@ -4,6 +4,7 @@ import {
   analyzeProjectTeam,
   approveProjectTeam,
   buildAnalystPickerNotice,
+  buildAnalystExclusionCauses,
   curateAnalystCatalogForPicker,
   pickDefaultAnalyst,
   preflightProjectTeam,
@@ -439,7 +440,7 @@ test("buildAnalystPickerNotice names providers with zero usable picker rows with
   assert.equal(curated.models.length, 1);
   assert.equal(curated.models[0].adapterId, "codex");
   const notice = buildAnalystPickerNotice(raw, curated, null);
-  assert.equal(notice, "Claude: no disponible para análisis ahora");
+  assert.equal(notice, "Claude: sin benchmark (solo selección manual)");
   assert.ok(!/funds|crédito|billing|quota/i.test(notice));
 });
 
@@ -449,7 +450,7 @@ test("buildAnalystPickerNotice joins multiple absences and uses unverifiedClaude
     { models: [] },
     "2 Claude models are unverified"
   );
-  assert.equal(notice, "Claude: no disponible para análisis ahora");
+  assert.equal(notice, "Claude: acceso sin verificar");
 });
 
 test("preflightProjectTeam surfaces the unverified Claude notice, honestly, without picking a fallback model", async () => {
@@ -461,7 +462,7 @@ test("preflightProjectTeam surfaces the unverified Claude notice, honestly, with
     })
   });
   assert.equal(result.unverifiedClaudeNotice, "2 Claude models are unverified");
-  assert.equal(result.pickerNotice, "Claude: no disponible para análisis ahora");
+  assert.equal(result.pickerNotice, "Claude: acceso sin verificar");
   assert.deepEqual(result.analystCatalog, { recommendedModel: null, models: [] });
 });
 
@@ -485,7 +486,7 @@ test("preflightProjectTeam returns pickerNotice when a raw provider is filtered 
       }
     })
   });
-  assert.equal(result.pickerNotice, "Claude: no disponible para análisis ahora");
+  assert.equal(result.pickerNotice, "Claude: sin benchmark (solo selección manual)");
   assert.equal(result.analystCatalog.models.length, 1);
   assert.equal(result.analystCatalog.models[0].adapterId, "codex");
 });
@@ -554,4 +555,56 @@ test("analyzeProjectTeam fails closed when the requested analyst exists but is n
     }),
     /GPT-5 is not an available analyst/i
   );
+});
+
+test("buildAnalystPickerNotice states the verifiable cause per provider, without calling unscored or unverified access 'unavailable'", () => {
+  const raw = {
+    recommendedModel: null,
+    models: [
+      catalogEntry({ candidateKey: "codex::gpt", adapterId: "codex", modelId: "gpt", displayName: "GPT", evidenceStatus: "scored", available: true }),
+      catalogEntry({ candidateKey: "claude::opus", adapterId: "claude", modelId: "opus", displayName: "Claude Opus", evidenceStatus: "scored", available: false, cause: "quota_exhausted" }),
+      catalogEntry({ candidateKey: "cursor::x", adapterId: "cursor", modelId: "x", displayName: "X", evidenceStatus: "scored", available: false, cause: "unavailable_verified" })
+    ],
+    exclusions: [
+      { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm", cause: "access_unknown", reason: "Access has not been verified" }
+    ]
+  };
+  const curated = curateAnalystCatalogForPicker(raw);
+  const notice = buildAnalystPickerNotice(raw, curated, null);
+  assert.equal(
+    notice,
+    "Claude: cuota agotada · Cursor: no disponible para análisis ahora · OpenCode Go: acceso sin verificar"
+  );
+});
+
+test("buildAnalystExclusionCauses lists one machine-readable row per provider and cause for providers with no usable picker rows", () => {
+  const raw = {
+    models: [
+      catalogEntry({ candidateKey: "codex::gpt", adapterId: "codex", modelId: "gpt", displayName: "GPT", evidenceStatus: "scored", available: true }),
+      catalogEntry({ candidateKey: "claude::a", adapterId: "claude", modelId: "a", displayName: "A", evidenceStatus: "scored", available: false, cause: "quota_exhausted" }),
+      catalogEntry({ candidateKey: "claude::b", adapterId: "claude", modelId: "b", displayName: "B", evidenceStatus: "unscored", available: true, cause: "unscored" })
+    ],
+    exclusions: [{ candidateKey: "claude::c", adapterId: "claude", modelId: "c", cause: "access_unknown", reason: "Access has not been verified" }]
+  };
+  const causes = buildAnalystExclusionCauses(raw, curateAnalystCatalogForPicker(raw), null);
+  assert.deepEqual(causes, [
+    { adapterId: "claude", provider: "Claude", cause: "quota_exhausted", models: 1, reason: null },
+    { adapterId: "claude", provider: "Claude", cause: "access_unknown", models: 1, reason: "Access has not been verified" },
+    { adapterId: "claude", provider: "Claude", cause: "unscored", models: 1, reason: null }
+  ]);
+});
+
+test("preflightProjectTeam adds an additive exclusionCauses field next to the existing fields", async () => {
+  const result = await preflightProjectTeam({
+    cwd: "/project",
+    createConversationService: fakeService({
+      analystCatalog: {
+        recommendedModel: null,
+        models: [catalogEntry({ candidateKey: "claude::x", adapterId: "claude", modelId: "x", displayName: "Claude X", evidenceStatus: "scored", available: false, cause: "quota_exhausted" })]
+      }
+    })
+  });
+  assert.equal(result.pickerNotice, "Claude: cuota agotada");
+  assert.deepEqual(result.exclusionCauses, [{ adapterId: "claude", provider: "Claude", cause: "quota_exhausted", models: 1, reason: null }]);
+  assert.ok("unverifiedClaudeNotice" in result && "projectRoot" in result);
 });

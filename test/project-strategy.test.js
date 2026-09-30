@@ -493,3 +493,42 @@ test("applyProjectTeamOverride on a legacy entry with no recommendedAssignment f
   const entry = updated.projectTeam.find((e) => e.role === "Explorer");
   assert.deepEqual(entry.recommendedAssignment.model, originalModel, "the legacy entry's own current model was its real recommendation — must be captured, not lost");
 });
+
+test("computeBootstrapAnalystCatalog attaches a verifiable cause to unavailable models and lists blocked-entitlement exclusions separately, never as unavailability", () => {
+  const candidates = realCandidates();
+  const claude = candidates.scoredAll.find((model) => model.adapterId === "claude");
+  const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
+  const unverified = { ...claude, modelId: "claude-unv", candidateKey: "claude::claude-unv", entitlement: ENTITLEMENT.UNVERIFIED, entitlementReason: "Access has not been verified" };
+  const denied = { ...claude, modelId: "claude-den", candidateKey: "claude::claude-den", entitlement: ENTITLEMENT.DENIED, entitlementReason: "Credits required" };
+  const catalog = computeBootstrapAnalystCatalog({
+    ...candidates,
+    scoredAll: [codex],
+    manualSelectionScoredPool: [codex, unverified, denied],
+    eligibility: { claude: { ok: true }, codex: { ok: false, reason: "Codex usage window is limited (2% left)", cause: "quota_exhausted" } },
+    unscoredModels: [
+      { adapterId: "codex", modelId: "gpt-6-experimental", displayName: "GPT-6 Experimental" },
+      { adapterId: "claude", modelId: "claude-new", displayName: "Claude New" }
+    ]
+  });
+  const codexScored = catalog.models.find((m) => m.modelId === "codex-model");
+  assert.equal(codexScored.available, false);
+  assert.equal(codexScored.cause, "quota_exhausted");
+  const unscored = catalog.models.find((m) => m.modelId === "claude-new");
+  assert.equal(unscored.cause, "unscored", "unscored is a manual-only choice, not unavailability");
+  assert.equal(unscored.available, true);
+  assert.equal(catalog.models.find((m) => m.modelId === "gpt-6-experimental").cause, "quota_exhausted", "an unavailable provider's verified cause wins over unscored");
+  const byKey = Object.fromEntries(catalog.exclusions.map((e) => [e.candidateKey, e]));
+  assert.equal(byKey["claude::claude-unv"].cause, "access_unknown");
+  assert.equal(byKey["claude::claude-unv"].reason, "Access has not been verified");
+  assert.equal(byKey["claude::claude-den"].cause, "unavailable_verified");
+  assert.ok(!catalog.models.some((m) => ["claude-unv", "claude-den"].includes(m.modelId)), "blocked entitlements stay excluded");
+});
+
+test("computeBootstrapAnalystCatalog marks an unavailable model without a router cause as unavailable_verified and an available scored model as cause null", () => {
+  const catalog = computeBootstrapAnalystCatalog({
+    ...realCandidates(), eligibility: { claude: { ok: true }, codex: { ok: false, reason: "codex missing" } }
+  });
+  assert.equal(catalog.models.find((m) => m.adapterId === "claude").cause, null);
+  assert.equal(catalog.models.find((m) => m.adapterId === "codex").cause, "unavailable_verified");
+  assert.deepEqual(catalog.exclusions, []);
+});

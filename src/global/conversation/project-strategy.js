@@ -159,7 +159,7 @@ function quotaFor(providerCapacity, adapterId) {
  *   `providerCapacity`, plus
  *   `unscoredModels` (real catalog models with no AA match — see
  *   conversation/service.js's own `unscoredModels`).
- * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, quota: number|null, recommendationTags: string[]}>}}
+ * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, cause: string|null, quota: number|null, recommendationTags: string[]}>, exclusions: Array<{candidateKey: string, adapterId: string, modelId: string, cause: string, reason: string|null}>}}
  */
 export function computeBootstrapAnalystCatalog({
   scoredAll, manualSelectionScoredPool = scoredAll, eligibility, registry,
@@ -194,6 +194,29 @@ export function computeBootstrapAnalystCatalog({
   const qualityKey = quality ? candidateKeyOf(quality) : null;
   const efficientKey = efficient ? candidateKeyOf(efficient) : null;
 
+  // Exclusion causes (machine-readable). Blocked entitlements are absent from
+  // `models` by design, so their cause travels in `exclusions` instead —
+  // "denied" is verified unavailability, "unverified" is UNKNOWN access and
+  // must never be presented as unavailability.
+  const entitlementCause = (entitlement) => (
+    entitlement === ENTITLEMENT.DENIED ? "unavailable_verified" : "access_unknown"
+  );
+  const exclusions = [];
+  const seenExcluded = new Set();
+  for (const model of [...manualSelectionScoredPool, ...unscoredModels]) {
+    if (!ASK_SUPPORTED_ADAPTERS.has(model.adapterId) || !BLOCKED_ENTITLEMENTS.has(model.entitlement)) continue;
+    const key = candidateKeyOf(model);
+    if (seenExcluded.has(key)) continue;
+    seenExcluded.add(key);
+    exclusions.push({
+      candidateKey: key, adapterId: model.adapterId, modelId: model.modelId,
+      cause: entitlementCause(model.entitlement), reason: model.entitlementReason ?? null
+    });
+  }
+  // Unavailable (eligibility not ok): the router's own cause, else the
+  // verified-unavailable default (checkCandidate only says !ok on real evidence).
+  const unavailableCause = (adapterId) => eligibility[adapterId]?.cause ?? "unavailable_verified";
+
   const scoredEntries = askSupportedScored.map((model) => {
     const key = candidateKeyOf(model);
     const recommendationTags = [];
@@ -206,6 +229,7 @@ export function computeBootstrapAnalystCatalog({
       entitlement: model.entitlement ?? null,
       entitlementReason: model.entitlementReason ?? null,
       available: eligibility[model.adapterId]?.ok === true,
+      cause: eligibility[model.adapterId]?.ok === true ? null : unavailableCause(model.adapterId),
       quota: quotaFor(providerCapacity, model.adapterId),
       recommendationTags
     };
@@ -217,13 +241,17 @@ export function computeBootstrapAnalystCatalog({
     entitlement: model.entitlement ?? null,
     entitlementReason: model.entitlementReason ?? null,
     available: eligibility[model.adapterId]?.ok === true,
+    // Unscored is a manual-only choice, not unavailability. When the
+    // provider itself is unavailable right now, that verified cause wins so
+    // the picker never hides why a whole provider is out.
+    cause: eligibility[model.adapterId]?.ok === true ? "unscored" : unavailableCause(model.adapterId),
     quota: quotaFor(providerCapacity, model.adapterId),
     recommendationTags: []
   }));
 
   const models = [...scoredEntries, ...unscoredEntries];
   const recommendedModel = models.find((model) => model.recommendationTags.includes("quality")) ?? null;
-  return { recommendedModel, models };
+  return { recommendedModel, models, exclusions };
 }
 
 /**

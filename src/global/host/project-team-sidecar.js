@@ -104,49 +104,81 @@ export function curateAnalystCatalogForPicker(analystCatalog) {
   return { recommendedModel, models };
 }
 
+// Verifiable cause -> Spanish picker copy. Only causes backed by real
+// evidence; never funds/credits/billing. `unscored` and `access_unknown`
+// are deliberately NOT worded as unavailability.
+const CAUSE_ORDER = ["quota_exhausted", "unavailable_verified", "policy_excluded", "access_unknown", "unscored"];
+const CAUSE_COPY = Object.freeze({
+  quota_exhausted: "cuota agotada",
+  unavailable_verified: "no disponible para análisis ahora",
+  policy_excluded: "excluido por política",
+  access_unknown: "acceso sin verificar",
+  unscored: "sin benchmark (solo selección manual)"
+});
+
 /**
- * Compact honest absence when a known provider contributed zero usable
- * picker rows. Never invents billing / out-of-funds / credits causes.
+ * Machine-readable, per-provider exclusion causes for providers that
+ * contributed ZERO usable picker rows (the same set the notice names).
+ * One row per (provider, cause): `{adapterId, provider, cause, models, reason}`.
+ * Sources, all real evidence only: per-model `cause` on unavailable/unscored
+ * raw models, `rawCatalog.exclusions` (blocked-entitlement models that are
+ * absent from `models` by design), and the Claude unverified-access notice.
+ * A provider absent from the curated list for a reason with no evidence
+ * (e.g. deduped by display name) gets no row — never an invented cause.
  *
- * Built from raw catalog vs curated (unavailable/unscored filtered) and/or
- * existing `unverifiedClaudeNotice` presence.
+ * @param {{models?: object[], exclusions?: object[]}|null|undefined} rawCatalog
+ * @param {{models?: object[]}|null|undefined} curatedCatalog
+ * @param {string|null|undefined} unverifiedClaudeNotice
+ * @returns {Array<{adapterId: string, provider: string, cause: string, models: number, reason: string|null}>}
+ */
+export function buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifiedClaudeNotice = null) {
+  const curatedAdapters = new Set(
+    (Array.isArray(curatedCatalog?.models) ? curatedCatalog.models : []).map((m) => m?.adapterId).filter(Boolean)
+  );
+  const rows = new Map();
+  const add = (adapterId, cause, reason = null) => {
+    if (!adapterId || !CAUSE_COPY[cause] || curatedAdapters.has(adapterId)) return;
+    const key = `${adapterId}\u0000${cause}`;
+    const row = rows.get(key) ?? { adapterId, provider: providerPickerLabel(adapterId), cause, models: 0, reason: null };
+    row.models += 1;
+    row.reason = row.reason ?? reason;
+    rows.set(key, row);
+  };
+  for (const model of Array.isArray(rawCatalog?.models) ? rawCatalog.models : []) {
+    if (model?.available !== true) add(model?.adapterId, model?.cause ?? "unavailable_verified");
+    else if (model?.evidenceStatus === "unscored" && !(model.recommendationTags ?? []).length) add(model.adapterId, "unscored");
+  }
+  for (const exclusion of Array.isArray(rawCatalog?.exclusions) ? rawCatalog.exclusions : []) {
+    add(exclusion?.adapterId, exclusion?.cause, exclusion?.reason ?? null);
+  }
+  if (unverifiedClaudeNotice && !curatedAdapters.has("claude") && ![...rows.values()].some((r) => r.adapterId === "claude" && r.cause === "access_unknown")) {
+    add("claude", "access_unknown", String(unverifiedClaudeNotice));
+  }
+  return [...rows.values()].sort((a, b) =>
+    a.provider.localeCompare(b.provider) || CAUSE_ORDER.indexOf(a.cause) - CAUSE_ORDER.indexOf(b.cause)
+  );
+}
+
+/**
+ * Compact honest notice when a known provider contributed zero usable
+ * picker rows, stating the verifiable cause per provider (see
+ * buildAnalystExclusionCauses). Never invents billing / out-of-funds /
+ * credits causes, and never words unscored or unverified access as
+ * unavailability.
  *
- * @param {{models?: object[]}|null|undefined} rawCatalog
+ * @param {{models?: object[], exclusions?: object[]}|null|undefined} rawCatalog
  * @param {{models?: object[]}|null|undefined} curatedCatalog
  * @param {string|null|undefined} unverifiedClaudeNotice
  * @returns {string|null}
  */
 export function buildAnalystPickerNotice(rawCatalog, curatedCatalog, unverifiedClaudeNotice = null) {
-  const rawModels = Array.isArray(rawCatalog?.models) ? rawCatalog.models : [];
-  const curatedModels = Array.isArray(curatedCatalog?.models) ? curatedCatalog.models : [];
-  const rawAdapters = new Set();
-  for (const model of rawModels) {
-    if (model?.adapterId) rawAdapters.add(model.adapterId);
+  const byProvider = new Map();
+  for (const row of buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifiedClaudeNotice)) {
+    const copies = byProvider.get(row.provider) ?? [];
+    copies.push(CAUSE_COPY[row.cause]);
+    byProvider.set(row.provider, copies);
   }
-  const curatedAdapters = new Set();
-  for (const model of curatedModels) {
-    if (model?.adapterId) curatedAdapters.add(model.adapterId);
-  }
-
-  const parts = [];
-  const seenLabels = new Set();
-  const pushAbsence = (adapterId) => {
-    const label = providerPickerLabel(adapterId);
-    if (seenLabels.has(label)) return;
-    seenLabels.add(label);
-    parts.push(`${label}: no disponible para análisis ahora`);
-  };
-
-  for (const adapterId of [...rawAdapters].sort((a, b) =>
-    providerPickerLabel(a).localeCompare(providerPickerLabel(b))
-  )) {
-    if (!curatedAdapters.has(adapterId)) pushAbsence(adapterId);
-  }
-
-  if (unverifiedClaudeNotice && !curatedAdapters.has("claude")) {
-    pushAbsence("claude");
-  }
-
+  const parts = [...byProvider.entries()].map(([provider, copies]) => `${provider}: ${copies.join(", ")}`);
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
@@ -298,7 +330,7 @@ function toSerializable(value) {
  * preflight itself, so a serialization miss on profile never blocks the picker.
  *
  * @param {{cwd?: string, createConversationService?: typeof createConversationService}} args
- * @returns {Promise<{analystCatalog: object, profile: object|null, candidates: object|null, projectRoot: string|null, unverifiedClaudeNotice: string|null, pickerNotice: string|null}>}
+ * @returns {Promise<{analystCatalog: object, profile: object|null, candidates: object|null, projectRoot: string|null, unverifiedClaudeNotice: string|null, pickerNotice: string|null, exclusionCauses: Array<{adapterId: string, provider: string, cause: string, models: number, reason: string|null}>}>}
  */
 export async function preflightProjectTeam({
   cwd,
@@ -316,7 +348,9 @@ export async function preflightProjectTeam({
     candidates: toSerializable(preflight.candidates),
     projectRoot: preflight.projectRoot ?? null,
     unverifiedClaudeNotice,
-    pickerNotice: buildAnalystPickerNotice(rawCatalog, analystCatalog, unverifiedClaudeNotice)
+    pickerNotice: buildAnalystPickerNotice(rawCatalog, analystCatalog, unverifiedClaudeNotice),
+    // Additive (T10/T11): machine-readable cause rows behind `pickerNotice`.
+    exclusionCauses: buildAnalystExclusionCauses(rawCatalog, analystCatalog, unverifiedClaudeNotice)
   };
 }
 
