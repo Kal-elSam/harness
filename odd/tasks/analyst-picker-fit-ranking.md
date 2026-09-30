@@ -46,3 +46,14 @@ Estimated delivery: ~600+ changed lines -> delivery strategy `ask-on-risk`; ask 
 - [ ] T13 Human acceptance with real authorized provider (pending user; mocks never count as 100%).
 
 Commits per task (evidence recorded below).
+
+## Scope update (user-approved 2026-09-30): review findings + team presentation
+Verified review findings: Go ask agent lacks webfetch/external_directory deny and mutates global opencode.json; ranking is tag/name based; prompt does not consume the shared profile; unscored/unverified models hidden. Corrections below reopen T9/T10 acceptance.
+Assumptions (recorded): unscored-but-available models are selectable (lower evidence confidence, no star); unverified access stays excluded and shows as "verifying", never as missing quota.
+
+- [ ] T14 Go isolation: per-run OpenCode config (no global opencode.json mutation), deny webfetch + external_directory (plus existing bash/edit/task/write), tests prove the generated config; isolation label stays `restricted` unless a real canary proves more.
+- [ ] T15 Composite analyst fit: rank = profile fit (shared profile capabilities) + capabilities + benchmarks + evidence confidence; availability gates usability only; benchmark missing lowers confidence, not eligibility. Prompt and ranking consume ONE profile definition (derive prompt focus from BOOTSTRAP_ANALYST_PROFILE). Numeric fit exposed per candidate; no invented scores.
+- [ ] T16 Team presentation: incomplete or blocked team -> hide entire roles list (no partial team); complete + approved + validated -> show roles; saved assignments are never deleted.
+- [ ] T17 Sidebar: compact incomplete-team notice + re-analyze action, reachable when Pi fails; "verification in progress" state that never claims missing quota.
+- [ ] T18 Node 24 run, list the 6 skipped tests, re-run build + PTY.
+- [ ] T9/T10 re-accepted only after T14/T15 pass.
