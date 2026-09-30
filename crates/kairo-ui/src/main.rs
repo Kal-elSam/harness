@@ -3388,6 +3388,40 @@ mod tests {
     }
 
     #[test]
+    fn reanalyze_key_works_with_hidden_roles_even_when_pi_failed() {
+        for presentation in ["incomplete", "blocked", "verifying"] {
+            let (mut app, path) = recorder_app("ask");
+            // Pi get_state failed/timed out: engine gate is unavailable.
+            app.engine.status = "unavailable".into();
+            app.engine.reason = Some("get_state timed out".into());
+            assert!(!app.engine.can_prompt());
+            app.view.team_presentation = Some(presentation.into());
+            app.view.roles_visible = false;
+            let quit = handle_key(&mut app, press('a')).expect("key");
+            assert!(!quit);
+            assert!(app.preflight_pending, "{presentation}: preflight not sent");
+            assert!(app.picker.is_some(), "{presentation}: analyst modal not opened");
+            assert!(
+                recorded_ops(&path, 1).contains("project.preflight"),
+                "{presentation}: sidecar op missing"
+            );
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    #[test]
+    fn reanalyze_slash_command_works_with_hidden_roles_when_pi_failed() {
+        let (mut app, path) = recorder_app("ask");
+        app.engine.status = "unavailable".into();
+        app.view.roles_visible = false;
+        app.editor.insert_str("/analyze");
+        app.submit_editor();
+        assert!(app.preflight_pending);
+        assert!(recorded_ops(&path, 1).contains("project.preflight"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn hidden_roles_cannot_be_edited_blind() {
         let (mut app, path) = recorder_app("ask");
         app.view.team_state = Some("suggested".into());

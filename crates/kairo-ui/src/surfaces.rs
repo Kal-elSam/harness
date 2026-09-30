@@ -149,11 +149,18 @@ impl Default for ShellViewModel {
 /// Sidebar copy while the roles list is hidden. The verifying wording never
 /// mentions quota: unverified access is "still checking", not "missing".
 fn hidden_team_notice_lines(model: &ShellViewModel) -> Vec<&'static str> {
-    match model.team_presentation.as_deref() {
+    let mut lines = match model.team_presentation.as_deref() {
         Some("verifying") => vec!["Verifying team access…"],
         Some("blocked") => vec!["Team blocked"],
         _ => vec!["Team incomplete"],
+    };
+    // Re-analyze is driven by the Rust host + sidecar (`project.preflight`),
+    // never by Pi RPC, so the hint is always honest.
+    if model.team_state.as_deref() == Some("suggested") {
+        lines.push("A = approve");
     }
+    lines.push("a = re-analyze");
+    lines
 }
 
 fn empty_team_key_hint(team_state: Option<&str>) -> &'static str {
@@ -2375,6 +2382,23 @@ mod tests {
             assert!(!hay.contains("Orchestrator"), "{state}: role leaked: {hay}");
             assert!(!hay.contains("Builder"), "{state}: role leaked: {hay}");
         }
+    }
+
+    #[test]
+    fn hidden_roles_notice_names_the_reanalyze_key_in_every_state() {
+        for state in ["incomplete", "blocked", "verifying"] {
+            let hay = sidebar_hay(&hidden_model(state));
+            assert!(hay.contains("a = re-analyze"), "{state}: no key hint: {hay}");
+        }
+    }
+
+    #[test]
+    fn suggested_hidden_team_still_offers_approve_alongside_reanalyze() {
+        let mut model = hidden_model("incomplete");
+        model.team_state = Some("suggested".into());
+        let hay = sidebar_hay(&model);
+        assert!(hay.contains("A = approve"), "{hay}");
+        assert!(hay.contains("a = re-analyze"), "{hay}");
     }
 
     #[test]
