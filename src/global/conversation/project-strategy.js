@@ -222,13 +222,14 @@ function quotaFor(providerCapacity, adapterId) {
  * that one result (`rank`, `qualification`, `evaluation`) into the catalog and
  * only the "efficient" tag still comes from the Explorer efficiency balance.
  * @param {object} args - `scoredAll`, `eligibility`, `registry`,
- *   `providerCapacity`, plus
+ *   `providerCapacity`, `deniedScoredPool` (verified-denied scored candidates:
+ *   comparison evidence and exclusion causes only, never rows), plus
  *   `unscoredModels` (real catalog models with no AA match — see
  *   conversation/service.js's own `unscoredModels`).
  * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, accessVerified: boolean, selectable: boolean, cause: string|null, quota: number|null, rank: number|null, qualification: "qualified"|"partial_evidence"|"insufficient_evidence"|"no_evidence", identityKey: string, evaluation: {comparable: boolean|null, confidence: "high"|"medium"|"low"|null, capabilities: {reasoning: number|null, coding: number|null}, benchmarkCounts: {reasoning: number|null, coding: number|null}, optionalEvidence: boolean, missing: string[]}, recommendationTags: string[]}>, exclusions: Array<{candidateKey: string, adapterId: string, modelId: string, cause: string, reason: string|null}>}}
  */
 export function computeBootstrapAnalystCatalog({
-  scoredAll, manualSelectionScoredPool = scoredAll, eligibility, registry,
+  scoredAll, manualSelectionScoredPool = scoredAll, deniedScoredPool = [], eligibility, registry,
   providerCapacity = null, unscoredModels = []
 }) {
   // Restrict the CANDIDATE POOL itself to ask-supported adapters before
@@ -255,7 +256,12 @@ export function computeBootstrapAnalystCatalog({
   const roleCapabilities = { Explorer: BOOTSTRAP_ANALYST_PROFILE.capabilities };
   // ONE comparison for every route, verified or not: verification changes who
   // may be listed, never the order.
-  const evaluations = evaluateAnalystPool(askSupportedScoredAll, registry);
+  // A verified-DENIED candidate is never a row, but its benchmark evidence still
+  // takes part in the comparison: the order of the usable rows must not change
+  // just because access to another model was checked (percentiles are
+  // pool-relative). `deniedScoredPool` is evidence-only.
+  const deniedAskSupported = deniedScoredPool.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
+  const evaluations = evaluateAnalystPool([...askSupportedScoredAll, ...deniedAskSupported], registry);
   const efficientTeam = buildEfficientTeam(askSupportedRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
   const efficient = efficientTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
   const efficientKey = efficient ? candidateKeyOf(efficient) : null;
@@ -271,7 +277,7 @@ export function computeBootstrapAnalystCatalog({
   const scoredKeys = new Set([...askSupportedScoredAll, ...askSupportedUnscored].map(candidateKeyOf));
   const exclusions = [];
   const seenExcluded = new Set();
-  for (const model of [...manualSelectionScoredPool, ...unscoredModels]) {
+  for (const model of [...manualSelectionScoredPool, ...deniedScoredPool, ...unscoredModels]) {
     if (!ASK_SUPPORTED_ADAPTERS.has(model.adapterId) || !BLOCKED_ENTITLEMENTS.has(model.entitlement)) continue;
     if (isAccessUnverified(model) && scoredKeys.has(candidateKeyOf(model))) continue;
     const key = candidateKeyOf(model);

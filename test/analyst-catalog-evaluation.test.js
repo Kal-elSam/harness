@@ -14,14 +14,18 @@ const row = (slug, metrics) => ({
 const full = (slug, gpqa, hle, sciCode, extra = {}) => row(slug, { gpqa, hle, sciCode, intelligenceIndex: 1, codingIndex: 1, ...extra });
 
 /** routes: [adapterId, slug] pairs; the same slug on two adapters is the same model via two subscriptions. */
-function catalogFor(aaRows, routes, { eligible = null, entitlement = {} } = {}) {
+function catalogFor(aaRows, routes, { eligible = null, entitlement = {}, denied = [] } = {}) {
   const adapters = [...new Set(routes.map(([adapterId]) => adapterId))];
-  const scored = scoreAvailableModels(
+  const all = scoreAvailableModels(
     adapters.map((adapterId) => ({ adapterId, models: routes.filter(([a]) => a === adapterId).map(([, id]) => ({ id })) })),
     aaRows
   ).map((model) => ({ ...model, candidateKey: `${model.adapterId}::${model.modelId}`, entitlement: entitlement[`${model.adapterId}::${model.modelId}`] ?? ENTITLEMENT.NOT_APPLICABLE }));
+  // Like the product's candidate pools: a verified-DENIED route never enters the selection pools; it travels separately.
+  const isDenied = (model) => denied.includes(model.candidateKey);
+  const scored = all.filter((model) => !isDenied(model));
+  const deniedScoredPool = all.filter(isDenied).map((model) => ({ ...model, entitlement: ENTITLEMENT.DENIED }));
   const eligibility = Object.fromEntries(adapters.map((adapterId) => [adapterId, { ok: eligible ? eligible.includes(adapterId) : true }]));
-  return computeBootstrapAnalystCatalog({ scoredAll: scored, manualSelectionScoredPool: scored, eligibility, registry: createCapabilityRegistry() });
+  return computeBootstrapAnalystCatalog({ scoredAll: scored, manualSelectionScoredPool: scored, deniedScoredPool, eligibility, registry: createCapabilityRegistry() });
 }
 
 const rowOf = (catalog, key) => catalog.models.find((model) => model.candidateKey === key);
@@ -151,4 +155,19 @@ test("ONE classification: catalog star, picker star, default analyst and main ro
   assert.deepEqual(mainKeys(after), ["claude::best", "codex::shared", "opencode-go::third"]);
   assert.equal(pickDefaultAnalyst(after).model.modelId, "best");
   assert.equal(pickDefaultAnalyst(before).model.modelId, "shared");
+});
+
+test("a verified-DENIED model stays in the comparison as evidence: denying it never reorders the others, and it is reported as an exclusion, never listed", () => {
+  // Found by search: with this data the order of a/b/c DOES flip when t-top leaves the pool (percentiles are pool-relative).
+  const aa = [full("t-top", 0.836, 0.398, 0.502), full("a", 0.81, 0.354, 0.598), full("b", 0.963, 0.394, 0.566), full("c", 0.857, 0.374, 0.58)];
+  const routes = [["claude", "t-top"], ["codex", "a"], ["cursor", "b"], ["opencode-go", "c"]];
+  const unverified = catalogFor(aa, routes, { entitlement: { "claude::t-top": ENTITLEMENT.UNVERIFIED } });
+  const denied = catalogFor(aa, routes, { denied: ["claude::t-top"] });
+  const others = (catalog) => order(catalog).filter((key) => key !== "claude::t-top");
+  assert.equal(others(denied).length, 3);
+  assert.deepEqual(others(denied), others(unverified), "same comparison pool, same order among the usable rows");
+  const withoutDeniedEvidence = catalogFor(aa.filter((row) => row.slug !== "t-top"), routes.filter(([, id]) => id !== "t-top"));
+  assert.notDeepEqual(order(withoutDeniedEvidence), others(denied), "the fixture is sensitive: dropping the denied evidence WOULD reorder the rest");
+  assert.equal(denied.models.some((m) => m.candidateKey === "claude::t-top"), false, "a denied route is never a row");
+  assert.deepEqual(denied.exclusions.map((e) => [e.candidateKey, e.cause]), [["claude::t-top", "unavailable_verified"]]);
 });

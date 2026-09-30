@@ -926,7 +926,7 @@ export function createConversationService(deps = {}) {
         // needing to know why. Access-mode-manual candidates may stay in
         // it, but per-model entitlement fails closed: unverified Claude is
         // reserved for the separate explicit manual-selection pool below.
-        const { recommendationPool: scoredAll, manualSelectionPool: manualSelectionScoredPool } = buildScoredCandidatePools(
+        const { recommendationPool: scoredAll, manualSelectionPool: manualSelectionScoredPool, deniedPool: deniedScoredPool } = buildScoredCandidatePools(
           scoredAllRaw,
           completeCandidateCatalog
         );
@@ -1078,7 +1078,7 @@ export function createConversationService(deps = {}) {
           // denied, and unverified Claude already excluded), not the raw
           // scoreAvailableModels() output
           // — see scoredAllRaw/completeCandidateCatalog above.
-          scoredAll, manualSelectionScoredPool, registry, providerCapacity,
+          scoredAll, manualSelectionScoredPool, deniedScoredPool, registry, providerCapacity,
           // The real subset Kairo can actually launch itself — exposed
           // for the real task router (not yet built) to consume; never
           // used by QUALITY/EFFICIENT TEAM or ProjectStrategy, which only
@@ -1295,12 +1295,12 @@ export function createConversationService(deps = {}) {
             this.snapshot({ cwd: projectRoot })
           ]);
       const {
-        scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null,
+        scoredAll = [], manualSelectionScoredPool = scoredAll, deniedScoredPool = [], eligibility = {}, registry = null,
         providerCapacity = null, unscoredModels = [], analystUnscoredModels = unscoredModels,
         claudeEntitlement = {}, cursorAccess = {}, verificationPlan = EMPTY_VERIFICATION_PLAN
       } = snap.modelIntelligence ?? {};
       const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement, cursorAccess };
-      const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, unscoredModels: analystUnscoredModels });
+      const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, deniedScoredPool, unscoredModels: analystUnscoredModels });
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
       ).length;

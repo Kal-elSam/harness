@@ -59,7 +59,7 @@ export function traceAnalystRanking({ providerCatalogs, aaModels, eligibility = 
   const effectiveEligibility = eligibility ?? Object.fromEntries(providerCatalogs.map(({ adapterId }) => [adapterId, { ok: true }]));
   const scoredAllRaw = scoreAvailableModels(providerCatalogs, aaModels);
   const complete = buildCompleteCandidateCatalog(providerCatalogs, aaModels, { modelEntitlement });
-  const { recommendationPool, manualSelectionPool } = buildScoredCandidatePools(scoredAllRaw, complete);
+  const { recommendationPool, manualSelectionPool, deniedPool } = buildScoredCandidatePools(scoredAllRaw, complete);
   const analystUnscored = complete
     .filter((candidate) => (
       candidate.evidenceStatus === "unscored" && candidate.lifecycle !== "superseded" && candidate.entitlement !== ENTITLEMENT.DENIED
@@ -70,7 +70,7 @@ export function traceAnalystRanking({ providerCatalogs, aaModels, eligibility = 
       entitlement: candidate.entitlement, entitlementReason: candidate.entitlementReason
     }));
   const catalog = computeBootstrapAnalystCatalog({
-    scoredAll: recommendationPool, manualSelectionScoredPool: manualSelectionPool, eligibility: effectiveEligibility,
+    scoredAll: recommendationPool, manualSelectionScoredPool: manualSelectionPool, deniedScoredPool: deniedPool, eligibility: effectiveEligibility,
     registry: createCapabilityRegistry(), providerCapacity: null, unscoredModels: analystUnscored
   });
   const curated = curateAnalystCatalogForPicker(catalog);
