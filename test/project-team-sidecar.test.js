@@ -6,6 +6,7 @@ import {
   buildAnalystPickerNotice,
   buildAnalystExclusionCauses,
   curateAnalystCatalogForPicker,
+  MIN_RECOMMENDATION_CONFIDENCE,
   pickDefaultAnalyst,
   preflightProjectTeam,
   summarizeProjectStrategy
@@ -102,7 +103,7 @@ test("pickDefaultAnalyst takes the catalog's own recommended model", () => {
   assert.deepEqual(analyst.recommendationTags, ["quality"]);
 });
 
-test("pickDefaultAnalyst skips an unavailable recommendation for the first available entry", () => {
+test("pickDefaultAnalyst returns null (no blind first-available fallback) when the recommendation is unavailable", () => {
   const analyst = pickDefaultAnalyst({
     recommendedModel: { candidateKey: "claude::sonnet" },
     models: [
@@ -116,9 +117,42 @@ test("pickDefaultAnalyst skips an unavailable recommendation for the first avail
       catalogEntry({ recommendationTags: ["efficient"] })
     ]
   });
-  assert.equal(analyst.model.adapterId, "codex");
-  assert.equal(analyst.selectionSource, "manual");
-  assert.equal(analyst.choice, "efficient");
+  assert.equal(analyst, null);
+});
+
+test("pickDefaultAnalyst returns null when there is no recommendation, even with available models", () => {
+  assert.equal(
+    pickDefaultAnalyst({ recommendedModel: null, models: [catalogEntry({ recommendationTags: ["quality"] })] }),
+    null
+  );
+  assert.equal(pickDefaultAnalyst({ models: [catalogEntry()] }), null);
+});
+
+test("pickDefaultAnalyst returns null when the recommendation is below the confidence floor", () => {
+  const low = MIN_RECOMMENDATION_CONFIDENCE - 0.01;
+  assert.equal(
+    pickDefaultAnalyst({
+      recommendedModel: { candidateKey: "codex::gpt-5" },
+      models: [catalogEntry({ confidence: low })]
+    }),
+    null
+  );
+  assert.equal(
+    pickDefaultAnalyst({
+      recommendedModel: { candidateKey: "codex::gpt-5", confidence: low },
+      models: [catalogEntry()]
+    }),
+    null
+  );
+});
+
+test("pickDefaultAnalyst still picks an explicit recommendation at or above the confidence floor", () => {
+  const analyst = pickDefaultAnalyst({
+    recommendedModel: { candidateKey: "codex::gpt-5" },
+    models: [catalogEntry({ confidence: MIN_RECOMMENDATION_CONFIDENCE, recommendationTags: ["quality"] })]
+  });
+  assert.equal(analyst?.model.modelId, "gpt-5");
+  assert.equal(analyst?.selectionSource, "recommended");
 });
 
 test("pickDefaultAnalyst returns null instead of inventing a model", () => {
@@ -167,7 +201,7 @@ test("analyzeProjectTeam surfaces the preflight's unverified Claude notice", asy
   const result = await analyzeProjectTeam({
     cwd: "/project",
     createConversationService: fakeService({
-      analystCatalog: { recommendedModel: null, models: [catalogEntry()] },
+      analystCatalog: { recommendedModel: { candidateKey: "codex::gpt-5" }, models: [catalogEntry()] },
       unverifiedClaudeNotice: "2 Claude models are unverified"
     })
   });
@@ -184,6 +218,30 @@ test("analyzeProjectTeam fails closed when no analyst is available", async () =>
     }),
     /no ask-capable analyst/i
   );
+});
+
+test("analyzeProjectTeam returns analyst_selection_required without calling the analyzer when nothing qualifies", async () => {
+  for (const analystCatalog of [
+    { recommendedModel: null, models: [catalogEntry()] },
+    {
+      recommendedModel: { candidateKey: "codex::gpt-5" },
+      models: [catalogEntry({ confidence: MIN_RECOMMENDATION_CONFIDENCE - 0.1 })]
+    }
+  ]) {
+    const calls = [];
+    const result = await analyzeProjectTeam({
+      cwd: "/project",
+      createConversationService: fakeService({ analystCatalog, calls })
+    });
+    assert.equal(result.status, "analyst_selection_required");
+    assert.match(result.message, /open the analyst picker/i);
+    assert.equal(result.state, undefined, "no strategy summary is invented");
+    assert.deepEqual(
+      calls.map(([name]) => name),
+      ["preflightProject"],
+      "analyzer (runBootstrapAnalysis) must not be called and no strategy is mutated"
+    );
+  }
 });
 
 test("analyzeProjectTeam fails closed when every catalog entry is unavailable", async () => {
@@ -206,7 +264,7 @@ test("analyzeProjectTeam propagates a real analysis failure verbatim", async () 
     analyzeProjectTeam({
       cwd: "/project",
       createConversationService: fakeService({
-        analystCatalog: { recommendedModel: null, models: [catalogEntry()] },
+        analystCatalog: { recommendedModel: { candidateKey: "codex::gpt-5" }, models: [catalogEntry()] },
         analysisResult: new Error("Bootstrap Analyst did not answer: timeout")
       })
     }),

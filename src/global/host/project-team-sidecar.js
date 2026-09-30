@@ -100,9 +100,7 @@ export function curateAnalystCatalogForPicker(analystCatalog) {
   const survivor = incomingRecommended
     ? models.find((model) => model.candidateKey === incomingRecommended.candidateKey)
     : null;
-  const confidence = survivor ? (survivor.confidence ?? incomingRecommended.confidence) : null;
-  const sufficient = confidence == null || numericOr(confidence, 0) >= MIN_RECOMMENDATION_CONFIDENCE;
-  const recommendedModel = survivor && sufficient ? incomingRecommended : null;
+  const recommendedModel = survivor && recommendationQualifies(survivor, incomingRecommended) ? incomingRecommended : null;
   return { recommendedModel, models };
 }
 
@@ -185,11 +183,22 @@ export function buildAnalystPickerNotice(rawCatalog, curatedCatalog, unverifiedC
 }
 
 /**
- * The default Bootstrap Analyst: the catalog's own recommended model when
- * it is currently available, otherwise the first available catalog entry
- * (catalog order — the same real ranking the cockpit picker shows). An
- * unavailable-only catalog returns null: an analyst that cannot run is not
- * a default, and the caller fails closed.
+ * The single rule for "this recommendation keeps its star": its evidence
+ * confidence (the model's own, else the recommendation's) reaches
+ * MIN_RECOMMENDATION_CONFIDENCE. No confidence field = legacy entry, kept.
+ * Shared by the picker curation and the default pick so they never diverge.
+ */
+function recommendationQualifies(model, recommendation) {
+  const confidence = model?.confidence ?? recommendation?.confidence ?? null;
+  return confidence == null || numericOr(confidence, 0) >= MIN_RECOMMENDATION_CONFIDENCE;
+}
+
+/**
+ * The default Bootstrap Analyst: ONLY the catalog's own recommended model,
+ * and only when it is currently available and still qualifies as a
+ * recommendation (same confidence rule the picker's star uses). Anything
+ * else returns null — there is no blind "first available" fallback; the
+ * caller must ask the human to choose.
  *
  * @param {{recommendedModel?: {candidateKey?: string}|null, models?: object[]}|null|undefined} analystCatalog
  * @returns {{model: {adapterId: string, modelId: string, displayName: string}, selectionSource: "recommended"|"manual", recommendationTags: string[], choice: "quality"|"efficient"|null}|null}
@@ -197,10 +206,10 @@ export function buildAnalystPickerNotice(rawCatalog, curatedCatalog, unverifiedC
 export function pickDefaultAnalyst(analystCatalog) {
   const models = analystCatalog?.models ?? [];
   const recommendedKey = analystCatalog?.recommendedModel?.candidateKey ?? null;
-  const available = models.filter((model) => model?.available === true);
-  const picked =
-    available.find((model) => model.candidateKey === recommendedKey) ?? available[0] ?? null;
-  if (!picked) return null;
+  const picked = recommendedKey
+    ? models.find((model) => model?.available === true && model.candidateKey === recommendedKey)
+    : null;
+  if (!picked || !recommendationQualifies(picked, analystCatalog.recommendedModel)) return null;
   const recommendationTags = picked.recommendationTags ?? [];
   return {
     // The same clean modelRef shape the overlay hands to
@@ -211,7 +220,7 @@ export function pickDefaultAnalyst(analystCatalog) {
       modelId: picked.modelId,
       displayName: picked.displayName
     },
-    selectionSource: picked.candidateKey === recommendedKey ? "recommended" : "manual",
+    selectionSource: "recommended",
     recommendationTags,
     choice: recommendationTags.includes("quality")
       ? "quality"
@@ -253,6 +262,9 @@ function requireCwd(cwd) {
   }
   return cwd;
 }
+
+export const ANALYST_SELECTION_REQUIRED_MESSAGE =
+  "No analyst qualifies as a recommendation for this project — open the analyst picker and choose one.";
 
 function noAnalystError(analystCatalog) {
   const total = analystCatalog?.models?.length ?? 0;
@@ -367,10 +379,11 @@ export async function preflightProjectTeam({
  * It is re-validated against THIS call's own fresh catalog (never trusted
  * verbatim — availability can change between the picker's preflight and
  * this analyze). Omitted or unresolvable → the catalog's own recommended
- * default (`pickDefaultAnalyst`), same as before this option existed.
+ * default (`pickDefaultAnalyst`) when it qualifies; otherwise the result is
+ * `{status: "analyst_selection_required", message}` and nothing runs.
  *
  * @param {{cwd?: string, analyst?: object|null, createConversationService?: typeof createConversationService}} args
- * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null, notice: string|null}>}
+ * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null, notice: string|null}|{status: "analyst_selection_required", message: string}>}
  */
 export async function analyzeProjectTeam({
   cwd,
@@ -386,7 +399,13 @@ export async function analyzeProjectTeam({
     if (!analyst) throw requestedAnalystError(requestedAnalyst);
   } else {
     analyst = pickDefaultAnalyst(preflight.analystCatalog);
-    if (!analyst) throw noAnalystError(preflight.analystCatalog);
+    if (!analyst) {
+      const anyAvailable = (preflight.analystCatalog?.models ?? []).some((model) => model?.available === true);
+      if (!anyAvailable) throw noAnalystError(preflight.analystCatalog);
+      // Usable models exist but none qualifies as a recommendation: never
+      // pick one silently. No provider call, no strategy mutation.
+      return { status: "analyst_selection_required", message: ANALYST_SELECTION_REQUIRED_MESSAGE };
+    }
   }
   const strategy = await service.runBootstrapAnalysis({
     cwd: projectCwd,

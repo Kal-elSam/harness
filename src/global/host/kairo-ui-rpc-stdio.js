@@ -907,6 +907,12 @@ export async function runKairoUiRpcStdio({
   const runTeamOp = async (op, run) => {
     try {
       const summary = await run();
+      if (summary?.status === "analyst_selection_required") {
+        // Honest non-result: nothing ran, nothing changed. The host shows
+        // `reason` and opens the picker; never a generic error.
+        writeOut({ type: "team", op, ok: false, status: summary.status, reason: summary.message });
+        return summary;
+      }
       writeOut({
         type: "team",
         op,
@@ -1716,14 +1722,16 @@ export async function runKairoUiRpcStdio({
         const summary = await runTeamOp("project.analyze", () =>
           analyzeProjectTeam({ cwd, analyst: requestedAnalyst })
         );
-        if (summary.notice) writeOut({ type: "notice", message: summary.notice });
-        await emitSnapshot();
-        writeOut({
-          type: "notice",
-          message:
-            `Suggested team ready: ${summary.teamRows} role${summary.teamRows === 1 ? "" : "s"}` +
-            `${summary.analyst ? ` via ${summary.analyst}` : ""} — approve to enable chat.`
-        });
+        if (summary.status !== "analyst_selection_required") {
+          if (summary.notice) writeOut({ type: "notice", message: summary.notice });
+          await emitSnapshot();
+          writeOut({
+            type: "notice",
+            message:
+              `Suggested team ready: ${summary.teamRows} role${summary.teamRows === 1 ? "" : "s"}` +
+              `${summary.analyst ? ` via ${summary.analyst}` : ""} — approve to enable chat.`
+          });
+        }
       } else if (op === "team.approve") {
         const summary = await runTeamOp("team.approve", () => approveProjectTeam({ cwd }));
         // Approval is what makes a launchable projectTeam route exist:

@@ -823,6 +823,11 @@ impl ShellApp {
         self.team_action_pending = false;
         let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
         if !ok {
+            if record.get("status").and_then(|v| v.as_str()) == Some("analyst_selection_required") {
+                if let Some(reason) = record.get("reason").and_then(|v| v.as_str()) {
+                    self.view.notice = Some(reason.to_string());
+                }
+            }
             return;
         }
         if let Some(state) = record.get("state").and_then(|v| v.as_str()) {
@@ -3055,6 +3060,22 @@ mod tests {
     fn arm_pending_preflight(app: &mut ShellApp) {
         app.preflight_pending = true;
         app.picker = Some(AnalystPickerState::loading());
+    }
+
+    #[test]
+    fn analyst_selection_required_team_record_shows_its_message_and_clears_pending() {
+        let mut app = ShellApp::new(None);
+        app.team_action_pending = true;
+        app.ingest_team_record(&json!({
+            "type": "team", "op": "project.analyze", "ok": false,
+            "status": "analyst_selection_required",
+            "reason": "No analyst qualifies — open the analyst picker and choose one."
+        }));
+        assert!(!app.team_action_pending);
+        assert_eq!(
+            app.view.notice.as_deref(),
+            Some("No analyst qualifies — open the analyst picker and choose one.")
+        );
     }
 
     #[test]
