@@ -12,6 +12,8 @@
 // so a thin or low-confidence analysis can never leave the project with
 // literally zero real role requirements.
 
+import { BOOTSTRAP_ANALYST_PROFILE, formatFocusAreas } from "./bootstrap-analyst-profile.js";
+
 export const PROJECT_ANALYSIS_SCHEMA = "kairo.project-analysis/v1";
 
 // The only real capabilities the scoring engine (capability-scoring.js)
@@ -32,7 +34,8 @@ const KNOWN_ROLES = new Set(["Explorer", "Architect", "Builder", "Debugger", "Te
  * @param {object} profile - computeProjectProfile() result
  * @returns {string}
  */
-export function buildAnalystPrompt(profile) {
+export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_PROFILE) {
+  const focusAreas = analystProfile.focusAreas;
   const lines = [
     "You are Kairo's Bootstrap Analyst. Investigate this real project, READ-ONLY — never propose or make any file change.",
     "You may read real files in this working directory to inform your answer, but do not modify anything.",
@@ -49,7 +52,9 @@ export function buildAnalystPrompt(profile) {
     `Known risks: ${profile.risks.map((r) => r.detail).join("; ") || "none"}`,
     "",
     "## Investigation",
-    "Before answering, investigate the real repository (read-only) for: the languages actually in use, the project structure and module boundaries, its dependencies, its constraints (tooling, runtime, compatibility, process), and its risks. Weigh the architecture and design of what you read, not only file names.",
+    `Focus areas: ${focusAreas.join(", ")}.`,
+    "Before answering, investigate the real repository (read-only) for: the languages actually in use, the project structure and module boundaries, its dependencies, its constraints (tooling, runtime, compatibility, process), and its risks. " +
+      `Weigh the real ${formatFocusAreas(focusAreas)} of what you read, not only file names.`,
     "Justify the team you suggest (recommendedRoleNeeds) with repo evidence: each role need must say why this project needs it and cite the real files you read.",
     "",
     "## Task",

@@ -18,7 +18,10 @@
 
 import { buildAiTeam, buildEfficientTeam, ensureRegistry } from "../intelligence/model-intelligence.js";
 import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
-import { computeRoleEvaluations } from "../intelligence/capability-scoring.js";
+import { computeCapabilityGapValue, computeRoleEvaluations } from "../intelligence/capability-scoring.js";
+import {
+  ANALYST_FIT_DEFAULT_WEIGHTS, BOOTSTRAP_ANALYST_PROFILE, SCORED_ANALYST_CONFIDENCE_FLOOR, UNSCORED_ANALYST_CONFIDENCE
+} from "./bootstrap-analyst-profile.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
 
 // The Bootstrap Analyst investigates read-only via askProvider
@@ -49,36 +52,10 @@ export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor", "ope
 // not_applicable.
 export const BLOCKED_ENTITLEMENTS = new Set([ENTITLEMENT.DENIED, ENTITLEMENT.UNVERIFIED]);
 
-/**
- * The Bootstrap Analyst as a temporary, read-only WORKFLOW — deliberately
- * NOT a RoleProfile (see role-profiles.js's ROLE_PROFILES/ROLE_CAPABILITIES,
- * the six real team roles): the analyst never joins the team, never
- * writes anything, and only exists for the duration of one real /project
- * analyze run. Shaped like a RoleProfile (same fields) purely so this
- * codebase's one established "what does doing this job actually mean"
- * shape gets reused instead of inventing a second one — capabilities is
- * the SAME required-reasoning/optional-instructionFollowing baseline the
- * old ANALYST_CAPABILITIES constant hardcoded, now declared once here and
- * consumed everywhere the analyst's own capability floor matters.
- * @type {{role: string, objective: string, responsibility: string, capabilities: {required: string[], optional: string[]}, allowedActions: string[], allowedActionIds: string[], deliverable: string, completionCriteria: string}}
- */
-export const BOOTSTRAP_ANALYST_PROFILE = {
-  role: "BootstrapAnalyst",
-  objective: "Investigate a real, not-yet-analyzed project read-only and return a structured, evidence-backed ProjectAnalysis Kairo can trust to derive this project's real role requirements from.",
-  responsibility: "Read the real project (files, history, workflow docs already collected by project-profile.js, plus anything else it reads on its own) and report real architecture traits, real risks, and which of Kairo's six roles this specific project actually needs — never a boilerplate or generic answer.",
-  // The capability vocabulary (capability-scoring.js) has no "architecture"
-  // or "design" benchmark, so those are covered by the closest real scored
-  // capabilities: reasoning (architecture/design judgment) and coding
-  // (reading and weighing real code). `focusAreas` documents the intent;
-  // only `capabilities` gates ranking, for the picker AND team recovery
-  // (both consume computeBootstrapAnalystCatalog).
-  capabilities: { required: ["reasoning", "coding"], optional: ["instructionFollowing"] },
-  focusAreas: ["reasoning", "coding", "architecture", "design"],
-  allowedActions: ["read files", "search/grep the repository", "run read-only inspection commands (e.g. git log, git blame)"],
-  allowedActionIds: ["repo.read", "repo.search", "repo.inspect_history"],
-  deliverable: "A valid ProjectAnalysis (see project-analysis.js's PROJECT_ANALYSIS_SCHEMA) — every field backed by a real file the analyst actually read, never an invented finding.",
-  completionCriteria: "The analysis identifies this project's real architecture, its real risks, and which roles it actually needs, each with real supporting evidence — not just a subset copied from a generic checklist."
-};
+// The Bootstrap Analyst profile (single definition shared with the analyst
+// prompt) lives in bootstrap-analyst-profile.js; re-exported here for the
+// existing import sites.
+export { BOOTSTRAP_ANALYST_PROFILE };
 
 function modelRef(teamModel) {
   if (!teamModel) return null;
@@ -137,6 +114,51 @@ function candidateKeyOf(model) {
   return model.candidateKey ?? `${model.adapterId}::${model.modelId}`;
 }
 
+/**
+ * Composite analyst fit per scored model, from REAL evidence only.
+ *  - profileFit = sum(weight_c * value_c over capabilities WITH evidence)
+ *    / sum(weight_c over every profile capability). value_c is the model's
+ *    own scale-normalized 0-1 capability magnitude (computeCapabilityGapValue,
+ *    benchmark evidence). A capability with no data adds nothing to the
+ *    numerator; no number is ever invented for it.
+ *  - coverage = weight of capabilities with evidence / total weight.
+ *  - benchmarkDepth = mean real benchmark coverage of the scored capabilities
+ *    (0 when a capability only had the composite-index fallback).
+ *  - confidence = SCORED floor + (1 - floor) * (coverage + benchmarkDepth) / 2.
+ *  - fit = profileFit * confidence (thin evidence is discounted on purpose).
+ * Weights: required 1, optional 0.5, overridable via profile.capabilityWeights.
+ * Unscored models are handled by the caller: fit 0, UNSCORED confidence.
+ */
+function computeAnalystFits(pool, registry, profile = BOOTSTRAP_ANALYST_PROFILE) {
+  const { required, optional } = profile.capabilities;
+  const weightOf = (capability) => profile.capabilityWeights?.[capability]
+    ?? (required.includes(capability) ? ANALYST_FIT_DEFAULT_WEIGHTS.required : ANALYST_FIT_DEFAULT_WEIGHTS.optional);
+  const capabilities = [...required, ...optional];
+  const totalWeight = capabilities.reduce((sum, capability) => sum + weightOf(capability), 0);
+  const fits = new Map();
+  if (!pool.length || !totalWeight) return fits;
+  const gapValues = new Map(capabilities.map((capability) => [capability, computeCapabilityGapValue(registry, pool, capability)]));
+  const evaluations = computeRoleEvaluations(registry, pool, profile.role, capabilities);
+  for (const model of pool) {
+    const modelKey = `${model.adapterId}::${model.modelId}`;
+    let weighted = 0;
+    let coveredWeight = 0;
+    const depths = [];
+    for (const capability of capabilities) {
+      const value = gapValues.get(capability).get(modelKey);
+      if (value == null) continue;
+      weighted += weightOf(capability) * value;
+      coveredWeight += weightOf(capability);
+      depths.push(Math.min(1, evaluations.get(modelKey)?.benchmarkCoverage?.[capability] ?? 0));
+    }
+    const coverage = coveredWeight / totalWeight;
+    const benchmarkDepth = depths.length ? depths.reduce((a, b) => a + b, 0) / depths.length : 0;
+    const confidence = SCORED_ANALYST_CONFIDENCE_FLOOR + (1 - SCORED_ANALYST_CONFIDENCE_FLOOR) * ((coverage + benchmarkDepth) / 2);
+    fits.set(modelKey, { fit: (weighted / totalWeight) * confidence, confidence });
+  }
+  return fits;
+}
+
 function quotaFor(providerCapacity, adapterId) {
   return providerCapacity?.[adapterId]?.quotaRemainingPercent ?? null;
 }
@@ -159,7 +181,7 @@ function quotaFor(providerCapacity, adapterId) {
  *   `providerCapacity`, plus
  *   `unscoredModels` (real catalog models with no AA match — see
  *   conversation/service.js's own `unscoredModels`).
- * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, cause: string|null, quota: number|null, recommendationTags: string[]}>, exclusions: Array<{candidateKey: string, adapterId: string, modelId: string, cause: string, reason: string|null}>}}
+ * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, cause: string|null, quota: number|null, fit: number, confidence: number, recommendationTags: string[]}>, exclusions: Array<{candidateKey: string, adapterId: string, modelId: string, cause: string, reason: string|null}>}}
  */
 export function computeBootstrapAnalystCatalog({
   scoredAll, manualSelectionScoredPool = scoredAll, eligibility, registry,
@@ -187,6 +209,7 @@ export function computeBootstrapAnalystCatalog({
   ));
 
   const roleCapabilities = { Explorer: BOOTSTRAP_ANALYST_PROFILE.capabilities };
+  const fits = computeAnalystFits(askSupportedScored, ensureRegistry(askSupportedScored, registry));
   const aiTeam = buildAiTeam(askSupportedRecommended, eligibility, registry, roleCapabilities);
   const efficientTeam = buildEfficientTeam(askSupportedRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
   const quality = aiTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
@@ -231,6 +254,8 @@ export function computeBootstrapAnalystCatalog({
       available: eligibility[model.adapterId]?.ok === true,
       cause: eligibility[model.adapterId]?.ok === true ? null : unavailableCause(model.adapterId),
       quota: quotaFor(providerCapacity, model.adapterId),
+      fit: fits.get(key)?.fit ?? 0,
+      confidence: fits.get(key)?.confidence ?? SCORED_ANALYST_CONFIDENCE_FLOOR,
       recommendationTags
     };
   });
@@ -246,6 +271,10 @@ export function computeBootstrapAnalystCatalog({
     // the picker never hides why a whole provider is out.
     cause: eligibility[model.adapterId]?.ok === true ? "unscored" : unavailableCause(model.adapterId),
     quota: quotaFor(providerCapacity, model.adapterId),
+    // No benchmark exists: fit stays 0 and confidence is the documented
+    // unscored constant. Nothing is invented; availability alone makes the
+    // model selectable.
+    fit: 0, confidence: UNSCORED_ANALYST_CONFIDENCE,
     recommendationTags: []
   }));
 

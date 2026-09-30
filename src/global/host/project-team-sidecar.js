@@ -35,29 +35,37 @@ function providerPickerLabel(adapterId) {
 }
 
 /**
- * Fit rank for available analysis-capable models — NOT provider brand.
- * recommendedKey → quality → efficient → scored → rest.
- * @param {object} model
- * @param {string|null} recommendedKey
+ * Minimum evidence confidence for the recommended star. The star is a claim
+ * ("Kairo recommends this one"), so it needs real evidence behind it; the
+ * row itself stays selectable either way.
  */
-function analystFitRank(model, recommendedKey) {
-  const tags = model.recommendationTags ?? [];
-  if (model.candidateKey === recommendedKey) return 0;
-  if (tags.includes("quality")) return 1;
-  if (tags.includes("efficient")) return 2;
-  if (model.evidenceStatus === "scored") return 3;
-  return 4;
+export const MIN_RECOMMENDATION_CONFIDENCE = 0.5;
+
+function numericOr(value, fallback) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * Numeric analyst fit (0..1, from computeBootstrapAnalystCatalog).
+ * Entries without one (legacy records) count as 0: no evidence, no rank.
+ * Tags are informational and never part of the ordering.
+ * @param {object} model
+ */
+function analystFitRank(model) {
+  return numericOr(model.fit, 0);
 }
 
 /**
  * Curate the full analyst catalog for the ratatui picker:
- * - available only
- * - scored (or quality/efficient tagged) — drop the unscored flood
- * - rank by analyst-profile fit (tags/scores), never preferred-adapter bias
- * - dedupe by displayName; single global cap
+ * - available only (availability gates usability, nothing else)
+ * - scored AND unscored models are kept; unscored carry fit 0 and lower confidence
+ * - order: fit desc, then confidence desc, then display name
+ * - dedupe by displayName (best fit wins); single global cap
  *
  * Never invents models; never reintroduces unavailable adapters.
- * `recommendedModel` survives only when its candidateKey remains in `models`.
+ * `recommendedModel` survives only when its candidateKey remains in `models`
+ * AND its confidence reaches MIN_RECOMMENDATION_CONFIDENCE (entries with no
+ * confidence field are legacy and keep the star).
  *
  * @param {{recommendedModel?: object|null, models?: object[]}|null|undefined} analystCatalog
  * @returns {{recommendedModel: object|null, models: object[]}}
@@ -65,19 +73,12 @@ function analystFitRank(model, recommendedKey) {
 export function curateAnalystCatalogForPicker(analystCatalog) {
   const incoming = Array.isArray(analystCatalog?.models) ? analystCatalog.models : [];
   const available = incoming.filter((model) => model?.available === true);
-  const analysisCapable = available.filter((model) => {
-    const tags = model.recommendationTags ?? [];
-    if (tags.includes("quality") || tags.includes("efficient")) return true;
-    return model.evidenceStatus === "scored";
-  });
 
-  const recommendedKey = analystCatalog?.recommendedModel?.candidateKey ?? null;
-  const ordered = [...analysisCapable].sort((a, b) => {
-    const byRank = analystFitRank(a, recommendedKey) - analystFitRank(b, recommendedKey);
-    if (byRank !== 0) return byRank;
-    const evidenceA = a.evidenceStatus === "scored" ? 0 : 1;
-    const evidenceB = b.evidenceStatus === "scored" ? 0 : 1;
-    if (evidenceA !== evidenceB) return evidenceA - evidenceB;
+  const ordered = [...available].sort((a, b) => {
+    const byFit = analystFitRank(b) - analystFitRank(a);
+    if (byFit !== 0) return byFit;
+    const byConfidence = numericOr(b.confidence, 0) - numericOr(a.confidence, 0);
+    if (byConfidence !== 0) return byConfidence;
     const nameA = String(a.displayName ?? a.modelId ?? "");
     const nameB = String(b.displayName ?? b.modelId ?? "");
     return nameA.localeCompare(nameB);
@@ -96,11 +97,12 @@ export function curateAnalystCatalogForPicker(analystCatalog) {
   }
 
   const incomingRecommended = analystCatalog?.recommendedModel ?? null;
-  const recommendedModel =
-    incomingRecommended
-    && models.some((model) => model.candidateKey === incomingRecommended.candidateKey)
-      ? incomingRecommended
-      : null;
+  const survivor = incomingRecommended
+    ? models.find((model) => model.candidateKey === incomingRecommended.candidateKey)
+    : null;
+  const confidence = survivor ? (survivor.confidence ?? incomingRecommended.confidence) : null;
+  const sufficient = confidence == null || numericOr(confidence, 0) >= MIN_RECOMMENDATION_CONFIDENCE;
+  const recommendedModel = survivor && sufficient ? incomingRecommended : null;
   return { recommendedModel, models };
 }
 
