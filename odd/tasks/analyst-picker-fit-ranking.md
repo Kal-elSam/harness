@@ -29,3 +29,20 @@ Capture showed only Codex; Claude missing with no honest reason. Preferred-adapt
 - Ineligible Claude absent + compact notice, no disabled rows
 - ★ only for real recommendedModel
 - Confirm still revalidates availability
+
+## Extension: usable `kairo` startup + analysis + team (approved 2026-09-30)
+
+Branch `feat/kairo-startup-analyst-team` (worktree from c2382a261). No push, no merge, no #362 changes, no real-account use without authorization.
+TDD: enabled (project strict TDD), runner `node --test <file>`; Rust `cargo test --manifest-path crates/kairo-ui/Cargo.toml`.
+Route: delegated direct, one writer per unit (mapper evidence: 4+ files per unit).
+Estimated delivery: ~600+ changed lines -> delivery strategy `ask-on-risk`; ask chain strategy before pushing (not authorized to push anyway).
+
+- [ ] T7 Startup: `session_start` no longer awaits usage/availability probes (index.js ~:789); probes run in background with `.catch`. Test with slow/never-resolving stubs. Do not raise the 8s timeout blindly; add late-get_state bridge test only to characterize.
+- [ ] T8 Unified analyst profile: `BOOTSTRAP_ANALYST_PROFILE` (project-strategy.js:65) = reasoning + coding + architecture + design; `buildAnalystPrompt` investigates languages/structure/deps/constraints/risks and justifies team with repo evidence.
+- [ ] T9 OpenCode Go bootstrap analyzer adapter (read-only constraints, honest isolation level, no silent provider substitution, no auto-activation).
+- [ ] T10 Exclusion causes (quota exhausted / unavailable verified -> exclude; unknown access and unscored != unavailable) plumbed into picker curation + notice.
+- [ ] T11 Rust modal: loading/error/exclusion states; cargo test.
+- [ ] T12 Build binary+sidecar, PTY smoke; local `kairo` retarget ONLY with authorization + backup + rollback (currently symlinks to ratatui-host worktree).
+- [ ] T13 Human acceptance with real authorized provider (pending user; mocks never count as 100%).
+
+Commits per task (evidence recorded below).
