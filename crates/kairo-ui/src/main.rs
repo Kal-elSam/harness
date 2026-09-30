@@ -4120,6 +4120,8 @@ mod tests {
             detail: "codex".into(),
             state: crate::surfaces::AgentState::Idle,
             cause: Default::default(),
+                why: None,
+                availability: None,
         }];
         app.view.team_presentation = Some("incomplete".into());
         app.view.roles_visible = false;
@@ -4167,6 +4169,8 @@ mod tests {
             detail: "codex".into(),
             state: crate::surfaces::AgentState::Idle,
             cause: Default::default(),
+                why: None,
+                availability: None,
         }];
         app.view.roles_visible = false;
         app.begin_role_edit_for_selected();

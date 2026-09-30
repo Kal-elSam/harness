@@ -109,13 +109,13 @@ test("order is catalog rank best→worst, then candidateKey — display name is 
     assert.deepEqual(curated.alternatives, []);
     assert.equal(curated.recommendedModel, null);
     for (const row of curated.models) {
-      assert.equal(row.explanation, null);
+      assert.match(row.explanation, /\S/);
       assert.ok(row.detail == null || typeof row.detail === "string");
     }
   }
 });
 
-test("list lines have no recommendation copy; thin evidence keeps detail for d (T26)", () => {
+test("thin evidence explains confidence honestly; detail keeps counts for d (T29)", () => {
   const curated = curateAnalystCatalogForPicker({
     models: [
       entry({ candidateKey: "a::ok", modelId: "ok", displayName: "Ok", rank: 1 }),
@@ -126,8 +126,11 @@ test("list lines have no recommendation copy; thin evidence keeps detail for d (
     ]
   });
   assert.deepEqual(keys(curated.models), ["a::ok", "a::sol"]);
-  assert.ok(curated.models.every((row) => row.explanation == null));
+  const ok = curated.models.find((row) => row.modelId === "ok");
+  assert.match(ok.explanation, /apto|investigar/i);
   const sol = curated.models.find((row) => row.modelId === "sol");
+  assert.match(sol.explanation, /provisional|confianza evidencial/i);
+  assert.match(sol.explanation, /no implican menor capacidad/i);
   assert.match(sol.detail, /provisional|menos evidencia/i);
 });
 

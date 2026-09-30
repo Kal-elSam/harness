@@ -432,7 +432,8 @@ export function computeBootstrapAnalystCatalog({
  * because only one real candidate is accessible right now.
  * @param {object} profile - computeProjectProfile() result, with
  *   roleRequirements already replaced by project-analysis.js's
- *   deriveRoleRequirements() output (real analyst findings + mechanical floor)
+ *   deriveRoleRequirements() output (analyst-justified roles, or the
+ *   mechanical safety floor when the analyst yielded none)
  * @param {object} candidates - the real candidate pool: `scoredAll`
  *   (scoreAvailableModels output, every candidate provider), `eligibility`
  *   (checkCandidate results per adapterId), `registry` (Model Intelligence

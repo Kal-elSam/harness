@@ -14,7 +14,7 @@ const FULL_STRATEGY = {
   bootstrapAnalyst: { displayName: "Claude Opus 5", adapterId: "claude", modelId: "claude-opus-5", accessMode: "automatic" },
   orchestrator: { displayName: "Kimi K3", adapterId: "opencode-go", modelId: "kimi-k3", accessMode: "automatic" },
   projectTeam: [
-    { role: "Builder", model: { displayName: "GPT-6 Terra", adapterId: "codex", modelId: "gpt-6-terra", accessMode: "automatic" } },
+    { role: "Builder", model: { displayName: "GPT-6 Terra", adapterId: "codex", modelId: "gpt-6-terra", accessMode: "automatic" }, reason: "Chosen for coding throughput on this stack." },
     { role: "Reviewer", model: null }
   ]
 };
@@ -42,10 +42,15 @@ test("workspace snapshot keeps Kairo's project team, bound session, usage and me
   // Compat: the pre-existing state/assignments shape is unchanged
   // (additive change — team.rows is asserted separately below).
   assert.equal(snapshot.team.state, "active");
-  assert.deepEqual(snapshot.team.assignments, [
-    { role: "Builder", model: "GPT-6 Terra", via: "codex" },
-    { role: "Reviewer", model: "MiniMax-M3", via: "opencode-go" }
-  ]);
+  assert.equal(snapshot.team.assignments.length, 2);
+  assert.equal(snapshot.team.assignments[0].role, "Builder");
+  assert.equal(snapshot.team.assignments[0].model, "GPT-6 Terra");
+  assert.equal(snapshot.team.assignments[0].via, "codex");
+  assert.match(snapshot.team.assignments[0].reason, /Selected for coding|coding capability/i);
+  assert.equal(snapshot.team.assignments[0].availability.label, "verificando");
+  assert.equal(snapshot.team.assignments[1].role, "Reviewer");
+  assert.equal(snapshot.team.assignments[1].model, "MiniMax-M3");
+  assert.equal(snapshot.team.assignments[1].via, "opencode-go");
   assert.deepEqual(snapshot.usage, [{ provider: "codex", totalTokens: 2400 }]);
   assert.deepEqual(snapshot.memory, { status: "configured" });
 });
@@ -86,18 +91,28 @@ test("workspace loader reads each existing Kairo source without choosing an arbi
 test("workspace snapshot team rows cover Project Analyst, Orchestrator, and every project-team role, defaulting availability to checking", () => {
   const snapshot = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY });
 
-  assert.deepEqual(snapshot.team.rows, [
-    { role: "Project Analyst", model: "Claude Opus 5", via: "claude", accessMode: "automatic", availability: { state: "checking", warning: null } },
-    { role: "Orchestrator", model: "Kimi K3", via: "opencode-go", accessMode: "automatic", availability: { state: "checking", warning: null } },
-    { role: "Builder", model: "GPT-6 Terra", via: "codex", accessMode: "automatic", availability: { state: "checking", warning: null } },
-    { role: "Reviewer", model: "no eligible option", via: "unknown", accessMode: null, availability: { state: "checking", warning: null } }
-  ]);
+  assert.equal(snapshot.team.rows.length, 4);
+  assert.equal(snapshot.team.rows[0].role, "Project Analyst");
+  assert.equal(snapshot.team.rows[0].availability.state, "checking");
+  assert.equal(snapshot.team.rows[0].reason, null);
+  assert.equal(snapshot.team.rows[2].role, "Builder");
+  assert.equal(snapshot.team.rows[2].model, "GPT-6 Terra");
+  assert.equal(snapshot.team.rows[2].via, "codex");
+  assert.equal(snapshot.team.rows[2].accessMode, "automatic");
+  assert.equal(snapshot.team.rows[2].reason, "Chosen for coding throughput on this stack.");
+  assert.deepEqual(snapshot.team.rows[2].availability, { state: "checking", warning: null });
+  assert.equal(snapshot.team.rows[3].role, "Reviewer");
+  assert.equal(snapshot.team.rows[3].model, "no eligible option");
   // Existing compatible shape stays intact (additive change).
   assert.deepEqual(snapshot.team.state, "active");
-  assert.deepEqual(snapshot.team.assignments, [
-    { role: "Builder", model: "GPT-6 Terra", via: "codex" },
-    { role: "Reviewer", model: "Unavailable", via: "unknown" }
-  ]);
+  assert.equal(snapshot.team.assignments[0].role, "Builder");
+  assert.equal(snapshot.team.assignments[0].model, "GPT-6 Terra");
+  assert.equal(snapshot.team.assignments[0].via, "codex");
+  assert.equal(snapshot.team.assignments[0].reason, "Chosen for coding throughput on this stack.");
+  assert.equal(snapshot.team.assignments[0].availability.label, "verificando");
+  assert.equal(snapshot.team.assignments[1].role, "Reviewer");
+  assert.equal(snapshot.team.assignments[1].model, "Unavailable");
+  assert.equal(snapshot.team.assignments[1].via, "unknown");
 });
 
 test("workspace snapshot team rows compute real availability when intelligence is injected", () => {
@@ -499,15 +514,34 @@ test("loadKairoUsageData never throws even when a reader rejects — a failed re
 test("workspace snapshot exposes herd agents[] derived from team rows, additive to the existing shape", () => {
   const snapshot = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY });
 
-  assert.deepEqual(snapshot.agents, [
-    { id: "project-analyst", label: "Project Analyst", role: "Project Analyst", provider: "claude", model: "Claude Opus 5", state: "unknown", stateReason: null },
-    { id: "orchestrator", label: "Orchestrator", role: "Orchestrator", provider: "opencode-go", model: "Kimi K3", state: "unknown", stateReason: null },
-    { id: "builder", label: "Builder", role: "Builder", provider: "codex", model: "GPT-6 Terra", state: "unknown", stateReason: null },
-    { id: "reviewer", label: "Reviewer", role: "Reviewer", provider: "unknown", model: "no eligible option", state: "unknown", stateReason: null }
-  ]);
+  assert.equal(snapshot.agents.length, 4);
+  assert.equal(snapshot.agents[0].id, "project-analyst");
+  assert.equal(snapshot.agents[0].why, null);
+  assert.equal(snapshot.agents[0].availability, "verificando");
+  assert.equal(snapshot.agents[2].id, "builder");
+  assert.equal(snapshot.agents[2].why, "Chosen for coding throughput on this stack.");
+  assert.equal(snapshot.agents[2].model, "GPT-6 Terra");
+  assert.equal(snapshot.agents[2].provider, "codex");
+  assert.equal(snapshot.agents[2].availability, "verificando");
+  assert.equal(snapshot.agents[3].id, "reviewer");
   // Additive: the pre-existing team shape is unchanged.
   assert.equal(snapshot.team.rows.length, 4);
   assert.equal(snapshot.team.state, "active");
+});
+
+test("workspace snapshot agents expose usable/bloqueado availability labels with why for the proposal table (T29)", () => {
+  const snapshot = buildKairoWorkspaceSnapshot({
+    projectRoot: "/work/agentic-harness",
+    strategy: FULL_STRATEGY,
+    intelligence: { eligibility: { codex: { ok: true } }, claudeEntitlement: { "claude-opus-5": { status: "denied", reason: "plan tier too low" } }, cursorAccess: {} }
+  });
+  const builder = snapshot.agents.find((agent) => agent.id === "builder");
+  assert.equal(builder.availability, "usable");
+  assert.equal(builder.why, "Chosen for coding throughput on this stack.");
+  assert.equal(builder.model, "GPT-6 Terra");
+  const analyst = snapshot.agents.find((agent) => agent.id === "project-analyst");
+  assert.equal(analyst.availability, "bloqueado");
+  assert.equal(snapshot.team.assignments[0].availability.label, "usable");
 });
 
 test("workspace snapshot agents map blocked to blocked with reason and available to idle, never working or done without a run signal", () => {

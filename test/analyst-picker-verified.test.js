@@ -111,7 +111,7 @@ test("unverified, denied and exhausted rows are in NEITHER list", () => {
   assert.deepEqual(keys(curated.alternatives), []);
 });
 
-test("list has no recommendation explanations; detail carries certainty for d (T26)", () => {
+test("explanations separate aptitude from evidential confidence; detail carries counts for d (T29)", () => {
   const curated = curateAnalystCatalogForPicker({
     models: [
       entry({ modelId: "strong", displayName: "Strong", rank: 1, evaluation: { ...EVALUATION, capabilities: { reasoning: 0.9, coding: 0.8 } } }),
@@ -121,11 +121,11 @@ test("list has no recommendation explanations; detail carries certainty for d (T
   });
   assert.equal(curated.recommendedModel, null);
   assert.deepEqual(curated.alternatives, []);
-  for (const row of curated.models) {
-    assert.equal(row.explanation, null);
-    assert.ok(row.detail == null || typeof row.detail === "string");
-  }
+  const strong = curated.models.find((row) => row.modelId === "strong");
+  assert.match(strong.explanation, /apto|investigar/i);
+  assert.doesNotMatch(strong.explanation, /menor capacidad/i);
   const unscored = curated.models.find((row) => row.modelId === "unscored");
+  assert.match(unscored.explanation, /no implica menor capacidad/i);
   assert.match(unscored.detail, /sin fila de benchmark|benchmark/i);
 });
 

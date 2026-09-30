@@ -76,6 +76,15 @@ Assumptions (recorded): unscored-but-available models are selectable (lower evid
 - [x] T27 (approved 2026-09-30) Flat picker list ordered best→worst by catalog `rank` (`compareAnalystRows`; unranked last). Precise exclusion causes: `quota_reserve` / `rate_limited` / `quota_exhausted` / unverified — concise Spanish (`reserva baja (N%)`, `ventana limitada`, `cuota agotada`, `sin verificar`). Cursor non-JSON stdout/stderr matching LIMIT_TEXT_PATTERN → EXHAUSTED (timeout stays UNVERIFIED). `recommendedModel: null`, `alternatives: []`; do not change team-formation evaluator. No invented Cursor /usage API; no real probes; no push. T9/T10/T12/T13/T18 stay OPEN.
 - [x] T28 (approved 2026-09-30; implemented — acceptance below) Fix analysis→team functional flow: (1) `buildProjectStrategy` assigns usable primary else validated fallback — never a blocked comparative leader as operational; orchestrator = operational Architect; evaluator untouched. (2) `analysis_progress` stages (prep/ask/process/build) via service→sidecar→RPC; animated elapsed, no invented %. (3) `team-presentation` separates pending-approval (show draft) from incomplete/blocked; “ready to approve” only when all operational assignments usable. (4) Auto-open Project view on finished analysis snapshot; no auto-approve. (5) Preserve model identity vs block reason; consistent row counts; clear progress on done/fail. (6) Revalidate integrity+availability before approve; reject with reasons, no silent substitution. Preserve unrelated work and previously approved teams. T9/T10/T12/T13/T18 stay OPEN.
 
+- [x] T29 (approved 2026-09-30; gaps 3→5→6) Picker explanation (aptitude ≠ evidence confidence); minimal analyst-justified team (floor only when empty); proposal table why + disponibilidad. Evaluator (`buildAiTeam`/`buildEfficientTeam`/`rankCandidatesByRequirements`) untouched. No push; no real probes.
+
+
+## T29 acceptance (observed 2026-09-30)
+- **Gap 3**: `decorate`/`rowExplanation` sets Spanish `explanation` — qualified = short aptitude; partial/insufficient/no_evidence = honest evidential confidence + “benchmarks thin/missing ≠ lower capability”. `detail` keeps counts for `d`. Flat list + `compareAnalystRows`; `recommendedModel: null`, `alternatives: []`.
+- **Gap 5**: `deriveRoleRequirements` — analyst-justified roles win; mechanical Explorer/Architect floor only when analyst yields zero valid needs. Does not rewrite ACTIVE assignments. Capability merge when the same role appears on both.
+- **Gap 6**: `compactAssignment`/`workspaceAgents` carry `reason`/`why` (via shared `explainTeamDecision`) and availability labels (`usable`/`bloqueado`/…). Rust `SidebarAgent` + `render_project_view` show Role — provider · model, then por qué / disponibilidad. Model identity not replaced by block reason (T28).
+- **Checks**: focused Node (picker/analysis/sidecar/workspace/cockpit) + `cargo test` kairo-ui. Commit hash in report. No Co-authored-by Cursor; no push.
+
 
 ## T28 acceptance (observed 2026-09-30)
 - Commit: `954ce28d0` (`feat(kairo): operational team assignment, analysis progress, and approve gate (T28)`). No Co-authored-by. No push.

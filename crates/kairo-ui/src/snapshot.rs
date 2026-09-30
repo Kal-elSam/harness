@@ -123,11 +123,30 @@ fn map_agent(entry: &Value) -> SidebarAgent {
     let state = parse_agent_state(entry.get("state").and_then(|v| v.as_str()));
     let detail = agent_detail_line(entry, state);
     let cause = agent_block_cause(entry);
+    let why = entry
+        .get("why")
+        .or_else(|| entry.get("reason"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let availability = entry
+        .get("availability")
+        .and_then(|v| match v {
+            Value::String(s) => Some(s.as_str()),
+            Value::Object(obj) => obj.get("label").and_then(|l| l.as_str()),
+            _ => None,
+        })
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     SidebarAgent {
         label,
         detail,
         state,
         cause,
+        why,
+        availability,
     }
 }
 
@@ -377,6 +396,33 @@ mod tests {
         );
         assert_eq!(view.agents[1].label, "Builder");
         assert_eq!(view.agents[1].state, AgentState::Idle);
+    }
+
+    #[test]
+    fn maps_agent_why_and_availability_without_replacing_model_identity() {
+        let snapshot = json!({
+            "project": { "label": "agentic-harness" },
+            "agents": [{
+                "label": "Builder",
+                "state": "idle",
+                "provider": "codex",
+                "model": "GPT-6 Terra",
+                "why": "Chosen for coding throughput on this stack.",
+                "availability": "usable"
+            }]
+        });
+        let mut view = ShellViewModel::default();
+        apply_workspace_snapshot(&mut view, &snapshot);
+        assert_eq!(view.agents[0].detail, "codex · GPT-6 Terra");
+        assert_eq!(
+            view.agents[0].why.as_deref(),
+            Some("Chosen for coding throughput on this stack.")
+        );
+        assert_eq!(view.agents[0].availability.as_deref(), Some("usable"));
+        assert!(
+            !view.agents[0].detail.contains("Chosen"),
+            "why must not replace provider · model identity"
+        );
     }
 
     #[test]
@@ -792,6 +838,8 @@ mod tests {
                 detail: "blocked".into(),
                 state: AgentState::Blocked,
                 cause: BlockCause::Unavailable,
+                why: None,
+                availability: None,
             })
             .collect();
         let attention = blocked_team_attention(&agents).expect("CTA");

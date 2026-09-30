@@ -82,6 +82,11 @@ pub struct SidebarAgent {
     /// aggregation (e.g. the chat CTA) never re-derives from already
     /// shortened/truncated text.
     pub cause: BlockCause,
+    /// Assignment why (sidecar `why` / `reason`) for the Project proposal table.
+    pub why: Option<String>,
+    /// Spanish availability label (`usable` / `bloqueado` / …) — never replaces
+    /// provider · model identity in `detail`.
+    pub availability: Option<String>,
 }
 
 impl SidebarAgent {
@@ -1462,12 +1467,35 @@ pub fn render_project_view(
             } else {
                 Style::default().fg(tone::TEXT).bg(tone::WORK_BG)
             };
+            let muted = if selected {
+                Style::default()
+                    .fg(tone::MUTED)
+                    .bg(tone::SELECT_BG)
+            } else {
+                Style::default().fg(tone::MUTED).bg(tone::WORK_BG)
+            };
             let marker = if selected { "› " } else { "  " };
+            // Proposal table: Role — provider · model; why + availability on
+            // following lines. Model identity stays in detail (T28).
             lines.push(padded_span(
                 &format!("{marker}{} — {}", agent.label, agent.detail),
                 inner.width,
                 style,
             ));
+            if let Some(why) = agent.why.as_deref().filter(|s| !s.is_empty()) {
+                lines.push(padded_span(
+                    &format!("  por qué: {why}"),
+                    inner.width,
+                    muted,
+                ));
+            }
+            if let Some(avail) = agent.availability.as_deref().filter(|s| !s.is_empty()) {
+                lines.push(padded_span(
+                    &format!("  disponibilidad: {avail}"),
+                    inner.width,
+                    muted,
+                ));
+            }
         }
         let hint = if state == "suggested" {
             "Enter = edit selected role · A = approve · Esc → Work"
@@ -2054,6 +2082,8 @@ mod tests {
             detail: "idle".into(),
             state: AgentState::Idle,
             cause: BlockCause::Unavailable,
+                why: None,
+                availability: None,
         }];
         model.selected_agent = 0;
         let mut chat = ChatState::default();
@@ -2424,12 +2454,16 @@ mod tests {
                 detail: "idle".into(),
                 state: AgentState::Idle,
                 cause: BlockCause::Unavailable,
+                why: None,
+                availability: None,
             },
             SidebarAgent {
                 label: "Builder".into(),
                 detail: "blocked".into(),
                 state: AgentState::Blocked,
                 cause: BlockCause::Unavailable,
+                why: None,
+                availability: None,
             },
         ];
         model.selected_agent = 0;
@@ -2493,12 +2527,16 @@ mod tests {
                 detail: "kimi".into(),
                 state: AgentState::Idle,
                 cause: BlockCause::Unavailable,
+                why: None,
+                availability: None,
             },
             SidebarAgent {
                 label: "Builder".into(),
                 detail: "codex".into(),
                 state: AgentState::Blocked,
                 cause: BlockCause::Unavailable,
+                why: None,
+                availability: None,
             },
         ];
         model.team_state = Some("active".into());
@@ -2569,6 +2607,43 @@ mod tests {
     }
 
     #[test]
+    fn project_view_proposal_table_shows_why_and_availability_under_role_identity() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        let mut model = ShellViewModel::default();
+        model.team_state = Some("suggested".into());
+        model.roles_visible = true;
+        model.agents = vec![SidebarAgent {
+            label: "Builder".into(),
+            detail: "codex · GPT-6 Terra".into(),
+            state: AgentState::Idle,
+            cause: BlockCause::Unavailable,
+            why: Some("Chosen for coding throughput on this stack.".into()),
+            availability: Some("usable".into()),
+        }];
+        render_project_view(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+            WorkspaceView::Project,
+        );
+        let hay = buffer_text(&buf);
+        assert!(
+            hay.contains("Builder — codex · GPT-6 Terra"),
+            "role identity line missing: {hay}"
+        );
+        assert!(hay.contains("por qué: Chosen for coding throughput"), "{hay}");
+        assert!(hay.contains("disponibilidad: usable"), "{hay}");
+        assert!(
+            !hay.contains("Builder — Chosen"),
+            "why must not replace provider · model: {hay}"
+        );
+    }
+
+    #[test]
     fn empty_sidebar_offers_approve_key_once_a_team_is_suggested() {
         let area = Rect::new(0, 0, 100, 30);
         let regions = split_shell(area);
@@ -2604,6 +2679,8 @@ mod tests {
             detail: "codex".into(),
             state: AgentState::Idle,
             cause: Default::default(),
+                why: None,
+                availability: None,
         }];
         render_shell(&mut buf, regions, &model, &ChatState::default(), &default_editor());
         let hay = buffer_text(&buf);
@@ -2663,6 +2740,8 @@ mod tests {
             detail: "OpenCode Go · rate-limited · /analyze".into(),
             state: AgentState::Blocked,
             cause: BlockCause::RateLimited,
+                why: None,
+                availability: None,
         }];
         render_shell(
             &mut buf,

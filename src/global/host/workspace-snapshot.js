@@ -6,6 +6,7 @@ import { readProjectStrategy } from "../conversation/project-strategy-store.js";
 import { getSession, isValidSessionId } from "../conversation/session-registry.js";
 import { listProviderUsage } from "../runtime/usage-store.js";
 import { resolveAssignmentAvailability } from "../conversation/assignment-availability.js";
+import { explainTeamDecision } from "../conversation/team-decision.js";
 import { buildUsageModel, formatSubscriptionUsageSegments } from "../conversation/usage-summary.js";
 import { createConversationService } from "../conversation/service.js";
 import { readCodexUsage } from "../observability/codex-usage.js";
@@ -17,12 +18,27 @@ import { readAvailabilityRecovery } from "../conversation/availability-recovery-
 
 export const KAIRO_WORKSPACE_SNAPSHOT_SCHEMA = "kairo.workspace-shell/v1";
 
-function compactAssignment(entry) {
+/** Spanish availability label for the Project proposal table — never replaces model identity. */
+function availabilityLabel(state) {
+  if (state === "available") return "usable";
+  if (state === "blocked") return "bloqueado";
+  if (state === "checking") return "verificando";
+  return "desconocido";
+}
+
+function compactAssignment(entry, intelligence) {
   const model = entry?.model ?? null;
+  const availability = rowAvailability(model, intelligence);
   return {
     role: entry?.role ?? "Unknown role",
     model: model?.displayName ?? model?.modelId ?? "Unavailable",
-    via: model?.adapterId ?? "unknown"
+    via: model?.adapterId ?? "unknown",
+    reason: explainTeamDecision(entry),
+    availability: {
+      state: availability.state,
+      label: availabilityLabel(availability.state),
+      warning: availability.warning ?? null
+    }
   };
 }
 
@@ -67,6 +83,8 @@ function agentState(availability) {
  * Analyst, Orchestrator, then project-team roles). Same facts as
  * `team.rows`, reshaped for attention ordering (blocked first happens at
  * render, see workspace-widget.js); no second recommendation.
+ * Additive `why` / `availability` feed the Project proposal table
+ * (por qué / disponibilidad) without replacing provider · model identity.
  * @param {object} team - the `workspaceTeam` value
  */
 function workspaceAgents(team) {
@@ -77,7 +95,9 @@ function workspaceAgents(team) {
     provider: row.via ?? "unknown",
     model: row.model ?? "no eligible option",
     state: agentState(row.availability),
-    stateReason: row.availability?.warning ?? null
+    stateReason: row.availability?.warning ?? null,
+    why: row.reason ?? null,
+    availability: availabilityLabel(row.availability?.state)
   }));
 }
 
@@ -128,13 +148,14 @@ function rowAvailability(model, intelligence) {
   return { state: "blocked", warning: warning ?? null, ...(limit ? { limit } : {}) };
 }
 
-function teamRow(role, model, intelligence) {
+function teamRow(role, model, intelligence, entry = null) {
   return {
     role,
     model: model?.displayName ?? model?.modelId ?? "no eligible option",
     via: model?.adapterId ?? "unknown",
     accessMode: model?.accessMode ?? null,
-    availability: rowAvailability(model, intelligence)
+    availability: rowAvailability(model, intelligence),
+    reason: entry ? explainTeamDecision(entry) : null
   };
 }
 
@@ -152,7 +173,7 @@ function workspaceTeamRows(strategy, intelligence) {
     teamRow("Orchestrator", strategy.orchestrator ?? null, intelligence)
   ];
   for (const entry of strategy.projectTeam ?? []) {
-    rows.push(teamRow(entry?.role ?? "Unknown role", entry?.model ?? null, intelligence));
+    rows.push(teamRow(entry?.role ?? "Unknown role", entry?.model ?? null, intelligence, entry));
   }
   return rows;
 }
@@ -174,7 +195,7 @@ function workspaceTeam(strategy, intelligence, cache = null, now = Date.now()) {
   const cachedIntelligence = useCache && cache?.value ? cache.value : intelligence;
   const base = {
     state: strategy.status ?? "unknown",
-    assignments: (strategy.projectTeam ?? []).map(compactAssignment),
+    assignments: (strategy.projectTeam ?? []).map((entry) => compactAssignment(entry, cachedIntelligence)),
     rows: workspaceTeamRows(strategy, cachedIntelligence)
   };
   // Additive presentation state (presentation only; never touches the

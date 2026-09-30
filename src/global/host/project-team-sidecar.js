@@ -78,6 +78,25 @@ function evidenceDetail(row) {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+/**
+ * Concise Spanish list line (Rust `description`): aptitude when qualified;
+ * for thin/missing evidence, name evidential confidence and stress that
+ * thin/missing benchmarks do NOT imply lower capability. Counts stay in `detail`.
+ */
+function rowExplanation(row) {
+  if (row.qualification === QUALIFICATION.QUALIFIED) {
+    return "Apto para investigar arquitectura y código";
+  }
+  if (row.qualification === QUALIFICATION.PARTIAL) {
+    return "Confianza evidencial provisional — benchmarks escasos no implican menor capacidad";
+  }
+  if (row.qualification === QUALIFICATION.INSUFFICIENT) {
+    return "Evidencia insuficiente para comparar — benchmarks faltantes no implican menor capacidad";
+  }
+  // no_evidence / unknown: honest absence, not a capability claim
+  return "Sin evidencia de benchmark — no implica menor capacidad";
+}
+
 /** Model AND subscription, so the same model on two subscriptions stays distinguishable. */
 function decorate(model) {
   return {
@@ -86,7 +105,7 @@ function decorate(model) {
     listing: "main",
     subscription: subscriptionOf(model),
     label: labelOf(model),
-    explanation: null,
+    explanation: rowExplanation(model),
     detail: evidenceDetail(model)
   };
 }
