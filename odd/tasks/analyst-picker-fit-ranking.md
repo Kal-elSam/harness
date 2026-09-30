@@ -78,6 +78,7 @@ Assumptions (recorded): unscored-but-available models are selectable (lower evid
 
 
 ## T28 acceptance (observed 2026-09-30)
+- Commit: `954ce28d0` (`feat(kairo): operational team assignment, analysis progress, and approve gate (T28)`). No Co-authored-by. No push.
 - **Operational assignment**: `buildProjectStrategy` uses usable efficient primary, else usable fallback, else keeps preferred primary with `assignmentState: "blocked"` (role still required). Orchestrator = operational Architect. `qualityTeam`/`efficientTeam` comparative evidence unchanged. Evaluator (`buildAiTeam`/`buildEfficientTeam`/`rankCandidatesByRequirements`) untouched.
 - **analysis_progress**: stages `preparing` → `consulting_analyst` → `processing` → `building_team` via `runLockedBootstrapAnalysis` → sidecar `onProgress` → RPC `{type:"analysis_progress", stage, analyst, elapsedMs}`. Rust shows stage · analyst · elapsed spinner; clears on team success/failure. No invented %.
 - **Presentation**: `pending_approval` (suggested, probe pending, rolesVisible) / `ready_to_approve` (suggested, all operational usable) / `blocked` with rolesVisible for suggested drafts; ACTIVE complete/verifying/blocked unchanged. Ready notice only when `readyToApprove`; otherwise “draft needs attention”.
