@@ -42,7 +42,7 @@ Estimated delivery: ~600+ changed lines -> delivery strategy `ask-on-risk`; ask 
 - [ ] T9 OpenCode Go bootstrap analyzer adapter (read-only constraints, honest isolation level, no silent provider substitution, no auto-activation).
 - [ ] T10 Exclusion causes (quota exhausted / unavailable verified -> exclude; unknown access and unscored != unavailable) plumbed into picker curation + notice.
 - [x] T11 Rust modal: loading/error/exclusion states; cargo test. Modal opens in Loading on request, Error state with r retry / Esc close, per-provider exclusion cause lines (pickerNotice fallback when field absent); rpc stdio now forwards exclusionCauses. (commit: "feat(kairo-ui): show loading, error and exclusion causes in analyst modal"; hash in report)
-- [ ] T12 Build binary+sidecar, PTY smoke; local `kairo` retarget ONLY with authorization + backup + rollback (currently symlinks to ratatui-host worktree).
+- [ ] T12 (partial) Built host binary (dist/kairo-ui/darwin-arm64, Node 22, cargo release) and PTY smoke PASS (60x30, 100x30, 160x48). Local kairo NOT retargeted: awaits authorization, backup and rollback. Node 24 run and real-provider acceptance (T13) pending.
 - [ ] T13 Human acceptance with real authorized provider (pending user; mocks never count as 100%).
 
 Commits per task (evidence recorded below).
