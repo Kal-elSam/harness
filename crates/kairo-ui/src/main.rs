@@ -3439,6 +3439,69 @@ mod tests {
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
     }
 
+    /// Replays the frozen wire fixture produced by the real Node sidecar
+    /// (test/analyst-preflight-analyze-wire.test.js). Host-side hops run for
+    /// real: `request_analyst_preflight` and the picker Enter path write the
+    /// request lines through `BridgeClient::send_op` into a recorder process,
+    /// and the sidecar records enter through `ingest_record`. The Node
+    /// sidecar itself is NOT running here (its output is the fixture).
+    #[test]
+    fn preflight_then_analyze_wire_fixture_roundtrips_through_the_host() {
+        let fixture = include_str!("../fixtures/preflight-analyze-unverified.ndjson");
+        let lines: Vec<serde_json::Value> = fixture
+            .lines()
+            .map(|l| serde_json::from_str(l).expect("fixture line is JSON"))
+            .collect();
+        let of = |dir: &str| -> Vec<serde_json::Value> {
+            lines
+                .iter()
+                .filter(|l| l["dir"] == dir)
+                .map(|l| l["record"].clone())
+                .collect()
+        };
+        let requests = of("host->sidecar");
+        let records = of("sidecar->host");
+        assert_eq!(requests.len(), 2);
+
+        let (mut app, path) = recorder_app("ask");
+        app.request_analyst_preflight();
+        assert!(app.picker.is_some() && app.preflight_pending);
+
+        let preflight = records.iter().find(|r| r["type"] == "preflight").expect("preflight record");
+        app.ingest_record(preflight.clone());
+        assert!(!app.preflight_pending);
+        let picker = app.picker.as_ref().expect("modal open with the real catalog");
+        let unverified = picker
+            .options
+            .iter()
+            .position(|o| !o.access_verified)
+            .expect("unverified-access row is listed");
+        assert!(picker.options[unverified].row_label().contains("acceso sin verificar"));
+        assert!(!picker.options[unverified].recommended);
+
+        for _ in 0..unverified {
+            assert!(!handle_picker_key(&mut app, press('j')));
+        }
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.picker.is_none() && app.team_action_pending);
+
+        let recorded: Vec<serde_json::Value> = recorded_ops(&path, 2)
+            .lines()
+            .map(|l| serde_json::from_str(l).expect("host wrote JSON"))
+            .collect();
+        assert_eq!(recorded, requests, "the host writes exactly the requests the sidecar was given");
+
+        for record in records.iter().filter(|r| r["type"] != "preflight") {
+            app.ingest_record(record.clone());
+        }
+        assert!(!app.team_action_pending);
+        assert!(app.view.team_state.is_none(), "no team state is invented");
+        let team = records.iter().find(|r| r["type"] == "team").unwrap();
+        assert_eq!(app.view.notice.as_deref(), team["reason"].as_str());
+        assert!(app.view.notice.as_deref().unwrap().contains("could not be verified"));
+        let _ = std::fs::remove_file(path);
+    }
+
     #[test]
     fn reanalyze_key_works_with_hidden_roles_even_when_pi_failed() {
         for presentation in ["incomplete", "blocked", "verifying"] {
