@@ -80,10 +80,12 @@ Assumptions (recorded): unscored-but-available models are selectable (lower evid
 
 
 ## T29 acceptance (observed 2026-09-30)
+- Commit: `1675840f3c1f7d1ffa6ecf67cb729818362e6d69` (`feat(kairo): picker aptitude explanations, minimal analyst team, proposal table (T29)`). No Co-authored-by. No push.
 - **Gap 3**: `decorate`/`rowExplanation` sets Spanish `explanation` — qualified = short aptitude; partial/insufficient/no_evidence = honest evidential confidence + “benchmarks thin/missing ≠ lower capability”. `detail` keeps counts for `d`. Flat list + `compareAnalystRows`; `recommendedModel: null`, `alternatives: []`.
 - **Gap 5**: `deriveRoleRequirements` — analyst-justified roles win; mechanical Explorer/Architect floor only when analyst yields zero valid needs. Does not rewrite ACTIVE assignments. Capability merge when the same role appears on both.
 - **Gap 6**: `compactAssignment`/`workspaceAgents` carry `reason`/`why` (via shared `explainTeamDecision`) and availability labels (`usable`/`bloqueado`/…). Rust `SidebarAgent` + `render_project_view` show Role — provider · model, then por qué / disponibilidad. Model identity not replaced by block reason (T28).
-- **Checks**: focused Node (picker/analysis/sidecar/workspace/cockpit) + `cargo test` kairo-ui. Commit hash in report. No Co-authored-by Cursor; no push.
+- **Checks**: Node focused (analyst-picker-verified/views + project-analysis + project-team-sidecar + workspace-shell-snapshot + cockpit-view + project-overlay): 205 pass. `cargo test --manifest-path crates/kairo-ui/Cargo.toml`: 295 passed.
+- **NOT observed**: real probes; push; evaluator changes.
 
 
 ## T28 acceptance (observed 2026-09-30)
