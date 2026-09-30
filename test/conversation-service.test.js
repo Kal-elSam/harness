@@ -487,7 +487,7 @@ test("preflightProject computes a real read-only ProjectProfile and full analyst
   assert.equal(result.analystCatalog.models.length, 2, "both real ask-supported candidates from realScoredCandidates() must appear");
 });
 
-test("REGRESSION: preflightProject recommends only entitlement-safe models and excludes unverified Claude entirely — 'unavailable' means absent, never visible with a warning", async () => {
+test("REGRESSION (superseded for UNVERIFIED by T20): preflightProject recommends only entitlement-safe models; unverified Claude is a non-available selectable row", async () => {
   const candidates = await realScoredCandidates();
   const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
   const claude = {
@@ -508,7 +508,9 @@ test("REGRESSION: preflightProject recommends only entitlement-safe models and e
 
   const result = await service.preflightProject({ cwd: "/repo" });
   assert.equal(result.analystCatalog.recommendedModel.adapterId, "codex");
-  assert.ok(!result.analystCatalog.models.some((model) => model.adapterId === "claude"), "an unverified model must never appear in the analyst catalog at all, not even with a warning");
+  const claudeRow = result.analystCatalog.models.find((model) => model.adapterId === "claude");
+  assert.equal(claudeRow?.available, false, "T20: unverified access is listed but never 'available'");
+  assert.equal(claudeRow?.selectable, true);
 });
 
 test("runBootstrapAnalysis refuses to start while another analysis holds the project lock, without touching the analyst", async () => {
@@ -2492,4 +2494,95 @@ test("A2: submitTask ignores signal/onEvent on the PLAN path", async () => {
   const result = await service.submitTask({ cwd: "/repo", task: "do", mode: "plan", signal: new AbortController().signal, onEvent: () => {} });
   assert.equal(result.kind, "plan");
   assert.deepEqual(Object.keys(seen).sort(), ["cwd", "sessionId", "task"]);
+});
+
+// ---- T20: on-demand analyst access check (stubs only, no real provider) ----
+
+function accessService(overrides = {}) {
+  const writes = { claude: [], cursor: [] };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => null,
+    writeClaudeEntitlementCache: async (_home, doc) => { writes.claude.push(doc); },
+    readCursorAccessCache: async () => null,
+    writeCursorAccessCache: async (_home, doc) => { writes.cursor.push(doc); },
+    ...overrides
+  });
+  return { service, writes };
+}
+
+test("verifyAnalystAccess probes exactly the chosen Claude model on demand and persists a real ALLOWED/DENIED result", async () => {
+  const probed = [];
+  const { service, writes } = accessService({
+    probeClaudeModelEntitlements: async ({ modelIds, maxProbes }) => {
+      probed.push({ modelIds, maxProbes });
+      return modelIds.map((modelId) => ({ modelId, status: ENTITLEMENT.ALLOWED, reason: null, probedAt: new Date().toISOString() }));
+    }
+  });
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "claude-x" } });
+  assert.deepEqual(probed, [{ modelIds: ["claude-x"], maxProbes: 1 }]);
+  assert.equal(result.status, ENTITLEMENT.ALLOWED);
+  assert.equal(writes.claude.length, 1, "a real result is persisted so the next preflight sees it");
+});
+
+test("verifyAnalystAccess reports UNVERIFIED with the real reason and persists nothing when the probe cannot decide", async () => {
+  const { service, writes } = accessService({
+    probeClaudeModelEntitlements: async ({ modelIds }) => modelIds.map((modelId) => ({
+      modelId, status: ENTITLEMENT.UNVERIFIED, reason: "claude entitlement probe timed out after 30000ms", probedAt: new Date().toISOString()
+    }))
+  });
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "claude-x" } });
+  assert.equal(result.status, ENTITLEMENT.UNVERIFIED);
+  assert.match(result.reason, /timed out/);
+  assert.equal(writes.claude.length, 0);
+});
+
+test("verifyAnalystAccess turns a thrown probe into UNVERIFIED (never allowed) and a DENIED result stays denied", async () => {
+  const thrown = accessService({ probeClaudeModelEntitlements: async () => { throw new Error("spawn EACCES"); } });
+  const a = await thrown.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "m" } });
+  assert.equal(a.status, ENTITLEMENT.UNVERIFIED);
+  assert.match(a.reason, /EACCES/);
+  const denied = accessService({
+    probeClaudeModelEntitlements: async ({ modelIds }) => modelIds.map((modelId) => ({
+      modelId, status: ENTITLEMENT.DENIED, reason: "credits_required", probedAt: new Date().toISOString()
+    }))
+  });
+  const b = await denied.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "m" } });
+  assert.equal(b.status, ENTITLEMENT.DENIED);
+  assert.equal(b.reason, "credits_required");
+});
+
+test("verifyAnalystAccess probes the model's own Cursor pool directly (bypassing the snapshot cooldown) and maps the vocabulary", async () => {
+  const probed = [];
+  const { service, writes } = accessService({
+    probeCursorPoolAccess: async ({ pool, modelId }) => {
+      probed.push({ pool, modelId });
+      return { pool, status: "available", reason: null, probedAt: new Date().toISOString() };
+    }
+  });
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId: "gpt-5", displayName: "GPT-5" } });
+  assert.deepEqual(probed, [{ pool: "other_models", modelId: "gpt-5" }]);
+  assert.equal(result.status, ENTITLEMENT.ALLOWED);
+  assert.equal(writes.cursor.length, 1);
+
+  const exhausted = accessService({
+    probeCursorPoolAccess: async ({ pool }) => ({ pool, status: "exhausted", reason: "usage limit", probedAt: new Date().toISOString() })
+  });
+  assert.equal((await exhausted.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId: "gpt-5" } })).status, ENTITLEMENT.DENIED);
+  const unknown = accessService({
+    probeCursorPoolAccess: async ({ pool }) => ({ pool, status: "unverified", reason: "login required", probedAt: new Date().toISOString() })
+  });
+  const u = await unknown.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId: "gpt-5" } });
+  assert.equal(u.status, ENTITLEMENT.UNVERIFIED);
+  assert.equal(u.reason, "login required");
+  assert.equal(unknown.writes.cursor.length, 0);
+});
+
+test("verifyAnalystAccess fails closed for an adapter with no on-demand check", async () => {
+  const { service } = accessService();
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "opencode-go", modelId: "x" } });
+  assert.equal(result.status, ENTITLEMENT.UNVERIFIED);
+  assert.match(result.reason, /no on-demand access check/i);
 });

@@ -1320,6 +1320,53 @@ export function createConversationService(deps = {}) {
       };
     },
     /**
+     * T20: on-demand access check for ONE analyst model the human just
+     * confirmed whose access is UNVERIFIED. Runs the real provider probe for
+     * that model only (Claude: one `claude -p` entitlement probe, about one
+     * cent when allowed; Cursor: one minimal `cursor-agent -p` probe of the
+     * model's own pool, bypassing the snapshot cooldown), persists a real
+     * allowed/denied result exactly like the snapshot/verify paths do, and
+     * never persists or reports "allowed" for anything it could not decide.
+     * Fail-closed: any other adapter, a thrown probe, or an undecidable
+     * result is UNVERIFIED with the real reason (never invented quota).
+     * @param {{cwd?: string, model: {adapterId: string, modelId: string, displayName?: string}}} args
+     * @returns {Promise<{status: "allowed"|"denied"|"unverified", reason: string|null}>}
+     */
+    async verifyAnalystAccess({ cwd, model } = {}) {
+      const adapterId = model?.adapterId ?? null;
+      const modelId = model?.modelId ?? null;
+      if (!adapterId || !modelId) return { status: ENTITLEMENT.UNVERIFIED, reason: "No analyst model to verify" };
+      try {
+        const projectRoot = cwd ? await root(cwd) : process.cwd();
+        if (adapterId === "claude") {
+          const [result] = await probeClaudeModelEntitlementsImpl({ modelIds: [modelId], maxProbes: 1, cwd: projectRoot });
+          const status = result?.status ?? ENTITLEMENT.UNVERIFIED;
+          if (isPersistableEntitlementStatus(status)) {
+            let subscriptionType = null;
+            try { subscriptionType = (await verifyClaudeSubscriptionAuthImpl({}))?.subscriptionType ?? null; } catch { subscriptionType = null; }
+            const cache = await readClaudeEntitlementCacheImpl(homeDir);
+            await writeClaudeEntitlementCacheImpl(homeDir, mergeEntitlementResultsImpl(cache, { subscriptionType, results: [result] }));
+            readClaudeEntitlementCacheCached.invalidate();
+            return { status, reason: result.reason ?? null };
+          }
+          return { status: ENTITLEMENT.UNVERIFIED, reason: result?.reason ?? "Claude access probe returned no decision" };
+        }
+        if (adapterId === "cursor") {
+          const pool = classifyCursorPool({ id: modelId, displayName: model.displayName });
+          const probed = await probeCursorPoolAccessImpl({ pool, modelId, cwd: projectRoot });
+          const status = cursorStatusToEntitlement(probed?.status);
+          if (status !== ENTITLEMENT.UNVERIFIED) {
+            const cache = await readCursorAccessCacheImpl(homeDir).catch(() => null);
+            await writeCursorAccessCacheImpl(homeDir, mergeCursorAccessResult(cache, probed)).catch(() => {});
+          }
+          return { status, reason: probed?.reason ?? null };
+        }
+        return { status: ENTITLEMENT.UNVERIFIED, reason: `No on-demand access check exists for ${adapterId}` };
+      } catch (error) {
+        return { status: ENTITLEMENT.UNVERIFIED, reason: error?.message ?? String(error) };
+      }
+    },
+    /**
      * ProjectOverlay's confirmed analyst step (ANALYZING -> SUGGESTED):
      * runs the human's already-confirmed real model read-only (askProvider
      * — the same real, no-file-write path ASK mode uses; never a new

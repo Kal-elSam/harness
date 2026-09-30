@@ -913,6 +913,17 @@ export async function runKairoUiRpcStdio({
         writeOut({ type: "team", op, ok: false, status: summary.status, reason: summary.message });
         return summary;
       }
+      if (summary?.status === "analyst_access_unverified") {
+        // T20: the chosen analyst's access could not be confirmed on demand.
+        // Nothing ran, nothing changed, nothing was substituted; `reason`
+        // carries the honest message, the structured fields let the host
+        // name the analyst and the check outcome.
+        writeOut({
+          type: "team", op, ok: false, status: summary.status, reason: summary.message,
+          accessStatus: summary.accessStatus ?? "unverified", analyst: summary.analyst ?? null
+        });
+        return summary;
+      }
       writeOut({
         type: "team",
         op,
@@ -1722,7 +1733,7 @@ export async function runKairoUiRpcStdio({
         const summary = await runTeamOp("project.analyze", () =>
           analyzeProjectTeam({ cwd, analyst: requestedAnalyst })
         );
-        if (summary.status !== "analyst_selection_required") {
+        if (summary.status !== "analyst_selection_required" && summary.status !== "analyst_access_unverified") {
           if (summary.notice) writeOut({ type: "notice", message: summary.notice });
           await emitSnapshot();
           writeOut({

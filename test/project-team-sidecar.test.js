@@ -53,9 +53,19 @@ function fakeService({
   analysisResult = suggestedStrategy(),
   approveResult = { ...suggestedStrategy(), status: "active" },
   unverifiedClaudeNotice = null,
-  calls = []
+  calls = [],
+  verifyAnalystAccess = undefined
 } = {}) {
   return () => ({
+    ...(verifyAnalystAccess
+      ? {
+          async verifyAnalystAccess(args) {
+            calls.push(["verifyAnalystAccess", args]);
+            if (verifyAnalystAccess instanceof Error) throw verifyAnalystAccess;
+            return verifyAnalystAccess;
+          }
+        }
+      : {}),
     async preflightProject({ cwd, mode = "full" } = {}) {
       calls.push(["preflightProject", cwd, mode]);
       return {
@@ -673,4 +683,177 @@ test("preflightProjectTeam adds an additive exclusionCauses field next to the ex
   assert.equal(result.pickerNotice, "Claude: cuota agotada");
   assert.deepEqual(result.exclusionCauses, [{ adapterId: "claude", provider: "Claude", cause: "quota_exhausted", models: 1, reason: null }]);
   assert.ok("unverifiedClaudeNotice" in result && "projectRoot" in result);
+});
+
+// ---- T20: unverified-access models are selectable, never automatic, revalidated on selection ----
+
+function unverifiedEntry(overrides = {}) {
+  return catalogEntry({
+    candidateKey: "claude::opus-unv",
+    adapterId: "claude",
+    modelId: "opus-unv",
+    displayName: "Claude Opus Unverified",
+    entitlement: "unverified",
+    available: false,
+    selectable: true,
+    accessVerified: false,
+    cause: "access_unknown",
+    fit: 0.9,
+    confidence: 0.9,
+    recommendationTags: [],
+    ...overrides
+  });
+}
+
+test("T20 curate: unverified-access rows are kept but ranked after every verified row, sorted by fit within their own group", () => {
+  const curated = curateAnalystCatalogForPicker({
+    recommendedModel: null,
+    models: [
+      unverifiedEntry({ candidateKey: "claude::unv-low", modelId: "unv-low", displayName: "Unv Low", fit: 0.2 }),
+      catalogEntry({ candidateKey: "codex::weak", modelId: "weak", displayName: "Weak Verified", fit: 0.1, confidence: 0.5 }),
+      unverifiedEntry({ candidateKey: "claude::unv-high", modelId: "unv-high", displayName: "Unv High", fit: 0.95 }),
+      catalogEntry({ candidateKey: "codex::strong", modelId: "strong", displayName: "Strong Verified", fit: 0.5, confidence: 0.6 })
+    ]
+  });
+  assert.deepEqual(curated.models.map((m) => m.displayName), ["Strong Verified", "Weak Verified", "Unv High", "Unv Low"]);
+  assert.equal(curated.models[2].accessVerified, false);
+});
+
+test("T20 curate: a non-selectable, non-available row is still dropped; a verified row wins a display-name dedupe; the cap still applies", () => {
+  const dropped = curateAnalystCatalogForPicker({
+    models: [unverifiedEntry({ selectable: false, cause: "quota_exhausted" })]
+  });
+  assert.equal(dropped.models.length, 0);
+  const deduped = curateAnalystCatalogForPicker({
+    models: [unverifiedEntry({ displayName: "Same Name", fit: 0.99 }), catalogEntry({ displayName: "Same Name", fit: 0.1 })]
+  });
+  assert.equal(deduped.models.length, 1);
+  assert.equal(deduped.models[0].accessVerified, undefined, "the verified twin survives, not the unverified one");
+  const many = curateAnalystCatalogForPicker({
+    models: Array.from({ length: 30 }, (_, i) => unverifiedEntry({ candidateKey: `claude::m${i}`, modelId: `m${i}`, displayName: `M${i}` }))
+  });
+  assert.equal(many.models.length, 16);
+});
+
+test("T20 curate: the star never lands on an unverified-access row, even if the catalog points at it", () => {
+  const curated = curateAnalystCatalogForPicker({
+    recommendedModel: { candidateKey: "claude::opus-unv" },
+    models: [unverifiedEntry({ recommendationTags: ["quality"] }), catalogEntry()]
+  });
+  assert.equal(curated.recommendedModel, null);
+  assert.equal(curated.models.length, 2);
+});
+
+test("T20 pickDefaultAnalyst: never returns an unverified-access model, even recommended, tagged, selectable and 'available'", () => {
+  for (const extra of [{}, { available: true }, { recommendationTags: ["quality"], available: true }]) {
+    assert.equal(
+      pickDefaultAnalyst({
+        recommendedModel: { candidateKey: "claude::opus-unv", recommendationTags: ["quality"] },
+        models: [unverifiedEntry(extra)]
+      }),
+      null
+    );
+  }
+});
+
+test("T20 causes: a selectable unverified-access row is no longer an exclusion; a provider with zero selectable rows keeps its notice", () => {
+  const raw = {
+    models: [unverifiedEntry(), catalogEntry()],
+    exclusions: [{ candidateKey: "cursor::x", adapterId: "cursor", modelId: "x", cause: "access_unknown", reason: null }]
+  };
+  const curated = curateAnalystCatalogForPicker(raw);
+  assert.ok(curated.models.some((m) => m.adapterId === "claude"));
+  const causes = buildAnalystExclusionCauses(raw, curated, "1 Claude models are unverified");
+  assert.deepEqual(causes.map((c) => c.adapterId), ["cursor"], "claude is selectable now; only the provider with zero rows is listed");
+  assert.equal(buildAnalystPickerNotice(raw, curated, "1 Claude models are unverified"), "Cursor: acceso sin verificar");
+});
+
+const UNVERIFIED_CATALOG = {
+  recommendedModel: { candidateKey: "codex::gpt-5" },
+  models: [catalogEntry({ recommendationTags: ["quality"] }), unverifiedEntry()]
+};
+const PICK_UNVERIFIED = {
+  model: { adapterId: "claude", modelId: "opus-unv", displayName: "stale" },
+  selectionSource: "manual",
+  recommendationTags: [],
+  choice: null
+};
+
+test("T20 analyze: confirming an unverified-access analyst runs the on-demand access check BEFORE the provider analysis, then proceeds when it passes", async () => {
+  const calls = [];
+  const result = await analyzeProjectTeam({
+    cwd: "/project",
+    analyst: PICK_UNVERIFIED,
+    createConversationService: fakeService({
+      analystCatalog: UNVERIFIED_CATALOG, calls, verifyAnalystAccess: { status: "allowed", reason: null }
+    })
+  });
+  assert.deepEqual(calls.map(([name]) => name), ["preflightProject", "verifyAnalystAccess", "runBootstrapAnalysis"]);
+  assert.deepEqual(calls[1][1], { cwd: "/project", model: { adapterId: "claude", modelId: "opus-unv", displayName: "Claude Opus Unverified" } });
+  const analyst = calls[2][1].analyst;
+  assert.equal(analyst.model.modelId, "opus-unv");
+  assert.equal(analyst.selectionSource, "manual");
+  assert.deepEqual(Object.keys(analyst).sort(), ["choice", "model", "recommendationTags", "selectionSource"], "no catalog-only fields leak into the persisted analyst");
+  assert.equal(result.state, "suggested");
+});
+
+test("T20 analyze: a failed, denied or undecidable access check returns an honest analyst_access_unverified result with no analysis, no strategy write and no substitution", async () => {
+  const cases = [
+    { verify: { status: "unverified", reason: "claude entitlement probe timed out after 30000ms" }, accessStatus: "unverified", reason: /timed out/ },
+    { verify: { status: "denied", reason: "credits_required" }, accessStatus: "denied", reason: /credits_required/ },
+    { verify: new Error("spawn EACCES"), accessStatus: "unverified", reason: /EACCES/ },
+    { verify: undefined, accessStatus: "unverified", reason: /no on-demand access check/i }
+  ];
+  for (const { verify, accessStatus, reason } of cases) {
+    const calls = [];
+    const result = await analyzeProjectTeam({
+      cwd: "/project",
+      analyst: PICK_UNVERIFIED,
+      createConversationService: fakeService({ analystCatalog: UNVERIFIED_CATALOG, calls, verifyAnalystAccess: verify })
+    });
+    assert.equal(result.status, "analyst_access_unverified");
+    assert.equal(result.accessStatus, accessStatus);
+    assert.match(result.reason, reason);
+    assert.match(result.message, reason);
+    assert.deepEqual(result.analyst, { adapterId: "claude", modelId: "opus-unv", displayName: "Claude Opus Unverified" });
+    assert.ok(!/quota|funds|credits? (?:exhausted|run out)/i.test(result.message.replace(/credits_required/g, "")), "never claims missing quota");
+    assert.ok(!calls.some(([name]) => name === "runBootstrapAnalysis"), "no provider analysis, no strategy mutation");
+    assert.ok(!calls.some(([name]) => name === "approveProjectStrategy"));
+    assert.equal(result.state, undefined);
+  }
+});
+
+test("T20 analyze: a verified analyst is not re-checked, and an unverified one on an ineligible provider stays refused", async () => {
+  const calls = [];
+  await analyzeProjectTeam({
+    cwd: "/project",
+    analyst: { model: { adapterId: "codex", modelId: "gpt-5" } },
+    createConversationService: fakeService({ analystCatalog: UNVERIFIED_CATALOG, calls, verifyAnalystAccess: { status: "allowed" } })
+  });
+  assert.ok(!calls.some(([name]) => name === "verifyAnalystAccess"));
+  await assert.rejects(
+    analyzeProjectTeam({
+      cwd: "/project",
+      analyst: PICK_UNVERIFIED,
+      createConversationService: fakeService({
+        analystCatalog: { models: [unverifiedEntry({ selectable: false, cause: "quota_exhausted" })] },
+        verifyAnalystAccess: { status: "allowed" }
+      })
+    }),
+    /not an available analyst/i
+  );
+});
+
+test("T20 analyze: with no analyst requested, an unverified-access model is never chosen by default", async () => {
+  const calls = [];
+  const result = await analyzeProjectTeam({
+    cwd: "/project",
+    createConversationService: fakeService({
+      analystCatalog: { recommendedModel: { candidateKey: "claude::opus-unv" }, models: [unverifiedEntry({ recommendationTags: ["quality"] })] },
+      calls,
+      verifyAnalystAccess: { status: "allowed" }
+    })
+  });
+  assert.equal(result.status, "analyst_selection_required");
+  assert.deepEqual(calls.map(([name]) => name), ["preflightProject"]);
 });

@@ -55,9 +55,21 @@ function analystFitRank(model) {
   return numericOr(model.fit, 0);
 }
 
+/** Access is explicitly UNVERIFIED (catalog `accessVerified: false`); absent field = verified/legacy. */
+function isAccessUnverified(model) {
+  return model?.accessVerified === false;
+}
+
+/** Usable now (`available`) or selectable with revalidation (`selectable`, unverified access). */
+function isPickerSelectable(model) {
+  return model?.available === true || model?.selectable === true;
+}
+
 /**
  * Curate the full analyst catalog for the ratatui picker:
- * - available only (availability gates usability, nothing else)
+ * - available OR selectable (T20: unverified-access rows are selectable and
+ *   ranked after every verified row, by fit inside their own group; they are
+ *   revalidated on selection and never starred or defaulted)
  * - scored AND unscored models are kept; unscored carry fit 0 and lower confidence
  * - order: fit desc, then confidence desc, then display name
  * - dedupe by displayName (best fit wins); single global cap
@@ -72,9 +84,11 @@ function analystFitRank(model) {
  */
 export function curateAnalystCatalogForPicker(analystCatalog) {
   const incoming = Array.isArray(analystCatalog?.models) ? analystCatalog.models : [];
-  const available = incoming.filter((model) => model?.available === true);
+  const available = incoming.filter(isPickerSelectable);
 
   const ordered = [...available].sort((a, b) => {
+    const byAccess = Number(isAccessUnverified(a)) - Number(isAccessUnverified(b));
+    if (byAccess !== 0) return byAccess;
     const byFit = analystFitRank(b) - analystFitRank(a);
     if (byFit !== 0) return byFit;
     const byConfidence = numericOr(b.confidence, 0) - numericOr(a.confidence, 0);
@@ -100,7 +114,9 @@ export function curateAnalystCatalogForPicker(analystCatalog) {
   const survivor = incomingRecommended
     ? models.find((model) => model.candidateKey === incomingRecommended.candidateKey)
     : null;
-  const recommendedModel = survivor && recommendationQualifies(survivor, incomingRecommended) ? incomingRecommended : null;
+  const recommendedModel = survivor && !isAccessUnverified(survivor) && recommendationQualifies(survivor, incomingRecommended)
+    ? incomingRecommended
+    : null;
   return { recommendedModel, models };
 }
 
@@ -145,6 +161,7 @@ export function buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifi
     rows.set(key, row);
   };
   for (const model of Array.isArray(rawCatalog?.models) ? rawCatalog.models : []) {
+    if (model?.selectable === true && model?.available !== true) continue; // selectable (unverified access): not an exclusion
     if (model?.available !== true) add(model?.adapterId, model?.cause ?? "unavailable_verified");
     else if (model?.evidenceStatus === "unscored" && !(model.recommendationTags ?? []).length) add(model.adapterId, "unscored");
   }
@@ -207,7 +224,7 @@ export function pickDefaultAnalyst(analystCatalog) {
   const models = analystCatalog?.models ?? [];
   const recommendedKey = analystCatalog?.recommendedModel?.candidateKey ?? null;
   const picked = recommendedKey
-    ? models.find((model) => model?.available === true && model.candidateKey === recommendedKey)
+    ? models.find((model) => model?.available === true && !isAccessUnverified(model) && model.candidateKey === recommendedKey)
     : null;
   if (!picked || !recommendationQualifies(picked, analystCatalog.recommendedModel)) return null;
   const recommendationTags = picked.recommendationTags ?? [];
@@ -298,18 +315,41 @@ function resolveRequestedAnalyst(requested, analystCatalog) {
   if (!adapterId || !modelId) return null;
   const models = analystCatalog?.models ?? [];
   const match = models.find((model) => model?.adapterId === adapterId && model?.modelId === modelId);
-  if (!match || match.available !== true) return null;
+  if (!match || !isPickerSelectable(match)) return null;
   const recommendedKey = analystCatalog?.recommendedModel?.candidateKey ?? null;
   const recommendationTags = match.recommendationTags ?? [];
   return {
+    // Internal marker (stripped before the analyst reaches the service).
+    needsAccessCheck: isAccessUnverified(match),
     model: { adapterId: match.adapterId, modelId: match.modelId, displayName: match.displayName },
-    selectionSource: match.candidateKey === recommendedKey ? "recommended" : "manual",
+    selectionSource: match.candidateKey === recommendedKey && !isAccessUnverified(match) ? "recommended" : "manual",
     recommendationTags,
     choice: recommendationTags.includes("quality")
       ? "quality"
       : recommendationTags.includes("efficient")
         ? "efficient"
         : null
+  };
+}
+
+/**
+ * Honest result when the on-demand access check for an unverified-access
+ * analyst did not pass. Says only what is known: the real reason, never a
+ * made-up quota/billing cause. Nothing ran and nothing was substituted.
+ */
+function accessUnverifiedResult(model, check) {
+  const label = model.displayName ?? model.modelId;
+  const denied = check.status === "denied";
+  const reason = check.reason ?? null;
+  const headline = denied
+    ? `Access to ${label} was checked and is not available`
+    : `Access to ${label} could not be verified`;
+  return {
+    status: "analyst_access_unverified",
+    accessStatus: denied ? "denied" : "unverified",
+    analyst: { adapterId: model.adapterId, modelId: model.modelId, displayName: label },
+    reason,
+    message: `${headline}${reason ? ` (${reason})` : ""} — nothing was analyzed. Pick another analyst or try again.`
   };
 }
 
@@ -382,8 +422,13 @@ export async function preflightProjectTeam({
  * default (`pickDefaultAnalyst`) when it qualifies; otherwise the result is
  * `{status: "analyst_selection_required", message}` and nothing runs.
  *
+ * T20: a requested analyst whose access is UNVERIFIED is revalidated through
+ * `service.verifyAnalystAccess` before anything runs; if that does not pass the
+ * result is `{status: "analyst_access_unverified", accessStatus, analyst,
+ * reason, message}` — no provider call, no strategy write, no substitution.
+ *
  * @param {{cwd?: string, analyst?: object|null, createConversationService?: typeof createConversationService}} args
- * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null, notice: string|null}|{status: "analyst_selection_required", message: string}>}
+ * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null, notice: string|null}|{status: "analyst_selection_required", message: string}|{status: "analyst_access_unverified", accessStatus: "unverified"|"denied", analyst: {adapterId: string, modelId: string, displayName: string}, reason: string|null, message: string}>}
  */
 export async function analyzeProjectTeam({
   cwd,
@@ -395,12 +440,30 @@ export async function analyzeProjectTeam({
   const preflight = await service.preflightProject({ cwd: projectCwd });
   let analyst;
   if (requestedAnalyst) {
-    analyst = resolveRequestedAnalyst(requestedAnalyst, preflight.analystCatalog);
-    if (!analyst) throw requestedAnalystError(requestedAnalyst);
+    const resolved = resolveRequestedAnalyst(requestedAnalyst, preflight.analystCatalog);
+    if (!resolved) throw requestedAnalystError(requestedAnalyst);
+    const { needsAccessCheck, ...resolvedAnalyst } = resolved;
+    analyst = resolvedAnalyst;
+    if (needsAccessCheck) {
+      // T20: unknown access is revalidated on selection, BEFORE any provider
+      // analysis or strategy write. Fail-closed: a missing check, a throw,
+      // a denial or an undecidable result all stop here with the real reason.
+      let check;
+      try {
+        check = typeof service.verifyAnalystAccess === "function"
+          ? await service.verifyAnalystAccess({ cwd: projectCwd, model: analyst.model })
+          : { status: "unverified", reason: "no on-demand access check is available for this analyst" };
+      } catch (error) {
+        check = { status: "unverified", reason: error?.message ?? String(error) };
+      }
+      if (check?.status !== "allowed" && check?.status !== "not_applicable") {
+        return accessUnverifiedResult(analyst.model, check ?? { status: "unverified", reason: null });
+      }
+    }
   } else {
     analyst = pickDefaultAnalyst(preflight.analystCatalog);
     if (!analyst) {
-      const anyAvailable = (preflight.analystCatalog?.models ?? []).some((model) => model?.available === true);
+      const anyAvailable = (preflight.analystCatalog?.models ?? []).some(isPickerSelectable);
       if (!anyAvailable) throw noAnalystError(preflight.analystCatalog);
       // Usable models exist but none qualifies as a recommendation: never
       // pick one silently. No provider call, no strategy mutation.

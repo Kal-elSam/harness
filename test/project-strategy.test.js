@@ -132,7 +132,7 @@ test("computeBootstrapAnalystCatalog reports real availability and quota per can
   assert.equal(codex.quota, null, "no real quota data for codex here — must stay honestly null, never invented");
 });
 
-test("REGRESSION: unverified Claude is absent from the Bootstrap Analyst catalog — 'unavailable' means absent, never visible with a warning", () => {
+test("REGRESSION (superseded for UNVERIFIED by T20): unverified Claude is listed only as a non-available, non-starred selectable row", () => {
   const candidates = realCandidates();
   const unverifiedClaude = {
     ...candidates.scoredAll.find((model) => model.adapterId === "claude"),
@@ -145,7 +145,11 @@ test("REGRESSION: unverified Claude is absent from the Bootstrap Analyst catalog
     manualSelectionScoredPool: [safeCodex, unverifiedClaude]
   };
   const catalog = computeBootstrapAnalystCatalog(input);
-  assert.ok(!catalog.models.some((model) => model.adapterId === "claude"), "an unverified model must never appear in the selector at all, not even with a warning");
+  const claudeRow = catalog.models.find((model) => model.adapterId === "claude");
+  assert.ok(claudeRow, "T20: unverified access is selectable (user decision), so the row exists");
+  assert.equal(claudeRow.available, false, "but it is never 'available' (safe to run now)");
+  assert.equal(claudeRow.accessVerified, false);
+  assert.equal(claudeRow.selectable, true);
   assert.equal(catalog.recommendedModel.adapterId, "codex");
 });
 
@@ -520,10 +524,96 @@ test("computeBootstrapAnalystCatalog attaches a verifiable cause to unavailable 
   assert.equal(unscored.available, true);
   assert.equal(catalog.models.find((m) => m.modelId === "gpt-6-experimental").cause, "quota_exhausted", "an unavailable provider's verified cause wins over unscored");
   const byKey = Object.fromEntries(catalog.exclusions.map((e) => [e.candidateKey, e]));
-  assert.equal(byKey["claude::claude-unv"].cause, "access_unknown");
-  assert.equal(byKey["claude::claude-unv"].reason, "Access has not been verified");
+  assert.equal(byKey["claude::claude-unv"], undefined, "T20: unverified access is selectable, no longer an exclusion");
   assert.equal(byKey["claude::claude-den"].cause, "unavailable_verified");
-  assert.ok(!catalog.models.some((m) => ["claude-unv", "claude-den"].includes(m.modelId)), "blocked entitlements stay excluded");
+  assert.equal(byKey["claude::claude-den"].reason, "Credits required");
+  assert.ok(!catalog.models.some((m) => m.modelId === "claude-den"), "verified-denied stays excluded");
+  const unverifiedEntry = catalog.models.find((m) => m.modelId === "claude-unv");
+  assert.ok(unverifiedEntry, "T20: unverified access stays in the catalog");
+  assert.equal(unverifiedEntry.cause, "access_unknown");
+});
+
+function unverifiedWorld(overrides = {}) {
+  const candidates = realCandidates();
+  const claude = candidates.scoredAll.find((model) => model.adapterId === "claude");
+  const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
+  // The unverified Claude model is the strongest on paper (same evidence as
+  // the verified Claude model), so any leak into the star/default shows up.
+  const unverified = {
+    ...claude, modelId: "claude-unv", candidateKey: "claude::claude-unv", modelName: "Claude Unverified",
+    entitlement: ENTITLEMENT.UNVERIFIED, entitlementReason: "Access has not been verified"
+  };
+  const verifiedCodex = { ...codex, entitlement: ENTITLEMENT.NOT_APPLICABLE };
+  return computeBootstrapAnalystCatalog({
+    ...candidates,
+    scoredAll: [verifiedCodex],
+    manualSelectionScoredPool: [verifiedCodex, unverified],
+    eligibility: { claude: { ok: true }, codex: { ok: true } },
+    ...overrides
+  });
+}
+
+test("T20: an unverified-access model is selectable but honestly not 'available' (additive accessVerified/selectable/cause fields)", () => {
+  const catalog = unverifiedWorld();
+  const entry = catalog.models.find((m) => m.modelId === "claude-unv");
+  assert.equal(entry.available, false, "available stays the safe-to-run-now flag");
+  assert.equal(entry.selectable, true);
+  assert.equal(entry.accessVerified, false);
+  assert.equal(entry.cause, "access_unknown");
+  assert.equal(entry.entitlement, ENTITLEMENT.UNVERIFIED);
+  assert.deepEqual(entry.recommendationTags, []);
+  const verified = catalog.models.find((m) => m.modelId === "codex-model");
+  assert.equal(verified.available, true);
+  assert.equal(verified.selectable, true);
+  assert.equal(verified.accessVerified, true);
+  assert.deepEqual(catalog.exclusions, []);
+});
+
+test("T20: an unverified-access model is never the recommendedModel nor tagged, even when it would win on evidence", () => {
+  const catalog = unverifiedWorld();
+  assert.equal(catalog.recommendedModel?.modelId, "codex-model");
+  for (const model of catalog.models.filter((m) => m.accessVerified === false)) {
+    assert.deepEqual(model.recommendationTags, []);
+    assert.notEqual(catalog.recommendedModel?.candidateKey, model.candidateKey);
+  }
+  // Even when the unverified model is the ONLY candidate it is not starred.
+  const candidates = realCandidates();
+  const claude = candidates.scoredAll.find((model) => model.adapterId === "claude");
+  const only = computeBootstrapAnalystCatalog({
+    ...candidates, scoredAll: [claude], // a leaky caller that put it in the recommendation pool too
+    manualSelectionScoredPool: [{ ...claude, entitlement: ENTITLEMENT.UNVERIFIED }],
+    eligibility: { claude: { ok: true }, codex: { ok: true } }
+  });
+  assert.equal(only.models.length, 1);
+  assert.equal(only.recommendedModel, null);
+  assert.deepEqual(only.models[0].recommendationTags, []);
+});
+
+test("T20: verified models keep their fit when an unverified model joins the pool; unverified fit comes from real evidence", () => {
+  const withUnverified = unverifiedWorld();
+  const candidates = realCandidates();
+  const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
+  const alone = computeBootstrapAnalystCatalog({
+    ...candidates, scoredAll: [codex], manualSelectionScoredPool: [codex], eligibility: { claude: { ok: true }, codex: { ok: true } }
+  });
+  assert.equal(
+    withUnverified.models.find((m) => m.modelId === "codex-model").fit,
+    alone.models.find((m) => m.modelId === "codex-model").fit
+  );
+  const unverified = withUnverified.models.find((m) => m.modelId === "claude-unv");
+  assert.equal(typeof unverified.fit, "number");
+  assert.ok(unverified.fit >= 0 && unverified.fit <= 1);
+  assert.equal(typeof unverified.confidence, "number");
+});
+
+test("T20: an unverified-access model on an ineligible provider is not selectable and keeps the provider's verified cause", () => {
+  const catalog = unverifiedWorld({
+    eligibility: { claude: { ok: false, reason: "limited", cause: "quota_exhausted" }, codex: { ok: true } }
+  });
+  const entry = catalog.models.find((m) => m.modelId === "claude-unv");
+  assert.equal(entry.selectable, false);
+  assert.equal(entry.available, false);
+  assert.equal(entry.cause, "quota_exhausted");
 });
 
 test("computeBootstrapAnalystCatalog marks an unavailable model without a router cause as unavailable_verified and an available scored model as cause null", () => {

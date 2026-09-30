@@ -877,6 +877,75 @@ test("sidecar project.analyze surfaces analyst_selection_required honestly (no s
   await runPromise;
 });
 
+test("sidecar project.analyze surfaces analyst_access_unverified honestly (T20: no snapshot, no success notice, structured analyst + accessStatus)", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+  const message = "Access to Claude Opus could not be verified (probe timed out) — nothing was analyzed. Pick another analyst or try again.";
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async () => ({
+      status: "analyst_access_unverified",
+      accessStatus: "unverified",
+      analyst: { adapterId: "claude", modelId: "opus", displayName: "Claude Opus" },
+      reason: "probe timed out",
+      message
+    }),
+    loadSnapshot: async () => {
+      throw new Error("snapshot must not be reloaded when no analysis ran");
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const before = out.length;
+  stdin.write(`${JSON.stringify({ op: "project.analyze" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  const after = out.slice(before);
+  const team = after.find((r) => r.type === "team");
+  assert.equal(team?.ok, false);
+  assert.equal(team?.status, "analyst_access_unverified");
+  assert.equal(team?.accessStatus, "unverified");
+  assert.deepEqual(team?.analyst, { adapterId: "claude", modelId: "opus", displayName: "Claude Opus" });
+  assert.equal(team?.reason, message);
+  assert.equal(after.some((r) => r.type === "snapshot"), false);
+  assert.equal(
+    after.some((r) => r.type === "notice" && /Suggested team ready/.test(r.message)),
+    false
+  );
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
 test("sidecar project.analyze forwards the picker's chosen analyst payload verbatim", async () => {
   const out = [];
   const stdout = new PassThrough();

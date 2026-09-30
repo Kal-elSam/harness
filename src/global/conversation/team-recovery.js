@@ -60,14 +60,15 @@ export function decideTeamRecovery({ strategy, fingerprint, record, eligibility,
 
 /**
  * The analyst for an automatic re-analysis: available right now, scored,
- * and entitled. Prefers the quality pick, then the efficient pick, then any
+ * and entitled (unknown access is never an automatic choice, T20). Prefers the quality pick, then the efficient pick, then any
  * other candidate; never an unavailable one. Isolation is still verified by
  * the analyzer adapter itself before any provider call.
  * @param {{recommendedModel: object|null, models: object[]}} analystCatalog
  */
 export function pickRecoveryAnalyst(analystCatalog) {
   const usable = (analystCatalog?.models ?? []).filter((model) => (
-    model.available === true && model.evidenceStatus !== "unscored" && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
+    model.available === true && model.accessVerified !== false && model.evidenceStatus !== "unscored"
+    && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
   ));
   const picked = usable.find((model) => model.recommendationTags?.includes("quality"))
     ?? usable.find((model) => model.recommendationTags?.includes("efficient"))

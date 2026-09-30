@@ -66,6 +66,22 @@ test("pickRecoveryAnalyst prefers the available quality pick, then efficient, th
   assert.equal(pickRecoveryAnalyst({ recommendedModel: null, models: [] }), null);
 });
 
+test("T20: pickRecoveryAnalyst never picks an unverified-access model, however it is flagged or ranked", () => {
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, recommendationTags: [], ...extra });
+  const shapes = [
+    { entitlement: "unverified", available: false, selectable: true, accessVerified: false, cause: "access_unknown" },
+    { entitlement: "unverified", available: true },
+    { entitlement: null, available: true, accessVerified: false },
+    { entitlement: null, available: false, selectable: true }
+  ];
+  for (const shape of shapes) {
+    const unverified = entry(CLAUDE, { recommendationTags: ["quality"], ...shape });
+    assert.equal(pickRecoveryAnalyst({ recommendedModel: unverified, models: [unverified] }), null, JSON.stringify(shape));
+    const verified = entry(CODEX);
+    assert.equal(pickRecoveryAnalyst({ recommendedModel: unverified, models: [unverified, verified] }).model.modelId, verified.modelId);
+  }
+});
+
 // A controllable world for runTeamRecovery: eligibility can change between
 // calls, and every write is observable.
 function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIMITED], analyze, lock = true, analystCatalog } = {}) {

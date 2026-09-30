@@ -52,6 +52,16 @@ export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor", "ope
 // not_applicable.
 export const BLOCKED_ENTITLEMENTS = new Set([ENTITLEMENT.DENIED, ENTITLEMENT.UNVERIFIED]);
 
+// T20 (user decision, supersedes T10's "BLOCKED_ENTITLEMENTS unchanged" for
+// UNVERIFIED only): the Bootstrap Analyst picker keeps UNVERIFIED-access
+// models as selectable rows (access is UNKNOWN, not denied). They are never
+// `available` (the safe-to-run-now flag), never starred, never a default and
+// never picked by automatic recovery; the analyze path re-verifies access on
+// selection. DENIED stays excluded everywhere. Every other surface (team edit
+// catalog, unscored list, router) keeps using BLOCKED_ENTITLEMENTS.
+const isAccessUnverified = (model) => model?.entitlement === ENTITLEMENT.UNVERIFIED;
+const isAccessDenied = (model) => model?.entitlement === ENTITLEMENT.DENIED;
+
 // The Bootstrap Analyst profile (single definition shared with the analyst
 // prompt) lives in bootstrap-analyst-profile.js; re-exported here for the
 // existing import sites.
@@ -194,9 +204,10 @@ export function computeBootstrapAnalystCatalog({
   // after the fact would silently lose a genuinely real 2nd/3rd-place
   // candidate whenever the unsupported provider happened to rank #1.
   const askSupportedRecommended = scoredAll.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
-  const askSupportedScored = manualSelectionScoredPool.filter((model) => (
-    ASK_SUPPORTED_ADAPTERS.has(model.adapterId) && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
+  const askSupportedScoredAll = manualSelectionScoredPool.filter((model) => (
+    ASK_SUPPORTED_ADAPTERS.has(model.adapterId) && !isAccessDenied(model)
   ));
+  const askSupportedScored = askSupportedScoredAll.filter((model) => !isAccessUnverified(model));
   // scoredAll (the Recommendation Pool) already excludes superseded
   // candidates (buildRecommendationPool); unscoredModels doesn't go
   // through that pool, so the same real "not superseded" rule is applied
@@ -210,6 +221,13 @@ export function computeBootstrapAnalystCatalog({
 
   const roleCapabilities = { Explorer: BOOTSTRAP_ANALYST_PROFILE.capabilities };
   const fits = computeAnalystFits(askSupportedScored, ensureRegistry(askSupportedScored, registry));
+  // Verified models keep the fit they would have without any unverified
+  // model around (fit normalizes against its pool); unverified models are
+  // scored against the full pool, from the same real evidence.
+  const hasUnverified = askSupportedScoredAll.length > askSupportedScored.length;
+  const unverifiedFits = hasUnverified
+    ? computeAnalystFits(askSupportedScoredAll, ensureRegistry(askSupportedScoredAll, registry))
+    : fits;
   const aiTeam = buildAiTeam(askSupportedRecommended, eligibility, registry, roleCapabilities);
   const efficientTeam = buildEfficientTeam(askSupportedRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
   const quality = aiTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
@@ -217,17 +235,20 @@ export function computeBootstrapAnalystCatalog({
   const qualityKey = quality ? candidateKeyOf(quality) : null;
   const efficientKey = efficient ? candidateKeyOf(efficient) : null;
 
-  // Exclusion causes (machine-readable). Blocked entitlements are absent from
-  // `models` by design, so their cause travels in `exclusions` instead —
-  // "denied" is verified unavailability, "unverified" is UNKNOWN access and
-  // must never be presented as unavailability.
+  // Exclusion causes (machine-readable). Verified-denied models are absent
+  // from `models` by design, so their cause travels in `exclusions` instead.
+  // Unverified access (UNKNOWN, never unavailability) is selectable since T20
+  // and lives in `models` with cause "access_unknown"; only unverified
+  // UNSCORED models (hidden upstream) still surface here.
   const entitlementCause = (entitlement) => (
     entitlement === ENTITLEMENT.DENIED ? "unavailable_verified" : "access_unknown"
   );
+  const scoredKeys = new Set(askSupportedScoredAll.map(candidateKeyOf));
   const exclusions = [];
   const seenExcluded = new Set();
   for (const model of [...manualSelectionScoredPool, ...unscoredModels]) {
     if (!ASK_SUPPORTED_ADAPTERS.has(model.adapterId) || !BLOCKED_ENTITLEMENTS.has(model.entitlement)) continue;
+    if (isAccessUnverified(model) && scoredKeys.has(candidateKeyOf(model))) continue;
     const key = candidateKeyOf(model);
     if (seenExcluded.has(key)) continue;
     seenExcluded.add(key);
@@ -240,22 +261,30 @@ export function computeBootstrapAnalystCatalog({
   // verified-unavailable default (checkCandidate only says !ok on real evidence).
   const unavailableCause = (adapterId) => eligibility[adapterId]?.cause ?? "unavailable_verified";
 
-  const scoredEntries = askSupportedScored.map((model) => {
+  const scoredEntries = askSupportedScoredAll.map((model) => {
     const key = candidateKeyOf(model);
+    const unverified = isAccessUnverified(model);
+    const providerOk = eligibility[model.adapterId]?.ok === true;
     const recommendationTags = [];
-    if (key === qualityKey) recommendationTags.push("quality");
-    if (key === efficientKey) recommendationTags.push("efficient");
+    // An unverified-access model is never starred or tagged, whatever the
+    // caller's recommendation pool says.
+    if (!unverified && key === qualityKey) recommendationTags.push("quality");
+    if (!unverified && key === efficientKey) recommendationTags.push("efficient");
+    const fitSource = unverified ? unverifiedFits : fits;
     return {
       candidateKey: key, adapterId: model.adapterId, modelId: model.modelId,
       displayName: model.modelName ?? model.displayName ?? model.modelId,
       evidenceStatus: model.evidenceStatus ?? "scored",
       entitlement: model.entitlement ?? null,
       entitlementReason: model.entitlementReason ?? null,
-      available: eligibility[model.adapterId]?.ok === true,
-      cause: eligibility[model.adapterId]?.ok === true ? null : unavailableCause(model.adapterId),
+      // `available` = safe to run now. Unknown access is not that.
+      available: providerOk && !unverified,
+      accessVerified: !unverified,
+      selectable: providerOk,
+      cause: !providerOk ? unavailableCause(model.adapterId) : unverified ? "access_unknown" : null,
       quota: quotaFor(providerCapacity, model.adapterId),
-      fit: fits.get(key)?.fit ?? 0,
-      confidence: fits.get(key)?.confidence ?? SCORED_ANALYST_CONFIDENCE_FLOOR,
+      fit: fitSource.get(key)?.fit ?? 0,
+      confidence: fitSource.get(key)?.confidence ?? SCORED_ANALYST_CONFIDENCE_FLOOR,
       recommendationTags
     };
   });
@@ -266,6 +295,8 @@ export function computeBootstrapAnalystCatalog({
     entitlement: model.entitlement ?? null,
     entitlementReason: model.entitlementReason ?? null,
     available: eligibility[model.adapterId]?.ok === true,
+    accessVerified: true,
+    selectable: eligibility[model.adapterId]?.ok === true,
     // Unscored is a manual-only choice, not unavailability. When the
     // provider itself is unavailable right now, that verified cause wins so
     // the picker never hides why a whole provider is out.
