@@ -14,10 +14,11 @@ const COMPLETE = {
   bootstrapAnalyst: model("claude", "claude-opus-5"),
   orchestrator: model("opencode-go", "kimi-k3"),
   projectTeam: [
-    { role: "Builder", model: model("codex", "gpt-6-terra") },
-    { role: "Reviewer", model: model("codex", "gpt-6-terra") }
+    { role: "Builder", model: model("codex", "gpt-6-terra"), assignmentState: "ready" },
+    { role: "Reviewer", model: model("codex", "gpt-6-terra"), assignmentState: "ready" }
   ]
 };
+const SUGGESTED = { ...COMPLETE, status: "suggested" };
 const ALL_OK = {
   eligibility: { codex: { ok: true }, claude: { ok: true }, "opencode-go": { ok: true } },
   claudeEntitlement: {},
@@ -35,11 +36,19 @@ test("a never-analyzed project is incomplete and hides roles", () => {
   assert.deepEqual(presentation, { state: "incomplete", rolesVisible: false, reason: "not_analyzed" });
 });
 
-test("suggested and stale teams are incomplete (not approved) even when every role is available", () => {
-  for (const status of ["suggested", "stale"]) {
-    const presentation = snap({ ...COMPLETE, status }, { intelligence: ALL_OK }).team.presentation;
-    assert.deepEqual(presentation, { state: "incomplete", rolesVisible: false, reason: "not_approved" }, status);
-  }
+test("T28: suggested draft with every assignment usable is ready_to_approve and shows roles", () => {
+  const presentation = snap(SUGGESTED, { intelligence: ALL_OK }).team.presentation;
+  assert.deepEqual(presentation, { state: "ready_to_approve", rolesVisible: true, reason: null });
+});
+
+test("T28: suggested draft while availability is pending is pending_approval (reviewable, not hidden)", () => {
+  const presentation = snap(SUGGESTED).team.presentation;
+  assert.deepEqual(presentation, { state: "pending_approval", rolesVisible: true, reason: "availability_pending" });
+});
+
+test("stale teams are incomplete (not approved) even when every role is available", () => {
+  const presentation = snap({ ...COMPLETE, status: "stale" }, { intelligence: ALL_OK }).team.presentation;
+  assert.deepEqual(presentation, { state: "incomplete", rolesVisible: false, reason: "not_approved" });
 });
 
 test("a role without a saved model makes the whole team incomplete (no partial team)", () => {
@@ -50,7 +59,7 @@ test("a role without a saved model makes the whole team incomplete (no partial t
   assert.equal(snap(noOrchestrator, { intelligence: ALL_OK }).team.presentation.reason, "missing_assignment");
 });
 
-test("probe still pending is verifying, never blocked and never quota", () => {
+test("ACTIVE probe still pending is verifying, never blocked and never quota", () => {
   const presentation = snap(COMPLETE).team.presentation;
   assert.deepEqual(presentation, { state: "verifying", rolesVisible: false, reason: "availability_pending" });
 });
@@ -70,10 +79,24 @@ test("a failed probe is blocked with an unverified reason, even with a cache", (
   assert.deepEqual(cachedFailed, { state: "blocked", rolesVisible: false, reason: "availability_unverified" });
 });
 
-test("any blocked role hides the whole team", () => {
+test("any blocked role on an ACTIVE team hides the whole team", () => {
   const intelligence = { ...ALL_OK, eligibility: { ...ALL_OK.eligibility, codex: { ok: false, reason: "rate limited" } } };
   assert.deepEqual(snap(COMPLETE, { intelligence }).team.presentation,
     { state: "blocked", rolesVisible: false, reason: "availability_blocked" });
+});
+
+test("T28: suggested draft with a blocked operational assignment stays reviewable (rolesVisible)", () => {
+  const strategy = {
+    ...SUGGESTED,
+    projectTeam: [
+      { role: "Builder", model: model("codex", "gpt-6-terra"), assignmentState: "blocked" },
+      COMPLETE.projectTeam[1]
+    ]
+  };
+  const presentation = snap(strategy, { intelligence: ALL_OK }).team.presentation;
+  assert.equal(presentation.state, "blocked");
+  assert.equal(presentation.rolesVisible, true);
+  assert.equal(presentation.reason, "assignment_blocked");
 });
 
 test("deriveTeamPresentation is tolerant of missing input", () => {

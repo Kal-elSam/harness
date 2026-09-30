@@ -860,7 +860,15 @@ test("CANARY: runBootstrapAnalysis's real sanitized-snapshot pipeline (not mocke
 });
 
 test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approvedAt, but requires a real suggested strategy to exist first", async () => {
-  let stored = { schema: "kairo.project-strategy/v1", status: "suggested", profileFingerprint: "fp-1" };
+  const model = { adapterId: "codex", modelId: "gpt-6-terra", displayName: "GPT-6 Terra", accessMode: "automatic" };
+  let stored = {
+    schema: "kairo.project-strategy/v1",
+    status: "suggested",
+    profileFingerprint: "fp-1",
+    bootstrapAnalyst: model,
+    orchestrator: model,
+    projectTeam: [{ role: "Builder", model, assignmentState: "ready", assignmentSource: "recommended" }]
+  };
   const service = createConversationService({
     resolveRoot: async () => "/repo",
     homeDir: "/home/test",
@@ -868,6 +876,7 @@ test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approve
     writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
   });
   const approved = await service.approveProjectStrategy({ cwd: "/repo" });
+  assert.equal(approved.ok, true);
   assert.equal(approved.status, "active");
   assert.ok(approved.approvedAt);
 
@@ -876,6 +885,31 @@ test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approve
     readProjectStrategy: async () => null
   });
   await assert.rejects(() => serviceNoStrategy.approveProjectStrategy({ cwd: "/repo" }));
+});
+
+test("T28: approveProjectStrategy refuses when an operational assignment is blocked — no mutation, no silent swap", async () => {
+  const blocked = { adapterId: "claude", modelId: "claude-opus-5", displayName: "Opus", accessMode: "automatic" };
+  let stored = {
+    schema: "kairo.project-strategy/v1",
+    status: "suggested",
+    profileFingerprint: "fp-1",
+    bootstrapAnalyst: blocked,
+    orchestrator: blocked,
+    projectTeam: [{ role: "Builder", model: blocked, assignmentState: "blocked", assignmentSource: "recommended" }]
+  };
+  let writes = 0;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    readProjectStrategy: async () => stored,
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => { writes += 1; stored = strategy; return strategy; }
+  });
+  const refused = await service.approveProjectStrategy({ cwd: "/repo" });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.status, "suggested");
+  assert.ok(Array.isArray(refused.reasons) && refused.reasons.length > 0);
+  assert.equal(writes, 0, "refused approve must not mutate the strategy store");
+  assert.equal(stored.status, "suggested");
 });
 
 test("refreshProjectStrategy marks an ACTIVE strategy STALE only when the real fingerprint actually changed, and preserves its previous approval/team otherwise", async () => {

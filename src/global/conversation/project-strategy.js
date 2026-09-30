@@ -90,6 +90,58 @@ function projectModelRef(teamModel) {
 }
 
 /**
+ * Whether a team-model entry from buildAiTeam/buildEfficientTeam is usable as
+ * an operational assignment. `available === true` is the intentional ready
+ * path; a missing `available` is treated as usable only for backward
+ * compatibility with older fixtures that omit the flag. Explicit
+ * `available: false` is never operational.
+ */
+function isOperationallyUsable(teamModel) {
+  if (!teamModel) return false;
+  return teamModel.available !== false;
+}
+
+/**
+ * Pick the operational model for one efficient-team entry: usable primary,
+ * else usable fallback, else keep the preferred primary for display and mark
+ * the assignment blocked. Never invents a silent substitute outside that
+ * primary/fallback pair. qualityTeam/efficientTeam keep comparative evidence.
+ */
+function resolveOperationalAssignment(entry) {
+  const preferredPrimary = entry?.primary ?? null;
+  const preferredFallback = entry?.fallback ?? null;
+  const decisionEvidence = entry?.decisionEvidence ?? null;
+  const reason = entry?.reason ?? null;
+
+  let model = null;
+  let fallback = null;
+  let assignmentState = "blocked";
+
+  if (isOperationallyUsable(preferredPrimary)) {
+    model = projectModelRef(preferredPrimary);
+    fallback = preferredFallback ? projectModelRef(preferredFallback) : null;
+    assignmentState = "ready";
+  } else if (isOperationallyUsable(preferredFallback)) {
+    model = projectModelRef(preferredFallback);
+    fallback = null;
+    assignmentState = "ready";
+  } else {
+    model = projectModelRef(preferredPrimary);
+    fallback = preferredFallback ? projectModelRef(preferredFallback) : null;
+    assignmentState = "blocked";
+  }
+
+  return {
+    model,
+    fallback,
+    assignmentState,
+    decisionEvidence,
+    reason,
+    recommendedAssignment: { model, fallback, decisionEvidence, reason, assignmentState }
+  };
+}
+
+/**
  * The project's own real role->capabilities map, straight from its (by
  * now analyst-derived) roleRequirements — never the generic global
  * table's OWN capability set. But whether a project-derived capability
@@ -449,23 +501,30 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
   // and overrideEvidence records the real access/evidence state behind
   // that specific override, never reusing the original recommendation's
   // own evidence as if it justified a different model.
+  // Operational projectTeam: usable primary, else usable fallback, else a
+  // blocked preferred-primary display — never a blocked comparative leader
+  // as the live assignment when a validated fallback exists. qualityTeam /
+  // efficientTeam stay comparative evidence only.
   const projectTeam = activeRoles.map((role) => {
     const entry = byRoleEfficient.get(role);
-    const model = entry ? projectModelRef(entry.primary) : null;
-    const fallback = entry?.fallback ? projectModelRef(entry.fallback) : null;
-    const decisionEvidence = entry?.decisionEvidence ?? null;
-    // The same real, human-readable string efficientTeam's own entries
-    // already carry (see buildEfficientTeam/describeEfficiencyDecision) —
-    // never a new explanation formula, just surfaced here too so the
-    // overlay can show WHY this role got this model, not only which one.
-    const reason = entry?.reason ?? null;
+    const resolved = resolveOperationalAssignment(entry);
     return {
-      role, model, fallback, decisionEvidence, reason,
+      role,
+      model: resolved.model,
+      fallback: resolved.fallback,
+      decisionEvidence: resolved.decisionEvidence,
+      reason: resolved.reason,
+      assignmentState: resolved.assignmentState,
       assignmentSource: "recommended",
-      recommendedAssignment: { model, fallback, decisionEvidence, reason },
+      recommendedAssignment: resolved.recommendedAssignment,
       overrideEvidence: null
     };
   });
+
+  // Orchestrator follows the OPERATIONAL Architect assignment (fallback when
+  // the comparative quality primary is blocked), never quality primary alone.
+  const architectOperational = projectTeam.find((entry) => entry.role === "Architect")?.model
+    ?? modelRef(byRoleCapability.get("Architect")?.primary);
 
   return {
     status: "suggested",
@@ -473,7 +532,9 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
     bootstrapAnalystChoice: bootstrapAnalyst.choice ?? null,
     bootstrapAnalystSelectionSource: bootstrapAnalyst.selectionSource ?? "recommended",
     bootstrapAnalystRecommendationTags: bootstrapAnalyst.recommendationTags ?? (bootstrapAnalyst.choice ? [bootstrapAnalyst.choice] : []),
-    orchestrator: modelRef(byRoleCapability.get("Architect")?.primary),
+    orchestrator: architectOperational
+      ? { adapterId: architectOperational.adapterId, modelId: architectOperational.modelId, displayName: architectOperational.displayName ?? null }
+      : null,
     activeRoles,
     qualityTeam,
     efficientTeam: efficientRoles,
@@ -616,7 +677,7 @@ export function applyProjectTeamOverride(strategy, role, candidate) {
   const index = findProjectTeamEntry(strategy, role);
   const entry = strategy.projectTeam[index];
   const recommendedAssignment = entry.recommendedAssignment
-    ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null, reason: entry.reason ?? null };
+    ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null, reason: entry.reason ?? null, assignmentState: entry.assignmentState ?? "ready" };
 
   if (sameModel(recommendedAssignment.model, candidate)) {
     return resetProjectTeamAssignment(strategy, role);
@@ -639,6 +700,7 @@ export function applyProjectTeamOverride(strategy, role, candidate) {
     fallback: null,
     decisionEvidence: null,
     reason: null,
+    assignmentState: "ready",
     assignmentSource: "override",
     overrideEvidence: {
       accessMode: candidate.accessMode ?? null, available: candidate.available ?? null,
@@ -664,12 +726,13 @@ export function resetProjectTeamAssignment(strategy, role) {
   const index = findProjectTeamEntry(strategy, role);
   const entry = strategy.projectTeam[index];
   const recommendedAssignment = entry.recommendedAssignment
-    ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null, reason: entry.reason ?? null };
+    ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null, reason: entry.reason ?? null, assignmentState: entry.assignmentState ?? "ready" };
   const updatedEntry = {
     ...entry,
     recommendedAssignment,
     model: recommendedAssignment.model, fallback: recommendedAssignment.fallback,
     decisionEvidence: recommendedAssignment.decisionEvidence, reason: recommendedAssignment.reason ?? null,
+    assignmentState: recommendedAssignment.assignmentState ?? "ready",
     assignmentSource: "recommended",
     overrideEvidence: null
   };

@@ -1111,6 +1111,130 @@ test("sidecar project.analyze without an analyst payload forwards analyst null (
   await runPromise;
 });
 
+test("T28: sidecar project.analyze relays analysis_progress stages and only announces ready when readyToApprove", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async ({ onProgress }) => {
+      assert.equal(typeof onProgress, "function");
+      onProgress({ stage: "preparing", analyst: "Claude Sonnet", startedAt: 1, elapsedMs: 0 });
+      onProgress({ stage: "consulting_analyst", analyst: "Claude Sonnet", startedAt: 1, elapsedMs: 10 });
+      onProgress({ stage: "processing", analyst: "Claude Sonnet", startedAt: 1, elapsedMs: 20 });
+      onProgress({ stage: "building_team", analyst: "Claude Sonnet", startedAt: 1, elapsedMs: 30 });
+      return {
+        state: "suggested",
+        teamRows: 2,
+        roles: ["Architect", "Builder"],
+        analyst: "Claude Sonnet",
+        projectRoot: "/project",
+        notice: null,
+        readyToApprove: true,
+        blockedRoles: []
+      };
+    },
+    loadSnapshot: async () => fakeSnapshot({ team: { state: "suggested", rows: [], assignments: [] } })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const before = out.length;
+  stdin.write(`${JSON.stringify({ op: "project.analyze", analyst: { model: { adapterId: "claude", modelId: "sonnet" } } })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+  const after = out.slice(before);
+  const progress = after.filter((r) => r.type === "analysis_progress");
+  assert.deepEqual(progress.map((r) => r.stage), ["preparing", "consulting_analyst", "processing", "building_team"]);
+  assert.ok(progress.every((r) => r.analyst === "Claude Sonnet"));
+  assert.ok(after.some((r) => r.type === "notice" && /Suggested team ready/.test(r.message)));
+  assert.equal(after.some((r) => r.type === "notice" && /needs attention/.test(r.message)), false);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("T28: sidecar project.analyze announces draft needs attention when readyToApprove is false", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async () => ({
+      state: "suggested",
+      teamRows: 1,
+      roles: ["Explorer"],
+      analyst: "Claude",
+      projectRoot: "/project",
+      notice: null,
+      readyToApprove: false,
+      blockedRoles: ["Explorer"]
+    }),
+    loadSnapshot: async () => fakeSnapshot({ team: { state: "suggested", rows: [], assignments: [] } })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const before = out.length;
+  stdin.write(`${JSON.stringify({ op: "project.analyze" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+  const after = out.slice(before);
+  assert.ok(after.some((r) => r.type === "notice" && /needs attention/.test(r.message) && /Explorer/.test(r.message)));
+  assert.equal(after.some((r) => r.type === "notice" && /Suggested team ready/.test(r.message)), false);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
 test("sidecar team.approve re-applies Architect and republishes models plus snapshot", async () => {
   const setModelCalls = [];
   const out = [];

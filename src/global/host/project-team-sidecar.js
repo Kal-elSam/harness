@@ -344,12 +344,23 @@ function modelLabel(ref) {
 export function summarizeProjectStrategy(strategy) {
   if (!strategy) return null;
   const team = strategy.projectTeam ?? [];
+  const blockedRoles = team
+    .filter((entry) => !entry?.model || entry?.assignmentState === "blocked")
+    .map((entry) => entry?.role)
+    .filter(Boolean);
+  // Operational projectTeam roles only — Analyst is separate (bootstrapAnalyst).
+  const readyToApprove = strategy.status === "suggested"
+    && team.length > 0
+    && blockedRoles.length === 0
+    && Boolean(strategy.orchestrator?.adapterId && (strategy.orchestrator?.modelId || strategy.orchestrator?.displayName));
   return {
     state: strategy.status ?? "unknown",
     teamRows: team.length,
     roles: team.map((entry) => entry?.role).filter(Boolean),
     analyst: modelLabel(strategy.bootstrapAnalyst),
-    projectRoot: strategy.projectRoot ?? null
+    projectRoot: strategy.projectRoot ?? null,
+    readyToApprove,
+    blockedRoles
   };
 }
 
@@ -585,12 +596,13 @@ export async function verifyProjectTeamAccess({
  * result is `{status: "analyst_access_unverified", accessStatus, analyst,
  * reason, message}` — no provider call, no strategy write, no substitution.
  *
- * @param {{cwd?: string, analyst?: object|null, createConversationService?: typeof createConversationService}} args
- * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null, notice: string|null}|{status: "analyst_selection_required", message: string}|{status: "analyst_access_confirmation_required", analyst: {adapterId: string, modelId: string, displayName: string}, message: string}|{status: "analyst_access_unverified", accessStatus: "unverified"|"denied", analyst: {adapterId: string, modelId: string, displayName: string}, reason: string|null, message: string}>}
+ * @param {{cwd?: string, analyst?: object|null, onProgress?: (event: {stage: string, analyst: string|null, startedAt: number, elapsedMs: number}) => void, createConversationService?: typeof createConversationService}} args
+ * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null, notice: string|null, readyToApprove?: boolean, blockedRoles?: string[]}|{status: "analyst_selection_required", message: string}|{status: "analyst_access_confirmation_required", analyst: {adapterId: string, modelId: string, displayName: string}, message: string}|{status: "analyst_access_unverified", accessStatus: "unverified"|"denied", analyst: {adapterId: string, modelId: string, displayName: string}, reason: string|null, message: string}>}
  */
 export async function analyzeProjectTeam({
   cwd,
   analyst: requestedAnalyst = null,
+  onProgress = null,
   createConversationService: createService = createConversationService
 } = {}) {
   const projectCwd = requireCwd(cwd);
@@ -637,7 +649,8 @@ export async function analyzeProjectTeam({
     cwd: projectCwd,
     profile: preflight.profile,
     candidates: preflight.candidates,
-    analyst
+    analyst,
+    ...(typeof onProgress === "function" ? { onProgress } : {})
   });
   const summary = summarizeProjectStrategy(strategy);
   if (!summary) {
@@ -660,6 +673,9 @@ export async function approveProjectTeam({
   const projectCwd = requireCwd(cwd);
   const service = createService({ enableProviderProbes: true });
   const approved = await service.approveProjectStrategy({ cwd: projectCwd });
+  if (approved?.ok === false) {
+    return approved;
+  }
   const summary = summarizeProjectStrategy(approved);
   if (!summary) {
     throw new Error("Approval returned no strategy — the project team was not activated.");

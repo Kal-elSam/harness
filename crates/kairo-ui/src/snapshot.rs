@@ -54,7 +54,10 @@ pub fn apply_workspace_snapshot(view: &mut ShellViewModel, snapshot: &Value) {
 /// and never claims quota/blocking while verification is still running.
 fn derive_team_attention(view: &ShellViewModel) -> Option<Vec<String>> {
     match view.team_presentation.as_deref() {
-        Some("complete") => None,
+        Some("complete") | Some("ready_to_approve") => None,
+        Some("pending_approval") => {
+            Some(vec!["Suggested team draft — open Project (2) to review · a to re-analyze".to_string()])
+        }
         Some("verifying") => Some(vec!["Verifying team access…".to_string()]),
         Some(state @ ("incomplete" | "blocked")) => {
             let head = if state == "blocked" { "Team blocked" } else { "Team incomplete" };
@@ -85,7 +88,7 @@ fn apply_team_presentation(view: &mut ShellViewModel, presentation: Option<&Valu
     view.team_presentation = state.map(str::to_string);
     view.roles_visible = match (flag, state) {
         (Some(flag), _) => flag,
-        (None, Some("complete")) => true,
+        (None, Some("complete" | "pending_approval" | "ready_to_approve")) => true,
         (None, Some("incomplete" | "blocked" | "verifying")) => false,
         _ => true,
     };
@@ -141,12 +144,8 @@ fn agent_block_cause(entry: &Value) -> BlockCause {
 }
 
 fn agent_detail_line(entry: &Value, state: AgentState) -> String {
-    if let Some(reason) = entry.get("stateReason").and_then(|v| v.as_str()) {
-        let trimmed = reason.trim();
-        if !trimmed.is_empty() {
-            return shorten_agent_detail(trimmed);
-        }
-    }
+    // Always preserve provider · model identity. Block reasons live on
+    // `cause` / attention copy — never replace the model line.
     let provider = entry.get("provider").and_then(|v| v.as_str());
     let model = entry.get("model").and_then(|v| v.as_str());
     match (provider, model) {
@@ -215,9 +214,9 @@ fn owned_provider_head(detail: &str) -> Option<String> {
     Some(cleaned.to_string())
 }
 
-/// Collapse long provider outage sentences so the AGENTS column stays
-/// scannable, but keep an actionable next step (re-analyze) when the
-/// reason is a spent subscription quota or similar outage.
+/// Collapse long provider outage sentences for attention/CTA copy helpers.
+/// Agent identity lines no longer use this (T28: provider · model stays).
+#[allow(dead_code)]
 fn shorten_agent_detail(detail: &str) -> String {
     let lower = detail.to_ascii_lowercase();
     let cause = classify_block_cause(&lower);
@@ -369,13 +368,13 @@ mod tests {
         assert_eq!(view.agents.len(), 2);
         assert_eq!(view.agents[0].label, "Reviewer");
         assert_eq!(view.agents[0].state, AgentState::Blocked);
-        assert_eq!(view.agents[0].detail, "No entitlement");
+        assert_eq!(view.agents[0].detail, "claude", "identity stays provider·model; reason is separate");
+        assert_eq!(view.agents[0].cause, BlockCause::Unavailable);
         assert!(
             !view.agents[0].detail.to_ascii_lowercase().contains("funds"),
             "an entitlement message alone must never invent a funds cause: {}",
             view.agents[0].detail
         );
-        assert_eq!(view.agents[0].cause, BlockCause::Unavailable);
         assert_eq!(view.agents[1].label, "Builder");
         assert_eq!(view.agents[1].state, AgentState::Idle);
     }
@@ -528,7 +527,7 @@ mod tests {
         });
         let mut view = ShellViewModel::default();
         apply_workspace_snapshot(&mut view, &snapshot);
-        assert_eq!(view.agents[0].detail, "Codex · rate-limited · /analyze");
+        assert_eq!(view.agents[0].detail, "codex");
         assert_eq!(view.agents[0].cause, BlockCause::RateLimited);
         let joined = view.team_attention.expect("CTA").join(" ");
         assert!(
@@ -556,10 +555,7 @@ mod tests {
         });
         let mut view = ShellViewModel::default();
         apply_workspace_snapshot(&mut view, &snapshot);
-        assert_eq!(
-            view.agents[0].detail,
-            "OpenCode Go · rate-limited · /analyze"
-        );
+        assert_eq!(view.agents[0].detail, "opencode-go");
         assert_eq!(view.agents[0].cause, BlockCause::RateLimited);
         let attention = view.team_attention.expect("blocked team needs CTA");
         let joined = attention.join(" ");
@@ -599,10 +595,7 @@ mod tests {
         });
         let mut view = ShellViewModel::default();
         apply_workspace_snapshot(&mut view, &snapshot);
-        assert_eq!(
-            view.agents[0].detail,
-            "OpenCode Go · quota spent · /analyze"
-        );
+        assert_eq!(view.agents[0].detail, "opencode-go");
         assert_eq!(view.agents[0].cause, BlockCause::QuotaExhausted);
     }
 
@@ -620,7 +613,7 @@ mod tests {
         });
         let mut view = ShellViewModel::default();
         apply_workspace_snapshot(&mut view, &snapshot);
-        assert_eq!(view.agents[0].detail, "Codex · no funds · /analyze");
+        assert_eq!(view.agents[0].detail, "codex");
         assert_eq!(view.agents[0].cause, BlockCause::NoFunds);
         let joined = view.team_attention.expect("CTA").join(" ");
         assert!(
@@ -644,7 +637,7 @@ mod tests {
         });
         let mut view = ShellViewModel::default();
         apply_workspace_snapshot(&mut view, &snapshot);
-        assert_eq!(view.agents[0].detail, "Claude · no funds · /analyze");
+        assert_eq!(view.agents[0].detail, "claude");
         assert_eq!(view.agents[0].cause, BlockCause::NoFunds);
     }
 
@@ -729,9 +722,9 @@ mod tests {
             .find(|a| a.label == "Builder")
             .expect("builder row");
         assert_eq!(architect.cause, BlockCause::RateLimited);
-        assert_eq!(architect.detail, "OpenCode Go · rate-limited · /analyze");
+        assert_eq!(architect.detail, "opencode-go");
         assert_eq!(builder.cause, BlockCause::NoFunds);
-        assert_eq!(builder.detail, "Codex · no funds · /analyze");
+        assert_eq!(builder.detail, "codex");
         // Aggregate CTA must not pick either cause when roles disagree.
         let joined = view.team_attention.expect("CTA").join(" ");
         assert!(
@@ -773,7 +766,8 @@ mod tests {
         assert_eq!(view.agents[0].cause, BlockCause::RateLimited);
         assert_eq!(
             view.agents[0].detail,
-            "OpenCode Go · rate-limited · /analyze"
+            "opencode-go",
+            "identity stays provider·model even when stateReason is long"
         );
     }
 

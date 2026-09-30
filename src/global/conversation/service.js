@@ -42,6 +42,7 @@ import { acquireProjectAnalysisLock } from "./project-analysis-lock.js";
 import { readAvailabilityRecovery, writeAvailabilityRecovery } from "./availability-recovery-store.js";
 import { approveRecoveryProposal, rejectRecoveryProposal, runTeamRecovery } from "./team-recovery.js";
 import { resolveProjectRoute } from "./project-router.js";
+import { resolveAssignmentAvailability } from "./assignment-availability.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
@@ -612,7 +613,28 @@ export function createConversationService(deps = {}) {
   // is held (see runBootstrapAnalysis). `persist: false` returns the
   // suggested strategy without writing it: automatic team recovery must not
   // overwrite the ACTIVE team before it has verified the rebuilt one.
-  async function runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst, persist = true }) {
+  // Optional `onProgress({ stage, analyst, startedAt, elapsedMs })` mirrors
+  // verification_progress — stages: preparing, consulting_analyst,
+  // processing, building_team. Never invents percentages or private thoughts.
+  async function runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst, persist = true, onProgress = null }) {
+    const startedAt = Date.now();
+    const analystLabel = analyst?.model?.displayName
+      ?? analyst?.model?.modelId
+      ?? null;
+    const emitProgress = (stage) => {
+      if (typeof onProgress !== "function") return;
+      try {
+        onProgress({
+          stage,
+          analyst: analystLabel,
+          startedAt,
+          elapsedMs: Math.max(0, Date.now() - startedAt)
+        });
+      } catch {
+        // Progress listeners must never abort analysis.
+      }
+    };
+    emitProgress("preparing");
     // SECRET-SAFE (a real, meaningful reduction — not by itself a
     // filesystem sandbox guarantee, see sanitized-snapshot.js's own
     // header for why): the analyst's `cwd` points at a bounded,
@@ -646,12 +668,14 @@ export function createConversationService(deps = {}) {
       // just answering from the prompt text) genuinely takes longer
       // than ASK mode's quick-question default — give it real room
       // instead of timing out mid-investigation.
+      emitProgress("consulting_analyst");
       const response = await adapter.analyze({
         question: prompt, snapshotRoot: snapshot.snapshotRoot, timeoutMs: BOOTSTRAP_ANALYST_TIMEOUT_MS
       });
       if (response.status !== "answered") {
         throw new Error(`Bootstrap Analyst did not answer: ${response.error ?? response.status}`);
       }
+      emitProgress("processing");
       const parsed = parseProjectAnalysisImpl(response.answer);
       if (!parsed.valid) throw new Error(`Bootstrap Analyst response failed validation: ${parsed.error}`);
       // Real-evidence gate, checked PER recommendedRoleNeeds entry (see
@@ -660,6 +684,7 @@ export function createConversationService(deps = {}) {
       // had access to — one well-evidenced role need can no longer
       // vouch for every other role need in the same response.
       const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, snapshot.copiedFiles);
+      emitProgress("building_team");
       const strategy = buildProjectStrategy({ ...profile, roleRequirements }, candidates, analyst);
       if (persist) await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
       return {
@@ -1595,7 +1620,7 @@ export function createConversationService(deps = {}) {
      * @param {object} args.candidates - from preflightProject
      * @param {{choice?: "quality"|"efficient"|null, model: object, selectionSource?: "recommended"|"manual", recommendationTags?: string[]}} args.analyst
      */
-    async runBootstrapAnalysis({ cwd, profile, candidates, analyst }) {
+    async runBootstrapAnalysis({ cwd, profile, candidates, analyst, onProgress = null }) {
       const projectRoot = await root(cwd);
       // One analysis per project at a time: automatic team recovery takes
       // the same lock, so a manual analyze never races it (or vice versa).
@@ -1605,7 +1630,10 @@ export function createConversationService(deps = {}) {
         throw new Error(`A project analysis is already running for this project${holder}. Wait for it to finish, then try again.`);
       }
       try {
-        return await runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst });
+        return await runLockedBootstrapAnalysis({
+          projectRoot, profile, candidates, analyst,
+          ...(typeof onProgress === "function" ? { onProgress } : {})
+        });
       } finally {
         await lock.release();
       }
@@ -1664,14 +1692,60 @@ export function createConversationService(deps = {}) {
         writeRecord: (record) => writeAvailabilityRecoveryImpl(homeDir, projectRoot, record)
       });
     },
-    /** `/project approve`: SUGGESTED -> ACTIVE. Requires a real suggested strategy to already exist — the Bootstrap Analyst choice is already locked in by the time a strategy exists at all (see runBootstrapAnalysis), so there's nothing left to confirm here. */
+    /**
+     * `/project approve`: SUGGESTED -> ACTIVE. Re-checks strategy integrity
+     * and current eligibility/availability for every operational assignment
+     * before flipping status. Unusable or missing roles return
+     * `{ok:false, status, reasons[]}` without mutating — never a silent
+     * model swap. Edit stays allowed on the suggested strategy.
+     */
     async approveProjectStrategy({ cwd }) {
       const projectRoot = await root(cwd);
       const existing = await readProjectStrategyImpl(homeDir, projectRoot);
       if (!existing) throw new Error("No suggested project strategy yet — run /project analyze first.");
+      if (existing.status !== "suggested") {
+        return { ok: false, status: existing.status ?? "unknown", reasons: [`Strategy is ${existing.status}, not suggested — nothing to approve.`] };
+      }
+      const reasons = [];
+      const team = existing.projectTeam ?? [];
+      if (team.length === 0) reasons.push("projectTeam is empty — re-analyze before approving.");
+      if (!existing.orchestrator?.adapterId || !(existing.orchestrator?.modelId || existing.orchestrator?.displayName)) {
+        reasons.push("Orchestrator assignment is missing.");
+      }
+      const snap = await this.snapshot({ cwd: projectRoot });
+      const intelligence = snap.modelIntelligence ?? {};
+      const availabilityOpts = {
+        eligibility: intelligence.eligibility ?? {},
+        claudeEntitlement: intelligence.claudeEntitlement ?? {},
+        cursorAccess: intelligence.cursorAccess ?? {}
+      };
+      for (const entry of team) {
+        const role = entry?.role ?? "Unknown role";
+        if (!entry?.model?.adapterId || !(entry.model.modelId || entry.model.displayName)) {
+          reasons.push(`${role}: missing assignment`);
+          continue;
+        }
+        if (entry.assignmentState === "blocked") {
+          reasons.push(`${role}: assignment blocked (no usable primary or fallback)`);
+          continue;
+        }
+        const availability = resolveAssignmentAvailability(entry.model, availabilityOpts);
+        if (!availability.available) {
+          reasons.push(`${role}: ${availability.warning ?? "unavailable"}`);
+        }
+      }
+      if (existing.orchestrator?.adapterId) {
+        const orch = resolveAssignmentAvailability(existing.orchestrator, availabilityOpts);
+        if (!orch.available) {
+          reasons.push(`Orchestrator: ${orch.warning ?? "unavailable"}`);
+        }
+      }
+      if (reasons.length > 0) {
+        return { ok: false, status: existing.status, reasons };
+      }
       const approved = { ...existing, status: "active", approvedAt: new Date().toISOString() };
       await writeProjectStrategyImpl(homeDir, projectRoot, approved);
-      return { ...approved, projectRoot };
+      return { ok: true, ...approved, projectRoot };
     },
     /**
      * `/project refresh`: a strategy that was never approved (no strategy

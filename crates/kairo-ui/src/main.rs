@@ -60,6 +60,56 @@ use surfaces::{
 };
 use workspace_nav::{escape_to_work, view_from_digit, WorkspaceView};
 
+/// T28 bootstrap-analysis progress (mirrors verification_progress wire shape,
+/// but stages are preparing / consulting_analyst / processing / building_team).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct AnalysisProgress {
+    stage: String,
+    analyst: Option<String>,
+    elapsed_ms: u64,
+}
+
+impl AnalysisProgress {
+    fn apply_record(&mut self, record: &serde_json::Value) {
+        if let Some(stage) = record.get("stage").and_then(|v| v.as_str()) {
+            self.stage = stage.trim().to_string();
+        }
+        if let Some(analyst) = record.get("analyst").and_then(|v| v.as_str()) {
+            let trimmed = analyst.trim();
+            self.analyst = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
+        }
+        if let Some(elapsed) = record.get("elapsedMs").and_then(|v| v.as_u64()) {
+            self.elapsed_ms = elapsed;
+        }
+    }
+
+    fn stage_label(&self) -> &str {
+        match self.stage.as_str() {
+            "preparing" => "Preparing",
+            "consulting_analyst" => "Consulting analyst",
+            "processing" => "Processing",
+            "building_team" => "Building team",
+            other if !other.is_empty() => other,
+            _ => "Analyzing",
+        }
+    }
+
+    fn notice_line(&self) -> String {
+        let elapsed_s = self.elapsed_ms / 1000;
+        let spinner = match (elapsed_s / 1) % 4 {
+            0 => "⠋",
+            1 => "⠙",
+            2 => "⠹",
+            _ => "⠸",
+        };
+        match &self.analyst {
+            Some(analyst) => format!("{spinner} {} · {analyst} · {elapsed_s}s", self.stage_label()),
+            None => format!("{spinner} {} · {elapsed_s}s", self.stage_label()),
+        }
+    }
+}
+
+
 // Keybindings (V2 + R3b + R4):
 // - Tab: cycle focus Editor → Sidebar → Transcript
 // - Shift+Tab: cycle WorkMode ASK → PLAN → AGENT → ASK (U4a; plain Tab stays focus)
@@ -205,6 +255,9 @@ struct ShellApp {
     verification_progress: Option<VerificationProgress>,
     /// A consented verification was sent and its `verification` record has not arrived.
     verification_running: bool,
+    /// T28: live bootstrap-analysis stage (preparing/consulting_analyst/…);
+    /// cleared on success or failure. Never invents percentages.
+    analysis_progress: Option<AnalysisProgress>,
     /// `team.revalidate` or `team.recovery.preview` was sent; a second one
     /// is refused with a notice instead of silently piling up.
     availability_action_pending: bool,
@@ -272,6 +325,7 @@ impl ShellApp {
             verification_detail_lines: Vec::new(),
             verification_progress: None,
             verification_running: false,
+            analysis_progress: None,
             availability_action_pending: false,
             recovery_preview: None,
             recovery_action_pending: false,
@@ -464,6 +518,8 @@ impl ShellApp {
             self.ingest_preflight_record(&record);
         } else if kind == Some("verification_progress") {
             self.ingest_verification_progress(&record);
+        } else if kind == Some("analysis_progress") {
+            self.ingest_analysis_progress(&record);
         } else if kind == Some("verification") {
             self.ingest_verification_record(&record);
         } else if kind == Some("availability") {
@@ -846,7 +902,9 @@ impl ShellApp {
     /// summary text arrives as its own `notice`; this only tracks state.
     fn ingest_team_record(&mut self, record: &serde_json::Value) {
         self.team_action_pending = false;
+        self.analysis_progress = None;
         let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        let op = record.get("op").and_then(|v| v.as_str());
         if !ok {
             if matches!(
                 record.get("status").and_then(|v| v.as_str()),
@@ -863,7 +921,18 @@ impl ShellApp {
         if let Some(state) = record.get("state").and_then(|v| v.as_str()) {
             self.view.team_state = Some(state.to_string());
         }
+        // T28: finished analysis opens Project for review — never auto-approves.
+        if op == Some("project.analyze") {
+            self.set_workspace_view(WorkspaceView::Project);
+        }
         self.sync_empty_hint();
+    }
+
+    /// Sidecar `analysis_progress` record: stage + analyst + elapsedMs.
+    fn ingest_analysis_progress(&mut self, record: &serde_json::Value) {
+        let progress = self.analysis_progress.get_or_insert_with(AnalysisProgress::default);
+        progress.apply_record(record);
+        self.view.notice = Some(progress.notice_line());
     }
 
     fn request_team_op(&mut self, op: TeamOp) {
@@ -3560,6 +3629,44 @@ mod tests {
         app.ingest_team_record(&json!({ "type": "team", "op": "project.analyze", "ok": false, "reason": "boom" }));
         assert!(!app.team_action_pending);
         assert_eq!(app.view.notice, None);
+    }
+
+    #[test]
+    fn t28_successful_analyze_opens_project_view_and_clears_analysis_progress() {
+        let mut app = ShellApp::new(None);
+        app.analysis_progress = Some(AnalysisProgress {
+            stage: "building_team".into(),
+            analyst: Some("Claude".into()),
+            elapsed_ms: 1200,
+        });
+        app.workspace_view = WorkspaceView::Work;
+        app.ingest_team_record(&json!({
+            "type": "team", "op": "project.analyze", "ok": true,
+            "state": "suggested", "teamRows": 2, "roles": ["Architect", "Builder"], "analyst": "Claude"
+        }));
+        assert_eq!(app.workspace_view, WorkspaceView::Project);
+        assert_eq!(app.view.team_state.as_deref(), Some("suggested"));
+        assert!(app.analysis_progress.is_none(), "progress clears on success");
+    }
+
+    #[test]
+    fn t28_analysis_progress_updates_notice_with_stage_analyst_and_elapsed() {
+        let mut app = ShellApp::new(None);
+        app.ingest_analysis_progress(&json!({
+            "type": "analysis_progress",
+            "stage": "consulting_analyst",
+            "analyst": "Claude Sonnet",
+            "elapsedMs": 2500
+        }));
+        let notice = app.view.notice.as_ref().expect("progress paints a notice");
+        assert!(notice.contains("Consulting analyst"), "{notice}");
+        assert!(notice.contains("Claude Sonnet"), "{notice}");
+        assert!(notice.contains("2s"), "{notice}");
+        assert!(!notice.contains('%'), "no invented percentages: {notice}");
+        app.ingest_team_record(&json!({
+            "type": "team", "op": "project.analyze", "ok": false, "reason": "boom"
+        }));
+        assert!(app.analysis_progress.is_none(), "progress clears on failure");
     }
 
     #[test]

@@ -955,6 +955,15 @@ export async function runKairoUiRpcStdio({
         });
         return summary;
       }
+      if (summary?.ok === false) {
+        // Approve gate (T28): integrity/availability refused without mutation.
+        writeOut({
+          type: "team", op, ok: false, status: summary.status ?? "blocked",
+          reason: Array.isArray(summary.reasons) ? summary.reasons.join("; ") : (summary.message ?? "Approval refused"),
+          reasons: Array.isArray(summary.reasons) ? summary.reasons : []
+        });
+        return summary;
+      }
       writeOut({
         type: "team",
         op,
@@ -962,7 +971,9 @@ export async function runKairoUiRpcStdio({
         state: summary.state,
         teamRows: summary.teamRows,
         roles: summary.roles,
-        analyst: summary.analyst ?? null
+        analyst: summary.analyst ?? null,
+        readyToApprove: summary.readyToApprove ?? null,
+        blockedRoles: summary.blockedRoles ?? []
       });
       return summary;
     } catch (err) {
@@ -1783,17 +1794,37 @@ export async function runKairoUiRpcStdio({
           message: "Analyzing project team… (real read-only provider call, can take a minute)"
         });
         const summary = await runTeamOp("project.analyze", () =>
-          analyzeProjectTeam({ cwd, analyst: requestedAnalyst })
+          analyzeProjectTeam({
+            cwd,
+            analyst: requestedAnalyst,
+            onProgress: (event) => writeOut({
+              type: "analysis_progress",
+              stage: event?.stage ?? null,
+              analyst: event?.analyst ?? null,
+              elapsedMs: event?.elapsedMs ?? null,
+              startedAt: event?.startedAt ?? null
+            })
+          })
         );
         if (!["analyst_selection_required", "analyst_access_unverified", "analyst_access_confirmation_required"].includes(summary.status)) {
           if (summary.notice) writeOut({ type: "notice", message: summary.notice });
           await emitSnapshot();
-          writeOut({
-            type: "notice",
-            message:
-              `Suggested team ready: ${summary.teamRows} role${summary.teamRows === 1 ? "" : "s"}` +
-              `${summary.analyst ? ` via ${summary.analyst}` : ""} — approve to enable chat.`
-          });
+          if (summary.readyToApprove) {
+            writeOut({
+              type: "notice",
+              message:
+                `Suggested team ready: ${summary.teamRows} role${summary.teamRows === 1 ? "" : "s"}` +
+                `${summary.analyst ? ` via ${summary.analyst}` : ""} — approve to enable chat.`
+            });
+          } else {
+            const blocked = Array.isArray(summary.blockedRoles) ? summary.blockedRoles : [];
+            writeOut({
+              type: "notice",
+              message: blocked.length > 0
+                ? `Suggested team draft needs attention: ${blocked.length} blocked role${blocked.length === 1 ? "" : "s"} (${blocked.join(", ")}) — open Project to review or re-analyze.`
+                : "Suggested team draft needs attention — open Project to review blocked or missing roles."
+            });
+          }
         }
       } else if (op === "team.approve") {
         const summary = await runTeamOp("team.approve", () => approveProjectTeam({ cwd }));

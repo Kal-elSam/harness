@@ -260,6 +260,55 @@ test("buildProjectStrategy's projectTeam reuses the exact same real Pareto/risk-
   assert.equal(entry.model.modelId, strategy.efficientTeam[0].model.modelId);
 });
 
+test("T28: blocked primary with usable fallback → operational assignment is the fallback (never the blocked comparative leader)", () => {
+  const candidates = {
+    ...realCandidates(),
+    eligibility: { claude: { ok: false, reason: "quota" }, codex: { ok: true } }
+  };
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), candidates, analystChoice("quality", { adapterId: "codex", modelId: "codex-model" }));
+  const [entry] = strategy.projectTeam;
+  assert.equal(entry.model.adapterId, "codex", "operational model must be the usable fallback");
+  assert.equal(entry.model.modelId, "codex-model");
+  assert.equal(entry.assignmentState, "ready");
+  assert.equal(entry.recommendedAssignment.model.adapterId, "codex", "frozen recommendation is the operational pick");
+  assert.equal(entry.fallback, null, "fallback already promoted — no silent second substitute");
+  // qualityTeam keeps the comparative primary for evidence display
+  assert.equal(strategy.qualityTeam[0].model.adapterId, "claude");
+});
+
+test("T28: neither primary nor fallback usable → role stays required but assignment is blocked (no silent substitute)", () => {
+  const candidates = {
+    ...realCandidates(),
+    eligibility: { claude: { ok: false, reason: "quota" }, codex: { ok: false, reason: "quota" } }
+  };
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), candidates, analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
+  assert.deepEqual(strategy.activeRoles, ["Explorer"]);
+  const [entry] = strategy.projectTeam;
+  assert.equal(entry.assignmentState, "blocked");
+  assert.equal(entry.model.adapterId, "claude", "preferred primary kept for display");
+  assert.equal(entry.model.modelId, "claude-model");
+});
+
+test("T28: orchestrator comes from the operational Architect assignment, not quality primary alone", () => {
+  const candidates = {
+    ...realCandidates(),
+    eligibility: { claude: { ok: false, reason: "quota" }, codex: { ok: true } }
+  };
+  // Architect with reasoning-only prefers Claude comparatively; Claude blocked → fallback Codex operational.
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Architect", capabilities: ["reasoning"], reason: "" }]
+  }), candidates, analystChoice("quality", { adapterId: "codex", modelId: "codex-model" }));
+  const architect = strategy.projectTeam.find((e) => e.role === "Architect");
+  assert.equal(architect.model.adapterId, "codex");
+  assert.equal(strategy.orchestrator.adapterId, "codex");
+  assert.equal(strategy.orchestrator.modelId, architect.model.modelId);
+  assert.equal(strategy.qualityTeam[0].model.adapterId, "claude", "comparative quality primary still exposed");
+});
+
 test("buildProjectStrategy's projectTeam carries the richer model reference (candidateKey, accessMode) plus assignmentSource and decisionEvidence", () => {
   const strategy = buildProjectStrategy(profile({
     roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
