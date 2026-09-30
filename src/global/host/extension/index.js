@@ -465,6 +465,7 @@ export function createKairoWorkspaceExtension(pi, {
   let shownAvailabilityKeys = new Set();
   const shownRecoveryKeys = new Set();
   let pendingRecovery = Promise.resolve(null);
+  let startupProbes = Promise.resolve();
   // The Kairo session currently bound to THIS Pi process, held in memory —
   // never re-derived from env on every refresh (see bindSession below).
   // null means genuinely unbound, presented as such, never a silent "ask".
@@ -786,7 +787,17 @@ export function createKairoWorkspaceExtension(pi, {
       }
     });
 
-    await Promise.all([usagePromise, availabilityPromise, pendingNotice]);
+    // Local init (bind, routes, Phase 1 render) is awaited above; the live
+    // probes can take many seconds (or never settle), so session_start does
+    // not wait for them. Each settles independently and re-renders itself;
+    // every rejection is swallowed here so nothing goes unhandled. Timeouts
+    // are unchanged. `recovery()` awaits this group, not session_start.
+    const swallow = () => null;
+    startupProbes = Promise.all([
+      usagePromise.catch(swallow),
+      availabilityPromise.catch(swallow),
+      pendingNotice.catch(swallow)
+    ]);
   });
 
   // P2 polish: the first turn clears the Kairo welcome header (see
@@ -864,7 +875,10 @@ export function createKairoWorkspaceExtension(pi, {
   return {
     registerRoutes,
     /** The most recent automatic team recovery (null when none ran). */
-    recovery: () => pendingRecovery
+    recovery: async () => {
+      await startupProbes;
+      return pendingRecovery;
+    }
   };
 }
 

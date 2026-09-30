@@ -177,6 +177,8 @@ test("E2E: proposal survives a restart — a fresh process notifies the persiste
   const notifications = [];
   const ctx = { cwd: "/repo", ui: { setStatus: () => {}, setWidget: () => {}, notify: (...args) => notifications.push(args) } };
   await second.events.get("session_start")({}, ctx);
+  // session_start no longer awaits the background probes; recovery() does.
+  await restarted.recovery();
   const joined = notifications.map(([message]) => message).join("\n");
   assert.match(joined, /rate-limited/, "the persisted cause shows after restart");
   assert.match(joined, /kairo-team-approve/, "the restart notice names the approve command");
