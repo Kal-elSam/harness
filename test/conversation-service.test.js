@@ -1224,7 +1224,7 @@ test("REGRESSION: snapshot starts usage, project strategy, and provider-probe ca
   assert.equal(aaResolvedBeforeSlowUsageFinished, true, "provider-probe reads must start concurrently with usage reads, not wait for them to finish first");
 });
 
-test("REGRESSION: Cursor's two real pool probes run concurrently, never sequentially — a slow probe for one pool must not delay starting the other's", async () => {
+test("REGRESSION (T23, rewritten): Cursor's two pool probes in the explicit verifyAccess run concurrently, never sequentially — and snapshot() itself never starts one", async () => {
   const startedAt = {};
   const service = createConversationService({
     resolveRoot: async () => "/repo",
@@ -1265,13 +1265,15 @@ test("REGRESSION: Cursor's two real pool probes run concurrently, never sequenti
   });
 
   await service.snapshot({ cwd: "/repo" });
+  assert.deepEqual(startedAt, {}, "discovery (snapshot) never probes");
+  await service.verifyAccess({ cwd: "/repo", confirmed: true });
   assert.ok(startedAt.cursor_models, "cursor_models pool must have been probed");
   assert.ok(startedAt.other_models, "other_models pool must have been probed");
   const gap = Math.abs(startedAt.other_models - startedAt.cursor_models);
   assert.ok(gap < 20, `both pool probes must start within a few ms of each other (concurrent) — got a ${gap}ms gap, consistent with a sequential for-loop waiting out cursor_models' full 40ms delay first`);
 });
 
-test("REGRESSION: a real UNVERIFIED Cursor probe result cools down in memory for 30s — never re-spawns cursor-agent on every snapshot() poll", async () => {
+test("REGRESSION (T23, rewritten): repeated snapshot() polls never spawn cursor-agent, whatever the cache state (was: 30s in-memory probe cooldown)", async () => {
   let probeCalls = 0;
   const service = createConversationService({
     resolveRoot: async () => "/repo",
@@ -1306,7 +1308,7 @@ test("REGRESSION: a real UNVERIFIED Cursor probe result cools down in memory for
   await service.snapshot({ cwd: "/repo" });
   await service.snapshot({ cwd: "/repo" });
   await service.snapshot({ cwd: "/repo" });
-  assert.equal(probeCalls, 1, "three snapshot() polls within the 30s cooldown must real-probe exactly once, not once per poll");
+  assert.equal(probeCalls, 0, "snapshot() polls are discovery-only: zero probes, not one per poll");
 });
 
 test("REGRESSION: snapshot's real unscoredModels — the exact list /models --evidence renders — excludes an UNVERIFIED unscored Claude model, not just a DENIED one", async () => {
