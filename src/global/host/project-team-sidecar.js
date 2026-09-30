@@ -14,6 +14,7 @@
  * ProjectStrategy the service persisted.
  */
 
+import { MIN_RECOMMENDATION_CONFIDENCE, recommendationQualifies } from "../conversation/analyst-qualification.js";
 import { createConversationService } from "../conversation/service.js";
 
 /** After dedupe by displayName, keep at most this many picker rows. */
@@ -34,12 +35,7 @@ function providerPickerLabel(adapterId) {
   return PROVIDER_PICKER_LABELS[adapterId] ?? String(adapterId);
 }
 
-/**
- * Minimum evidence confidence for the recommended star. The star is a claim
- * ("Kairo recommends this one"), so it needs real evidence behind it; the
- * row itself stays selectable either way.
- */
-export const MIN_RECOMMENDATION_CONFIDENCE = 0.5;
+export { MIN_RECOMMENDATION_CONFIDENCE };
 
 function numericOr(value, fallback) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -197,17 +193,6 @@ export function buildAnalystPickerNotice(rawCatalog, curatedCatalog, unverifiedC
   }
   const parts = [...byProvider.entries()].map(([provider, copies]) => `${provider}: ${copies.join(", ")}`);
   return parts.length > 0 ? parts.join(" · ") : null;
-}
-
-/**
- * The single rule for "this recommendation keeps its star": its evidence
- * confidence (the model's own, else the recommendation's) reaches
- * MIN_RECOMMENDATION_CONFIDENCE. No confidence field = legacy entry, kept.
- * Shared by the picker curation and the default pick so they never diverge.
- */
-function recommendationQualifies(model, recommendation) {
-  const confidence = model?.confidence ?? recommendation?.confidence ?? null;
-  return confidence == null || numericOr(confidence, 0) >= MIN_RECOMMENDATION_CONFIDENCE;
 }
 
 /**

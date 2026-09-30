@@ -10,6 +10,7 @@
 // the previous team stays exactly as it was. Every step's I/O is injected,
 // so the decision logic has no hidden dependencies.
 
+import { recommendationQualifies } from "./analyst-qualification.js";
 import { availabilityFingerprint } from "./availability-fingerprint.js";
 import { applyProjectTeamOverride } from "./project-strategy.js";
 
@@ -60,19 +61,23 @@ export function decideTeamRecovery({ strategy, fingerprint, record, eligibility,
 
 /**
  * The analyst for an automatic re-analysis: available right now, scored,
- * and entitled (unknown access is never an automatic choice, T20). Prefers the quality pick, then the efficient pick, then any
- * other candidate; never an unavailable one. Isolation is still verified by
- * the analyzer adapter itself before any provider call.
+ * entitled (unknown access is never an automatic choice, T20), and tagged
+ * quality or efficient with evidence that passes the SAME qualification rule
+ * as the picker and the default pick (T21a). Prefers quality, then efficient.
+ * There is no blind "first usable" fallback: when nothing qualifies this
+ * returns null and the caller must NOT choose or analyze. Isolation is still
+ * verified by the analyzer adapter itself before any provider call.
  * @param {{recommendedModel: object|null, models: object[]}} analystCatalog
  */
 export function pickRecoveryAnalyst(analystCatalog) {
+  const recommended = analystCatalog?.recommendedModel ?? null;
   const usable = (analystCatalog?.models ?? []).filter((model) => (
     model.available === true && model.accessVerified !== false && model.evidenceStatus !== "unscored"
     && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
+    && recommendationQualifies(model, recommended?.candidateKey === model.candidateKey ? recommended : null)
   ));
   const picked = usable.find((model) => model.recommendationTags?.includes("quality"))
     ?? usable.find((model) => model.recommendationTags?.includes("efficient"))
-    ?? usable[0]
     ?? null;
   if (!picked) return null;
   const tags = picked.recommendationTags ?? [];
@@ -175,7 +180,7 @@ export async function runTeamRecovery(context) {
     if (availabilityFingerprint(preflight.candidates?.eligibility).key !== fingerprint.key) return keepPrevious("availability-changed");
 
     const analyst = pickRecoveryAnalyst(preflight.analystCatalog);
-    if (!analyst) return keepPrevious("no-analyst");
+    if (!analyst) return keepPrevious("analyst_selection_required");
 
     let rebuilt;
     try {
