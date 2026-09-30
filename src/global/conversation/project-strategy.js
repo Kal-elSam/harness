@@ -232,7 +232,7 @@ export function computeBootstrapAnalystCatalog({
   const askSupportedUnscored = unscoredModels.filter((model) => (
     ASK_SUPPORTED_ADAPTERS.has(model.adapterId)
     && model.lifecycle !== "superseded"
-    && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
+    && !isAccessDenied(model)
   ));
 
   const roleCapabilities = { Explorer: BOOTSTRAP_ANALYST_PROFILE.capabilities };
@@ -259,7 +259,7 @@ export function computeBootstrapAnalystCatalog({
   const entitlementCause = (entitlement) => (
     entitlement === ENTITLEMENT.DENIED ? "unavailable_verified" : "access_unknown"
   );
-  const scoredKeys = new Set(askSupportedScoredAll.map(candidateKeyOf));
+  const scoredKeys = new Set([...askSupportedScoredAll, ...askSupportedUnscored].map(candidateKeyOf));
   const exclusions = [];
   const seenExcluded = new Set();
   for (const model of [...manualSelectionScoredPool, ...unscoredModels]) {
@@ -305,26 +305,32 @@ export function computeBootstrapAnalystCatalog({
       recommendationTags
     };
   });
-  const unscoredEntries = askSupportedUnscored.map((model) => ({
+  const unscoredEntries = askSupportedUnscored.map((model) => {
+    const providerOk = eligibility[model.adapterId]?.ok === true;
+    const unverified = isAccessUnverified(model);
+    return {
     candidateKey: candidateKeyOf(model), adapterId: model.adapterId, modelId: model.modelId,
     displayName: model.displayName ?? model.modelId,
     evidenceStatus: "unscored",
     entitlement: model.entitlement ?? null,
     entitlementReason: model.entitlementReason ?? null,
-    available: eligibility[model.adapterId]?.ok === true,
-    accessVerified: true,
-    selectable: eligibility[model.adapterId]?.ok === true,
+    // Unknown access (no benchmark AND unverified) is a manual candidate that
+    // is revalidated on confirm: selectable, never "safe to run now".
+    available: providerOk && !unverified,
+    accessVerified: !unverified,
+    selectable: providerOk,
     // Unscored is a manual-only choice, not unavailability. When the
     // provider itself is unavailable right now, that verified cause wins so
     // the picker never hides why a whole provider is out.
-    cause: eligibility[model.adapterId]?.ok === true ? "unscored" : unavailableCause(model.adapterId),
+    cause: !providerOk ? unavailableCause(model.adapterId) : unverified ? "access_unknown" : "unscored",
     quota: quotaFor(providerCapacity, model.adapterId),
     // No benchmark exists: fit is unknown (null, never an invented 0) and
     // confidence is the documented unscored constant. Nothing is invented;
     // availability alone makes the model selectable.
     fit: null, confidence: UNSCORED_ANALYST_CONFIDENCE, evidence: { ...NO_ANALYST_EVIDENCE },
     recommendationTags: []
-  }));
+    };
+  });
 
   const models = [...scoredEntries, ...unscoredEntries];
   const recommendedModel = models.find((model) => model.recommendationTags.includes("quality")) ?? null;

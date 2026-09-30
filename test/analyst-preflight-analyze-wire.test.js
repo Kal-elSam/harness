@@ -27,12 +27,14 @@ const CATALOG = {
     {
       candidateKey: "codex::gpt-5", adapterId: "codex", modelId: "gpt-5", displayName: "GPT-5",
       evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true,
-      recommendationTags: [], fit: 0.6, confidence: 0.9
+      accessVerified: true, selectable: true, recommendationTags: [], fit: 0.6, confidence: 0.9,
+      evidence: { reasoning: 0.7, coding: 0.6, coverage: 1 }
     },
     {
       candidateKey: "claude::opus-unv", adapterId: "claude", modelId: "opus-unv", displayName: "Claude Opus Unverified",
       evidenceStatus: "scored", entitlement: "unverified", entitlementReason: null, available: false,
-      selectable: true, accessVerified: false, cause: "access_unknown", recommendationTags: ["quality"], fit: 0.9, confidence: 0.9
+      selectable: true, accessVerified: false, cause: "access_unknown", recommendationTags: ["quality"], fit: 0.9, confidence: 0.9,
+      evidence: { reasoning: 0.9, coding: 0.9, coverage: 1 }
     }
   ]
 };
@@ -45,8 +47,10 @@ const REQUEST_ANALYZE = {
   analyst: {
     model: { adapterId: "claude", modelId: "opus-unv", displayName: "Claude Opus Unverified" },
     selectionSource: "manual",
-    recommendationTags: ["quality"],
-    choice: "quality"
+    recommendationTags: [],
+    choice: null,
+    // The Rust host sets this only after the modal's explicit second confirmation.
+    accessCheckConfirmed: true
   }
 };
 

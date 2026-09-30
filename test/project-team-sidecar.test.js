@@ -22,6 +22,10 @@ function catalogEntry(overrides = {}) {
     entitlement: null,
     entitlementReason: null,
     available: true,
+    accessVerified: true,
+    fit: 0.5,
+    confidence: 0.7,
+    evidence: { reasoning: 0.7, coding: 0.6, coverage: 1 },
     recommendationTags: [],
     ...overrides
   };
@@ -150,7 +154,7 @@ test("pickDefaultAnalyst returns null when the recommendation is below the confi
   assert.equal(
     pickDefaultAnalyst({
       recommendedModel: { candidateKey: "codex::gpt-5", confidence: low },
-      models: [catalogEntry()]
+      models: [catalogEntry({ confidence: undefined })]
     }),
     null
   );
@@ -326,25 +330,28 @@ test("preflightProjectTeam returns the real analyst catalog without persisting o
     createConversationService: fakeService({ analystCatalog: catalog, calls })
   });
   assert.deepEqual(calls, [["preflightProject", "/project", "catalog"]], "picker preflight uses catalog mode — never analysis or approval");
-  assert.deepEqual(result.analystCatalog, catalog);
+  assert.deepEqual(result.analystCatalog.recommendedModel, catalog.recommendedModel);
+  assert.deepEqual(result.analystCatalog.models.map((m) => m.candidateKey), ["codex::gpt-5"]);
+  assert.deepEqual(result.analystCatalog.alternatives, []);
   assert.equal(result.projectRoot, "/project");
   assert.equal(result.profile, null, "catalog mode skips project profile until analyze");
   assert.deepEqual(result.candidates, { scoredAll: [], eligibility: {} });
 });
 
-test("curateAnalystCatalogForPicker ranks by numeric fit, not tags or brand; dedupes; keeps unscored models", () => {
+test("curateAnalystCatalogForPicker ranks by numeric fit, not tags or brand; keeps same-name rows by candidateKey; unscored go to manual alternatives", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: { candidateKey: "codex::astra", confidence: 0.8 },
     models: [
       catalogEntry({ candidateKey: "cursor::opus-1", adapterId: "cursor", modelId: "opus-high", displayName: "Claude Opus 5.5", fit: 0.5, confidence: 0.7 }),
       catalogEntry({ candidateKey: "cursor::opus-2", adapterId: "cursor", modelId: "opus-max", displayName: "Claude Opus 5.5", fit: 0.4, confidence: 0.7 }),
-      catalogEntry({ candidateKey: "cursor::unscored", adapterId: "cursor", modelId: "mystery", displayName: "Mystery", evidenceStatus: "unscored", fit: 0, confidence: 0.25 }),
+      catalogEntry({ candidateKey: "cursor::unscored", adapterId: "cursor", modelId: "mystery", displayName: "Mystery", evidenceStatus: "unscored", fit: null, confidence: 0.25, evidence: { reasoning: null, coding: null, coverage: null } }),
       catalogEntry({ candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", recommendationTags: ["quality"], fit: 0.6, confidence: 0.8 }),
       catalogEntry({ candidateKey: "codex::blocked", adapterId: "codex", modelId: "old", displayName: "Old Codex", fit: 0.9, confidence: 0.9, available: false })
     ]
   });
-  assert.deepEqual(curated.models.map((m) => m.displayName), ["GPT-6-Astra", "Claude Opus 5.5", "Mystery"]);
-  assert.equal(curated.models[1].candidateKey, "cursor::opus-1", "dedupe keeps the best-fit duplicate");
+  assert.deepEqual(curated.models.map((m) => m.displayName), ["GPT-6-Astra", "Claude Opus 5.5", "Claude Opus 5.5"]);
+  assert.deepEqual(curated.models.map((m) => m.candidateKey), ["codex::astra", "cursor::opus-1", "cursor::opus-2"]);
+  assert.deepEqual(curated.alternatives.map((m) => m.displayName), ["Mystery"]);
   assert.equal(curated.recommendedModel.candidateKey, "codex::astra");
 });
 
@@ -371,24 +378,25 @@ test("curateAnalystCatalogForPicker breaks fit ties by confidence, then by name"
   assert.deepEqual(curated.models.map((m) => m.displayName), ["Charlie", "Alpha", "Bravo"]);
 });
 
-test("curateAnalystCatalogForPicker keeps available unscored models (fit 0) after scored ones, and still caps the list", () => {
+test("curateAnalystCatalogForPicker puts available unscored models (unknown fit) in the manual view, uncapped", () => {
   const models = Array.from({ length: 20 }, (_, i) => catalogEntry({
     candidateKey: `x::m${i}`, modelId: `m${i}`, displayName: `Model ${String(i).padStart(2, "0")}`,
-    evidenceStatus: "unscored", fit: 0, confidence: 0.25
+    evidenceStatus: "unscored", fit: null, confidence: 0.25, evidence: { reasoning: null, coding: null, coverage: null }
   }));
   models.push(catalogEntry({ candidateKey: "x::scored", modelId: "scored", displayName: "Scored", fit: 0.3, confidence: 0.6 }));
   const curated = curateAnalystCatalogForPicker({ recommendedModel: null, models });
-  assert.equal(curated.models.length, 16);
-  assert.equal(curated.models[0].displayName, "Scored");
-  assert.ok(curated.models.slice(1).every((m) => m.evidenceStatus === "unscored"));
+  assert.deepEqual(curated.models.map((m) => m.displayName), ["Scored"]);
+  assert.equal(curated.alternatives.length, 20, "no cap");
+  assert.ok(curated.alternatives.every((m) => m.evidenceStatus === "unscored"));
 });
 
-test("curateAnalystCatalogForPicker drops the recommended star when its confidence is insufficient, but keeps the row", () => {
+test("curateAnalystCatalogForPicker drops the recommended star when its confidence is insufficient; the row stays selectable in the manual view", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: { candidateKey: "codex::thin" },
     models: [catalogEntry({ candidateKey: "codex::thin", modelId: "thin", displayName: "Thin", recommendationTags: ["quality"], fit: 0.1, confidence: 0.4 })]
   });
-  assert.equal(curated.models.length, 1);
+  assert.equal(curated.models.length, 0, "confidence below the floor does not qualify for the main view");
+  assert.equal(curated.alternatives.length, 1);
   assert.equal(curated.recommendedModel, null);
 });
 
@@ -482,10 +490,10 @@ test("curateAnalystCatalogForPicker keeps scored cursor models when no preferred
       })
     ]
   });
-  assert.equal(curated.models.length, 2);
+  assert.equal(curated.models.length, 3, "candidateKey identity: both Opus variants stay");
   assert.deepEqual(
     curated.models.map((m) => m.displayName).sort(),
-    ["Claude Opus 5.5", "GPT-5.6 Terra"]
+    ["Claude Opus 5.5", "Claude Opus 5.5", "GPT-5.6 Terra"]
   );
 });
 
@@ -538,7 +546,7 @@ test("preflightProjectTeam surfaces the unverified Claude notice, honestly, with
   });
   assert.equal(result.unverifiedClaudeNotice, "2 Claude models are unverified");
   assert.equal(result.pickerNotice, "Claude: acceso sin verificar");
-  assert.deepEqual(result.analystCatalog, { recommendedModel: null, models: [] });
+  assert.deepEqual(result.analystCatalog, { recommendedModel: null, models: [], alternatives: [] });
 });
 
 test("preflightProjectTeam returns pickerNotice when a raw provider is filtered out", async () => {
@@ -715,24 +723,24 @@ test("T20 curate: unverified-access rows are kept but ranked after every verifie
       catalogEntry({ candidateKey: "codex::strong", modelId: "strong", displayName: "Strong Verified", fit: 0.5, confidence: 0.6 })
     ]
   });
-  assert.deepEqual(curated.models.map((m) => m.displayName), ["Strong Verified", "Weak Verified", "Unv High", "Unv Low"]);
-  assert.equal(curated.models[2].accessVerified, false);
+  assert.deepEqual(curated.models.map((m) => m.displayName), ["Strong Verified", "Weak Verified"]);
+  assert.deepEqual(curated.alternatives.map((m) => m.displayName), ["Unv High", "Unv Low"], "unverified access lives in the manual view only");
+  assert.equal(curated.alternatives[0].accessVerified, false);
 });
 
-test("T20 curate: a non-selectable, non-available row is still dropped; a verified row wins a display-name dedupe; the cap still applies", () => {
+test("T20 curate: a non-selectable, non-available row is still dropped; same display name keeps both rows; no cap", () => {
   const dropped = curateAnalystCatalogForPicker({
     models: [unverifiedEntry({ selectable: false, cause: "quota_exhausted" })]
   });
-  assert.equal(dropped.models.length, 0);
+  assert.equal(dropped.models.length + dropped.alternatives.length, 0);
   const deduped = curateAnalystCatalogForPicker({
     models: [unverifiedEntry({ displayName: "Same Name", fit: 0.99 }), catalogEntry({ displayName: "Same Name", fit: 0.1 })]
   });
-  assert.equal(deduped.models.length, 1);
-  assert.equal(deduped.models[0].accessVerified, undefined, "the verified twin survives, not the unverified one");
+  assert.equal(deduped.models.length + deduped.alternatives.length, 2, "no display-name dedupe: identity is candidateKey");
   const many = curateAnalystCatalogForPicker({
     models: Array.from({ length: 30 }, (_, i) => unverifiedEntry({ candidateKey: `claude::m${i}`, modelId: `m${i}`, displayName: `M${i}` }))
   });
-  assert.equal(many.models.length, 16);
+  assert.equal(many.alternatives.length, 30);
 });
 
 test("T20 curate: the star never lands on an unverified-access row, even if the catalog points at it", () => {
@@ -741,7 +749,8 @@ test("T20 curate: the star never lands on an unverified-access row, even if the 
     models: [unverifiedEntry({ recommendationTags: ["quality"] }), catalogEntry()]
   });
   assert.equal(curated.recommendedModel, null);
-  assert.equal(curated.models.length, 2);
+  assert.equal(curated.models.length, 1);
+  assert.equal(curated.alternatives.length, 1);
 });
 
 test("T20 pickDefaultAnalyst: never returns an unverified-access model, even recommended, tagged, selectable and 'available'", () => {
@@ -762,7 +771,7 @@ test("T20 causes: a selectable unverified-access row is no longer an exclusion; 
     exclusions: [{ candidateKey: "cursor::x", adapterId: "cursor", modelId: "x", cause: "access_unknown", reason: null }]
   };
   const curated = curateAnalystCatalogForPicker(raw);
-  assert.ok(curated.models.some((m) => m.adapterId === "claude"));
+  assert.ok(curated.alternatives.some((m) => m.adapterId === "claude"));
   const causes = buildAnalystExclusionCauses(raw, curated, "1 Claude models are unverified");
   assert.deepEqual(causes.map((c) => c.adapterId), ["cursor"], "claude is selectable now; only the provider with zero rows is listed");
   assert.equal(buildAnalystPickerNotice(raw, curated, "1 Claude models are unverified"), "Cursor: acceso sin verificar");
@@ -776,7 +785,8 @@ const PICK_UNVERIFIED = {
   model: { adapterId: "claude", modelId: "opus-unv", displayName: "stale" },
   selectionSource: "manual",
   recommendationTags: [],
-  choice: null
+  choice: null,
+  accessCheckConfirmed: true
 };
 
 test("T20 analyze: confirming an unverified-access analyst runs the on-demand access check BEFORE the provider analysis, then proceeds when it passes", async () => {

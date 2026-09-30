@@ -513,6 +513,23 @@ test("REGRESSION (superseded for UNVERIFIED by T20): preflightProject recommends
   assert.equal(claudeRow?.selectable, true);
 });
 
+test("preflightProject lists an unscored UNVERIFIED model as a manual candidate via analystUnscoredModels (the shared unscoredModels list stays filtered)", async () => {
+  const candidates = await realScoredCandidates();
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    computeProjectProfile: async () => ({ fingerprint: "fp-1", roleRequirements: [] })
+  });
+  const both = { adapterId: "claude", modelId: "both", displayName: "Both", candidateKey: "claude::both", entitlement: ENTITLEMENT.UNVERIFIED };
+  service.snapshot = async () => ({
+    modelIntelligence: { ...candidates, unscoredModels: [], analystUnscoredModels: [both], claudeEntitlement: {} }
+  });
+  const result = await service.preflightProject({ cwd: "/repo" });
+  const row = result.analystCatalog.models.find((model) => model.modelId === "both");
+  assert.equal(row?.accessVerified, false);
+  assert.equal(row?.selectable, true);
+  assert.equal(row?.fit, null);
+});
+
 test("runBootstrapAnalysis refuses to start while another analysis holds the project lock, without touching the analyst", async () => {
   let analyzed = false;
   const service = createConversationService({

@@ -14,11 +14,8 @@
  * ProjectStrategy the service persisted.
  */
 
-import { MIN_RECOMMENDATION_CONFIDENCE, recommendationQualifies } from "../conversation/analyst-qualification.js";
+import { MIN_RECOMMENDATION_CONFIDENCE, qualifiesForMainView, recommendationQualifies } from "../conversation/analyst-qualification.js";
 import { createConversationService } from "../conversation/service.js";
-
-/** After dedupe by displayName, keep at most this many picker rows. */
-const ANALYST_PICKER_CAP = 16;
 
 /** Short provider labels for compact absence notices — never invent causes. */
 const PROVIDER_PICKER_LABELS = Object.freeze({
@@ -41,14 +38,12 @@ function numericOr(value, fallback) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-/**
- * Numeric analyst fit (0..1, from computeBootstrapAnalystCatalog).
- * Entries without one (legacy records) count as 0: no evidence, no rank.
- * Tags are informational and never part of the ordering.
- * @param {object} model
- */
-function analystFitRank(model) {
-  return numericOr(model.fit, 0);
+/** Known (measured) fit sorts before unknown fit; both compare high to low. */
+function compareFit(a, b) {
+  const fitA = typeof a.fit === "number" && Number.isFinite(a.fit) ? a.fit : null;
+  const fitB = typeof b.fit === "number" && Number.isFinite(b.fit) ? b.fit : null;
+  if (fitA === null || fitB === null) return Number(fitA === null) - Number(fitB === null);
+  return fitB - fitA;
 }
 
 /** Access is explicitly UNVERIFIED (catalog `accessVerified: false`); absent field = verified/legacy. */
@@ -61,59 +56,79 @@ function isPickerSelectable(model) {
   return model?.available === true || model?.selectable === true;
 }
 
+function compareRows(a, b) {
+  const byFit = compareFit(a, b);
+  if (byFit !== 0) return byFit;
+  const byConfidence = numericOr(b.confidence, 0) - numericOr(a.confidence, 0);
+  if (byConfidence !== 0) return byConfidence;
+  const nameA = String(a.displayName ?? a.modelId ?? "");
+  const nameB = String(b.displayName ?? b.modelId ?? "");
+  return nameA.localeCompare(nameB);
+}
+
+const score = (value) => (typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "?");
+
+/** One short Spanish line per row, from the row's own real evidence only. */
+function explainRow(model, listing) {
+  if (listing === "main") {
+    return `razonamiento ${score(model.evidence?.reasoning)} · código ${score(model.evidence?.coding)} · confianza ${score(model.confidence)}`;
+  }
+  const reasons = [];
+  if (isAccessUnverified(model)) reasons.push("acceso sin verificar");
+  const { reasoning, coding } = model.evidence ?? {};
+  if (model.evidenceStatus === "unscored") reasons.push("sin benchmark");
+  else if (typeof reasoning !== "number" || typeof coding !== "number") reasons.push("benchmark incompleto");
+  return `${reasons.join(" · ") || "selección manual"} · solo manual`;
+}
+
 /**
- * Curate the full analyst catalog for the ratatui picker:
- * - available OR selectable (T20: unverified-access rows are selectable and
- *   ranked after every verified row, by fit inside their own group; they are
- *   revalidated on selection and never starred or defaulted)
- * - scored AND unscored models are kept; unscored carry fit 0 and lower confidence
- * - order: fit desc, then confidence desc, then display name
- * - dedupe by displayName (best fit wins); single global cap
+ * Curate the full analyst catalog for the ratatui picker into two explicit
+ * views. Identity is the candidateKey (adapterId + modelId), never the
+ * display name: the same model through two subscriptions keeps both rows,
+ * and there is no row cap (the modal scrolls).
  *
- * Never invents models; never reintroduces unavailable adapters.
- * `recommendedModel` survives only when its candidateKey remains in `models`
- * AND its confidence reaches MIN_RECOMMENDATION_CONFIDENCE (entries with no
- * confidence field are legacy and keep the star).
+ * - `models` (MAIN view): only candidates that pass `qualifiesForMainView`
+ *   (available, access verified, reasoning AND coding evidence, confidence
+ *   >= MIN_RECOMMENDATION_CONFIDENCE). No extra fit threshold. Sorted by fit
+ *   (unknown fit last), then confidence, then name.
+ * - `alternatives` (MANUAL view): every other still-selectable candidate —
+ *   no (or partial) benchmark, unknown access, or both. Never starred, never
+ *   tagged, never auto-selected; confirming an unknown-access row revalidates
+ *   it behind an explicit second confirmation (see `analyzeProjectTeam`).
+ *   Exhausted / denied / unavailable candidates are in neither view.
+ *
+ * `recommendedModel` survives only when its candidateKey is in the MAIN list
+ * and its confidence reaches MIN_RECOMMENDATION_CONFIDENCE.
+ * Each row gains additive `listing` ("main"|"manual") and a short
+ * `explanation`. Never invents models.
  *
  * @param {{recommendedModel?: object|null, models?: object[]}|null|undefined} analystCatalog
- * @returns {{recommendedModel: object|null, models: object[]}}
+ * @returns {{recommendedModel: object|null, models: object[], alternatives: object[]}}
  */
 export function curateAnalystCatalogForPicker(analystCatalog) {
   const incoming = Array.isArray(analystCatalog?.models) ? analystCatalog.models : [];
-  const available = incoming.filter(isPickerSelectable);
-
-  const ordered = [...available].sort((a, b) => {
-    const byAccess = Number(isAccessUnverified(a)) - Number(isAccessUnverified(b));
-    if (byAccess !== 0) return byAccess;
-    const byFit = analystFitRank(b) - analystFitRank(a);
-    if (byFit !== 0) return byFit;
-    const byConfidence = numericOr(b.confidence, 0) - numericOr(a.confidence, 0);
-    if (byConfidence !== 0) return byConfidence;
-    const nameA = String(a.displayName ?? a.modelId ?? "");
-    const nameB = String(b.displayName ?? b.modelId ?? "");
-    return nameA.localeCompare(nameB);
-  });
-
-  const seenNames = new Set();
-  const models = [];
-  for (const model of ordered) {
-    const nameKey = String(model.displayName ?? model.modelId ?? model.candidateKey ?? "")
-      .trim()
-      .toLowerCase();
-    if (!nameKey || seenNames.has(nameKey)) continue;
-    seenNames.add(nameKey);
-    models.push(model);
-    if (models.length >= ANALYST_PICKER_CAP) break;
+  const seen = new Set();
+  const main = [];
+  const manual = [];
+  for (const model of incoming) {
+    if (!isPickerSelectable(model)) continue;
+    const key = model.candidateKey ?? `${model.adapterId}::${model.modelId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (qualifiesForMainView(model)) main.push({ ...model, listing: "main", explanation: explainRow(model, "main") });
+    else manual.push({ ...model, recommendationTags: [], listing: "manual", explanation: explainRow(model, "manual") });
   }
+  const models = main.sort(compareRows);
+  const alternatives = manual.sort(compareRows);
 
   const incomingRecommended = analystCatalog?.recommendedModel ?? null;
   const survivor = incomingRecommended
     ? models.find((model) => model.candidateKey === incomingRecommended.candidateKey)
     : null;
-  const recommendedModel = survivor && !isAccessUnverified(survivor) && recommendationQualifies(survivor, incomingRecommended)
+  const recommendedModel = survivor && recommendationQualifies(survivor, incomingRecommended)
     ? incomingRecommended
     : null;
-  return { recommendedModel, models };
+  return { recommendedModel, models, alternatives };
 }
 
 // Verifiable cause -> Spanish picker copy. Only causes backed by real
@@ -144,9 +159,12 @@ const CAUSE_COPY = Object.freeze({
  * @returns {Array<{adapterId: string, provider: string, cause: string, models: number, reason: string|null}>}
  */
 export function buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifiedClaudeNotice = null) {
-  const curatedAdapters = new Set(
-    (Array.isArray(curatedCatalog?.models) ? curatedCatalog.models : []).map((m) => m?.adapterId).filter(Boolean)
-  );
+  // A provider "contributes" when it has a row in EITHER picker view.
+  const curatedRows = [
+    ...(Array.isArray(curatedCatalog?.models) ? curatedCatalog.models : []),
+    ...(Array.isArray(curatedCatalog?.alternatives) ? curatedCatalog.alternatives : [])
+  ];
+  const curatedAdapters = new Set(curatedRows.map((m) => m?.adapterId).filter(Boolean));
   const rows = new Map();
   const add = (adapterId, cause, reason = null) => {
     if (!adapterId || !CAUSE_COPY[cause] || curatedAdapters.has(adapterId)) return;
@@ -306,6 +324,7 @@ function resolveRequestedAnalyst(requested, analystCatalog) {
   return {
     // Internal marker (stripped before the analyst reaches the service).
     needsAccessCheck: isAccessUnverified(match),
+    accessCheckConfirmed: requested?.accessCheckConfirmed === true,
     model: { adapterId: match.adapterId, modelId: match.modelId, displayName: match.displayName },
     selectionSource: match.candidateKey === recommendedKey && !isAccessUnverified(match) ? "recommended" : "manual",
     recommendationTags,
@@ -335,6 +354,19 @@ function accessUnverifiedResult(model, check) {
     analyst: { adapterId: model.adapterId, modelId: model.modelId, displayName: label },
     reason,
     message: `${headline}${reason ? ` (${reason})` : ""} — nothing was analyzed. Pick another analyst or try again.`
+  };
+}
+
+/**
+ * Honest result when an unknown-access analyst is picked without the explicit
+ * second confirmation: the provider was NOT called and nothing ran.
+ */
+function accessConfirmationRequiredResult(model) {
+  const label = model.displayName ?? model.modelId;
+  return {
+    status: "analyst_access_confirmation_required",
+    analyst: { adapterId: model.adapterId, modelId: model.modelId, displayName: label },
+    message: `Access to ${label} is unverified. Verifying it calls the provider and may consume account — confirm explicitly to continue. Nothing was run.`
   };
 }
 
@@ -369,7 +401,7 @@ function toSerializable(value) {
  * preflight itself, so a serialization miss on profile never blocks the picker.
  *
  * @param {{cwd?: string, createConversationService?: typeof createConversationService}} args
- * @returns {Promise<{analystCatalog: object, profile: object|null, candidates: object|null, projectRoot: string|null, unverifiedClaudeNotice: string|null, pickerNotice: string|null, exclusionCauses: Array<{adapterId: string, provider: string, cause: string, models: number, reason: string|null}>}>}
+ * @returns {Promise<{analystCatalog: {recommendedModel: object|null, models: object[], alternatives: object[]}, profile: object|null, candidates: object|null, projectRoot: string|null, unverifiedClaudeNotice: string|null, pickerNotice: string|null, exclusionCauses: Array<{adapterId: string, provider: string, cause: string, models: number, reason: string|null}>}>}
  */
 export async function preflightProjectTeam({
   cwd,
@@ -407,13 +439,17 @@ export async function preflightProjectTeam({
  * default (`pickDefaultAnalyst`) when it qualifies; otherwise the result is
  * `{status: "analyst_selection_required", message}` and nothing runs.
  *
- * T20: a requested analyst whose access is UNVERIFIED is revalidated through
+ * T20: a requested analyst whose access is UNVERIFIED needs the explicit
+ * `analyst.accessCheckConfirmed === true` (the probe calls the provider and
+ * may consume account); without it the result is `{status:
+ * "analyst_access_confirmation_required", analyst, message}` and nothing runs.
+ * Once confirmed it is revalidated through
  * `service.verifyAnalystAccess` before anything runs; if that does not pass the
  * result is `{status: "analyst_access_unverified", accessStatus, analyst,
  * reason, message}` — no provider call, no strategy write, no substitution.
  *
  * @param {{cwd?: string, analyst?: object|null, createConversationService?: typeof createConversationService}} args
- * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null, notice: string|null}|{status: "analyst_selection_required", message: string}|{status: "analyst_access_unverified", accessStatus: "unverified"|"denied", analyst: {adapterId: string, modelId: string, displayName: string}, reason: string|null, message: string}>}
+ * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null, notice: string|null}|{status: "analyst_selection_required", message: string}|{status: "analyst_access_confirmation_required", analyst: {adapterId: string, modelId: string, displayName: string}, message: string}|{status: "analyst_access_unverified", accessStatus: "unverified"|"denied", analyst: {adapterId: string, modelId: string, displayName: string}, reason: string|null, message: string}>}
  */
 export async function analyzeProjectTeam({
   cwd,
@@ -427,8 +463,13 @@ export async function analyzeProjectTeam({
   if (requestedAnalyst) {
     const resolved = resolveRequestedAnalyst(requestedAnalyst, preflight.analystCatalog);
     if (!resolved) throw requestedAnalystError(requestedAnalyst);
-    const { needsAccessCheck, ...resolvedAnalyst } = resolved;
+    const { needsAccessCheck, accessCheckConfirmed, ...resolvedAnalyst } = resolved;
     analyst = resolvedAnalyst;
+    if (needsAccessCheck && !accessCheckConfirmed) {
+      // The probe calls the provider and may consume account: it only runs
+      // after the human's explicit second confirmation. Nothing ran.
+      return accessConfirmationRequiredResult(analyst.model);
+    }
     if (needsAccessCheck) {
       // T20: unknown access is revalidated on selection, BEFORE any provider
       // analysis or strategy write. Fail-closed: a missing check, a throw,

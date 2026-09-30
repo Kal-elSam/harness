@@ -904,6 +904,22 @@ export function createConversationService(deps = {}) {
         // evidenceStatus — model-intelligence.js's old listUnscoredModels
         // duplicated this exact same real AA-match check separately; this
         // catalog replaces it as the one real source of truth.
+        const toUnscoredRow = (candidate) => ({
+          adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.rawDisplayName,
+          candidateKey: candidate.candidateKey, accessMode: candidate.accessMode, lifecycle: candidate.lifecycle,
+          entitlement: candidate.entitlement, entitlementReason: candidate.entitlementReason
+        });
+        // Analyst picker only: the same unscored set but keeping UNVERIFIED
+        // access (selectable with revalidation, manual view). DENIED stays out.
+        // `unscoredModels` below is untouched, so /models --evidence and the
+        // team edit catalog keep hiding unverified models.
+        const analystUnscoredModels = completeCandidateCatalog
+          .filter((candidate) => (
+            candidate.evidenceStatus === "unscored"
+            && candidate.lifecycle !== "superseded"
+            && candidate.entitlement !== ENTITLEMENT.DENIED
+          ))
+          .map(toUnscoredRow);
         const unscoredModels = completeCandidateCatalog
           // Same "not superseded" real rule the Recommendation Pool
           // applies to SCORED candidates (buildRecommendationPool) — an
@@ -919,11 +935,7 @@ export function createConversationService(deps = {}) {
             && candidate.lifecycle !== "superseded"
             && !BLOCKED_ENTITLEMENTS.has(candidate.entitlement)
           ))
-          .map((candidate) => ({
-            adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.rawDisplayName,
-            candidateKey: candidate.candidateKey, accessMode: candidate.accessMode, lifecycle: candidate.lifecycle,
-            entitlement: candidate.entitlement, entitlementReason: candidate.entitlementReason
-          }));
+          .map(toUnscoredRow);
 
         // The Model Intelligence Foundation registry: every source Kairo
         // has (AA, Hugging Face scoped to Go, manufacturer snapshots,
@@ -966,7 +978,7 @@ export function createConversationService(deps = {}) {
         result.modelIntelligence = {
           status: aa.status, source: aa.source, age: aa.age,
           models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(eligibleRecommendations),
-          eligibility, coverage, unscoredModels,
+          eligibility, coverage, unscoredModels, analystUnscoredModels,
           // Resolved Claude per-model entitlement (cache-only; never probed here).
           claudeEntitlement,
           // Real, per-pool Cursor access — a real minimal probe, never a
@@ -1224,10 +1236,11 @@ export function createConversationService(deps = {}) {
           ]);
       const {
         scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null,
-        providerCapacity = null, unscoredModels = [], claudeEntitlement = {}, cursorAccess = {}
+        providerCapacity = null, unscoredModels = [], analystUnscoredModels = unscoredModels,
+        claudeEntitlement = {}, cursorAccess = {}
       } = snap.modelIntelligence ?? {};
       const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement, cursorAccess };
-      const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, unscoredModels });
+      const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, unscoredModels: analystUnscoredModels });
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
       ).length;

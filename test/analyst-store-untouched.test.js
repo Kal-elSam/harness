@@ -24,7 +24,8 @@ const verifiedLow = entry({
   candidateKey: "codex::low", adapterId: "codex", modelId: "low", displayName: "Low", entitlement: null,
   available: true, selectable: true, accessVerified: true, cause: undefined, confidence: 0.1, recommendationTags: ["quality"]
 });
-const pick = { model: { adapterId: "claude", modelId: "opus-unv", displayName: "x" }, selectionSource: "manual", recommendationTags: [], choice: null };
+const pick = { model: { adapterId: "claude", modelId: "opus-unv", displayName: "x" }, selectionSource: "manual", recommendationTags: [], choice: null, accessCheckConfirmed: true };
+const unconfirmedPick = { ...pick, accessCheckConfirmed: undefined };
 
 async function withStore(run) {
   const home = await mkdtemp(join(tmpdir(), "kairo-store-untouched-"));
@@ -93,6 +94,21 @@ test("T21b: analyst_access_unverified (failing or throwing revalidation) leaves 
       assert.ok(Buffer.from(before).equals(await read()), "strategy file is byte-identical");
     });
   }
+});
+
+test("an unknown-access pick WITHOUT the explicit second confirmation: no provider probe, no analysis, strategy file byte-identical", async () => {
+  await withStore(async ({ before, spies, service, read }) => {
+    const result = await analyzeProjectTeam({
+      cwd: PROJECT,
+      analyst: unconfirmedPick,
+      createConversationService: service({ models: [verifiedLow, entry()] }, { status: "allowed" })
+    });
+    assert.equal(result.status, "analyst_access_confirmation_required");
+    assert.equal(spies.verify, 0, "the provider probe never ran");
+    assert.equal(spies.analysis, 0);
+    assert.equal(spies.approve, 0);
+    assert.ok(Buffer.from(before).equals(await read()));
+  });
 });
 
 test("T21b (control): when revalidation passes, the stubbed analysis DOES change the file, so the byte check above can fail", async () => {

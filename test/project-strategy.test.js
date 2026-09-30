@@ -753,3 +753,36 @@ test("focus areas without a real capability key (architecture, design) map onto 
   assert.deepEqual(FOCUS_AREA_CAPABILITIES.architecture, ["reasoning", "coding"]);
   assert.deepEqual(FOCUS_AREA_CAPABILITIES.design, ["reasoning", "coding"]);
 });
+
+test("an unscored model with UNVERIFIED access is a selectable manual candidate (no benchmark AND unknown access); DENIED stays excluded", () => {
+  const catalog = computeBootstrapAnalystCatalog({
+    ...realCandidates(),
+    eligibility: { claude: { ok: true }, codex: { ok: true } },
+    unscoredModels: [
+      { adapterId: "claude", modelId: "both", displayName: "Both", candidateKey: "claude::both", entitlement: ENTITLEMENT.UNVERIFIED, entitlementReason: "Access has not been verified" },
+      { adapterId: "claude", modelId: "denied-unscored", displayName: "Denied", candidateKey: "claude::denied-unscored", entitlement: ENTITLEMENT.DENIED, entitlementReason: "Credits required" }
+    ]
+  });
+  const both = catalog.models.find((m) => m.modelId === "both");
+  assert.ok(both, "kept in the catalog");
+  assert.equal(both.evidenceStatus, "unscored");
+  assert.equal(both.available, false, "unknown access is not safe-to-run-now");
+  assert.equal(both.selectable, true);
+  assert.equal(both.accessVerified, false);
+  assert.equal(both.cause, "access_unknown");
+  assert.equal(both.fit, null);
+  assert.deepEqual(both.recommendationTags, []);
+  assert.ok(!catalog.models.some((m) => m.modelId === "denied-unscored"));
+  assert.deepEqual(catalog.exclusions.map((e) => e.candidateKey), ["claude::denied-unscored"]);
+});
+
+test("an unscored UNVERIFIED model on an ineligible provider is not selectable and keeps the provider's verified cause", () => {
+  const catalog = computeBootstrapAnalystCatalog({
+    ...realCandidates(),
+    eligibility: { claude: { ok: false, cause: "quota_exhausted" }, codex: { ok: true } },
+    unscoredModels: [{ adapterId: "claude", modelId: "both", displayName: "Both", candidateKey: "claude::both", entitlement: ENTITLEMENT.UNVERIFIED }]
+  });
+  const both = catalog.models.find((m) => m.modelId === "both");
+  assert.equal(both.selectable, false);
+  assert.equal(both.cause, "quota_exhausted");
+});
