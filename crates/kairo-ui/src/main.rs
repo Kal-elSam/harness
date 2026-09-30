@@ -1642,6 +1642,12 @@ impl ShellApp {
     }
 
     fn begin_role_edit_for_selected(&mut self) {
+        if !self.view.roles_visible {
+            self.view.notice = Some(
+                "Roles are hidden until the team is complete — re-analyze (a) first.".into(),
+            );
+            return;
+        }
         if !can_edit_team_roles(self.view.team_state.as_deref()) {
             self.view.notice = Some(
                 "Role edit only while the team is SUGGESTED (ACTIVE/STALE are read-only)."
@@ -3379,6 +3385,28 @@ mod tests {
 
     fn esc() -> KeyEvent {
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn hidden_roles_cannot_be_edited_blind() {
+        let (mut app, path) = recorder_app("ask");
+        app.view.team_state = Some("suggested".into());
+        app.view.agents = vec![crate::surfaces::SidebarAgent {
+            label: "Builder".into(),
+            detail: "codex".into(),
+            state: crate::surfaces::AgentState::Idle,
+            cause: Default::default(),
+        }];
+        app.view.roles_visible = false;
+        app.begin_role_edit_for_selected();
+        assert!(app.role_editor.is_none(), "no editor for a hidden role");
+        assert!(
+            app.view.notice.as_deref().is_some_and(|n| n.contains("hidden")),
+            "{:?}",
+            app.view.notice
+        );
+        assert_eq!(recorded_ops(&path, 1).trim(), "", "no bridge op sent");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

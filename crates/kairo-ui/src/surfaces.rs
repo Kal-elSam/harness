@@ -113,6 +113,13 @@ pub struct ShellViewModel {
     /// Snapshot `team.state` (`not_analyzed` / `suggested` / `active` / `stale`)
     /// when the bridge reported one — drives the in-UI analyze/approve hints.
     pub team_state: Option<String>,
+    /// Derived presentation state from the projection's additive
+    /// `team.presentation.state` (`complete`/`incomplete`/`blocked`/`verifying`).
+    /// `None` = older sidecar without the field (legacy behavior).
+    pub team_presentation: Option<String>,
+    /// Whether the sidebar may list team roles. Presentation only; saved
+    /// assignments are untouched. Defaults to true (legacy).
+    pub roles_visible: bool,
     /// U4a WorkMode: ask | plan | agent (fail-closed default ask).
     pub work_mode: String,
 }
@@ -131,12 +138,24 @@ impl Default for ShellViewModel {
             usage_line: "USAGE · waiting for bridge".into(),
             engine_line: "MODEL · (local mock without --bridge)".into(),
             team_state: None,
+            team_presentation: None,
+            roles_visible: true,
             work_mode: "ask".into(),
         }
     }
 }
 
 /// Second line of the empty AGENTS list: the key that fills it, in this UI.
+/// Sidebar copy while the roles list is hidden. The verifying wording never
+/// mentions quota: unverified access is "still checking", not "missing".
+fn hidden_team_notice_lines(model: &ShellViewModel) -> Vec<&'static str> {
+    match model.team_presentation.as_deref() {
+        Some("verifying") => vec!["Verifying team access…"],
+        Some("blocked") => vec!["Team blocked"],
+        _ => vec!["Team incomplete"],
+    }
+}
+
 fn empty_team_key_hint(team_state: Option<&str>) -> &'static str {
     if team_state == Some("suggested") {
         "A = approve"
@@ -192,7 +211,13 @@ fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel, focus: F
             .add_modifier(Modifier::BOLD)
             .bg(tone::SIDEBAR_BG),
     )));
-    if model.agents.is_empty() {
+    if !model.roles_visible {
+        // Whole roles list hidden (no partial team); compact state notice only.
+        let notice_style = Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG);
+        for line in hidden_team_notice_lines(model) {
+            items.push(ListItem::new(padded_span(line, row_width, notice_style)));
+        }
+    } else if model.agents.is_empty() {
         let empty_style = Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG);
         items.push(ListItem::new(padded_span(
             "No team yet",
@@ -2300,6 +2325,72 @@ mod tests {
             "must not invent Orchestrator"
         );
         assert!(!hay.contains("Builder"), "must not invent Builder");
+    }
+
+    fn hidden_model(state: &str) -> ShellViewModel {
+        let mut model = ShellViewModel::default();
+        model.agents = vec![
+            SidebarAgent {
+                label: "Orchestrator".into(),
+                detail: "kimi".into(),
+                state: AgentState::Idle,
+                cause: BlockCause::Unavailable,
+            },
+            SidebarAgent {
+                label: "Builder".into(),
+                detail: "codex".into(),
+                state: AgentState::Blocked,
+                cause: BlockCause::Unavailable,
+            },
+        ];
+        model.team_state = Some("active".into());
+        model.team_presentation = Some(state.into());
+        model.roles_visible = false;
+        model
+    }
+
+    fn sidebar_hay(model: &ShellViewModel) -> String {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut buf = Buffer::empty(area);
+        render_shell(
+            &mut buf,
+            regions,
+            model,
+            &ChatState::default(),
+            &default_editor(),
+        );
+        buffer_text(&buf)
+    }
+
+    #[test]
+    fn hidden_roles_show_compact_notice_per_state_and_no_role_rows() {
+        for (state, needle) in [
+            ("incomplete", "Team incomplete"),
+            ("blocked", "Team blocked"),
+            ("verifying", "Verifying team access"),
+        ] {
+            let hay = sidebar_hay(&hidden_model(state));
+            assert!(hay.contains(needle), "{state}: missing {needle}: {hay}");
+            assert!(!hay.contains("Orchestrator"), "{state}: role leaked: {hay}");
+            assert!(!hay.contains("Builder"), "{state}: role leaked: {hay}");
+        }
+    }
+
+    #[test]
+    fn verifying_notice_never_mentions_quota() {
+        let hay = sidebar_hay(&hidden_model("verifying")).to_ascii_lowercase();
+        assert!(!hay.contains("quota"), "verifying must not claim quota: {hay}");
+        assert!(!hay.contains("funds"), "verifying must not claim funds: {hay}");
+    }
+
+    #[test]
+    fn visible_roles_render_again_when_the_team_is_complete() {
+        let mut model = hidden_model("complete");
+        model.roles_visible = true;
+        let hay = sidebar_hay(&model);
+        assert!(hay.contains("Orchestrator") && hay.contains("Builder"), "{hay}");
+        assert!(!hay.contains("Team incomplete"));
     }
 
     #[test]

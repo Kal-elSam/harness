@@ -12,6 +12,7 @@ import { readCodexUsage } from "../observability/codex-usage.js";
 import { readClaudeUsage } from "../observability/claude-usage.js";
 import { readOpenCodeUsage } from "../observability/opencode-usage.js";
 import { readCachedUsage, writeCachedUsage, readCachedAvailability, writeCachedAvailability } from "./workspace-cache.js";
+import { deriveTeamPresentation } from "../conversation/team-presentation.js";
 import { readAvailabilityRecovery } from "../conversation/availability-recovery-store.js";
 
 export const KAIRO_WORKSPACE_SNAPSHOT_SCHEMA = "kairo.workspace-shell/v1";
@@ -168,7 +169,7 @@ function workspaceTeamRows(strategy, intelligence) {
  * @param {number} [now]
  */
 function workspaceTeam(strategy, intelligence, cache = null, now = Date.now()) {
-  if (!strategy) return { state: "not_analyzed", assignments: [], rows: [] };
+  if (!strategy) return { state: "not_analyzed", assignments: [], rows: [], presentation: deriveTeamPresentation(null) };
   const useCache = intelligence === undefined || intelligence === null;
   const cachedIntelligence = useCache && cache?.value ? cache.value : intelligence;
   const base = {
@@ -176,6 +177,11 @@ function workspaceTeam(strategy, intelligence, cache = null, now = Date.now()) {
     assignments: (strategy.projectTeam ?? []).map(compactAssignment),
     rows: workspaceTeamRows(strategy, cachedIntelligence)
   };
+  // Additive presentation state (presentation only; never touches the
+  // stored assignments). Current validation needs a LIVE probe: a cache
+  // shown while the probe is pending is `verifying`, a failed one `blocked`.
+  const probe = intelligence === undefined ? "pending" : intelligence === null ? "failed" : "live";
+  base.presentation = deriveTeamPresentation(strategy, { rows: base.rows, probe });
   if (useCache && cache?.value) {
     return { ...base, cached: true, cacheAgeMs: Math.max(0, now - cache.savedAt) };
   }

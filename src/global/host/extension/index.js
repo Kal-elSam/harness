@@ -79,8 +79,19 @@ function subscriptionsLine(subscriptions) {
  * Rendered through the component path (createKairoTextWidget), never a
  * plain string array, because 7 real roles with warnings can exceed Pi's
  * MAX_WIDGET_LINES=10 cap. */
+function teamPresentationNotice(state) {
+  if (state === "verifying") return "Verifying team access — roles appear once verification completes.";
+  if (state === "blocked") return "Team blocked — run /project analyze to re-analyze; roles are hidden until the team is complete.";
+  return "Team incomplete — run /project analyze to re-analyze; roles are hidden until the team is complete.";
+}
+
 function teamDetailLines(team) {
   const rows = Array.isArray(team?.rows) ? team.rows : [];
+  // Presentation only: an incomplete/blocked/verifying team lists no roles
+  // (no partial team). Absent presentation = legacy behavior.
+  if (team?.presentation && team.presentation.rolesVisible === false) {
+    return [`KAIRO TEAM · ${team?.state ?? "not_analyzed"}`, teamPresentationNotice(team.presentation.state)];
+  }
   return [
     `KAIRO TEAM · ${team?.state ?? "not_analyzed"}`,
     ...(rows.length

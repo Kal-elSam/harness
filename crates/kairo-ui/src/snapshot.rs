@@ -37,6 +37,31 @@ pub fn apply_workspace_snapshot(view: &mut ShellViewModel, snapshot: &Value) {
     {
         view.team_state = Some(state.to_string());
     }
+
+    if snapshot.get("team").is_some() {
+        apply_team_presentation(view, snapshot.pointer("/team/presentation"));
+    }
+}
+
+/// Additive `team.presentation` (`state`, `rolesVisible`, `reason`). Tolerant:
+/// absent or malformed => legacy (roles visible); `state` alone decides only
+/// for the known states; an explicit `rolesVisible` bool always wins.
+fn apply_team_presentation(view: &mut ShellViewModel, presentation: Option<&Value>) {
+    let state = presentation
+        .and_then(|p| p.get("state"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let flag = presentation
+        .and_then(|p| p.get("rolesVisible"))
+        .and_then(|v| v.as_bool());
+    view.team_presentation = state.map(str::to_string);
+    view.roles_visible = match (flag, state) {
+        (Some(flag), _) => flag,
+        (None, Some("complete")) => true,
+        (None, Some("incomplete" | "blocked" | "verifying")) => false,
+        _ => true,
+    };
 }
 
 fn project_display_label(project: &Value) -> String {
@@ -326,6 +351,55 @@ mod tests {
         assert_eq!(view.agents[0].cause, BlockCause::Unavailable);
         assert_eq!(view.agents[1].label, "Builder");
         assert_eq!(view.agents[1].state, AgentState::Idle);
+    }
+
+    #[test]
+    fn team_presentation_is_parsed_and_absent_means_legacy_visible() {
+        let mut view = ShellViewModel::default();
+        assert!(view.roles_visible, "legacy default shows roles");
+        apply_workspace_snapshot(
+            &mut view,
+            &json!({ "team": { "state": "active", "presentation": {
+                "state": "blocked", "rolesVisible": false, "reason": "availability_blocked" } } }),
+        );
+        assert_eq!(view.team_presentation.as_deref(), Some("blocked"));
+        assert!(!view.roles_visible);
+
+        apply_workspace_snapshot(
+            &mut view,
+            &json!({ "team": { "state": "active", "presentation": {
+                "state": "complete", "rolesVisible": true, "reason": null } } }),
+        );
+        assert_eq!(view.team_presentation.as_deref(), Some("complete"));
+        assert!(view.roles_visible);
+
+        // An older sidecar without the field resets to legacy behavior.
+        apply_workspace_snapshot(
+            &mut view,
+            &json!({ "team": { "state": "active" } }),
+        );
+        assert_eq!(view.team_presentation, None);
+        assert!(view.roles_visible);
+    }
+
+    #[test]
+    fn team_presentation_tolerates_partial_or_unknown_shapes() {
+        let mut view = ShellViewModel::default();
+        // state only: visibility follows `complete`.
+        apply_workspace_snapshot(
+            &mut view,
+            &json!({ "team": { "presentation": { "state": "verifying" } } }),
+        );
+        assert!(!view.roles_visible);
+        // Unknown state with no flag: fail open to legacy (older/newer sidecar).
+        apply_workspace_snapshot(
+            &mut view,
+            &json!({ "team": { "presentation": { "state": "weird" } } }),
+        );
+        assert!(view.roles_visible);
+        // Garbage types never panic.
+        apply_workspace_snapshot(&mut view, &json!({ "team": { "presentation": 7 } }));
+        assert!(view.roles_visible);
     }
 
     #[test]
