@@ -39,6 +39,7 @@
  *   { "op": "list_sessions" }
  *   { "op": "reload_snapshot" }
  *   { "op": "project.preflight" }
+ *   { "op": "project.verify_access", "confirmed": true }  — T23: explicit, consented provider verification; `confirmed` must be exactly `true`
  *   { "op": "project.analyze", "analyst"?: { model, selectionSource, recommendationTags, choice } }
  *   { "op": "team.approve" }
  *   { "op": "team.revalidate" }
@@ -124,7 +125,8 @@ import { loadKairoProviderModels } from "./kairo-route-provider.js";
 import {
   analyzeProjectTeam as analyzeProjectTeamImpl,
   approveProjectTeam as approveProjectTeamImpl,
-  preflightProjectTeam as preflightProjectTeamImpl
+  preflightProjectTeam as preflightProjectTeamImpl,
+  verifyProjectTeamAccess as verifyProjectTeamAccessImpl
 } from "./project-team-sidecar.js";
 import { buildOpsSnapshot } from "./ops-sidecar.js";
 import {
@@ -363,6 +365,7 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut, { mergeRows } 
  * @param {typeof analyzeProjectTeamImpl} [options.analyzeProjectTeam]
  * @param {typeof approveProjectTeamImpl} [options.approveProjectTeam]
  * @param {typeof preflightProjectTeamImpl} [options.preflightProjectTeam]
+ * @param {typeof verifyProjectTeamAccessImpl} [options.verifyProjectTeamAccess]
  * @param {typeof revalidateTeamAvailabilityImpl} [options.revalidateTeamAvailability]
  * @param {typeof recoverProjectTeamImpl} [options.recoverProjectTeam]
  * @param {typeof approveRecoveryProposalImpl} [options.approveRecoveryProposal]
@@ -411,6 +414,7 @@ export async function runKairoUiRpcStdio({
   analyzeProjectTeam = analyzeProjectTeamImpl,
   approveProjectTeam = approveProjectTeamImpl,
   preflightProjectTeam = preflightProjectTeamImpl,
+  verifyProjectTeamAccess = verifyProjectTeamAccessImpl,
   revalidateTeamAvailability = revalidateTeamAvailabilityImpl,
   recoverProjectTeam = recoverProjectTeamImpl,
   approveRecoveryProposal = approveRecoveryProposalImpl,
@@ -895,6 +899,27 @@ export async function runKairoUiRpcStdio({
   const emitSnapshot = async () => {
     const snapshot = await loadSnapshot({ cwd });
     writeOut({ type: "snapshot", snapshot });
+  };
+
+  /** One `preflight` record (shared by `project.preflight` and the post-verification rebuild). */
+  const emitPreflight = async () => {
+    try {
+      const preflight = await preflightProjectTeam({ cwd });
+      writeOut({
+        type: "preflight",
+        ok: true,
+        analystCatalog: preflight.analystCatalog,
+        profile: preflight.profile,
+        candidates: preflight.candidates,
+        pickerNotice: preflight.pickerNotice ?? null,
+        exclusionCauses: Array.isArray(preflight.exclusionCauses) ? preflight.exclusionCauses : [],
+        unverifiedSubscriptions: Array.isArray(preflight.unverifiedSubscriptions) ? preflight.unverifiedSubscriptions : [],
+        verificationPlan: preflight.verificationPlan ?? null,
+        unverifiedClaudeNotice: preflight.unverifiedClaudeNotice ?? null
+      });
+    } catch (err) {
+      writeOut({ type: "preflight", ok: false, reason: err?.message ?? String(err) });
+    }
   };
 
   /**
@@ -1705,22 +1730,29 @@ export async function runKairoUiRpcStdio({
         // Read-only: the ratatui host's own analyst picker (T2, no
         // cockpit) — lists the real catalog so a human can choose which
         // Bootstrap Analyst runs `project.analyze`, before anything is
-        // sent to a provider. Never persists, never picks for the human.
-        try {
-          const preflight = await preflightProjectTeam({ cwd });
-          writeOut({
-            type: "preflight",
-            ok: true,
-            analystCatalog: preflight.analystCatalog,
-            profile: preflight.profile,
-            candidates: preflight.candidates,
-            pickerNotice: preflight.pickerNotice ?? null,
-            exclusionCauses: Array.isArray(preflight.exclusionCauses) ? preflight.exclusionCauses : [],
-            unverifiedClaudeNotice: preflight.unverifiedClaudeNotice ?? null
-          });
-        } catch (err) {
-          writeOut({ type: "preflight", ok: false, reason: err?.message ?? String(err) });
+        // sent to a provider. Never persists, never picks for the human,
+        // and (T23) never spawns a provider probe: the additive
+        // `verificationPlan` only DESCRIBES the checks.
+        await emitPreflight();
+      } else if (op === "project.verify_access") {
+        // T23: the ONLY op that may spawn provider probes. Requires an
+        // explicit `confirmed: true` (anything else is refused without
+        // touching a provider). Emits the per-subscription outcome, then the
+        // rebuilt catalog so the picker opens on verified options only.
+        const confirmed = cmd?.confirmed === true;
+        if (confirmed) {
+          writeOut({ type: "notice", message: "Verifying access… (real provider calls, may consume quota)" });
         }
+        const result = await verifyProjectTeamAccess({ cwd, confirmed });
+        writeOut({
+          type: "verification",
+          ok: result.ran === true,
+          status: result.status,
+          persisted: result.persisted === true,
+          outcomes: Array.isArray(result.outcomes) ? result.outcomes : [],
+          message: result.message ?? null
+        });
+        if (result.ran === true) await emitPreflight();
       } else if (op === "project.analyze") {
         // Team setup lives here, in the ratatui host: default analyst
         // (or the human's own pick from `project.preflight`'s catalog,

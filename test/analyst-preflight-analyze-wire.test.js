@@ -8,7 +8,8 @@ import { KAIRO_WORKSPACE_SNAPSHOT_SCHEMA, openPiRpcBridge } from "../src/global/
 import { runKairoUiRpcStdio } from "../src/global/host/kairo-ui-rpc-stdio.js";
 import {
   analyzeProjectTeam as analyzeProjectTeamImpl,
-  preflightProjectTeam as preflightProjectTeamImpl
+  preflightProjectTeam as preflightProjectTeamImpl,
+  verifyProjectTeamAccess as verifyProjectTeamAccessImpl
 } from "../src/global/host/project-team-sidecar.js";
 
 // T21b.2: project.preflight -> project.analyze with an unverified-access
@@ -19,7 +20,7 @@ import {
 // frozen into a fixture that the Rust test (crates/kairo-ui, main.rs) replays
 // through the Rust host's own code: its request writer and record ingestion.
 
-const FIXTURE = fileURLToPath(new URL("../crates/kairo-ui/fixtures/preflight-analyze-unverified.ndjson", import.meta.url));
+const FIXTURE = fileURLToPath(new URL("../crates/kairo-ui/fixtures/verify-then-pick.ndjson", import.meta.url));
 
 const CATALOG = {
   recommendedModel: null,
@@ -94,7 +95,7 @@ async function pollUntil(pred, ms = 3000) {
   return pred();
 }
 
-test("T21b: preflight -> analyze with an unverified analyst whose revalidation fails emits the exact wire records and runs no analysis", async () => {
+test("T21b safety net (T23: no longer the primary path, no Rust fixture): a crafted analyze for a still-unverified analyst revalidates first, fails closed and runs no analysis", async () => {
   const spies = { preflight: [], verify: [], analysis: 0, snapshotReloads: 0 };
   const service = {
     async preflightProject({ cwd, mode }) {
@@ -144,12 +145,103 @@ test("T21b: preflight -> analyze with an unverified analyst whose revalidation f
   assert.deepEqual(spies, { preflight: ["catalog", undefined], verify: ["opus-unv"], analysis: 0, snapshotReloads: 0 });
   assert.equal(out.slice(mark).some((r) => r.type === "snapshot"), false);
   assert.equal(out.slice(mark).some((r) => r.type === "notice" && /Suggested team ready/.test(r.message)), false);
+});
+
+// ---- T23: preflight -> verify (explicit consent) -> preflight, frozen for the Rust host ----
+
+const REQUEST_VERIFY = { op: "project.verify_access", confirmed: true };
+const PLAN_PENDING = {
+  pendingCount: 1, reusableCount: 1, mayConsumeQuota: true,
+  costStatement: "Verifying makes 1 real provider call and may consume quota or account credit.",
+  subscriptions: [
+    {
+      adapterId: "cursor", provider: "Cursor", granularity: "pool", pendingCount: 1, reusableCount: 0,
+      checks: [{ id: "cursor::other_models", kind: "pool", pool: "other_models", modelId: "gpt-5.4", models: 2, label: "Other models", state: "pending", reason: "never_verified", cachedStatus: null, age: null }]
+    },
+    {
+      adapterId: "claude", provider: "Claude", granularity: "model", pendingCount: 0, reusableCount: 1,
+      checks: [{ id: "claude::claude-a", kind: "model", modelId: "claude-a", label: "Claude A", state: "reusable", reason: null, cachedStatus: "allowed", age: "3m" }]
+    }
+  ]
+};
+const PLAN_DONE = { pendingCount: 0, reusableCount: 2, mayConsumeQuota: false, costStatement: null, subscriptions: [] };
+const row = (adapterId, modelId, displayName, fit, extra = {}) => ({
+  candidateKey: `${adapterId}::${modelId}`, adapterId, modelId, displayName, evidenceStatus: "scored", entitlement: null,
+  entitlementReason: null, available: true, accessVerified: true, selectable: true, recommendationTags: [], fit, confidence: 0.9,
+  evidence: { reasoning: 0.7, coding: 0.6, coverage: 1 }, ...extra
+});
+
+test("T23 wire: preflight carries the plan; project.verify_access (confirmed) runs verification once, then re-emits a preflight with the verified rows", async () => {
+  let verified = false;
+  const spies = { verify: [], preflights: 0, analysis: 0 };
+  const service = {
+    async preflightProject({ cwd }) {
+      spies.preflights += 1;
+      const models = verified
+        ? [row("claude", "claude-a", "Claude A", 0.9), row("cursor", "gpt-5.4", "GPT 5.4", 0.8), row("codex", "gpt-5", "GPT-5", 0.6)]
+        : [row("claude", "claude-a", "Claude A", 0.9), row("codex", "gpt-5", "GPT-5", 0.6),
+          row("cursor", "gpt-5.4", "GPT 5.4", 0.8, { available: false, accessVerified: false, cause: "access_unknown", entitlement: "unverified" })];
+      return {
+        profile: { root: cwd }, candidates: { scoredAll: [], eligibility: {} }, projectRoot: cwd, unverifiedClaudeNotice: null,
+        analystCatalog: { recommendedModel: null, models, exclusions: [] },
+        verificationPlan: verified ? PLAN_DONE : PLAN_PENDING
+      };
+    },
+    async verifyAccess(args) {
+      spies.verify.push(args);
+      verified = true;
+      return {
+        ran: true, status: "verified", persisted: true,
+        outcomes: [{ adapterId: "cursor", provider: "Cursor", granularity: "pool", counts: { allowed: 1, denied: 0, unverified: 0 },
+          results: [{ id: "cursor::other_models", label: "Other models", pool: "other_models", modelId: "gpt-5.4", status: "allowed", reason: null }] }]
+      };
+    },
+    async runBootstrapAnalysis() { spies.analysis += 1; throw new Error("analysis must never run"); }
+  };
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => { for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line)); });
+  const stdin = new PassThrough();
+  const run = runKairoUiRpcStdio({
+    stdin, stdout, cwd: "/project", openBridge,
+    preflightProjectTeam: (args) => preflightProjectTeamImpl({ ...args, createConversationService: () => service }),
+    verifyProjectTeamAccess: (args) => verifyProjectTeamAccessImpl({ ...args, createConversationService: () => service })
+  });
+  assert.ok(await pollUntil(() => out.some((r) => r.type === "ready" || r.type === "engine")), "sidecar came up");
+  const mark = out.length;
+  stdin.write(`${JSON.stringify(REQUEST_PREFLIGHT)}\n`);
+  assert.ok(await pollUntil(() => out.slice(mark).some((r) => r.type === "preflight")));
+  assert.deepEqual(spies.verify, [], "preflight alone never verifies");
+  const first = out.slice(mark).find((r) => r.type === "preflight");
+  assert.equal(first.verificationPlan.pendingCount, 1);
+  assert.deepEqual(first.unverifiedSubscriptions.map((s) => s.adapterId), ["cursor"]);
+
+  const mid = out.length;
+  stdin.write(`${JSON.stringify(REQUEST_VERIFY)}\n`);
+  assert.ok(await pollUntil(() => out.slice(mid).some((r) => r.type === "preflight")));
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await run;
+
+  assert.deepEqual(spies.verify, [{ cwd: "/project", confirmed: true }]);
+  assert.equal(spies.analysis, 0);
+  const after = out.slice(mid);
+  const verification = after.find((r) => r.type === "verification");
+  assert.equal(verification.ok, true);
+  assert.equal(verification.status, "verified");
+  assert.equal(verification.outcomes[0].results[0].status, "allowed");
+  const types = after.map((r) => r.type);
+  assert.ok(types.indexOf("verification") < types.indexOf("preflight"), "outcome first, then the rebuilt catalog");
+  const second = after.find((r) => r.type === "preflight");
+  assert.deepEqual(second.analystCatalog.models.map((m) => m.candidateKey), ["claude::claude-a", "cursor::gpt-5.4", "codex::gpt-5"]);
+  assert.equal(second.verificationPlan.pendingCount, 0);
+  assert.deepEqual(second.unverifiedSubscriptions, []);
 
   const lines = [
     { dir: "host->sidecar", record: REQUEST_PREFLIGHT },
-    wire.find((r) => r.type === "preflight") && { dir: "sidecar->host", record: wire.find((r) => r.type === "preflight") },
-    { dir: "host->sidecar", record: REQUEST_ANALYZE },
-    ...wire.filter((r) => r.type !== "preflight").map((record) => ({ dir: "sidecar->host", record }))
+    { dir: "sidecar->host", record: first },
+    { dir: "host->sidecar", record: REQUEST_VERIFY },
+    ...after.filter((r) => ["verification", "preflight"].includes(r.type)).map((record) => ({ dir: "sidecar->host", record }))
   ];
   const text = `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`;
   if (process.env.UPDATE_WIRE_FIXTURE === "1") await writeFile(FIXTURE, text);
@@ -159,4 +251,32 @@ test("T21b: preflight -> analyze with an unverified analyst whose revalidation f
     lines,
     "wire fixture drifted; regenerate with UPDATE_WIRE_FIXTURE=1 and re-run the Rust test"
   );
+});
+
+test("T23 wire: project.verify_access without confirmed:true never verifies and reports confirmation_required", async () => {
+  const spies = { verify: 0 };
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => { for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line)); });
+  const stdin = new PassThrough();
+  const run = runKairoUiRpcStdio({
+    stdin, stdout, cwd: "/project", openBridge,
+    verifyProjectTeamAccess: (args) => verifyProjectTeamAccessImpl({
+      ...args,
+      createConversationService: () => ({ async verifyAccess() { spies.verify += 1; return { ran: true, status: "verified", outcomes: [] }; } })
+    }),
+    preflightProjectTeam: async () => { throw new Error("no preflight after a refusal"); }
+  });
+  assert.ok(await pollUntil(() => out.some((r) => r.type === "ready" || r.type === "engine")));
+  const mark = out.length;
+  stdin.write(`${JSON.stringify({ op: "project.verify_access" })}\n`);
+  assert.ok(await pollUntil(() => out.slice(mark).some((r) => r.type === "verification")));
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await run;
+  const verification = out.slice(mark).find((r) => r.type === "verification");
+  assert.equal(verification.ok, false);
+  assert.equal(verification.status, "confirmation_required");
+  assert.equal(spies.verify, 0);
+  assert.equal(out.slice(mark).some((r) => r.type === "preflight"), false);
 });

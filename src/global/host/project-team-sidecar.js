@@ -14,7 +14,9 @@
  * ProjectStrategy the service persisted.
  */
 
-import { MIN_RECOMMENDATION_CONFIDENCE, qualifiesForMainView, recommendationQualifies } from "../conversation/analyst-qualification.js";
+import {
+  MIN_RECOMMENDATION_CONFIDENCE, compareAnalystRows, qualifiesForMainView, recommendationQualifies
+} from "../conversation/analyst-qualification.js";
 import { createConversationService } from "../conversation/service.js";
 
 /** Short provider labels for compact absence notices — never invent causes. */
@@ -34,17 +36,9 @@ function providerPickerLabel(adapterId) {
 
 export { MIN_RECOMMENDATION_CONFIDENCE };
 
-function numericOr(value, fallback) {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-/** Known (measured) fit sorts before unknown fit; both compare high to low. */
-function compareFit(a, b) {
-  const fitA = typeof a.fit === "number" && Number.isFinite(a.fit) ? a.fit : null;
-  const fitB = typeof b.fit === "number" && Number.isFinite(b.fit) ? b.fit : null;
-  if (fitA === null || fitB === null) return Number(fitA === null) - Number(fitB === null);
-  return fitB - fitA;
-}
+const EMPTY_VERIFICATION_PLAN = Object.freeze({
+  pendingCount: 0, reusableCount: 0, mayConsumeQuota: false, subscriptions: [], costStatement: null
+});
 
 /** Access is explicitly UNVERIFIED (catalog `accessVerified: false`); absent field = verified/legacy. */
 function isAccessUnverified(model) {
@@ -56,51 +50,81 @@ function isPickerSelectable(model) {
   return model?.available === true || model?.selectable === true;
 }
 
-function compareRows(a, b) {
-  const byFit = compareFit(a, b);
-  if (byFit !== 0) return byFit;
-  const byConfidence = numericOr(b.confidence, 0) - numericOr(a.confidence, 0);
-  if (byConfidence !== 0) return byConfidence;
-  const nameA = String(a.displayName ?? a.modelId ?? "");
-  const nameB = String(b.displayName ?? b.modelId ?? "");
-  return nameA.localeCompare(nameB);
+/** Usable now AND access verified: the only kind of row the picker lists (T23). */
+function isVerifiedAvailable(model) {
+  return model?.available === true && !isAccessUnverified(model);
 }
 
-const score = (value) => (typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "?");
+/** Main view size: the top three qualified options, never padded. */
+export const MAIN_VIEW_LIMIT = 3;
 
-/** One short Spanish line per row, from the row's own real evidence only. */
+const isMeasured = (value) => typeof value === "number" && Number.isFinite(value);
+
+// Plain-language strength bands. The numeric fit/evidence stay internal (they
+// drive ranking); the picker only ever shows these words.
+function strengthWord(value) {
+  if (value >= 0.75) return "excelente";
+  if (value >= 0.55) return "sólido";
+  if (value >= 0.35) return "moderado";
+  return "limitado";
+}
+
+function confidenceWord(value) {
+  if (value >= 0.75) return "alta";
+  if (value >= 0.6) return "media";
+  return "baja";
+}
+
+/** One short Spanish line per row, from the row's own real evidence only — words, never numbers. */
 function explainRow(model, listing) {
-  if (listing === "main") {
-    return `razonamiento ${score(model.evidence?.reasoning)} · código ${score(model.evidence?.coding)} · confianza ${score(model.confidence)}`;
-  }
-  const reasons = [];
-  if (isAccessUnverified(model)) reasons.push("acceso sin verificar");
   const { reasoning, coding } = model.evidence ?? {};
-  if (model.evidenceStatus === "unscored") reasons.push("sin benchmark");
-  else if (typeof reasoning !== "number" || typeof coding !== "number") reasons.push("benchmark incompleto");
-  return `${reasons.join(" · ") || "selección manual"} · solo manual`;
+  const hasBoth = isMeasured(reasoning) && isMeasured(coding);
+  const evidenceWords = hasBoth
+    ? `razonamiento ${strengthWord(reasoning)} · código ${strengthWord(coding)} · confianza ${confidenceWord(model.confidence)}`
+    : null;
+  if (listing === "main") return evidenceWords ?? "evidencia de razonamiento y código incompleta";
+  if (model.evidenceStatus === "unscored") return "sin benchmark · solo manual";
+  if (!hasBoth) return "benchmark incompleto · solo manual";
+  return `${evidenceWords} · ${qualifiesForMainView(model) ? "fuera del top tres" : "evidencia insuficiente para el top"} · solo manual`;
+}
+
+function subscriptionOf(model) {
+  return providerPickerLabel(model.adapterId);
+}
+
+/** Model AND subscription, so near-identical rows on two subscriptions stay distinguishable. */
+function decorate(model, listing, tags) {
+  const subscription = subscriptionOf(model);
+  return {
+    ...model,
+    recommendationTags: tags,
+    listing,
+    subscription,
+    label: `${model.displayName ?? model.modelId} · ${subscription}`,
+    explanation: explainRow(model, listing)
+  };
 }
 
 /**
  * Curate the full analyst catalog for the ratatui picker into two explicit
- * views. Identity is the candidateKey (adapterId + modelId), never the
- * display name: the same model through two subscriptions keeps both rows,
- * and there is no row cap (the modal scrolls).
+ * views of VERIFIED, available options only. Identity is the candidateKey
+ * (adapterId + modelId), never the display name: the same model through two
+ * subscriptions keeps both rows. One ranking (shared comparator: measured fit,
+ * then confidence, then name) spans every subscription.
  *
- * - `models` (MAIN view): only candidates that pass `qualifiesForMainView`
- *   (available, access verified, reasoning AND coding evidence, confidence
- *   >= MIN_RECOMMENDATION_CONFIDENCE). No extra fit threshold. Sorted by fit
- *   (unknown fit last), then confidence, then name.
- * - `alternatives` (MANUAL view): every other still-selectable candidate —
- *   no (or partial) benchmark, unknown access, or both. Never starred, never
- *   tagged, never auto-selected; confirming an unknown-access row revalidates
- *   it behind an explicit second confirmation (see `analyzeProjectTeam`).
- *   Exhausted / denied / unavailable candidates are in neither view.
+ * - `models` (MAIN view): the top THREE candidates that pass
+ *   `qualifiesForMainView` (available, access verified, reasoning AND coding
+ *   evidence, confidence >= MIN_RECOMMENDATION_CONFIDENCE). Never padded with
+ *   insufficient candidates.
+ * - `alternatives` (MANUAL view): every other verified, available candidate —
+ *   qualified ones beyond the top three, plus thin/partial/no-benchmark ones.
+ *   Manual no longer means pending access.
+ * - Unverified, denied, exhausted and unavailable candidates are in neither
+ *   view; `buildAnalystExclusionCauses` reports them by subscription.
  *
- * `recommendedModel` survives only when its candidateKey is in the MAIN list
- * and its confidence reaches MIN_RECOMMENDATION_CONFIDENCE.
- * Each row gains additive `listing` ("main"|"manual") and a short
- * `explanation`. Never invents models.
+ * `recommendedModel` (the star) is the FIRST main row. Each row gains
+ * additive `listing`, `subscription`, `label` and a plain-language
+ * `explanation` (no decimals). Never invents models.
  *
  * @param {{recommendedModel?: object|null, models?: object[]}|null|undefined} analystCatalog
  * @returns {{recommendedModel: object|null, models: object[], alternatives: object[]}}
@@ -108,97 +132,108 @@ function explainRow(model, listing) {
 export function curateAnalystCatalogForPicker(analystCatalog) {
   const incoming = Array.isArray(analystCatalog?.models) ? analystCatalog.models : [];
   const seen = new Set();
-  const main = [];
-  const manual = [];
+  const verified = [];
   for (const model of incoming) {
-    if (!isPickerSelectable(model)) continue;
+    if (!isVerifiedAvailable(model)) continue;
     const key = model.candidateKey ?? `${model.adapterId}::${model.modelId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    if (qualifiesForMainView(model)) main.push({ ...model, listing: "main", explanation: explainRow(model, "main") });
-    else manual.push({ ...model, recommendationTags: [], listing: "manual", explanation: explainRow(model, "manual") });
+    verified.push(model);
   }
-  const models = main.sort(compareRows);
-  const alternatives = manual.sort(compareRows);
+  const qualified = verified.filter(qualifiesForMainView).sort(compareAnalystRows);
+  const others = verified.filter((model) => !qualifiesForMainView(model));
+  const mainSource = qualified.slice(0, MAIN_VIEW_LIMIT);
+  const manualSource = [...qualified.slice(MAIN_VIEW_LIMIT), ...others].sort(compareAnalystRows);
 
-  const incomingRecommended = analystCatalog?.recommendedModel ?? null;
-  const survivor = incomingRecommended
-    ? models.find((model) => model.candidateKey === incomingRecommended.candidateKey)
-    : null;
-  const recommendedModel = survivor && recommendationQualifies(survivor, incomingRecommended)
-    ? incomingRecommended
-    : null;
+  const withoutQuality = (model) => (model.recommendationTags ?? []).filter((tag) => tag !== "quality");
+  const models = mainSource.map((model, index) => decorate(
+    model, "main", index === 0 ? ["quality", ...withoutQuality(model)] : withoutQuality(model)
+  ));
+  const alternatives = manualSource.map((model) => decorate(model, "manual", []));
+  // The star: the first row of the unified ranking (qualifiesForMainView
+  // already guarantees enough confidence), never an incoming pointer.
+  const first = models[0] ?? null;
+  const recommendedModel = first && recommendationQualifies(first, null) ? first : null;
   return { recommendedModel, models, alternatives };
 }
 
 // Verifiable cause -> Spanish picker copy. Only causes backed by real
-// evidence; never funds/credits/billing. `unscored` and `access_unknown`
-// are deliberately NOT worded as unavailability.
+// evidence; never funds/credits/billing. `access_unknown` is worded as an
+// explicit partial-comparison acknowledgement (never as unavailability).
 const CAUSE_ORDER = ["quota_exhausted", "unavailable_verified", "policy_excluded", "access_unknown", "unscored"];
 const CAUSE_COPY = Object.freeze({
   quota_exhausted: "cuota agotada",
   unavailable_verified: "no disponible para análisis ahora",
   policy_excluded: "excluido por política",
-  access_unknown: "acceso sin verificar",
+  access_unknown: "no verificado — comparación parcial",
   unscored: "sin benchmark (solo selección manual)"
 });
 
+const REASON_COPY = Object.freeze({ stale: "evidencia vencida" });
+
 /**
- * Machine-readable, per-provider exclusion causes for providers that
- * contributed ZERO usable picker rows (the same set the notice names).
- * One row per (provider, cause): `{adapterId, provider, cause, models, reason}`.
- * Sources, all real evidence only: per-model `cause` on unavailable/unscored
- * raw models, `rawCatalog.exclusions` (blocked-entitlement models that are
- * absent from `models` by design), and the Claude unverified-access notice.
- * A provider absent from the curated list for a reason with no evidence
- * (e.g. deduped by display name) gets no row — never an invented cause.
+ * Machine-readable, per-subscription exclusion causes for every candidate that
+ * is in NEITHER picker view (T23): unverified access, verified-denied,
+ * exhausted quota, provider unavailable, policy. One row per (provider,
+ * cause): `{adapterId, provider, cause, models, reason}`, reported even when
+ * the same subscription still has verified rows (a partial comparison is never
+ * presented as complete). Sources are real evidence only: per-model `cause` /
+ * `accessVerified` on catalog models, `rawCatalog.exclusions` (denied models
+ * absent from `models` by design) and the Claude unverified-access notice.
+ * Never an invented cause.
  *
  * @param {{models?: object[], exclusions?: object[]}|null|undefined} rawCatalog
- * @param {{models?: object[]}|null|undefined} curatedCatalog
+ * @param {{models?: object[], alternatives?: object[]}|null|undefined} curatedCatalog
  * @param {string|null|undefined} unverifiedClaudeNotice
  * @returns {Array<{adapterId: string, provider: string, cause: string, models: number, reason: string|null}>}
  */
 export function buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifiedClaudeNotice = null) {
-  // A provider "contributes" when it has a row in EITHER picker view.
   const curatedRows = [
     ...(Array.isArray(curatedCatalog?.models) ? curatedCatalog.models : []),
     ...(Array.isArray(curatedCatalog?.alternatives) ? curatedCatalog.alternatives : [])
   ];
+  const curatedKeys = new Set(curatedRows.map((m) => m?.candidateKey ?? `${m?.adapterId}::${m?.modelId}`));
   const curatedAdapters = new Set(curatedRows.map((m) => m?.adapterId).filter(Boolean));
   const rows = new Map();
-  const add = (adapterId, cause, reason = null) => {
-    if (!adapterId || !CAUSE_COPY[cause] || curatedAdapters.has(adapterId)) return;
+  const add = (adapterId, cause, candidateKey, reason = null) => {
+    if (!adapterId || !CAUSE_COPY[cause]) return;
     const key = `${adapterId}\u0000${cause}`;
-    const row = rows.get(key) ?? { adapterId, provider: providerPickerLabel(adapterId), cause, models: 0, reason: null };
-    row.models += 1;
+    const row = rows.get(key) ?? { adapterId, provider: providerPickerLabel(adapterId), cause, keys: new Set(), reason: null };
+    row.keys.add(candidateKey ?? `${adapterId}::${row.keys.size}`);
     row.reason = row.reason ?? reason;
     rows.set(key, row);
   };
   for (const model of Array.isArray(rawCatalog?.models) ? rawCatalog.models : []) {
-    if (model?.selectable === true && model?.available !== true) continue; // selectable (unverified access): not an exclusion
-    if (model?.available !== true) add(model?.adapterId, model?.cause ?? "unavailable_verified");
-    else if (model?.evidenceStatus === "unscored" && !(model.recommendationTags ?? []).length) add(model.adapterId, "unscored");
+    const candidateKey = model?.candidateKey ?? `${model?.adapterId}::${model?.modelId}`;
+    if (curatedKeys.has(candidateKey)) continue;
+    // A provider-level cause (quota, unavailable, policy) wins over unknown
+    // access: the model is out because of the provider, not just unverified.
+    const providerCause = model?.cause && model.cause !== "access_unknown" && model.cause !== "unscored" ? model.cause : null;
+    if (model?.available !== true) {
+      if (providerCause) add(model?.adapterId, providerCause, candidateKey);
+      else if (isAccessUnverified(model) || model?.cause === "access_unknown") add(model?.adapterId, "access_unknown", candidateKey, model?.entitlementReason ?? null);
+      else add(model?.adapterId, "unavailable_verified", candidateKey);
+    }
   }
   for (const exclusion of Array.isArray(rawCatalog?.exclusions) ? rawCatalog.exclusions : []) {
-    add(exclusion?.adapterId, exclusion?.cause, exclusion?.reason ?? null);
+    add(exclusion?.adapterId, exclusion?.cause, exclusion?.candidateKey, exclusion?.reason ?? null);
   }
   if (unverifiedClaudeNotice && !curatedAdapters.has("claude") && ![...rows.values()].some((r) => r.adapterId === "claude" && r.cause === "access_unknown")) {
-    add("claude", "access_unknown", String(unverifiedClaudeNotice));
+    add("claude", "access_unknown", "claude::notice", String(unverifiedClaudeNotice));
   }
-  return [...rows.values()].sort((a, b) =>
-    a.provider.localeCompare(b.provider) || CAUSE_ORDER.indexOf(a.cause) - CAUSE_ORDER.indexOf(b.cause)
-  );
+  return [...rows.values()]
+    .map(({ keys, reason, ...row }) => ({ ...row, models: keys.size, reason: reason == null ? null : (REASON_COPY[reason] ?? reason) }))
+    .sort((a, b) => a.provider.localeCompare(b.provider) || CAUSE_ORDER.indexOf(a.cause) - CAUSE_ORDER.indexOf(b.cause));
 }
 
 /**
- * Compact honest notice when a known provider contributed zero usable
- * picker rows, stating the verifiable cause per provider (see
- * buildAnalystExclusionCauses). Never invents billing / out-of-funds /
- * credits causes, and never words unscored or unverified access as
- * unavailability.
+ * Compact honest notice naming, per subscription, every verifiable cause that
+ * keeps candidates out of the picker (see buildAnalystExclusionCauses). Never
+ * invents billing / out-of-funds / credits causes, and words unknown access as
+ * a partial comparison, never as unavailability.
  *
  * @param {{models?: object[], exclusions?: object[]}|null|undefined} rawCatalog
- * @param {{models?: object[]}|null|undefined} curatedCatalog
+ * @param {{models?: object[], alternatives?: object[]}|null|undefined} curatedCatalog
  * @param {string|null|undefined} unverifiedClaudeNotice
  * @returns {string|null}
  */
@@ -413,6 +448,7 @@ export async function preflightProjectTeam({
   const rawCatalog = preflight.analystCatalog ?? { recommendedModel: null, models: [] };
   const analystCatalog = curateAnalystCatalogForPicker(rawCatalog);
   const unverifiedClaudeNotice = preflight.unverifiedClaudeNotice ?? null;
+  const exclusionCauses = buildAnalystExclusionCauses(rawCatalog, analystCatalog, unverifiedClaudeNotice);
   return {
     analystCatalog,
     profile: toSerializable(preflight.profile),
@@ -421,8 +457,50 @@ export async function preflightProjectTeam({
     unverifiedClaudeNotice,
     pickerNotice: buildAnalystPickerNotice(rawCatalog, analystCatalog, unverifiedClaudeNotice),
     // Additive (T10/T11): machine-readable cause rows behind `pickerNotice`.
-    exclusionCauses: buildAnalystExclusionCauses(rawCatalog, analystCatalog, unverifiedClaudeNotice)
+    exclusionCauses,
+    // Additive (T23): subscriptions whose access could not be verified — the
+    // picker must say so, a partial comparison is never presented as complete.
+    unverifiedSubscriptions: exclusionCauses
+      .filter((row) => row.cause === "access_unknown")
+      .map(({ adapterId, provider, models, reason }) => ({ adapterId, provider, models, reason })),
+    // Additive (T23): the concrete, never-executed verification plan.
+    verificationPlan: toSerializable(preflight.verificationPlan) ?? EMPTY_VERIFICATION_PLAN
   };
+}
+
+/**
+ * Explicit, consented access verification for the picker (T23). Without
+ * `confirmed === true` nothing is asked of the service at all. With consent it
+ * runs `service.verifyAccess` (each pending check at most once; only real
+ * allowed/denied results are persisted by the service) and returns the
+ * per-subscription outcomes. Never touches the project strategy. A failure is
+ * reported as `{ran: false, status: "failed", message}` with the real reason.
+ *
+ * @param {{cwd?: string, confirmed?: boolean, createConversationService?: typeof createConversationService}} args
+ * @returns {Promise<{ran: boolean, status: "confirmation_required"|"verified"|"failed"|"unavailable", message?: string, persisted?: boolean, outcomes: object[]}>}
+ */
+export async function verifyProjectTeamAccess({
+  cwd,
+  confirmed,
+  createConversationService: createService = createConversationService
+} = {}) {
+  const projectCwd = requireCwd(cwd);
+  if (confirmed !== true) {
+    return {
+      ran: false, status: "confirmation_required", outcomes: [],
+      message: "Access verification calls the providers and may consume quota — it only runs after explicit confirmation. Nothing was run."
+    };
+  }
+  try {
+    const service = createService({ enableProviderProbes: true });
+    if (typeof service.verifyAccess !== "function") {
+      return { ran: false, status: "unavailable", outcomes: [], message: "This build has no access verification entry point." };
+    }
+    const result = await service.verifyAccess({ cwd: projectCwd, confirmed: true });
+    return toSerializable(result) ?? { ran: false, status: "failed", outcomes: [], message: "Verification returned no result." };
+  } catch (error) {
+    return { ran: false, status: "failed", outcomes: [], message: `Access verification failed: ${error?.message ?? String(error)}` };
+  }
 }
 
 /**

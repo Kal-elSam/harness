@@ -58,7 +58,7 @@ test("main list holds only qualifying candidates; no fit threshold is invented (
   assert.deepEqual(curated.models.map((m) => m.listing), ["main", "main"]);
 });
 
-test("manual alternatives: no benchmark OR unknown access (including both), never starred, unknown fit after known", () => {
+test("manual alternatives (T23, rewritten): only VERIFIED available candidates (no/partial benchmark); unknown access is excluded, never starred or tagged", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: { candidateKey: "a::unv", confidence: 0.9 },
     models: [
@@ -71,13 +71,13 @@ test("manual alternatives: no benchmark OR unknown access (including both), neve
     ]
   });
   assert.deepEqual(keys(curated.models), ["a::ok"]);
-  assert.deepEqual(keys(curated.alternatives), ["a::unv", "a::partial", "a::both", "a::unscored"]);
+  assert.deepEqual(keys(curated.alternatives), ["a::partial", "a::unscored"]);
   assert.ok(curated.alternatives.every((m) => m.listing === "manual"));
-  assert.equal(curated.recommendedModel, null, "a manual/unverified row is never the star");
+  assert.equal(curated.recommendedModel.candidateKey, "a::ok", "the star is the first ranked row, not the incoming pointer");
   assert.ok(curated.alternatives.every((m) => (m.recommendationTags ?? []).length === 0), "alternatives are never tagged");
 });
 
-test("identity is candidateKey: same model through two subscriptions keeps both rows; no display-name dedupe and no 16 cap", () => {
+test("identity is candidateKey (T23, rewritten): same model through two subscriptions keeps both rows across main+manual; no display-name dedupe", () => {
   const twins = [
     entry({ candidateKey: "codex::gpt-5", adapterId: "codex", displayName: "GPT-5", fit: 0.6 }),
     entry({ candidateKey: "opencode-go::gpt-5", adapterId: "opencode-go", displayName: "GPT-5", fit: 0.5 })
@@ -86,14 +86,16 @@ test("identity is candidateKey: same model through two subscriptions keeps both 
     candidateKey: `x::m${i}`, modelId: `m${i}`, displayName: `Model ${i}`, fit: 0.3 + i / 1000
   }));
   const curated = curateAnalystCatalogForPicker({ recommendedModel: null, models: [...twins, ...many] });
-  assert.equal(curated.models.length, 32);
-  assert.ok(curated.models.some((m) => m.candidateKey === "codex::gpt-5"));
-  assert.ok(curated.models.some((m) => m.candidateKey === "opencode-go::gpt-5"));
+  assert.equal(curated.models.length, 3, "main view is the top three");
+  assert.equal(curated.models.length + curated.alternatives.length, 32, "nothing is lost: the rest stays reachable in the manual view");
+  const all = [...curated.models, ...curated.alternatives];
+  assert.ok(all.some((m) => m.candidateKey === "codex::gpt-5"));
+  assert.ok(all.some((m) => m.candidateKey === "opencode-go::gpt-5"));
   const dupKey = curateAnalystCatalogForPicker({ recommendedModel: null, models: [twins[0], { ...twins[0] }] });
   assert.equal(dupKey.models.length, 1, "the same candidateKey twice is one row");
 });
 
-test("rows are sorted by fit then confidence then name; every row carries a short explanation and the raw evidence", () => {
+test("rows are sorted by fit then confidence then name across main then manual; every row carries a short plain explanation and the raw evidence (T23: top three + rest)", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: null,
     models: [
@@ -103,17 +105,13 @@ test("rows are sorted by fit then confidence then name; every row carries a shor
       entry({ candidateKey: "a::z", displayName: "Zulu", fit: 0.8, confidence: 0.55 })
     ]
   });
-  assert.deepEqual(keys(curated.models), ["a::z", "a::c", "a::a", "a::b"]);
-  for (const row of curated.models) {
+  assert.deepEqual(keys(curated.models), ["a::z", "a::c", "a::a"]);
+  assert.deepEqual(keys(curated.alternatives), ["a::b"], "qualified beyond the top three stays reachable manually");
+  for (const row of [...curated.models, ...curated.alternatives]) {
     assert.equal(typeof row.explanation, "string");
-    assert.ok(row.explanation.length > 0 && row.explanation.length <= 80, row.explanation);
+    assert.ok(row.explanation.length > 0 && row.explanation.length <= 100, row.explanation);
     assert.deepEqual(row.evidence, EVIDENCE);
   }
-  const manual = curateAnalystCatalogForPicker({
-    recommendedModel: null,
-    models: [entry({ candidateKey: "a::u", available: false, accessVerified: false, cause: "access_unknown" })]
-  }).alternatives[0];
-  assert.match(manual.explanation, /sin verificar/);
 });
 
 test("recommended star survives only from the main list", () => {
@@ -192,7 +190,7 @@ test("a verified pick needs no confirmation flag (no probe at all)", async () =>
   assert.deepEqual(calls.map((c) => c[0]), ["runBootstrapAnalysis"]);
 });
 
-test("preflight exposes main models and manual alternatives, and keeps both subscriptions of one model", async () => {
+test("preflight exposes main models and manual alternatives, keeps both subscriptions of one model, and reports unverified access separately (T23)", async () => {
   const raw = {
     recommendedModel: null,
     models: [
@@ -204,5 +202,6 @@ test("preflight exposes main models and manual alternatives, and keeps both subs
   };
   const result = await preflightProjectTeam({ cwd: "/p", createConversationService: fakeService({ analystCatalog: raw, verify: {}, calls: [] }) });
   assert.deepEqual(keys(result.analystCatalog.models), ["codex::gpt-5", "claude::gpt-5"]);
-  assert.deepEqual(keys(result.analystCatalog.alternatives), ["claude::unv"]);
+  assert.deepEqual(keys(result.analystCatalog.alternatives), [], "T23: unknown access is in neither list");
+  assert.deepEqual(result.unverifiedSubscriptions.map((row) => [row.adapterId, row.models]), [["claude", 1]]);
 });

@@ -330,7 +330,7 @@ test("preflightProjectTeam returns the real analyst catalog without persisting o
     createConversationService: fakeService({ analystCatalog: catalog, calls })
   });
   assert.deepEqual(calls, [["preflightProject", "/project", "catalog"]], "picker preflight uses catalog mode — never analysis or approval");
-  assert.deepEqual(result.analystCatalog.recommendedModel, catalog.recommendedModel);
+  assert.equal(result.analystCatalog.recommendedModel.candidateKey, catalog.recommendedModel.candidateKey);
   assert.deepEqual(result.analystCatalog.models.map((m) => m.candidateKey), ["codex::gpt-5"]);
   assert.deepEqual(result.analystCatalog.alternatives, []);
   assert.equal(result.projectRoot, "/project");
@@ -431,7 +431,7 @@ test("curateAnalystCatalogForPicker ranks eligible Claude above Codex by fit, no
   assert.equal(curated.recommendedModel.candidateKey, "claude::opus");
 });
 
-test("curateAnalystCatalogForPicker nulls recommendedModel when it does not survive the filter", () => {
+test("curateAnalystCatalogForPicker (T23, rewritten): a dead incoming recommendation never keeps the star; the star is the first ranked surviving row", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: { candidateKey: "claude::down", recommendationTags: ["quality"] },
     models: [
@@ -455,7 +455,7 @@ test("curateAnalystCatalogForPicker nulls recommendedModel when it does not surv
       })
     ]
   });
-  assert.equal(curated.recommendedModel, null);
+  assert.equal(curated.recommendedModel.candidateKey, "codex::gpt", "star = first ranked row; the unavailable pointer is ignored");
   assert.equal(curated.models.length, 1);
   assert.equal(curated.models[0].adapterId, "codex");
 });
@@ -533,7 +533,7 @@ test("buildAnalystPickerNotice joins multiple absences and uses unverifiedClaude
     { models: [] },
     "2 Claude models are unverified"
   );
-  assert.equal(notice, "Claude: acceso sin verificar");
+  assert.equal(notice, "Claude: no verificado — comparación parcial");
 });
 
 test("preflightProjectTeam surfaces the unverified Claude notice, honestly, without picking a fallback model", async () => {
@@ -545,7 +545,7 @@ test("preflightProjectTeam surfaces the unverified Claude notice, honestly, with
     })
   });
   assert.equal(result.unverifiedClaudeNotice, "2 Claude models are unverified");
-  assert.equal(result.pickerNotice, "Claude: acceso sin verificar");
+  assert.equal(result.pickerNotice, "Claude: no verificado — comparación parcial");
   assert.deepEqual(result.analystCatalog, { recommendedModel: null, models: [], alternatives: [] });
 });
 
@@ -657,7 +657,7 @@ test("buildAnalystPickerNotice states the verifiable cause per provider, without
   const notice = buildAnalystPickerNotice(raw, curated, null);
   assert.equal(
     notice,
-    "Claude: cuota agotada · Cursor: no disponible para análisis ahora · OpenCode Go: acceso sin verificar"
+    "Claude: cuota agotada · Cursor: no disponible para análisis ahora · OpenCode Go: no verificado — comparación parcial"
   );
 });
 
@@ -713,7 +713,7 @@ function unverifiedEntry(overrides = {}) {
   });
 }
 
-test("T20 curate: unverified-access rows are kept but ranked after every verified row, sorted by fit within their own group", () => {
+test("T23 curate (rewrote T20): unverified-access rows are in NEITHER view; verified rows keep fit order", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: null,
     models: [
@@ -724,33 +724,33 @@ test("T20 curate: unverified-access rows are kept but ranked after every verifie
     ]
   });
   assert.deepEqual(curated.models.map((m) => m.displayName), ["Strong Verified", "Weak Verified"]);
-  assert.deepEqual(curated.alternatives.map((m) => m.displayName), ["Unv High", "Unv Low"], "unverified access lives in the manual view only");
-  assert.equal(curated.alternatives[0].accessVerified, false);
+  assert.deepEqual(curated.alternatives, [], "unverified access is reported separately, never listed");
 });
 
-test("T20 curate: a non-selectable, non-available row is still dropped; same display name keeps both rows; no cap", () => {
+test("T23 curate (rewrote T20): a non-available row is dropped; same display name keeps both rows by candidateKey; nothing is lost past the top three", () => {
   const dropped = curateAnalystCatalogForPicker({
     models: [unverifiedEntry({ selectable: false, cause: "quota_exhausted" })]
   });
   assert.equal(dropped.models.length + dropped.alternatives.length, 0);
   const deduped = curateAnalystCatalogForPicker({
-    models: [unverifiedEntry({ displayName: "Same Name", fit: 0.99 }), catalogEntry({ displayName: "Same Name", fit: 0.1 })]
+    models: [catalogEntry({ candidateKey: "codex::a", displayName: "Same Name", fit: 0.99 }), catalogEntry({ candidateKey: "codex::b", displayName: "Same Name", fit: 0.1 })]
   });
   assert.equal(deduped.models.length + deduped.alternatives.length, 2, "no display-name dedupe: identity is candidateKey");
   const many = curateAnalystCatalogForPicker({
-    models: Array.from({ length: 30 }, (_, i) => unverifiedEntry({ candidateKey: `claude::m${i}`, modelId: `m${i}`, displayName: `M${i}` }))
+    models: Array.from({ length: 30 }, (_, i) => catalogEntry({ candidateKey: `claude::m${i}`, adapterId: "claude", modelId: `m${i}`, displayName: `M${i}` }))
   });
-  assert.equal(many.alternatives.length, 30);
+  assert.equal(many.models.length, 3);
+  assert.equal(many.alternatives.length, 27);
 });
 
-test("T20 curate: the star never lands on an unverified-access row, even if the catalog points at it", () => {
+test("T23 curate (rewrote T20): the star never lands on an unverified-access row, even if the catalog points at it", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: { candidateKey: "claude::opus-unv" },
     models: [unverifiedEntry({ recommendationTags: ["quality"] }), catalogEntry()]
   });
-  assert.equal(curated.recommendedModel, null);
+  assert.equal(curated.recommendedModel.candidateKey, "codex::gpt-5");
   assert.equal(curated.models.length, 1);
-  assert.equal(curated.alternatives.length, 1);
+  assert.equal(curated.alternatives.length, 0);
 });
 
 test("T20 pickDefaultAnalyst: never returns an unverified-access model, even recommended, tagged, selectable and 'available'", () => {
@@ -765,16 +765,19 @@ test("T20 pickDefaultAnalyst: never returns an unverified-access model, even rec
   }
 });
 
-test("T20 causes: a selectable unverified-access row is no longer an exclusion; a provider with zero selectable rows keeps its notice", () => {
+test("T23 causes (rewrote T20): an unverified-access row IS an exclusion by subscription, even when the provider has other rows", () => {
   const raw = {
     models: [unverifiedEntry(), catalogEntry()],
     exclusions: [{ candidateKey: "cursor::x", adapterId: "cursor", modelId: "x", cause: "access_unknown", reason: null }]
   };
   const curated = curateAnalystCatalogForPicker(raw);
-  assert.ok(curated.alternatives.some((m) => m.adapterId === "claude"));
+  assert.equal(curated.alternatives.length, 0);
   const causes = buildAnalystExclusionCauses(raw, curated, "1 Claude models are unverified");
-  assert.deepEqual(causes.map((c) => c.adapterId), ["cursor"], "claude is selectable now; only the provider with zero rows is listed");
-  assert.equal(buildAnalystPickerNotice(raw, curated, "1 Claude models are unverified"), "Cursor: acceso sin verificar");
+  assert.deepEqual(causes.map((c) => [c.adapterId, c.cause, c.models]), [["claude", "access_unknown", 1], ["cursor", "access_unknown", 1]]);
+  assert.equal(
+    buildAnalystPickerNotice(raw, curated, "1 Claude models are unverified"),
+    "Claude: no verificado — comparación parcial · Cursor: no verificado — comparación parcial"
+  );
 });
 
 const UNVERIFIED_CATALOG = {
