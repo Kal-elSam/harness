@@ -263,9 +263,10 @@ export function createOpencodeGoBootstrapAnalyzerAdapter({ modelId, deps = {} } 
     //     rule the Claude adapter follows for an application-enforced
     //     boundary, but WITHOUT its canary. OpenCode has no read-only
     //     flag (see intelligence/opencode-ask-agent.js): the boundary is
-    //     Kairo's own `kairo-ask` agent, which denies bash/edit/write/task
-    //     via opencode.json permissions (enforced by opencode's own
-    //     process, not the OS). No out-of-bounds read was ever attempted
+    //     Kairo's own `kairo-ask` agent, injected per run via inline config
+    //     (never the user's global opencode.json), which denies
+    //     bash/edit/write/task/webfetch/external_directory (enforced by
+    //     opencode's own process, not the OS). No out-of-bounds read was ever attempted
     //     against it, and read scope is only `cwd = snapshotRoot` (a
     //     secret-redacted copy), not a proven path confinement — so this
     //     is never "verified" and never canaryTested. The caller's gate

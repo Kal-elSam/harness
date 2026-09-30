@@ -238,12 +238,10 @@ function fakeOpencodeSpawn(ndjsonLines) {
   };
 }
 
-test("opencode-go: ensures the real read-only agent first, then runs --agent kairo-ask with the real fully-qualified model ref, accumulating real text events into the answer", async () => {
-  const ensureCalls = [];
+test("opencode-go: runs --agent kairo-ask with the real fully-qualified model ref, accumulating real text events into the answer", async () => {
   const seenArgs = [];
   const answer = await askProvider({
     provider: "opencode-go", question: "What is this project about?", model: "kimi-k3", cwd: "/repo",
-    ensureOpencodeAskAgent: async () => { ensureCalls.push(true); },
     spawn: (cmd, args) => {
       seenArgs.push([cmd, args]);
       return fakeOpencodeSpawn([
@@ -254,7 +252,6 @@ test("opencode-go: ensures the real read-only agent first, then runs --agent kai
       ])();
     }
   });
-  assert.equal(ensureCalls.length, 1, "the real read-only agent must be ensured before every real opencode call");
   assert.equal(answer.status, "answered");
   assert.equal(answer.answer, "It orchestrates Codex/Claude/OpenCode.");
   assert.deepEqual(seenArgs[0], ["opencode", ["run", "--agent", "kairo-ask", "--format", "json", "--model", "opencode-go/kimi-k3", "What is this project about?"]]);
@@ -264,7 +261,6 @@ test("opencode-zen: the real fully-qualified model ref uses the 'opencode/' pref
   const seenArgs = [];
   await askProvider({
     provider: "opencode-zen", question: "q", model: "kimi-k3", cwd: "/repo",
-    ensureOpencodeAskAgent: async () => {},
     spawn: (cmd, args) => { seenArgs.push([cmd, args]); return fakeOpencodeSpawn([{ type: "text", part: { type: "text", text: "ok" } }])(); }
   });
   assert.ok(seenArgs[0][1].includes("opencode/kimi-k3"));
@@ -274,25 +270,12 @@ test("opencode-zen: the real fully-qualified model ref uses the 'opencode/' pref
 test("REGRESSION: a real opencode error event is reported honestly, never silently dropped in favor of whatever partial text arrived first", async () => {
   const answer = await askProvider({
     provider: "opencode-go", question: "q", model: "kimi-k3", cwd: "/repo",
-    ensureOpencodeAskAgent: async () => {},
     spawn: () => fakeOpencodeSpawn([
       { type: "error", error: { name: "APIError", data: { message: "Upstream request failed: quota exceeded" } } }
     ])()
   });
   assert.equal(answer.status, "error");
   assert.match(answer.error, /quota exceeded/);
-});
-
-test("REGRESSION: if ensuring the real read-only agent itself fails, opencode is never spawned at all", async () => {
-  let spawnCalled = false;
-  const answer = await askProvider({
-    provider: "opencode-go", question: "q", model: "kimi-k3", cwd: "/repo",
-    ensureOpencodeAskAgent: async () => { throw new Error("disk full"); },
-    spawn: () => { spawnCalled = true; return fakeOpencodeSpawn([{ type: "text", part: { type: "text", text: "ok" } }])(); }
-  });
-  assert.equal(answer.status, "error");
-  assert.match(answer.error, /disk full/);
-  assert.equal(spawnCalled, false, "never spawn a real opencode process if Kairo can't first guarantee it's read-only");
 });
 
 test("an unsupported provider yields an honest 'unsupported' result, never a guess", async () => {
@@ -371,7 +354,7 @@ test("PARITY: with no signal and no onEvent every adapter spawns with the exact 
     };
     const res = await askProvider({
       provider: a.provider, question: "q", model: a.model, cwd: "/repo", spawn,
-      sourceEnv: { PATH: "/usr/bin" }, ensureOpencodeAskAgent: async () => {}
+      sourceEnv: { PATH: "/usr/bin" }
     });
     assert.equal(res.status, "answered", a.provider);
     assert.equal(seen.length, 1);
@@ -391,7 +374,7 @@ test("abort BEFORE spawn: resolves cancelled and never spawns, for every adapter
     ac.abort();
     const res = await askProvider({
       provider: a.provider, question: "q", cwd: "/repo", signal: ac.signal,
-      spawn: () => { spawned = true; return groupChild(); }, ensureOpencodeAskAgent: async () => {}
+      spawn: () => { spawned = true; return groupChild(); }
     });
     assert.deepEqual(res, { status: "cancelled", answer: null, error: null }, a.provider);
     assert.equal(spawned, false, a.provider);
@@ -406,8 +389,7 @@ test("a signal makes the child a process-group leader (detached: true); everythi
     const kills = [];
     const pending = askProvider({
       provider: a.provider, question: "q", cwd: "/repo", signal: ac.signal, spawn: stubSpawn(child, seen),
-      ensureOpencodeAskAgent: async () => {},
-      killProcess: (pid, sig) => { kills.push([pid, sig]); setImmediate(() => child.emit("close", null)); }
+        killProcess: (pid, sig) => { kills.push([pid, sig]); setImmediate(() => child.emit("close", null)); }
     });
     await spawned(child);
     assert.equal(seen[0].options.detached, true, a.provider);
@@ -616,7 +598,7 @@ test("opencode: text and error parts are emitted incrementally as chunks arrive"
   const child = groupChild();
   const pending = askProvider({
     provider: "opencode-go", question: "q", cwd: "/repo", spawn: stubSpawn(child),
-    ensureOpencodeAskAgent: async () => {}, onEvent: (e) => events.push(e)
+    onEvent: (e) => events.push(e)
   });
   await spawned(child);
   const l1 = JSON.stringify({ type: "text", part: { text: "Hel" } });
@@ -634,7 +616,7 @@ test("opencode: text and error parts are emitted incrementally as chunks arrive"
   const child2 = groupChild();
   const p2 = askProvider({
     provider: "opencode-go", question: "q", cwd: "/repo", spawn: stubSpawn(child2),
-    ensureOpencodeAskAgent: async () => {}, onEvent: (e) => errEvents.push(e)
+    onEvent: (e) => errEvents.push(e)
   });
   await spawned(child2);
   child2.stdout.emit("data", JSON.stringify({ type: "error", error: { data: { message: "quota" } } }) + "\n");
@@ -662,7 +644,7 @@ test("an onEvent that throws (or rejects) never breaks the run", async () => {
     const child = groupChild();
     const pending = askProvider({
       provider: "opencode-go", question: "q", cwd: "/repo", spawn: stubSpawn(child),
-      ensureOpencodeAskAgent: async () => {}, onEvent
+      onEvent
     });
     await spawned(child);
     child.stdout.emit("data", JSON.stringify({ type: "text", part: { text: "fine" } }) + "\n");
