@@ -7,3 +7,11 @@ graphify-out/
 .codegraph/
 .pnpm-store/
 packages/kairo-vscode/dist/
+
+# Rust
+crates/kairo-ui/target/
+
+# Prebuilt kairo-ui binaries (built by scripts/build-kairo-ui-binaries.sh; shipped via npm files)
+dist/kairo-ui/*/kairo-ui
+dist/kairo-ui/*/*.dSYM/
+

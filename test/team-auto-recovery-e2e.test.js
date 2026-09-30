@@ -7,8 +7,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createKairoWorkspaceExtension } from "../src/global/host/extension/index.js";
-import { loadKairoProviderModels } from "../src/global/host/kairo-route-provider.js";
-import { buildKairoWorkspaceSnapshot, recoverKairoProjectTeam } from "../src/global/host/workspace-snapshot.js";
+import { buildKairoProviderModels, loadKairoProviderModels } from "../src/global/host/kairo-route-provider.js";
+import { approveKairoRecovery, buildKairoWorkspaceSnapshot, recoverKairoProjectTeam, rejectKairoRecovery } from "../src/global/host/workspace-snapshot.js";
 import { createConversationService } from "../src/global/conversation/service.js";
 import { scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
@@ -70,7 +70,8 @@ function scenario() {
   };
 
   const { pi, providers, events } = fakePi();
-  const extension = createKairoWorkspaceExtension(pi, {
+  const service = createService();
+  const buildExtension = (extra = {}) => createKairoWorkspaceExtension(pi, {
     loadSnapshot: async ({ availabilityIntelligence }) => buildKairoWorkspaceSnapshot({
       projectRoot: "/repo", strategy: store.strategy, usageIntelligence: {}, availabilityIntelligence
     }),
@@ -83,11 +84,16 @@ function scenario() {
       resolveAdapter: () => ({ availability: () => ({ launchable: true }) })
     }),
     createProvider: ({ models }) => ({ models }),
-    recoverTeam: (args) => recoverKairoProjectTeam(args, { createConversationService: createService })
+    recoverTeam: (args) => recoverKairoProjectTeam(args, { createConversationService: createService }),
+    approveTeam: (args) => approveKairoRecovery(args, { createConversationService: createService }),
+    rejectTeam: (args) => rejectKairoRecovery(args, { createConversationService: createService }),
+    readPendingRecovery: async () => store.recovery,
+    ...extra
   });
+  const extension = buildExtension();
   const notifications = [];
   const ctx = { cwd: "/repo", ui: { setStatus: () => {}, setWidget: () => {}, notify: (...args) => notifications.push(args) } };
-  return { store, providers, events, extension, notifications, ctx };
+  return { store, providers, events, extension, notifications, ctx, buildExtension, approveRecovery: (args) => service.approveRecoveryProposal(args) };
 }
 
 function fakePi() {
@@ -105,25 +111,37 @@ function fakePi() {
   };
 }
 
-test("E2E: Go limited with Codex/Claude available — no new Go assignment, the recovered team is active, and Pi routes resolve to it", async () => {
-  const { store, providers, events, extension, notifications, ctx } = scenario();
+test("E2E: Go limited with Codex/Claude available — recovery proposes without swapping, approval activates and Pi routes follow", async () => {
+  const { store, providers, events, extension, notifications, ctx, approveRecovery } = scenario();
 
   await events.get("session_start")({}, ctx);
   assert.deepEqual(providers.get("kairo").models.map((model) => model.kairoRoute.adapterId), ["opencode-go"], "before recovery Pi routes the Go team");
 
   const result = await extension.recovery();
-  assert.equal(result.outcome, "activated", result.reason);
-  assert.equal(store.strategy.status, "active");
-  assert.equal(store.strategy.activation.source, "automatic-recovery");
-  assert.ok(store.strategy.projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no new assignment uses Go");
+  assert.equal(result.outcome, "proposed", result.reason);
+  assert.equal(store.strategy.status, "active", "the proposal never touches the active team file");
+  assert.equal(store.strategy.profileFingerprint, "fp-1", "the previous team keeps serving");
+  assert.deepEqual(providers.get("kairo").models.map((model) => model.kairoRoute.adapterId), ["opencode-go"], "no silent route swap on propose");
+  assert.ok(store.recovery.proposal.projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no proposed assignment uses Go");
+  assert.ok(result.affected.some((entry) => /rate-limited/.test(entry.reason)), "the cause rides along");
 
-  const routes = providers.get("kairo").models;
-  assert.ok(routes.length > 0, "Pi has executable routes for the recovered team");
-  assert.ok(routes.every((model) => model.kairoRoute.adapterId !== "opencode-go"), "Pi routes resolve to the recovered team, not Go");
+  const approved = await approveRecovery({ cwd: "/repo" });
+  assert.equal(approved.outcome, "approved");
+  assert.equal(store.strategy.status, "active");
+  assert.equal(store.strategy.activation.source, "recovery-approved");
+  assert.ok(store.strategy.projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no activated assignment uses Go");
+
+  const routes = buildKairoProviderModels({
+    strategy: store.strategy,
+    resolveAdapter: () => ({ availability: () => ({ launchable: true }) })
+  });
+  assert.ok(routes.length > 0, "the approved team yields executable routes");
+  assert.ok(routes.every((model) => model.kairoRoute.adapterId !== "opencode-go"), "approved routes resolve to the recovered team, not Go");
 
   const messages = notifications.map(([message]) => message);
-  assert.equal(messages.filter((message) => /OpenCode Go monthly window is rate-limited/.test(message)).length, 1, "one availability notice for the Go window");
-  assert.ok(messages.some((message) => /recovered the project team/.test(message)));
+  assert.ok(messages.some((message) => /OpenCode Go monthly window is rate-limited/.test(message)), "the cause is named");
+  assert.ok(messages.some((message) => /proposes a recovered team/.test(message)), "recovery proposes instead of activating");
+  assert.ok(messages.some((message) => /Nothing was activated/.test(message)), "the notice is explicit that nothing swapped");
   assert.ok(messages.every((message) => !/exhaust/i.test(message)), "a window limit is never reported as exhausted");
   assert.equal(store.analyses, 1);
 });
@@ -141,4 +159,25 @@ test("E2E: repeated refreshes trigger no duplicate analysis and no repeated noti
 
   assert.equal(store.analyses, 1, "same availability, no second analysis");
   assert.equal(notifications.length, afterFirst, "no notice is repeated");
+});
+
+test("E2E: proposal survives a restart — a fresh process notifies the persisted cause and its approve decides", async () => {
+  const first = scenario();
+  await first.events.get("session_start")({}, first.ctx);
+  const proposed = await first.extension.recovery();
+  assert.equal(proposed.outcome, "proposed");
+
+  // Restart: a new extension instance sharing only the persisted stores.
+  const second = scenario();
+  second.store.strategy = first.store.strategy;
+  second.store.recovery = first.store.recovery;
+  second.store.analyses = first.store.analyses;
+  const restarted = second.buildExtension();
+  assert.ok(restarted, "a fresh instance boots on the persisted stores");
+  const notifications = [];
+  const ctx = { cwd: "/repo", ui: { setStatus: () => {}, setWidget: () => {}, notify: (...args) => notifications.push(args) } };
+  await second.events.get("session_start")({}, ctx);
+  const joined = notifications.map(([message]) => message).join("\n");
+  assert.match(joined, /rate-limited/, "the persisted cause shows after restart");
+  assert.match(joined, /kairo-team-approve/, "the restart notice names the approve command");
 });

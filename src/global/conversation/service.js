@@ -40,7 +40,7 @@ import { verifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/clau
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
 import { acquireProjectAnalysisLock } from "./project-analysis-lock.js";
 import { readAvailabilityRecovery, writeAvailabilityRecovery } from "./availability-recovery-store.js";
-import { runTeamRecovery } from "./team-recovery.js";
+import { approveRecoveryProposal, rejectRecoveryProposal, runTeamRecovery } from "./team-recovery.js";
 import { resolveProjectRoute } from "./project-router.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -1082,9 +1082,15 @@ export function createConversationService(deps = {}) {
      * actually available/quota-healthy — no task, no plan, no approval
      * gate. Throws (never returns a fabricated answer) if no provider can
      * answer or the call itself fails.
-     * @param {{cwd: string, task: string, sessionId?: string|null}} args
+     * Optional `signal` / `onEvent` are forwarded to the provider call only
+     * when given (no-options calls are byte-identical). A cancelled provider
+     * run (or an already-aborted signal) resolves `{kind: "cancelled"}`: no
+     * history is appended and no answer is returned. Non-cancel failures
+     * still throw.
+     * @param {{cwd: string, task: string, sessionId?: string|null, signal?: AbortSignal, onEvent?: Function}} args
      */
-    async askQuestion({ cwd, task, sessionId = null }) {
+    async askQuestion({ cwd, task, sessionId = null, signal, onEvent }) {
+      if (signal?.aborted) return { kind: "cancelled" };
       const { decision, projectRoot } = await this.planAsk({ cwd, task });
       if (decision.decision !== "ROUTED") throw new Error(`Cannot answer: ${decision.why}`);
       // Real conversation continuity: every provider call here is otherwise
@@ -1094,7 +1100,13 @@ export function createConversationService(deps = {}) {
       // below, never this enriched version (so it never compounds).
       const history = await readAskHistoryImpl(homeDir, projectRoot, sessionId).catch(() => []);
       const question = buildAskPromptWithHistory(history, task);
-      const result = await askProviderImpl({ provider: decision.provider, question, model: decision.model, cwd: projectRoot });
+      if (signal?.aborted) return { kind: "cancelled" };
+      const askArgs = { provider: decision.provider, question, model: decision.model, cwd: projectRoot };
+      if (signal) askArgs.signal = signal;
+      // Tag every event with the routed provider so hosts need not guess it.
+      if (onEvent) askArgs.onEvent = (event) => onEvent({ provider: decision.provider, ...event });
+      const result = await askProviderImpl(askArgs);
+      if (result.status === "cancelled" || signal?.aborted) return { kind: "cancelled" };
       if (result.status !== "answered") throw new Error(result.error ?? `${decision.provider} gave no answer.`);
       await appendAskHistoryImpl(homeDir, projectRoot, {
         question: task, answer: result.answer, provider: decision.provider, model: decision.model
@@ -1115,10 +1127,11 @@ export function createConversationService(deps = {}) {
      * @param {"ask"|"plan"|"agent"|null} [args.mode]
      * @param {string|null} [args.sessionId]
      */
-    async submitTask({ cwd, task, mode = null, sessionId = null }) {
+    async submitTask({ cwd, task, mode = null, sessionId = null, signal, onEvent }) {
       const isQuestion = mode ? mode === "ask" : isLikelyQuestion(task);
       if (isQuestion) {
-        const answer = await this.askQuestion({ cwd, task, sessionId });
+        const answer = await this.askQuestion({ cwd, task, sessionId, signal, onEvent });
+        if (answer.kind === "cancelled") return { kind: "cancelled" };
         return { kind: "answer", ...answer };
       }
       const plan = await this.submitArchitecture({ cwd, task, sessionId });
@@ -1186,14 +1199,29 @@ export function createConversationService(deps = {}) {
       return acquireSessionLockImpl(dir, { sessionId });
     },
     /**
-     * ProjectOverlay preflight: computes a real, read-only ProjectProfile
-     * and the full analyst catalog. No provider call or persistence occurs;
-     * the human selects and confirms a catalog entry before analysis runs.
+     * ProjectOverlay / ratatui picker preflight: computes a real, read-only
+     * ProjectProfile (full mode) and the full analyst catalog. No bootstrap
+     * provider call or strategy persistence occurs; the human selects and
+     * confirms a catalog entry before analysis runs.
+     *
+     * @param {{ cwd: string, mode?: "full"|"catalog" }} args
+     *   `mode: "catalog"` skips `computeProjectProfile` so the ratatui
+     *   picker can open after a single snapshot (usage/catalog/auth probes).
+     *   Analyze always uses `mode: "full"` (or omits mode) so profile exists.
      */
-    async preflightProject({ cwd }) {
+    async preflightProject({ cwd, mode = "full" } = {}) {
       const projectRoot = await root(cwd);
-      const profile = await computeProjectProfileImpl({ cwd: projectRoot });
-      const snap = await this.snapshot({ cwd: projectRoot });
+      const catalogOnly = mode === "catalog";
+      // profile (local git/Graphify read) and snapshot (usage/catalog/auth/
+      // cursor provider probes) are independent I/O — started together in
+      // full mode. Catalog-only mode skips profile so the picker modal is
+      // bounded by snapshot wall time alone (analyze re-runs full preflight).
+      const [profile, snap] = catalogOnly
+        ? [null, await this.snapshot({ cwd: projectRoot })]
+        : await Promise.all([
+            computeProjectProfileImpl({ cwd: projectRoot }),
+            this.snapshot({ cwd: projectRoot })
+          ]);
       const {
         scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null,
         providerCapacity = null, unscoredModels = [], claudeEntitlement = {}, cursorAccess = {}
@@ -1344,6 +1372,36 @@ export function createConversationService(deps = {}) {
         preflight: () => this.preflightProject({ cwd: projectRoot }),
         analyze: ({ profile, candidates, analyst }) => runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst, persist: false }),
         now
+      });
+    },
+    /**
+     * Approve a pending recovery proposal (see team-recovery.js): the
+     * proposal is re-verified against current eligibility and only then
+     * activated. A stale proposal throws instead of swapping in blocked
+     * models. Nothing is ever auto-approved — this is the explicit human
+     * act runTeamRecovery deliberately leaves out.
+     */
+    async approveRecoveryProposal({ cwd }) {
+      const projectRoot = await root(cwd);
+      return approveRecoveryProposal({
+        readRecord: () => readAvailabilityRecoveryImpl(homeDir, projectRoot),
+        writeRecord: (record) => writeAvailabilityRecoveryImpl(homeDir, projectRoot, record),
+        readStrategy: () => readProjectStrategyImpl(homeDir, projectRoot),
+        writeStrategy: (strategy) => writeProjectStrategyImpl(homeDir, projectRoot, strategy),
+        currentEligibility: async () => (await this.snapshot({ cwd: projectRoot })).modelIntelligence?.eligibility ?? {},
+        now
+      });
+    },
+    /**
+     * Reject a pending recovery proposal: the active team was never
+     * touched, so rejection only closes the fingerprint. Throws when
+     * there is nothing pending.
+     */
+    async rejectRecoveryProposal({ cwd }) {
+      const projectRoot = await root(cwd);
+      return rejectRecoveryProposal({
+        readRecord: () => readAvailabilityRecoveryImpl(homeDir, projectRoot),
+        writeRecord: (record) => writeAvailabilityRecoveryImpl(homeDir, projectRoot, record)
       });
     },
     /** `/project approve`: SUGGESTED -> ACTIVE. Requires a real suggested strategy to already exist — the Bootstrap Analyst choice is already locked in by the time a strategy exists at all (see runBootstrapAnalysis), so there's nothing left to confirm here. */

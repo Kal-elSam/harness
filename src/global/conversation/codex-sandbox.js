@@ -56,16 +56,34 @@ const SAFE_ENV_KEYS = Object.freeze([
   "http_proxy", "https_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS"
 ]);
 
-function buildSandboxedCodexEnv(sourceEnv = process.env) {
+function buildSandboxedCodexEnv(sourceEnv = process.env, resolvedCodexHome) {
   const env = Object.create(null);
   for (const key of SAFE_ENV_KEYS) {
+    if (key === "CODEX_HOME") continue; // set below from the single resolved value
     if (sourceEnv[key] != null && sourceEnv[key] !== "") env[key] = sourceEnv[key];
   }
+  // Always set explicitly — never independently re-derived from sourceEnv —
+  // so the child env can never disagree with the SBPL profile's CODEX_HOME.
+  env.CODEX_HOME = resolvedCodexHome;
   return env;
 }
 
 function unknown(error) {
   return { status: "error", answer: null, error: String(error) };
+}
+
+/**
+ * Single source of truth for which CODEX_HOME this run uses — resolved
+ * ONCE by the caller and then reused for both the SBPL profile
+ * (buildCodexSandboxProfile) and the child's env (buildSandboxedCodexEnv),
+ * so Codex and the sandbox boundary can never disagree on the path.
+ * Precedence: an explicit non-empty `codexHome` arg, then a non-empty
+ * `sourceEnv.CODEX_HOME`, then the default `~/.codex`.
+ */
+export function resolveCodexHome({ codexHome, sourceEnv = process.env } = {}) {
+  if (codexHome != null && codexHome !== "") return codexHome;
+  if (sourceEnv?.CODEX_HOME != null && sourceEnv.CODEX_HOME !== "") return sourceEnv.CODEX_HOME;
+  return join(homedir(), ".codex");
 }
 
 export async function isCodexSandboxSupported(deps = {}) {
@@ -125,6 +143,15 @@ export async function buildCodexSandboxProfile({ snapshotRoot, codexHome = join(
   const readableExtra = [
     "/usr", "/System", "/bin", "/sbin", "/private/var/db/dyld", "/Library", "/opt", "/private/etc"
   ];
+  // CoreFoundation preferences (cfprefs) read shared memory published by the
+  // user's cfprefsd; without it the sandboxed Codex process gets a Sandbox
+  // denial on ipc-posix-shm-read-data. Read-only, exactly these two names.
+  const getuid = "getuid" in deps ? deps.getuid : process.getuid?.bind(process);
+  const uid = typeof getuid === "function" ? getuid() : null;
+  const cfprefsNames = [
+    ...(uid != null ? [`apple.cfprefs.${uid}v1`] : []),
+    "apple.cfprefs.daemonv1"
+  ].map((n) => `(ipc-posix-name "${n}")`).join(" ");
   return `(version 1)
 (deny default)
 (allow process-fork)
@@ -132,7 +159,7 @@ export async function buildCodexSandboxProfile({ snapshotRoot, codexHome = join(
 (allow file-read-metadata (subpath "/"))
 (allow file-read-data (literal "/"))
 (allow file-read*
-${subpathRules([...snapshotForms, ...codexHomeForms, ...readableExtra])}
+${subpathRules([...snapshotForms, ...codexHomeForms, ...readableExtra, "/private/var/folders", "/private/tmp"])}
   (literal "/dev/null")
   (literal "/dev/urandom")
   (literal "/dev/tty"))
@@ -144,6 +171,7 @@ ${subpathRules([...snapshotForms, ...codexHomeForms, "/private/var/folders", "/p
 (allow signal (target self))
 (allow network*)
 (allow system-socket)
+(allow ipc-posix-shm-read-data ${cfprefsNames})
 `;
 }
 
@@ -160,13 +188,17 @@ ${subpathRules([...snapshotForms, ...codexHomeForms, "/private/var/folders", "/p
  * @param {string} [args.codexHome]
  */
 export async function runCodexSandboxedBootstrap({
-  question, model = null, snapshotRoot, codexHome = join(homedir(), ".codex"),
+  question, model = null, snapshotRoot, codexHome,
   spawn = defaultSpawn, timeoutMs = DEFAULT_TIMEOUT_MS, sourceEnv = process.env, deps = {}
 }) {
   const isolation = await getCodexIsolationStatus(deps);
   if (!isolation.available) {
     return { status: "error", answer: null, error: "isolation_unavailable", isolation };
   }
+
+  // Resolved ONCE and reused for both the SBPL profile and the child env —
+  // Codex and the sandbox boundary must never disagree on CODEX_HOME.
+  const resolvedCodexHome = resolveCodexHome({ codexHome, sourceEnv });
 
   let workDir;
   try {
@@ -178,33 +210,51 @@ export async function runCodexSandboxedBootstrap({
   const outFile = join(workDir, "answer.txt");
 
   try {
-    const profile = await buildCodexSandboxProfile({ snapshotRoot, codexHome }, deps);
+    const profile = await buildCodexSandboxProfile({ snapshotRoot, codexHome: resolvedCodexHome }, deps);
     await (deps.writeFile ?? writeFile)(profilePath, profile, "utf8");
 
     // --skip-git-repo-check: snapshotRoot deliberately excludes .git.
     // --ephemeral: no session files persisted to disk for this run.
-    // --ignore-user-config: doesn't load $CODEX_HOME/config.toml (auth
-    // itself still resolves via CODEX_HOME, per `codex exec --help`).
+    // Do NOT pass --ignore-user-config: Codex must load $CODEX_HOME/config.toml
+    // (auth still resolves via CODEX_HOME). Ignoring user config caused
+    // thread/start "failed to load configuration" under sandbox-exec, then a
+    // misleading "Reading additional input from stdin..." fallback.
     const args = [
       "-f", profilePath, "codex", "exec",
       "--dangerously-bypass-approvals-and-sandbox",
-      "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
+      "--skip-git-repo-check", "--ephemeral",
       "-o", outFile
     ];
     if (model) args.push("--model", model);
     args.push(question);
 
-    const env = buildSandboxedCodexEnv(sourceEnv);
+    const env = buildSandboxedCodexEnv(sourceEnv, resolvedCodexHome);
     const result = await new Promise((resolve) => {
       let child;
       try {
-        child = spawn("sandbox-exec", args, { cwd: snapshotRoot, env, stdio: ["ignore", "pipe", "pipe"] });
+        // Explicit pipe+end (not inherit): the ratatui sidecar's own stdin is
+        // the JSONL control channel — never let Codex read it as a prompt.
+        child = spawn("sandbox-exec", args, { cwd: snapshotRoot, env, stdio: ["pipe", "pipe", "pipe"] });
+        try { child.stdin?.end(); } catch { /* best effort */ }
       } catch (error) {
         resolve(unknown(error?.message ?? error));
         return;
       }
       let finished = false;
-      const timer = setTimeout(() => finish(unknown("sandboxed codex exec timed out")), timeoutMs);
+      // Real sandbox-exec/codex stderr — captured so a missing output file
+      // (below) reports WHY the sandboxed run actually failed (denied
+      // subpath, real Codex error, a real model error), never just the
+      // raw ENOENT for a file that's missing BECAUSE the run failed, not
+      // the other way around. Mirrors quick-ask.js's askCodex.
+      let stderr = "";
+      child.stderr?.on("data", (chunk) => { stderr += chunk; });
+      const timer = setTimeout(() => {
+        const trimmed = stderr.trim();
+        const message = trimmed
+          ? `sandboxed codex exec timed out after ${timeoutMs}ms\n${trimmed}`
+          : `sandboxed codex exec timed out after ${timeoutMs}ms`;
+        finish(unknown(message));
+      }, timeoutMs);
       function finish(res) {
         if (finished) return;
         finished = true;
@@ -213,13 +263,13 @@ export async function runCodexSandboxedBootstrap({
         resolve(res);
       }
       child.once?.("error", (error) => finish(unknown(error?.message ?? error)));
-      child.once?.("close", async () => {
+      child.once?.("close", async (code) => {
         try {
           const text = (await (deps.readFile ?? readFile)(outFile, "utf8")).trim();
-          if (!text) return finish(unknown("sandboxed codex exec produced no final message"));
+          if (!text) return finish(unknown(stderr.trim() || "sandboxed codex exec produced no final message"));
           finish({ status: "answered", answer: text, error: null });
-        } catch (error) {
-          finish(unknown(error?.message ?? error));
+        } catch {
+          finish(unknown(stderr.trim() || `sandboxed codex exec exited ${code} without writing its output file`));
         }
       });
     });

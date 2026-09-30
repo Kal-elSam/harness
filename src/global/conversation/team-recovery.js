@@ -21,7 +21,9 @@ const BLOCKED_ENTITLEMENTS = new Set(["denied", "unverified"]);
 // per fingerprint, waiting 10 min then 20 min between them. A transient
 // failure never leaves the team without another try; a persistent one
 // stops at retries-exhausted instead of re-analyzing on every refresh.
-const TERMINAL_OUTCOMES = new Set(["activated", "baseline"]);
+// "activated" stays terminal for records written before proposals
+// replaced auto-activation (see runTeamRecovery's own doc).
+const TERMINAL_OUTCOMES = new Set(["activated", "baseline", "proposed", "approved", "rejected"]);
 export const MAX_RECOVERY_ATTEMPTS = 3;
 export const RECOVERY_RETRY_BACKOFF_MS = 10 * 60_000;
 
@@ -95,6 +97,21 @@ function carryOverOverrides(rebuilt, previous) {
 }
 
 /**
+ * The team rows that lost access under `eligibility` — role, model name,
+ * and the proven reason. This is the cause a proposal carries: real
+ * per-adapter reasons, never a generic "blocked" word.
+ */
+function affectedEntries(strategy, eligibility) {
+  return (strategy?.projectTeam ?? [])
+    .filter((entry) => entry.model?.accessMode === "automatic" && !isRoutableNow(entry.model, eligibility))
+    .map((entry) => ({
+      role: entry.role ?? "Unknown role",
+      model: entry.model?.displayName ?? entry.model?.modelId ?? "unknown",
+      reason: eligibility?.[entry.model?.adapterId]?.reason ?? "not eligible"
+    }));
+}
+
+/**
  * @param {object} context
  * @param {() => Promise<object|null>} context.readStrategy
  * @param {(strategy: object) => Promise<void>} context.writeStrategy
@@ -106,7 +123,14 @@ function carryOverOverrides(rebuilt, previous) {
  * @param {(input: {profile: object, candidates: object, analyst: object}) => Promise<object>} context.analyze -
  *   returns a SUGGESTED strategy WITHOUT persisting it.
  * @param {() => number} [context.now]
- * @returns {Promise<{outcome: "skipped"|"baseline"|"activated"|"kept-previous", reason?: string, lastOutcome?: string, fingerprint: string, strategy?: object, analyst?: object}>}
+ * @returns {Promise<{outcome: "skipped"|"baseline"|"proposed"|"kept-previous", reason?: string, lastOutcome?: string, fingerprint: string, proposal?: object, affected?: object[], analyst?: object}>}
+ *
+ * A recovery NEVER activates: the rebuilt team is stored as a SUGGESTED
+ * proposal on the fingerprint record, and the active strategy file is not
+ * touched. Approval is an explicit, separate act (see
+ * approveRecoveryProposal); rejection likewise (see
+ * rejectRecoveryProposal). The previous team keeps serving until a human
+ * approves its replacement.
  */
 export async function runTeamRecovery(context) {
   const now = context.now ?? (() => Date.now());
@@ -163,16 +187,90 @@ export async function runTeamRecovery(context) {
     if (availabilityFingerprint(eligibilityAfter).key !== fingerprint.key) return keepPrevious("availability-changed");
     if (!rebuilt?.projectTeam?.some((entry) => isRoutableNow(entry.model, eligibilityAfter))) return keepPrevious("no-usable-provider");
 
-    const activated = {
+    const proposal = {
       ...carryOverOverrides(rebuilt, strategy),
-      status: "active",
-      approvedAt: new Date(now()).toISOString(),
-      activation: { source: "automatic-recovery", fingerprint: fingerprint.key }
+      status: "suggested",
+      proposedAt: new Date(now()).toISOString(),
+      proposal: { source: "automatic-recovery", fingerprint: fingerprint.key }
     };
-    await context.writeStrategy(activated);
-    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "activated", attempts });
-    return { outcome: "activated", fingerprint: fingerprint.key, strategy: activated, analyst };
+    const affected = affectedEntries(strategy, eligibility);
+    // basedOn pins the exact active team this proposal was built against
+    // (see approveRecoveryProposal): a late approval after a human edit
+    // or a newer approval must refuse instead of overwriting. affected is
+    // persisted — not just returned — so the cause still shows after a
+    // restart, when only the record (never memory) is left.
+    const basedOn = {
+      profileFingerprint: strategy?.profileFingerprint ?? null,
+      approvedAt: strategy?.approvedAt ?? null
+    };
+    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "proposed", attempts, proposal, affected, basedOn });
+    return { outcome: "proposed", fingerprint: fingerprint.key, proposal, affected, analyst };
   } finally {
     await lock.release();
   }
+}
+
+/**
+ * Activates a pending recovery proposal — the explicit human act that
+ * runTeamRecovery deliberately does NOT perform. Re-verifies every
+ * proposed assignment against CURRENT eligibility first: availability may
+ * have moved since the proposal was built, and activating a stale
+ * proposal would swap in models that are blocked right now.
+ * @param {object} context
+ * @param {() => Promise<object|null>} context.readRecord
+ * @param {(record: {fingerprint: string, outcome: string}) => Promise<void>} context.writeRecord
+ * @param {() => Promise<object|null>} context.readStrategy
+ * @param {(strategy: object) => Promise<void>} context.writeStrategy
+ * @param {() => Promise<object>} context.currentEligibility
+ * @param {() => number} [context.now]
+ */
+export async function approveRecoveryProposal(context) {
+  const now = context.now ?? (() => Date.now());
+  const record = await context.readRecord();
+  if (record?.outcome !== "proposed" || typeof record?.proposal !== "object" || !record.proposal) {
+    throw new Error("No proposed recovery to approve — run a recovery analysis first.");
+  }
+  // The proposal was verified against the active team of its own time. A
+  // human edit or a newer approval since then (any activation bumps
+  // approvedAt; any re-analysis bumps profileFingerprint; only an ACTIVE
+  // team is approvable onto) makes this approval late: refuse instead of
+  // overwriting a team the human changed meanwhile. readStrategy is not
+  // decorative — it is the guard.
+  const current = await context.readStrategy();
+  if (current?.status !== "active") {
+    throw new Error("The active team is no longer active — review the current team before approving a stale proposal.");
+  }
+  if ((current?.profileFingerprint ?? null) !== (record.basedOn?.profileFingerprint ?? null) ||
+      (current?.approvedAt ?? null) !== (record.basedOn?.approvedAt ?? null)) {
+    throw new Error("The active team changed since the proposal was built — run a fresh recovery analysis instead of approving.");
+  }
+  const eligibility = await context.currentEligibility();
+  const stale = (record.proposal.projectTeam ?? []).filter((entry) => !isRoutableNow(entry.model, eligibility));
+  if (stale.length) {
+    const roles = stale.map((entry) => entry.role ?? "Unknown role").join(", ");
+    throw new Error(`Recovery proposal is stale (${roles} no longer routable) — run a fresh recovery analysis instead of approving.`);
+  }
+  const activated = {
+    ...record.proposal,
+    status: "active",
+    approvedAt: new Date(now()).toISOString(),
+    activation: { source: "recovery-approved", fingerprint: record.fingerprint }
+  };
+  await context.writeStrategy(activated);
+  await context.writeRecord({ fingerprint: record.fingerprint, outcome: "approved" });
+  return { outcome: "approved", fingerprint: record.fingerprint, strategy: activated };
+}
+
+/**
+ * Dismisses a pending recovery proposal — the previous team was never
+ * touched, so rejection only closes the fingerprint. A later
+ * availability change (new fingerprint) may propose again.
+ */
+export async function rejectRecoveryProposal(context) {
+  const record = await context.readRecord();
+  if (record?.outcome !== "proposed" || typeof record?.proposal !== "object" || !record.proposal) {
+    throw new Error("No proposed recovery to reject.");
+  }
+  await context.writeRecord({ fingerprint: record.fingerprint, outcome: "rejected" });
+  return { outcome: "rejected", fingerprint: record.fingerprint };
 }

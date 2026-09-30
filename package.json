@@ -23,6 +23,7 @@
     "bin",
     "src",
     "scripts",
+    "dist/kairo-ui",
     "repo-template",
     "global-template",
     "prompts",
@@ -31,17 +32,23 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "node --test",
-    "test:cool": "node --test --test-concurrency=1",
+    "test": "node --test 'test/**/*.js' 'test/**/*.mjs' 'test/**/*.cjs' 'packages/kairo-vscode/test/**/*.js' 'packages/kairo-vscode/test/**/*.mjs' 'packages/kairo-vscode/test/**/*.cjs'",
+    "test:cool": "node --test --test-concurrency=1 'test/**/*.js' 'test/**/*.mjs' 'test/**/*.cjs' 'packages/kairo-vscode/test/**/*.js' 'packages/kairo-vscode/test/**/*.mjs' 'packages/kairo-vscode/test/**/*.cjs'",
     "doctor": "node ./bin/kairo.js doctor",
+    "build:kairo-ui": "bash scripts/build-kairo-ui-binaries.sh",
     "smoke": "bash scripts/smoke-test.sh",
     "ux:smoke": "bash scripts/ux-smoke-test.sh",
     "smoke:cockpit": "bash scripts/cockpit-smoke-test.sh",
     "smoke:registry": "bash scripts/registry-smoke-test.sh",
     "smoke:installer": "bash scripts/installer-smoke-test.sh",
     "smoke:bridge": "bash scripts/bridge-smoke-test.sh",
+    "smoke:kairo-ui-pty": "python3 scripts/kairo-ui-pty-e2e.py",
+    "smoke:kairo-ui-ask-pty": "python3 scripts/kairo-ui-ask-pty-e2e.py",
     "release:check": "node scripts/check-release-commit.mjs",
-    "release:published": "node scripts/check-published-release.mjs"
+    "release:published": "node scripts/check-published-release.mjs",
+    "verify:kairo-ui-clean-install": "bash scripts/verify-kairo-ui-clean-install.sh",
+    "verify:kairo-ui-packaged": "node --test test/kairo-ui-packaged-verify.test.js",
+    "verify:kairo-ui-npm-pack-install": "node --test test/kairo-ui-npm-pack-install.test.js"
   },
   "keywords": [
     "ai",
@@ -73,12 +80,9 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
-    "@earendil-works/pi-tui": "0.85.1",
-    "@kal-elsam/kairo-pi-coding-agent": "0.87.1-kairo.3",
+    "@kal-elsam/kairo-pi-coding-agent": "0.87.1-kairo.5",
     "@modelcontextprotocol/server": "2.0.0",
     "ansi-escapes": "^7.3.0",
-    "ink": "^5.2.1",
-    "react": "^18.3.1",
     "zod": "4.4.3"
   }
 }

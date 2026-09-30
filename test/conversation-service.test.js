@@ -420,7 +420,7 @@ async function realScoredCandidates() {
   return { scoredAll, eligibility: { codex: { ok: true }, claude: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null };
 }
 
-test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit and activates it only after verifying — never persisting the suggestion over the active team", async () => {
+test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit into a proposal — never activating, never persisting over the active team", async () => {
   const base = await realScoredCandidates();
   const candidates = { ...base, scoredAll: base.scoredAll.map((model) => ({ ...model, accessMode: "automatic" })) };
   const goModel = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "automatic" };
@@ -457,15 +457,13 @@ test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit and act
   service.snapshot = async () => ({ modelIntelligence: candidates });
 
   const result = await service.recoverProjectTeam({ cwd: "/repo" });
-  assert.equal(result.outcome, "activated", result.reason);
+  assert.equal(result.outcome, "proposed", result.reason);
   assert.deepEqual(lockOwners, ["automatic-recovery"]);
   assert.equal(analyzedWith.length, 1);
   assert.ok(!analyzedWith[0].startsWith("opencode-go"), "the analyst is available right now");
-  assert.equal(writes.length, 1, "exactly one write: the verified ACTIVE team, never an intermediate suggestion");
-  assert.equal(writes[0].status, "active");
-  assert.equal(writes[0].activation.source, "automatic-recovery");
-  assert.ok(writes[0].projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no new assignment uses the unavailable provider");
-  assert.deepEqual(records.map((record) => record.outcome), ["started", "activated"]);
+  assert.equal(writes.length, 0, "no strategy write: the proposal lives on the record, the active team is untouched");
+  assert.ok(result.proposal.projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no proposed assignment uses the unavailable provider");
+  assert.deepEqual(records.map((record) => record.outcome), ["started", "proposed"]);
 
   const again = await service.recoverProjectTeam({ cwd: "/repo" });
   assert.equal(again.reason, "already-handled");
@@ -2431,4 +2429,67 @@ test("preflightProject surfaces the unverified Claude notice when live entitleme
   });
   const result = await service.preflightProject({ cwd: "/repo" });
   assert.equal(result.unverifiedClaudeNotice, buildUnverifiedClaudePreflightNotice(2));
+});
+
+// ---- A2: ASK cancellation and provider events ---------------------------------
+
+function askServiceWith({ askProvider, appendCalls = [], spawnGuard = null } = {}) {
+  return createConversationService({
+    resolveRoot: async () => "/repo",
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
+    readAskHistory: async () => [],
+    askProvider,
+    appendAskHistoryEntry: async (...args) => { appendCalls.push(args); }
+  });
+}
+
+test("A2: askQuestion forwards signal and onEvent to the ASK provider call only when given", async () => {
+  const askCalls = [];
+  const service = askServiceWith({ askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "ok" }; } });
+  const controller = new AbortController();
+  const seen = [];
+  await service.askQuestion({ cwd: "/repo", task: "hi", signal: controller.signal, onEvent: (e) => seen.push(e) });
+  assert.equal(askCalls[0].signal, controller.signal);
+  askCalls[0].onEvent({ kind: "progress", summary: "s" });
+  assert.deepEqual(seen, [{ provider: "claude", kind: "progress", summary: "s" }]);
+});
+
+test("A2: askQuestion without options passes no signal/onEvent keys (byte-identical provider args)", async () => {
+  const askCalls = [];
+  const service = askServiceWith({ askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "ok" }; } });
+  await service.askQuestion({ cwd: "/repo", task: "hi" });
+  assert.deepEqual(Object.keys(askCalls[0]).sort(), ["cwd", "model", "provider", "question"]);
+});
+
+test("A2: a cancelled provider result resolves {kind:'cancelled'}, appends no history and returns no answer", async () => {
+  const appendCalls = [];
+  const service = askServiceWith({
+    appendCalls,
+    askProvider: async () => ({ status: "cancelled", answer: null, error: "cancelled" })
+  });
+  const result = await service.submitTask({ cwd: "/repo", task: "hi", mode: "ask", signal: new AbortController().signal });
+  assert.deepEqual(result, { kind: "cancelled" });
+  assert.equal(appendCalls.length, 0);
+});
+
+test("A2: an already-aborted signal never reaches the provider nor appends history", async () => {
+  const appendCalls = [];
+  let called = 0;
+  const service = askServiceWith({ appendCalls, askProvider: async () => { called += 1; return { status: "answered", answer: "x" }; } });
+  const controller = new AbortController();
+  controller.abort();
+  const result = await service.submitTask({ cwd: "/repo", task: "hi", mode: "ask", signal: controller.signal });
+  assert.deepEqual(result, { kind: "cancelled" });
+  assert.equal(called, 0);
+  assert.equal(appendCalls.length, 0);
+});
+
+test("A2: submitTask ignores signal/onEvent on the PLAN path", async () => {
+  const service = createConversationService({ resolveRoot: async () => "/repo" });
+  let seen = null;
+  service.submitArchitecture = async (args) => { seen = args; return { taskId: "t1" }; };
+  const result = await service.submitTask({ cwd: "/repo", task: "do", mode: "plan", signal: new AbortController().signal, onEvent: () => {} });
+  assert.equal(result.kind, "plan");
+  assert.deepEqual(Object.keys(seen).sort(), ["cwd", "sessionId", "task"]);
 });

@@ -1,0 +1,32 @@
+# FIXTURE mock — not live provider
+# size/scenario: 60x30-dialog
+┌ Chat ────────────────────────────────────────────────────┐
+│you: FIXTURE: outline the auth plan                       │
+│thinking: FIXTURE thinking — weighing OAuth vs session    │
+│          cookies                                         │
+│assistant: FIXTURE assistant — propose OAuth login with   │
+│           refresh tokens.                                │
+│                                                          │
+│⚠ FIXTURE mock — not live provider · V3-FIXTURE · sidebar │
+│  collapsed (<90 cols)                                    │
+│                                                          │
+│                                                          │
+│  ┌ Extension · select — j/k · Enter · Esc cancel ─────┐  │
+│  │FIXTURE extension_ui select                         │  │
+│  │› Allow                                             │  │
+│  │  Block                                             │  │
+│  │  Ask later                                         │  │
+│  │                                                    │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+┌ Message Kairo · PLAN ────────────────────────────────────┐
+│                                                          │
+│                                                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────
+ USAGE · Codex mock 96% │ Claude mock 80%                   

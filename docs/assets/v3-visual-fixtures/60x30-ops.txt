@@ -1,0 +1,32 @@
+# FIXTURE mock — not live provider
+# size/scenario: 60x30-ops
+┌ Operations · 1·2·3·4 · 5 Ops · 6 Set ────────────────────┐
+│Health                                                    │
+│  Control plane · HEALTHY (FIXTURE)                       │
+│                                                          │
+│Providers / fleet                                         │
+│  Fleet topology (kairo fleet) — not slash /providers     │
+│  opencode · fixture-orchestrator                         │
+│                                                          │
+│Usage                                                     │
+│  Provider usage (/usage)                                 │
+│  Codex mock · 96%                                        │
+│                                                          │
+│Diagnostics                                               │
+│  Agents                                                  │
+│  Detected: 1/1 (fixture)                                 │
+│                                                          │
+│Runs                                                      │
+│  run-fixture · running · codex · cancellable             │
+│                                                          │
+│Alerts                                                    │
+│  alt-fixture00000001 · open · fixture alert              │
+│                                                          │
+│Reviews (read-only)                                       │
+│  rev-fixture · pass                                      │
+│                                                          │
+│Backups                                                   │
+│  fixture-snap-1                                          │
+│Esc → Work · r refresh · s sync · b rollback · c cancel   │
+│d dismiss · v reviews                                     │
+└──────────────────────────────────────────────────────────┘

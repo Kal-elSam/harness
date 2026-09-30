@@ -1,9 +1,9 @@
-import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../text-width.js";
 import { buildTaskRows, clampSelection, isActionAvailable } from "./rows.js";
 import { CARD_TONE, cardBottom, cardInnerWidth, cardLine, cardTop, renderPanel as renderPanelWithTheme } from "./card.js";
 import { theme } from "./theme.js";
 import { resolveAssignmentAvailability } from "../conversation/assignment-availability.js";
-import { formatSubscriptionUsageSegments, quotaWarnSuffix } from "../conversation/usage-summary.js";
+import { formatSubscriptionUsageSegments, formatSlashUsageLines, quotaWarnSuffix } from "../conversation/usage-summary.js";
 
 // Re-exported for every existing importer of this module — the real
 // implementation moved to conversation/assignment-availability.js (a
@@ -1370,24 +1370,7 @@ export class CockpitView {
    * `/providers`, clearly labeled.
    */
   usageLines() {
-    const usage = this.snapshot?.usage ?? {};
-    const lines = [];
-    const codex = usage.codex;
-    lines.push(codex?.windows?.length
-      ? `Codex ${codex.windows.map((window) => `${window.name} ${window.remainingPercent}% left${quotaWarnSuffix(window.remainingPercent)}${window.resetsAtIso ? ` reset ${window.resetsAtIso}` : ""}`).join(" · ")} · source: ${codex.source ?? "measured"}`
-      : "Codex usage unknown · source: Codex app-server · no quota fabricated");
-    const claude = usage.claude;
-    lines.push(claude?.windows?.length
-      ? `Claude ${claude.windows.map((window) => `${window.label ?? window.name} ${window.remainingPercent}% left${quotaWarnSuffix(window.remainingPercent)}`).join(" · ")} · source: ${claude.source ?? "measured"}`
-      : "Claude usage unknown · no quota fabricated");
-    const go = usage.opencode?.go;
-    lines.push(go?.windows?.length
-      ? `Go ${go.windows.map((window) => {
-        const limited = window.status === "rate-limited";
-        return `${shortWindowName(window.name)} ${window.remainingPercent}%${limited ? " RATE LIMITED" : quotaWarnSuffix(window.remainingPercent)}`;
-      }).join(" · ")} · source: ${go.source ?? "measured"}`
-      : "Go usage unknown · source unavailable");
-    return lines;
+    return formatSlashUsageLines(this.snapshot);
   }
 
   renderDetail(width) {

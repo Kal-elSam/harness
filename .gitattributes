@@ -1,0 +1,4 @@
+# Vendored upstream source: exclude from GitHub language stats, diff
+# stats, and any tool that honors linguist attributes (CodeGraph,
+# graphify, review tooling). See odd/tasks/pi-source-unification.md.
+third_party/** linguist-vendored

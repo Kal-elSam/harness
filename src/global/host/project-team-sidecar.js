@@ -1,0 +1,387 @@
+/**
+ * Headless project-team analyze + approve for the ratatui host.
+ *
+ * The ratatui UI owns team setup end to end: no cockpit, no Pi slash
+ * command. This module is the thin, non-interactive equivalent of the
+ * cockpit's ProjectOverlay flow (preflight -> analyst -> analyze ->
+ * approve), reusing conversation/service.js verbatim. It decides exactly
+ * one thing the overlay asked a human for: which Bootstrap Analyst to
+ * use (the catalog's own recommendation, see `pickDefaultAnalyst`).
+ *
+ * Fail-closed: an empty or fully unavailable analyst catalog throws with a
+ * concrete reason instead of falling back to another provider, and no role
+ * or model is ever synthesized here — every row comes from the real
+ * ProjectStrategy the service persisted.
+ */
+
+import { createConversationService } from "../conversation/service.js";
+
+/** After dedupe by displayName, keep at most this many picker rows. */
+const ANALYST_PICKER_CAP = 16;
+
+/** Short provider labels for compact absence notices — never invent causes. */
+const PROVIDER_PICKER_LABELS = Object.freeze({
+  claude: "Claude",
+  codex: "Codex",
+  cursor: "Cursor",
+  "opencode-go": "OpenCode Go",
+  "opencode-zen": "OpenCode Zen",
+  opencode: "OpenCode",
+  pi: "Pi"
+});
+
+function providerPickerLabel(adapterId) {
+  return PROVIDER_PICKER_LABELS[adapterId] ?? String(adapterId);
+}
+
+/**
+ * Fit rank for available analysis-capable models — NOT provider brand.
+ * recommendedKey → quality → efficient → scored → rest.
+ * @param {object} model
+ * @param {string|null} recommendedKey
+ */
+function analystFitRank(model, recommendedKey) {
+  const tags = model.recommendationTags ?? [];
+  if (model.candidateKey === recommendedKey) return 0;
+  if (tags.includes("quality")) return 1;
+  if (tags.includes("efficient")) return 2;
+  if (model.evidenceStatus === "scored") return 3;
+  return 4;
+}
+
+/**
+ * Curate the full analyst catalog for the ratatui picker:
+ * - available only
+ * - scored (or quality/efficient tagged) — drop the unscored flood
+ * - rank by analyst-profile fit (tags/scores), never preferred-adapter bias
+ * - dedupe by displayName; single global cap
+ *
+ * Never invents models; never reintroduces unavailable adapters.
+ * `recommendedModel` survives only when its candidateKey remains in `models`.
+ *
+ * @param {{recommendedModel?: object|null, models?: object[]}|null|undefined} analystCatalog
+ * @returns {{recommendedModel: object|null, models: object[]}}
+ */
+export function curateAnalystCatalogForPicker(analystCatalog) {
+  const incoming = Array.isArray(analystCatalog?.models) ? analystCatalog.models : [];
+  const available = incoming.filter((model) => model?.available === true);
+  const analysisCapable = available.filter((model) => {
+    const tags = model.recommendationTags ?? [];
+    if (tags.includes("quality") || tags.includes("efficient")) return true;
+    return model.evidenceStatus === "scored";
+  });
+
+  const recommendedKey = analystCatalog?.recommendedModel?.candidateKey ?? null;
+  const ordered = [...analysisCapable].sort((a, b) => {
+    const byRank = analystFitRank(a, recommendedKey) - analystFitRank(b, recommendedKey);
+    if (byRank !== 0) return byRank;
+    const evidenceA = a.evidenceStatus === "scored" ? 0 : 1;
+    const evidenceB = b.evidenceStatus === "scored" ? 0 : 1;
+    if (evidenceA !== evidenceB) return evidenceA - evidenceB;
+    const nameA = String(a.displayName ?? a.modelId ?? "");
+    const nameB = String(b.displayName ?? b.modelId ?? "");
+    return nameA.localeCompare(nameB);
+  });
+
+  const seenNames = new Set();
+  const models = [];
+  for (const model of ordered) {
+    const nameKey = String(model.displayName ?? model.modelId ?? model.candidateKey ?? "")
+      .trim()
+      .toLowerCase();
+    if (!nameKey || seenNames.has(nameKey)) continue;
+    seenNames.add(nameKey);
+    models.push(model);
+    if (models.length >= ANALYST_PICKER_CAP) break;
+  }
+
+  const incomingRecommended = analystCatalog?.recommendedModel ?? null;
+  const recommendedModel =
+    incomingRecommended
+    && models.some((model) => model.candidateKey === incomingRecommended.candidateKey)
+      ? incomingRecommended
+      : null;
+  return { recommendedModel, models };
+}
+
+/**
+ * Compact honest absence when a known provider contributed zero usable
+ * picker rows. Never invents billing / out-of-funds / credits causes.
+ *
+ * Built from raw catalog vs curated (unavailable/unscored filtered) and/or
+ * existing `unverifiedClaudeNotice` presence.
+ *
+ * @param {{models?: object[]}|null|undefined} rawCatalog
+ * @param {{models?: object[]}|null|undefined} curatedCatalog
+ * @param {string|null|undefined} unverifiedClaudeNotice
+ * @returns {string|null}
+ */
+export function buildAnalystPickerNotice(rawCatalog, curatedCatalog, unverifiedClaudeNotice = null) {
+  const rawModels = Array.isArray(rawCatalog?.models) ? rawCatalog.models : [];
+  const curatedModels = Array.isArray(curatedCatalog?.models) ? curatedCatalog.models : [];
+  const rawAdapters = new Set();
+  for (const model of rawModels) {
+    if (model?.adapterId) rawAdapters.add(model.adapterId);
+  }
+  const curatedAdapters = new Set();
+  for (const model of curatedModels) {
+    if (model?.adapterId) curatedAdapters.add(model.adapterId);
+  }
+
+  const parts = [];
+  const seenLabels = new Set();
+  const pushAbsence = (adapterId) => {
+    const label = providerPickerLabel(adapterId);
+    if (seenLabels.has(label)) return;
+    seenLabels.add(label);
+    parts.push(`${label}: no disponible para análisis ahora`);
+  };
+
+  for (const adapterId of [...rawAdapters].sort((a, b) =>
+    providerPickerLabel(a).localeCompare(providerPickerLabel(b))
+  )) {
+    if (!curatedAdapters.has(adapterId)) pushAbsence(adapterId);
+  }
+
+  if (unverifiedClaudeNotice && !curatedAdapters.has("claude")) {
+    pushAbsence("claude");
+  }
+
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
+ * The default Bootstrap Analyst: the catalog's own recommended model when
+ * it is currently available, otherwise the first available catalog entry
+ * (catalog order — the same real ranking the cockpit picker shows). An
+ * unavailable-only catalog returns null: an analyst that cannot run is not
+ * a default, and the caller fails closed.
+ *
+ * @param {{recommendedModel?: {candidateKey?: string}|null, models?: object[]}|null|undefined} analystCatalog
+ * @returns {{model: {adapterId: string, modelId: string, displayName: string}, selectionSource: "recommended"|"manual", recommendationTags: string[], choice: "quality"|"efficient"|null}|null}
+ */
+export function pickDefaultAnalyst(analystCatalog) {
+  const models = analystCatalog?.models ?? [];
+  const recommendedKey = analystCatalog?.recommendedModel?.candidateKey ?? null;
+  const available = models.filter((model) => model?.available === true);
+  const picked =
+    available.find((model) => model.candidateKey === recommendedKey) ?? available[0] ?? null;
+  if (!picked) return null;
+  const recommendationTags = picked.recommendationTags ?? [];
+  return {
+    // The same clean modelRef shape the overlay hands to
+    // runBootstrapAnalysis — no catalog-only fields leak into what gets
+    // persisted as the strategy's own bootstrapAnalyst.
+    model: {
+      adapterId: picked.adapterId,
+      modelId: picked.modelId,
+      displayName: picked.displayName
+    },
+    selectionSource: picked.candidateKey === recommendedKey ? "recommended" : "manual",
+    recommendationTags,
+    choice: recommendationTags.includes("quality")
+      ? "quality"
+      : recommendationTags.includes("efficient")
+        ? "efficient"
+        : null
+  };
+}
+
+/** `adapterId · displayName` for a persisted analyst/model ref (honest when absent). */
+function modelLabel(ref) {
+  const model = ref?.model ?? ref;
+  const name = model?.displayName ?? model?.modelId ?? null;
+  const via = model?.adapterId ?? null;
+  if (!name) return null;
+  return via ? `${via} · ${name}` : name;
+}
+
+/**
+ * Host-facing summary of a real ProjectStrategy — state, row count, roles
+ * and the analyst that produced it. Never a recommendation of its own.
+ * @param {object|null} strategy
+ */
+export function summarizeProjectStrategy(strategy) {
+  if (!strategy) return null;
+  const team = strategy.projectTeam ?? [];
+  return {
+    state: strategy.status ?? "unknown",
+    teamRows: team.length,
+    roles: team.map((entry) => entry?.role).filter(Boolean),
+    analyst: modelLabel(strategy.bootstrapAnalyst),
+    projectRoot: strategy.projectRoot ?? null
+  };
+}
+
+function requireCwd(cwd) {
+  if (typeof cwd !== "string" || cwd.trim() === "") {
+    throw new Error("Project team analyze/approve requires a project directory (cwd).");
+  }
+  return cwd;
+}
+
+function noAnalystError(analystCatalog) {
+  const total = analystCatalog?.models?.length ?? 0;
+  if (total === 0) {
+    return new Error(
+      "No ask-capable analyst model in this project's catalog — Kairo cannot analyze the project team. " +
+        "Authenticate a supported provider CLI (Codex, Claude, Cursor, OpenCode) and try again."
+    );
+  }
+  return new Error(
+    `Every analyst candidate (${total}) is not available right now — Kairo will not run a project analysis with an ineligible model. ` +
+      "Check provider access (login / quota / entitlement) and try again."
+  );
+}
+
+/**
+ * Re-validates a human's own picked analyst (the ratatui host's picker —
+ * see analyst-picker payload shape, matching the cockpit's own
+ * ProjectOverlay onSelect) against the FRESH catalog from this call's own
+ * preflight, never trusting a stale caller-supplied `available` flag.
+ * Returns null (never throws) when the requested candidate isn't in the
+ * catalog at all, or is there but not currently available — the caller
+ * decides how to fail closed.
+ *
+ * @param {{model?: {adapterId?: string, modelId?: string}}|null|undefined} requested
+ * @param {{recommendedModel?: {candidateKey?: string}|null, models?: object[]}|null|undefined} analystCatalog
+ */
+function resolveRequestedAnalyst(requested, analystCatalog) {
+  const adapterId = requested?.model?.adapterId ?? null;
+  const modelId = requested?.model?.modelId ?? null;
+  if (!adapterId || !modelId) return null;
+  const models = analystCatalog?.models ?? [];
+  const match = models.find((model) => model?.adapterId === adapterId && model?.modelId === modelId);
+  if (!match || match.available !== true) return null;
+  const recommendedKey = analystCatalog?.recommendedModel?.candidateKey ?? null;
+  const recommendationTags = match.recommendationTags ?? [];
+  return {
+    model: { adapterId: match.adapterId, modelId: match.modelId, displayName: match.displayName },
+    selectionSource: match.candidateKey === recommendedKey ? "recommended" : "manual",
+    recommendationTags,
+    choice: recommendationTags.includes("quality")
+      ? "quality"
+      : recommendationTags.includes("efficient")
+        ? "efficient"
+        : null
+  };
+}
+
+function requestedAnalystError(requested) {
+  const label = requested?.model?.displayName ?? requested?.model?.modelId ?? "The selected analyst";
+  return new Error(
+    `${label} is not an available analyst for this project right now — pick another model and try again.`
+  );
+}
+
+/**
+ * JSON-safe clone for values that cross the stdio sidecar boundary — drops
+ * functions/class methods rather than throwing, and fails to `null` (never
+ * a crash) on a genuinely circular value. `undefined` also becomes `null`
+ * so a caller always gets a concrete, serializable shape.
+ * @param {unknown} value
+ */
+function toSerializable(value) {
+  if (value === undefined) return null;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read-only preflight for the ratatui host's own analyst picker (T2) — the
+ * non-interactive equivalent of the cockpit's ProjectOverlay landing on
+ * SELECT_ANALYST. Uses `mode: "catalog"` so opening the modal waits on
+ * snapshot/probes only (no project-profile scan). Analyze re-runs a full
+ * preflight itself, so a serialization miss on profile never blocks the picker.
+ *
+ * @param {{cwd?: string, createConversationService?: typeof createConversationService}} args
+ * @returns {Promise<{analystCatalog: object, profile: object|null, candidates: object|null, projectRoot: string|null, unverifiedClaudeNotice: string|null, pickerNotice: string|null}>}
+ */
+export async function preflightProjectTeam({
+  cwd,
+  createConversationService: createService = createConversationService
+} = {}) {
+  const projectCwd = requireCwd(cwd);
+  const service = createService({ enableProviderProbes: true });
+  const preflight = await service.preflightProject({ cwd: projectCwd, mode: "catalog" });
+  const rawCatalog = preflight.analystCatalog ?? { recommendedModel: null, models: [] };
+  const analystCatalog = curateAnalystCatalogForPicker(rawCatalog);
+  const unverifiedClaudeNotice = preflight.unverifiedClaudeNotice ?? null;
+  return {
+    analystCatalog,
+    profile: toSerializable(preflight.profile),
+    candidates: toSerializable(preflight.candidates),
+    projectRoot: preflight.projectRoot ?? null,
+    unverifiedClaudeNotice,
+    pickerNotice: buildAnalystPickerNotice(rawCatalog, analystCatalog, unverifiedClaudeNotice)
+  };
+}
+
+/**
+ * Analyze this project's team headlessly. Persists a SUGGESTED
+ * ProjectStrategy (the service does) — never active: activation stays an
+ * explicit human act (`approveProjectTeam`).
+ *
+ * `analyst` is an optional human pick from the ratatui host's own picker
+ * (T2) — the same clean modelRef shape the cockpit's ProjectOverlay
+ * onSelect builds (`{model, selectionSource, recommendationTags, choice}`).
+ * It is re-validated against THIS call's own fresh catalog (never trusted
+ * verbatim — availability can change between the picker's preflight and
+ * this analyze). Omitted or unresolvable → the catalog's own recommended
+ * default (`pickDefaultAnalyst`), same as before this option existed.
+ *
+ * @param {{cwd?: string, analyst?: object|null, createConversationService?: typeof createConversationService}} args
+ * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null, notice: string|null}>}
+ */
+export async function analyzeProjectTeam({
+  cwd,
+  analyst: requestedAnalyst = null,
+  createConversationService: createService = createConversationService
+} = {}) {
+  const projectCwd = requireCwd(cwd);
+  const service = createService({ enableProviderProbes: true });
+  const preflight = await service.preflightProject({ cwd: projectCwd });
+  let analyst;
+  if (requestedAnalyst) {
+    analyst = resolveRequestedAnalyst(requestedAnalyst, preflight.analystCatalog);
+    if (!analyst) throw requestedAnalystError(requestedAnalyst);
+  } else {
+    analyst = pickDefaultAnalyst(preflight.analystCatalog);
+    if (!analyst) throw noAnalystError(preflight.analystCatalog);
+  }
+  const strategy = await service.runBootstrapAnalysis({
+    cwd: projectCwd,
+    profile: preflight.profile,
+    candidates: preflight.candidates,
+    analyst
+  });
+  const summary = summarizeProjectStrategy(strategy);
+  if (!summary) {
+    throw new Error("Project analysis returned no strategy — nothing was suggested.");
+  }
+  return { ...summary, notice: preflight.unverifiedClaudeNotice ?? null };
+}
+
+/**
+ * Approve the suggested strategy: SUGGESTED -> ACTIVE. Throws the
+ * service's own error when there is nothing to approve.
+ *
+ * @param {{cwd?: string, createConversationService?: typeof createConversationService}} args
+ * @returns {Promise<{state: string, teamRows: number, roles: string[], analyst: string|null, projectRoot: string|null}>}
+ */
+export async function approveProjectTeam({
+  cwd,
+  createConversationService: createService = createConversationService
+} = {}) {
+  const projectCwd = requireCwd(cwd);
+  const service = createService({ enableProviderProbes: true });
+  const approved = await service.approveProjectStrategy({ cwd: projectCwd });
+  const summary = summarizeProjectStrategy(approved);
+  if (!summary) {
+    throw new Error("Approval returned no strategy — the project team was not activated.");
+  }
+  return summary;
+}

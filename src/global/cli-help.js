@@ -52,8 +52,7 @@ sections, components, backups, and drift repair under ~/.harness.
 Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_NAME}).
 
 ## Configuration & health
-  ${cli}                              Unified Kairo workspace (TTY).
-                                      Requires Pi on PATH; use --legacy-cockpit as fallback.
+  ${cli}                              Unified Kairo workspace (TTY, ratatui).
   ${cli} --dry-run                      Setup dry-run (scriptable)
   ${cli} --version
   ${cli} setup [--dry-run] [--yes] [--confirm] [--simple] [--no-preflight] [--agents <list|all>] [--components <list>]
@@ -67,15 +66,16 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} update [--yes] [--json]        Update the Kairo CLI from npm
   ${cli} update --scope=workspace [--dry-run]  Refresh workspace template files
   ${cli} uninstall [--dry-run]
-
+  
 ## Agents & runs
-  ${cli} shell                          Operations cockpit (TTY)
+  ${cli} shell                          Unified workspace (ops: press 5 inside the TUI)
   ${cli} architect --task "..." [--model <name>] [--cwd <dir>] [--json]
   ${cli} plans list|show|approve|reject [<taskId>] [--cwd <dir>] [--json]
   ${cli} start [--cwd <dir>]             Start a new unified workspace session
   ${cli} resume [sessionId] [--cwd <dir>]    Resume a unified workspace session (picker if more than one and no id given)
   ${cli} list [--cwd <dir>] [--json]         Real sessions for this project, most recently updated first
-  ${cli} ui [--cwd <dir>] [--port <n>]       Unified workspace; --legacy-cockpit opens the legacy browser UI
+  ${cli} ui [--cwd <dir>] [--port <n>] [--ratatui]
+                                      Unified workspace (ratatui only; --pi / --legacy-cockpit retired)
   ${cli} conversation                     Unified workspace
   ${cli} conversation snapshot|architect|show|approve|reject|cancel ... [--json]
   ${cli} conversation execute <taskId> [--role <role>] [--confirm] [--model <name>] [--json]  No --confirm: preview only. --confirm: revalidate and execute the shown target.

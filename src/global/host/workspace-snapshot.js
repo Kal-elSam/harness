@@ -12,6 +12,7 @@ import { readCodexUsage } from "../observability/codex-usage.js";
 import { readClaudeUsage } from "../observability/claude-usage.js";
 import { readOpenCodeUsage } from "../observability/opencode-usage.js";
 import { readCachedUsage, writeCachedUsage, readCachedAvailability, writeCachedAvailability } from "./workspace-cache.js";
+import { readAvailabilityRecovery } from "../conversation/availability-recovery-store.js";
 
 export const KAIRO_WORKSPACE_SNAPSHOT_SCHEMA = "kairo.workspace-shell/v1";
 
@@ -32,6 +33,73 @@ function workspaceSession(session) {
     mode: session.mode ?? "ask",
     state: "bound"
   };
+}
+
+/** Stable herd id for one agent — a slug of the role name, never a random
+ * or session-scoped value, so attention state can be tracked per role
+ * across refreshes. */
+function agentId(role) {
+  const slug = String(role ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "unknown-role";
+}
+
+/**
+ * The herd state for one agent, derived ONLY from the team row's real
+ * availability — this snapshot never invents its own liveness rule.
+ * - `blocked`: resolveAssignmentAvailability said blocked (fail-closed
+ *   attention signal; never presented as available).
+ * - `idle`: assignment available with no active run for that role.
+ * - `unknown`: still checking, or the probe failed / produced no evidence.
+ * `working`/`done` are deliberately NEVER emitted here: the snapshot
+ * inputs expose no per-role run signal yet (see H3 in
+ * odd/tasks/herd-shell-layout.md) — claiming them would be fabrication.
+ * @param {object} availability - a team row's `availability`
+ */
+function agentState(availability) {
+  if (availability?.state === "blocked") return "blocked";
+  if (availability?.state === "available") return "idle";
+  return "unknown";
+}
+
+/**
+ * The herd agents — one entry per team row, in strategy order (Project
+ * Analyst, Orchestrator, then project-team roles). Same facts as
+ * `team.rows`, reshaped for attention ordering (blocked first happens at
+ * render, see workspace-widget.js); no second recommendation.
+ * @param {object} team - the `workspaceTeam` value
+ */
+function workspaceAgents(team) {
+  return (team?.rows ?? []).map((row) => ({
+    id: agentId(row.role),
+    label: row.role ?? "Unknown role",
+    role: row.role ?? "Unknown role",
+    provider: row.via ?? "unknown",
+    model: row.model ?? "no eligible option",
+    state: agentState(row.availability),
+    stateReason: row.availability?.warning ?? null
+  }));
+}
+
+/**
+ * The herd spaces — minimum viable: the current project plus the bound
+ * session (short id + mode). Never an invented multi-repo list: exactly
+ * these two entries, with the session entry honestly `unbound` when no
+ * host binding exists.
+ * @param {object} project - the snapshot's `project`
+ * @param {object} session - the snapshot's `session`
+ */
+function workspaceSpaces(project, session) {
+  const spaces = [{
+    kind: "project",
+    label: project?.label ?? project?.root ?? "unknown",
+    root: project?.root ?? null
+  }];
+  if (session?.state === "bound") {
+    spaces.push({ kind: "session", id: String(session.id).slice(0, 8), mode: session.mode ?? "ask", state: "bound" });
+  } else {
+    spaces.push({ kind: "session", state: "unbound" });
+  }
+  return spaces;
 }
 
 /**
@@ -183,14 +251,21 @@ export function buildKairoWorkspaceSnapshot({
   if (typeof projectRoot !== "string" || projectRoot.trim() === "") {
     throw new Error("Kairo workspace snapshot requires a project root.");
   }
+  const project = { root: projectRoot, label: basename(projectRoot) || projectRoot };
+  const sessionValue = workspaceSession(session);
+  const team = workspaceTeam(strategy, availabilityIntelligence, availabilityCache, now);
   return {
     schema: KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
-    project: { root: projectRoot, label: basename(projectRoot) || projectRoot },
-    session: workspaceSession(session),
-    team: workspaceTeam(strategy, availabilityIntelligence, availabilityCache, now),
+    project,
+    session: sessionValue,
+    team,
     usage: Array.isArray(usage) ? usage : [],
     subscriptions: workspaceSubscriptions(usageIntelligence, usageCache, now),
-    memory: { status: engram?.status ?? "unknown" }
+    memory: { status: engram?.status ?? "unknown" },
+    // Additive herd contract (H1): same team/session facts, reshaped for
+    // attention ordering — old consumers keep reading team/session untouched.
+    agents: workspaceAgents(team),
+    spaces: workspaceSpaces(project, sessionValue)
   };
 }
 
@@ -302,6 +377,79 @@ export async function recoverKairoProjectTeam({ cwd } = {}, deps = {}) {
   } catch (error) {
     return { outcome: "error", reason: error?.message ?? String(error) };
   }
+}
+
+/** Approve / reject a pending recovery proposal from the Pi host (the
+ * `kairo-team-approve` / `kairo-team-reject` commands). Never throw: an
+ * unexpected failure is reported as `{outcome: "error", reason}` so the
+ * Pi host can say so without breaking its refresh. Approval re-verifies
+ * and activates; rejection only closes — see team-recovery.js. */
+export async function approveKairoRecovery({ cwd } = {}, deps = {}) {
+  const createService = deps.createConversationService ?? createConversationService;
+  try {
+    return await createService({ enableProviderProbes: true }).approveRecoveryProposal({ cwd });
+  } catch (error) {
+    return { outcome: "error", reason: error?.message ?? String(error) };
+  }
+}
+
+export async function rejectKairoRecovery({ cwd } = {}, deps = {}) {
+  const createService = deps.createConversationService ?? createConversationService;
+  try {
+    return await createService({ enableProviderProbes: true }).rejectRecoveryProposal({ cwd });
+  } catch (error) {
+    return { outcome: "error", reason: error?.message ?? String(error) };
+  }
+}
+
+/** Read the pending recovery record for this project (null when none) —
+ * how a fresh process (restart) still sees a proposal made before it: the
+ * cause (`affected`) and the suggested team live on the record, never in
+ * memory. Returns null on any read failure: no record is never an error,
+ * only "nothing pending". */
+export async function readPendingKairoRecovery({ cwd = process.cwd() } = {}, deps = {}) {
+  try {
+    const resolveRoot = deps.resolveProjectRoot ?? resolveProjectRoot;
+    const homeDir = (deps.resolveHomeDir ?? resolveHomeDir)();
+    const projectRoot = await resolveRoot(cwd);
+    const read = deps.readAvailabilityRecovery ?? readAvailabilityRecovery;
+    return await read(homeDir, projectRoot);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * On-demand availability revalidation for the ratatui host (U2c): re-runs
+ * the SAME real conversation-service probe `loadKairoLiveData` uses, then
+ * rebuilds the workspace snapshot from that fresh evidence — so the
+ * sidebar/CTA reflect real provider state instead of the last-known cache.
+ * Never invents a cause of its own: every row's `availability.warning`
+ * comes straight from the real `eligibility[...].reason` text this call
+ * received (see workspaceTeamRows / assignment-availability.js), the same
+ * evidence a normal refresh would eventually show.
+ *
+ * Fails closed: a failed probe (`loadKairoLiveData` returns null) still
+ * rebuilds the snapshot — from whatever last-known cache already exists —
+ * and reports `ok: false` with a real reason, never a fabricated
+ * "available" or a synthesized quota/funds cause.
+ * @param {{cwd: string}} args
+ * @param {object} [deps] - forwarded to both loadKairoLiveData and
+ *   loadKairoWorkspaceSnapshot (their own DI shapes).
+ * @returns {Promise<{ok: boolean, reason: string|null, snapshot: object}>}
+ */
+export async function revalidateKairoTeamAvailability({ cwd } = {}, deps = {}) {
+  const loadLive = deps.loadKairoLiveData ?? loadKairoLiveData;
+  const loadSnap = deps.loadKairoWorkspaceSnapshot ?? loadKairoWorkspaceSnapshot;
+  const live = await loadLive({ cwd }, deps);
+  const snapshot = await loadSnap({ cwd, intelligence: live }, deps);
+  return {
+    ok: live !== null,
+    reason: live === null
+      ? "Live availability probe failed — team status shown from the last-known state."
+      : null,
+    snapshot
+  };
 }
 
 export async function loadKairoLiveData({ cwd } = {}, deps = {}) {

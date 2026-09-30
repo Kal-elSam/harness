@@ -1,9 +1,15 @@
+import { readFileSync, statSync } from "node:fs";
 import { createKernelService } from "../../kernel/service.js";
+import { resolveKairoPiSettingsPath } from "../launch-gentle-shell.js";
 import { createKairoRouteProvider, loadKairoProviderModels } from "../kairo-route-provider.js";
 import {
-  loadKairoWorkspaceSnapshot, loadKairoLiveData, loadKairoUsageData, recoverKairoProjectTeam
+  approveKairoRecovery, loadKairoWorkspaceSnapshot, loadKairoLiveData, loadKairoUsageData, readPendingKairoRecovery, recoverKairoProjectTeam, rejectKairoRecovery
 } from "../workspace-snapshot.js";
-import { availabilityNotices, createKairoTextWidget, createKairoWorkspaceWidget, formatSessionIdentity } from "../workspace-widget.js";
+import {
+  availabilityNotices, createCompactShellSummaryWidget, createKairoTextWidget, createKairoWorkspaceWidget,
+  createShellBottomStripWidget, createShellSidebarWidget, createShellWelcomeWidget, formatSessionIdentity,
+  TEAM_SETUP_NEXT_STEP
+} from "../workspace-shell-text.js";
 import { MAX_RECOVERY_ATTEMPTS } from "../../conversation/team-recovery.js";
 import { resolveHomeDir } from "../../paths.js";
 import { resolveProjectRoot } from "../../architect/architect-store.js";
@@ -67,15 +73,24 @@ function subscriptionsLine(subscriptions) {
 }
 
 /** `/kairo-team`'s full detail lines, unbounded — every role, plus its
- * full warning text when it has one. Rendered through the component path
- * (createKairoTextWidget), never a plain string array, because 7 real
- * roles with warnings can exceed Pi's MAX_WIDGET_LINES=10 cap. */
+ * full warning text when it has one, plus the next step when a row is
+ * blocked with no captured cause (the sidebar/compact summary can only
+ * say access is unavailable there — this detail view owes the action).
+ * Rendered through the component path (createKairoTextWidget), never a
+ * plain string array, because 7 real roles with warnings can exceed Pi's
+ * MAX_WIDGET_LINES=10 cap. */
 function teamDetailLines(team) {
   const rows = Array.isArray(team?.rows) ? team.rows : [];
   return [
     `KAIRO TEAM · ${team?.state ?? "not_analyzed"}`,
     ...(rows.length
-      ? rows.flatMap((row) => (row.availability?.warning ? [teamRowLine(row), `  ${row.availability.warning}`] : [teamRowLine(row)]))
+      ? rows.flatMap((row) => {
+          if (row.availability?.warning) return [teamRowLine(row), `  ${row.availability.warning}`];
+          if (row.availability?.state === "blocked") {
+            return [teamRowLine(row), "  Next step: run /project analyze to assign an eligible model."];
+          }
+          return [teamRowLine(row)];
+        })
       : ["Run /project analyze to build this project's team."])
   ];
 }
@@ -115,7 +130,7 @@ function linesForView(snapshot, view) {
       return [
         "KAIRO ROUTES · unavailable",
         "No verified automatic route is available for this project.",
-        "Next: run kairo --legacy-cockpit, then /project analyze.",
+        TEAM_SETUP_NEXT_STEP,
         subscriptionsLine(snapshot.subscriptions),
         ...teamDetailLines(snapshot.team)
       ];
@@ -128,19 +143,177 @@ function workspaceStatus(snapshot) {
   return `Kairo · ${snapshot.project.label} · ${formatSessionIdentity(snapshot.session)}`;
 }
 
-/** Renders `snapshot` onto the one Kairo widget slot, in the shape `view`
- * needs: the themed two-panel component for "overview", the component
- * path (no line cap) for a detail view that can exceed 10 lines, or a
- * plain string array for a detail view that stays comfortably under it.
- * Every non-overview view gets the same shared session-identity line
- * (see formatSessionIdentity) appended once here — the overview shows it
- * through its own USAGE panel footer, so every view that can occupy the
- * one Kairo widget slot names the bound session the same honest way. */
-function setWorkspaceWidget(ctx, snapshot, view, extraLines) {
+/**
+ * The fork's ACTUAL current TUI mode, read fresh from its own settings.json
+ * (see launch-gentle-shell.js's resolveKairoPiSettingsPath and
+ * prepareKairoPiHome, which write to this exact file before every launch)
+ * — never cached, so a live mode switch from inside a running Pi session
+ * (its settings selector calls `SettingsManager.setTuiMode`, which
+ * persists to this same file immediately, per interactive-mode.ts's
+ * `onTuiModeChange`) is visible on the very next call. This mirrors the
+ * fork's OWN default rule exactly (`SettingsManager.getTuiMode`: anything
+ * other than exactly `"fullscreen"` is regular) — an earlier version
+ * defaulted the OPPOSITE way (missing/unreadable meant fullscreen), which
+ * only worked by coincidence because Kairo's own launcher always writes an
+ * explicit value first (native review R2 WARNING, 2026-09-25).
+ */
+function readLiveKairoTuiMode(env, readFileImpl = readFileSync) {
+  try {
+    const parsed = JSON.parse(readFileImpl(resolveKairoPiSettingsPath(env), "utf8"));
+    return parsed && typeof parsed === "object" && parsed.tuiMode === "fullscreen" ? "fullscreen" : "regular";
+  } catch {
+    // Missing, unreadable, or malformed settings file: mirror the fork's
+    // own default (SettingsManager.getTuiMode falls back to "regular"),
+    // never Kairo's own launch-time opinion (see prepareKairoPiHome).
+    return "regular";
+  }
+}
+
+/**
+ * Builds a `getTuiMode()` reader that only re-reads and re-parses
+ * settings.json when its mtime has actually changed. `readLiveKairoTuiMode`
+ * alone does a `readFileSync` plus `JSON.parse` on every call — cheap once,
+ * but `getTuiMode` runs on every `setWorkspaceWidget` call, and Pi repaints
+ * the fullscreen widget/sidebar/strip on every streamed token while a
+ * response is in flight, so re-reading and re-parsing the same unchanged
+ * file dozens of times per second is pure waste (native review R3 finding,
+ * 2026-09-25). `statSync` alone is far cheaper than reading the file body,
+ * so it runs on every call; the body is only re-read when `mtimeMs`
+ * differs from the last observed value. A missing/unreadable settings file
+ * is never cached (so it keeps trying once the file appears), mirroring
+ * `readLiveKairoTuiMode`'s own fallback.
+ */
+export function createLiveTuiModeReader(env, { statImpl = statSync, readFileImpl = readFileSync } = {}) {
+  let cachedMtimeMs = null;
+  let cachedMode = "regular";
+  return function getTuiMode() {
+    let mtimeMs;
+    try {
+      mtimeMs = statImpl(resolveKairoPiSettingsPath(env)).mtimeMs;
+    } catch {
+      cachedMtimeMs = null;
+      return "regular";
+    }
+    if (mtimeMs === cachedMtimeMs) return cachedMode;
+    cachedMtimeMs = mtimeMs;
+    cachedMode = readLiveKairoTuiMode(env, readFileImpl);
+    return cachedMode;
+  };
+}
+
+/**
+ * True only when the shell surface should own the render: the fork exposes
+ * BOTH `setSidebar`/`setBottomStrip` (feature-detected; the published `.3`
+ * pin Kairo still ships does not) AND the current TUI mode is fullscreen.
+ *
+ * `getTuiMode` is called FRESH here on every render — never cached — so a
+ * live mode switch (the fork's settings selector, which persists through
+ * `SettingsManager.setTuiMode` to the same settings.json this reads — see
+ * readLiveKairoTuiMode below) is picked up on the very next render. An
+ * earlier version read `KAIRO_TUI_MODE`, captured once from `env` at
+ * extension-creation time; that value never changed once the process
+ * started, so switching to regular mid-session left the extension still
+ * painting into slots the fork had stopped drawing (native review R4/R3
+ * finding, 2026-09-25).
+ *
+ * Regular mode and the `.3` pin both fall back to the single classic
+ * widget slot exactly as before H7/H8 — this function is the ONE place
+ * that decides which surface owns a render, so every caller (the ordinary
+ * "overview" render and the "no automatic route" override alike) makes
+ * the same choice and never lets both surfaces show the same fact at once.
+ */
+function isShellActive(ctx, getTuiMode) {
+  const hasShellApis = typeof ctx?.ui?.setSidebar === "function" && typeof ctx?.ui?.setBottomStrip === "function";
+  return hasShellApis && getTuiMode?.() === "fullscreen";
+}
+
+/**
+ * The H7/H8 fullscreen shell surface: installs the sidebar, bottom strip,
+ * and compact-summary widget ONCE, whenever the shell is active — never
+ * branching on column count here at dispatch time. Each of the three
+ * factories (see workspace-widget.js's createShellSidebarWidget /
+ * createShellBottomStripWidget / createCompactShellSummaryWidget) decides
+ * its OWN content live inside its own `render()`, reading `getColumns()`
+ * fresh on every repaint: sidebar+strip render real content at
+ * SHELL_SIDEBAR_MIN_COLUMNS or more and stay empty below it; the compact
+ * summary does the opposite. This means crossing the 90-column threshold
+ * reflows on the very next repaint with NO extension-triggered refresh —
+ * an earlier version captured `getColumns()` once here and baked the
+ * sidebar-shown/compact-shown choice into which factory got installed, so
+ * a live resize with no following session_start/command refresh left the
+ * wrong surface painted (native review R4/R3 finding, 2026-09-25).
+ * `extraLines` (e.g. a team-recovery notice) and `routeUnavailable` (no
+ * automatic Pi route — folds the old "unavailable-routes" widget's two
+ * facts in here instead of a separate, duplicate widget) are forwarded to
+ * every factory so whichever surface ends up visible carries them.
+ * Only called once `isShellActive` is true; the caller (setWorkspaceWidget)
+ * handles the regular-mode/`.3`-pin fallback and slot clearing itself.
+ */
+function renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable = false, extraLines = [], getTuiMode = null, selection = null }) {
+  ctx.ui.setSidebar(createShellSidebarWidget(snapshot, {
+    getColumns,
+    routeUnavailable,
+    extraLines,
+    selectedAgentId: selection?.selectedAgentId ?? null,
+    onSelectAgent: selection?.onSelectAgent ?? null
+  }));
+  ctx.ui.setBottomStrip(createShellBottomStripWidget(snapshot, { getColumns, extraLines }));
+  ctx.ui.setWidget?.("kairo-workspace", createCompactShellSummaryWidget(snapshot, { getColumns, routeUnavailable, extraLines }));
+  // Remember this paint so a sidebar click can re-open the surface with a
+  // new selection without a full snapshot reload — the click only changes
+  // which detail block is open, never the facts. Guarded by isShellActive
+  // at click time (see the closure's onSelectAgent): a mode switch away
+  // from fullscreen must never repaint slots the fork stopped drawing.
+  if (selection) selection._paint = { ctx, snapshot, getColumns, routeUnavailable, extraLines, getTuiMode };
+}
+
+/**
+ * Renders `snapshot` onto the Kairo surface, in the shape `view` needs.
+ * For "overview" and "unavailable-routes", the ACTIVE surface — the H7/H8
+ * fullscreen shell (sidebar/strip/compact-summary, see renderShellSurface)
+ * or the classic single widget slot — decides based on `isShellActive`;
+ * every other view always uses the classic widget slot (team/sessions/
+ * usage/route/memory detail views are unaffected by the shell surface).
+ * The classic widget path renders the themed two-panel component for
+ * "overview", the component path (no line cap) for a detail view that can
+ * exceed 10 lines, or a plain string array for a detail view that stays
+ * comfortably under it. Every non-overview classic-widget view gets the
+ * same shared session-identity line (see formatSessionIdentity) appended
+ * once here — the overview shows it through the status bar in fullscreen
+ * (see workspaceStatus) or its own USAGE panel footer in regular mode, so
+ * every surface that can occupy the one Kairo widget slot names the bound
+ * session the same honest way.
+ */
+function setWorkspaceWidget(ctx, snapshot, view, extraLines, { getColumns, getTuiMode, selection = null } = {}) {
+  const shellActive = isShellActive(ctx, getTuiMode);
+
   if (view === "overview") {
+    if (shellActive) {
+      renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable: false, extraLines, getTuiMode, selection });
+      return;
+    }
+    // Regular mode, or the shell APIs are missing entirely (the published
+    // `.3` pin): clear the shell slots when they exist at all (a no-op on
+    // the fork side in regular mode, but explicit here so a mode switch
+    // mid-session never leaves stale sidebar/strip content behind once
+    // fullscreen returns) and fall back to the single classic widget slot
+    // exactly as it worked before H7/H8.
+    ctx?.ui?.setSidebar?.(undefined);
+    ctx?.ui?.setBottomStrip?.(undefined);
     ctx?.ui?.setWidget?.("kairo-workspace", createKairoWorkspaceWidget(snapshot, extraLines));
     return;
   }
+
+  if (view === "unavailable-routes" && shellActive) {
+    // Fold the same two facts the classic detail widget would show (no
+    // automatic route, run /project analyze) into whichever shell surface
+    // is active, instead of a separate widget landing next to — or, below
+    // SHELL_SIDEBAR_MIN_COLUMNS, replacing — the sidebar/strip/compact
+    // summary. See renderShellSurface's own doc.
+    renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable: true, extraLines, getTuiMode, selection });
+    return;
+  }
+
   const lines = [...linesForView(snapshot, view), formatSessionIdentity(snapshot.session), ...extraLines];
   if (UNBOUNDED_TEXT_VIEWS.has(view)) {
     ctx?.ui?.setWidget?.("kairo-workspace", createKairoTextWidget(lines));
@@ -162,19 +335,59 @@ function recoveryNotice(result) {
       .join(", ");
     return { level: "info", message: `Kairo recovered the project team after a provider availability change: ${team}. Pi routes are updated.` };
   }
+  // A proposal is NOT an activation: the previous team keeps serving until
+  // a human approves its replacement (see team-recovery.js). The notice
+  // names the cause and the verified alternative, and the approval surface
+  // (S3-1b) is the only executable exit — never a background swap.
+  if (result?.outcome === "proposed") {
+    const cause = (result.affected ?? [])
+      .map((entry) => `${entry.role} (${entry.model}: ${entry.reason})`)
+      .join(", ") || "a provider availability change";
+    const alternative = (result.proposal?.projectTeam ?? [])
+      .map((entry) => `${entry.role} → ${entry.model?.displayName ?? entry.model?.modelId ?? "no eligible option"}`)
+      .join(", ") || "no verified alternative yet";
+    return { level: "warning", message: `Kairo proposes a recovered team after ${cause}. Verified alternative: ${alternative}. Nothing was activated — approve with /kairo-team-approve or reject with /kairo-team-reject.` };
+  }
   if (result?.outcome === "kept-previous" || result?.outcome === "error") {
     return {
       level: "warning",
-      message: `Kairo could not recover the project team (${result.reason ?? "unknown reason"}). The current team stays active and Kairo retries on a later refresh. To recover now: run kairo --legacy-cockpit, then /project analyze.`
+      message: `Kairo could not recover the project team (${result.reason ?? "unknown reason"}). The current team stays active and Kairo retries on a later refresh. To recover now: ${TEAM_SETUP_NEXT_STEP}`
     };
   }
   if (result?.outcome === "skipped" && result.reason === "retries-exhausted") {
     return {
       level: "warning",
-      message: `Kairo stopped retrying team recovery after ${MAX_RECOVERY_ATTEMPTS} attempts (last: ${result.lastOutcome ?? "unknown"}). Next: run kairo --legacy-cockpit, then /project analyze.`
+      message: `Kairo stopped retrying team recovery after ${MAX_RECOVERY_ATTEMPTS} attempts (last: ${result.lastOutcome ?? "unknown"}). ${TEAM_SETUP_NEXT_STEP}`
     };
   }
   return null;
+}
+
+/**
+ * P2 polish (2026-09-26): installs the Kairo welcome header (see
+ * workspace-widget.js's createShellWelcomeWidget) into the fork's header
+ * slot (`ctx.ui.setHeader`), but ONLY while both are true: the fullscreen
+ * shell owns the render (see isShellActive — regular mode and the
+ * shell-API-less `.3` pin keep Pi's own built-in header, untouched) and the
+ * bound conversation genuinely has no messages yet, read live from
+ * `ctx.sessionManager.getEntries()` — never a reason-based guess (a
+ * "reload"/"resume"/"fork" can each land on an empty or a populated
+ * conversation). The welcome is cleared back to Pi's default by the
+ * `turn_start` handler below at the first turn — it is never a transcript
+ * message, so it never needs clearing from session history itself.
+ */
+function updateWelcomeHeader(ctxBag, snapshot, getTuiMode, getColumns) {
+  if (!isShellActive(ctxBag, getTuiMode)) return;
+  const entries = ctxBag?.sessionManager?.getEntries?.() ?? [];
+  // A brand-new session already carries non-message bookkeeping entries
+  // (e.g. a "model_change"/"session_info" entry) even with zero real
+  // conversation turns — only "message" entries are actual user/assistant
+  // turns (see the fork's SessionEntry union in session-manager.ts), so
+  // that is the one honest "has the conversation started" signal.
+  const hasMessages = entries.some((entry) => entry?.type === "message");
+  if (hasMessages) return;
+  const projectLabel = snapshot.project?.label ?? snapshot.project?.root ?? "unknown";
+  ctxBag?.ui?.setHeader?.(createShellWelcomeWidget(projectLabel, { getColumns }));
 }
 
 /**
@@ -192,7 +405,8 @@ function recoveryNotice(result) {
  * is real (just for a session that is no longer the active one).
  */
 async function refreshWorkspace(ctxOrCwd, {
-  loadSnapshot, sessionId = null, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [], onSnapshot = () => {}, isCurrent = () => true
+  loadSnapshot, sessionId = null, view = "overview", usageIntelligence, availabilityIntelligence, extraLines = [],
+  onSnapshot = () => {}, isCurrent = () => true, getColumns, getTuiMode, selection = null
 }) {
   // Pi's ctx becomes stale after an async yield following a session replacement
   // (Pi asserts ctx.cwd/ctx.ui). Capture cwd/ui synchronously at call time;
@@ -209,7 +423,7 @@ async function refreshWorkspace(ctxOrCwd, {
   });
   if (!isCurrent()) return snapshot;
   ui?.setStatus?.("kairo", workspaceStatus(snapshot));
-  setWorkspaceWidget(ctxForWidget, snapshot, view, extraLines);
+  setWorkspaceWidget(ctxForWidget, snapshot, view, extraLines, { getColumns, getTuiMode, selection });
   onSnapshot(snapshot, { liveAvailability: availabilityIntelligence != null });
   return snapshot;
 }
@@ -227,12 +441,24 @@ export function createKairoWorkspaceExtension(pi, {
   loadRouteModels = loadKairoProviderModels,
   createProvider = createKairoRouteProvider,
   recoverTeam = recoverKairoProjectTeam,
+  approveTeam = approveKairoRecovery,
+  rejectTeam = rejectKairoRecovery,
+  readPendingRecovery = readPendingKairoRecovery,
   resolveHomeDirImpl = resolveHomeDir,
   resolveProjectRootImpl = resolveProjectRoot,
   createSessionImpl = createSession,
   getSessionImpl = getSession,
   lookupPiBindingImpl = lookupPiBinding,
-  recordPiBindingImpl = recordPiBinding
+  recordPiBindingImpl = recordPiBinding,
+  // H7/H8: the fork exposes no getter for its own TUI mode or terminal
+  // width, so these default to the one honest, LIVE real source each has:
+  // the fork's own settings.json (see readLiveKairoTuiMode/
+  // createLiveTuiModeReader — mtime-cached, so a live in-session mode
+  // switch is never stale, but an unchanged file is not re-parsed on
+  // every render) and the process's own stdout columns. Tests inject
+  // fixed values instead of a real TTY/settings file.
+  getColumns = () => process.stdout.columns,
+  getTuiMode = createLiveTuiModeReader(env)
 } = {}) {
   let routeSignature = null;
   let routeState = "unknown";
@@ -243,6 +469,25 @@ export function createKairoWorkspaceExtension(pi, {
   // never re-derived from env on every refresh (see bindSession below).
   // null means genuinely unbound, presented as such, never a silent "ask".
   let boundKairoSessionId = null;
+  // The open sidebar agent detail (S2-1b): clicking an agent row toggles
+  // its detail block, clicking it again closes it. Held here — one per
+  // extension instance — and threaded into every shell paint as
+  // `selection`, so a snapshot refresh keeps the open detail instead of
+  // collapsing it. Keyboard reaches the same detail through `/kairo-team`
+  // (see teamDetailLines), which needs no selection state at all.
+  const shellSelection = { selectedAgentId: null, _paint: null };
+  shellSelection.onSelectAgent = (agentId) => {
+    shellSelection.selectedAgentId = shellSelection.selectedAgentId === agentId ? null : agentId;
+    const paint = shellSelection._paint;
+    if (!paint || !isShellActive(paint.ctx, paint.getTuiMode)) return;
+    renderShellSurface(paint.ctx, paint.snapshot, {
+      getColumns: paint.getColumns,
+      routeUnavailable: paint.routeUnavailable,
+      extraLines: paint.extraLines,
+      getTuiMode: paint.getTuiMode,
+      selection: shellSelection
+    });
+  };
   // Bumped once at the START of every session_start invocation (see below).
   // A render belongs to the most recent session_start iff its own captured
   // generation still equals this counter when its (possibly slow) snapshot
@@ -464,11 +709,15 @@ export function createKairoWorkspaceExtension(pi, {
       loadSnapshot,
       sessionId: boundKairoSessionId,
       onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info),
-      isCurrent
+      isCurrent,
+      getColumns,
+      getTuiMode,
+      selection: shellSelection
     });
     if (routeState === "unavailable" && isCurrent()) {
-      setWorkspaceWidget(ctxBag, snapshot, "unavailable-routes", []);
+      setWorkspaceWidget(ctxBag, snapshot, "unavailable-routes", [], { getColumns, getTuiMode, selection: shellSelection });
     }
+    if (isCurrent()) updateWelcomeHeader(ctxBag, snapshot, getTuiMode, getColumns);
 
     // Phase 2 (P01.2 split): usage (the three usage readers, ~5s combined)
     // and team availability (the full conversation-service snapshot probe,
@@ -492,10 +741,13 @@ export function createKairoWorkspaceExtension(pi, {
         availabilityIntelligence: latestAvailabilityIntelligence,
         extraLines,
         onSnapshot: (snap, info) => notifyAvailability(ctxBag, snap, info),
-        isCurrent
+        isCurrent,
+        getColumns,
+        getTuiMode,
+        selection: shellSelection
       });
       if (routeState === "unavailable" && isCurrent()) {
-        setWorkspaceWidget(ctxBag, refreshed, "unavailable-routes", extraLines);
+        setWorkspaceWidget(ctxBag, refreshed, "unavailable-routes", extraLines, { getColumns, getTuiMode, selection: shellSelection });
       }
     }
 
@@ -517,7 +769,48 @@ export function createKairoWorkspaceExtension(pi, {
       if (result !== null) pendingRecovery = runRecovery(ctxBag, cwd, rerender).catch(() => null);
     });
 
-    await Promise.all([usagePromise, availabilityPromise]);
+    // A proposal made before a restart still waits on the record (cause +
+    // suggested team persisted there, never in memory) — surface it while
+    // the probes run, never before them: this read must not delay probe
+    // startup (timing-sensitive renders depend on it). Same dedupe key as
+    // runRecovery's own notice, so it says it once.
+    const pendingNotice = readPendingRecovery({ cwd }).catch(() => null).then((pending) => {
+      if (!isCurrent()) return;
+      if (pending?.outcome === "proposed" && pending?.proposal) {
+        const notice = recoveryNotice({ outcome: "proposed", affected: pending.affected ?? [], proposal: pending.proposal });
+        const key = `${pending.fingerprint}|proposed|`;
+        if (notice && !shownRecoveryKeys.has(key)) {
+          shownRecoveryKeys.add(key);
+          ctx?.ui?.notify?.(notice.message, notice.level);
+        }
+      }
+    });
+
+    await Promise.all([usagePromise, availabilityPromise, pendingNotice]);
+  });
+
+  // P2 polish: the first turn clears the Kairo welcome header (see
+  // updateWelcomeHeader) back to Pi's own built-in default — `turnIndex`
+  // is Pi's own real count, so this needs no extension-side bookkeeping
+  // and never fires again on a later turn.
+  pi.on("turn_start", (event, ctx) => {
+    if (event?.turnIndex === 0 && isShellActive(ctx, getTuiMode)) {
+      ctx?.ui?.setHeader?.(undefined);
+    }
+  });
+
+  // A2 polish (2026-09-26): a real PTY run found that with no model
+  // configured, submitting text prints "No models available"/"No API key"
+  // errors straight into the transcript, but `turn_start` never fires (Pi
+  // never starts a turn when it has no model), so the welcome header above
+  // stayed visible over those errors. The fork's "input" event fires as
+  // soon as user input is received, before any agent/turn processing, even
+  // in that no-model case — clear the welcome header there too, so it never
+  // outlives the first thing the user actually typed.
+  pi.on("input", (_event, ctx) => {
+    if (isShellActive(ctx, getTuiMode)) {
+      ctx?.ui?.setHeader?.(undefined);
+    }
   });
 
   const commands = [
@@ -531,9 +824,42 @@ export function createKairoWorkspaceExtension(pi, {
   for (const [name, description, view] of commands) {
     pi.registerCommand(name, {
       description,
-      handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, sessionId: boundKairoSessionId, view })
+      handler: async (_args, ctx) => refreshWorkspace(ctx, { loadSnapshot, sessionId: boundKairoSessionId, view, getColumns, getTuiMode, selection: shellSelection })
     });
   }
+
+  // Recovery proposal decisions are real Pi commands (not legacy-cockpit
+  // only): approving re-verifies, activates, re-syncs Pi routes and
+  // repaints; rejecting only closes. Both report loudly on error — a
+  // failed approval never looks like an approval.
+  pi.registerCommand("kairo-team-approve", {
+    description: "Approve the pending recovery proposal",
+    handler: async (_args, ctx) => {
+      const cwd = ctx?.cwd ?? process.cwd();
+      const result = await approveTeam({ cwd });
+      if (result?.outcome === "approved") {
+        await registerRoutes(cwd);
+        await refreshWorkspace(ctx, { loadSnapshot, sessionId: boundKairoSessionId, view: "overview", getColumns, getTuiMode, selection: shellSelection });
+        ctx?.ui?.notify?.("Recovery proposal approved — the new team is active and Pi routes follow it.", "info");
+      } else {
+        ctx?.ui?.notify?.(`Could not approve the recovery proposal (${result?.reason ?? "unknown reason"}). The current team stays active.`, "warning");
+      }
+      return result;
+    }
+  });
+  pi.registerCommand("kairo-team-reject", {
+    description: "Reject the pending recovery proposal",
+    handler: async (_args, ctx) => {
+      const cwd = ctx?.cwd ?? process.cwd();
+      const result = await rejectTeam({ cwd });
+      if (result?.outcome === "rejected") {
+        ctx?.ui?.notify?.("Recovery proposal rejected — the current team stays active.", "info");
+      } else {
+        ctx?.ui?.notify?.(`Could not reject the recovery proposal (${result?.reason ?? "unknown reason"}).`, "warning");
+      }
+      return result;
+    }
+  });
 
   return {
     registerRoutes,
