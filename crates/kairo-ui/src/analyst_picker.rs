@@ -517,18 +517,63 @@ impl ExclusionCause {
     /// worded as "unavailable".
     pub fn line(&self) -> String {
         let what = match self.cause.as_str() {
+            "quota_reserve" => {
+                if let Some(reason) = &self.reason {
+                    if let Some(caps) = regex_percent(reason) {
+                        format!("reserva baja ({caps}%)")
+                    } else {
+                        "reserva baja".to_string()
+                    }
+                } else {
+                    "reserva baja".to_string()
+                }
+            }
+            "rate_limited" => "ventana limitada".to_string(),
             "quota_exhausted" => "cuota agotada".to_string(),
-            "unavailable_verified" => "no disponible (verificado)".to_string(),
+            "unavailable_verified" => "no disponible".to_string(),
             "policy_excluded" => "excluido por política".to_string(),
-            "access_unknown" => "no verificado — comparación parcial".to_string(),
-            "unscored" => "sin benchmark (solo selección manual)".to_string(),
+            "access_unknown" => "sin verificar".to_string(),
+            "unscored" => "sin benchmark".to_string(),
             other => format!("excluido ({other})"),
         };
-        match &self.reason {
-            Some(reason) => format!("{}: {what} — {reason}", self.provider),
-            None => format!("{}: {what}", self.provider),
+        // Embed percent in `what` for quota_reserve; keep short for rate_limited /
+        // access_unknown timeouts; otherwise append reason when present.
+        let skip_reason = match self.cause.as_str() {
+            "quota_reserve" if what.contains('%') => true,
+            "rate_limited" => true,
+            "access_unknown" => self
+                .reason
+                .as_deref()
+                .is_some_and(|r| {
+                    let lower = r.to_ascii_lowercase();
+                    lower.contains("timeout") || lower.contains("timed out")
+                }),
+            _ => false,
+        };
+        match (&self.reason, skip_reason) {
+            (Some(reason), false) => format!("{}: {what} — {reason}", self.provider),
+            _ => format!("{}: {what}", self.provider),
         }
     }
+}
+
+fn regex_percent(reason: &str) -> Option<&str> {
+    let bytes = reason.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'%' {
+                return std::str::from_utf8(&bytes[start..i]).ok();
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
 }
 
 /// State machine for the modal: options + selection + an inline notice
@@ -1070,14 +1115,27 @@ mod tests {
         .expect("field present");
         let lines: Vec<String> = causes.iter().map(ExclusionCause::line).collect();
         assert_eq!(lines[0], "claude: cuota agotada");
-        assert_eq!(lines[1], "cursor: no disponible (verificado)");
+        assert_eq!(lines[1], "cursor: no disponible");
         assert_eq!(lines[2], "go: excluido por política");
-        assert_eq!(lines[3], "codex: no verificado — comparación parcial");
-        assert_eq!(lines[4], "zed: sin benchmark (solo selección manual)");
+        assert_eq!(lines[3], "codex: sin verificar");
+        assert_eq!(lines[4], "zed: sin benchmark");
         let unique: std::collections::HashSet<_> = lines.iter().map(|l| l.split(": ").nth(1).unwrap().to_string()).collect();
         assert_eq!(unique.len(), 5, "wording must be distinct per cause");
         assert!(!lines[3].contains("no disponible"));
         assert!(!lines[4].contains("no disponible"));
+    }
+
+    #[test]
+    fn quota_reserve_and_rate_limited_have_concise_spanish_distinct_from_exhausted() {
+        let causes = ExclusionCause::list_from_record(&record_with_causes(json!([
+            { "adapterId": "claude", "provider": "Claude", "cause": "quota_reserve", "models": 1, "reason": "Claude 5h window is limited (4% left)" },
+            { "adapterId": "go", "provider": "OpenCode Go", "cause": "rate_limited", "models": 1, "reason": "OpenCode Go monthly window is rate-limited" },
+            { "adapterId": "codex", "provider": "Codex", "cause": "quota_exhausted", "models": 1, "reason": null }
+        ])))
+        .expect("field present");
+        assert_eq!(causes[0].line(), "Claude: reserva baja (4%)");
+        assert_eq!(causes[1].line(), "OpenCode Go: ventana limitada");
+        assert_eq!(causes[2].line(), "Codex: cuota agotada");
     }
 
     #[test]
@@ -1127,7 +1185,7 @@ mod tests {
         assert!(picker
             .detail_source()
             .iter()
-            .any(|line| line.contains("no verificado")));
+            .any(|line| line.contains("sin verificar")));
         assert_eq!(AnalystPickerState::default().footer_text(), None);
     }
 

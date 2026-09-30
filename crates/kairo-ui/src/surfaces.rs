@@ -2977,8 +2977,8 @@ mod tests {
         render_analyst_picker(&mut buf, area, &picker);
         let detail = buffer_text(&buf);
         assert!(detail.contains("claude: cuota agotada"), "{detail}");
-        assert!(detail.contains("codex: no verificado — comparación parcial"), "{detail}");
-        assert!(detail.contains("zed: sin benchmark (solo selección manual)"), "{detail}");
+        assert!(detail.contains("codex: sin verificar"), "{detail}");
+        assert!(detail.contains("zed: sin benchmark"), "{detail}");
         assert!(!detail.contains("no disponible"), "unknowns must not read as unavailable: {detail}");
     }
 

@@ -46,7 +46,7 @@ test("qualifiesForMainView needs available + verified access + a qualified (suff
   }
 });
 
-test("flat list (T26): every verified available route, alphabetical by model · subscription · id", () => {
+test("flat list (T27): every verified available route, best→worst by catalog rank (unranked last)", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: null,
     models: [
@@ -56,7 +56,7 @@ test("flat list (T26): every verified available route, alphabetical by model · 
       entry({ candidateKey: "a::unverified", modelId: "unv", displayName: "Unverified", available: false, accessVerified: false, cause: "access_unknown" })
     ]
   });
-  assert.deepEqual(keys(curated.models), ["a::first", "a::noevidence", "a::second"]);
+  assert.deepEqual(keys(curated.models), ["a::first", "a::second", "a::noevidence"]);
   assert.deepEqual(curated.alternatives, []);
   assert.equal(curated.recommendedModel, null);
   assert.ok(curated.models.every((m) => m.listing === "main" && (m.recommendationTags ?? []).length === 0));
@@ -96,16 +96,16 @@ test("equivalent routes stay separate; same candidateKey collapses once", () => 
   assert.equal(dupKey.models.length, 1, "the same candidateKey twice is one row");
 });
 
-test("order is alphabetical by display name, then subscription, then candidateKey — input rank is ignored", () => {
+test("order is catalog rank best→worst, then candidateKey — display name is ignored (T27)", () => {
   const rows = [
-    entry({ candidateKey: "a::b", modelId: "b", displayName: "Bravo", rank: 2, identityKey: "b" }),
-    entry({ candidateKey: "a::a", modelId: "a", displayName: "Alpha", rank: 1, identityKey: "a" }),
+    entry({ candidateKey: "a::b", modelId: "b", displayName: "Bravo", rank: 1, identityKey: "b" }),
+    entry({ candidateKey: "a::a", modelId: "a", displayName: "Alpha", rank: 2, identityKey: "a" }),
     entry({ candidateKey: "a::c", modelId: "c", displayName: "Charlie", rank: 3, identityKey: "c" }),
     entry({ candidateKey: "a::z", modelId: "z", displayName: "Zulu", rank: 4, identityKey: "z" })
   ];
   for (const input of [rows, [...rows].reverse(), [rows[2], rows[0], rows[3], rows[1]]]) {
     const curated = curateAnalystCatalogForPicker({ recommendedModel: null, models: input });
-    assert.deepEqual(keys(curated.models), ["a::a", "a::b", "a::c", "a::z"]);
+    assert.deepEqual(keys(curated.models), ["a::b", "a::a", "a::c", "a::z"]);
     assert.deepEqual(curated.alternatives, []);
     assert.equal(curated.recommendedModel, null);
     for (const row of curated.models) {
@@ -139,7 +139,7 @@ test("project context never reorders the flat list", () => {
   const without = curateAnalystCatalogForPicker({ models });
   const withContext = curateAnalystCatalogForPicker({ models }, { projectContext: { stack: ["Rust"], risks: ["sin script de test"] } });
   assert.deepEqual(keys(withContext.models), keys(without.models));
-  assert.deepEqual(keys(withContext.models), ["a::a", "a::b"]);
+  assert.deepEqual(keys(withContext.models), ["a::b", "a::a"]);
   assert.equal(withContext.recommendedModel, null);
 });
 

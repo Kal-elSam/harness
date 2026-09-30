@@ -176,14 +176,20 @@ function remainingPercent(usageEntry) {
 /**
  * Machine-readable exclusion causes carried on an ineligible
  * checkCandidate() verdict and on Bootstrap Analyst catalog entries.
- * - quota_exhausted: a real usage window is at/under MIN_QUOTA_PERCENT or rate-limited (EXCLUDES)
+ * - quota_reserve: a real usage window is below MIN_QUOTA_PERCENT but still has
+ *   remaining headroom (>0%) — conserved reserve, not exhausted (EXCLUDES)
+ * - rate_limited: a real usage window reports rate-limited (EXCLUDES)
+ * - quota_exhausted: a real usage window is at 0% remaining (EXCLUDES)
  * - unavailable_verified: adapter missing/not available/not launchable, or a denied entitlement (EXCLUDES)
  * - policy_excluded: excluded by Kairo policy (OpenCode Zen, PAYG risk) — not an availability claim
  * - access_unknown: entitlement unverified — access is UNKNOWN, never reported as unavailable
  * - unscored: no benchmark — manual-only choice, never reported as unavailable
  * Never a billing cause: no cause here claims funds/credits/billing.
+ * Consumers MUST distinguish these causes in copy — do not always say "cuota agotada".
  */
 export const EXCLUSION_CAUSE = Object.freeze({
+  QUOTA_RESERVE: "quota_reserve",
+  RATE_LIMITED: "rate_limited",
   QUOTA_EXHAUSTED: "quota_exhausted",
   UNAVAILABLE_VERIFIED: "unavailable_verified",
   POLICY_EXCLUDED: "policy_excluded",
@@ -210,7 +216,10 @@ function limitingWindow(usageEntry) {
  * An ineligible verdict for a temporary window limit. `limit` is the
  * structured evidence (which provider, which window, when it resets) that
  * availability tracking and notices key on; `reason` stays human-readable
- * and never claims exhaustion.
+ * and never overclaims exhaustion when reserve remains.
+ *
+ * Cause is precise so consumers can say "reserva baja" / "ventana limitada" /
+ * "cuota agotada" — never collapse every window limit into "cuota agotada".
  */
 function windowLimited(provider, label, window, verb = "limited") {
   const name = window.name ?? window.label ?? null;
@@ -220,12 +229,14 @@ function windowLimited(provider, label, window, verb = "limited") {
     verb === "limited" && remainingPercent != null ? `${remainingPercent}% left` : null,
     resetsAt ? `resets ${resetsAt}` : null
   ].filter(Boolean).join(", ");
+  const cause = verb === "rate-limited"
+    ? EXCLUSION_CAUSE.RATE_LIMITED
+    : (remainingPercent != null && remainingPercent > 0
+      ? EXCLUSION_CAUSE.QUOTA_RESERVE
+      : EXCLUSION_CAUSE.QUOTA_EXHAUSTED);
   return {
     ok: false,
-    // Machine-readable exclusion cause (see EXCLUSION_CAUSE). Kept as
-    // "quota_exhausted" because that is the cause family consumers render
-    // ("cuota agotada"); `reason` stays the precise, non-overclaiming text.
-    cause: "quota_exhausted",
+    cause,
     reason: `${label} ${name ?? "usage"} window is ${verb}${details ? ` (${details})` : ""}`,
     limit: { provider, window: name, remainingPercent, resetsAt }
   };

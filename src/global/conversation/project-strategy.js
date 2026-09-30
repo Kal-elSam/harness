@@ -319,6 +319,7 @@ export function computeBootstrapAnalystCatalog({
       accessVerified: !unverified,
       selectable: providerOk,
       cause: !providerOk ? unavailableCause(model.adapterId) : unverified ? "access_unknown" : null,
+      causeReason: !providerOk ? (eligibility[model.adapterId]?.reason ?? null) : null,
       quota: quotaFor(providerCapacity, model.adapterId),
       rank: verdict?.rank ?? null,
       qualification: verdict?.qualification ?? QUALIFICATION.NONE,
@@ -348,6 +349,7 @@ export function computeBootstrapAnalystCatalog({
     // provider itself is unavailable right now, that verified cause wins so
     // the picker never hides why a whole provider is out.
     cause: !providerOk ? unavailableCause(model.adapterId) : unverified ? "access_unknown" : "unscored",
+    causeReason: !providerOk ? (eligibility[model.adapterId]?.reason ?? null) : null,
     quota: quotaFor(providerCapacity, model.adapterId),
     // No benchmark exists: no rank, no evaluation, nothing invented.
     // Availability alone makes the model selectable (manual view).

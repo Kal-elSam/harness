@@ -511,7 +511,7 @@ test("non-window ineligibility carries no window limit", () => {
   assert.deepEqual(healthy, { ok: true, reason: null });
 });
 
-test("checkCandidate carries a machine-readable exclusion cause: quota window -> quota_exhausted, unavailable/not launchable/missing adapter -> unavailable_verified, Zen -> policy_excluded", () => {
+test("checkCandidate carries a machine-readable exclusion cause: quota reserve / exhausted / unavailable / Zen policy", () => {
   const adapters = [
     { id: "codex", available: true, launchable: true },
     { id: "claude", available: false, reason: "claude not installed" },
@@ -519,7 +519,7 @@ test("checkCandidate carries a machine-readable exclusion cause: quota window ->
   ];
   const quota = checkCandidate("codex", { adapters, codexUsage: { primary: { remainingPercent: 2 } } });
   assert.equal(quota.ok, false);
-  assert.equal(quota.cause, "quota_exhausted");
+  assert.equal(quota.cause, "quota_reserve", "remaining > 0 under MIN is reserve, not exhausted");
   assert.equal(checkCandidate("claude", { adapters }).cause, "unavailable_verified");
   assert.equal(checkCandidate("cursor", { adapters }).cause, "unavailable_verified");
   assert.equal(checkCandidate("opencode-go", { adapters }).cause, "unavailable_verified");
@@ -529,10 +529,27 @@ test("checkCandidate carries a machine-readable exclusion cause: quota window ->
   assert.equal(ok.cause, undefined, "an eligible candidate carries no exclusion cause");
 });
 
-test("checkCandidate reports an opencode-go rate-limited window as quota_exhausted", () => {
+test("checkCandidate reports Claude 4% as quota_reserve, 0% as quota_exhausted, and Go rate-limited as rate_limited (T27)", () => {
+  const adapters = [
+    { id: "claude", available: true, launchable: true },
+    { id: "opencode", available: true, launchable: true }
+  ];
+  const reserve = checkCandidate("claude", { adapters, claudeUsage: { primary: { remainingPercent: 4 } } });
+  assert.equal(reserve.cause, "quota_reserve");
+  assert.match(reserve.reason, /4%/);
+  const exhausted = checkCandidate("claude", { adapters, claudeUsage: { primary: { remainingPercent: 0 } } });
+  assert.equal(exhausted.cause, "quota_exhausted");
+  const rateLimited = checkCandidate("opencode-go", {
+    adapters,
+    opencodeGoUsage: { windows: [{ name: "monthly", remainingPercent: 0, status: "rate-limited" }] }
+  });
+  assert.equal(rateLimited.cause, "rate_limited");
+});
+
+test("checkCandidate reports an opencode-go rate-limited window as rate_limited (T27)", () => {
   const result = checkCandidate("opencode-go", {
     adapters: [{ id: "opencode", available: true, launchable: true }],
     opencodeGoUsage: { windows: [{ name: "monthly", remainingPercent: 0, status: "rate-limited" }] }
   });
-  assert.equal(result.cause, "quota_exhausted");
+  assert.equal(result.cause, "rate_limited");
 });

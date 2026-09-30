@@ -15,7 +15,7 @@
  */
 
 import {
-  MAIN_VIEW_LIMIT, QUALIFICATION, recommendationQualifies
+  MAIN_VIEW_LIMIT, QUALIFICATION, compareAnalystRows, recommendationQualifies
 } from "../conversation/analyst-qualification.js";
 import { computeProjectProfile } from "../conversation/project-profile.js";
 import { createConversationService } from "../conversation/service.js";
@@ -78,20 +78,6 @@ function evidenceDetail(row) {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-/**
- * Flat picker order (T26): model name, then subscription, then route id.
- * Never rank, provider preference, or benchmark volume.
- */
-function comparePickerRows(a, b) {
-  const nameA = String(a?.displayName ?? a?.modelId ?? "");
-  const nameB = String(b?.displayName ?? b?.modelId ?? "");
-  const byName = nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
-  if (byName !== 0) return byName;
-  const bySub = subscriptionOf(a).localeCompare(subscriptionOf(b), undefined, { sensitivity: "base" });
-  if (bySub !== 0) return bySub;
-  return String(a?.candidateKey ?? "").localeCompare(String(b?.candidateKey ?? ""));
-}
-
 /** Model AND subscription, so the same model on two subscriptions stays distinguishable. */
 function decorate(model) {
   return {
@@ -135,11 +121,12 @@ export function summarizeProjectContext(profile) {
 }
 
 /**
- * Curate the analyst catalog for the ratatui picker as ONE flat list (T26).
+ * Curate the analyst catalog for the ratatui picker as ONE flat list (T27).
  * Every verified, currently available route appears — with many, few, or no
- * benchmarks. Alphabetical by model · subscription · candidateKey. Same-route
- * duplicates (identical candidateKey) collapse to one row; equivalent routes
- * of the same model on different subscriptions stay separate.
+ * benchmarks. Ordered best→worst by catalog `rank` via `compareAnalystRows`
+ * (unranked last; ties by candidateKey). Same-route duplicates (identical
+ * candidateKey) collapse to one row; equivalent routes of the same model on
+ * different subscriptions stay separate.
  *
  * - `models`: the full usable list (no artificial top-N).
  * - `alternatives`: always `[]` (no Other view).
@@ -164,7 +151,7 @@ export function curateAnalystCatalogForPicker(analystCatalog, { projectContext: 
     seen.add(key);
     usable.push(model);
   }
-  usable.sort(comparePickerRows);
+  usable.sort(compareAnalystRows);
   return {
     recommendedModel: null,
     models: usable.map(decorate),
@@ -172,19 +159,63 @@ export function curateAnalystCatalogForPicker(analystCatalog, { projectContext: 
   };
 }
 
-// Verifiable cause -> Spanish picker copy. Only causes backed by real
-// evidence; never funds/credits/billing. `access_unknown` is worded as an
-// explicit partial-comparison acknowledgement (never as unavailability).
-const CAUSE_ORDER = ["quota_exhausted", "unavailable_verified", "policy_excluded", "access_unknown", "unscored"];
+// Verifiable cause -> concise Spanish picker copy. Only causes backed by real
+// evidence; never funds/credits/billing. Consumers must not always say
+// "cuota agotada" — reserve / rate-limit / exhausted are distinct.
+const CAUSE_ORDER = [
+  "quota_reserve", "rate_limited", "quota_exhausted",
+  "unavailable_verified", "policy_excluded", "access_unknown", "unscored"
+];
 const CAUSE_COPY = Object.freeze({
+  quota_reserve: "reserva baja",
+  rate_limited: "ventana limitada",
   quota_exhausted: "cuota agotada",
-  unavailable_verified: "no disponible para análisis ahora",
+  unavailable_verified: "no disponible",
   policy_excluded: "excluido por política",
-  access_unknown: "no verificado — comparación parcial",
-  unscored: "sin benchmark (solo selección manual)"
+  access_unknown: "sin verificar",
+  unscored: "sin benchmark"
 });
 
 const REASON_COPY = Object.freeze({ stale: "evidencia vencida" });
+
+/**
+ * Concise Spanish "what" for an exclusion cause. For `quota_reserve`, embeds
+ * remaining percent from `reason` when present (`reserva baja (N%)`).
+ * Timeout on `access_unknown` stays "sin verificar" (never "cuota agotada").
+ *
+ * @param {string} cause
+ * @param {string|null|undefined} reason
+ * @returns {string}
+ */
+export function formatExclusionWhat(cause, reason = null) {
+  const base = CAUSE_COPY[cause] ?? `excluido (${cause})`;
+  if (cause === "quota_reserve") {
+    const match = String(reason ?? "").match(/(\d+)%/);
+    return match ? `reserva baja (${match[1]}%)` : base;
+  }
+  return base;
+}
+
+/**
+ * One picker detail line: `Provider: what` or `Provider: what — compactReason`
+ * only when the reason adds information beyond `what`.
+ *
+ * @param {string} provider
+ * @param {string} cause
+ * @param {string|null|undefined} reason
+ * @returns {string}
+ */
+export function formatExclusionLine(provider, cause, reason = null) {
+  const what = formatExclusionWhat(cause, reason);
+  const raw = reason == null || reason === "" ? null : String(reason);
+  if (!raw) return `${provider}: ${what}`;
+  if (cause === "quota_reserve" && /\(\d+%\)/.test(what)) return `${provider}: ${what}`;
+  if (cause === "rate_limited") return `${provider}: ${what}`;
+  if (cause === "access_unknown" && /timeout|timed\s*out/i.test(raw)) return `${provider}: ${what}`;
+  const compact = REASON_COPY[raw] ?? raw;
+  if (compact === what) return `${provider}: ${what}`;
+  return `${provider}: ${what} — ${compact}`;
+}
 
 /**
  * Machine-readable, per-subscription exclusion causes for every candidate that
@@ -225,7 +256,7 @@ export function buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifi
     // access: the model is out because of the provider, not just unverified.
     const providerCause = model?.cause && model.cause !== "access_unknown" && model.cause !== "unscored" ? model.cause : null;
     if (model?.available !== true) {
-      if (providerCause) add(model?.adapterId, providerCause, candidateKey);
+      if (providerCause) add(model?.adapterId, providerCause, candidateKey, model?.causeReason ?? model?.entitlementReason ?? null);
       else if (isAccessUnverified(model) || model?.cause === "access_unknown") add(model?.adapterId, "access_unknown", candidateKey, model?.entitlementReason ?? null);
       else add(model?.adapterId, "unavailable_verified", candidateKey);
     }

@@ -6,6 +6,7 @@ import {
   buildAnalystPickerNotice,
   buildAnalystExclusionCauses,
   curateAnalystCatalogForPicker,
+  formatExclusionLine,
   pickDefaultAnalyst,
   preflightProjectTeam,
   summarizeProjectStrategy
@@ -348,7 +349,7 @@ test("preflightProjectTeam returns the real analyst catalog without persisting o
   assert.deepEqual(result.candidates, { scoredAll: [], eligibility: {} });
 });
 
-test("curateAnalystCatalogForPicker (T26) is alphabetical; same display name keeps both routes; unscored stay in the flat list", () => {
+test("curateAnalystCatalogForPicker (T27) is best→worst by rank; same display name keeps both routes; unscored stay in the flat list", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: { candidateKey: "codex::astra" },
     models: [
@@ -359,13 +360,13 @@ test("curateAnalystCatalogForPicker (T26) is alphabetical; same display name kee
       catalogEntry({ candidateKey: "codex::blocked", adapterId: "codex", modelId: "old", displayName: "Old Codex", rank: 0, available: false })
     ]
   });
-  assert.deepEqual(curated.models.map((m) => m.displayName), ["Claude Opus 5.5", "Claude Opus 5.5", "GPT-6-Astra", "Mystery"]);
-  assert.deepEqual(curated.models.map((m) => m.candidateKey), ["cursor::opus-1", "cursor::opus-2", "codex::astra", "cursor::unscored"]);
+  assert.deepEqual(curated.models.map((m) => m.displayName), ["GPT-6-Astra", "Claude Opus 5.5", "Claude Opus 5.5", "Mystery"]);
+  assert.deepEqual(curated.models.map((m) => m.candidateKey), ["codex::astra", "cursor::opus-1", "cursor::opus-2", "cursor::unscored"]);
   assert.deepEqual(curated.alternatives, []);
   assert.equal(curated.recommendedModel, null);
 });
 
-test("curateAnalystCatalogForPicker alphabetical order ignores tags and rank (T26)", () => {
+test("curateAnalystCatalogForPicker rank order ignores tags and display name (T27)", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: null,
     models: [
@@ -373,7 +374,7 @@ test("curateAnalystCatalogForPicker alphabetical order ignores tags and rank (T2
       catalogEntry({ candidateKey: "codex::plain", modelId: "plain", displayName: "Plain", rank: 2 })
     ]
   });
-  assert.deepEqual(curated.models.map((m) => m.displayName), ["Plain", "Tagged"]);
+  assert.deepEqual(curated.models.map((m) => m.displayName), ["Tagged", "Plain"]);
   assert.equal(curated.recommendedModel, null);
 });
 
@@ -440,7 +441,7 @@ test("curateAnalystCatalogForPicker ranks eligible Claude above Codex by the cat
       })
     ]
   });
-  // Alphabetical by display name: Claude Opus before GPT.
+  // Rank order (best first): Claude Opus (1) before GPT (2).
   assert.equal(curated.models[0].adapterId, "claude");
   assert.equal(curated.models[1].adapterId, "codex");
   assert.equal(curated.recommendedModel, null);
@@ -694,6 +695,31 @@ test("buildAnalystExclusionCauses lists one machine-readable row per provider an
     { adapterId: "claude", provider: "Claude", cause: "access_unknown", models: 1, reason: "Access has not been verified" }
   ]);
   assert.ok(!causes.some((row) => row.adapterId === "cursor"), "an available unscored model is selectable, so it is no exclusion");
+});
+
+test("T27 exclusion copy: quota_reserve with 4% is reserva baja (4%), never cuota agotada", () => {
+  const reason = "Claude 5h window is limited (4% left)";
+  const raw = {
+    models: [
+      catalogEntry({
+        candidateKey: "claude::opus",
+        adapterId: "claude",
+        modelId: "opus",
+        displayName: "Claude Opus",
+        available: false,
+        cause: "quota_reserve",
+        causeReason: reason
+      })
+    ]
+  };
+  const causes = buildAnalystExclusionCauses(raw, curateAnalystCatalogForPicker(raw), null);
+  assert.equal(causes.length, 1);
+  assert.equal(causes[0].cause, "quota_reserve");
+  assert.equal(causes[0].reason, reason);
+  assert.equal(formatExclusionLine(causes[0].provider, causes[0].cause, causes[0].reason), "Claude: reserva baja (4%)");
+  assert.doesNotMatch(formatExclusionLine(causes[0].provider, causes[0].cause, causes[0].reason), /cuota agotada/);
+  assert.equal(formatExclusionLine("OpenCode Go", "rate_limited", "monthly window is rate-limited"), "OpenCode Go: ventana limitada");
+  assert.equal(formatExclusionLine("Cursor", "access_unknown", "cursor access probe timed out after 8000ms"), "Cursor: sin verificar");
 });
 
 test("preflightProjectTeam adds an additive exclusionCauses field next to the existing fields", async () => {

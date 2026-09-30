@@ -43,7 +43,7 @@ const unverified = (overrides = {}) => entry({
 });
 const keys = (rows) => rows.map((row) => row.candidateKey);
 
-test("flat list (T26): all verified available routes, alphabetical — no top-three / Other", () => {
+test("flat list (T27): all verified available routes, best→worst by catalog rank — no top-three / Other", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: null,
     models: [
@@ -55,13 +55,13 @@ test("flat list (T26): all verified available routes, alphabetical — no top-th
       entry({ adapterId: "cursor", modelId: "u2", displayName: "U2", rank: 6 })
     ]
   });
-  assert.deepEqual(keys(curated.models), ["codex::c1", "codex::c2", "claude::k1", "claude::k2", "cursor::u1", "cursor::u2"]);
+  assert.deepEqual(keys(curated.models), ["claude::k1", "cursor::u1", "codex::c2", "codex::c1", "claude::k2", "cursor::u2"]);
   assert.deepEqual(curated.alternatives, []);
   assert.equal(curated.recommendedModel, null);
   assert.ok(curated.models.every((row) => row.listing === "main"));
 });
 
-test("alphabetical order ignores brand preference and catalog rank (T26)", () => {
+test("rank order ignores brand preference; unranked rows follow ranked (T27)", () => {
   const curated = curateAnalystCatalogForPicker({
     models: [
       entry({ adapterId: "codex", modelId: "gpt", displayName: "GPT", rank: 1 }),
@@ -69,7 +69,7 @@ test("alphabetical order ignores brand preference and catalog rank (T26)", () =>
       entry({ adapterId: "claude", modelId: "opus", displayName: "Opus", rank: 3 })
     ]
   });
-  assert.deepEqual(keys(curated.models), ["cursor::composer", "codex::gpt", "claude::opus"]);
+  assert.deepEqual(keys(curated.models), ["codex::gpt", "cursor::composer", "claude::opus"]);
 });
 
 test("recommendedModel is always null even when the raw catalog points at a row", () => {
@@ -79,7 +79,7 @@ test("recommendedModel is always null even when the raw catalog points at a row"
   ];
   const curated = curateAnalystCatalogForPicker({ recommendedModel: { candidateKey: "codex::a" }, models: rows });
   assert.equal(curated.recommendedModel, null);
-  assert.deepEqual(keys(curated.models), ["codex::a", "claude::b"]);
+  assert.deepEqual(keys(curated.models), ["claude::b", "codex::a"]);
   const thin = curateAnalystCatalogForPicker({ models: [entry({ displayName: "Thin", qualification: "partial_evidence" })] });
   assert.equal(thin.recommendedModel, null);
   assert.equal(thin.models.length, 1);
@@ -94,7 +94,7 @@ test("thin, insufficient and unscored verified rows stay in the flat list", () =
       entry({ adapterId: "cursor", modelId: "unscored", displayName: "Unscored", ...noEvidence })
     ]
   });
-  assert.deepEqual(keys(curated.models), ["codex::good", "claude::partial", "codex::thin", "cursor::unscored"]);
+  assert.deepEqual(keys(curated.models), ["codex::good", "codex::thin", "claude::partial", "cursor::unscored"]);
   assert.deepEqual(curated.alternatives, []);
 });
 
