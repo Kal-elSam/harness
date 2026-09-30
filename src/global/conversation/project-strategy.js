@@ -143,10 +143,11 @@ function candidateKeyOf(model) {
  * invented for it.
  * @param {object[]} pool - every non-denied, ask-supported scored candidate
  * @param {object|null} registry
+ * @param {Set<string>|null} [rowKeys] - candidate keys that become catalog rows; the rest is evidence-only
  * @param {typeof BOOTSTRAP_ANALYST_PROFILE} [profile]
  * @returns {Map<string, {rank: number|null, qualification: string, identityKey: string, evaluation: object}>}
  */
-function evaluateAnalystPool(pool, registry, profile = BOOTSTRAP_ANALYST_PROFILE) {
+function evaluateAnalystPool(pool, registry, rowKeys = null, profile = BOOTSTRAP_ANALYST_PROFILE) {
   const results = new Map();
   if (!pool.length) return results;
   const { required, optional } = profile.capabilities;
@@ -172,8 +173,11 @@ function evaluateAnalystPool(pool, registry, profile = BOOTSTRAP_ANALYST_PROFILE
       missing: []
     };
     for (const route of groupOf.get(candidateKeyOf(entry.model))) {
+      // Evidence-only routes (verified-denied) are compared but are never rows:
+      // they take no rank, so the rows' ranks stay contiguous.
+      const isRow = !rowKeys || rowKeys.has(candidateKeyOf(route));
       results.set(candidateKeyOf(route), {
-        rank: nextRank++,
+        rank: isRow ? nextRank++ : null,
         qualification: entry.comparable ? QUALIFICATION.QUALIFIED : QUALIFICATION.PARTIAL,
         identityKey: modelIdentityKey(route), evaluation
       });
@@ -261,7 +265,9 @@ export function computeBootstrapAnalystCatalog({
   // just because access to another model was checked (percentiles are
   // pool-relative). `deniedScoredPool` is evidence-only.
   const deniedAskSupported = deniedScoredPool.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
-  const evaluations = evaluateAnalystPool([...askSupportedScoredAll, ...deniedAskSupported], registry);
+  const evaluations = evaluateAnalystPool(
+    [...askSupportedScoredAll, ...deniedAskSupported], registry, new Set(askSupportedScoredAll.map(candidateKeyOf))
+  );
   const efficientTeam = buildEfficientTeam(askSupportedRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
   const efficient = efficientTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
   const efficientKey = efficient ? candidateKeyOf(efficient) : null;

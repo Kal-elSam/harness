@@ -572,12 +572,12 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         .project_line
         .as_deref()
         .filter(|_| matches!(picker.phase, PickerPhase::Ready | PickerPhase::Verify))
-        .map(|line| wrap_notice(line, text_width, Style::default()).len() as u16)
+        .map(|line| crate::analyst_picker::wrap_words(line, text_width as usize).len() as u16)
         .unwrap_or(0);
     let plain_rows = |lines: &[String]| -> u16 {
         lines
             .iter()
-            .map(|l| wrap_notice(l, text_width, Style::default()).len() as u16)
+            .map(|l| crate::analyst_picker::wrap_words(l, text_width as usize).len() as u16)
             .sum::<u16>()
             .max(1)
     };
@@ -667,7 +667,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         .as_deref()
         .filter(|_| matches!(picker.phase, PickerPhase::Ready | PickerPhase::Verify))
     {
-        lines.extend(wrap_notice(
+        lines.extend(wrap_plain(
             project,
             inner.width,
             Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
@@ -675,7 +675,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     }
     if let Some(details) = &detail_lines {
         for text in details {
-            lines.extend(wrap_notice(
+            lines.extend(wrap_plain(
                 text,
                 inner.width,
                 Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
@@ -684,11 +684,14 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     } else if let Some(progress) = &verifying_lines {
         for (i, text) in progress.iter().enumerate() {
             let style = if i == 0 {
-                notice_style
+                Style::default()
+                    .fg(tone::ACCENT)
+                    .add_modifier(Modifier::BOLD)
+                    .bg(tone::SIDEBAR_BG)
             } else {
                 Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
             };
-            lines.extend(wrap_notice(text, inner.width, style));
+            lines.extend(wrap_plain(text, inner.width, style));
         }
     } else if let Some(verify) = &verify_lines {
         for (i, text) in verify.iter().enumerate() {
@@ -1658,6 +1661,15 @@ fn wrap_notice(notice: &str, inner_width: u16, style: Style) -> Vec<Line<'static
         }
     }
     out
+}
+
+/// Plain (non-warning) wrapped text for modal bodies: word-wrapped to `width`
+/// with no glyph prefix, every line padded so the background fills the row.
+fn wrap_plain(text: &str, width: u16, style: Style) -> Vec<Line<'static>> {
+    crate::analyst_picker::wrap_words(text, width as usize)
+        .into_iter()
+        .map(|line| padded_span(&line, width, style))
+        .collect()
 }
 
 /// One list/paragraph line padded to `width` so background fills the row.
@@ -3145,6 +3157,27 @@ mod tests {
         for needle in ["Recomendado para analizar este proyecto", "razonamiento por debajo de GPT", "Bravo", "lidera en código"] {
             assert!(hay.contains(needle), "missing {needle:?} in: {hay}");
         }
+    }
+
+    #[test]
+    fn analyst_picker_body_lines_are_plain_text_not_warnings() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut picker = verifying_picker_with_problems();
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Verifying access… 2/5 checks") && !hay.contains("⚠ Verifying access"), "progress is not a warning: {hay}");
+        assert!(!hay.contains("⚠ Now:") && !hay.contains("⚠ Closing this window"), "{hay}");
+        picker.toggle_details();
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        assert!(!buffer_text(&buf).contains("⚠ Claude · Claude B"), "details are plain lines");
+        let mut ready = picker_with_views();
+        ready.project_line = Some("Proyecto demo · Node.js".into());
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &ready);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Proyecto demo · Node.js") && !hay.contains("⚠ Proyecto"), "context is not a warning: {hay}");
     }
 
     #[test]

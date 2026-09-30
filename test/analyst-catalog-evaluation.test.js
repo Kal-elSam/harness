@@ -171,3 +171,10 @@ test("a verified-DENIED model stays in the comparison as evidence: denying it ne
   assert.equal(denied.models.some((m) => m.candidateKey === "claude::t-top"), false, "a denied route is never a row");
   assert.deepEqual(denied.exclusions.map((e) => [e.candidateKey, e.cause]), [["claude::t-top", "unavailable_verified"]]);
 });
+
+test("an evidence-only (denied) model that would rank FIRST takes no rank: the rows' ranks stay contiguous from 1", () => {
+  const aa = [full("strongest", 0.99, 0.7, 0.7), full("a", 0.9, 0.5, 0.5), full("b", 0.85, 0.45, 0.45)];
+  const catalog = catalogFor(aa, [["claude", "strongest"], ["codex", "a"], ["cursor", "b"]], { denied: ["claude::strongest"] });
+  assert.deepEqual(catalog.models.map((m) => [m.modelId, m.rank]), [["a", 1], ["b", 2]]);
+  assert.equal(catalog.recommendedModel.modelId, "a");
+});

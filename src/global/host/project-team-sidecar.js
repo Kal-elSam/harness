@@ -494,7 +494,7 @@ function toSerializable(value) {
  * preflight itself, so a serialization miss on profile never blocks the picker.
  *
  * @param {{cwd?: string, createConversationService?: typeof createConversationService}} args
- * @returns {Promise<{analystCatalog: {recommendedModel: object|null, models: object[], alternatives: object[]}, profile: object|null, candidates: object|null, projectRoot: string|null, unverifiedClaudeNotice: string|null, pickerNotice: string|null, exclusionCauses: Array<{adapterId: string, provider: string, cause: string, models: number, reason: string|null}>}>}
+ * @returns {Promise<{analystCatalog: {recommendedModel: object|null, models: object[], alternatives: object[]}, profile: object|null, projectContext: {name: string|null, stack: string[], architecture: string|null, risks: string[], confidence: string|null, line: string}|null, candidates: object|null, projectRoot: string|null, unverifiedClaudeNotice: string|null, pickerNotice: string|null, exclusionCauses: Array<{adapterId: string, provider: string, cause: string, models: number, reason: string|null}>}>}
  */
 export async function preflightProjectTeam({
   cwd,
