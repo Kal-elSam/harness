@@ -786,3 +786,81 @@ test("an unscored UNVERIFIED model on an ineligible provider is not selectable a
   assert.equal(both.selectable, false);
   assert.equal(both.cause, "quota_exhausted");
 });
+
+// ---- T23: one ranking across every subscription; the star is its first row ----
+
+import { compareAnalystRows, qualifiesForMainView } from "../src/global/conversation/analyst-qualification.js";
+
+function crossSubscriptionCatalog(models, entitlements = {}) {
+  const scoredAll = scoreAvailableModels(
+    ["codex", "claude", "cursor"].map((adapterId) => ({
+      adapterId, models: models.filter((m) => m.adapterId === adapterId).map((m) => ({ id: m.id }))
+    })),
+    models.map((m) => ({ slug: m.id, name: m.id, intelligenceIndex: m.reasoning, codingIndex: m.coding, mathIndex: null }))
+  ).map((model) => ({ ...model, entitlement: entitlements[`${model.adapterId}::${model.modelId}`] ?? null }));
+  return computeBootstrapAnalystCatalog({
+    scoredAll,
+    eligibility: { codex: { ok: true }, claude: { ok: true }, cursor: { ok: true } },
+    registry: createCapabilityRegistry(), providerCapacity: null
+  });
+}
+
+const rankedQualified = (catalog) => catalog.models.filter(qualifiesForMainView).sort(compareAnalystRows);
+
+test("T23: a better-scored Claude outranks Codex and owns the star; no provider gets a built-in head start", () => {
+  const catalog = crossSubscriptionCatalog([
+    { adapterId: "codex", id: "codex-mid", reasoning: 70, coding: 70 },
+    { adapterId: "codex", id: "codex-low", reasoning: 50, coding: 50 },
+    { adapterId: "claude", id: "claude-top", reasoning: 95, coding: 92 },
+    { adapterId: "cursor", id: "cursor-second", reasoning: 88, coding: 85 }
+  ]);
+  const ranked = rankedQualified(catalog);
+  assert.equal(ranked[0].modelId, "claude-top");
+  assert.equal(ranked[1].modelId, "cursor-second");
+  assert.equal(catalog.recommendedModel.candidateKey, ranked[0].candidateKey);
+});
+
+test("T23: a better-scored Cursor outranks Codex and owns the star", () => {
+  const catalog = crossSubscriptionCatalog([
+    { adapterId: "codex", id: "codex-mid", reasoning: 70, coding: 70 },
+    { adapterId: "claude", id: "claude-mid", reasoning: 75, coding: 74 },
+    { adapterId: "cursor", id: "cursor-top", reasoning: 96, coding: 97 }
+  ]);
+  assert.equal(catalog.recommendedModel.modelId, "cursor-top");
+  assert.equal(catalog.recommendedModel.adapterId, "cursor");
+});
+
+test("T23: and Codex still wins when it is genuinely best (ranking is evidence, not a provider preference)", () => {
+  const catalog = crossSubscriptionCatalog([
+    { adapterId: "codex", id: "codex-top", reasoning: 97, coding: 96 },
+    { adapterId: "claude", id: "claude-mid", reasoning: 75, coding: 74 },
+    { adapterId: "cursor", id: "cursor-mid", reasoning: 72, coding: 71 }
+  ]);
+  assert.equal(catalog.recommendedModel.modelId, "codex-top");
+});
+
+test("T23: the star is always the first row of the unified ranking and the only 'quality' tag (never the earlier Pareto pick)", () => {
+  let seed = 7;
+  const next = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return 30 + (seed % 70); };
+  for (let round = 0; round < 25; round += 1) {
+    const catalog = crossSubscriptionCatalog(
+      ["codex", "claude", "cursor"].flatMap((adapterId) => [0, 1, 2].map((n) => ({
+        adapterId, id: `${adapterId}-${n}`, reasoning: next(), coding: next()
+      })))
+    );
+    const ranked = rankedQualified(catalog);
+    if (ranked.length === 0) { assert.equal(catalog.recommendedModel, null); continue; }
+    assert.equal(catalog.recommendedModel.candidateKey, ranked[0].candidateKey, `round ${round}`);
+    const qualityTagged = catalog.models.filter((m) => m.recommendationTags.includes("quality"));
+    assert.deepEqual(qualityTagged.map((m) => m.candidateKey), [ranked[0].candidateKey]);
+  }
+});
+
+test("T23: an unverified or denied model can never be the star, whatever it scores", () => {
+  const catalog = crossSubscriptionCatalog([
+    { adapterId: "claude", id: "claude-unverified", reasoning: 99, coding: 99 },
+    { adapterId: "cursor", id: "cursor-denied", reasoning: 98, coding: 98 },
+    { adapterId: "codex", id: "codex-ok", reasoning: 60, coding: 60 }
+  ], { "claude::claude-unverified": ENTITLEMENT.UNVERIFIED, "cursor::cursor-denied": ENTITLEMENT.DENIED });
+  assert.equal(catalog.recommendedModel.modelId, "codex-ok");
+});

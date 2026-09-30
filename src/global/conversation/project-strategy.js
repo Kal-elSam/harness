@@ -23,6 +23,7 @@ import {
   ANALYST_FIT_DEFAULT_WEIGHTS, BOOTSTRAP_ANALYST_PROFILE, SCORED_ANALYST_CONFIDENCE_FLOOR, UNSCORED_ANALYST_CONFIDENCE
 } from "./bootstrap-analyst-profile.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
+import { compareAnalystRows, qualifiesForMainView } from "./analyst-qualification.js";
 
 // The Bootstrap Analyst investigates read-only via askProvider
 // (intelligence/quick-ask.js), which only actually supports these
@@ -244,11 +245,8 @@ export function computeBootstrapAnalystCatalog({
   const unverifiedFits = hasUnverified
     ? computeAnalystFits(askSupportedScoredAll, ensureRegistry(askSupportedScoredAll, registry))
     : fits;
-  const aiTeam = buildAiTeam(askSupportedRecommended, eligibility, registry, roleCapabilities);
   const efficientTeam = buildEfficientTeam(askSupportedRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
-  const quality = aiTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
   const efficient = efficientTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
-  const qualityKey = quality ? candidateKeyOf(quality) : null;
   const efficientKey = efficient ? candidateKeyOf(efficient) : null;
 
   // Exclusion causes (machine-readable). Verified-denied models are absent
@@ -283,8 +281,8 @@ export function computeBootstrapAnalystCatalog({
     const providerOk = eligibility[model.adapterId]?.ok === true;
     const recommendationTags = [];
     // An unverified-access model is never starred or tagged, whatever the
-    // caller's recommendation pool says.
-    if (!unverified && key === qualityKey) recommendationTags.push("quality");
+    // caller's recommendation pool says. The "quality" tag/star is assigned
+    // below, from the unified ranking (never the old Explorer/Pareto pick).
     if (!unverified && key === efficientKey) recommendationTags.push("efficient");
     const fitSource = unverified ? unverifiedFits : fits;
     return {
@@ -333,7 +331,13 @@ export function computeBootstrapAnalystCatalog({
   });
 
   const models = [...scoredEntries, ...unscoredEntries];
-  const recommendedModel = models.find((model) => model.recommendationTags.includes("quality")) ?? null;
+  // ONE ranking across every subscription (shared comparator, shared profile
+  // fit): the star is the FIRST row of that ranking among candidates that
+  // qualify for the main view (verified, available, real evidence, enough
+  // confidence) — never a per-provider pick and never a name/stack preference.
+  const star = models.filter(qualifiesForMainView).sort(compareAnalystRows)[0] ?? null;
+  if (star) star.recommendationTags = ["quality", ...star.recommendationTags.filter((tag) => tag !== "quality")];
+  const recommendedModel = star;
   return { recommendedModel, models, exclusions };
 }
 

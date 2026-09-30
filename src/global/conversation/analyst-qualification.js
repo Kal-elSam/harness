@@ -50,3 +50,24 @@ export function qualifiesForMainView(model) {
     && hasValidConfidence(model)
     && model.confidence >= MIN_RECOMMENDATION_CONFIDENCE;
 }
+
+/**
+ * The ONE analyst ranking order, shared by the catalog (star) and the picker
+ * (row order): measured fit first (unknown fit last), then evidence
+ * confidence, then display name. No provider, stack or name preference.
+ * @param {{fit?: number|null, confidence?: number, displayName?: string, modelId?: string}} a
+ * @param {{fit?: number|null, confidence?: number, displayName?: string, modelId?: string}} b
+ */
+export function compareAnalystRows(a, b) {
+  const fitA = isMeasured(a?.fit) ? a.fit : null;
+  const fitB = isMeasured(b?.fit) ? b.fit : null;
+  if (fitA === null || fitB === null) {
+    const unknown = Number(fitA === null) - Number(fitB === null);
+    if (unknown !== 0) return unknown;
+  } else if (fitA !== fitB) {
+    return fitB - fitA;
+  }
+  const byConfidence = numericOr(b?.confidence, 0) - numericOr(a?.confidence, 0);
+  if (byConfidence !== 0) return byConfidence;
+  return String(a?.displayName ?? a?.modelId ?? "").localeCompare(String(b?.displayName ?? b?.modelId ?? ""));
+}
