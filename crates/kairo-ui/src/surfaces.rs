@@ -512,9 +512,11 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
 
 /// The analyst picker (T2) — a centered modal over the work surface, the
 /// in-UI equivalent of the cockpit's ProjectOverlay SELECT_ANALYST screen.
-/// Two explicit views: the qualified main list and the manual alternatives
-/// (`m` toggles). Only usable rows are listed; the list scrolls (no cap) and
-/// the highlighted row is always painted.
+/// Two explicit views: the top-three main list and the remaining verified
+/// options (`m` toggles). Only verified, usable rows are listed; the list
+/// scrolls and the highlighted row is always painted. With pending access
+/// checks it first shows the concrete confirmation screen (`Verify`), then a
+/// waiting state (`Verifying`); both stay inside the modal.
 pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPickerState) {
     let width = area.width.saturating_sub(6).clamp(36, 72);
     let text_width = width.saturating_sub(2);
@@ -526,13 +528,10 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         .as_deref()
         .map(|e| wrap_notice(e, text_width, Style::default()).len() as u16)
         .unwrap_or(0);
-    let warning_lines: Option<Vec<String>> = picker.warning.as_ref().map(|option| {
-        vec![
-            format!("Verify access to {}?", option.display_name),
-            "Verifying calls the provider and may consume account.".to_string(),
-            "Enter = verify and analyze · Esc = back".to_string(),
-        ]
-    });
+    let verify_lines: Option<Vec<String>> = match (&picker.phase, &picker.plan) {
+        (PickerPhase::Verify, Some(plan)) => Some(plan.lines()),
+        _ => None,
+    };
     let empty_copy = if picker.view == PickerView::Main && !picker.alternatives.is_empty() {
         format!(
             "No qualified analyst — press m for manual alternatives ({}).",
@@ -550,7 +549,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         .sum::<u16>()
         .max(1);
     let content_rows = match &picker.phase {
-        _ if warning_lines.is_some() => warning_lines
+        _ if verify_lines.is_some() => verify_lines
             .as_ref()
             .map(|lines| {
                 lines
@@ -563,7 +562,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
             wrap_notice(&empty_copy, text_width, Style::default()).len() as u16
         }
         PickerPhase::Ready => list_rows,
-        PickerPhase::Loading => 1,
+        PickerPhase::Loading | PickerPhase::Verifying | PickerPhase::Verify => 1,
         PickerPhase::Error(_) => error_rows.max(1),
     };
     // Grow the popup to fit every wrapped notice row (not just one fixed
@@ -583,23 +582,22 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     }
 
     Clear.render(popup, buf);
-    let title = if warning_lines.is_some() {
-        " Confirm access check — Enter · Esc back ".to_string()
-    } else {
-        match &picker.phase {
-            PickerPhase::Ready => match picker.view {
-                PickerView::Main => format!(
-                    " Select analyst — qualified · m manual ({}) · Enter · Esc · q quit ",
-                    picker.alternatives.len()
-                ),
-                PickerView::Manual => format!(
-                    " Manual alternatives — m qualified ({}) · Enter · Esc · q quit ",
-                    picker.options.len()
-                ),
-            },
-            PickerPhase::Loading => " Select analyst — loading · Esc cancel · q/Ctrl+C quit ".to_string(),
-            PickerPhase::Error(_) => " Select analyst — r retry · Esc close · q/Ctrl+C quit ".to_string(),
-        }
+    let title = match &picker.phase {
+        PickerPhase::Ready => match picker.view {
+            PickerView::Main => format!(
+                " Select analyst — top {} · m others ({}) · Enter · Esc · q quit ",
+                picker.options.len().max(1),
+                picker.alternatives.len()
+            ),
+            PickerView::Manual => format!(
+                " Other verified analysts — m top ({}) · Enter · Esc · q quit ",
+                picker.options.len()
+            ),
+        },
+        PickerPhase::Loading => " Select analyst — loading · Esc cancel · q/Ctrl+C quit ".to_string(),
+        PickerPhase::Verify => " Verify access — Enter verify · Esc skip · q quit ".to_string(),
+        PickerPhase::Verifying => " Verifying access — Esc close · q/Ctrl+C quit ".to_string(),
+        PickerPhase::Error(_) => " Select analyst — r retry · Esc close · q/Ctrl+C quit ".to_string(),
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -626,8 +624,8 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         .map(|n| wrap_notice(n, inner.width, notice_style))
         .unwrap_or_default();
     let mut lines: Vec<Line> = Vec::new();
-    if let Some(warning) = &warning_lines {
-        for (i, text) in warning.iter().enumerate() {
+    if let Some(verify) = &verify_lines {
+        for (i, text) in verify.iter().enumerate() {
             let style = if i == 0 {
                 notice_style
             } else {
@@ -635,6 +633,12 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
             };
             lines.extend(wrap_notice(text, inner.width, style));
         }
+    } else if picker.phase == PickerPhase::Verifying {
+        lines.push(padded_span(
+            "Verifying access… real provider calls, this can take a minute.",
+            inner.width,
+            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        ));
     } else if let Some(error) = &error_text {
         let style = Style::default()
             .fg(tone::ERROR)
@@ -2097,7 +2101,7 @@ mod tests {
                 model_id: "gpt".into(),
                 display_name: "GPT".into(),
                 available: true,
-                access_verified: true,
+                subscription: "codex".into(),
                 recommended: false,
                 tags: vec![],
                 fit: None,
@@ -2118,7 +2122,7 @@ mod tests {
     }
 
     #[test]
-    fn analyst_picker_modal_renders_the_unverified_access_marker_on_those_rows_only() {
+    fn analyst_picker_modal_never_paints_an_unverified_access_row() {
         use crate::analyst_picker::AnalystPickerState;
         use serde_json::json;
 
@@ -2134,8 +2138,9 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Claude Unverified"), "{hay}");
-        assert_eq!(hay.matches("acceso sin verificar").count(), 1, "marker only on the unverified row: {hay}");
+        assert!(hay.contains("GPT Verified"), "{hay}");
+        assert!(!hay.contains("Claude Unverified"), "unknown access is reported separately, never listed: {hay}");
+        assert!(!hay.contains("acceso sin verificar"), "{hay}");
     }
 
     #[test]
@@ -2911,7 +2916,7 @@ mod tests {
         let hay = buffer_text(&buf);
         assert!(hay.contains("No ask-capable analyst"), "empty message stays honest: {hay}");
         assert!(hay.contains("claude: cuota agotada"), "{hay}");
-        assert!(hay.contains("codex: acceso sin verificar"), "{hay}");
+        assert!(hay.contains("codex: no verificado — comparación parcial"), "{hay}");
         assert!(hay.contains("zed: sin benchmark (solo selección manual)"), "{hay}");
         assert!(!hay.contains("no disponible"), "unknowns must not read as unavailable: {hay}");
     }
@@ -2921,7 +2926,7 @@ mod tests {
             "models": [
                 { "candidateKey": "codex::a", "adapterId": "codex", "modelId": "a", "displayName": "Qualified Alpha",
                   "available": true, "accessVerified": true, "fit": 0.8,
-                  "explanation": "razonamiento 0.80 · código 0.70 · confianza 0.90", "recommendationTags": [] }
+                  "explanation": "razonamiento excelente · código sólido · confianza alta", "recommendationTags": [] }
             ],
             "alternatives": [
                 { "candidateKey": "cursor::u", "adapterId": "cursor", "modelId": "u", "displayName": "Manual Unscored",
@@ -2941,24 +2946,27 @@ mod tests {
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
         assert!(hay.contains("Qualified Alpha"), "{hay}");
-        assert!(hay.contains("razonamiento 0.80"), "per-row explanation missing: {hay}");
+        assert!(hay.contains("razonamiento excelente"), "per-row plain-language explanation missing: {hay}");
+        assert!(!hay.contains("0.80"), "decimals never reach the modal: {hay}");
+        assert!(hay.contains("Qualified Alpha · codex"), "rows are identified by model AND subscription: {hay}");
         assert!(!hay.contains("Manual Unscored"), "manual rows stay out of the main view: {hay}");
-        assert!(hay.contains("m manual (2)"), "the manual view must be discoverable with its count: {hay}");
+        assert!(hay.contains("m others (1)"), "the other verified options must be discoverable with their count: {hay}");
     }
 
     #[test]
-    fn analyst_picker_manual_view_lists_only_alternatives_and_points_back() {
+    fn analyst_picker_manual_view_lists_only_verified_alternatives_and_points_back() {
         let area = Rect::new(0, 0, 100, 30);
         let mut picker = picker_with_views();
         picker.toggle_view();
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Manual alternatives"), "{hay}");
-        assert!(hay.contains("Manual Unscored") && hay.contains("Manual Unverified"), "{hay}");
+        assert!(hay.contains("Other verified analysts"), "{hay}");
+        assert!(hay.contains("Manual Unscored"), "{hay}");
+        assert!(!hay.contains("Manual Unverified"), "unverified rows never list: {hay}");
         assert!(!hay.contains("Qualified Alpha"), "{hay}");
         assert!(!hay.contains("recommended"), "manual rows are never starred: {hay}");
-        assert!(hay.contains("m qualified (1)"), "{hay}");
+        assert!(hay.contains("m top (1)"), "{hay}");
     }
 
     #[test]
@@ -2978,20 +2986,60 @@ mod tests {
         assert!(hay.contains("manual alternatives"), "{hay}");
     }
 
+    fn verify_picker() -> crate::analyst_picker::AnalystPickerState {
+        use crate::analyst_picker::{AnalystPickerState, PickerPhase, VerificationPlan};
+        let record = serde_json::json!({ "verificationPlan": {
+            "subscriptions": [
+                { "provider": "Claude", "granularity": "model", "checks": [
+                    { "label": "Claude A", "state": "pending" }, { "label": "Claude B", "state": "pending" },
+                    { "label": "Claude C", "state": "reusable" } ] },
+                { "provider": "Cursor", "granularity": "pool", "checks": [
+                    { "label": "Other models", "state": "pending" } ] }
+            ] } });
+        let mut picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({ "models": [] }));
+        picker.plan = VerificationPlan::from_record(&record);
+        picker.phase = PickerPhase::Verify;
+        picker
+    }
+
     #[test]
-    fn analyst_picker_warning_states_the_provider_call_and_needs_a_second_enter() {
+    fn analyst_picker_confirmation_screen_lists_accounts_checks_reuse_and_the_quota_warning() {
         let area = Rect::new(0, 0, 100, 30);
-        let mut picker = picker_with_views();
-        picker.toggle_view(); // Manual Unverified sorts first (known fit)
-        assert!(picker.confirm().is_none());
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &verify_picker());
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("Verify access before choosing an analyst"), "{hay}");
+        assert!(hay.contains("Claude: 2 model checks — Claude A, Claude B"), "{hay}");
+        assert!(hay.contains("Cursor: 1 pool check — Other models"), "deduplicated per pool: {hay}");
+        assert!(hay.contains("1 check already verified — reused, no call"), "{hay}");
+        assert!(hay.contains("Makes 3 real provider calls and may consume quota or account credit"), "{hay}");
+        assert!(hay.contains("Enter = verify") && hay.contains("Esc = skip"), "{hay}");
+        assert!(!hay.contains("No ask-capable analyst"), "the confirmation is not an empty catalog: {hay}");
+    }
+
+    #[test]
+    fn analyst_picker_verifying_state_stays_inside_the_modal() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut picker = verify_picker();
+        picker.begin_verifying();
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Manual Unverified"), "{hay}");
-        assert!(hay.contains("calls the provider"), "{hay}");
-        assert!(hay.contains("consume account"), "{hay}");
-        assert!(hay.contains("Enter"), "{hay}");
-        assert!(hay.contains("Esc"), "{hay}");
+        assert!(hay.contains("Verifying access"), "{hay}");
+        assert!(hay.contains("real provider calls"), "{hay}");
+        assert!(!hay.contains("Enter = verify"), "no second consent prompt while running: {hay}");
+    }
+
+    #[test]
+    fn analyst_picker_ready_state_acknowledges_unverified_subscriptions_so_the_comparison_is_never_presented_as_complete() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut picker = picker_with_views();
+        picker.not_verified = 2;
+        let mut buf = Buffer::empty(area);
+        render_analyst_picker(&mut buf, area, &picker);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("2 subscriptions not verified"), "{hay}");
+        assert!(hay.contains("partial"), "{hay}");
     }
 
     #[test]

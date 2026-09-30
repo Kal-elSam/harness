@@ -31,7 +31,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::{Frame, Terminal};
 use ratatui_textarea::{Input, Key, TextArea};
 
-use analyst_picker::{AnalystPickerState, ExclusionCause, PickerPhase};
+use analyst_picker::{outcome_lines, AnalystPickerState, ExclusionCause, PickerPhase, VerificationPlan};
 use bridge::BridgeClient;
 use chat::{sidebar_accepts_selection_keys, ChatState, Focus};
 use engine::{
@@ -189,6 +189,12 @@ struct ShellApp {
     preflight_pending: bool,
     /// The open analyst picker modal (T2) — `Some` while it owns key input.
     picker: Option<AnalystPickerState>,
+    /// T23: a consented verification already ran for the open picker, so the
+    /// rebuilt preflight opens the picker directly (never the confirmation
+    /// screen again).
+    verification_ran: bool,
+    /// Per-subscription outcome lines of that verification, shown in the footer.
+    verification_outcome_lines: Vec<String>,
     /// `team.revalidate` or `team.recovery.preview` was sent; a second one
     /// is refused with a notice instead of silently piling up.
     availability_action_pending: bool,
@@ -251,6 +257,8 @@ impl ShellApp {
             team_action_pending: false,
             preflight_pending: false,
             picker: None,
+            verification_ran: false,
+            verification_outcome_lines: Vec::new(),
             availability_action_pending: false,
             recovery_preview: None,
             recovery_action_pending: false,
@@ -441,6 +449,8 @@ impl ShellApp {
             self.ingest_team_record(&record);
         } else if kind == Some("preflight") {
             self.ingest_preflight_record(&record);
+        } else if kind == Some("verification") {
+            self.ingest_verification_record(&record);
         } else if kind == Some("availability") {
             self.ingest_availability_record(&record);
         } else if kind == Some("recovery") {
@@ -878,6 +888,8 @@ impl ShellApp {
             Ok(()) => {
                 self.preflight_pending = true;
                 self.view.notice = None;
+                self.verification_ran = false;
+                self.verification_outcome_lines.clear();
                 // The modal opens immediately in an explicit loading state.
                 self.picker = Some(AnalystPickerState::loading());
             }
@@ -924,8 +936,71 @@ impl ShellApp {
             Some(causes) if !causes.is_empty() => picker.causes = causes,
             _ => picker.notice = preflight_picker_notice(record),
         }
+        // T23: subscriptions whose access is not verified are acknowledged so
+        // a partial comparison is never presented as complete.
+        picker.not_verified = record
+            .get("unverifiedSubscriptions")
+            .and_then(|v| v.as_array())
+            .map(Vec::len)
+            .unwrap_or(0);
+        picker.outcome_lines = std::mem::take(&mut self.verification_outcome_lines);
+        // Pending checks (and no verification yet for this picker): show the
+        // concrete confirmation screen first. Nothing has been sent.
+        if !self.verification_ran {
+            if let Some(plan) = VerificationPlan::from_record(record).filter(|p| p.pending > 0) {
+                picker.plan = Some(plan);
+                picker.phase = PickerPhase::Verify;
+            }
+        }
         self.view.notice = None;
         self.picker = Some(picker);
+    }
+
+    /// Enter on the confirmation screen: send the consented verification and
+    /// wait inside the modal for the outcome + the rebuilt catalog.
+    fn send_verify_access(&mut self) {
+        let Some(bridge) = self.bridge.as_mut() else {
+            if let Some(picker) = self.picker.as_mut() {
+                *picker = AnalystPickerState::failed("No sidecar connection to verify access.");
+            }
+            return;
+        };
+        match bridge.verify_project_access() {
+            Ok(()) => {
+                self.preflight_pending = true;
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.begin_verifying();
+                }
+            }
+            Err(err) => {
+                self.picker = Some(AnalystPickerState::failed(err.to_string()));
+            }
+        }
+    }
+
+    /// Sidecar `verification` record (answer to `project.verify_access`). A
+    /// run that could not start, or failed, lands inside the modal as an error
+    /// (retry re-fetches the catalog); a run that happened keeps the modal
+    /// waiting for the rebuilt `preflight` record and remembers its outcomes.
+    fn ingest_verification_record(&mut self, record: &serde_json::Value) {
+        let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !ok {
+            // No rebuilt preflight follows a run that did not happen.
+            self.preflight_pending = false;
+        }
+        if self.picker.is_none() {
+            return;
+        }
+        if !ok {
+            let reason = record
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Access verification did not run.");
+            self.picker = Some(AnalystPickerState::failed(reason));
+            return;
+        }
+        self.verification_ran = true;
+        self.verification_outcome_lines = outcome_lines(&record["outcomes"]);
     }
 
     /// Enter on an available picker row: send `project.analyze` with the
@@ -2804,14 +2879,17 @@ fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
         KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             return true;
         }
-        KeyCode::Char('m') if picker.phase == PickerPhase::Ready && picker.warning.is_none() => {
+        KeyCode::Char('m') if picker.phase == PickerPhase::Ready => {
             picker.toggle_view();
         }
         KeyCode::Esc => {
-            // Esc on the provider-call warning goes back to the list; a
-            // second Esc closes the modal.
-            if !picker.cancel_warning() {
+            // Esc on the confirmation screen skips verification (nothing is
+            // sent): the picker opens with the already-verified options only.
+            // Anywhere else it closes the modal.
+            if !picker.skip_verification() {
                 app.picker = None;
+                app.verification_ran = false;
+                app.verification_outcome_lines.clear();
                 app.view.notice = Some("Analyst picker cancelled.".into());
             }
         }
@@ -2822,7 +2900,10 @@ fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
             app.request_analyst_preflight();
         }
         KeyCode::Enter => {
-            if let Some(option) = picker.confirm() {
+            if picker.phase == PickerPhase::Verify {
+                // The human consented on the concrete confirmation screen.
+                app.send_verify_access();
+            } else if let Some(option) = picker.confirm() {
                 let payload = AnalystPickerState::analyst_payload(&option);
                 app.picker = None;
                 app.send_analyze_with_analyst(payload);
@@ -3128,46 +3209,163 @@ mod tests {
         );
     }
 
-    fn manual_picker_app() -> ShellApp {
+    fn verified_row(key: &str, name: &str, adapter: &str, extra: serde_json::Value) -> serde_json::Value {
+        let mut row = json!({
+            "candidateKey": key, "adapterId": adapter, "modelId": key, "displayName": name,
+            "available": true, "accessVerified": true, "subscription": adapter,
+            "recommendationTags": [], "fit": 0.5
+        });
+        if let (Some(o), Some(e)) = (row.as_object_mut(), extra.as_object()) {
+            for (k, v) in e {
+                o.insert(k.clone(), v.clone());
+            }
+        }
+        row
+    }
+
+    fn pending_plan() -> serde_json::Value {
+        json!({
+            "pendingCount": 3, "reusableCount": 1, "mayConsumeQuota": true,
+            "subscriptions": [
+                { "adapterId": "claude", "provider": "Claude", "granularity": "model", "checks": [
+                    { "label": "Claude A", "state": "pending" }, { "label": "Claude B", "state": "pending" },
+                    { "label": "Claude C", "state": "reusable" } ] },
+                { "adapterId": "cursor", "provider": "Cursor", "granularity": "pool", "checks": [
+                    { "label": "Other models", "state": "pending" } ] }
+            ]
+        })
+    }
+
+    fn preflight_with_plan(models: serde_json::Value, plan: serde_json::Value) -> serde_json::Value {
+        json!({
+            "type": "preflight", "ok": true,
+            "analystCatalog": { "recommendedModel": null, "models": models },
+            "verificationPlan": plan,
+            "unverifiedSubscriptions": [
+                { "adapterId": "claude", "provider": "Claude", "models": 2, "reason": null },
+                { "adapterId": "cursor", "provider": "Cursor", "models": 1, "reason": null }
+            ]
+        })
+    }
+
+    fn enter() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn a_preflight_with_pending_checks_opens_the_confirmation_screen_and_sends_nothing() {
+        let (mut app, path) = recorder_app("ask");
+        app.request_analyst_preflight();
+        app.ingest_preflight_record(&preflight_with_plan(json!([verified_row("codex::a", "A", "codex", json!({}))]), pending_plan()));
+        let picker = app.picker.as_ref().expect("modal open");
+        assert_eq!(picker.phase, PickerPhase::Verify);
+        assert_eq!(picker.plan.as_ref().unwrap().pending, 3);
+        // Only the preflight request was written; no verify_access.
+        let ops = recorded_ops(&path, 1);
+        assert!(ops.contains("project.preflight") && !ops.contains("verify_access"), "{ops}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn enter_on_the_confirmation_screen_sends_the_consented_verify_op_and_waits_inside_the_modal() {
+        let (mut app, path) = recorder_app("ask");
+        app.request_analyst_preflight();
+        app.ingest_preflight_record(&preflight_with_plan(json!([]), pending_plan()));
+        handle_picker_key(&mut app, enter());
+        assert_eq!(app.picker.as_ref().unwrap().phase, PickerPhase::Verifying);
+        assert!(app.preflight_pending);
+        let ops = recorded_ops(&path, 2);
+        assert!(ops.contains("\"op\":\"project.verify_access\"") && ops.contains("\"confirmed\":true"), "{ops}");
+        // Enter again while verifying neither re-sends nor closes.
+        handle_picker_key(&mut app, enter());
+        assert_eq!(recorded_ops(&path, 2).lines().count(), 2);
+        assert!(app.picker.is_some());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn esc_on_the_confirmation_screen_sends_nothing_and_opens_the_picker_with_the_verified_options_and_the_not_verified_line() {
+        let (mut app, path) = recorder_app("ask");
+        app.request_analyst_preflight();
+        let row = verified_row("codex::a", "A", "codex", json!({ "listing": "main" }));
+        app.ingest_preflight_record(&preflight_with_plan(json!([row]), pending_plan()));
+        handle_picker_key(&mut app, esc());
+        let picker = app.picker.as_ref().expect("Esc on the confirmation only skips it");
+        assert_eq!(picker.phase, PickerPhase::Ready);
+        assert_eq!(picker.options.len(), 1, "already-verified options only");
+        let footer = picker.footer_text().unwrap();
+        assert!(footer.starts_with("2 subscriptions not verified"), "{footer}");
+        let ops = recorded_ops(&path, 1);
+        assert!(!ops.contains("verify_access"), "cancel sends no verification: {ops}");
+        assert_eq!(ops.lines().count(), 1);
+        // A second Esc closes the modal.
+        handle_picker_key(&mut app, esc());
+        assert!(app.picker.is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_verification_failure_lands_inside_the_modal_and_retry_is_possible() {
+        let (mut app, path) = recorder_app("ask");
+        app.request_analyst_preflight();
+        app.ingest_preflight_record(&preflight_with_plan(json!([]), pending_plan()));
+        handle_picker_key(&mut app, enter());
+        app.ingest_verification_record(&json!({ "type": "verification", "ok": false, "status": "failed", "message": "Access verification failed: disk exploded" }));
+        assert!(!app.preflight_pending, "no rebuilt preflight follows a failed run");
+        assert_eq!(
+            app.picker.as_ref().unwrap().phase,
+            PickerPhase::Error("Access verification failed: disk exploded".into())
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_verification_failure_after_the_modal_was_closed_still_clears_the_pending_flag() {
         let mut app = ShellApp::new(None);
-        app.picker = Some(AnalystPickerState::from_analyst_catalog(&json!({
-            "models": [],
-            "alternatives": [{
-                "candidateKey": "claude::unv", "adapterId": "claude", "modelId": "unv",
-                "displayName": "Unv", "available": false, "selectable": true,
-                "accessVerified": false, "fit": null, "recommendationTags": []
-            }]
-        })));
-        app
+        app.preflight_pending = true;
+        app.ingest_verification_record(&json!({ "type": "verification", "ok": false, "status": "failed", "message": "x" }));
+        assert!(!app.preflight_pending);
+        assert!(app.picker.is_none());
     }
 
     #[test]
-    fn esc_on_the_access_warning_goes_back_to_the_list_then_a_second_esc_closes() {
-        let mut app = manual_picker_app();
-        handle_picker_key(&mut app, press('m'));
-        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(app.picker.as_ref().unwrap().warning.is_some());
-        handle_picker_key(&mut app, esc());
-        assert!(app.picker.is_some(), "first Esc only dismisses the warning");
-        assert!(app.picker.as_ref().unwrap().warning.is_none());
-        assert!(!app.team_action_pending);
-        handle_picker_key(&mut app, esc());
-        assert!(app.picker.is_none(), "second Esc closes the modal");
+    fn after_a_successful_verification_the_rebuilt_preflight_opens_the_picker_with_outcomes_and_never_asks_again() {
+        let (mut app, path) = recorder_app("ask");
+        app.request_analyst_preflight();
+        app.ingest_preflight_record(&preflight_with_plan(json!([]), pending_plan()));
+        handle_picker_key(&mut app, enter());
+        app.ingest_verification_record(&json!({
+            "type": "verification", "ok": true, "status": "verified",
+            "outcomes": [{ "provider": "Cursor", "counts": { "allowed": 0, "denied": 0, "unverified": 1 },
+                "results": [{ "status": "unverified", "reason": "login required" }] }]
+        }));
+        assert_eq!(app.picker.as_ref().unwrap().phase, PickerPhase::Verifying, "still waiting for the rebuilt catalog");
+        // The rebuilt preflight still lists a pending check (the probe could not decide): no second prompt.
+        app.ingest_preflight_record(&preflight_with_plan(
+            json!([verified_row("codex::a", "A", "codex", json!({ "listing": "main" }))]),
+            pending_plan(),
+        ));
+        let picker = app.picker.as_ref().unwrap();
+        assert_eq!(picker.phase, PickerPhase::Ready);
+        assert_eq!(picker.options.len(), 1);
+        let footer = picker.footer_text().unwrap();
+        assert!(footer.contains("Cursor: 0 allowed · 0 denied · 1 unverified — login required"), "{footer}");
+        assert!(footer.contains("2 subscriptions not verified"), "partial comparison stays acknowledged: {footer}");
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn m_does_not_toggle_the_view_while_loading_or_while_the_warning_is_up() {
+    fn m_toggles_only_when_ready_not_while_loading_verifying_or_confirming() {
         let mut loading = ShellApp::new(None);
         loading.picker = Some(AnalystPickerState::loading());
         handle_picker_key(&mut loading, press('m'));
         assert_eq!(loading.picker.as_ref().unwrap().view, crate::analyst_picker::PickerView::Main);
 
-        let mut app = manual_picker_app();
+        let mut app = ShellApp::new(None);
+        app.picker = Some(AnalystPickerState::loading());
+        app.ingest_preflight_record(&preflight_with_plan(json!([]), pending_plan()));
         handle_picker_key(&mut app, press('m'));
-        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        handle_picker_key(&mut app, press('m'));
-        assert_eq!(app.picker.as_ref().unwrap().view, crate::analyst_picker::PickerView::Manual);
-        assert!(app.picker.as_ref().unwrap().warning.is_some(), "m is ignored on the warning");
+        assert_eq!(app.picker.as_ref().unwrap().view, crate::analyst_picker::PickerView::Main, "m is ignored on the confirmation screen");
     }
 
     #[test]
@@ -3511,13 +3709,14 @@ mod tests {
 
     /// Replays the frozen wire fixture produced by the real Node sidecar
     /// (test/analyst-preflight-analyze-wire.test.js). Host-side hops run for
-    /// real: `request_analyst_preflight` and the picker Enter path write the
-    /// request lines through `BridgeClient::send_op` into a recorder process,
-    /// and the sidecar records enter through `ingest_record`. The Node
-    /// sidecar itself is NOT running here (its output is the fixture).
+    /// real: `request_analyst_preflight` and the confirmation Enter write the
+    /// request lines through `BridgeClient::send_op` into a recorder process
+    /// (asserted equal to the fixture requests), and the sidecar records enter
+    /// through `ingest_record`. The Node sidecar itself is NOT running here
+    /// (its output is the fixture).
     #[test]
-    fn preflight_then_analyze_wire_fixture_roundtrips_through_the_host() {
-        let fixture = include_str!("../fixtures/preflight-analyze-unverified.ndjson");
+    fn preflight_verify_wire_fixture_roundtrips_through_the_host() {
+        let fixture = include_str!("../fixtures/verify-then-pick.ndjson");
         let lines: Vec<serde_json::Value> = fixture
             .lines()
             .map(|l| serde_json::from_str(l).expect("fixture line is JSON"))
@@ -3537,50 +3736,36 @@ mod tests {
         app.request_analyst_preflight();
         assert!(app.picker.is_some() && app.preflight_pending);
 
-        let preflight = records.iter().find(|r| r["type"] == "preflight").expect("preflight record");
-        app.ingest_record(preflight.clone());
+        let preflights: Vec<&serde_json::Value> = records.iter().filter(|r| r["type"] == "preflight").collect();
+        assert_eq!(preflights.len(), 2, "before and after verification");
+        app.ingest_record(preflights[0].clone());
         assert!(!app.preflight_pending);
-        let picker = app.picker.as_ref().expect("modal open with the real catalog");
-        assert!(
-            picker.options.iter().all(|o| o.access_verified),
-            "the main view holds only verified, qualified rows"
-        );
-        assert!(!handle_picker_key(&mut app, press('m')), "m opens the manual alternatives");
-        let picker = app.picker.as_ref().unwrap();
-        assert_eq!(picker.view, crate::analyst_picker::PickerView::Manual);
-        let unverified = picker
-            .alternatives
-            .iter()
-            .position(|o| !o.access_verified)
-            .expect("unverified-access row is listed in the manual view");
-        assert!(picker.alternatives[unverified].row_label().contains("acceso sin verificar"));
-        assert!(!picker.alternatives[unverified].recommended);
+        let picker = app.picker.as_ref().expect("modal open");
+        assert_eq!(picker.phase, PickerPhase::Verify, "the real plan opens the confirmation screen");
+        assert_eq!(picker.plan.as_ref().unwrap().pending, 1);
+        assert!(picker.plan.as_ref().unwrap().lines().iter().any(|l| l.starts_with("Cursor: 1 pool check")));
+        assert_eq!(picker.options.len(), 2, "only verified rows before verification");
 
-        for _ in 0..unverified {
-            assert!(!handle_picker_key(&mut app, press('j')));
-        }
-        // First Enter: warning only. Nothing is sent, the modal stays open.
-        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(app.picker.as_ref().is_some_and(|p| p.warning.is_some()));
-        assert!(!app.team_action_pending, "no analyze/probe request before the second confirmation");
-        // Second Enter: the confirmed request goes out.
-        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(app.picker.is_none() && app.team_action_pending);
-
+        handle_picker_key(&mut app, enter());
+        assert_eq!(app.picker.as_ref().unwrap().phase, PickerPhase::Verifying);
         let recorded: Vec<serde_json::Value> = recorded_ops(&path, 2)
             .lines()
             .map(|l| serde_json::from_str(l).expect("host wrote JSON"))
             .collect();
         assert_eq!(recorded, requests, "the host writes exactly the requests the sidecar was given");
 
-        for record in records.iter().filter(|r| r["type"] != "preflight") {
+        for record in records.iter().filter(|r| r["type"] == "verification") {
             app.ingest_record(record.clone());
         }
-        assert!(!app.team_action_pending);
-        assert!(app.view.team_state.is_none(), "no team state is invented");
-        let team = records.iter().find(|r| r["type"] == "team").unwrap();
-        assert_eq!(app.view.notice.as_deref(), team["reason"].as_str());
-        assert!(app.view.notice.as_deref().unwrap().contains("could not be verified"));
+        app.ingest_record(preflights[1].clone());
+        let picker = app.picker.as_ref().expect("modal open");
+        assert_eq!(picker.phase, PickerPhase::Ready);
+        assert_eq!(picker.options.len(), 3, "the verified Cursor row joined after verification");
+        assert!(picker.options.iter().all(|o| o.available));
+        assert_eq!(picker.options[0].candidate_key, "claude::claude-a");
+        assert!(picker.options[0].recommended, "star = first ranked row");
+        assert_eq!(picker.not_verified, 0);
+        assert!(picker.footer_text().unwrap().contains("Cursor: 1 allowed"));
         let _ = std::fs::remove_file(path);
     }
 

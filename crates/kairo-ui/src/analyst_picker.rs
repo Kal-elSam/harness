@@ -5,11 +5,12 @@
 //! `project.preflight` sidecar op and its real `analystCatalog`.
 //!
 //! Never invents a model absent from the real catalog. The modal lists
-//! **usable** models — unavailable adapters (rate-limited Go, etc.) stay out
-//! of the picker entirely. Models whose access is UNVERIFIED (catalog
-//! `accessVerified: false`, `selectable: true`) are listed after the verified
-//! ones with an "acceso sin verificar" marker; they are never starred and the
-//! sidecar re-verifies access when one is confirmed (T20).
+//! **verified, available** models only (T23): unverified, denied, exhausted and
+//! unavailable candidates never appear as rows; the sidecar reports them
+//! separately by subscription. When the preflight carries pending access
+//! checks the modal first shows a concrete confirmation screen (`Verify`):
+//! Enter runs the consented verification (`project.verify_access`), Esc skips
+//! it and opens the picker on already-verified options only.
 
 use std::cell::Cell;
 
@@ -22,56 +23,40 @@ pub struct AnalystOption {
     pub adapter_id: String,
     pub model_id: String,
     pub display_name: String,
+    /// The subscription the model runs through (sidecar `subscription`, else
+    /// the adapter id) — rows are identified by model AND subscription.
+    pub subscription: String,
     pub available: bool,
-    /// `false` when the catalog says access is unverified (selectable, never
-    /// starred, revalidated by the sidecar on confirm). Absent = verified.
-    pub access_verified: bool,
     pub recommended: bool,
     pub tags: Vec<String>,
     /// Analyst fit 0..1 when the catalog has real evidence; `None` = unknown
-    /// (absent or `null`), never an invented 0. A measured 0 stays `Some(0.0)`.
+    /// (absent or `null`), never an invented 0. Kept for ordering only — the
+    /// modal shows the plain-language `explanation`, never the number.
     pub fit: Option<f64>,
-    /// Sidecar's short per-row explanation (real evidence only), if any.
+    /// Sidecar's short plain-language per-row explanation, if any.
     pub explanation: Option<String>,
 }
 
-/// Marker for rows whose access is not verified yet.
-pub const ACCESS_UNVERIFIED_MARKER: &str = "acceso sin verificar";
-
 impl AnalystOption {
-    /// `<displayName>    <adapterId>` — model-first, never provider-first.
-    /// Recommended gets an honest suffix; unavailable models are never listed.
+    /// `<displayName> · <subscription>` — model AND subscription, so the same
+    /// model through two subscriptions is distinguishable. Recommended gets an
+    /// honest suffix.
     pub fn row_label(&self) -> String {
-        let mut label = format!("{}    {}", self.display_name, self.adapter_id);
+        let mut label = format!("{} · {}", self.display_name, self.subscription);
         if self.recommended {
             label.push_str("  ★ recommended");
-        }
-        if !self.access_verified {
-            label.push_str("  · ");
-            label.push_str(ACCESS_UNVERIFIED_MARKER);
         }
         label
     }
 
-    /// Short secondary line — the real tag(s) and the sidecar's own
-    /// explanation only, never invented.
+    /// Secondary line: the sidecar's own plain-language explanation only,
+    /// never invented and never a number.
     pub fn description(&self) -> String {
-        let mut parts: Vec<String> = self
-            .tags
-            .iter()
-            .map(|t| match t.as_str() {
-                "quality" => "Quality fit".to_string(),
-                "efficient" => "Efficient fit".to_string(),
-                other => other.to_string(),
-            })
-            .collect();
-        if let Some(explanation) = self.explanation.as_deref().filter(|e| !e.is_empty()) {
-            parts.push(explanation.to_string());
-        }
-        if !self.access_verified {
-            parts.push("se verifica al confirmar".to_string());
-        }
-        parts.join(" · ")
+        self.explanation
+            .as_deref()
+            .filter(|e| !e.is_empty())
+            .unwrap_or("")
+            .to_string()
     }
 
     /// Lines this option takes in the list (label + optional description).
@@ -94,14 +79,187 @@ pub enum PickerView {
 }
 
 /// Which body the modal shows: the modal opens in `Loading` the moment the
-/// preflight request is sent, then becomes `Ready` (catalog arrived) or
-/// `Error` (the request failed) — the failure stays inside the modal.
+/// preflight request is sent, then becomes `Verify` (pending access checks:
+/// concrete confirmation screen), `Ready` (catalog arrived) or `Error` (the
+/// request failed) — loading, verification and failure all stay inside the
+/// modal. `Verifying` is the wait for the consented verification to finish.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PickerPhase {
     #[default]
     Ready,
     Loading,
+    Verify,
+    Verifying,
     Error(String),
+}
+
+/// One check of the verification plan (Claude: a model; Cursor: a pool).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanCheck {
+    pub label: String,
+    pub pending: bool,
+}
+
+/// One subscription's share of the plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanSubscription {
+    pub provider: String,
+    /// `"model"` (Claude) or `"pool"` (Cursor).
+    pub granularity: String,
+    pub checks: Vec<PlanCheck>,
+}
+
+impl PlanSubscription {
+    pub fn pending(&self) -> usize {
+        self.checks.iter().filter(|c| c.pending).count()
+    }
+}
+
+/// The concrete, never-executed verification plan from the preflight record's
+/// additive `verificationPlan`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerificationPlan {
+    pub pending: usize,
+    pub reusable: usize,
+    pub subscriptions: Vec<PlanSubscription>,
+}
+
+impl VerificationPlan {
+    /// Tolerant parse: `None` when the field is absent/malformed (older
+    /// sidecar), so the picker opens as before.
+    pub fn from_record(record: &Value) -> Option<Self> {
+        let plan = record.get("verificationPlan")?;
+        let subs = plan.get("subscriptions")?.as_array()?;
+        let subscriptions: Vec<PlanSubscription> = subs
+            .iter()
+            .filter_map(|sub| {
+                let provider = sub
+                    .get("provider")
+                    .or_else(|| sub.get("adapterId"))
+                    .and_then(|v| v.as_str())?
+                    .to_string();
+                let granularity = sub
+                    .get("granularity")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("model")
+                    .to_string();
+                let checks = sub
+                    .get("checks")
+                    .and_then(|v| v.as_array())
+                    .map(|checks| {
+                        checks
+                            .iter()
+                            .filter_map(|c| {
+                                let label = c
+                                    .get("label")
+                                    .or_else(|| c.get("modelId"))
+                                    .and_then(|v| v.as_str())?
+                                    .to_string();
+                                let pending =
+                                    c.get("state").and_then(|v| v.as_str()) == Some("pending");
+                                Some(PlanCheck { label, pending })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some(PlanSubscription {
+                    provider,
+                    granularity,
+                    checks,
+                })
+            })
+            .collect();
+        let pending = subscriptions.iter().map(PlanSubscription::pending).sum();
+        let reusable = subscriptions
+            .iter()
+            .map(|s| s.checks.len() - s.pending())
+            .sum();
+        Some(Self {
+            pending,
+            reusable,
+            subscriptions,
+        })
+    }
+
+    /// Subscriptions with at least one pending check.
+    pub fn pending_subscriptions(&self) -> usize {
+        self.subscriptions.iter().filter(|s| s.pending() > 0).count()
+    }
+
+    /// The confirmation screen body: which accounts, which checks, and the
+    /// quota-consumption warning. Checks reused from fresh evidence make no call.
+    pub fn lines(&self) -> Vec<String> {
+        let mut lines = vec!["Verify access before choosing an analyst.".to_string()];
+        for sub in self.subscriptions.iter().filter(|s| s.pending() > 0) {
+            let unit = if sub.granularity == "pool" { "pool" } else { "model" };
+            let n = sub.pending();
+            let labels: Vec<&str> = sub
+                .checks
+                .iter()
+                .filter(|c| c.pending)
+                .map(|c| c.label.as_str())
+                .collect();
+            lines.push(format!(
+                "{}: {n} {unit} check{} — {}",
+                sub.provider,
+                if n == 1 { "" } else { "s" },
+                labels.join(", ")
+            ));
+        }
+        if self.reusable > 0 {
+            lines.push(format!(
+                "{} check{} already verified — reused, no call.",
+                self.reusable,
+                if self.reusable == 1 { "" } else { "s" }
+            ));
+        }
+        lines.push(format!(
+            "Makes {} real provider call{} and may consume quota or account credit.",
+            self.pending,
+            if self.pending == 1 { "" } else { "s" }
+        ));
+        lines.push("Enter = verify · Esc = skip (only verified options are listed)".to_string());
+        lines
+    }
+}
+
+/// One line per verified subscription from a `verification` record's
+/// `outcomes` (allowed / denied / unverified with the real reason). Never
+/// invents a result.
+pub fn outcome_lines(outcomes: &Value) -> Vec<String> {
+    let Some(rows) = outcomes.as_array() else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(|row| {
+            let provider = row
+                .get("provider")
+                .or_else(|| row.get("adapterId"))
+                .and_then(|v| v.as_str())?;
+            let count = |k: &str| row["counts"].get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+            let mut reasons: Vec<String> = Vec::new();
+            for result in row.get("results").and_then(|v| v.as_array()).into_iter().flatten() {
+                if result.get("status").and_then(|v| v.as_str()) == Some("unverified") {
+                    if let Some(reason) = result.get("reason").and_then(|v| v.as_str()) {
+                        let reason = reason.trim();
+                        if !reason.is_empty() && !reasons.iter().any(|r| r == reason) {
+                            reasons.push(reason.to_string());
+                        }
+                    }
+                }
+            }
+            let mut line = format!(
+                "{provider}: {} allowed · {} denied · {} unverified",
+                count("allowed"),
+                count("denied"),
+                count("unverified")
+            );
+            if !reasons.is_empty() {
+                line.push_str(&format!(" — {}", reasons.join("; ")));
+            }
+            Some(line)
+        })
+        .collect()
 }
 
 /// One per-provider exclusion row from the preflight record's additive
@@ -142,13 +300,14 @@ impl ExclusionCause {
 
     /// One short line per provider. Wording is distinct per cause (same
     /// Spanish register as the sidecar's own picker notices); unknown access
-    /// and missing benchmarks are never worded as "unavailable".
+    /// is worded as a partial comparison and missing benchmarks are never
+    /// worded as "unavailable".
     pub fn line(&self) -> String {
         let what = match self.cause.as_str() {
             "quota_exhausted" => "cuota agotada".to_string(),
             "unavailable_verified" => "no disponible (verificado)".to_string(),
             "policy_excluded" => "excluido por política".to_string(),
-            "access_unknown" => "acceso sin verificar".to_string(),
+            "access_unknown" => "no verificado — comparación parcial".to_string(),
             "unscored" => "sin benchmark (solo selección manual)".to_string(),
             other => format!("excluido ({other})"),
         };
@@ -176,9 +335,14 @@ pub struct AnalystPickerState {
     pub notice: Option<String>,
     pub phase: PickerPhase,
     pub causes: Vec<ExclusionCause>,
-    /// `Some(option)` while the provider-call warning for an unknown-access
-    /// row waits for its explicit second confirmation.
-    pub warning: Option<AnalystOption>,
+    /// The pending/reusable checks, while the confirmation screen is up (or
+    /// after it was skipped).
+    pub plan: Option<VerificationPlan>,
+    /// Subscriptions whose access could not be verified — a partial
+    /// comparison is never presented as complete.
+    pub not_verified: usize,
+    /// Per-subscription outcome of a verification that just ran.
+    pub outcome_lines: Vec<String>,
 }
 
 impl AnalystPickerState {
@@ -202,9 +366,9 @@ impl AnalystPickerState {
                 .iter()
                 .filter_map(|m| Self::parse_option(m, recommended_key, allow_recommended))
                 .collect();
-            // Recommended first when the catalog's own recommendedModel
-            // survived; known fit before unknown fit (stable otherwise, so
-            // the sidecar's order is preserved). Never auto-promote the first
+            // The sidecar already ranks across every subscription: keep its
+            // order, only moving the recommended row (the first ranked one)
+            // up and known fit ahead of unknown. Never auto-promote the first
             // row — ★ only for a real recommendation.
             options.sort_by_key(|o| (!o.recommended, o.fit.is_none()));
             options
@@ -223,11 +387,10 @@ impl AnalystPickerState {
         allow_recommended: bool,
     ) -> Option<AnalystOption> {
         let available = m.get("available").and_then(|v| v.as_bool()).unwrap_or(false);
-        let selectable = m.get("selectable").and_then(|v| v.as_bool()).unwrap_or(false);
         let access_verified = m.get("accessVerified").and_then(|v| v.as_bool()).unwrap_or(true);
-        // Product rule: only usable analysts appear in the modal, plus
-        // selectable ones whose access is unverified (T20).
-        if !available && !(selectable && !access_verified) {
+        // Product rule (T23): only VERIFIED, available analysts are rows.
+        // Unknown access is reported separately, never listed.
+        if !available || !access_verified {
             return None;
         }
         let candidate_key = m.get("candidateKey").and_then(|v| v.as_str())?.to_string();
@@ -238,13 +401,19 @@ impl AnalystPickerState {
             .and_then(|v| v.as_str())
             .unwrap_or(model_id.as_str())
             .to_string();
+        let subscription = m
+            .get("subscription")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(adapter_id.as_str())
+            .to_string();
         let tags: Vec<String> = m
             .get("recommendationTags")
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
             .unwrap_or_default();
-        let recommended =
-            allow_recommended && access_verified && recommended_key == Some(candidate_key.as_str());
+        let recommended = allow_recommended && recommended_key == Some(candidate_key.as_str());
         // null / absent / non-numeric fit = unknown (never coerced to 0).
         let fit = m.get("fit").and_then(|v| v.as_f64()).filter(|f| f.is_finite());
         let explanation = m
@@ -258,8 +427,8 @@ impl AnalystPickerState {
             adapter_id,
             model_id,
             display_name,
+            subscription,
             available,
-            access_verified,
             recommended,
             tags,
             fit,
@@ -283,10 +452,42 @@ impl AnalystPickerState {
         }
     }
 
-    /// Footer text: per-provider cause lines (when the sidecar sent them)
-    /// followed by any other notice (`pickerNotice` fallback, inline refusals).
+    /// Enter on the confirmation screen: the consented verification was
+    /// requested; the modal waits (inside itself) for the rebuilt catalog.
+    pub fn begin_verifying(&mut self) {
+        if self.phase == PickerPhase::Verify {
+            self.phase = PickerPhase::Verifying;
+        }
+    }
+
+    /// Esc on the confirmation screen: nothing is sent; the picker opens with
+    /// only the already-verified options and says how many subscriptions were
+    /// not verified. Returns `true` when a confirmation screen was skipped.
+    pub fn skip_verification(&mut self) -> bool {
+        if self.phase != PickerPhase::Verify {
+            return false;
+        }
+        self.phase = PickerPhase::Ready;
+        if let Some(plan) = &self.plan {
+            self.not_verified = self.not_verified.max(plan.pending_subscriptions());
+        }
+        true
+    }
+
+    /// Footer text: outcome of a verification that just ran, the "N
+    /// subscriptions not verified" acknowledgement, per-provider cause lines
+    /// (when the sidecar sent them), then any other notice (`pickerNotice`
+    /// fallback, inline refusals).
     pub fn footer_text(&self) -> Option<String> {
-        let mut parts: Vec<String> = self.causes.iter().map(ExclusionCause::line).collect();
+        let mut parts: Vec<String> = self.outcome_lines.clone();
+        if self.not_verified > 0 {
+            parts.push(format!(
+                "{} subscription{} not verified — the comparison is partial",
+                self.not_verified,
+                if self.not_verified == 1 { "" } else { "s" }
+            ));
+        }
+        parts.extend(self.causes.iter().map(ExclusionCause::line));
         if let Some(notice) = &self.notice {
             parts.push(notice.clone());
         }
@@ -310,8 +511,8 @@ impl AnalystPickerState {
         }
     }
 
-    /// `m`: switch between the qualified list and the manual alternatives.
-    /// Clears any pending warning; selection restarts at the top.
+    /// `m`: switch between the top-three list and the remaining verified
+    /// options. Selection restarts at the top.
     pub fn toggle_view(&mut self) {
         if self.phase != PickerPhase::Ready {
             return;
@@ -322,14 +523,13 @@ impl AnalystPickerState {
         };
         self.selected = 0;
         self.scroll.set(0);
-        self.warning = None;
     }
 
     /// Move highlight forward, wrapping across the active view's rows.
     /// Preserves `notice` (e.g. preflight provider-absence copy).
     pub fn move_down(&mut self) {
         let len = self.active().len();
-        if len == 0 || self.warning.is_some() {
+        if len == 0 || self.phase != PickerPhase::Ready {
             return;
         }
         self.selected = (self.selected + 1) % len;
@@ -337,7 +537,7 @@ impl AnalystPickerState {
 
     pub fn move_up(&mut self) {
         let len = self.active().len();
-        if len == 0 || self.warning.is_some() {
+        if len == 0 || self.phase != PickerPhase::Ready {
             return;
         }
         self.selected = (self.selected + len - 1) % len;
@@ -371,34 +571,18 @@ impl AnalystPickerState {
         start..end.max(selected + 1).min(options.len())
     }
 
-    /// Esc while the provider-call warning is up: back to the list (the
-    /// picker stays open). Returns `true` when a warning was dismissed.
-    pub fn cancel_warning(&mut self) -> bool {
-        self.warning.take().is_some()
-    }
-
-    /// Enter: confirm the highlighted model. A verified, available row is
-    /// returned at once. An UNKNOWN-access row first raises a warning (the
-    /// verification calls the provider and may consume account) and returns
-    /// `None`; only a second Enter on that warning returns it. Unavailable
-    /// verified rows are refused with an inline notice (defense in depth).
+    /// Enter: confirm the highlighted model. Every listed row is verified, so
+    /// it is returned at once; an unavailable row is refused with an inline
+    /// notice (defense in depth).
     pub fn confirm(&mut self) -> Option<AnalystOption> {
         if self.phase != PickerPhase::Ready {
             return None;
         }
-        if let Some(pending) = self.warning.take() {
-            return Some(pending);
-        }
         let message = match self.selected_option() {
-            Some(option) if !option.available && option.access_verified => Some(format!(
+            Some(option) if !option.available => Some(format!(
                 "{} is not available right now — pick another model.",
                 option.display_name
             )),
-            Some(option) if !option.access_verified => {
-                self.warning = Some(option.clone());
-                self.notice = None;
-                return None;
-            }
             Some(option) => return Some(option.clone()),
             None => Some("No available analyst in the catalog right now.".into()),
         };
@@ -423,7 +607,7 @@ impl AnalystPickerState {
         } else {
             None
         };
-        let mut payload = serde_json::json!({
+        serde_json::json!({
             "model": {
                 "adapterId": option.adapter_id,
                 "modelId": option.model_id,
@@ -432,13 +616,7 @@ impl AnalystPickerState {
             "selectionSource": selection_source,
             "recommendationTags": option.tags,
             "choice": choice,
-        });
-        // The payload is only ever built after the explicit second
-        // confirmation (see `confirm`), so an unknown-access pick carries it.
-        if !option.access_verified {
-            payload["accessCheckConfirmed"] = Value::Bool(true);
-        }
-        payload
+        })
     }
 }
 
@@ -555,7 +733,7 @@ mod tests {
             model_id: "gpt".into(),
             display_name: "GPT".into(),
             available: true,
-            access_verified: true,
+            subscription: "Codex".into(),
             recommended: true,
             tags: vec!["quality".into()],
             fit: None,
@@ -578,7 +756,7 @@ mod tests {
             model_id: "sonnet".into(),
             display_name: "Claude Sonnet".into(),
             available: true,
-            access_verified: true,
+            subscription: "Codex".into(),
             recommended: false,
             tags: vec![],
             fit: None,
@@ -652,7 +830,7 @@ mod tests {
         assert_eq!(lines[0], "claude: cuota agotada");
         assert_eq!(lines[1], "cursor: no disponible (verificado)");
         assert_eq!(lines[2], "go: excluido por política");
-        assert_eq!(lines[3], "codex: acceso sin verificar");
+        assert_eq!(lines[3], "codex: no verificado — comparación parcial");
         assert_eq!(lines[4], "zed: sin benchmark (solo selección manual)");
         let unique: std::collections::HashSet<_> = lines.iter().map(|l| l.split(": ").nth(1).unwrap().to_string()).collect();
         assert_eq!(unique.len(), 5, "wording must be distinct per cause");
@@ -699,100 +877,9 @@ mod tests {
         }];
         assert_eq!(
             picker.footer_text().as_deref(),
-            Some("codex: acceso sin verificar\nClaude: cuota agotada")
+            Some("codex: no verificado — comparación parcial\nClaude: cuota agotada")
         );
         assert_eq!(AnalystPickerState::default().footer_text(), None);
-    }
-
-    fn unverified_catalog() -> Value {
-        json!({
-            "recommendedModel": { "candidateKey": "claude::unv" },
-            "models": [
-                {
-                    "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt",
-                    "displayName": "GPT", "available": true, "accessVerified": true,
-                    "selectable": true, "recommendationTags": []
-                },
-                {
-                    "candidateKey": "claude::unv", "adapterId": "claude", "modelId": "unv",
-                    "displayName": "Claude Unverified", "available": false, "accessVerified": false,
-                    "selectable": true, "cause": "access_unknown", "recommendationTags": ["quality"]
-                },
-                {
-                    "candidateKey": "cursor::down", "adapterId": "cursor", "modelId": "down",
-                    "displayName": "Cursor Down", "available": false, "accessVerified": true,
-                    "selectable": false, "cause": "quota_exhausted", "recommendationTags": []
-                }
-            ]
-        })
-    }
-
-    #[test]
-    fn unverified_access_rows_are_listed_marked_and_never_starred() {
-        let picker = AnalystPickerState::from_analyst_catalog(&unverified_catalog());
-        assert_eq!(picker.options.len(), 2, "selectable unverified row kept; unusable Cursor row dropped");
-        let unv = picker.options.iter().find(|o| o.adapter_id == "claude").expect("unverified row");
-        assert!(!unv.access_verified);
-        assert!(!unv.available);
-        assert!(!unv.recommended, "a catalog pointer must never star an unverified row");
-        assert!(unv.row_label().contains("acceso sin verificar"), "{}", unv.row_label());
-        assert!(!unv.row_label().contains("recommended"));
-        let verified = picker.options.iter().find(|o| o.adapter_id == "codex").unwrap();
-        assert!(verified.access_verified);
-        assert!(!verified.row_label().contains("sin verificar"));
-        assert_eq!(picker.options[0].adapter_id, "codex", "verified rows stay ahead (sidecar order preserved)");
-    }
-
-    #[test]
-    fn confirming_an_unverified_row_warns_first_and_needs_a_second_confirmation() {
-        let mut picker = AnalystPickerState::from_analyst_catalog(&unverified_catalog());
-        picker.move_down();
-        assert!(picker.confirm().is_none(), "first Enter must NOT send anything");
-        let warning = picker.warning.clone().expect("the provider-call warning is raised");
-        assert_eq!(warning.model_id, "unv");
-        assert!(picker.notice.is_none());
-        let picked = picker.confirm().expect("second Enter confirms");
-        assert_eq!(picked.model_id, "unv");
-        assert!(picker.warning.is_none());
-        let payload = AnalystPickerState::analyst_payload(&picked);
-        assert_eq!(payload["selectionSource"], "manual");
-        assert_eq!(payload["model"]["modelId"], "unv");
-        assert_eq!(payload["model"]["adapterId"], "claude");
-        assert_eq!(payload["accessCheckConfirmed"], true);
-    }
-
-    #[test]
-    fn esc_on_the_warning_returns_to_the_list_without_confirming() {
-        let mut picker = AnalystPickerState::from_analyst_catalog(&unverified_catalog());
-        picker.move_down();
-        assert!(picker.confirm().is_none());
-        assert!(picker.cancel_warning());
-        assert!(picker.warning.is_none());
-        assert!(!picker.cancel_warning(), "nothing left to cancel");
-        // A fresh Enter warns again (the confirmation is never remembered).
-        assert!(picker.confirm().is_none());
-        assert!(picker.warning.is_some());
-    }
-
-    #[test]
-    fn movement_is_frozen_while_the_warning_is_up_and_toggling_clears_it() {
-        let mut picker = AnalystPickerState::from_analyst_catalog(&unverified_catalog());
-        picker.move_down();
-        picker.confirm();
-        let at = picker.selected;
-        picker.move_down();
-        picker.move_up();
-        assert_eq!(picker.selected, at);
-        picker.toggle_view();
-        assert!(picker.warning.is_none());
-    }
-
-    #[test]
-    fn a_verified_payload_never_carries_the_access_confirmation_flag() {
-        let mut picker = AnalystPickerState::from_analyst_catalog(&catalog());
-        let picked = picker.confirm().unwrap();
-        let payload = AnalystPickerState::analyst_payload(&picked);
-        assert!(payload.get("accessCheckConfirmed").is_none());
     }
 
     fn views_catalog() -> Value {
@@ -800,7 +887,7 @@ mod tests {
             "recommendedModel": { "candidateKey": "codex::a" },
             "models": [
                 { "candidateKey": "codex::a", "adapterId": "codex", "modelId": "a", "displayName": "Alpha",
-                  "available": true, "accessVerified": true, "fit": 0.8, "explanation": "razonamiento 0.80 · código 0.70 · confianza 0.90",
+                  "available": true, "accessVerified": true, "fit": 0.8, "explanation": "razonamiento excelente · código sólido · confianza alta",
                   "recommendationTags": ["quality"], "listing": "main" },
                 { "candidateKey": "claude::a", "adapterId": "claude", "modelId": "a", "displayName": "Alpha",
                   "available": true, "accessVerified": true, "fit": 0.0, "recommendationTags": [], "listing": "main" },
@@ -823,12 +910,12 @@ mod tests {
         let mut picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
         assert_eq!(picker.view, PickerView::Main);
         assert_eq!(picker.options.len(), 3);
-        assert_eq!(picker.alternatives.len(), 2, "unusable row dropped, both manual rows kept");
+        assert_eq!(picker.alternatives.len(), 1, "unusable and unverified rows are dropped; only the verified manual row stays");
         assert!(picker.options[0].recommended);
         assert!(picker.alternatives.iter().all(|o| !o.recommended));
         picker.toggle_view();
         assert_eq!(picker.view, PickerView::Manual);
-        assert_eq!(picker.active().len(), 2);
+        assert_eq!(picker.active().len(), 1);
         assert_eq!(picker.selected, 0);
         picker.toggle_view();
         assert_eq!(picker.view, PickerView::Main);
@@ -844,9 +931,8 @@ mod tests {
             "models": [{ "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "available": true }]
         }));
         assert_eq!(legacy.options[0].fit, None);
-        // Manual view: known fit (Unv 0.4, unverified) precedes unknown (Unscored).
-        assert_eq!(picker.alternatives[0].model_id, "unv");
-        assert_eq!(picker.alternatives[1].model_id, "unscored");
+        // Manual view: the verified unscored row only (unverified rows never list).
+        assert_eq!(picker.alternatives[0].model_id, "unscored");
     }
 
     #[test]
@@ -863,23 +949,17 @@ mod tests {
     }
 
     #[test]
-    fn explanation_is_part_of_the_row_description() {
+    fn the_row_description_is_the_plain_language_explanation_only() {
         let picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
-        assert!(picker.options[0].description().contains("razonamiento 0.80"));
-        assert!(picker.options[0].description().contains("Quality fit"));
-    }
-
-    #[test]
-    fn manual_unverified_rows_confirm_through_the_warning_too() {
-        let mut picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
-        picker.toggle_view();
-        assert_eq!(picker.selected_option().unwrap().model_id, "unv");
-        assert!(picker.confirm().is_none());
-        assert!(picker.warning.is_some());
-        // A manual but verified (unscored) row needs no warning.
-        picker.cancel_warning();
-        picker.move_down();
-        assert_eq!(picker.confirm().unwrap().model_id, "unscored");
+        assert_eq!(
+            picker.options[0].description(),
+            "razonamiento excelente · código sólido · confianza alta"
+        );
+        assert!(!picker.options[0].description().contains("Quality fit"));
+        assert!(!picker.options[0].description().chars().any(|c| c.is_ascii_digit()));
+        // A row without an explanation has no second line, never an invented one.
+        assert_eq!(picker.options[1].description(), "");
+        assert_eq!(picker.options[1].height(), 1);
     }
 
     fn many_options(n: usize) -> AnalystPickerState {
@@ -937,9 +1017,141 @@ mod tests {
         let mut stale = AnalystPickerState::from_analyst_catalog(&json!({
             "models": [{ "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "available": true }]
         }));
-        assert!(stale.options[0].access_verified, "absent accessVerified means verified/legacy");
+        assert_eq!(stale.options.len(), 1, "absent accessVerified means verified/legacy");
         stale.options[0].available = false;
         assert!(stale.confirm().is_none());
         assert!(stale.notice.as_deref().unwrap_or("").contains("not available"));
+    }
+
+    // ---- T23: verified rows only, model + subscription, verification plan ----
+
+    #[test]
+    fn unverified_and_unavailable_rows_are_never_listed_in_either_view() {
+        let picker = AnalystPickerState::from_analyst_catalog(&json!({
+            "models": [
+                { "candidateKey": "claude::unv", "adapterId": "claude", "modelId": "unv", "displayName": "Unv",
+                  "available": false, "selectable": true, "accessVerified": false },
+                { "candidateKey": "claude::sneaky", "adapterId": "claude", "modelId": "sneaky", "displayName": "Sneaky",
+                  "available": true, "accessVerified": false },
+                { "candidateKey": "codex::ok", "adapterId": "codex", "modelId": "ok", "displayName": "Ok", "available": true }
+            ],
+            "alternatives": [
+                { "candidateKey": "cursor::unv", "adapterId": "cursor", "modelId": "unv", "displayName": "CUnv",
+                  "available": false, "selectable": true, "accessVerified": false }
+            ]
+        }));
+        assert_eq!(picker.options.iter().map(|o| o.model_id.as_str()).collect::<Vec<_>>(), vec!["ok"]);
+        assert!(picker.alternatives.is_empty());
+    }
+
+    #[test]
+    fn rows_are_identified_by_model_and_subscription() {
+        let picker = AnalystPickerState::from_analyst_catalog(&json!({
+            "models": [
+                { "candidateKey": "codex::gpt-x", "adapterId": "codex", "modelId": "gpt-x", "displayName": "GPT-X",
+                  "subscription": "Codex", "available": true },
+                { "candidateKey": "cursor::gpt-x", "adapterId": "cursor", "modelId": "gpt-x", "displayName": "GPT-X",
+                  "subscription": "Cursor", "available": true },
+                { "candidateKey": "claude::legacy", "adapterId": "claude", "modelId": "legacy", "displayName": "Legacy",
+                  "available": true }
+            ]
+        }));
+        let labels: Vec<String> = picker.options.iter().map(AnalystOption::row_label).collect();
+        assert_eq!(labels, vec!["GPT-X · Codex", "GPT-X · Cursor", "Legacy · claude"]);
+    }
+
+    fn plan_record() -> Value {
+        json!({ "verificationPlan": {
+            "subscriptions": [
+                { "provider": "Claude", "granularity": "model", "checks": [
+                    { "label": "Claude A", "state": "pending" }, { "label": "Claude B", "state": "reusable" } ] },
+                { "provider": "Cursor", "granularity": "pool", "checks": [
+                    { "label": "Cursor models", "state": "pending" }, { "label": "Other models", "state": "pending" } ] },
+                { "provider": "Codex", "granularity": "model", "checks": [ { "label": "x", "state": "reusable" } ] }
+            ] } })
+    }
+
+    #[test]
+    fn plan_parse_counts_pending_and_reusable_and_lists_only_pending_checks() {
+        let plan = VerificationPlan::from_record(&plan_record()).expect("plan");
+        assert_eq!((plan.pending, plan.reusable), (3, 2));
+        assert_eq!(plan.pending_subscriptions(), 2);
+        let lines = plan.lines();
+        assert_eq!(lines[1], "Claude: 1 model check — Claude A");
+        assert_eq!(lines[2], "Cursor: 2 pool checks — Cursor models, Other models");
+        assert!(lines.iter().all(|l| !l.starts_with("Codex")), "a fully reusable subscription makes no call");
+        assert_eq!(lines[3], "2 checks already verified — reused, no call.");
+        assert!(lines.last().unwrap().contains("Enter = verify"));
+        assert!(lines.iter().any(|l| l.contains("Makes 3 real provider calls and may consume quota")));
+    }
+
+    #[test]
+    fn plan_absent_or_malformed_is_none_so_an_older_sidecar_opens_straight_to_the_picker() {
+        assert!(VerificationPlan::from_record(&json!({})).is_none());
+        assert!(VerificationPlan::from_record(&json!({ "verificationPlan": null })).is_none());
+        assert!(VerificationPlan::from_record(&json!({ "verificationPlan": { "subscriptions": "x" } })).is_none());
+        let empty = VerificationPlan::from_record(&json!({ "verificationPlan": { "subscriptions": [] } })).unwrap();
+        assert_eq!(empty.pending, 0);
+    }
+
+    #[test]
+    fn skip_verification_opens_the_picker_and_counts_the_unverified_subscriptions() {
+        let mut picker = AnalystPickerState::default();
+        picker.plan = VerificationPlan::from_record(&plan_record());
+        picker.phase = PickerPhase::Verify;
+        assert!(picker.confirm().is_none(), "Enter on the confirmation is the host's job, never a pick");
+        assert!(picker.skip_verification());
+        assert_eq!(picker.phase, PickerPhase::Ready);
+        assert_eq!(picker.not_verified, 2);
+        assert!(picker.footer_text().unwrap().starts_with("2 subscriptions not verified"));
+        assert!(!picker.skip_verification(), "nothing left to skip");
+    }
+
+    #[test]
+    fn begin_verifying_only_moves_the_confirmation_screen() {
+        let mut ready = AnalystPickerState::default();
+        ready.begin_verifying();
+        assert_eq!(ready.phase, PickerPhase::Ready);
+        let mut verify = AnalystPickerState { phase: PickerPhase::Verify, ..Default::default() };
+        verify.begin_verifying();
+        assert_eq!(verify.phase, PickerPhase::Verifying);
+        assert!(verify.confirm().is_none());
+        verify.toggle_view();
+        assert_eq!(verify.view, PickerView::Main);
+    }
+
+    #[test]
+    fn outcome_lines_report_each_subscription_with_real_reasons_and_invent_nothing() {
+        let lines = outcome_lines(&json!([
+            { "provider": "Claude", "counts": { "allowed": 1, "denied": 1, "unverified": 0 }, "results": [] },
+            { "provider": "Cursor", "counts": { "allowed": 0, "denied": 0, "unverified": 2 },
+              "results": [ { "status": "unverified", "reason": "login required" },
+                           { "status": "unverified", "reason": "login required" },
+                           { "status": "allowed", "reason": "ignored" } ] }
+        ]));
+        assert_eq!(lines[0], "Claude: 1 allowed · 1 denied · 0 unverified");
+        assert_eq!(lines[1], "Cursor: 0 allowed · 0 denied · 2 unverified — login required");
+        assert!(outcome_lines(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn footer_order_is_outcomes_then_not_verified_then_causes_then_notice() {
+        let picker = AnalystPickerState {
+            outcome_lines: vec!["Cursor: 1 allowed · 0 denied · 0 unverified".into()],
+            not_verified: 1,
+            causes: vec![ExclusionCause {
+                adapter_id: "claude".into(),
+                provider: "Claude".into(),
+                cause: "quota_exhausted".into(),
+                models: 1,
+                reason: None,
+            }],
+            notice: Some("extra".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            picker.footer_text().unwrap(),
+            "Cursor: 1 allowed · 0 denied · 0 unverified\n1 subscription not verified — the comparison is partial\nClaude: cuota agotada\nextra"
+        );
     }
 }
