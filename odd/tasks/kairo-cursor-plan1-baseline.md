@@ -89,3 +89,27 @@ Mode: unknown for this integration branch — run focused then full applicable s
 - PTY Rust↔sidecar (SIMULATED providers): `scripts/kairo-ui-team-flow-pty-e2e.py` + fixture
   - approve-chat, recovery-reject, recovery-apply @ 100×30 — all PASS
 - Smoke script: `package.json` → `smoke:kairo-ui-team-flow-pty`
+
+
+### P1-T2 precision (post-review)
+
+- Integrated tests use the **real sidecar** (`runKairoUiRpcStdio`) but **SIMULATE** Pi, analysis/approval bodies, recovery decisions, and chat answers.
+- They prove wiring + navigation (ops, notices, set_model, prompt routing), **not** full real-provider / real-analyst behavior.
+- Those real-behavior checks remain **pending** (require separate provider authorization + post-Claude package re-run).
+
+
+### Packaging prep (baseline — NOT P1-T4 close)
+
+Observed on `feat/kairo-cursor-baseline` @ `79771262a` (+ this docs commit), host Darwin arm64. **Do not declare P1-T4 closed.** Re-run the same checks on the final package after Claude U2+ integration.
+
+| Check | Result | Limit |
+|---|---|---|
+| `scripts/build-kairo-ui-binaries.sh` | 4/4 keys built: darwin-arm64 (~1.7M Mach-O), darwin-x64 (~1.8M Mach-O), linux-arm64 (~1.4M ELF), linux-x64 (~1.5M ELF) | Artifacts local/gitignored; not published |
+| `scripts/verify-kairo-ui-clean-install.sh` | PASS (hand-staged + npm-pack extract; selection never invokes cargo) | Foreign runtime exec gaps honest: darwin-x64 needs Rosetta; linux-* need Linux/qemu |
+| `test/kairo-ui-prebuilt.test.js` | 7/7 | — |
+| `test/launch-ratatui-host.test.js` | 18/18 (after `pnpm install` in worktree) | — |
+| Windows `ui` | Explicit error: use non-interactive CLI / `kairo setup`; no spawn | CLI-only retained |
+| Host `--v3-capture` from prebuilt (PATH without cargo) | exit 0, **52** fixtures incl. 60×30 / 100×30 / 160×48 | Auto fixtures, **not** human visual approval |
+| `kairo-ui-pty-e2e.py` @ 60/100/160 with packaged binary | PASS (mock sidecar) | Mock sidecar only — not real providers |
+
+Claude note: U1 committed with review **declined** (not approved); U2 may continue under that decision. Cursor did not touch Claude-owned impl files during this packaging prep.
