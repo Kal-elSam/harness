@@ -86,6 +86,12 @@ RDD: native switch unchanged; review assessed per commit; functional tests are n
   - ASK own `provider_event` flow (answer, error, cancel, switch, quit, restore): covered by `ask-real-progress-and-cancel` tests plus the fake-provider PTY e2e; no new mismatch demonstrated.
 - U3 NOT-VERIFIABLE (pending authorization): (a) real installed-package Pi RPC cold start without `session.model` emitting an explicit `no_model` (needs a real `kairo-pi-coding-agent` run; fork fix is unpublished/unproven as cause); (b) any real provider (Codex `exec --json` schema, Claude, Cursor, OpenCode) ASK events, thinking/tools presence. Needs separate user authorization for provider/network use.
 
+- U4 closing evidence (parent, HEAD `3d5945702`): `pnpm test` full Node suite: 2421 tests, 2409 pass, 6 fail, 6 skipped. `cargo test --manifest-path crates/kairo-ui/Cargo.toml`: 331 pass / 0 fail. The 6 Node failures also fail identically on the base `56c530cf2` (re-run on a detached worktree: analyst-ranking-trace, analyst-preflight-analyze-wire, conversation-service, analyst-catalog-evaluation; 126 tests, 120 pass, 6 fail on both). They are inherited from the Cursor baseline (analyst area), not caused by this branch, and not fixed here (out of scope, owned by Cursor).
+- Commits delivered to Cursor: `f30f4c2c0` (U1), `10dd3bd02` + `a066e4fd3` (U2), `3d5945702` (U3 stderr fix); tracker docs `f1ba9b69f`, `af4297086`, `bbc0e261d`, `03e019165`.
+- Native review: U1 and U2 candidates declined by the user; U3 fix not assessed. No receipts exist. Functional tests are not approval.
+- Contracts: ops `ops.runs.show` -> `ops_run_show`, `ops.reviews.show` -> `ops_review_show`, `settings.setup.load|preview|apply` -> `settings_setup_load|preview|apply` (documented in the header of `kairo-ui-rpc-stdio.js`).
+- NOT 100% functional: pending authorization for a real installed-package Pi RPC cold start without `session.model`, and any real provider run (Codex, Claude, Cursor, OpenCode). 6 inherited Node failures remain unresolved.
+
 ## Next step
 
-U3 pending authorization for the two NOT-VERIFIABLE items above (local scope done), then U4.
+Cursor integrates the commits above and decides on the 6 inherited analyst failures. U3 stays open until the two NOT-VERIFIABLE items are authorized and run; U4 stays open until then too.
