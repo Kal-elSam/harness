@@ -40,4 +40,9 @@ Reproduce the analyst picker Kairo shows without new probes, restore allowed Cla
 
 ## Applicable checks
 
-- `node --test test/model-candidate-catalog.test.js test/project-strategy.test.js`
+- `node --test test/model-candidate-catalog.test.js test/project-strategy.test.js` → 96 pass
+- Work-unit commit: `fd59758af5dd4af8d9a191599ae42f7c5f488a6e`
+- Local install: `npm link` from `kairo-plan1-baseline` — `kairo` realpath → this worktree (was `kairo-startup-analyst`)
+- RDD assess (Cursor): `review_due=true` / unassessable — Cursor not an immutable-receipt runtime; no clone disable without user request
+- Selector offline (cached AA + entitlement, Cursor 5.5 shape, no probes): `claude-opus-5` + `claude-sonnet-5` in curated picker
+- Pending (needs consumption auth): reanalyze + approve usable team + conversation — do **not** approve the old suggested draft
