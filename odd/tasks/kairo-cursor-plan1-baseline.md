@@ -34,9 +34,9 @@ Establish a clean integration baseline from Ratatui and preserve analyst T28/T29
 ## Tasks
 
 - [x] P1-T1 — Merge analyst into Ratatui baseline; resolve conflicts; deliver base hash to Claude
-- [x] P1-T2 — Integrated tests (Rust UI ↔ real sidecar; label simulations)
-- [ ] P1-T3 — Integrate Claude commits; full suites; record failures honestly
-- [ ] P1-T4 — Final package validation evidence (binaries, columns, Windows CLI); no remote delivery without auth
+- [x] P1-T2 — Integrated tests (Rust UI ↔ real sidecar; label simulations) — re-validated after Claude U1–U3
+- [x] P1-T3 — Integrate Claude commits; full suites; record failures honestly
+- [x] P1-T4 — Final package validation evidence (binaries, columns, Windows CLI); no remote delivery without auth
 
 ## Routing
 
@@ -118,10 +118,64 @@ Evidence dir: `/tmp/kairo-pty-team-flow-p1t2/`. Smoke: `pnpm smoke:kairo-ui-team
 
 Test gotchas (not product defects): empty-compose chrome steals leading `r`/`R` (markers must avoid hotkeys); Node harness needs a short post-ready delay before `stop`+`stdin.end` or the op can race the readline attach.
 
-P1-T2 remains open for post-U2 re-run. P1-T4 still open. No Claude files edited; no real providers.
+P1-T2 re-validated after Claude U1–U3 (see P1-T3). No Claude files edited during expand; no real providers.
 
 
-### Packaging prep (baseline — NOT P1-T4 close)
+### P1-T3 — Integrate Claude U1–U3 (preserve Cursor corrections)
+
+Cherry-picked onto `feat/kairo-cursor-baseline` (after `62c10da4d` P1-T2 expand), preserving Cursor commits `567f53406` (T29 conversation-service + wire fixture) and Plan1 integrated/PTY tests:
+
+| Claude commit | Content | Local hash |
+|---|---|---|
+| `f30f4c2c0` | ops.runs.show / ops.reviews.show + Rust detail | `8c92505ac` |
+| `10dd3bd02` | settings.setup load/preview/apply | `54841de81` |
+| `a066e4fd3` | native Setup flow in Settings | `3becaba09` |
+| `3d5945702` | Pi startup stderr in engine reason | `2cc8a16ed` |
+
+Conflicts: only `odd/tasks/kairo-parity.md` (modify/delete + content) — took Claude; synced closing notes from `7b1d064c2`. **Zero** overlap with Cursor post-base source files.
+
+Post-integrate suites (this tree, not Claude's old base):
+
+| Suite | Result |
+|---|---|
+| `cargo test -p kairo-ui` | **331/331** |
+| Focused Claude+Plan1 Node (ops/settings/pi/plan1/recovery/conversation) | **257/257** |
+| `pnpm test` full Node | **2422 pass / 4 fail / 1 skip** (2427 tests) |
+| P1-T2 expanded PTY (rebuilt binary) | **PASS** — evidence `/tmp/kairo-pty-team-flow-post-u2/` |
+
+#### Investigation of the failures that remain after integrate
+
+Claude's closing note claimed **6** Node failures identical on base `56c530cf2`. On **this integrated HEAD**, the same four-file probe yields **4 fail / 122 pass** (not 6):
+
+| # | Test | File | Symptom on integrated HEAD | Root cause |
+|---|---|---|---|---|
+| — | (conversation-service bootstrap roles) | `test/conversation-service.test.js` | **PASS** | Fixed earlier by Cursor `567f53406` (T29 Architect-only) — no longer a failure |
+| — | (analyst-preflight-analyze-wire T23/T24) | `test/analyst-preflight-analyze-wire.test.js` | **PASS** | Not failing on integrated HEAD |
+| 1 | ONE classification: catalog/picker/default/main agree | `analyst-catalog-evaluation.test.js:135` | `TypeError: null.candidateKey` | **Stale vs T27**: `curateAnalystCatalogForPicker` always returns `recommendedModel: null` (no star); test still reads `curated.recommendedModel.candidateKey` |
+| 2 | trace reports… controlled catalog | `analyst-ranking-trace.test.js:11` | `starred.length` 0≠1 | Trace stars via `curated.recommendedModel` → always null after T27 |
+| 3 | after T24: Sol ONE main slot / Opus in main three | `analyst-ranking-trace.test.js:30` | `main.length` 12≠3 | T27 flat list: all usable routes are `stage:"main"` (no top-3); Cursor effort ids + both Sol routes appear in main |
+| 4 | after T24: Cursor effort ids manual-only | `analyst-ranking-trace.test.js:51` | stage `'main'≠'manual'` | Same T27 flat-list: unscored-but-available effort ids are listed in main with `qualification:"no_evidence"`, not parked in manual |
+
+**Verdict:** product behavior matches **T27** (`project-team-sidecar.js` flat list, no star). The four failures are **stale assertions** written for the pre-T27 top-3/star contract, not regressions from Claude U1–U3. Fix path (not done here): rewrite those four tests to T27 expectations, or restore starring only if product reverts T27 — product decision.
+
+Not fixed in this turn (investigation only). Real-provider / live Pi cold-start still need separate authorization.
+
+
+### P1-T4 — Final package validation (post-Claude integrate)
+
+Re-run on integrated HEAD + rebuilt prebuilts. Host Darwin arm64. **No publish / push / PR.**
+
+| Check | Result | Limit |
+|---|---|---|
+| `scripts/build-kairo-ui-binaries.sh` | 4/4: darwin-arm64 ~1.7M, darwin-x64 ~1.8M, linux-arm64 ~1.4M, linux-x64 ~1.6M | gitignored; not published |
+| `scripts/verify-kairo-ui-clean-install.sh` | PASS (hand-staged + npm-pack) | Foreign exec gaps: darwin-x64 Rosetta; linux-* Linux/qemu |
+| `test/kairo-ui-prebuilt.test.js` + `launch-ratatui-host` | PASS (incl. Windows fail-closed) | — |
+| Host `--v3-capture` | exit 0, **52** fixtures (60/100/160) | auto; not human visual approval |
+| Mock PTY `kairo-ui-pty-e2e.py` @60/100/160 | PASS | mock sidecar |
+| P1-T2 team-flow PTY (SIMULATED providers) | PASS | see P1-T3 |
+| Real providers / live Pi no-model cold start | **not run** | auth not granted |
+
+### Packaging prep (baseline — historical; superseded by P1-T4 above)
 
 Observed on `feat/kairo-cursor-baseline` @ `79771262a` (+ this docs commit), host Darwin arm64. **Do not declare P1-T4 closed.** Re-run the same checks on the final package after Claude U2+ integration.
 
