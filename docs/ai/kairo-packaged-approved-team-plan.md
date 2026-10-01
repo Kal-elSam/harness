@@ -80,3 +80,7 @@ Authorization for the first run was granted and consumed; further runs need a ne
 - Strategy-less packaged PASS (real Pi): `/tmp/kairo-acceptance-prep/packaged-no-model-real-pi/`
 - Adapter happy paths: `docs/ai/kairo-parity-provider-plan.md`
 - Claude `is_error` fix (fixture): `b72305be2` / `fd877dcc7`; native review of redaction+`is_error` range **DECLINED** (`1efd0db9a`) — OMITTED, not approval.
+
+## Instrumented evidence (simulated Pi)
+
+The packaged harness now runs the real sidecar behind a transparent tee and waits on the real `ready` record in `sidecar.jsonl` (explicit FAIL after 25 s; no screen-text proxy). The in-host approval -> `set_model` -> `engine` path and its negative cases are proven with a fake Pi in `docs/ai/kairo-pi-connect-evidence.md`. That proves harness and wiring only, not the published Pi.
