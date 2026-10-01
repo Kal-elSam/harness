@@ -434,7 +434,8 @@ Branch: `feat/kairo-pi-p02-session-binding`, stacked on
 
 Fork: `@kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.1`, built from the
 upstream `earendil-works/pi` source at 0.87.1 with the upstream build. Its
-source lives in a separate sibling repo (`../kairo-pi`), with the patch as
+source lived in a separate sibling repo (`../kairo-pi`, RETIRED on
+2026-09-25; the fork now lives in `third_party/pi`), with the patch as
 commits on top of the upstream 0.87.1 tag. There is no `pi` bin. The
 empty-session behavior is off by default and turns on only with
 `KAIRO_PI_EMPTY_SESSIONS=1`, which the Kairo launcher sets in the child
@@ -461,7 +462,8 @@ environment only. Pi's own subprocesses inherit it (documented).
   a child with session_start:fork, the first append adds no duplicate
   header). Check `npm pack --dry-run` includes `dist/bundle/**`, LICENSE,
   and attribution. Route: delegated writer (new repo, build, tests).
-  - Done (fork repo `../kairo-pi`, branch `kairo/0.87.1` on upstream tag
+  - Done (fork repo `../kairo-pi`, now retired and imported into
+    `third_party/pi`; branch `kairo/0.87.1` on upstream tag
     `v0.87.1` = `f07218c4d`): tests `3f3b98e4e` (RED 6 fail / 4 pass),
     fix `a8a10c4f5` (GREEN 10/10; parent re-ran it: 10/10), lock script
     `10ddd65d9`, rebrand `a4ac58ddb`. Node 22.23.0. Upstream suite
