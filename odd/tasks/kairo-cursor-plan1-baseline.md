@@ -238,7 +238,11 @@ Re-run on HEAD that includes `50f9b4984` + T27 test rewrite. Host Darwin arm64. 
 | `smoke:kairo-packaged-no-model` (SIMULATED Pi) | **PASS** |
 | REAL published Pi offline (prior auth) | **PASS** — reason **No active strategy…** only |
 
-Binaries unchanged by the JS stderr fix; clean-install re-proved selection + host `--v3-capture`. Remaining open: real providers, human product visual, foreign-platform exec, approved-team+usable-provider path.
+Binaries unchanged by the JS stderr fix; clean-install re-proved selection + host `--v3-capture`. Remaining open: Cursor provider, packaged approved-team+usable-provider path, human product visual, foreign-platform exec. Claude may advance the simulated `is_error:true` parser test.
+
+#### Full Node suite on `5c7ff53ae` (post-redactor; required regression)
+
+`pnpm test` at detached `5c7ff53ae`: **2433 tests, 2432 pass, 0 fail, 1 skipped** (~105 s). The earlier 126 focused tests do not replace this after changing the shared redactor. HEAD `7ff7b6033` is docs-only after that SHA (provider happy-path evidence incorporate; no re-run of real `OK` calls).
 
 ### P1-T4 — historical note (pre-placeholder; superseded)
 
