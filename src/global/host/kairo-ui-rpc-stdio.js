@@ -27,7 +27,10 @@
  *   { "op": "ops.runs.show", "runId": "..." }  — U1: read-only run detail → ops_run_show (redacted, bounded events; ok:false + reason not_found|invalid_id|read_failed)
  *   { "op": "ops.reviews.show", "receiptId": "rev-..." }  — U1: read-only review receipt detail → ops_review_show (same error contract)
  *   { "op": "ops.alerts.dismiss", "alertId": "...", "confirmed": true }  — U5b
- *   { "op": "settings.snapshot" }  — U5b: profile/integrations/connections (+ setup stub)
+ *   { "op": "settings.snapshot" }  — U5b: profile/integrations/connections (+ setup: {wired:true,label})
+ *   { "op": "settings.setup.load" }  — U2: agents (detected flags) + components + defaults → settings_setup_load
+ *   { "op": "settings.setup.preview", "agents": [...], "components": [...] }  — U2: dry-run plan + fingerprint, writes nothing → settings_setup_preview (ok:false + reason invalid_selection on unknown ids)
+ *   { "op": "settings.setup.apply", "agents": [...], "components": [...], "fingerprint": "...", "confirm": true }  — U2: applies only with confirm:true AND a fingerprint matching a freshly recomputed preview → settings_setup_apply (reason applied|not_confirmed|stale_preview|invalid_selection|apply_failed)
  *   { "op": "settings.integration.confirm", "id": "..." }  — U5b: curated intent receipt (no install)
  *   { "op": "project.refresh" }  — U4d: refreshProjectStrategy
  *   { "op": "team.edit.catalog", "role": "..." }  — U4d: getProjectTeamEditCatalog
@@ -91,6 +94,7 @@
  * { type: "ops_snapshot", ok, error, health, fleet, usage, diagnostics, runs, alerts, reviews, backups, hints } (U5a/U5b),
  * { type: "ops_sync_preview"|"ops_sync_result"|"ops_rollback_preview"|"ops_rollback_result"|"ops_run_cancel"|"ops_alert_dismiss", ... } (U5b),
  * { type: "settings_snapshot"|"settings_integration_result", ... } (U5b),
+ * { type: "settings_setup_load"|"settings_setup_preview"|"settings_setup_apply", ... } (U2),
  * { type: "team_edit_catalog", role, models, currentCandidateKey?, recommendedCandidateKey? } (U4d),
  * { type: "team_edit_saved", role, strategy } (U4d),
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
@@ -143,6 +147,7 @@ import {
   showOpsRun
 } from "./ops-mutations.js";
 import { buildSettingsSnapshot } from "./settings-sidecar.js";
+import { applySetup, loadSetupOptions, previewSetup } from "./settings-setup.js";
 import {
   getCuratedIntegration,
   reduceSettingsAction,
@@ -461,7 +466,10 @@ export async function runKairoUiRpcStdio({
   dismissOpsAlert: dismissOpsAlertImpl = dismissOpsAlert,
   showOpsRun: showOpsRunImpl = showOpsRun,
   showOpsReview: showOpsReviewImpl = showOpsReview,
-  buildSettingsSnapshot: buildSettingsSnapshotImpl = buildSettingsSnapshot
+  buildSettingsSnapshot: buildSettingsSnapshotImpl = buildSettingsSnapshot,
+  loadSetupOptions: loadSetupOptionsImpl = loadSetupOptions,
+  previewSetup: previewSetupImpl = previewSetup,
+  applySetup: applySetupImpl = applySetup
 } = {}) {
   const bridge = await openBridge({ cwd });
   let kairoModels = [];
@@ -1445,11 +1453,35 @@ export async function runKairoUiRpcStdio({
             : ["Connections unavailable."],
           catalog: Array.isArray(settings.catalog) ? settings.catalog : [],
           setup: settings.setup ?? {
-            wired: false,
-            label: "Interactive setup · not wired"
+            wired: true,
+            label: "press s to set up agents and components"
           },
           hints: typeof settings.hints === "string" ? settings.hints : "Esc → Work"
         });
+      } else if (op === "settings.setup.load") {
+        const result = await loadSetupOptionsImpl({
+          homeDir,
+          workspaceRoot: projectRoot ?? cwd
+        });
+        writeOut({ type: "settings_setup_load", ...result });
+      } else if (op === "settings.setup.preview") {
+        const result = await previewSetupImpl({
+          homeDir,
+          workspaceRoot: projectRoot ?? cwd,
+          agents: Array.isArray(cmd.agents) ? cmd.agents : [],
+          components: Array.isArray(cmd.components) ? cmd.components : []
+        });
+        writeOut({ type: "settings_setup_preview", ...result });
+      } else if (op === "settings.setup.apply") {
+        const result = await applySetupImpl({
+          homeDir,
+          workspaceRoot: projectRoot ?? cwd,
+          agents: Array.isArray(cmd.agents) ? cmd.agents : [],
+          components: Array.isArray(cmd.components) ? cmd.components : [],
+          fingerprint: typeof cmd.fingerprint === "string" ? cmd.fingerprint : "",
+          confirm: cmd.confirm === true
+        });
+        writeOut({ type: "settings_setup_apply", ...result });
       } else if (op === "settings.integration.confirm") {
         // Curated intent receipt only — never installs files (cockpit-settings).
         const id = typeof cmd.id === "string" ? cmd.id : "";

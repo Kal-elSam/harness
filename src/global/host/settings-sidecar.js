@@ -2,7 +2,8 @@
  * U5b: Settings snapshot for the ratatui host.
  *
  * Reuses cockpit-settings formatters, profile resolution, and connections
- * report. Interactive setup has no safe ratatui path yet — honest stub.
+ * report. Setup (load / preview / confirmed apply) is wired through
+ * settings-setup.js (U2); this snapshot only advertises it.
  */
 
 import { buildConnectionsReport } from "../connections.js";
@@ -18,8 +19,8 @@ import { resolveProfile } from "../profile.js";
 import { buildRuntimeDashboardData } from "../runtime/run-cli.js";
 import { PACKAGE_NAME } from "../brand/cli.js";
 
-/** Honest label — no interactive setup chrome in ratatui yet. Keep short for 60-col wrap. */
-export const SETUP_NOT_WIRED_LABEL = "use `kairo setup` (UI not wired)";
+/** Setup is native in Settings (U2). Keep short for 60-col wrap. */
+export const SETUP_WIRED_LABEL = "press s to set up agents and components";
 
 export const SETTINGS_HINTS_DEFAULT =
   "Esc → Work · ↑↓ browse · Enter preview · y/n confirm";
@@ -162,8 +163,8 @@ export async function buildSettingsSnapshot({
     connections,
     catalog: catalogLines,
     setup: {
-      wired: false,
-      label: SETUP_NOT_WIRED_LABEL
+      wired: true,
+      label: SETUP_WIRED_LABEL
     },
     hints: formatSettingsHints()
   };

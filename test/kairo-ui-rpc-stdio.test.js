@@ -4547,7 +4547,7 @@ test("U5b: ops.alerts.dismiss refuses without confirmed; settings.snapshot + int
       integrations: ["CURATED", "available · Pi usage widget"],
       connections: ["CONNECTIONS", "ok · Cursor MCP"],
       catalog: [],
-      setup: { wired: false, label: "Interactive setup · not wired — use `kairo setup`" },
+      setup: { wired: true, label: "press s to set up agents and components" },
       hints: "Esc → Work · ↑↓ browse"
     }),
     openBridge: openBridgeWithModel()
@@ -4578,7 +4578,8 @@ test("U5b: ops.alerts.dismiss refuses without confirmed; settings.snapshot + int
   assert.equal(denied[1]?.ok, true);
   const settings = out.find((r) => r.type === "settings_snapshot");
   assert.equal(settings?.ok, true);
-  assert.match(settings?.setup?.label ?? "", /not wired/);
+  assert.equal(settings?.setup?.wired, true);
+  assert.match(settings?.setup?.label ?? "", /set up/);
   assert.match(settings?.profile?.join("\n") ?? "", /applyMode/);
   const intent = out.find((r) => r.type === "settings_integration_result");
   assert.equal(intent?.ok, true);
@@ -5362,6 +5363,65 @@ test("U1: ops.runs.show and ops.reviews.show dispatch through DI", async () => {
   assert.equal(shows[1].ok, false);
   assert.equal(shows[1].reason, "not_found");
   assert.equal(out.find((r) => r.type === "ops_review_show")?.review?.reviewId, "rev-0123456789abcdef");
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("U2: settings.setup load/preview/apply dispatch through DI and never throw to transport", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const calls = [];
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "ask" }),
+    loadSetupOptions: async (args) => {
+      calls.push(["load", Object.keys(args).sort()]);
+      return { ok: true, agents: [{ id: "claude", label: "Claude", detected: true }], components: [], defaults: { agents: ["claude"], components: [] } };
+    },
+    previewSetup: async (args) => {
+      calls.push(["preview", args.agents, args.components]);
+      if (args.agents?.[0] === "nope") {
+        return { ok: false, reason: "invalid_selection", error: 'Unknown agent "nope".' };
+      }
+      return { ok: true, fingerprint: "fp-1", agents: args.agents, components: args.components, summary: "1 managed change(s) planned.", changes: [] };
+    },
+    applySetup: async (args) => {
+      calls.push(["apply", args.agents, args.components, args.fingerprint, args.confirm]);
+      if (args.confirm !== true) return { ok: false, reason: "not_confirmed", error: "no" };
+      return { ok: true, reason: "applied", agents: args.agents, components: args.components };
+    },
+    openBridge: openBridgeWithModel()
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "settings.setup.load" })}\n`);
+  stdin.write(
+    `${JSON.stringify({ op: "settings.setup.preview", agents: ["claude"], components: ["orchestrator"] })}\n`
+  );
+  stdin.write(`${JSON.stringify({ op: "settings.setup.preview", agents: ["nope"], components: [] })}\n`);
+  stdin.write(`${JSON.stringify({ op: "settings.setup.apply", agents: ["claude"], components: [], fingerprint: "fp-1" })}\n`);
+  stdin.write(
+    `${JSON.stringify({ op: "settings.setup.apply", agents: ["claude"], components: [], fingerprint: "fp-1", confirm: true })}\n`
+  );
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(calls[1], ["preview", ["claude"], ["orchestrator"]]);
+  assert.deepEqual(calls[3], ["apply", ["claude"], [], "fp-1", false]);
+  assert.deepEqual(calls[4], ["apply", ["claude"], [], "fp-1", true]);
+  assert.equal(out.find((r) => r.type === "settings_setup_load")?.agents?.[0]?.id, "claude");
+  const previews = out.filter((r) => r.type === "settings_setup_preview");
+  assert.equal(previews[0].fingerprint, "fp-1");
+  assert.equal(previews[1].ok, false);
+  assert.equal(previews[1].reason, "invalid_selection");
+  const applies = out.filter((r) => r.type === "settings_setup_apply");
+  assert.equal(applies[0].reason, "not_confirmed");
+  assert.equal(applies[1].reason, "applied");
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();
   await runPromise;
