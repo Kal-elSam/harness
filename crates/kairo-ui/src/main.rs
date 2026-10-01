@@ -128,19 +128,20 @@ impl AnalysisProgress {
 //   session into a new one (RPC `clone`) — the source session is untouched.
 //   Any unsent draft in the compose box is saved on quit and restored on
 //   the next `kairo resume` of the same session.
-// - Bridge only, team setup in this UI (no cockpit): type `/analyze` (or empty
-//   compose + `a`) to open the analyst picker; `/approve` or `A` when suggested.
+// - Bridge only, team setup in this UI (no cockpit): type `/analyze` (or
+//   Sidebar-focus `a`) to open the analyst picker; `/approve` or Sidebar `A`
+//   when suggested. Bare letters never steal compose keystrokes.
 //   Esc cancels the picker; q / Ctrl+C quit (TTY restored before bridge kill).
-// - Bridge only, availability + recovery (U2c): empty-compose `r` re-probes
+// - Bridge only, availability + recovery (U2c): Sidebar-focus `r` re-probes
 //   provider availability on demand (sidebar/CTA update from real evidence,
-//   never an invented quota/funds cause); empty-compose `R` builds a
+//   never an invented quota/funds cause); Sidebar-focus `R` builds a
 //   strategy-recovery preview when the team is stale/blocked. In the
 //   preview modal: Enter/`y` applies (re-verified against CURRENT
 //   eligibility — a stale preview is refused and mutates nothing), `x`
 //   explicitly rejects (closes the proposal, current team stays active),
 //   Esc cancels locally (no server call at all).
-// - Bridge only, plans / tasks (U4b+U4d): empty-compose `p` or `3` opens the
-//   Tasks view (plan list owns execute keys). Empty-compose `1`–`4` switch
+// - Bridge only, plans / tasks (U4b+U4d): Sidebar-focus `p` or `3` opens the
+//   Tasks view (plan list owns execute keys). Sidebar-focus `1`–`4` switch
 //   Work|Project|Tasks|Sessions; Esc returns to Work. Ctrl+L or `4` opens
 //   Sessions. Bare `/project` → Project view; Enter on a SUGGESTED role opens
 //   the per-role editor (ACTIVE/STALE refused).
@@ -152,7 +153,8 @@ impl AnalysisProgress {
 //   response with the same id; Enter confirms (select/confirm/input/editor);
 //   j/k move select/confirm; notify is a notice only (no response). Engine
 //   death / quit releases every open dialog so the host is never stuck.
-// - n/c: demo notice clear (local, no bridge)
+// - n/c: demo notice / clear — only from an empty compose (or non-editor
+//   focus); never steal mid-draft letters.
 
 /// The two in-UI team setup actions (`a` / `A`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2262,14 +2264,21 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
                 app.submit_editor();
                 return Ok(app.quit_requested);
             }
-            if key.code == KeyCode::Char('q') && app.editor.lines().join("").trim().is_empty() {
+            // Bare q/n/c only when the draft is empty — otherwise they are
+            // ordinary compose characters (same integrity rule as shared
+            // team/view/recovery shortcuts).
+            let draft_empty = app.editor.lines().join("").trim().is_empty();
+            if key.code == KeyCode::Char('q') && draft_empty {
                 return Ok(true);
             }
-            if key.code == KeyCode::Char('n') && app.bridge.is_none() {
+            if key.code == KeyCode::Char('n') && draft_empty && app.bridge.is_none() {
                 app.view.notice = Some("Demo notice: engine unavailable (bridge not wired)".into());
                 return Ok(false);
             }
-            if key.code == KeyCode::Char('c') && !key.modifiers.contains(KeyModifiers::CONTROL) {
+            if key.code == KeyCode::Char('c')
+                && draft_empty
+                && !key.modifiers.contains(KeyModifiers::CONTROL)
+            {
                 app.view.notice = None;
                 return Ok(false);
             }
@@ -2351,9 +2360,9 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
 }
 
 /// `a` = analyze project team, `A` = approve the suggestion — the whole
-/// unblock-chat path, in this UI. From Editor focus they only fire while the
-/// engine cannot prompt and the draft is empty, so a working compose box
-/// never loses a typed character.
+/// unblock-chat path, in this UI. Bare keys never fire while Editor is
+/// focused (typed characters always enter the draft). From Sidebar /
+/// Transcript they stay reachable; `/analyze` / `/approve` cover compose.
 fn try_team_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
     if app.bridge.is_none()
         || key
@@ -2823,7 +2832,8 @@ fn handle_setup_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
     true
 }
 
-/// U4d/U5a: empty-compose `1`–`6` switch Work|Project|Tasks|Sessions|Ops|Settings.
+/// U4d/U5a: Sidebar/Transcript `1`–`6` switch Work|Project|Tasks|Sessions|Ops|Settings.
+/// Never from Editor focus — digits must type into the compose draft.
 fn try_view_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
     if key
         .modifiers
@@ -2848,8 +2858,8 @@ fn try_view_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
     true
 }
 
-/// `p` opens Tasks view / plans list (U4b+U4d). Same empty-compose gate as
-/// team setup so a typed character is never stolen. While the list is open,
+/// `p` opens Tasks view / plans list (U4b+U4d). Same non-editor gate as team
+/// setup so a typed character is never stolen. While the list is open,
 /// `handle_plan_list_key` owns input — including `y`/`n` — so team `a`/`A`
 /// cannot clash.
 fn try_plan_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
@@ -3043,8 +3053,8 @@ fn handle_execution_modal_key(app: &mut ShellApp, key: KeyEvent) -> bool {
 }
 
 /// `r` = revalidate availability on demand, `R` = preview a strategy
-/// recovery. Same empty-compose-or-non-editor-focus gate as team setup
-/// (`team_keys_available`) — bare keys never steal a typed character.
+/// recovery. Same non-editor-focus gate as team setup (`team_keys_available`)
+/// — bare keys never steal a typed character from the compose editor.
 fn try_recovery_shortcut(app: &mut ShellApp, key: KeyEvent) -> bool {
     if app.bridge.is_none()
         || key
@@ -4442,6 +4452,8 @@ mod tests {
             assert!(!app.engine.can_prompt());
             app.view.team_presentation = Some(presentation.into());
             app.view.roles_visible = false;
+            // Bare `a` is a navigation/team shortcut — Sidebar focus, not compose.
+            app.chat.focus = Focus::Sidebar;
             let quit = handle_key(&mut app, press('a')).expect("key");
             assert!(!quit);
             assert!(app.preflight_pending, "{presentation}: preflight not sent");
@@ -4903,6 +4915,155 @@ mod tests {
         let ops = recorded_ops(&path, 1);
         assert!(ops.contains("\"op\":\"settings.integration.confirm\""), "{ops}");
         assert!(!ops.contains("settings.setup"), "{ops}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Shared bare keys gated by `team_keys_available` — letters + digits.
+    const SHARED_SHORTCUT_CHARS: &[char] =
+        &['a', 'A', 'r', 'R', 'p', '1', '2', '3', '4', '5', '6'];
+
+    fn engine_states_for_first_key() -> Vec<(&'static str, Option<&'static str>)> {
+        vec![
+            ("starting", None),
+            (
+                "no_model",
+                Some("No active strategy with automatic launchable projectTeam routes"),
+            ),
+            ("connected", None),
+        ]
+    }
+
+    fn type_chars(app: &mut ShellApp, text: &str) {
+        for c in text.chars() {
+            handle_key(app, press(c)).expect("key");
+        }
+    }
+
+    #[test]
+    fn editor_keeps_first_shared_shortcut_key_across_engine_states() {
+        for (status, reason) in engine_states_for_first_key() {
+            // One recorder per engine state — shortcuts need a bridge to even
+            // attempt theft; reuse it across the shared-key matrix.
+            let (mut app, path) = recorder_app("ask");
+            app.engine.status = status.into();
+            app.engine.reason = reason.map(str::to_string);
+            app.engine.model_label = if status == "connected" {
+                Some("claude-haiku-4-5".into())
+            } else {
+                None
+            };
+            app.view.team_state = Some("suggested".into());
+
+            for &first in SHARED_SHORTCUT_CHARS {
+                app.clear_editor();
+                app.picker = None;
+                app.recovery_preview = None;
+                app.preflight_pending = false;
+                app.chat.focus = Focus::Editor;
+                app.workspace_view = WorkspaceView::Work;
+                app.view.notice = None;
+
+                let phrase = format!("{first}est intact draft");
+                type_chars(&mut app, &phrase);
+
+                let draft = app.editor.lines().join("");
+                assert_eq!(
+                    draft, phrase,
+                    "editor lost leading '{first}' under engine status={status}"
+                );
+                assert!(
+                    app.picker.is_none(),
+                    "status={status} first={first}: analyze shortcut must not fire"
+                );
+                assert!(
+                    app.recovery_preview.is_none(),
+                    "status={status} first={first}: recovery shortcut must not fire"
+                );
+                assert_eq!(
+                    app.workspace_view,
+                    WorkspaceView::Work,
+                    "status={status} first={first}: view/plan shortcut must not fire"
+                );
+                assert!(
+                    !app.preflight_pending,
+                    "status={status} first={first}: no silent analyze preflight"
+                );
+            }
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn editor_reply_prompt_keeps_leading_r_in_draft_and_history() {
+        // Mirrors the packaged approved-team loss: "Reply…" → "eply…".
+        for (status, reason) in engine_states_for_first_key() {
+            let (mut app, path) = recorder_app("ask");
+            app.engine.status = status.into();
+            app.engine.reason = reason.map(str::to_string);
+            app.chat.focus = Focus::Editor;
+            let prompt = "Reply with the single word OK.";
+            type_chars(&mut app, prompt);
+            assert_eq!(
+                app.editor.lines().join(""),
+                prompt,
+                "draft truncated under status={status}"
+            );
+
+            handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .expect("enter");
+            let user = app
+                .chat
+                .messages
+                .iter()
+                .rev()
+                .find(|m| matches!(m.role, chat::MessageRole::User))
+                .expect("user history row");
+            assert_eq!(
+                user.content, prompt,
+                "chat history truncated under status={status}"
+            );
+            assert_eq!(
+                app.pending_prompt.as_deref(),
+                Some(prompt),
+                "pending prompt truncated under status={status}"
+            );
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn shared_shortcuts_still_work_from_sidebar_focus() {
+        // Navigation / team / recovery remain reachable without stealing
+        // compose characters — use non-editor focus.
+        let (mut app, path) = recorder_app("ask");
+        app.engine.status = "connected".into();
+        app.chat.focus = Focus::Sidebar;
+        app.view.team_state = Some("suggested".into());
+
+        handle_key(&mut app, press('3')).expect("3");
+        assert_eq!(app.workspace_view, WorkspaceView::Tasks);
+
+        app.set_workspace_view(WorkspaceView::Work);
+        app.chat.focus = Focus::Sidebar;
+        handle_key(&mut app, press('p')).expect("p");
+        assert_eq!(app.workspace_view, WorkspaceView::Tasks);
+
+        app.set_workspace_view(WorkspaceView::Work);
+        app.chat.focus = Focus::Sidebar;
+        handle_key(&mut app, press('a')).expect("a");
+        assert!(app.preflight_pending);
+        assert!(app.picker.is_some());
+
+        app.preflight_pending = false;
+        app.picker = None;
+        app.chat.focus = Focus::Sidebar;
+        handle_key(&mut app, press('r')).expect("r");
+        // Revalidate is a bridge op — recorded, no provider.
+        let ops = recorded_ops(&path, 2);
+        assert!(
+            ops.contains("revalidate") || ops.contains("team.revalidate") || ops.contains("availability"),
+            "sidebar r should request revalidate: {ops}"
+        );
         let _ = std::fs::remove_file(path);
     }
 }

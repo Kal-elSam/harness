@@ -143,11 +143,11 @@ impl EngineGate {
 }
 
 /// The in-UI next step for a blocked chat. Prefer slash commands so compose
-/// never steals a bare `a`/`A` keystroke when the engine looks connected.
+/// never steals a bare `a`/`A` keystroke. Bare letters remain on Sidebar focus.
 pub fn team_next_step_line(team_state: Option<&str>) -> String {
     match team_state {
         Some("suggested") => {
-            "Next: type /approve (or press A) — /analyze re-runs the picker.".into()
+            "Next: type /approve (or A from the sidebar) — /analyze re-runs the picker.".into()
         }
         Some("active") | Some("stale") => {
             "Next: type /analyze to choose an analyst and re-analyze, then /approve.".into()
@@ -157,8 +157,8 @@ pub fn team_next_step_line(team_state: Option<&str>) -> String {
 }
 
 /// Whether `a` may open the analyst picker. Always true when the bridge is
-/// up — re-analyze is valid even after chat connects. Compose only yields
-/// the bare key when the draft is empty (see `team_keys_available`).
+/// up — re-analyze is valid even after chat connects. Compose never yields
+/// the bare key (see `team_keys_available`); use Sidebar focus or `/analyze`.
 pub fn can_analyze_team(_engine: &EngineGate) -> bool {
     true
 }
@@ -168,14 +168,14 @@ pub fn can_approve_team(team_state: Option<&str>) -> bool {
     team_state == Some("suggested")
 }
 
-/// Bare `a` / `A` only fire from an empty compose (or non-editor focus).
-/// When the engine can prompt, empty-compose `a` still opens the picker so
-/// re-analyze stays reachable; non-empty drafts keep every character.
-pub fn team_keys_available(focus_is_editor: bool, editor_empty: bool, _can_prompt: bool) -> bool {
-    if !focus_is_editor {
-        return true;
-    }
-    editor_empty
+/// Bare shared shortcuts (`a`/`A`/`r`/`R`/`p`/`1`–`6`) never fire while the
+/// compose editor is focused — empty or not. The first typed character must
+/// always enter the draft (starting / `no_model` / `connected`). Navigation
+/// and team/recovery actions stay available from Sidebar/Transcript focus
+/// (and via slash commands); `_editor_empty` / `_can_prompt` are retained so
+/// call sites stay stable.
+pub fn team_keys_available(focus_is_editor: bool, _editor_empty: bool, _can_prompt: bool) -> bool {
+    !focus_is_editor
 }
 
 /// Classify a compose submit that is a host slash command (not a Pi prompt).
@@ -349,7 +349,7 @@ mod tests {
         );
         let hint = gate.work_empty_hint_lines(None).expect("hint");
         assert_eq!(hint[0], "Chat blocked: no_model — No model selected");
-        // Team setup is in this UI via slash commands (and empty-compose a/A).
+        // Team setup is in this UI via slash commands (and Sidebar-focus a/A).
         assert!(hint[1].contains("/analyze"));
         assert!(hint[1].contains("/approve"));
         assert!(!hint[1].contains("legacy-cockpit"));
@@ -380,14 +380,19 @@ mod tests {
     }
 
     #[test]
-    fn team_keys_only_fire_from_an_empty_compose_or_non_editor_focus() {
-        // Empty compose: bare `a` may open the picker (even if chat works).
-        assert!(team_keys_available(true, true, true));
-        assert!(team_keys_available(true, true, false));
-        // Non-empty draft: never steal characters.
-        assert!(!team_keys_available(true, false, true));
-        assert!(!team_keys_available(true, false, false));
-        // Sidebar / transcript focus is never typing.
+    fn team_keys_never_fire_while_editor_is_focused() {
+        // Editor focus: bare shared shortcuts must never steal the first
+        // keystroke — empty or not, can_prompt or not (starting / no_model /
+        // connected all pass can_prompt=false or true here).
+        for can_prompt in [false, true] {
+            assert!(
+                !team_keys_available(true, true, can_prompt),
+                "empty editor must keep typed characters (can_prompt={can_prompt})"
+            );
+            assert!(!team_keys_available(true, false, can_prompt));
+        }
+        // Sidebar / transcript: navigation stays available without compose.
+        assert!(team_keys_available(false, true, false));
         assert!(team_keys_available(false, false, true));
     }
 
