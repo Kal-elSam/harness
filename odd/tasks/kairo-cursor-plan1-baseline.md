@@ -68,3 +68,9 @@ Mode: unknown for this integration branch — run focused then full applicable s
 - Focused Node: 212/212 pass (`team-presentation`, `project-strategy`, `project-analysis`, `project-team-sidecar`, analyst picker/access, `team-recovery`)
 - `cargo test -p kairo-ui`: 295/295 pass (includes T28 analysis_progress tests)
 
+
+### P1-T1 follow-up — pre-existing analyst test drift
+
+- `conversation-service` bootstrap assertion still expected Explorer+Architect floor; T29 keeps analyst-justified roles only → assert `["Architect"]`.
+- Regenerated `crates/kairo-ui/fixtures/verify-then-pick.ndjson` after aptitude explanation text drift (`UPDATE_WIRE_FIXTURE=1`); Rust `preflight_verify_wire_fixture_roundtrips_through_the_host` pass.
+- These two failures already reproduced on pure `feat/kairo-startup-analyst-team` before the merge; not introduced by conflict resolution.
