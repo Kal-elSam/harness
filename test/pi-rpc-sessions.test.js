@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -25,6 +25,8 @@ test("listPiSessionFilesForCwd returns newest jsonl sessions for cwd", () => {
     `${JSON.stringify({ type: "session", id, name, cwd })}\n`;
   writeFileSync(older, header("sess-old", "Older"));
   writeFileSync(newer, header("sess-new", "Newer"));
+  utimesSync(older, 1000, 1000);
+  utimesSync(newer, 2000, 2000);
   const env = { HOME: home, PI_CODING_AGENT_DIR: agentDir };
   const list = listPiSessionFilesForCwd({ cwd, env });
   assert.equal(list.length, 2);

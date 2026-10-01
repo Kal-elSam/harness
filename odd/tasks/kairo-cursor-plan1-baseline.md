@@ -33,7 +33,7 @@ Establish a clean integration baseline from Ratatui and preserve analyst T28/T29
 
 ## Tasks
 
-- [ ] P1-T1 — Merge analyst into Ratatui baseline; resolve conflicts; deliver base hash to Claude
+- [x] P1-T1 — Merge analyst into Ratatui baseline; resolve conflicts; deliver base hash to Claude
 - [ ] P1-T2 — Integrated tests (Rust UI ↔ real sidecar; label simulations)
 - [ ] P1-T3 — Integrate Claude commits; full suites; record failures honestly
 - [ ] P1-T4 — Final package validation evidence (binaries, columns, Windows CLI); no remote delivery without auth
@@ -52,3 +52,17 @@ Mode: unknown for this integration branch — run focused then full applicable s
 - Entries `kairo`, `start`, `resume`, `ui`, `shell` coherent
 - Analyst + team work from Rust
 - Base commit hash published for Claude
+
+
+## Progress / evidence
+
+### P1-T1 — Merge baseline
+
+- Base: `feat/ratatui-host` @ `4fd5e277e`
+- Integrated: `feat/kairo-startup-analyst-team` @ `87f063eec`
+- Conflict policy: took analyst (`--theirs`) for all 19 conflicted paths after verifying Rust UI function set is a superset (0 ratatui-only fns in `main.rs`) and deletions replace the old simple picker.
+- Preserved: Pi `0.87.1-kairo.5`; CLI `kairo`/`ui`/`start`/`resume`/`shell` → `launchRatatuiHost`; retired cockpit/Pi opt-outs still throw.
+- Dropped expired `.npmrc` Pi.5 cooldown exclude (past 2026-09-29).
+- Did **not** import herd-shell dirty WIP (session-handoff / context-fill).
+- Hash to deliver: recorded after merge commit + focused verification.
+

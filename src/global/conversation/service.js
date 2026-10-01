@@ -42,6 +42,7 @@ import { acquireProjectAnalysisLock } from "./project-analysis-lock.js";
 import { readAvailabilityRecovery, writeAvailabilityRecovery } from "./availability-recovery-store.js";
 import { approveRecoveryProposal, rejectRecoveryProposal, runTeamRecovery } from "./team-recovery.js";
 import { resolveProjectRoute } from "./project-router.js";
+import { resolveAssignmentAvailability } from "./assignment-availability.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
@@ -128,47 +129,116 @@ function cursorStatusToEntitlement(status) {
 }
 
 /**
- * Resolves each real Cursor pool's access from the 15-minute disk cache,
- * probing at most once per pool (never per model, never concurrently —
- * one real representative model per pool) only when that pool's cached
- * state is missing or expired. A pool with no real candidate model in the
- * current catalog is never probed — there's nothing to gate.
- * @param {{homeDir: string, cursorModels: Array<{id:string,displayName?:string}>, cwd: string, now: number, ttlMs: number, readCache: Function, writeCache: Function, probe: Function}} args
- * @returns {Promise<Record<string, {status: string, reason: string|null}>>}
+ * Discovery-only view of each real Cursor pool's access: persisted evidence
+ * only, NEVER a provider probe. A fresh (within TTL) cached AVAILABLE/EXHAUSTED
+ * entry is reused; a cached-but-expired entry is UNVERIFIED with reason
+ * "stale" (never allowed); no entry is UNVERIFIED with no reason. A pool with
+ * no real candidate model in the current catalog has nothing to gate. Probing
+ * lives behind the explicit, confirmed `verifyAccess` entry point only.
+ * @param {{homeDir: string, cursorModels: Array<{id:string,displayName?:string}>, now: number, ttlMs: number, readCache: Function}} args
+ * @returns {Promise<Record<string, {status: string, reason: string|null, age: string|null, probedAt: string|null}>>}
  */
-async function resolveOrProbeCursorAccess({ homeDir, cursorModels, cwd, now, ttlMs, readCache, writeCache, probe }) {
-  const byPool = { [CURSOR_POOL.CURSOR_MODELS]: [], [CURSOR_POOL.OTHER_MODELS]: [] };
-  for (const model of cursorModels) byPool[classifyCursorPool(model)].push(model);
-
+async function resolveCursorAccessFromCache({ homeDir, cursorModels, now, ttlMs, readCache }) {
+  const hasModels = { [CURSOR_POOL.CURSOR_MODELS]: false, [CURSOR_POOL.OTHER_MODELS]: false };
+  for (const model of cursorModels) hasModels[classifyCursorPool(model)] = true;
   const cache = await readCache(homeDir).catch(() => null);
-  // Both pools are entirely independent real CLI probes — reading `cache`
-  // (never mutated here) for both in parallel is exactly equivalent to the
-  // old sequential read, since neither pool's disk entry is ever touched
-  // by the other's outcome; only the two real cursor-agent spawns
-  // themselves need to run concurrently instead of one waiting out the
-  // other's full real timeout first.
-  const outcomes = await Promise.all([CURSOR_POOL.CURSOR_MODELS, CURSOR_POOL.OTHER_MODELS].map(async (pool) => {
-    const representative = byPool[pool][0];
-    if (!representative) {
-      return { pool, result: { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null }, probed: null };
+  const result = {};
+  for (const pool of [CURSOR_POOL.CURSOR_MODELS, CURSOR_POOL.OTHER_MODELS]) {
+    if (!hasModels[pool]) {
+      result[pool] = { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null, age: null, probedAt: null };
+      continue;
     }
     const resolved = resolveCursorPoolAccess({ cache, pool, now, ttlMs });
-    if (resolved.status !== CURSOR_ACCESS_STATUS.UNVERIFIED) {
-      return { pool, result: resolved, probed: null };
-    }
-    const probed = await probe({ pool, modelId: representative.id, cwd });
-    return { pool, result: { status: probed.status, reason: probed.reason }, probed };
-  }));
-
-  let workingCache = cache;
-  const result = {};
-  for (const { pool, result: poolResult, probed } of outcomes) {
-    result[pool] = poolResult;
-    if (probed) workingCache = mergeCursorAccessResult(workingCache, probed);
+    result[pool] = resolved.status === CURSOR_ACCESS_STATUS.UNVERIFIED
+      ? { ...resolved, reason: resolved.probedAt ? "stale" : null }
+      : resolved;
   }
-  if (workingCache !== cache) await writeCache(homeDir, workingCache).catch(() => {});
   return result;
 }
+
+/** Expired cached evidence is unverified with reason "stale" (never allowed, never a guess). */
+function markStaleEntitlements(resolved) {
+  for (const entry of Object.values(resolved)) {
+    if (entry.status === ENTITLEMENT.UNVERIFIED && entry.probedAt && !entry.reason) entry.reason = "stale";
+  }
+  return resolved;
+}
+
+const SUBSCRIPTION_LABEL = Object.freeze({ claude: "Claude", cursor: "Cursor" });
+
+function evidenceStatusLabel(status) {
+  if (status === ENTITLEMENT.ALLOWED || status === CURSOR_ACCESS_STATUS.AVAILABLE) return "allowed";
+  if (status === ENTITLEMENT.DENIED || status === CURSOR_ACCESS_STATUS.EXHAUSTED) return "denied";
+  return null;
+}
+
+/**
+ * The concrete, never-executed verification plan: which checks are pending
+ * per subscription (Claude: one per MODEL; Cursor: one per POOL, never one per
+ * row) and which are reusable from fresh persisted evidence. Pure: no I/O.
+ * Only subscriptions the router already considers usable contribute checks.
+ * `mayConsumeQuota` is true whenever at least one check is pending, because
+ * each pending check is a real provider call.
+ * @param {{eligibility: Record<string, {ok?: boolean}>, claudeModels: Array<{id: string, displayName?: string}>, claudeEntitlement: Record<string, object>, cursorModels: Array<{id: string, displayName?: string}>, cursorAccess: Record<string, object>}} args
+ */
+export function buildAccessVerificationPlan({ eligibility = {}, claudeModels = [], claudeEntitlement = {}, cursorModels = [], cursorAccess = {} }) {
+  const subscriptions = [];
+  if (eligibility.claude?.ok === true && claudeModels.length > 0) {
+    const checks = claudeModels.map((model) => {
+      const entry = claudeEntitlement[model.id] ?? { status: ENTITLEMENT.UNVERIFIED };
+      const cachedStatus = evidenceStatusLabel(entry.status);
+      return {
+        id: `claude::${model.id}`, kind: "model", modelId: model.id, label: model.displayName ?? model.id,
+        state: cachedStatus ? "reusable" : "pending",
+        reason: cachedStatus ? null : (entry.probedAt ? "stale" : "never_verified"),
+        cachedStatus, age: cachedStatus ? (entry.age ?? null) : null
+      };
+    });
+    // Same probe cap the explicit verify path has always honored.
+    let pendingSeen = 0;
+    const capped = checks.filter((check) => check.state !== "pending" || (pendingSeen += 1) <= CLAUDE_ENTITLEMENT_MAX_PROBES);
+    subscriptions.push(summarizeSubscription("claude", "model", capped));
+  }
+  if (eligibility.cursor?.ok === true && cursorModels.length > 0) {
+    const byPool = { [CURSOR_POOL.CURSOR_MODELS]: [], [CURSOR_POOL.OTHER_MODELS]: [] };
+    for (const model of cursorModels) byPool[classifyCursorPool(model)].push(model);
+    const checks = [];
+    for (const pool of [CURSOR_POOL.CURSOR_MODELS, CURSOR_POOL.OTHER_MODELS]) {
+      const representative = byPool[pool][0];
+      if (!representative) continue;
+      const access = cursorAccess[pool] ?? { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null };
+      const cachedStatus = evidenceStatusLabel(access.status);
+      checks.push({
+        id: `cursor::${pool}`, kind: "pool", pool, modelId: representative.id, models: byPool[pool].length,
+        label: pool === CURSOR_POOL.CURSOR_MODELS ? "Cursor models" : "Other models",
+        state: cachedStatus ? "reusable" : "pending",
+        reason: cachedStatus ? null : (access.reason === "stale" ? "stale" : "never_verified"),
+        cachedStatus, age: cachedStatus ? (access.age ?? null) : null
+      });
+    }
+    if (checks.length > 0) subscriptions.push(summarizeSubscription("cursor", "pool", checks));
+  }
+  const pendingCount = subscriptions.reduce((sum, sub) => sum + sub.pendingCount, 0);
+  const reusableCount = subscriptions.reduce((sum, sub) => sum + sub.reusableCount, 0);
+  return {
+    pendingCount, reusableCount, mayConsumeQuota: pendingCount > 0, subscriptions,
+    costStatement: pendingCount > 0
+      ? `Verifying makes ${pendingCount} real provider call${pendingCount === 1 ? "" : "s"} and may consume quota or account credit.`
+      : null
+  };
+}
+
+function summarizeSubscription(adapterId, granularity, checks) {
+  return {
+    adapterId, provider: SUBSCRIPTION_LABEL[adapterId] ?? adapterId, granularity, checks,
+    pendingCount: checks.filter((check) => check.state === "pending").length,
+    reusableCount: checks.filter((check) => check.state === "reusable").length
+  };
+}
+
+const EMPTY_VERIFICATION_PLAN = Object.freeze({
+  pendingCount: 0, reusableCount: 0, mayConsumeQuota: false, subscriptions: [], costStatement: null
+});
 
 /**
  * Enforces task->session ownership: throws only when BOTH sides are real
@@ -500,21 +570,6 @@ export function createConversationService(deps = {}) {
   const writeCursorAccessCacheImpl = deps.writeCursorAccessCache ?? writeCursorAccessCache;
   const probeCursorPoolAccessImpl = deps.probeCursorPoolAccess ?? probeCursorPoolAccess;
   const cursorAccessTtlMs = deps.cursorAccessTtlMs ?? DEFAULT_CURSOR_ACCESS_TTL_MS;
-  // A real UNVERIFIED probe result is never persisted to disk (see
-  // cursor-entitlement-store.js's own mergeCursorAccessResult doc), so
-  // without this the disk cache stays permanently stale for an
-  // unauthenticated account and every single snapshot() poll (~every 2s)
-  // would re-spawn a real cursor-agent CLI probe per pool. This in-memory-
-  // only cooldown — never written to disk, never confused with a real
-  // AVAILABLE/EXHAUSTED result — rate-limits real probe attempts per pool
-  // independently, one createCachedProbe instance each, so both pools keep
-  // their own single-flight/TTL and never share or clobber each other's.
-  const cursorProbeCooldownMs = deps.cursorProbeCooldownMs ?? 30_000;
-  const probeCursorPoolAccessCooldown = {
-    [CURSOR_POOL.CURSOR_MODELS]: createCachedProbe(probeCursorPoolAccessImpl, cursorProbeCooldownMs),
-    [CURSOR_POOL.OTHER_MODELS]: createCachedProbe(probeCursorPoolAccessImpl, cursorProbeCooldownMs)
-  };
-  const probeCursorPoolAccessCooldownImpl = (args) => probeCursorPoolAccessCooldown[args.pool](args.pool, args);
   const readClaudeEntitlementCacheCached = createCachedProbe(
     () => readClaudeEntitlementCacheImpl(homeDir), claudeEntitlementCacheTtlMs
   );
@@ -558,7 +613,28 @@ export function createConversationService(deps = {}) {
   // is held (see runBootstrapAnalysis). `persist: false` returns the
   // suggested strategy without writing it: automatic team recovery must not
   // overwrite the ACTIVE team before it has verified the rebuilt one.
-  async function runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst, persist = true }) {
+  // Optional `onProgress({ stage, analyst, startedAt, elapsedMs })` mirrors
+  // verification_progress — stages: preparing, consulting_analyst,
+  // processing, building_team. Never invents percentages or private thoughts.
+  async function runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst, persist = true, onProgress = null }) {
+    const startedAt = Date.now();
+    const analystLabel = analyst?.model?.displayName
+      ?? analyst?.model?.modelId
+      ?? null;
+    const emitProgress = (stage) => {
+      if (typeof onProgress !== "function") return;
+      try {
+        onProgress({
+          stage,
+          analyst: analystLabel,
+          startedAt,
+          elapsedMs: Math.max(0, Date.now() - startedAt)
+        });
+      } catch {
+        // Progress listeners must never abort analysis.
+      }
+    };
+    emitProgress("preparing");
     // SECRET-SAFE (a real, meaningful reduction — not by itself a
     // filesystem sandbox guarantee, see sanitized-snapshot.js's own
     // header for why): the analyst's `cwd` points at a bounded,
@@ -592,12 +668,14 @@ export function createConversationService(deps = {}) {
       // just answering from the prompt text) genuinely takes longer
       // than ASK mode's quick-question default — give it real room
       // instead of timing out mid-investigation.
+      emitProgress("consulting_analyst");
       const response = await adapter.analyze({
         question: prompt, snapshotRoot: snapshot.snapshotRoot, timeoutMs: BOOTSTRAP_ANALYST_TIMEOUT_MS
       });
       if (response.status !== "answered") {
         throw new Error(`Bootstrap Analyst did not answer: ${response.error ?? response.status}`);
       }
+      emitProgress("processing");
       const parsed = parseProjectAnalysisImpl(response.answer);
       if (!parsed.valid) throw new Error(`Bootstrap Analyst response failed validation: ${parsed.error}`);
       // Real-evidence gate, checked PER recommendedRoleNeeds entry (see
@@ -606,6 +684,7 @@ export function createConversationService(deps = {}) {
       // had access to — one well-evidenced role need can no longer
       // vouch for every other role need in the same response.
       const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, snapshot.copiedFiles);
+      emitProgress("building_team");
       const strategy = buildProjectStrategy({ ...profile, roleRequirements }, candidates, analyst);
       if (persist) await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
       return {
@@ -803,13 +882,13 @@ export function createConversationService(deps = {}) {
         }
         const claudeCatalog = readClaudeModelsImpl();
         // Cache-only resolve — never probeClaudeModelEntitlement* from snapshot().
-        const claudeEntitlement = resolveClaudeEntitlements({
+        const claudeEntitlement = markStaleEntitlements(resolveClaudeEntitlements({
           cache: entitlementCache,
           subscriptionType: claudeAuth?.subscriptionType ?? null,
           catalogIds: (claudeCatalog.models ?? []).map((m) => m.id),
           now: now(),
           ttlMs: deps.claudeEntitlementTtlMs ?? DEFAULT_ENTITLEMENT_TTL_MS
-        });
+        }));
         const catalogsByAdapter = {
           codex: codexCatalog?.models ?? [],
           claude: claudeCatalog.models,
@@ -819,17 +898,17 @@ export function createConversationService(deps = {}) {
           // named model (see cursor-models.js's own doc).
           cursor: (cursorCatalog?.models ?? []).filter((model) => !isCursorAutoModel(model.id))
         };
-        // Cursor's own real access, per pool — a real, minimal probe (at
-        // most one per pool, only when the 15-minute disk cache is stale
-        // or missing; see cursor-entitlement.js/-store.js). Never a human
-        // toggle anymore. Projected into the shared ENTITLEMENT vocabulary
-        // so it plugs into the exact same per-model gating Claude's own
-        // entitlement already uses (buildCompleteCandidateCatalog's DENIED/
-        // UNVERIFIED filtering, project-router.js's blockingEntitlement) —
-        // never a second, parallel mechanism.
-        const cursorAccess = await resolveOrProbeCursorAccess({
-          homeDir, cursorModels: catalogsByAdapter.cursor, cwd: projectRoot, now: now(), ttlMs: cursorAccessTtlMs,
-          readCache: readCursorAccessCacheImpl, writeCache: writeCursorAccessCacheImpl, probe: probeCursorPoolAccessCooldownImpl
+        // Cursor's own real access, per pool, from PERSISTED evidence only.
+        // Discovery never spawns a provider probe: a fresh cache entry is
+        // reused, a stale one is unverified ("stale"), and real probing only
+        // happens through the explicit, confirmed verifyAccess() entry point.
+        // Projected into the shared ENTITLEMENT vocabulary so it plugs into
+        // the exact same per-model gating Claude's own entitlement already
+        // uses (buildCompleteCandidateCatalog's DENIED/UNVERIFIED filtering,
+        // project-router.js's blockingEntitlement) — never a second mechanism.
+        const cursorAccess = await resolveCursorAccessFromCache({
+          homeDir, cursorModels: catalogsByAdapter.cursor, now: now(), ttlMs: cursorAccessTtlMs,
+          readCache: readCursorAccessCacheImpl
         });
         const cursorModelEntitlement = {};
         for (const model of catalogsByAdapter.cursor) {
@@ -872,7 +951,7 @@ export function createConversationService(deps = {}) {
         // needing to know why. Access-mode-manual candidates may stay in
         // it, but per-model entitlement fails closed: unverified Claude is
         // reserved for the separate explicit manual-selection pool below.
-        const { recommendationPool: scoredAll, manualSelectionPool: manualSelectionScoredPool } = buildScoredCandidatePools(
+        const { recommendationPool: scoredAll, manualSelectionPool: manualSelectionScoredPool, deniedPool: deniedScoredPool } = buildScoredCandidatePools(
           scoredAllRaw,
           completeCandidateCatalog
         );
@@ -904,6 +983,22 @@ export function createConversationService(deps = {}) {
         // evidenceStatus — model-intelligence.js's old listUnscoredModels
         // duplicated this exact same real AA-match check separately; this
         // catalog replaces it as the one real source of truth.
+        const toUnscoredRow = (candidate) => ({
+          adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.rawDisplayName,
+          candidateKey: candidate.candidateKey, accessMode: candidate.accessMode, lifecycle: candidate.lifecycle,
+          entitlement: candidate.entitlement, entitlementReason: candidate.entitlementReason
+        });
+        // Analyst picker only: the same unscored set but keeping UNVERIFIED
+        // access (selectable with revalidation, manual view). DENIED stays out.
+        // `unscoredModels` below is untouched, so /models --evidence and the
+        // team edit catalog keep hiding unverified models.
+        const analystUnscoredModels = completeCandidateCatalog
+          .filter((candidate) => (
+            candidate.evidenceStatus === "unscored"
+            && candidate.lifecycle !== "superseded"
+            && candidate.entitlement !== ENTITLEMENT.DENIED
+          ))
+          .map(toUnscoredRow);
         const unscoredModels = completeCandidateCatalog
           // Same "not superseded" real rule the Recommendation Pool
           // applies to SCORED candidates (buildRecommendationPool) — an
@@ -919,11 +1014,7 @@ export function createConversationService(deps = {}) {
             && candidate.lifecycle !== "superseded"
             && !BLOCKED_ENTITLEMENTS.has(candidate.entitlement)
           ))
-          .map((candidate) => ({
-            adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.rawDisplayName,
-            candidateKey: candidate.candidateKey, accessMode: candidate.accessMode, lifecycle: candidate.lifecycle,
-            entitlement: candidate.entitlement, entitlementReason: candidate.entitlementReason
-          }));
+          .map(toUnscoredRow);
 
         // The Model Intelligence Foundation registry: every source Kairo
         // has (AA, Hugging Face scoped to Go, manufacturer snapshots,
@@ -966,7 +1057,7 @@ export function createConversationService(deps = {}) {
         result.modelIntelligence = {
           status: aa.status, source: aa.source, age: aa.age,
           models: annotateWithRegistryEvidence(scored, registry), roles: bestModelPerRole(eligibleRecommendations),
-          eligibility, coverage, unscoredModels,
+          eligibility, coverage, unscoredModels, analystUnscoredModels,
           // Resolved Claude per-model entitlement (cache-only; never probed here).
           claudeEntitlement,
           // Real, per-pool Cursor access — a real minimal probe, never a
@@ -976,6 +1067,12 @@ export function createConversationService(deps = {}) {
           // `cursorAccess` (pool-level) is what the UI reads for real,
           // human-readable Cursor-specific status text.
           cursorAccess, modelEntitlement,
+          // Concrete, never-executed verification plan (T23): which checks
+          // are pending per subscription and which are reusable.
+          verificationPlan: buildAccessVerificationPlan({
+            eligibility, claudeModels: claudeCatalog.models ?? [], claudeEntitlement,
+            cursorModels: catalogsByAdapter.cursor, cursorAccess
+          }),
           // BEST FIT GLOBAL / EFFICIENT GLOBAL: the honest, uncoordinated
           // per-role winner — never cedes a role for portfolio diversity,
           // family concentration, or provider distribution (see
@@ -1006,7 +1103,7 @@ export function createConversationService(deps = {}) {
           // denied, and unverified Claude already excluded), not the raw
           // scoreAvailableModels() output
           // — see scoredAllRaw/completeCandidateCatalog above.
-          scoredAll, manualSelectionScoredPool, registry, providerCapacity,
+          scoredAll, manualSelectionScoredPool, deniedScoredPool, registry, providerCapacity,
           // The real subset Kairo can actually launch itself — exposed
           // for the real task router (not yet built) to consume; never
           // used by QUALITY/EFFICIENT TEAM or ProjectStrategy, which only
@@ -1223,18 +1320,19 @@ export function createConversationService(deps = {}) {
             this.snapshot({ cwd: projectRoot })
           ]);
       const {
-        scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null,
-        providerCapacity = null, unscoredModels = [], claudeEntitlement = {}, cursorAccess = {}
+        scoredAll = [], manualSelectionScoredPool = scoredAll, deniedScoredPool = [], eligibility = {}, registry = null,
+        providerCapacity = null, unscoredModels = [], analystUnscoredModels = unscoredModels,
+        claudeEntitlement = {}, cursorAccess = {}, verificationPlan = EMPTY_VERIFICATION_PLAN
       } = snap.modelIntelligence ?? {};
       const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement, cursorAccess };
-      const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, unscoredModels });
+      const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, deniedScoredPool, unscoredModels: analystUnscoredModels });
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
       ).length;
       const unverifiedClaudeNotice = unverifiedCount > 0
         ? buildUnverifiedClaudePreflightNotice(unverifiedCount)
         : null;
-      return { profile, candidates, analystCatalog, projectRoot, unverifiedClaudeNotice };
+      return { profile, candidates, analystCatalog, projectRoot, unverifiedClaudeNotice, verificationPlan };
     },
     /**
      * `/models --verify-access [--refresh]`: the only service path that
@@ -1320,6 +1418,193 @@ export function createConversationService(deps = {}) {
       };
     },
     /**
+     * The concrete, read-only verification plan (T23): pending vs reusable
+     * checks per subscription and whether running them may consume quota.
+     * Built from persisted evidence only — nothing is probed here.
+     * @param {{cwd: string}} args
+     */
+    async planAccessVerification({ cwd } = {}) {
+      const snap = await this.snapshot({ cwd: await root(cwd) });
+      return snap.modelIntelligence?.verificationPlan ?? EMPTY_VERIFICATION_PLAN;
+    },
+    /**
+     * The explicit, confirmed verification entry point (T23) and the ONLY
+     * place discovery-time probes can run. Executes each pending check of
+     * `planAccessVerification` at most once (Claude per model, Cursor per
+     * pool), persists only real allowed/denied results through the existing
+     * stores, and reports a per-subscription outcome. Never invents a
+     * result, never substitutes another provider; a probe that throws or
+     * cannot decide is `unverified` with its real reason.
+     * `onProgress` (optional, additive) receives
+     * `{completed, total, active: [{id, label, adapterId, provider}], done: null|{id, label, adapterId, provider, status, reason}}`:
+     * once when the run starts, then once per finished check. `total` counts
+     * pending checks only (reusable evidence makes no call). A throwing
+     * listener never affects the run.
+     * @param {{cwd: string, confirmed?: boolean, onProgress?: (event: object) => void}} args
+     * @returns {Promise<{ran: boolean, status: "confirmation_required"|"verified", message?: string, persisted?: boolean, outcomes: Array<object>}>}
+     */
+    async verifyAccess({ cwd, confirmed, onProgress = null } = {}) {
+      if (confirmed !== true) {
+        return {
+          ran: false, status: "confirmation_required", outcomes: [],
+          message: "Access verification calls the providers and may consume quota — it only runs after explicit confirmation. Nothing was run."
+        };
+      }
+      const projectRoot = await root(cwd);
+      const plan = await this.planAccessVerification({ cwd: projectRoot });
+      const outcomes = [];
+      let persisted = false;
+      // Progress: counts only the checks this run will really make.
+      const runnable = plan.subscriptions.filter((sub) => sub.adapterId === "claude" || sub.adapterId === "cursor");
+      const total = runnable.reduce((sum, sub) => sum + sub.checks.filter((check) => check.state === "pending").length, 0);
+      let completed = 0;
+      const refOf = (subscription, check) => ({ id: check.id, label: check.label, adapterId: subscription.adapterId, provider: subscription.provider });
+      const emit = (active, done) => {
+        if (typeof onProgress !== "function") return;
+        try { onProgress({ completed, total, active, done }); } catch { /* a listener never breaks verification */ }
+      };
+      const reported = new Set();
+      const finish = (subscription, check, status, reason, nextActive) => {
+        if (reported.has(check.id)) return;
+        reported.add(check.id);
+        completed += 1;
+        emit(nextActive, { ...refOf(subscription, check), status, reason: reason ?? null });
+      };
+      for (const subscription of plan.subscriptions) {
+        const pending = subscription.checks.filter((check) => check.state === "pending");
+        if (pending.length === 0) continue;
+        let results;
+        if (subscription.adapterId === "claude") {
+          const ids = pending.map((check) => check.modelId);
+          const checkByModel = new Map(pending.map((check) => [check.modelId, check]));
+          emit([refOf(subscription, pending[0])], null);
+          // The next Claude model (sequential probes) is the active one.
+          const nextClaude = (modelId) => {
+            const index = pending.findIndex((check) => check.modelId === modelId);
+            const upcoming = pending[index + 1];
+            return upcoming ? [refOf(subscription, upcoming)] : [];
+          };
+          let probed;
+          try {
+            probed = await probeClaudeModelEntitlementsImpl({
+              modelIds: ids, maxProbes: CLAUDE_ENTITLEMENT_MAX_PROBES, cwd: projectRoot,
+              onProgress: ({ modelId, result } = {}) => {
+                const check = checkByModel.get(modelId);
+                if (check) finish(subscription, check, result?.status ?? ENTITLEMENT.UNVERIFIED, result?.reason ?? null, nextClaude(modelId));
+              }
+            });
+          } catch (error) {
+            probed = ids.map((modelId) => ({ modelId, status: ENTITLEMENT.UNVERIFIED, reason: error?.message ?? String(error) }));
+          }
+          const byModel = new Map((Array.isArray(probed) ? probed : []).map((result) => [result?.modelId, result]));
+          const persistable = [];
+          results = pending.map((check) => {
+            const real = byModel.get(check.modelId);
+            const status = real?.status ?? ENTITLEMENT.UNVERIFIED;
+            if (isPersistableEntitlementStatus(status)) persistable.push(real);
+            const reason = real ? (real.reason ?? null) : "The probe returned no result for this model";
+            // Probes that did not report live are reported now, in order.
+            finish(subscription, check, status, reason, nextClaude(check.modelId));
+            return { id: check.id, label: check.label, modelId: check.modelId, status, reason };
+          });
+          if (persistable.length > 0) {
+            let subscriptionType = null;
+            try { subscriptionType = (await verifyClaudeSubscriptionAuthImpl({}))?.subscriptionType ?? null; } catch { subscriptionType = null; }
+            const cache = await readClaudeEntitlementCacheImpl(homeDir);
+            await writeClaudeEntitlementCacheImpl(homeDir, mergeEntitlementResultsImpl(cache, { subscriptionType, results: persistable }));
+            readClaudeEntitlementCacheCached.invalidate();
+            persisted = true;
+          }
+        } else if (subscription.adapterId === "cursor") {
+          // Cursor pools run concurrently: every pending pool is active at once.
+          let inFlight = pending.map((check) => refOf(subscription, check));
+          emit(inFlight, null);
+          const probed = await Promise.all(pending.map(async (check) => {
+            let real;
+            try {
+              real = await probeCursorPoolAccessImpl({ pool: check.pool, modelId: check.modelId, cwd: projectRoot });
+            } catch (error) {
+              real = { pool: check.pool, status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: error?.message ?? String(error) };
+            }
+            inFlight = inFlight.filter((ref) => ref.id !== check.id);
+            finish(subscription, check, cursorStatusToEntitlement(real?.status), real?.reason ?? null, [...inFlight]);
+            return real;
+          }));
+          let cache = await readCursorAccessCacheImpl(homeDir).catch(() => null);
+          const before = cache;
+          results = pending.map((check, index) => {
+            const real = probed[index];
+            const status = cursorStatusToEntitlement(real?.status);
+            if (status !== ENTITLEMENT.UNVERIFIED) cache = mergeCursorAccessResult(cache, real);
+            return { id: check.id, label: check.label, pool: check.pool, modelId: check.modelId, status, reason: real?.reason ?? null };
+          });
+          if (cache !== before) {
+            await writeCursorAccessCacheImpl(homeDir, cache).catch(() => {});
+            persisted = true;
+          }
+        } else {
+          continue;
+        }
+        outcomes.push({
+          adapterId: subscription.adapterId, provider: subscription.provider, granularity: subscription.granularity,
+          results,
+          counts: {
+            allowed: results.filter((r) => r.status === ENTITLEMENT.ALLOWED).length,
+            denied: results.filter((r) => r.status === ENTITLEMENT.DENIED).length,
+            unverified: results.filter((r) => r.status === ENTITLEMENT.UNVERIFIED).length
+          }
+        });
+      }
+      return { ran: true, status: "verified", persisted, outcomes };
+    },
+    /**
+     * T20: on-demand access check for ONE analyst model the human just
+     * confirmed whose access is UNVERIFIED. Runs the real provider probe for
+     * that model only (Claude: one `claude -p` entitlement probe, about one
+     * cent when allowed; Cursor: one minimal `cursor-agent -p` probe of the
+     * model's own pool, bypassing the snapshot cooldown), persists a real
+     * allowed/denied result exactly like the snapshot/verify paths do, and
+     * never persists or reports "allowed" for anything it could not decide.
+     * Fail-closed: any other adapter, a thrown probe, or an undecidable
+     * result is UNVERIFIED with the real reason (never invented quota).
+     * @param {{cwd?: string, model: {adapterId: string, modelId: string, displayName?: string}}} args
+     * @returns {Promise<{status: "allowed"|"denied"|"unverified", reason: string|null}>}
+     */
+    async verifyAnalystAccess({ cwd, model } = {}) {
+      const adapterId = model?.adapterId ?? null;
+      const modelId = model?.modelId ?? null;
+      if (!adapterId || !modelId) return { status: ENTITLEMENT.UNVERIFIED, reason: "No analyst model to verify" };
+      try {
+        const projectRoot = cwd ? await root(cwd) : process.cwd();
+        if (adapterId === "claude") {
+          const [result] = await probeClaudeModelEntitlementsImpl({ modelIds: [modelId], maxProbes: 1, cwd: projectRoot });
+          const status = result?.status ?? ENTITLEMENT.UNVERIFIED;
+          if (isPersistableEntitlementStatus(status)) {
+            let subscriptionType = null;
+            try { subscriptionType = (await verifyClaudeSubscriptionAuthImpl({}))?.subscriptionType ?? null; } catch { subscriptionType = null; }
+            const cache = await readClaudeEntitlementCacheImpl(homeDir);
+            await writeClaudeEntitlementCacheImpl(homeDir, mergeEntitlementResultsImpl(cache, { subscriptionType, results: [result] }));
+            readClaudeEntitlementCacheCached.invalidate();
+            return { status, reason: result.reason ?? null };
+          }
+          return { status: ENTITLEMENT.UNVERIFIED, reason: result?.reason ?? "Claude access probe returned no decision" };
+        }
+        if (adapterId === "cursor") {
+          const pool = classifyCursorPool({ id: modelId, displayName: model.displayName });
+          const probed = await probeCursorPoolAccessImpl({ pool, modelId, cwd: projectRoot });
+          const status = cursorStatusToEntitlement(probed?.status);
+          if (status !== ENTITLEMENT.UNVERIFIED) {
+            const cache = await readCursorAccessCacheImpl(homeDir).catch(() => null);
+            await writeCursorAccessCacheImpl(homeDir, mergeCursorAccessResult(cache, probed)).catch(() => {});
+          }
+          return { status, reason: probed?.reason ?? null };
+        }
+        return { status: ENTITLEMENT.UNVERIFIED, reason: `No on-demand access check exists for ${adapterId}` };
+      } catch (error) {
+        return { status: ENTITLEMENT.UNVERIFIED, reason: error?.message ?? String(error) };
+      }
+    },
+    /**
      * ProjectOverlay's confirmed analyst step (ANALYZING -> SUGGESTED):
      * runs the human's already-confirmed real model read-only (askProvider
      * — the same real, no-file-write path ASK mode uses; never a new
@@ -1335,7 +1620,7 @@ export function createConversationService(deps = {}) {
      * @param {object} args.candidates - from preflightProject
      * @param {{choice?: "quality"|"efficient"|null, model: object, selectionSource?: "recommended"|"manual", recommendationTags?: string[]}} args.analyst
      */
-    async runBootstrapAnalysis({ cwd, profile, candidates, analyst }) {
+    async runBootstrapAnalysis({ cwd, profile, candidates, analyst, onProgress = null }) {
       const projectRoot = await root(cwd);
       // One analysis per project at a time: automatic team recovery takes
       // the same lock, so a manual analyze never races it (or vice versa).
@@ -1345,7 +1630,10 @@ export function createConversationService(deps = {}) {
         throw new Error(`A project analysis is already running for this project${holder}. Wait for it to finish, then try again.`);
       }
       try {
-        return await runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst });
+        return await runLockedBootstrapAnalysis({
+          projectRoot, profile, candidates, analyst,
+          ...(typeof onProgress === "function" ? { onProgress } : {})
+        });
       } finally {
         await lock.release();
       }
@@ -1404,14 +1692,60 @@ export function createConversationService(deps = {}) {
         writeRecord: (record) => writeAvailabilityRecoveryImpl(homeDir, projectRoot, record)
       });
     },
-    /** `/project approve`: SUGGESTED -> ACTIVE. Requires a real suggested strategy to already exist — the Bootstrap Analyst choice is already locked in by the time a strategy exists at all (see runBootstrapAnalysis), so there's nothing left to confirm here. */
+    /**
+     * `/project approve`: SUGGESTED -> ACTIVE. Re-checks strategy integrity
+     * and current eligibility/availability for every operational assignment
+     * before flipping status. Unusable or missing roles return
+     * `{ok:false, status, reasons[]}` without mutating — never a silent
+     * model swap. Edit stays allowed on the suggested strategy.
+     */
     async approveProjectStrategy({ cwd }) {
       const projectRoot = await root(cwd);
       const existing = await readProjectStrategyImpl(homeDir, projectRoot);
       if (!existing) throw new Error("No suggested project strategy yet — run /project analyze first.");
+      if (existing.status !== "suggested") {
+        return { ok: false, status: existing.status ?? "unknown", reasons: [`Strategy is ${existing.status}, not suggested — nothing to approve.`] };
+      }
+      const reasons = [];
+      const team = existing.projectTeam ?? [];
+      if (team.length === 0) reasons.push("projectTeam is empty — re-analyze before approving.");
+      if (!existing.orchestrator?.adapterId || !(existing.orchestrator?.modelId || existing.orchestrator?.displayName)) {
+        reasons.push("Orchestrator assignment is missing.");
+      }
+      const snap = await this.snapshot({ cwd: projectRoot });
+      const intelligence = snap.modelIntelligence ?? {};
+      const availabilityOpts = {
+        eligibility: intelligence.eligibility ?? {},
+        claudeEntitlement: intelligence.claudeEntitlement ?? {},
+        cursorAccess: intelligence.cursorAccess ?? {}
+      };
+      for (const entry of team) {
+        const role = entry?.role ?? "Unknown role";
+        if (!entry?.model?.adapterId || !(entry.model.modelId || entry.model.displayName)) {
+          reasons.push(`${role}: missing assignment`);
+          continue;
+        }
+        if (entry.assignmentState === "blocked") {
+          reasons.push(`${role}: assignment blocked (no usable primary or fallback)`);
+          continue;
+        }
+        const availability = resolveAssignmentAvailability(entry.model, availabilityOpts);
+        if (!availability.available) {
+          reasons.push(`${role}: ${availability.warning ?? "unavailable"}`);
+        }
+      }
+      if (existing.orchestrator?.adapterId) {
+        const orch = resolveAssignmentAvailability(existing.orchestrator, availabilityOpts);
+        if (!orch.available) {
+          reasons.push(`Orchestrator: ${orch.warning ?? "unavailable"}`);
+        }
+      }
+      if (reasons.length > 0) {
+        return { ok: false, status: existing.status, reasons };
+      }
       const approved = { ...existing, status: "active", approvedAt: new Date().toISOString() };
       await writeProjectStrategyImpl(homeDir, projectRoot, approved);
-      return { ...approved, projectRoot };
+      return { ok: true, ...approved, projectRoot };
     },
     /**
      * `/project refresh`: a strategy that was never approved (no strategy

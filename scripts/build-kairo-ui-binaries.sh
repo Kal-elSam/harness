@@ -110,6 +110,10 @@ copy_built() {
   local built="$2"
   local dest_dir="$OUT_ROOT/$key"
   mkdir -p "$dest_dir"
+  # Replace, never overwrite in place: reusing the inode of a binary that was
+  # already launched leaves macOS with a stale code-signature cache and the
+  # rebuilt host is SIGKILLed on launch.
+  rm -f "$dest_dir/kairo-ui"
   cp "$built" "$dest_dir/kairo-ui"
   chmod +x "$dest_dir/kairo-ui"
   printf 'built %s → %s\n' "$key" "$dest_dir/kairo-ui"

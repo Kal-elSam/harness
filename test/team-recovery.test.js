@@ -51,7 +51,7 @@ test("decide: an affected team, or any later availability change, triggers one r
 });
 
 test("pickRecoveryAnalyst prefers the available quality pick, then efficient, then any scored available model — never an unavailable one", () => {
-  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, recommendationTags: [], ...extra });
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: [], ...extra });
   const quality = entry(CLAUDE, { recommendationTags: ["quality"] });
   assert.equal(pickRecoveryAnalyst({ recommendedModel: quality, models: [quality] }).model.modelId, "claude-opus-5");
 
@@ -66,13 +66,52 @@ test("pickRecoveryAnalyst prefers the available quality pick, then efficient, th
   assert.equal(pickRecoveryAnalyst({ recommendedModel: null, models: [] }), null);
 });
 
+test("T21a: pickRecoveryAnalyst never blind-picks an untagged model", () => {
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: [], ...extra });
+  assert.equal(pickRecoveryAnalyst({ recommendedModel: null, models: [entry(CLAUDE), entry(CODEX)] }), null);
+});
+
+test("T21a (T24, rewritten from the confidence threshold): pickRecoveryAnalyst applies the shared qualification rule (qualified, comparable required evidence)", () => {
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: ["quality"], ...extra });
+  for (const qualification of ["partial_evidence", "insufficient_evidence", "no_evidence", undefined]) {
+    const thin = entry(CLAUDE, { qualification });
+    assert.equal(pickRecoveryAnalyst({ recommendedModel: thin, models: [thin] }), null, String(qualification));
+  }
+  const ok = entry(CLAUDE);
+  assert.equal(pickRecoveryAnalyst({ recommendedModel: ok, models: [ok] }).model.modelId, "claude-opus-5");
+  const thinQuality = entry(CLAUDE, { qualification: "partial_evidence" });
+  const okEfficient = entry(CODEX, { recommendationTags: ["efficient"] });
+  assert.equal(pickRecoveryAnalyst({ recommendedModel: thinQuality, models: [thinQuality, okEfficient] }).model.modelId, "gpt-6-astra");
+});
+
+test("T21a: pickRecoveryAnalyst skips accessVerified:false even when tagged and confident", () => {
+  const unverified = { ...CLAUDE, evidenceStatus: "scored", available: true, recommendationTags: ["quality"], qualification: "qualified", accessVerified: false };
+  assert.equal(pickRecoveryAnalyst({ recommendedModel: unverified, models: [unverified] }), null);
+});
+
+test("T20: pickRecoveryAnalyst never picks an unverified-access model, however it is flagged or ranked", () => {
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: [], ...extra });
+  const shapes = [
+    { entitlement: "unverified", available: false, selectable: true, accessVerified: false, cause: "access_unknown" },
+    { entitlement: "unverified", available: true },
+    { entitlement: null, available: true, accessVerified: false },
+    { entitlement: null, available: false, selectable: true }
+  ];
+  for (const shape of shapes) {
+    const unverified = entry(CLAUDE, { recommendationTags: ["quality"], ...shape });
+    assert.equal(pickRecoveryAnalyst({ recommendedModel: unverified, models: [unverified] }), null, JSON.stringify(shape));
+    const verified = entry(CODEX, { recommendationTags: ["efficient"] });
+    assert.equal(pickRecoveryAnalyst({ recommendedModel: unverified, models: [unverified, verified] }).model.modelId, verified.modelId);
+  }
+});
+
 // A controllable world for runTeamRecovery: eligibility can change between
 // calls, and every write is observable.
 function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIMITED], analyze, lock = true, analystCatalog } = {}) {
   const state = { strategy, record, writes: [], records: [], released: false, analyzeCalls: 0, clock: Date.parse("2026-09-23T12:00:00.000Z") };
   let eligibilityCalls = 0;
   const nextEligibility = () => eligibilitySequence[Math.min(eligibilityCalls++, eligibilitySequence.length - 1)];
-  const catalogEntry = (model) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, recommendationTags: ["quality"] });
+  const catalogEntry = (model) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: ["quality"] });
   const context = {
     readStrategy: async () => state.strategy,
     writeStrategy: async (next) => { state.writes.push(next); state.strategy = next; },
@@ -144,12 +183,13 @@ test("recovery keeps the previous team when availability changes during the anal
   assert.equal(state.writes.length, 0, "a team built for stale availability is never activated");
 });
 
-test("recovery keeps the previous team when no analyst is available (e.g. unverified entitlement only)", async () => {
+test("recovery keeps the previous team when no analyst qualifies (e.g. unverified entitlement only)", async () => {
   const unverified = { ...CLAUDE, evidenceStatus: "scored", entitlement: "unverified", available: false, recommendationTags: ["quality"] };
   const { state, context } = world({ analystCatalog: { recommendedModel: unverified, models: [unverified] } });
   const result = await runTeamRecovery(context);
   assert.equal(result.outcome, "kept-previous");
-  assert.equal(result.reason, "no-analyst");
+  assert.equal(result.reason, "analyst_selection_required");
+  assert.equal(state.records.at(-1).outcome, "analyst_selection_required");
   assert.equal(state.analyzeCalls, 0);
   assert.equal(state.writes.length, 0);
 });
@@ -255,7 +295,7 @@ test("decide: activated and baseline close a fingerprint; failures only defer it
   assert.deepEqual(decide({ outcome: "baseline", updatedAt: at(600) }), { action: "skip", reason: "already-handled" });
   assert.deepEqual(decide({ outcome: "no-usable-provider", attempts: 1, updatedAt: at(1) }), { action: "skip", reason: "retry-later" });
   assert.deepEqual(decide({ outcome: "no-usable-provider", attempts: 1, updatedAt: at(11) }), { action: "recover" });
-  assert.deepEqual(decide({ outcome: "no-analyst", attempts: 3, updatedAt: at(600) }), { action: "skip", reason: "retries-exhausted", lastOutcome: "no-analyst" });
+  assert.deepEqual(decide({ outcome: "analyst_selection_required", attempts: 3, updatedAt: at(600) }), { action: "skip", reason: "retries-exhausted", lastOutcome: "analyst_selection_required" });
 });
 
 // A controllable world for approve/reject: one proposed record, observable writes.

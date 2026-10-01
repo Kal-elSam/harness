@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildClaudeExecutionEnv } from "../runtime/execution-adapters/claude.js";
-import { ensureKairoAskAgent, KAIRO_ASK_AGENT_NAME } from "./opencode-ask-agent.js";
+import { buildKairoAskConfigContent, KAIRO_ASK_AGENT_NAME, KAIRO_ASK_CONFIG_ENV } from "./opencode-ask-agent.js";
 import { toRuntimeModelRef } from "./transport-registry.js";
 import { killProcessTree } from "./process-tree.js";
 
@@ -339,12 +339,10 @@ function buildOpencodeExecutionEnv(sourceEnv = process.env) {
 /**
  * OpenCode's real CLI has no flag-driven read-only mode (verified via
  * `opencode run --help`) — its permission model lives only in
- * opencode.json, so this always runs against Kairo's own real, verified
- * read-only agent (see opencode-ask-agent.js's own doc — live-verified
- * both that it genuinely blocks a real write attempt and that
- * `--agent`/`--model` compose correctly), ensured to exist in the user's
- * global config before every call (cheap idempotent check — no real
- * write unless actually missing or drifted).
+ * opencode config, so this always runs against Kairo's own read-only agent
+ * (see opencode-ask-agent.js), injected per run through the child's
+ * OPENCODE_CONFIG_CONTENT env var. The user's global opencode.json is
+ * never touched.
  *
  * Verified live (`opencode run --agent kairo-ask --format json`): the
  * real NDJSON stream emits `type: "text"` events carrying the real
@@ -354,13 +352,11 @@ function buildOpencodeExecutionEnv(sourceEnv = process.env) {
  * every other ask call here.
  * @param {{question:string, model:string|null, cwd:string, spawn:Function, timeoutMs:number, env:object}} args
  */
-async function askOpencode({ question, model, cwd, spawn, timeoutMs, env, control, ensureAgent = ensureKairoAskAgent }) {
-  try {
-    await ensureAgent();
-  } catch (error) {
-    return unknown(`could not ensure Kairo's read-only OpenCode agent: ${error?.message ?? error}`);
-  }
+async function askOpencode({ question, model, cwd, spawn, timeoutMs, env: baseEnv, control }) {
   if (control.signal?.aborted) return cancelled();
+  // Per-run isolated config: the read-only agent travels in the child's env,
+  // never in the user's global opencode.json.
+  const env = Object.assign(Object.create(null), baseEnv, { [KAIRO_ASK_CONFIG_ENV]: buildKairoAskConfigContent() });
   const args = ["run", "--agent", KAIRO_ASK_AGENT_NAME, "--format", "json"];
   if (model) args.push("--model", model);
   args.push(question);
@@ -502,7 +498,7 @@ async function askCodex({ question, model, cwd, spawn, timeoutMs, env, control }
  */
 export async function askProvider({
   provider, question, model = null, cwd, spawn = defaultSpawn, timeoutMs = DEFAULT_TIMEOUT_MS, sourceEnv = process.env,
-  ensureOpencodeAskAgent = ensureKairoAskAgent, signal = undefined, onEvent = undefined,
+  signal = undefined, onEvent = undefined,
   killGraceMs = DEFAULT_KILL_GRACE_MS, killProcess = undefined
 }) {
   // Optional cancellation/progress. With neither `signal` nor `onEvent` every
@@ -520,8 +516,7 @@ export async function askProvider({
     // service.js's executePlan already does for real task execution.
     const runtimeModel = model ? toRuntimeModelRef(provider === "opencode-go" ? "go" : "zen", model) : null;
     return askOpencode({
-      question, model: runtimeModel, cwd, spawn, timeoutMs, env: buildOpencodeExecutionEnv(sourceEnv),
-      ensureAgent: ensureOpencodeAskAgent, control
+      question, model: runtimeModel, cwd, spawn, timeoutMs, env: buildOpencodeExecutionEnv(sourceEnv), control
     });
   }
   return { status: "unsupported", answer: null, error: `ASK is not supported for provider "${provider}" yet.` };

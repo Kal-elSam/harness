@@ -76,6 +76,14 @@ function mockOpenBridge(factory) {
   };
 }
 
+// Poll with a bound instead of fixed sleeps: under the parallel full suite the
+// sidecar can take longer than a fixed delay to open the bridge / react.
+async function pollUntil(pred, ms = 3000) {
+  const deadline = Date.now() + ms;
+  while (!pred() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+  return pred();
+}
+
 test("sidecar emits ready then routes prompt via submitTask (never Pi prompt)", async () => {
   let childRef = null;
   const out = [];
@@ -131,7 +139,9 @@ test("sidecar emits ready then routes prompt via submitTask (never Pi prompt)", 
     })
   });
 
-  await new Promise((r) => setTimeout(r, 50));
+  // Wait for the event instead of a fixed 50 ms: under the parallel full suite the
+  // sidecar can take longer than that to open the bridge and emit `ready`.
+  assert.ok(await pollUntil(() => out.some((r) => r.type === "ready")), "ready emitted");
   assert.equal(out[0]?.type, "ready");
   assert.equal(out[0]?.engine?.status, "connected");
   assert.equal(out[0]?.snapshot?.schema, KAIRO_WORKSPACE_SNAPSHOT_SCHEMA);
@@ -145,7 +155,7 @@ test("sidecar emits ready then routes prompt via submitTask (never Pi prompt)", 
   assert.equal(modeEvt?.mode, "ask", "fail-closed default mode on ready");
 
   stdin.write(`${JSON.stringify({ op: "prompt", message: "hello" })}\n`);
-  await new Promise((r) => setTimeout(r, 80));
+  assert.ok(await pollUntil(() => out.some((r) => r.type === "task_result")), "task_result emitted");
 
   assert.equal(piPromptCalls.length, 0, "U4a: never forward Enter to Pi prompt");
   // A2: ASK turns additionally carry the cancel signal and event sink.
@@ -287,13 +297,6 @@ test("sidecar stays alive and emits engine_unavailable after Pi exit", async () 
     })
   });
 
-  // Poll with a bound instead of fixed 30 ms sleeps: under the parallel full
-  // suite the sidecar can take longer than that to open the bridge / react.
-  const pollUntil = async (pred, ms = 3000) => {
-    const deadline = Date.now() + ms;
-    while (!pred() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
-    return pred();
-  };
   // `ready` is emitted only after the bridge is open and its exit listener is
   // attached, so emitting `exit` before it could be lost.
   assert.ok(
@@ -707,6 +710,9 @@ test("sidecar project.preflight returns the real analyst catalog for the ratatui
   });
   const stdin = new PassThrough();
   const preflightCalls = [];
+  const causes = [
+    { adapterId: "claude", provider: "claude", cause: "access_unknown", models: 2, reason: null }
+  ];
   const catalog = {
     recommendedModel: { candidateKey: "codex::gpt-5" },
     models: [
@@ -739,7 +745,7 @@ test("sidecar project.preflight returns the real analyst catalog for the ratatui
     ),
     preflightProjectTeam: async ({ cwd }) => {
       preflightCalls.push(cwd);
-      return { analystCatalog: catalog, profile: { fp: "x" }, candidates: { scoredAll: [] }, projectRoot: cwd, unverifiedClaudeNotice: null };
+      return { analystCatalog: catalog, profile: { fp: "x" }, candidates: { scoredAll: [] }, projectRoot: cwd, unverifiedClaudeNotice: null, exclusionCauses: causes };
     }
   });
 
@@ -752,6 +758,7 @@ test("sidecar project.preflight returns the real analyst catalog for the ratatui
   assert.equal(preflight?.ok, true);
   assert.deepEqual(preflight?.analystCatalog, catalog);
   assert.deepEqual(preflight?.profile, { fp: "x" });
+  assert.deepEqual(preflight?.exclusionCauses, causes, "exclusionCauses must pass through to the modal");
 
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();
@@ -804,6 +811,186 @@ test("sidecar project.preflight reports a real failure honestly, as ok:false —
   assert.equal(preflight?.ok, false);
   assert.match(preflight?.reason ?? "", /No provider CLI is authenticated/);
 
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar project.analyze surfaces analyst_selection_required honestly (no snapshot, no success notice)", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+  const message = "No analyst qualifies as a recommendation — open the analyst picker and choose one.";
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async () => ({ status: "analyst_selection_required", message }),
+    loadSnapshot: async () => {
+      throw new Error("snapshot must not be reloaded when no analysis ran");
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const before = out.length;
+  stdin.write(`${JSON.stringify({ op: "project.analyze" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  const after = out.slice(before);
+  const team = after.find((r) => r.type === "team");
+  assert.equal(team?.ok, false);
+  assert.equal(team?.status, "analyst_selection_required");
+  assert.equal(team?.reason, message);
+  assert.equal(after.some((r) => r.type === "snapshot"), false);
+  assert.equal(
+    after.some((r) => r.type === "notice" && /Suggested team ready/.test(r.message)),
+    false
+  );
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar project.analyze surfaces analyst_access_unverified honestly (T20: no snapshot, no success notice, structured analyst + accessStatus)", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+  const message = "Access to Claude Opus could not be verified (probe timed out) — nothing was analyzed. Pick another analyst or try again.";
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async () => ({
+      status: "analyst_access_unverified",
+      accessStatus: "unverified",
+      analyst: { adapterId: "claude", modelId: "opus", displayName: "Claude Opus" },
+      reason: "probe timed out",
+      message
+    }),
+    loadSnapshot: async () => {
+      throw new Error("snapshot must not be reloaded when no analysis ran");
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const before = out.length;
+  stdin.write(`${JSON.stringify({ op: "project.analyze" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+
+  const after = out.slice(before);
+  const team = after.find((r) => r.type === "team");
+  assert.equal(team?.ok, false);
+  assert.equal(team?.status, "analyst_access_unverified");
+  assert.equal(team?.accessStatus, "unverified");
+  assert.deepEqual(team?.analyst, { adapterId: "claude", modelId: "opus", displayName: "Claude Opus" });
+  assert.equal(team?.reason, message);
+  assert.equal(after.some((r) => r.type === "snapshot"), false);
+  assert.equal(
+    after.some((r) => r.type === "notice" && /Suggested team ready/.test(r.message)),
+    false
+  );
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("sidecar project.analyze relays analyst_access_confirmation_required as a structured non-result (no snapshot, no success notice)", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const message = "Access to Claude Opus is unverified. Verifying it calls the provider and may consume account — confirm explicitly to continue. Nothing was run.";
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") return { type: "response", command: "get_state", success: true, data: { sessionId: "s1", model: ctx?.activeModel ?? null } };
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async () => ({
+      status: "analyst_access_confirmation_required",
+      analyst: { adapterId: "claude", modelId: "opus", displayName: "Claude Opus" },
+      message
+    }),
+    loadSnapshot: async () => {
+      throw new Error("snapshot must not be reloaded when no analysis ran");
+    }
+  });
+  await new Promise((r) => setTimeout(r, 40));
+  const before = out.length;
+  stdin.write(`${JSON.stringify({ op: "project.analyze" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+  const after = out.slice(before);
+  const team = after.find((r) => r.type === "team");
+  assert.equal(team?.ok, false);
+  assert.equal(team?.status, "analyst_access_confirmation_required");
+  assert.equal(team?.reason, message);
+  assert.deepEqual(team?.analyst, { adapterId: "claude", modelId: "opus", displayName: "Claude Opus" });
+  assert.equal(after.some((r) => r.type === "snapshot"), false);
+  assert.equal(after.some((r) => r.type === "notice" && /Suggested team ready/.test(r.message)), false);
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();
   await runPromise;
@@ -871,7 +1058,7 @@ test("sidecar project.analyze forwards the picker's chosen analyst payload verba
   await runPromise;
 });
 
-test("sidecar project.analyze without an analyst payload keeps the default-pick fallback (analyst omitted)", async () => {
+test("sidecar project.analyze without an analyst payload forwards analyst null (the sidecar decides; no blind default)", async () => {
   const out = [];
   const stdout = new PassThrough();
   stdout.on("data", (chunk) => {
@@ -917,7 +1104,131 @@ test("sidecar project.analyze without an analyst payload keeps the default-pick 
   await new Promise((r) => setTimeout(r, 80));
 
   assert.equal(analyzeCalls.length, 1);
-  assert.equal(analyzeCalls[0].analyst, null, "no picker payload means the default-analyst fallback stays intact");
+  assert.equal(analyzeCalls[0].analyst, null, "no picker payload is forwarded as null; the sidecar never auto-picks without a qualifying recommendation");
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("T28: sidecar project.analyze relays analysis_progress stages and only announces ready when readyToApprove", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async ({ onProgress }) => {
+      assert.equal(typeof onProgress, "function");
+      onProgress({ stage: "preparing", analyst: "Claude Sonnet", startedAt: 1, elapsedMs: 0 });
+      onProgress({ stage: "consulting_analyst", analyst: "Claude Sonnet", startedAt: 1, elapsedMs: 10 });
+      onProgress({ stage: "processing", analyst: "Claude Sonnet", startedAt: 1, elapsedMs: 20 });
+      onProgress({ stage: "building_team", analyst: "Claude Sonnet", startedAt: 1, elapsedMs: 30 });
+      return {
+        state: "suggested",
+        teamRows: 2,
+        roles: ["Architect", "Builder"],
+        analyst: "Claude Sonnet",
+        projectRoot: "/project",
+        notice: null,
+        readyToApprove: true,
+        blockedRoles: []
+      };
+    },
+    loadSnapshot: async () => fakeSnapshot({ team: { state: "suggested", rows: [], assignments: [] } })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const before = out.length;
+  stdin.write(`${JSON.stringify({ op: "project.analyze", analyst: { model: { adapterId: "claude", modelId: "sonnet" } } })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+  const after = out.slice(before);
+  const progress = after.filter((r) => r.type === "analysis_progress");
+  assert.deepEqual(progress.map((r) => r.stage), ["preparing", "consulting_analyst", "processing", "building_team"]);
+  assert.ok(progress.every((r) => r.analyst === "Claude Sonnet"));
+  assert.ok(after.some((r) => r.type === "notice" && /Suggested team ready/.test(r.message)));
+  assert.equal(after.some((r) => r.type === "notice" && /needs attention/.test(r.message)), false);
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
+test("T28: sidecar project.analyze announces draft needs attention when readyToApprove is false", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    analyzeProjectTeam: async () => ({
+      state: "suggested",
+      teamRows: 1,
+      roles: ["Explorer"],
+      analyst: "Claude",
+      projectRoot: "/project",
+      notice: null,
+      readyToApprove: false,
+      blockedRoles: ["Explorer"]
+    }),
+    loadSnapshot: async () => fakeSnapshot({ team: { state: "suggested", rows: [], assignments: [] } })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const before = out.length;
+  stdin.write(`${JSON.stringify({ op: "project.analyze" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+  const after = out.slice(before);
+  assert.ok(after.some((r) => r.type === "notice" && /needs attention/.test(r.message) && /Explorer/.test(r.message)));
+  assert.equal(after.some((r) => r.type === "notice" && /Suggested team ready/.test(r.message)), false);
 
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();

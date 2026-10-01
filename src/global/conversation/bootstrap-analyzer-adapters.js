@@ -27,7 +27,7 @@
 //     returns, so callers don't need to branch on adapter type downstream.
 //
 // This module only wires the providers that already have a real
-// implementation (Codex, Claude). Requesting an adapterId with no real
+// implementation (Codex, Claude, Cursor, OpenCode Go; Zen never). Requesting an adapterId with no real
 // implementation yet returns an honest "not implemented" ineligible
 // adapter — never a silent fallback to a provider the caller didn't ask
 // for.
@@ -40,6 +40,7 @@ import {
 import { verifyClaudeSubscriptionAuth as defaultVerifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 import { readClaudeModels as defaultReadClaudeModels } from "../observability/claude-models.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
+import { readOpenCodeModels as defaultReadOpenCodeModels } from "../observability/opencode-models.js";
 import { readCursorModels as defaultReadCursorModels } from "../observability/cursor-models.js";
 import { probeCursorAuth as defaultProbeCursorAuth } from "../observability/cursor-auth.js";
 import {
@@ -239,10 +240,73 @@ export function createCursorBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}
   };
 }
 
+const OPENCODE_GO_PREFIX = "opencode-go/";
+
+export function createOpencodeGoBootstrapAnalyzerAdapter({ modelId, deps = {} } = {}) {
+  const ask = deps.askProvider ?? defaultAskProvider;
+  const listModels = deps.readOpenCodeModels ?? defaultReadOpenCodeModels;
+  // The real Go catalog stores bare ids; tolerate a fully-qualified ref.
+  const bareId = typeof modelId === "string" && modelId.startsWith(OPENCODE_GO_PREFIX)
+    ? modelId.slice(OPENCODE_GO_PREFIX.length)
+    : modelId;
+  const ineligible = (reason) => ({ eligible: false, reason, isolation: "unverified", canaryTested: false });
+  return {
+    adapterId: "opencode-go",
+    modelId: bareId,
+    // Real, honest eligibility — never a hardcoded claim and never a
+    // substitute provider. Gates:
+    //  1. A Go model must be given.
+    //  2. The model must be in the REAL `opencode models opencode-go`
+    //     catalog (which also proves the CLI is installed/usable); an
+    //     unreadable catalog is ineligible with its real error.
+    //  3. isolation: "restricted", canaryTested: false — the same level
+    //     rule the Claude adapter follows for an application-enforced
+    //     boundary, but WITHOUT its canary. OpenCode has no read-only
+    //     flag (see intelligence/opencode-ask-agent.js): the boundary is
+    //     Kairo's own `kairo-ask` agent, injected per run via inline config
+    //     (never the user's global opencode.json), which denies
+    //     bash/edit/write/task/webfetch/external_directory (enforced by
+    //     opencode's own process, not the OS). No out-of-bounds read was ever attempted
+    //     against it, and read scope is only `cwd = snapshotRoot` (a
+    //     secret-redacted copy), not a proven path confinement — so this
+    //     is never "verified" and never canaryTested. The caller's gate
+    //     (service.js) keys on `eligible`, like every other adapter whose
+    //     boundary exists; ineligible adapters are the ones reported
+    //     "unverified".
+    // OpenCode Zen is deliberately NOT handled here (PAYG risk): it has no
+    // factory and stays an explicit "not implemented" ineligible adapter.
+    async checkEligibility() {
+      if (!bareId) return ineligible("No OpenCode Go model selection was provided.");
+      let catalog;
+      try {
+        catalog = await listModels({ provider: "opencode-go" });
+      } catch (error) {
+        return ineligible(`Could not read OpenCode Go's real model catalog: ${error?.message ?? error}`);
+      }
+      if (catalog?.status !== "measured") {
+        return ineligible(`Could not read OpenCode Go's real model catalog: ${catalog?.error ?? catalog?.status ?? "unknown"}`);
+      }
+      if (!catalog.models.some((m) => m.id === bareId)) {
+        return ineligible(`"${bareId}" is not in this account's real OpenCode Go model catalog.`);
+      }
+      return { eligible: true, isolation: "restricted", canaryTested: false };
+    },
+    // Always provider "opencode-go" (fully-qualified by askProvider) — a
+    // Go failure is returned as-is, never retried on another provider.
+    async analyze({ question, snapshotRoot, timeoutMs, signal }) {
+      if (!snapshotRoot) {
+        return { status: "error", answer: null, error: "OpenCode Go analysis requires a snapshotRoot; refusing to run against the live working directory." };
+      }
+      return ask({ provider: "opencode-go", question, model: bareId, cwd: snapshotRoot, timeoutMs, signal });
+    }
+  };
+}
+
 const ADAPTER_FACTORIES = Object.freeze({
   codex: createCodexBootstrapAnalyzerAdapter,
   claude: createClaudeBootstrapAnalyzerAdapter,
-  cursor: createCursorBootstrapAnalyzerAdapter
+  cursor: createCursorBootstrapAnalyzerAdapter,
+  "opencode-go": createOpencodeGoBootstrapAnalyzerAdapter
 });
 
 /**

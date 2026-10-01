@@ -473,4 +473,20 @@ test("buildScoredCandidatePools excludes denied Claude from both recommendation 
   const pools = buildScoredCandidatePools(scoreAvailableModels(providerCatalogs, aa), catalog);
   assert.deepEqual(pools.recommendationPool, []);
   assert.deepEqual(pools.manualSelectionPool, []);
+  // T24: the denied candidate is kept apart as comparison evidence / exclusion cause, never a selectable pool.
+  assert.deepEqual(pools.deniedPool.map((c) => [c.candidateKey, c.entitlement, c.entitlementReason]), [["claude::claude-fable-5-1", ENTITLEMENT.DENIED, "Credits required"]]);
+});
+
+test("buildScoredCandidatePools keeps a superseded denied candidate out of every pool, including the evidence-only denied pool", () => {
+  const aa = [
+    { slug: "claude-opus-4-8", name: "Claude Opus 4.8", intelligenceIndex: 50, codingIndex: 50 },
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 60, codingIndex: 60 }
+  ];
+  const providerCatalogs = [{ adapterId: "claude", models: [{ id: "claude-opus-4-8" }, { id: "claude-opus-5" }] }];
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, {
+    modelEntitlement: { claude: { "claude-opus-4-8": { status: ENTITLEMENT.DENIED, reason: "x" }, "claude-opus-5": { status: ENTITLEMENT.ALLOWED, reason: null } } }
+  });
+  const pools = buildScoredCandidatePools(scoreAvailableModels(providerCatalogs, aa), catalog);
+  assert.deepEqual(pools.deniedPool, [], "a superseded generation is out for lifecycle reasons, denied or not");
+  assert.deepEqual(pools.manualSelectionPool.map((c) => c.modelId), ["claude-opus-5"]);
 });

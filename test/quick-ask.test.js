@@ -238,12 +238,10 @@ function fakeOpencodeSpawn(ndjsonLines) {
   };
 }
 
-test("opencode-go: ensures the real read-only agent first, then runs --agent kairo-ask with the real fully-qualified model ref, accumulating real text events into the answer", async () => {
-  const ensureCalls = [];
+test("opencode-go: runs --agent kairo-ask with the real fully-qualified model ref, accumulating real text events into the answer", async () => {
   const seenArgs = [];
   const answer = await askProvider({
     provider: "opencode-go", question: "What is this project about?", model: "kimi-k3", cwd: "/repo",
-    ensureOpencodeAskAgent: async () => { ensureCalls.push(true); },
     spawn: (cmd, args) => {
       seenArgs.push([cmd, args]);
       return fakeOpencodeSpawn([
@@ -254,7 +252,6 @@ test("opencode-go: ensures the real read-only agent first, then runs --agent kai
       ])();
     }
   });
-  assert.equal(ensureCalls.length, 1, "the real read-only agent must be ensured before every real opencode call");
   assert.equal(answer.status, "answered");
   assert.equal(answer.answer, "It orchestrates Codex/Claude/OpenCode.");
   assert.deepEqual(seenArgs[0], ["opencode", ["run", "--agent", "kairo-ask", "--format", "json", "--model", "opencode-go/kimi-k3", "What is this project about?"]]);
@@ -264,7 +261,6 @@ test("opencode-zen: the real fully-qualified model ref uses the 'opencode/' pref
   const seenArgs = [];
   await askProvider({
     provider: "opencode-zen", question: "q", model: "kimi-k3", cwd: "/repo",
-    ensureOpencodeAskAgent: async () => {},
     spawn: (cmd, args) => { seenArgs.push([cmd, args]); return fakeOpencodeSpawn([{ type: "text", part: { type: "text", text: "ok" } }])(); }
   });
   assert.ok(seenArgs[0][1].includes("opencode/kimi-k3"));
@@ -274,25 +270,12 @@ test("opencode-zen: the real fully-qualified model ref uses the 'opencode/' pref
 test("REGRESSION: a real opencode error event is reported honestly, never silently dropped in favor of whatever partial text arrived first", async () => {
   const answer = await askProvider({
     provider: "opencode-go", question: "q", model: "kimi-k3", cwd: "/repo",
-    ensureOpencodeAskAgent: async () => {},
     spawn: () => fakeOpencodeSpawn([
       { type: "error", error: { name: "APIError", data: { message: "Upstream request failed: quota exceeded" } } }
     ])()
   });
   assert.equal(answer.status, "error");
   assert.match(answer.error, /quota exceeded/);
-});
-
-test("REGRESSION: if ensuring the real read-only agent itself fails, opencode is never spawned at all", async () => {
-  let spawnCalled = false;
-  const answer = await askProvider({
-    provider: "opencode-go", question: "q", model: "kimi-k3", cwd: "/repo",
-    ensureOpencodeAskAgent: async () => { throw new Error("disk full"); },
-    spawn: () => { spawnCalled = true; return fakeOpencodeSpawn([{ type: "text", part: { type: "text", text: "ok" } }])(); }
-  });
-  assert.equal(answer.status, "error");
-  assert.match(answer.error, /disk full/);
-  assert.equal(spawnCalled, false, "never spawn a real opencode process if Kairo can't first guarantee it's read-only");
 });
 
 test("an unsupported provider yields an honest 'unsupported' result, never a guess", async () => {
@@ -333,8 +316,20 @@ function groupChild(pid = 4242) {
 }
 
 function stubSpawn(child, seen = []) {
-  return (cmd, args, options) => { seen.push({ cmd, args, options }); return child; };
+  return (cmd, args, options) => { seen.push({ cmd, args, options }); child.spawned = true; return child; };
 }
+
+// Polls until `condition()` holds. Replaces fixed sleeps that only *assumed* an
+// event (the spawn, the group kill) had already happened.
+async function waitFor(condition, what, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+const spawned = (child) => waitFor(() => child.spawned === true, "the provider to spawn");
 
 const ADAPTERS = [
   { provider: "claude", cmd: "claude", model: "m", ensure: false },
@@ -359,7 +354,7 @@ test("PARITY: with no signal and no onEvent every adapter spawns with the exact 
     };
     const res = await askProvider({
       provider: a.provider, question: "q", model: a.model, cwd: "/repo", spawn,
-      sourceEnv: { PATH: "/usr/bin" }, ensureOpencodeAskAgent: async () => {}
+      sourceEnv: { PATH: "/usr/bin" }
     });
     assert.equal(res.status, "answered", a.provider);
     assert.equal(seen.length, 1);
@@ -379,7 +374,7 @@ test("abort BEFORE spawn: resolves cancelled and never spawns, for every adapter
     ac.abort();
     const res = await askProvider({
       provider: a.provider, question: "q", cwd: "/repo", signal: ac.signal,
-      spawn: () => { spawned = true; return groupChild(); }, ensureOpencodeAskAgent: async () => {}
+      spawn: () => { spawned = true; return groupChild(); }
     });
     assert.deepEqual(res, { status: "cancelled", answer: null, error: null }, a.provider);
     assert.equal(spawned, false, a.provider);
@@ -394,10 +389,9 @@ test("a signal makes the child a process-group leader (detached: true); everythi
     const kills = [];
     const pending = askProvider({
       provider: a.provider, question: "q", cwd: "/repo", signal: ac.signal, spawn: stubSpawn(child, seen),
-      ensureOpencodeAskAgent: async () => {},
-      killProcess: (pid, sig) => { kills.push([pid, sig]); setImmediate(() => child.emit("close", null)); }
+        killProcess: (pid, sig) => { kills.push([pid, sig]); setImmediate(() => child.emit("close", null)); }
     });
-    await new Promise((r) => setTimeout(r, 15));
+    await spawned(child);
     assert.equal(seen[0].options.detached, true, a.provider);
     assert.deepEqual(seen[0].options.stdio, ["ignore", "pipe", "pipe"]);
     ac.abort();
@@ -417,9 +411,9 @@ test("abort mid-run: SIGTERM goes to the process GROUP (-pid); cancelled resolve
   });
   let settled = false;
   pending.then(() => { settled = true; });
-  await new Promise((r) => setTimeout(r, 5));
+  await spawned(child);
   ac.abort();
-  await new Promise((r) => setTimeout(r, 5));
+  await waitFor(() => kills.length > 0, "the group SIGTERM");
   assert.deepEqual(kills, [[-777, "SIGTERM"]]);
   assert.equal(settled, false, "must not resolve before the child has closed");
   closed = true;
@@ -438,7 +432,7 @@ test("abort: a child that ignores SIGTERM is SIGKILLed after killGraceMs, then c
     provider: "cursor", question: "q", cwd: "/repo", signal: ac.signal, killGraceMs: 20, spawn: stubSpawn(child),
     killProcess: (pid, sig) => { kills.push([pid, sig]); } // never closes the child
   });
-  await new Promise((r) => setTimeout(r, 5));
+  await spawned(child);
   ac.abort();
   const res = await pending;
   assert.equal(res.status, "cancelled");
@@ -452,7 +446,7 @@ test("group kill failure falls back to the direct child kill", async () => {
     provider: "claude", question: "q", cwd: "/repo", signal: ac.signal, killGraceMs: 10, spawn: stubSpawn(child),
     killProcess: () => { throw Object.assign(new Error("ESRCH"), { code: "ESRCH" }); }
   });
-  await new Promise((r) => setTimeout(r, 5));
+  await spawned(child);
   ac.abort();
   const res = await pending;
   assert.equal(res.status, "cancelled");
@@ -469,7 +463,7 @@ test("a cancelled turn is never returned as answered even if the child already w
       setImmediate(() => child.emit("close", 0));
     }
   });
-  await new Promise((r) => setTimeout(r, 5));
+  await spawned(child);
   ac.abort();
   const res = await pending;
   assert.equal(res.status, "cancelled");
@@ -484,7 +478,7 @@ test("finish is idempotent: a normal close then a late abort does not kill or do
     provider: "claude", question: "q", cwd: "/repo", signal: ac.signal, spawn: stubSpawn(child),
     killProcess: (pid, sig) => { kills.push([pid, sig]); }
   });
-  await new Promise((r) => setTimeout(r, 5));
+  await spawned(child);
   child.stdout.emit("data", JSON.stringify({ result: "done" }));
   child.emit("close", 0);
   const res = await pending;
@@ -528,9 +522,9 @@ test("codex events: fragmented JSONL is correlated by item id, invalid lines are
   const events = [];
   const child = groupChild();
   let outFile;
-  const spawn = (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; return child; };
+  const spawn = (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; child.spawned = true; return child; };
   const pending = askProvider({ provider: "codex", question: "q", cwd: "/repo", spawn, onEvent: (e) => events.push(e) });
-  await new Promise((r) => setTimeout(r, 15));
+  await spawned(child);
   const start = JSON.stringify({ type: "item.started", item: { id: "item_1", type: "command_execution", command: "ls -la", status: "in_progress" } });
   child.stdout.emit("data", start.slice(0, 20));
   assert.deepEqual(events, [], "a partial line emits nothing yet");
@@ -560,9 +554,9 @@ test("codex: a failed command maps to tool_end ok:false; a turn.failed maps to a
   let outFile;
   const pending = askProvider({
     provider: "codex", question: "q", cwd: "/repo", onEvent: (e) => events.push(e),
-    spawn: (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; return child; }
+    spawn: (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; child.spawned = true; return child; }
   });
-  await new Promise((r) => setTimeout(r, 15));
+  await spawned(child);
   child.stdout.emit("data", JSON.stringify({ type: "item.started", item: { id: "i9", type: "command_execution", command: "false" } }) + "\n");
   child.stdout.emit("data", JSON.stringify({ type: "item.completed", item: { id: "i9", type: "command_execution", command: "false", exit_code: 1, status: "failed" } }) + "\n");
   child.stdout.emit("data", JSON.stringify({ type: "turn.failed", error: { message: "model exploded" } }) + "\n");
@@ -584,10 +578,10 @@ test("cancelled codex never reads the -o file (even if it holds an answer), remo
   let outFile;
   const pending = askProvider({
     provider: "codex", question: "q", cwd: "/repo", signal: ac.signal, onEvent: (e) => events.push(e),
-    spawn: (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; return child; },
+    spawn: (cmd, args) => { outFile = args[args.indexOf("-o") + 1]; child.spawned = true; return child; },
     killProcess: () => {}
   });
-  await new Promise((r) => setTimeout(r, 15));
+  await spawned(child);
   child.stdout.emit("data", JSON.stringify({ type: "item.started", item: { id: "a", type: "command_execution", command: "ls" } }) + "\n");
   ac.abort();
   await writeFile(outFile, "SHOULD NOT BE USED", "utf8");
@@ -604,9 +598,9 @@ test("opencode: text and error parts are emitted incrementally as chunks arrive"
   const child = groupChild();
   const pending = askProvider({
     provider: "opencode-go", question: "q", cwd: "/repo", spawn: stubSpawn(child),
-    ensureOpencodeAskAgent: async () => {}, onEvent: (e) => events.push(e)
+    onEvent: (e) => events.push(e)
   });
-  await new Promise((r) => setTimeout(r, 10));
+  await spawned(child);
   const l1 = JSON.stringify({ type: "text", part: { text: "Hel" } });
   child.stdout.emit("data", l1.slice(0, 10));
   assert.deepEqual(events, []);
@@ -622,9 +616,9 @@ test("opencode: text and error parts are emitted incrementally as chunks arrive"
   const child2 = groupChild();
   const p2 = askProvider({
     provider: "opencode-go", question: "q", cwd: "/repo", spawn: stubSpawn(child2),
-    ensureOpencodeAskAgent: async () => {}, onEvent: (e) => errEvents.push(e)
+    onEvent: (e) => errEvents.push(e)
   });
-  await new Promise((r) => setTimeout(r, 10));
+  await spawned(child2);
   child2.stdout.emit("data", JSON.stringify({ type: "error", error: { data: { message: "quota" } } }) + "\n");
   child2.emit("close", 1);
   assert.equal((await p2).status, "error");
@@ -636,7 +630,7 @@ test("claude and cursor: no fake streaming — one progress marker, then the sin
     const events = [];
     const child = groupChild();
     const pending = askProvider({ provider, question: "q", cwd: "/repo", spawn: stubSpawn(child), onEvent: (e) => events.push(e) });
-    await new Promise((r) => setTimeout(r, 5));
+    await spawned(child);
     child.stdout.emit("data", JSON.stringify({ result: "ans" }));
     child.emit("close", 0);
     assert.equal((await pending).answer, "ans");
@@ -650,9 +644,9 @@ test("an onEvent that throws (or rejects) never breaks the run", async () => {
     const child = groupChild();
     const pending = askProvider({
       provider: "opencode-go", question: "q", cwd: "/repo", spawn: stubSpawn(child),
-      ensureOpencodeAskAgent: async () => {}, onEvent
+      onEvent
     });
-    await new Promise((r) => setTimeout(r, 10));
+    await spawned(child);
     child.stdout.emit("data", JSON.stringify({ type: "text", part: { text: "fine" } }) + "\n");
     child.emit("close", 0);
     assert.deepEqual(await pending, { status: "answered", answer: "fine", error: null });

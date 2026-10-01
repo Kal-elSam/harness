@@ -186,6 +186,14 @@ impl BridgeClient {
         self.send_op("project.preflight", Value::Null)
     }
 
+    /// T23: the explicit, consented access verification. The only op that may
+    /// spawn provider probes; `confirmed: true` is sent only after the human
+    /// pressed Enter on the confirmation screen. Answers with a `verification`
+    /// record followed (when it ran) by a rebuilt `preflight` record.
+    pub fn verify_project_access(&mut self) -> std::io::Result<()> {
+        self.send_op("project.verify_access", serde_json::json!({ "confirmed": true }))
+    }
+
     /// Approve the suggested team; the sidecar re-applies Architect after it.
     pub fn approve_project_team(&mut self) -> std::io::Result<()> {
         self.send_op("team.approve", Value::Null)

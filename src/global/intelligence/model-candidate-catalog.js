@@ -498,6 +498,7 @@ export function buildCompleteCandidateCatalog(providerCatalogs, aaModels, deps =
 function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
   const identityByKey = new Map(completeCatalog.map((identity) => [identity.candidateKey, identity]));
   const pool = [];
+  const denied = [];
   for (const scored of scoredAll) {
     const candidateKey = `${scored.adapterId}::${scored.modelId}`;
     const identity = identityByKey.get(candidateKey);
@@ -507,16 +508,10 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
     // never excludes: an un-joined candidate is treated as lineage-
     // unknown, exactly like any other real unrecognized lineage.
     if (identity?.lifecycle === "superseded") continue;
-    // Denied entitlement is the same class as superseded: it is not a
-    // selectable candidate anywhere. Unverified access IS still retained
-    // in this internal pool (see this function's own doc above) —
-    // recommendation-safe filtering happens in buildScoredCandidatePools,
-    // and every real UI selection catalog filters unverified out too.
-    if (identity?.entitlement === ENTITLEMENT.DENIED) continue;
     const fallbackEntitlement = scored.adapterId === "claude"
       ? ENTITLEMENT.UNVERIFIED
       : ENTITLEMENT.NOT_APPLICABLE;
-    pool.push({
+    const hydrated = {
       ...scored,
       candidateKey,
       modelName: identity?.modelName ?? scored.displayName ?? scored.modelId,
@@ -528,9 +523,22 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
       generation: identity?.generation ?? null,
       lifecycle: identity?.lifecycle ?? "unknown",
       resourceCost: identity?.resourceCost ?? null
-    });
+    };
+    // Denied entitlement is the same class as superseded for SELECTION: it is
+    // not a selectable candidate anywhere. It is still returned apart
+    // (`denied`) so a caller can keep its benchmark evidence in a comparison
+    // and report the exclusion cause; it is never part of a selection pool.
+    // Unverified access IS still retained in this internal pool (see this
+    // function's own doc above) — recommendation-safe filtering happens in
+    // buildScoredCandidatePools, and every real UI selection catalog filters
+    // unverified out too.
+    if (identity?.entitlement === ENTITLEMENT.DENIED) {
+      denied.push(hydrated);
+      continue;
+    }
+    pool.push(hydrated);
   }
-  return pool;
+  return { pool, denied };
 }
 
 /**
@@ -544,12 +552,14 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
  * candidate from it). Denied and superseded candidates enter neither pool.
  * @param {Array<object>} scoredAll
  * @param {Array<ModelCandidateIdentity>} completeCatalog
- * @returns {{recommendationPool: Array<RecommendationPoolCandidate>, manualSelectionPool: Array<RecommendationPoolCandidate>}}
+ * `deniedPool` (T24) holds the verified-DENIED, non-superseded scored candidates:
+ * never selectable, kept only as comparison evidence and exclusion causes.
+ * @returns {{recommendationPool: Array<RecommendationPoolCandidate>, manualSelectionPool: Array<RecommendationPoolCandidate>, deniedPool: Array<RecommendationPoolCandidate>}}
  */
 export function buildScoredCandidatePools(scoredAll, completeCatalog) {
-  const manualSelectionPool = hydrateScoredCandidatePool(scoredAll, completeCatalog);
+  const { pool: manualSelectionPool, denied: deniedPool } = hydrateScoredCandidatePool(scoredAll, completeCatalog);
   const recommendationPool = manualSelectionPool.filter((candidate) => AUTOMATIC_ENTITLEMENTS.has(candidate.entitlement));
-  return { recommendationPool, manualSelectionPool };
+  return { recommendationPool, manualSelectionPool, deniedPool };
 }
 
 /** Backward-compatible projection for callers that only need safe recommendations. */

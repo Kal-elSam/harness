@@ -127,12 +127,16 @@ fn fixture_model(width: u16) -> ShellViewModel {
                 detail: "idle".into(),
                 state: AgentState::Idle,
                 cause: BlockCause::Unavailable,
+                why: None,
+                availability: None,
             },
             SidebarAgent {
                 label: "Builder".into(),
                 detail: "rate limited".into(),
                 state: AgentState::Blocked,
                 cause: BlockCause::RateLimited,
+                why: None,
+                availability: None,
             },
         ],
         selected_agent: 0,
@@ -143,6 +147,8 @@ fn fixture_model(width: u16) -> ShellViewModel {
         usage_line: "USAGE · Codex mock 96% │ Claude mock 80%".into(),
         engine_line: "MODEL · mock-model · session v3-fixture-1".into(),
         team_state: Some("active".into()),
+        team_presentation: Some("complete".into()),
+        roles_visible: true,
         work_mode: "plan".into(),
     };
     // Sidebar only paints when width ≥ 90; keep agents populated either way

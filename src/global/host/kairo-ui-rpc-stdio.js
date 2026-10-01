@@ -39,6 +39,8 @@
  *   { "op": "list_sessions" }
  *   { "op": "reload_snapshot" }
  *   { "op": "project.preflight" }
+ *   { "op": "project.verify_access", "confirmed": true }  — T23: explicit, consented provider verification; `confirmed` must be exactly `true`
+ *       (T24: answered by `verification_progress` records `{completed, total, active: [{label, provider}], done}` while it runs, then `verification`)
  *   { "op": "project.analyze", "analyst"?: { model, selectionSource, recommendationTags, choice } }
  *   { "op": "team.approve" }
  *   { "op": "team.revalidate" }
@@ -124,7 +126,8 @@ import { loadKairoProviderModels } from "./kairo-route-provider.js";
 import {
   analyzeProjectTeam as analyzeProjectTeamImpl,
   approveProjectTeam as approveProjectTeamImpl,
-  preflightProjectTeam as preflightProjectTeamImpl
+  preflightProjectTeam as preflightProjectTeamImpl,
+  verifyProjectTeamAccess as verifyProjectTeamAccessImpl
 } from "./project-team-sidecar.js";
 import { buildOpsSnapshot } from "./ops-sidecar.js";
 import {
@@ -363,6 +366,7 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut, { mergeRows } 
  * @param {typeof analyzeProjectTeamImpl} [options.analyzeProjectTeam]
  * @param {typeof approveProjectTeamImpl} [options.approveProjectTeam]
  * @param {typeof preflightProjectTeamImpl} [options.preflightProjectTeam]
+ * @param {typeof verifyProjectTeamAccessImpl} [options.verifyProjectTeamAccess]
  * @param {typeof revalidateTeamAvailabilityImpl} [options.revalidateTeamAvailability]
  * @param {typeof recoverProjectTeamImpl} [options.recoverProjectTeam]
  * @param {typeof approveRecoveryProposalImpl} [options.approveRecoveryProposal]
@@ -411,6 +415,7 @@ export async function runKairoUiRpcStdio({
   analyzeProjectTeam = analyzeProjectTeamImpl,
   approveProjectTeam = approveProjectTeamImpl,
   preflightProjectTeam = preflightProjectTeamImpl,
+  verifyProjectTeamAccess = verifyProjectTeamAccessImpl,
   revalidateTeamAvailability = revalidateTeamAvailabilityImpl,
   recoverProjectTeam = recoverProjectTeamImpl,
   approveRecoveryProposal = approveRecoveryProposalImpl,
@@ -897,6 +902,30 @@ export async function runKairoUiRpcStdio({
     writeOut({ type: "snapshot", snapshot });
   };
 
+  /** One `preflight` record (shared by `project.preflight` and the post-verification rebuild). */
+  const emitPreflight = async () => {
+    try {
+      const preflight = await preflightProjectTeam({ cwd });
+      writeOut({
+        type: "preflight",
+        ok: true,
+        analystCatalog: preflight.analystCatalog,
+        profile: preflight.profile,
+        // T24: local project context (stack, architecture, risks) for the
+        // picker's explanation text; never part of the ranking.
+        projectContext: preflight.projectContext ?? null,
+        candidates: preflight.candidates,
+        pickerNotice: preflight.pickerNotice ?? null,
+        exclusionCauses: Array.isArray(preflight.exclusionCauses) ? preflight.exclusionCauses : [],
+        unverifiedSubscriptions: Array.isArray(preflight.unverifiedSubscriptions) ? preflight.unverifiedSubscriptions : [],
+        verificationPlan: preflight.verificationPlan ?? null,
+        unverifiedClaudeNotice: preflight.unverifiedClaudeNotice ?? null
+      });
+    } catch (err) {
+      writeOut({ type: "preflight", ok: false, reason: err?.message ?? String(err) });
+    }
+  };
+
   /**
    * One team mutation (analyze / approve). Emits a structured `team`
    * record either way, so the host never infers success from prose, then
@@ -907,6 +936,34 @@ export async function runKairoUiRpcStdio({
   const runTeamOp = async (op, run) => {
     try {
       const summary = await run();
+      if (summary?.status === "analyst_selection_required") {
+        // Honest non-result: nothing ran, nothing changed. The host shows
+        // `reason` and opens the picker; never a generic error.
+        writeOut({ type: "team", op, ok: false, status: summary.status, reason: summary.message });
+        return summary;
+      }
+      if (summary?.status === "analyst_access_unverified" || summary?.status === "analyst_access_confirmation_required") {
+        // `analyst_access_confirmation_required`: the provider probe was NOT run
+        // (no explicit second confirmation); same non-result shape.
+        // T20: the chosen analyst's access could not be confirmed on demand.
+        // Nothing ran, nothing changed, nothing was substituted; `reason`
+        // carries the honest message, the structured fields let the host
+        // name the analyst and the check outcome.
+        writeOut({
+          type: "team", op, ok: false, status: summary.status, reason: summary.message,
+          accessStatus: summary.accessStatus ?? "unverified", analyst: summary.analyst ?? null
+        });
+        return summary;
+      }
+      if (summary?.ok === false) {
+        // Approve gate (T28): integrity/availability refused without mutation.
+        writeOut({
+          type: "team", op, ok: false, status: summary.status ?? "blocked",
+          reason: Array.isArray(summary.reasons) ? summary.reasons.join("; ") : (summary.message ?? "Approval refused"),
+          reasons: Array.isArray(summary.reasons) ? summary.reasons : []
+        });
+        return summary;
+      }
       writeOut({
         type: "team",
         op,
@@ -914,7 +971,9 @@ export async function runKairoUiRpcStdio({
         state: summary.state,
         teamRows: summary.teamRows,
         roles: summary.roles,
-        analyst: summary.analyst ?? null
+        analyst: summary.analyst ?? null,
+        readyToApprove: summary.readyToApprove ?? null,
+        blockedRoles: summary.blockedRoles ?? []
       });
       return summary;
     } catch (err) {
@@ -1686,21 +1745,43 @@ export async function runKairoUiRpcStdio({
         // Read-only: the ratatui host's own analyst picker (T2, no
         // cockpit) — lists the real catalog so a human can choose which
         // Bootstrap Analyst runs `project.analyze`, before anything is
-        // sent to a provider. Never persists, never picks for the human.
-        try {
-          const preflight = await preflightProjectTeam({ cwd });
-          writeOut({
-            type: "preflight",
-            ok: true,
-            analystCatalog: preflight.analystCatalog,
-            profile: preflight.profile,
-            candidates: preflight.candidates,
-            pickerNotice: preflight.pickerNotice ?? null,
-            unverifiedClaudeNotice: preflight.unverifiedClaudeNotice ?? null
-          });
-        } catch (err) {
-          writeOut({ type: "preflight", ok: false, reason: err?.message ?? String(err) });
+        // sent to a provider. Never persists, never picks for the human,
+        // and (T23) never spawns a provider probe: the additive
+        // `verificationPlan` only DESCRIBES the checks.
+        await emitPreflight();
+      } else if (op === "project.verify_access") {
+        // T23: the ONLY op that may spawn provider probes. Requires an
+        // explicit `confirmed: true` (anything else is refused without
+        // touching a provider). Emits the per-subscription outcome, then the
+        // rebuilt catalog so the picker opens on verified options only.
+        const confirmed = cmd?.confirmed === true;
+        if (confirmed) {
+          writeOut({ type: "notice", message: "Verifying access… (real provider calls, may consume quota)" });
         }
+        // T24: progress records while the checks run (completed/total and the
+        // active check labels). Additive: a host that ignores them still gets
+        // the final `verification` record. Closing the host's modal sends
+        // nothing here, so a run in flight is never cancelled by the UI.
+        const result = await verifyProjectTeamAccess({
+          cwd,
+          confirmed,
+          onProgress: (progress) => writeOut({
+            type: "verification_progress",
+            completed: progress?.completed ?? 0,
+            total: progress?.total ?? 0,
+            active: Array.isArray(progress?.active) ? progress.active : [],
+            done: progress?.done ?? null
+          })
+        });
+        writeOut({
+          type: "verification",
+          ok: result.ran === true,
+          status: result.status,
+          persisted: result.persisted === true,
+          outcomes: Array.isArray(result.outcomes) ? result.outcomes : [],
+          message: result.message ?? null
+        });
+        if (result.ran === true) await emitPreflight();
       } else if (op === "project.analyze") {
         // Team setup lives here, in the ratatui host: default analyst
         // (or the human's own pick from `project.preflight`'s catalog,
@@ -1713,16 +1794,38 @@ export async function runKairoUiRpcStdio({
           message: "Analyzing project team… (real read-only provider call, can take a minute)"
         });
         const summary = await runTeamOp("project.analyze", () =>
-          analyzeProjectTeam({ cwd, analyst: requestedAnalyst })
+          analyzeProjectTeam({
+            cwd,
+            analyst: requestedAnalyst,
+            onProgress: (event) => writeOut({
+              type: "analysis_progress",
+              stage: event?.stage ?? null,
+              analyst: event?.analyst ?? null,
+              elapsedMs: event?.elapsedMs ?? null,
+              startedAt: event?.startedAt ?? null
+            })
+          })
         );
-        if (summary.notice) writeOut({ type: "notice", message: summary.notice });
-        await emitSnapshot();
-        writeOut({
-          type: "notice",
-          message:
-            `Suggested team ready: ${summary.teamRows} role${summary.teamRows === 1 ? "" : "s"}` +
-            `${summary.analyst ? ` via ${summary.analyst}` : ""} — approve to enable chat.`
-        });
+        if (!["analyst_selection_required", "analyst_access_unverified", "analyst_access_confirmation_required"].includes(summary.status)) {
+          if (summary.notice) writeOut({ type: "notice", message: summary.notice });
+          await emitSnapshot();
+          if (summary.readyToApprove) {
+            writeOut({
+              type: "notice",
+              message:
+                `Suggested team ready: ${summary.teamRows} role${summary.teamRows === 1 ? "" : "s"}` +
+                `${summary.analyst ? ` via ${summary.analyst}` : ""} — approve to enable chat.`
+            });
+          } else {
+            const blocked = Array.isArray(summary.blockedRoles) ? summary.blockedRoles : [];
+            writeOut({
+              type: "notice",
+              message: blocked.length > 0
+                ? `Suggested team draft needs attention: ${blocked.length} blocked role${blocked.length === 1 ? "" : "s"} (${blocked.join(", ")}) — open Project to review or re-analyze.`
+                : "Suggested team draft needs attention — open Project to review blocked or missing roles."
+            });
+          }
+        }
       } else if (op === "team.approve") {
         const summary = await runTeamOp("team.approve", () => approveProjectTeam({ cwd }));
         // Approval is what makes a launchable projectTeam route exist:

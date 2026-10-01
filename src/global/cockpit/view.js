@@ -4,6 +4,7 @@ import { CARD_TONE, cardBottom, cardInnerWidth, cardLine, cardTop, renderPanel a
 import { theme } from "./theme.js";
 import { resolveAssignmentAvailability } from "../conversation/assignment-availability.js";
 import { formatSubscriptionUsageSegments, formatSlashUsageLines, quotaWarnSuffix } from "../conversation/usage-summary.js";
+import { explainTeamDecision, ROLE_CAPABILITY_BLURB } from "../conversation/team-decision.js";
 
 // Re-exported for every existing importer of this module — the real
 // implementation moved to conversation/assignment-availability.js (a
@@ -19,46 +20,10 @@ export { resolveAssignmentAvailability };
 // the exact same LOW threshold text, never a second implementation.
 export { quotaWarnSuffix };
 
-/** Plain-language description of what each role optimizes for — mirrors
- * buildAiTeamRoleDefinitions()'s real compute functions in
- * model-intelligence.js, never a per-model claim, so it never needs
- * updating when the underlying models change. */
-export const ROLE_CAPABILITY_BLURB = {
-  Explorer: "general reasoning capability",
-  Architect: "general reasoning capability",
-  Builder: "coding capability",
-  Debugger: "reasoning and terminal-debugging capability",
-  Tester: "coding and terminal-execution capability",
-  Reviewer: "independent reasoning and coding review"
-};
-
-const OVERRIDE_DECISION_TEXT = "Manual override — not the automatic ranking's own pick.";
-
-/**
- * Pure, human-readable why for one team assignment — from real
- * `reason` / `decisionEvidence` only, never invented metrics.
- * Existing `entry.reason` always wins; overrides use a single formulation.
- * @param {{role?: string, reason?: string|null, assignmentSource?: string|null, decisionEvidence?: object|null}} entry
- * @returns {string}
- */
-export function explainTeamDecision(entry) {
-  if (!entry) return `Selected for ${ROLE_CAPABILITY_BLURB.Explorer ?? "this role's capability requirement"}.`;
-  if (entry.assignmentSource === "override") return OVERRIDE_DECISION_TEXT;
-  if (entry.reason) return entry.reason;
-
-  const blurb = ROLE_CAPABILITY_BLURB[entry.role] ?? "this role's capability requirement";
-  const decisionType = entry.decisionEvidence?.decisionType ?? null;
-  if (decisionType === "leader") {
-    const floor = entry.decisionEvidence?.requiredFloor;
-    const risk = entry.decisionEvidence?.riskLevel;
-    if (floor != null && risk != null) {
-      const floorPct = Math.round(floor * 100);
-      return `Ranked first for ${blurb} among eligible candidates — nothing cheaper or faster displaced it at the ${floorPct}% capability floor (${risk}-risk role).`;
-    }
-    return `Ranked first for ${blurb} among eligible candidates.`;
-  }
-  return `Selected for ${blurb}.`;
-}
+// Re-exported: explainTeamDecision / ROLE_CAPABILITY_BLURB live in
+// conversation/team-decision.js so the workspace snapshot can share them
+// without pulling cockpit rendering deps.
+export { explainTeamDecision, ROLE_CAPABILITY_BLURB };
 
 /** view.js's own local binding for card.js's real renderPanel, fixed to this module's theme. */
 function renderPanel(title, tone, width, contentLines, targetLineCount = contentLines.length) {
