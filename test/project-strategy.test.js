@@ -309,6 +309,58 @@ test("T28: orchestrator comes from the operational Architect assignment, not qua
   assert.equal(strategy.qualityTeam[0].model.adapterId, "claude", "comparative quality primary still exposed");
 });
 
+test("REGRESSION: OpenCode Go monthly rate-limit must not leave Architect/Builder/Orchestrator on Go when Codex is the usable fallback", () => {
+  // Live suggested draft assigned Architect/Builder to opencode-go/kimi-k3
+  // with Codex only as fallback while Go was limited:monthly — comparative
+  // leader kept as operational model. Operational assignment must promote
+  // the eligible Codex fallback into projectTeam.model (and orchestrator).
+  const aa = [
+    { slug: "kimi-k3", name: "Kimi K3", intelligenceIndex: 90, codingIndex: 90, terminalBenchV2: 0.9 },
+    { slug: "gpt-5.6-terra", name: "GPT-5.6-Terra", intelligenceIndex: 80, codingIndex: 80, terminalBenchV2: 0.85 }
+  ];
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "opencode-go", models: [{ id: "kimi-k3", displayName: "Kimi K3" }] },
+    { adapterId: "codex", models: [{ id: "gpt-5.6-terra", displayName: "GPT-5.6-Terra" }] }
+  ], aa).map((model) => ({ ...model, accessMode: "automatic" }));
+  const strategy = buildProjectStrategy(
+    profile({
+      roleRequirements: [
+        { role: "Architect", capabilities: ["reasoning", "coding"], reason: "" },
+        { role: "Builder", capabilities: ["coding", "terminalExecution"], reason: "" }
+      ]
+    }),
+    {
+      scoredAll,
+      eligibility: {
+        "opencode-go": {
+          ok: false,
+          cause: "rate_limited",
+          reason: "OpenCode Go monthly window is rate-limited (resets 2026-10-12T18:00:48.000Z)"
+        },
+        codex: { ok: true, reason: null }
+      },
+      registry: createCapabilityRegistry(),
+      providerCapacity: null
+    },
+    analystChoice("quality", { adapterId: "codex", modelId: "gpt-5.6-terra", displayName: "GPT-5.6-Terra" })
+  );
+  const architect = strategy.projectTeam.find((entry) => entry.role === "Architect");
+  const builder = strategy.projectTeam.find((entry) => entry.role === "Builder");
+  assert.ok(architect, "Architect must stay an active operational role");
+  assert.ok(builder, "Builder must stay an active operational role");
+  assert.equal(architect.model.adapterId, "codex", "Architect operational model must leave rate-limited Go");
+  assert.equal(architect.assignmentState, "ready");
+  assert.equal(architect.fallback, null);
+  assert.equal(builder.model.adapterId, "codex", "Builder operational model must leave rate-limited Go");
+  assert.equal(strategy.orchestrator.adapterId, "codex");
+  assert.notEqual(strategy.orchestrator.adapterId, "opencode-go");
+  assert.equal(
+    strategy.qualityTeam.find((entry) => entry.role === "Architect")?.model?.adapterId,
+    "opencode-go",
+    "comparative quality evidence may still name the Go leader"
+  );
+});
+
 test("buildProjectStrategy's projectTeam carries the richer model reference (candidateKey, accessMode) plus assignmentSource and decisionEvidence", () => {
   const strategy = buildProjectStrategy(profile({
     roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]

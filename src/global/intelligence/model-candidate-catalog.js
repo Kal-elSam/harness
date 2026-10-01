@@ -23,12 +23,13 @@
 // lineageKey/generation are populated only for the recognized, conservative
 // families in LINEAGE_PARSERS (see its own doc) — every other candidate
 // gets null/null, never a guess. lifecycle is computed from THAT: a
-// candidate is "superseded" only when a real, strictly newer generation
-// under the exact same lineageKey is ALSO present in this same catalog
-// (i.e. genuinely accessible, not hypothetical); everything else —
-// unrecognized lineage, or the newest (or only) generation within a
-// recognized one — is "current" or "unknown", never excluded from
-// anything downstream just because its lineage couldn't be determined.
+// candidate is "superseded" when a real, strictly newer generation under
+// the exact same lineageKey is ALSO present on the SAME adapterId, or when
+// a Cursor Claude re-export lags a newer generation on the canonical
+// `claude` adapter. Cursor listing a newer Claude generation must never
+// retire Claude's own still-current catalog. Unrecognized lineages stay
+// "unknown" and are never excluded just because lineage couldn't be
+// determined.
 
 import { matchArtificialAnalysisScore } from "./model-intelligence.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
@@ -48,7 +49,7 @@ import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
  * @property {"scored"|"partial"|"unscored"} evidenceStatus - "scored": AA matched this exact model AND reports at least one of intelligenceIndex/codingIndex. "partial": AA matched it but both composite indices are null (real match, thin evidence). "unscored": no confident AA match at all. Never role-specific — see this module's own doc for why.
  * @property {string|null} lineageKey - real, recognized model family/lineage (see LINEAGE_PARSERS) — null when the modelId doesn't match any recognized, conservative pattern. Never guessed.
  * @property {number|null} generation - a real, comparable version number within that lineage — null whenever lineageKey is null.
- * @property {"current"|"superseded"|"unknown"} lifecycle - "superseded" only when a real, strictly newer generation under the SAME lineageKey is also present in this catalog; "current" when it's the newest (or only) generation in a recognized lineage; "unknown" whenever lineageKey is null. An unknown lineage NEVER excludes a candidate from anything downstream.
+ * @property {"current"|"superseded"|"unknown"} lifecycle - "superseded" when a real, strictly newer generation under the SAME lineageKey is present on the SAME adapterId, or when a Cursor re-export of a Claude lineage lags a newer generation on the canonical `claude` adapter; "current" otherwise for recognized lineages; "unknown" whenever lineageKey is null. An unknown lineage NEVER excludes a candidate from anything downstream. Cursor exposing Claude Opus 5.5 must never supersede Claude's allowed Opus 5.
  * @property {{inputPerMTok: number, outputPerMTok: number}|null} resourceCost - real, provider-reported cost, when the provider actually reports one (OpenCode Go today) — never estimated or carried over from a different model.
  */
 
@@ -309,25 +310,48 @@ export function resolveLineage(modelId) {
 
 /**
  * Computes each candidate's real "current"/"superseded"/"unknown"
- * lifecycle from lineageKey/generation already resolved onto it —
- * "superseded" only when a real, strictly newer generation under the
- * SAME lineageKey is ALSO present in `catalog` (i.e. genuinely
- * accessible right now, not merely a known future release). Returns a
- * NEW array (candidates are copied, never mutated in place).
+ * lifecycle from lineageKey/generation already resolved onto it.
+ *
+ * Same-adapter rule: "superseded" when a strictly newer generation under
+ * the SAME lineageKey exists on the SAME adapterId.
+ *
+ * Cross-adapter Claude re-exports: Cursor (and only Cursor) also yields to
+ * a newer generation present on the canonical `claude` adapter — so an
+ * obsolete `claude-4-sonnet` re-exposure retires once Claude Sonnet 5 is
+ * in Claude's catalog. The reverse must never happen: Cursor listing
+ * Claude Opus 5.5 must not mark Claude's allowed Opus 5 superseded.
+ *
+ * Returns a NEW array (candidates are copied, never mutated in place).
  * @param {Array<ModelCandidateIdentity>} catalog
  * @returns {Array<ModelCandidateIdentity>}
  */
 function applyLifecycle(catalog) {
-  const maxGenerationByLineage = new Map();
+  const maxGenerationByAdapterLineage = new Map();
   for (const candidate of catalog) {
     if (candidate.lineageKey == null) continue;
-    const current = maxGenerationByLineage.get(candidate.lineageKey);
-    if (current == null || candidate.generation > current) maxGenerationByLineage.set(candidate.lineageKey, candidate.generation);
+    const key = `${candidate.adapterId}::${candidate.lineageKey}`;
+    const current = maxGenerationByAdapterLineage.get(key);
+    if (current == null || candidate.generation > current) {
+      maxGenerationByAdapterLineage.set(key, candidate.generation);
+    }
   }
   return catalog.map((candidate) => {
     if (candidate.lineageKey == null) return { ...candidate, lifecycle: "unknown" };
-    const max = maxGenerationByLineage.get(candidate.lineageKey);
-    return { ...candidate, lifecycle: candidate.generation < max ? "superseded" : "current" };
+    const sameAdapterMax = maxGenerationByAdapterLineage.get(
+      `${candidate.adapterId}::${candidate.lineageKey}`
+    );
+    if (candidate.generation < sameAdapterMax) {
+      return { ...candidate, lifecycle: "superseded" };
+    }
+    // Cursor re-exposes Claude model ids; retire those that lag Claude's
+    // own catalog. Never let Cursor's inventory retire Claude's.
+    if (candidate.adapterId === "cursor" && candidate.lineageKey.startsWith("claude-")) {
+      const claudeMax = maxGenerationByAdapterLineage.get(`claude::${candidate.lineageKey}`);
+      if (claudeMax != null && candidate.generation < claudeMax) {
+        return { ...candidate, lifecycle: "superseded" };
+      }
+    }
+    return { ...candidate, lifecycle: "current" };
   });
 }
 
