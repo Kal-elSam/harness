@@ -95,7 +95,7 @@ Mode: unknown for this integration branch — run focused then full applicable s
 
 - Integrated tests use the **real sidecar** (`runKairoUiRpcStdio`) but **SIMULATE** Pi, analysis/approval bodies, recovery decisions, and chat answers.
 - They prove wiring + navigation (ops, notices, set_model, prompt routing), **not** full real-provider / real-analyst behavior.
-- Those real-behavior checks remain **pending** (require separate provider authorization + post-Claude package re-run).
+- Published Pi RPC cold start (no model) was later **VERIFIED by Claude** and fixed (`50f9b4984` / `287d34342`) — see P1-T3 reopen. Real **provider** runs remain pending specific authorization. Packaged-host no-model path is a separate open check.
 
 
 ### P1-T2 expand — multi-size / resize / real draft store / reject+cancel
@@ -156,9 +156,7 @@ Claude's closing note claimed **6** Node failures identical on base `56c530cf2`.
 | 3 | after T24: Sol ONE main slot / Opus in main three | `analyst-ranking-trace.test.js:30` | `main.length` 12≠3 | T27 flat list: all usable routes are `stage:"main"` (no top-3); Cursor effort ids + both Sol routes appear in main |
 | 4 | after T24: Cursor effort ids manual-only | `analyst-ranking-trace.test.js:51` | stage `'main'≠'manual'` | Same T27 flat-list: unscored-but-available effort ids are listed in main with `qualification:"no_evidence"`, not parked in manual |
 
-**Verdict:** product behavior matches **T27** (`project-team-sidecar.js` flat list, no star). The four failures are **stale assertions** written for the pre-T27 top-3/star contract, not regressions from Claude U1–U3. Fix path (not done here): rewrite those four tests to T27 expectations, or restore starring only if product reverts T27 — product decision.
-
-Not fixed in that turn (investigation only). Real-provider / live Pi cold-start still need separate authorization.
+**Verdict:** product behavior matches **T27** (`project-team-sidecar.js` flat list, no star). The four failures were **stale assertions** for the pre-T27 top-3/star contract, not regressions from Claude U1–U3. Later rewritten in `7377b45c9` (order/identity/evidence kept).
 
 
 ### P1-T3 reopen — placeholder `no_model` fix + T27 test rewrite
@@ -169,14 +167,29 @@ Not fixed in that turn (investigation only). Real-provider / live Pi cold-start 
 |---|---|
 | Cherry-pick `50f9b4984` | local `287d34342` — `classifyPiEngineFromState` + pi-rpc-bridge test |
 | Rewrite 4 stale tests to T27 | `7377b45c9` — keep order/identity/evidence; no star / flat list / effort ids in main tail |
+| Sync Claude cold-start docs | `ec444354c` ← `75f54aecc` (parity tracker + `docs/ai/kairo-parity-provider-plan.md`) |
 | `cargo test -p kairo-ui` | **331/331** |
 | `pnpm test` | **2427 pass / 0 fail / 1 skip** (live Pi) |
 | P1-T2 expanded PTY | **PASS** — `/tmp/kairo-pty-after-placeholder/` |
 | Packaging re-run | 4/4 prebuilts; clean-install PASS; Windows fail-closed; v3-capture 52; mock PTY 60/100/160 PASS |
 
-Real providers / live Pi cold-start with no session.model: still **pending authorization** — green tests do not close that gap.
+#### Published Pi cold start — VERIFIED (Claude; not pending auth)
 
-HEAD after this close: see `git log -1` on `feat/kairo-cursor-baseline`.
+Claude already ran the **published** `@kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.5` cold start (user-authorized 2026-10-01, local only): `--mode rpc --no-session --offline`, isolated temp HOME/`PI_CODING_AGENT_DIR`, scrubbed env (no keys, no network). Observed: `get_state` → placeholder `{id,provider,api:"unknown"}` (not null); `prompt` → `success:false` "No API key found…". Gap: classifier treated placeholder as `connected`. Fix `50f9b4984` / integrated `287d34342`. Item (a) = **VERIFIED/FIXED**. Do **not** keep marking this as pending authorization.
+
+That evidence is **not** the same as: launching the **integrated, packaged Kairo host** (prebuilt `kairo-ui` + sidecar) with no model selected and observing end-to-end `no_model` UI. That packaged-host check remains a separate, still-open item below.
+
+#### Still open (close evidence / delivery — no new features)
+
+| Item | Status |
+|---|---|
+| Real provider runs (Codex/Claude/Cursor/OpenCode ASK events, tools, thinking) | Pending **specific** provider authorization — see `docs/ai/kairo-parity-provider-plan.md` (not executed) |
+| Packaged integrated host, no model (prebuilt binary path) | **Distinct** from published-Pi RPC cold start; not yet observed as a full product path |
+| Human visual acceptance of the integrated product | Pending (v3-capture is auto fixtures only) |
+| Foreign-platform package exec (darwin-x64 / linux-*) | Selection PASS; runtime exec still needs Rosetta / Linux-or-qemu hosts |
+| Native review consent | U1/U2 **declined** (stand); U3 candidate consent still **pending** — resolve separately |
+
+Simulated/PTY/Node green ≠ complete validation. No further feature work in this stream until the open evidence above is closed or explicitly deferred.
 
 
 ### P1-T4 — Final package validation (post-placeholder fix)
@@ -191,7 +204,9 @@ Re-run on HEAD that includes `50f9b4984` + T27 test rewrite. Host Darwin arm64. 
 | Host `--v3-capture` | exit 0, **52** fixtures (60/100/160) | auto; not human visual approval |
 | Mock PTY @60/100/160 | PASS | mock sidecar |
 | P1-T2 team-flow PTY | PASS | SIMULATED providers |
-| Real providers / live Pi no-model cold start | **not run** | auth not granted |
+| Published Pi RPC cold start (no session.model) | **VERIFIED by Claude** → fix `287d34342` | Not pending auth; see P1-T3 reopen |
+| Packaged integrated host, no model (prebuilt path) | **not observed** | Distinct from published-Pi RPC check |
+| Real providers | **not run** | needs specific auth |
 
 ### P1-T4 — historical note (pre-placeholder; superseded)
 
