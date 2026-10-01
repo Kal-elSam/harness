@@ -64,5 +64,7 @@ Mode: unknown for this integration branch — run focused then full applicable s
 - Preserved: Pi `0.87.1-kairo.5`; CLI `kairo`/`ui`/`start`/`resume`/`shell` → `launchRatatuiHost`; retired cockpit/Pi opt-outs still throw.
 - Dropped expired `.npmrc` Pi.5 cooldown exclude (past 2026-09-29).
 - Did **not** import herd-shell dirty WIP (session-handoff / context-fill).
-- Hash to deliver: recorded after merge commit + focused verification.
+- Merge commit / base hash for Claude: `56c530cf2bde99881ef9277747f2968cbb78dd21`
+- Focused Node: 212/212 pass (`team-presentation`, `project-strategy`, `project-analysis`, `project-team-sidecar`, analyst picker/access, `team-recovery`)
+- `cargo test -p kairo-ui`: 295/295 pass (includes T28 analysis_progress tests)
 
