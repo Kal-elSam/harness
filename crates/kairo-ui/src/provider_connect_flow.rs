@@ -318,11 +318,15 @@ impl ProviderConnectFlow {
             || reason == "login_completed"
             || (ok && reason == "connected");
         if connected {
-            self.result = Some(
-                label
-                    .unwrap_or("Connected — refresh inventory to see verified models.")
-                    .into(),
-            );
+            // Prefer adapter label when present; keep the inventory reminder if
+            // the label is only the bare success token.
+            let mut message = "Connected — refresh inventory to see verified models.".to_string();
+            if let Some(l) = label {
+                if !l.is_empty() && l != "Connected" {
+                    message = l.to_string();
+                }
+            }
+            self.result = Some(message);
             self.error = None;
         } else if reason == "auth_not_confirmed" {
             // Exit 0 without confirmed auth is not a connection.
@@ -548,6 +552,22 @@ mod tests {
             "reason": "auth_not_confirmed"
         })));
         assert_eq!(flow.result.as_deref(), Some("No conectado"));
+    }
+
+    #[test]
+    fn bare_connected_label_keeps_inventory_reminder() {
+        let mut flow = ProviderConnectFlow::loading();
+        flow.stage = ConnectStage::Connecting;
+        assert!(flow.apply_connect_record(&json!({
+            "ok": true,
+            "outcome": "connected",
+            "reason": "login_completed",
+            "label": "Connected"
+        })));
+        assert_eq!(
+            flow.result.as_deref(),
+            Some("Connected — refresh inventory to see verified models.")
+        );
     }
 
     #[test]

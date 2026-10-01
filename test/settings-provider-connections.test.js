@@ -69,7 +69,7 @@ test("auth_not_confirmed formats as No conectado", () => {
   );
   assert.equal(
     formatConnectResultLabel({ ok: true, outcome: "connected", reason: "login_completed" }),
-    "Connected"
+    "Connected — refresh inventory to see verified models."
   );
 });
 

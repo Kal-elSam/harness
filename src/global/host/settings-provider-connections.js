@@ -210,7 +210,8 @@ export function formatConnectResultLabel({ ok, outcome, reason } = {}) {
     || resolvedOutcome === "connected"
     || resolvedReason === "login_completed"
   ) {
-    return "Connected";
+    // Login confirms auth only — remind that models stay catalogued until verify.
+    return "Connected — refresh inventory to see verified models.";
   }
   if (resolvedReason === "auth_not_confirmed") {
     return "No conectado";

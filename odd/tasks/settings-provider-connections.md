@@ -43,8 +43,10 @@ Inventory labels: `catalogued` | `verified` | `unverified` | `quota_limited` | `
 | Ratatui UI | state machine + bridge ops | no live TTY yield in `cargo test` |
 
 ## Progress / evidence
-- Checks observed: Node connections suites **124/124**; `cargo test -p kairo-ui` provider_connect_flow **5/5**; `python3 scripts/kairo-ui-connections-pty-e2e.py` success/cancel/fail **PASS** (fake status runner + `terminal.session_result`; no real provider CLI).
+- Tip conserved for review: `658d842c1` (`60a0102a7..658d842c1`). Follow-up fixes land **on top**, no history rewrite.
+- Checks observed at tip: Node connections **124/124**; `cargo test` provider_connect_flow **5/5**; PTY e2e success/cancel/fail **PASS** (fake status runner + `terminal.session_result`; no real provider CLI).
+- Finding on tip: success `label:"Connected"` overwrote the inventory reminder in Ratatui — fixed above tip without expanding features or running providers.
 - Review: Cursor runtime is **unassessable** for immutable RDD — not a pass, not low risk, and does **not** authorize `review mode disable`.
 
 ## Next step
-Hand range **`60a0102a7..HEAD`** on `feat/kairo-cursor-baseline` to an admitted review runtime (claude-code / opencode / codex) for receipt-driven evaluation.
+Hand range **`60a0102a7..HEAD`** on `feat/kairo-cursor-baseline` (includes tip `658d842c1` + follow-ups) to an admitted review runtime (claude-code / opencode / codex).
