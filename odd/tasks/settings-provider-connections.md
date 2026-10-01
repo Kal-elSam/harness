@@ -9,7 +9,7 @@ Do NOT implement provider auth/CLI allowlists — consume Claude's `connections.
 Settings Connect + per-account/model inventory + journey connect → refresh → verify pending → analyst → team, with terminal yield/restore and no auto-login on open.
 
 ## Contract (consumed)
-Backend tip tree matches `feat/connections-backend` (`b6ed4f938` + `671c5d79c` + `f0b541f52`):
+Backend tip matches `feat/connections-backend` (`b6ed4f938` + `671c5d79c` + `f0b541f52`), plus checklist copy that `auth_not_confirmed` surfaces as **No conectado**:
 - `status` → layers `installation` / `authentication` / `modelAccess` / `quota` (never one boolean)
 - `preview({ providerId, action: "login" })` → allowlisted argv, surfaces, `previewId`, expiry (pure; no spawn)
 - `connect({ preview, confirm: true })` → `connected` only after fresh auth status; exit 0 alone can be `failed`/`auth_not_confirmed`
@@ -27,10 +27,11 @@ Inventory labels: `catalogued` | `verified` | `unverified` | `quota_limited` | `
 - [x] T4 Protocol evidence: PTY script + simulated double unit tests; no login on open
 - [x] T5 Settings glue (`c` / `v` / refresh); analyst verify stays separate consent
 
-## Commits (this lane, after trailer strip)
-- `feat(connections): …` — Claude backend contract (tree ≡ `feat/connections-backend`)
-- `feat(settings): …` — host adapter, host-bridge, simulated test double, RPC/PTY tests, tracker
-- `feat(kairo-ui): …` — ProviderConnectFlow + Settings wiring (`No conectado` for `auth_not_confirmed`)
+## Commits (this lane; no `Co-authored-by: Cursor`)
+- `85decbfd0` — Claude backend contract (≡ `feat/connections-backend` + No conectado checklist note)
+- `e1e433f39` — host adapter, host-bridge, simulated test double, RPC/PTY tests, tracker
+- `c6fa7bf59` — ProviderConnectFlow + Settings wiring
+- docs tip on branch — pin of SHAs + admitted review range (this file)
 
 ## What is simulated vs real
 | Surface | Real | Simulated |
@@ -42,11 +43,8 @@ Inventory labels: `catalogued` | `verified` | `unverified` | `quota_limited` | `
 | Ratatui UI | state machine + bridge ops | no live TTY yield in `cargo test` |
 
 ## Progress / evidence
-- Backend tree: identical to `feat/connections-backend` tip (`ab6c8454…`).
-- Host: `settings-provider-connections.js`, `connections-interactive-pty.js`, `kairo-ui-rpc-stdio.js`.
-- UI: `crates/kairo-ui/src/provider_connect_flow.rs` (+ bridge/main/settings_panel).
-- Checks: Node connections suites; `cargo test -p kairo-ui`; `python3 scripts/kairo-ui-connections-pty-e2e.py`.
-- Review: Cursor runtime is **unassessable** for immutable RDD — deliver `60a0102a7..HEAD` to claude-code / opencode / codex. Do not treat unassessable as pass; do not disable RDD.
+- Checks observed: Node connections suites **124/124**; `cargo test -p kairo-ui` provider_connect_flow **5/5**; `python3 scripts/kairo-ui-connections-pty-e2e.py` success/cancel/fail **PASS** (fake status runner + `terminal.session_result`; no real provider CLI).
+- Review: Cursor runtime is **unassessable** for immutable RDD — not a pass, not low risk, and does **not** authorize `review mode disable`.
 
 ## Next step
-Hand range `60a0102a7..HEAD` to an admitted review runtime for receipt-driven evaluation.
+Hand range **`60a0102a7..HEAD`** on `feat/kairo-cursor-baseline` to an admitted review runtime (claude-code / opencode / codex) for receipt-driven evaluation.
