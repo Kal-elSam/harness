@@ -184,10 +184,25 @@ That evidence is **not** the same as: launching the **integrated, packaged Kairo
 | Item | Status |
 |---|---|
 | Real provider runs (Codex/Claude/Cursor/OpenCode ASK events, tools, thinking) | Pending **specific** provider authorization — see `docs/ai/kairo-parity-provider-plan.md` (not executed) |
-| Packaged integrated host, no model (prebuilt binary path) | **Distinct** from published-Pi RPC cold start; not yet observed as a full product path |
-| Human visual acceptance of the integrated product | Pending (v3-capture is auto fixtures only) |
+| Packaged integrated host, no model (prebuilt binary path) | **Prepared + PASS** (see acceptance pack below) | Distinct from published-Pi RPC check |
+| Human visual acceptance of the integrated product | **Captures ready** — awaiting your review | v3-capture auto fixtures |
 | Foreign-platform package exec (darwin-x64 / linux-*) | Selection PASS; runtime exec still needs Rosetta / Linux-or-qemu hosts |
 | Native review consent | U1/U2 **declined** (stand); U3 candidate consent still **pending** — resolve separately |
+
+#### Acceptance pack (isolated; no credentials / no network)
+
+Command: `pnpm prepare:acceptance-evidence` (or `bash scripts/prepare-kairo-acceptance-evidence.sh`).
+
+Latest local pack: `/tmp/kairo-acceptance-prep/`
+
+| Artifact | Purpose |
+|---|---|
+| `ACCEPTANCE.md` | How to review |
+| `packaged-no-model/*/screen.after-ready.txt` | Packaged host shows `Chat blocked: no_model` |
+| `packaged-no-model/*/sidecar.log` | REAL classifier + stdio loop |
+| `v3-visual/*.html` (52 files) | Human visual acceptance at 60/100/160 + ops/settings |
+
+Default Pi child for the packaged check is a **local fake** returning the published placeholder shape; classifier + host binary are real. Optional `KAIRO_PACKAGED_NO_MODEL_REAL_PI=1` attempts published Pi offline (still scrubbed HOME).
 
 Simulated/PTY/Node green ≠ complete validation. No further feature work in this stream until the open evidence above is closed or explicitly deferred.
 
@@ -205,8 +220,9 @@ Re-run on HEAD that includes `50f9b4984` + T27 test rewrite. Host Darwin arm64. 
 | Mock PTY @60/100/160 | PASS | mock sidecar |
 | P1-T2 team-flow PTY | PASS | SIMULATED providers |
 | Published Pi RPC cold start (no session.model) | **VERIFIED by Claude** → fix `287d34342` | Not pending auth; see P1-T3 reopen |
-| Packaged integrated host, no model (prebuilt path) | **not observed** | Distinct from published-Pi RPC check |
+| Packaged integrated host, no model (prebuilt path) | **PASS** (isolated pack) | Distinct from published-Pi RPC; see `/tmp/kairo-acceptance-prep/` |
 | Real providers | **not run** | needs specific auth |
+| Human visual (v3 fixtures) | **52 captures ready** | awaiting human accept/reject |
 
 ### P1-T4 — historical note (pre-placeholder; superseded)
 
