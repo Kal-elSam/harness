@@ -111,22 +111,38 @@ test("unverified, denied and exhausted rows are in NEITHER list", () => {
   assert.deepEqual(keys(curated.alternatives), []);
 });
 
-test("explanations separate aptitude from evidential confidence; detail carries counts for d (T29)", () => {
+test("picker rows are a flat label list — no aptitude prose; credit-gated models stay out", () => {
   const curated = curateAnalystCatalogForPicker({
     models: [
       entry({ modelId: "strong", displayName: "Strong", rank: 1, evaluation: { ...EVALUATION, capabilities: { reasoning: 0.9, coding: 0.8 } } }),
-      entry({ modelId: "meh", displayName: "Meh", rank: 2, evaluation: { ...EVALUATION, capabilities: { reasoning: 0.4, coding: 0.35 } } }),
-      entry({ modelId: "unscored", displayName: "Unscored", ...noEvidence })
+      entry({ modelId: "unscored", displayName: "Unscored", ...noEvidence }),
+      entry({
+        adapterId: "claude",
+        modelId: "claude-fable-5-1",
+        displayName: "Claude Fable 5.1",
+        available: false,
+        selectable: false,
+        accessVerified: true,
+        cause: "unavailable_verified",
+        entitlementReason: "credits_required"
+      }),
+      entry({
+        adapterId: "cursor",
+        modelId: "composer-2",
+        displayName: "Composer",
+        available: false,
+        selectable: false,
+        accessVerified: true,
+        cause: "unavailable_verified"
+      })
     ]
   });
   assert.equal(curated.recommendedModel, null);
   assert.deepEqual(curated.alternatives, []);
-  const strong = curated.models.find((row) => row.modelId === "strong");
-  assert.match(strong.explanation, /apto|investigar/i);
-  assert.doesNotMatch(strong.explanation, /menor capacidad/i);
-  const unscored = curated.models.find((row) => row.modelId === "unscored");
-  assert.match(unscored.explanation, /no implica menor capacidad/i);
-  assert.match(unscored.detail, /sin fila de benchmark|benchmark/i);
+  assert.deepEqual(curated.models.map((row) => row.label), ["Strong · Codex", "Unscored · Codex"]);
+  assert.ok(curated.models.every((row) => row.explanation == null && row.detail == null));
+  assert.ok(!curated.models.some((row) => row.modelId === "claude-fable-5-1"));
+  assert.ok(!curated.models.some((row) => row.adapterId === "cursor"), "empty Cursor subscription contributes no rows");
 });
 
 test("rows carry model AND subscription so the same model on two subscriptions is distinguishable", () => {

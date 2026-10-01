@@ -15,7 +15,7 @@
  */
 
 import {
-  MAIN_VIEW_LIMIT, QUALIFICATION, compareAnalystRows, recommendationQualifies
+  MAIN_VIEW_LIMIT, compareAnalystRows, recommendationQualifies
 } from "../conversation/analyst-qualification.js";
 import { computeProjectProfile } from "../conversation/project-profile.js";
 import { createConversationService } from "../conversation/service.js";
@@ -51,53 +51,17 @@ function isPickerSelectable(model) {
   return model?.available === true || model?.selectable === true;
 }
 
-const CAPABILITY_WORDS = Object.freeze({ reasoning: "razonamiento", coding: "código", instructionFollowing: "seguimiento de instrucciones" });
-
 function subscriptionOf(model) {
   return providerPickerLabel(model.adapterId);
 }
 
 const labelOf = (model) => `${model.displayName ?? model.modelId} · ${subscriptionOf(model)}`;
 
-/** Benchmark / certainty notes for `d` — never shown as a primary picker line. */
-function evidenceDetail(row) {
-  const counts = row.evaluation?.benchmarkCounts ?? {};
-  const parts = [];
-  if (row.qualification === QUALIFICATION.PARTIAL) {
-    parts.push("certeza de comparación: provisional (menos evidencia ≠ menor capacidad)");
-  } else if (row.qualification === QUALIFICATION.INSUFFICIENT) {
-    const missing = (row.evaluation?.missing ?? []).map((capability) => CAPABILITY_WORDS[capability] ?? capability);
-    parts.push(`faltan datos medidos de ${missing.join(" y ") || "capacidades requeridas"}`);
-  } else if (row.qualification === QUALIFICATION.NONE) {
-    parts.push("sin fila de benchmark vinculada");
-  } else if (row.qualification === QUALIFICATION.QUALIFIED) {
-    parts.push("certeza de comparación: evidencia comparable disponible");
-  }
-  if (typeof counts.reasoning === "number") parts.push(`razonamiento: ${counts.reasoning} benchmark(s)`);
-  if (typeof counts.coding === "number") parts.push(`código: ${counts.coding} benchmark(s)`);
-  return parts.length > 0 ? parts.join(" · ") : null;
-}
-
 /**
- * Concise Spanish list line (Rust `description`): aptitude when qualified;
- * for thin/missing evidence, name evidential confidence and stress that
- * thin/missing benchmarks do NOT imply lower capability. Counts stay in `detail`.
+ * Picker rows are a flat, actionable list: model · subscription only.
+ * No aptitude / benchmark prose under each row — that copy never helped pick.
+ * Benchmark notes stay out of the primary list (exclusions live behind `d`).
  */
-function rowExplanation(row) {
-  if (row.qualification === QUALIFICATION.QUALIFIED) {
-    return "Apto para investigar arquitectura y código";
-  }
-  if (row.qualification === QUALIFICATION.PARTIAL) {
-    return "Confianza evidencial provisional — benchmarks escasos no implican menor capacidad";
-  }
-  if (row.qualification === QUALIFICATION.INSUFFICIENT) {
-    return "Evidencia insuficiente para comparar — benchmarks faltantes no implican menor capacidad";
-  }
-  // no_evidence / unknown: honest absence, not a capability claim
-  return "Sin evidencia de benchmark — no implica menor capacidad";
-}
-
-/** Model AND subscription, so the same model on two subscriptions stays distinguishable. */
 function decorate(model) {
   return {
     ...model,
@@ -105,8 +69,8 @@ function decorate(model) {
     listing: "main",
     subscription: subscriptionOf(model),
     label: labelOf(model),
-    explanation: rowExplanation(model),
-    detail: evidenceDetail(model)
+    explanation: null,
+    detail: null
   };
 }
 
@@ -140,12 +104,13 @@ export function summarizeProjectContext(profile) {
 }
 
 /**
- * Curate the analyst catalog for the ratatui picker as ONE flat list (T27).
- * Every verified, currently available route appears — with many, few, or no
- * benchmarks. Ordered best→worst by catalog `rank` via `compareAnalystRows`
- * (unranked last; ties by candidateKey). Same-route duplicates (identical
- * candidateKey) collapse to one row; equivalent routes of the same model on
- * different subscriptions stay separate.
+ * Flat picker catalog: every model that is safe to select and run for analysis
+ * right now (`available` + verified access). Credit-gated / denied models
+ * (e.g. Fable with `credits_required`) and unverified access never appear —
+ * they stay in exclusions / verification, not in the list. A subscription
+ * with zero usable models (e.g. Cursor with no available pool) simply
+ * contributes no rows; Cursor's own live inventory remains `cursor-agent
+ * models` when the human needs it outside this picker.
  *
  * - `models`: the full usable list (no artificial top-N).
  * - `alternatives`: always `[]` (no Other view).
@@ -164,7 +129,10 @@ export function curateAnalystCatalogForPicker(analystCatalog, { projectContext: 
   const seen = new Set();
   const usable = [];
   for (const model of incoming) {
+    // Only actionable analysts: verified access and available now. Denied /
+    // credits / exhausted / unverified are never listed as selectable.
     if (model?.available !== true || model?.accessVerified === false) continue;
+    if (model?.cause === "unavailable_verified" || model?.cause === "policy_excluded") continue;
     const key = model.candidateKey ?? `${model.adapterId}::${model.modelId}`;
     if (seen.has(key)) continue;
     seen.add(key);
