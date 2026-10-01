@@ -183,7 +183,7 @@ That evidence is **not** the same as: launching the **integrated, packaged Kairo
 
 | Item | Status |
 |---|---|
-| Real provider runs (Codex/Claude/Cursor/OpenCode ASK events, tools, thinking) | Pending **specific** provider authorization — see `docs/ai/kairo-parity-provider-plan.md` (not executed) |
+| Real provider basic `OK` (Codex/Claude/OpenCode Go) | **PASS** (Claude evidence in `docs/ai/kairo-parity-provider-plan.md`; do not re-run) | Cursor provider still pending; error/tool/thinking paths pending; ≠ packaged product with approved team |
 | Packaged integrated host, no model (prebuilt binary path) | **PASS SIMULATED Pi** + **PASS REAL published Pi offline** (auth 2026-10-01) | Reason observed: **No active strategy…** (blocks chat without active team — not approved-team+usable-provider). Evidence `/tmp/kairo-acceptance-prep/packaged-no-model(-real-pi)/`; missing Pi → exit 2; temp proj `git init` for extension |
 | Human visual acceptance of the **product** (not fixtures) | Open | Fixture HTML reviewable separately; product accept still pending |
 | Foreign-platform package exec (darwin-x64 / linux-*) | Selection PASS; runtime exec still needs Rosetta / Linux-or-qemu hosts |
@@ -222,7 +222,7 @@ Re-run on HEAD that includes `50f9b4984` + T27 test rewrite. Host Darwin arm64. 
 | P1-T2 team-flow PTY | PASS | SIMULATED providers |
 | Published Pi RPC cold start (no session.model) | **VERIFIED by Claude** → fix `287d34342` | Not pending auth; see P1-T3 reopen |
 | Packaged integrated host, no model (prebuilt path) | **PASS SIMULATED** + **PASS REAL published Pi offline** | Reason: **No active strategy…** (not approved-team+provider); evidence `packaged-no-model-real-pi/`; git init in temp proj |
-| Real providers | **not run** | needs specific auth |
+| Real providers (adapter happy path) | Codex/Claude/OpenCode Go **PASS**; Cursor pending | Do not re-run Claudes OK evidence; packaged approved-team path still open |
 | Human visual (v3 fixtures) | Fixture verdict available | Product visual acceptance still separate |
 | U3 native review | **approved + acknowledged** | U1/U2 remain declined |
 | Stderr redaction | **`23ec9c4d9` / `d41e0c6a9` integrated** | Revalidated below |
