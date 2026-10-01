@@ -225,7 +225,20 @@ Re-run on HEAD that includes `50f9b4984` + T27 test rewrite. Host Darwin arm64. 
 | Real providers | **not run** | needs specific auth |
 | Human visual (v3 fixtures) | Fixture verdict available | Product visual acceptance still separate |
 | U3 native review | **approved + acknowledged** | U1/U2 remain declined |
-| Stderr redaction | **`23ec9c4d9` integrated** | Revalidate package after fixture commit |
+| Stderr redaction | **`23ec9c4d9` / `d41e0c6a9` integrated** | Revalidated below |
+
+#### Post-stderr package revalidation (`1efd3b7e8` + `d41e0c6a9`, Darwin arm64)
+
+| Check | Result |
+|---|---|
+| `node --test` pi-rpc-bridge + kairo-ui-rpc-stdio + run-redact | **126/126 PASS** |
+| `node --test` kairo-ui-prebuilt + packaged-verify | **15/15 PASS** |
+| `cargo test` kairo-ui | **331/331 PASS** |
+| `pnpm verify:kairo-ui-clean-install` | **PASS** (foreign exec gaps unchanged) |
+| `smoke:kairo-packaged-no-model` (SIMULATED Pi) | **PASS** |
+| REAL published Pi offline (prior auth) | **PASS** — reason **No active strategy…** only |
+
+Binaries unchanged by the JS stderr fix; clean-install re-proved selection + host `--v3-capture`. Remaining open: real providers, human product visual, foreign-platform exec, approved-team+usable-provider path.
 
 ### P1-T4 — historical note (pre-placeholder; superseded)
 
