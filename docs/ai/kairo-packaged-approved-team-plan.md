@@ -1,6 +1,6 @@
 # Kairo parity — packaged host: approved team → usable provider
 
-Status: **NOT EXECUTED.** Prepared only. Requires explicit user authorization before any run.
+Status: **EXECUTED once (2026-10-01).** Authorized: published Pi + `claude-haiku-4-5` via claude.ai Pro; temp repo/state; real `approveProjectTeam`; one `OK` prompt ≤60s. Evidence: `/tmp/kairo-acceptance-prep/packaged-approved-team/`. Rescored PASS on observed `claude · claude-haiku-4-5: OK` (runner matcher initially false-failed). No retry. Does not certify analysis/other providers/tools/cancel.
 Tracker: `odd/tasks/kairo-parity.md` / `odd/tasks/kairo-cursor-plan1-baseline.md`.
 
 ## Purpose
@@ -56,7 +56,7 @@ Answer all of the following before any execution:
 4. **Pi child:** published real Pi offline for handshake, or allow simulated Pi only for the host wiring while the **provider** call is real? (Default proposal: real Pi + one real provider.)
 5. **Spend acknowledgement:** one short turn; expect ~similar baseline CLI context cost as the adapter `OK` runs (~19k–25k input tokens or ~$0.01 on Claude).
 
-Until authorized, status stays **NOT EXECUTED**.
+Authorization for the first run was granted and consumed; further runs need a new explicit auth.
 
 ## Implementation sketch (prepared, not run)
 

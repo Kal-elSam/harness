@@ -185,7 +185,7 @@ That evidence is **not** the same as: launching the **integrated, packaged Kairo
 |---|---|
 | Real provider basic `OK` (Codex/Claude/OpenCode Go) | **PASS** (Claude evidence in `docs/ai/kairo-parity-provider-plan.md`; do not re-run) | Cursor provider still pending; error/tool/thinking paths pending; ≠ packaged product with approved team |
 | Packaged integrated host, no model (prebuilt binary path) | **PASS SIMULATED Pi** + **PASS REAL published Pi offline** (auth 2026-10-01) | Reason observed: **No active strategy…** (blocks chat without active team — not approved-team+usable-provider). Evidence `/tmp/kairo-acceptance-prep/packaged-no-model(-real-pi)/`; missing Pi → exit 2; temp proj `git init` for extension |
-| Packaged approved-team → usable provider | **Prepared, NOT EXECUTED** — see `docs/ai/kairo-packaged-approved-team-plan.md` | Needs explicit auth; ≠ adapter OK PASS; ≠ strategy-less no_model |
+| Packaged approved-team → usable provider | **PASS once** (Claude haiku; evidence `/tmp/kairo-acceptance-prep/packaged-approved-team/`) | Real OK on UI; runner matcher false-failed then rescored; no retry; ≠ analysis/tools/cancel |
 | Human visual acceptance of the **product** (not fixtures) | Open | Fixture HTML reviewable separately; product accept still pending |
 | Foreign-platform package exec (darwin-x64 / linux-*) | Selection PASS; runtime exec still needs Rosetta / Linux-or-qemu hosts |
 | Native review consent | U1/U2 **declined** (stand); **U3 approved + acknowledged** | Not pending consent |
@@ -223,7 +223,8 @@ Re-run on HEAD that includes `50f9b4984` + T27 test rewrite. Host Darwin arm64. 
 | P1-T2 team-flow PTY | PASS | SIMULATED providers |
 | Published Pi RPC cold start (no session.model) | **VERIFIED by Claude** → fix `287d34342` | Not pending auth; see P1-T3 reopen |
 | Packaged integrated host, no model (prebuilt path) | **PASS SIMULATED** + **PASS REAL published Pi offline** | Reason: **No active strategy…** (not approved-team+provider); evidence `packaged-no-model-real-pi/`; git init in temp proj |
-| Real providers (adapter happy path) | Codex/Claude/OpenCode Go **PASS**; Cursor pending | Do not re-run Claudes OK evidence; packaged approved-team path still open |
+| Real providers (adapter happy path) | Codex/Claude/OpenCode Go **PASS**; Cursor pending | Do not re-run Claudes OK evidence |
+| Packaged approved-team → usable provider | **PASS once** (Claude haiku) | Evidence rescored; auth consumed |
 | Human visual (v3 fixtures) | Fixture verdict available | Product visual acceptance still separate |
 | U3 native review | **approved + acknowledged** | U1/U2 remain declined |
 | Stderr redaction | **`23ec9c4d9` / `d41e0c6a9` integrated** | Revalidated below |
@@ -271,5 +272,5 @@ Integrated `b72305be2` (RED fixture) + `fd877dcc7` (fix) + `1efd0db9a` (native r
 - `node --test test/quick-ask.test.js`: **33/33 PASS**
 - `pnpm test` on integrated branch: **2435 tests, 2434 pass, 0 fail, 1 skipped**
 - Claude's older 6 inherited analyst fails do **not** invalidate this Cursor green.
-- Packaged approved-team plan prepared: `docs/ai/kairo-packaged-approved-team-plan.md` (**NOT EXECUTED**).
+- Packaged approved-team plan: `docs/ai/kairo-packaged-approved-team-plan.md` — **EXECUTED once** with Claude haiku; evidence `/tmp/kairo-acceptance-prep/packaged-approved-team/` (+ `RESULT.rescored.json`).
 
