@@ -185,6 +185,7 @@ That evidence is **not** the same as: launching the **integrated, packaged Kairo
 |---|---|
 | Real provider basic `OK` (Codex/Claude/OpenCode Go) | **PASS** (Claude evidence in `docs/ai/kairo-parity-provider-plan.md`; do not re-run) | Cursor provider still pending; error/tool/thinking paths pending; ≠ packaged product with approved team |
 | Packaged integrated host, no model (prebuilt binary path) | **PASS SIMULATED Pi** + **PASS REAL published Pi offline** (auth 2026-10-01) | Reason observed: **No active strategy…** (blocks chat without active team — not approved-team+usable-provider). Evidence `/tmp/kairo-acceptance-prep/packaged-no-model(-real-pi)/`; missing Pi → exit 2; temp proj `git init` for extension |
+| Packaged approved-team → usable provider | **Prepared, NOT EXECUTED** — see `docs/ai/kairo-packaged-approved-team-plan.md` | Needs explicit auth; ≠ adapter OK PASS; ≠ strategy-less no_model |
 | Human visual acceptance of the **product** (not fixtures) | Open | Fixture HTML reviewable separately; product accept still pending |
 | Foreign-platform package exec (darwin-x64 / linux-*) | Selection PASS; runtime exec still needs Rosetta / Linux-or-qemu hosts |
 | Native review consent | U1/U2 **declined** (stand); **U3 approved + acknowledged** | Not pending consent |
@@ -259,3 +260,16 @@ Observed on `feat/kairo-cursor-baseline` @ `79771262a` (+ this docs commit), hos
 | `kairo-ui-pty-e2e.py` @ 60/100/160 with packaged binary | PASS (mock sidecar) | Mock sidecar only — not real providers |
 
 Claude note: U1 committed with review **declined** (not approved); U2 may continue under that decision. Cursor did not touch Claude-owned impl files during this packaging prep.
+
+
+### Claude `is_error` + review of redaction range
+
+Integrated `b72305be2` (RED fixture) + `fd877dcc7` (fix) + `1efd0db9a` (native review **DECLINED** for `75f54aecc..fd877dcc7`, which also covers the previously unreviewed stderr redactor). OMITTED — not approval. Claude's older 6 inherited analyst failures do not invalidate Cursor's integrated full-suite green.
+
+#### Post-`is_error` integration (`6c54a860c`)
+
+- `node --test test/quick-ask.test.js`: **33/33 PASS**
+- `pnpm test` on integrated branch: **2435 tests, 2434 pass, 0 fail, 1 skipped**
+- Claude's older 6 inherited analyst fails do **not** invalidate this Cursor green.
+- Packaged approved-team plan prepared: `docs/ai/kairo-packaged-approved-team-plan.md` (**NOT EXECUTED**).
+
