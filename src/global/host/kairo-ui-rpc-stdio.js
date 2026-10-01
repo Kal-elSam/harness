@@ -32,6 +32,12 @@
  *   { "op": "settings.setup.preview", "agents": [...], "components": [...] }  — U2: dry-run plan + fingerprint, writes nothing → settings_setup_preview (ok:false + reason invalid_selection on unknown ids)
  *   { "op": "settings.setup.apply", "agents": [...], "components": [...], "fingerprint": "...", "confirm": true }  — U2: applies only with confirm:true AND a fingerprint matching a freshly recomputed preview → settings_setup_apply (reason applied|not_confirmed|stale_preview|invalid_selection|apply_failed)
  *   { "op": "settings.integration.confirm", "id": "..." }  — U5b: curated intent receipt (no install)
+ *   { "op": "connections.status", "provider"?: "claude"|... }  — Settings Connect: contract status + inventory (never connects)
+ *   { "op": "connections.preview", "provider": "..." }  — read-only preview (argv/surfaces/fingerprint); never connects
+ *   { "op": "connections.connect", "provider": "...", "fingerprint"|"previewId": "...", "confirm": true }
+ *       — requires confirm:true + matching preview; interactive CLI runs on a host-bridged TTY (never sidecar RPC stdio)
+ *   { "op": "terminal.session_result", "sessionId": "...", "code": 0 }  — host finished the interactive CLI on the real TTY
+ *   { "op": "connections.verify_pending" }  — read-only offer (models + cost); does not probe
  *   { "op": "project.refresh" }  — U4d: refreshProjectStrategy
  *   { "op": "team.edit.catalog", "role": "..." }  — U4d: getProjectTeamEditCatalog
  *   { "op": "team.edit.assign", "role": "...", "candidateKey": "..." }  — U4d: setProjectTeamAssignment (SUGGESTED only)
@@ -95,6 +101,8 @@
  * { type: "ops_sync_preview"|"ops_sync_result"|"ops_rollback_preview"|"ops_rollback_result"|"ops_run_cancel"|"ops_alert_dismiss", ... } (U5b),
  * { type: "settings_snapshot"|"settings_integration_result", ... } (U5b),
  * { type: "settings_setup_load"|"settings_setup_preview"|"settings_setup_apply", ... } (U2),
+ * { type: "connections_status"|"connections_preview"|"connections_connect"|"connections_verify_pending", ... },
+ * { type: "terminal_yield"|"terminal_restore", provider?, fingerprint?, ... },
  * { type: "team_edit_catalog", role, models, currentCandidateKey?, recommendedCandidateKey? } (U4d),
  * { type: "team_edit_saved", role, strategy } (U4d),
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
@@ -148,6 +156,14 @@ import {
 } from "./ops-mutations.js";
 import { buildSettingsSnapshot } from "./settings-sidecar.js";
 import { applySetup, loadSetupOptions, previewSetup } from "./settings-setup.js";
+import {
+  connectionsConnect as runConnectionsConnect,
+  connectionsPreview as runConnectionsPreview,
+  connectionsStatus as runConnectionsStatus,
+  buildVerifyPendingOffer,
+  loadConnectionsBackend
+} from "./settings-provider-connections.js";
+import { createHostBridgedInteractiveRunner } from "./connections-interactive-pty.js";
 import {
   getCuratedIntegration,
   reduceSettingsAction,
@@ -418,6 +434,10 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut, { mergeRows } 
  * @param {(args?: object) => Promise<object>} [options.cancelOpsRun]
  * @param {(args?: object) => Promise<object>} [options.dismissOpsAlert]
  * @param {(args?: object) => Promise<object>} [options.buildSettingsSnapshot]
+ * @param {object} [options.connectionsBackend]  — Claude contract adapter or test double; never auto-login
+ * @param {(deps?: object) => object|Promise<object>} [options.loadConnectionsBackend]
+ * @param {Function} [options.connectionsInteractiveRunner] — injected interactive runner (tests); default is host-bridged PTY
+ * @param {Function} [options.connectionsStatusRunner] — injected status runner (tests)
  */
 export async function runKairoUiRpcStdio({
   stdin = process.stdin,
@@ -431,6 +451,10 @@ export async function runKairoUiRpcStdio({
   approveProjectTeam = approveProjectTeamImpl,
   preflightProjectTeam = preflightProjectTeamImpl,
   verifyProjectTeamAccess = verifyProjectTeamAccessImpl,
+  connectionsBackend = null,
+  loadConnectionsBackend: loadConnectionsBackendImpl = loadConnectionsBackend,
+  connectionsInteractiveRunner = null,
+  connectionsStatusRunner = null,
   revalidateTeamAvailability = revalidateTeamAvailabilityImpl,
   recoverProjectTeam = recoverProjectTeamImpl,
   approveRecoveryProposal = approveRecoveryProposalImpl,
@@ -508,6 +532,42 @@ export async function runKairoUiRpcStdio({
   // Live WorkMode for prompt routing (U4a). Fail-closed default; restored
   // from the active session document on ready/switch/new/fork.
   let currentMode = "ask";
+
+  // Provider connections (Settings Connect). Loaded lazily; never called on boot.
+  // Interactive login never inherits sidecar RPC stdio — host bridges the real TTY.
+  let connectionsBackendResolved = connectionsBackend;
+  /** @type {ReturnType<typeof createHostBridgedInteractiveRunner>|null} */
+  let hostInteractiveRunner = null;
+  /** @type {Map<string, { preview: object, surfaces: object }>} */
+  const lastConnectionPreviews = new Map();
+  const ensureConnectionsBackend = async () => {
+    if (connectionsBackendResolved) return connectionsBackendResolved;
+    if (!hostInteractiveRunner && !connectionsInteractiveRunner) {
+      hostInteractiveRunner = createHostBridgedInteractiveRunner({
+        onYield({ sessionId, argv }) {
+          writeOut({
+            type: "terminal_yield",
+            sessionId,
+            argv,
+            reason: "provider_connect"
+          });
+        },
+        onCancel(sessionId) {
+          writeOut({ type: "terminal_cancel", sessionId });
+        }
+      });
+    }
+    const interactiveRunner = connectionsInteractiveRunner ?? hostInteractiveRunner;
+    connectionsBackendResolved = await loadConnectionsBackendImpl({
+      backend: connectionsBackend || undefined,
+      interactiveRunner,
+      runner: connectionsStatusRunner || undefined,
+      homeDir,
+      env,
+      cwd
+    });
+    return connectionsBackendResolved;
+  };
 
   /** Attach the real bound Kairo session id (or null) to each Pi file entry. */
   const annotateSessions = async (files) => {
@@ -1514,6 +1574,80 @@ export async function runKairoUiRpcStdio({
             message: state.message
           });
         }
+      } else if (op === "connections.status") {
+        const backend = await ensureConnectionsBackend();
+        const provider = typeof cmd.provider === "string" ? cmd.provider : null;
+        const result = await runConnectionsStatus({ backend, provider });
+        writeOut({ type: "connections_status", ...result });
+      } else if (op === "connections.preview") {
+        const backend = await ensureConnectionsBackend();
+        const provider = typeof cmd.provider === "string" ? cmd.provider : "";
+        const result = await runConnectionsPreview({ backend, provider });
+        if (result.ok === true && result.preview) {
+          lastConnectionPreviews.set(provider, {
+            preview: result.preview,
+            surfaces: result.surfaces ?? {},
+            fingerprint: result.previewId ?? result.fingerprint
+          });
+        }
+        writeOut({ type: "connections_preview", ...result });
+      } else if (op === "connections.connect") {
+        const backend = await ensureConnectionsBackend();
+        const provider = typeof cmd.provider === "string" ? cmd.provider : "";
+        const fingerprint = typeof cmd.fingerprint === "string"
+          ? cmd.fingerprint
+          : (typeof cmd.previewId === "string" ? cmd.previewId : "");
+        const confirm = cmd.confirm === true;
+        const held = lastConnectionPreviews.get(provider);
+        const surfacesTerminal = held?.surfaces?.terminal === true
+          || (Array.isArray(held?.surfaces?.list) && held.surfaces.list.includes("terminal"));
+        const timeoutMs = Number.isFinite(cmd.timeoutMs) && cmd.timeoutMs > 0
+          ? Number(cmd.timeoutMs)
+          : undefined;
+        let result;
+        try {
+          result = await runConnectionsConnect({
+            backend,
+            provider,
+            fingerprint,
+            preview: held?.preview ?? null,
+            confirm,
+            signal: undefined,
+            timeoutMs
+          });
+        } catch (err) {
+          result = {
+            ok: false,
+            outcome: err?.name === "AbortError" ? "cancelled" : "failed",
+            reason: err?.name === "AbortError" ? "cancelled" : "failed",
+            provider,
+            error: err?.message ?? String(err)
+          };
+        }
+        if (confirm && surfacesTerminal) {
+          writeOut({ type: "terminal_restore", ...result });
+        }
+        writeOut({ type: "connections_connect", ...result });
+      } else if (op === "terminal.session_result") {
+        const sessionId = typeof cmd.sessionId === "string" ? cmd.sessionId : "";
+        const runner = hostInteractiveRunner;
+        if (runner && sessionId) {
+          runner.complete(sessionId, {
+            code: Number.isInteger(cmd.code) ? cmd.code : null,
+            stdout: typeof cmd.stdout === "string" ? cmd.stdout : "",
+            stderr: typeof cmd.stderr === "string" ? cmd.stderr : ""
+          });
+        }
+      } else if (op === "connections.verify_pending") {
+        const backend = await ensureConnectionsBackend();
+        const status = await runConnectionsStatus({ backend });
+        const offer = buildVerifyPendingOffer({ inventory: status.inventory });
+        writeOut({
+          type: "connections_verify_pending",
+          ok: true,
+          incomplete: status.incomplete === true,
+          ...offer
+        });
       } else if (op === "project.refresh") {
         const result = await refreshProjectStrategyImpl({ cwd });
         writeOut({
