@@ -1386,6 +1386,85 @@ test("sidecar team.approve failure never re-applies a model", async () => {
   await runPromise;
 });
 
+test("sidecar team.approve refused by the service has no activation effects and reports the cause", async () => {
+  const setModelCalls = [];
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) {
+      out.push(JSON.parse(line));
+    }
+  });
+  const stdin = new PassThrough();
+  let loadModelsCalls = 0;
+
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    loadKairoProviderModels: async () => {
+      loadModelsCalls += 1;
+      return [];
+    },
+    openBridge: mockOpenBridge(() =>
+      createFakeRpcChild({
+        onCommand: (cmd, ctx) => {
+          if (cmd.type === "get_state") {
+            return {
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: { sessionId: "s1", model: ctx?.activeModel ?? null }
+            };
+          }
+          if (cmd.type === "set_model") {
+            setModelCalls.push(cmd);
+            if (ctx?.setModel) ctx.setModel({ id: cmd.modelId, provider: "kairo" });
+            return { type: "response", command: "set_model", success: true };
+          }
+          return null;
+        }
+      })
+    ),
+    // The real service refuses without mutation and returns a plain result.
+    approveProjectTeam: async () => ({
+      ok: false,
+      status: "blocked",
+      reasons: ["Claude is not available for Architect"]
+    })
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const setModelBefore = setModelCalls.length;
+  const loadBefore = loadModelsCalls;
+  const outBefore = out.length;
+  stdin.write(`${JSON.stringify({ op: "team.approve" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+  const after = out.slice(outBefore);
+
+  assert.equal(setModelCalls.length, setModelBefore, "a refused approval must not send set_model");
+  assert.equal(loadModelsCalls, loadBefore, "a refused approval must not reload the Kairo routes");
+  assert.equal(after.some((r) => r.type === "kairoModels"), false, "no models republished");
+  assert.equal(after.some((r) => r.type === "engine"), false, "Architect is not re-applied");
+  assert.equal(after.some((r) => r.type === "snapshot"), false, "nothing changed, no new snapshot");
+  assert.equal(
+    after.some((r) => r.type === "notice" && /Team active/.test(r.message)),
+    false,
+    "must not announce an active team"
+  );
+  const team = after.find((r) => r.type === "team");
+  assert.equal(team?.ok, false);
+  assert.match(team?.reason ?? "", /Claude is not available for Architect/);
+  assert.ok(
+    after.some((r) => r.type === "notice" && /Claude is not available for Architect/.test(r.message)),
+    "the refusal cause is shown to the user"
+  );
+
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
+
 test("sidecar cycle_model does not re-apply Architect after the cycle", async () => {
   const setModelCalls = [];
   const models = [

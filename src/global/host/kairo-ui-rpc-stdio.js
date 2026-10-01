@@ -250,6 +250,12 @@ export function projectStatusLines(snap) {
 
 /** U4b: decidePlan only accepts these — never execute / handoff. */
 const PLAN_DECISIONS = new Set(["approved", "rejected"]);
+// Team-op results that mean "nothing ran, nothing changed" (see `runTeamOp`).
+const ANALYST_NON_RESULT_STATUSES = new Set([
+  "analyst_selection_required",
+  "analyst_access_unverified",
+  "analyst_access_confirmation_required"
+]);
 
 /**
  * Notice after a PLAN/AGENT submitTask plan outcome. Uses y/n (not `a`) so
@@ -1874,25 +1880,39 @@ export async function runKairoUiRpcStdio({
         }
       } else if (op === "team.approve") {
         const summary = await runTeamOp("team.approve", () => approveProjectTeam({ cwd }));
-        // Approval is what makes a launchable projectTeam route exist:
-        // refresh the cached Kairo routes, then re-select Architect on the
-        // live bridge (the same reapply the session ops do) so chat
-        // unblocks without restarting the host.
-        try {
-          kairoModels = await loadModels({ cwd });
-        } catch {
-          kairoModels = [];
+        // The service refuses without mutating (`ok: false`, or an analyst
+        // access/selection non-result): the previous team stays as it was, so
+        // none of the activation effects below may run. `runTeamOp` already
+        // emitted the structured `team` record; surface the cause as a notice
+        // because the host only quotes `reason` for the analyst statuses.
+        if (summary?.ok === false || ANALYST_NON_RESULT_STATUSES.has(summary?.status)) {
+          if (summary?.ok === false) {
+            const cause = Array.isArray(summary.reasons) && summary.reasons.length
+              ? summary.reasons.join("; ")
+              : (summary.message ?? "Approval refused");
+            writeOut({ type: "notice", message: `Team approval refused: ${cause}` });
+          }
+        } else {
+          // Approval is what makes a launchable projectTeam route exist:
+          // refresh the cached Kairo routes, then re-select Architect on the
+          // live bridge (the same reapply the session ops do) so chat
+          // unblocks without restarting the host.
+          try {
+            kairoModels = await loadModels({ cwd });
+          } catch {
+            kairoModels = [];
+          }
+          writeOut({
+            type: "kairoModels",
+            kairoModels: serializeKairoModelsForHost(kairoModels)
+          });
+          await applyEngineAndMaybeTranscript({ reapplyArchitect: true });
+          await emitSnapshot();
+          writeOut({
+            type: "notice",
+            message: `Team active: ${summary.teamRows} role${summary.teamRows === 1 ? "" : "s"}.`
+          });
         }
-        writeOut({
-          type: "kairoModels",
-          kairoModels: serializeKairoModelsForHost(kairoModels)
-        });
-        await applyEngineAndMaybeTranscript({ reapplyArchitect: true });
-        await emitSnapshot();
-        writeOut({
-          type: "notice",
-          message: `Team active: ${summary.teamRows} role${summary.teamRows === 1 ? "" : "s"}.`
-        });
       } else if (op === "team.revalidate") {
         // On-demand re-probe (U2c): same real conversation-service snapshot
         // call the second render phase uses, never a synthesized cause. The
