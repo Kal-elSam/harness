@@ -1,0 +1,56 @@
+{
+  "scenario": "published-pi-connect-handshake",
+  "pi": "published-real",
+  "providerArchitect": "claude",
+  "model": "claude-haiku-4-5",
+  "auth": "claude.ai Pro (HOME; CLAUDE_CONFIG_DIR unset) + entitlement copy",
+  "prompt": null,
+  "passRequires": "ready.engine.status connected from sidecar.jsonl (no ASK)",
+  "checks": [
+    {
+      "name": "seed approve status active",
+      "ok": true,
+      "detail": "{\"ok\": true, \"status\": \"active\", \"approvedAt\": \"2026-10-01T19:43:03.242Z\", \"roles\": [\"Architect\", \"Explorer\"], \"teamRows\": 2, \"strategyFile\": \"/private/var/folders/31/6ktd_ddd0_76x3x8mdyhsmw40000gn/T/kairo-published-pi-connect-tjravx6s/harness-home/.harness/sessions/9eef1f0114966217/project-strategy.json\", \"entitlementHaiku\": \"allowed\", \"model\": \"claude-haiku-4-5\"}"
+    },
+    {
+      "name": "seed Architect is Claude Haiku 4.5",
+      "ok": true,
+      "detail": "{\"model\": \"claude-haiku-4-5\", \"roles\": [\"Architect\", \"Explorer\"], \"seed\": {\"ok\": true, \"status\": \"active\", \"approvedAt\": \"2026-10-01T19:43:03.242Z\", \"roles\": [\"Architect\", \"Explorer\"], \"teamRows\": 2, \"strategyFile\": \"/private/var/folders/31/6ktd_ddd0_76x3x8mdyhsmw40000gn/T/kairo-published-pi-connect-tjravx6s/harness-home/.harness/sessions/9eef1f0114966217/project-strategy.json\", \"entitlementHaiku\": \"allowed\", \"model\": \"claude-haiku-4-5\"}}"
+    },
+    {
+      "name": "SSH_AUTH_SOCK not forwarded",
+      "ok": true,
+      "detail": "None"
+    },
+    {
+      "name": "published Pi CLI present (no sim)",
+      "ok": true,
+      "detail": "/Users/kal-el/Desktop/agentic-harness-worktrees/kairo-plan1-baseline/node_modules/@kal-elsam/kairo-pi-coding-agent/dist/cli.js"
+    },
+    {
+      "name": "ready.engine.status == connected (sidecar.jsonl)",
+      "ok": true,
+      "detail": "{\"status\": \"connected\", \"reason\": null, \"model\": {\"id\": \"claude::claude-haiku-4-5\", \"name\": \"Claude Haiku 4.5 \\u00b7 Architect\", \"reasoning\": true, \"input\": [\"text\"], \"cost\": {\"input\": 0, \"output\": 0, \"cacheRead\": 0, \"cacheWrite\": 0}, \"contextWindow\": 128000, \"maxTokens\": 16384, \"api\": \"kairo-cli\", \"provider\": \"kairo\", \"baseUrl\": \"kairo://local\"}, \"modelLabel\": \"Claude Haiku 4.5 \\u00b7 Architect\"}"
+    },
+    {
+      "name": "connected model is Claude Haiku 4.5 (id or label)",
+      "ok": true,
+      "detail": "{\"status\": \"connected\", \"reason\": null, \"model\": {\"id\": \"claude::claude-haiku-4-5\", \"name\": \"Claude Haiku 4.5 \\u00b7 Architect\", \"reasoning\": true, \"input\": [\"text\"], \"cost\": {\"input\": 0, \"output\": 0, \"cacheRead\": 0, \"cacheWrite\": 0}, \"contextWindow\": 128000, \"maxTokens\": 16384, \"api\": \"kairo-cli\", \"provider\": \"kairo\", \"baseUrl\": \"kairo://local\"}, \"modelLabel\": \"Claude Haiku 4.5 \\u00b7 Architect\"}"
+    },
+    {
+      "name": "no ASK prompt sent (handshake-only)",
+      "ok": true,
+      "detail": "prompt skipped by design"
+    },
+    {
+      "name": "host exits",
+      "ok": true,
+      "detail": "0"
+    }
+  ],
+  "limits": [
+    "Handshake only \u2014 no ASK / no inference turn",
+    "Does not re-certify adapter OK prompts",
+    "Seeded approve before launch (not in-host A path)"
+  ]
+}

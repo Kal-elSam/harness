@@ -1,0 +1,28 @@
+{
+  "type": "ready",
+  "engine": {
+    "status": "connected",
+    "reason": null,
+    "sessionId": "01a0f8fd-e35e-75bd-bef4-b19f6035b361",
+    "model": {
+      "id": "claude::claude-haiku-4-5",
+      "name": "Claude Haiku 4.5 \u00b7 Architect",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 128000,
+      "maxTokens": 16384,
+      "api": "kairo-cli",
+      "provider": "kairo",
+      "baseUrl": "kairo://local"
+    }
+  },
+  "modelLabel": null
+}

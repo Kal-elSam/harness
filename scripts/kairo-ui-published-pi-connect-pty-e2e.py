@@ -53,6 +53,15 @@ EVIDENCE_DIR = Path(
         "/tmp/kairo-acceptance-prep/published-pi-connect",
     )
 )
+EXPECTED_ARCHITECT = {
+    "adapterId": "claude",
+    "modelId": "claude-haiku-4-5",
+    "candidateKey": "claude::claude-haiku-4-5",
+    "displayName": "Claude Haiku 4.5",
+}
+PUBLISHED_PI_CLI = (
+    ROOT / "node_modules" / "@kal-elsam" / "kairo-pi-coding-agent" / "dist" / "cli.js"
+)
 
 
 def _load(name: str, filename: str):
@@ -101,6 +110,11 @@ def main() -> int:
         die(f"missing tee or real sidecar: {SIDECAR} / {REAL_SIDECAR}")
     if not SEED.is_file():
         die(f"missing seed script: {SEED}")
+    if not PUBLISHED_PI_CLI.is_file():
+        die(
+            f"published Pi CLI missing (no sim fallback): {PUBLISHED_PI_CLI}",
+            2,
+        )
 
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     for stale in (EV.SIDECAR_JSONL, EV.SIDECAR_STDERR_LOG):
@@ -165,7 +179,7 @@ def main() -> int:
         "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
     }
     for key, value in os.environ.items():
-        if key == "CLAUDE_CONFIG_DIR":
+        if key in ("CLAUDE_CONFIG_DIR", "SSH_AUTH_SOCK"):
             continue
         upper = key.upper()
         if any(
@@ -181,7 +195,7 @@ def main() -> int:
             )
         ):
             continue
-        if key in ("NODE", "KAIRO_UI_NODE", "KAIRO_UI_BINARY", "SSH_AUTH_SOCK"):
+        if key in ("NODE", "KAIRO_UI_NODE", "KAIRO_UI_BINARY"):
             env.setdefault(key, value)
 
     (EVIDENCE_DIR / "env.redacted.json").write_text(
@@ -190,9 +204,11 @@ def main() -> int:
                 "HOME": env["HOME"],
                 "HARNESS_HOME": env["HARNESS_HOME"],
                 "CLAUDE_CONFIG_DIR": "<unset-intentional>",
+                "SSH_AUTH_SOCK": "<stripped-intentional>",
                 "PI_CODING_AGENT_DIR": env["PI_CODING_AGENT_DIR"],
                 "KAIRO_PI_MODE": "real",
                 "prompt": None,
+                "expectedArchitect": EXPECTED_ARCHITECT,
                 "has_anthropic_api_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
             },
             indent=2,
@@ -207,6 +223,16 @@ def main() -> int:
         checks.append((name, bool(ok), detail))
 
     check("seed approve status active", seed_json.get("status") == "active", json.dumps(seed_json)[:400])
+    # Exact Architect identity from seed output (model field) before launch.
+    seed_model_id = seed_json.get("model")
+    roles = seed_json.get("roles") or []
+    check(
+        "seed Architect is Claude Haiku 4.5",
+        seed_model_id == EXPECTED_ARCHITECT["modelId"] and "Architect" in roles,
+        json.dumps({"model": seed_model_id, "roles": roles, "seed": seed_json}, default=str)[:600],
+    )
+    check("SSH_AUTH_SOCK not forwarded", "SSH_AUTH_SOCK" not in env, str(env.get("SSH_AUTH_SOCK")))
+    check("published Pi CLI present (no sim)", PUBLISHED_PI_CLI.is_file(), str(PUBLISHED_PI_CLI))
 
     p = Pty(binary, cols, rows, env, proj)
     try:
@@ -221,12 +247,17 @@ def main() -> int:
         (EVIDENCE_DIR / "flat.after-ready.txt").write_text(flat(p) + "\n", encoding="utf-8")
 
         engine = ready.get("engine") or {}
+        model = engine.get("model") if isinstance(engine.get("model"), dict) else {}
+        model_id = str(model.get("id") or "")
+        model_label = str(
+            ready.get("modelLabel") or engine.get("modelLabel") or model.get("name") or ""
+        )
         engine_summary = json.dumps(
             {
                 "status": engine.get("status"),
                 "reason": engine.get("reason"),
-                "model": engine.get("model"),
-                "modelLabel": ready.get("modelLabel") or engine.get("modelLabel"),
+                "model": model,
+                "modelLabel": model_label,
             }
         )
         check(
@@ -235,8 +266,12 @@ def main() -> int:
             engine_summary,
         )
         check(
-            "ready.engine carries a model identity",
-            isinstance(engine.get("model"), dict) and bool(engine["model"].get("id")),
+            "connected model is Claude Haiku 4.5 (id or label)",
+            EXPECTED_ARCHITECT["modelId"] in model_id
+            or EXPECTED_ARCHITECT["candidateKey"] in model_id
+            or EXPECTED_ARCHITECT["modelId"] in model_label
+            or "haiku-4-5" in model_id.lower()
+            or "haiku 4.5" in model_label.lower(),
             engine_summary,
         )
         # Handshake only — never type a prompt / never call a provider for OK.

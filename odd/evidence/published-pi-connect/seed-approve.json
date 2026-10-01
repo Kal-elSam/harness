@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "status": "active",
+  "approvedAt": "2026-10-01T19:43:03.242Z",
+  "roles": [
+    "Architect",
+    "Explorer"
+  ],
+  "teamRows": 2,
+  "strategyFile": "/private/var/folders/31/6ktd_ddd0_76x3x8mdyhsmw40000gn/T/kairo-published-pi-connect-tjravx6s/harness-home/.harness/sessions/9eef1f0114966217/project-strategy.json",
+  "entitlementHaiku": "allowed",
+  "model": "claude-haiku-4-5"
+}

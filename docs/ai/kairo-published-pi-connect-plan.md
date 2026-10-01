@@ -1,8 +1,18 @@
 # Published Pi connect — handshake only (no ASK)
 
-Status: **PREPARED, not executed.** Waiting on explicit authorization.
+Status: **EXECUTED once (2026-10-01).** Authorized handshake-only: published Pi + claude.ai Pro HOME + existing entitlement; temp state; `SSH_AUTH_SOCK` stripped; no ASK/prompt/sim/retry. Evidence: `/tmp/kairo-acceptance-prep/published-pi-connect/` + `odd/evidence/published-pi-connect/`.
 Tracker: `odd/tasks/kairo-pi-connect-evidence.md`.
 Harness: `scripts/kairo-ui-published-pi-connect-pty-e2e.py`.
+
+## Observed (PASS)
+
+`ready.engine.status == connected` with model:
+- `id`: `claude::claude-haiku-4-5`
+- `name`: `Claude Haiku 4.5 · Architect`
+- `provider`: `kairo` / `api`: `kairo-cli`
+
+No ASK prompt sent. Adapter OK PASSes unchanged / not re-run.
+
 
 ## Purpose
 
