@@ -168,6 +168,33 @@ test("classifyPiEngineFromState: missing model is no_model when RPC already answ
   assert.equal(classifyPiEngineFromState({ model: { id: "x" } }).status, "connected");
 });
 
+test("classifyPiEngineFromState: the placeholder model real Pi reports with no model is no_model", () => {
+  // Captured from the real @kal-elsam/kairo-pi-coding-agent 0.87.1-kairo.5 RPC
+  // cold start with no provider configured: get_state returns this placeholder
+  // instead of null, and the following prompt fails with "No API key found".
+  const placeholder = {
+    id: "unknown",
+    name: "unknown",
+    api: "unknown",
+    provider: "unknown",
+    baseUrl: "",
+    reasoning: false,
+    input: [],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 0,
+    maxTokens: 0
+  };
+  assert.deepEqual(
+    classifyPiEngineFromState({ model: placeholder, sessionId: "s1" }),
+    { status: "no_model", reason: "No model selected", sessionId: "s1", model: null }
+  );
+  // A real model that merely lacks metadata stays connected.
+  assert.equal(
+    classifyPiEngineFromState({ model: { id: "unknown", provider: "anthropic" } }).status,
+    "connected"
+  );
+});
+
 test("openPiRpcBridge always returns hostOpen with workspace-shell/v1 snapshot even when Pi spawn fails", async () => {
   const bridge = await openPiRpcBridge({
     cwd: "/project",

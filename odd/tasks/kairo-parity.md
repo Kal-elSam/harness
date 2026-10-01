@@ -90,8 +90,10 @@ RDD: native switch unchanged; review assessed per commit; functional tests are n
 - Commits delivered to Cursor: `f30f4c2c0` (U1), `10dd3bd02` + `a066e4fd3` (U2), `3d5945702` (U3 stderr fix); tracker docs `f1ba9b69f`, `af4297086`, `bbc0e261d`, `03e019165`.
 - Native review: U1 and U2 candidates declined by the user; U3 fix not assessed. No receipts exist. Functional tests are not approval.
 - Contracts: ops `ops.runs.show` -> `ops_run_show`, `ops.reviews.show` -> `ops_review_show`, `settings.setup.load|preview|apply` -> `settings_setup_load|preview|apply` (documented in the header of `kairo-ui-rpc-stdio.js`).
-- NOT 100% functional: pending authorization for a real installed-package Pi RPC cold start without `session.model`, and any real provider run (Codex, Claude, Cursor, OpenCode). 6 inherited Node failures remain unresolved.
+- NOT 100% functional: any real provider run (Codex, Claude, Cursor, OpenCode) is still pending authorization. 6 inherited Node failures remain unresolved.
+
+- U3 real Pi cold start (user-authorized 2026-10-01, local only): ran the published `@kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.5` `--mode rpc --no-session --offline` in an isolated temp HOME/PI_CODING_AGENT_DIR, scrubbed env (no keys, no network use). Observed: `get_state` returns `success:true` with a PLACEHOLDER model `{id:"unknown",provider:"unknown",api:"unknown",...}` (not null); `prompt` returns `success:false` "No API key found for the selected model." Gap: `classifyPiEngineFromState` classified that placeholder as `connected`. RED: new test in `test/pi-rpc-bridge.test.js` failed (actual connected). Fix: treat the all-"unknown" placeholder as `no_model`; a real model with id "unknown" but another provider stays connected. GREEN: node pi-rpc-bridge + kairo-ui-rpc-stdio 116 pass / 0 fail; cargo 331 pass / 0 fail. Item (a) is now VERIFIED/FIXED; item (b) real providers remains pending authorization, so U3 stays unticked.
 
 ## Next step
 
-Cursor integrates the commits above and decides on the 6 inherited analyst failures. U3 stays open until the two NOT-VERIFIABLE items are authorized and run; U4 stays open until then too.
+Cursor integrates the commits above and decides on the 6 inherited analyst failures. U3 stays open until real provider ASK runs are authorized and run (item b); U4 stays open until then too.

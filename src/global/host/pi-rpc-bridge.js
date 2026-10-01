@@ -144,9 +144,20 @@ export async function resolveArchitectRouteForRpc(
   }
 }
 
+/**
+ * With no model configured, Pi reports a placeholder model whose provider, api
+ * and id are all the literal "unknown" instead of `null`.
+ */
+function isPiPlaceholderModel(model) {
+  return (
+    model.id === "unknown" && model.provider === "unknown" && model.api === "unknown"
+  );
+}
+
 export function classifyPiEngineFromState(data = {}) {
   const sessionId = typeof data?.sessionId === "string" ? data.sessionId : null;
-  const model = data?.model && typeof data.model === "object" ? data.model : null;
+  const reported = data?.model && typeof data.model === "object" ? data.model : null;
+  const model = reported && !isPiPlaceholderModel(reported) ? reported : null;
   if (!model) {
     return {
       status: "no_model",
