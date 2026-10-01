@@ -93,7 +93,17 @@ function scenario() {
   const extension = buildExtension();
   const notifications = [];
   const ctx = { cwd: "/repo", ui: { setStatus: () => {}, setWidget: () => {}, notify: (...args) => notifications.push(args) } };
-  return { store, providers, events, extension, notifications, ctx, buildExtension, approveRecovery: (args) => service.approveRecoveryProposal(args) };
+  return {
+    store,
+    providers,
+    events,
+    extension,
+    notifications,
+    ctx,
+    buildExtension,
+    approveRecovery: (args) => service.approveRecoveryProposal(args),
+    rejectRecovery: (args) => service.rejectRecoveryProposal(args)
+  };
 }
 
 function fakePi() {
@@ -182,4 +192,30 @@ test("E2E: proposal survives a restart — a fresh process notifies the persiste
   const joined = notifications.map(([message]) => message).join("\n");
   assert.match(joined, /rate-limited/, "the persisted cause shows after restart");
   assert.match(joined, /kairo-team-approve/, "the restart notice names the approve command");
+});
+
+test("E2E: recovery proposal reject keeps the prior Go team and never activates the proposal (SIMULATED eligibility)", async () => {
+  const { store, providers, events, extension, ctx, rejectRecovery } = scenario();
+
+  await events.get("session_start")({}, ctx);
+  const proposed = await extension.recovery();
+  assert.equal(proposed.outcome, "proposed");
+  const priorTeam = structuredClone(store.strategy.projectTeam);
+  assert.deepEqual(
+    providers.get("kairo").models.map((model) => model.kairoRoute.adapterId),
+    ["opencode-go"],
+    "routes still point at the limited Go team before reject"
+  );
+
+  const rejected = await rejectRecovery({ cwd: "/repo" });
+  assert.equal(rejected.outcome, "rejected");
+  assert.equal(store.strategy.status, "active");
+  assert.deepEqual(store.strategy.projectTeam, priorTeam, "reject never mutates the active team");
+  assert.equal(store.strategy.activation?.source, undefined);
+  assert.deepEqual(
+    providers.get("kairo").models.map((model) => model.kairoRoute.adapterId),
+    ["opencode-go"],
+    "reject leaves Pi routes on the prior team"
+  );
+  assert.ok(store.recovery, "the fingerprint is closed so the same loss is not re-proposed forever");
 });

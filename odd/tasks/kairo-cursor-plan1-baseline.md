@@ -34,7 +34,7 @@ Establish a clean integration baseline from Ratatui and preserve analyst T28/T29
 ## Tasks
 
 - [x] P1-T1 — Merge analyst into Ratatui baseline; resolve conflicts; deliver base hash to Claude
-- [ ] P1-T2 — Integrated tests (Rust UI ↔ real sidecar; label simulations)
+- [x] P1-T2 — Integrated tests (Rust UI ↔ real sidecar; label simulations)
 - [ ] P1-T3 — Integrate Claude commits; full suites; record failures honestly
 - [ ] P1-T4 — Final package validation evidence (binaries, columns, Windows CLI); no remote delivery without auth
 
@@ -74,3 +74,18 @@ Mode: unknown for this integration branch — run focused then full applicable s
 - `conversation-service` bootstrap assertion still expected Explorer+Architect floor; T29 keeps analyst-justified roles only → assert `["Architect"]`.
 - Regenerated `crates/kairo-ui/fixtures/verify-then-pick.ndjson` after aptitude explanation text drift (`UPDATE_WIRE_FIXTURE=1`); Rust `preflight_verify_wire_fixture_roundtrips_through_the_host` pass.
 - These two failures already reproduced on pure `feat/kairo-startup-analyst-team` before the merge; not introduced by conflict resolution.
+
+
+### P1-T2 — Integrated analyst→approve→chat and recovery approve/reject
+
+- Did **not** edit Claude-owned impl: `settings-sidecar.js`, `ops-sidecar.js`, `kairo-ui-rpc-stdio.js`, `setup.js`, ops/settings panels.
+- Real providers: not invoked (authorization not granted); every simulation labeled `SIMULATED` in tests/scripts.
+- Node integrated (REAL `runKairoUiRpcStdio`): `test/plan1-analyst-chat-recovery-integrated.test.js` — 4/4
+  - analyst→analyze→proposal→approve→chat
+  - recovery.preview→apply
+  - recovery.preview→reject
+  - draft stop→restore
+- Extension E2E reject path: `test/team-auto-recovery-e2e.test.js` (+reject keeps prior Go team)
+- PTY Rust↔sidecar (SIMULATED providers): `scripts/kairo-ui-team-flow-pty-e2e.py` + fixture
+  - approve-chat, recovery-reject, recovery-apply @ 100×30 — all PASS
+- Smoke script: `package.json` → `smoke:kairo-ui-team-flow-pty`
