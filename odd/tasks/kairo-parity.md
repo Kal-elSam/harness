@@ -103,6 +103,8 @@ RDD: native switch unchanged; review assessed per commit; functional tests are n
 
 - U3 Claude `is_error` defect (found by reading `quick-ask.js` after the real runs; confirmed with a fixture, no provider call): a clean-exit `{is_error:true, result:"..."}` was reported as `answered` and emitted as the final text. RED: `test/quick-ask.test.js` test 7 failed (actual `answered`, expected `error`) in `b72305be2`. Fix mirrors the Cursor guard already in the same file: `is_error === true` -> `error`, no `final` event. GREEN: quick-ask 33/33; Node full 2429 tests, 2417 pass, same 6 inherited failures. The real success shape (`is_error:false`) test is kept and passes.
 
+- Review of range `75f54aecc..fd877dcc7` (8 files, 265 lines, target sha256:153cc9c5…9948; includes the unreviewed stderr redaction `23ec9c4d9` and the quick-ask `is_error` fix `fd877dcc7`): assessed `high` (process_boundary in pi-rpc-bridge.js); native review DECLINED for this candidate by the user (`declined_this_candidate`, target matched). OMITTED, not a functional failure and not an approval; no receipt. Reviewed boundary stays at `75f54aecc`.
+
 ## Next step
 
 Close remaining delivery evidence without new features: (1) Cursor provider (still pending — do not re-run Codex/Claude/OpenCode Go `OK` evidence Claude already recorded); (2) **packaged product** with approved team + usable provider (needs specific auth — distinct from adapter happy-path PASS); (3) human product visual acceptance; (4) foreign-platform package runtime exec; (5) simulated `is_error:true` test (Claude can advance). Stderr redaction integrated (`23ec9c4d9`). U3 review consent closed (approved + acknowledged); U1/U2 declined. Separate: "provider responds" ≠ "integrated product works with that provider".
