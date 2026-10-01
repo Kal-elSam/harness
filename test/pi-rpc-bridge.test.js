@@ -556,3 +556,80 @@ test("U3 no-model cold start: stderr tail is bounded and later exits keep the di
   assert.ok(notice.reason.length < 5000, "stderr tail bounded");
   await bridge.stop();
 });
+
+async function exitReasonAfterStderr(chunks, code = 1) {
+  let childRef = null;
+  const bridge = await openPiRpcBridge({
+    cwd: "/project",
+    loadSnapshot: async () => fakeSnapshot(),
+    resolveCliPath: () => "/fake/cli.js",
+    loadKairoProviderModels: noArchitectModels,
+    spawnImpl: () => {
+      childRef = rpcChildWithArchitect("codex::x");
+      return childRef;
+    },
+    execPath: "/usr/bin/node",
+    connectTimeoutMs: 500
+  });
+  const events = [];
+  bridge.onEvent((e) => events.push(e));
+  for (const chunk of chunks) childRef.stderr.emit("data", Buffer.from(chunk));
+  childRef.emit("exit", code, null);
+  const notice = events.find((e) => e.type === "engine_unavailable");
+  await bridge.stop();
+  assert.ok(notice, "engine_unavailable notice");
+  return notice.reason;
+}
+
+const FAKE_SECRETS = [
+  "sk-test-FAKEFAKEFAKEFAKEFAKE1234",
+  "Bearer fake.jwt.token.value",
+  "ANTHROPIC_API_KEY=fake-key-value-123",
+  "https://user:fakepass@example.invalid/x"
+];
+const FAKE_SECRET_PAYLOADS = [
+  "sk-test-FAKEFAKEFAKEFAKEFAKE1234",
+  "fake.jwt.token.value",
+  "fake-key-value-123",
+  "fakepass"
+];
+
+test("stderr tail is redacted: every secret form is masked, diagnostics survive", async () => {
+  for (let i = 0; i < FAKE_SECRETS.length; i++) {
+    const reason = await exitReasonAfterStderr([
+      `Error: cannot load config /tmp/x/settings.json using ${FAKE_SECRETS[i]} now\n`
+    ]);
+    assert.ok(!reason.includes(FAKE_SECRET_PAYLOADS[i]), `secret ${i} leaked: ${reason}`);
+    assert.match(reason, /\[REDACTED\]/);
+    assert.match(reason, /Error: cannot load config \/tmp\/x\/settings\.json/);
+    assert.match(reason, /code 1/);
+  }
+});
+
+test("stderr tail redaction catches a secret split across two chunks", async () => {
+  const reason = await exitReasonAfterStderr([
+    "boot failed: key sk-test-FAKEFAKEF",
+    "AKEFAKEFAKE1234 rejected\n"
+  ]);
+  assert.ok(!reason.includes("FAKEFAKEF"), reason);
+  assert.ok(!reason.includes("AKEFAKEFAKE1234"), reason);
+  assert.match(reason, /\[REDACTED\]/);
+  assert.match(reason, /rejected/);
+});
+
+test("stderr tail redaction: a secret straddling the 2000-char boundary is not partially revealed", async () => {
+  for (const pad of [1980, 1990, 2000, 2010, 2020, 8000 - 10, 8000 + 10]) {
+    const secret = "sk-test-FAKEFAKEFAKEFAKEFAKE1234";
+    const reason = await exitReasonAfterStderr([`${"a ".repeat(pad / 2)}${secret} tail-end-text\n`]);
+    assert.ok(!reason.includes("FAKEFAKE"), `pad ${pad} leaked: ${reason.slice(0, 120)}`);
+    assert.ok(!reason.includes("1234"), `pad ${pad} leaked tail: ${reason.slice(0, 120)}`);
+    assert.match(reason, /tail-end-text/);
+    assert.ok(reason.length < 2300, "bounded");
+  }
+});
+
+test("stderr tail redaction keeps the tail bounded under heavy output", async () => {
+  const reason = await exitReasonAfterStderr([`${"y".repeat(50000)}\nlast ANTHROPIC_API_KEY=fake-key-value-123\n`]);
+  assert.ok(reason.length < 2300, `length ${reason.length}`);
+  assert.ok(!reason.includes("fake-key-value-123"));
+});

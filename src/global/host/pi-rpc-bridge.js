@@ -28,6 +28,7 @@ import {
   DEFAULT_EXTENSION_DIR,
   buildKairoPiResourceArgs
 } from "./launch-gentle-shell.js";
+import { redactText } from "../runtime/run-redact.js";
 import { loadKairoProviderModels as loadKairoProviderModelsImpl } from "./kairo-route-provider.js";
 import { resolveHomeDir } from "../paths.js";
 
@@ -484,20 +485,48 @@ function dispatchRecord(bridge, pending, eventBuffer, listeners, record) {
 }
 
 const STDERR_TAIL_MAX = 2000;
+// Raw window kept larger than the surfaced tail so redaction sees whole
+// secrets (also across chunk boundaries) before the final truncation.
+const STDERR_RAW_MAX = STDERR_TAIL_MAX * 4;
+
+// Credentials are short; a longer leading run is opaque output, not a cut secret.
+const PARTIAL_TOKEN_MAX = 256;
+
+function dropLeadingPartialToken(text) {
+  // The leading token may be the cut tail of a secret; discard it.
+  const m = /^(\S*)\s/.exec(text);
+  if (!m || m[1].length > PARTIAL_TOKEN_MAX) return text;
+  return text.slice(m[0].length);
+}
+
+function formatStderrTail(raw, rawTruncated) {
+  const window = rawTruncated ? dropLeadingPartialToken(raw) : raw;
+  const redacted = redactText(window);
+  if (redacted.length <= STDERR_TAIL_MAX) return redacted;
+  // Already redacted over the larger window, so a straddling secret is a marker.
+  return redacted.slice(-STDERR_TAIL_MAX);
+}
 
 function withStderrTail(message, tail) {
-  const text = tail.trim();
+  const text = formatStderrTail(tail.raw, tail.truncated).trim();
   return text ? `${message}: ${text}` : message;
 }
 
 function attachChild(bridge, child) {
   bridge._setChild(child);
-  let stderrTail = "";
+  const stderrTail = { raw: "", truncated: false };
   child.stdout?.on("data", (chunk) => bridge._ingestStdout(chunk));
   child.stderr?.on("data", (chunk) => {
     // stderr is diagnostic only — never protocol. Keep a bounded tail so a
     // startup failure is shown verbatim instead of a bare exit code.
-    stderrTail = (stderrTail + String(chunk)).slice(-STDERR_TAIL_MAX);
+    // Redaction happens on the assembled window when the reason is formatted.
+    const next = stderrTail.raw + String(chunk);
+    if (next.length > STDERR_RAW_MAX) {
+      stderrTail.raw = next.slice(-STDERR_RAW_MAX);
+      stderrTail.truncated = true;
+    } else {
+      stderrTail.raw = next;
+    }
   });
   child.once("error", (err) => {
     bridge._setExitError(new Error(withStderrTail(`Agent process error: ${err.message}`, stderrTail)), {
