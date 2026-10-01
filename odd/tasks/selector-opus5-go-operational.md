@@ -45,4 +45,11 @@ Reproduce the analyst picker Kairo shows without new probes, restore allowed Cla
 - Local install: `npm link` from `kairo-plan1-baseline` — `kairo` realpath → this worktree (was `kairo-startup-analyst`)
 - RDD assess (Cursor): `review_due=true` / unassessable — Cursor not an immutable-receipt runtime; no clone disable without user request
 - Selector offline (cached AA + entitlement, Cursor 5.5 shape, no probes): `claude-opus-5` + `claude-sonnet-5` in curated picker
-- Pending (needs consumption auth): reanalyze + approve usable team + conversation — do **not** approve the old suggested draft
+- **Full flow (2026-10-01, authorized consumption):**
+  - Gotcha: shell had `HARNESS_HOME=/tmp/kairo-seed-test3…` — first analyze wrote to tmp; re-ran with `env -u HARNESS_HOME`
+  - Live picker (real home): Opus 5 + Sonnet 5 present; Go `rate_limited`
+  - Reanalyze analyst: Codex GPT-6-Astra → new SUGGESTED (did **not** approve old draft)
+  - Operational team: Architect/Reviewer/Orchestrator → Codex; Explorer/Debugger → Claude Opus 5; **no Go**
+  - Approved → `active` @ 2026-10-01T20:16:12.159Z
+  - Conversation `askQuestion`: provider `claude`, answered with repo purpose sentence
+
