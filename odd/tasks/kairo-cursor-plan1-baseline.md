@@ -34,9 +34,9 @@ Establish a clean integration baseline from Ratatui and preserve analyst T28/T29
 ## Tasks
 
 - [x] P1-T1 — Merge analyst into Ratatui baseline; resolve conflicts; deliver base hash to Claude
-- [x] P1-T2 — Integrated tests (Rust UI ↔ real sidecar; label simulations) — re-validated after Claude U1–U3
-- [x] P1-T3 — Integrate Claude commits; full suites; record failures honestly
-- [x] P1-T4 — Final package validation evidence (binaries, columns, Windows CLI); no remote delivery without auth
+- [x] P1-T2 — Integrated tests (Rust UI ↔ real sidecar; label simulations) — re-validated after Claude U1–U3 + placeholder fix
+- [x] P1-T3 — Integrate Claude commits; full suites; record failures honestly — **reopened** for `50f9b4984`, then closed
+- [x] P1-T4 — Final package validation evidence (binaries, columns, Windows CLI) — **re-run required** after placeholder fix; done on post-fix HEAD
 
 ## Routing
 
@@ -158,24 +158,42 @@ Claude's closing note claimed **6** Node failures identical on base `56c530cf2`.
 
 **Verdict:** product behavior matches **T27** (`project-team-sidecar.js` flat list, no star). The four failures are **stale assertions** written for the pre-T27 top-3/star contract, not regressions from Claude U1–U3. Fix path (not done here): rewrite those four tests to T27 expectations, or restore starring only if product reverts T27 — product decision.
 
-Not fixed in this turn (investigation only). Real-provider / live Pi cold-start still need separate authorization.
+Not fixed in that turn (investigation only). Real-provider / live Pi cold-start still need separate authorization.
 
 
-### P1-T4 — Final package validation (post-Claude integrate)
+### P1-T3 reopen — placeholder `no_model` fix + T27 test rewrite
 
-Re-run on integrated HEAD + rebuilt prebuilts. Host Darwin arm64. **No publish / push / PR.**
+`4344e8427` lacked Claude's follow-up `50f9b4984` (Pi placeholder model `unknown/unknown/unknown` must classify as `no_model`). Prior package evidence did **not** certify that fix.
+
+| Step | Result |
+|---|---|
+| Cherry-pick `50f9b4984` | local `287d34342` — `classifyPiEngineFromState` + pi-rpc-bridge test |
+| Rewrite 4 stale tests to T27 | `7377b45c9` — keep order/identity/evidence; no star / flat list / effort ids in main tail |
+| `cargo test -p kairo-ui` | **331/331** |
+| `pnpm test` | **2427 pass / 0 fail / 1 skip** (live Pi) |
+| P1-T2 expanded PTY | **PASS** — `/tmp/kairo-pty-after-placeholder/` |
+| Packaging re-run | 4/4 prebuilts; clean-install PASS; Windows fail-closed; v3-capture 52; mock PTY 60/100/160 PASS |
+
+Real providers / live Pi cold-start with no session.model: still **pending authorization** — green tests do not close that gap.
+
+HEAD after this close: see `git log -1` on `feat/kairo-cursor-baseline`.
+
+
+### P1-T4 — Final package validation (post-placeholder fix)
+
+Re-run on HEAD that includes `50f9b4984` + T27 test rewrite. Host Darwin arm64. **No publish / push / PR.** Prior packaging on `4344e8427` is **invalidated** for the placeholder fix.
 
 | Check | Result | Limit |
 |---|---|---|
 | `scripts/build-kairo-ui-binaries.sh` | 4/4: darwin-arm64 ~1.7M, darwin-x64 ~1.8M, linux-arm64 ~1.4M, linux-x64 ~1.6M | gitignored; not published |
 | `scripts/verify-kairo-ui-clean-install.sh` | PASS (hand-staged + npm-pack) | Foreign exec gaps: darwin-x64 Rosetta; linux-* Linux/qemu |
-| `test/kairo-ui-prebuilt.test.js` + `launch-ratatui-host` | PASS (incl. Windows fail-closed) | — |
+| `test/kairo-ui-prebuilt` + `launch-ratatui-host` | PASS (incl. Windows fail-closed) | — |
 | Host `--v3-capture` | exit 0, **52** fixtures (60/100/160) | auto; not human visual approval |
-| Mock PTY `kairo-ui-pty-e2e.py` @60/100/160 | PASS | mock sidecar |
-| P1-T2 team-flow PTY (SIMULATED providers) | PASS | see P1-T3 |
+| Mock PTY @60/100/160 | PASS | mock sidecar |
+| P1-T2 team-flow PTY | PASS | SIMULATED providers |
 | Real providers / live Pi no-model cold start | **not run** | auth not granted |
 
-### Packaging prep (baseline — historical; superseded by P1-T4 above)
+### P1-T4 — historical note (pre-placeholder; superseded)
 
 Observed on `feat/kairo-cursor-baseline` @ `79771262a` (+ this docs commit), host Darwin arm64. **Do not declare P1-T4 closed.** Re-run the same checks on the final package after Claude U2+ integration.
 
