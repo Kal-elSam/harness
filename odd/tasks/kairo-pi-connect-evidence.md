@@ -82,4 +82,4 @@ Work-unit commits on `feat/kairo-pi-connect-evidence`, handed to Cursor by hash.
 
 ## Next step
 
-Cursor integrates the instrumentation (coordinate the shared packaged approved-team harness file), then the fix and these tests, and revalidates. A real-Pi run needs new authorization.
+Cursor integrated on `feat/kairo-cursor-baseline` via fast-forward through `478489737` (instrumentation `a426c5711`/`eb4421e08`…, fix `49662386f`, review `151d0e74f` preserved, tests `478489737`). Revalidated at HEAD: `test/kairo-ui-rpc-stdio.test.js` 106/106; simulated-Pi Node suite 15/15; Python sidecar-evidence 7/7; `cargo test` 334/0; simulated-Pi PTY e2e 7/7 PASS (rebuilt release binary). Simulated Pi only — published Pi / real providers still need new authorization. Optional leftover: PTY refusal scenario; nested-branch readability.
