@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """Packaged integrated host — no_model check (isolated, no credentials, no network).
 
-DISTINCT from Claude's published-Pi RPC-only cold start:
-  this drives the PREBUILT `kairo-ui` binary through a REAL sidecar op loop
-  (`runKairoUiRpcStdio` + `classifyPiEngineFromState`) so the product path
-  shows Chat blocked: no_model.
+Default mode = **integration with simulated Pi** (placeholder child matching the
+published package shape). That does NOT certify a real-Pi run.
 
-REAL: prebuilt binary, stdio loop, classifier (placeholder → no_model).
-SIMULATED by default: Pi child is a local fake that returns the same
-placeholder model shape the published package emitted. Set
-KAIRO_PACKAGED_NO_MODEL_REAL_PI=1 to attempt a real published Pi spawn
-(still offline / scrubbed HOME — never user credentials).
+REAL Pi variant (requires explicit authorization + KAIRO_PACKAGED_NO_MODEL_REAL_PI=1):
+  published @kal-elsam/kairo-pi-coding-agent, offline, temp HOME. If real Pi is
+  requested and unavailable, the sidecar exits non-zero — **no silent fallback**.
+
+DISTINCT from Claude's published-Pi RPC-only cold start (already VERIFIED).
 
 Env: KAIRO_UI_BINARY, KAIRO_PTY_EVIDENCE_DIR, KAIRO_PTY_SIZES (default 100x30),
      KAIRO_PACKAGED_NO_MODEL_REAL_PI=1, KAIRO_PACKAGED_NO_MODEL_KEEP=1.
@@ -23,6 +21,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -127,12 +126,25 @@ def main() -> int:
         for d in (home, state, proj):
             d.mkdir(parents=True, exist_ok=True)
         (home / "pi-agent").mkdir(parents=True, exist_ok=True)
+        # Product spawn loads the Kairo host extension; Architect requires a Git
+        # cwd. Keep isolation (temp proj) but init a minimal repo so REAL Pi can
+        # start — do not strip --extension / use -ne (that would diverge from
+        # the packaged host path).
+        git_init = subprocess.run(
+            ["git", "init", "-q"],
+            cwd=proj,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         evidence = EVIDENCE_DIR / f"{cols}x{rows}"
         evidence.mkdir(parents=True, exist_ok=True)
         checks: list[tuple[str, bool, str]] = []
 
         def check(name: str, ok: bool, detail: str = ""):
             checks.append((name, bool(ok), detail))
+
+        check("temp proj is a git repo (extension requirement)", git_init.returncode == 0, git_init.stderr.strip())
 
         env = scrubbed_env(home, state, cols, rows)
         # Prove isolation: no leftover credential vars.
@@ -147,6 +159,22 @@ def main() -> int:
                 return log_path.read_text(errors="replace").splitlines() if log_path.exists() else []
 
             ok_ready = p.wait_for(lambda: any('out {"type":"ready"' in l for l in log_lines()), 25.0)
+            mode_lines = [l for l in log_lines() if l.startswith("mode ")]
+            want_real = os.environ.get("KAIRO_PACKAGED_NO_MODEL_REAL_PI") == "1"
+            if want_real:
+                check(
+                    "mode is REAL_PUBLISHED_PI_OFFLINE (no silent sim)",
+                    any("REAL_PUBLISHED_PI_OFFLINE" in l for l in mode_lines),
+                    str(mode_lines),
+                )
+                if any("real_pi_unavailable FAIL" in l for l in log_lines()):
+                    check("real Pi unavailable must fail closed", False, "sidecar fell into unavailable without hard fail")
+            else:
+                check(
+                    "mode is SIMULATED_PI (integration with simulated Pi)",
+                    any("SIMULATED_PI_PLACEHOLDER_CHILD" in l for l in mode_lines),
+                    str(mode_lines),
+                )
             check("sidecar ready (REAL stdio loop)", ok_ready)
             p.pump(0.8)
             (evidence / "screen.after-ready.txt").write_text(p.text() + "\n", encoding="utf-8")
@@ -230,8 +258,12 @@ def main() -> int:
         print(f"\nPackaged no_model FAIL: {failed} check(s)", file=sys.stderr)
         return 1
     print(
-        "\nPackaged no_model PASS — REAL: prebuilt host + classifier; "
-        "Pi child placeholder shape (or REAL_PI if requested)"
+        "\nPackaged no_model PASS — REAL host+classifier; "
+        + (
+            "REAL published Pi offline"
+            if os.environ.get("KAIRO_PACKAGED_NO_MODEL_REAL_PI") == "1"
+            else "SIMULATED Pi placeholder child (does not certify real Pi)"
+        )
     )
     return 0
 

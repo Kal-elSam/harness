@@ -2,19 +2,19 @@
 /**
  * Packaged-host no_model sidecar (isolated evidence).
  *
- * REAL:
- *   - runKairoUiRpcStdio op loop
- *   - classifyPiEngineFromState (incl. placeholder → no_model fix)
- * Optional REAL Pi child when KAIRO_PACKAGED_NO_MODEL_REAL_PI=1 and the
- * published package is resolvable; otherwise a local fake child that returns
- * the same PLACEHOLDER model shape Claude observed from
- * @kal-elsam/kairo-pi-coding-agent@0.87.1-kairo.5.
+ * Default = **SIMULATED Pi** (placeholder child with published package shape).
+ * That certifies host+classifier wiring only — never a real-Pi run.
  *
+ * REAL when KAIRO_PACKAGED_NO_MODEL_REAL_PI=1:
+ *   published @kal-elsam/kairo-pi-coding-agent, `--offline`, temp HOME.
+ *   If the published CLI is missing → exit 2 (FAIL). No silent sim fallback.
+ *
+ * Always REAL: runKairoUiRpcStdio + classifyPiEngineFromState.
  * NEVER: credentials, network, real providers, or user HOME sessions.
  *
  * Env:
  *   KAIRO_PACKAGED_NO_MODEL_E2E_DIR  — required log dir
- *   KAIRO_PACKAGED_NO_MODEL_REAL_PI=1 — try real published Pi (offline)
+ *   KAIRO_PACKAGED_NO_MODEL_REAL_PI=1 — require real published Pi (offline)
  *   HOME / HARNESS_HOME / PI_CODING_AGENT_DIR — must be temp isolates
  */
 import { appendFileSync, mkdirSync, existsSync } from "node:fs";
@@ -127,9 +127,17 @@ function resolvePublishedPiCli() {
 const wantRealPi = process.env.KAIRO_PACKAGED_NO_MODEL_REAL_PI === "1";
 const realCli = wantRealPi ? resolvePublishedPiCli() : null;
 if (wantRealPi && !realCli) {
-  log("real_pi_unavailable falling back to placeholder child");
+  log("real_pi_unavailable FAIL — no silent fallback to simulation");
+  console.error(
+    "KAIRO_PACKAGED_NO_MODEL_REAL_PI=1 but published @kal-elsam/kairo-pi-coding-agent CLI was not found under node_modules. Refusing to fall back to the simulated placeholder child."
+  );
+  process.exit(2);
 }
-log(`mode ${realCli ? "REAL_PUBLISHED_PI_OFFLINE" : "PLACEHOLDER_CHILD_VIA_REAL_CLASSIFIER"}`);
+if (wantRealPi) {
+  log("mode REAL_PUBLISHED_PI_OFFLINE");
+} else {
+  log("mode SIMULATED_PI_PLACEHOLDER_CHILD (integration with simulated Pi)");
+}
 
 const snapshot = () => ({
   schema: KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
@@ -161,17 +169,18 @@ await runKairoUiRpcStdio({
   loadKairoProviderModels: async () => [],
   loadSnapshot: async () => snapshot(),
   openBridge: async (opts) => {
-    if (realCli) {
+    if (wantRealPi) {
       return openPiRpcBridge({
         cwd: opts?.cwd ?? cwd,
         loadSnapshot: async () => snapshot(),
         resolveCliPath: () => realCli,
         loadKairoProviderModels: async () => [],
         connectTimeoutMs: 12_000,
-        // Extra offline / no-session args if the bridge allows via env on the child;
-        // isolation comes from scrubbed HOME + PI_CODING_AGENT_DIR.
+        // Published package cold start: RPC + no session + offline (no network).
+        extraArgs: ["--offline"]
       });
     }
+    // Explicit simulated-Pi path only when REAL_PI is not requested.
     return openPiRpcBridge({
       cwd: opts?.cwd ?? cwd,
       loadSnapshot: async () => snapshot(),

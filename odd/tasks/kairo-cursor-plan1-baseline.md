@@ -184,10 +184,11 @@ That evidence is **not** the same as: launching the **integrated, packaged Kairo
 | Item | Status |
 |---|---|
 | Real provider runs (Codex/Claude/Cursor/OpenCode ASK events, tools, thinking) | Pending **specific** provider authorization — see `docs/ai/kairo-parity-provider-plan.md` (not executed) |
-| Packaged integrated host, no model (prebuilt binary path) | **Prepared + PASS** (see acceptance pack below) | Distinct from published-Pi RPC check |
-| Human visual acceptance of the integrated product | **Captures ready** — awaiting your review | v3-capture auto fixtures |
+| Packaged integrated host, no model (prebuilt binary path) | **PASS SIMULATED Pi** + **PASS REAL published Pi offline** (auth 2026-10-01) | Reason observed: **No active strategy…** (blocks chat without active team — not approved-team+usable-provider). Evidence `/tmp/kairo-acceptance-prep/packaged-no-model(-real-pi)/`; missing Pi → exit 2; temp proj `git init` for extension |
+| Human visual acceptance of the **product** (not fixtures) | Open | Fixture HTML reviewable separately; product accept still pending |
 | Foreign-platform package exec (darwin-x64 / linux-*) | Selection PASS; runtime exec still needs Rosetta / Linux-or-qemu hosts |
-| Native review consent | U1/U2 **declined** (stand); U3 candidate consent still **pending** — resolve separately |
+| Native review consent | U1/U2 **declined** (stand); **U3 approved + acknowledged** | Not pending consent |
+| Stderr redaction (`23ec9c4d9`) | **Integrated** on this branch | Surfaces/redacts Pi startup stderr; revalidate package after |
 
 #### Acceptance pack (isolated; no credentials / no network)
 
@@ -198,13 +199,13 @@ Latest local pack: `/tmp/kairo-acceptance-prep/`
 | Artifact | Purpose |
 |---|---|
 | `ACCEPTANCE.md` | How to review |
-| `packaged-no-model/*/screen.after-ready.txt` | Packaged host shows `Chat blocked: no_model` |
-| `packaged-no-model/*/sidecar.log` | REAL classifier + stdio loop |
-| `v3-visual/*.html` (52 files) | Human visual acceptance at 60/100/160 + ops/settings |
+| `packaged-no-model/*/screen.after-ready.txt` | SIMULATED-Pi pack: host shows `Chat blocked: no_model` |
+| `packaged-no-model/*/sidecar.log` | REAL classifier + stdio; mode `SIMULATED_PI_PLACEHOLDER_CHILD` |
+| `v3-visual/*.html` (52 files) | Fixture review only — not product visual acceptance |
 
-Default Pi child for the packaged check is a **local fake** returning the published placeholder shape; classifier + host binary are real. Optional `KAIRO_PACKAGED_NO_MODEL_REAL_PI=1` attempts published Pi offline (still scrubbed HOME).
+**Packaged check labeling:** default run = integración con Pi **simulado**. Does **not** certify published Pi. Real variant: `KAIRO_PACKAGED_NO_MODEL_REAL_PI=1` → published CLI + `--offline` + temp HOME; if CLI missing → **fail** (exit 2), never silent fallback to simulation. Authorization for that real run is requested separately (not auto-executed).
 
-Simulated/PTY/Node green ≠ complete validation. No further feature work in this stream until the open evidence above is closed or explicitly deferred.
+Simulated/PTY/Node green ≠ complete validation. A PASS certifies the observed scenario only — not every state sharing the `no_model` label. Remaining: real providers, human product visual, foreign-platform exec.
 
 
 ### P1-T4 — Final package validation (post-placeholder fix)
@@ -220,9 +221,11 @@ Re-run on HEAD that includes `50f9b4984` + T27 test rewrite. Host Darwin arm64. 
 | Mock PTY @60/100/160 | PASS | mock sidecar |
 | P1-T2 team-flow PTY | PASS | SIMULATED providers |
 | Published Pi RPC cold start (no session.model) | **VERIFIED by Claude** → fix `287d34342` | Not pending auth; see P1-T3 reopen |
-| Packaged integrated host, no model (prebuilt path) | **PASS** (isolated pack) | Distinct from published-Pi RPC; see `/tmp/kairo-acceptance-prep/` |
+| Packaged integrated host, no model (prebuilt path) | **PASS SIMULATED** + **PASS REAL published Pi offline** | Reason: **No active strategy…** (not approved-team+provider); evidence `packaged-no-model-real-pi/`; git init in temp proj |
 | Real providers | **not run** | needs specific auth |
-| Human visual (v3 fixtures) | **52 captures ready** | awaiting human accept/reject |
+| Human visual (v3 fixtures) | Fixture verdict available | Product visual acceptance still separate |
+| U3 native review | **approved + acknowledged** | U1/U2 remain declined |
+| Stderr redaction | **`23ec9c4d9` integrated** | Revalidate package after fixture commit |
 
 ### P1-T4 — historical note (pre-placeholder; superseded)
 

@@ -14,12 +14,18 @@ if [[ ! -x "$BIN" ]]; then
   exit 2
 fi
 
-echo "== packaged no_model PTY (isolated) =="
+echo "== packaged no_model PTY (SIMULATED Pi by default) =="
 export KAIRO_UI_BINARY="$BIN"
 export KAIRO_PTY_EVIDENCE_DIR="$EVIDENCE/packaged-no-model"
 # Scrub common credential env for this process tree.
 unset ANTHROPIC_API_KEY OPENAI_API_KEY CURSOR_API_KEY OPENCODE_API_KEY \
   CLAUDE_API_KEY CODEX_API_KEY GOOGLE_API_KEY GEMINI_API_KEY 2>/dev/null || true
+if [[ "${KAIRO_PACKAGED_NO_MODEL_REAL_PI:-}" == "1" ]]; then
+  echo "REAL Pi mode requested — will FAIL (not fall back) if published CLI missing."
+  export KAIRO_PACKAGED_NO_MODEL_REAL_PI=1
+  export KAIRO_PTY_EVIDENCE_DIR="$EVIDENCE/packaged-no-model-real-pi"
+  mkdir -p "$KAIRO_PTY_EVIDENCE_DIR"
+fi
 python3 "$ROOT/scripts/kairo-ui-packaged-no-model-pty-e2e.py"
 
 echo "== v3-capture for human visual acceptance =="
@@ -36,15 +42,18 @@ Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 Binary: \`$BIN\`
 HEAD: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
-## 1. Packaged host — no_model (isolated)
+## 1. Packaged host — no_model
 
+### Default (already run): SIMULATED Pi
 Path: \`packaged-no-model/\`
+- Prebuilt \`kairo-ui\` + real classifier + **simulated** Pi placeholder child.
+- Labels integration wiring only — **does not certify** published Pi.
 
-- **What it is:** prebuilt \`kairo-ui\` + real sidecar classifier with the
-  published-Pi placeholder model shape → UI must show \`Chat blocked: no_model\`.
-- **What it is not:** Claude's published-Pi RPC-only cold start (already VERIFIED).
-- **Credentials / network:** none. Temp HOME only.
-- **Review:** open \`*/screen.after-ready.txt\` and confirm the blocked chat line.
+### Real published Pi (offline) — needs authorization
+Command (after explicit auth):
+\`KAIRO_PACKAGED_NO_MODEL_REAL_PI=1 pnpm smoke:kairo-packaged-no-model\`
+- Temp HOME / HARNESS_HOME / PI_CODING_AGENT_DIR; \`--offline\`; no credentials.
+- If published CLI missing → **fail** (exit 2); no silent simulation fallback.
 
 ## 2. V3 visual fixtures (human approval)
 
