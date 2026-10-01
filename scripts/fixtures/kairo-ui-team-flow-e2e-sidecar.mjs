@@ -8,7 +8,10 @@
  *
  * Modes via KAIRO_TEAM_FLOW_MODE:
  *   approve-chat  — team starts pending_approval; approve then chat
- *   recovery-apply / recovery-reject — team starts stale; R preview then y/x
+ *   recovery-apply / recovery-reject — team starts stale; R preview then y/x/Esc
+ *
+ * Drafts: intentionally omit saveDraft/loadDraft overrides so the REAL
+ * session-registry store under HARNESS_HOME is exercised (isolated temp HOME).
  */
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";

@@ -98,6 +98,29 @@ Mode: unknown for this integration branch — run focused then full applicable s
 - Those real-behavior checks remain **pending** (require separate provider authorization + post-Claude package re-run).
 
 
+### P1-T2 expand — multi-size / resize / real draft store / reject+cancel
+
+Expanded without touching Claude-owned impl. Host Darwin arm64, binary `dist/kairo-ui/darwin-arm64/kairo-ui`.
+
+| Check | Result | REAL vs SIMULATED |
+|---|---|---|
+| Node `plan1-analyst-chat-recovery-integrated` | 4/4 | REAL sidecar op loop; SIMULATED Pi/analysis/recovery/chat + in-memory draft store |
+| Node `plan1-session-draft-real-store` | 1/1 | REAL `saveDraft`/`loadDraft` → `draft.json` under temp `HARNESS_HOME`; SIMULATED Pi only |
+| Node `team-auto-recovery-e2e` (+reject) | 4/4 relevant | SIMULATED eligibility; reject keeps prior Go team |
+| PTY `approve-chat` @60/100/160 | PASS | REAL Rust PTY + sidecar; SIMULATED team/chat |
+| PTY `recovery-reject` @60/100/160 | PASS | reject: no `set_model`, no apply — prior team kept |
+| PTY `recovery-apply` @60/100/160 | PASS | SIMULATED apply body |
+| PTY `recovery-cancel` @60/100/160 | PASS | Esc: neither apply nor reject; no `set_model` |
+| PTY `resize-preserve` 100→60→100 | PASS | content + editor input survive SIGWINCH |
+| PTY `draft-restore` stop→restart | PASS | REAL `draft.json` under isolated HOME+`KAIRO_SESSION_ID`; never user `~/.harness` |
+
+Evidence dir: `/tmp/kairo-pty-team-flow-p1t2/`. Smoke: `pnpm smoke:kairo-ui-team-flow-pty`.
+
+Test gotchas (not product defects): empty-compose chrome steals leading `r`/`R` (markers must avoid hotkeys); Node harness needs a short post-ready delay before `stop`+`stdin.end` or the op can race the readline attach.
+
+P1-T2 remains open for post-U2 re-run. P1-T4 still open. No Claude files edited; no real providers.
+
+
 ### Packaging prep (baseline — NOT P1-T4 close)
 
 Observed on `feat/kairo-cursor-baseline` @ `79771262a` (+ this docs commit), host Darwin arm64. **Do not declare P1-T4 closed.** Re-run the same checks on the final package after Claude U2+ integration.
