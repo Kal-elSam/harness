@@ -481,6 +481,58 @@ test("buildAiTeam's widened search still respects the 3-per-provider limit — a
   assert.match(byRole.Tester.reason, /widened the search/);
 });
 
+test("SYNTHETIC contract: when Claude clears the 80% floor and Builder is not active, a 4th Codex technical role must not claim only-adequate-concentration", () => {
+  // SYNTHETIC scores (not the preserved AA fixture). Locks the concentration
+  // contract in isolation. Deterministic offline repro of the saved session
+  // lives in test/team-selection-repro.test.js + fixtures/team-selection-repro-dfd018.json.
+  const roleCaps = {
+    Explorer: { required: ["reasoning"], optional: [] },
+    Architect: { required: ["reasoning"], optional: [] },
+    Debugger: { required: ["reasoning"], optional: [] },
+    Reviewer: { required: ["reasoning"], optional: [] }
+  };
+  const aa = [
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 100, codingIndex: null, mathIndex: null },
+    { slug: "gpt-5.6-terra", name: "GPT-5.6-Terra", intelligenceIndex: 96, codingIndex: null, mathIndex: null },
+    { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", intelligenceIndex: 94, codingIndex: null, mathIndex: null },
+    { slug: "gpt-5.5", name: "GPT-5.5", intelligenceIndex: 92, codingIndex: null, mathIndex: null },
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 88, codingIndex: null, mathIndex: null }
+  ];
+  const scored = scoreAvailableModels([
+    { adapterId: "codex", models: [{ id: "gpt-6-astra" }, { id: "gpt-5.6-terra" }, { id: "gpt-5.6-sol" }, { id: "gpt-5.5" }] },
+    { adapterId: "claude", models: [{ id: "claude-opus-5" }] },
+    { adapterId: "opencode-go", models: [{ id: "kimi-k3" }] }
+  ], aa);
+  const eligibility = {
+    codex: { ok: true },
+    claude: { ok: true },
+    "opencode-go": {
+      ok: false,
+      cause: "rate_limited",
+      reason: "OpenCode Go monthly window is rate-limited"
+    }
+  };
+  const team = buildAiTeam(scored, eligibility, null, roleCaps);
+  const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
+  const adapters = new Set(team.map((t) => t.primary.adapterId === "opencode-go" && t.primary.available === false
+    ? t.fallback?.adapterId
+    : t.primary.adapterId));
+
+  assert.ok(adapters.has("claude"), "an adequate, eligible Claude must cover at least one active role once Codex hits concentration pressure");
+  assert.notEqual(
+    byRole.Reviewer.reason,
+    "Only adequate option — no real alternative avoids concentration without forcing a repeat.",
+    "Reviewer must not claim only-adequate while Claude clears the widened floor and Builder is inactive"
+  );
+  if (byRole.Reviewer.primary.adapterId === "codex") {
+    assert.match(
+      byRole.Reviewer.reason ?? "",
+      /widened the search|avoid concentration|Kept independent/,
+      "a Codex Reviewer pick after concentration pressure needs an honest diversity/widen reason, never a silent or only-adequate claim"
+    );
+  }
+});
+
 test("buildAiTeam's widened search still keeps Reviewer independent from Builder's own provider — a same-adapter, different-family candidate is skipped for a genuinely independent one", () => {
   // Builder's own adapter (pB) hosts both the leader Reviewer would
   // otherwise repeat AND a real, different-family rival that clears the

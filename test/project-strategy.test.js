@@ -361,6 +361,81 @@ test("REGRESSION: OpenCode Go monthly rate-limit must not leave Architect/Builde
   );
 });
 
+test("SYNTHETIC contract: allowed Claude + providerCapacity must reach the balancer; Reviewer must not claim only-adequate while Claude clears the floor", () => {
+  // SYNTHETIC AA indices (not the preserved session fixture). Locks balancer
+  // wiring in isolation. Deterministic offline repro of the saved session
+  // lives in test/team-selection-repro.test.js + fixtures/team-selection-repro-dfd018.json.
+  const aa = [
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 100, codingIndex: 95, terminalBenchV2: 0.9 },
+    { slug: "gpt-5.6-terra", name: "GPT-5.6-Terra", intelligenceIndex: 96, codingIndex: 92, terminalBenchV2: 0.88 },
+    { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", intelligenceIndex: 94, codingIndex: 90, terminalBenchV2: 0.86 },
+    { slug: "gpt-5.5", name: "GPT-5.5", intelligenceIndex: 92, codingIndex: 88, terminalBenchV2: 0.84 },
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 88, codingIndex: 91, terminalBenchV2: 0.82 },
+    { slug: "kimi-k3", name: "Kimi K3", intelligenceIndex: 98, codingIndex: 97, terminalBenchV2: 0.95 }
+  ];
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "codex", models: [{ id: "gpt-6-astra" }, { id: "gpt-5.6-terra" }, { id: "gpt-5.6-sol" }, { id: "gpt-5.5" }] },
+    { adapterId: "claude", models: [{ id: "claude-opus-5" }] },
+    { adapterId: "opencode-go", models: [{ id: "kimi-k3" }] }
+  ], aa).map((model) => ({
+    ...model,
+    accessMode: "automatic",
+    entitlement: model.adapterId === "claude" ? ENTITLEMENT.ALLOWED : ENTITLEMENT.NOT_APPLICABLE
+  }));
+  const providerCapacity = {
+    codex: { adapterId: "codex", quotaRemainingPercent: 22 },
+    claude: { adapterId: "claude", quotaRemainingPercent: 29 },
+    "opencode-go": { adapterId: "opencode-go", quotaRemainingPercent: 0 }
+  };
+  const strategy = buildProjectStrategy(
+    profile({
+      roleRequirements: [
+        { role: "Explorer", capabilities: ["reasoning", "terminalExecution"], reason: "" },
+        { role: "Architect", capabilities: ["reasoning", "coding"], reason: "" },
+        { role: "Debugger", capabilities: ["reasoning", "coding", "terminalExecution"], reason: "" },
+        { role: "Reviewer", capabilities: ["reasoning", "coding"], reason: "" }
+      ]
+    }),
+    {
+      scoredAll,
+      eligibility: {
+        codex: { ok: true },
+        claude: { ok: true },
+        "opencode-go": {
+          ok: false,
+          cause: "rate_limited",
+          reason: "OpenCode Go monthly window is rate-limited (resets 2026-10-12T18:00:48.000Z)"
+        }
+      },
+      registry: createCapabilityRegistry(),
+      providerCapacity
+    },
+    analystChoice("quality", { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra" })
+  );
+
+  const qualityAdapters = new Set(strategy.qualityTeam.map((entry) => entry.model.adapterId));
+  const projectAdapters = new Set(strategy.projectTeam.map((entry) => entry.model.adapterId));
+  const reviewerQuality = strategy.qualityTeam.find((entry) => entry.role === "Reviewer");
+  const analystRow = computeBootstrapAnalystCatalog({
+    scoredAll,
+    eligibility: { codex: { ok: true }, claude: { ok: true }, "opencode-go": { ok: false } },
+    registry: createCapabilityRegistry(),
+    providerCapacity
+  }).models.find((row) => row.adapterId === "claude" && row.modelId === "claude-opus-5");
+
+  assert.ok(
+    qualityAdapters.has("claude") || projectAdapters.has("claude"),
+    "adequate allowed Claude must appear on quality or operational project team — not silently dropped for an all-Codex portfolio"
+  );
+  assert.notEqual(
+    reviewerQuality?.reason,
+    "Only adequate option — no real alternative avoids concentration without forcing a repeat.",
+    "Reviewer must not claim only-adequate-concentration while Claude clears the floor"
+  );
+  assert.ok(analystRow, "Claude Opus must remain visible to the balancer catalog");
+  assert.equal(analystRow.quota, 29, "worst-window Claude remaining percent must reach the balancer as providerCapacity");
+});
+
 test("buildProjectStrategy's projectTeam carries the richer model reference (candidateKey, accessMode) plus assignmentSource and decisionEvidence", () => {
   const strategy = buildProjectStrategy(profile({
     roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
