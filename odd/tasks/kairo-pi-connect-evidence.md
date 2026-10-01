@@ -70,6 +70,7 @@ Work-unit commits on `feat/kairo-pi-connect-evidence`, handed to Cursor by hash.
 - Scope of the claim: simulated Pi only. It proves the host wiring and the harness (approval -> Architect -> set_model -> explicit connected event, plus the negative causes). It does NOT prove the published Pi, a real provider, or Architect launchability on a real machine. The packaged approved-team harness was not executed (needs authorization).
 - Open production defect (not fixed here): refused `team.approve` still emits notice "Team active: undefined roles." (`kairo-ui-rpc-stdio.js` ~L1875-1895). Needs its own failing test and a fix decision.
 
-## Next step
+- Native review of range `f0305570c..6a0f17555` (15 files, 1643 lines, target sha256:96c5e124…94b6): assessed `high` (process_boundary in the packaged approved-team PTY e2e); DECLINED for this candidate by the user (`declined_this_candidate`, target matched). OMITTED: neither a functional failure nor an approval; no receipt. Reviewed boundary stays at `f0305570c`.
 
+## Next step
 Fix the refused-approve notice defect as a separate change, if the user approves; a real-Pi run of the packaged approved-team harness needs new authorization.
