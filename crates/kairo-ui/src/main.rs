@@ -179,9 +179,10 @@ impl TeamOp {
     }
 }
 
-/// Prefer sidecar `pickerNotice`; fall back to a compact Claude absence line
-/// when only the longer `unverifiedClaudeNotice` is present. Never invents
-/// billing / funds causes.
+/// Prefer sidecar `pickerNotice`; fall back to the same compact partial-
+/// comparison acknowledgement the sidecar uses when only the longer
+/// `unverifiedClaudeNotice` is present. Never invents billing / funds causes,
+/// and never labels a single-model denial as if all of Claude were unavailable.
 fn preflight_picker_notice(record: &serde_json::Value) -> Option<String> {
     if let Some(notice) = record
         .get("pickerNotice")
@@ -197,7 +198,7 @@ fn preflight_picker_notice(record: &serde_json::Value) -> Option<String> {
         .map(str::trim)
         .is_some_and(|s| !s.is_empty());
     if has_unverified {
-        return Some("Claude: no disponible para análisis ahora".into());
+        return Some("Comparación parcial — d = detalles".into());
     }
     None
 }

@@ -313,40 +313,49 @@ export function resolveLineage(modelId) {
  * lifecycle from lineageKey/generation already resolved onto it.
  *
  * Same-adapter rule: "superseded" when a strictly newer generation under
- * the SAME lineageKey exists on the SAME adapterId.
+ * the SAME lineageKey exists on the SAME adapterId AND that newer peer
+ * has access proof that can retire a sibling (`allowed` or
+ * `not_applicable`). An unverified or denied newer ID (e.g. Claude Opus
+ * 5.5 freshly cataloged with no entitlement probe yet) must NOT retire an
+ * older allowed generation — inventory still lists the new ID as
+ * unverified; the allowed older one stays recommendable.
  *
  * Cross-adapter Claude re-exports: Cursor (and only Cursor) also yields to
- * a newer generation present on the canonical `claude` adapter — so an
- * obsolete `claude-4-sonnet` re-exposure retires once Claude Sonnet 5 is
- * in Claude's catalog. The reverse must never happen: Cursor listing
- * Claude Opus 5.5 must not mark Claude's allowed Opus 5 superseded.
+ * a newer generation present on the canonical `claude` adapter when that
+ * Claude peer itself has access proof — so an obsolete `claude-4-sonnet`
+ * re-exposure retires once Claude Sonnet 5 is allowed on Claude. The
+ * reverse must never happen: Cursor listing Claude Opus 5.5 must not mark
+ * Claude's allowed Opus 5 superseded.
  *
  * Returns a NEW array (candidates are copied, never mutated in place).
  * @param {Array<ModelCandidateIdentity>} catalog
  * @returns {Array<ModelCandidateIdentity>}
  */
 function applyLifecycle(catalog) {
-  const maxGenerationByAdapterLineage = new Map();
+  const maxProvenGenerationByAdapterLineage = new Map();
   for (const candidate of catalog) {
     if (candidate.lineageKey == null) continue;
+    // Unverified/denied peers are inventory only — they do not prove a
+    // newer generation is actually accessible enough to retire another.
+    if (!AUTOMATIC_ENTITLEMENTS.has(candidate.entitlement)) continue;
     const key = `${candidate.adapterId}::${candidate.lineageKey}`;
-    const current = maxGenerationByAdapterLineage.get(key);
+    const current = maxProvenGenerationByAdapterLineage.get(key);
     if (current == null || candidate.generation > current) {
-      maxGenerationByAdapterLineage.set(key, candidate.generation);
+      maxProvenGenerationByAdapterLineage.set(key, candidate.generation);
     }
   }
   return catalog.map((candidate) => {
     if (candidate.lineageKey == null) return { ...candidate, lifecycle: "unknown" };
-    const sameAdapterMax = maxGenerationByAdapterLineage.get(
+    const sameAdapterMax = maxProvenGenerationByAdapterLineage.get(
       `${candidate.adapterId}::${candidate.lineageKey}`
     );
-    if (candidate.generation < sameAdapterMax) {
+    if (sameAdapterMax != null && candidate.generation < sameAdapterMax) {
       return { ...candidate, lifecycle: "superseded" };
     }
     // Cursor re-exposes Claude model ids; retire those that lag Claude's
-    // own catalog. Never let Cursor's inventory retire Claude's.
+    // own proven catalog. Never let Cursor's inventory retire Claude's.
     if (candidate.adapterId === "cursor" && candidate.lineageKey.startsWith("claude-")) {
-      const claudeMax = maxGenerationByAdapterLineage.get(`claude::${candidate.lineageKey}`);
+      const claudeMax = maxProvenGenerationByAdapterLineage.get(`claude::${candidate.lineageKey}`);
       if (claudeMax != null && candidate.generation < claudeMax) {
         return { ...candidate, lifecycle: "superseded" };
       }

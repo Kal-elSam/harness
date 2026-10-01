@@ -475,18 +475,33 @@ impl VerificationProgress {
     }
 }
 
-/// One per-provider exclusion row from the preflight record's additive
+/// One per-model exclusion row from the preflight record's additive
 /// `exclusionCauses` (see project-team-sidecar.js `buildAnalystExclusionCauses`).
+/// Older sidecars may omit `displayName`/`modelId`; then the line falls back
+/// to the provider label.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExclusionCause {
     pub adapter_id: String,
     pub provider: String,
+    pub model_id: Option<String>,
+    pub display_name: Option<String>,
     pub cause: String,
     pub models: u64,
     pub reason: Option<String>,
 }
 
 impl ExclusionCause {
+    /// Prefer model display name, then modelId, then provider — never the
+    /// provider alone when a model identity is known (a Fable denial must not
+    /// read as "Claude: no disponible").
+    fn subject(&self) -> &str {
+        self.display_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.model_id.as_deref().filter(|s| !s.is_empty()))
+            .unwrap_or(self.provider.as_str())
+    }
+
     /// Tolerant parse: `None` when the field is absent (older sidecar) so the
     /// caller keeps the `pickerNotice` fallback; malformed rows are dropped.
     pub fn list_from_record(record: &Value) -> Option<Vec<Self>> {
@@ -499,6 +514,14 @@ impl ExclusionCause {
                     Some(Self {
                         adapter_id: str_of("adapterId").unwrap_or(provider).to_string(),
                         provider: provider.to_string(),
+                        model_id: str_of("modelId")
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string),
+                        display_name: str_of("displayName")
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string),
                         cause: str_of("cause").unwrap_or("").to_string(),
                         models: row.get("models").and_then(|v| v.as_u64()).unwrap_or(0),
                         reason: str_of("reason")
@@ -511,7 +534,7 @@ impl ExclusionCause {
         )
     }
 
-    /// One short line per provider. Wording is distinct per cause (same
+    /// One short line per excluded model. Wording is distinct per cause (same
     /// Spanish register as the sidecar's own picker notices); unknown access
     /// is worded as a partial comparison and missing benchmarks are never
     /// worded as "unavailable".
@@ -550,9 +573,10 @@ impl ExclusionCause {
                 }),
             _ => false,
         };
+        let subject = self.subject();
         match (&self.reason, skip_reason) {
-            (Some(reason), false) => format!("{}: {what} — {reason}", self.provider),
-            _ => format!("{}: {what}", self.provider),
+            (Some(reason), false) => format!("{subject}: {what} — {reason}"),
+            _ => format!("{subject}: {what}"),
         }
     }
 }
@@ -1104,6 +1128,34 @@ mod tests {
     }
 
     #[test]
+    fn fable_denial_uses_model_subject_not_claude_provider() {
+        let causes = ExclusionCause::list_from_record(&record_with_causes(json!([
+            {
+                "adapterId": "claude",
+                "provider": "Claude",
+                "modelId": "claude-fable-5-1",
+                "displayName": "Claude Fable 5.1",
+                "cause": "unavailable_verified",
+                "models": 1,
+                "reason": null
+            },
+            {
+                "adapterId": "claude",
+                "provider": "Claude",
+                "modelId": "claude-opus-5-5",
+                "displayName": "Claude Opus 5.5",
+                "cause": "access_unknown",
+                "models": 1,
+                "reason": null
+            }
+        ])))
+        .expect("field present");
+        assert_eq!(causes[0].line(), "Claude Fable 5.1: no disponible");
+        assert_eq!(causes[1].line(), "Claude Opus 5.5: sin verificar");
+        assert!(!causes.iter().any(|c| c.line().starts_with("Claude:")));
+    }
+
+    #[test]
     fn every_cause_has_distinct_wording_and_never_says_unavailable_for_unknowns() {
         let causes = ExclusionCause::list_from_record(&record_with_causes(json!([
             { "adapterId": "claude", "provider": "claude", "cause": "quota_exhausted", "models": 2, "reason": null },
@@ -1174,6 +1226,8 @@ mod tests {
         picker.causes = vec![ExclusionCause {
             adapter_id: "codex".into(),
             provider: "codex".into(),
+            model_id: None,
+            display_name: None,
             cause: "access_unknown".into(),
             models: 1,
             reason: None,
@@ -1442,6 +1496,8 @@ mod tests {
             causes: vec![ExclusionCause {
                 adapter_id: "claude".into(),
                 provider: "Claude".into(),
+                model_id: None,
+                display_name: None,
                 cause: "quota_exhausted".into(),
                 models: 1,
                 reason: None,

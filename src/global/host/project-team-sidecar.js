@@ -216,41 +216,59 @@ export function formatExclusionWhat(cause, reason = null) {
 }
 
 /**
- * One picker detail line: `Provider: what` or `Provider: what — compactReason`
- * only when the reason adds information beyond `what`.
+ * Subject label for one exclusion row: prefer the model display name, then
+ * modelId, then the provider. Never prefer the provider when a model identity
+ * is known — that is how a Fable denial used to read as "Claude: no disponible".
  *
- * @param {string} provider
+ * @param {{displayName?: string|null, modelId?: string|null, provider?: string|null}|null|undefined} row
+ * @returns {string}
+ */
+export function exclusionSubject(row) {
+  const name = row?.displayName == null || row.displayName === "" ? null : String(row.displayName);
+  const modelId = row?.modelId == null || row.modelId === "" ? null : String(row.modelId);
+  const provider = row?.provider == null || row.provider === "" ? null : String(row.provider);
+  return name ?? modelId ?? provider ?? "unknown";
+}
+
+/**
+ * One picker detail line: `Subject: what` or `Subject: what — compactReason`
+ * only when the reason adds information beyond `what`. `subject` is the
+ * model display name when known (e.g. "Claude Fable 5.1"); fall back to the
+ * provider label only when there is no per-model subject — never label a
+ * single-model denial as if the whole provider were unavailable.
+ *
+ * @param {string} subject
  * @param {string} cause
  * @param {string|null|undefined} reason
  * @returns {string}
  */
-export function formatExclusionLine(provider, cause, reason = null) {
+export function formatExclusionLine(subject, cause, reason = null) {
   const what = formatExclusionWhat(cause, reason);
+  const label = subject == null || subject === "" ? "unknown" : String(subject);
   const raw = reason == null || reason === "" ? null : String(reason);
-  if (!raw) return `${provider}: ${what}`;
-  if (cause === "quota_reserve" && /\(\d+%\)/.test(what)) return `${provider}: ${what}`;
-  if (cause === "rate_limited") return `${provider}: ${what}`;
-  if (cause === "access_unknown" && /timeout|timed\s*out/i.test(raw)) return `${provider}: ${what}`;
+  if (!raw) return `${label}: ${what}`;
+  if (cause === "quota_reserve" && /\(\d+%\)/.test(what)) return `${label}: ${what}`;
+  if (cause === "rate_limited") return `${label}: ${what}`;
+  if (cause === "access_unknown" && /timeout|timed\s*out/i.test(raw)) return `${label}: ${what}`;
   const compact = REASON_COPY[raw] ?? raw;
-  if (compact === what) return `${provider}: ${what}`;
-  return `${provider}: ${what} — ${compact}`;
+  if (compact === what) return `${label}: ${what}`;
+  return `${label}: ${what} — ${compact}`;
 }
 
 /**
- * Machine-readable, per-subscription exclusion causes for every candidate that
- * is in NEITHER picker view (T23): unverified access, verified-denied,
- * exhausted quota, provider unavailable, policy. One row per (provider,
- * cause): `{adapterId, provider, cause, models, reason}`, reported even when
- * the same subscription still has verified rows (a partial comparison is never
- * presented as complete). Sources are real evidence only: per-model `cause` /
- * `accessVerified` on catalog models, `rawCatalog.exclusions` (denied models
- * absent from `models` by design) and the Claude unverified-access notice.
- * Never an invented cause.
+ * Machine-readable, per-model exclusion causes for every candidate that is
+ * in NEITHER picker view (T23): unverified access, verified-denied,
+ * exhausted quota, provider unavailable, policy. One row per excluded
+ * model — never rolled up to the provider — so a Fable denial cannot read
+ * as "Claude: no disponible" while other Claude models remain listed.
+ * Sources are real evidence only: per-model `cause` / `accessVerified` on
+ * catalog models and `rawCatalog.exclusions` (denied models absent from
+ * `models` by design). Never an invented cause.
  *
  * @param {{models?: object[], exclusions?: object[]}|null|undefined} rawCatalog
  * @param {{models?: object[], alternatives?: object[]}|null|undefined} curatedCatalog
  * @param {string|null|undefined} unverifiedClaudeNotice
- * @returns {Array<{adapterId: string, provider: string, cause: string, models: number, reason: string|null}>}
+ * @returns {Array<{adapterId: string, provider: string, modelId: string|null, displayName: string|null, candidateKey: string, cause: string, models: number, reason: string|null}>}
  */
 export function buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifiedClaudeNotice = null) {
   const curatedRows = [
@@ -260,13 +278,20 @@ export function buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifi
   const curatedKeys = new Set(curatedRows.map((m) => m?.candidateKey ?? `${m?.adapterId}::${m?.modelId}`));
   const curatedAdapters = new Set(curatedRows.map((m) => m?.adapterId).filter(Boolean));
   const rows = new Map();
-  const add = (adapterId, cause, candidateKey, reason = null) => {
+  const add = ({ adapterId, cause, candidateKey, modelId = null, displayName = null, reason = null }) => {
     if (!adapterId || !CAUSE_COPY[cause]) return;
-    const key = `${adapterId}\u0000${cause}`;
-    const row = rows.get(key) ?? { adapterId, provider: providerPickerLabel(adapterId), cause, keys: new Set(), reason: null };
-    row.keys.add(candidateKey ?? `${adapterId}::${row.keys.size}`);
-    row.reason = row.reason ?? reason;
-    rows.set(key, row);
+    const key = candidateKey ?? `${adapterId}::${modelId ?? rows.size}`;
+    if (rows.has(key)) return;
+    rows.set(key, {
+      adapterId,
+      provider: providerPickerLabel(adapterId),
+      modelId: modelId == null ? null : String(modelId),
+      displayName: displayName == null || displayName === "" ? null : String(displayName),
+      candidateKey: key,
+      cause,
+      models: 1,
+      reason: reason == null ? null : (REASON_COPY[reason] ?? reason)
+    });
   };
   for (const model of Array.isArray(rawCatalog?.models) ? rawCatalog.models : []) {
     const candidateKey = model?.candidateKey ?? `${model?.adapterId}::${model?.modelId}`;
@@ -274,21 +299,75 @@ export function buildAnalystExclusionCauses(rawCatalog, curatedCatalog, unverifi
     // A provider-level cause (quota, unavailable, policy) wins over unknown
     // access: the model is out because of the provider, not just unverified.
     const providerCause = model?.cause && model.cause !== "access_unknown" && model.cause !== "unscored" ? model.cause : null;
+    const base = {
+      adapterId: model?.adapterId,
+      candidateKey,
+      modelId: model?.modelId ?? null,
+      displayName: model?.displayName ?? model?.modelName ?? null
+    };
     if (model?.available !== true) {
-      if (providerCause) add(model?.adapterId, providerCause, candidateKey, model?.causeReason ?? model?.entitlementReason ?? null);
-      else if (isAccessUnverified(model) || model?.cause === "access_unknown") add(model?.adapterId, "access_unknown", candidateKey, model?.entitlementReason ?? null);
-      else add(model?.adapterId, "unavailable_verified", candidateKey);
+      if (providerCause) {
+        add({ ...base, cause: providerCause, reason: model?.causeReason ?? model?.entitlementReason ?? null });
+      } else if (isAccessUnverified(model) || model?.cause === "access_unknown") {
+        add({ ...base, cause: "access_unknown", reason: model?.entitlementReason ?? null });
+      } else {
+        add({ ...base, cause: "unavailable_verified" });
+      }
     }
   }
   for (const exclusion of Array.isArray(rawCatalog?.exclusions) ? rawCatalog.exclusions : []) {
-    add(exclusion?.adapterId, exclusion?.cause, exclusion?.candidateKey, exclusion?.reason ?? null);
+    add({
+      adapterId: exclusion?.adapterId,
+      cause: exclusion?.cause,
+      candidateKey: exclusion?.candidateKey,
+      modelId: exclusion?.modelId ?? null,
+      displayName: exclusion?.displayName ?? exclusion?.modelId ?? null,
+      reason: exclusion?.reason ?? null
+    });
   }
-  if (unverifiedClaudeNotice && !curatedAdapters.has("claude") && ![...rows.values()].some((r) => r.adapterId === "claude" && r.cause === "access_unknown")) {
-    add("claude", "access_unknown", "claude::notice", String(unverifiedClaudeNotice));
+  if (
+    unverifiedClaudeNotice
+    && !curatedAdapters.has("claude")
+    && ![...rows.values()].some((r) => r.adapterId === "claude" && r.cause === "access_unknown")
+  ) {
+    add({
+      adapterId: "claude",
+      cause: "access_unknown",
+      candidateKey: "claude::notice",
+      modelId: null,
+      displayName: null,
+      reason: String(unverifiedClaudeNotice)
+    });
   }
   return [...rows.values()]
-    .map(({ keys, reason, ...row }) => ({ ...row, models: keys.size, reason: reason == null ? null : (REASON_COPY[reason] ?? reason) }))
-    .sort((a, b) => a.provider.localeCompare(b.provider) || CAUSE_ORDER.indexOf(a.cause) - CAUSE_ORDER.indexOf(b.cause));
+    .sort((a, b) => (
+      a.provider.localeCompare(b.provider)
+      || CAUSE_ORDER.indexOf(a.cause) - CAUSE_ORDER.indexOf(b.cause)
+      || String(a.displayName ?? a.modelId ?? "").localeCompare(String(b.displayName ?? b.modelId ?? ""))
+    ));
+}
+
+/**
+ * Subscription-level rollup of per-model `access_unknown` exclusion rows —
+ * kept additive for verification-plan UI that still thinks in subscriptions.
+ * @param {Array<{adapterId: string, provider: string, cause: string, models?: number, reason: string|null}>} exclusionCauses
+ * @returns {Array<{adapterId: string, provider: string, models: number, reason: string|null}>}
+ */
+export function aggregateUnverifiedSubscriptions(exclusionCauses) {
+  const byAdapter = new Map();
+  for (const row of Array.isArray(exclusionCauses) ? exclusionCauses : []) {
+    if (row?.cause !== "access_unknown" || !row.adapterId) continue;
+    const existing = byAdapter.get(row.adapterId) ?? {
+      adapterId: row.adapterId,
+      provider: row.provider,
+      models: 0,
+      reason: null
+    };
+    existing.models += typeof row.models === "number" ? row.models : 1;
+    existing.reason = existing.reason ?? row.reason ?? null;
+    byAdapter.set(row.adapterId, existing);
+  }
+  return [...byAdapter.values()];
 }
 
 /**
@@ -539,13 +618,13 @@ export async function preflightProjectTeam({
     projectRoot: preflight.projectRoot ?? null,
     unverifiedClaudeNotice,
     pickerNotice: buildAnalystPickerNotice(rawCatalog, analystCatalog, unverifiedClaudeNotice),
-    // Additive (T10/T11): machine-readable cause rows behind `pickerNotice`.
+    // Additive (T10/T11): machine-readable per-model cause rows behind `pickerNotice`.
     exclusionCauses,
-    // Additive (T23): subscriptions whose access could not be verified — the
-    // picker must say so, a partial comparison is never presented as complete.
-    unverifiedSubscriptions: exclusionCauses
-      .filter((row) => row.cause === "access_unknown")
-      .map(({ adapterId, provider, models, reason }) => ({ adapterId, provider, models, reason })),
+    // Additive (T23): subscriptions whose access could not be verified — rolled
+    // up from per-model access_unknown rows so verification-plan UI still
+    // thinks in subscriptions. The picker must say so; a partial comparison is
+    // never presented as complete.
+    unverifiedSubscriptions: aggregateUnverifiedSubscriptions(exclusionCauses),
     // Additive (T23): the concrete, never-executed verification plan.
     verificationPlan: toSerializable(preflight.verificationPlan) ?? EMPTY_VERIFICATION_PLAN
   };

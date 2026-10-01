@@ -221,15 +221,21 @@ def scenario_picker(run: Run, evidence: Path):
     else:
         run.check("narrow terminal still lists a Sol Codex route", "gpt-5-6-sol · Codex" in screen, screen[-500:])
     run.check("the partial comparison is acknowledged", "2 subscriptions not verified" in screen and "partial" in screen, screen[-400:])
-    # Denied causes live behind d (compact footer may only point at details).
-    if "Claude: no disponible (verificado)" not in screen:
+    # Denied Fable lives behind d as a per-model cause — never "Claude: no disponible".
+    denied_line = "claude-fable-5-1: no disponible"
+    if denied_line not in screen and "Claude Fable" not in screen:
         p.send(b"d")
-        details = p.wait_for(lambda: "Claude: no disponible (verificado)" in flat(p) or "d = details" in flat(p), 5.0)
-        run.check("denied cause is reachable via d", details and "Claude: no disponible (verificado)" in flat(p), flat(p)[-400:])
+        details = p.wait_for(lambda: denied_line in flat(p) or "Fable" in flat(p) or "d = details" in flat(p), 5.0)
+        detail_text = flat(p)
+        run.check(
+            "denied Fable cause is reachable via d as a per-model line",
+            details and (denied_line in detail_text or "Fable" in detail_text) and "Claude: no disponible" not in detail_text,
+            detail_text[-400:],
+        )
         p.send(b"d")
         p.wait_for(lambda: "Select analyst" in flat(p), 5.0)
     else:
-        run.check("the denied model is reported as a per-subscription cause", True, "visible in footer")
+        run.check("the denied Fable model is reported as a per-model cause", "Claude: no disponible" not in screen, screen[-400:])
 
     # 5. Navigate to gpt-5-6-sol · Codex (alphabetical list; not necessarily first).
     target = "gpt-5-6-sol · Codex"

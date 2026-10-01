@@ -6,6 +6,7 @@ import {
   buildAnalystPickerNotice,
   buildAnalystExclusionCauses,
   curateAnalystCatalogForPicker,
+  exclusionSubject,
   formatExclusionLine,
   pickDefaultAnalyst,
   preflightProjectTeam,
@@ -680,19 +681,37 @@ test("buildAnalystPickerNotice stays compact; per-provider causes live in exclus
   assert.ok(causes.some((row) => row.adapterId === "opencode-go" && row.cause === "access_unknown"));
 });
 
-test("buildAnalystExclusionCauses lists one machine-readable row per provider and cause for providers with no usable picker rows", () => {
+test("buildAnalystExclusionCauses lists one machine-readable row per excluded model, never rolled up by provider", () => {
   const raw = {
     models: [
       catalogEntry({ candidateKey: "codex::gpt", adapterId: "codex", modelId: "gpt", displayName: "GPT", evidenceStatus: "scored", available: true }),
       catalogEntry({ candidateKey: "claude::a", adapterId: "claude", modelId: "a", displayName: "A", evidenceStatus: "scored", available: false, cause: "quota_exhausted" }),
       catalogEntry({ candidateKey: "cursor::u", adapterId: "cursor", modelId: "u", displayName: "U", evidenceStatus: "unscored", available: true, cause: "unscored" })
     ],
-    exclusions: [{ candidateKey: "claude::c", adapterId: "claude", modelId: "c", cause: "access_unknown", reason: "Access has not been verified" }]
+    exclusions: [{ candidateKey: "claude::c", adapterId: "claude", modelId: "c", displayName: "Claude C", cause: "access_unknown", reason: "Access has not been verified" }]
   };
   const causes = buildAnalystExclusionCauses(raw, curateAnalystCatalogForPicker(raw), null);
   assert.deepEqual(causes, [
-    { adapterId: "claude", provider: "Claude", cause: "quota_exhausted", models: 1, reason: null },
-    { adapterId: "claude", provider: "Claude", cause: "access_unknown", models: 1, reason: "Access has not been verified" }
+    {
+      adapterId: "claude",
+      provider: "Claude",
+      modelId: "a",
+      displayName: "A",
+      candidateKey: "claude::a",
+      cause: "quota_exhausted",
+      models: 1,
+      reason: null
+    },
+    {
+      adapterId: "claude",
+      provider: "Claude",
+      modelId: "c",
+      displayName: "Claude C",
+      candidateKey: "claude::c",
+      cause: "access_unknown",
+      models: 1,
+      reason: "Access has not been verified"
+    }
   ]);
   assert.ok(!causes.some((row) => row.adapterId === "cursor"), "an available unscored model is selectable, so it is no exclusion");
 });
@@ -716,10 +735,37 @@ test("T27 exclusion copy: quota_reserve with 4% is reserva baja (4%), never cuot
   assert.equal(causes.length, 1);
   assert.equal(causes[0].cause, "quota_reserve");
   assert.equal(causes[0].reason, reason);
-  assert.equal(formatExclusionLine(causes[0].provider, causes[0].cause, causes[0].reason), "Claude: reserva baja (4%)");
-  assert.doesNotMatch(formatExclusionLine(causes[0].provider, causes[0].cause, causes[0].reason), /cuota agotada/);
+  assert.equal(formatExclusionLine(exclusionSubject(causes[0]), causes[0].cause, causes[0].reason), "Claude Opus: reserva baja (4%)");
+  assert.doesNotMatch(formatExclusionLine(exclusionSubject(causes[0]), causes[0].cause, causes[0].reason), /cuota agotada/);
   assert.equal(formatExclusionLine("OpenCode Go", "rate_limited", "monthly window is rate-limited"), "OpenCode Go: ventana limitada");
   assert.equal(formatExclusionLine("Cursor", "access_unknown", "cursor access probe timed out after 8000ms"), "Cursor: sin verificar");
+});
+
+test("Fable denial is labeled as Fable, never as Claude: no disponible", () => {
+  const raw = {
+    models: [
+      catalogEntry({
+        candidateKey: "claude::claude-opus-5",
+        adapterId: "claude",
+        modelId: "claude-opus-5",
+        displayName: "Claude Opus 5",
+        available: true
+      })
+    ],
+    exclusions: [{
+      candidateKey: "claude::claude-fable-5-1",
+      adapterId: "claude",
+      modelId: "claude-fable-5-1",
+      displayName: "Claude Fable 5.1",
+      cause: "unavailable_verified",
+      reason: null
+    }]
+  };
+  const causes = buildAnalystExclusionCauses(raw, curateAnalystCatalogForPicker(raw), null);
+  const fable = causes.find((row) => row.modelId === "claude-fable-5-1");
+  assert.ok(fable);
+  assert.equal(formatExclusionLine(exclusionSubject(fable), fable.cause, fable.reason), "Claude Fable 5.1: no disponible");
+  assert.ok(!causes.some((row) => formatExclusionLine(exclusionSubject(row), row.cause, row.reason).startsWith("Claude:")));
 });
 
 test("preflightProjectTeam adds an additive exclusionCauses field next to the existing fields", async () => {
@@ -733,7 +779,16 @@ test("preflightProjectTeam adds an additive exclusionCauses field next to the ex
     })
   });
   assert.equal(result.pickerNotice, "Algunas suscripciones no aportan opciones — d = detalles");
-  assert.deepEqual(result.exclusionCauses, [{ adapterId: "claude", provider: "Claude", cause: "quota_exhausted", models: 1, reason: null }]);
+  assert.deepEqual(result.exclusionCauses, [{
+    adapterId: "claude",
+    provider: "Claude",
+    modelId: "x",
+    displayName: "Claude X",
+    candidateKey: "claude::x",
+    cause: "quota_exhausted",
+    models: 1,
+    reason: null
+  }]);
   assert.ok("unverifiedClaudeNotice" in result && "projectRoot" in result);
 });
 
@@ -809,15 +864,18 @@ test("T20 pickDefaultAnalyst: never returns an unverified-access model, even rec
   }
 });
 
-test("T23 causes (rewrote T20): an unverified-access row IS an exclusion by subscription, even when the provider has other rows", () => {
+test("T23 causes (rewrote T20): an unverified-access row IS an exclusion by model, even when the provider has other rows", () => {
   const raw = {
     models: [unverifiedEntry(), catalogEntry()],
-    exclusions: [{ candidateKey: "cursor::x", adapterId: "cursor", modelId: "x", cause: "access_unknown", reason: null }]
+    exclusions: [{ candidateKey: "cursor::x", adapterId: "cursor", modelId: "x", displayName: "Cursor X", cause: "access_unknown", reason: null }]
   };
   const curated = curateAnalystCatalogForPicker(raw);
   assert.equal(curated.alternatives.length, 0);
   const causes = buildAnalystExclusionCauses(raw, curated, "1 Claude models are unverified");
-  assert.deepEqual(causes.map((c) => [c.adapterId, c.cause, c.models]), [["claude", "access_unknown", 1], ["cursor", "access_unknown", 1]]);
+  assert.deepEqual(
+    causes.map((c) => [c.adapterId, c.modelId, c.cause, c.models]),
+    [["claude", "opus-unv", "access_unknown", 1], ["cursor", "x", "access_unknown", 1]]
+  );
   assert.equal(
     buildAnalystPickerNotice(raw, curated, "1 Claude models are unverified"),
     "Comparación parcial — d = detalles"

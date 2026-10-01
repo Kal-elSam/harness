@@ -141,7 +141,7 @@ test("rows carry model AND subscription so the same model on two subscriptions i
   assert.deepEqual([curated.models.length, curated.alternatives.length], [2, 0]);
 });
 
-test("exclusion causes list every subscription with unverified/denied/exhausted models, even one that still has verified rows", () => {
+test("exclusion causes list every excluded model with unverified/denied/exhausted causes, even when the provider still has verified rows", () => {
   const raw = {
     models: [
       entry({ adapterId: "claude", modelId: "verified" }),
@@ -150,15 +150,17 @@ test("exclusion causes list every subscription with unverified/denied/exhausted 
       unverified({ adapterId: "cursor", modelId: "c-u" }),
       entry({ adapterId: "codex", modelId: "spent", available: false, selectable: false, cause: "quota_exhausted" })
     ],
-    exclusions: [{ candidateKey: "claude::denied", adapterId: "claude", modelId: "denied", cause: "unavailable_verified", reason: "credits_required" }]
+    exclusions: [{ candidateKey: "claude::denied", adapterId: "claude", modelId: "denied", displayName: "Denied", cause: "unavailable_verified", reason: "credits_required" }]
   };
   const curated = curateAnalystCatalogForPicker(raw);
   const causes = buildAnalystExclusionCauses(raw, curated);
-  const find = (adapterId, cause) => causes.find((row) => row.adapterId === adapterId && row.cause === cause);
-  assert.equal(find("claude", "access_unknown").models, 2);
-  assert.equal(find("claude", "unavailable_verified").models, 1);
-  assert.equal(find("cursor", "access_unknown").models, 1);
-  assert.equal(find("codex", "quota_exhausted").models, 1);
+  const count = (adapterId, cause) => causes.filter((row) => row.adapterId === adapterId && row.cause === cause).length;
+  assert.equal(count("claude", "access_unknown"), 2);
+  assert.equal(count("claude", "unavailable_verified"), 1);
+  assert.equal(count("cursor", "access_unknown"), 1);
+  assert.equal(count("codex", "quota_exhausted"), 1);
+  assert.ok(causes.every((row) => row.models === 1));
+  assert.ok(causes.some((row) => row.modelId === "denied" && row.displayName === "Denied"));
 });
 
 test("a subscription that could not be verified is acknowledged compactly; causes stay machine-readable for d (T25)", () => {
