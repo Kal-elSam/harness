@@ -1,0 +1,30 @@
+ ◈ team-flow-e2e ──────────┐┌ Chat ────────────────────────────────────────────────────────────────┐
+AGENTS                     ││Chat blocked: no_model — no Architect route yet                       │
+No team yet                ││Next: type /analyze to choose an analyst and re-analyze, then /approve│
+a = analyze                ││                                                                      │
+                           ││⚠ Suggested team draft — open Project (2) to review · a to re-analyze │
+                           ││                                                                      │
+                           ││⚠ Cannot set property engine of #<Object> which has only a getter     │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           ││                                                                      │
+                           │└──────────────────────────────────────────────────────────────────────┘
+                           │┌ Message Kairo · ASK ─────────────────────────────────────────────────┐
+                           ││Reply with the single word OK.                                        │
+                           ││                                                                      │
+                           ││                                                                      │
+───────────────────────────┘└──────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ USAGE ·

@@ -1,0 +1,61 @@
+{
+  "binary": "/Users/kal-el/Desktop/agentic-harness-worktrees/kairo-plan1-baseline/dist/kairo-ui/darwin-arm64/kairo-ui",
+  "prompt": "Reply with the single word OK.",
+  "failed": 0,
+  "checks": [
+    {
+      "name": "Sidebar A \u2192 team.approve (SIMULATED)",
+      "ok": true,
+      "detail": "['team.approve']"
+    },
+    {
+      "name": "draft on screen keeps leading R (Reply\u2026)",
+      "ok": true,
+      "detail": "\u25c8 team-flow-e2e Chat AGENTS Chat blocked: no_model \u2014 no Architect route yet No team yet Next: type /analyze to choose an analyst and re-analyze, then /approve a = analyze \u26a0 Suggested team draft \u2014 open Project (2) to review \u00b7 a to re-analyze \u26a0 Cannot set property engine of #<Object> which has only a getter Message Kairo \u00b7 ASK Reply with the single word OK. USAGE \u00b7"
+    },
+    {
+      "name": "draft is not truncated to eply\u2026",
+      "ok": true,
+      "detail": " route yet No team yet Next: type /analyze to choose an analyst and re-analyze, then /approve a = analyze \u26a0 Suggested team draft \u2014 open Project (2) to review \u00b7 a to re-analyze \u26a0 Cannot set property engine of #<Object> which has only a getter Message Kairo \u00b7 ASK Reply with the single word OK. USAGE \u00b7"
+    },
+    {
+      "name": "submit reached SIMULATED submitTask",
+      "ok": true,
+      "detail": "['out {\"type\":\"ready\",\"engine\":{\"status\":\"no_model\",\"reason\":\"no Architect route yet\",\"sessionId\":\"pi-team-flow\",\"model\":null},\"snapshot\":{\"schema\":\"kairo.workspace-shell/v1\",\"project\":{\"label\":\"team-flow-e2e\"},\"agents\":[],\"team\":{\"state\":\"suggested\",\"presentation\":{\"state\":\"pending_approval\",\"rolesVisible\":true,\"reason\":null},\"rows\":[{\"role\":\"Architect\",\"model\":\"Codex m1 (simulated)\",\"via\":\"codex"
+    },
+    {
+      "name": "SIMULATED answer / prompt visible in UI",
+      "ok": true,
+      "detail": "\u25c8 team-flow-e2e Chat AGENTS Type /analyze to choose an analyst \u00b7 then chat below. No team yet you: Reply with the single word OK. a = analyze \u26a0 Suggested team draft \u2014 open Project (2) to review \u00b7 a to re-analyze \u26a0 Submitting \u00b7 ASK\u2026 Message Kairo \u00b7 ASK /analyze \u00b7 Message\u2026 USAGE \u00b7"
+    },
+    {
+      "name": "sidecar history task keeps leading R",
+      "ok": true,
+      "detail": "['chat mode=ask task=Reply with the single word OK.']"
+    },
+    {
+      "name": "sidecar history is not eply\u2026",
+      "ok": true,
+      "detail": "['chat mode=ask task=Reply with the single word OK.']"
+    },
+    {
+      "name": "ask-history optional under SIMULATED team-flow (sidecar log is source of truth)",
+      "ok": true,
+      "detail": "no ask-history.json \u2014 OK for this fixture"
+    },
+    {
+      "name": "UI history keeps Reply\u2026 (you: line or SIMULATED echo)",
+      "ok": true,
+      "detail": "\u25c8 team-flow-e2e Chat AGENTS Type /analyze to choose an analyst \u00b7 then chat below. No team yet you: Reply with the single word OK. a = analyze \u26a0 Suggested team draft \u2014 open Project (2) to review \u00b7 a to re-analyze \u26a0 Submitting \u00b7 ASK\u2026 Message Kairo \u00b7 ASK /analyze \u00b7 Message\u2026 USAGE \u00b7"
+    },
+    {
+      "name": "host exits",
+      "ok": true,
+      "detail": "0"
+    }
+  ],
+  "limits": [
+    "SIMULATED Pi/providers only \u2014 does not certify Pi connected",
+    "No real Claude/Codex/OpenCode call"
+  ]
+}

@@ -5,7 +5,7 @@ Status: **EXECUTED once (2026-10-01); evidence-only review corrected the same da
 **Honest verdict (existing evidence only — no re-call, matcher not weakened):**
 - **PASS:** equipo aprobado + respuesta real `claude · claude-haiku-4-5: OK`.
 - **NOT verified:** conexión Pi / engine `connected` — no aparece la cadena `connected` en screens/flats/ask-history; ready = `USAGE · waiting for bridge`, post-prompt = `USAGE · checking`. Placeholder fixes and ASK `OK` do **not** certify Pi connection (still a separate pending delivery item).
-- **Leading `R`:** pérdida de **entrada**, no de captura — `ask-history.json` guardó `question: "eply with the single word OK."`. Root cause: shared empty-compose / Editor-focus bare shortcuts (`R` and peers). **Host fix:** `team_keys_available` no longer yields bare shared keys while Editor is focused; covered by local RED→GREEN tests (no providers).
+- **Leading `R`:** pérdida de **entrada** (ask-history `eply…`) — **CLOSED** on rebuilt binary with SIMULATED provider (`f9bf66ca7`; evidence `odd/evidence/empty-compose-reply-r/`). Draft, UI `you:` line, and sidecar task all keep `Reply…`. **No further real provider call** for this bug.
 
 Does not certify analysis/other providers/tools/cancel/Pi-connected.
 Tracker: `odd/tasks/kairo-parity.md` / `odd/tasks/kairo-cursor-plan1-baseline.md`.

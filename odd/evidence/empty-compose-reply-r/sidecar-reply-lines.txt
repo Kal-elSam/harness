@@ -1,0 +1,4 @@
+9:in {"message":"Reply with the single word OK.","op":"prompt"}
+10:chat mode=ask task=Reply with the single word OK.
+11:out {"type":"task_result","kind":"answer","provider":"simulated","model":"sim-chat","answer":"SIMULATED reply: Reply with the single word OK."}
+12:out {"type":"notice","message":"simulated · sim-chat: SIMULATED reply: Reply with the single word OK."}
