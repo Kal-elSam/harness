@@ -128,6 +128,45 @@ test("claude: fails closed to error on malformed JSON or a missing result field"
   assert.equal(noResult.status, "error");
 });
 
+function fakeClaudeJsonSpawn(payload) {
+  return () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.kill = () => {};
+    setTimeout(() => {
+      child.stdout.emit("data", JSON.stringify(payload));
+      child.emit("close", 0);
+    }, 0);
+    return child;
+  };
+}
+
+// Real success shape observed from `claude -p --output-format json` (claude 2.1.286).
+test("claude: the real success shape (is_error false) is still answered and emits the final text", async () => {
+  const events = [];
+  const answer = await askProvider({
+    provider: "claude", question: "q", cwd: "/repo",
+    onEvent: (event) => events.push(event),
+    spawn: fakeClaudeJsonSpawn({ type: "result", subtype: "success", is_error: false, result: "OK" })
+  });
+  assert.equal(answer.status, "answered");
+  assert.equal(answer.answer, "OK");
+  assert.deepEqual(events.filter((event) => event.kind === "final").map((event) => event.text), ["OK"]);
+});
+
+test("claude: is_error true with a result string and a clean exit is an error, never an answer or a final event", async () => {
+  const events = [];
+  const answer = await askProvider({
+    provider: "claude", question: "q", cwd: "/repo",
+    onEvent: (event) => events.push(event),
+    spawn: fakeClaudeJsonSpawn({ type: "result", subtype: "error_during_execution", is_error: true, result: "mensaje de error" })
+  });
+  assert.equal(answer.status, "error");
+  assert.equal(answer.answer, null);
+  assert.match(answer.error, /mensaje de error/);
+  assert.equal(events.some((event) => event.kind === "final"), false);
+});
+
 test("codex: reads the real answer from --output-last-message, never combining --sandbox with --approve-for-me", async () => {
   const seenArgs = [];
   const spawn = (cmd, args) => {
