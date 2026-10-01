@@ -40,7 +40,7 @@ Make the host's Pi engine status observable and testable end to end, so approval
 - [x] E1 — Sidecar tee + stderr log + wait-on-`ready` in the packaged e2e harness (replace the `ready_line()` stub).
 - [x] E2 — Fake instrumented Pi + in-host approval flow; positive case: approval -> `set_model` to the expected Architect -> explicit `connected` event with coherent model identity.
 - [x] E3 — Negative cases: empty list, `set_model` failure, timeout/missing protocol -> explicit status and cause.
-- [ ] E4 — Rebuilt-binary PTY run, targeted tests and applicable suites; record hashes, checks and limits here and in the mirror.
+- [x] E4 — Rebuilt-binary PTY run, targeted tests and applicable suites; record hashes, checks and limits here and in the mirror.
 
 ## Acceptance
 
@@ -66,6 +66,10 @@ Work-unit commits on `feat/kairo-pi-connect-evidence`, handed to Cursor by hash.
   - Limits: fake Pi sets `name == modelId`; adapter launchability injected via `resolveAdapter`; approval uses the real service with provider probes disabled; PTY `silent-set-model` starts from an active strategy (the in-host approval path would wait the default 8 s `bridge.request` timeout).
   - **Production defect observed (not fixed, out of scope):** when `team.approve` is refused (`approveProjectStrategy` -> `{ok:false, reasons}`), `kairo-ui-rpc-stdio.js` (`team.approve` branch, ~L1875-1895) still emits `notice` "Team active: undefined roles." after the refused `team` record. Reproduced with `approveProjectTeam` stubbed to `{ok:false}`. Needs its own failing test + fix decision.
 
+- **E4 (parent, independent re-verification, simulated Pi):** rebuilt `crates/kairo-ui/target/release/kairo-ui` (`cargo build --release`), re-ran `scripts/kairo-ui-simulated-pi-connect-pty-e2e.py` with that binary: real exit 0, 7/7 scenarios PASS (positive, no-architect-route, unlaunchable-route, set-model-fails, placeholder-model, silent-get-state, silent-set-model). Read the evidence files myself: positive `sidecar.jsonl` = `ready.engine` `no_model` ("No active strategy with automatic launchable projectTeam routes") -> `team` `team.approve ok:true, state:"active"` -> `engine` `connected`, model `codex::sim-architect-1`, `modelLabel` `codex::sim-architect-1`; `fake-pi-requests.jsonl` = `get_state`, `get_state`, `set_model {provider:"kairo", modelId:"codex::sim-architect-1"}`, `get_state`. Suites at HEAD `af85e552b`: `pnpm test` 2450 tests / 2444 pass / 0 fail / 6 skipped; `cargo test` 334 pass / 0 fail.
+- Scope of the claim: simulated Pi only. It proves the host wiring and the harness (approval -> Architect -> set_model -> explicit connected event, plus the negative causes). It does NOT prove the published Pi, a real provider, or Architect launchability on a real machine. The packaged approved-team harness was not executed (needs authorization).
+- Open production defect (not fixed here): refused `team.approve` still emits notice "Team active: undefined roles." (`kairo-ui-rpc-stdio.js` ~L1875-1895). Needs its own failing test and a fix decision.
+
 ## Next step
 
-E4 (parent): re-run the checks, decide on the refused-approve notice defect, and register the final hashes here and in the mirror.
+Fix the refused-approve notice defect as a separate change, if the user approves; a real-Pi run of the packaged approved-team harness needs new authorization.
