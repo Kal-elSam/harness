@@ -1386,7 +1386,17 @@ test("sidecar team.approve failure never re-applies a model", async () => {
   await runPromise;
 });
 
-test("sidecar team.approve refused by the service has no activation effects and reports the cause", async () => {
+// Lets already-queued promise/IO continuations run without a wall-clock sleep:
+// each turn yields to the event loop once.
+async function settleEventLoop(turns = 25) {
+  for (let i = 0; i < turns; i += 1) await new Promise((r) => setImmediate(r));
+}
+
+// Drives one `team.approve` that the service refuses and returns every record
+// emitted by that op plus the observable activation side effects. Waits are on
+// events: `ready`, the structured `team` record, then a sentinel op's error
+// record (so the approve handling had its chance to run before absence checks).
+async function runRefusedApprove(approveResult) {
   const setModelCalls = [];
   const out = [];
   const stdout = new PassThrough();
@@ -1427,23 +1437,37 @@ test("sidecar team.approve refused by the service has no activation effects and 
       })
     ),
     // The real service refuses without mutation and returns a plain result.
-    approveProjectTeam: async () => ({
-      ok: false,
-      status: "blocked",
-      reasons: ["Claude is not available for Architect"]
-    })
+    approveProjectTeam: async () => approveResult
   });
 
-  await new Promise((r) => setTimeout(r, 40));
+  assert.ok(await pollUntil(() => out.some((r) => r.type === "ready")), "sidecar became ready");
+  await settleEventLoop();
   const setModelBefore = setModelCalls.length;
   const loadBefore = loadModelsCalls;
   const outBefore = out.length;
-  stdin.write(`${JSON.stringify({ op: "team.approve" })}\n`);
-  await new Promise((r) => setTimeout(r, 80));
-  const after = out.slice(outBefore);
 
-  assert.equal(setModelCalls.length, setModelBefore, "a refused approval must not send set_model");
-  assert.equal(loadModelsCalls, loadBefore, "a refused approval must not reload the Kairo routes");
+  stdin.write(`${JSON.stringify({ op: "team.approve" })}\n`);
+  assert.ok(
+    await pollUntil(() => out.slice(outBefore).some((r) => r.type === "team" && r.op === "team.approve")),
+    "the structured team record was emitted"
+  );
+  stdin.write(`${JSON.stringify({ op: "__after_refusal_sentinel__" })}\n`);
+  assert.ok(
+    await pollUntil(() => out.slice(outBefore).some((r) => r.type === "error" && /Unknown op/.test(r.message))),
+    "the sentinel op was answered after the refusal"
+  );
+  await settleEventLoop();
+
+  const after = out.slice(outBefore);
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+  return { after, setModelSent: setModelCalls.length - setModelBefore, routesReloaded: loadModelsCalls - loadBefore };
+}
+
+function assertNoActivation({ after, setModelSent, routesReloaded }) {
+  assert.equal(setModelSent, 0, "a refused approval must not send set_model");
+  assert.equal(routesReloaded, 0, "a refused approval must not reload the Kairo routes");
   assert.equal(after.some((r) => r.type === "kairoModels"), false, "no models republished");
   assert.equal(after.some((r) => r.type === "engine"), false, "Architect is not re-applied");
   assert.equal(after.some((r) => r.type === "snapshot"), false, "nothing changed, no new snapshot");
@@ -1452,18 +1476,63 @@ test("sidecar team.approve refused by the service has no activation effects and 
     false,
     "must not announce an active team"
   );
-  const team = after.find((r) => r.type === "team");
-  assert.equal(team?.ok, false);
-  assert.match(team?.reason ?? "", /Claude is not available for Architect/);
+}
+
+test("sidecar team.approve refused (ok:false) has no activation effects and shows every reason", async () => {
+  const result = await runRefusedApprove({
+    ok: false,
+    status: "blocked",
+    reasons: ["Claude is not available for Architect", "Explorer route is stale"]
+  });
+  assertNoActivation(result);
+  const team = result.after.find((r) => r.type === "team");
+  assert.equal(team.ok, false);
+  assert.match(team.reason, /Claude is not available for Architect; Explorer route is stale/);
   assert.ok(
-    after.some((r) => r.type === "notice" && /Claude is not available for Architect/.test(r.message)),
+    result.after.some(
+      (r) => r.type === "notice" && r.message === "Team approval refused: Claude is not available for Architect; Explorer route is stale"
+    ),
     "the refusal cause is shown to the user"
   );
-
-  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
-  stdin.end();
-  await runPromise;
 });
+
+test("sidecar team.approve refused with empty reasons falls back to message", async () => {
+  const result = await runRefusedApprove({ ok: false, status: "blocked", reasons: [], message: "Strategy changed since review" });
+  assertNoActivation(result);
+  assert.ok(
+    result.after.some((r) => r.type === "notice" && r.message === "Team approval refused: Strategy changed since review"),
+    "message is the cause when there are no reasons"
+  );
+});
+
+test("sidecar team.approve refused with neither reasons nor message still says it was refused", async () => {
+  const result = await runRefusedApprove({ ok: false });
+  assertNoActivation(result);
+  const team = result.after.find((r) => r.type === "team");
+  assert.equal(team.ok, false);
+  assert.equal(team.status, "blocked");
+  assert.ok(
+    result.after.some((r) => r.type === "notice" && r.message === "Team approval refused: Approval refused"),
+    "default cause when the service gave none"
+  );
+});
+
+for (const status of [
+  "analyst_selection_required",
+  "analyst_access_unverified",
+  "analyst_access_confirmation_required"
+]) {
+  test(`sidecar team.approve non-result ${status} has no activation effects`, async () => {
+    const result = await runRefusedApprove({ status, message: `reason for ${status}` });
+    assertNoActivation(result);
+    const team = result.after.find((r) => r.type === "team");
+    assert.equal(team.ok, false);
+    assert.equal(team.status, status);
+    assert.equal(team.reason, `reason for ${status}`);
+    // The host quotes `reason` for these statuses itself; no extra refusal notice.
+    assert.equal(result.after.some((r) => r.type === "notice" && /Team approval refused/.test(r.message)), false);
+  });
+}
 
 test("sidecar cycle_model does not re-apply Architect after the cycle", async () => {
   const setModelCalls = [];
