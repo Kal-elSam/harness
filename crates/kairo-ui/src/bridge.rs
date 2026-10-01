@@ -431,7 +431,7 @@ impl BridgeClient {
         )
     }
 
-    /// U5b: Settings snapshot (profile / integrations / connections / setup stub).
+    /// U5b: Settings snapshot (profile / integrations / connections / setup status).
     pub fn settings_snapshot(&mut self) -> std::io::Result<()> {
         self.send_op("settings.snapshot", Value::Null)
     }
@@ -441,6 +441,42 @@ impl BridgeClient {
         self.send_op(
             "settings.integration.confirm",
             serde_json::json!({ "id": id }),
+        )
+    }
+
+    /// U2: setup options (agents with detected flags, components, defaults).
+    pub fn settings_setup_load(&mut self) -> std::io::Result<()> {
+        self.send_op("settings.setup.load", Value::Null)
+    }
+
+    /// U2: read-only dry-run preview of a setup selection (returns a fingerprint).
+    pub fn settings_setup_preview(
+        &mut self,
+        agents: &[String],
+        components: &[String],
+    ) -> std::io::Result<()> {
+        self.send_op(
+            "settings.setup.preview",
+            serde_json::json!({ "agents": agents, "components": components }),
+        )
+    }
+
+    /// U2: apply a previewed selection. Only sent after the explicit confirm
+    /// modal; the sidecar re-checks `confirm` and the fingerprint.
+    pub fn settings_setup_apply(
+        &mut self,
+        agents: &[String],
+        components: &[String],
+        fingerprint: &str,
+    ) -> std::io::Result<()> {
+        self.send_op(
+            "settings.setup.apply",
+            serde_json::json!({
+                "agents": agents,
+                "components": components,
+                "fingerprint": fingerprint,
+                "confirm": true
+            }),
         )
     }
 

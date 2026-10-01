@@ -1,4 +1,4 @@
-//! U5b: Settings panel — profile / integrations / connections + setup stub.
+//! U5b: Settings panel — profile / integrations / connections; U2: native setup flow.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -7,6 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use crate::ops_panel::{wrap_ops_hint_lines, wrap_panel_body_line};
+use crate::setup_flow::{SetupFlow, SetupStage};
 use crate::surfaces::tone;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -26,6 +27,8 @@ pub struct SettingsPanelState {
     pub pending_integration_id: Option<String>,
     pub selected_integration: usize,
     pub integration_ids: Vec<String>,
+    /// U2: native setup flow (select / preview / confirm / apply).
+    pub setup: Option<SetupFlow>,
 }
 
 impl SettingsPanelState {
@@ -34,7 +37,7 @@ impl SettingsPanelState {
             loading: true,
             ok: true,
             hints: "Esc → Work".into(),
-            setup_label: "use `kairo setup` (UI not wired)".into(),
+            setup_label: "loading setup status…".into(),
             setup_wired: false,
             profile: vec!["Loading settings…".into()],
             ..Self::default()
@@ -62,7 +65,7 @@ impl SettingsPanelState {
         let setup_label = setup
             .and_then(|v| v.get("label"))
             .and_then(|v| v.as_str())
-            .unwrap_or("use `kairo setup` (UI not wired)")
+            .unwrap_or("setup status unavailable")
             .to_string();
         let integration_ids = record
             .get("integrations")
@@ -104,16 +107,20 @@ impl SettingsPanelState {
             hints: record
                 .get("hints")
                 .and_then(|v| v.as_str())
-                .unwrap_or("Esc → Work · ↑↓ browse · Enter preview · y/n confirm")
+                .unwrap_or("Esc → Work · ↑↓ browse · Enter preview · y/n confirm · s setup")
                 .to_string(),
             scroll: 0,
             pending_integration_id: None,
             selected_integration: 0,
             integration_ids: ids,
+            setup: None,
         }
     }
 
     pub fn body_lines(&self) -> Vec<String> {
+        if let Some(flow) = &self.setup {
+            return flow.body_lines();
+        }
         let mut out = Vec::new();
         if let Some(err) = &self.error {
             out.push(format!("Error · {err}"));
@@ -133,16 +140,18 @@ impl SettingsPanelState {
         out.push(String::new());
         out.push("Setup".into());
         let wire = if self.setup_wired {
-            "wired"
+            "ready"
         } else {
-            "not wired"
+            "unavailable"
         };
         out.push(format!("  [{wire}] {}", self.setup_label));
         out
     }
 
     pub fn footer_hints(&self) -> &str {
-        if self.pending_integration_id.is_some() {
+        if let Some(flow) = &self.setup {
+            flow.footer_hints()
+        } else if self.pending_integration_id.is_some() {
             "y confirm intent · n/Esc cancel"
         } else if self.hints.is_empty() {
             "Esc → Work"
@@ -252,7 +261,8 @@ pub fn render_settings_panel(
         let is_heading = matches!(
             text.as_str(),
             "Profile" | "Integrations" | "Connections" | "Setup"
-        ) || text.starts_with("Error ·");
+        ) || text.starts_with("Error ·")
+            || text.starts_with("Setup ·");
         for piece in wrap_panel_body_line(text, inner.width as usize) {
             wrapped_body.push((piece, is_heading));
         }
@@ -293,6 +303,61 @@ pub fn render_settings_panel(
     if let Some(id) = &state.pending_integration_id {
         render_settings_confirm(buf, area, id);
     }
+    if let Some(flow) = &state.setup {
+        if flow.stage == SetupStage::Confirm {
+            render_setup_confirm(buf, area, flow);
+        }
+    }
+}
+
+/// U2: explicit y/n modal before any write. Esc/n cancel and send nothing.
+fn render_setup_confirm(buf: &mut Buffer, area: Rect, flow: &SetupFlow) {
+    let width = area.width.saturating_sub(6).clamp(36, 72);
+    let height = 7.min(area.height.saturating_sub(2).max(5));
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+    if popup.width == 0 || popup.height == 0 {
+        return;
+    }
+    Clear.render(popup, buf);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .title(Span::styled(
+            " Settings · confirm setup ",
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    let (agents, comps, changes) = flow
+        .preview
+        .as_ref()
+        .map(|p| (p.agents.len(), p.components.len(), p.change_count))
+        .unwrap_or((0, 0, 0));
+    let muted = Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG);
+    let lines = vec![
+        padded_span(
+            &format!("Apply setup? {agents} agent(s) · {comps} component(s)"),
+            inner.width,
+            Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+        ),
+        padded_span(
+            &format!("Writes {changes} managed change(s) under your home."),
+            inner.width,
+            muted,
+        ),
+        padded_span("y apply · n/Esc cancel (nothing applied)", inner.width, muted),
+    ];
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .render(inner, buf);
 }
 
 fn render_settings_confirm(buf: &mut Buffer, area: Rect, integration_id: &str) {
@@ -350,27 +415,28 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn settings_record_marks_setup_not_wired() {
+    fn settings_record_marks_setup_ready() {
         let state = SettingsPanelState::from_settings_record(&json!({
             "ok": true,
             "profile": ["PROFILE", "applyMode · prompt"],
             "integrations": ["available · Pi usage widget · 0.2.1 · MIT"],
             "connections": ["ok · Cursor MCP"],
-            "setup": { "wired": false, "label": "use `kairo setup` (UI not wired)" },
-            "hints": "Esc → Work · ↑↓ browse · Enter preview · y/n confirm"
+            "setup": { "wired": true, "label": "press s to set up agents and components" },
+            "hints": "Esc → Work · ↑↓ browse · Enter preview · y/n confirm · s setup"
         }));
-        assert!(!state.setup_wired);
-        assert!(state.setup_label.contains("kairo setup"));
+        assert!(state.setup_wired);
+        assert!(state.setup_label.contains("press s"));
         let body = state.body_lines().join("\n");
         assert!(body.contains("Profile"));
         assert!(body.contains("Connections"));
-        assert!(body.contains("not wired"));
-        assert!(body.contains("kairo setup"));
+        assert!(body.contains("[ready]"));
+        assert!(!body.contains("not wired"));
+        assert!(body.contains("press s"));
         let wrapped = wrap_panel_body_line(
-            "  [not wired] Interactive setup · not wired — use `kairo setup` in a terminal",
+            "  [ready] press s to set up agents and components in this terminal",
             40,
         );
-        assert!(wrapped.iter().any(|l| l.contains("kairo") || l.contains("setup")));
+        assert!(wrapped.iter().any(|l| l.contains("setup") || l.contains("press")));
         assert!(wrapped.iter().all(|l| l.chars().count() <= 40));
         let hints = wrap_ops_hint_lines(state.footer_hints(), 60);
         assert!(hints.len() <= 2);
@@ -391,5 +457,66 @@ mod tests {
         );
         state.clear_integration_confirm();
         assert!(state.pending_integration_id.is_none());
+    }
+
+    fn buffer_text(buf: &Buffer) -> String {
+        buf.content().iter().map(|c| c.symbol().to_string()).collect()
+    }
+
+    fn flow_at(stage: &str) -> SetupFlow {
+        let mut flow = SetupFlow::loading();
+        flow.apply_load_record(&json!({
+            "ok": true,
+            "agents": [{ "id": "claude", "label": "Claude Code", "detected": true }],
+            "components": [{ "id": "orchestrator", "label": "Orchestrator", "description": "d" }],
+            "defaults": { "agents": ["claude"], "components": ["orchestrator"] }
+        }));
+        if stage == "select" {
+            return flow;
+        }
+        flow.begin_preview().unwrap();
+        flow.apply_preview_record(&json!({
+            "ok": true, "fingerprint": "fp", "agents": ["claude"], "components": ["orchestrator"],
+            "summary": "1 managed change(s) planned.", "changeCount": 1,
+            "changes": [{ "kind": "config", "action": "create", "target": ".claude/CLAUDE.md" }]
+        }));
+        if stage == "confirm" {
+            flow.begin_confirm();
+        }
+        flow
+    }
+
+    #[test]
+    fn setup_panel_renders_selection_and_hints() {
+        let mut state = SettingsPanelState::from_settings_record(&json!({ "ok": true }));
+        state.setup = Some(flow_at("select"));
+        let area = Rect::new(0, 0, 60, 20);
+        let mut buf = Buffer::empty(area);
+        render_settings_panel(&mut buf, area, &state, " Settings ");
+        let text = buffer_text(&buf);
+        assert!(text.contains("Setup · Agents"), "{text}");
+        assert!(text.contains("[x] claude"), "{text}");
+        assert!(text.contains("Space toggle"), "{text}");
+        assert!(!text.contains("confirm setup"), "{text}");
+    }
+
+    #[test]
+    fn setup_confirm_modal_renders_only_in_confirm_stage() {
+        let mut state = SettingsPanelState::from_settings_record(&json!({ "ok": true }));
+        state.setup = Some(flow_at("preview"));
+        let area = Rect::new(0, 0, 60, 20);
+        let mut buf = Buffer::empty(area);
+        render_settings_panel(&mut buf, area, &state, " Settings ");
+        let text = buffer_text(&buf);
+        assert!(text.contains("1 managed change(s) planned."), "{text}");
+        assert!(!text.contains("confirm setup"), "{text}");
+
+        state.setup = Some(flow_at("confirm"));
+        let mut buf = Buffer::empty(area);
+        render_settings_panel(&mut buf, area, &state, " Settings ");
+        let text = buffer_text(&buf);
+        assert!(text.contains("confirm setup"), "{text}");
+        assert!(text.contains("Apply setup?"), "{text}");
+        assert!(text.contains("n/Esc cancel"), "{text}");
     }
 }

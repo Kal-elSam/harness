@@ -23,7 +23,7 @@ import { PACKAGE_NAME } from "../brand/cli.js";
 export const SETUP_WIRED_LABEL = "press s to set up agents and components";
 
 export const SETTINGS_HINTS_DEFAULT =
-  "Esc → Work · ↑↓ browse · Enter preview · y/n confirm";
+  "Esc → Work · ↑↓ browse · Enter preview · y/n confirm · s setup";
 
 export function formatSettingsHints() {
   return SETTINGS_HINTS_DEFAULT;

@@ -109,10 +109,10 @@ fn paint_settings_fixture(buf: &mut Buffer, area: Rect) {
         "integrations": ["available · Pi usage widget · 0.2.1 · MIT"],
         "connections": ["ok · Cursor MCP (fixture)"],
         "setup": {
-            "wired": false,
-            "label": "use `kairo setup` (UI not wired)"
+            "wired": true,
+            "label": "press s to set up agents and components"
         },
-        "hints": "Esc → Work · ↑↓ browse · Enter preview · y/n confirm"
+        "hints": "Esc → Work · ↑↓ browse · Enter preview · y/n confirm · s setup"
     }));
     let title = WorkspaceView::Settings.chrome_title_for_width(area.width);
     render_settings_panel(buf, area, &state, &title);
@@ -491,7 +491,8 @@ mod tests {
         let ops = fs::read_to_string(dir.join("60x30-ops.txt")).unwrap();
         assert!(ops.contains("Health") || ops.contains("kairo fleet") || ops.contains("Ops"));
         let settings = fs::read_to_string(dir.join("60x30-settings.txt")).unwrap();
-        assert!(settings.contains("not wired") || settings.contains("Profile"));
+        assert!(settings.contains("Profile") && settings.contains("[ready]"));
+        assert!(!settings.contains("not wired"));
         let _ = fs::remove_dir_all(&dir);
     }
 }

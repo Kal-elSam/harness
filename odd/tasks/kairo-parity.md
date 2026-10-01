@@ -41,7 +41,7 @@ RDD: native switch unchanged; review assessed per commit; functional tests are n
 ## Tasks
 
 - [x] U1 — `ops.runs.show` + `ops.reviews.show`: Node (ops-mutations/sidecar/dispatch) and Rust (ops_panel/bridge/main). Route: delegated writer (6+ non-trivial files).
-- [ ] U2 — Setup in Settings: load / preview / apply-confirmed (sidecar + dispatch) and Rust Settings panel flow. Route: delegated writer.
+- [x] U2 — Setup in Settings: load / preview / apply-confirmed (sidecar + dispatch) and Rust Settings panel flow. Route: delegated writer.
 - [ ] U3 — Runtime: no-model startup diagnostics; ASK real-event validation (limited to demonstrated gaps). Route: delegated, evidence-first.
 - [ ] U4 — Full suites, docs of contracts, hashes and limitations recorded here and in the mirror.
 
@@ -62,9 +62,21 @@ RDD: native switch unchanged; review assessed per commit; functional tests are n
   - RED rust: `cargo test --no-run` failed to compile: unresolved `OpsDetail`/`OpsDetailKind`, no `OpsPickMode::RunDetail`/`ReviewDetail`, no `selected_run_id`.
   - GREEN rust: `cargo test --manifest-path crates/kairo-ui/Cargo.toml`: 306 pass / 0 fail.
   - Keys: Enter (normal mode) picks a run for detail, `v` picks a review, Enter opens, Esc closes detail then returns to hub; `c` cancel still requires y/n confirm. Hint string now `... d dismiss · Enter run · v review`; V3 ops fixtures regenerated (only 60x30-ops changed).
-  - Commit hashes: see git log for `feat(kairo-ui-rpc): add ops.runs.show...` (single work unit).
+  - Commit: `f30f4c2c0` feat(kairo-ui): add ops.runs.show and ops.reviews.show with navigable detail (single work unit, 1012+/22-). Parent spot check re-ran node suites: 115 pass / 0 fail.
 - U1 limitations: run id validated with `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$` (custom ids outside it report invalid_id); events bounded to last 50 and projected to timestamp/type/summary only; Rust detail lines are not wrapped (long summaries are clipped by the panel width); no live provider check.
+
+- U1 review: assessed `high` (process_boundary in main.rs, 13 files, 1091 lines, base 56c530cf2). Native review DECLINED for this candidate by the user (`declined_this_candidate`, target sha256:ca4c9dab…). No receipt exists; functional tests are not approval. Reviewed boundary stays at 56c530cf2, so U2 is assessed over the accumulated range.
+
+- U2 evidence (strict TDD):
+  - RED node: `node --test test/settings-setup.test.js` failed (module `settings-setup.js` missing); `settings-sidecar.test.js` failed (no export `SETUP_WIRED_LABEL`); RPC dispatch test failed (no `settings_setup_*` records).
+  - GREEN node: settings-setup + settings-sidecar + kairo-ui-rpc-stdio + ops-mutations: 125 pass / 0 fail; setup*/apply-confirmation/adapter-matrix: 43 pass / 0 fail (shared setup code untouched).
+  - RED rust: `cargo test --no-run` failed to compile: unresolved `SetupFlow`/`SetupStage` (state machine tests), then `no field setup on SettingsPanelState` (main.rs flow tests).
+  - GREEN rust: `cargo test --manifest-path crates/kairo-ui/Cargo.toml`: 329 pass / 0 fail. Two render tests (setup panel, confirm modal) were added after the implementation (no RED for those two).
+  - Ops: `settings.setup.load|preview|apply` -> `settings_setup_load|preview|apply`. Apply needs `confirm:true` and a fingerprint equal to a freshly recomputed preview (`not_confirmed` / `stale_preview` otherwise); it goes through `installGlobalHarness` and `assertExplicitApplyConsent`. Preview is a dry run (tested: temp home tree unchanged).
+  - Keys (Settings): `s` opens setup; Space/Enter toggle, `p` preview, `a` open confirm modal, `y` apply, `n`/Esc cancel (Esc steps back one stage and sends nothing); success re-requests `settings.snapshot`. Late/mismatched responses are ignored by stage + selection guards. Integration-confirm flow unchanged (regression test).
+  - Hardened a flaky U1 test (`run_cancel_still_requires_explicit_confirm`) that raced the recorder's partial line writes.
+- U2 limitations: apply is all-or-nothing through the existing installer (no per-file selection); preview change list capped at 200 entries; setup replaces the Settings body while open; no real-home apply was run (tests use a temp home); workspace component catalog uses the project root only.
 
 ## Next step
 
-U2 (setup in Settings).
+U3 (runtime diagnostics) then U4.

@@ -12,6 +12,7 @@ mod recovery_picker;
 mod role_editor;
 mod session_picker;
 mod settings_panel;
+mod setup_flow;
 mod snapshot;
 mod surfaces;
 mod v3_capture;
@@ -52,6 +53,7 @@ use recovery_picker::RecoveryPreviewState;
 use role_editor::{can_edit_team_roles, RoleEditPhase, RoleEditorState};
 use session_picker::SessionPickerState;
 use settings_panel::SettingsPanelState;
+use setup_flow::{SetupFlow, SetupStage};
 use snapshot::apply_workspace_snapshot;
 use surfaces::{
     render_analyst_picker, render_confirm_execute, render_extension_ui, render_operations_view,
@@ -670,9 +672,44 @@ impl ShellApp {
             });
             self.request_ops_snapshot();
         } else if kind == Some("settings_snapshot") {
-            self.settings_panel = Some(SettingsPanelState::from_settings_record(&record));
+            // U2: a refresh (e.g. after apply) must not drop an open setup flow.
+            let setup = self.settings_panel.as_mut().and_then(|s| s.setup.take());
+            let mut next = SettingsPanelState::from_settings_record(&record);
+            next.setup = setup;
+            self.settings_panel = Some(next);
             if self.workspace_view == WorkspaceView::Settings {
                 self.view.notice = Some("Settings snapshot updated.".into());
+            }
+        } else if kind == Some("settings_setup_load") {
+            if let Some(flow) = self.settings_panel.as_mut().and_then(|s| s.setup.as_mut()) {
+                flow.apply_load_record(&record);
+            }
+        } else if kind == Some("settings_setup_preview") {
+            if let Some(settings) = self.settings_panel.as_mut() {
+                if let Some(flow) = settings.setup.as_mut() {
+                    if flow.apply_preview_record(&record) {
+                        settings.scroll = 0;
+                    }
+                }
+            }
+        } else if kind == Some("settings_setup_apply") {
+            let outcome = self
+                .settings_panel
+                .as_mut()
+                .and_then(|s| s.setup.as_mut())
+                .and_then(|flow| flow.apply_result_record(&record));
+            if let Some(settings) = self.settings_panel.as_mut() {
+                settings.scroll = 0;
+            }
+            match outcome {
+                Some(true) => {
+                    self.view.notice = Some("Setup applied · refreshing Settings…".into());
+                    self.request_settings_snapshot();
+                }
+                Some(false) => {
+                    self.view.notice = Some("Setup not applied — see Settings.".into());
+                }
+                None => {}
             }
         } else if kind == Some("settings_integration_result") {
             if let Some(settings) = self.settings_panel.as_mut() {
@@ -1864,7 +1901,10 @@ impl ShellApp {
     }
 
     fn request_settings_snapshot(&mut self) {
-        self.settings_panel = Some(SettingsPanelState::loading());
+        let setup = self.settings_panel.as_mut().and_then(|s| s.setup.take());
+        let mut loading = SettingsPanelState::loading();
+        loading.setup = setup;
+        self.settings_panel = Some(loading);
         let Some(bridge) = self.bridge.as_mut() else {
             self.settings_panel = Some(SettingsPanelState::from_settings_record(
                 &serde_json::json!({
@@ -1875,7 +1915,7 @@ impl ShellApp {
                     "connections": ["Connections unavailable."],
                     "setup": {
                         "wired": false,
-                        "label": "Interactive setup · not wired — use `kairo setup`"
+                        "label": "setup unavailable — no bridge"
                     },
                     "hints": "Esc → Work"
                 }),
@@ -2163,6 +2203,18 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
         }
         if app.workspace_view == WorkspaceView::Settings {
             if let Some(settings) = app.settings_panel.as_mut() {
+                if let Some(flow) = settings.setup.as_mut() {
+                    // U2: Esc steps back one stage; nothing is ever sent.
+                    if flow.escape() {
+                        settings.setup = None;
+                        settings.scroll = 0;
+                        app.view.notice = Some("Setup closed — nothing applied.".into());
+                    } else {
+                        settings.scroll = 0;
+                        app.view.notice = Some("Cancelled — nothing applied.".into());
+                    }
+                    return Ok(false);
+                }
                 if settings.pending_integration_id.is_some() {
                     settings.clear_integration_confirm();
                     app.view.notice = Some("Cancelled — no files written.".into());
@@ -2588,6 +2640,13 @@ fn handle_ops_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
 
 /// U5b: Settings scroll + curated integration intent confirm.
 fn handle_settings_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
+    if app
+        .settings_panel
+        .as_ref()
+        .map_or(false, |s| s.setup.is_some())
+    {
+        return handle_setup_keys(app, key);
+    }
     let Some(settings) = app.settings_panel.as_mut() else {
         return false;
     };
@@ -2643,8 +2702,125 @@ fn handle_settings_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
             app.request_settings_snapshot();
             true
         }
+        KeyCode::Char('s')
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT) =>
+        {
+            settings.setup = Some(SetupFlow::loading());
+            settings.scroll = 0;
+            match app.bridge.as_mut() {
+                Some(bridge) => {
+                    if let Err(err) = bridge.settings_setup_load() {
+                        app.view.notice = Some(format!("settings.setup.load failed: {err}"));
+                    } else {
+                        app.view.notice = Some("Loading setup options…".into());
+                    }
+                }
+                None => {
+                    app.view.notice = Some("No bridge — cannot load setup.".into());
+                }
+            }
+            true
+        }
         _ => false,
     }
+}
+
+/// Rows of the setup list kept in view while moving the cursor.
+const SETUP_VIEW_ROWS: usize = 14;
+
+/// U2: keys while the setup flow is open. Always consumes the key.
+/// Only `p` (read-only dry run) and `y` inside the confirm modal send ops.
+fn handle_setup_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
+    let plain_key = !key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+    let Some(settings) = app.settings_panel.as_mut() else {
+        return false;
+    };
+    let Some(flow) = settings.setup.as_mut() else {
+        return false;
+    };
+    if !plain_key {
+        return true;
+    }
+    match flow.stage {
+        SetupStage::Select => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                flow.move_cursor(-1);
+                let line = flow.cursor_line();
+                settings.scroll = settings.scroll.min(line);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                flow.move_cursor(1);
+                let line = flow.cursor_line();
+                if line >= settings.scroll + SETUP_VIEW_ROWS {
+                    settings.scroll = line + 1 - SETUP_VIEW_ROWS;
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => flow.toggle(),
+            KeyCode::Char('p') => {
+                if let Some((agents, components)) = flow.begin_preview() {
+                    match app.bridge.as_mut() {
+                        Some(bridge) => {
+                            if let Err(err) = bridge.settings_setup_preview(&agents, &components) {
+                                app.view.notice =
+                                    Some(format!("settings.setup.preview failed: {err}"));
+                            } else {
+                                app.view.notice =
+                                    Some("Previewing setup (nothing is written)…".into());
+                            }
+                        }
+                        None => app.view.notice = Some("No bridge — cannot preview setup.".into()),
+                    }
+                }
+            }
+            _ => {}
+        },
+        SetupStage::Preview => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => settings.scroll_by(-1, SETUP_VIEW_ROWS),
+            KeyCode::Down | KeyCode::Char('j') => settings.scroll_by(1, SETUP_VIEW_ROWS),
+            KeyCode::Char('a') => {
+                if flow.begin_confirm() {
+                    app.view.notice = Some("Apply setup? y apply · n/Esc cancel".into());
+                }
+            }
+            _ => {}
+        },
+        SetupStage::Confirm => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if let Some((agents, components, fingerprint)) = flow.confirm_apply() {
+                    match app.bridge.as_mut() {
+                        Some(bridge) => {
+                            if let Err(err) =
+                                bridge.settings_setup_apply(&agents, &components, &fingerprint)
+                            {
+                                app.view.notice =
+                                    Some(format!("settings.setup.apply failed: {err}"));
+                            } else {
+                                app.view.notice = Some("Applying setup…".into());
+                            }
+                        }
+                        None => app.view.notice = Some("No bridge — cannot apply setup.".into()),
+                    }
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                flow.escape();
+                app.view.notice = Some("Cancelled — nothing applied.".into());
+            }
+            _ => {}
+        },
+        SetupStage::Result => {
+            if matches!(key.code, KeyCode::Enter | KeyCode::Char('q')) {
+                settings.setup = None;
+                settings.scroll = 0;
+            }
+        }
+        SetupStage::Loading | SetupStage::Previewing | SetupStage::Applying => {}
+    }
+    true
 }
 
 /// U4d/U5a: empty-compose `1`–`6` switch Work|Project|Tasks|Sessions|Ops|Settings.
@@ -4146,7 +4322,8 @@ mod tests {
         let ops = std::fs::read_to_string(&path).unwrap_or_default();
         assert!(!ops.contains("ops.runs.cancel"), "{ops}");
         handle_ops_keys(&mut app, plain('y'));
-        let ops = recorded_ops(&path, 1);
+        wait_for_op(&path, "\"op\":\"ops.runs.cancel\"");
+        let ops = std::fs::read_to_string(&path).unwrap_or_default();
         assert!(ops.contains("\"op\":\"ops.runs.cancel\"") && ops.contains("run_b"), "{ops}");
         let _ = std::fs::remove_file(path);
     }
@@ -4522,5 +4699,210 @@ mod tests {
         app.chat.begin_ask();
         app.ingest_record(json!({ "type": "transcript", "messages": [] }));
         assert!(!app.chat.ask_in_flight);
+    }
+
+    // ---- U2: native setup flow inside Settings -----------------------
+
+    fn settings_setup_app() -> (ShellApp, PathBuf) {
+        let (mut app, path) = recorder_app("ask");
+        app.workspace_view = WorkspaceView::Settings;
+        app.settings_panel = Some(SettingsPanelState::from_settings_record(&json!({
+            "ok": true,
+            "integrations": ["available · Pi usage widget"],
+            "setup": { "wired": true, "label": "press s to set up agents and components" }
+        })));
+        (app, path)
+    }
+
+    fn setup_load_record() -> serde_json::Value {
+        json!({
+            "type": "settings_setup_load", "ok": true,
+            "agents": [
+                { "id": "claude", "label": "Claude Code", "detected": true },
+                { "id": "codex", "label": "Codex", "detected": false }
+            ],
+            "components": [
+                { "id": "orchestrator", "label": "Orchestrator", "description": "d", "defaultEnabled": true }
+            ],
+            "defaults": { "agents": ["claude"], "components": ["orchestrator"] }
+        })
+    }
+
+    fn setup_preview_record() -> serde_json::Value {
+        json!({
+            "type": "settings_setup_preview", "ok": true, "fingerprint": "fp-xyz",
+            "agents": ["claude"], "components": ["orchestrator"],
+            "summary": "1 managed change(s) planned.", "changeCount": 1,
+            "changes": [ { "kind": "config", "action": "create", "target": ".claude/CLAUDE.md", "status": "planned" } ]
+        })
+    }
+
+    fn setup_stage(app: &ShellApp) -> Option<setup_flow::SetupStage> {
+        app.settings_panel.as_ref()?.setup.as_ref().map(|f| f.stage)
+    }
+
+    /// Wait (bounded) until the recorder log contains `needle` (full line written).
+    fn wait_for_op(path: &PathBuf, needle: &str) {
+        for _ in 0..300 {
+            if std::fs::read_to_string(path)
+                .unwrap_or_default()
+                .lines()
+                .any(|l| l.contains(needle) && l.trim_end().ends_with('}'))
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    fn ops_lines(path: &PathBuf) -> Vec<String> {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Drive the app to the Preview stage (3 ops sent: load, preview => 2).
+    fn setup_at_preview() -> (ShellApp, PathBuf) {
+        let (mut app, path) = settings_setup_app();
+        assert!(handle_settings_keys(&mut app, plain('s')));
+        app.ingest_record(setup_load_record());
+        assert!(handle_settings_keys(&mut app, plain('p')));
+        recorded_ops(&path, 2);
+        app.ingest_record(setup_preview_record());
+        assert_eq!(setup_stage(&app), Some(setup_flow::SetupStage::Preview));
+        (app, path)
+    }
+
+    #[test]
+    fn s_opens_setup_and_sends_load_then_load_record_enables_selection() {
+        let (mut app, path) = settings_setup_app();
+        assert!(handle_settings_keys(&mut app, plain('s')));
+        let ops = recorded_ops(&path, 1);
+        assert!(ops.contains("\"op\":\"settings.setup.load\""), "{ops}");
+        assert_eq!(setup_stage(&app), Some(setup_flow::SetupStage::Loading));
+        app.ingest_record(setup_load_record());
+        assert_eq!(setup_stage(&app), Some(setup_flow::SetupStage::Select));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn p_sends_preview_with_current_selection_and_space_toggles() {
+        let (mut app, path) = settings_setup_app();
+        handle_settings_keys(&mut app, plain('s'));
+        app.ingest_record(setup_load_record());
+        handle_settings_keys(&mut app, plain('j')); // codex
+        handle_settings_keys(&mut app, plain(' ')); // select codex
+        assert!(handle_settings_keys(&mut app, plain('p')));
+        wait_for_op(&path, "\"op\":\"settings.setup.preview\"");
+        let preview = ops_lines(&path).into_iter().nth(1).unwrap_or_default();
+        assert!(preview.contains("\"op\":\"settings.setup.preview\""), "{preview}");
+        assert!(preview.contains("\"claude\"") && preview.contains("\"codex\""), "{preview}");
+        assert!(preview.contains("\"orchestrator\""), "{preview}");
+        assert!(!preview.contains("apply"), "{preview}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn confirm_modal_requires_y_and_n_or_esc_send_nothing() {
+        let (mut app, path) = setup_at_preview();
+        assert!(handle_settings_keys(&mut app, plain('a')));
+        assert_eq!(setup_stage(&app), Some(setup_flow::SetupStage::Confirm));
+        assert!(handle_settings_keys(&mut app, plain('n')));
+        assert_eq!(setup_stage(&app), Some(setup_flow::SetupStage::Preview));
+        assert!(handle_settings_keys(&mut app, plain('a')));
+        handle_key(&mut app, esc()).unwrap();
+        assert_eq!(setup_stage(&app), Some(setup_flow::SetupStage::Preview));
+        // Now confirm for real: the log must hold exactly load, preview, apply.
+        assert!(handle_settings_keys(&mut app, plain('a')));
+        assert!(handle_settings_keys(&mut app, plain('y')));
+        wait_for_op(&path, "\"op\":\"settings.setup.apply\"");
+        let lines = ops_lines(&path);
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert!(lines[2].contains("\"op\":\"settings.setup.apply\""), "{}", lines[2]);
+        assert!(lines[2].contains("\"fingerprint\":\"fp-xyz\""), "{}", lines[2]);
+        assert!(lines[2].contains("\"confirm\":true"), "{}", lines[2]);
+        assert_eq!(setup_stage(&app), Some(setup_flow::SetupStage::Applying));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn esc_walks_back_without_sending_and_stays_in_settings() {
+        let (mut app, path) = setup_at_preview();
+        handle_key(&mut app, esc()).unwrap(); // Preview -> Select
+        assert_eq!(setup_stage(&app), Some(setup_flow::SetupStage::Select));
+        handle_key(&mut app, esc()).unwrap(); // close flow
+        assert_eq!(setup_stage(&app), None);
+        assert_eq!(app.workspace_view, WorkspaceView::Settings);
+        // Only load + preview were ever sent.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(ops_lines(&path).len(), 2, "{:?}", ops_lines(&path));
+        handle_key(&mut app, esc()).unwrap(); // normal Esc -> Work
+        assert_eq!(app.workspace_view, WorkspaceView::Work);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn apply_success_shows_result_and_refreshes_settings_snapshot() {
+        let (mut app, path) = setup_at_preview();
+        handle_settings_keys(&mut app, plain('a'));
+        handle_settings_keys(&mut app, plain('y'));
+        app.ingest_record(json!({ "type": "settings_setup_apply", "ok": true, "reason": "applied",
+            "agents": ["claude"], "components": ["orchestrator"] }));
+        wait_for_op(&path, "\"op\":\"settings.snapshot\"");
+        let lines = ops_lines(&path);
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(lines[3].contains("\"op\":\"settings.snapshot\""), "{lines:?}");
+        let flow = app.settings_panel.as_ref().unwrap().setup.as_ref().unwrap();
+        assert_eq!(flow.stage, setup_flow::SetupStage::Result);
+        assert!(flow.body_lines().join("\n").contains("Setup applied"));
+        // The refreshed snapshot must not drop the visible result.
+        app.ingest_record(json!({ "type": "settings_snapshot", "ok": true,
+            "setup": { "wired": true, "label": "press s" } }));
+        assert_eq!(setup_stage(&app), Some(setup_flow::SetupStage::Result));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn apply_failure_is_visible_and_does_not_refresh() {
+        let (mut app, path) = setup_at_preview();
+        handle_settings_keys(&mut app, plain('a'));
+        handle_settings_keys(&mut app, plain('y'));
+        app.ingest_record(json!({ "type": "settings_setup_apply", "ok": false,
+            "reason": "stale_preview", "error": "Preview is missing or out of date." }));
+        let flow = app.settings_panel.as_ref().unwrap().setup.as_ref().unwrap();
+        assert!(flow.body_lines().join("\n").contains("stale_preview"));
+        wait_for_op(&path, "\"op\":\"settings.setup.apply\"");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(ops_lines(&path).len(), 3, "{:?}", ops_lines(&path));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn late_responses_after_close_are_ignored() {
+        let (mut app, path) = setup_at_preview();
+        handle_key(&mut app, esc()).unwrap();
+        handle_key(&mut app, esc()).unwrap();
+        assert_eq!(setup_stage(&app), None);
+        app.ingest_record(setup_preview_record());
+        app.ingest_record(json!({ "type": "settings_setup_apply", "ok": true, "reason": "applied" }));
+        app.ingest_record(setup_load_record());
+        assert_eq!(setup_stage(&app), None);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(ops_lines(&path).len(), 2, "{:?}", ops_lines(&path));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn integration_confirm_flow_is_unchanged() {
+        let (mut app, path) = settings_setup_app();
+        assert!(handle_settings_keys(&mut app, enter()));
+        assert!(app.settings_panel.as_ref().unwrap().pending_integration_id.is_some());
+        assert!(handle_settings_keys(&mut app, plain('y')));
+        let ops = recorded_ops(&path, 1);
+        assert!(ops.contains("\"op\":\"settings.integration.confirm\""), "{ops}");
+        assert!(!ops.contains("settings.setup"), "{ops}");
+        let _ = std::fs::remove_file(path);
     }
 }
