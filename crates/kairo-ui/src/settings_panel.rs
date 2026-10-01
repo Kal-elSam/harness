@@ -7,6 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use crate::ops_panel::{wrap_ops_hint_lines, wrap_panel_body_line};
+use crate::provider_connect_flow::ProviderConnectFlow;
 use crate::setup_flow::{SetupFlow, SetupStage};
 use crate::surfaces::tone;
 
@@ -29,6 +30,8 @@ pub struct SettingsPanelState {
     pub integration_ids: Vec<String>,
     /// U2: native setup flow (select / preview / confirm / apply).
     pub setup: Option<SetupFlow>,
+    /// Settings Connect: provider inventory + authorize flow.
+    pub provider_connect: Option<ProviderConnectFlow>,
 }
 
 impl SettingsPanelState {
@@ -107,17 +110,21 @@ impl SettingsPanelState {
             hints: record
                 .get("hints")
                 .and_then(|v| v.as_str())
-                .unwrap_or("Esc → Work · ↑↓ browse · Enter preview · y/n confirm · s setup")
+                .unwrap_or("Esc → Work · ↑↓ browse · Enter preview · y/n confirm · s setup · c connect")
                 .to_string(),
             scroll: 0,
             pending_integration_id: None,
             selected_integration: 0,
             integration_ids: ids,
             setup: None,
+            provider_connect: None,
         }
     }
 
     pub fn body_lines(&self) -> Vec<String> {
+        if let Some(flow) = &self.provider_connect {
+            return flow.body_lines();
+        }
         if let Some(flow) = &self.setup {
             return flow.body_lines();
         }
@@ -149,7 +156,9 @@ impl SettingsPanelState {
     }
 
     pub fn footer_hints(&self) -> &str {
-        if let Some(flow) = &self.setup {
+        if let Some(flow) = &self.provider_connect {
+            flow.footer_hints()
+        } else if let Some(flow) = &self.setup {
             flow.footer_hints()
         } else if self.pending_integration_id.is_some() {
             "y confirm intent · n/Esc cancel"
@@ -308,6 +317,59 @@ pub fn render_settings_panel(
             render_setup_confirm(buf, area, flow);
         }
     }
+    if let Some(flow) = &state.provider_connect {
+        if flow.stage == crate::provider_connect_flow::ConnectStage::Confirm {
+            render_provider_connect_confirm(buf, area, flow);
+        }
+    }
+}
+
+fn render_provider_connect_confirm(
+    buf: &mut Buffer,
+    area: Rect,
+    flow: &ProviderConnectFlow,
+) {
+    let width = area.width.saturating_sub(6).clamp(36, 72);
+    let height = 7.min(area.height.saturating_sub(2).max(5));
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+    if popup.width == 0 || popup.height == 0 {
+        return;
+    }
+    Clear.render(popup, buf);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tone::BORDER_FOCUS))
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .title(Span::styled(
+            " Settings · authorize connection ",
+            Style::default()
+                .fg(tone::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    let preview = flow.preview.as_ref();
+    let provider = preview.map(|p| p.provider.as_str()).unwrap_or("?");
+    let scope = preview.map(|p| p.scope.as_str()).unwrap_or("");
+    let muted = Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG);
+    let lines = vec![
+        padded_span(
+            &format!("Authorize {provider}?"),
+            inner.width,
+            Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+        ),
+        padded_span(scope, inner.width, muted),
+        padded_span("Shows scope before any CLI/browser handoff.", inner.width, muted),
+        padded_span("y confirm · n/Esc cancel", inner.width, muted),
+    ];
+    Paragraph::new(lines)
+        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .render(inner, buf);
 }
 
 /// U2: explicit y/n modal before any write. Esc/n cancel and send nothing.

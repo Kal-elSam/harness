@@ -480,6 +480,52 @@ impl BridgeClient {
         )
     }
 
+    /// Settings Connect: refresh provider inventory (never connects).
+    pub fn connections_status(&mut self) -> std::io::Result<()> {
+        self.send_op("connections.status", Value::Null)
+    }
+
+    pub fn connections_preview(&mut self, provider: &str) -> std::io::Result<()> {
+        self.send_op(
+            "connections.preview",
+            serde_json::json!({ "provider": provider }),
+        )
+    }
+
+    pub fn connections_connect(&mut self, provider: &str, fingerprint: &str) -> std::io::Result<()> {
+        self.send_op(
+            "connections.connect",
+            serde_json::json!({
+                "provider": provider,
+                "fingerprint": fingerprint,
+                "confirm": true
+            }),
+        )
+    }
+
+    pub fn terminal_ready(&mut self) -> std::io::Result<()> {
+        self.send_op("terminal.ready", Value::Null)
+    }
+
+    /// Host finished the interactive provider CLI on the real TTY (not RPC stdio).
+    pub fn terminal_session_result(
+        &mut self,
+        session_id: &str,
+        code: Option<i32>,
+    ) -> std::io::Result<()> {
+        self.send_op(
+            "terminal.session_result",
+            serde_json::json!({
+                "sessionId": session_id,
+                "code": code
+            }),
+        )
+    }
+
+    pub fn connections_verify_pending(&mut self) -> std::io::Result<()> {
+        self.send_op("connections.verify_pending", Value::Null)
+    }
+
     /// Force-stop the Node sidecar. Never block the TTY on a wedged child:
     /// best-effort cooperative `stop`, then kill + wait. Idempotent for Drop.
     pub fn stop(&mut self) -> std::io::Result<()> {

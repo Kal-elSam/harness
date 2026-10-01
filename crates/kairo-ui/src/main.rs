@@ -13,6 +13,7 @@ mod role_editor;
 mod session_picker;
 mod settings_panel;
 mod setup_flow;
+mod provider_connect_flow;
 mod snapshot;
 mod surfaces;
 mod v3_capture;
@@ -22,6 +23,7 @@ use std::collections::HashMap;
 use std::env;
 use std::io::{self, stdout};
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -54,6 +56,7 @@ use role_editor::{can_edit_team_roles, RoleEditPhase, RoleEditorState};
 use session_picker::SessionPickerState;
 use settings_panel::SettingsPanelState;
 use setup_flow::{SetupFlow, SetupStage};
+use provider_connect_flow::{ConnectStage, ProviderConnectFlow};
 use snapshot::apply_workspace_snapshot;
 use surfaces::{
     render_analyst_picker, render_confirm_execute, render_extension_ui, render_operations_view,
@@ -677,12 +680,122 @@ impl ShellApp {
         } else if kind == Some("settings_snapshot") {
             // U2: a refresh (e.g. after apply) must not drop an open setup flow.
             let setup = self.settings_panel.as_mut().and_then(|s| s.setup.take());
+            let provider_connect = self
+                .settings_panel
+                .as_mut()
+                .and_then(|s| s.provider_connect.take());
             let mut next = SettingsPanelState::from_settings_record(&record);
             next.setup = setup;
+            next.provider_connect = provider_connect;
             self.settings_panel = Some(next);
             if self.workspace_view == WorkspaceView::Settings {
                 self.view.notice = Some("Settings snapshot updated.".into());
             }
+        } else if kind == Some("connections_status") {
+            if let Some(flow) = self
+                .settings_panel
+                .as_mut()
+                .and_then(|s| s.provider_connect.as_mut())
+            {
+                if flow.apply_status_record(&record) {
+                    if let Some(settings) = self.settings_panel.as_mut() {
+                        settings.scroll = 0;
+                    }
+                }
+            }
+        } else if kind == Some("connections_preview") {
+            if let Some(settings) = self.settings_panel.as_mut() {
+                if let Some(flow) = settings.provider_connect.as_mut() {
+                    if flow.apply_preview_record(&record) {
+                        settings.scroll = 0;
+                    }
+                }
+            }
+        } else if kind == Some("connections_connect") {
+            if let Some(settings) = self.settings_panel.as_mut() {
+                if let Some(flow) = settings.provider_connect.as_mut() {
+                    flow.apply_connect_record(&record);
+                    settings.scroll = 0;
+                }
+            }
+        } else if kind == Some("terminal_yield") {
+            // Leave the alternate screen and run the allowlisted CLI on the
+            // real TTY. Never tunnel interactive IO through the RPC pipes.
+            if let Some(settings) = self.settings_panel.as_mut() {
+                if let Some(flow) = settings.provider_connect.as_mut() {
+                    flow.yielded = true;
+                }
+            }
+            let session_id = record
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let argv: Vec<String> = record
+                .get("argv")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let _ = disable_raw_mode();
+            let _ = execute!(stdout(), LeaveAlternateScreen);
+            if let Some(flow) = self
+                .settings_panel
+                .as_mut()
+                .and_then(|s| s.provider_connect.as_mut())
+            {
+                flow.mark_connecting_after_yield();
+            }
+            let code = if argv.is_empty() || session_id.is_empty() {
+                None
+            } else {
+                let program = &argv[0];
+                let args = &argv[1..];
+                match Command::new(program)
+                    .args(args)
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .status()
+                {
+                    Ok(status) => status.code(),
+                    Err(_) => None,
+                }
+            };
+            let _ = execute!(stdout(), EnterAlternateScreen);
+            let _ = enable_raw_mode();
+            if let Some(bridge) = self.bridge.as_mut() {
+                let _ = bridge.terminal_session_result(&session_id, code);
+            }
+        } else if kind == Some("terminal_restore") {
+            // Host already restored the alternate screen after the CLI exited;
+            // apply the connect outcome to the Settings flow.
+            if let Some(settings) = self.settings_panel.as_mut() {
+                if let Some(flow) = settings.provider_connect.as_mut() {
+                    flow.apply_terminal_restore(&record);
+                    settings.scroll = 0;
+                }
+            }
+            self.view.notice = Some("Terminal restored to Kairo.".into());
+        } else if kind == Some("connections_verify_pending") {
+            let pending = record
+                .get("pendingCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let cost = record
+                .get("costStatement")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            self.view.notice = Some(if pending == 0 {
+                "No pending verifications — reusable evidence is current.".into()
+            } else {
+                format!(
+                    "{pending} pending · {cost} · confirm via analyst verify (separate consent)."
+                )
+            });
         } else if kind == Some("settings_setup_load") {
             if let Some(flow) = self.settings_panel.as_mut().and_then(|s| s.setup.as_mut()) {
                 flow.apply_load_record(&record);
@@ -2653,6 +2766,13 @@ fn handle_settings_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
     if app
         .settings_panel
         .as_ref()
+        .map_or(false, |s| s.provider_connect.is_some())
+    {
+        return handle_provider_connect_keys(app, key);
+    }
+    if app
+        .settings_panel
+        .as_ref()
         .map_or(false, |s| s.setup.is_some())
     {
         return handle_setup_keys(app, key);
@@ -2733,7 +2853,163 @@ fn handle_settings_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
             }
             true
         }
+        KeyCode::Char('c')
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT) =>
+        {
+            settings.provider_connect = Some(ProviderConnectFlow::loading());
+            settings.scroll = 0;
+            match app.bridge.as_mut() {
+                Some(bridge) => {
+                    if let Err(err) = bridge.connections_status() {
+                        app.view.notice = Some(format!("connections.status failed: {err}"));
+                    } else {
+                        app.view.notice = Some("Loading provider connections…".into());
+                    }
+                }
+                None => {
+                    app.view.notice = Some("No bridge — cannot load connections.".into());
+                }
+            }
+            true
+        }
+        KeyCode::Char('v')
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT) =>
+        {
+            match app.bridge.as_mut() {
+                Some(bridge) => {
+                    if let Err(err) = bridge.connections_verify_pending() {
+                        app.view.notice =
+                            Some(format!("connections.verify_pending failed: {err}"));
+                    } else {
+                        app.view.notice =
+                            Some("Checking pending verifications (no probes yet)…".into());
+                    }
+                }
+                None => {
+                    app.view.notice = Some("No bridge — cannot list pending verifications.".into());
+                }
+            }
+            true
+        }
         _ => false,
+    }
+}
+
+fn handle_provider_connect_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
+    let plain_key = !key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+    let Some(settings) = app.settings_panel.as_mut() else {
+        return false;
+    };
+    let Some(flow) = settings.provider_connect.as_mut() else {
+        return false;
+    };
+    match flow.stage {
+        ConnectStage::Browse => match key.code {
+            KeyCode::Up | KeyCode::Char('k') if plain_key => {
+                flow.move_cursor(-1);
+                settings.scroll_by(-1, 12);
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') if plain_key => {
+                flow.move_cursor(1);
+                settings.scroll_by(1, 12);
+                true
+            }
+            KeyCode::Enter if plain_key => {
+                if let Some(provider) = flow.begin_preview() {
+                    match app.bridge.as_mut() {
+                        Some(bridge) => {
+                            if let Err(err) = bridge.connections_preview(&provider) {
+                                app.view.notice =
+                                    Some(format!("connections.preview failed: {err}"));
+                            } else {
+                                app.view.notice =
+                                    Some(format!("Previewing {provider} authorization…"));
+                            }
+                        }
+                        None => {
+                            app.view.notice = Some("No bridge — cannot preview.".into());
+                        }
+                    }
+                }
+                settings.scroll = 0;
+                true
+            }
+            KeyCode::Esc => {
+                settings.provider_connect = None;
+                app.view.notice = Some("Closed provider connections.".into());
+                true
+            }
+            _ => true,
+        },
+        ConnectStage::Preview => match key.code {
+            KeyCode::Char('a') if plain_key => {
+                flow.open_confirm();
+                settings.scroll = 0;
+                true
+            }
+            KeyCode::Esc => {
+                flow.escape();
+                settings.scroll = 0;
+                true
+            }
+            _ => true,
+        },
+        ConnectStage::Confirm => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if let Some((provider, fingerprint, _terminal)) = flow.begin_connect() {
+                    match app.bridge.as_mut() {
+                        Some(bridge) => {
+                            if let Err(err) = bridge.connections_connect(&provider, &fingerprint) {
+                                app.view.notice =
+                                    Some(format!("connections.connect failed: {err}"));
+                                // Unstick UI on transport failure.
+                                if let Some(flow) = settings.provider_connect.as_mut() {
+                                    let _ = flow.apply_connect_record(&serde_json::json!({
+                                        "ok": false,
+                                        "reason": "failed",
+                                        "error": err.to_string()
+                                    }));
+                                }
+                            } else {
+                                app.view.notice = Some("Authorizing…".into());
+                            }
+                        }
+                        None => {
+                            app.view.notice = Some("No bridge — cannot connect.".into());
+                        }
+                    }
+                }
+                settings.scroll = 0;
+                true
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                flow.cancel_confirm();
+                settings.scroll = 0;
+                app.view.notice = Some("Authorization cancelled.".into());
+                true
+            }
+            _ => true,
+        },
+        ConnectStage::Result => {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                // Return to browse and refresh inventory after connect/cancel/fail.
+                settings.provider_connect = Some(ProviderConnectFlow::loading());
+                settings.scroll = 0;
+                if let Some(bridge) = app.bridge.as_mut() {
+                    let _ = bridge.connections_status();
+                }
+            }
+            true
+        }
+        ConnectStage::Loading | ConnectStage::Previewing | ConnectStage::Connecting
+        | ConnectStage::Yielding => true,
     }
 }
 
