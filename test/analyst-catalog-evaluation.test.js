@@ -132,27 +132,52 @@ test("unverified routes take part in the same comparison but are never starred",
   assert.equal(verified.recommendedModel.modelId, "best");
 });
 
-test("ONE classification: catalog star, picker star, default analyst and main rows agree, in any input order and before/after verification", () => {
+test("T27: picker flat list has no star; order/identity/evidence stable under shuffle; verification only filters who is listed", () => {
   const aa = [full("best", 0.97, 0.62, 0.62), full("shared", 0.93, 0.55, 0.58), full("third", 0.9, 0.5, 0.5), full("fourth", 0.85, 0.4, 0.45)];
   const routes = [["claude", "best"], ["codex", "shared"], ["cursor", "shared"], ["opencode-go", "third"], ["claude", "fourth"]];
   const mainKeys = (catalog) => curateAnalystCatalogForPicker(catalog).models.map((m) => m.candidateKey);
+
   for (const entitlement of [{}, { "claude::best": ENTITLEMENT.UNVERIFIED }]) {
     const reference = catalogFor(aa, routes, { entitlement });
     const curated = curateAnalystCatalogForPicker(reference);
-    assert.equal(curated.recommendedModel.candidateKey, reference.recommendedModel.candidateKey);
-    assert.equal(pickDefaultAnalyst(reference).model.modelId, curated.recommendedModel.modelId, "default == star");
-    assert.equal(new Set(curated.models.map((m) => m.identityKey)).size, curated.models.length, "main rows are distinct models");
+
+    // T27 picker contract: no star, no Other bucket.
+    assert.equal(curated.recommendedModel, null);
+    assert.deepEqual(curated.alternatives, []);
+    assert.equal(pickDefaultAnalyst(curated), null, "curated catalog has no recommendedModel → no default");
+
+    // Bootstrap evaluator may still nominate a raw recommendedModel for other consumers.
+    assert.ok(reference.recommendedModel?.candidateKey, "raw catalog still computes a recommendation");
+    assert.equal(
+      pickDefaultAnalyst(reference).model.modelId,
+      reference.recommendedModel.modelId,
+      "default on the raw catalog still follows the bootstrap recommendation"
+    );
+
+    // Identity + evidence: equivalent routes stay separate rows with identical evaluation.
+    const shared = curated.models.filter((m) => m.identityKey === "shared");
+    assert.equal(shared.length, 2, "codex::shared and cursor::shared both stay in the flat list");
+    assert.deepEqual(shared[0].evaluation, shared[1].evaluation);
+    assert.notEqual(shared[0].candidateKey, shared[1].candidateKey);
+
+    // Order is rank-stable under any input shuffle.
     for (const seed of [5, 17, 301]) {
       const shuffledCatalog = catalogFor(shuffled(aa, seed), shuffled(routes, seed + 3), { entitlement });
       assert.deepEqual(mainKeys(shuffledCatalog), mainKeys(reference), `seed ${seed}`);
-      assert.equal(pickDefaultAnalyst(shuffledCatalog).model.modelId, pickDefaultAnalyst(reference).model.modelId);
+      assert.equal(
+        pickDefaultAnalyst(shuffledCatalog).model.modelId,
+        pickDefaultAnalyst(reference).model.modelId,
+        `raw default stable seed ${seed}`
+      );
     }
   }
-  // Verifying the unverified star changes who is listed, not the order of the rows that were already listed.
+
+  // Verifying an unverified top route adds it to the list; rows already listed keep their relative order.
   const before = catalogFor(aa, routes, { entitlement: { "claude::best": ENTITLEMENT.UNVERIFIED } });
   const after = catalogFor(aa, routes);
-  assert.deepEqual(mainKeys(before), ["codex::shared", "opencode-go::third", "claude::fourth"]);
-  assert.deepEqual(mainKeys(after), ["claude::best", "codex::shared", "opencode-go::third"]);
+  assert.deepEqual(mainKeys(before), ["codex::shared", "cursor::shared", "opencode-go::third", "claude::fourth"]);
+  assert.deepEqual(mainKeys(after), ["claude::best", "codex::shared", "cursor::shared", "opencode-go::third", "claude::fourth"]);
+  assert.deepEqual(mainKeys(after).slice(1), mainKeys(before), "verification prepends the newly listed route only");
   assert.equal(pickDefaultAnalyst(after).model.modelId, "best");
   assert.equal(pickDefaultAnalyst(before).model.modelId, "shared");
 });
