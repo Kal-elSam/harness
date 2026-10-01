@@ -7,10 +7,11 @@ import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { harnessHomePaths } from "../paths.js";
 import { writeAtomicJson } from "../runtime/write-atomic-json.js";
-import { ENTITLEMENT } from "./claude-model-entitlement.js";
+import { ENTITLEMENT, TEMPORARY_LIMIT, clampRetryAfterMs } from "./claude-model-entitlement.js";
+import { accountEvidenceUsable, computeAccountFingerprint } from "./account-fingerprint.js";
 
 export const DEFAULT_ENTITLEMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-/** Short TTL for UNVERIFIED probe attempts — avoids re-probing on every analyze. */
+/** Short TTL for plain UNVERIFIED probe attempts — avoids re-probing on every analyze. */
 export const DEFAULT_UNVERIFIED_ENTITLEMENT_TTL_MS = 60 * 60 * 1000;
 
 function ageLabel(fetchedAtIso, nowMs = Date.now()) {
@@ -28,6 +29,12 @@ function isPersistableStatus(status) {
     || status === ENTITLEMENT.UNVERIFIED;
 }
 
+// A temporary-limit result (429) is evidence with its own short TTL: stored
+// as unverified + limit marker, never as a denial.
+function isTemporaryLimit(entry) {
+  return entry?.status === ENTITLEMENT.UNVERIFIED && entry?.limit === TEMPORARY_LIMIT;
+}
+
 function subscriptionTypeMatches(cache, subscriptionType) {
   if (!cache) return false;
   const cached = cache.subscriptionType ?? null;
@@ -41,9 +48,10 @@ function ttlForStatus(status, { ttlMs, unverifiedTtlMs }) {
   return status === ENTITLEMENT.UNVERIFIED ? unverifiedTtlMs : ttlMs;
 }
 
-function emptyDoc(subscriptionType, fetchedAt = new Date().toISOString()) {
+function emptyDoc(subscriptionType, fetchedAt = new Date().toISOString(), accountFingerprint = null) {
   return {
     subscriptionType: subscriptionType ?? null,
+    accountFingerprint,
     fetchedAt,
     models: Object.create(null)
   };
@@ -83,14 +91,18 @@ export async function writeClaudeEntitlementCache(homeDir, doc, deps = {}) {
 
 /**
  * Pure resolver: map catalog ids → live entitlement view from cache.
- * Invalidates the entire cache when subscriptionType differs.
+ * Invalidates when subscriptionType differs (null auth keeps cache) or when
+ * the caller enforces account identity and the fingerprint does not match.
+ * Temporary 429 evidence uses Retry-After TTL; plain UNVERIFIED uses the
+ * short verify-once TTL; allowed/denied use the long TTL.
  *
  * @param {{
  *   cache: object|null,
  *   subscriptionType: string|null,
  *   catalogIds: string[],
  *   now?: number,
- *   ttlMs?: number
+ *   ttlMs?: number,
+ *   unverifiedTtlMs?: number
  * }} options
  * @returns {Record<string, { status: string, reason: string|null, age: string|null, probedAt: string|null }>}
  */
@@ -100,11 +112,13 @@ export function resolveClaudeEntitlements({
   catalogIds = [],
   now = Date.now(),
   ttlMs = DEFAULT_ENTITLEMENT_TTL_MS,
-  unverifiedTtlMs = DEFAULT_UNVERIFIED_ENTITLEMENT_TTL_MS
+  unverifiedTtlMs = DEFAULT_UNVERIFIED_ENTITLEMENT_TTL_MS,
+  ...identity
 } = {}) {
   const usable = cache
     && typeof cache === "object"
     && subscriptionTypeMatches(cache, subscriptionType)
+    && accountEvidenceUsable(cache, identity)
     && cache.models
     && typeof cache.models === "object"
     ? cache
@@ -113,6 +127,28 @@ export function resolveClaudeEntitlements({
   const resolved = Object.create(null);
   for (const modelId of catalogIds) {
     const entry = usable?.models?.[modelId] ?? null;
+    if (isTemporaryLimit(entry)) {
+      const probedAtMs = new Date(entry.probedAt ?? "").getTime();
+      const retryMs = clampRetryAfterMs((entry.retryAfterMs ?? 0) / 1000);
+      if (Number.isFinite(probedAtMs) && now - probedAtMs <= retryMs) {
+        resolved[modelId] = {
+          status: ENTITLEMENT.UNVERIFIED,
+          reason: entry.reason ?? null,
+          limit: TEMPORARY_LIMIT,
+          retryAfterMs: retryMs,
+          age: ageLabel(entry.probedAt, now),
+          probedAt: entry.probedAt
+        };
+        continue;
+      }
+      resolved[modelId] = {
+        status: ENTITLEMENT.UNVERIFIED,
+        reason: null,
+        age: ageLabel(entry.probedAt, now),
+        probedAt: entry.probedAt ?? null
+      };
+      continue;
+    }
     if (!entry || !isPersistableStatus(entry.status)) {
       resolved[modelId] = {
         status: ENTITLEMENT.UNVERIFIED,
@@ -146,41 +182,57 @@ export function resolveClaudeEntitlements({
 }
 
 /**
- * Merge fresh probe results into a cache doc. Persists allowed, denied, and
- * unverified attempts (unverified uses a short TTL at resolve time). Discards
- * status "unknown". A transient null subscriptionType keeps the existing
- * cache account type and models — same tolerance as resolveClaudeEntitlements.
+ * Merge fresh probe results into a cache doc. Persists allowed, denied,
+ * plain unverified (verify-once short TTL), and temporary-limit (429)
+ * evidence. Discards status "unknown". A transient null subscriptionType
+ * keeps the existing cache account type and models. Never stores raw
+ * account identifiers, only the one-way `accountFingerprint`.
  *
  * @param {object|null} cache
  * @param {{ subscriptionType: string|null, catalogIds?: string[], results: Array<{ modelId: string, status: string, reason?: string|null, probedAt?: string }> }} payload
  */
-export function mergeEntitlementResults(cache, { subscriptionType, results = [] } = {}) {
+export function mergeEntitlementResults(cache, { subscriptionType, results = [], ...identity } = {}) {
+  const enforcing = Object.hasOwn(identity, "accountIdentifier");
+  const fingerprint = enforcing ? computeAccountFingerprint(identity.accountIdentifier) : null;
+  const sameAccount = !enforcing || (fingerprint !== null && cache?.accountFingerprint === fingerprint);
   const keepCache = cache
     && typeof cache === "object"
     && subscriptionTypeMatches(cache, subscriptionType)
+    && sameAccount
     && cache.models
     && typeof cache.models === "object";
   const base = keepCache
     ? {
       subscriptionType: cache.subscriptionType ?? null,
+      accountFingerprint: cache.accountFingerprint ?? null,
       fetchedAt: cache.fetchedAt,
       models: { ...cache.models }
     }
-    : emptyDoc(subscriptionType);
+    : emptyDoc(subscriptionType, undefined, fingerprint);
+  if (enforcing) base.accountFingerprint = fingerprint;
 
   let newestProbedAt = base.fetchedAt;
   for (const result of results) {
     if (!result || typeof result.modelId !== "string") continue;
     if (result.status === "unknown") continue;
-    if (!isPersistableStatus(result.status)) continue;
+    const temporary = isTemporaryLimit(result);
+    if (!temporary && !isPersistableStatus(result.status)) continue;
     const probedAt = typeof result.probedAt === "string"
       ? result.probedAt
       : new Date().toISOString();
-    base.models[result.modelId] = {
-      status: result.status,
-      reason: result.reason ?? null,
-      probedAt
-    };
+    base.models[result.modelId] = temporary
+      ? {
+        status: ENTITLEMENT.UNVERIFIED,
+        limit: TEMPORARY_LIMIT,
+        retryAfterMs: clampRetryAfterMs((result.retryAfterMs ?? 0) / 1000),
+        reason: result.reason ?? null,
+        probedAt
+      }
+      : {
+        status: result.status,
+        reason: result.reason ?? null,
+        probedAt
+      };
     if (!newestProbedAt || probedAt > newestProbedAt) newestProbedAt = probedAt;
   }
 

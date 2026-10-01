@@ -166,6 +166,20 @@ function isPersistableEntitlementStatus(status) {
     || status === ENTITLEMENT.UNVERIFIED;
 }
 
+// A 429 temporary limit is persisted too (short-TTL evidence), but only as
+// unverified+limit, so every DENIED/UNVERIFIED gate keeps failing closed.
+function isPersistableEntitlementResult(result) {
+  return isPersistableEntitlementStatus(result?.status)
+    || (result?.status === ENTITLEMENT.UNVERIFIED && result?.limit === "temporary");
+}
+
+// Identity is enforced only when the auth probe reports an `accountIdentifier`
+// key (the real verifier always does, null when unidentifiable). Fakes that
+// omit the key keep the legacy subscription-only behavior.
+function accountIdentity(auth) {
+  return auth && Object.hasOwn(auth, "accountIdentifier") ? { accountIdentifier: auth.accountIdentifier } : {};
+}
+
 // Cursor's own real access status (AVAILABLE/EXHAUSTED/UNVERIFIED) uses a
 // vocabulary purpose-built for its own two-pool model; wherever Kairo's
 // existing per-model entitlement machinery (blockingEntitlement in
@@ -964,6 +978,7 @@ export function createConversationService(deps = {}) {
         const claudeEntitlement = markStaleEntitlements(resolveClaudeEntitlements({
           cache: entitlementCache,
           subscriptionType: claudeAuth?.subscriptionType ?? null,
+          ...accountIdentity(claudeAuth),
           catalogIds: (claudeCatalog.models ?? []).map((m) => m.id),
           now: now(),
           ttlMs: deps.claudeEntitlementTtlMs ?? DEFAULT_ENTITLEMENT_TTL_MS
@@ -1444,6 +1459,7 @@ export function createConversationService(deps = {}) {
       const resolved = resolveClaudeEntitlements({
         cache,
         subscriptionType,
+        ...accountIdentity(auth),
         catalogIds,
         now: nowMs,
         ttlMs
@@ -1452,8 +1468,11 @@ export function createConversationService(deps = {}) {
         ? catalogIds
         : catalogIds.filter((id) => {
           const entry = resolved[id];
-          return entry?.status === ENTITLEMENT.UNVERIFIED
-            && (!entry.probedAt || entry.reason === "stale");
+          // Recent reusable UNVERIFIED (incl. temporary 429) stays out of the
+          // refresh-less probe set; only never-verified / stale are pending.
+          if (entry?.status !== ENTITLEMENT.UNVERIFIED) return false;
+          if (entry?.limit === "temporary") return false;
+          return !entry.probedAt || entry.reason === "stale";
         })
       ).slice(0, CLAUDE_ENTITLEMENT_MAX_PROBES);
       const costStatement = buildClaudeEntitlementVerifyCostStatement({ pendingCount: pendingIds.length });
@@ -1477,10 +1496,10 @@ export function createConversationService(deps = {}) {
         cwd: projectRoot ?? process.cwd(),
         onProgress
       });
-      const hasPersistable = results.some((result) => isPersistableEntitlementStatus(result?.status));
+      const hasPersistable = results.some(isPersistableEntitlementResult);
       let persisted = false;
       if (hasPersistable) {
-        const merged = mergeEntitlementResultsImpl(cache, { subscriptionType, results });
+        const merged = mergeEntitlementResultsImpl(cache, { subscriptionType, ...accountIdentity(auth), results });
         await writeClaudeEntitlementCacheImpl(homeDir, merged);
         persisted = true;
         // The very next snapshot() in this same session must see this real
@@ -1585,17 +1604,18 @@ export function createConversationService(deps = {}) {
           results = pending.map((check) => {
             const real = byModel.get(check.modelId);
             const status = real?.status ?? ENTITLEMENT.UNVERIFIED;
-            if (isPersistableEntitlementStatus(status)) persistable.push(real);
+            if (isPersistableEntitlementResult(real)) persistable.push(real);
             const reason = real ? (real.reason ?? null) : "The probe returned no result for this model";
             // Probes that did not report live are reported now, in order.
             finish(subscription, check, status, reason, nextClaude(check.modelId));
             return { id: check.id, label: check.label, modelId: check.modelId, status, reason };
           });
           if (persistable.length > 0) {
-            let subscriptionType = null;
-            try { subscriptionType = (await verifyClaudeSubscriptionAuthImpl({}))?.subscriptionType ?? null; } catch { subscriptionType = null; }
+            let auth = null;
+            try { auth = await verifyClaudeSubscriptionAuthImpl({}); } catch { auth = null; }
+            const subscriptionType = auth?.subscriptionType ?? null;
             const cache = await readClaudeEntitlementCacheImpl(homeDir);
-            await writeClaudeEntitlementCacheImpl(homeDir, mergeEntitlementResultsImpl(cache, { subscriptionType, results: persistable }));
+            await writeClaudeEntitlementCacheImpl(homeDir, mergeEntitlementResultsImpl(cache, { subscriptionType, ...accountIdentity(auth), results: persistable }));
             readClaudeEntitlementCacheCached.invalidate();
             persisted = true;
           }
@@ -1663,12 +1683,14 @@ export function createConversationService(deps = {}) {
         if (adapterId === "claude") {
           const [result] = await probeClaudeModelEntitlementsImpl({ modelIds: [modelId], maxProbes: 1, cwd: projectRoot });
           const status = result?.status ?? ENTITLEMENT.UNVERIFIED;
-          if (isPersistableEntitlementStatus(status)) {
-            let subscriptionType = null;
-            try { subscriptionType = (await verifyClaudeSubscriptionAuthImpl({}))?.subscriptionType ?? null; } catch { subscriptionType = null; }
+          if (isPersistableEntitlementResult(result)) {
+            let auth = null;
+            try { auth = await verifyClaudeSubscriptionAuthImpl({}); } catch { auth = null; }
+            const subscriptionType = auth?.subscriptionType ?? null;
             const cache = await readClaudeEntitlementCacheImpl(homeDir);
-            await writeClaudeEntitlementCacheImpl(homeDir, mergeEntitlementResultsImpl(cache, { subscriptionType, results: [result] }));
+            await writeClaudeEntitlementCacheImpl(homeDir, mergeEntitlementResultsImpl(cache, { subscriptionType, ...accountIdentity(auth), results: [result] }));
             readClaudeEntitlementCacheCached.invalidate();
+            if (status === ENTITLEMENT.UNVERIFIED) return { status, reason: result?.reason ?? null, limit: "temporary" };
             return { status, reason: result.reason ?? null };
           }
           return { status: ENTITLEMENT.UNVERIFIED, reason: result?.reason ?? "Claude access probe returned no decision" };

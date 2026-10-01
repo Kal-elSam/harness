@@ -53,7 +53,16 @@ export async function verifyClaudeSubscriptionAuth({
       { code: CLAUDE_AUTH_ERRORS.SUBSCRIPTION_REQUIRED }
     );
   }
-  return { mode: "subscription", subscriptionType: status.subscriptionType };
+  // In-memory only: the caller hashes it (account-fingerprint.js) before any
+  // persistence. null when `claude auth status` exposes no stable identity.
+  const parts = ["email", "orgId", "organizationId", "accountUuid", "userId"]
+    .map((key) => (typeof status?.[key] === "string" ? status[key].trim() : ""))
+    .filter(Boolean);
+  return {
+    mode: "subscription",
+    subscriptionType: status.subscriptionType,
+    accountIdentifier: parts.length > 0 ? parts.join("|") : null
+  };
 }
 
 export function buildClaudeLaunch({ task, cwd, model, permissions = [], env = process.env }) {
