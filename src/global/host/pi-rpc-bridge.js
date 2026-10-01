@@ -472,14 +472,24 @@ function dispatchRecord(bridge, pending, eventBuffer, listeners, record) {
   }
 }
 
+const STDERR_TAIL_MAX = 2000;
+
+function withStderrTail(message, tail) {
+  const text = tail.trim();
+  return text ? `${message}: ${text}` : message;
+}
+
 function attachChild(bridge, child) {
   bridge._setChild(child);
+  let stderrTail = "";
   child.stdout?.on("data", (chunk) => bridge._ingestStdout(chunk));
-  child.stderr?.on("data", () => {
-    // stderr is diagnostic only — never protocol
+  child.stderr?.on("data", (chunk) => {
+    // stderr is diagnostic only — never protocol. Keep a bounded tail so a
+    // startup failure is shown verbatim instead of a bare exit code.
+    stderrTail = (stderrTail + String(chunk)).slice(-STDERR_TAIL_MAX);
   });
   child.once("error", (err) => {
-    bridge._setExitError(new Error(`Agent process error: ${err.message}`), {
+    bridge._setExitError(new Error(withStderrTail(`Agent process error: ${err.message}`, stderrTail)), {
       intentional: bridge._isStopped()
     });
   });
@@ -493,7 +503,7 @@ function attachChild(bridge, child) {
       signal != null
         ? `Agent process exited from signal ${signal}`
         : `Agent process exited with code ${code ?? 1}`;
-    bridge._setExitError(new Error(detail));
+    bridge._setExitError(new Error(withStderrTail(detail, stderrTail)));
   });
 }
 

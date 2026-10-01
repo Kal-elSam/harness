@@ -743,6 +743,74 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// U3: full-envelope events exactly as the vendored fork types declare them
+    /// (`AgentEvent` / `AssistantMessageEvent`): extra fields (`partial`,
+    /// `message`, `contentIndex`, `args`) and lifecycle records the host does
+    /// not render must neither add rows nor break the reducer, and a provider
+    /// with no thinking and no tools must still render a plain answer.
+    #[test]
+    fn fork_shaped_envelopes_render_only_text_and_ignore_lifecycle_records() {
+        let mut chat = ChatState::default();
+        let partial = json!({ "role": "assistant", "content": [] });
+        for record in [
+            json!({ "type": "agent_start" }),
+            json!({ "type": "turn_start" }),
+            json!({ "type": "message_start", "message": partial }),
+            json!({ "type": "message_update", "message": partial,
+                    "assistantMessageEvent": { "type": "start", "partial": partial } }),
+            json!({ "type": "message_update", "message": partial,
+                    "assistantMessageEvent": { "type": "text_start", "contentIndex": 0, "partial": partial } }),
+            json!({ "type": "message_update", "message": partial,
+                    "assistantMessageEvent": { "type": "text_delta", "contentIndex": 0, "delta": "Hi", "partial": partial } }),
+            json!({ "type": "message_update", "message": partial,
+                    "assistantMessageEvent": { "type": "text_end", "contentIndex": 0, "content": "Hi", "partial": partial } }),
+            json!({ "type": "message_update", "message": partial,
+                    "assistantMessageEvent": { "type": "done", "reason": "stop", "message": partial } }),
+            json!({ "type": "message_end", "message": partial }),
+            json!({ "type": "turn_end", "message": partial, "toolResults": [] }),
+            json!({ "type": "agent_end", "messages": [] }),
+            json!({ "type": "agent_settled" }),
+        ] {
+            chat.apply_sidecar_event(&record);
+        }
+        // Default state seeds one System hint row; nothing else may be added.
+        let rows: Vec<_> = chat
+            .messages
+            .iter()
+            .filter(|m| m.role != MessageRole::System)
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "only the assistant text row: {:?}",
+            chat.messages
+        );
+        assert_eq!(rows[0].role, MessageRole::Assistant);
+        assert_eq!(rows[0].content, "Hi");
+        assert!(!rows[0].streaming);
+        assert!(!chat.is_streaming);
+    }
+
+    /// U3: an aborted stream arrives as `{type:"error", reason:"aborted",
+    /// error: AssistantMessage{ stopReason, errorMessage }}`.
+    #[test]
+    fn fork_shaped_aborted_stream_error_renders_error_row() {
+        let mut chat = ChatState::default();
+        chat.apply_sidecar_event(&json!({
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+                "type": "error",
+                "reason": "aborted",
+                "error": { "role": "assistant", "stopReason": "aborted",
+                           "errorMessage": "Request was aborted", "content": [] }
+            }
+        }));
+        let err = chat.messages.last().expect("error row");
+        assert_eq!(err.role, MessageRole::Error);
+        assert_eq!(err.content, "Request was aborted");
+    }
+
     #[test]
     fn text_delta_appends_to_streaming_assistant() {
         let mut chat = ChatState::default();

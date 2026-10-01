@@ -77,6 +77,15 @@ RDD: native switch unchanged; review assessed per commit; functional tests are n
   - Hardened a flaky U1 test (`run_cancel_still_requires_explicit_confirm`) that raced the recorder's partial line writes.
 - U2 limitations: apply is all-or-nothing through the existing installer (no per-file selection); preview change list capped at 200 entries; setup replaces the Settings body while open; no real-home apply was run (tests use a temp home); workspace component catalog uses the project root only.
 
+- U2 review: range `bbc0e261d..a066e4fd3` (2 commits, 15 files, 1957 lines, target sha256:5413747b…35a1) assessed `high` (process_boundary in main.rs). Range includes the U1 test-race fix (`recorded_ops` -> `wait_for_op`). Native review DECLINED for this candidate by the user (`declined_this_candidate`, target matched). No receipt exists; functional tests are not approval. Spot check by the parent: cargo 329 pass, node 125 pass.
+
+- U3 evidence (strict TDD, evidence-first; U3 stays UNTICKED because two items are NOT-VERIFIABLE locally):
+  - No-model startup, sidecar/bridge layer: `bridge no_model` (missing Architect, `set_model` failure) and the sidecar `ready` `no_model` record are VERIFIED-NO-GAP (existing tests in `test/pi-rpc-bridge.test.js`, `test/kairo-ui-rpc-stdio.test.js`; Rust `engine.rs` renders `Chat blocked: no_model — <reason>`). JSONL errors (`success:false` + `error`) reach `engine.reason` verbatim: VERIFIED-NO-GAP.
+  - Startup stderr: FIXED. RED: `node --test test/pi-rpc-bridge.test.js` failed 2 tests (reason was only `Agent process exited with code 1`, stderr was discarded in `attachChild`). Fix: bounded (2000 chars) stderr tail appended to exit/error reasons in `src/global/host/pi-rpc-bridge.js`. GREEN: pi-rpc-bridge + kairo-ui-rpc-stdio 115 pass / 0 fail.
+  - ASK/Pi event shapes vs vendored fork types (`AgentEvent`, `AssistantMessageEvent` in `third_party/pi/packages/{agent,ai}/src/types.ts`; `agent_settled` exists in `rpc-mode.ts`): field names (`assistantMessageEvent.delta`, `.error.errorMessage`, `toolCallId`, `toolName`, `partialResult`, `result`, `isError`) match `apply_sidecar_event`: VERIFIED-NO-GAP. Two Rust regression tests added with full-envelope fork-shaped records (lifecycle records ignored, no phantom rows; aborted stream error row). Both passed on first run (no fix needed). Cargo: 331 pass / 0 fail.
+  - ASK own `provider_event` flow (answer, error, cancel, switch, quit, restore): covered by `ask-real-progress-and-cancel` tests plus the fake-provider PTY e2e; no new mismatch demonstrated.
+- U3 NOT-VERIFIABLE (pending authorization): (a) real installed-package Pi RPC cold start without `session.model` emitting an explicit `no_model` (needs a real `kairo-pi-coding-agent` run; fork fix is unpublished/unproven as cause); (b) any real provider (Codex `exec --json` schema, Claude, Cursor, OpenCode) ASK events, thinking/tools presence. Needs separate user authorization for provider/network use.
+
 ## Next step
 
-U3 (runtime diagnostics) then U4.
+U3 pending authorization for the two NOT-VERIFIABLE items above (local scope done), then U4.

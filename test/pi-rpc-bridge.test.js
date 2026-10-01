@@ -477,3 +477,55 @@ test("U3b: bridge.sendRaw cancelled response preserves the exact request id", as
   assert.equal(parsed.type, "extension_ui_response");
   await bridge.stop();
 });
+
+test("U3 no-model cold start: startup stderr is surfaced verbatim in the exit reason", async () => {
+  const bridge = await openPiRpcBridge({
+    cwd: "/project",
+    loadSnapshot: async () => fakeSnapshot(),
+    resolveCliPath: () => "/fake/cli.js",
+    loadKairoProviderModels: noArchitectModels,
+    spawnImpl: () => {
+      const child = createFakeRpcChild({ onCommand: () => null });
+      setTimeout(() => {
+        child.stderr.emit("data", Buffer.from("Error: No models available. Run /login first.\n"));
+        child.emit("exit", 1, null);
+      }, 10);
+      return child;
+    },
+    execPath: "/usr/bin/node",
+    connectTimeoutMs: 500
+  });
+
+  assert.equal(bridge.hostOpen, true);
+  assert.equal(bridge.engine.status, "unavailable");
+  assert.match(bridge.engine.reason, /code 1/);
+  assert.match(bridge.engine.reason, /No models available\. Run \/login first\./);
+  await bridge.stop();
+});
+
+test("U3 no-model cold start: stderr tail is bounded and later exits keep the diagnostic", async () => {
+  let childRef = null;
+  const bridge = await openPiRpcBridge({
+    cwd: "/project",
+    loadSnapshot: async () => fakeSnapshot(),
+    resolveCliPath: () => "/fake/cli.js",
+    loadKairoProviderModels: noArchitectModels,
+    spawnImpl: () => {
+      childRef = rpcChildWithArchitect("codex::x");
+      return childRef;
+    },
+    execPath: "/usr/bin/node",
+    connectTimeoutMs: 500
+  });
+  assert.equal(bridge.engine.status, "no_model");
+  const events = [];
+  bridge.onEvent((e) => events.push(e));
+  childRef.stderr.emit("data", Buffer.from(`${"x".repeat(20000)}FINAL-LINE\n`));
+  childRef.emit("exit", 2, null);
+  const notice = events.find((e) => e.type === "engine_unavailable");
+  assert.ok(notice, "engine_unavailable notice");
+  assert.match(notice.reason, /code 2/);
+  assert.match(notice.reason, /FINAL-LINE/);
+  assert.ok(notice.reason.length < 5000, "stderr tail bounded");
+  await bridge.stop();
+});
