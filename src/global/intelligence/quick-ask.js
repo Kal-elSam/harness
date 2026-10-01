@@ -270,6 +270,9 @@ function askClaude({ question, model, cwd, spawn, timeoutMs, env, control }) {
     child.once?.("close", () => {
       let parsed;
       try { parsed = JSON.parse(stdout); } catch { return finish(unknown("malformed JSON from claude -p")); }
+      // `claude -p --output-format json` reports failures as a normal result
+      // object with is_error true and the error text in `result`.
+      if (parsed?.is_error === true) return finish(unknown(typeof parsed.result === "string" ? parsed.result : "claude -p reported an error"));
       if (typeof parsed?.result !== "string") return finish(unknown("no result text in claude -p response"));
       run.emit({ kind: "final", text: parsed.result });
       finish({ status: "answered", answer: parsed.result, error: null });
