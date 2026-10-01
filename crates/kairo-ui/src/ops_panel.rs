@@ -35,6 +35,9 @@ pub struct OpsPanelState {
     pub confirm: Option<OpsConfirmState>,
     /// When set, ↑↓ moves this list instead of scrolling the body.
     pub pick_mode: OpsPickMode,
+    pub selected_review: usize,
+    /// U1: read-only run / review detail that replaces the hub body while open.
+    pub detail: Option<OpsDetail>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -44,6 +47,216 @@ pub enum OpsPickMode {
     Run,
     Alert,
     Backup,
+    /// U1: pick any run (cancellable or not) to open its detail.
+    RunDetail,
+    /// U1: pick a review receipt to open its detail.
+    ReviewDetail,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpsDetailKind {
+    Run,
+    Review,
+}
+
+/// U1: detail view lines for one run or review receipt (read-only).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpsDetail {
+    pub kind: OpsDetailKind,
+    pub id: String,
+    pub loading: bool,
+    pub ok: bool,
+    pub error: Option<String>,
+    pub lines: Vec<String>,
+    pub scroll: usize,
+}
+
+fn str_field<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    v.get(key).and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+}
+
+impl OpsDetail {
+    pub fn loading(kind: OpsDetailKind, id: &str) -> Self {
+        let title = match kind {
+            OpsDetailKind::Run => "Run detail",
+            OpsDetailKind::Review => "Review detail",
+        };
+        Self {
+            kind,
+            id: id.to_string(),
+            loading: true,
+            ok: true,
+            error: None,
+            lines: vec![format!("{title} · {id}"), "  Loading…".into()],
+            scroll: 0,
+        }
+    }
+
+    pub fn matches(&self, kind: OpsDetailKind, id: &str) -> bool {
+        self.kind == kind && self.id == id
+    }
+
+    /// Build detail lines from an `ops_run_show` / `ops_review_show` record.
+    pub fn from_record(kind: OpsDetailKind, record: &serde_json::Value) -> Self {
+        let requested = str_field(record, "requestedId").unwrap_or("?").to_string();
+        let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !ok {
+            let reason = str_field(record, "reason").unwrap_or("error");
+            let message = str_field(record, "error").unwrap_or("Detail unavailable.");
+            return Self {
+                kind,
+                id: requested.clone(),
+                loading: false,
+                ok: false,
+                error: Some(message.to_string()),
+                lines: vec![
+                    format!("Error · {message}"),
+                    format!("  reason: {reason}"),
+                    format!("  id: {requested}"),
+                ],
+                scroll: 0,
+            };
+        }
+        let lines = match kind {
+            OpsDetailKind::Run => run_detail_lines(record),
+            OpsDetailKind::Review => review_detail_lines(record),
+        };
+        Self {
+            kind,
+            id: requested,
+            loading: false,
+            ok: true,
+            error: None,
+            lines,
+            scroll: 0,
+        }
+    }
+}
+
+fn run_detail_lines(record: &serde_json::Value) -> Vec<String> {
+    let run = record.get("run").cloned().unwrap_or(serde_json::Value::Null);
+    let g = |k: &str| str_field(&run, k);
+    let mut out = vec![format!("Run detail · {}", g("runId").unwrap_or("?"))];
+    out.push(format!("  State: {}", g("state").unwrap_or("unknown")));
+    out.push(format!(
+        "  Agent: {} ({}) · model {}",
+        g("agentId").unwrap_or("?"),
+        g("provider").unwrap_or("?"),
+        g("model").unwrap_or("default")
+    ));
+    if let Some(t) = g("startedAt") {
+        out.push(format!("  Started: {t}"));
+    }
+    if let Some(t) = g("completedAt") {
+        out.push(format!("  Completed: {t}"));
+    }
+    let len = run.get("taskLength").and_then(|v| v.as_u64()).unwrap_or(0);
+    out.push(format!(
+        "  Task: digest {} ({len} chars, content not stored)",
+        g("taskDigest").unwrap_or("unknown")
+    ));
+    if let Some(e) = g("error") {
+        out.push(format!("  Error: {e}"));
+    }
+    out.push(String::new());
+    let events = record
+        .get("events")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    out.push(format!("Events ({})", events.len()));
+    if record
+        .get("eventsTruncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        out.push("  … older events omitted".into());
+    }
+    if events.is_empty() {
+        out.push("  (none)".into());
+    }
+    for ev in &events {
+        if ev.get("parseError").and_then(|v| v.as_bool()) == Some(true) {
+            let line = ev.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
+            out.push(format!("  [parse error line {line}]"));
+            continue;
+        }
+        out.push(format!(
+            "  {} {} {}",
+            str_field(ev, "timestamp").unwrap_or("-"),
+            str_field(ev, "type").unwrap_or("?"),
+            str_field(ev, "summary").unwrap_or("")
+        ));
+    }
+    out
+}
+
+fn review_detail_lines(record: &serde_json::Value) -> Vec<String> {
+    let review = record
+        .get("review")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let g = |k: &str| str_field(&review, k);
+    let mut out = vec![format!("Review detail · {}", g("reviewId").unwrap_or("?"))];
+    out.push("  Receipt is read-only; this view grants no approval.".into());
+    out.push(format!("  State: {}", g("state").unwrap_or("unknown")));
+    out.push(format!(
+        "  Agent: {} · model {}",
+        g("agentId").unwrap_or("?"),
+        g("model").unwrap_or("default")
+    ));
+    if let Some(t) = g("createdAt") {
+        out.push(format!("  Created: {t}"));
+    }
+    if let Some(snap) = review.get("snapshot") {
+        let files = snap.get("fileCount").and_then(|v| v.as_u64()).unwrap_or(0);
+        out.push(format!(
+            "  Snapshot: {} · {} · {files} file(s)",
+            str_field(snap, "mode").unwrap_or("?"),
+            str_field(snap, "headSha").unwrap_or("?")
+        ));
+    }
+    out.push(String::new());
+    let findings = review
+        .get("findings")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    out.push(format!("Findings ({})", findings.len()));
+    if findings.is_empty() {
+        out.push("  (none)".into());
+    }
+    for f in &findings {
+        let location = match (str_field(f, "path"), f.get("line").and_then(|v| v.as_u64())) {
+            (Some(p), Some(l)) => format!(" · {p}:{l}"),
+            (Some(p), None) => format!(" · {p}"),
+            _ => String::new(),
+        };
+        out.push(format!(
+            "  [{}] {}{location}",
+            str_field(f, "severity").unwrap_or("?"),
+            str_field(f, "title").unwrap_or("")
+        ));
+        if let Some(p) = str_field(f, "problem") {
+            out.push(format!("      problem: {p}"));
+        }
+        if let Some(r) = str_field(f, "recommendation") {
+            out.push(format!("      fix: {r}"));
+        }
+    }
+    let warnings = review
+        .get("warnings")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if !warnings.is_empty() {
+        out.push(String::new());
+        out.push(format!("Warnings ({})", warnings.len()));
+        for w in warnings.iter().filter_map(|w| w.as_str()) {
+            out.push(format!("  {w}"));
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +301,8 @@ impl OpsPanelState {
             selected_backup: 0,
             confirm: None,
             pick_mode: OpsPickMode::None,
+            selected_review: 0,
+            detail: None,
         }
     }
 
@@ -113,7 +328,7 @@ impl OpsPanelState {
             .get("hints")
             .and_then(|v| v.as_str())
             .unwrap_or(
-                "Esc → Work · r refresh · s sync · b rollback · c cancel · d dismiss · v reviews",
+                "Esc → Work · r refresh · s sync · b rollback · c cancel · d dismiss · Enter run · v review",
             )
             .to_string();
         let runs = record
@@ -220,11 +435,16 @@ impl OpsPanelState {
             selected_backup: 0,
             confirm: None,
             pick_mode: OpsPickMode::None,
+            selected_review: 0,
+            detail: None,
         }
     }
 
     /// Flatten sections with headings for the scrollable body.
     pub fn body_lines(&self) -> Vec<String> {
+        if let Some(detail) = &self.detail {
+            return detail.lines.clone();
+        }
         let mut out = Vec::new();
         if let Some(err) = &self.error {
             out.push(format!("Error · {err}"));
@@ -241,7 +461,8 @@ impl OpsPanelState {
             out.push("  (none)".into());
         } else {
             for (i, run) in self.runs.iter().enumerate() {
-                let mark = if self.pick_mode == OpsPickMode::Run && i == self.selected_run {
+                let picking = matches!(self.pick_mode, OpsPickMode::Run | OpsPickMode::RunDetail);
+                let mark = if picking && i == self.selected_run {
                     "›"
                 } else {
                     " "
@@ -279,8 +500,15 @@ impl OpsPanelState {
         if self.reviews.is_empty() {
             out.push("  (none)".into());
         } else {
-            for review in &self.reviews {
-                out.push(format!("  {} · {}", review.review_id, review.state));
+            for (i, review) in self.reviews.iter().enumerate() {
+                let mark = if self.pick_mode == OpsPickMode::ReviewDetail
+                    && i == self.selected_review
+                {
+                    "›"
+                } else {
+                    " "
+                };
+                out.push(format!("{mark} {} · {}", review.review_id, review.state));
             }
         }
 
@@ -305,7 +533,12 @@ impl OpsPanelState {
         if self.confirm.is_some() {
             return "y confirm · n/Esc cancel";
         }
+        if self.detail.is_some() {
+            return "↑↓ scroll · Esc back";
+        }
         match self.pick_mode {
+            OpsPickMode::RunDetail => "↑↓ select run · Enter open detail · Esc clear",
+            OpsPickMode::ReviewDetail => "↑↓ select review · Enter open detail · Esc clear",
             OpsPickMode::Run => "↑↓ select run · Enter confirm cancel · Esc clear",
             OpsPickMode::Alert => "↑↓ select alert · Enter confirm dismiss · Esc clear",
             OpsPickMode::Backup => "↑↓ select backup · Enter preview rollback · Esc clear",
@@ -319,8 +552,29 @@ impl OpsPanelState {
         }
     }
 
+    /// Scroll offset in effect: the detail's own while a detail is open.
+    pub fn effective_scroll(&self) -> usize {
+        self.detail.as_ref().map_or(self.scroll, |d| d.scroll)
+    }
+
     pub fn scroll_by(&mut self, delta: isize, viewport_rows: usize) {
+        if let Some(detail) = self.detail.as_mut() {
+            let max_scroll = detail.lines.len().saturating_sub(viewport_rows.max(1));
+            let next = detail.scroll as isize + delta;
+            detail.scroll = next.clamp(0, max_scroll as isize) as usize;
+            return;
+        }
         match self.pick_mode {
+            OpsPickMode::RunDetail if !self.runs.is_empty() => {
+                let len = self.runs.len() as isize;
+                let next = self.selected_run as isize + delta;
+                self.selected_run = next.rem_euclid(len) as usize;
+            }
+            OpsPickMode::ReviewDetail if !self.reviews.is_empty() => {
+                let len = self.reviews.len() as isize;
+                let next = self.selected_review as isize + delta;
+                self.selected_review = next.rem_euclid(len) as usize;
+            }
             OpsPickMode::Run if !self.runs.is_empty() => {
                 let len = self.runs.len() as isize;
                 let next = self.selected_run as isize + delta;
@@ -354,6 +608,16 @@ impl OpsPanelState {
             .get(self.selected_run)
             .filter(|r| r.cancellable)
             .map(|r| r.run_id.as_str())
+    }
+
+    pub fn selected_run_id(&self) -> Option<&str> {
+        self.runs.get(self.selected_run).map(|r| r.run_id.as_str())
+    }
+
+    pub fn selected_review_id(&self) -> Option<&str> {
+        self.reviews
+            .get(self.selected_review)
+            .map(|r| r.review_id.as_str())
     }
 
     pub fn selected_alert_id(&self) -> Option<&str> {
@@ -526,7 +790,7 @@ pub fn render_ops_panel(buf: &mut Buffer, area: Rect, state: &OpsPanelState, chr
 
     let body_budget = inner.height.saturating_sub(footer_rows).max(1) as usize;
     let body = state.body_lines();
-    let start = state.scroll.min(body.len().saturating_sub(1).max(0));
+    let start = state.effective_scroll().min(body.len().saturating_sub(1).max(0));
     let visible = body.iter().skip(start).take(body_budget);
 
     let mut lines: Vec<Line> = Vec::new();
@@ -541,7 +805,12 @@ pub fn render_ops_panel(buf: &mut Buffer, area: Rect, state: &OpsPanelState, chr
                 | "Alerts"
                 | "Reviews (read-only)"
                 | "Backups"
-        ) || text.starts_with("Error ·");
+        ) || text.starts_with("Error ·")
+            || text.starts_with("Run detail ·")
+            || text.starts_with("Review detail ·")
+            || text.starts_with("Events (")
+            || text.starts_with("Findings (")
+            || text.starts_with("Warnings (");
         let style = if is_heading {
             Style::default()
                 .fg(tone::TEXT)
@@ -738,5 +1007,115 @@ mod tests {
         assert!(text.contains("Health") || text.contains("HEALTHY"));
         assert!(text.contains("Esc"));
         assert!(text.contains("fleet") || text.contains("Fleet") || text.contains("Providers"));
+    }
+
+    fn run_record() -> serde_json::Value {
+        json!({
+            "type": "ops_run_show",
+            "ok": true,
+            "requestedId": "run_a",
+            "run": {
+                "runId": "run_a", "state": "completed", "agentId": "cursor",
+                "provider": "cursor", "model": null,
+                "startedAt": "2026-01-01T00:00:00Z", "completedAt": "2026-01-01T00:01:00Z",
+                "taskDigest": "abcd1234abcd1234", "taskLength": 42, "error": null
+            },
+            "events": [
+                { "timestamp": "t1", "type": "process.stdout", "summary": "hello" },
+                { "parseError": true, "line": 4, "message": "bad json" }
+            ],
+            "eventsTruncated": true
+        })
+    }
+
+    #[test]
+    fn run_detail_maps_state_digest_and_events() {
+        let d = OpsDetail::from_record(OpsDetailKind::Run, &run_record());
+        assert!(d.ok && !d.loading && d.error.is_none());
+        let text = d.lines.join("\n");
+        assert!(text.contains("State: completed"), "{text}");
+        assert!(text.contains("abcd1234abcd1234") && text.contains("42 chars"), "{text}");
+        assert!(text.contains("process.stdout") && text.contains("hello"), "{text}");
+        assert!(text.contains("parse error") && text.contains("line 4"), "{text}");
+        assert!(text.contains("older events omitted"), "{text}");
+    }
+
+    #[test]
+    fn detail_error_record_is_honest_and_not_an_empty_success() {
+        let d = OpsDetail::from_record(
+            OpsDetailKind::Run,
+            &json!({ "type": "ops_run_show", "ok": false, "reason": "not_found",
+                     "error": "Run \"run_x\" not found.", "requestedId": "run_x" }),
+        );
+        assert!(!d.ok);
+        assert_eq!(d.id, "run_x");
+        let text = d.lines.join("\n");
+        assert!(text.contains("not found"), "{text}");
+        assert!(text.contains("not_found"), "{text}");
+    }
+
+    #[test]
+    fn review_detail_maps_findings_and_is_read_only() {
+        let d = OpsDetail::from_record(
+            OpsDetailKind::Review,
+            &json!({ "type": "ops_review_show", "ok": true, "requestedId": "rev-1",
+                "review": { "reviewId": "rev-1", "state": "completed", "agentId": "codex",
+                  "createdAt": "2026-01-01", "readOnly": true,
+                  "snapshot": { "mode": "staged", "headSha": "abc", "fileCount": 2 },
+                  "findings": [ { "severity": "high", "title": "Bad thing", "path": "a.js",
+                                  "line": 3, "problem": "P", "recommendation": "R" } ],
+                  "warnings": ["w1"] } }),
+        );
+        let text = d.lines.join("\n");
+        assert!(text.contains("read-only"), "{text}");
+        assert!(text.contains("[high] Bad thing") && text.contains("a.js:3"), "{text}");
+        assert!(text.contains("w1") && text.contains("2 file"), "{text}");
+        assert!(!text.to_lowercase().contains("approved"), "{text}");
+    }
+
+    #[test]
+    fn pick_modes_select_any_run_and_review_for_detail() {
+        let mut s = OpsPanelState::from_ops_record(&json!({
+            "runs": [ { "runId": "r1", "state": "done" }, { "runId": "r2", "state": "failed" } ],
+            "reviews": [ { "reviewId": "rev-a", "state": "completed" },
+                         { "reviewId": "rev-b", "state": "failed" } ]
+        }));
+        s.pick_mode = OpsPickMode::RunDetail;
+        s.scroll_by(1, 12);
+        assert_eq!(s.selected_run_id(), Some("r2"));
+        s.pick_mode = OpsPickMode::ReviewDetail;
+        s.scroll_by(1, 12);
+        assert_eq!(s.selected_review_id(), Some("rev-b"));
+        assert!(s.body_lines().iter().any(|l| l.starts_with("› rev-b")));
+        assert!(s.footer_hints().contains("Enter"));
+    }
+
+    #[test]
+    fn render_detail_replaces_hub_body_and_scrolls_with_back_hint() {
+        let mut s = OpsPanelState::from_ops_record(&json!({ "runs": [ { "runId": "run_a", "state": "x" } ] }));
+        s.detail = Some(OpsDetail::from_record(OpsDetailKind::Run, &run_record()));
+        assert!(s.footer_hints().contains("Esc"));
+        let body = s.body_lines().join("\n");
+        assert!(body.contains("Run detail") && !body.contains("Providers / fleet"), "{body}");
+        let area = Rect::new(0, 0, 70, 20);
+        let mut buf = Buffer::empty(area);
+        render_ops_panel(&mut buf, area, &s, " Operations ");
+        let mut text = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                text.push_str(buf[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        assert!(text.contains("Run detail") && text.contains("abcd1234abcd1234"), "{text}");
+    }
+
+    #[test]
+    fn detail_loading_state_shows_loading_line() {
+        let d = OpsDetail::loading(OpsDetailKind::Review, "rev-1");
+        assert!(d.loading);
+        assert!(d.lines.join(" ").contains("Loading"));
+        assert!(d.matches(OpsDetailKind::Review, "rev-1"));
+        assert!(!d.matches(OpsDetailKind::Run, "rev-1"));
     }
 }

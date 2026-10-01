@@ -410,6 +410,19 @@ impl BridgeClient {
         self.send_op("ops.runs.cancel", serde_json::json!({ "runId": run_id }))
     }
 
+    /// U1: read-only run detail (redacted state + bounded events).
+    pub fn ops_runs_show(&mut self, run_id: &str) -> std::io::Result<()> {
+        self.send_op("ops.runs.show", serde_json::json!({ "runId": run_id }))
+    }
+
+    /// U1: read-only review receipt detail.
+    pub fn ops_reviews_show(&mut self, receipt_id: &str) -> std::io::Result<()> {
+        self.send_op(
+            "ops.reviews.show",
+            serde_json::json!({ "receiptId": receipt_id }),
+        )
+    }
+
     /// U5b: dismiss an alert (requires confirmed:true after UI confirm).
     pub fn ops_alerts_dismiss(&mut self, alert_id: &str) -> std::io::Result<()> {
         self.send_op(

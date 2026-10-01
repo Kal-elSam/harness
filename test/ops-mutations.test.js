@@ -13,7 +13,9 @@ import {
   listOpsReviews,
   listOpsRuns,
   previewOpsRollback,
-  previewOpsSync
+  previewOpsSync,
+  showOpsReview,
+  showOpsRun
 } from "../src/global/host/ops-mutations.js";
 
 test("previewOpsSync forwards to governance preview and returns fingerprint", async () => {
@@ -196,4 +198,176 @@ test("listOpsAlerts and listOpsReviews fail-closed to empty arrays", async () =>
   });
   assert.equal(good.ok, true);
   assert.equal(good.reviews[0].reviewId, "rev-1");
+});
+
+const GOOD_RUN_ID = "run_abc123_x1y2z3";
+const GOOD_REVIEW_ID = "rev-0123456789abcdef0123";
+
+test("showOpsRun returns redacted, bounded detail without task text", async () => {
+  const events = Array.from({ length: 5 }, (_, i) => ({
+    timestamp: `2026-01-01T00:00:0${i}Z`,
+    type: "process.stdout",
+    data: { line: i === 4 ? "sk-abcdefghijklmnop" : `line ${i}`, prompt: "SECRET PROMPT" }
+  }));
+  events.splice(2, 0, { parseError: true, line: 3, message: "bad json" });
+  const seen = {};
+  const result = await showOpsRun({
+    homeDir: "/tmp/h",
+    runId: GOOD_RUN_ID,
+    eventLimit: 3,
+    readState: async (home, id) => {
+      seen.state = [home, id];
+      return {
+        runId: id,
+        agentId: "cursor",
+        provider: "cursor",
+        model: null,
+        state: "completed",
+        taskDigest: "abcd1234abcd1234",
+        taskLength: 42,
+        task: "RAW TASK TEXT",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:01:00Z",
+        error: null,
+        env: { OPENAI_API_KEY: "sk-leak" }
+      };
+    },
+    readEvents: async (home, id, opts) => {
+      seen.events = opts;
+      return events;
+    }
+  });
+  assert.deepEqual(seen.state, ["/tmp/h", GOOD_RUN_ID]);
+  assert.equal(result.ok, true);
+  assert.equal(result.run.runId, GOOD_RUN_ID);
+  assert.equal(result.run.state, "completed");
+  assert.equal(result.run.taskDigest, "abcd1234abcd1234");
+  assert.equal(result.run.taskLength, 42);
+  assert.equal(result.events.length, 3);
+  assert.equal(result.eventsTruncated, true);
+  const wire = JSON.stringify(result);
+  assert.ok(!wire.includes("SECRET PROMPT"));
+  assert.ok(!wire.includes("RAW TASK TEXT"));
+  assert.ok(!wire.includes("sk-abcdefghijklmnop"));
+  assert.ok(!wire.includes("sk-leak"));
+  assert.ok(result.events.some((e) => e.summary === "[REDACTED]"));
+});
+
+test("showOpsRun reports parse errors in events without crashing", async () => {
+  const result = await showOpsRun({
+    homeDir: "/tmp/h",
+    runId: GOOD_RUN_ID,
+    readState: async () => ({ runId: GOOD_RUN_ID, state: "failed" }),
+    readEvents: async () => [{ parseError: true, line: 2, message: "oops" }]
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.events[0].parseError, true);
+  assert.equal(result.events[0].line, 2);
+  assert.equal(result.eventsTruncated, false);
+});
+
+test("showOpsRun is honest about not_found, invalid_id and read errors", async () => {
+  const missing = await showOpsRun({
+    homeDir: "/tmp/h",
+    runId: GOOD_RUN_ID,
+    readState: async () => null,
+    readEvents: async () => []
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, "not_found");
+  assert.match(missing.error, /not found/i);
+
+  for (const bad of ["", undefined, "../etc", "a/b", "run id", "x".repeat(200)]) {
+    let touched = false;
+    const r = await showOpsRun({
+      homeDir: "/tmp/h",
+      runId: bad,
+      readState: async () => {
+        touched = true;
+        return null;
+      }
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, "invalid_id");
+    assert.equal(touched, false);
+  }
+
+  const broken = await showOpsRun({
+    homeDir: "/tmp/h",
+    runId: GOOD_RUN_ID,
+    readState: async () => {
+      throw new Error("Invalid run state at x");
+    }
+  });
+  assert.equal(broken.ok, false);
+  assert.equal(broken.reason, "read_failed");
+  assert.match(broken.error, /Invalid run state/);
+});
+
+test("showOpsReview returns read-only receipt fields", async () => {
+  const result = await showOpsReview({
+    homeDir: "/tmp/h",
+    receiptId: GOOD_REVIEW_ID,
+    loadReceipt: async (id, opts) => {
+      assert.equal(id, GOOD_REVIEW_ID);
+      assert.equal(opts.homeDir, "/tmp/h");
+      return {
+        version: 1,
+        reviewId: id,
+        agentId: "codex",
+        model: "m",
+        state: "completed",
+        createdAt: "2026-01-01T00:00:00Z",
+        cliVersion: "1.0.0",
+        snapshot: { mode: "staged", headSha: "abc", totals: { files: 2 }, files: [{ path: "a" }, { path: "b" }] },
+        findings: [
+          { id: "f1", severity: "high", title: "T", path: "a.js", line: 3, problem: "P", recommendation: "R" }
+        ],
+        warnings: ["w1"],
+        usage: { tokens: 5 },
+        timings: { durationMs: 12 },
+        approval: "granted",
+        authority: "admin"
+      };
+    }
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.review.reviewId, GOOD_REVIEW_ID);
+  assert.equal(result.review.state, "completed");
+  assert.equal(result.review.findings.length, 1);
+  assert.equal(result.review.findings[0].severity, "high");
+  assert.equal(result.review.snapshot.fileCount, 2);
+  assert.deepEqual(result.review.warnings, ["w1"]);
+  assert.equal(result.review.readOnly, true);
+  const wire = JSON.stringify(result);
+  assert.ok(!wire.includes("approval"));
+  assert.ok(!wire.includes("authority"));
+});
+
+test("showOpsReview is honest about not_found, invalid_id and read errors", async () => {
+  const missing = await showOpsReview({
+    homeDir: "/tmp/h",
+    receiptId: GOOD_REVIEW_ID,
+    loadReceipt: async (id) => {
+      throw new Error(`Review receipt not found: ${id}`);
+    }
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, "not_found");
+
+  const invalid = await showOpsReview({ homeDir: "/tmp/h", receiptId: "../x" });
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.reason, "invalid_id");
+  const empty = await showOpsReview({ homeDir: "/tmp/h" });
+  assert.equal(empty.reason, "invalid_id");
+
+  const broken = await showOpsReview({
+    homeDir: "/tmp/h",
+    receiptId: GOOD_REVIEW_ID,
+    loadReceipt: async () => {
+      throw new Error("Unexpected token in JSON");
+    }
+  });
+  assert.equal(broken.ok, false);
+  assert.equal(broken.reason, "read_failed");
 });

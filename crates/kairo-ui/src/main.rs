@@ -46,7 +46,7 @@ use execution_flow::{ConfirmExecuteState, ExecutionModal, RoleSelectState};
 use extension_ui::{ExtensionUiEvent, ExtensionUiMethod, ExtensionUiState};
 use layout::split_shell;
 use ops_flow::{OpsConfirmKind, OpsConfirmState};
-use ops_panel::{OpsPanelState, OpsPickMode};
+use ops_panel::{OpsDetail, OpsDetailKind, OpsPanelState, OpsPickMode};
 use plan_list::{PlanListState, PLAN_REQUESTED_HOST_COPY};
 use recovery_picker::RecoveryPreviewState;
 use role_editor::{can_edit_team_roles, RoleEditPhase, RoleEditorState};
@@ -625,6 +625,10 @@ impl ShellApp {
                 .unwrap_or(if ok { "ok" } else { "failed" });
             self.view.notice = Some(format!("Rollback · {reason}"));
             self.request_ops_snapshot();
+        } else if kind == Some("ops_run_show") {
+            self.ingest_ops_detail(OpsDetailKind::Run, &record);
+        } else if kind == Some("ops_review_show") {
+            self.ingest_ops_detail(OpsDetailKind::Review, &record);
         } else if kind == Some("ops_run_cancel") {
             if let Some(ops) = self.ops_panel.as_mut() {
                 ops.confirm = None;
@@ -1821,6 +1825,25 @@ impl ShellApp {
         }
     }
 
+    /// U1: apply a detail record only to the matching in-flight detail view
+    /// (stale or unsolicited responses are dropped).
+    fn ingest_ops_detail(&mut self, kind: OpsDetailKind, record: &serde_json::Value) {
+        let requested = record
+            .get("requestedId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let Some(ops) = self.ops_panel.as_mut() else {
+            return;
+        };
+        let waiting = ops
+            .detail
+            .as_ref()
+            .is_some_and(|d| d.loading && d.matches(kind, requested));
+        if waiting {
+            ops.detail = Some(OpsDetail::from_record(kind, record));
+        }
+    }
+
     fn request_ops_snapshot(&mut self) {
         self.ops_panel = Some(OpsPanelState::loading());
         let Some(bridge) = self.bridge.as_mut() else {
@@ -2128,6 +2151,10 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
                     app.view.notice = Some("Cancelled — no mutation.".into());
                     return Ok(false);
                 }
+                if ops.detail.is_some() {
+                    ops.detail = None;
+                    return Ok(false);
+                }
                 if ops.pick_mode != OpsPickMode::None {
                     ops.pick_mode = OpsPickMode::None;
                     return Ok(false);
@@ -2379,6 +2406,16 @@ fn handle_ops_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
         }
     }
 
+    // U1: an open detail owns scrolling and swallows every mutation key.
+    if ops.detail.is_some() {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => ops.scroll_by(-1, 12),
+            KeyCode::Down | KeyCode::Char('j') => ops.scroll_by(1, 12),
+            _ => {}
+        }
+        return true;
+    }
+
     // Pick-mode Enter selects the target.
     if ops.pick_mode != OpsPickMode::None {
         match key.code {
@@ -2421,6 +2458,34 @@ fn handle_ops_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
                             }
                         } else {
                             app.view.notice = Some("No backup selected.".into());
+                        }
+                    }
+                    OpsPickMode::RunDetail => {
+                        if let Some(run_id) = ops.selected_run_id().map(str::to_string) {
+                            ops.pick_mode = OpsPickMode::None;
+                            ops.detail = Some(OpsDetail::loading(OpsDetailKind::Run, &run_id));
+                            if let Some(bridge) = app.bridge.as_mut() {
+                                if let Err(err) = bridge.ops_runs_show(&run_id) {
+                                    app.view.notice =
+                                        Some(format!("ops.runs.show failed: {err}"));
+                                }
+                            }
+                        } else {
+                            app.view.notice = Some("No run selected.".into());
+                        }
+                    }
+                    OpsPickMode::ReviewDetail => {
+                        if let Some(id) = ops.selected_review_id().map(str::to_string) {
+                            ops.pick_mode = OpsPickMode::None;
+                            ops.detail = Some(OpsDetail::loading(OpsDetailKind::Review, &id));
+                            if let Some(bridge) = app.bridge.as_mut() {
+                                if let Err(err) = bridge.ops_reviews_show(&id) {
+                                    app.view.notice =
+                                        Some(format!("ops.reviews.show failed: {err}"));
+                                }
+                            }
+                        } else {
+                            app.view.notice = Some("No review selected.".into());
                         }
                     }
                     OpsPickMode::None => {}
@@ -2496,13 +2561,25 @@ fn handle_ops_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
             }
             true
         }
-        KeyCode::Char('v') if plain => {
-            let n = ops.reviews.len();
-            app.view.notice = Some(if n == 0 {
-                "No review receipts.".into()
+        KeyCode::Enter if plain => {
+            if ops.runs.is_empty() {
+                app.view.notice = Some("No runs to open.".into());
             } else {
-                format!("{n} review receipt(s) listed (read-only).")
-            });
+                ops.pick_mode = OpsPickMode::RunDetail;
+                ops.selected_run = ops.selected_run.min(ops.runs.len() - 1);
+                app.view.notice = Some("Select run · Enter open detail · Esc clear".into());
+            }
+            true
+        }
+        KeyCode::Char('v') if plain => {
+            if ops.reviews.is_empty() {
+                app.view.notice = Some("No review receipts.".into());
+            } else {
+                ops.pick_mode = OpsPickMode::ReviewDetail;
+                ops.selected_review = 0;
+                app.view.notice =
+                    Some("Select review · Enter open detail (read-only) · Esc clear".into());
+            }
             true
         }
         _ => false,
@@ -3982,6 +4059,106 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         std::fs::read_to_string(path).unwrap_or_default()
+    }
+
+    // ---- U1: run / review detail in Operations ----------------------
+
+    fn ops_detail_app() -> (ShellApp, PathBuf) {
+        let (mut app, path) = recorder_app("ask");
+        app.workspace_view = WorkspaceView::Operations;
+        app.ops_panel = Some(OpsPanelState::from_ops_record(&json!({
+            "runs": [
+                { "runId": "run_a", "state": "completed", "agentId": "cursor", "cancellable": false },
+                { "runId": "run_b", "state": "running", "agentId": "codex", "cancellable": true }
+            ],
+            "reviews": [ { "reviewId": "rev-0123456789abcdef", "state": "completed" } ]
+        })));
+        (app, path)
+    }
+
+    fn plain(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn enter_then_enter_requests_selected_run_detail_and_esc_returns() {
+        let (mut app, path) = ops_detail_app();
+        assert!(handle_ops_keys(&mut app, enter()));
+        assert_eq!(app.ops_panel.as_ref().unwrap().pick_mode, OpsPickMode::RunDetail);
+        assert!(handle_ops_keys(&mut app, plain('j')));
+        assert!(handle_ops_keys(&mut app, enter()));
+        let ops = recorded_ops(&path, 1);
+        assert!(ops.contains("\"op\":\"ops.runs.show\"") && ops.contains("\"runId\":\"run_b\""), "{ops}");
+        assert!(app.ops_panel.as_ref().unwrap().detail.as_ref().unwrap().loading);
+
+        app.ingest_record(json!({ "type": "ops_run_show", "ok": true, "requestedId": "run_b",
+            "run": { "runId": "run_b", "state": "running" }, "events": [], "eventsTruncated": false }));
+        let d = app.ops_panel.as_ref().unwrap().detail.as_ref().unwrap();
+        assert!(!d.loading && d.ok);
+
+        // Esc closes the detail first, staying in Operations.
+        handle_key(&mut app, esc()).unwrap();
+        assert!(app.ops_panel.as_ref().unwrap().detail.is_none());
+        assert_eq!(app.workspace_view, WorkspaceView::Operations);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn v_then_enter_requests_review_detail_and_not_found_is_shown() {
+        let (mut app, path) = ops_detail_app();
+        assert!(handle_ops_keys(&mut app, plain('v')));
+        assert_eq!(app.ops_panel.as_ref().unwrap().pick_mode, OpsPickMode::ReviewDetail);
+        assert!(handle_ops_keys(&mut app, enter()));
+        let ops = recorded_ops(&path, 1);
+        assert!(ops.contains("\"op\":\"ops.reviews.show\"")
+            && ops.contains("\"receiptId\":\"rev-0123456789abcdef\""), "{ops}");
+        app.ingest_record(json!({ "type": "ops_review_show", "ok": false, "reason": "not_found",
+            "error": "Review receipt not found: rev-0123456789abcdef",
+            "requestedId": "rev-0123456789abcdef" }));
+        let d = app.ops_panel.as_ref().unwrap().detail.as_ref().unwrap();
+        assert!(!d.ok);
+        assert!(d.lines.join("\n").contains("not found"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn stale_detail_response_for_another_id_is_ignored() {
+        let (mut app, path) = ops_detail_app();
+        handle_ops_keys(&mut app, enter());
+        handle_ops_keys(&mut app, enter());
+        app.ingest_record(json!({ "type": "ops_run_show", "ok": true, "requestedId": "run_zzz",
+            "run": { "runId": "run_zzz", "state": "x" }, "events": [] }));
+        assert!(app.ops_panel.as_ref().unwrap().detail.as_ref().unwrap().loading);
+        // Unsolicited response with no open detail never opens one.
+        app.ops_panel.as_mut().unwrap().detail = None;
+        app.ingest_record(json!({ "type": "ops_run_show", "ok": true, "requestedId": "run_a",
+            "run": { "runId": "run_a", "state": "x" }, "events": [] }));
+        assert!(app.ops_panel.as_ref().unwrap().detail.is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn run_cancel_still_requires_explicit_confirm() {
+        let (mut app, path) = ops_detail_app();
+        handle_ops_keys(&mut app, plain('c'));
+        handle_ops_keys(&mut app, enter());
+        assert!(app.ops_panel.as_ref().unwrap().confirm.is_some());
+        let ops = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(!ops.contains("ops.runs.cancel"), "{ops}");
+        handle_ops_keys(&mut app, plain('y'));
+        let ops = recorded_ops(&path, 1);
+        assert!(ops.contains("\"op\":\"ops.runs.cancel\"") && ops.contains("run_b"), "{ops}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn open_detail_swallows_cancel_keys() {
+        let (mut app, path) = ops_detail_app();
+        app.ops_panel.as_mut().unwrap().detail =
+            Some(OpsDetail::loading(OpsDetailKind::Run, "run_b"));
+        assert!(handle_ops_keys(&mut app, plain('c')));
+        assert!(app.ops_panel.as_ref().unwrap().confirm.is_none());
+        let _ = std::fs::remove_file(path);
     }
 
     fn pe(turn: &str, seq: u64, kind: &str, extra: serde_json::Value) -> serde_json::Value {

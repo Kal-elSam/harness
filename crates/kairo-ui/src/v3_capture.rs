@@ -96,7 +96,7 @@ fn paint_ops_fixture(buf: &mut Buffer, area: Rect) {
         "alerts": [{ "alertId": "alt-fixture00000001", "state": "open", "title": "fixture alert" }],
         "reviews": [{ "reviewId": "rev-fixture", "state": "pass" }],
         "backups": ["fixture-snap-1"],
-        "hints": "Esc → Work · r refresh · s sync · b rollback · c cancel · d dismiss · v reviews"
+        "hints": "Esc → Work · r refresh · s sync · b rollback · c cancel · d dismiss · Enter run · v review"
     }));
     let title = WorkspaceView::Operations.chrome_title_for_width(area.width);
     render_ops_panel(buf, area, &state, &title);

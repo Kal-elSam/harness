@@ -24,6 +24,8 @@
  *   { "op": "ops.rollback.preview", "snapshot": "..." }  — U5b: rollback preview
  *   { "op": "ops.rollback.apply", "preview": {...} }  — U5b: apply confirmed rollback
  *   { "op": "ops.runs.cancel", "runId": "..." }  — U5b: cancel a cancellable run
+ *   { "op": "ops.runs.show", "runId": "..." }  — U1: read-only run detail → ops_run_show (redacted, bounded events; ok:false + reason not_found|invalid_id|read_failed)
+ *   { "op": "ops.reviews.show", "receiptId": "rev-..." }  — U1: read-only review receipt detail → ops_review_show (same error contract)
  *   { "op": "ops.alerts.dismiss", "alertId": "...", "confirmed": true }  — U5b
  *   { "op": "settings.snapshot" }  — U5b: profile/integrations/connections (+ setup stub)
  *   { "op": "settings.integration.confirm", "id": "..." }  — U5b: curated intent receipt (no install)
@@ -136,7 +138,9 @@ import {
   cancelOpsRun,
   dismissOpsAlert,
   previewOpsRollback,
-  previewOpsSync
+  previewOpsSync,
+  showOpsReview,
+  showOpsRun
 } from "./ops-mutations.js";
 import { buildSettingsSnapshot } from "./settings-sidecar.js";
 import {
@@ -455,6 +459,8 @@ export async function runKairoUiRpcStdio({
   applyOpsRollback: applyOpsRollbackImpl = applyOpsRollback,
   cancelOpsRun: cancelOpsRunImpl = cancelOpsRun,
   dismissOpsAlert: dismissOpsAlertImpl = dismissOpsAlert,
+  showOpsRun: showOpsRunImpl = showOpsRun,
+  showOpsReview: showOpsReviewImpl = showOpsReview,
   buildSettingsSnapshot: buildSettingsSnapshotImpl = buildSettingsSnapshot
 } = {}) {
   const bridge = await openBridge({ cwd });
@@ -1413,6 +1419,14 @@ export async function runKairoUiRpcStdio({
           homeDir
         });
         writeOut({ type: "ops_alert_dismiss", ...result });
+      } else if (op === "ops.runs.show") {
+        const runId = typeof cmd.runId === "string" ? cmd.runId : "";
+        const result = await showOpsRunImpl({ homeDir, runId });
+        writeOut({ type: "ops_run_show", requestedId: runId, ...result });
+      } else if (op === "ops.reviews.show") {
+        const receiptId = typeof cmd.receiptId === "string" ? cmd.receiptId : "";
+        const result = await showOpsReviewImpl({ homeDir, receiptId });
+        writeOut({ type: "ops_review_show", requestedId: receiptId, ...result });
       } else if (op === "settings.snapshot") {
         const settings = await buildSettingsSnapshotImpl({
           homeDir,

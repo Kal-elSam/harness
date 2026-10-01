@@ -28,5 +28,5 @@
 │Backups                                                   │
 │  fixture-snap-1                                          │
 │Esc → Work · r refresh · s sync · b rollback · c cancel   │
-│d dismiss · v reviews                                     │
+│d dismiss · Enter run · v review                          │
 └──────────────────────────────────────────────────────────┘

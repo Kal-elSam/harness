@@ -36,7 +36,7 @@ export const FLEET_SECTION_TITLE =
 
 /** U5b: wrap-safe action hints (≤2 lines at 60 cols via host wrap). */
 export const OPS_HINTS =
-  "Esc → Work · r refresh · s sync · b rollback · c cancel · d dismiss · v reviews";
+  "Esc → Work · r refresh · s sync · b rollback · c cancel · d dismiss · Enter run · v review";
 
 const require = createRequire(import.meta.url);
 const DEFAULT_PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");

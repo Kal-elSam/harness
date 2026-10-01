@@ -5316,3 +5316,53 @@ test("A4: resuming a bound session (KAIRO_SESSION_ID) emits a transcript with it
   ]);
   await sc.stop();
 });
+
+test("U1: ops.runs.show and ops.reviews.show dispatch through DI", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const calls = [];
+  const runPromise = runKairoUiRpcStdio({
+    stdin,
+    stdout,
+    cwd: "/project",
+    env: { KAIRO_SESSION_ID: KAIRO_ID_A },
+    getSession: async () => ({ id: KAIRO_ID_A, mode: "ask" }),
+    showOpsRun: async ({ runId }) => {
+      calls.push(["run", runId]);
+      return runId === "run_ok"
+        ? { ok: true, run: { runId, state: "completed" }, events: [], eventsTruncated: false }
+        : { ok: false, reason: "not_found", error: `Run "${runId}" not found.` };
+    },
+    showOpsReview: async ({ receiptId }) => {
+      calls.push(["review", receiptId]);
+      return { ok: true, review: { reviewId: receiptId, state: "completed", findings: [] } };
+    },
+    openBridge: openBridgeWithModel()
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  stdin.write(`${JSON.stringify({ op: "ops.runs.show", runId: "run_ok" })}\n`);
+  stdin.write(`${JSON.stringify({ op: "ops.runs.show", runId: "run_missing" })}\n`);
+  stdin.write(`${JSON.stringify({ op: "ops.runs.show" })}\n`);
+  stdin.write(`${JSON.stringify({ op: "ops.reviews.show", receiptId: "rev-0123456789abcdef" })}\n`);
+  await new Promise((r) => setTimeout(r, 80));
+  assert.deepEqual(calls, [
+    ["run", "run_ok"],
+    ["run", "run_missing"],
+    ["run", ""],
+    ["review", "rev-0123456789abcdef"]
+  ]);
+  const shows = out.filter((r) => r.type === "ops_run_show");
+  assert.equal(shows.length, 3);
+  assert.equal(shows[0].ok, true);
+  assert.equal(shows[0].run.runId, "run_ok");
+  assert.equal(shows[1].ok, false);
+  assert.equal(shows[1].reason, "not_found");
+  assert.equal(out.find((r) => r.type === "ops_review_show")?.review?.reviewId, "rev-0123456789abcdef");
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+});
