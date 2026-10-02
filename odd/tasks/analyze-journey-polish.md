@@ -100,3 +100,4 @@ Ordered plan (concurrency blocked until step 1):
 - README / real-provider acceptance / Settings onboarding (separate ODD).
 - Cleanup 4 legacy T24 ranking/trace tests vs T26/T27 flat picker.
 - IDE: turn off **Cursor Settings → Agent → Attribution** (CLI already `false` in `~/.cursor/cli-config.json`).
+- Evidence commit: `cad96b8ea` — concurrency 2 + analyze 20s timeout + tests.
