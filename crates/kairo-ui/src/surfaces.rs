@@ -87,6 +87,8 @@ pub struct SidebarAgent {
     /// Spanish availability label (`usable` / `bloqueado` / …) — never replaces
     /// provider · model identity in `detail`.
     pub availability: Option<String>,
+    /// Discarded peers for this role (`Descartados`) with concentration causes.
+    pub discarded: Vec<String>,
 }
 
 impl SidebarAgent {
@@ -1496,6 +1498,16 @@ pub fn render_project_view(
                     muted,
                 ));
             }
+            if !agent.discarded.is_empty() {
+                lines.push(padded_span("  Descartados:", inner.width, muted));
+                for discarded in &agent.discarded {
+                    lines.push(padded_span(
+                        &format!("    · {discarded}"),
+                        inner.width,
+                        muted,
+                    ));
+                }
+            }
         }
         let hint = if state == "suggested" {
             "Enter = edit selected role · A = approve · Esc → Work"
@@ -2084,6 +2096,7 @@ mod tests {
             cause: BlockCause::Unavailable,
                 why: None,
                 availability: None,
+                discarded: vec![],
         }];
         model.selected_agent = 0;
         let mut chat = ChatState::default();
@@ -2456,6 +2469,7 @@ mod tests {
                 cause: BlockCause::Unavailable,
                 why: None,
                 availability: None,
+                discarded: vec![],
             },
             SidebarAgent {
                 label: "Builder".into(),
@@ -2464,6 +2478,7 @@ mod tests {
                 cause: BlockCause::Unavailable,
                 why: None,
                 availability: None,
+                discarded: vec![],
             },
         ];
         model.selected_agent = 0;
@@ -2529,6 +2544,7 @@ mod tests {
                 cause: BlockCause::Unavailable,
                 why: None,
                 availability: None,
+                discarded: vec![],
             },
             SidebarAgent {
                 label: "Builder".into(),
@@ -2537,6 +2553,7 @@ mod tests {
                 cause: BlockCause::Unavailable,
                 why: None,
                 availability: None,
+                discarded: vec![],
             },
         ];
         model.team_state = Some("active".into());
@@ -2621,6 +2638,9 @@ mod tests {
             cause: BlockCause::Unavailable,
             why: Some("Chosen for coding throughput on this stack.".into()),
             availability: Some("usable".into()),
+            discarded: vec![
+                "Claude · claude-opus-5 — límite de concentración del modelo".into(),
+            ],
         }];
         render_project_view(
             &mut buf,
@@ -2637,6 +2657,11 @@ mod tests {
         );
         assert!(hay.contains("por qué: Chosen for coding throughput"), "{hay}");
         assert!(hay.contains("disponibilidad: usable"), "{hay}");
+        assert!(hay.contains("Descartados:"), "{hay}");
+        assert!(
+            hay.contains("Claude · claude-opus-5 — límite de concentración del modelo"),
+            "{hay}"
+        );
         assert!(
             !hay.contains("Builder — Chosen"),
             "why must not replace provider · model: {hay}"
@@ -2681,6 +2706,7 @@ mod tests {
             cause: Default::default(),
                 why: None,
                 availability: None,
+                discarded: vec![],
         }];
         render_shell(&mut buf, regions, &model, &ChatState::default(), &default_editor());
         let hay = buffer_text(&buf);
@@ -2742,6 +2768,7 @@ mod tests {
             cause: BlockCause::RateLimited,
                 why: None,
                 availability: None,
+                discarded: vec![],
         }];
         render_shell(
             &mut buf,

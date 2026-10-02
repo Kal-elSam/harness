@@ -6,7 +6,9 @@ import { join } from "node:path";
 import {
   buildClaudeEntitlementVerifyCostStatement,
   buildUnverifiedClaudePreflightNotice,
-  createConversationService
+  countNaggingUnverifiedClaudeModels,
+  createConversationService,
+  forAnalyzePreflightNotice
 } from "../src/global/conversation/service.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 import { DEFAULT_ENTITLEMENT_TTL_MS } from "../src/global/observability/claude-entitlement-store.js";
@@ -2485,6 +2487,50 @@ test("preflightProject surfaces the unverified Claude notice when live entitleme
   });
   const result = await service.preflightProject({ cwd: "/repo" });
   assert.equal(result.unverifiedClaudeNotice, buildUnverifiedClaudePreflightNotice(2));
+});
+
+test("preflightProject omits unverifiedClaudeNotice when UNVERIFIED rows are recent reusable cache hits", async () => {
+  const probedAt = new Date().toISOString();
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    computeProjectProfile: async () => ({ fingerprint: "fp-1", roleRequirements: [] }),
+    writeProjectStrategy: async () => {}
+  });
+  service.snapshot = async () => ({
+    modelIntelligence: {
+      ...(await realScoredCandidates()),
+      claudeEntitlement: {
+        "claude-a": { status: ENTITLEMENT.UNVERIFIED, reason: "timeout", probedAt },
+        "claude-b": { status: ENTITLEMENT.ALLOWED, reason: null, probedAt },
+        "claude-c": { status: ENTITLEMENT.UNVERIFIED, reason: "stale", probedAt }
+      }
+    }
+  });
+  const result = await service.preflightProject({ cwd: "/repo" });
+  assert.equal(result.unverifiedClaudeNotice, buildUnverifiedClaudePreflightNotice(1));
+  assert.equal(countNaggingUnverifiedClaudeModels({
+    a: { status: ENTITLEMENT.UNVERIFIED, probedAt, reason: "timeout" },
+    b: { status: ENTITLEMENT.UNVERIFIED, probedAt: null, reason: null }
+  }), 1);
+});
+
+test("forAnalyzePreflightNotice strips Cursor pools without touching Claude pending counts", () => {
+  const filtered = forAnalyzePreflightNotice({
+    pendingCount: 3,
+    reusableCount: 2,
+    mayConsumeQuota: true,
+    costStatement: "x",
+    subscriptions: [
+      { adapterId: "claude", provider: "Claude", pendingCount: 1, reusableCount: 1, checks: [] },
+      { adapterId: "cursor", provider: "Cursor", pendingCount: 2, reusableCount: 1, checks: [] }
+    ]
+  });
+  assert.equal(filtered.pendingCount, 1);
+  assert.equal(filtered.reusableCount, 1);
+  assert.equal(filtered.mayConsumeQuota, true);
+  assert.deepEqual(filtered.subscriptions.map((s) => s.adapterId), ["claude"]);
+  assert.match(filtered.costStatement, /1 real provider call/);
 });
 
 // ---- A2: ASK cancellation and provider events ---------------------------------

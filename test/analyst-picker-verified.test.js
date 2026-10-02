@@ -174,7 +174,16 @@ test("a subscription that could not be verified is acknowledged compactly; cause
 // ---- sidecar entry points (fakes only) ----
 
 test("preflightProjectTeam exposes verificationPlan and unverifiedSubscriptions additively and never calls a verification entry point", async () => {
-  const plan = { pendingCount: 2, reusableCount: 0, mayConsumeQuota: true, subscriptions: [{ adapterId: "cursor", provider: "Cursor", granularity: "pool", checks: [] }], costStatement: "x" };
+  const plan = {
+    pendingCount: 3,
+    reusableCount: 1,
+    mayConsumeQuota: true,
+    costStatement: "x",
+    subscriptions: [
+      { adapterId: "claude", provider: "Claude", granularity: "model", pendingCount: 1, reusableCount: 1, checks: [] },
+      { adapterId: "cursor", provider: "Cursor", granularity: "pool", pendingCount: 2, reusableCount: 0, checks: [] }
+    ]
+  };
   const spies = { verifyAccess: 0, verifyAnalystAccess: 0 };
   const result = await preflightProjectTeam({
     cwd: "/project",
@@ -182,15 +191,26 @@ test("preflightProjectTeam exposes verificationPlan and unverifiedSubscriptions 
       async preflightProject() {
         return {
           profile: null, candidates: null, projectRoot: "/project", unverifiedClaudeNotice: null, verificationPlan: plan,
-          analystCatalog: { recommendedModel: null, models: [entry({ adapterId: "codex", modelId: "ok" }), unverified({ adapterId: "cursor", modelId: "c" })], exclusions: [] }
+          analystCatalog: {
+            recommendedModel: null,
+            models: [
+              entry({ adapterId: "codex", modelId: "ok" }),
+              unverified({ adapterId: "claude", modelId: "claude-a" }),
+              unverified({ adapterId: "cursor", modelId: "c" })
+            ],
+            exclusions: []
+          }
         };
       },
       async verifyAccess() { spies.verifyAccess += 1; },
       async verifyAnalystAccess() { spies.verifyAnalystAccess += 1; }
     })
   });
-  assert.deepEqual(result.verificationPlan, plan);
-  assert.deepEqual(result.unverifiedSubscriptions.map((s) => [s.adapterId, s.models]), [["cursor", 1]]);
+  // Analyze notice: Cursor pools stripped; Claude pending kept. Cursor still in exclusionCauses (`d`).
+  assert.equal(result.verificationPlan.pendingCount, 1);
+  assert.deepEqual(result.verificationPlan.subscriptions.map((s) => s.adapterId), ["claude"]);
+  assert.deepEqual(result.unverifiedSubscriptions.map((s) => [s.adapterId, s.models]), [["claude", 1]]);
+  assert.ok(result.exclusionCauses.some((row) => row.adapterId === "cursor" && row.cause === "access_unknown"));
   assert.deepEqual(spies, { verifyAccess: 0, verifyAnalystAccess: 0 });
 });
 

@@ -129,6 +129,7 @@ fn fixture_model(width: u16) -> ShellViewModel {
                 cause: BlockCause::Unavailable,
                 why: None,
                 availability: None,
+                discarded: vec![],
             },
             SidebarAgent {
                 label: "Builder".into(),
@@ -137,6 +138,7 @@ fn fixture_model(width: u16) -> ShellViewModel {
                 cause: BlockCause::RateLimited,
                 why: None,
                 availability: None,
+                discarded: vec![],
             },
         ],
         selected_agent: 0,

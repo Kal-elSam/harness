@@ -6,7 +6,7 @@ import { readProjectStrategy } from "../conversation/project-strategy-store.js";
 import { getSession, isValidSessionId } from "../conversation/session-registry.js";
 import { listProviderUsage } from "../runtime/usage-store.js";
 import { resolveAssignmentAvailability } from "../conversation/assignment-availability.js";
-import { explainTeamDecision } from "../conversation/team-decision.js";
+import { explainTeamDecision, formatDiscardedAlternatives } from "../conversation/team-decision.js";
 import { buildUsageModel, formatSubscriptionUsageSegments } from "../conversation/usage-summary.js";
 import { createConversationService } from "../conversation/service.js";
 import { readCodexUsage } from "../observability/codex-usage.js";
@@ -34,6 +34,7 @@ function compactAssignment(entry, intelligence) {
     model: model?.displayName ?? model?.modelId ?? "Unavailable",
     via: model?.adapterId ?? "unknown",
     reason: explainTeamDecision(entry),
+    discarded: formatDiscardedAlternatives(entry?.selection),
     availability: {
       state: availability.state,
       label: availabilityLabel(availability.state),
@@ -97,6 +98,7 @@ function workspaceAgents(team) {
     state: agentState(row.availability),
     stateReason: row.availability?.warning ?? null,
     why: row.reason ?? null,
+    discarded: Array.isArray(row.discarded) ? row.discarded : [],
     availability: availabilityLabel(row.availability?.state)
   }));
 }

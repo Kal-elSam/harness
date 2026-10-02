@@ -4139,6 +4139,7 @@ mod tests {
             cause: Default::default(),
                 why: None,
                 availability: None,
+                discarded: vec![],
         }];
         app.view.team_presentation = Some("incomplete".into());
         app.view.roles_visible = false;
@@ -4188,6 +4189,7 @@ mod tests {
             cause: Default::default(),
                 why: None,
                 availability: None,
+                discarded: vec![],
         }];
         app.view.roles_visible = false;
         app.begin_role_edit_for_selected();

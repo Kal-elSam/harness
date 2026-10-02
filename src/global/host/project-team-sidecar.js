@@ -18,7 +18,7 @@ import {
   MAIN_VIEW_LIMIT, QUALIFICATION, compareAnalystRows, recommendationQualifies
 } from "../conversation/analyst-qualification.js";
 import { computeProjectProfile } from "../conversation/project-profile.js";
-import { createConversationService } from "../conversation/service.js";
+import { createConversationService, forAnalyzePreflightNotice } from "../conversation/service.js";
 
 /** Short provider labels for compact absence notices — never invent causes. */
 const PROVIDER_PICKER_LABELS = Object.freeze({
@@ -543,11 +543,17 @@ export async function preflightProjectTeam({
     exclusionCauses,
     // Additive (T23): subscriptions whose access could not be verified — the
     // picker must say so, a partial comparison is never presented as complete.
+    // Analyze notice contract: Cursor stays in exclusionCauses (`d`) and in
+    // routing, but Cursor pool noise stays out of the verify modal counts.
     unverifiedSubscriptions: exclusionCauses
-      .filter((row) => row.cause === "access_unknown")
+      .filter((row) => row.cause === "access_unknown" && row.adapterId !== "cursor")
       .map(({ adapterId, provider, models, reason }) => ({ adapterId, provider, models, reason })),
-    // Additive (T23): the concrete, never-executed verification plan.
-    verificationPlan: toSerializable(preflight.verificationPlan) ?? EMPTY_VERIFICATION_PLAN
+    // Additive (T23): the concrete, never-executed verification plan —
+    // Claude-facing for analyze UI; full plan (incl. Cursor) remains on the
+    // service snapshot for Settings / verifyAccess.
+    verificationPlan: forAnalyzePreflightNotice(
+      toSerializable(preflight.verificationPlan) ?? EMPTY_VERIFICATION_PLAN
+    )
   };
 }
 

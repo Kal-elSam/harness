@@ -18,6 +18,45 @@ export const ROLE_CAPABILITY_BLURB = {
 
 const OVERRIDE_DECISION_TEXT = "Manual override — not the automatic ranking's own pick.";
 
+const PROVIDER_LABEL = Object.freeze({
+  claude: "Claude",
+  codex: "Codex",
+  cursor: "Cursor",
+  "opencode-go": "OpenCode Go",
+  "opencode-zen": "OpenCode Zen",
+  opencode: "OpenCode",
+  pi: "Pi"
+});
+
+const BLOCK_CAUSE_ES = Object.freeze({
+  model_cap: "límite de concentración del modelo",
+  provider_cap: "límite técnico del proveedor",
+  reviewer_independence: "independencia Builder/Reviewer"
+});
+
+/**
+ * Compact "Descartados" lines for one role from selection.evaluated —
+ * only peers blocked by a concentration cause. Never invents quota/billing.
+ * @param {{evaluated?: Array<{adapterId?: string, modelId?: string, blockedBy?: string|null}>}|null|undefined} selection
+ * @returns {string[]}
+ */
+export function formatDiscardedAlternatives(selection) {
+  const evaluated = Array.isArray(selection?.evaluated) ? selection.evaluated : [];
+  const lines = [];
+  const seen = new Set();
+  for (const row of evaluated) {
+    if (!row?.blockedBy) continue;
+    const cause = BLOCK_CAUSE_ES[row.blockedBy] ?? row.blockedBy;
+    const provider = PROVIDER_LABEL[row.adapterId] ?? String(row.adapterId ?? "provider");
+    const model = row.modelId ?? "modelo";
+    const line = `${provider} · ${model} — ${cause}`;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    lines.push(line);
+  }
+  return lines;
+}
+
 /**
  * Pure, human-readable why for one team assignment — from real
  * `reason` / `decisionEvidence` only, never invented metrics.

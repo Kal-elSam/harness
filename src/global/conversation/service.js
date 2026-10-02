@@ -112,6 +112,53 @@ export function buildUnverifiedClaudePreflightNotice(count) {
   return `${n} modelos de Claude tienen acceso sin verificar — solo están disponibles para selección manual y pueden requerir créditos extra. Corré /models --verify-access para verificar (los que tu plan deniega cuestan $0; los permitidos, alrededor de un centavo cada uno).`;
 }
 
+/**
+ * Count Claude UNVERIFIED entries that still warrant an analyze nag —
+ * never-verified or stale. Recent cached UNVERIFIED (reusable under the
+ * verify-once TTL) must not re-open the notice.
+ * @param {Record<string, {status?: string, probedAt?: string|null, reason?: string|null}>} claudeEntitlement
+ * @returns {number}
+ */
+export function countNaggingUnverifiedClaudeModels(claudeEntitlement = {}) {
+  let count = 0;
+  for (const entry of Object.values(claudeEntitlement ?? {})) {
+    if (entry?.status !== ENTITLEMENT.UNVERIFIED) continue;
+    const view = verificationCheckState(entry, ENTITLEMENT.UNVERIFIED);
+    if (view.state === "pending") count += 1;
+  }
+  return count;
+}
+
+/**
+ * Analyze preflight UI contract: Cursor stays in routing/eligibility and in
+ * the full snapshot plan (Settings / verifyAccess), but Cursor pool checks
+ * must not appear in the analyze verify modal ("2 pool checks" noise).
+ * @param {{pendingCount?: number, reusableCount?: number, mayConsumeQuota?: boolean, costStatement?: string|null, subscriptions?: Array<object>}|null|undefined} plan
+ */
+export function forAnalyzePreflightNotice(plan) {
+  if (!plan || typeof plan !== "object") return { ...EMPTY_VERIFICATION_PLAN };
+  const subscriptions = Array.isArray(plan.subscriptions)
+    ? plan.subscriptions.filter((sub) => sub?.adapterId !== "cursor")
+    : [];
+  const pendingCount = subscriptions.reduce(
+    (sum, sub) => sum + (Number(sub.pendingCount) || 0),
+    0
+  );
+  const reusableCount = subscriptions.reduce(
+    (sum, sub) => sum + (Number(sub.reusableCount) || 0),
+    0
+  );
+  return {
+    pendingCount,
+    reusableCount,
+    mayConsumeQuota: pendingCount > 0,
+    subscriptions,
+    costStatement: pendingCount > 0
+      ? `Verifying makes ${pendingCount} real provider call${pendingCount === 1 ? "" : "s"} and may consume quota or account credit.`
+      : null
+  };
+}
+
 function isPersistableEntitlementStatus(status) {
   return status === ENTITLEMENT.ALLOWED
     || status === ENTITLEMENT.DENIED
@@ -1357,9 +1404,7 @@ export function createConversationService(deps = {}) {
       } = snap.modelIntelligence ?? {};
       const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement, cursorAccess };
       const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, deniedScoredPool, unscoredModels: analystUnscoredModels });
-      const unverifiedCount = Object.values(claudeEntitlement).filter(
-        (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
-      ).length;
+      const unverifiedCount = countNaggingUnverifiedClaudeModels(claudeEntitlement);
       const unverifiedClaudeNotice = unverifiedCount > 0
         ? buildUnverifiedClaudePreflightNotice(unverifiedCount)
         : null;

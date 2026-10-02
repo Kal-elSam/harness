@@ -23,9 +23,9 @@ Follow-up: merge null-auth preserves max cache (`subscriptionTypeMatches` on wri
 - **`buildUnverifiedClaudePreflightNotice` still counts cached UNVERIFIED.** Round 2 filters the analyze notice (Cursor out of notice; unverified-recent should not nag).
 
 ## Round 2 (in progress)
-- Draft exclusions (`Descartados` + causes) per role.
-- Filter Cursor probe noise out of analyze preflight notice (routing unchanged).
-- Tighten unverified notice so recent cached UNVERIFIED does not re-nag.
+- [x] Draft exclusions (`Descartados` + causes) per role — `formatDiscardedAlternatives` → workspace snapshot → Rust Project proposal table.
+- [x] Filter Cursor probe noise out of analyze preflight notice (routing unchanged) — `forAnalyzePreflightNotice` strips Cursor from analyze UI plan / `unverifiedSubscriptions`; full plan stays on snapshot for Settings/`verifyAccess`.
+- [x] Tighten unverified notice so recent cached UNVERIFIED does not re-nag — `countNaggingUnverifiedClaudeModels` (pending only).
 
 ## Round 3+ (pending)
 - Claude sweep speed (after blame on `never Promise.all`).

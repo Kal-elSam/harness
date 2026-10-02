@@ -258,3 +258,10 @@ Branch/worktree: `feat/kairo-startup-analyst-team` @ `agentic-harness-worktrees/
 - Draft exclusions (T4 / team-selection-evidence).
 - Cursor out of analyze notice (product decision locked: stays in routing, leaves notice).
 - Claude speed (blame `never Promise.all` first).
+
+## Analyze journey polish — round 2 (2026-10-02)
+
+- [x] `formatDiscardedAlternatives` + snapshot `discarded` + Rust `SidebarAgent.discarded` / Project `Descartados:` render.
+- [x] `forAnalyzePreflightNotice`: Cursor pools omitted from analyze verify modal plan + `unverifiedSubscriptions` (exclusionCauses/`d` still list Cursor).
+- [x] `countNaggingUnverifiedClaudeModels`: recent reusable UNVERIFIED does not set `unverifiedClaudeNotice`.
+- Checks (observed): focused Node (discarded / picker-verified / conversation notice / access-verification / sidecar) + `cargo test` kairo-ui after compile fix.

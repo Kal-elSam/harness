@@ -140,6 +140,18 @@ fn map_agent(entry: &Value) -> SidebarAgent {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+    let discarded = entry
+        .get("discarded")
+        .and_then(|v| v.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     SidebarAgent {
         label,
         detail,
@@ -147,6 +159,7 @@ fn map_agent(entry: &Value) -> SidebarAgent {
         cause,
         why,
         availability,
+        discarded,
     }
 }
 
@@ -840,6 +853,7 @@ mod tests {
                 cause: BlockCause::Unavailable,
                 why: None,
                 availability: None,
+                discarded: vec![],
             })
             .collect();
         let attention = blocked_team_attention(&agents).expect("CTA");
