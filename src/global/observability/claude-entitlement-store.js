@@ -10,6 +10,8 @@ import { writeAtomicJson } from "../runtime/write-atomic-json.js";
 import { ENTITLEMENT } from "./claude-model-entitlement.js";
 
 export const DEFAULT_ENTITLEMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Short TTL for UNVERIFIED probe attempts — avoids re-probing on every analyze. */
+export const DEFAULT_UNVERIFIED_ENTITLEMENT_TTL_MS = 60 * 60 * 1000;
 
 function ageLabel(fetchedAtIso, nowMs = Date.now()) {
   const fetchedAt = new Date(fetchedAtIso ?? "").getTime();
@@ -21,7 +23,22 @@ function ageLabel(fetchedAtIso, nowMs = Date.now()) {
 }
 
 function isPersistableStatus(status) {
-  return status === ENTITLEMENT.ALLOWED || status === ENTITLEMENT.DENIED;
+  return status === ENTITLEMENT.ALLOWED
+    || status === ENTITLEMENT.DENIED
+    || status === ENTITLEMENT.UNVERIFIED;
+}
+
+function subscriptionTypeMatches(cache, subscriptionType) {
+  if (!cache) return false;
+  const cached = cache.subscriptionType ?? null;
+  const current = subscriptionType ?? null;
+  if (cached === current) return true;
+  // A transient null auth read must not wipe a real cached sweep.
+  return current === null;
+}
+
+function ttlForStatus(status, { ttlMs, unverifiedTtlMs }) {
+  return status === ENTITLEMENT.UNVERIFIED ? unverifiedTtlMs : ttlMs;
 }
 
 function emptyDoc(subscriptionType, fetchedAt = new Date().toISOString()) {
@@ -82,11 +99,12 @@ export function resolveClaudeEntitlements({
   subscriptionType,
   catalogIds = [],
   now = Date.now(),
-  ttlMs = DEFAULT_ENTITLEMENT_TTL_MS
+  ttlMs = DEFAULT_ENTITLEMENT_TTL_MS,
+  unverifiedTtlMs = DEFAULT_UNVERIFIED_ENTITLEMENT_TTL_MS
 } = {}) {
   const usable = cache
     && typeof cache === "object"
-    && cache.subscriptionType === subscriptionType
+    && subscriptionTypeMatches(cache, subscriptionType)
     && cache.models
     && typeof cache.models === "object"
     ? cache
@@ -106,10 +124,11 @@ export function resolveClaudeEntitlements({
     }
 
     const probedAtMs = new Date(entry.probedAt ?? "").getTime();
-    if (!Number.isFinite(probedAtMs) || now - probedAtMs > ttlMs) {
+    const entryTtl = ttlForStatus(entry.status, { ttlMs, unverifiedTtlMs });
+    if (!Number.isFinite(probedAtMs) || now - probedAtMs > entryTtl) {
       resolved[modelId] = {
         status: ENTITLEMENT.UNVERIFIED,
-        reason: null,
+        reason: entry.probedAt ? "stale" : null,
         age: ageLabel(entry.probedAt, now),
         probedAt: entry.probedAt ?? null
       };
@@ -149,7 +168,8 @@ export function mergeEntitlementResults(cache, { subscriptionType, results = [] 
   let newestProbedAt = base.fetchedAt;
   for (const result of results) {
     if (!result || typeof result.modelId !== "string") continue;
-    if (result.status === "unknown" || !isPersistableStatus(result.status)) continue;
+    if (result.status === "unknown") continue;
+    if (!isPersistableStatus(result.status)) continue;
     const probedAt = typeof result.probedAt === "string"
       ? result.probedAt
       : new Date().toISOString();

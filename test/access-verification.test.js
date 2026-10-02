@@ -99,7 +99,7 @@ test("fresh cached Cursor evidence is reused as-is: no probe, real status projec
 
 test("stale cached Cursor evidence is unverified with reason 'stale', never allowed, and never probed on discovery", async () => {
   const { service, calls } = harness({
-    cursorCache: cursorCacheDoc({ cursor_models: { status: "available", reason: null, probedAt: STALE } })
+    cursorCache: cursorCacheDoc({ cursor_models: { status: "available", reason: null, probedAt: VERY_STALE } })
   });
   const snap = await service.snapshot({ cwd: "/repo" });
   assert.equal(snap.modelIntelligence.cursorAccess.cursor_models.status, "unverified");
@@ -215,9 +215,46 @@ test("verifyAccess reports denied and unverified-with-real-reason per subscripti
   ]);
   const cursor = result.outcomes.find((o) => o.adapterId === "cursor");
   assert.ok(cursor.results.every((r) => r.status === "unverified" && r.reason === "login required"));
-  assert.equal(writes.cursor.length, 0, "an unverified Cursor result is never persisted");
+  assert.equal(writes.cursor.length, 1, "unverified Cursor attempts are persisted with a short TTL");
   assert.equal(writes.claude.length, 1);
-  assert.deepEqual(Object.keys(writes.claude[0].models), ["claude-a"], "only the real denied result reaches the cache");
+  assert.deepEqual(Object.keys(writes.claude[0].models).sort(), ["claude-a", "claude-b"], "denied and unverified attempts both reach the cache");
+});
+
+test("after an all-unverified sweep the next planAccessVerification has pendingCount 0 until TTL expires", async () => {
+  let claudeCache = null;
+  const stateful = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    now: () => NOW,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => claudeCache,
+    writeClaudeEntitlementCache: async (_home, doc) => { claudeCache = doc; },
+    readCursorAccessCache: async () => null,
+    writeCursorAccessCache: async () => {},
+    readCodexModels: async () => ({ status: "measured", models: [] }),
+    readClaudeModels: () => ({ status: "documented", models: [{ id: "claude-a", displayName: "Claude A" }] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    probeClaudeModelEntitlements: async ({ modelIds }) => modelIds.map((modelId) => ({
+      modelId, status: ENTITLEMENT.UNVERIFIED, reason: "probe timed out after 30000ms", probedAt: iso(0)
+    })),
+    probeCursorPoolAccess: async () => ({ pool: "cursor_models", status: "unverified", reason: "timeout", probedAt: iso(0) }),
+    readArtificialAnalysisModels: async () => AA,
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => []
+  });
+  assert.equal((await stateful.planAccessVerification({ cwd: "/repo" })).pendingCount, 1);
+  await stateful.verifyAccess({ cwd: "/repo", confirmed: true });
+  const after = await stateful.planAccessVerification({ cwd: "/repo" });
+  assert.equal(after.pendingCount, 0, "recent unverified attempts are reused, not re-probed");
+  assert.equal(after.mayConsumeQuota, false);
 });
 
 test("verifyAccess turns a thrown probe into unverified with the real reason and keeps going", async () => {

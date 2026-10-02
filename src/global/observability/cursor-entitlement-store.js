@@ -12,11 +12,10 @@ import { harnessHomePaths } from "../paths.js";
 import { writeAtomicJson } from "../runtime/write-atomic-json.js";
 import { CURSOR_ACCESS_STATUS } from "./cursor-entitlement.js";
 
-// A real probe spawns a genuine cursor-agent process — 15 minutes keeps
-// every refresh/poll tick from re-spawning one, while still being short
-// enough that a real quota recovery (a new billing period, an upgrade)
-// surfaces again soon without ever needing a restart.
-export const DEFAULT_CURSOR_ACCESS_TTL_MS = 15 * 60 * 1000;
+// Real AVAILABLE/EXHAUSTED evidence — long enough to avoid re-probing every analyze.
+export const DEFAULT_CURSOR_ACCESS_TTL_MS = 6 * 60 * 60 * 1000;
+/** Short TTL for UNVERIFIED probe attempts (timeouts, auth noise). */
+export const DEFAULT_UNVERIFIED_CURSOR_ACCESS_TTL_MS = 60 * 60 * 1000;
 
 function ageLabel(fetchedAtIso, nowMs = Date.now()) {
   const fetchedAt = new Date(fetchedAtIso ?? "").getTime();
@@ -28,7 +27,13 @@ function ageLabel(fetchedAtIso, nowMs = Date.now()) {
 }
 
 function isPersistableStatus(status) {
-  return status === CURSOR_ACCESS_STATUS.AVAILABLE || status === CURSOR_ACCESS_STATUS.EXHAUSTED;
+  return status === CURSOR_ACCESS_STATUS.AVAILABLE
+    || status === CURSOR_ACCESS_STATUS.EXHAUSTED
+    || status === CURSOR_ACCESS_STATUS.UNVERIFIED;
+}
+
+function ttlForStatus(status, { ttlMs, unverifiedTtlMs }) {
+  return status === CURSOR_ACCESS_STATUS.UNVERIFIED ? unverifiedTtlMs : ttlMs;
 }
 
 function emptyDoc(fetchedAt = new Date().toISOString()) {
@@ -72,22 +77,33 @@ export async function writeCursorAccessCache(homeDir, doc, deps = {}) {
  * @param {{cache: object|null, pool: string, now?: number, ttlMs?: number}} options
  * @returns {{status: string, reason: string|null, age: string|null, probedAt: string|null}}
  */
-export function resolveCursorPoolAccess({ cache, pool, now = Date.now(), ttlMs = DEFAULT_CURSOR_ACCESS_TTL_MS } = {}) {
+export function resolveCursorPoolAccess({
+  cache,
+  pool,
+  now = Date.now(),
+  ttlMs = DEFAULT_CURSOR_ACCESS_TTL_MS,
+  unverifiedTtlMs = DEFAULT_UNVERIFIED_CURSOR_ACCESS_TTL_MS
+} = {}) {
   const entry = cache?.pools?.[pool] ?? null;
   if (!entry || !isPersistableStatus(entry.status)) {
     return { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null, age: null, probedAt: null };
   }
   const probedAtMs = new Date(entry.probedAt ?? "").getTime();
-  if (!Number.isFinite(probedAtMs) || now - probedAtMs > ttlMs) {
-    return { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null, age: ageLabel(entry.probedAt, now), probedAt: entry.probedAt ?? null };
+  const entryTtl = ttlForStatus(entry.status, { ttlMs, unverifiedTtlMs });
+  if (!Number.isFinite(probedAtMs) || now - probedAtMs > entryTtl) {
+    return {
+      status: CURSOR_ACCESS_STATUS.UNVERIFIED,
+      reason: entry.probedAt ? "stale" : null,
+      age: ageLabel(entry.probedAt, now),
+      probedAt: entry.probedAt ?? null
+    };
   }
   return { status: entry.status, reason: entry.reason ?? null, age: ageLabel(entry.probedAt, now), probedAt: entry.probedAt };
 }
 
 /**
- * Merges one fresh probe result into a cache doc. Discards UNVERIFIED —
- * only real AVAILABLE/EXHAUSTED evidence is ever persisted (see this
- * file's own header doc).
+ * Merges one fresh probe result into a cache doc. UNVERIFIED attempts are
+ * persisted with a short TTL so analyze does not re-probe on every open.
  * @param {object|null} cache
  * @param {{pool: string, status: string, reason?: string|null, probedAt?: string}} result
  */

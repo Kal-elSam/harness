@@ -234,3 +234,27 @@ What changed and why (observed): Opus 5 is one of the three distinct models (mai
 - **Checks observed**: `node --test` analyst-picker-views + verified + project-team-sidecar: 76 pass. `cargo test --manifest-path crates/kairo-ui/Cargo.toml`: 290 passed (prior turn). Analyst PTY smoke `KAIRO_PTY_SIZES=100x30 npm run smoke:kairo-ui-analyst-pty`: PASS (flat list, no star/Other, navigated to `gpt-5-6-sol · Codex`, Enter → `project.analyze` with that route + `selectionSource:manual`).
 - **Delivery**: commit `086d43431` (`feat(picker): flat verified analyst list without ranking UI`). Backup `~/.harness/relink-backup/kairo-ui.darwin-arm64.prev4` (sha256 c2fdf18bd7ef5263fa17bae113a0d9927b303893513d2e4e9b7c08f098c86c89 = pre-T26 / T25 binary). Fresh host `dist/kairo-ui/darwin-arm64/kairo-ui` sha256 8c6f46f6d602804d205100d8dfd5e4c3deddd62394aabf5cf62e0ea4c6afe626, `codesign --verify` valid. No push; no real probes.
 - **Human acceptance**: T9/T10/T12/T13/T18 and live-picker acceptance stay OPEN — not marked complete.
+
+## Analyze journey polish — round 1 (steps 1 + 2, 2026-10-02)
+
+Branch/worktree: `feat/kairo-startup-analyst-team` @ `agentic-harness-worktrees/kairo-startup-analyst`. No push.
+
+### Step 1 — Green
+- [x] `conversation-service.test.js`: expect T29 minimal team (`Architect` only, no forced `Explorer`).
+- [x] Regenerated `crates/kairo-ui/fixtures/verify-then-pick.ndjson` (`UPDATE_WIRE_FIXTURE=1`).
+
+### Step 2 — Verify once
+- [x] Persist `UNVERIFIED` probe attempts (Claude + Cursor) with 1h TTL; allowed/denied keep long TTL (Claude 7d, Cursor 6h).
+- [x] `buildAccessVerificationPlan`: recent unverified attempts → `reusable` (no re-probe until TTL).
+- [x] `main.rs`: stop resetting `verification_ran` on every `a`/preflight (Esc skip-verify still clears).
+- [x] Tests: `access-verification`, entitlement stores, `verifyAnalystAccess`, Rust `preflight_with_pending_plan_skips_verify_when_verification_already_ran`.
+
+### Verification (observed 2026-10-02)
+- Focused Node (6 files above): **156 pass, 0 fail**.
+- `cargo test --manifest-path crates/kairo-ui/Cargo.toml`: **296 pass, 0 fail**.
+- Full `pnpm test`: **2395 pass, 4 fail, 5 skip** — failures are legacy T24 ranking/trace tests (`analyst-catalog-evaluation.test.js`, `analyst-ranking-trace.test.js`) vs T26/T27 flat picker; **not introduced by round 1** (separate cleanup).
+
+### Next (round 2+)
+- Draft exclusions (T4 / team-selection-evidence).
+- Cursor out of analyze notice (product decision locked: stays in routing, leaves notice).
+- Claude speed (blame `never Promise.all` first).

@@ -113,7 +113,9 @@ export function buildUnverifiedClaudePreflightNotice(count) {
 }
 
 function isPersistableEntitlementStatus(status) {
-  return status === ENTITLEMENT.ALLOWED || status === ENTITLEMENT.DENIED;
+  return status === ENTITLEMENT.ALLOWED
+    || status === ENTITLEMENT.DENIED
+    || status === ENTITLEMENT.UNVERIFIED;
 }
 
 // Cursor's own real access status (AVAILABLE/EXHAUSTED/UNVERIFIED) uses a
@@ -172,6 +174,33 @@ function evidenceStatusLabel(status) {
   return null;
 }
 
+/** Pending vs reusable for one verification check row (discovery never probes). */
+function verificationCheckState(entry, unverifiedStatus) {
+  const cachedStatus = evidenceStatusLabel(entry?.status);
+  if (cachedStatus) {
+    return {
+      state: "reusable",
+      reason: null,
+      cachedStatus,
+      age: entry.age ?? null
+    };
+  }
+  if (entry?.status === unverifiedStatus && entry.probedAt && entry.reason !== "stale") {
+    return {
+      state: "reusable",
+      reason: null,
+      cachedStatus: null,
+      age: entry.age ?? null
+    };
+  }
+  return {
+    state: "pending",
+    reason: entry?.reason === "stale" ? "stale" : (entry?.probedAt ? "stale" : "never_verified"),
+    cachedStatus: null,
+    age: null
+  };
+}
+
 /**
  * The concrete, never-executed verification plan: which checks are pending
  * per subscription (Claude: one per MODEL; Cursor: one per POOL, never one per
@@ -186,12 +215,13 @@ export function buildAccessVerificationPlan({ eligibility = {}, claudeModels = [
   if (eligibility.claude?.ok === true && claudeModels.length > 0) {
     const checks = claudeModels.map((model) => {
       const entry = claudeEntitlement[model.id] ?? { status: ENTITLEMENT.UNVERIFIED };
-      const cachedStatus = evidenceStatusLabel(entry.status);
+      const view = verificationCheckState(entry, ENTITLEMENT.UNVERIFIED);
       return {
         id: `claude::${model.id}`, kind: "model", modelId: model.id, label: model.displayName ?? model.id,
-        state: cachedStatus ? "reusable" : "pending",
-        reason: cachedStatus ? null : (entry.probedAt ? "stale" : "never_verified"),
-        cachedStatus, age: cachedStatus ? (entry.age ?? null) : null
+        state: view.state,
+        reason: view.reason,
+        cachedStatus: view.cachedStatus,
+        age: view.age
       };
     });
     // Same probe cap the explicit verify path has always honored.
@@ -207,13 +237,14 @@ export function buildAccessVerificationPlan({ eligibility = {}, claudeModels = [
       const representative = byPool[pool][0];
       if (!representative) continue;
       const access = cursorAccess[pool] ?? { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null };
-      const cachedStatus = evidenceStatusLabel(access.status);
+      const view = verificationCheckState(access, CURSOR_ACCESS_STATUS.UNVERIFIED);
       checks.push({
         id: `cursor::${pool}`, kind: "pool", pool, modelId: representative.id, models: byPool[pool].length,
         label: pool === CURSOR_POOL.CURSOR_MODELS ? "Cursor models" : "Other models",
-        state: cachedStatus ? "reusable" : "pending",
-        reason: cachedStatus ? null : (access.reason === "stale" ? "stale" : "never_verified"),
-        cachedStatus, age: cachedStatus ? (access.age ?? null) : null
+        state: view.state,
+        reason: view.reason,
+        cachedStatus: view.cachedStatus,
+        age: view.age
       });
     }
     if (checks.length > 0) subscriptions.push(summarizeSubscription("cursor", "pool", checks));
@@ -1373,7 +1404,11 @@ export function createConversationService(deps = {}) {
       });
       const pendingIds = (refresh
         ? catalogIds
-        : catalogIds.filter((id) => resolved[id]?.status === ENTITLEMENT.UNVERIFIED)
+        : catalogIds.filter((id) => {
+          const entry = resolved[id];
+          return entry?.status === ENTITLEMENT.UNVERIFIED
+            && (!entry.probedAt || entry.reason === "stale");
+        })
       ).slice(0, CLAUDE_ENTITLEMENT_MAX_PROBES);
       const costStatement = buildClaudeEntitlementVerifyCostStatement({ pendingCount: pendingIds.length });
       if (typeof beforeProbe === "function") {
@@ -1535,7 +1570,7 @@ export function createConversationService(deps = {}) {
           results = pending.map((check, index) => {
             const real = probed[index];
             const status = cursorStatusToEntitlement(real?.status);
-            if (status !== ENTITLEMENT.UNVERIFIED) cache = mergeCursorAccessResult(cache, real);
+            if (real?.pool) cache = mergeCursorAccessResult(cache, real);
             return { id: check.id, label: check.label, pool: check.pool, modelId: check.modelId, status, reason: real?.reason ?? null };
           });
           if (cache !== before) {
@@ -1593,7 +1628,7 @@ export function createConversationService(deps = {}) {
           const pool = classifyCursorPool({ id: modelId, displayName: model.displayName });
           const probed = await probeCursorPoolAccessImpl({ pool, modelId, cwd: projectRoot });
           const status = cursorStatusToEntitlement(probed?.status);
-          if (status !== ENTITLEMENT.UNVERIFIED) {
+          if (probed?.pool) {
             const cache = await readCursorAccessCacheImpl(homeDir).catch(() => null);
             await writeCursorAccessCacheImpl(homeDir, mergeCursorAccessResult(cache, probed)).catch(() => {});
           }

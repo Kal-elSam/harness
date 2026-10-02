@@ -142,5 +142,28 @@ test("mergeEntitlementResults drops status unknown and keeps allowed/denied unde
   assert.equal(merged.models["claude-opus-5"].status, ENTITLEMENT.ALLOWED);
   assert.equal(merged.models["claude-fable-5-1"].status, ENTITLEMENT.DENIED);
   assert.equal(merged.models["claude-haiku-4-5"], undefined);
-  assert.equal(merged.models["claude-sonnet-4-6"], undefined);
+  assert.equal(merged.models["claude-sonnet-4-6"].status, ENTITLEMENT.UNVERIFIED);
+});
+
+test("resolveClaudeEntitlements reuses a fresh UNVERIFIED attempt within the short TTL", () => {
+  const probedAt = "2026-09-19T18:00:00.000Z";
+  const cache = {
+    subscriptionType: "pro",
+    fetchedAt: probedAt,
+    models: {
+      "claude-sonnet-4-6": {
+        status: ENTITLEMENT.UNVERIFIED,
+        reason: "timeout",
+        probedAt
+      }
+    }
+  };
+  const resolved = resolveClaudeEntitlements({
+    cache,
+    subscriptionType: "pro",
+    catalogIds: ["claude-sonnet-4-6"],
+    now: Date.parse("2026-09-19T18:30:00.000Z")
+  });
+  assert.equal(resolved["claude-sonnet-4-6"].status, ENTITLEMENT.UNVERIFIED);
+  assert.equal(resolved["claude-sonnet-4-6"].reason, "timeout");
 });

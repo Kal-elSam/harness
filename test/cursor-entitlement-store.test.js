@@ -42,7 +42,7 @@ test("writeCursorAccessCache persists a doc that readCursorAccessCache round-tri
   assert.deepEqual(await readCursorAccessCache(homeDir), onDisk);
 });
 
-test("REGRESSION: resolveCursorPoolAccess is UNVERIFIED with no cache, and expires per-pool after the 15-minute TTL", () => {
+test("REGRESSION: resolveCursorPoolAccess is UNVERIFIED with no cache, and expires per-pool after the configured TTL", () => {
   assert.equal(resolveCursorPoolAccess({ cache: null, pool: CURSOR_POOL.OTHER_MODELS }).status, CURSOR_ACCESS_STATUS.UNVERIFIED);
 
   const probedAt = "2026-09-22T10:00:00.000Z";
@@ -51,7 +51,7 @@ test("REGRESSION: resolveCursorPoolAccess is UNVERIFIED with no cache, and expir
   const fresh = resolveCursorPoolAccess({ cache, pool: CURSOR_POOL.OTHER_MODELS, now: Date.parse("2026-09-22T10:14:00.000Z"), ttlMs: DEFAULT_CURSOR_ACCESS_TTL_MS });
   assert.equal(fresh.status, CURSOR_ACCESS_STATUS.AVAILABLE);
 
-  const stale = resolveCursorPoolAccess({ cache, pool: CURSOR_POOL.OTHER_MODELS, now: Date.parse("2026-09-22T10:15:01.000Z"), ttlMs: DEFAULT_CURSOR_ACCESS_TTL_MS });
+  const stale = resolveCursorPoolAccess({ cache, pool: CURSOR_POOL.OTHER_MODELS, now: Date.parse("2026-09-22T16:00:01.000Z"), ttlMs: DEFAULT_CURSOR_ACCESS_TTL_MS });
   assert.equal(stale.status, CURSOR_ACCESS_STATUS.UNVERIFIED);
 });
 
@@ -68,9 +68,9 @@ test("REGRESSION: an exhausted OTHER_MODELS pool never affects CURSOR_MODELS' ow
   assert.equal(resolveCursorPoolAccess({ cache, pool: CURSOR_POOL.CURSOR_MODELS, now }).status, CURSOR_ACCESS_STATUS.AVAILABLE);
 });
 
-test("mergeCursorAccessResult persists AVAILABLE/EXHAUSTED but discards UNVERIFIED — a transient probe failure never locks out a retry for the whole TTL", () => {
+test("mergeCursorAccessResult persists AVAILABLE/EXHAUSTED and UNVERIFIED attempts", () => {
   const merged = mergeCursorAccessResult(null, { pool: CURSOR_POOL.CURSOR_MODELS, status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: "timeout", probedAt: "2026-09-22T10:00:00.000Z" });
-  assert.equal(merged.pools[CURSOR_POOL.CURSOR_MODELS], undefined);
+  assert.equal(merged.pools[CURSOR_POOL.CURSOR_MODELS].status, CURSOR_ACCESS_STATUS.UNVERIFIED);
 
   const withReal = mergeCursorAccessResult(merged, { pool: CURSOR_POOL.CURSOR_MODELS, status: CURSOR_ACCESS_STATUS.AVAILABLE, reason: null, probedAt: "2026-09-22T10:01:00.000Z" });
   assert.equal(withReal.pools[CURSOR_POOL.CURSOR_MODELS].status, CURSOR_ACCESS_STATUS.AVAILABLE);

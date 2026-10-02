@@ -985,7 +985,6 @@ impl ShellApp {
             Ok(()) => {
                 self.preflight_pending = true;
                 self.view.notice = None;
-                self.verification_ran = false;
                 self.verification_outcome_lines.clear();
                 self.verification_detail_lines.clear();
                 // The modal opens immediately in an explicit loading state.
@@ -3713,6 +3712,24 @@ mod tests {
         assert_eq!(picker.options.len(), 1);
         assert!(picker.causes.is_empty());
         assert_eq!(picker.notice.as_deref(), Some("Claude: cuota agotada"));
+    }
+
+    #[test]
+    fn preflight_with_pending_plan_skips_verify_when_verification_already_ran() {
+        let mut app = ShellApp::new(None);
+        arm_pending_preflight(&mut app);
+        app.verification_ran = true;
+        app.ingest_preflight_record(&json!({
+            "type": "preflight", "ok": true,
+            "analystCatalog": { "models": [
+                { "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt", "displayName": "GPT", "available": true, "recommendationTags": [] }
+            ] },
+            "verificationPlan": {
+                "pendingCount": 2, "reusableCount": 0, "mayConsumeQuota": true,
+                "costStatement": "would verify", "subscriptions": []
+            }
+        }));
+        assert_eq!(app.picker.as_ref().unwrap().phase, PickerPhase::Ready);
     }
 
     #[test]
