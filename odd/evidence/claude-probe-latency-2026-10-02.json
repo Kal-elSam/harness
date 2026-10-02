@@ -1,0 +1,277 @@
+{
+  "startedAt": "2026-10-02T18:57:33.139Z",
+  "finishedAt": "2026-10-02T18:59:32.892Z",
+  "constraints": {
+    "maxProbes": 30,
+    "concurrency": 1,
+    "passes": 2,
+    "timeoutMs": 30000
+  },
+  "catalogStatus": "documented",
+  "modelIds": [
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-4-5",
+    "claude-fable-5-1",
+    "claude-fable-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6"
+  ],
+  "probeCount": 18,
+  "samples": [
+    {
+      "pass": 1,
+      "index": 1,
+      "modelId": "claude-opus-5",
+      "latencyMs": 7783,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:57:40.923Z"
+    },
+    {
+      "pass": 1,
+      "index": 2,
+      "modelId": "claude-sonnet-5",
+      "latencyMs": 7754,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:57:48.676Z"
+    },
+    {
+      "pass": 1,
+      "index": 3,
+      "modelId": "claude-haiku-4-5",
+      "latencyMs": 7906,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:57:56.583Z"
+    },
+    {
+      "pass": 1,
+      "index": 4,
+      "modelId": "claude-fable-5-1",
+      "latencyMs": 4031,
+      "status": "denied",
+      "limit": null,
+      "reason": "Fable 5.1 requires usage credits. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.",
+      "probedAt": "2026-10-02T18:58:00.614Z"
+    },
+    {
+      "pass": 1,
+      "index": 5,
+      "modelId": "claude-fable-5",
+      "latencyMs": 3929,
+      "status": "denied",
+      "limit": null,
+      "reason": "Fable 5 requires usage credits. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.",
+      "probedAt": "2026-10-02T18:58:04.542Z"
+    },
+    {
+      "pass": 1,
+      "index": 6,
+      "modelId": "claude-opus-4-8",
+      "latencyMs": 6040,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:58:10.583Z"
+    },
+    {
+      "pass": 1,
+      "index": 7,
+      "modelId": "claude-opus-4-7",
+      "latencyMs": 8449,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:58:19.031Z"
+    },
+    {
+      "pass": 1,
+      "index": 8,
+      "modelId": "claude-opus-4-6",
+      "latencyMs": 7570,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:58:26.602Z"
+    },
+    {
+      "pass": 1,
+      "index": 9,
+      "modelId": "claude-sonnet-4-6",
+      "latencyMs": 7666,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:58:34.267Z"
+    },
+    {
+      "pass": 2,
+      "index": 10,
+      "modelId": "claude-opus-5",
+      "latencyMs": 7875,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:58:42.142Z"
+    },
+    {
+      "pass": 2,
+      "index": 11,
+      "modelId": "claude-sonnet-5",
+      "latencyMs": 7079,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:58:49.222Z"
+    },
+    {
+      "pass": 2,
+      "index": 12,
+      "modelId": "claude-haiku-4-5",
+      "latencyMs": 14315,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:59:03.537Z"
+    },
+    {
+      "pass": 2,
+      "index": 13,
+      "modelId": "claude-fable-5-1",
+      "latencyMs": 3927,
+      "status": "denied",
+      "limit": null,
+      "reason": "Fable 5.1 requires usage credits. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.",
+      "probedAt": "2026-10-02T18:59:07.465Z"
+    },
+    {
+      "pass": 2,
+      "index": 14,
+      "modelId": "claude-fable-5",
+      "latencyMs": 4990,
+      "status": "denied",
+      "limit": null,
+      "reason": "Fable 5 requires usage credits. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.",
+      "probedAt": "2026-10-02T18:59:12.456Z"
+    },
+    {
+      "pass": 2,
+      "index": 15,
+      "modelId": "claude-opus-4-8",
+      "latencyMs": 5907,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:59:18.364Z"
+    },
+    {
+      "pass": 2,
+      "index": 16,
+      "modelId": "claude-opus-4-7",
+      "latencyMs": 6601,
+      "status": "allowed",
+      "limit": null,
+      "reason": null,
+      "probedAt": "2026-10-02T18:59:24.965Z"
+    },
+    {
+      "pass": 2,
+      "index": 17,
+      "modelId": "claude-opus-4-6",
+      "latencyMs": 3981,
+      "status": "unverified",
+      "limit": "temporary",
+      "reason": "You've hit your session limit · resets 2:30pm (America/Mexico_City)",
+      "probedAt": "2026-10-02T18:59:28.946Z"
+    },
+    {
+      "pass": 2,
+      "index": 18,
+      "modelId": "claude-sonnet-4-6",
+      "latencyMs": 3945,
+      "status": "unverified",
+      "limit": "temporary",
+      "reason": "You've hit your session limit · resets 2:30pm (America/Mexico_City)",
+      "probedAt": "2026-10-02T18:59:32.891Z"
+    }
+  ],
+  "overall": {
+    "n": 18,
+    "min": 3927,
+    "max": 14315,
+    "p50": 6601,
+    "p95": 14315
+  },
+  "byModel": {
+    "claude-opus-5": {
+      "n": 2,
+      "min": 7783,
+      "max": 7875,
+      "p50": 7783,
+      "p95": 7875
+    },
+    "claude-sonnet-5": {
+      "n": 2,
+      "min": 7079,
+      "max": 7754,
+      "p50": 7079,
+      "p95": 7754
+    },
+    "claude-haiku-4-5": {
+      "n": 2,
+      "min": 7906,
+      "max": 14315,
+      "p50": 7906,
+      "p95": 14315
+    },
+    "claude-fable-5-1": {
+      "n": 2,
+      "min": 3927,
+      "max": 4031,
+      "p50": 3927,
+      "p95": 4031
+    },
+    "claude-fable-5": {
+      "n": 2,
+      "min": 3929,
+      "max": 4990,
+      "p50": 3929,
+      "p95": 4990
+    },
+    "claude-opus-4-8": {
+      "n": 2,
+      "min": 5907,
+      "max": 6040,
+      "p50": 5907,
+      "p95": 6040
+    },
+    "claude-opus-4-7": {
+      "n": 2,
+      "min": 6601,
+      "max": 8449,
+      "p50": 6601,
+      "p95": 8449
+    },
+    "claude-opus-4-6": {
+      "n": 2,
+      "min": 3981,
+      "max": 7570,
+      "p50": 3981,
+      "p95": 7570
+    },
+    "claude-sonnet-4-6": {
+      "n": 2,
+      "min": 3945,
+      "max": 7666,
+      "p50": 3945,
+      "p95": 7666
+    }
+  }
+}

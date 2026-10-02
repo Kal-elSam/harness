@@ -56,10 +56,34 @@ Observed (consent + eligibility close): access-verification + analyst-picker-ver
 Ordered plan (concurrency blocked until step 1):
 
 1. **[x] Cherry-pick `b6ed4f938` → `879ff3f`** — 429 → temporary UNVERIFIED (Retry-After TTL), never 7-day DENIED. Merged with Round 1 verify-once (plain UNVERIFIED still persists 1h; `subscriptionTypeMatches` null-auth keep). RED→GREEN: `connections-access-classification.test.js` + fingerprint suite.
-2. **Measure** real probe latency (≈5 runs); record p50/p95 in this ODD.
+2. **[x] Measure** real probe latency — see **Latency evidence** below.
 3. **Concurrency 2** default inside `probeClaudeModelEntitlements`; on 429 stop new launches and finish sequential.
-4. **Timeout** from measured p95 (+ margin), analyze scope only.
+4. **Timeout** from measured p95 (+ margin), analyze scope only → **recommend `20_000` ms** (p95 14315 + margin; still under 30s default for Settings).
 5. **Tests**: max in-flight, stable result order, progress with out-of-order completion, 429 cutover.
+
+### Latency evidence (2026-10-02, user-authorized)
+
+- Script: `scripts/measure-claude-probe-latency.js`
+- Raw: `odd/evidence/claude-probe-latency-2026-10-02.json`
+- Constraints: concurrency **1**, max **30**, **2** sequential passes over documented catalog (9 models) = **18** probes, `timeoutMs=30000`.
+- Wall: ~121s for the whole run.
+- Overall: n=18, min=3927, **p50=6601**, **p95=14315**, max=14315.
+- By model (p50 / p95 ms):
+
+| model | n | p50 | p95 | notes |
+|-------|---|-----|-----|-------|
+| claude-opus-5 | 2 | 7783 | 7875 | allowed |
+| claude-sonnet-5 | 2 | 7079 | 7754 | allowed |
+| claude-haiku-4-5 | 2 | 7906 | 14315 | allowed; pass2 outlier |
+| claude-fable-5-1 | 2 | 3927 | 4031 | denied (credits) |
+| claude-fable-5 | 2 | 3929 | 4990 | denied (credits) |
+| claude-opus-4-8 | 2 | 5907 | 6040 | allowed |
+| claude-opus-4-7 | 2 | 6601 | 8449 | allowed |
+| claude-opus-4-6 | 2 | 3981 | 7570 | pass2 = temporary 429 |
+| claude-sonnet-4-6 | 2 | 3945 | 7666 | pass2 = temporary 429 |
+
+- Observed mid-run: 2× `unverified/temporary` (429) on pass 2 — confirms step 1 is load-bearing before concurrency.
+- Recommended analyze timeout: **20s** (above p95 14.3s with margin). Keep Settings/unscoped at 30s unless measured separately.
 
 ### Blame (`never Promise.all`)
 - Introduced in `df18ced13` (2026-09-19) with INC1 entitlement probe — same commit as `probeClaudeModelEntitlements`.
