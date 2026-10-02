@@ -332,6 +332,14 @@ impl ProviderConnectFlow {
             // Exit 0 without confirmed auth is not a connection.
             self.result = Some(label.unwrap_or("No conectado").into());
             self.error = None;
+        } else if reason == "auth_check_incomplete" {
+            // Login may have succeeded; only retry connections.status.
+            self.result = Some(
+                label
+                    .unwrap_or("Not confirmed — retry the check")
+                    .into(),
+            );
+            self.error = None;
         } else {
             // Cancel/fail must not look like success and must leave the flow usable.
             self.result = Some(
@@ -552,6 +560,21 @@ mod tests {
             "reason": "auth_not_confirmed"
         })));
         assert_eq!(flow.result.as_deref(), Some("No conectado"));
+    }
+
+    #[test]
+    fn auth_check_incomplete_asks_to_retry_status_only() {
+        let mut flow = ProviderConnectFlow::loading();
+        flow.stage = ConnectStage::Connecting;
+        assert!(flow.apply_connect_record(&json!({
+            "ok": false,
+            "outcome": "failed",
+            "reason": "auth_check_incomplete"
+        })));
+        assert_eq!(
+            flow.result.as_deref(),
+            Some("Not confirmed — retry the check")
+        );
     }
 
     #[test]

@@ -68,6 +68,10 @@ test("auth_not_confirmed formats as No conectado", () => {
     "No conectado"
   );
   assert.equal(
+    formatConnectResultLabel({ ok: false, outcome: "failed", reason: "auth_check_incomplete" }),
+    "Not confirmed — retry the check"
+  );
+  assert.equal(
     formatConnectResultLabel({ ok: true, outcome: "connected", reason: "login_completed" }),
     "Connected — refresh inventory to see verified models."
   );

@@ -216,6 +216,10 @@ export function formatConnectResultLabel({ ok, outcome, reason } = {}) {
   if (resolvedReason === "auth_not_confirmed") {
     return "No conectado";
   }
+  if (resolvedReason === "auth_check_incomplete") {
+    // Login may have succeeded; only the cheap status recheck is incomplete.
+    return "Not confirmed — retry the check";
+  }
   if (resolvedOutcome === "cancelled" || resolvedReason === "cancelled") {
     return "Not connected · cancelled";
   }
