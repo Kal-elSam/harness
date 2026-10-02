@@ -25,13 +25,14 @@
 // gets null/null, never a guess. lifecycle is computed from THAT, scoped
 // **per adapter**: a candidate is "superseded" only when a real, strictly
 // newer generation under the exact same lineageKey is ALSO present on the
-// **same adapter** (genuinely accessible on that subscription). Cursor
-// re-exposing Claude Opus 5.5 must never mark Claude's own Opus 5 as
-// superseded — each adapter's catalog is its own generation ladder.
-// Unrecognized lineage, or the newest (or only) generation within a
-// recognized one on that adapter, is "current" or "unknown", never
-// excluded from anything downstream just because its lineage couldn't
-// be determined.
+// **same adapter** with access proof (`allowed` / `not_applicable`). An
+// unverified/denied newer peer (e.g. freshly cataloged Claude Opus 5.5)
+// must not retire an allowed older generation. Cursor re-exposing Claude
+// Opus 5.5 must never mark Claude's own Opus 5 as superseded — each
+// adapter's catalog is its own generation ladder. Unrecognized lineage,
+// or the newest proven (or only) generation within a recognized one on
+// that adapter, is "current" or "unknown", never excluded from anything
+// downstream just because its lineage couldn't be determined.
 
 import { matchArtificialAnalysisScore } from "./model-intelligence.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
@@ -51,7 +52,7 @@ import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
  * @property {"scored"|"partial"|"unscored"} evidenceStatus - "scored": AA matched this exact model AND reports at least one of intelligenceIndex/codingIndex. "partial": AA matched it but both composite indices are null (real match, thin evidence). "unscored": no confident AA match at all. Never role-specific — see this module's own doc for why.
  * @property {string|null} lineageKey - real, recognized model family/lineage (see LINEAGE_PARSERS) — null when the modelId doesn't match any recognized, conservative pattern. Never guessed.
  * @property {number|null} generation - a real, comparable version number within that lineage — null whenever lineageKey is null.
- * @property {"current"|"superseded"|"unknown"} lifecycle - "superseded" only when a real, strictly newer generation under the SAME lineageKey is also present **on the same adapter**; "current" when it's the newest (or only) generation in that adapter's lineage; "unknown" whenever lineageKey is null. An unknown lineage NEVER excludes a candidate from anything downstream. Cross-adapter re-exposures (e.g. Cursor Claude 5.5 vs Claude Claude 5) never supersede each other.
+ * @property {"current"|"superseded"|"unknown"} lifecycle - "superseded" only when a real, strictly newer generation under the SAME lineageKey is also present **on the same adapter** with access proof (`allowed` / `not_applicable`); "current" when it's the newest proven (or only) generation in that adapter's lineage; "unknown" whenever lineageKey is null. An unknown lineage NEVER excludes a candidate from anything downstream. An unverified newer ID must not retire an allowed older peer. Cross-adapter re-exposures (e.g. Cursor Claude 5.5 vs Claude Claude 5) never supersede each other.
  * @property {{inputPerMTok: number, outputPerMTok: number}|null} resourceCost - real, provider-reported cost, when the provider actually reports one (OpenCode Go today) — never estimated or carried over from a different model.
  */
 
@@ -312,29 +313,44 @@ export function resolveLineage(modelId) {
 
 /**
  * Computes each candidate's real "current"/"superseded"/"unknown"
- * lifecycle from lineageKey/generation already resolved onto it —
- * "superseded" only when a real, strictly newer generation under the
- * SAME lineageKey is ALSO present on the **same adapter** (that
- * subscription's own ladder). Cursor re-exposing a newer Claude
- * generation must not retire Claude's native current model. Returns a
- * NEW array (candidates are copied, never mutated in place).
+ * lifecycle from lineageKey/generation already resolved onto it.
+ *
+ * Same-adapter rule: "superseded" when a strictly newer generation under
+ * the SAME lineageKey exists on the SAME adapterId AND that newer peer
+ * has access proof that can retire a sibling (`allowed` or
+ * `not_applicable`). An unverified or denied newer ID (e.g. Claude Opus
+ * 5.5 freshly cataloged with no entitlement probe yet) must NOT retire an
+ * older allowed generation — inventory still lists the new ID as
+ * unverified; the allowed older one stays recommendable.
+ *
+ * Cursor re-exposing a newer Claude generation must not retire Claude's
+ * native current model. Returns a NEW array (candidates are copied, never
+ * mutated in place).
  * @param {Array<ModelCandidateIdentity>} catalog
  * @returns {Array<ModelCandidateIdentity>}
  */
 function applyLifecycle(catalog) {
-  const maxGenerationByAdapterLineage = new Map();
+  const maxProvenGenerationByAdapterLineage = new Map();
   for (const candidate of catalog) {
     if (candidate.lineageKey == null) continue;
+    // Unverified/denied peers are inventory only — they do not prove a
+    // newer generation is actually accessible enough to retire another.
+    if (!AUTOMATIC_ENTITLEMENTS.has(candidate.entitlement)) continue;
     const key = `${candidate.adapterId}\u0000${candidate.lineageKey}`;
-    const current = maxGenerationByAdapterLineage.get(key);
+    const current = maxProvenGenerationByAdapterLineage.get(key);
     if (current == null || candidate.generation > current) {
-      maxGenerationByAdapterLineage.set(key, candidate.generation);
+      maxProvenGenerationByAdapterLineage.set(key, candidate.generation);
     }
   }
   return catalog.map((candidate) => {
     if (candidate.lineageKey == null) return { ...candidate, lifecycle: "unknown" };
-    const max = maxGenerationByAdapterLineage.get(`${candidate.adapterId}\u0000${candidate.lineageKey}`);
-    return { ...candidate, lifecycle: candidate.generation < max ? "superseded" : "current" };
+    const max = maxProvenGenerationByAdapterLineage.get(
+      `${candidate.adapterId}\u0000${candidate.lineageKey}`
+    );
+    if (max != null && candidate.generation < max) {
+      return { ...candidate, lifecycle: "superseded" };
+    }
+    return { ...candidate, lifecycle: "current" };
   });
 }
 

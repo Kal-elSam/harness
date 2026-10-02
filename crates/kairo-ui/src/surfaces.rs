@@ -3241,7 +3241,7 @@ mod tests {
     }
 
     #[test]
-    fn analyst_picker_rows_wrap_their_long_explanations_so_the_whole_reason_is_visible() {
+    fn analyst_picker_list_shows_model_labels_only_not_sidecar_explanations() {
         let area = Rect::new(0, 0, 80, 30);
         let long = "Recomendado para comprender este proyecto (Node.js) y proponer el equipo · destaca en código entre las opciones con evidencia comparable";
         let picker = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(&serde_json::json!({
@@ -3256,8 +3256,9 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        for needle in ["Recomendado para comprender este proyecto", "destaca en código", "Bravo", "También viable"] {
-            assert!(hay.contains(needle), "missing {needle:?} in: {hay}");
+        assert!(hay.contains("Alpha") && hay.contains("Bravo"), "{hay}");
+        for needle in ["Recomendado para comprender este proyecto", "destaca en código", "También viable"] {
+            assert!(!hay.contains(needle), "explanation leaked into list: {needle:?} in {hay}");
         }
     }
 

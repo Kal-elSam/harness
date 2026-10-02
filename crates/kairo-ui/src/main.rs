@@ -4060,8 +4060,12 @@ mod tests {
             "the sidecar's local project scan contextualizes the picker"
         );
         assert!(
-            picker.options.iter().all(|o| o.description().chars().count() > 10),
-            "every row carries its own explanation from the sidecar"
+            picker.options.iter().all(|o| o.description().is_empty() && o.height_at(64) == 1),
+            "picker list is label-only even when the sidecar sends explanations"
+        );
+        assert!(
+            picker.options.iter().all(|o| o.explanation.as_deref().is_some_and(|e| e.chars().count() > 10)),
+            "sidecar still delivers per-row explanation payloads"
         );
 
         handle_picker_key(&mut app, enter());

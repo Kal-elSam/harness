@@ -130,6 +130,12 @@ test("REGRESSION: resolveLineage never treats a real Cursor effort suffix (low/m
 });
 
 test("REGRESSION: Cursor re-exposing Claude Opus/Sonnet 5.5 must not supersede Claude's own Opus/Sonnet 5 on the Claude adapter", () => {
+  const claudeAllowed = {
+    "claude-opus-5": { status: ENTITLEMENT.ALLOWED, reason: null },
+    "claude-sonnet-5": { status: ENTITLEMENT.ALLOWED, reason: null },
+    "claude-haiku-4-5": { status: ENTITLEMENT.ALLOWED, reason: null },
+    "claude-opus-4-8": { status: ENTITLEMENT.ALLOWED, reason: null }
+  };
   const catalog = buildCompleteCandidateCatalog([
     {
       adapterId: "claude",
@@ -148,7 +154,7 @@ test("REGRESSION: Cursor re-exposing Claude Opus/Sonnet 5.5 must not supersede C
         { id: "claude-opus-5-thinking-high", displayName: "Claude Opus 5 Thinking High" }
       ]
     }
-  ], []);
+  ], [], { modelEntitlement: { claude: claudeAllowed } });
   const byKey = Object.fromEntries(catalog.map((c) => [c.candidateKey, c]));
   assert.equal(byKey["claude::claude-opus-5"].lifecycle, "current");
   assert.equal(byKey["claude::claude-sonnet-5"].lifecycle, "current");
@@ -167,22 +173,57 @@ test("REGRESSION: Cursor re-exposing Claude Opus/Sonnet 5.5 must not supersede C
       { adapterId: "cursor", models: catalog.filter((c) => c.adapterId === "cursor").map((c) => ({ id: c.modelId, displayName: c.modelName })) }
     ],
     [],
-    {
-      modelEntitlement: {
-        claude: {
-          "claude-opus-5": { status: ENTITLEMENT.ALLOWED, reason: null },
-          "claude-sonnet-5": { status: ENTITLEMENT.ALLOWED, reason: null },
-          "claude-haiku-4-5": { status: ENTITLEMENT.ALLOWED, reason: null },
-          "claude-opus-4-8": { status: ENTITLEMENT.ALLOWED, reason: null }
-        }
-      }
-    }
+    { modelEntitlement: { claude: claudeAllowed } }
   );
   const pool = buildRecommendationPool(scored, withAccess);
   assert.deepEqual(
     pool.filter((c) => c.adapterId === "claude").map((c) => c.modelId).sort(),
     ["claude-haiku-4-5", "claude-opus-5", "claude-sonnet-5"]
   );
+});
+
+test("REGRESSION: cataloged Claude Opus/Sonnet 5.5 with no entitlement must stay unverified and must not supersede allowed Opus/Sonnet 5", () => {
+  // Completing the inventory with CLI-verified 5.5 IDs must not retire the
+  // allowed 5 generation until a 5.5 peer itself has access proof.
+  const aa = [
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 50, codingIndex: 70 },
+    { slug: "claude-sonnet-5", name: "Claude Sonnet 5", intelligenceIndex: 40, codingIndex: 65 },
+    { slug: "claude-opus-5-5", name: "Claude Opus 5.5", intelligenceIndex: 55, codingIndex: 72 },
+    { slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", intelligenceIndex: 48, codingIndex: 68 }
+  ];
+  const providerCatalogs = [{
+    adapterId: "claude",
+    models: [
+      { id: "claude-opus-5", displayName: "Claude Opus 5" },
+      { id: "claude-sonnet-5", displayName: "Claude Sonnet 5" },
+      { id: "claude-opus-5-5", displayName: "Claude Opus 5.5" },
+      { id: "claude-sonnet-5-5", displayName: "Claude Sonnet 5.5" }
+    ]
+  }];
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, {
+    modelEntitlement: {
+      claude: {
+        "claude-opus-5": { status: ENTITLEMENT.ALLOWED },
+        "claude-sonnet-5": { status: ENTITLEMENT.ALLOWED }
+        // 5.5 deliberately absent → unverified inventory only
+      }
+    }
+  });
+  const byKey = Object.fromEntries(catalog.map((c) => [c.candidateKey, c]));
+  assert.equal(byKey["claude::claude-opus-5-5"].entitlement, ENTITLEMENT.UNVERIFIED);
+  assert.equal(byKey["claude::claude-sonnet-5-5"].entitlement, ENTITLEMENT.UNVERIFIED);
+  assert.equal(byKey["claude::claude-opus-5-5"].lifecycle, "current", "unverified 5.5 stays cataloged as current inventory");
+  assert.equal(byKey["claude::claude-sonnet-5-5"].lifecycle, "current");
+  assert.equal(byKey["claude::claude-opus-5"].lifecycle, "current", "allowed Opus 5 is not retired by unverified 5.5");
+  assert.equal(byKey["claude::claude-sonnet-5"].lifecycle, "current");
+
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const pool = buildRecommendationPool(scoredAll, catalog);
+  const keys = pool.map((c) => c.candidateKey);
+  assert.ok(keys.includes("claude::claude-opus-5"));
+  assert.ok(keys.includes("claude::claude-sonnet-5"));
+  assert.ok(!keys.includes("claude::claude-opus-5-5"), "unverified 5.5 is inventory, not recommendable");
+  assert.ok(!keys.includes("claude::claude-sonnet-5-5"));
 });
 
 test("REGRESSION: a variant suffix never produces a false unknown — a real, genuinely-superseded old generation's Cursor variant must still resolve its true lineage and get marked superseded, exactly like the bare id would", () => {
@@ -224,7 +265,11 @@ test("REGRESSION: resolveLineage also recognizes Cursor's own reordered claude-{
   }, {
     adapterId: "claude",
     models: [{ id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }]
-  }], []);
+  }], [], {
+    modelEntitlement: {
+      claude: { "claude-sonnet-5": { status: ENTITLEMENT.ALLOWED } }
+    }
+  });
   const byId = Object.fromEntries(catalog.map((c) => [c.modelId, c]));
   // Lifecycle is per adapter: Cursor's own ladder retires 4 under 4.6; Claude's
   // Sonnet 5 is not retired by Cursor having an older (or newer) sibling.
@@ -254,7 +299,16 @@ test("buildCompleteCandidateCatalog marks a real, strictly older Claude generati
       { id: "claude-opus-5", displayName: "Claude Opus 5" },
       { id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }
     ]
-  }], []);
+  }], [], {
+    modelEntitlement: {
+      claude: {
+        "claude-opus-4-6": { status: ENTITLEMENT.ALLOWED },
+        "claude-opus-4-8": { status: ENTITLEMENT.ALLOWED },
+        "claude-opus-5": { status: ENTITLEMENT.ALLOWED },
+        "claude-sonnet-5": { status: ENTITLEMENT.ALLOWED }
+      }
+    }
+  });
   const byId = Object.fromEntries(catalog.map((c) => [c.modelId, c]));
   assert.equal(byId["claude-opus-4-6"].lifecycle, "superseded");
   assert.equal(byId["claude-opus-4-8"].lifecycle, "superseded");

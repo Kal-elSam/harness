@@ -78,25 +78,21 @@ impl AnalystOption {
         format!("{} · {}", self.display_name, self.subscription)
     }
 
-    /// Secondary line: the sidecar's own plain-language explanation only,
-    /// never invented and never a number. Flat list (T26) usually has none.
+    /// Secondary line under the model label. Always empty: the picker is a
+    /// flat model list (label only). Sidecar `explanation` may still arrive
+    /// on the option for other surfaces; it is not painted in the list.
     pub fn description(&self) -> String {
-        self.explanation
-            .as_deref()
-            .filter(|e| !e.is_empty())
-            .unwrap_or("")
-            .to_string()
+        String::new()
     }
 
-    /// The explanation wrapped to `width` characters (empty when there is none).
-    pub fn description_lines(&self, width: usize) -> Vec<String> {
-        wrap_words(&self.description(), width)
+    /// Wrapped secondary lines — always empty (see [`Self::description`]).
+    pub fn description_lines(&self, _width: usize) -> Vec<String> {
+        Vec::new()
     }
 
-    /// Lines this option takes in the list at `width`: its label plus the
-    /// wrapped explanation.
-    pub fn height_at(&self, width: usize) -> usize {
-        1 + self.description_lines(width).len()
+    /// Rows in the list for this option (label only → always 1).
+    pub fn height_at(&self, _width: usize) -> usize {
+        1
     }
 }
 
@@ -1250,15 +1246,15 @@ mod tests {
     }
 
     #[test]
-    fn the_row_description_is_the_plain_language_explanation_only() {
+    fn the_picker_list_is_label_only_even_when_sidecar_sends_explanations() {
         let picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
-        assert_eq!(
-            picker.options[0].description(),
-            "razonamiento excelente · código sólido · confianza alta"
+        assert!(
+            picker.options[0].explanation.as_deref().is_some_and(|e| !e.is_empty()),
+            "sidecar still delivers explanation payloads"
         );
-        assert!(!picker.options[0].description().contains("Quality fit"));
-        assert!(!picker.options[0].description().chars().any(|c| c.is_ascii_digit()));
-        // A row without an explanation has no second line, never an invented one.
+        assert_eq!(picker.options[0].description(), "");
+        assert!(picker.options[0].description_lines(64).is_empty());
+        assert_eq!(picker.options[0].height_at(64), 1);
         assert_eq!(picker.options[1].description(), "");
         assert_eq!(picker.options[1].height_at(64), 1);
     }
@@ -1569,18 +1565,16 @@ mod tests {
     }
 
     #[test]
-    fn a_long_explanation_wraps_to_the_modal_width_and_the_row_height_follows() {
+    fn a_long_sidecar_explanation_does_not_inflate_the_list_row() {
         let long = "Recomendado para comprender este proyecto (Node.js) y proponer el equipo · destaca en código entre las opciones con evidencia comparable";
         let picker = AnalystPickerState::from_analyst_catalog(&json!({
             "models": [{ "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "displayName": "B", "available": true, "explanation": long }]
         }));
         let option = &picker.options[0];
-        let lines = option.description_lines(40);
-        assert!(lines.len() >= 3, "{lines:?}");
-        assert!(lines.iter().all(|l| l.chars().count() <= 40), "{lines:?}");
-        assert_eq!(lines.join(" "), long, "wrapping never drops or reorders words");
-        assert_eq!(option.height_at(40), 1 + lines.len());
-        assert_eq!(option.height_at(400), 2, "a wide modal keeps it on one line");
+        assert_eq!(option.explanation.as_deref(), Some(long));
+        assert!(option.description_lines(40).is_empty());
+        assert_eq!(option.height_at(40), 1);
+        assert_eq!(option.height_at(400), 1);
     }
 
     #[test]
