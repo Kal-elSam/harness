@@ -625,8 +625,8 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
   assert.equal(result.status, "suggested");
   assert.equal(result.bootstrapAnalyst.adapterId, "codex");
   assert.equal(result.bootstrapAnalystChoice, "quality");
-  // Explorer (mechanical floor) + Architect (the analyst's own real, evidence-backed finding) must both be active.
-  assert.ok(result.activeRoles.includes("Explorer") && result.activeRoles.includes("Architect"));
+  // T29: analyst-justified roles only — Architect from evidence-backed finding; Explorer floor is not forced alongside.
+  assert.ok(result.activeRoles.includes("Architect") && !result.activeRoles.includes("Explorer"));
   assert.equal(result.orchestrator.adapterId, "claude", "coding-only Architect (from the analyst's real finding) must pick the real coding leader");
   assert.equal(written.status, "suggested", "the suggestion must actually be persisted, not just returned");
   assert.equal(cleanedUp, true, "the sanitized snapshot must always be cleaned up, never left on disk");
@@ -2462,8 +2462,8 @@ test("verifyClaudeEntitlements does not persist evidence when every probe result
   });
 
   const summary = await service.verifyClaudeEntitlements({ cwd: "/repo", refresh: false });
-  assert.equal(writeCalls, 0, "all-unverified sweep must not write the entitlement cache");
-  assert.equal(summary.persisted, false);
+  assert.equal(writeCalls, 1, "all-unverified sweep persists attempts so analyze does not re-probe immediately");
+  assert.equal(summary.persisted, true);
 });
 
 test("preflightProject surfaces the unverified Claude notice when live entitlement has unverified models", async () => {
@@ -2581,7 +2581,7 @@ test("verifyAnalystAccess probes exactly the chosen Claude model on demand and p
   assert.equal(writes.claude.length, 1, "a real result is persisted so the next preflight sees it");
 });
 
-test("verifyAnalystAccess reports UNVERIFIED with the real reason and persists nothing when the probe cannot decide", async () => {
+test("verifyAnalystAccess reports UNVERIFIED with the real reason and persists the attempt when the probe cannot decide", async () => {
   const { service, writes } = accessService({
     probeClaudeModelEntitlements: async ({ modelIds }) => modelIds.map((modelId) => ({
       modelId, status: ENTITLEMENT.UNVERIFIED, reason: "claude entitlement probe timed out after 30000ms", probedAt: new Date().toISOString()
@@ -2590,7 +2590,7 @@ test("verifyAnalystAccess reports UNVERIFIED with the real reason and persists n
   const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "claude-x" } });
   assert.equal(result.status, ENTITLEMENT.UNVERIFIED);
   assert.match(result.reason, /timed out/);
-  assert.equal(writes.claude.length, 0);
+  assert.equal(writes.claude.length, 1);
 });
 
 test("verifyAnalystAccess turns a thrown probe into UNVERIFIED (never allowed) and a DENIED result stays denied", async () => {
@@ -2631,7 +2631,7 @@ test("verifyAnalystAccess probes the model's own Cursor pool directly (bypassing
   const u = await unknown.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId: "gpt-5" } });
   assert.equal(u.status, ENTITLEMENT.UNVERIFIED);
   assert.equal(u.reason, "login required");
-  assert.equal(unknown.writes.cursor.length, 0);
+  assert.equal(unknown.writes.cursor.length, 1);
 });
 
 test("verifyAnalystAccess fails closed for an adapter with no on-demand check", async () => {
