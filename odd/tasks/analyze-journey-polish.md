@@ -107,3 +107,40 @@ Ordered plan (concurrency blocked until step 1):
 - [x] Legacy T24 top-three/star ranking tests rewritten for T26/T27 flat list.
 - Evidence: `pnpm test` **2447 pass / 0 fail / 5 skip**; Rust wire fixture updated for Claude.
 - Evidence commit: `cad96b8ea` — concurrency 2 + analyze 20s timeout + tests (superseded abort behavior in follow-up commit).
+
+## T12 — Push + local `kairo` retarget (2026-10-02)
+
+### Push (backup, no PR)
+- Remote: `origin/feat/kairo-startup-analyst-team` = local `966280216`
+- Verified: `git ls-remote origin refs/heads/feat/kairo-startup-analyst-team`
+
+### Retarget
+- **Previous target (backup):** `~/.local/lib/node_modules/@kal-elsam/kairo-runtime` → `../../../../Desktop/agentic-harness-worktrees/kairo-plan1-baseline`
+- **Build:** `pnpm build:kairo-ui` in worktree → `dist/kairo-ui/darwin-arm64/kairo-ui` (Mach-O arm64, ~1.7M)
+- **Active now:** same link → `../../../../Desktop/agentic-harness-worktrees/kairo-startup-analyst`
+- **Check:** `readlink -f $(which kairo)` → `…/kairo-startup-analyst/bin/kairo.js`; `kairo --version` → `0.35.1`
+
+### Rollback (one command)
+```bash
+ln -sfn ../../../../Desktop/agentic-harness-worktrees/kairo-plan1-baseline ~/.local/lib/node_modules/@kal-elsam/kairo-runtime
+```
+Smoke-tested 2026-10-02: retarget → rollback → re-apply; both `readlink -f $(which kairo)` paths matched.
+
+### Re-apply after rollback
+```bash
+ln -sfn ../../../../Desktop/agentic-harness-worktrees/kairo-startup-analyst ~/.local/lib/node_modules/@kal-elsam/kairo-runtime
+```
+
+## T12/T13 — Real terminal acceptance (pending user drive)
+
+Run in a **real project** (not the harness), then paste screenshot/copy + `~/.harness` cache before/after.
+
+| # | Action | Expected | Evidence |
+|---|--------|----------|----------|
+| A | `kairo ui` → `a` (analyze) | Modal without Cursor lines; “N calls” Claude-only; live progress i/N; concurrency 2; ≤~1 min | |
+| B | Pick analyst + analyze | Draft per role; Descartados with real causes | |
+| C | `a` again immediately | No Verify screen (verify-once) | |
+| D | If 429 appears | Sweep stops; remaining “skipped after rate limit”; not DENIED 7d | |
+| E | Settings → Providers | Cursor still verifiable (note if `auth_check_incomplete` from baseline) | |
+
+Caches to snapshot: `~/.harness/**/claude-entitlement*`, `~/.harness/**/cursor-access*` (exact paths as on disk).
