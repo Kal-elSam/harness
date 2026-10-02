@@ -146,20 +146,23 @@ export function resolveClaudeEntitlements({
 }
 
 /**
- * Merge fresh probe results into a cache doc. Discards status "unknown"
- * (and unverified) — only allowed/denied evidence is persisted.
+ * Merge fresh probe results into a cache doc. Persists allowed, denied, and
+ * unverified attempts (unverified uses a short TTL at resolve time). Discards
+ * status "unknown". A transient null subscriptionType keeps the existing
+ * cache account type and models — same tolerance as resolveClaudeEntitlements.
  *
  * @param {object|null} cache
  * @param {{ subscriptionType: string|null, catalogIds?: string[], results: Array<{ modelId: string, status: string, reason?: string|null, probedAt?: string }> }} payload
  */
 export function mergeEntitlementResults(cache, { subscriptionType, results = [] } = {}) {
-  const base = cache
+  const keepCache = cache
     && typeof cache === "object"
-    && cache.subscriptionType === subscriptionType
+    && subscriptionTypeMatches(cache, subscriptionType)
     && cache.models
-    && typeof cache.models === "object"
+    && typeof cache.models === "object";
+  const base = keepCache
     ? {
-      subscriptionType: cache.subscriptionType,
+      subscriptionType: cache.subscriptionType ?? null,
       fetchedAt: cache.fetchedAt,
       models: { ...cache.models }
     }
@@ -182,6 +185,7 @@ export function mergeEntitlementResults(cache, { subscriptionType, results = [] 
   }
 
   base.fetchedAt = newestProbedAt ?? new Date().toISOString();
-  base.subscriptionType = subscriptionType ?? null;
+  // Preserve the known account type when auth briefly returns null.
+  base.subscriptionType = subscriptionType ?? base.subscriptionType ?? null;
   return base;
 }

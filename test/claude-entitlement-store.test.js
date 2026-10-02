@@ -145,6 +145,38 @@ test("mergeEntitlementResults drops status unknown and keeps allowed/denied unde
   assert.equal(merged.models["claude-sonnet-4-6"].status, ENTITLEMENT.UNVERIFIED);
 });
 
+test("REGRESSION: mergeEntitlementResults with null subscriptionType keeps a real max cache (models + type)", () => {
+  const cache = {
+    subscriptionType: "max",
+    fetchedAt: "2026-09-19T10:00:00.000Z",
+    models: {
+      "claude-opus-5": {
+        status: ENTITLEMENT.ALLOWED,
+        reason: null,
+        probedAt: "2026-09-19T10:00:00.000Z"
+      },
+      "claude-haiku-4-5": {
+        status: ENTITLEMENT.DENIED,
+        reason: "credits_required",
+        probedAt: "2026-09-19T10:00:00.000Z"
+      }
+    }
+  };
+  const merged = mergeEntitlementResults(cache, {
+    subscriptionType: null,
+    results: [{
+      modelId: "claude-sonnet-4-6",
+      status: ENTITLEMENT.UNVERIFIED,
+      reason: "timeout",
+      probedAt: "2026-09-19T18:00:00.000Z"
+    }]
+  });
+  assert.equal(merged.subscriptionType, "max", "transient null auth must not rewrite the cached account type");
+  assert.equal(merged.models["claude-opus-5"].status, ENTITLEMENT.ALLOWED, "7-day allowed evidence must survive");
+  assert.equal(merged.models["claude-haiku-4-5"].status, ENTITLEMENT.DENIED, "7-day denied evidence must survive");
+  assert.equal(merged.models["claude-sonnet-4-6"].status, ENTITLEMENT.UNVERIFIED);
+});
+
 test("resolveClaudeEntitlements reuses a fresh UNVERIFIED attempt within the short TTL", () => {
   const probedAt = "2026-09-19T18:00:00.000Z";
   const cache = {
