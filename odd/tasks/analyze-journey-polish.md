@@ -53,16 +53,24 @@ Observed (consent + eligibility close): access-verification + analyst-picker-ver
 
 ## Round 3 — Claude sweep speed (in progress)
 
+Ordered plan (concurrency blocked until step 1):
+
+1. **Cherry-pick `b6ed4f938`** — 429 → temporary UNVERIFIED (short TTL), never 7-day DENIED. RED tests in `connections-access-classification.test.js` first.
+2. **Measure** real probe latency (≈5 runs); record p50/p95 in this ODD.
+3. **Concurrency 2** default inside `probeClaudeModelEntitlements`; on 429 stop new launches and finish sequential.
+4. **Timeout** from measured p95 (+ margin), analyze scope only.
+5. **Tests**: max in-flight, stable result order, progress with out-of-order completion, 429 cutover.
+
 ### Blame (`never Promise.all`)
 - Introduced in `df18ced13` (2026-09-19) with INC1 entitlement probe — same commit as `probeClaudeModelEntitlements`.
 - ODD constraint in `odd/tasks/claude-model-entitlement.md`: **“Probes sequential, never Promise.all”** — policy choice at feature birth, not a discovered CLI lock/mutex.
 - Implementation: independent `spawn("claude", …)` per model; default `timeoutMs = 30_000`, `maxProbes = 12` → worst case ~6 min sequential.
 - No process-wide lock in this module. Cursor pool probes already use `Promise.all` in `verifyAccess`.
-- Real risks if parallelized: Anthropic 429/overload (classified DENIED for some statuses), concurrent CLI load, cost of N allowed probes (~1¢ each) firing together.
+- Real risks if parallelized: Anthropic 429/overload (today cached as DENIED 7d — **blocking**, fixed by step 1), concurrent CLI load, cost of N allowed probes (~1¢ each) firing together.
 
-### Proposed change (needs go-ahead)
-- Bounded concurrency 2–3 + timeout ~15s for analyze verify sweeps; keep fail-closed classification; update the INC1 sequential test accordingly.
-- Leave unscoped Settings/`--verify-access` policy decision explicit if different.
+### Proposed change (after step 1)
+- Bounded concurrency 2 (conservative) + timeout from measured p95 for analyze verify sweeps; keep fail-closed classification.
+- Leave unscoped Settings/`--verify-access` timeout decision explicit if different.
 
 ## Round 3+ (also pending)
 - README / real-provider acceptance / Settings onboarding (separate ODD).
