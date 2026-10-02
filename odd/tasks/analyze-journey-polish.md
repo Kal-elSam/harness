@@ -154,3 +154,10 @@ Observed in `@kal-elsam/kairo-runtime`: flat list had **Claude Haiku 4.5** as th
 **Real filter:** lifecycle is computed on the **cross-adapter** complete catalog. Cursor re-exposes `claude-opus-5-5-*` / `claude-sonnet-5-5-*` (gen **5.5**, same `lineageKey` as Claude’s `claude-opus-5` / `claude-sonnet-5` gen **5**), so native Claude Opus/Sonnet 5 are marked **`superseded`** and drop out of selection pools. Haiku has no newer Cursor sibling → stays `current`. Cursor’s own 5.5 rows then stay out because `other_models` is **exhausted**. Net: only Haiku from Claude.
 
 Product question (not fixed yet): should supersession be **per adapter**, or ignore Cursor re-exposures when that Cursor pool is exhausted?
+
+### Fix (2026-10-02) — supersession is per adapter
+- `applyLifecycle` now keys max generation by `(adapterId, lineageKey)`.
+- Claude Opus 5 / Sonnet 5 stay `current` even when Cursor lists Opus/Sonnet 5.5.
+- Within an adapter, older gens still retire (Claude Opus 4.8 under Opus 5; Cursor Opus 5 under 5.5).
+- Live preflight after fix: Claude picker rows = `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`.
+- Restart `kairo ui` (JS change; no UI rebuild required).

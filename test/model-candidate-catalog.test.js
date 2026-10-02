@@ -129,6 +129,62 @@ test("REGRESSION: resolveLineage never treats a real Cursor effort suffix (low/m
   assert.equal(byId["gpt-5.4-low"].lifecycle, "current");
 });
 
+test("REGRESSION: Cursor re-exposing Claude Opus/Sonnet 5.5 must not supersede Claude's own Opus/Sonnet 5 on the Claude adapter", () => {
+  const catalog = buildCompleteCandidateCatalog([
+    {
+      adapterId: "claude",
+      models: [
+        { id: "claude-opus-5", displayName: "Claude Opus 5" },
+        { id: "claude-sonnet-5", displayName: "Claude Sonnet 5" },
+        { id: "claude-haiku-4-5", displayName: "Claude Haiku 4.5" },
+        { id: "claude-opus-4-8", displayName: "Claude Opus 4.8" }
+      ]
+    },
+    {
+      adapterId: "cursor",
+      models: [
+        { id: "claude-opus-5-5-high", displayName: "Claude Opus 5.5 High" },
+        { id: "claude-sonnet-5-5-high", displayName: "Claude Sonnet 5.5 High" },
+        { id: "claude-opus-5-thinking-high", displayName: "Claude Opus 5 Thinking High" }
+      ]
+    }
+  ], []);
+  const byKey = Object.fromEntries(catalog.map((c) => [c.candidateKey, c]));
+  assert.equal(byKey["claude::claude-opus-5"].lifecycle, "current");
+  assert.equal(byKey["claude::claude-sonnet-5"].lifecycle, "current");
+  assert.equal(byKey["claude::claude-haiku-4-5"].lifecycle, "current");
+  assert.equal(byKey["claude::claude-opus-4-8"].lifecycle, "superseded", "within Claude, older gens still retire");
+  assert.equal(byKey["cursor::claude-opus-5-5-high"].lifecycle, "current");
+  assert.equal(byKey["cursor::claude-opus-5-thinking-high"].lifecycle, "superseded", "within Cursor, 5 retires under 5.5");
+  const scored = [
+    { adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", intelligenceIndex: 50, codingIndex: 70 },
+    { adapterId: "claude", modelId: "claude-sonnet-5", displayName: "Claude Sonnet 5", intelligenceIndex: 40, codingIndex: 65 },
+    { adapterId: "claude", modelId: "claude-haiku-4-5", displayName: "Claude Haiku 4.5", intelligenceIndex: 15, codingIndex: null }
+  ].map((row) => ({ ...row, slug: row.modelId, name: row.displayName, mathIndex: null }));
+  const withAccess = buildCompleteCandidateCatalog(
+    [
+      { adapterId: "claude", models: catalog.filter((c) => c.adapterId === "claude").map((c) => ({ id: c.modelId, displayName: c.modelName })) },
+      { adapterId: "cursor", models: catalog.filter((c) => c.adapterId === "cursor").map((c) => ({ id: c.modelId, displayName: c.modelName })) }
+    ],
+    [],
+    {
+      modelEntitlement: {
+        claude: {
+          "claude-opus-5": { status: ENTITLEMENT.ALLOWED, reason: null },
+          "claude-sonnet-5": { status: ENTITLEMENT.ALLOWED, reason: null },
+          "claude-haiku-4-5": { status: ENTITLEMENT.ALLOWED, reason: null },
+          "claude-opus-4-8": { status: ENTITLEMENT.ALLOWED, reason: null }
+        }
+      }
+    }
+  );
+  const pool = buildRecommendationPool(scored, withAccess);
+  assert.deepEqual(
+    pool.filter((c) => c.adapterId === "claude").map((c) => c.modelId).sort(),
+    ["claude-haiku-4-5", "claude-opus-5", "claude-sonnet-5"]
+  );
+});
+
 test("REGRESSION: a variant suffix never produces a false unknown — a real, genuinely-superseded old generation's Cursor variant must still resolve its true lineage and get marked superseded, exactly like the bare id would", () => {
   const catalog = buildCompleteCandidateCatalog([{
     adapterId: "cursor",
@@ -170,8 +226,10 @@ test("REGRESSION: resolveLineage also recognizes Cursor's own reordered claude-{
     models: [{ id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }]
   }], []);
   const byId = Object.fromEntries(catalog.map((c) => [c.modelId, c]));
+  // Lifecycle is per adapter: Cursor's own ladder retires 4 under 4.6; Claude's
+  // Sonnet 5 is not retired by Cursor having an older (or newer) sibling.
   assert.equal(byId["claude-4-sonnet"].lifecycle, "superseded");
-  assert.equal(byId["claude-4.6-sonnet-medium"].lifecycle, "superseded");
+  assert.equal(byId["claude-4.6-sonnet-medium"].lifecycle, "current");
   assert.equal(byId["claude-sonnet-5"].lifecycle, "current");
 });
 

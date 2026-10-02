@@ -22,13 +22,16 @@
 //
 // lineageKey/generation are populated only for the recognized, conservative
 // families in LINEAGE_PARSERS (see its own doc) — every other candidate
-// gets null/null, never a guess. lifecycle is computed from THAT: a
-// candidate is "superseded" only when a real, strictly newer generation
-// under the exact same lineageKey is ALSO present in this same catalog
-// (i.e. genuinely accessible, not hypothetical); everything else —
-// unrecognized lineage, or the newest (or only) generation within a
-// recognized one — is "current" or "unknown", never excluded from
-// anything downstream just because its lineage couldn't be determined.
+// gets null/null, never a guess. lifecycle is computed from THAT, scoped
+// **per adapter**: a candidate is "superseded" only when a real, strictly
+// newer generation under the exact same lineageKey is ALSO present on the
+// **same adapter** (genuinely accessible on that subscription). Cursor
+// re-exposing Claude Opus 5.5 must never mark Claude's own Opus 5 as
+// superseded — each adapter's catalog is its own generation ladder.
+// Unrecognized lineage, or the newest (or only) generation within a
+// recognized one on that adapter, is "current" or "unknown", never
+// excluded from anything downstream just because its lineage couldn't
+// be determined.
 
 import { matchArtificialAnalysisScore } from "./model-intelligence.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
@@ -48,7 +51,7 @@ import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
  * @property {"scored"|"partial"|"unscored"} evidenceStatus - "scored": AA matched this exact model AND reports at least one of intelligenceIndex/codingIndex. "partial": AA matched it but both composite indices are null (real match, thin evidence). "unscored": no confident AA match at all. Never role-specific — see this module's own doc for why.
  * @property {string|null} lineageKey - real, recognized model family/lineage (see LINEAGE_PARSERS) — null when the modelId doesn't match any recognized, conservative pattern. Never guessed.
  * @property {number|null} generation - a real, comparable version number within that lineage — null whenever lineageKey is null.
- * @property {"current"|"superseded"|"unknown"} lifecycle - "superseded" only when a real, strictly newer generation under the SAME lineageKey is also present in this catalog; "current" when it's the newest (or only) generation in a recognized lineage; "unknown" whenever lineageKey is null. An unknown lineage NEVER excludes a candidate from anything downstream.
+ * @property {"current"|"superseded"|"unknown"} lifecycle - "superseded" only when a real, strictly newer generation under the SAME lineageKey is also present **on the same adapter**; "current" when it's the newest (or only) generation in that adapter's lineage; "unknown" whenever lineageKey is null. An unknown lineage NEVER excludes a candidate from anything downstream. Cross-adapter re-exposures (e.g. Cursor Claude 5.5 vs Claude Claude 5) never supersede each other.
  * @property {{inputPerMTok: number, outputPerMTok: number}|null} resourceCost - real, provider-reported cost, when the provider actually reports one (OpenCode Go today) — never estimated or carried over from a different model.
  */
 
@@ -311,22 +314,26 @@ export function resolveLineage(modelId) {
  * Computes each candidate's real "current"/"superseded"/"unknown"
  * lifecycle from lineageKey/generation already resolved onto it —
  * "superseded" only when a real, strictly newer generation under the
- * SAME lineageKey is ALSO present in `catalog` (i.e. genuinely
- * accessible right now, not merely a known future release). Returns a
+ * SAME lineageKey is ALSO present on the **same adapter** (that
+ * subscription's own ladder). Cursor re-exposing a newer Claude
+ * generation must not retire Claude's native current model. Returns a
  * NEW array (candidates are copied, never mutated in place).
  * @param {Array<ModelCandidateIdentity>} catalog
  * @returns {Array<ModelCandidateIdentity>}
  */
 function applyLifecycle(catalog) {
-  const maxGenerationByLineage = new Map();
+  const maxGenerationByAdapterLineage = new Map();
   for (const candidate of catalog) {
     if (candidate.lineageKey == null) continue;
-    const current = maxGenerationByLineage.get(candidate.lineageKey);
-    if (current == null || candidate.generation > current) maxGenerationByLineage.set(candidate.lineageKey, candidate.generation);
+    const key = `${candidate.adapterId}\u0000${candidate.lineageKey}`;
+    const current = maxGenerationByAdapterLineage.get(key);
+    if (current == null || candidate.generation > current) {
+      maxGenerationByAdapterLineage.set(key, candidate.generation);
+    }
   }
   return catalog.map((candidate) => {
     if (candidate.lineageKey == null) return { ...candidate, lifecycle: "unknown" };
-    const max = maxGenerationByLineage.get(candidate.lineageKey);
+    const max = maxGenerationByAdapterLineage.get(`${candidate.adapterId}\u0000${candidate.lineageKey}`);
     return { ...candidate, lifecycle: candidate.generation < max ? "superseded" : "current" };
   });
 }
