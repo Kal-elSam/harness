@@ -9,6 +9,9 @@ import { readClaudeModels } from "../observability/claude-models.js";
 import { readCursorAccessCache, resolveCursorPoolAccess } from "../observability/cursor-entitlement-store.js";
 import { CURSOR_POOL } from "../observability/cursor-entitlement.js";
 import { readCachedUsage } from "../host/workspace-cache.js";
+import { STATUS_ARGV } from "./allowlist.js";
+import { parseCursorAuth } from "./parsers.js";
+import { createSpawnRunner, execute } from "./runner.js";
 
 // Quota is account-wide and the usage cache is not identity-bound, so only a
 // recent snapshot is trusted.
@@ -19,6 +22,20 @@ const POOL_LABELS = { [CURSOR_POOL.CURSOR_MODELS]: "Cursor models", [CURSOR_POOL
 function worstRemaining(windows) {
   const values = windows.map((w) => w?.remainingPercent).filter((v) => typeof v === "number" && Number.isFinite(v));
   return values.length > 0 ? Math.min(...values) : null;
+}
+
+/**
+ * Production identity source for the Cursor access writer: ONLY the allowlisted
+ * `cursor-agent status --format json` through the shared runner, parsed by the
+ * existing parser. Any failure or absent field is null (never a guess).
+ */
+export async function readCursorAccountIdentifier({ runner = createSpawnRunner(), timeoutMs = 10_000, signal } = {}) {
+  try {
+    const step = await execute(runner, STATUS_ARGV.cursor.auth, { timeoutMs, signal });
+    return step.kind === "exit" ? (parseCursorAuth(step).identifier ?? null) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function createDefaultReaders({ homeDir, deps = {} } = {}) {
@@ -40,10 +57,14 @@ export function createDefaultReaders({ homeDir, deps = {} } = {}) {
     // models needs `cursor-agent models`, which Kairo never runs from here).
     async cursor({ accountIdentifier = null, now }) {
       const cache = await readCursorAccessCache(homeDir, deps);
-      return Object.values(CURSOR_POOL).map((pool) => ({
-        ...resolveCursorPoolAccess({ cache, pool, now, accountIdentifier }),
-        modelId: pool, label: POOL_LABELS[pool] ?? pool, scope: "pool"
-      }));
+      // A cache with evidence but no fingerprint predates identity-aware writes (or the
+      // account was unidentifiable when it was written): say so instead of a bare unknown.
+      const unidentified = Object.keys(cache?.pools ?? {}).length > 0 && typeof cache.accountFingerprint !== "string";
+      return Object.values(CURSOR_POOL).map((pool) => {
+        const access = resolveCursorPoolAccess({ cache, pool, now, accountIdentifier });
+        const reason = unidentified && access.status === "unverified" ? "cursor_identity_not_recorded" : access.reason;
+        return { ...access, reason, modelId: pool, label: POOL_LABELS[pool] ?? pool, scope: "pool" };
+      });
     }
     // codex / opencode-go: no per-model evidence source exists => no reader.
   };

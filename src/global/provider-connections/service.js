@@ -40,6 +40,9 @@ function failureReason(kind) {
   return "spawn_error";
 }
 
+// Recheck outcomes that say nothing about the login itself (retry only the cheap status check).
+const INCONCLUSIVE_REASONS = new Set(["timeout", "cancelled", "spawn_error", "not_installed"]);
+
 function computePreviewId(providerId, action, argv, expiresAt) {
   return createHash("sha256")
     .update(`kairo-connection-preview-v1\n${providerId}\n${action}\n${JSON.stringify(argv)}\n${expiresAt}`)
@@ -195,14 +198,20 @@ export function createProviderConnections({
     if (step.kind !== "exit") return { outcome: "failed", reason: failureReason(step.kind) };
     if (step.code !== 0) return { outcome: "failed", reason: "exit_nonzero" };
 
-    // T8: exit 0 is NOT success. Re-run status (fresh) and trust only that.
+    // T8: exit 0 is NOT success. A caller that cancelled meanwhile gets cancelled.
+    if (signal?.aborted) return { outcome: "cancelled", reason: "cancelled" };
+    // The recheck has its OWN fresh budget (statusTimeoutMs, never what login left over) and
+    // still honors the caller's signal. R4: an INCONCLUSIVE check is not a failed login.
     const { providers } = await status({ providerIds: [providerId], signal, timeoutMs: statusTimeoutMs });
     const after = providers[0];
-    const confirmed = after.authentication.state === "authenticated";
-    // `outcome`/`reason`/`status` keep the original shape; auth_not_confirmed is a `failed` reason.
+    const auth = after.authentication;
+    if (auth.state === "unknown" && auth.reason === "cancelled") return { outcome: "cancelled", reason: "cancelled", status: after };
+    const confirmed = auth.state === "authenticated";
+    const incomplete = auth.state === "unknown" && INCONCLUSIVE_REASONS.has(auth.reason);
+    // `outcome`/`reason`/`status` keep the original shape; both failure reasons are `failed` reasons.
     const result = {
       outcome: confirmed ? "connected" : "failed",
-      reason: confirmed ? "login_completed" : "auth_not_confirmed",
+      reason: confirmed ? "login_completed" : (incomplete ? "auth_check_incomplete" : "auth_not_confirmed"),
       status: after,
       accountChanged: null,
       evidenceInvalidated: false,

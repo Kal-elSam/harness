@@ -321,3 +321,47 @@ test("spawn runner: no shell, credential env vars stripped, inherit only when in
     assert.deepEqual(Object.keys(call.options.env), ["PATH"]);
   }
 });
+
+// T11/R4: an inconclusive post-login recheck is not a failed login.
+function recheckApi({ status, interactive, statusTimeoutMs = 25 }) {
+  const runner = createFakeRunner({ "claude --version": { stdout: "2.1.287\n" }, ...status });
+  return createProviderConnections({
+    runner, interactiveRunner: interactive ?? createFakeRunner({ "claude auth login --claudeai": { code: 0 } }),
+    homeDir: mkdtempSync(join(tmpdir(), "kairo-conn-recheck-")), now: () => T0, evidenceStore: null, statusTimeoutMs
+  });
+}
+const loginPreview = (api) => api.preview({ providerId: "claude", action: "login" });
+
+test("T11/R4: caller already cancelled when login exits 0 => cancelled, no recheck", async () => {
+  const controller = new AbortController();
+  const interactive = (argv) => { controller.abort(); return { done: Promise.resolve({ code: 0, stdout: "", stderr: "" }), kill() {} }; };
+  const api = recheckApi({ status: { "claude auth status --json": claudeStatus("a@example.com") }, interactive });
+  const result = await api.connect({ preview: loginPreview(api), confirm: true, signal: controller.signal });
+  assert.equal(result.outcome, "cancelled");
+  assert.equal(result.reason, "cancelled");
+});
+
+test("T11/R4: recheck timeout => failed/auth_check_incomplete with status (not auth_not_confirmed)", async () => {
+  const api = recheckApi({ status: { "claude auth status --json": { hang: true } } });
+  const result = await api.connect({ preview: loginPreview(api), confirm: true, timeoutMs: 5000 });
+  assert.equal(result.outcome, "failed");
+  assert.equal(result.reason, "auth_check_incomplete");
+  assert.equal(result.status.authentication.state, "unknown");
+});
+
+test("T11/R4: recheck spawn error => auth_check_incomplete; unparseable output stays auth_not_confirmed", async () => {
+  const broken = recheckApi({ status: { "claude auth status --json": { errorCode: "EIO" } } });
+  assert.equal((await broken.connect({ preview: loginPreview(broken), confirm: true })).reason, "auth_check_incomplete");
+  const garbled = recheckApi({ status: { "claude auth status --json": { stdout: "not json" } } });
+  assert.equal((await garbled.connect({ preview: loginPreview(garbled), confirm: true })).reason, "auth_not_confirmed");
+});
+
+test("T11/R4: cancel during the recheck => cancelled; recheck gets its own budget (tiny login timeout does not matter)", async () => {
+  const controller = new AbortController();
+  const api = recheckApi({ status: { "claude auth status --json": { hang: true } }, statusTimeoutMs: 5000 });
+  const pending = api.connect({ preview: loginPreview(api), confirm: true, signal: controller.signal, timeoutMs: 1 });
+  setTimeout(() => controller.abort(), 20);
+  assert.equal((await pending).outcome, "cancelled");
+  const ok = recheckApi({ status: { "claude auth status --json": claudeStatus("a@example.com") } });
+  assert.equal((await ok.connect({ preview: loginPreview(ok), confirm: true, timeoutMs: 1 })).outcome, "connected");
+});

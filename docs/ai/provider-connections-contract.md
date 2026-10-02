@@ -54,7 +54,7 @@ allowlist runs, no shell, secret env vars stripped, never `--with-api-key`/`--wi
 | outcome | reason |
 |---|---|
 | `connected` | `login_completed` (exit 0 AND fresh status `authenticated`) |
-| `failed` | `exit_nonzero`, `not_installed`, `spawn_error`, **`auth_not_confirmed`** |
+| `failed` | `exit_nonzero`, `not_installed`, `spawn_error`, **`auth_not_confirmed`**, **`auth_check_incomplete`** |
 | `cancelled` / `timeout` | same word; the process is killed |
 | `rejected` | see above |
 
@@ -95,6 +95,10 @@ Login argv is `["opencode","auth","login"]`: no `-p`, no `-m`. Syntax verified f
 The user picks interactively; the post-login `opencode auth list` check decides. Go counts as authenticated only when its own line is in the
 Credentials section (whole-word match; "OpenCode Zen" does not count; Environment-only or ambiguous output is `unknown`).
 
+### R4: inconclusive recheck (additive)
+
+The post-login recheck has its own fresh `statusTimeoutMs` budget and honors the caller's signal. `authenticated` => `connected`; `unauthenticated` or an unparseable/ambiguous output => `failed/auth_not_confirmed`; an inconclusive check (timeout, spawn error, binary missing) => `failed/auth_check_incomplete`; cancelled => `cancelled`. Cursor `modelAccess.models[].reason` may be `cursor_identity_not_recorded` (cache has evidence but no recorded account fingerprint).
+
 ## Cursor adapter checklist (kairo-plan1-baseline worktree)
 
 Files: `src/global/host/settings-provider-connections.js` (`adaptProviderConnectionsApi`, `classifyModelAccess`, `buildProviderInventory`,
@@ -105,3 +109,4 @@ Files: `src/global/host/settings-provider-connections.js` (`adaptProviderConnect
 3. `api.connect` result `outcome:"failed", reason:"auth_not_confirmed"` must surface as **"No conectado"** (login exited 0 but the account is not authenticated).
 4. `needsTerminal` = `preview.surfaces.includes("terminal")` in the adapter (the connect result also carries it as an additive field).
 5. `loadConnectionsBackend` should pass a real `runner`/`interactiveRunner` or omit them (the module defaults to a spawn runner); passing `accessReaders:{}`, `quotaReaders:{}`, `evidenceStore:null` is fine, defaults merge.
+6. `outcome:"failed", reason:"auth_check_incomplete"` (post-login status check timed out, was cancelled or could not run; `status` is included) must be shown as "not confirmed, retry the check", NOT as a failed login: re-run only `connections.status`. A caller cancel gives `outcome:"cancelled"`.

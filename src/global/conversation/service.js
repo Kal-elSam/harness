@@ -1,3 +1,4 @@
+import { readCursorAccountIdentifier } from "../provider-connections/readers.js";
 import { createArchitecturePlan } from "../architect/architect-manager.js";
 import {
   listTaskRecords, readExecutionLink, readTaskRecord, resolveProjectRoot, transitionTask,
@@ -583,6 +584,14 @@ export function createConversationService(deps = {}) {
   const readCursorAccessCacheImpl = deps.readCursorAccessCache ?? readCursorAccessCache;
   const writeCursorAccessCacheImpl = deps.writeCursorAccessCache ?? writeCursorAccessCache;
   const probeCursorPoolAccessImpl = deps.probeCursorPoolAccess ?? probeCursorPoolAccess;
+  // Identity for Cursor evidence: resolved at most once per verification sweep, only when a
+  // probe is about to be written. With an injected probe (a fake world) the default never spawns.
+  const resolveCursorAccountIdentifierImpl = deps.resolveCursorAccountIdentifier
+    ?? (deps.probeCursorPoolAccess ? async () => null : readCursorAccountIdentifier);
+  const cursorIdentity = async () => {
+    const accountIdentifier = await Promise.resolve(resolveCursorAccountIdentifierImpl()).catch(() => null);
+    return typeof accountIdentifier === "string" && accountIdentifier.trim() ? { accountIdentifier } : {};
+  };
   const cursorAccessTtlMs = deps.cursorAccessTtlMs ?? DEFAULT_CURSOR_ACCESS_TTL_MS;
   const readClaudeEntitlementCacheCached = createCachedProbe(
     () => readClaudeEntitlementCacheImpl(homeDir), claudeEntitlementCacheTtlMs
@@ -1549,10 +1558,11 @@ export function createConversationService(deps = {}) {
           }));
           let cache = await readCursorAccessCacheImpl(homeDir).catch(() => null);
           const before = cache;
+          const identity = probed.some((real) => cursorStatusToEntitlement(real?.status) !== ENTITLEMENT.UNVERIFIED) ? await cursorIdentity() : {};
           results = pending.map((check, index) => {
             const real = probed[index];
             const status = cursorStatusToEntitlement(real?.status);
-            if (status !== ENTITLEMENT.UNVERIFIED) cache = mergeCursorAccessResult(cache, real);
+            if (status !== ENTITLEMENT.UNVERIFIED) cache = mergeCursorAccessResult(cache, real, identity);
             return { id: check.id, label: check.label, pool: check.pool, modelId: check.modelId, status, reason: real?.reason ?? null };
           });
           if (cache !== before) {
@@ -1614,7 +1624,7 @@ export function createConversationService(deps = {}) {
           const status = cursorStatusToEntitlement(probed?.status);
           if (status !== ENTITLEMENT.UNVERIFIED) {
             const cache = await readCursorAccessCacheImpl(homeDir).catch(() => null);
-            await writeCursorAccessCacheImpl(homeDir, mergeCursorAccessResult(cache, probed)).catch(() => {});
+            await writeCursorAccessCacheImpl(homeDir, mergeCursorAccessResult(cache, probed, await cursorIdentity())).catch(() => {});
           }
           return { status, reason: probed?.reason ?? null };
         }
