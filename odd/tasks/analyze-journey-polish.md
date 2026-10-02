@@ -46,7 +46,25 @@ Follow-up: merge null-auth preserves max cache (`subscriptionTypeMatches` on wri
 
 Observed (consent + eligibility close): access-verification + analyst-picker-verified 34/34; team-decision-discarded 5/5; workspace-shell-snapshot 33/33.
 
-## Round 3+ (pending)
-- Claude sweep speed (after blame on `never Promise.all`).
+### Round 2 UX follow-up (not blocking; presentation only)
+- Eligibility lines are global but currently repeated under every role’s Descartados — split team-level “Proveedores fuera…” vs per-role concentration peers (`workspace-snapshot.js` + `surfaces.rs`).
+- `check.reason` from `checkCandidate` is English; mixed with Spanish “sin verificar” — review live copy.
+- Unauthenticated Cursor: pool “sin verificar” lines can stack on top of adapter-level “not eligible” — dampen duplicate Cursor noise.
+
+## Round 3 — Claude sweep speed (in progress)
+
+### Blame (`never Promise.all`)
+- Introduced in `df18ced13` (2026-09-19) with INC1 entitlement probe — same commit as `probeClaudeModelEntitlements`.
+- ODD constraint in `odd/tasks/claude-model-entitlement.md`: **“Probes sequential, never Promise.all”** — policy choice at feature birth, not a discovered CLI lock/mutex.
+- Implementation: independent `spawn("claude", …)` per model; default `timeoutMs = 30_000`, `maxProbes = 12` → worst case ~6 min sequential.
+- No process-wide lock in this module. Cursor pool probes already use `Promise.all` in `verifyAccess`.
+- Real risks if parallelized: Anthropic 429/overload (classified DENIED for some statuses), concurrent CLI load, cost of N allowed probes (~1¢ each) firing together.
+
+### Proposed change (needs go-ahead)
+- Bounded concurrency 2–3 + timeout ~15s for analyze verify sweeps; keep fail-closed classification; update the INC1 sequential test accordingly.
+- Leave unscoped Settings/`--verify-access` policy decision explicit if different.
+
+## Round 3+ (also pending)
 - README / real-provider acceptance / Settings onboarding (separate ODD).
+- Cleanup 4 legacy T24 ranking/trace tests vs T26/T27 flat picker.
 - IDE: turn off **Cursor Settings → Agent → Attribution** (CLI already `false` in `~/.cursor/cli-config.json`).
