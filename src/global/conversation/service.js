@@ -974,7 +974,7 @@ export function createConversationService(deps = {}) {
           eligibility[adapterId] = check;
           if (check.ok) candidates.push(adapterId);
         }
-        const claudeCatalog = readClaudeModelsImpl();
+        const claudeCatalog = readClaudeModelsImpl({ homeDir });
         // Cache-only resolve — never probeClaudeModelEntitlement* from snapshot().
         const claudeEntitlement = markStaleEntitlements(resolveClaudeEntitlements({
           cache: entitlementCache,
@@ -1264,7 +1264,7 @@ export function createConversationService(deps = {}) {
           readClaudeUsageCached("global", {}),
           readCodexModelsImpl()
         ]);
-        claudeCatalog = readClaudeModelsImpl();
+        claudeCatalog = readClaudeModelsImpl({ homeDir });
       }
       const decision = routeAsk({ adapters, codexUsage, claudeUsage, catalogs: { codex: codexCatalog, claude: claudeCatalog }, taskText: task });
       return { decision, projectRoot };
@@ -1445,7 +1445,7 @@ export function createConversationService(deps = {}) {
      */
     async verifyClaudeEntitlements({ cwd, refresh = false, beforeProbe = null, onProgress = null } = {}) {
       const projectRoot = cwd ? await root(cwd) : null;
-      const catalog = readClaudeModelsImpl();
+      const catalog = readClaudeModelsImpl({ homeDir });
       const catalogIds = (catalog.models ?? []).map((m) => m.id).filter(Boolean);
       let auth = null;
       try {

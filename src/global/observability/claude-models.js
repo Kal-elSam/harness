@@ -1,19 +1,31 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { resolveHomeDir } from "../paths.js";
+
 // Claude Code's CLI has no dedicated machine-readable model-discovery
 // command (`claude --help` exposes no `models` subcommand like Codex's
-// `model/list` RPC or OpenCode's `models` command). The interactive
-// `claude models` prompt can still name the IDs Claude Code offers in a
-// session — those exact IDs are what this documented catalog tracks.
+// `model/list` RPC or OpenCode's `models` command). Claude Code does keep
+// the catalog behind its own `/model` menu in
+// `~/.claude/cache/model-catalog/<id>-cc.json` and refreshes it itself, so
+// that file is the live source when present. It is an INTERNAL, undocumented
+// format: every read is validated strictly and any failure falls back to the
+// documented list below, never throws and never blocks a caller.
 //
-// This is the documented model catalog only — current as of this file's
-// last update — NOT a live entitlement check. It intentionally carries
-// `status: "documented"` (never "measured") so callers can't mistake it for
-// verified data the way Codex/OpenCode/Cursor's catalogs are.
+// Result labels stay honest: `status: "cached"` (with `fetchedAt`) when the
+// Claude Code cache was read, `status: "documented"` when only the list in
+// this file was used. Neither is a live entitlement check, and neither is
+// ever "measured" the way Codex/OpenCode/Cursor's catalogs are.
 //
-// Access (allowed/denied/unverified) is orthogonal and comes from the
-// entitlement store. A newly cataloged ID with no entitlement entry must
-// surface as unverified — never as silently available, and never omitted
-// from inventory just because access is unknown.
+// Cached IDs are ADDED to the documented ones (union, never replace), so a
+// model that left the menu does not vanish from inventory. Access
+// (allowed/denied/unverified) is orthogonal and comes from the entitlement
+// store: a newly seen ID with no entitlement entry surfaces as unverified,
+// never as silently available.
 const SOURCE = "documented catalog (no live discovery command exists for claude)";
+const CACHE_SOURCE = "Claude Code model-catalog cache (~/.claude/cache/model-catalog) + documented catalog";
+const CACHE_SCHEMA_VERSION = 2;
+const CACHE_FILE_PATTERN = /-cc\.json$/;
+const CLAUDE_ID_PATTERN = /^claude-[a-z0-9][a-z0-9.-]*$/;
 
 // IDs verified from Claude Code's own `claude models` listing (2026-10-01):
 //   Fable 5.1 → claude-fable-5-1
@@ -39,10 +51,53 @@ const DOCUMENTED_MODELS = [
 ];
 
 /**
- * Returns the documented Claude model catalog. Always synchronous and
- * always `status: "documented"` — there is nothing to fail closed on since
- * no live read is attempted.
+ * Newest `*-cc.json` in Claude Code's model-catalog cache, parsed and
+ * validated. Returns null on ANY problem (missing dir, unreadable file,
+ * corrupt JSON, other schema version, no usable models).
+ * @returns {{fetchedAt: string|null, models: Array<{id: string, displayName: string}>}|null}
  */
-export function readClaudeModels() {
-  return { status: "documented", source: SOURCE, models: DOCUMENTED_MODELS.slice(), error: null };
+function readClaudeCodeCache(homeDir) {
+  try {
+    const dir = join(homeDir, ".claude", "cache", "model-catalog");
+    const newest = readdirSync(dir)
+      .filter((name) => CACHE_FILE_PATTERN.test(name))
+      .map((name) => ({ name, mtimeMs: statSync(join(dir, name)).mtimeMs }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+    if (!newest) return null;
+    const doc = JSON.parse(readFileSync(join(dir, newest.name), "utf8"));
+    if (doc?.version !== CACHE_SCHEMA_VERSION) return null;
+    const entries = doc?.catalog?.config?.models;
+    if (!Array.isArray(entries)) return null;
+    const models = [];
+    for (const entry of entries) {
+      if (typeof entry?.id !== "string" || !CLAUDE_ID_PATTERN.test(entry.id)) continue;
+      const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : entry.id;
+      models.push({ id: entry.id, displayName: name.startsWith("Claude ") ? name : `Claude ${name}` });
+    }
+    if (models.length === 0) return null;
+    const fetchedMs = Number(doc.fetchedAt);
+    return { fetchedAt: Number.isFinite(fetchedMs) ? new Date(fetchedMs).toISOString() : null, models };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns the Claude model catalog: the documented list, plus any extra IDs
+ * Claude Code's own cache knows about. Always synchronous and never throws.
+ * @param {{homeDir?: string}} [options]
+ */
+export function readClaudeModels({ homeDir } = {}) {
+  const documented = DOCUMENTED_MODELS.slice();
+  const cache = readClaudeCodeCache(homeDir ?? resolveHomeDir());
+  if (!cache) return { status: "documented", source: SOURCE, models: documented, error: null };
+  const known = new Set(documented.map((model) => model.id));
+  const added = cache.models.filter((model) => !known.has(model.id) && known.add(model.id));
+  return {
+    status: "cached",
+    source: CACHE_SOURCE,
+    fetchedAt: cache.fetchedAt,
+    models: [...documented, ...added],
+    error: null
+  };
 }
