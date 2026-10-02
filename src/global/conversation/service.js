@@ -54,7 +54,8 @@ import {
 } from "../observability/claude-entitlement-store.js";
 import {
   ENTITLEMENT,
-  probeClaudeModelEntitlements
+  probeClaudeModelEntitlements,
+  ANALYZE_PROBE_TIMEOUT_MS
 } from "../observability/claude-model-entitlement.js";
 import {
   DEFAULT_CURSOR_ACCESS_TTL_MS,
@@ -1590,7 +1591,10 @@ export function createConversationService(deps = {}) {
           let probed;
           try {
             probed = await probeClaudeModelEntitlementsImpl({
-              modelIds: ids, maxProbes: CLAUDE_ENTITLEMENT_MAX_PROBES, cwd: projectRoot,
+              modelIds: ids,
+              maxProbes: CLAUDE_ENTITLEMENT_MAX_PROBES,
+              cwd: projectRoot,
+              ...(scope === "analyze" ? { timeoutMs: ANALYZE_PROBE_TIMEOUT_MS } : {}),
               onProgress: ({ modelId, result } = {}) => {
                 const check = checkByModel.get(modelId);
                 if (check) finish(subscription, check, result?.status ?? ENTITLEMENT.UNVERIFIED, result?.reason ?? null, nextClaude(modelId));

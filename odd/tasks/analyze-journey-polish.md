@@ -51,15 +51,15 @@ Observed (consent + eligibility close): access-verification + analyst-picker-ver
 - `check.reason` from `checkCandidate` is English; mixed with Spanish “sin verificar” — review live copy.
 - Unauthenticated Cursor: pool “sin verificar” lines can stack on top of adapter-level “not eligible” — dampen duplicate Cursor noise.
 
-## Round 3 — Claude sweep speed (in progress)
+## Round 3 — Claude sweep speed (done)
 
 Ordered plan (concurrency blocked until step 1):
 
 1. **[x] Cherry-pick `b6ed4f938` → `879ff3f`** — 429 → temporary UNVERIFIED (Retry-After TTL), never 7-day DENIED. Merged with Round 1 verify-once (plain UNVERIFIED still persists 1h; `subscriptionTypeMatches` null-auth keep). RED→GREEN: `connections-access-classification.test.js` + fingerprint suite.
 2. **[x] Measure** real probe latency — see **Latency evidence** below.
-3. **Concurrency 2** default inside `probeClaudeModelEntitlements`; on 429 stop new launches and finish sequential.
-4. **Timeout** from measured p95 (+ margin), analyze scope only → **recommend `20_000` ms** (p95 14315 + margin; still under 30s default for Settings).
-5. **Tests**: max in-flight, stable result order, progress with out-of-order completion, 429 cutover.
+3. **[x] Concurrency 2** default inside `probeClaudeModelEntitlements`; on temporary 429 stop new launches and finish at concurrency 1. Result array stays in catalog order.
+4. **[x] Timeout** analyze scope only → `ANALYZE_PROBE_TIMEOUT_MS = 20_000` (p95 14315 + margin). Settings/unscoped keep default 30s.
+5. **[x] Tests**: max in-flight=2, stable result order + out-of-order progress, 429 cutover, concurrency=1 sequential, analyze passes 20s timeout (`claude-model-entitlement.test.js`, `access-verification.test.js`).
 
 ### Latency evidence (2026-10-02, user-authorized)
 

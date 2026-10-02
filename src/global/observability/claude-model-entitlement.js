@@ -29,6 +29,11 @@ export const TEMPORARY_LIMIT_DEFAULT_RETRY_MS = 5 * 60 * 1000;
 export const TEMPORARY_LIMIT_MAX_RETRY_MS = 60 * 60 * 1000;
 const TEMPORARY_LIMIT_MIN_RETRY_MS = 5 * 1000;
 
+/** Default in-flight Claude entitlement probes (Round 3 — conservative). */
+export const DEFAULT_PROBE_CONCURRENCY = 2;
+/** Analyze-scope probe timeout from measured p95 (~14.3s) + margin. */
+export const ANALYZE_PROBE_TIMEOUT_MS = 20_000;
+
 /** Retry-After (seconds, as number or numeric string) -> clamped ms; default when absent/invalid. */
 export function clampRetryAfterMs(retryAfterSeconds) {
   const seconds = typeof retryAfterSeconds === "string" ? Number(retryAfterSeconds) : retryAfterSeconds;
@@ -192,10 +197,14 @@ export async function probeClaudeModelEntitlement({
 }
 
 /**
- * Probe many model ids sequentially (never Promise.all). Caps at maxProbes.
+ * Bounded concurrent probe batch. Default concurrency 2 (analyze Round 3).
+ * On a temporary 429 (`limit: temporary`), no new parallel launches — remaining
+ * work finishes at concurrency 1. Result array stays in catalog order even when
+ * completions arrive out of order. Caps at maxProbes.
  * @param {{
  *   modelIds: string[],
  *   maxProbes?: number,
+ *   concurrency?: number,
  *   onProgress?: (event: { modelId: string, index: number, total: number, result: object }) => void,
  *   spawn?: typeof defaultSpawn,
  *   cwd?: string,
@@ -206,18 +215,60 @@ export async function probeClaudeModelEntitlement({
 export async function probeClaudeModelEntitlements({
   modelIds = [],
   maxProbes = 12,
+  concurrency = DEFAULT_PROBE_CONCURRENCY,
   onProgress = null,
   ...probeOpts
 } = {}) {
   const ids = Array.isArray(modelIds) ? modelIds.slice(0, Math.max(0, maxProbes)) : [];
-  const results = [];
-  for (let index = 0; index < ids.length; index += 1) {
-    const modelId = ids[index];
-    const result = await probeClaudeModelEntitlement({ modelId, ...probeOpts });
-    results.push(result);
-    if (typeof onProgress === "function") {
-      onProgress({ modelId, index, total: ids.length, result });
-    }
-  }
+  const total = ids.length;
+  if (total === 0) return [];
+
+  const results = new Array(total);
+  let next = 0;
+  let active = 0;
+  let maxInFlight = Math.max(1, Math.floor(Number(concurrency)) || DEFAULT_PROBE_CONCURRENCY);
+
+  await new Promise((resolve) => {
+    const pump = () => {
+      while (active < maxInFlight && next < total) {
+        const index = next;
+        next += 1;
+        active += 1;
+        const modelId = ids[index];
+        Promise.resolve()
+          .then(() => probeClaudeModelEntitlement({ modelId, ...probeOpts }))
+          .then((result) => {
+            results[index] = result;
+            if (typeof onProgress === "function") {
+              try {
+                onProgress({ modelId, index, total, result });
+              } catch {
+                /* a progress listener never breaks the run */
+              }
+            }
+            // Temporary rate limit: stop opening new parallel slots.
+            if (result?.limit === TEMPORARY_LIMIT) maxInFlight = 1;
+          })
+          .catch((error) => {
+            results[index] = unverifiedResult(modelId, error?.message ?? String(error));
+            if (typeof onProgress === "function") {
+              try {
+                onProgress({ modelId, index, total, result: results[index] });
+              } catch {
+                /* ignore */
+              }
+            }
+          })
+          .finally(() => {
+            active -= 1;
+            if (next >= total && active === 0) resolve();
+            else pump();
+          });
+      }
+      if (next >= total && active === 0) resolve();
+    };
+    pump();
+  });
+
   return results;
 }

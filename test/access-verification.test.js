@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createConversationService } from "../src/global/conversation/service.js";
-import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
+import {
+  ENTITLEMENT,
+  ANALYZE_PROBE_TIMEOUT_MS
+} from "../src/global/observability/claude-model-entitlement.js";
 
 // T23: discovery never probes; verification is an explicit, confirmed,
 // deduplicated entry point. Every provider call is a spy/fake here.
@@ -328,6 +331,45 @@ test("verifyAccess scope=analyze runs only Claude pending checks — Cursor pool
   assert.ok(!result.outcomes.some((o) => o.adapterId === "cursor"));
   const claude = result.outcomes.find((o) => o.adapterId === "claude");
   assert.deepEqual(claude.results.map((r) => [r.id, r.status]), [["claude::claude-b", "allowed"]]);
+});
+
+test("verifyAccess scope=analyze passes ANALYZE_PROBE_TIMEOUT_MS to Claude probes", async () => {
+  let seenTimeout = "unset";
+  const { service, calls } = harness({
+    claudeCache: null,
+    cursorCache: cursorCacheDoc({
+      cursor_models: { status: "available", reason: null, probedAt: FRESH },
+      other_models: { status: "available", reason: null, probedAt: FRESH }
+    }),
+    claudeProbe: async (args) => {
+      seenTimeout = args.timeoutMs;
+      return args.modelIds.map((modelId) => ({
+        modelId, status: ENTITLEMENT.ALLOWED, reason: null, probedAt: iso(0)
+      }));
+    }
+  });
+  await service.verifyAccess({ cwd: "/repo", confirmed: true, scope: "analyze" });
+  assert.ok(calls.claude.length >= 1);
+  assert.equal(seenTimeout, ANALYZE_PROBE_TIMEOUT_MS);
+});
+
+test("verifyAccess without analyze scope does not override Claude probe timeout", async () => {
+  let seenTimeout = "unset";
+  const { service } = harness({
+    claudeCache: null,
+    cursorCache: cursorCacheDoc({
+      cursor_models: { status: "available", reason: null, probedAt: FRESH },
+      other_models: { status: "available", reason: null, probedAt: FRESH }
+    }),
+    claudeProbe: async (args) => {
+      seenTimeout = args.timeoutMs;
+      return args.modelIds.map((modelId) => ({
+        modelId, status: ENTITLEMENT.ALLOWED, reason: null, probedAt: iso(0)
+      }));
+    }
+  });
+  await service.verifyAccess({ cwd: "/repo", confirmed: true });
+  assert.equal(seenTimeout, undefined);
 });
 
 test("verifyAccess without scope still probes Cursor (Settings / full consent path)", async () => {
