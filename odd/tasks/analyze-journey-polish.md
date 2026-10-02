@@ -24,17 +24,27 @@ Follow-up: merge null-auth preserves max cache (`subscriptionTypeMatches` on wri
 
 ## Round 2 (done)
 
-Commit (no AI attribution trailer):
+### Dependency (cherry-pick into this branch)
+| Hash | Message |
+|------|---------|
+| `bc9b5655f` | feat(intelligence): persist per-role selection causes for draft exclusions |
+
+~1.3k lines including the `team-selection-repro-dfd018` fixture (~985). Needed so `selection.evaluated[].blockedBy` exists for concentration Descartados; not invented in Round 2.
+
+### Round 2 commits (no AI attribution trailer)
 
 | Hash | Message |
 |------|---------|
 | `ff6c18a5a` | feat(kairo): draft Descartados and quiet analyze preflight notice |
+| `fee43ac98` | docs(odd): record round-2 commit hash for analyze journey polish |
+| `90c4a88bd` | fix(kairo): honor analyze consent scope in verifyAccess |
+| `14d8eb499` | feat(kairo): put eligibility exclusions into draft Descartados |
 
-- [x] Draft exclusions (`Descartados` + causes) per role — `formatDiscardedAlternatives` → workspace snapshot → Rust Project proposal table.
-- [x] Filter Cursor probe noise out of analyze preflight notice (routing unchanged) — `forAnalyzePreflightNotice` strips Cursor from analyze UI plan / `unverifiedSubscriptions`; full plan stays on snapshot for Settings/`verifyAccess`.
+- [x] Draft exclusions (`Descartados`) — concentration peers **and** eligibility/`cursorAccess` causes (Claude cuota, Go rate-limit, Cursor sin verificar). Wired through `teamRow` → `agents` (not only `assignments`).
+- [x] Filter Cursor out of analyze preflight **notice + execution** — `forAnalyzePreflightNotice` for UI; `verifyAccess({ scope: "analyze" })` from `verifyProjectTeamAccess` so consent matches probes. Unscoped `verifyAccess` still runs full plan (Settings).
 - [x] Tighten unverified notice so recent cached UNVERIFIED does not re-nag — `countNaggingUnverifiedClaudeModels` (pending only).
 
-Observed: Node focused suite 191 pass / 0 fail; `cargo test` kairo-ui 296 pass / 0 fail.
+Observed (consent + eligibility close): access-verification + analyst-picker-verified 34/34; team-decision-discarded 5/5; workspace-shell-snapshot 33/33.
 
 ## Round 3+ (pending)
 - Claude sweep speed (after blame on `never Promise.all`).
