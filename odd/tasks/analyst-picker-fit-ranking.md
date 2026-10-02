@@ -261,9 +261,14 @@ Branch/worktree: `feat/kairo-startup-analyst-team` @ `agentic-harness-worktrees/
 
 ## Analyze journey polish — round 2 (2026-10-02)
 
-Commit: `ff6c18a5a` — feat(kairo): draft Descartados and quiet analyze preflight notice.
+Dependency: `bc9b5655f` (team-selection-evidence cherry-pick — selection.evaluated[].blockedBy + fixture).
 
-- [x] `formatDiscardedAlternatives` + snapshot `discarded` + Rust `SidebarAgent.discarded` / Project `Descartados:` render.
-- [x] `forAnalyzePreflightNotice`: Cursor pools omitted from analyze verify modal plan + `unverifiedSubscriptions` (exclusionCauses/`d` still list Cursor).
-- [x] `countNaggingUnverifiedClaudeModels`: recent reusable UNVERIFIED does not set `unverifiedClaudeNotice`.
-- Checks (observed): Node focused 191 pass / 0 fail; `cargo test` kairo-ui 296 pass / 0 fail.
+Commits:
+- `ff6c18a5a` — initial Descartados + notice filter (incomplete: consent mismatch + concentration-only)
+- `90c4a88bd` — `verifyAccess({ scope: "analyze" })` matches Claude-only modal consent
+- `14d8eb499` — eligibility/`cursorAccess` Descartados + discarded on team rows/agents
+
+- [x] Consent honesty: analyze verify probes only what the modal promised.
+- [x] `formatEligibilityExclusions` + `formatRoleDiscarded`; agents carry discarded.
+- [x] Cursor stays in routing; Settings/unscoped verifyAccess still full plan.
+- Checks (observed): access-verification + picker-verified 34/34; discarded 5/5; workspace-shell-snapshot 33/33.
