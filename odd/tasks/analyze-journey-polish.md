@@ -22,10 +22,19 @@ Follow-up: merge null-auth preserves max cache (`subscriptionTypeMatches` on wri
 - **`verification_ran` is session-scoped.** After one verify in this host process, a later preflight with pending checks (e.g. 1h unverified TTL expired) will not re-open the Verify screen until Esc-cancel / restart. Acceptable for round 1; Settings “verify now” (T6) is the explicit refresh path.
 - **`buildUnverifiedClaudePreflightNotice` still counts cached UNVERIFIED.** Round 2 filters the analyze notice (Cursor out of notice; unverified-recent should not nag).
 
-## Round 2 (in progress)
+## Round 2 (done)
+
+Commit (no AI attribution trailer):
+
+| Hash | Message |
+|------|---------|
+| `ff6c18a5a` | feat(kairo): draft Descartados and quiet analyze preflight notice |
+
 - [x] Draft exclusions (`Descartados` + causes) per role — `formatDiscardedAlternatives` → workspace snapshot → Rust Project proposal table.
 - [x] Filter Cursor probe noise out of analyze preflight notice (routing unchanged) — `forAnalyzePreflightNotice` strips Cursor from analyze UI plan / `unverifiedSubscriptions`; full plan stays on snapshot for Settings/`verifyAccess`.
 - [x] Tighten unverified notice so recent cached UNVERIFIED does not re-nag — `countNaggingUnverifiedClaudeModels` (pending only).
+
+Observed: Node focused suite 191 pass / 0 fail; `cargo test` kairo-ui 296 pass / 0 fail.
 
 ## Round 3+ (pending)
 - Claude sweep speed (after blame on `never Promise.all`).

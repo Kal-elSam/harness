@@ -261,7 +261,9 @@ Branch/worktree: `feat/kairo-startup-analyst-team` @ `agentic-harness-worktrees/
 
 ## Analyze journey polish — round 2 (2026-10-02)
 
+Commit: `ff6c18a5a` — feat(kairo): draft Descartados and quiet analyze preflight notice.
+
 - [x] `formatDiscardedAlternatives` + snapshot `discarded` + Rust `SidebarAgent.discarded` / Project `Descartados:` render.
 - [x] `forAnalyzePreflightNotice`: Cursor pools omitted from analyze verify modal plan + `unverifiedSubscriptions` (exclusionCauses/`d` still list Cursor).
 - [x] `countNaggingUnverifiedClaudeModels`: recent reusable UNVERIFIED does not set `unverifiedClaudeNotice`.
-- Checks (observed): focused Node (discarded / picker-verified / conversation notice / access-verification / sidecar) + `cargo test` kairo-ui after compile fix.
+- Checks (observed): Node focused 191 pass / 0 fail; `cargo test` kairo-ui 296 pass / 0 fail.
