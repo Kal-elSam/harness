@@ -769,12 +769,48 @@ function assignOneRole({ role, pool, fullRanked, better, modelUsage, providerTec
   return { entry: leader, reasonKind: "only-adequate-concentration" };
 }
 
-function passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter) {
+/**
+ * The concentration limit that blocks a candidate for a role, or null when
+ * none does. Check order is the same as the original boolean gate:
+ * model family cap, provider technical cap, Builder/Reviewer independence.
+ * @returns {"model_cap"|"provider_cap"|"reviewer_independence"|null}
+ */
+function concentrationBlockCause(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter) {
   const key = familyKey(candidate.model);
-  if ((modelUsage.get(key) ?? 0) >= MAX_ROLES_PER_MODEL) return false;
-  if (TECHNICAL_ROLES.includes(role) && (providerTechnicalUsage.get(candidate.model.adapterId) ?? 0) >= MAX_TECHNICAL_ROLES_PER_PROVIDER) return false;
-  if (role === "Reviewer" && reviewerBuilderAdapter != null && candidate.model.adapterId === reviewerBuilderAdapter) return false;
-  return true;
+  if ((modelUsage.get(key) ?? 0) >= MAX_ROLES_PER_MODEL) return "model_cap";
+  if (TECHNICAL_ROLES.includes(role) && (providerTechnicalUsage.get(candidate.model.adapterId) ?? 0) >= MAX_TECHNICAL_ROLES_PER_PROVIDER) return "provider_cap";
+  if (role === "Reviewer" && reviewerBuilderAdapter != null && candidate.model.adapterId === reviewerBuilderAdapter) return "reviewer_independence";
+  return null;
+}
+
+function passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter) {
+  return concentrationBlockCause(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter) === null;
+}
+
+/** Evidence for a coordinated role that no eligible provider covers: nothing was evaluated. Fresh object per call so entries never share state. */
+const NO_ELIGIBLE_SELECTION = () => ({ reasonKind: "no-eligible-provider", poolSize: 0, evaluated: [] });
+
+/**
+ * Small JSON-serializable audit record of what a role's selection evaluated:
+ * every candidate of the role's ranked list, whether it sat in the narrow
+ * band/floor pool, and which concentration limit (if any) blocked it given the
+ * state BEFORE this role was assigned. Pure evidence; never feeds back into
+ * selection.
+ */
+function buildSelectionEvidence({ result, ranked, pool, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter }) {
+  const inPool = new Set(pool.map((candidate) => modelKey(candidate.model)));
+  return {
+    reasonKind: result.reasonKind ?? null,
+    poolSize: result.poolSize ?? null,
+    evaluated: ranked.map((candidate) => ({
+      candidateKey: candidate.model.candidateKey ?? `${candidate.model.adapterId}::${candidate.model.modelId}`,
+      adapterId: candidate.model.adapterId,
+      modelId: candidate.model.modelId,
+      gapValue: candidate.gapValue ?? null,
+      inBand: inPool.has(modelKey(candidate.model)),
+      blockedBy: concentrationBlockCause(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter)
+    }))
+  };
 }
 
 /**
@@ -801,7 +837,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
   let builderAdapter = null;
 
   for (const role of order) {
-    const { better, pool, fullRanked } = rolePools.find((r) => r.role === role);
+    const { better, pool, fullRanked, ranked } = rolePools.find((r) => r.role === role);
     // Snapshot the concentration state as it stood BEFORE this role was
     // assigned — describeEfficiencyDecision must explain a decision using
     // the state that was actually true when it was made, never the
@@ -819,6 +855,11 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
     if (result) {
       result.modelUsageSnapshot = modelUsageSnapshot;
       result.providerUsageSnapshot = providerUsageSnapshot;
+      result.selection = buildSelectionEvidence({
+        result, ranked: fullRanked ?? ranked ?? pool, pool, role,
+        modelUsage: modelUsageSnapshot, providerTechnicalUsage: providerUsageSnapshot,
+        reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null
+      });
       const key = familyKey(result.entry.model);
       modelUsage.set(key, (modelUsage.get(key) ?? 0) + 1);
       providerTechnicalUsage.set(result.entry.model.adapterId, (providerTechnicalUsage.get(result.entry.model.adapterId) ?? 0) + 1);
@@ -1159,6 +1200,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: null,
         reason: "No eligible provider currently covers this role.",
+        selection: NO_ELIGIBLE_SELECTION(),
         coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
         decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType: "fallback" })
       });
@@ -1174,6 +1216,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
         reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`,
+        selection: result.selection,
         coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
         decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType: "fallback" })
       });
@@ -1218,7 +1261,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason, coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
+      reason, selection: result.selection, coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
       decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType })
     });
   }
@@ -1649,7 +1692,8 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     // `pool[0]` (pool is already floor-filtered, but preserves order —
     // ranked[0] and pool[0] are the same real model as long as the
     // leader itself clears its own floor, which it trivially always does).
-    leader: ranked[0] ?? null
+    leader: ranked[0] ?? null,
+    ranked
   }));
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
     const { leader } = rolePools.find((r) => r.role === role);
@@ -1673,6 +1717,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: null,
         reason: "No eligible provider currently covers this role.",
+        selection: NO_ELIGIBLE_SELECTION(),
         decisionEvidence: buildDecisionEvidence({ evaluation: null, requiredCapabilities, decisionType: "fallback", requiredFloor, riskLevel })
       });
       continue;
@@ -1692,6 +1737,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
         reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`,
+        selection: result.selection,
         decisionEvidence: buildDecisionEvidence({ evaluation: evalFor(chosen.model), requiredCapabilities, decisionType: "fallback", retention, requiredFloor, riskLevel })
       });
       continue;
@@ -1723,6 +1769,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
       reason,
+      selection: result.selection,
       decisionEvidence: buildDecisionEvidence({ evaluation: evalFor(chosen.model), requiredCapabilities, decisionType, retention, requiredFloor, riskLevel, savings })
     });
   }

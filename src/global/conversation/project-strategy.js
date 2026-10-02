@@ -468,11 +468,11 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
 
   const qualityTeam = activeRoles.map((role) => {
     const entry = byRoleCapability.get(role);
-    return { role, model: modelRef(entry.primary), reason: entry.reason ?? null };
+    return { role, model: modelRef(entry.primary), reason: entry.reason ?? null, selection: entry.selection ?? null };
   });
   const efficientRoles = activeRoles.map((role) => {
     const entry = byRoleEfficient.get(role);
-    return entry ? { role, model: modelRef(entry.primary), reason: entry.reason ?? null } : { role, model: null, reason: null };
+    return entry ? { role, model: modelRef(entry.primary), reason: entry.reason ?? null, selection: entry.selection ?? null } : { role, model: null, reason: null, selection: null };
   });
 
   // The OPERATIONAL team a real router resolves against (see
@@ -515,6 +515,7 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
       fallback: resolved.fallback,
       decisionEvidence: resolved.decisionEvidence,
       reason: resolved.reason,
+      selection: entry?.selection ?? null,
       assignmentState: resolved.assignmentState,
       assignmentSource: "recommended",
       recommendedAssignment: resolved.recommendedAssignment,
@@ -539,6 +540,7 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
     activeRoles,
     qualityTeam,
     efficientTeam: efficientRoles,
+    providerCapacity: providerCapacity ?? null,
     projectTeam,
     profileFingerprint: profile.fingerprint,
     approvedAt: null
