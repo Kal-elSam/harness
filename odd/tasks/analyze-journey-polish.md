@@ -144,3 +144,13 @@ Run in a **real project** (not the harness), then paste screenshot/copy + `~/.ha
 | E | Settings → Providers | Cursor still verifiable (note if `auth_check_incomplete` from baseline) | |
 
 Caches to snapshot: `~/.harness/**/claude-entitlement*`, `~/.harness/**/cursor-access*` (exact paths as on disk).
+
+### T12 finding (2026-10-02) — why only Claude Haiku in picker
+
+Observed in `@kal-elsam/kairo-runtime`: flat list had **Claude Haiku 4.5** as the only Claude row; `d` showed Claude “no disponible — Fable 5.1 requires usage credits”, Cursor exhausted / stale, Go limited.
+
+**Not** “only Haiku is allowed.” Entitlement cache (`~/.harness/claude-entitlement.json`): Opus 5 / Sonnet 5 / Haiku **allowed**; only Fable 5/5.1 **denied** (credits).
+
+**Real filter:** lifecycle is computed on the **cross-adapter** complete catalog. Cursor re-exposes `claude-opus-5-5-*` / `claude-sonnet-5-5-*` (gen **5.5**, same `lineageKey` as Claude’s `claude-opus-5` / `claude-sonnet-5` gen **5**), so native Claude Opus/Sonnet 5 are marked **`superseded`** and drop out of selection pools. Haiku has no newer Cursor sibling → stays `current`. Cursor’s own 5.5 rows then stay out because `other_models` is **exhausted**. Net: only Haiku from Claude.
+
+Product question (not fixed yet): should supersession be **per adapter**, or ignore Cursor re-exposures when that Cursor pool is exhausted?
