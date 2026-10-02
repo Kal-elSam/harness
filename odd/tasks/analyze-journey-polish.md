@@ -55,7 +55,7 @@ Observed (consent + eligibility close): access-verification + analyst-picker-ver
 
 Ordered plan (concurrency blocked until step 1):
 
-1. **Cherry-pick `b6ed4f938`** — 429 → temporary UNVERIFIED (short TTL), never 7-day DENIED. RED tests in `connections-access-classification.test.js` first.
+1. **[x] Cherry-pick `b6ed4f938` → `879ff3f`** — 429 → temporary UNVERIFIED (Retry-After TTL), never 7-day DENIED. Merged with Round 1 verify-once (plain UNVERIFIED still persists 1h; `subscriptionTypeMatches` null-auth keep). RED→GREEN: `connections-access-classification.test.js` + fingerprint suite.
 2. **Measure** real probe latency (≈5 runs); record p50/p95 in this ODD.
 3. **Concurrency 2** default inside `probeClaudeModelEntitlements`; on 429 stop new launches and finish sequential.
 4. **Timeout** from measured p95 (+ margin), analyze scope only.
