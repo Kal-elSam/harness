@@ -246,7 +246,7 @@ test("verifyProjectTeamAccess with consent runs the service once and returns per
     cwd: "/project", confirmed: true,
     createConversationService: () => ({ async verifyAccess(args) { calls.push(args); return { ran: true, status: "verified", persisted: true, outcomes }; } })
   });
-  assert.deepEqual(calls, [{ cwd: "/project", confirmed: true }]);
+  assert.deepEqual(calls, [{ cwd: "/project", confirmed: true, scope: "analyze" }]);
   assert.equal(result.ran, true);
   assert.deepEqual(result.outcomes, outcomes);
 });
@@ -299,9 +299,10 @@ test("the strategy file is byte-identical after a cancelled (unconfirmed) and a 
     assert.deepEqual(await readFile(file), before);
 
     const failed = await verifyProjectTeamAccess({ cwd: project, confirmed: true, createConversationService: make(async () => { throw new Error("claude down"); }) });
-    assert.equal(failed.ran, true, "the real run happened; both checks ended unverified with real reasons");
+    assert.equal(failed.ran, true, "the real run happened; Claude checks ended unverified with real reasons");
     assert.ok(failed.outcomes.every((o) => o.counts.unverified === o.results.length));
-    assert.deepEqual(probes, { claude: 1, cursor: 1 });
+    assert.deepEqual(probes, { claude: 1, cursor: 0 }, "analyze consent must not probe Cursor");
+    assert.ok(failed.outcomes.every((o) => o.adapterId === "claude"));
     assert.deepEqual(await readFile(file), before, "verification never touches the project strategy");
   } finally {
     await rm(home, { recursive: true, force: true });

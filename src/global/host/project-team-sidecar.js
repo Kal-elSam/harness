@@ -589,8 +589,12 @@ export async function verifyProjectTeamAccess({
     if (typeof service.verifyAccess !== "function") {
       return { ran: false, status: "unavailable", outcomes: [], message: "This build has no access verification entry point." };
     }
+    // Analyze consent matches the Claude-only plan shown in the verify modal.
     const result = await service.verifyAccess({
-      cwd: projectCwd, confirmed: true, ...(typeof onProgress === "function" ? { onProgress } : {})
+      cwd: projectCwd,
+      confirmed: true,
+      scope: "analyze",
+      ...(typeof onProgress === "function" ? { onProgress } : {})
     });
     return toSerializable(result) ?? { ran: false, status: "failed", outcomes: [], message: "Verification returned no result." };
   } catch (error) {

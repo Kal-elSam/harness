@@ -130,9 +130,10 @@ export function countNaggingUnverifiedClaudeModels(claudeEntitlement = {}) {
 }
 
 /**
- * Analyze preflight UI contract: Cursor stays in routing/eligibility and in
- * the full snapshot plan (Settings / verifyAccess), but Cursor pool checks
- * must not appear in the analyze verify modal ("2 pool checks" noise).
+ * Analyze preflight UI + verifyAccess(scope:"analyze") contract: Cursor stays
+ * in routing/eligibility and in the full snapshot plan (Settings /
+ * verifyAccess without scope), but Cursor pool checks must not appear in the
+ * analyze verify modal and must not run after analyze consent.
  * @param {{pendingCount?: number, reusableCount?: number, mayConsumeQuota?: boolean, costStatement?: string|null, subscriptions?: Array<object>}|null|undefined} plan
  */
 export function forAnalyzePreflightNotice(plan) {
@@ -1520,10 +1521,12 @@ export function createConversationService(deps = {}) {
      * once when the run starts, then once per finished check. `total` counts
      * pending checks only (reusable evidence makes no call). A throwing
      * listener never affects the run.
-     * @param {{cwd: string, confirmed?: boolean, onProgress?: (event: object) => void}} args
+     * `scope: "analyze"` narrows the run to the same Claude-only plan the
+     * analyze verify modal showed (Cursor stays for Settings / unscoped calls).
+     * @param {{cwd: string, confirmed?: boolean, scope?: "analyze"|null, onProgress?: (event: object) => void}} args
      * @returns {Promise<{ran: boolean, status: "confirmation_required"|"verified", message?: string, persisted?: boolean, outcomes: Array<object>}>}
      */
-    async verifyAccess({ cwd, confirmed, onProgress = null } = {}) {
+    async verifyAccess({ cwd, confirmed, scope = null, onProgress = null } = {}) {
       if (confirmed !== true) {
         return {
           ran: false, status: "confirmation_required", outcomes: [],
@@ -1531,7 +1534,8 @@ export function createConversationService(deps = {}) {
         };
       }
       const projectRoot = await root(cwd);
-      const plan = await this.planAccessVerification({ cwd: projectRoot });
+      const fullPlan = await this.planAccessVerification({ cwd: projectRoot });
+      const plan = scope === "analyze" ? forAnalyzePreflightNotice(fullPlan) : fullPlan;
       const outcomes = [];
       let persisted = false;
       // Progress: counts only the checks this run will really make.

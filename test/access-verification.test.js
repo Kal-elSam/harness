@@ -307,6 +307,39 @@ test("after verification the next preflight sees the persisted evidence and stil
   void service;
 });
 
+test("verifyAccess scope=analyze runs only Claude pending checks — Cursor pools stay for Settings/snapshot", async () => {
+  const { service, calls } = harness({
+    claudeCache: claudeCacheDoc({ "claude-a": { status: "allowed", reason: null, probedAt: FRESH } }),
+    cursorCache: null
+  });
+  const events = [];
+  const result = await service.verifyAccess({
+    cwd: "/repo",
+    confirmed: true,
+    scope: "analyze",
+    onProgress: (event) => events.push(structuredClone(event))
+  });
+  assert.equal(result.ran, true);
+  assert.deepEqual(calls.claude, [["claude-b"]], "exactly one Claude model probe");
+  assert.deepEqual(calls.cursor, [], "analyze scope must not probe Cursor pools");
+  assert.ok(events.every((event) => event.total === 1), "progress total matches the consented Claude-only plan");
+  assert.equal(events.at(-1)?.completed, 1);
+  assert.ok(events.every((event) => (event.active ?? []).every((a) => a.adapterId === "claude")));
+  assert.ok(!result.outcomes.some((o) => o.adapterId === "cursor"));
+  const claude = result.outcomes.find((o) => o.adapterId === "claude");
+  assert.deepEqual(claude.results.map((r) => [r.id, r.status]), [["claude::claude-b", "allowed"]]);
+});
+
+test("verifyAccess without scope still probes Cursor (Settings / full consent path)", async () => {
+  const { service, calls } = harness({
+    claudeCache: claudeCacheDoc({ "claude-a": { status: "allowed", reason: null, probedAt: FRESH } }),
+    cursorCache: null
+  });
+  await service.verifyAccess({ cwd: "/repo", confirmed: true });
+  assert.deepEqual(calls.claude, [["claude-b"]]);
+  assert.equal(calls.cursor.length, 2);
+});
+
 // ---- T24: progress records while a consented verification runs ----
 
 test("verifyAccess reports progress: completed/total plus the active check label; reusable evidence is not counted", async () => {
