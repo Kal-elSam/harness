@@ -34,6 +34,11 @@ const BLOCK_CAUSE_ES = Object.freeze({
   reviewer_independence: "independencia Builder/Reviewer"
 });
 
+const CURSOR_POOL_LABEL = Object.freeze({
+  cursor_models: "Cursor models",
+  other_models: "Other models"
+});
+
 /**
  * Compact "Descartados" lines for one role from selection.evaluated —
  * only peers blocked by a concentration cause. Never invents quota/billing.
@@ -50,6 +55,66 @@ export function formatDiscardedAlternatives(selection) {
     const provider = PROVIDER_LABEL[row.adapterId] ?? String(row.adapterId ?? "provider");
     const model = row.modelId ?? "modelo";
     const line = `${provider} · ${model} — ${cause}`;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    lines.push(line);
+  }
+  return lines;
+}
+
+/**
+ * Provider-level exclusions from snapshot eligibility / Cursor pool access —
+ * why automatic routing never offered Claude/Go/Cursor (cuota, rate-limit,
+ * unverified). Uses real `{ok, reason}` and cursorAccess statuses only.
+ * @param {{eligibility?: Record<string, {ok?: boolean, reason?: string|null}>, cursorAccess?: Record<string, {status?: string, reason?: string|null}>}|null|undefined} intelligence
+ * @returns {string[]}
+ */
+export function formatEligibilityExclusions(intelligence) {
+  const eligibility = intelligence?.eligibility && typeof intelligence.eligibility === "object"
+    ? intelligence.eligibility
+    : {};
+  const cursorAccess = intelligence?.cursorAccess && typeof intelligence.cursorAccess === "object"
+    ? intelligence.cursorAccess
+    : {};
+  const lines = [];
+  const seen = new Set();
+  const push = (line) => {
+    if (!line || seen.has(line)) return;
+    seen.add(line);
+    lines.push(line);
+  };
+  for (const [adapterId, check] of Object.entries(eligibility)) {
+    if (check?.ok !== false) continue;
+    const provider = PROVIDER_LABEL[adapterId] ?? String(adapterId);
+    push(`${provider} — ${check.reason ?? "not eligible"}`);
+  }
+  for (const [pool, access] of Object.entries(cursorAccess)) {
+    const status = access?.status;
+    if (status === "available") continue;
+    const poolLabel = CURSOR_POOL_LABEL[pool] ?? pool;
+    if (status === "exhausted") {
+      push(`Cursor · ${poolLabel} — límite alcanzado${access?.reason ? ` (${access.reason})` : ""}`);
+      continue;
+    }
+    // unverified / missing / anything else fail-closed as sin verificar
+    push(`Cursor · ${poolLabel} — sin verificar${access?.reason ? ` (${access.reason})` : ""}`);
+  }
+  return lines;
+}
+
+/**
+ * Full Descartados list for a role: concentration peers + eligibility exclusions.
+ * @param {object|null|undefined} selection
+ * @param {object|null|undefined} intelligence
+ * @returns {string[]}
+ */
+export function formatRoleDiscarded(selection, intelligence) {
+  const lines = [];
+  const seen = new Set();
+  for (const line of [
+    ...formatEligibilityExclusions(intelligence),
+    ...formatDiscardedAlternatives(selection)
+  ]) {
     if (seen.has(line)) continue;
     seen.add(line);
     lines.push(line);
