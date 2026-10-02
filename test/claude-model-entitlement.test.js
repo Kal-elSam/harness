@@ -218,7 +218,7 @@ test("probeClaudeModelEntitlements keeps catalog result order when completions f
   ], "with staggered delays, progress should not be strictly sequential");
 });
 
-test("probeClaudeModelEntitlements cuts new launches to concurrency 1 after a temporary 429", async () => {
+test("probeClaudeModelEntitlements aborts the rest of the sweep after a temporary 429", async () => {
   const allowed = await loadFixture("claude-entitlement-allowed-haiku.json");
   const temporary = {
     type: "result",
@@ -235,28 +235,23 @@ test("probeClaudeModelEntitlements cuts new launches to concurrency 1 after a te
     m3: allowed,
     m4: allowed
   };
-  let inFlight = 0;
-  let maxAfterTemporary = 0;
-  let sawTemporary = false;
+  const spawned = [];
 
   const results = await probeClaudeModelEntitlements({
     modelIds: ["m1", "m2", "m3", "m4"],
     concurrency: 2,
     spawn: (_cmd, args) => {
       const modelId = args[args.indexOf("--model") + 1];
-      inFlight += 1;
-      if (sawTemporary) maxAfterTemporary = Math.max(maxAfterTemporary, inFlight);
+      spawned.push(modelId);
       const child = new EventEmitter();
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.kill = () => {};
-      // m1 finishes first (temporary); peers stay longer so cutover is observable.
+      // m1 finishes first (temporary); a peer may already be in flight.
       const delayMs = modelId === "m1" ? 10 : 50;
       setTimeout(() => {
         child.stdout.emit("data", JSON.stringify(bodies[modelId]));
         child.emit("close", 0, null);
-        if (modelId === "m1") sawTemporary = true;
-        inFlight -= 1;
       }, delayMs);
       return child;
     }
@@ -264,8 +259,13 @@ test("probeClaudeModelEntitlements cuts new launches to concurrency 1 after a te
 
   assert.equal(results[0].status, ENTITLEMENT.UNVERIFIED);
   assert.equal(results[0].limit, TEMPORARY_LIMIT);
-  assert.ok(sawTemporary);
-  assert.equal(maxAfterTemporary, 1, "after temporary 429, only one new probe may be in flight");
+  assert.ok(spawned.includes("m1"));
+  assert.ok(spawned.length <= 2, `at most the initial concurrency window may spawn; got ${spawned.join(",")}`);
+  assert.ok(!spawned.includes("m3") && !spawned.includes("m4"), "models after the abort window must not spawn");
+  const skipped = results.filter((r) => r.reason === "skipped after temporary Claude rate limit");
+  assert.ok(skipped.length >= 2, "unstarted models are marked skipped, not probed sequentially");
+  assert.ok(skipped.every((r) => r.status === ENTITLEMENT.UNVERIFIED && r.limit === TEMPORARY_LIMIT));
+  assert.deepEqual(results.map((r) => r.modelId), ["m1", "m2", "m3", "m4"]);
 });
 
 test("probeClaudeModelEntitlement uses the exact measured argv shape", async () => {

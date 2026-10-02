@@ -4052,7 +4052,7 @@ mod tests {
         let picker = app.picker.as_ref().expect("modal open");
         assert_eq!(picker.phase, PickerPhase::Verify, "the real plan opens the confirmation screen");
         assert_eq!(picker.plan.as_ref().unwrap().pending, 1);
-        assert!(picker.plan.as_ref().unwrap().lines().iter().any(|l| l.starts_with("Cursor: 1 pool check")));
+        assert!(picker.plan.as_ref().unwrap().lines().iter().any(|l| l.starts_with("Claude: 1 model check")));
         assert_eq!(picker.options.len(), 2, "only verified rows before verification");
         assert_eq!(
             picker.project_line.as_deref(),
@@ -4077,7 +4077,7 @@ mod tests {
         app.ingest_record(progress_records[0].clone());
         let live = app.picker.as_ref().unwrap().progress.as_ref().expect("progress shows in the modal");
         assert_eq!((live.completed, live.total), (0, 1));
-        assert_eq!(live.active, vec!["Other models · Cursor".to_string()]);
+        assert_eq!(live.active, vec!["Claude A · Claude".to_string()]);
         app.ingest_record(progress_records[1].clone());
         assert_eq!(app.picker.as_ref().unwrap().progress.as_ref().unwrap().completed, 1);
         for record in records.iter().filter(|r| r["type"] == "verification") {
@@ -4086,12 +4086,12 @@ mod tests {
         app.ingest_record(preflights[1].clone());
         let picker = app.picker.as_ref().expect("modal open");
         assert_eq!(picker.phase, PickerPhase::Ready);
-        assert_eq!(picker.options.len(), 3, "the verified Cursor row joined after verification");
+        assert_eq!(picker.options.len(), 3, "the verified Claude row joined after verification");
         assert!(picker.options.iter().all(|o| o.available));
         assert_eq!(picker.options[0].candidate_key, "claude::claude-a");
         assert!(picker.options.iter().all(|o| !o.recommended), "T26: no star");
         assert_eq!(picker.not_verified, 0);
-        assert!(picker.footer_text().unwrap().contains("Cursor: 1 allowed"));
+        assert!(picker.footer_text().unwrap().contains("Claude: 1 allowed"));
         let _ = std::fs::remove_file(path);
     }
 

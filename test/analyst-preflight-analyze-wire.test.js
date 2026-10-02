@@ -163,12 +163,22 @@ const PLAN_PENDING = {
   costStatement: "Verifying makes 1 real provider call and may consume quota or account credit.",
   subscriptions: [
     {
-      adapterId: "cursor", provider: "Cursor", granularity: "pool", pendingCount: 1, reusableCount: 0,
-      checks: [{ id: "cursor::other_models", kind: "pool", pool: "other_models", modelId: "gpt-5.4", models: 2, label: "Other models", state: "pending", reason: "never_verified", cachedStatus: null, age: null }]
+      adapterId: "claude", provider: "Claude", granularity: "model", pendingCount: 1, reusableCount: 0,
+      checks: [{ id: "claude::claude-a", kind: "model", modelId: "claude-a", label: "Claude A", state: "pending", reason: "never_verified", cachedStatus: null, age: null }]
     },
     {
-      adapterId: "claude", provider: "Claude", granularity: "model", pendingCount: 0, reusableCount: 1,
-      checks: [{ id: "claude::claude-a", kind: "model", modelId: "claude-a", label: "Claude A", state: "reusable", reason: null, cachedStatus: "allowed", age: "3m" }]
+      adapterId: "cursor", provider: "Cursor", granularity: "pool", pendingCount: 0, reusableCount: 1,
+      checks: [{ id: "cursor::other_models", kind: "pool", pool: "other_models", modelId: "gpt-5.4", models: 2, label: "Other models", state: "reusable", reason: null, cachedStatus: "allowed", age: "3m" }]
+    }
+  ]
+};
+const PLAN_CURSOR_ONLY_PENDING = {
+  pendingCount: 1, reusableCount: 0, mayConsumeQuota: true,
+  costStatement: "Verifying makes 1 real provider call and may consume quota or account credit.",
+  subscriptions: [
+    {
+      adapterId: "cursor", provider: "Cursor", granularity: "pool", pendingCount: 1, reusableCount: 0,
+      checks: [{ id: "cursor::other_models", kind: "pool", pool: "other_models", modelId: "gpt-5.4", models: 2, label: "Other models", state: "pending", reason: "never_verified", cachedStatus: null, age: null }]
     }
   ]
 };
@@ -187,8 +197,11 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
       spies.preflights += 1;
       const models = verified
         ? [row("claude", "claude-a", "Claude A", 1), row("cursor", "gpt-5.4", "GPT 5.4", 2), row("codex", "gpt-5", "GPT-5", 3)]
-        : [row("claude", "claude-a", "Claude A", 1), row("codex", "gpt-5", "GPT-5", 3),
-          row("cursor", "gpt-5.4", "GPT 5.4", 2, { available: false, accessVerified: false, cause: "access_unknown", entitlement: "unverified" })];
+        : [
+          row("claude", "claude-a", "Claude A", 1, { available: false, accessVerified: false, cause: "access_unknown", entitlement: "unverified" }),
+          row("codex", "gpt-5", "GPT-5", 3),
+          row("cursor", "gpt-5.4", "GPT 5.4", 2)
+        ];
       return {
         profile: { root: cwd }, candidates: { scoredAll: [], eligibility: {} }, projectRoot: cwd, unverifiedClaudeNotice: null,
         analystCatalog: { recommendedModel: null, models, exclusions: [] },
@@ -197,14 +210,14 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
     },
     async verifyAccess(args) {
       spies.verify.push({ cwd: args.cwd, confirmed: args.confirmed, hasProgressListener: typeof args.onProgress === "function" });
-      const check = { id: "cursor::other_models", label: "Other models", adapterId: "cursor", provider: "Cursor" };
+      const check = { id: "claude::claude-a", label: "Claude A", adapterId: "claude", provider: "Claude" };
       args.onProgress?.({ completed: 0, total: 1, active: [check], done: null });
       verified = true;
       args.onProgress?.({ completed: 1, total: 1, active: [], done: { ...check, status: "allowed", reason: null } });
       return {
         ran: true, status: "verified", persisted: true,
-        outcomes: [{ adapterId: "cursor", provider: "Cursor", granularity: "pool", counts: { allowed: 1, denied: 0, unverified: 0 },
-          results: [{ id: "cursor::other_models", label: "Other models", pool: "other_models", modelId: "gpt-5.4", status: "allowed", reason: null }] }]
+        outcomes: [{ adapterId: "claude", provider: "Claude", granularity: "model", counts: { allowed: 1, denied: 0, unverified: 0 },
+          results: [{ id: "claude::claude-a", label: "Claude A", modelId: "claude-a", status: "allowed", reason: null }] }]
       };
     },
     async runBootstrapAnalysis() { spies.analysis += 1; throw new Error("analysis must never run"); }
@@ -227,7 +240,8 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
   assert.equal(first.verificationPlan.pendingCount, 1);
   assert.equal(first.projectContext.line, "Proyecto demo · Node.js · arquitectura modular · riesgos: sin script de test", "the local project scan reaches the host");
   assert.ok(first.analystCatalog.models.every((row) => typeof row.explanation === "string" && row.explanation.length > 10), "every row carries its own explanation");
-  assert.deepEqual(first.unverifiedSubscriptions.map((s) => s.adapterId), ["cursor"]);
+  assert.deepEqual(first.unverifiedSubscriptions.map((s) => s.adapterId), ["claude"]);
+  assert.ok(!first.verificationPlan.subscriptions.some((s) => s.adapterId === "cursor"), "analyze notice strips Cursor even when reusable");
 
   const mid = out.length;
   stdin.write(`${JSON.stringify(REQUEST_VERIFY)}\n`);
@@ -247,7 +261,7 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
   assert.ok(types.indexOf("verification") < types.indexOf("preflight"), "outcome first, then the rebuilt catalog");
   const progress = after.filter((r) => r.type === "verification_progress");
   assert.deepEqual(progress.map((r) => [r.completed, r.total, r.active.map((a) => a.label), r.done?.status ?? null]), [
-    [0, 1, ["Other models"], null],
+    [0, 1, ["Claude A"], null],
     [1, 1, [], "allowed"]
   ]);
   assert.ok(types.lastIndexOf("verification_progress") < types.indexOf("verification"), "progress comes before the outcome");
@@ -270,6 +284,50 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
     lines,
     "wire fixture drifted; regenerate with UPDATE_WIRE_FIXTURE=1 and re-run the Rust test"
   );
+});
+
+test("T23 wire: Cursor-only pending plan yields pendingCount 0 for analyze — no Verify prompt", async () => {
+  const spies = { verify: 0 };
+  const service = {
+    async preflightProject({ cwd }) {
+      return {
+        profile: { root: cwd }, candidates: { scoredAll: [], eligibility: {} }, projectRoot: cwd, unverifiedClaudeNotice: null,
+        analystCatalog: {
+          recommendedModel: null,
+          models: [row("codex", "gpt-5", "GPT-5", 1), row("cursor", "gpt-5.4", "GPT 5.4", 2)],
+          exclusions: []
+        },
+        verificationPlan: PLAN_CURSOR_ONLY_PENDING
+      };
+    },
+    async verifyAccess() {
+      spies.verify += 1;
+      throw new Error("analyze must not verify when only Cursor is pending");
+    }
+  };
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => { for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line)); });
+  const stdin = new PassThrough();
+  const run = runKairoUiRpcStdio({
+    stdin, stdout, cwd: "/project", openBridge,
+    preflightProjectTeam: (args) => preflightProjectTeamImpl({ ...args, createConversationService: () => service, computeProfile }),
+    verifyProjectTeamAccess: (args) => verifyProjectTeamAccessImpl({ ...args, createConversationService: () => service })
+  });
+  assert.ok(await pollUntil(() => out.some((r) => r.type === "ready" || r.type === "engine")), "sidecar came up");
+  const mark = out.length;
+  stdin.write(`${JSON.stringify(REQUEST_PREFLIGHT)}\n`);
+  assert.ok(await pollUntil(() => out.slice(mark).some((r) => r.type === "preflight")));
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await run;
+  const first = out.slice(mark).find((r) => r.type === "preflight");
+  assert.equal(first.verificationPlan.pendingCount, 0);
+  assert.equal(first.verificationPlan.mayConsumeQuota, false);
+  assert.equal(first.verificationPlan.costStatement, null);
+  assert.deepEqual(first.verificationPlan.subscriptions, []);
+  assert.deepEqual(first.unverifiedSubscriptions, []);
+  assert.equal(spies.verify, 0);
 });
 
 test("T23 wire: project.verify_access without confirmed:true never verifies and reports confirmation_required", async () => {

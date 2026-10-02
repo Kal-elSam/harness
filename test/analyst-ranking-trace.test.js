@@ -22,36 +22,36 @@ test("trace reports identity, evidence, exclusion and final position for every c
   const cursorOpus = byKey(trace, "cursor::claude-opus-5-thinking-high");
   assert.equal(cursorOpus.evidenceStatus, "unscored", "no AA match for the Cursor effort id: a data gap, not a code outcome");
   assert.equal(cursorOpus.benchmarks.gpqa, null);
-  assert.equal(trace.rows.filter((row) => row.starred).length, 1);
+  assert.equal(trace.rows.filter((row) => row.starred).length, 0, "T26: picker has no star");
+  assert.equal(trace.curated.recommendedModel, null);
   assert.match(formatAnalystTrace(trace), /claude::claude-opus-5/);
 });
 
-// T24 (rewritten from the BASELINE tests that characterized the old fit = profileFit x confidence ranking).
-test("after T24: the same Sol model takes ONE main slot, Opus 5 is in the main view, nothing is starred by provider", () => {
+// T26/T27: flat list (no top-three / Other). Rewritten from the T24 main-slot assertions.
+test("after T26/T27: flat list keeps every verified available route; Sol appears on both Codex and Cursor; Opus 5 is listed", () => {
   const trace = traceAnalystRanking({ ...CONTROLLED_TRACE_CATALOG, aaModels });
   const main = trace.rows.filter((row) => row.stage === "main").sort((a, b) => a.position - b.position);
-  assert.equal(main.length, 3);
-  assert.equal(new Set(main.map((row) => row.catalog.identityKey)).size, 3, "three DISTINCT models");
-  assert.ok(main.some((row) => row.candidateKey === "claude::claude-opus-5"), "Opus 5 is one of the three distinct models");
-  const solRoutes = trace.rows.filter((row) => row.catalog?.identityKey === "gpt-5-6-sol");
-  assert.ok(solRoutes.some((row) => row.stage === "main"));
-  assert.equal(solRoutes.filter((row) => row.stage === "main").length, 1, "the Sol model occupies one slot across Codex and Cursor");
-  assert.equal(byKey(trace, "cursor::gpt-5-6-sol").stage, "manual", "the equivalent route is manual");
+  assert.ok(main.length > 3, "flat list is uncapped");
+  assert.deepEqual(trace.curated.alternatives, []);
+  assert.equal(trace.curated.recommendedModel, null);
+  assert.ok(main.some((row) => row.candidateKey === "claude::claude-opus-5"), "Opus 5 stays in the flat list");
+  assert.ok(main.some((row) => row.candidateKey === "codex::gpt-5-6-sol"));
+  assert.ok(main.some((row) => row.candidateKey === "cursor::gpt-5-6-sol"), "equivalent routes stay separate (T27)");
   assert.equal(byKey(trace, "codex::gpt-5-6-sol").catalog.evaluation.optionalEvidence, true);
 });
 
-test("after T24: the optional instructionFollowing datum no longer decides anything — removing ifBench from every row keeps the main three identical", () => {
+test("after T24 evaluator: the optional instructionFollowing datum no longer decides order — removing ifBench keeps the flat list identical", () => {
   const withoutOptional = aaModels.map((row) => ({ ...row, ifBench: null }));
   const mainOf = (t) => t.rows.filter((row) => row.stage === "main").sort((a, b) => a.position - b.position).map((row) => row.candidateKey);
   const a = traceAnalystRanking({ ...CONTROLLED_TRACE_CATALOG, aaModels });
   const b = traceAnalystRanking({ ...CONTROLLED_TRACE_CATALOG, aaModels: withoutOptional });
-  assert.deepEqual(new Set(mainOf(a)), new Set(mainOf(b)), "same three models with or without the optional benchmark");
+  assert.deepEqual(mainOf(a), mainOf(b), "same flat order with or without the optional benchmark");
 });
 
-test("after T24: the Cursor effort ids stay unscored (data gap) and are manual-only, never starred", () => {
+test("after T26/T27: Cursor effort ids stay unscored but remain in the flat list, never starred", () => {
   const trace = traceAnalystRanking({ ...CONTROLLED_TRACE_CATALOG, aaModels });
   for (const key of ["cursor::claude-opus-5-thinking-high", "cursor::claude-sonnet-5-thinking-high"]) {
-    assert.equal(byKey(trace, key).stage, "manual");
+    assert.equal(byKey(trace, key).stage, "main");
     assert.equal(byKey(trace, key).catalog.qualification, "no_evidence");
     assert.equal(byKey(trace, key).starred, false);
   }

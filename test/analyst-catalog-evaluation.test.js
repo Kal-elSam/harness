@@ -132,29 +132,29 @@ test("unverified routes take part in the same comparison but are never starred",
   assert.equal(verified.recommendedModel.modelId, "best");
 });
 
-test("ONE classification: catalog star, picker star, default analyst and main rows agree, in any input order and before/after verification", () => {
+test("T27 flat curation: no star, full usable list, stable order across shuffles and after verification", () => {
   const aa = [full("best", 0.97, 0.62, 0.62), full("shared", 0.93, 0.55, 0.58), full("third", 0.9, 0.5, 0.5), full("fourth", 0.85, 0.4, 0.45)];
   const routes = [["claude", "best"], ["codex", "shared"], ["cursor", "shared"], ["opencode-go", "third"], ["claude", "fourth"]];
   const mainKeys = (catalog) => curateAnalystCatalogForPicker(catalog).models.map((m) => m.candidateKey);
   for (const entitlement of [{}, { "claude::best": ENTITLEMENT.UNVERIFIED }]) {
     const reference = catalogFor(aa, routes, { entitlement });
     const curated = curateAnalystCatalogForPicker(reference);
-    assert.equal(curated.recommendedModel.candidateKey, reference.recommendedModel.candidateKey);
-    assert.equal(pickDefaultAnalyst(reference).model.modelId, curated.recommendedModel.modelId, "default == star");
-    assert.equal(new Set(curated.models.map((m) => m.identityKey)).size, curated.models.length, "main rows are distinct models");
+    assert.equal(curated.recommendedModel, null, "T26: curated catalog never carries a star");
+    assert.deepEqual(curated.alternatives, []);
+    assert.equal(pickDefaultAnalyst(curated), null, "flat picker never auto-picks");
+    assert.equal(new Set(curated.models.map((m) => m.candidateKey)).size, curated.models.length);
     for (const seed of [5, 17, 301]) {
       const shuffledCatalog = catalogFor(shuffled(aa, seed), shuffled(routes, seed + 3), { entitlement });
       assert.deepEqual(mainKeys(shuffledCatalog), mainKeys(reference), `seed ${seed}`);
-      assert.equal(pickDefaultAnalyst(shuffledCatalog).model.modelId, pickDefaultAnalyst(reference).model.modelId);
     }
   }
-  // Verifying the unverified star changes who is listed, not the order of the rows that were already listed.
+  // Verifying an unverified route adds it to the flat list without reordering the already-listed rows' relative order among themselves.
   const before = catalogFor(aa, routes, { entitlement: { "claude::best": ENTITLEMENT.UNVERIFIED } });
   const after = catalogFor(aa, routes);
-  assert.deepEqual(mainKeys(before), ["codex::shared", "opencode-go::third", "claude::fourth"]);
-  assert.deepEqual(mainKeys(after), ["claude::best", "codex::shared", "opencode-go::third"]);
-  assert.equal(pickDefaultAnalyst(after).model.modelId, "best");
-  assert.equal(pickDefaultAnalyst(before).model.modelId, "shared");
+  assert.deepEqual(mainKeys(before), ["codex::shared", "cursor::shared", "opencode-go::third", "claude::fourth"]);
+  assert.deepEqual(mainKeys(after), ["claude::best", "codex::shared", "cursor::shared", "opencode-go::third", "claude::fourth"]);
+  assert.equal(pickDefaultAnalyst(curateAnalystCatalogForPicker(after)), null);
+  assert.equal(pickDefaultAnalyst(after)?.model.modelId, "best", "raw catalog star still drives pickDefaultAnalyst when present");
 });
 
 test("a verified-DENIED model stays in the comparison as evidence: denying it never reorders the others, and it is reported as an exclusion, never listed", () => {

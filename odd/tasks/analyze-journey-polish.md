@@ -57,9 +57,9 @@ Ordered plan (concurrency blocked until step 1):
 
 1. **[x] Cherry-pick `b6ed4f938` → `879ff3f`** — 429 → temporary UNVERIFIED (Retry-After TTL), never 7-day DENIED. Merged with Round 1 verify-once (plain UNVERIFIED still persists 1h; `subscriptionTypeMatches` null-auth keep). RED→GREEN: `connections-access-classification.test.js` + fingerprint suite.
 2. **[x] Measure** real probe latency — see **Latency evidence** below.
-3. **[x] Concurrency 2** default inside `probeClaudeModelEntitlements`; on temporary 429 stop new launches and finish at concurrency 1. Result array stays in catalog order.
+3. **[x] Concurrency 2** default inside `probeClaudeModelEntitlements`; on temporary 429 **abort the rest of the sweep** (in-flight finish; unstarted → unverified+temporary skipped, no spawn). Result array stays in catalog order.
 4. **[x] Timeout** analyze scope only → `ANALYZE_PROBE_TIMEOUT_MS = 20_000` (p95 14315 + margin). Settings/unscoped keep default 30s.
-5. **[x] Tests**: max in-flight=2, stable result order + out-of-order progress, 429 cutover, concurrency=1 sequential, analyze passes 20s timeout (`claude-model-entitlement.test.js`, `access-verification.test.js`).
+5. **[x] Tests**: max in-flight=2, stable result order + out-of-order progress, 429 abort, concurrency=1 sequential, analyze passes 20s timeout (`claude-model-entitlement.test.js`, `access-verification.test.js`).
 
 ### Latency evidence (2026-10-02, user-authorized)
 
@@ -98,6 +98,12 @@ Ordered plan (concurrency blocked until step 1):
 
 ## Round 3+ (also pending)
 - README / real-provider acceptance / Settings onboarding (separate ODD).
-- Cleanup 4 legacy T24 ranking/trace tests vs T26/T27 flat picker.
 - IDE: turn off **Cursor Settings → Agent → Attribution** (CLI already `false` in `~/.cursor/cli-config.json`).
-- Evidence commit: `cad96b8ea` — concurrency 2 + analyze 20s timeout + tests.
+- UX Descartados split (team vs role) — non-blocking.
+
+## Close checklist (2026-10-02)
+- [x] Wire fixture: Claude pending (not Cursor); Cursor-only → `pendingCount` 0.
+- [x] Temporary 429 aborts remaining Claude probes (not concurrency→1).
+- [x] Legacy T24 top-three/star ranking tests rewritten for T26/T27 flat list.
+- Evidence: `pnpm test` **2447 pass / 0 fail / 5 skip**; Rust wire fixture updated for Claude.
+- Evidence commit: `cad96b8ea` — concurrency 2 + analyze 20s timeout + tests (superseded abort behavior in follow-up commit).

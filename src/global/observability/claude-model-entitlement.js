@@ -198,8 +198,9 @@ export async function probeClaudeModelEntitlement({
 
 /**
  * Bounded concurrent probe batch. Default concurrency 2 (analyze Round 3).
- * On a temporary 429 (`limit: temporary`), no new parallel launches — remaining
- * work finishes at concurrency 1. Result array stays in catalog order even when
+ * On a temporary 429 (`limit: temporary`), abort the rest of the sweep: no new
+ * launches, in-flight probes finish, not-yet-started ids become unverified
+ * (temporary) without a spawn. Result array stays in catalog order even when
  * completions arrive out of order. Caps at maxProbes.
  * @param {{
  *   modelIds: string[],
@@ -227,6 +228,38 @@ export async function probeClaudeModelEntitlements({
   let next = 0;
   let active = 0;
   let maxInFlight = Math.max(1, Math.floor(Number(concurrency)) || DEFAULT_PROBE_CONCURRENCY);
+  let aborted = false;
+
+  const emitProgress = (modelId, index, result) => {
+    if (typeof onProgress !== "function") return;
+    try {
+      onProgress({ modelId, index, total, result });
+    } catch {
+      /* a progress listener never breaks the run */
+    }
+  };
+
+  const skipRemainingAfterTemporary = (source) => {
+    if (aborted) return;
+    aborted = true;
+    maxInFlight = 0;
+    const retryAfterMs = source?.retryAfterMs;
+    while (next < total) {
+      const index = next;
+      next += 1;
+      const modelId = ids[index];
+      const skipped = {
+        modelId,
+        status: ENTITLEMENT.UNVERIFIED,
+        reason: "skipped after temporary Claude rate limit",
+        limit: TEMPORARY_LIMIT,
+        ...(typeof retryAfterMs === "number" ? { retryAfterMs } : {}),
+        probedAt: new Date().toISOString()
+      };
+      results[index] = skipped;
+      emitProgress(modelId, index, skipped);
+    }
+  };
 
   await new Promise((resolve) => {
     const pump = () => {
@@ -239,25 +272,12 @@ export async function probeClaudeModelEntitlements({
           .then(() => probeClaudeModelEntitlement({ modelId, ...probeOpts }))
           .then((result) => {
             results[index] = result;
-            if (typeof onProgress === "function") {
-              try {
-                onProgress({ modelId, index, total, result });
-              } catch {
-                /* a progress listener never breaks the run */
-              }
-            }
-            // Temporary rate limit: stop opening new parallel slots.
-            if (result?.limit === TEMPORARY_LIMIT) maxInFlight = 1;
+            emitProgress(modelId, index, result);
+            if (result?.limit === TEMPORARY_LIMIT) skipRemainingAfterTemporary(result);
           })
           .catch((error) => {
             results[index] = unverifiedResult(modelId, error?.message ?? String(error));
-            if (typeof onProgress === "function") {
-              try {
-                onProgress({ modelId, index, total, result: results[index] });
-              } catch {
-                /* ignore */
-              }
-            }
+            emitProgress(modelId, index, results[index]);
           })
           .finally(() => {
             active -= 1;
