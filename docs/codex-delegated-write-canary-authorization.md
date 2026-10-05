@@ -47,8 +47,10 @@ Status stays **prepared / not authorized / not run**.
 | Item | Value |
 |---|---|
 | Runs allowed | **1** (single process invocation of the exact command) |
-| Adapter | Codex CLI (`codex`) via OS wrap (`/usr/bin/sandbox-exec` + SBPL) |
-| Model | **Pin at grant time** with `--model <id>` (one Codex ChatGPT subscription model; no mid-run switch) |
+| Adapter | Codex CLI via OS wrap (`/usr/bin/sandbox-exec` + SBPL) |
+| Codex binary | Absolute path resolved at prep (e.g. under `~/.codex/packages/standalone/releases/<ver>/bin/codex`) — **never** bare `codex` |
+| Runtime read/exec | Pinned package release tree only — **not** whole personal `~/.codex`, **no** auth/config/state grants, **no** personal write |
+| Model | **Pin at grant time** with `--model <id>` after the absolute binary (one Codex ChatGPT subscription model; no mid-run switch) |
 | Account / session | **Named explicitly in the grant** (identity of the authorized login). Distinct from `CODEX_HOME`. |
 | Auth home path | Isolated `CODEX_HOME=/tmp/kairo-wt-delegated-1/provider-home` — **no** personal `~/.codex`, **no** symlink alias, **no** credential copy by harness prep |
 | Host | macOS with `/usr/bin/sandbox-exec` executable (fail-closed otherwise) |

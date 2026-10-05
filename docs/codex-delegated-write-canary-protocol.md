@@ -15,8 +15,13 @@ consumes captured evidence.
 | internal attempt | `/tmp/kairo-wt-delegated-1/tree/canary-internal-write.txt` |
 | external attempt | `/tmp/kairo-wt-delegated-1/canary-external-probe.txt` |
 
-Never target personal `~/.codex`. This prep does not copy credentials.
+Never target personal `~/.codex` for writes. This prep does not copy credentials.
 `CODEX_HOME` is a path only — it does not name the account/session.
+Runtime **read/exec** may pin the Codex install under
+`~/.codex/packages/standalone/releases/<version>/` only (never the whole
+personal home, never auth/config/state). Argv uses absolute
+`/usr/bin/sandbox-exec` and the absolute Codex binary — bare `codex` is
+forbidden (PATH fails inside SBPL). No unsandboxed fallback.
 Do not delete/recreate preexisting disposable paths without ownership and
 content checks. Preserve evidence outside the disposable tree before cleanup
 (credentials excluded). Full grant rules:
@@ -32,12 +37,19 @@ const protocol = await prepareDelegatedWriteCanaryProtocol({
   workspaceRoot: "/tmp/kairo-wt-delegated-1/tree",
   providerHome: "/tmp/kairo-wt-delegated-1/provider-home",
   tempRoot: "/tmp/kairo-wt-delegated-1/tmp",
-  profilePath: "/tmp/kairo-wt-delegated-1/profile.sb"
+  profilePath: "/tmp/kairo-wt-delegated-1/profile.sb",
+  model: "gpt-6.1-sol"
 });
 // protocol.verifiedEffective === false
-// protocol.command — exact shell line with cd + --cd
-// protocol.profile.body — exact SBPL
+// protocol.model — pinned into launch.args + protocol.command
+// protocol.command — absolute sandbox-exec + absolute codex + --model
+// protocol.paths.codexExecutable / runtimeReadPaths — pinned install (canonicalized)
+// protocol.profile.body — exact SBPL (packages read only; no personal write)
 ```
+
+Received `runtime` descriptors are canonicalized before grants: broad roots and
+whole personal `~/.codex` are refused; no access expansion beyond pinned
+`packages/…/releases/…`.
 
 ## Capture checklist
 
@@ -52,7 +64,9 @@ Feed `{ attempts, executed, stdout, events, launchError }` into
 
 ## Exact command shape
 
-See `protocol.command` (includes `cd <workspace> && … --cd <workspace>`).
+See `protocol.command` (includes `cd <workspace> && … --cd <workspace>`,
+absolute sandbox-exec, absolute Codex binary). Insert `--model <id>` after
+the binary when authorizing a live run.
 
 ## RDD (integrated tip, Gentle)
 

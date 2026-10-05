@@ -20,6 +20,7 @@ import {
   CANARY_ATTEMPT_OUTCOME,
   DELEGATED_WRITE_CANARY_VERDICT,
   describeIsolatedAuthHandling,
+  ensureCodexModelArg,
   ensureCodexWorkspaceCd,
   formatDelegatedWriteCanaryCommand,
   judgeDelegatedWriteCanaryOracle,
@@ -28,6 +29,7 @@ import {
   runDelegatedWriteCanary
 } from "../src/global/runtime/codex-delegated-write-canary.js";
 import { prepareDelegatedWriteCanaryProtocol } from "../src/global/runtime/codex-delegated-write-canary-protocol.js";
+import { canonicalizeCodexOsSandboxRuntime } from "../src/global/runtime/codex-delegated-sandbox-runtime.js";
 
 const WORKSPACE = "/tmp/kairo-wt-delegated-1/tree";
 const ISOLATED_PROVIDER = "/tmp/kairo-wt-delegated-1/provider-home";
@@ -36,6 +38,9 @@ const PERSONAL = "/Users/kal-el/.codex";
 const ALIAS_TO_PERSONAL = "/tmp/kairo-wt-delegated-1/alias-provider";
 const EXTERNAL_PROBE = "/tmp/kairo-wt-delegated-1/canary-external-probe.txt";
 const INTERNAL_MARKER = join(WORKSPACE, "canary-internal-write.txt");
+const PINNED_CODEX = "/Users/kal-el/.codex/packages/standalone/releases/0.160.0-test/bin/codex";
+const PINNED_PACKAGE = "/Users/kal-el/.codex/packages/standalone/releases/0.160.0-test";
+const PINNED_MODEL = "gpt-6.1-sol";
 
 function identityDeps(extra = {}) {
   return {
@@ -44,6 +49,7 @@ function identityDeps(extra = {}) {
     homedir: () => "/Users/kal-el",
     platform: "darwin",
     access: async () => {},
+    codexExecutable: PINNED_CODEX,
     ...extra
   };
 }
@@ -175,6 +181,10 @@ test("profile write allowlist uses canonical isolated roots only", async () => {
   assert.doesNotMatch(writeBlock, /\/Users\/kal-el\/\.codex/);
   assert.doesNotMatch(writeBlock, /\(subpath "\/private\/tmp"\)/);
   assert.doesNotMatch(writeBlock, /\(subpath "\/tmp"\)/);
+  // Narrow packages read/exec — not broad personal ~/.codex
+  assert.match(profile, new RegExp(`\\(subpath "${PINNED_PACKAGE.replaceAll("/", "\\/")}"\\)`));
+  assert.match(profile, new RegExp(`\\(literal "${PINNED_CODEX.replaceAll("/", "\\/")}"\\)`));
+  assert.doesNotMatch(profile, /\(subpath "\/Users\/kal-el\/\.codex"\)/);
 });
 
 test("rewriteCodexArgsForOuterOsSandbox forces bypass and drops approve-for-me", () => {
@@ -184,7 +194,7 @@ test("rewriteCodexArgsForOuterOsSandbox forces bypass and drops approve-for-me",
   );
 });
 
-test("wrap uses absolute sandbox-exec path after canonical validation; never falls back to bare codex", async () => {
+test("wrap pins absolute sandbox-exec + absolute codex; never bare names; no unsandboxed fallback", async () => {
   const launch = codex.buildLaunch({ task: "Implement plan", cwd: WORKSPACE, permissions: [] });
   const wrapped = await wrapCodexLaunchWithOsSandbox(launch, {
     profilePath: "/tmp/kairo-wt-delegated-1/profile.sb",
@@ -196,11 +206,125 @@ test("wrap uses absolute sandbox-exec path after canonical validation; never fal
   assert.equal(wrapped.command, "/usr/bin/sandbox-exec");
   assert.notEqual(wrapped.command, "sandbox-exec");
   assert.notEqual(wrapped.command, "codex");
+  assert.equal(wrapped.args[0], "-f");
+  assert.equal(wrapped.args[2], PINNED_CODEX);
+  assert.notEqual(wrapped.args[2], "codex");
   assert.equal(wrapped.env.CODEX_HOME, ISOLATED_PROVIDER);
   assert.equal(wrapped.env.TMPDIR, ISOLATED_TEMP);
   assert.deepEqual(wrapped.roots.allowedWritePaths, [
     WORKSPACE, ISOLATED_PROVIDER, ISOLATED_TEMP
   ]);
+  assert.equal(wrapped.runtime.executable, PINNED_CODEX);
+  assert.ok(wrapped.runtime.runtimeReadPaths.includes(PINNED_PACKAGE));
+});
+
+test("broad personal ~/.codex runtime grant is refused", async () => {
+  await assert.rejects(
+    () => buildDelegatedWriteSandboxProfile({
+      workspaceRoot: WORKSPACE,
+      providerHome: ISOLATED_PROVIDER,
+      tempRoot: ISOLATED_TEMP
+    }, identityDeps({ codexExecutable: PERSONAL })),
+    (error) => error.code === "delegated_write_personal_codex_runtime_too_broad"
+      || error.code === "delegated_write_personal_codex_runtime_outside_packages"
+  );
+
+  await assert.rejects(
+    () => wrapCodexLaunchWithOsSandbox(
+      codex.buildLaunch({ task: "t", cwd: WORKSPACE, permissions: [] }),
+      {
+        profilePath: "/tmp/kairo-wt-delegated-1/profile.sb",
+        providerHome: ISOLATED_PROVIDER,
+        tempRoot: ISOLATED_TEMP,
+        workspaceRoot: WORKSPACE
+      },
+      identityDeps({ codexExecutable: join(PERSONAL, "auth.json") })
+    ),
+    (error) => error.code === "delegated_write_personal_codex_runtime_outside_packages"
+  );
+});
+
+test("canonicalize rejects broad runtime roots and does not expand personal home", async () => {
+  await assert.rejects(
+    () => canonicalizeCodexOsSandboxRuntime({
+      executable: PINNED_CODEX,
+      packageRoot: PINNED_PACKAGE,
+      runtimeReadPaths: ["/Users"]
+    }, identityDeps()),
+    (error) => error.code === "delegated_write_runtime_broad_root_forbidden"
+  );
+
+  await assert.rejects(
+    () => canonicalizeCodexOsSandboxRuntime({
+      executable: PINNED_CODEX,
+      packageRoot: "/Users/kal-el",
+      runtimeReadPaths: [PINNED_PACKAGE]
+    }, identityDeps()),
+    (error) => error.code === "delegated_write_runtime_broad_root_forbidden"
+  );
+
+  await assert.rejects(
+    () => buildDelegatedWriteSandboxProfile({
+      workspaceRoot: WORKSPACE,
+      providerHome: ISOLATED_PROVIDER,
+      tempRoot: ISOLATED_TEMP,
+      runtime: {
+        executable: PINNED_CODEX,
+        packageRoot: PERSONAL,
+        runtimeReadPaths: [PERSONAL]
+      }
+    }, identityDeps()),
+    (error) => error.code === "delegated_write_personal_codex_runtime_too_broad"
+  );
+
+  const canonical = await canonicalizeCodexOsSandboxRuntime({
+    executable: PINNED_CODEX,
+    packageRoot: PINNED_PACKAGE,
+    runtimeReadPaths: [PINNED_PACKAGE, join(PINNED_PACKAGE, "bin")]
+  }, identityDeps());
+  assert.equal(canonical.executable, PINNED_CODEX);
+  assert.equal(canonical.packageRoot, PINNED_PACKAGE);
+  assert.ok(!canonical.runtimeReadPaths.includes(PERSONAL));
+});
+
+test("protocol pins model into final argv; profile and argv share identical runtime", async () => {
+  const protocol = await prepareDelegatedWriteCanaryProtocol({
+    workspaceRoot: WORKSPACE,
+    providerHome: ISOLATED_PROVIDER,
+    tempRoot: ISOLATED_TEMP,
+    profilePath: "/tmp/kairo-wt-delegated-1/profile.sb",
+    model: PINNED_MODEL,
+    writeFileImpl: async () => {}
+  }, identityDeps());
+
+  assert.equal(protocol.model, PINNED_MODEL);
+  assert.equal(protocol.launch.args.includes("--model"), true);
+  assert.equal(protocol.launch.args[protocol.launch.args.indexOf("--model") + 1], PINNED_MODEL);
+  assert.match(protocol.command, new RegExp(`'--model' '${PINNED_MODEL}'`));
+  assert.equal(protocol.model, PINNED_MODEL);
+
+  const exe = protocol.runtime.executable;
+  assert.equal(protocol.launch.args[2], exe);
+  for (const readPath of protocol.runtime.runtimeReadPaths) {
+    assert.match(protocol.profile.body, new RegExp(`\\(subpath "${readPath.replaceAll("/", "\\/")}"\\)`));
+  }
+  assert.match(protocol.profile.body, new RegExp(`\\(literal "${exe.replaceAll("/", "\\/")}"\\)`));
+  assert.doesNotMatch(protocol.profile.body, /\(subpath "\/Users\/kal-el\/\.codex"\)/);
+});
+
+test("ensureCodexModelArg requires model and overwrites preexisting flag", () => {
+  assert.throws(
+    () => ensureCodexModelArg(["-f", "p.sb", PINNED_CODEX, "exec"], ""),
+    (error) => error.code === "delegated_write_canary_model_required"
+  );
+  assert.deepEqual(
+    ensureCodexModelArg(["-f", "p.sb", PINNED_CODEX, "exec", "t"], PINNED_MODEL),
+    ["-f", "p.sb", PINNED_CODEX, "--model", PINNED_MODEL, "exec", "t"]
+  );
+  assert.deepEqual(
+    ensureCodexModelArg(["-f", "p.sb", PINNED_CODEX, "--model", "old", "exec"], PINNED_MODEL),
+    ["-f", "p.sb", PINNED_CODEX, "--model", PINNED_MODEL, "exec"]
+  );
 });
 
 test("canonical roots reject SBPL metacharacters before profile grants", async () => {
@@ -460,6 +584,7 @@ test("executable protocol pins profile/paths/capture and keeps verifiedEffective
     providerHome: ISOLATED_PROVIDER,
     tempRoot: ISOLATED_TEMP,
     profilePath: "/tmp/kairo-wt-delegated-1/profile.sb",
+    model: PINNED_MODEL,
     writeFileImpl: async (path, body) => {
       written.push({ path, body });
     }
@@ -476,6 +601,10 @@ test("executable protocol pins profile/paths/capture and keeps verifiedEffective
   assert.equal(protocol.paths.personalCodexForbidden, true);
   assert.match(protocol.command, /^cd '/);
   assert.match(protocol.command, /'--cd'/);
+  assert.match(protocol.command, /\/usr\/bin\/sandbox-exec/);
+  assert.match(protocol.command, new RegExp(`'${PINNED_CODEX.replaceAll("/", "\\/")}'`));
+  assert.doesNotMatch(protocol.command, /sandbox-exec' '-f' '[^']+' 'codex'/);
+  assert.equal(protocol.paths.codexExecutable, PINNED_CODEX);
   assert.ok(protocol.capture.beforeRun.length >= 1);
   assert.ok(protocol.capture.duringRun.length >= 1);
   assert.ok(protocol.capture.afterRun.length >= 1);
@@ -487,7 +616,8 @@ test("exported command pins workspace via cd and --cd; attempts are disposable o
     workspaceRoot: WORKSPACE,
     providerHome: ISOLATED_PROVIDER,
     tempRoot: ISOLATED_TEMP,
-    profilePath: "/tmp/kairo-wt-delegated-1/profile.sb"
+    profilePath: "/tmp/kairo-wt-delegated-1/profile.sb",
+    model: PINNED_MODEL
   }, identityDeps());
 
   assert.match(runner.command, new RegExp(`^cd '${WORKSPACE}' &&`));

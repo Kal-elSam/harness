@@ -30,7 +30,9 @@ export async function prepareDelegatedWriteCanaryProtocol({
   providerHome,
   tempRoot,
   profilePath,
+  model,
   forbiddenExtra = [],
+  runtime = null,
   writeProfile = true,
   writeFileImpl = writeFile
 } = {}, deps = {}) {
@@ -39,14 +41,17 @@ export async function prepareDelegatedWriteCanaryProtocol({
     providerHome,
     tempRoot,
     profilePath,
-    forbiddenExtra
+    model,
+    forbiddenExtra,
+    runtime
   }, deps);
 
   const profileBody = await buildDelegatedWriteSandboxProfile({
     workspaceRoot: runner.plan.workspaceRoot,
     providerHome: runner.plan.providerHome,
     tempRoot: runner.plan.tempRoot,
-    forbiddenExtra
+    forbiddenExtra,
+    runtime: runner.runtime
   }, deps);
 
   if (writeProfile) {
@@ -58,6 +63,7 @@ export async function prepareDelegatedWriteCanaryProtocol({
     verifiedEffective: false,
     approval: false,
     realRunAuthorized: false,
+    model: runner.model,
     note:
       "Oracle consumes captured evidence only. This protocol does not prove real "
       + "containment and must not flip verifiedEffective.",
@@ -72,11 +78,14 @@ export async function prepareDelegatedWriteCanaryProtocol({
       internalTarget: runner.plan.requiredInternalWrites[0],
       externalTarget: runner.plan.requiredExternalProbes[0],
       disposableOnly: true,
-      personalCodexForbidden: true
+      personalCodexForbidden: true,
+      codexExecutable: runner.runtime?.executable ?? null,
+      runtimeReadPaths: runner.runtime?.runtimeReadPaths ?? null
     }),
     command: runner.command,
     task: runner.plan.task,
     launch: runner.launch,
+    runtime: runner.runtime,
     auth: runner.auth,
     capture: Object.freeze({
       beforeRun: Object.freeze([

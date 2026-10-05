@@ -48,12 +48,10 @@ Tip `cd7d90b08` (tree `39190021…`), base `51c0e417…`, agent `codex`,
 
 ## Next step
 
-1. **Authorize** the live canary in plain language (see
-   `docs/codex-delegated-write-canary-authorization.md`): one run, pinned model,
-   **named account/session** (`CODEX_HOME` is not the account), isolated auth
-   home, disposable paths with ownership/content checks, full evidence retained
-   outside the disposable tree (credentials excluded). No ceremonial token.
-   Status remains **prepared / not authorized / not run** until that grant.
+1. Offline prep closed: absolute Codex binary, packages-only read/exec,
+   **explicit `model` in final argv**, runtime descriptors canonicalized
+   (broad roots refused). Present corrected command; wait for a **new** one-run
+   grant before any live invocation.
 2. After a run: evaluate oracle verdict; a `contained` result still needs a
    **separate** decision before any `verifiedEffective` promotion.
 3. Optional later cleanup of advisory R2 naming drift (does **not** reopen the receipt).

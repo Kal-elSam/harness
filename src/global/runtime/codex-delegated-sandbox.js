@@ -9,12 +9,13 @@ import { access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { DelegatedWriteOsSandboxError } from "./codex-delegated-sandbox-errors.js";
 import {
-  assertIsolatedProviderHome,
-  assertIsolatedTempRoot,
   assertSbplSafePath,
-  personalCodexHome,
   validateCanonicalDelegatedWriteRoots
 } from "./codex-delegated-sandbox-roots.js";
+import {
+  canonicalizeCodexOsSandboxRuntime,
+  resolveCodexOsSandboxRuntime
+} from "./codex-delegated-sandbox-runtime.js";
 
 export { DelegatedWriteOsSandboxError } from "./codex-delegated-sandbox-errors.js";
 export {
@@ -26,6 +27,12 @@ export {
   resolveCanonicalRoot,
   validateCanonicalDelegatedWriteRoots
 } from "./codex-delegated-sandbox-roots.js";
+export {
+  assertCodexRuntimeReadPathAllowed,
+  canonicalizeCodexOsSandboxRuntime,
+  deriveCodexPackageRoot,
+  resolveCodexOsSandboxRuntime
+} from "./codex-delegated-sandbox-runtime.js";
 
 export const SANDBOX_EXEC_PATH = "/usr/bin/sandbox-exec";
 
@@ -36,12 +43,20 @@ function subpathRules(paths) {
   }).join("\n");
 }
 
+function literalRules(paths) {
+  return paths.map((p) => {
+    assertSbplSafePath(p, { role: "literal" });
+    return `  (literal "${p}")`;
+  }).join("\n");
+}
+
 export async function buildDelegatedWriteSandboxProfile({
   workspaceRoot,
   providerHome,
   tempRoot,
   forbiddenExtra = [],
-  codexHome = null
+  codexHome = null,
+  runtime = null
 } = {}, deps = {}) {
   const roots = await validateCanonicalDelegatedWriteRoots({
     workspaceRoot,
@@ -50,19 +65,29 @@ export async function buildDelegatedWriteSandboxProfile({
     forbiddenExtra
   }, deps);
 
-  const readableExtra = [
+  const resolvedRuntime = await canonicalizeCodexOsSandboxRuntime(
+    runtime ?? await resolveCodexOsSandboxRuntime(deps),
+    deps
+  );
+
+  const systemReadable = [
     "/usr", "/System", "/bin", "/sbin", "/private/var/db/dyld", "/Library", "/opt", "/private/etc"
   ];
   const writeRoots = roots.allowedWritePaths;
+  const runtimeReads = resolvedRuntime.runtimeReadPaths;
 
+  // process-exec: system bins + pinned Codex package only — not broad personal ~/.codex
   return `(version 1)
 (deny default)
 (allow process-fork)
-(allow process-exec)
+(allow process-exec
+${subpathRules([...systemReadable, ...runtimeReads])}
+${literalRules([resolvedRuntime.executable])}
+)
 (allow file-read-metadata (literal "/"))
 (allow file-read-data (literal "/"))
 (allow file-read*
-${subpathRules([...writeRoots, ...readableExtra])}
+${subpathRules([...writeRoots, ...systemReadable, ...runtimeReads])}
   (literal "/dev/null")
   (literal "/dev/urandom")
   (literal "/dev/tty"))
@@ -134,7 +159,8 @@ export async function wrapCodexLaunchWithOsSandbox(launch, {
   providerHome,
   tempRoot,
   workspaceRoot = null,
-  forbiddenExtra = []
+  forbiddenExtra = [],
+  runtime = null
 } = {}, deps = {}) {
   await assertDelegatedWriteOsSandboxAvailable(deps);
 
@@ -158,17 +184,27 @@ export async function wrapCodexLaunchWithOsSandbox(launch, {
     forbiddenExtra
   }, deps);
 
+  const resolvedRuntime = await canonicalizeCodexOsSandboxRuntime(
+    runtime ?? await resolveCodexOsSandboxRuntime(deps),
+    deps
+  );
   const baseEnv = launch.env ?? process.env;
   return {
-    // Absolute path only — never PATH-resolve bare "sandbox-exec" after bypass rewrite.
+    // Absolute paths only — never bare "sandbox-exec" / "codex" (PATH fails inside SBPL).
     command: SANDBOX_EXEC_PATH,
-    args: ["-f", profilePath, "codex", ...rewriteCodexArgsForOuterOsSandbox(launch.args)],
+    args: [
+      "-f",
+      profilePath,
+      resolvedRuntime.executable,
+      ...rewriteCodexArgsForOuterOsSandbox(launch.args)
+    ],
     cwd: roots.workspaceRoot,
     env: {
       ...baseEnv,
       CODEX_HOME: roots.providerHome,
       TMPDIR: roots.tempRoot
     },
-    roots
+    roots,
+    runtime: resolvedRuntime
   };
 }

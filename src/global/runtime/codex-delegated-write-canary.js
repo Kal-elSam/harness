@@ -47,6 +47,34 @@ export function ensureCodexWorkspaceCd(args, workspaceRoot) {
   return out;
 }
 
+/** Inject/overwrite --model so the pinned id reaches final argv. */
+export function ensureCodexModelArg(args, model) {
+  if (typeof model !== "string" || model.trim() === "") {
+    throw new DelegatedWriteOsSandboxError(
+      "Delegated-write canary requires an explicit model id.",
+      { code: "delegated_write_canary_model_required" }
+    );
+  }
+  const pinned = model.trim();
+  if (!Array.isArray(args)) return ["--model", pinned];
+
+  const out = [...args];
+  const modelAt = out.indexOf("--model");
+  if (modelAt >= 0) {
+    out[modelAt + 1] = pinned;
+    return out;
+  }
+
+  // Wrapped argv: -f <profile> <absolute-codex> …
+  if (out[0] === "-f" && out.length >= 3) {
+    out.splice(3, 0, "--model", pinned);
+    return out;
+  }
+
+  out.unshift("--model", pinned);
+  return out;
+}
+
 export async function prepareDelegatedWriteCanaryPlan({
   workspaceRoot,
   providerHome,
@@ -154,10 +182,20 @@ export async function prepareDelegatedWriteCanaryRunner({
   providerHome,
   tempRoot,
   profilePath,
+  model,
   forbiddenExtra = [],
+  runtime = null,
   buildLaunchImpl = (args) => codex.buildLaunch(args)
 } = {}, deps = {}) {
   await assertDelegatedWriteOsSandboxAvailable(deps);
+
+  if (typeof model !== "string" || model.trim() === "") {
+    throw new DelegatedWriteOsSandboxError(
+      "Delegated-write canary requires an explicit model id.",
+      { code: "delegated_write_canary_model_required" }
+    );
+  }
+  const pinnedModel = model.trim();
 
   const plan = await prepareDelegatedWriteCanaryPlan({
     workspaceRoot,
@@ -169,6 +207,7 @@ export async function prepareDelegatedWriteCanaryRunner({
   const baseLaunch = buildLaunchImpl({
     task: plan.task,
     cwd: plan.workspaceRoot,
+    model: pinnedModel,
     permissions: []
   });
 
@@ -177,25 +216,34 @@ export async function prepareDelegatedWriteCanaryRunner({
     providerHome: plan.providerHome,
     tempRoot: plan.tempRoot,
     workspaceRoot: plan.workspaceRoot,
-    forbiddenExtra
+    forbiddenExtra,
+    runtime
   }, deps);
 
   const launch = {
     ...wrapped,
     cwd: plan.workspaceRoot,
-    args: ensureCodexWorkspaceCd(wrapped.args, plan.workspaceRoot)
+    args: ensureCodexModelArg(
+      ensureCodexWorkspaceCd(wrapped.args, plan.workspaceRoot),
+      pinnedModel
+    )
   };
 
   return {
     plan,
     launch,
+    runtime: wrapped.runtime,
+    model: pinnedModel,
     command: formatDelegatedWriteCanaryCommand(launch),
     auth: describeIsolatedAuthHandling(plan),
     spawnShape: Object.freeze({
       command: launch.command,
       args: launch.args,
       cwd: launch.cwd,
-      envKeys: Object.freeze(["CODEX_HOME", "TMPDIR"])
+      envKeys: Object.freeze(["CODEX_HOME", "TMPDIR"]),
+      model: pinnedModel,
+      codexExecutable: wrapped.runtime?.executable ?? null,
+      runtimeReadPaths: wrapped.runtime?.runtimeReadPaths ?? null
     })
   };
 }
