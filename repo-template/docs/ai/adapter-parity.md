@@ -48,6 +48,7 @@ evals/
 | Evals | agents/loops | commands/rules | `.codex/skills/evals` | `.claude/skills/evals` | `.pi/skills/evals` |
 | Loop Engineering | `.opencode/loops` | `loop-*` commands | loop skill/prompt | loop skill/agent | prompt templates |
 | Checkpoint | checkpoint agent | `/checkpoint` | checkpoint skill | checkpoint skill | `/checkpoint` |
+| Session handoff | `/session-handoff` | `/session-handoff` | session-handoff skill | session-handoff skill | `/session-handoff` |
 | Model routing | model-router agent | docs/rules | skill/prompt | skill/prompt | model-routing skill |
 | Review | checkpoint/reviewer | `/review` | review prompt/skill | reviewer agent | `/review` |
 | Human approval | policy | policy | policy | policy | policy |

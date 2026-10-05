@@ -37,6 +37,16 @@ docs/ai/harness.md
 
 Lectura por tarea: `docs/ai/context-budget.md`
 
+## Session handoff
+
+El contexto largo degrada la precisión de forma gradual. Cerca del 60% es un presupuesto de calidad, no un corte fijo.
+
+- **0–50%:** planear y cambios complejos.
+- **50–70%:** cerrar la unidad y escribir `handoff.md` en la raíz.
+- **Por encima de 70%:** no decidir arquitectura. Compactar o abrir sesión nueva.
+
+Protocolo: `docs/ai/session-handoff.md`. La sesión nueva arranca con el objetivo, ese archivo, los archivos relevantes y el estado de git. El resumen automático no lo reemplaza.
+
 ## Harness obligatorio
 
 Todo cambio no trivial sigue:
@@ -155,6 +165,7 @@ If it cannot be reviewed, it must not be automated.
 | `docs/ai/spec-driven-development.md` | SDD |
 | `docs/ai/test-driven-development.md` | TDD |
 | `docs/ai/agent-workflow.md` | Roles y handoffs |
+| `docs/ai/session-handoff.md` | Traspaso de sesión |
 | `docs/ai/memory.md` | Engram |
 | `docs/ai/context-graph.md` | Graphify |
 | `docs/skills/` | Procedimientos operativos |
