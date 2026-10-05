@@ -23,6 +23,41 @@ is official.
 | `unavailable` | Binary absent | Install hint only. No SDD / reviews / receipts / routing |
 | `incompatible` | Unknown schema, non-object, or ambiguous JSON | Fail closed. Work and Equipo stay |
 
+## Official bridge map (live path)
+
+```text
+probeGentle (capabilities v2 / v2.1)
+  → mapGentleProviderState
+      connected | upgrade_required | unavailable | incompatible
+  → when connected only:
+      argvFromBootstrap(bootstrap.command)   # review status only
+      → runGentleCommand(review status --json)
+      → mapOfficialReviewStatus              # pass next_transition unaltered
+      → optional: gentle-ai sdd-status --json
+  → control-plane Workflow + Attention (≤2 primaries)
+```
+
+`next_transition` kinds observed in fixtures: `execute` (verbatim
+`execute.command`) and `collect` (wait / no command). Kairo never invents a
+kind, command, receipt, gate, or lineage.
+
+### Result association (`kairo.review-ref/v1`)
+
+Work/minion results may carry a **read-only** `reviewRef` from
+`associateResultWithGentleReview`. It does not mutate `createMinionResult`.
+
+| `association` | When | `authority` |
+|---|---|---|
+| `pending` | Connected + RDD on + status ok, no published receipt id | `none` |
+| `official` | Connected + RDD on + Gentle published receipt id/digest | `gentle` |
+| `incompatible` | Bad/inventory/unknown schema, or provider incompatible/upgrade | `none` |
+| `unavailable` | Provider unavailable | `none` |
+| `rdd_off` | Explicit RDD off — ignores even an official-looking status | `none` |
+
+Advisory Kairo receipts (`kairo review` / `rev-*` under `~/.harness/reviews/`)
+may appear only as `advisoryReceiptId`. They never set `authority: gentle` and
+never fill `receipt` / `gate` / `nextTransition`.
+
 ## Official reads (connected only)
 
 Review status is **not** hard-coded. Kairo keeps Gentle’s announced
@@ -79,7 +114,7 @@ workflow section of the control plane. Do not delete them in this version.
 
 | Surface | Role after freeze |
 |---|---|
-| `kairo review` / `kairo reviews` | Bounded Codex/Pi reviews; receipts under `~/.harness/reviews/` |
+| `kairo review` / `kairo reviews` | Bounded Codex/Pi reviews; receipts under `~/.harness/reviews/`; may bind only as `reviewRef.advisoryReceiptId` |
 | Cockpit **Runs → Reviews** | Read-only Kairo receipts; not Gentle authority |
 | `kairo orchestrator` | Adapter capability diagnostics |
 | `kairo intelligence` | Harness Engineering routing (Ollama / OpenCode / OpenRouter). Not Gentle SDD |
