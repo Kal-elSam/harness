@@ -3,6 +3,15 @@ import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { writeAtomicJson } from "../runtime/write-atomic-json.js";
 import { installSessionStartHooks } from "./context-fill-checkpoint.js";
+import {
+  CONTEXT_FILL_CACHE_MS,
+  CONTEXT_FILL_SCHEMA,
+  projectLabel
+} from "./context-fill-constants.js";
+import {
+  mutateContextFillState,
+  readContextFillState
+} from "./context-fill-state.js";
 
 export {
   adapterMark,
@@ -11,14 +20,9 @@ export {
   runtimeAdapter
 } from "./context-fill-handoff.js";
 
-export const CONTEXT_FILL_SCHEMA = "kairo.context-fill/v1";
-export const CONTEXT_FILL_CACHE_MS = 60_000;
-const HOOK_MARKER = "context-fill-hook.js";
+export { CONTEXT_FILL_CACHE_MS, CONTEXT_FILL_SCHEMA, projectLabel } from "./context-fill-constants.js";
 
-export function projectLabel(cwd) {
-  const parts = String(cwd).split("/").filter(Boolean);
-  return parts.slice(-2).join("/") || "unknown";
-}
+const HOOK_MARKER = "context-fill-hook.js";
 
 export function payloadCwd(payload) {
   const candidates = [
@@ -74,11 +78,7 @@ function slim(report) {
 }
 
 async function readState(homeDir) {
-  try {
-    const parsed = JSON.parse(await readFile(join(homeDir, ".harness", "context-fill.json"), "utf8"));
-    if (parsed?.schema === CONTEXT_FILL_SCHEMA && parsed.projects) return parsed;
-  } catch { /* first write */ }
-  return { schema: CONTEXT_FILL_SCHEMA, projects: {} };
+  return readContextFillState(homeDir);
 }
 
 export async function readCachedReport(homeDir, cwd, now = Date.now()) {
@@ -96,42 +96,42 @@ export async function recordContextFill({
   now = Date.now(),
   saveEngram = async () => {}
 } = {}) {
-  const state = await readState(homeDir);
-  const label = projectLabel(report.cwd);
-  const previous = state.projects[label] ?? {};
   const fingerprint = fillFingerprint(report);
-  let engramFingerprint = previous.engramFingerprint ?? null;
-  if (fingerprint && fingerprint !== engramFingerprint) {
-    const observation = engramObservation(report);
-    if (observation && await saveEngram(observation, report.cwd)) {
-      engramFingerprint = fingerprint;
+  let remembered = false;
+  await mutateContextFillState(homeDir, async (state) => {
+    const label = projectLabel(report.cwd);
+    const previous = state.projects[label] ?? {};
+    let engramFingerprint = previous.engramFingerprint ?? null;
+    if (fingerprint && fingerprint !== engramFingerprint) {
+      const observation = engramObservation(report);
+      if (observation && await saveEngram(observation, report.cwd)) {
+        engramFingerprint = fingerprint;
+      }
     }
-  }
-  state.projects[label] = {
-    cwd: report.cwd,
-    measuredAt: new Date(now).toISOString(),
-    fingerprint,
-    engramFingerprint,
-    announced: previous.announced ?? {},
-    readings: slim(report)
-  };
-  await mkdir(join(homeDir, ".harness"), { recursive: true });
-  await writeAtomicJson(join(homeDir, ".harness", "context-fill.json"), state);
-  return { fingerprint, remembered: engramFingerprint === fingerprint && Boolean(fingerprint) };
+    remembered = engramFingerprint === fingerprint && Boolean(fingerprint);
+    state.projects[label] = {
+      cwd: report.cwd,
+      measuredAt: new Date(now).toISOString(),
+      fingerprint,
+      engramFingerprint,
+      announced: previous.announced ?? {},
+      readings: slim(report)
+    };
+  });
+  return { fingerprint, remembered };
 }
 
 export async function claimVisibleNotice(homeDir, cwd, adapter, mark) {
   if (!mark) return false;
-  const state = await readState(homeDir);
-  const label = projectLabel(cwd);
-  const previous = state.projects[label] ?? {};
-  const announced = { ...(previous.announced ?? {}) };
-  if (announced[adapter] === mark) return false;
-  announced[adapter] = mark;
-  state.projects[label] = { ...previous, announced };
-  await mkdir(join(homeDir, ".harness"), { recursive: true });
-  await writeAtomicJson(join(homeDir, ".harness", "context-fill.json"), state);
-  return true;
+  return mutateContextFillState(homeDir, (state) => {
+    const label = projectLabel(cwd);
+    const previous = state.projects[label] ?? {};
+    const announced = { ...(previous.announced ?? {}) };
+    if (announced[adapter] === mark) return false;
+    announced[adapter] = mark;
+    state.projects[label] = { ...previous, announced };
+    return true;
+  });
 }
 
 export function saveEngramObservation(observation, cwd, spawnImpl = spawn) {

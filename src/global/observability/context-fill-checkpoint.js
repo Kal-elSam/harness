@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { writeAtomicJson } from "../runtime/write-atomic-json.js";
+import { writeAtomicJson, writeAtomicText } from "../runtime/write-atomic-json.js";
 import { handoffDir } from "./context-fill-handoff.js";
 
 const HOOK_MARKER = "context-fill-hook.js";
@@ -76,7 +76,7 @@ export async function writeCheckpoint({ homeDir, cwd, report, adapter, prompt = 
     ""
   ].join("\n");
   await mkdir(handoffDir(homeDir, cwd), { recursive: true });
-  await writeFile(path, body);
+  await writeAtomicText(path, body);
   return path;
 }
 
