@@ -1,6 +1,6 @@
 import { createWorkResult, isWorkRequest } from "./contracts.js";
 import { normalizeRunResult } from "./run-result-normalizer.js";
-import { startRun } from "../runtime/run-manager.js";
+import { startRun, stopRun } from "../runtime/run-manager.js";
 import { readRunEvents } from "../runtime/run-store.js";
 
 export class RunSpawnArgumentError extends Error {
@@ -43,18 +43,28 @@ function failedAfterStart(runId, reason) {
  * Composes the kernel `spawnAdapter(decision, request)` seam over the existing
  * `startRun` executor. Admission is whatever `startRun` enforces under
  * `requireVerifiedWriteContainment: true`; nothing here widens permissions,
- * and this factory never stops, cancels, or writes run state.
+ * and this factory never writes run state itself.
+ *
+ * Cancellation is explicit and caller-driven: when `onStart` is provided it
+ * receives a `stop` handle bound to that run's runId, and nothing here ever
+ * cancels automatically (not on failure, not on an onStart error, not as a
+ * retry). A `cancelled` WorkResult reports run state (stopRun writes CANCELLED
+ * before killing the child), not confirmed process death.
  */
 export function createRunSpawnAdapter({
   homeDir,
   cliVersion,
   startRunImpl = startRun,
-  readRunEventsImpl = readRunEvents
+  readRunEventsImpl = readRunEvents,
+  stopRunImpl = stopRun,
+  onStart = null
 } = {}) {
   if (!nonEmptyString(homeDir)) throw new Error("createRunSpawnAdapter requires a non-empty homeDir.");
   if (!nonEmptyString(cliVersion)) throw new Error("createRunSpawnAdapter requires a non-empty cliVersion.");
   if (typeof startRunImpl !== "function") throw new Error("createRunSpawnAdapter requires a startRunImpl function.");
   if (typeof readRunEventsImpl !== "function") throw new Error("createRunSpawnAdapter requires a readRunEventsImpl function.");
+  if (typeof stopRunImpl !== "function") throw new Error("createRunSpawnAdapter requires a stopRunImpl function.");
+  if (onStart !== null && typeof onStart !== "function") throw new Error("createRunSpawnAdapter onStart must be a function when provided.");
 
   return async function spawnAdapter(decision, request) {
     assertSpawnArguments(decision, request);
@@ -77,6 +87,17 @@ export function createRunSpawnAdapter({
     const runId = started?.runId;
     if (!nonEmptyString(runId)) {
       throw new Error("startRun resolved without a runId (executor contract violation).");
+    }
+
+    if (onStart) {
+      // Isolated on purpose: a throwing or rejecting hook must never affect, cancel,
+      // or delay the run, change the WorkResult, or lose the runId.
+      const stop = (options) => stopRunImpl(homeDir, runId, options);
+      try {
+        Promise.resolve(onStart({ runId, stop, decision, request })).catch(() => {});
+      } catch {
+        // Swallowed by design; see above.
+      }
     }
 
     // From here a run exists: every problem becomes a failed WorkResult keeping the runId.
