@@ -93,7 +93,7 @@ Diagnostic prompt, identical text in A and B, for example: `Reply with the singl
 
 1. Process exit code `0`.
 2. stdout JSONL contains a real agent response: an `item.completed` event with `item.type == "agent_message"` and non-empty `text` (the event shape the repo's Codex parsers already use). A `turn.started` event alone is not enough.
-3. No cfprefs denial linked to the observed process tree in B's sandbox-log window (see PID-linked capture), while A shows them linked.
+3. No cfprefs denial linked to the observed process tree in B's sandbox-log window (see PID-linked capture), while A shows them linked. This absence counts as evidence only when capture coverage is complete (see Evidence contract); otherwise it is unknown, not clean.
 
 The absence of the `-32600` message alone is NOT success. Exit 0 without an `agent_message`, or an empty/whitespace response, is not success.
 
@@ -111,18 +111,39 @@ The absence of the `-32600` message alone is NOT success. Exit 0 without an `age
 
 Run `delegated-write-20261005T123142` MAY be cited as supporting precedent but **it is not a contemporaneous control**: it used the containment canary prompt (with write requests) instead of the diagnostic prompt, ran at a different time, and its provider-home state and PID window are not comparable to B's. If it replaces a fresh A, the strongest verdict available is "consistent with H1, not confirmed"; a "confirmed" verdict requires a contemporaneous A with the same prompt, binary, model and home.
 
+### Evidence contract: capture coverage (fixed before any run)
+
+Each arm's sandbox-log evidence is in exactly one of three states, and the verdict must say which:
+
+- **Linked-present:** at least one cfprefs denial whose offender PID is in the observed tree. Presence is positive evidence even if coverage is otherwise incomplete.
+- **Absent with complete coverage:** zero tree-linked cfprefs denials AND every coverage check below holds. This is valid evidence of absence.
+- **Unknown coverage:** any coverage check fails or cannot be evaluated. Absence in this state is NOT "clean"; any verdict that depends on absence becomes `inconclusive_capture_incomplete`.
+
+Coverage is complete only if ALL hold for the arm (record the result of each):
+
+1. **Extraction ran in full:** the log query covered the whole padded window (`buildSandboxLogWindow`), exited without error, and returned Sandbox kernel lines for some process (an empty window is unknown, not clean; arm A's window is expected to contain them).
+2. **Identity recorded:** real `startedAt`/`endedAt` from the spawn, the spawned `sandbox-exec` PID recorded as `sandboxExecPid`, and a non-empty observed tree. A tree that missed the short-lived process (the earlier runs lasted ~10-125 ms) is unknown coverage.
+3. **Parser accountability, no silent drops:** every extracted line containing `Sandbox:` is either parsed into an event or listed as unparsed with its raw text, so raw count = parsed + listed-unparsed. Any unparsed line mentioning `cfprefs` or `ipc-posix-shm` makes coverage unknown (it could be the missing denial).
+4. **Positive control:** the contemporaneous arm A shows tree-linked cfprefs denials through the same pipeline, proving the capture can see them. If A shows none, the experiment is already inconclusive (A did not reproduce).
+5. **Raw evidence preserved:** the unmodified log extract and the raw lines are saved for each arm.
+
+A clean B stays valid: B is never required to show a denial. A B with exit 0 + `agent_message` + zero tree-linked cfprefs denials **and complete coverage** is a valid confirmation of H1 for this startup failure; the same B with unknown coverage is `inconclusive_capture_incomplete`.
+
+Implementation status: **not implemented.** `parseSandboxOffenderEvents` returns only the lines it matches (non-matching lines are dropped silently), and nothing computes coverage or the verdict, so checks 1-5 and the decision table are applied by hand and recorded in the evidence until code does it. The native review's advisory ids on the parser (`R3-parser-first-line-only`, `R4-parser-silent-miss`) are recorded, without descriptions, in `odd/tasks/kernel-run-spawn-bridge.md`; they point at the same risk and are for this plan's owner.
+
 ### Decision table (fixed before any run)
 
 | A (contemporaneous) | B | Verdict |
 |---|---|---|
-| -32600 + cfprefs denials linked to the tree | success criterion met (exit 0 + agent_message + no linked cfprefs denial) | H1 confirmed for this startup failure under this profile (necessity shown; no claim about later blockers or about containment) |
-| same | same -32600 with NO linked cfprefs denials | H1 refuted: those denials are not the cause |
+| -32600 + cfprefs denials linked to the tree | success criterion met (exit 0 + agent_message + no linked cfprefs denial, with complete capture coverage) | H1 confirmed for this startup failure under this profile (necessity shown; no claim about later blockers or about containment) |
+| same | same -32600 with NO linked cfprefs denials AND complete capture coverage | H1 refuted: those denials are not the cause |
+| same | any outcome whose reading depends on "no linked cfprefs denial" while capture coverage is incomplete or unknown | `inconclusive_capture_incomplete`: absence is not evidence without complete coverage (a B that exited 0 with an `agent_message` is still recorded as an observation) |
 | same | -32600 AND linked cfprefs denials still present | Invalid arm: the rule did not take effect (check syntax/uid); no verdict |
 | same | -32600 gone but exit != 0 or no agent_message | Inconclusive: record the new blocker; H1 partially supported (that error cleared), not confirmed |
 | A does not show -32600 | any | Inconclusive: the failure did not reproduce; no verdict |
 | cfprefs events present but none linked to the tree | any | `inconclusive_pid_unlinked` |
 
-**Do not confuse:** B with **no** tree-linked cfprefs denials (treatment applied / clean allow path) is **not** `inconclusive_pid_unlinked`. That label is only when cfprefs events exist but fail tree linkage. Target denial still present on B ⇒ **invalid arm**, not evidence against H1. `-32600` with treatment applied, valid capture, and **no** linked cfprefs deny ⇒ **evidence against H1**.
+**Do not confuse:** B with **no** tree-linked cfprefs denials (treatment applied / clean allow path) is **not** `inconclusive_pid_unlinked`. That label is only when cfprefs events exist but fail tree linkage. Target denial still present on B ⇒ **invalid arm**, not evidence against H1. `-32600` with treatment applied, valid capture, and **no** linked cfprefs deny ⇒ **evidence against H1**. "Valid capture" means complete coverage per the Evidence contract; a clean B with complete coverage is valid and is never required to show a denial, while absence under unknown coverage is `inconclusive_capture_incomplete`, not clean.
 
 ## Authorization and cost (not granted)
 
