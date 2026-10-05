@@ -2,9 +2,7 @@
 
 ## Status
 
-**OFFLINE PREP CLOSED for authorization ask.** Profile delta helper + PID-linked
-capture plan + two-arm grant package exist. **No live arm run yet.** No
-production profile change, no promotion, no wiring.
+**EXECUTED ONCE PER ARM on 2026-10-05; interpretation closed: inconclusive, H1 partially supported, NOT confirmed** (fixed decision table, row 4; capture coverage incomplete as recorded). The profile delta helper, the PID-linked capture plan and the two-arm grant package existed before the run. No production profile change, no promotion, no wiring. Details, declared deviations and the grant reference are in "Run result and declared deviations" below. Nothing here authorizes another run.
 
 ## Objective
 
@@ -147,12 +145,56 @@ Implementation status (offline helpers): **partial.** `profilePermissionsOtherwi
 
 **Do not confuse:** B with **no** tree-linked cfprefs denials (treatment applied / clean allow path) is **not** `inconclusive_pid_unlinked`. That label is only when cfprefs events exist but fail tree linkage. Target denial still present on B ⇒ **invalid arm**, not evidence against H1. `-32600` with treatment applied, valid capture, and **no** linked cfprefs deny ⇒ **evidence against H1**. "Valid capture" means complete coverage per the Evidence contract; a clean B with complete coverage is valid and is never required to show a denial, while absence under unknown coverage is `inconclusive_capture_incomplete`, not clean.
 
-## Authorization and cost (not granted)
+## Run result and declared deviations (2026-10-05)
 
-- Nothing here is authorized to run. Earlier grants are consumed and do not apply.
+Evidence (outside the repo): `~/.harness/canary-evidence/cfprefs-diagnostic-20261005T222023Z` (tip at run `d58074bf0`). Each arm ran once; no retries; no credential copy. Run by another session; the independent read-only contrast is recorded in `odd/tasks/kernel-run-spawn-bridge.md` (commit `9537a53c2`).
+
+### Facts (re-derived from the raw files)
+
+| | A (control) | B (treatment) |
+|---|---|---|
+| Profile sha256 | `e07a911b...` (matches recorded) | `52ab51d6...` (matches recorded) |
+| Profile diff | baseline | baseline + exactly the two `ipc-posix-name` shm reads |
+| Binary sha256 / model / uid / argv / prompt / `CODEX_HOME` | `112fae7a...` / `gpt-6.1-sol` / 501 / identical / identical / same | same |
+| Timing | 61 ms; B started 13 ms after A ended | ~17 s |
+| Exit | 1 | 1 |
+| stderr signature | `Failed to synchronize managed preferences (code -32600)` | no `-32600`; later errors (network, skills root EPERM) |
+| stdout | empty | `thread.started`, `turn.started`, then reconnect/error events |
+| `agent_message` | no | no |
+| Tree-linked denials on `apple.cfprefs.501v1` / `apple.cfprefs.daemonv1` | yes, both (pid 84113) | none (tree 84117/84288) |
+
+### Reading, by the table fixed before the run
+
+Row 4: `-32600` cleared, exit != 0 and no `agent_message`. Verdict: **inconclusive; H1 partially supported (that error cleared), not confirmed.** The absence-dependent claim "B has no tree-linked cfprefs shm denial" additionally carries `inconclusive_capture_incomplete` under the evidence contract, because coverage is recorded incomplete (deviation D1). The wording "the cfprefs denials caused the `-32600`" is stronger than this evidence permits (n = 1 per arm, one order, capture incomplete as recorded).
+
+### Declared deviations (kept as deviations; none is converted into a pass)
+
+- **D1: log extraction rescued after the run.** The planned `log show` failed (exit 64: ISO-Z timestamps rejected by the required local `%Y-%m-%d %H:%M:%S` format), so both arms are recorded `extractionRanInFull: false`. The evidence was rescued afterwards with a separate local-time query over the same window (exit 0; A 159 lines, B 653 lines; whole-second bounds, up to ~0.4 s short of the padded end). The rescue is part of the evidence, preserved unmodified, and is a post-hoc deviation from check 1 of the evidence contract. It has NOT been accepted as satisfying check 1; accepting it would be a separate, explicit decision by the experiment owner and would not change the verdict above, because B fails the success criterion on exit code and `agent_message` regardless of coverage.
+- **D2: overlapping capture windows.** The arms ran 13 ms apart, so each padded window contains the other arm's pid. PID linkage separated them correctly. B's `inconclusivePidUnlinked: true` is the literal table rule (cfprefs events present, none in B's tree: they are arm A's pid 84113). Reading those as attributable arm-A noise is a refinement made after seeing the data; it is recorded here as such and is not applied to the verdict.
+- **D3: harness labels.** B's startup kind is recorded as `stdin_prompt` with `deniedResourceIdentified: true`, a catch-all label for a failed run that printed the stdin advisory. The authoritative evidence that B passed `thread/start` is its stdout (`thread.started`, `turn.started`), not that label.
+
+### Criteria are not reinterpreted
+
+The success criterion, the evidence contract and the decision table above stay exactly as fixed before the run. They are NOT to be edited or re-read after the fact to turn this result into a confirmation. A confirmation requires a new, contemporaneous experiment that is pre-registered and meets exit 0 + a real `agent_message` + complete capture coverage with its own explicit grant.
+
+Ambiguity noted after the run, not applied to the verdict: success criterion 3 says "no cfprefs denial linked to the tree". H1 concerns the two shm names, and B's tree does have 51 tree-linked `user-preference-read kcfpreferencesanyapplication` denials (checker cfprefsd). The verdict does not depend on this: under any reading B fails exit 0 + `agent_message`.
+
+### Observations outside the verdict (inference; nothing here is a recommendation to widen the profile)
+
+B's later failures coincide with tree-linked denials on `file-read-data /private/etc/hosts` (115) and `system-info net.link.addr` (160) next to the network errors, a `file-read-metadata` denial on the skills root matching the stderr EPERM, and the `user-preference-read` denials above. A causal link to the failures was not tested. Whether to allow any of them is a decision for the canary owner and conflicts with the startup classifier's no-preference-expansion stance; it would require a new experiment.
+
+## Authorization and cost (consumed)
+
+**Grant as recorded** in `authorization-record.json` of the run directory (self-recorded by the executing session; this Claude session did not observe the grant and it is not in this chat; channel recorded: Cursor): authorized at `2026-10-05T22:20:23.135Z`, text `User: Cursor execute each arm once; real UID explicit; preserve evidence; stop if auth missing; no credential copy; no retries`; model pinned `gpt-6.1-sol`; account/session recorded as a ChatGPT subscription login verified through the isolated `CODEX_HOME` login status (no credential copy); uid 501; tip at run `d58074bf0`. The grant text itself does not quote the model id or the account identity (those fields are filled by the harness), whereas the authorization package asks the grant to name them; this is recorded as an unresolved gap, not assumed away.
+
+**State: consumed.** One run per arm was made; no retries. No further run is authorized. A new run needs a new explicit grant that names the model and the account/session and states there is no credential copy.
+
+Original requirements, as written before the run (kept for the record):
+
+- Nothing here was authorized to run. Earlier grants are consumed and do not apply.
 - Needs one explicit grant for this two-arm experiment that names the model and the account/session, and states there is no credential copy. A should fail at startup before any model call; B makes one real model call with a trivial prompt only if startup clears (and A would too if it unexpectedly cleared).
 - Any adoption of the cfprefs allowance in the real canary profile is a separate decision for the canary owner: the repo's startup classifier deliberately records this failure as an unidentified resource with no preference-permission expansion, and this variant must remain a scratch diagnostic profile.
 
 ## Next step
 
-Wait for the explicit grant above. Then write the variant with `appendCfprefsDiagnosticDelta`, capture with `buildPidLinkedSandboxCapturePlan`, run A then B, and judge with the decision table in this document. B-4 and B-5 of the bridge stay stopped regardless of the outcome.
+None pending for this experiment: the interpretation is closed as inconclusive / H1 partially supported. Any further evidence needs a new pre-registered experiment with its own grant. B-4 and B-5 of the bridge stay stopped regardless of the outcome; nothing is promoted and nothing is wired.
