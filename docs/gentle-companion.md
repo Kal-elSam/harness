@@ -55,8 +55,24 @@ Work/minion results may carry a **read-only** `reviewRef` from
 | `rdd_off` | Explicit RDD off — ignores even an official-looking status | `none` |
 
 Advisory Kairo receipts (`kairo review` / `rev-*` under `~/.harness/reviews/`)
-may appear only as `advisoryReceiptId`. They never set `authority: gentle` and
+may appear only as `reviewRef.advisoryReceiptId`. They never set `authority: gentle` and
 never fill `receipt` / `gate` / `nextTransition`.
+
+### Approval provenance (host-neutral)
+
+`associateResultWithGentleReview` returns siblings beside the unchanged
+`reviewRef` v1 object:
+
+| Field | Meaning |
+|---|---|
+| `approval.provenance` | `none` \| `gentle_receipt` \| `advisory` \| `team_strategy` |
+| `approval.gentleStatus` | Gentle `receipt.status` pass-through only when provenance is `gentle_receipt` |
+| `approval.teamStrategyApproved` | Orthogonal project-strategy bit; never review authority |
+| `gentleContext` | Official `applicability` / `action` / `candidates[]` when Gentle published them |
+
+There is **no** `approved` / `rejected` boolean. Kairo does not invent a verdict
+envelope. Kernel `WorkResult` (`ok`, `workerId`, `summary` nullable) is a valid
+`result` input — host-independent preparation for Claude’s frozen result contract.
 
 ## Official reads (connected only)
 
