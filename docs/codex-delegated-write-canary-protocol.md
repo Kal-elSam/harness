@@ -19,9 +19,12 @@ Never target personal `~/.codex` for writes. This prep does not copy credentials
 `CODEX_HOME` is a path only — it does not name the account/session.
 Runtime **read/exec** may pin the Codex install under
 `~/.codex/packages/standalone/releases/<version>/` only (never the whole
-personal home, never auth/config/state). Argv uses absolute
-`/usr/bin/sandbox-exec` and the absolute Codex binary — bare `codex` is
-forbidden (PATH fails inside SBPL). No unsandboxed fallback.
+personal home, never auth/config/state). Managed startup reads use a **single**
+policy: exact literals for `/etc/codex/requirements.toml` (and
+`/private/etc/…` alias form) plus ancestor/alias metadata — **not** broad
+`(subpath "/etc")`. Managed requirements are never omitted or rewritten.
+Argv uses absolute `/usr/bin/sandbox-exec` and the absolute Codex binary —
+bare `codex` is forbidden (PATH fails inside SBPL). No unsandboxed fallback.
 Do not delete/recreate preexisting disposable paths without ownership and
 content checks. Preserve evidence outside the disposable tree before cleanup
 (credentials excluded). Full grant rules:

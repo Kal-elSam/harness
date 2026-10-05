@@ -17,6 +17,12 @@ import {
   canonicalizeCodexOsSandboxRuntime,
   resolveCodexOsSandboxRuntime
 } from "./codex-delegated-sandbox-runtime.js";
+import {
+  managedStartupExactReadLiterals,
+  managedStartupMetadataAncestors,
+  profileGrantsBroadEtcRead,
+  profileGrantsExactRequirementsReads
+} from "./codex-delegated-sandbox-startup-reads.js";
 
 export { DelegatedWriteOsSandboxError } from "./codex-delegated-sandbox-errors.js";
 export {
@@ -34,6 +40,17 @@ export {
   deriveCodexPackageRoot,
   resolveCodexOsSandboxRuntime
 } from "./codex-delegated-sandbox-runtime.js";
+export {
+  CODEX_ETC_ALIAS_PAIRS,
+  CODEX_MANAGED_REQUIREMENTS_PATH,
+  CODEX_MANAGED_REQUIREMENTS_PRIVATE_PATH,
+  CODEX_MANAGED_STARTUP_READ_PATHS,
+  classifyManagedRequirementsOpen,
+  managedStartupExactReadLiterals,
+  managedStartupMetadataAncestors,
+  profileGrantsBroadEtcRead,
+  profileGrantsExactRequirementsReads
+} from "./codex-delegated-sandbox-startup-reads.js";
 
 export const SANDBOX_EXEC_PATH = "/usr/bin/sandbox-exec";
 
@@ -102,19 +119,23 @@ export async function buildDelegatedWriteSandboxProfile({
   );
 
   const systemReadable = [
-    "/usr", "/System", "/bin", "/sbin", "/private/var/db/dyld", "/Library", "/opt", "/private/etc"
+    "/usr", "/System", "/bin", "/sbin", "/private/var/db/dyld", "/Library", "/opt"
   ];
   const writeRoots = roots.allowedWritePaths;
   const runtimeReads = resolvedRuntime.runtimeReadPaths;
-  // realpath(CODEX_HOME) walks / → /private → /private/tmp → …; metadata only.
-  const metadataAncestors = sbplAncestorLiteralsForRoots([
-    ...writeRoots,
-    ...runtimeReads,
-    resolvedRuntime.executable
-  ]);
+  const startupExactReads = managedStartupExactReadLiterals();
+  // realpath walks + /etc→/private/etc alias: metadata only, never broad /etc read.
+  const metadataAncestors = [
+    ...sbplAncestorLiteralsForRoots([
+      ...writeRoots,
+      ...runtimeReads,
+      resolvedRuntime.executable
+    ]),
+    ...managedStartupMetadataAncestors()
+  ].filter((path, index, all) => all.indexOf(path) === index);
 
   // process-exec: system bins + pinned Codex package only — not broad personal ~/.codex
-  return `(version 1)
+  const profileBody = `(version 1)
 (deny default)
 (allow process-fork)
 (allow process-exec
@@ -124,9 +145,12 @@ ${literalRules([resolvedRuntime.executable])}
 (allow file-read-metadata
 ${literalRules(metadataAncestors)}
 )
-(allow file-read-data (literal "/"))
+(allow file-read-data
+${literalRules(metadataAncestors)}
+)
 (allow file-read*
 ${subpathRules([...writeRoots, ...systemReadable, ...runtimeReads])}
+${literalRules(startupExactReads)}
   (literal "/dev/null")
   (literal "/dev/urandom")
   (literal "/dev/tty"))
@@ -138,6 +162,21 @@ ${subpathRules(writeRoots)})
 (allow network*)
 (allow system-socket)
 `;
+
+  if (profileGrantsBroadEtcRead(profileBody)) {
+    throw new DelegatedWriteOsSandboxError(
+      "Startup-read policy forbids broad /etc grants — refusing profile.",
+      { code: "delegated_write_broad_etc_read_forbidden" }
+    );
+  }
+  if (!profileGrantsExactRequirementsReads(profileBody)) {
+    throw new DelegatedWriteOsSandboxError(
+      "Startup-read policy requires exact managed requirements literals — refusing profile.",
+      { code: "delegated_write_requirements_literals_missing" }
+    );
+  }
+
+  return profileBody;
 }
 
 export async function isDelegatedWriteOsSandboxSupported(deps = {}) {
