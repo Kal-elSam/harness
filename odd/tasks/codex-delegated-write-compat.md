@@ -11,41 +11,43 @@ credential copy, promotion, or startRun wiring in this tranche.
 - [x] Protocol: exact SBPL profile, disposable paths, capture before/during/after
 - [x] `verifiedEffective: false` / `approval: false` on protocol + oracle
 - [x] Offline suites green (denial = linked tool/process error; executed required)
-- [x] RDD for Cursor canary range assessed via Gentle (separate from Claude B-1/B-2 decline)
+- [x] Cherry-pick `7571ecb46` → `8ff2f5fa8` on `feat/herd-shell-layout` (R1 PATH + SBPL fix)
+- [x] RDD receipt for **integrated** branch tip (Gentle approved + acknowledged)
 
 ## Protocol entry
 
 - Code: `prepareDelegatedWriteCanaryProtocol` → `src/global/runtime/codex-delegated-write-canary-protocol.js`
 - Doc: `docs/codex-delegated-write-canary-protocol.md`
 
-## RDD (Cursor range — Gentle)
+## RDD — prior worktree canary (closed; does not cover branch tip)
 
-Scope tip `c37ed2347` (containment/canary commits), base `95477e794` /
-tree `51c0e417…`, agent `codex` (Cursor runtime itself is **unassessable**
-for immutable receipts).
+| Field | Value |
+|---|---|
+| lineage | `review-2c1545c135018126` |
+| outcome | approved → acknowledged (burned) on worktree only |
+
+## RDD — integrated branch tip (current receipt)
+
+Tip `cd7d90b08` (tree `39190021…`), base `51c0e417…`, agent `codex`,
+`--committed-only`, untracked excluded.
 
 | Field | Value |
 |---|---|
 | risk | high |
-| review_due | true (`high_risk`) |
-| reason | `process_boundary` on `codex-delegated-sandbox.js` (`shell_process`) |
-| changed_paths / lines | 14 / 1496 |
-| target_identity | `sha256:a84d4ebaa752870bc2158727f2dda3b88f9d40b7da041c2cdb4444d4fdfd943b` |
-| lineage | `review-2c1545c135018126` |
-| preflight | STATUS → START `--consent=relay` → **`consent_required`** (blocking) |
-| receipt | **none** — waiting fresh human consent; Claude B-1/B-2 `declined` **not** reused |
-| canary | protocol ready; no live run / credentials / promotion / wiring |
-
-Note: Claude bridge B-3 assess `under_budget` is **not** approval and does **not**
-advance this candidate’s reviewed boundary. Splitting plans does not reset the
-last reviewed boundary arbitrarily.
+| changed_paths / lines | 21 / 2568 |
+| target_identity | `sha256:7966991f17cca5b58de2d09eea480e9a6c05d17e1b4487c2c4eb6e5201d645c3` |
+| lineage | `review-4b66cfffd44c6167` |
+| outcome | **approved → acknowledged** (authority **burned**) |
+| advisory (informational only) | R2 WARNING `R2-omitted-externals-misnomer`; R2 WARNING `R2-forbidden-sibling-name-drift` |
+| canary | protocol ready; **no** live run / credentials / promotion / wiring |
+| `verifiedEffective` | **false** — review ≠ containment proof |
 
 ## TDD
 
-Suites already reported by agents this session — not re-run this turn.
+`test/codex-delegated-write-os-wrap.test.js` green after cherry-pick (reported).
 
 ## Next step
 
-1. **Blocked on Gentle consent** for this Cursor canary candidate (see chat envelope).
-2. Live canary still needs separate authorization after/alongside review choice.
+1. Optional later cleanup of advisory R2 naming drift (does **not** reopen this receipt).
+2. Live canary still needs **separate** authorization.
 3. `verified_effective` only after live contained evidence (separate owner decision).
