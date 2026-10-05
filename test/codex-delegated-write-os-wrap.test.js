@@ -12,6 +12,7 @@ import {
   DelegatedWriteOsSandboxError,
   isDelegatedWriteOsSandboxSupported,
   rewriteCodexArgsForOuterOsSandbox,
+  sbplPathAncestors,
   validateCanonicalDelegatedWriteRoots,
   wrapCodexLaunchWithOsSandbox
 } from "../src/global/runtime/codex-delegated-sandbox.js";
@@ -185,6 +186,29 @@ test("profile write allowlist uses canonical isolated roots only", async () => {
   assert.match(profile, new RegExp(`\\(subpath "${PINNED_PACKAGE.replaceAll("/", "\\/")}"\\)`));
   assert.match(profile, new RegExp(`\\(literal "${PINNED_CODEX.replaceAll("/", "\\/")}"\\)`));
   assert.doesNotMatch(profile, /\(subpath "\/Users\/kal-el\/\.codex"\)/);
+});
+
+test("profile grants ancestor metadata for CODEX_HOME realpath without broadening writes", async () => {
+  const profile = await buildDelegatedWriteSandboxProfile({
+    workspaceRoot: WORKSPACE,
+    providerHome: ISOLATED_PROVIDER,
+    tempRoot: ISOLATED_TEMP
+  }, identityDeps());
+
+  const metadataBlock = profile.split("(allow file-read-metadata")[1].split("(allow file-read-data")[0];
+  for (const ancestor of sbplPathAncestors(ISOLATED_PROVIDER)) {
+    assert.match(metadataBlock, new RegExp(`\\(literal "${ancestor.replaceAll("/", "\\/")}"\\)`));
+  }
+  // Fixture uses /tmp/… (not /private/tmp); live macOS realpath probe covers /private.
+  assert.match(metadataBlock, /\(literal "\/tmp"\)/);
+
+  const writeBlock = profile.split("(allow file-write*")[1];
+  assert.doesNotMatch(writeBlock, /\(subpath "\/private\/tmp"\)/);
+  assert.doesNotMatch(writeBlock, /\(subpath "\/tmp"\)/);
+  assert.doesNotMatch(writeBlock, /\(subpath "\/Users\/kal-el\/\.codex"\)/);
+  // Metadata may name personal ancestors for package realpath; never write/subpath-read of whole ~/.codex
+  assert.doesNotMatch(profile, /\(subpath "\/Users\/kal-el\/\.codex"\)/);
+  assert.doesNotMatch(profile.split("(allow file-read*")[1].split("(allow file-write*")[0], /\(subpath "\/Users\/kal-el\/\.codex"\)/);
 });
 
 test("rewriteCodexArgsForOuterOsSandbox forces bypass and drops approve-for-me", () => {

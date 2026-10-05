@@ -7,6 +7,7 @@
 
 import { access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { DelegatedWriteOsSandboxError } from "./codex-delegated-sandbox-errors.js";
 import {
   assertSbplSafePath,
@@ -50,6 +51,36 @@ function literalRules(paths) {
   }).join("\n");
 }
 
+/**
+ * Ancestors required for realpath/canonicalize under Seatbelt.
+ * Metadata-only — never used as write grants. Includes "/".
+ */
+export function sbplPathAncestors(absolutePath) {
+  if (typeof absolutePath !== "string" || absolutePath.trim() === "") return [];
+  const abs = resolve(absolutePath);
+  assertSbplSafePath(abs, { role: "ancestor" });
+  const out = [];
+  let cur = abs;
+  while (cur !== "/" && cur !== "") {
+    const parent = dirname(cur);
+    if (parent === cur) break;
+    out.push(parent);
+    cur = parent;
+  }
+  out.push("/");
+  return [...new Set(out)];
+}
+
+export function sbplAncestorLiteralsForRoots(roots = []) {
+  const literals = [];
+  for (const root of roots) {
+    for (const ancestor of sbplPathAncestors(root)) {
+      if (!literals.includes(ancestor)) literals.push(ancestor);
+    }
+  }
+  return literals;
+}
+
 export async function buildDelegatedWriteSandboxProfile({
   workspaceRoot,
   providerHome,
@@ -75,6 +106,12 @@ export async function buildDelegatedWriteSandboxProfile({
   ];
   const writeRoots = roots.allowedWritePaths;
   const runtimeReads = resolvedRuntime.runtimeReadPaths;
+  // realpath(CODEX_HOME) walks / → /private → /private/tmp → …; metadata only.
+  const metadataAncestors = sbplAncestorLiteralsForRoots([
+    ...writeRoots,
+    ...runtimeReads,
+    resolvedRuntime.executable
+  ]);
 
   // process-exec: system bins + pinned Codex package only — not broad personal ~/.codex
   return `(version 1)
@@ -84,7 +121,9 @@ export async function buildDelegatedWriteSandboxProfile({
 ${subpathRules([...systemReadable, ...runtimeReads])}
 ${literalRules([resolvedRuntime.executable])}
 )
-(allow file-read-metadata (literal "/"))
+(allow file-read-metadata
+${literalRules(metadataAncestors)}
+)
 (allow file-read-data (literal "/"))
 (allow file-read*
 ${subpathRules([...writeRoots, ...systemReadable, ...runtimeReads])}
