@@ -20,8 +20,9 @@ credential copy, promotion, or startRun wiring in this tranche.
 
 ## RDD (Cursor range — Gentle)
 
-Scope tip `c37ed2347` (containment/canary commits), base `95477e794`, agent
-`codex` (Cursor runtime itself is **unassessable** for immutable receipts).
+Scope tip `c37ed2347` (containment/canary commits), base `95477e794` /
+tree `51c0e417…`, agent `codex` (Cursor runtime itself is **unassessable**
+for immutable receipts).
 
 | Field | Value |
 |---|---|
@@ -29,17 +30,22 @@ Scope tip `c37ed2347` (containment/canary commits), base `95477e794`, agent
 | review_due | true (`high_risk`) |
 | reason | `process_boundary` on `codex-delegated-sandbox.js` (`shell_process`) |
 | changed_paths / lines | 14 / 1496 |
-| receipt | **none** — review not started; consent not requested this turn |
-| vs Claude B-1/B-2 | **Separate candidate.** Claude’s `declined` on `c37ed2347..9d6d283b5` is **not** reused here |
+| target_identity | `sha256:a84d4ebaa752870bc2158727f2dda3b88f9d40b7da041c2cdb4444d4fdfd943b` |
+| lineage | `review-2c1545c135018126` |
+| preflight | STATUS → START `--consent=relay` → **`consent_required`** (blocking) |
+| receipt | **none** — waiting fresh human consent; Claude B-1/B-2 `declined` **not** reused |
+| canary | protocol ready; no live run / credentials / promotion / wiring |
 
-`agent=cursor` assess: unassessable (immutable receipt runtimes: claude-code, opencode, codex only).
+Note: Claude bridge B-3 assess `under_budget` is **not** approval and does **not**
+advance this candidate’s reviewed boundary. Splitting plans does not reset the
+last reviewed boundary arbitrarily.
 
 ## TDD
 
-`node --test test/codex-delegated-write-os-wrap.test.js`
+Suites already reported by agents this session — not re-run this turn.
 
 ## Next step
 
-1. User authorization for live canary under the protocol command (separate).
-2. Fresh Gentle consent if/when this Cursor range review starts — do not reuse Claude’s decline.
-3. Only after a live `contained` with linked tool denials: consider `verified_effective` (separate owner decision).
+1. **Blocked on Gentle consent** for this Cursor canary candidate (see chat envelope).
+2. Live canary still needs separate authorization after/alongside review choice.
+3. `verified_effective` only after live contained evidence (separate owner decision).
