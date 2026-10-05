@@ -31,14 +31,19 @@ Close partial-checkpoint reads and hook races on shared context-fill state as on
 - Lock hardening (this close-out): reproduced live-owner steal (`waiterOutcome:"waiter"` while owner held); fixed `isStale` to steal only when holder pid is dead / lock unusable.
 - `node --test test/context-fill-persistence.test.js test/kairo-control-plane-review-association.test.js test/kairo-control-plane-review-status.test.js`: 28 pass.
 
-## RDD evaluation (persistence range `79162fe3a^..79162fe3a`)
+## RDD evaluation (persistence slice after Claude close `6ee6f3767`)
 
-Honest: prior kernel assess `under_budget` on `363480a0f` **does not cover** this commit.
+Honest: prior kernel assess `under_budget` on `363480a0f` **does not cover** these commits.
 
-| Agent | Result |
-|-------|--------|
+| Commit | Note |
+|--------|------|
+| `79162fe3a` | atomic checkpoint + locked RMW |
+| `ef24a3198` | live-owner lock steal fix + association `isWorkResult` pin |
+
+| Agent | Result (base `79162fe3a^` → HEAD incl. both) |
+|-------|------|
 | `cursor` | `unassessable` / `high` / `review_due: true` (runtime not eligible for immutable receipt review) |
-| `claude-code` + `--untracked-scope exclude` + inventory `sha256:6f767953…` | `risk: high` (`process_boundary` / `shell_process` on `context-fill-checkpoint.js`), `changed_paths: 7`, `changed_lines: 413`, `review_due: true` / `high_risk` |
+| `claude-code` + `--untracked-scope exclude` + inventory `sha256:6f767953…` | `risk: high` (`process_boundary` / `shell_process` on `context-fill-checkpoint.js`), `changed_paths: 9`, `changed_lines: 600`, `review_due: true` / `high_risk` |
 
 Review not started from Cursor (ineligible runtime). Preflight STATUS for claude-code shows `fresh_target_ready` → `review.start` available on an eligible runtime. Slice remains **due**, not granted.
 
