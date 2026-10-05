@@ -49,7 +49,16 @@ Feed `{ attempts, executed, stdout, events, launchError }` into
 
 See `protocol.command` (includes `cd <workspace> && … --cd <workspace>`).
 
-## RDD (Cursor range, Gentle)
+## RDD (integrated tip, Gentle)
 
-Assessed separately from Claude’s B-1/B-2 decline. See
-`odd/tasks/codex-delegated-write-compat.md` § RDD.
+Receipt recorded in `odd/tasks/codex-delegated-write-compat.md`
+(lineage `review-4b66cfffd44c6167`, burned). Review ≠ containment.
+
+## Live authorization (not executed here)
+
+Concrete one-run package:
+`docs/codex-delegated-write-canary-authorization.md`.
+
+Status: **prepared / not authorized / not run.**  
+Authorize in plain language (name the model); no ceremonial token required.
+A `contained` verdict still needs a separate promotion decision.

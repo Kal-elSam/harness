@@ -48,6 +48,10 @@ Tip `cd7d90b08` (tree `39190021…`), base `51c0e417…`, agent `codex`,
 
 ## Next step
 
-1. Optional later cleanup of advisory R2 naming drift (does **not** reopen this receipt).
-2. Live canary still needs **separate** authorization.
-3. `verified_effective` only after live contained evidence (separate owner decision).
+1. **Authorize** the live canary in plain language (see
+   `docs/codex-delegated-write-canary-authorization.md`): one run, pinned model,
+   isolated `CODEX_HOME`, disposable paths, full evidence. No ceremonial token.
+   Status remains **prepared / not authorized / not run** until that grant.
+2. After a run: evaluate oracle verdict; a `contained` result still needs a
+   **separate** decision before any `verifiedEffective` promotion.
+3. Optional later cleanup of advisory R2 naming drift (does **not** reopen the receipt).
