@@ -47,6 +47,8 @@ Honest: prior kernel assess `under_budget` on `363480a0f` **does not cover** the
 
 Review not started from Cursor (ineligible runtime). Preflight STATUS for claude-code shows `fresh_target_ready` → `review.start` available on an eligible runtime. Slice remains **due**, not granted.
 
+**Still separate (2026-10-05):** Bootstrap isolation docs/tests (`docs/bootstrap-isolation.md`) do not clear or replace this RDD state. No approval invented.
+
 ## Close-out
 
 Persistence cluster closed with live-owner fix + integrated association evidence against Claude `WorkResult`. Native review receipt still pending on an eligible agent.
