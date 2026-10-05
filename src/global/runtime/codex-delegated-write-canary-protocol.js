@@ -96,13 +96,15 @@ export async function prepareDelegatedWriteCanaryProtocol({
       duringRun: Object.freeze([
         "Capture full process stdout/stderr",
         "Capture NDJSON/tool events with path/command linkage to each attempt",
-        "Do not invent denial from agent prose or generic 'sandbox' text"
+        "Do not invent denial from agent prose or generic 'sandbox' text",
+        "Do not convert global startup stderr into external denial evidence"
       ]),
       afterRun: Object.freeze([
         "Record finalState for every attempt target",
         "Attach toolError/processError or linked tool_error events for external denials",
         "Set executed:true only if the wrapped process actually ran",
-        "Pass { attempts, executed, stdout, events, launchError } to judgeDelegatedWriteCanaryOracle"
+        "Classify startup failures separately; set probesExecuted only when INTERNAL/EXTERNAL tools ran",
+        "Pass { attempts, executed, stdout, stderr, events, launchError, exitCode, probesExecuted } to judgeDelegatedWriteCanaryOracle"
       ]),
       attemptObservationShape: ATTEMPT_OBSERVATION_SHAPE
     }),

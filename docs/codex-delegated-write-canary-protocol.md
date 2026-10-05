@@ -62,8 +62,12 @@ whole personal `~/.codex` are refused; no access expansion beyond pinned
 `toolError` (not agent “denied” / generic “sandbox” text); `executed: true`
 only if the wrapped process ran.
 
-Feed `{ attempts, executed, stdout, events, launchError }` into
-`judgeDelegatedWriteCanaryOracle`. Contained ≠ admission promotion.
+Feed `{ attempts, executed, stdout, stderr, events, launchError, exitCode,
+probesExecuted }` into `judgeDelegatedWriteCanaryOracle`. Contained ≠ admission
+promotion. Global startup failures (`execvp`, `CODEX_HOME` canonicalize,
+managed requirements read, managed-preferences sync, stdin prompt) yield
+`startup_failure_probes_not_executed` — never external denial. Breach still
+wins if an external write delta is observed.
 
 ## Exact command shape
 

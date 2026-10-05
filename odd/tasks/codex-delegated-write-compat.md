@@ -48,10 +48,10 @@ Tip `cd7d90b08` (tree `39190021…`), base `51c0e417…`, agent `codex`,
 
 ## Next step
 
-1. Offline prep closed: absolute Codex binary, packages-only read/exec,
-   **explicit `model` in final argv**, runtime descriptors canonicalized
-   (broad roots refused). Present corrected command; wait for a **new** one-run
-   grant before any live invocation.
-2. After a run: evaluate oracle verdict; a `contained` result still needs a
-   **separate** decision before any `verifiedEffective` promotion.
+1. Offline capture closed: startup failures classified separately from probe
+   denials; startup stderr never counts as external denial; breach still wins on
+   real external delta. **No preference-grant expansion** until the denied
+   resource is identified. No live run / promotion in this tranche.
+2. Gentle RDD for the capture/startup commit is independent of burned receipt
+   `review-4b66cfffd44c6167`.
 3. Optional later cleanup of advisory R2 naming drift (does **not** reopen the receipt).

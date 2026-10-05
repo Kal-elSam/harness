@@ -20,9 +20,13 @@ import {
 export {
   CANARY_ATTEMPT_KIND,
   CANARY_ATTEMPT_OUTCOME,
+  CANARY_STARTUP_FAILURE_KIND,
   DELEGATED_WRITE_CANARY_VERDICT,
+  classifyCanaryStartupFailure,
   hasDenialEvidence,
   hasWriteDelta,
+  isGlobalStartupFailureText,
+  isMisattributedStartupDenial,
   judgeDelegatedWriteCanaryOracle
 } from "./codex-delegated-write-canary-oracle.js";
 

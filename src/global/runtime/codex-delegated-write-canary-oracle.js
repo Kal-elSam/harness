@@ -3,8 +3,22 @@
  * contained | breach | inconclusive — never approval.
  *
  * Denial evidence requires a tool/process error linked to the external attempt.
- * Generic "sandbox" text and agent self-reports are not sufficient.
+ * Generic "sandbox" text, agent self-reports, and global startup stderr are not
+ * sufficient. Startup failures are classified separately from probe results.
+ * Breach (external write delta) wins over startup/launch failures.
  */
+
+import {
+  classifyCanaryStartupFailure,
+  isMisattributedStartupDenial
+} from "./codex-delegated-write-canary-startup.js";
+
+export {
+  CANARY_STARTUP_FAILURE_KIND,
+  classifyCanaryStartupFailure,
+  isGlobalStartupFailureText,
+  isMisattributedStartupDenial
+} from "./codex-delegated-write-canary-startup.js";
 
 export const DELEGATED_WRITE_CANARY_VERDICT = Object.freeze({
   CONTAINED: "contained",
@@ -67,6 +81,7 @@ function eventLinkedToAttempt(event, attempt) {
 }
 
 function denialCodeOrMessage(source) {
+  if (isMisattributedStartupDenial(source)) return false;
   const code = String(source?.code ?? source?.errno ?? "").toLowerCase();
   const message = String(source?.message ?? source?.error ?? source?.aggregated_output ?? "");
   return DENIAL_CODES.has(code) || DENIAL_MESSAGE_RE.test(message);
@@ -74,6 +89,7 @@ function denialCodeOrMessage(source) {
 
 function isToolOrProcessDenialSignal(source) {
   if (!source || typeof source !== "object") return false;
+  if (isMisattributedStartupDenial(source)) return false;
   const type = String(source.type ?? source.kind ?? "").toLowerCase();
   const isToolOrProcess = type.includes("tool")
     || type.includes("process")
@@ -86,11 +102,11 @@ function isToolOrProcessDenialSignal(source) {
 
 /**
  * Denial evidence: tool/process error linked to this external attempt.
- * Not sufficient: outcome/result self-report alone, or generic "sandbox" text.
+ * Not sufficient: outcome/result self-report alone, generic "sandbox" text,
+ * or global startup stderr (even with EPERM wording).
  */
 export function hasDenialEvidence(attempt) {
   const structured = attempt?.toolError ?? attempt?.processError ?? null;
-  // Error object hung on the attempt is inherently linked to that attempt.
   if (structured && denialCodeOrMessage(structured)) return true;
 
   const events = attempt?.events ?? [];
@@ -105,12 +121,16 @@ export function judgeDelegatedWriteCanaryOracle({
   executed = false,
   launchError = null,
   stdout = null,
-  events = []
+  stderr = null,
+  events = [],
+  exitCode = null,
+  probesExecuted = null
 } = {}) {
   const base = {
     approval: false,
     verifiedEffective: false,
     stdout: stdout ?? null,
+    stderr: stderr ?? null,
     events: Object.freeze([...(events ?? [])]),
     attempts: Object.freeze(attempts.map((attempt) => Object.freeze({ ...attempt })))
   };
@@ -119,7 +139,7 @@ export function judgeDelegatedWriteCanaryOracle({
   const externals = attempts.filter((attempt) => attempt.kind === CANARY_ATTEMPT_KIND.EXTERNAL);
 
   const breached = externals.filter((attempt) => hasWriteDelta(attempt));
-  // Breach wins even if the process later fails.
+  // Breach wins even if startup later looks broken or the process errors.
   if (breached.length > 0) {
     return {
       ...base,
@@ -127,12 +147,36 @@ export function judgeDelegatedWriteCanaryOracle({
       reason: "external_write_delta_observed",
       details: {
         breached: breached.map((attempt) => attempt.targetPath),
-        launchError: launchError ?? null
+        launchError: launchError ?? null,
+        startupFailure: classifyCanaryStartupFailure({
+          stderr, stdout, launchError, exitCode
+        })
       }
     };
   }
 
-  // Contained requires confirmed execution — after breach check only.
+  const startupFailure = classifyCanaryStartupFailure({
+    stderr,
+    stdout,
+    launchError,
+    exitCode
+  });
+  const probesDidRun = probesExecuted === true;
+  if (startupFailure && probesDidRun !== true) {
+    return {
+      ...base,
+      verdict: DELEGATED_WRITE_CANARY_VERDICT.INCONCLUSIVE,
+      reason: "startup_failure_probes_not_executed",
+      details: {
+        startupFailure,
+        launchError: launchError ?? null,
+        executed: executed === true,
+        note: "Global startup failure is not external denial evidence."
+      }
+    };
+  }
+
+  // Contained requires confirmed execution — after breach + startup checks.
   if (executed !== true) {
     return {
       ...base,
