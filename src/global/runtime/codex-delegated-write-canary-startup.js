@@ -31,8 +31,11 @@ const STARTUP_RULES = Object.freeze([
     re: /synchronize managed preferences|managed preferences \(code -?32600\)/i
   },
   {
+    // Advisory only unless the process actually failed — successful runs may
+    // print "Reading additional input from stdin..." without a startup fault.
     kind: CANARY_STARTUP_FAILURE_KIND.STDIN_PROMPT,
-    re: /Reading additional input from stdin/i
+    re: /Reading additional input from stdin/i,
+    requiresProcessFailure: true
   }
 ]);
 
@@ -40,9 +43,17 @@ function combineText(...parts) {
   return parts.filter((part) => part != null && part !== "").map(String).join("\n");
 }
 
+function hasProcessFailureSignal({ exitCode, launchError }) {
+  if (exitCode != null && exitCode !== 0) return true;
+  if (launchError == null || launchError === "") return false;
+  if (typeof launchError === "string") return launchError.trim() !== "";
+  return true;
+}
+
 /**
  * Detect a global startup failure from process text / launchError.
  * Returns null when no known startup failure signature matches.
+ * Stdin advisory text alone with successful execution is not a failure.
  */
 export function classifyCanaryStartupFailure({
   stderr = "",
@@ -56,21 +67,26 @@ export function classifyCanaryStartupFailure({
   const text = combineText(stderr, stdout, fromError);
   if (!text.trim()) return null;
 
+  const processFailed = hasProcessFailureSignal({ exitCode, launchError });
+
   for (const rule of STARTUP_RULES) {
-    if (rule.re.test(text)) {
-      return Object.freeze({
-        kind: rule.kind,
-        probesExecuted: false,
-        exitCode: exitCode ?? null,
-        excerpt: text.slice(0, 400),
-        // Preferences/path denials stay unidentified — do not expand grants here.
-        deniedResourceIdentified: rule.kind !== CANARY_STARTUP_FAILURE_KIND.MANAGED_PREFERENCES_SYNC
-          && rule.kind !== CANARY_STARTUP_FAILURE_KIND.UNKNOWN_STARTUP,
-        note: rule.kind === CANARY_STARTUP_FAILURE_KIND.MANAGED_PREFERENCES_SYNC
-          ? "Managed-preferences failure recorded without identifying the denied preference resource; no preference permission expansion."
+    if (!rule.re.test(text)) continue;
+    if (rule.requiresProcessFailure && !processFailed) continue;
+
+    return Object.freeze({
+      kind: rule.kind,
+      probesExecuted: false,
+      exitCode: exitCode ?? null,
+      excerpt: text.slice(0, 400),
+      // Preferences/path denials stay unidentified — do not expand grants here.
+      deniedResourceIdentified: rule.kind !== CANARY_STARTUP_FAILURE_KIND.MANAGED_PREFERENCES_SYNC
+        && rule.kind !== CANARY_STARTUP_FAILURE_KIND.UNKNOWN_STARTUP,
+      note: rule.kind === CANARY_STARTUP_FAILURE_KIND.MANAGED_PREFERENCES_SYNC
+        ? "Managed-preferences failure recorded without identifying the denied preference resource; no preference permission expansion."
+        : rule.kind === CANARY_STARTUP_FAILURE_KIND.STDIN_PROMPT
+          ? "Stdin advisory treated as startup failure only because the process did not succeed."
           : null
-      });
-    }
+    });
   }
 
   // thread/start config load failures without a more specific signature

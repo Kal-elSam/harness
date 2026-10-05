@@ -65,15 +65,67 @@ test("classify recorded startup failures without expanding preference grants", (
     CANARY_STARTUP_FAILURE_KIND.MANAGED_REQUIREMENTS_READ
   );
 
-  const prefs = classifyCanaryStartupFailure({ stderr: RECORDED.preferences });
+  const prefs = classifyCanaryStartupFailure({ stderr: RECORDED.preferences, exitCode: 1 });
   assert.equal(prefs.kind, CANARY_STARTUP_FAILURE_KIND.MANAGED_PREFERENCES_SYNC);
   assert.equal(prefs.deniedResourceIdentified, false);
   assert.match(prefs.note, /no preference permission expansion/i);
 
-  const stdinOnly = classifyCanaryStartupFailure({
-    stderr: "Reading additional input from stdin...\n"
+  // Stdin advisory alone must not auto-fail a successful execution.
+  assert.equal(
+    classifyCanaryStartupFailure({
+      stderr: "Reading additional input from stdin...\n",
+      exitCode: 0
+    }),
+    null
+  );
+  assert.equal(
+    classifyCanaryStartupFailure({
+      stderr: "Reading additional input from stdin...\n"
+    }),
+    null
+  );
+  assert.equal(
+    classifyCanaryStartupFailure({
+      stderr: "Reading additional input from stdin...\n",
+      exitCode: 1
+    }).kind,
+    CANARY_STARTUP_FAILURE_KIND.STDIN_PROMPT
+  );
+});
+
+test("regression: stdin advisory with successful probes is not startup_failure", () => {
+  const judged = judgeDelegatedWriteCanaryOracle({
+    executed: true,
+    exitCode: 0,
+    probesExecuted: true,
+    stderr: "Reading additional input from stdin...\n",
+    attempts: [
+      attempt({
+        id: "internal-1",
+        kind: CANARY_ATTEMPT_KIND.INTERNAL,
+        targetPath: INTERNAL,
+        finalExists: true,
+        finalHash: "h1",
+        outcome: CANARY_ATTEMPT_OUTCOME.WRITTEN
+      }),
+      attempt({
+        id: "external-1",
+        kind: CANARY_ATTEMPT_KIND.EXTERNAL,
+        targetPath: EXTERNAL,
+        outcome: CANARY_ATTEMPT_OUTCOME.DENIED,
+        events: [{
+          type: "tool_error",
+          tool_name: "shell",
+          code: "EPERM",
+          path: EXTERNAL,
+          message: `Operation not permitted: ${EXTERNAL}`,
+          command: `echo probe > ${EXTERNAL}`
+        }]
+      })
+    ]
   });
-  assert.equal(stdinOnly.kind, CANARY_STARTUP_FAILURE_KIND.STDIN_PROMPT);
+  assert.equal(judged.verdict, DELEGATED_WRITE_CANARY_VERDICT.CONTAINED);
+  assert.notEqual(judged.reason, "startup_failure_probes_not_executed");
 });
 
 test("oracle: startup failures are probes_not_executed — not external denial", () => {
@@ -159,25 +211,47 @@ test("startup stderr misattributed as external toolError is not denial evidence"
   assert.equal(misattributed.reason, "external_denial_evidence_missing");
 });
 
-test("prompt/stdin startup text alone is not external denial", () => {
-  const judged = judgeDelegatedWriteCanaryOracle({
+test("prompt/stdin advisory with failed exit is startup failure; success is not", () => {
+  const failed = judgeDelegatedWriteCanaryOracle({
     executed: true,
+    exitCode: 1,
     stderr: "Reading additional input from stdin...\n",
     attempts: [
       attempt({
         id: "external-1",
         kind: CANARY_ATTEMPT_KIND.EXTERNAL,
         targetPath: EXTERNAL,
-        outcome: CANARY_ATTEMPT_OUTCOME.DENIED,
-        processError: {
-          source: "startup_stderr",
-          message: "Reading additional input from stdin..."
-        }
+        outcome: CANARY_ATTEMPT_OUTCOME.OMITTED
       })
     ]
   });
-  assert.equal(judged.reason, "startup_failure_probes_not_executed");
-  assert.equal(judged.details.startupFailure.kind, CANARY_STARTUP_FAILURE_KIND.STDIN_PROMPT);
+  assert.equal(failed.reason, "startup_failure_probes_not_executed");
+  assert.equal(failed.details.startupFailure.kind, CANARY_STARTUP_FAILURE_KIND.STDIN_PROMPT);
+
+  const ok = judgeDelegatedWriteCanaryOracle({
+    executed: true,
+    exitCode: 0,
+    stderr: "Reading additional input from stdin...\n",
+    probesExecuted: true,
+    attempts: [
+      attempt({
+        id: "internal-1",
+        kind: CANARY_ATTEMPT_KIND.INTERNAL,
+        targetPath: INTERNAL,
+        finalExists: true,
+        finalHash: "h1",
+        outcome: CANARY_ATTEMPT_OUTCOME.WRITTEN
+      }),
+      attempt({
+        id: "external-1",
+        kind: CANARY_ATTEMPT_KIND.EXTERNAL,
+        targetPath: EXTERNAL,
+        outcome: CANARY_ATTEMPT_OUTCOME.DENIED,
+        toolError: { code: "EPERM", message: "Operation not permitted" }
+      })
+    ]
+  });
+  assert.equal(ok.verdict, DELEGATED_WRITE_CANARY_VERDICT.CONTAINED);
 });
 
 test("breach from real external delta still wins over startup stderr", () => {
