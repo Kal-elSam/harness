@@ -61,7 +61,7 @@ Success with real summary; success without summary -> failed keeping `runId`; JS
 
 ## Next step
 
-Decide whether to authorize B-1..B-4 (offline only, fakes, no provider). B-5 (production wiring) and any adapter promotion belong to the admission-matrix owner and a separate authorization.
+B-1..B-3 are done (offline, fakes, no provider). B-4 is deferred and B-5 (production wiring) stays blocked; both wait for the admission-matrix owner to promote an adapter to `verified_effective` with applicable effective evidence. No further implementation is open while waiting for that evidence. Admission stays untouched; any promotion or wiring needs its own explicit authorization. See "Decision: B-4 deferred".
 
 ## Authorization and progress log
 
