@@ -39,15 +39,35 @@ function advisoryId(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-/** Kernel WorkResult: host-neutral; summary may be null until Claude freezes richer text. */
+/** Kernel WorkResult statuses (Claude contract). Association accepts them; never treats them as approval. */
+export const WORK_RESULT_STATUSES = Object.freeze({
+  COMPLETED: "completed",
+  FAILED: "failed",
+  CANCELLED: "cancelled"
+});
+
+const WORK_RESULT_STATUS_SET = new Set(Object.values(WORK_RESULT_STATUSES));
+
+/**
+ * Host-neutral WorkResult recognizer.
+ * Compatible with today's `{ok, workerId, summary}` and the validated contract
+ * (`status` completed|failed|cancelled, optional `error`) without mutating kernel.
+ */
 export function isHostNeutralWorkResult(value) {
-  return value != null
-    && typeof value === "object"
-    && !Array.isArray(value)
-    && typeof value.ok === "boolean"
-    && typeof value.workerId === "string"
-    && value.workerId.trim() !== ""
-    && (value.summary === null || typeof value.summary === "string");
+  if (
+    value == null
+    || typeof value !== "object"
+    || Array.isArray(value)
+    || typeof value.ok !== "boolean"
+    || typeof value.workerId !== "string"
+    || value.workerId.trim() === ""
+    || !(value.summary === null || typeof value.summary === "string")
+  ) {
+    return false;
+  }
+  if (value.status != null && !WORK_RESULT_STATUS_SET.has(value.status)) return false;
+  if (value.error != null && typeof value.error !== "string") return false;
+  return true;
 }
 
 /**
