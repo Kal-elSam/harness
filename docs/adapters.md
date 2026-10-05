@@ -1,5 +1,12 @@
 # Agents & adapters
 
+## Bootstrap Analysis confinement
+
+Only Bootstrap Analysis claims a filesystem boundary. See
+[Bootstrap isolation](bootstrap-isolation.md) for which adapters can guarantee it
+(`verified` vs `restricted`), the canary evidence, write-outside-snapshot denial,
+and incompatible configurations that fail closed.
+
 ## Supported adapters (agent-global)
 
 Kairo Runtime does **not** install Cursor, Codex, OpenCode, Claude Code, or Pi. It detects
