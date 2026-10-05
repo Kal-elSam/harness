@@ -2,55 +2,43 @@
 
 ## Objective
 
-Fix ordinary Codex execution flags for the **installed** CLI (compatibility),
-keep that fix separate from any isolation / `verified_effective` claim, and
-prepare a **valid** OS-sandbox canary path: isolated provider/temp roots, OS
-availability gate, explicit allow/deny paths — without running a live canary
-until specifically authorized.
+Ordinary CLI flag compatibility + valid OS-sandbox canary prep with canonical
+roots, oracle (contained/breach/inconclusive), exact command, and isolated auth
+handling — **no live canary, no promotion, no startRun wiring**.
 
-## Problem
+## Acceptance (this tranche)
 
-Installed Codex CLI rejects `--sandbox` + `--approve-for-me`. Separately, a
-valid containment test must not write personal `~/.codex`, must fail closed
-without `sandbox-exec`, and must not invent a canary pass.
-
-## Scope
-
-- Track A: ordinary CLI flag compatibility (`--approve-for-me` only)
-- Track B: adapted OS wrap + valid-test prep (isolated roots, availability gate, canary plan)
-
-## Non-goals
-
-- Promoting `verified_effective` without an authorized live canary
-- Running a real canary without `authorizeRealCanary: true`
-- Wiring Track B into ordinary `startRun` this increment
-- Kernel edits / native RDD start
-
-## Acceptance criteria
-
-- [x] Ordinary launch: `--approve-for-me` only
-- [x] Allowlist: workspace + isolated providerHome + isolated tempRoot; personal `~/.codex` write rejected
-- [x] OS sandbox unavailable → wrap/launch refused
-- [x] Canary plan exposes explicit allowed/forbidden paths; real run needs authorization
-- [x] Admission still `source_declared` / `verifiedEffective: false`
+- [x] Canonical roots validated before profile grants; symlink/broad/overlap/uncertain → reject
+- [x] Offline coverage: symlink→`.codex`, incompatible roots, sandbox absent, no fallback
+- [x] Runner + oracle reuse adapter launch; never approval
+- [x] Exact command + isolated auth docs for future authorization
+- [x] Admission still `source_declared`; RDD receipts remain pending (tests ≠ receipt)
 
 ## TDD
 
-- Runner: `node --test test/codex-execution-adapter.test.js test/delegated-execution-containment.test.js test/codex-delegated-write-os-wrap.test.js test/delegated-write-admission.test.js`
+`node --test test/codex-delegated-write-os-wrap.test.js test/codex-execution-adapter.test.js test/delegated-write-admission.test.js`
 
 ## Tasks
 
-- [x] CW-1..CW-4 Track A + initial Track B helpers
-- [x] CW-5 Isolated provider/temp allowlist; forbid personal config writes
-- [x] CW-6 OS availability gate before launch (fail closed)
-- [x] CW-7 Canary plan with explicit paths; real run authorization required (no live run)
+- [x] CW-1..CW-7 prior increments
+- [x] CW-8 Canonical root validation coherent with profile
+- [x] CW-9 Offline rejection coverage
+- [x] CW-10 Runner + oracle (never approval)
+- [x] CW-11 Exact command + isolated auth handoff (no live run)
 
-## Progress
+## Future authorized command (example shape)
 
-- 2026-10-05: Track A + initial Track B landed (`197c671e6`).
-- 2026-10-05: Valid-test prep — isolated roots, availability gate, canary plan (no live canary).
+```bash
+CODEX_HOME='<isolated-provider>' TMPDIR='<isolated-temp>' \
+  sandbox-exec -f '<profile.sb>' codex exec \
+  --dangerously-bypass-approvals-and-sandbox --json \
+  'Write canary-internal-write.txt inside the workspace only.'
+```
+
+Auth: copy credentials into isolated `CODEX_HOME` only — never `CODEX_HOME=~/.codex`,
+never symlink isolated → personal.
 
 ## Next step
 
-Only after explicit authorization: implement + run real canary under the prepared
-plan, then consider `verified_effective` promotion.
+Explicit user authorization → live canary under that command → only then consider
+`verified_effective` (separate owner/decision).

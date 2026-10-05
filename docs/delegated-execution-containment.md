@@ -29,30 +29,23 @@ isolation guarantee and not `verified_effective`.
 Evidence: `test/codex-execution-adapter.test.js` (live CLI mutual-exclusion
 confirmed on 0.160.0).
 
-## Track B — OS wrapper reuse (evaluation / optional strict path)
+## Track B — OS wrapper + valid canary prep
 
-Do **not** invent a second executor. Reuse the existing Bootstrap *mechanism*
-(`sandbox-exec` around the same `codex` argv) by wrapping
-`execution-adapters/codex.js`’s launch:
+Do **not** invent a second executor. Reuse `execution-adapters/codex.js`
+`buildLaunch` (same shape as `run-supervisor`) then wrap with `sandbox-exec`.
 
-- Module: `src/global/runtime/codex-delegated-sandbox.js`
-- Allowlist (adapted, not Bootstrap copy): **workspaceRoot** + **isolated
-  `providerHome`** + **isolated `tempRoot`** only. Personal `~/.codex` is
-  **forbidden** as a writable provider home. No broad `/private/tmp` write grant.
-- `assertDelegatedWriteOsSandboxAvailable` — OS sandbox must be present before
-  wrap/launch; failure → **no execute** (`delegated_write_os_sandbox_unavailable`)
-- `wrapCodexLaunchWithOsSandbox` sets `CODEX_HOME` / `TMPDIR` to the isolated roots
-- Inner argv uses `--dangerously-bypass-approvals-and-sandbox` (no nesting)
-- Canary prep: `prepareDelegatedWriteCanaryPlan` lists explicit allowed /
-  forbidden write paths. **`runDelegatedWriteCanary` requires
-  `authorizeRealCanary: true`**; without it →
-  `delegated_write_canary_authorization_required`. A new real run needs that
-  specific authorization (not implemented as a silent pass).
+| Piece | Contract |
+|---|---|
+| Canonical roots | `validateCanonicalDelegatedWriteRoots` before any SBPL grant — symlink/alias to personal `~/.codex`, broad roots (`/`, `/tmp`, …), forbidden overlaps, uncertain `realpath` → **reject** |
+| Allowlist | Only canonical `workspaceRoot` + isolated `providerHome` + isolated `tempRoot` |
+| Availability | Missing `sandbox-exec` → no wrap/launch; **no** fallback to bare `codex` |
+| Oracle | `contained` \| `breach` \| `inconclusive` — **never** `approval` / `verifiedEffective` |
+| Runner | `prepareDelegatedWriteCanaryRunner` → wrapped launch + **exact command** + isolated auth steps |
+| Real run | Requires `authorizeRealCanary: true`; this tranche does **not** spawn or promote |
 
-Track B helpers are **not** wired into ordinary `startRun` and do **not** flip
-the admission matrix by themselves.
-
+Modules: `codex-delegated-sandbox*.js`, `codex-delegated-write-canary.js`.
 Evidence: `test/codex-delegated-write-os-wrap.test.js`.
+RDD receipts stay pending — offline tests do not substitute review.
 
 ## Ordinary vs strict floor
 
