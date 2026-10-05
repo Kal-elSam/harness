@@ -71,8 +71,11 @@ never fill `receipt` / `gate` / `nextTransition`.
 | `gentleContext` | Official `applicability` / `action` / `candidates[]` when Gentle published them |
 
 There is **no** `approved` / `rejected` boolean. Kairo does not invent a verdict
-envelope. Kernel `WorkResult` (`ok`, `workerId`, `summary` nullable) is a valid
-`result` input — host-independent preparation for Claude’s frozen result contract.
+envelope. Kernel `WorkResult` (`ok`, `workerId`, `summary`) and the validated Claude
+contract shape (`status`: `completed` \| `failed` \| `cancelled`, optional
+`error`) are valid `result` inputs. Association never mutates the result object.
+Terminal status alone never sets approval provenance; `authority: gentle` marks
+receipt provenance only and never invents `approved` / `rejected`.
 
 ## Official reads (connected only)
 

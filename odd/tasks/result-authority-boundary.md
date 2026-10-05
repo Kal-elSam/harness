@@ -16,7 +16,7 @@ Delivery requires a verifiable authority boundary independent of host (Pi/Cursor
 
 - Extend `mapOfficialReviewStatus` to pass through applicability/action/candidates
 - Extend association return with `approval` + `gentleContext` (reviewRef v1 unchanged)
-- Accept kernel `WorkResult` (`ok`, `workerId`, `summary` nullable)
+- Accept kernel `WorkResult` and Claude contract statuses (`completed`|`failed`|`cancelled`) without editing kernel
 - Docs + offline tests
 - Tracker `odd/tasks/result-authority-boundary.md`
 
@@ -24,16 +24,18 @@ Delivery requires a verifiable authority boundary independent of host (Pi/Cursor
 
 - Invent approve/fix/reject verdicts
 - Spawn Gentle review / judgment-day
-- Wire DAG/delegations yet
-- Change Pi `on()` / host injection
-- Meaningful summary normalization (Claude ownership)
+- Wire DAG/delegations / productive execution
+- Edit `src/global/kernel/**`
+- Overwrite Claude’s `odd/tasks/kernel-work-result-contract.md`
 
 ## Constraints
 
 - Pass-through only for Gentle fields
 - Advisory never becomes approval provenance `gentle_receipt`
 - Team strategy approve is orthogonal, never review authority
-- Host-independent: kernel `WorkResult` + existing minion result
+- Terminal work status never grants approval by itself
+- Host-independent: kernel `WorkResult` + contract-shaped results + minion result
+- Association never mutates the input result object
 
 ## Acceptance criteria
 
@@ -42,7 +44,9 @@ Delivery requires a verifiable authority boundary independent of host (Pi/Cursor
 - [x] Official candidates/applicability/action bound when Gentle publishes them
 - [x] WorkResult association works with nullable summary
 - [x] No invented approval boolean/verdict
-- [x] Tests green + selective commit
+- [x] `completed` / `failed` / `cancelled` associate without mutation; none approve from finish or `authority: gentle` alone
+- [x] Advisory/official, RDD off, unavailable re-verified
+- [x] Tests green + selective commit (no kernel, no productive wiring)
 
 ## TDD
 
@@ -55,16 +59,19 @@ Delivery requires a verifiable authority boundary independent of host (Pi/Cursor
 - [x] RA-2 mapOfficialReviewStatus candidate/context pass-through
 - [x] RA-3 approval + gentleContext association (reviewRef compatible)
 - [x] RA-4 Docs + commit
+- [x] RA-5 Compatibility with Claude contract statuses; no approval from terminal/authority alone
+- [x] RA-6 Re-verify advisory/official + RDD off + unavailable; evidence + local commit
 
 ## Progress
 
 - 2026-10-05: opened from Cursor plan “resultado y autoridad”.
 - 2026-10-05: boundary implemented; 14 pass with status suite.
+- 2026-10-05: contract status coverage + no-mutation; preserved Claude kernel tracker untracked.
 
 ## Verification evidence
 
-- `node --test test/kairo-control-plane-review-association.test.js test/kairo-control-plane-review-status.test.js`: 14 pass.
+- `node --test test/kairo-control-plane-review-association.test.js test/kairo-control-plane-review-status.test.js`: 18 pass (2026-10-05).
 
 ## Next step
 
-Claude freezes richer `WorkResult.summary` if needed; Cursor can then wire DAG/`delegations[]` using this boundary without inventing verdicts.
+Await Claude kernel validation landing; then optional DAG/`delegations[]` wiring still without inventing verdicts or productive Gentle spawn.

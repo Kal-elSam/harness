@@ -218,3 +218,117 @@ test("mapOfficialReviewStatus passes candidates and split applicability/action",
   assert.deepEqual(mapped.review.candidates, publishedCandidates);
   assert.equal(mapped.review.state, "candidate");
 });
+
+function contractResult(status, extra = {}) {
+  if (status === "completed") {
+    return {
+      ok: true,
+      workerId: "worker_contract",
+      status,
+      summary: "Unit finished",
+      error: null,
+      ...extra
+    };
+  }
+  if (status === "failed") {
+    return {
+      ok: false,
+      workerId: "worker_contract",
+      status,
+      summary: null,
+      error: "adapter failed",
+      ...extra
+    };
+  }
+  return {
+    ok: false,
+    workerId: "worker_contract",
+    status: "cancelled",
+    summary: null,
+    error: null,
+    ...extra
+  };
+}
+
+test("completed/failed/cancelled contract results associate without mutation", () => {
+  for (const status of ["completed", "failed", "cancelled"]) {
+    const work = contractResult(status);
+    assert.equal(isHostNeutralWorkResult(work), true);
+    const snapshot = structuredClone(work);
+    const linked = associateResultWithGentleReview({
+      result: work,
+      provider: PROVIDER.CONNECTED,
+      mappedStatus: officialStatus(),
+      rddMode: "on"
+    });
+    assert.equal(linked.result, work);
+    assert.deepEqual(work, snapshot);
+    assert.equal(linked.result.status, status);
+    assert.equal(linked.reviewRef.authority, REVIEW_AUTHORITY.GENTLE);
+    assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.GENTLE_RECEIPT);
+    assert.equal("approved" in linked.approval, false);
+    assert.equal(linked.approval.gentleStatus, "bound");
+  }
+});
+
+test("terminal work status alone never grants approval provenance", () => {
+  for (const status of ["completed", "failed", "cancelled"]) {
+    const linked = associateResultWithGentleReview({
+      result: contractResult(status),
+      provider: PROVIDER.CONNECTED,
+      mappedStatus: pendingStatus(),
+      rddMode: "on"
+    });
+    assert.equal(linked.reviewRef.authority, REVIEW_AUTHORITY.NONE);
+    assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.NONE);
+    assert.equal(linked.approval.gentleStatus, null);
+    assert.equal("approved" in linked.approval, false);
+  }
+});
+
+test("authority gentle plus completed still does not invent an approved flag", () => {
+  const linked = associateResultWithGentleReview({
+    result: contractResult("completed"),
+    provider: PROVIDER.CONNECTED,
+    mappedStatus: officialStatus(),
+    rddMode: "on",
+    advisoryReceiptId: "rev-ffffffffffffffffffffffff"
+  });
+  assert.equal(linked.reviewRef.authority, REVIEW_AUTHORITY.GENTLE);
+  assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.GENTLE_RECEIPT);
+  assert.equal(linked.reviewRef.advisoryReceiptId, "rev-ffffffffffffffffffffffff");
+  assert.notEqual(linked.reviewRef.receipt, linked.reviewRef.advisoryReceiptId);
+  assert.equal("approved" in linked.approval, false);
+  assert.equal("rejected" in linked.approval, false);
+});
+
+test("failed and cancelled stay advisory/official separated under RDD off and unavailable", () => {
+  const failed = contractResult("failed");
+  const cancelled = contractResult("cancelled");
+
+  const rddOff = associateResultWithGentleReview({
+    result: failed,
+    provider: PROVIDER.CONNECTED,
+    mappedStatus: officialStatus(),
+    rddMode: "off",
+    advisoryReceiptId: "rev-111111111111111111111111"
+  });
+  assert.equal(rddOff.reviewRef.association, REVIEW_ASSOCIATION.RDD_OFF);
+  assert.equal(rddOff.reviewRef.authority, REVIEW_AUTHORITY.NONE);
+  assert.equal(rddOff.approval.provenance, APPROVAL_PROVENANCE.ADVISORY);
+  assert.equal(rddOff.gentleContext, null);
+  assert.equal(rddOff.result, failed);
+
+  const unavailable = associateResultWithGentleReview({
+    result: cancelled,
+    provider: PROVIDER.UNAVAILABLE,
+    mappedStatus: officialStatus(),
+    rddMode: "on",
+    advisoryReceiptId: "rev-222222222222222222222222"
+  });
+  assert.equal(unavailable.reviewRef.association, REVIEW_ASSOCIATION.UNAVAILABLE);
+  assert.equal(unavailable.reviewRef.authority, REVIEW_AUTHORITY.NONE);
+  assert.equal(unavailable.approval.provenance, APPROVAL_PROVENANCE.ADVISORY);
+  assert.equal(unavailable.gentleContext, null);
+  assert.equal(unavailable.result, cancelled);
+});
