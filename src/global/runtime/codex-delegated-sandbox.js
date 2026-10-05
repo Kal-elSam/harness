@@ -11,6 +11,7 @@ import { DelegatedWriteOsSandboxError } from "./codex-delegated-sandbox-errors.j
 import {
   assertIsolatedProviderHome,
   assertIsolatedTempRoot,
+  assertSbplSafePath,
   personalCodexHome,
   validateCanonicalDelegatedWriteRoots
 } from "./codex-delegated-sandbox-roots.js";
@@ -19,16 +20,20 @@ export { DelegatedWriteOsSandboxError } from "./codex-delegated-sandbox-errors.j
 export {
   assertIsolatedProviderHome,
   assertIsolatedTempRoot,
+  assertSbplSafePath,
   isSameOrInside,
   personalCodexHome,
   resolveCanonicalRoot,
   validateCanonicalDelegatedWriteRoots
 } from "./codex-delegated-sandbox-roots.js";
 
-const SANDBOX_EXEC_PATH = "/usr/bin/sandbox-exec";
+export const SANDBOX_EXEC_PATH = "/usr/bin/sandbox-exec";
 
 function subpathRules(paths) {
-  return paths.map((p) => `  (subpath "${p}")`).join("\n");
+  return paths.map((p) => {
+    assertSbplSafePath(p, { role: "subpath" });
+    return `  (subpath "${p}")`;
+  }).join("\n");
 }
 
 export async function buildDelegatedWriteSandboxProfile({
@@ -155,7 +160,8 @@ export async function wrapCodexLaunchWithOsSandbox(launch, {
 
   const baseEnv = launch.env ?? process.env;
   return {
-    command: "sandbox-exec",
+    // Absolute path only — never PATH-resolve bare "sandbox-exec" after bypass rewrite.
+    command: SANDBOX_EXEC_PATH,
     args: ["-f", profilePath, "codex", ...rewriteCodexArgsForOuterOsSandbox(launch.args)],
     cwd: roots.workspaceRoot,
     env: {

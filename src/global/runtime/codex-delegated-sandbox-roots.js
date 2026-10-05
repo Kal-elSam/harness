@@ -30,6 +30,28 @@ export function isSameOrInside(candidate, root) {
   return c === r || c.startsWith(`${r}/`);
 }
 
+/** Characters that break out of an SBPL double-quoted subpath literal. */
+const SBPL_UNSAFE = /["()\\\n\r\0]/;
+
+export function assertSbplSafePath(path, { role = "path" } = {}) {
+  if (typeof path !== "string" || path.trim() === "") {
+    throw new DelegatedWriteOsSandboxError(
+      `SBPL ${role} requires a non-empty path.`,
+      { code: "delegated_write_sbpl_path_required", details: { role, path } }
+    );
+  }
+  if (SBPL_UNSAFE.test(path)) {
+    throw new DelegatedWriteOsSandboxError(
+      `SBPL ${role} rejects path metacharacters — refusing profile grant.`,
+      {
+        code: "delegated_write_sbpl_path_unsafe",
+        details: { role, path }
+      }
+    );
+  }
+  return path;
+}
+
 function uniquePaths(paths) {
   return [...new Set(paths.map((p) => resolve(p)))];
 }
@@ -139,6 +161,7 @@ export async function validateCanonicalDelegatedWriteRoots({
   ]) {
     assertNotBroadRoot(canonical, role, deps);
     assertNotPersonalAlias(canonical, role, personalCanon);
+    assertSbplSafePath(canonical, { role });
   }
 
   const allowedWritePaths = uniquePaths([workspaceCanon, providerCanon, tempCanon]);

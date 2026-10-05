@@ -184,7 +184,7 @@ test("rewriteCodexArgsForOuterOsSandbox forces bypass and drops approve-for-me",
   );
 });
 
-test("wrap sets isolated env after canonical validation; never falls back to bare codex", async () => {
+test("wrap uses absolute sandbox-exec path after canonical validation; never falls back to bare codex", async () => {
   const launch = codex.buildLaunch({ task: "Implement plan", cwd: WORKSPACE, permissions: [] });
   const wrapped = await wrapCodexLaunchWithOsSandbox(launch, {
     profilePath: "/tmp/kairo-wt-delegated-1/profile.sb",
@@ -193,13 +193,26 @@ test("wrap sets isolated env after canonical validation; never falls back to bar
     workspaceRoot: WORKSPACE
   }, identityDeps());
 
-  assert.equal(wrapped.command, "sandbox-exec");
+  assert.equal(wrapped.command, "/usr/bin/sandbox-exec");
+  assert.notEqual(wrapped.command, "sandbox-exec");
   assert.notEqual(wrapped.command, "codex");
   assert.equal(wrapped.env.CODEX_HOME, ISOLATED_PROVIDER);
   assert.equal(wrapped.env.TMPDIR, ISOLATED_TEMP);
   assert.deepEqual(wrapped.roots.allowedWritePaths, [
     WORKSPACE, ISOLATED_PROVIDER, ISOLATED_TEMP
   ]);
+});
+
+test("canonical roots reject SBPL metacharacters before profile grants", async () => {
+  await assert.rejects(
+    () => validateCanonicalDelegatedWriteRoots({
+      workspaceRoot: `${WORKSPACE}/evil" )(allow file-write* (subpath "/`,
+      providerHome: ISOLATED_PROVIDER,
+      tempRoot: ISOLATED_TEMP
+    }, identityDeps()),
+    (error) => error instanceof DelegatedWriteOsSandboxError
+      && error.code === "delegated_write_sbpl_path_unsafe"
+  );
 });
 
 function attempt({
