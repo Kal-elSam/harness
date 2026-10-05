@@ -69,6 +69,19 @@ managed requirements read, managed-preferences sync, stdin prompt) yield
 `startup_failure_probes_not_executed` — never external denial. Breach still
 wins if an external write delta is observed.
 
+For a **cfprefs SHM diagnostic** (separate from containment), use
+`appendCfprefsDiagnosticDelta` + `buildPidLinkedSandboxCapturePlan` in
+`codex-delegated-write-canary-cfprefs-diagnostic.js`: exact
+`apple.cfprefs.<uid>v1` / `daemonv1` read-data only; link Sandbox events by
+offender PID inside a padded time window to the observed process tree.
+Apple `system.sb` precedent validates `(ipc-posix-name…)` syntax only — it does
+not prove Codex `-32600` clears.
+
+Live authorization for that diagnosis is a **two-arm** package (control with
+PID capture, then treatment with the exact cfprefs rule):
+`docs/codex-cfprefs-shm-diagnostic-authorization.md`. Do not reuse the
+single-run containment grant.
+
 ## Exact command shape
 
 See `protocol.command` (includes `cd <workspace> && … --cd <workspace>`,

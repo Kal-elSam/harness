@@ -96,6 +96,7 @@ export async function prepareDelegatedWriteCanaryProtocol({
       duringRun: Object.freeze([
         "Capture full process stdout/stderr",
         "Capture NDJSON/tool events with path/command linkage to each attempt",
+        "Record sandbox-exec PID and observed child tree (pid, ppid, comm)",
         "Do not invent denial from agent prose or generic 'sandbox' text",
         "Do not convert global startup stderr into external denial evidence"
       ]),
@@ -104,6 +105,7 @@ export async function prepareDelegatedWriteCanaryProtocol({
         "Attach toolError/processError or linked tool_error events for external denials",
         "Set executed:true only if the wrapped process actually ran",
         "Classify startup failures separately; set probesExecuted only when INTERNAL/EXTERNAL tools ran",
+        "For sandbox diagnosis: extract Sandbox events inside a padded startedAt..endedAt window; link by offenderPid in the observed tree (not process name alone)",
         "Pass { attempts, executed, stdout, stderr, events, launchError, exitCode, probesExecuted } to judgeDelegatedWriteCanaryOracle"
       ]),
       attemptObservationShape: ATTEMPT_OBSERVATION_SHAPE
