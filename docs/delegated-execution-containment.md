@@ -41,7 +41,7 @@ Do **not** invent a second executor. Reuse `execution-adapters/codex.js`
 | Availability | Missing `sandbox-exec` → no wrap/launch; **no** fallback to bare `codex` |
 | Command | Pins effective workspace with `cd <workspace> && … --cd <workspace>` |
 | Attempts | Disposable internal + external probe paths only — **not** personal `~/.codex` |
-| Oracle | `contained` needs internal **write delta** + external **denial evidence**; external write delta → `breach` even if process later errors; omitted externals / preexisting-no-delta → `inconclusive`. Preserves stdout/events/per-attempt result. **Never** `approval` / `verifiedEffective` |
+| Oracle | `contained` needs confirmed `executed`, internal **write delta**, and external **tool/process denial** linked to the probe (not generic “sandbox” text or agent self-report); external write delta → `breach` even if process later errors; omitted / weak evidence → `inconclusive`. Preserves stdout/events/per-attempt result. **Never** `approval` / `verifiedEffective` |
 | Runner | `prepareDelegatedWriteCanaryRunner` → wrapped launch + exact command + auth notes |
 | Real run | Requires `authorizeRealCanary: true`; this tranche does **not** spawn, copy credentials, or promote |
 

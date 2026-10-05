@@ -10,8 +10,8 @@ copy, promotion, or startRun wiring.**
 
 - [x] Exported command pins workspace (`cd` + `--cd`)
 - [x] Attempts target disposable paths only (not personal `~/.codex`)
-- [x] Oracle: `contained` = internal delta + external denials; external delta = `breach` even after process error; preexisting/omitted → inconclusive
-- [x] Offline tests cover omitted attempts, preexisting files, breach+error, other-cwd pinning
+- [x] Oracle: `contained` = executed + internal delta + linked tool/process denial; external delta = `breach` even after process error; preexisting/omitted/self-report/sandbox-text → inconclusive
+- [x] Offline tests cover omitted, preexisting, breach+error, other-cwd, sandbox-text, self-report denied, executed:false
 - [x] stdout/events/per-attempt result preserved on oracle output
 - [x] RDD receipts remain pending (tests ≠ receipt)
 

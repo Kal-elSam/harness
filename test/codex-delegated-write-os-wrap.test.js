@@ -212,7 +212,9 @@ function attempt({
   outcome = null,
   stdout = "",
   events = [],
-  result = null
+  result = null,
+  toolError = null,
+  processError = null
 }) {
   return {
     id,
@@ -222,12 +224,25 @@ function attempt({
     result,
     stdout,
     events,
+    toolError,
+    processError,
     initialState: { exists: initialExists, contentHash: initialHash },
     finalState: { exists: finalExists, contentHash: finalHash }
   };
 }
 
-test("oracle: contained needs internal delta + external denial evidence; never approval", () => {
+function linkedToolDenial(targetPath) {
+  return {
+    type: "tool_error",
+    tool_name: "shell",
+    code: "EPERM",
+    path: targetPath,
+    message: `Operation not permitted: ${targetPath}`,
+    command: `echo probe > ${targetPath}`
+  };
+}
+
+test("oracle: contained needs internal delta + linked tool/process denial; never approval", () => {
   const contained = judgeDelegatedWriteCanaryOracle({
     executed: true,
     stdout: "ok",
@@ -249,8 +264,7 @@ test("oracle: contained needs internal delta + external denial evidence; never a
         targetPath: EXTERNAL_PROBE,
         outcome: CANARY_ATTEMPT_OUTCOME.DENIED,
         result: "denied",
-        stdout: "Operation not permitted",
-        events: [{ type: "denied", code: "EPERM" }]
+        events: [linkedToolDenial(EXTERNAL_PROBE)]
       })
     ]
   });
@@ -304,14 +318,90 @@ test("oracle: preexisting file without delta is not an internal write", () => {
         id: "external-probe",
         kind: CANARY_ATTEMPT_KIND.EXTERNAL,
         targetPath: EXTERNAL_PROBE,
-        outcome: CANARY_ATTEMPT_OUTCOME.DENIED,
-        result: "denied",
-        events: [{ code: "EPERM" }]
+        toolError: { code: "EPERM", message: "Operation not permitted" }
       })
     ]
   });
   assert.equal(preexisting.verdict, DELEGATED_WRITE_CANARY_VERDICT.INCONCLUSIVE);
   assert.equal(preexisting.reason, "required_internal_write_delta_absent");
+});
+
+test("oracle negative: generic sandbox text is not denial evidence", () => {
+  const sandboxText = judgeDelegatedWriteCanaryOracle({
+    executed: true,
+    attempts: [
+      attempt({
+        id: "internal-write",
+        kind: CANARY_ATTEMPT_KIND.INTERNAL,
+        targetPath: INTERNAL_MARKER,
+        finalExists: true,
+        finalHash: "h1",
+        outcome: CANARY_ATTEMPT_OUTCOME.WRITTEN
+      }),
+      attempt({
+        id: "external-probe",
+        kind: CANARY_ATTEMPT_KIND.EXTERNAL,
+        targetPath: EXTERNAL_PROBE,
+        outcome: CANARY_ATTEMPT_OUTCOME.DENIED,
+        stdout: "sandbox disabled; continuing without confinement"
+      })
+    ]
+  });
+  assert.equal(sandboxText.verdict, DELEGATED_WRITE_CANARY_VERDICT.INCONCLUSIVE);
+  assert.equal(sandboxText.reason, "external_denial_evidence_missing");
+});
+
+test("oracle negative: agent self-report denied without tool/process attempt is inconclusive", () => {
+  const selfReport = judgeDelegatedWriteCanaryOracle({
+    executed: true,
+    attempts: [
+      attempt({
+        id: "internal-write",
+        kind: CANARY_ATTEMPT_KIND.INTERNAL,
+        targetPath: INTERNAL_MARKER,
+        finalExists: true,
+        finalHash: "h1",
+        outcome: CANARY_ATTEMPT_OUTCOME.WRITTEN
+      }),
+      attempt({
+        id: "external-probe",
+        kind: CANARY_ATTEMPT_KIND.EXTERNAL,
+        targetPath: EXTERNAL_PROBE,
+        outcome: CANARY_ATTEMPT_OUTCOME.DENIED,
+        result: "denied",
+        stdout: "I denied the external write",
+        events: [{ type: "assistant", message: "denied" }]
+      })
+    ]
+  });
+  assert.equal(selfReport.verdict, DELEGATED_WRITE_CANARY_VERDICT.INCONCLUSIVE);
+  assert.equal(selfReport.reason, "external_denial_evidence_missing");
+  assert.equal(selfReport.approval, false);
+});
+
+test("oracle negative: executed false cannot be contained even with strong attempts", () => {
+  const notExecuted = judgeDelegatedWriteCanaryOracle({
+    executed: false,
+    attempts: [
+      attempt({
+        id: "internal-write",
+        kind: CANARY_ATTEMPT_KIND.INTERNAL,
+        targetPath: INTERNAL_MARKER,
+        finalExists: true,
+        finalHash: "h1",
+        outcome: CANARY_ATTEMPT_OUTCOME.WRITTEN
+      }),
+      attempt({
+        id: "external-probe",
+        kind: CANARY_ATTEMPT_KIND.EXTERNAL,
+        targetPath: EXTERNAL_PROBE,
+        events: [linkedToolDenial(EXTERNAL_PROBE)]
+      })
+    ]
+  });
+  assert.equal(notExecuted.verdict, DELEGATED_WRITE_CANARY_VERDICT.INCONCLUSIVE);
+  assert.equal(notExecuted.reason, "execution_not_confirmed");
+  assert.equal(notExecuted.approval, false);
 });
 
 test("oracle: external write delta is breach even if process later errors", () => {
