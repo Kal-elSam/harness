@@ -17,11 +17,13 @@ export const CFPREFS_DIAGNOSTIC_KIND = "cfprefs_shm_read_data_only";
 /** Default log window pad around the observed spawn interval. */
 export const DEFAULT_SANDBOX_LOG_PAD_MS = 2000;
 
+const DEFAULT_UID = 501;
+
 /**
  * Exact SHM names denied in run …T123142 for uid 501.
  * daemonv1 is shared; the per-user segment uses apple.cfprefs.<uid>v1.
  */
-export function cfprefsObservedShmNames(uid = process.getuid?.() ?? 501) {
+export function cfprefsObservedShmNames(uid = DEFAULT_UID) {
   const numeric = Number(uid);
   if (!Number.isInteger(numeric) || numeric < 0) {
     throw new Error("cfprefs diagnostic requires a non-negative integer uid");
@@ -35,7 +37,7 @@ export function cfprefsObservedShmNames(uid = process.getuid?.() ?? 501) {
 /**
  * Exact SBPL allow block. Read-data only — no write-create, no notification_center.
  */
-export function buildCfprefsShmReadDataAllowRule({ uid = process.getuid?.() ?? 501 } = {}) {
+export function buildCfprefsShmReadDataAllowRule({ uid = DEFAULT_UID } = {}) {
   const names = cfprefsObservedShmNames(uid);
   const nameRules = names.map((name) => `  (ipc-posix-name "${name}")`).join("\n");
   return `(allow ipc-posix-shm-read-data\n${nameRules})`;
@@ -48,29 +50,69 @@ function normalizeProfileBody(body) {
   return body.replace(/\s+$/u, "") + "\n";
 }
 
+function countExactOccurrences(haystack, needle) {
+  if (!needle) return 0;
+  let count = 0;
+  let from = 0;
+  while (from <= haystack.length) {
+    const at = haystack.indexOf(needle, from);
+    if (at < 0) break;
+    count += 1;
+    from = at + needle.length;
+  }
+  return count;
+}
+
 /**
- * Append the diagnostic delta to a baseline profile. All prior grants stay verbatim.
+ * Expected Arm-B body: baseline + exactly one trailing copy of the rule.
+ * Does not delete or rewrite matches inside the baseline.
  */
-export function appendCfprefsDiagnosticDelta(baselineBody, { uid = process.getuid?.() ?? 501 } = {}) {
+export function expectedCfprefsDiagnosticVariant(baselineBody, { uid = DEFAULT_UID } = {}) {
   const baseline = normalizeProfileBody(baselineBody);
   const rule = buildCfprefsShmReadDataAllowRule({ uid });
-  if (baseline.includes(rule)) {
+  return Object.freeze({
+    baseline,
+    rule,
+    body: `${baseline}\n${rule}\n`,
+    baselineRuleCount: countExactOccurrences(baseline, rule)
+  });
+}
+
+/**
+ * Append the diagnostic delta to a baseline profile. All prior grants stay verbatim.
+ * If the exact rule already appears once in the baseline, returns it unchanged
+ * (`alreadyPresent: true`). That means **no differential treatment** relative to
+ * the baseline — not a valid A/B Arm B profile. Duplicate preexistence refuses.
+ */
+export function appendCfprefsDiagnosticDelta(baselineBody, { uid = DEFAULT_UID } = {}) {
+  const { baseline, rule, body, baselineRuleCount } = expectedCfprefsDiagnosticVariant(
+    baselineBody,
+    { uid }
+  );
+  const names = cfprefsObservedShmNames(uid);
+
+  if (baselineRuleCount > 1) {
+    throw new Error(
+      "cfprefs diagnostic baseline already contains the exact rule more than once"
+    );
+  }
+  if (baselineRuleCount === 1) {
     return Object.freeze({
       kind: CFPREFS_DIAGNOSTIC_KIND,
       body: baseline,
       rule,
-      names: cfprefsObservedShmNames(uid),
+      names,
       alreadyPresent: true,
       baselineSha256: sha256Text(baseline),
       variantSha256: sha256Text(baseline)
     });
   }
-  const body = `${baseline}\n${rule}\n`;
+
   return Object.freeze({
     kind: CFPREFS_DIAGNOSTIC_KIND,
     body,
     rule,
-    names: cfprefsObservedShmNames(uid),
+    names,
     alreadyPresent: false,
     baselineSha256: sha256Text(baseline),
     variantSha256: sha256Text(body)
@@ -82,20 +124,39 @@ function sha256Text(text) {
 }
 
 /**
- * Strip the diagnostic allow block (exact rule text) for surface comparison.
+ * True when variant is exactly baseline + one trailing exact rule,
+ * or baseline already contains that rule once and variant === baseline.
+ * Never strips arbitrary occurrences to force a match.
  */
-export function stripCfprefsDiagnosticDelta(profileBody, { uid = process.getuid?.() ?? 501 } = {}) {
-  const rule = buildCfprefsShmReadDataAllowRule({ uid });
-  const without = normalizeProfileBody(profileBody).replace(`\n${rule}\n`, "\n").replace(`${rule}\n`, "");
-  return normalizeProfileBody(without);
+export function profilePermissionsOtherwiseIntact(
+  baselineBody,
+  variantBody,
+  { uid = DEFAULT_UID } = {}
+) {
+  const { baseline, rule, body: expectedFresh } = expectedCfprefsDiagnosticVariant(
+    baselineBody,
+    { uid }
+  );
+  const actual = normalizeProfileBody(variantBody);
+  const baselineCount = countExactOccurrences(baseline, rule);
+  const actualCount = countExactOccurrences(actual, rule);
+
+  if (baselineCount > 1 || actualCount > 1) return false;
+  if (baselineCount === 1) {
+    return actual === baseline && actualCount === 1;
+  }
+  return actual === expectedFresh && actualCount === 1;
 }
 
 /**
- * True when variant === baseline + exact cfprefs rule only (whitespace-normalized ends).
+ * Positive integer PID (rejects 0, negative, NaN, non-integers).
  */
-export function profilePermissionsOtherwiseIntact(baselineBody, variantBody, { uid = process.getuid?.() ?? 501 } = {}) {
-  const stripped = stripCfprefsDiagnosticDelta(variantBody, { uid });
-  return normalizeProfileBody(baselineBody) === stripped;
+export function assertPositivePid(value, role = "pid") {
+  const pid = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw new Error(`${role} requires a positive integer pid`);
+  }
+  return pid;
 }
 
 /**
@@ -135,10 +196,7 @@ export function buildSandboxLogWindow({
  */
 export function freezeObservedProcessTree(nodes = []) {
   const tree = (Array.isArray(nodes) ? nodes : []).map((node) => {
-    const pid = Number(node?.pid);
-    if (!Number.isInteger(pid) || pid <= 0) {
-      throw new Error("observed tree node requires positive integer pid");
-    }
+    const pid = assertPositivePid(node?.pid, "observed tree node");
     const comm = typeof node?.comm === "string" ? node.comm.trim() : "";
     if (!comm) throw new Error("observed tree node requires comm");
     const ppid = node?.ppid == null ? null : Number(node.ppid);
@@ -155,20 +213,22 @@ export function treePidSet(tree) {
   return new Set(freezeObservedProcessTree(tree).map((node) => node.pid));
 }
 
+const SANDBOX_EVENT_RE =
+  /Sandbox:\s+([^\s(]+)\((\d+)\)\s+(deny|allow)\((\d+)\)\s+(\S+)(?:\s+(.+))?/i;
+
 /**
- * Parse offender identity from a Sandbox kernel / log line.
- * Example: `Sandbox: codex(12345) deny(1) ipc-posix-shm-read-data apple.cfprefs.501v1`
+ * Parse offender identity from a Sandbox kernel / log line (single physical line).
+ * Invalid PIDs throw — never silently coerce.
  */
 export function parseSandboxOffenderEvent(line) {
   if (typeof line !== "string" || line.trim() === "") return null;
-  const match = line.match(
-    /Sandbox:\s+([^\s(]+)\((\d+)\)\s+(deny|allow)\((\d+)\)\s+(\S+)(?:\s+(.+))?/i
-  );
+  const match = line.match(SANDBOX_EVENT_RE);
   if (!match) return null;
+  const offenderPid = assertPositivePid(match[2], "sandbox offender");
   const resource = typeof match[6] === "string" ? match[6].trim() : "";
   return Object.freeze({
     offenderProcess: match[1],
-    offenderPid: Number(match[2]),
+    offenderPid,
     decision: match[3].toLowerCase(),
     decisionCode: Number(match[4]),
     operation: match[5],
@@ -177,14 +237,77 @@ export function parseSandboxOffenderEvent(line) {
   });
 }
 
-export function parseSandboxOffenderEvents(text) {
-  const lines = String(text ?? "").split(/\r?\n/u);
-  const events = [];
-  for (const line of lines) {
-    const event = parseSandboxOffenderEvent(line);
-    if (event) events.push(event);
+function isRelevantUnparsedLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  return /sandbox|cfprefs|ipc-posix|notification_center|vfs\.disk-space/i.test(trimmed);
+}
+
+function coalesceMultilineSandboxLog(text) {
+  const rawLines = String(text ?? "").split(/\r?\n/u);
+  const physical = [];
+  let pending = null;
+
+  const flushPending = () => {
+    if (pending != null) {
+      physical.push(pending);
+      pending = null;
+    }
+  };
+
+  for (const line of rawLines) {
+    if (/^\s+/.test(line) && pending != null) {
+      pending = `${pending} ${line.trim()}`;
+      continue;
+    }
+    flushPending();
+    if (/Sandbox:\s+/i.test(line)) {
+      pending = line.trimEnd();
+      continue;
+    }
+    physical.push(line);
   }
-  return Object.freeze(events);
+  flushPending();
+  return physical;
+}
+
+/**
+ * Parse Sandbox offender events from a log extract.
+ * Coalesces indented continuation lines onto the preceding Sandbox: header.
+ * Preserves relevant non-parsed lines (never silent-drop).
+ */
+export function parseSandboxOffenderEvents(text) {
+  const physicalLines = coalesceMultilineSandboxLog(text);
+  const events = [];
+  const unparsedRelevantLines = [];
+
+  for (const line of physicalLines) {
+    if (typeof line !== "string" || line.trim() === "") continue;
+    try {
+      const event = parseSandboxOffenderEvent(line);
+      if (event) {
+        events.push(event);
+        continue;
+      }
+    } catch (error) {
+      unparsedRelevantLines.push(Object.freeze({
+        line: line.trim(),
+        reason: error instanceof Error ? error.message : String(error)
+      }));
+      continue;
+    }
+    if (isRelevantUnparsedLine(line)) {
+      unparsedRelevantLines.push(Object.freeze({
+        line: line.trim(),
+        reason: "unrecognized_sandbox_shaped_or_cfprefs_line"
+      }));
+    }
+  }
+
+  return Object.freeze({
+    events: Object.freeze(events),
+    unparsedRelevantLines: Object.freeze(unparsedRelevantLines)
+  });
 }
 
 /**
@@ -193,8 +316,7 @@ export function parseSandboxOffenderEvents(text) {
 export function linkSandboxEventsToObservedTree(events, observedTree, { sandboxExecPid = null } = {}) {
   const pids = treePidSet(observedTree);
   if (sandboxExecPid != null) {
-    const pid = Number(sandboxExecPid);
-    if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+    pids.add(assertPositivePid(sandboxExecPid, "sandboxExecPid"));
   }
   const linked = [];
   const unlinked = [];
@@ -210,8 +332,6 @@ export function linkSandboxEventsToObservedTree(events, observedTree, { sandboxE
     linkedCfprefs: Object.freeze(linkedCfprefs),
     unlinkedCfprefs: Object.freeze(unlinkedCfprefs),
     treePids: Object.freeze([...pids].sort((a, b) => a - b)),
-    // Unlinked non-tree PIDs in the same wall window are expected noise.
-    // Cfprefs events whose offenderPid is outside the tree cannot diagnose this run.
     hasPidLinkedCfprefsSignal: linkedCfprefs.length > 0,
     hasPidUnlinkedCfprefsSignal: unlinkedCfprefs.length > 0,
     inconclusivePidUnlinked:
@@ -235,7 +355,7 @@ export function buildPidLinkedSandboxCapturePlan({
   padAfterMs = DEFAULT_SANDBOX_LOG_PAD_MS,
   sandboxExecPid = null,
   observedTree = [],
-  uid = process.getuid?.() ?? 501
+  uid = DEFAULT_UID
 } = {}) {
   const window = buildSandboxLogWindow({
     startedAt,
@@ -245,13 +365,16 @@ export function buildPidLinkedSandboxCapturePlan({
   });
   const tree = freezeObservedProcessTree(observedTree);
   const pids = treePidSet(tree);
-  if (sandboxExecPid != null) pids.add(Number(sandboxExecPid));
+  const execPid = sandboxExecPid == null
+    ? null
+    : assertPositivePid(sandboxExecPid, "sandboxExecPid");
+  if (execPid != null) pids.add(execPid);
 
   return Object.freeze({
     kind: "pid_linked_sandbox_log_capture",
     diagnostic: CFPREFS_DIAGNOSTIC_KIND,
     window,
-    sandboxExecPid: sandboxExecPid == null ? null : Number(sandboxExecPid),
+    sandboxExecPid: execPid,
     observedTree: tree,
     treePids: Object.freeze([...pids].sort((a, b) => a - b)),
     cfprefsNames: cfprefsObservedShmNames(uid),
@@ -264,8 +387,9 @@ export function buildPidLinkedSandboxCapturePlan({
       "Capture sandbox-exec PID and observed child tree (pid, ppid, comm) during the run",
       "Extract Sandbox events only inside windowStartIso..windowEndIso",
       "Parse offenderProcess + offenderPid from each event; do not link by process name alone",
+      "Keep relevant unparsed lines (multiline leftovers, unknown Sandbox shapes); never treat silent parse miss as no-deny",
       "Keep events whose offenderPid is outside the tree as unlinked noise",
-      "Without linked cfprefs events (or clear absence after grant), result is inconclusive_pid_unlinked"
+      "inconclusive_pid_unlinked only when cfprefs events exist but none link to the tree — not when B has a clean allow path with zero cfprefs denials"
     ]),
     logShowPredicateHint:
       'eventMessage CONTAINS "Sandbox:" AND (eventMessage CONTAINS "cfprefs" OR eventMessage CONTAINS "ipc-posix-shm" OR eventMessage CONTAINS "notification_center" OR eventMessage CONTAINS "vfs.disk-space")',

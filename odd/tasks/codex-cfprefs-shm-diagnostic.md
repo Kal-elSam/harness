@@ -129,7 +129,9 @@ Coverage is complete only if ALL hold for the arm (record the result of each):
 
 A clean B stays valid: B is never required to show a denial. A B with exit 0 + `agent_message` + zero tree-linked cfprefs denials **and complete coverage** is a valid confirmation of H1 for this startup failure; the same B with unknown coverage is `inconclusive_capture_incomplete`.
 
-Implementation status: **not implemented.** `parseSandboxOffenderEvents` returns only the lines it matches (non-matching lines are dropped silently), and nothing computes coverage or the verdict, so checks 1-5 and the decision table are applied by hand and recorded in the evidence until code does it. The native review's advisory ids on the parser (`R3-parser-first-line-only`, `R4-parser-silent-miss`) are recorded, without descriptions, in `odd/tasks/kernel-run-spawn-bridge.md`; they point at the same risk and are for this plan's owner.
+Implementation status (offline helpers): **partial.** `profilePermissionsOtherwiseIntact` compares against `baseline + one exact trailing rule` (no strip-first-occurrence). `parseSandboxOffenderEvents` coalesces indented continuations, returns `{ events, unparsedRelevantLines }`, and rejects invalid PIDs into the unparsed list. Coverage checks 1–5 and the automatic verdict still require a live evidence recorder — applied by hand until that exists. Native review advisory ids on the prior parser/strip (`R3-parser-first-line-only`, `R4-parser-silent-miss`, `R3-strip-first-occurrence`, `R3-plan-nan-pid`, …) are addressed in code by this offline correction; they remain recorded in `odd/tasks/kernel-run-spawn-bridge.md`.
+
+**`alreadyPresent: true`:** `appendCfprefsDiagnosticDelta` found the exact rule already in the baseline and returned that body unchanged. That is **not** a differential treatment profile and **must not** be used as Arm B in the A/B experiment (A and B would be identical). A valid Arm B requires `alreadyPresent: false` and `profilePermissionsOtherwiseIntact(baseline, variant) === true` with exactly one trailing rule appended.
 
 ### Decision table (fixed before any run)
 
