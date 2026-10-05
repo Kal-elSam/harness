@@ -756,7 +756,7 @@ Checks: fork `test/kairo`; focused host tests; package/version resolution; real 
 
 Uncommitted work on this branch belongs to four separate groups. Do not mix them in commits.
 
-- **Shell (this doc)**: `package.json`, `pnpm-lock.yaml`, `.npmrc`, `src/global/host/launch-gentle-shell.js` (Pi pin `.3` -> `.4`), `src/global/host/extension/index.js` (env-gated `KAIRO_PROTOTYPE_THEME`, includes a `/tmp/proto-debug.log` debug write to remove or justify), `src/global/host/extension/kairo-prototype-theme.js`, `test/kairo-prototype-theme.test.js`, `docs/assets/`.
+- **Shell (this doc)**: `package.json`, `pnpm-lock.yaml`, `.npmrc`, `src/global/host/launch-gentle-shell.js` (Pi pin `.3` -> `.4`), `src/global/host/extension/index.js` (env-gated `KAIRO_PROTOTYPE_THEME`, debug-log writes removed, see R2), `src/global/host/extension/kairo-prototype-theme.js`, `test/kairo-prototype-theme.test.js`, `docs/assets/`.
 - **Handoff + context-fill**: moved to `odd/tasks/session-handoff-context-fill.md`.
 - **Documentation closures**: `odd/tasks/cursor-credit-discipline.md`, `odd/tasks/plan-mode-model-agnostic.md`.
 - **Diagnostics (never in functional commits)**: `report.json`, `scripts/inspect-opencode-tier.sh`.
@@ -767,3 +767,9 @@ Open shell items:
 - [x] R2 (2026-10-05) Prototype theme kept behind `KAIRO_PROTOTYPE_THEME=1` (not default); both debug-log writes (`index.js` block, `debugLog` helper in `kairo-prototype-theme.js`) removed. Real PTY with the flag: renders, no crash, `/tmp/proto-debug.log` not created.
 - [x] R3 (2026-10-05) Same version `0.87.1-kairo.4` in `package.json`, launcher constant, `pnpm-lock.yaml` and `.npmrc`. The `.npmrc` `minimum-release-age-exclude` for `.4` is now obsolete (published >24h ago) and its own comment says to remove it; pending user OK.
 - [x] R4 (2026-10-05, fresh evidence) Real PTY on `.4` with launcher argv/env, fresh HARNESS_HOME, no credentials: 100x30 start OK (sidebar beside chat, `session:` 1, `USAGE` 1, `Run /project analyze` 1); 60x30 sidebar hidden + compact summary + session id in status bar; live resize 100->60->100 reflows, no blank screen, `session:` 1 in every frame; welcome disappears after the first submit (`No models available` shown, welcome gone). Caveat: a submit issued ~6s after launch was not processed within a further 7s window (welcome still shown); the same early submit with a 25s wait cleared the welcome, so this looks like Pi startup latency before the input event, not the extension handler. Not root-caused further. Driver: scratchpad `pty_driver.py` (session-local, not committed). Recovery approve/reject: `team-recovery`, `orch-recovery`, `team-auto-recovery-e2e` 32/32 pass; restart persistence and no-alternative paths not separately verified in a PTY.
+
+### Native review (2026-10-05)
+
+- Range `60e7acf51..HEAD` (shell + handoff/context-fill commits; 39 files, 2128 lines, risk high: `process_boundary` in `scripts/context-fill-hook.js`). Untracked files excluded (`--untracked-scope=exclude`). Consent `granted` by the user for this candidate.
+- Lineage `review-0c2c0df11dff2fb5`, 4 lenses (risk, resilience, readability, reliability): all completed, outcome **approved**, no blocking findings, no correction. Acknowledged; authority burned. Approval is not delivery authorization: push/PR/merge remain user decisions.
+- 15 non-blocking advisory findings (separate later work, not a reason to re-review). Shell-owned: `kairo-prototype-theme.js:1-30` mixed scope (WARNING). Handoff-owned (tracked in `odd/tasks/session-handoff-context-fill.md` scope, not touched here): non-atomic checkpoint write (`context-fill-checkpoint.js:78-79`), hook state race (`context-fill-hook.js:100-112`), label collision (`context-fill-handoff.js:4-12`), duplicated helpers in `context-fill-*`.
