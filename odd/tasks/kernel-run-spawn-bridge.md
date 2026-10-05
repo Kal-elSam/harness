@@ -40,8 +40,8 @@ Committing this document authorizes no implementation. The strict admission stay
 
 ### Offline preparation (fakes only; each needs its own explicit authorization)
 
-- [ ] B-1 Pure normalization (run metadata + events -> `WorkResult`, keep `runId`), fake `startRun`, offline tests. No cancellation.
-- [ ] B-2 Factory composing admission arguments + `startRun` + normalization, fake `startRun`; assert `requireVerifiedWriteContainment: true`, `permissions: []`, `allowUnsafePermissions: false`, and that an admission rejection creates no run.
+- [x] B-1 Pure normalization (run metadata + events -> `WorkResult`, keep `runId`), fake `startRun`, offline tests. No cancellation.
+- [x] B-2 Factory composing admission arguments + `startRun` + normalization, fake `startRun`; assert `requireVerifiedWriteContainment: true`, `permissions: []`, `allowUnsafePermissions: false`, and that an admission rejection creates no run.
 - [ ] B-3 Explicit caller-driven cancel callback `onStart({ runId, stop })`; `stop` calls `stopRun` only when the caller invokes it.
 - [ ] B-4 Integration through real `startRun` with a fake spawn (no real process, no provider).
 
@@ -62,3 +62,11 @@ Success with real summary; success without summary -> failed keeping `runId`; JS
 ## Next step
 
 Decide whether to authorize B-1..B-4 (offline only, fakes, no provider). B-5 (production wiring) and any adapter promotion belong to the admission-matrix owner and a separate authorization.
+
+## Authorization and progress log
+
+- 2026-10-05: user authorized B-1 and B-2 only (offline, fakes, strict TDD, node --test). Not authorized: B-3, B-4, B-5, promotion of any adapter, provider calls. Route: one delegated writer (2 new source files + 2 new test files; Writer trigger). B-1 lives in `src/global/kernel/run-result-normalizer.js`, B-2 in `src/global/kernel/run-spawn-adapter.js`, so each work unit gets its own commit. TDD: strict, runner `node --test`, RED observed before implementation. RDD: assess each work-unit commit.
+- 2026-10-05: B-1 (`4be774e87`) and B-2 (`9d6d283b5`) done, offline only. Writer evidence: RED = `ERR_MODULE_NOT_FOUND` for each new test file before its module existed (import-level RED, not per-test); GREEN 14/14 (normalizer) and 15/15 (factory). Parent re-ran normalizer + factory + delegate suites: 36 pass, 0 fail. Writer's full `npm run test:cool`: 2450 tests, 2449 pass, 0 fail, 1 skip (not re-run by the parent).
+- Facts found while implementing: `prepareRun` runs `adapter.availability()` and the launchable check BEFORE admission, and availability can probe real CLIs; admission still runs before `preflight`, `createRunId` and `createRunRecord`. The real-`startRun` admission test therefore injects a stub adapter (available, launchable, `preflight` throws if called) and asserts for codex, claude, cursor, opencode and pi: `DelegatedWriteAdmissionError`, `preflight` never called, `homeDir` still empty (no run record). Argument errors use a new `RunSpawnArgumentError` (codes `run_spawn_invalid_request|provider|model`, `run_spawn_adapter_mismatch`). Normalizer accepts summary only from `data.text`, string `data.content`, string `data.result` or `type:'text'` blocks; never the `formatTranscriptEventText` JSON fallback.
+- Not authorized and not done: B-3, B-4, B-5, adapter promotion, wiring, provider calls. Nothing in the production path calls the new factory.
+- RDD assess (EXCLUDE untracked, committed-only): B-1+B-2 alone (`c37ed2347..9d6d283b5`): risk medium, 4 paths, 557 lines, `review_due: true` (`slice_budget_reached`). Range since the last reviewed boundary (`f3addf118`): high, 48 paths, 4641 lines, driven by other plans' commits (e.g. `process_boundary` in `context-fill-checkpoint.js`), not by this work.
