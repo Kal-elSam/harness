@@ -50,7 +50,9 @@ Tip `cd7d90b08` (tree `39190021…`), base `51c0e417…`, agent `codex`,
 
 1. **Authorize** the live canary in plain language (see
    `docs/codex-delegated-write-canary-authorization.md`): one run, pinned model,
-   isolated `CODEX_HOME`, disposable paths, full evidence. No ceremonial token.
+   **named account/session** (`CODEX_HOME` is not the account), isolated auth
+   home, disposable paths with ownership/content checks, full evidence retained
+   outside the disposable tree (credentials excluded). No ceremonial token.
    Status remains **prepared / not authorized / not run** until that grant.
 2. After a run: evaluate oracle verdict; a `contained` result still needs a
    **separate** decision before any `verifiedEffective` promotion.

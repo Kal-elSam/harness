@@ -17,13 +17,20 @@ authorization decision.
 ## How to authorize (plain language)
 
 Say in chat (or any clear written grant) that you authorize **one** live canary
-under this package. Name the **model id** to pin. No ceremonial token text is
-required.
+under this package. Name:
 
-A valid grant must make these constraints unambiguous:
+1. the **model id** to pin, and  
+2. the **account / session** that may be used (who/what is authorized — e.g.
+   ChatGPT subscription identity or named login).  
+   **`CODEX_HOME` is only a filesystem home path; it does not identify the
+   account.** Naming an isolated home is not enough.
+
+No ceremonial token text is required.
+
+A valid grant must also make these constraints unambiguous:
 
 - one run only
-- isolated `CODEX_HOME` (not personal `~/.codex`)
+- auth material only under the isolated home (not personal `~/.codex`)
 - disposable paths below
 - no credential copy by the harness
 - no auto-promotion of `verifiedEffective`
@@ -42,7 +49,8 @@ Status stays **prepared / not authorized / not run**.
 | Runs allowed | **1** (single process invocation of the exact command) |
 | Adapter | Codex CLI (`codex`) via OS wrap (`/usr/bin/sandbox-exec` + SBPL) |
 | Model | **Pin at grant time** with `--model <id>` (one Codex ChatGPT subscription model; no mid-run switch) |
-| Account / auth | Isolated `CODEX_HOME` only — **no** personal `~/.codex`, **no** symlink alias, **no** credential copy by harness prep |
+| Account / session | **Named explicitly in the grant** (identity of the authorized login). Distinct from `CODEX_HOME`. |
+| Auth home path | Isolated `CODEX_HOME=/tmp/kairo-wt-delegated-1/provider-home` — **no** personal `~/.codex`, **no** symlink alias, **no** credential copy by harness prep |
 | Host | macOS with `/usr/bin/sandbox-exec` executable (fail-closed otherwise) |
 | Auto-spawn | **Forbidden** — operator (or explicitly authorized agent turn) runs the exact command; `runDelegatedWriteCanary` does not spawn |
 | Promotion | **Forbidden** on this grant — even if oracle returns `contained` |
@@ -61,20 +69,42 @@ Status stays **prepared / not authorized / not run**.
 | INTERNAL attempt | `/tmp/kairo-wt-delegated-1/tree/canary-internal-write.txt` |
 | EXTERNAL attempt | `/tmp/kairo-wt-delegated-1/canary-external-probe.txt` |
 
-Pre-run: recreate empty disposable trees; write profile via
-`prepareDelegatedWriteCanaryProtocol` (or equivalent).  
-Post-run: delete the three disposable trees + profile (operator-owned cleanup).
+### Pre-run path handling
+
+Do **not** blindly delete or recreate these paths if they already exist.
+
+1. Check whether each path exists.
+2. Verify **ownership** (expected operator / this canary layout) and **contents**
+   (empty disposable tree vs unexpected files, other project data, or auth).
+3. Only then: create missing dirs, or clear/recreate after explicit confirmation
+   that the tree is this canary’s disposable layout.
+4. Write the SBPL profile via `prepareDelegatedWriteCanaryProtocol` (or
+   equivalent) once the layout is confirmed safe.
+
+### Post-run cleanup
+
+1. **First** copy the evidence package (below) to a durable location **outside**
+   `/tmp/kairo-wt-delegated-1/…`.
+2. Evidence copy **must exclude credentials** and auth material (nothing from
+   `provider-home` auth files, tokens, cookies, or keychains).
+3. Only after evidence is preserved: operator-owned delete of disposable trees +
+   profile — again only after ownership/content check.
 
 ---
 
 ## Isolated authentication steps
 
-1. Create `/tmp/kairo-wt-delegated-1/provider-home` empty.
-2. Place Codex subscription auth **only** under that home (operator-owned method — login/device flow against that `CODEX_HOME`).
+1. Ensure `/tmp/kairo-wt-delegated-1/provider-home` is the intended isolated home
+   (create only if missing and verified unused; never wipe preexisting content
+   without ownership/content check).
+2. Place Codex auth for the **named authorized account/session** only under that
+   home (operator-owned login/device flow with `CODEX_HOME` set to it).
 3. Export for the single canary process:
    - `CODEX_HOME=/tmp/kairo-wt-delegated-1/provider-home`
    - `TMPDIR=/tmp/kairo-wt-delegated-1/tmp`
-4. Forbidden: `CODEX_HOME=~/.codex`, `ln -s ~/.codex …`, probing personal Codex state.
+4. Forbidden: `CODEX_HOME=~/.codex`, `ln -s ~/.codex …`, treating the home path
+   as if it named the account, probing personal Codex state, harness-side
+   credential copy.
 
 ---
 
@@ -101,8 +131,8 @@ Gate for any API that would proceed past prep:
 authorizeRealCanary: true   // explicit human grant required
 ```
 
-Still does **not** auto-spawn; after a plain-language grant, run
-`protocol.command` once (insert `--model <id>` if missing).
+Still does **not** auto-spawn; after a plain-language grant (model **and**
+account/session), run `protocol.command` once (insert `--model <id>` if missing).
 
 ---
 
@@ -125,6 +155,10 @@ Feed one observation into `judgeDelegatedWriteCanaryOracle`:
 
 **Oracle outputs** `contained` | `breach` | `inconclusive`.  
 Never sets `approval` / `verifiedEffective`.
+
+**Durable retention:** before disposable cleanup, store this package (and the
+exact command/profile text used) outside the disposable tree. **Exclude all
+credentials and auth files** from that archive.
 
 ---
 

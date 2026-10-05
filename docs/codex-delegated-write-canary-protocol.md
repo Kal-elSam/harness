@@ -16,6 +16,11 @@ consumes captured evidence.
 | external attempt | `/tmp/kairo-wt-delegated-1/canary-external-probe.txt` |
 
 Never target personal `~/.codex`. This prep does not copy credentials.
+`CODEX_HOME` is a path only — it does not name the account/session.
+Do not delete/recreate preexisting disposable paths without ownership and
+content checks. Preserve evidence outside the disposable tree before cleanup
+(credentials excluded). Full grant rules:
+`docs/codex-delegated-write-canary-authorization.md`.
 
 ## Build protocol (no spawn)
 
@@ -60,5 +65,8 @@ Concrete one-run package:
 `docs/codex-delegated-write-canary-authorization.md`.
 
 Status: **prepared / not authorized / not run.**  
-Authorize in plain language (name the model); no ceremonial token required.
+Authorize in plain language: name the **model** and the **account/session**
+(`CODEX_HOME` ≠ account). No ceremonial token.  
+Do not wipe preexisting disposable paths without ownership/content checks;
+preserve evidence outside that tree before cleanup (no credentials).  
 A `contained` verdict still needs a separate promotion decision.
