@@ -249,6 +249,14 @@ function isShellActive(ctx, getTuiMode) {
  * handles the regular-mode/`.3`-pin fallback and slot clearing itself.
  */
 function renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable = false, extraLines = [], getTuiMode = null, selection = null }) {
+  // Visual-design prototype (session-scoped Kairo skin for TTY captures
+  // the user must approve before any product change — see
+  // kairo-prototype-theme.js). Env-gated: the default paint below is
+  // byte-identical when the flag is off.
+  if (process.env?.KAIRO_PROTOTYPE_THEME === "1") {
+    void paintPrototypeShellSurface(ctx, snapshot, { getColumns, routeUnavailable, extraLines, getTuiMode, selection });
+    return;
+  }
   ctx.ui.setSidebar(createShellSidebarWidget(snapshot, {
     getColumns,
     routeUnavailable,
@@ -264,6 +272,45 @@ function renderShellSurface(ctx, snapshot, { getColumns, routeUnavailable = fals
   // at click time (see the closure's onSelectAgent): a mode switch away
   // from fullscreen must never repaint slots the fork stopped drawing.
   if (selection) selection._paint = { ctx, snapshot, getColumns, routeUnavailable, extraLines, getTuiMode };
+}
+
+/**
+ * Prototype paint: same snapshot facts as renderShellSurface, but through
+ * the session-scoped Kairo skin (in-memory Theme instance + band fills).
+ * Any failure (import, theme, slots) falls back to the default paint —
+ * a capture experiment must never break the shell.
+ */
+async function paintPrototypeShellSurface(ctx, snapshot, { getColumns, routeUnavailable = false, extraLines = [], getTuiMode = null, selection = null }) {
+  try {
+    const skin = await import("./kairo-prototype-theme.js");
+    const theme = skin.applyPrototypeThemeOnce(ctx);
+    if (!theme) throw new Error("prototype theme unavailable");
+    // Full-height band: live terminal rows, read fresh like getColumns
+    // (never captured), so a resize reflows on the next repaint.
+    const getRows = () => process.stdout.rows;
+    ctx.ui.setSidebar(skin.createPrototypeSidebarWidget(snapshot, {
+      getColumns,
+      getRows,
+      routeUnavailable,
+      extraLines,
+      selectedAgentId: selection?.selectedAgentId ?? null,
+      onSelectAgent: selection?.onSelectAgent ?? null
+    }));
+    ctx.ui.setBottomStrip(skin.createPrototypeStripWidget(snapshot, { getColumns, extraLines }));
+    ctx.ui.setWidget?.("kairo-workspace", skin.createPrototypeCompactWidget(snapshot, { getColumns, routeUnavailable, extraLines }));
+    if (selection) selection._paint = { ctx, snapshot, getColumns, routeUnavailable, extraLines, getTuiMode };
+  } catch {
+    ctx.ui.setSidebar(createShellSidebarWidget(snapshot, {
+      getColumns,
+      routeUnavailable,
+      extraLines,
+      selectedAgentId: selection?.selectedAgentId ?? null,
+      onSelectAgent: selection?.onSelectAgent ?? null
+    }));
+    ctx.ui.setBottomStrip(createShellBottomStripWidget(snapshot, { getColumns, extraLines }));
+    ctx.ui.setWidget?.("kairo-workspace", createCompactShellSummaryWidget(snapshot, { getColumns, routeUnavailable, extraLines }));
+    if (selection) selection._paint = { ctx, snapshot, getColumns, routeUnavailable, extraLines, getTuiMode };
+  }
 }
 
 /**
