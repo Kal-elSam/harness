@@ -45,7 +45,7 @@ Make the kernel's delegation seam portable and honest: a validated `WorkResult` 
 - [x] `delegate` passes the full decision (provider, model, assignmentSource, why) to the adapter and validates the result.
 - [x] Adapter rejection propagates; MANUAL_HANDOFF / WAIT_FOR_PROJECT_TEAM / no adapter never execute.
 - [x] Two independent delegations stay independent (one fails, one resolves).
-- [ ] Focused tests + `npm run test:cool` green; fresh evidence recorded.
+- [x] Focused tests + `npm run test:cool` green; fresh evidence recorded.
 
 ## TDD
 
@@ -66,7 +66,7 @@ Make the kernel's delegation seam portable and honest: a validated `WorkResult` 
 - [x] K-2 GREEN: `createWorkResult` validation
 - [x] K-3 RED: delegate seam tests (full decision, validation, rejection, manual/wait/no-adapter, two independent)
 - [x] K-4 GREEN: `delegate` seam + update existing fakes
-- [ ] K-5 Refactor, focused tests, `npm run test:cool`, commit, RDD assess
+- [x] K-5 Refactor, focused tests, `npm run test:cool`, commit, RDD assess
 
 ## Progress
 
@@ -82,4 +82,10 @@ Make the kernel's delegation seam portable and honest: a validated `WorkResult` 
 
 ## Next step
 
-K-5: parent commit + RDD assess.
+Nothing pending for this contract. The production bridge (a real spawnAdapter wired to startRun) and AbortSignal/timeouts are separate, unauthorized work.
+
+## Close-out (2026-10-05)
+
+- Commit `363480a0f` (`feat(kernel): validate WorkResult and pass full decision to spawnAdapter`), local only, no push. Parent re-ran focused suites: kernel-contracts, kernel-delegate, worker-events, control-plane review-association: 38 pass, 0 fail. Writer-reported full `npm run test:cool`: 2376 tests, 2375 pass, 0 fail, 1 skip (not re-run by the parent).
+- RDD assess (`--base-ref HEAD~1 --committed-only`, untracked excluded): risk medium (`executable_change` in contracts.js), 6 paths, 316 lines, `review_due: false` (`under_budget`). No review started; the range stays pending in the slice until a later commit reaches the ~400-line budget.
+- The first assess without an untracked declaration reported unassessable/high; it was rerun with `--untracked-scope=exclude` as the other plan's untracked files are out of scope.
