@@ -73,16 +73,36 @@ Until that grant exists, agents must not spawn either arm.
 
 ## After both arms (evaluation — not automatic)
 
-| Observation | Reading |
+Canonical decision table: `odd/tasks/codex-cfprefs-shm-diagnostic.md`
+(§ Decision table). This grant package must not invent a different reading.
+
+Assume contemporaneous Arm A showed `-32600` **and** PID-linked
+`apple.cfprefs.*` denials. Then:
+
+| B observation (capture valid) | Reading |
 |---|---|
-| A still `-32600` with PID-linked `apple.cfprefs.*` deny; B clears `-32600` and shows no PID-linked cfprefs deny | H1 supported (syntax/runtime grant may still leave a **later** startup blocker) |
-| B still `-32600` with PID-linked cfprefs deny | H1 falsified or grant incomplete |
-| Either arm lacks PID-linked cfprefs signal | `inconclusive_pid_unlinked` — do not claim H1 |
-| B clears sync then hits a new startup error | Next sequential blocker — document; not containment |
+| Success criterion met: exit `0` + real `agent_message` + **no** tree-linked cfprefs **deny** | **H1 confirmed** for this startup failure under this profile (necessity only; not containment; later blockers still possible) |
+| `-32600` persists, treatment applied (profile delta verified), capture valid, and **no** tree-linked cfprefs **deny** | **Evidence against H1** — those denials are not the cause |
+| `-32600` persists **and** tree-linked cfprefs **deny** still present (target denial persists) | **Invalid arm** — the allow rule did not take effect (check syntax/uid/profile path). **Not** an H1 verdict |
+| `-32600` gone but exit ≠ `0` or no `agent_message` | **Inconclusive** — record the next blocker; H1 only partially supported |
+| A never showed `-32600` | **Inconclusive** — failure did not reproduce |
+
+### Do not confuse (PID vs treatment)
+
+| Situation | What it means |
+|---|---|
+| B has **no** tree-linked cfprefs denials after a verified allow rule | Expected when the rule took effect (or when nothing attempted the read). Use with `-32600` / success criterion to judge H1 — **not** `inconclusive_pid_unlinked` |
+| Sandbox log shows cfprefs events but **none** have `offenderPid ∈` observed tree | **`inconclusive_pid_unlinked`** — capture/linkage failure; do not claim H1 either way |
+| Foreign-PID cfprefs noise in the same wall window while tree-linked events exist | Noise; ignore for H1; decide on linked events only |
+
+Absence of denials in B ≠ missing PID link. Missing PID link requires
+cfprefs events that fail tree linkage (or no usable tree), not a clean
+allow path.
 
 ---
 
 ## Offline prep already recorded
 
-See `odd/tasks/codex-cfprefs-shm-diagnostic.md` (syntax checks + test evidence).
+See `odd/tasks/codex-cfprefs-shm-diagnostic.md` (syntax checks + test evidence +
+full decision table).
 Apple `system.sb` precedent validates `(ipc-posix-name…)` **syntax only**.

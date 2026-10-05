@@ -122,6 +122,8 @@ Run `delegated-write-20261005T123142` MAY be cited as supporting precedent but *
 | A does not show -32600 | any | Inconclusive: the failure did not reproduce; no verdict |
 | cfprefs events present but none linked to the tree | any | `inconclusive_pid_unlinked` |
 
+**Do not confuse:** B with **no** tree-linked cfprefs denials (treatment applied / clean allow path) is **not** `inconclusive_pid_unlinked`. That label is only when cfprefs events exist but fail tree linkage. Target denial still present on B ⇒ **invalid arm**, not evidence against H1. `-32600` with treatment applied, valid capture, and **no** linked cfprefs deny ⇒ **evidence against H1**.
+
 ## Authorization and cost (not granted)
 
 - Nothing here is authorized to run. Earlier grants are consumed and do not apply.
