@@ -88,7 +88,9 @@ Handoff and context-fill share contracts (`context` JSON, checkpoint format). Cl
 - `node --test test/context-fill.test.js test/context-fill-hook.test.js test/component-registry.test.js test/components-cli.test.js test/component-catalog-compat.test.js test/component-resolve.test.js test/workspace-components.test.js`: 40 pass (2026-10-05).
 - `npm run test:cool`: 2347 pass / 0 fail / 1 skipped (2026-10-05).
 - Bug fix evidence: RED `absent Cursor fill keeps band unknown` (expected unknown, actual comfortable), then GREEN after Cursor `contextBand` typeof guard.
+- Work-unit commits: `c731522d5` observability, `04c9df5b1` component, `a90ee5e11` templates, `304a50abc` tracker.
+- RDD: `gentle-ai review assess --agent cursor --committed-only` → `risk=high` / `review_due=true` reason `unassessable` (Cursor runtime not eligible for immutable receipt review; supported: claude-code, opencode, codex). Recorded; no mode disable and no fabricated PASS.
 
 ## Next step
 
-Selective conventional commits for this feature only (exclude shell/theme/pin/.npmrc/diagnostics), then RDD assess per work-unit commit.
+Feature closed on branch. PR delivery needs chain strategy under `ask-on-risk` (forecast >400 lines). Shell/theme remain on `odd/tasks/herd-shell-layout.md`. Diagnostics (`report.json`, `scripts/inspect-opencode-tier.sh`, `docs/assets/`) stay uncommitted.
