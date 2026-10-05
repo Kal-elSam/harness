@@ -4,7 +4,7 @@ import { SUPPORTED_CONTRACT } from "../src/global/observability/gentle-probe.js"
 import { PROVIDER } from "../src/global/control-plane/constants.js";
 import { mapOfficialReviewStatus } from "../src/global/control-plane/review-status.js";
 import { createMinionResult } from "../src/global/runtime/orchestration/orch-types.js";
-import { createWorkResult } from "../src/global/kernel/contracts.js";
+import { createWorkResult, isWorkResult } from "../src/global/kernel/contracts.js";
 import {
   APPROVAL_PROVENANCE,
   REVIEW_ASSOCIATION,
@@ -199,6 +199,7 @@ test("host-neutral WorkResult associates without inventing summary or verdict", 
     workerId: "worker_claude_1",
     summary: "Unit finished under host-neutral contract"
   });
+  assert.equal(isWorkResult(work), true);
   assert.equal(isHostNeutralWorkResult(work), true);
   const linked = associateResultWithGentleReview({
     result: work,
@@ -212,6 +213,39 @@ test("host-neutral WorkResult associates without inventing summary or verdict", 
   assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.GENTLE_RECEIPT);
   assert.equal(linked.approval.gentleStatus, "bound");
   assert.equal(linked.gentleContext.applicability, "candidate");
+});
+
+test("committed kernel isWorkResult covers completed/failed/cancelled association shapes", () => {
+  const completed = createWorkResult({
+    ok: true,
+    workerId: "worker_validated",
+    summary: "Validated completed"
+  });
+  const failed = createWorkResult({
+    ok: false,
+    workerId: "worker_validated",
+    status: "failed",
+    error: "adapter failed"
+  });
+  const cancelled = createWorkResult({
+    ok: false,
+    workerId: "worker_validated",
+    status: "cancelled"
+  });
+  for (const work of [completed, failed, cancelled]) {
+    assert.equal(isWorkResult(work), true);
+    assert.equal(isHostNeutralWorkResult(work), true);
+    const linked = associateResultWithGentleReview({
+      result: work,
+      provider: PROVIDER.CONNECTED,
+      mappedStatus: officialStatus(),
+      rddMode: "on"
+    });
+    assert.equal(linked.result, work);
+    assert.equal(linked.reviewRef.authority, REVIEW_AUTHORITY.GENTLE);
+    assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.GENTLE_RECEIPT);
+    assert.equal("approved" in linked.approval, false);
+  }
 });
 
 test("advisoryReceiptId accepts any non-empty string, not only rev-*", () => {

@@ -17,6 +17,12 @@ import {
   loadCheckpoint,
   writeCheckpoint
 } from "../src/global/observability/context-fill-checkpoint.js";
+import {
+  CONTEXT_FILL_LOCK_SCHEMA,
+  mutateContextFillState,
+  readContextFillState
+} from "../src/global/observability/context-fill-state.js";
+import { writeAtomicJson } from "../src/global/runtime/write-atomic-json.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const hookModule = pathToFileURL(join(here, "../src/global/observability/context-fill-hook.js")).href;
@@ -149,4 +155,114 @@ test("multiprocess claims and records do not lose updates", () => {
   const entry = Object.values(state.projects)[0];
   assert.equal(entry.announced.codex, "codex:80:saturated");
   assert.equal(entry.announced.cursor, "cursor:75:saturated");
+});
+
+test("live lock holder is not stolen after staleAfterMs", async () => {
+  const home = mkdtempSync(join(tmpdir(), "cf-live-lock-"));
+  let releaseHold;
+  const hold = new Promise((resolve) => {
+    releaseHold = resolve;
+  });
+  let enteredMutator;
+  const entered = new Promise((resolve) => {
+    enteredMutator = resolve;
+  });
+  const t0 = 1_000_000;
+  let now = t0;
+
+  const owner = mutateContextFillState(home, async (state) => {
+    state.projects.owner = { held: true };
+    enteredMutator();
+    await hold;
+    return "owner";
+  }, {
+    now: () => now,
+    isPidAlive: () => true,
+    pid: 111,
+    retries: 4,
+    retryMs: 5,
+    staleAfterMs: 50
+  });
+
+  await entered;
+  now = t0 + 10_000;
+  await assert.rejects(
+    () => mutateContextFillState(home, (state) => {
+      state.projects.waiter = { stole: true };
+      return "waiter";
+    }, {
+      now: () => now,
+      isPidAlive: () => true,
+      pid: 222,
+      retries: 4,
+      retryMs: 5,
+      staleAfterMs: 50
+    }),
+    /lock busy/
+  );
+  releaseHold();
+  assert.equal(await owner, "owner");
+  const state = await readContextFillState(home);
+  assert.equal(state.projects.owner?.held, true);
+  assert.equal(state.projects.waiter, undefined);
+});
+
+test("dead lock holder expires and yields to the waiter", async () => {
+  const home = mkdtempSync(join(tmpdir(), "cf-dead-lock-"));
+  await mkdir(join(home, ".harness"), { recursive: true });
+  const lockPath = join(home, ".harness", "context-fill.json.lock");
+  await writeAtomicJson(lockPath, {
+    schema: CONTEXT_FILL_LOCK_SCHEMA,
+    token: "dead-token",
+    pid: 65_534,
+    startedAt: new Date(1_000_000).toISOString()
+  }, { createExclusive: true });
+
+  const result = await mutateContextFillState(home, (state) => {
+    state.projects.recovered = { ok: true };
+    return "recovered";
+  }, {
+    now: () => 1_000_000 + 60_000,
+    isPidAlive: () => false,
+    pid: 333,
+    retries: 4,
+    retryMs: 5,
+    staleAfterMs: 50
+  });
+  assert.equal(result, "recovered");
+  const state = await readContextFillState(home);
+  assert.equal(state.projects.recovered?.ok, true);
+});
+
+test("contended mutators serialize: waiter succeeds after live owner releases", async () => {
+  const home = mkdtempSync(join(tmpdir(), "cf-contend-"));
+  let releaseHold;
+  const hold = new Promise((resolve) => {
+    releaseHold = resolve;
+  });
+  let enteredMutator;
+  const entered = new Promise((resolve) => {
+    enteredMutator = resolve;
+  });
+
+  const owner = mutateContextFillState(home, async (state) => {
+    state.projects.seq = ["owner"];
+    enteredMutator();
+    await hold;
+    return "owner";
+  }, { retries: 40, retryMs: 10 });
+
+  await entered;
+  const waiterPromise = mutateContextFillState(home, (state) => {
+    const seq = state.projects.seq ?? [];
+    seq.push("waiter");
+    state.projects.seq = seq;
+    return "waiter";
+  }, { retries: 40, retryMs: 10 });
+
+  await new Promise((r) => setTimeout(r, 30));
+  releaseHold();
+  assert.deepEqual(await Promise.all([owner, waiterPromise]), ["owner", "waiter"]);
+  const state = await readContextFillState(home);
+  assert.deepEqual(state.projects.seq, ["owner", "waiter"]);
 });

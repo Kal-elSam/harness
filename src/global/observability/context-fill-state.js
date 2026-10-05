@@ -68,12 +68,13 @@ async function acquireContextFillLock(homeDir, {
   };
   await mkdir(join(homeDir, ".harness"), { recursive: true });
 
+  // Steal only when the holder is gone or the lock doc is unusable.
+  // Never preempt a live owner by wall-clock age (that caused cross-process corruption).
   const isStale = (holder) => {
-    const startedAt = Date.parse(holder?.startedAt);
-    return !holder
-      || !isPidAlive(holder.pid)
-      || !Number.isFinite(startedAt)
-      || now() - startedAt > staleAfterMs;
+    if (!holder) return true;
+    const startedAt = Date.parse(holder.startedAt);
+    if (!Number.isFinite(startedAt)) return true;
+    return !isPidAlive(holder.pid);
   };
 
   for (let attempt = 0; attempt < retries; attempt += 1) {
@@ -93,7 +94,9 @@ async function acquireContextFillLock(homeDir, {
     }
     await sleep(retryMs);
   }
-  throw new Error("context-fill state lock busy");
+  throw new Error(
+    `context-fill state lock busy after ${retries} retries (live holders are not stolen; staleAfterMs=${staleAfterMs})`
+  );
 }
 
 /**
