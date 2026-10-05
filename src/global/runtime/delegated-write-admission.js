@@ -51,8 +51,9 @@ export const DELEGATED_WRITE_ADMISSION = Object.freeze({
     evidence:
       "source mapping only today: execution-adapters/codex.js → --approve-for-me "
       + "(installed CLI workspace-write posture; see test/codex-execution-adapter.test.js). "
-      + "No verified_effective canary recorded yet. OS wrap helpers in codex-delegated-sandbox.js "
-      + "are unevaluated for admission.",
+      + "No verified_effective canary recorded yet. OS wrap helpers require isolated "
+      + "provider/temp roots + authorizeRealCanary for a live canary "
+      + "(codex-delegated-sandbox.js).",
     blockedReason:
       "Codex write containment is source_declared only — not verified_effective; strict floor will not launch"
   }),
