@@ -2,10 +2,14 @@
 
 ## Bootstrap Analysis confinement
 
-Only Bootstrap Analysis claims a filesystem boundary. See
+Only Bootstrap Analysis claims a filesystem boundary for **investigation**. See
 [Bootstrap isolation](bootstrap-isolation.md) for which adapters can guarantee it
 (`verified` vs `restricted`), the canary evidence, write-outside-snapshot denial,
 and incompatible configurations that fail closed.
+
+**Authorized-write delegated execution** (worktrees, `startRun`, Codex
+`workspace-write`) is a different contract:
+[Delegated execution containment](delegated-execution-containment.md).
 
 ## Supported adapters (agent-global)
 
