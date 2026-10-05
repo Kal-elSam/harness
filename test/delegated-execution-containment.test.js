@@ -1,6 +1,7 @@
 /**
  * Contract: delegated execution containment (authorized writes) is not Bootstrap isolation.
- * Pins cwd/worktree binding + Codex workspace-write default without importing Bootstrap SBPL claims.
+ * Pins cwd/worktree binding + Codex --approve-for-me default (workspace-write posture)
+ * without importing Bootstrap SBPL claims.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -25,13 +26,16 @@ test("docs separate Bootstrap investigation confinement from delegated authorize
   assert.match(delegatedDoc, /bootstrap-isolation\.md/);
   assert.match(delegatedDoc, /Never reuse Bootstrap/);
   assert.match(delegatedDoc, /workspace-write/);
+  assert.match(delegatedDoc, /Track A|approve-for-me/);
+  assert.match(delegatedDoc, /Track B|codex-delegated-sandbox/);
   assert.doesNotMatch(delegatedDoc, /isolation:\s*"verified"/);
 });
 
 test("Codex delegated default authorizes workspace writes — not Bootstrap sandbox-exec args", () => {
   const launch = codex.buildLaunch({ task: "Implement plan", cwd: "/repo/worktree", permissions: [] });
-  assert.ok(launch.args.includes("--sandbox"));
-  assert.ok(launch.args.includes("workspace-write"));
+  // Installed CLI: --approve-for-me alone (implies workspace-write); never with --sandbox.
+  assert.ok(launch.args.includes("--approve-for-me"));
+  assert.equal(launch.args.includes("--sandbox"), false);
   assert.equal(launch.args.includes("sandbox-exec"), false);
   assert.equal(launch.args.includes("--dangerously-bypass-approvals-and-sandbox"), false);
   assert.equal(launch.cwd, "/repo/worktree");

@@ -10,6 +10,11 @@ Strict floor is **opt-in** (`requireVerifiedWriteContainment: true`). Ordinary
 Promote an adapter to `verified_effective` only with applicable effective
 evidence. Until then, callers that request the strict floor must not launch.
 
+Ordinary Codex flags (Track A): `--approve-for-me` only — installed CLI rejects
+`--sandbox` + `--approve-for-me`. That fix is compatibility, not verification.
+Optional OS wrap helpers: `codex-delegated-sandbox.js` (Track B); do not cite
+Bootstrap canaries.
+
 ## Matrix
 
 | Adapter | Status | Strict launch |
