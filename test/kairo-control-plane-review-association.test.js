@@ -4,11 +4,14 @@ import { SUPPORTED_CONTRACT } from "../src/global/observability/gentle-probe.js"
 import { PROVIDER } from "../src/global/control-plane/constants.js";
 import { mapOfficialReviewStatus } from "../src/global/control-plane/review-status.js";
 import { createMinionResult } from "../src/global/runtime/orchestration/orch-types.js";
+import { createWorkResult } from "../src/global/kernel/contracts.js";
 import {
+  APPROVAL_PROVENANCE,
   REVIEW_ASSOCIATION,
   REVIEW_AUTHORITY,
   REVIEW_REF_SCHEMA,
-  associateResultWithGentleReview
+  associateResultWithGentleReview,
+  isHostNeutralWorkResult
 } from "../src/global/control-plane/review-association.js";
 
 const nextTransition = {
@@ -19,6 +22,10 @@ const nextTransition = {
     command: "gentle-ai review start --contract=gentle-ai.review-integration/v2 --consent=relay"
   }
 };
+
+const publishedCandidates = [
+  { id: "cand-1", path: "src/a.js" }
+];
 
 function minion() {
   return createMinionResult({
@@ -35,6 +42,7 @@ function officialStatus(extra = {}) {
     contract: SUPPORTED_CONTRACT,
     applicability: "candidate",
     action: "status",
+    candidates: publishedCandidates,
     receipt: { id: "sha256:official", status: "bound", gate: "pre-commit" },
     next_transition: nextTransition,
     ...extra
@@ -47,6 +55,7 @@ function pendingStatus() {
     contract: SUPPORTED_CONTRACT,
     applicability: "candidate",
     action: "start",
+    candidates: publishedCandidates,
     receipt: { status: "not_applicable" },
     next_transition: nextTransition
   });
@@ -68,6 +77,15 @@ test("pending review: read-only reviewRef carries next_transition without invent
   assert.equal(linked.reviewRef.advisoryReceiptId, "rev-aaaaaaaaaaaaaaaaaaaaaaaa");
   assert.equal(linked.result.taskId, "task_offline_1");
   assert.equal(Object.isFrozen(linked.reviewRef), true);
+  assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.ADVISORY);
+  assert.equal(linked.approval.gentleStatus, null);
+  assert.equal(linked.approval.teamStrategyApproved, false);
+  assert.equal("approved" in linked.approval, false);
+  assert.deepEqual(linked.gentleContext, {
+    applicability: "candidate",
+    action: "start",
+    candidates: publishedCandidates
+  });
 });
 
 test("official result: Gentle receipt is authority; advisory stays separate", () => {
@@ -85,6 +103,10 @@ test("official result: Gentle receipt is authority; advisory stays separate", ()
   assert.deepEqual(linked.reviewRef.nextTransition, nextTransition);
   assert.equal(linked.reviewRef.advisoryReceiptId, "rev-bbbbbbbbbbbbbbbbbbbbbbbb");
   assert.notEqual(linked.reviewRef.receipt, linked.reviewRef.advisoryReceiptId);
+  assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.GENTLE_RECEIPT);
+  assert.equal(linked.approval.gentleStatus, "bound");
+  assert.equal("approved" in linked.approval, false);
+  assert.deepEqual(linked.gentleContext.candidates, publishedCandidates);
 });
 
 test("incompatible payload: fail closed with no Gentle authority", () => {
@@ -104,6 +126,8 @@ test("incompatible payload: fail closed with no Gentle authority", () => {
   assert.equal(linked.reviewRef.receipt, null);
   assert.equal(linked.reviewRef.nextTransition, null);
   assert.equal(linked.reviewRef.advisoryReceiptId, "rev-cccccccccccccccccccccccc");
+  assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.ADVISORY);
+  assert.equal(linked.gentleContext, null);
 });
 
 test("unavailable Gentle: association unavailable, advisory never promoted", () => {
@@ -119,6 +143,8 @@ test("unavailable Gentle: association unavailable, advisory never promoted", () 
   assert.equal(linked.reviewRef.receipt, null);
   assert.equal(linked.reviewRef.nextTransition, null);
   assert.equal(linked.reviewRef.advisoryReceiptId, "rev-dddddddddddddddddddddddd");
+  assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.ADVISORY);
+  assert.equal(linked.gentleContext, null);
 });
 
 test("RDD off: no Gentle authority even when status looks official", () => {
@@ -134,4 +160,61 @@ test("RDD off: no Gentle authority even when status looks official", () => {
   assert.equal(linked.reviewRef.receipt, null);
   assert.equal(linked.reviewRef.nextTransition, null);
   assert.equal(linked.reviewRef.advisoryReceiptId, "rev-eeeeeeeeeeeeeeeeeeeeeeee");
+  assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.ADVISORY);
+  assert.equal(linked.approval.gentleStatus, null);
+  assert.equal(linked.gentleContext, null);
+});
+
+test("team strategy approve is orthogonal and never invents a review verdict", () => {
+  const linked = associateResultWithGentleReview({
+    result: minion(),
+    provider: PROVIDER.CONNECTED,
+    mappedStatus: pendingStatus(),
+    rddMode: "on",
+    teamStrategyApproved: true
+  });
+  assert.equal(linked.reviewRef.authority, REVIEW_AUTHORITY.NONE);
+  assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.TEAM_STRATEGY);
+  assert.equal(linked.approval.teamStrategyApproved, true);
+  assert.equal(linked.approval.gentleStatus, null);
+  assert.equal("approved" in linked.approval, false);
+});
+
+test("official Gentle receipt outranks team strategy for provenance, keeps the flag", () => {
+  const linked = associateResultWithGentleReview({
+    result: minion(),
+    provider: PROVIDER.CONNECTED,
+    mappedStatus: officialStatus(),
+    rddMode: "on",
+    teamStrategyApproved: true
+  });
+  assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.GENTLE_RECEIPT);
+  assert.equal(linked.approval.teamStrategyApproved, true);
+  assert.equal(linked.approval.gentleStatus, "bound");
+});
+
+test("host-neutral WorkResult associates without inventing summary or verdict", () => {
+  const work = createWorkResult({ ok: true, workerId: "worker_claude_1", summary: null });
+  assert.equal(isHostNeutralWorkResult(work), true);
+  const linked = associateResultWithGentleReview({
+    result: work,
+    provider: PROVIDER.CONNECTED,
+    mappedStatus: officialStatus(),
+    rddMode: "on"
+  });
+  assert.equal(linked.result.summary, null);
+  assert.equal(linked.result.workerId, "worker_claude_1");
+  assert.equal(linked.reviewRef.authority, REVIEW_AUTHORITY.GENTLE);
+  assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.GENTLE_RECEIPT);
+  assert.equal(linked.approval.gentleStatus, "bound");
+  assert.equal(linked.gentleContext.applicability, "candidate");
+});
+
+test("mapOfficialReviewStatus passes candidates and split applicability/action", () => {
+  const mapped = officialStatus();
+  assert.equal(mapped.ok, true);
+  assert.equal(mapped.review.applicability, "candidate");
+  assert.equal(mapped.review.action, "status");
+  assert.deepEqual(mapped.review.candidates, publishedCandidates);
+  assert.equal(mapped.review.state, "candidate");
 });
