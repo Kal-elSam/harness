@@ -2,7 +2,10 @@
 
 Bootstrap Analysis (`runBootstrapAnalysis`) is the only path that claims a
 **filesystem confinement** for investigating a snapshot. General ASK does not
-inherit this guarantee.
+inherit this guarantee. **Delegated productive runs** (worktrees, `startRun`,
+authorized writes) use a different containment model — see
+[`delegated-execution-containment.md`](delegated-execution-containment.md).
+Do not cite Bootstrap canaries as evidence for delegated write posture.
 
 Two axes stay separate:
 
@@ -63,3 +66,9 @@ These setups must never be reported as a held Bootstrap boundary:
 Persistence commits on this branch may still show Gentle assess
 `risk: high` / `review_due: true` without a granted receipt. That review state is
 orthogonal to this isolation contract and must not be treated as approval.
+
+## Not this document
+
+Authorized-write delegated execution (worktrees, Codex `workspace-write`,
+permission authority) is documented in
+[`delegated-execution-containment.md`](delegated-execution-containment.md).
