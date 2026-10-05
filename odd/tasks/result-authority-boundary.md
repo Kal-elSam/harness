@@ -6,7 +6,7 @@ Verify `reviewRef` compatibility, distinguish approval provenance from Gentle au
 
 ## Problem
 
-`authority: gentle` on `reviewRef` marks receipt provenance, not that work was approved. Team-strategy approve and advisory `rev-*` receipts can be confused with Gentle. Candidate/context from status was dropped. Claude is freezing a host-neutral result/summary contract; Cursor must prepare the authority seam on that shape.
+`authority: gentle` on `reviewRef` marks receipt provenance, not that work was approved. Team-strategy approve and any non-empty advisory id (`advisoryReceiptId`; `rev-*` is conventional for `kairo review`, not enforced) can be confused with Gentle. Candidate/context from status was dropped. Claude is freezing a host-neutral result/summary contract; Cursor must prepare the authority seam on that shape.
 
 ## Why
 
@@ -67,10 +67,11 @@ Delivery requires a verifiable authority boundary independent of host (Pi/Cursor
 - 2026-10-05: opened from Cursor plan “resultado y autoridad”.
 - 2026-10-05: boundary implemented; 14 pass with status suite.
 - 2026-10-05: contract status coverage + no-mutation; preserved Claude kernel tracker untracked.
+- 2026-10-05: corrected docs — `advisoryReceiptId` is any non-empty string (`rev-*` not enforced). Association tests use non-empty WorkResult summary for dirty/real contract compatibility. Full post-commit `isWorkResult` integrated check still waits on Claude’s kernel commit.
 
 ## Verification evidence
 
-- `node --test test/kairo-control-plane-review-association.test.js test/kairo-control-plane-review-status.test.js`: 18 pass (2026-10-05).
+- `node --test test/kairo-control-plane-review-association.test.js test/kairo-control-plane-review-status.test.js`: 19 pass (2026-10-05), including non-`rev-*` advisory id.
 
 ## Next step
 

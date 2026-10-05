@@ -30,7 +30,9 @@ Kairo owns routing and cost; Gentle owns RDD consent, authority, and receipts. W
 ## Constraints
 
 - `next_transition` only when Gentle publishes it; never invent commands
-- Advisory Kairo `rev-*` receipts never set `authority: gentle`
+- Advisory ids (`advisoryReceiptId`: any non-empty string; `rev-*` not required) never set `authority: gentle`
+
+
 - Absent / RDD-off / incompatible → fail closed, no fabricated receipt
 - Artifacts in English; Spanish only in chat
 

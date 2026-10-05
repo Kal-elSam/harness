@@ -194,7 +194,11 @@ test("official Gentle receipt outranks team strategy for provenance, keeps the f
 });
 
 test("host-neutral WorkResult associates without inventing summary or verdict", () => {
-  const work = createWorkResult({ ok: true, workerId: "worker_claude_1", summary: null });
+  const work = createWorkResult({
+    ok: true,
+    workerId: "worker_claude_1",
+    summary: "Unit finished under host-neutral contract"
+  });
   assert.equal(isHostNeutralWorkResult(work), true);
   const linked = associateResultWithGentleReview({
     result: work,
@@ -202,12 +206,25 @@ test("host-neutral WorkResult associates without inventing summary or verdict", 
     mappedStatus: officialStatus(),
     rddMode: "on"
   });
-  assert.equal(linked.result.summary, null);
+  assert.equal(linked.result.summary, "Unit finished under host-neutral contract");
   assert.equal(linked.result.workerId, "worker_claude_1");
   assert.equal(linked.reviewRef.authority, REVIEW_AUTHORITY.GENTLE);
   assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.GENTLE_RECEIPT);
   assert.equal(linked.approval.gentleStatus, "bound");
   assert.equal(linked.gentleContext.applicability, "candidate");
+});
+
+test("advisoryReceiptId accepts any non-empty string, not only rev-*", () => {
+  const linked = associateResultWithGentleReview({
+    result: minion(),
+    provider: PROVIDER.CONNECTED,
+    mappedStatus: pendingStatus(),
+    rddMode: "on",
+    advisoryReceiptId: "note-local-1"
+  });
+  assert.equal(linked.reviewRef.advisoryReceiptId, "note-local-1");
+  assert.equal(linked.approval.provenance, APPROVAL_PROVENANCE.ADVISORY);
+  assert.equal(linked.reviewRef.authority, REVIEW_AUTHORITY.NONE);
 });
 
 test("mapOfficialReviewStatus passes candidates and split applicability/action", () => {
