@@ -46,11 +46,13 @@ export const DELEGATED_WRITE_ADMISSION = Object.freeze({
       "effective canary: in-cwd write succeeds; absolute path outside cwd denied",
       "auto-approval / native config behavior accounted for in that canary",
       "under the strict floor: no force/yolo bypass even with consent",
-      "source_declared workspace-write mapping is not sufficient alone"
+      "source_declared --approve-for-me (provider workspace-write) mapping is not sufficient alone"
     ]),
     evidence:
-      "source mapping only today: execution-adapters/codex.js → --sandbox workspace-write "
-      + "(see test/codex-execution-adapter.test.js). No verified_effective canary recorded yet.",
+      "source mapping only today: execution-adapters/codex.js → --approve-for-me "
+      + "(installed CLI workspace-write posture; see test/codex-execution-adapter.test.js). "
+      + "No verified_effective canary recorded yet. OS wrap helpers in codex-delegated-sandbox.js "
+      + "are unevaluated for admission.",
     blockedReason:
       "Codex write containment is source_declared only — not verified_effective; strict floor will not launch"
   }),
