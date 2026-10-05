@@ -50,8 +50,9 @@ const WORK_RESULT_STATUS_SET = new Set(Object.values(WORK_RESULT_STATUSES));
 
 /**
  * Host-neutral WorkResult recognizer.
- * Compatible with today's `{ok, workerId, summary}` and the validated contract
+ * Compatible with `{ok, workerId, summary}` and validated contract shapes
  * (`status` completed|failed|cancelled, optional `error`) without mutating kernel.
+ * Does not re-implement kernel validation; association only needs a stable object.
  */
 export function isHostNeutralWorkResult(value) {
   if (

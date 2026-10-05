@@ -54,9 +54,11 @@ Work/minion results may carry a **read-only** `reviewRef` from
 | `unavailable` | Provider unavailable | `none` |
 | `rdd_off` | Explicit RDD off — ignores even an official-looking status | `none` |
 
-Advisory Kairo receipts (`kairo review` / `rev-*` under `~/.harness/reviews/`)
-may appear only as `reviewRef.advisoryReceiptId`. They never set `authority: gentle` and
-never fill `receipt` / `gate` / `nextTransition`.
+Advisory Kairo observations may bind as `reviewRef.advisoryReceiptId`: any
+non-empty string is accepted (no `rev-*` prefix is required or enforced).
+Kairo’s own `kairo review` receipts often use `rev-*` under `~/.harness/reviews/`,
+but that naming is conventional, not a gate. Advisory ids never set
+`authority: gentle` and never fill `receipt` / `gate` / `nextTransition`.
 
 ### Approval provenance (host-neutral)
 
@@ -133,7 +135,7 @@ workflow section of the control plane. Do not delete them in this version.
 
 | Surface | Role after freeze |
 |---|---|
-| `kairo review` / `kairo reviews` | Bounded Codex/Pi reviews; receipts under `~/.harness/reviews/`; may bind only as `reviewRef.advisoryReceiptId` |
+| `kairo review` / `kairo reviews` | Bounded Codex/Pi reviews; receipts under `~/.harness/reviews/`; may bind as `reviewRef.advisoryReceiptId` (any non-empty string; `rev-*` is conventional only) |
 | Cockpit **Runs → Reviews** | Read-only Kairo receipts; not Gentle authority |
 | `kairo orchestrator` | Adapter capability diagnostics |
 | `kairo intelligence` | Harness Engineering routing (Ollama / OpenCode / OpenRouter). Not Gentle SDD |
