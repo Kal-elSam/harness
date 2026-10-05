@@ -210,6 +210,7 @@ test("pi run supervises official events, cancel path, and non-zero exit", async 
       task: "boom",
       cwd: failedHome,
       cliVersion: "0.6.0",
+      permissions: ["read-only"],
       spawnImpl: createFakeSpawn(2)
     });
     const failedFinal = await failed.completion;
