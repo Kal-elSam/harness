@@ -37,6 +37,7 @@ import { runEcosystemUpdatesCheck } from "./global/updates-cli.js";
 import { runSelfUpdate } from "./global/self-update.js";
 import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
 import { resolveHomeDir } from "./global/paths.js";
+import { formatContextFill, readContextFill } from "./global/observability/context-fill.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 import { runOrchestratorDiagnostics, runOrchestratorShell } from "./global/orchestrator.js";
 import { runIntelligenceCli } from "./global/intelligence-cli.js";
@@ -294,6 +295,19 @@ export async function runCli(argv) {
     case "setup":
       await runGlobalSetup(optionsWithPolicy, packageManifest, packageRoot);
       return;
+    case "context": {
+      const report = await readContextFill({
+        homeDir: resolveHomeDir(),
+        cwd: optionsWithPolicy.cwd
+      });
+      if (optionsWithPolicy.json) {
+        const { printJson } = await import("./global/json-output.js");
+        printJson(report);
+      } else {
+        console.log(formatContextFill(report));
+      }
+      return;
+    }
     case "status":
       await runGlobalStatus(packageRoot, {
         workspaceRoot: optionsWithPolicy.cwd,
@@ -1209,6 +1223,7 @@ function normalizeCommand(command) {
   if (command === "intelligence" || command === "intel") return "intelligence";
   if (command === "setup") return "setup";
   if (command === "status") return "status";
+  if (command === "context") return "context";
   if (command === "sync") return "sync";
   if (command === "upgrade") return "upgrade";
   if (command === "updates") return "updates";

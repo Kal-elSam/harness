@@ -94,6 +94,7 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} orchestrator [--json]          Read-only agent capability diagnostics
   ${cli} adapters [--json]
   ${cli} detect
+  ${cli} context [--cwd <dir>] [--json]   Window fill from home sessions (any project)
 
 ## Governance & audit
   ${cli} explain [--json]
