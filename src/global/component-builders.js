@@ -4,13 +4,15 @@ import { buildEngramMemoryManagedSection } from "./components/engram-memory.js";
 import { buildGraphifyContextManagedSection } from "./components/graphify-context.js";
 import { buildOrchestratorManagedSection } from "./components/orchestrator.js";
 import { buildSddCoreManagedSection } from "./components/sdd-core.js";
+import { buildSessionHandoffManagedSection } from "./components/session-handoff.js";
 
 export const COMPONENT_BUILDERS = {
   orchestrator: buildOrchestratorManagedSection,
   "sdd-core": buildSddCoreManagedSection,
   "engram-memory": buildEngramMemoryManagedSection,
   "graphify-context": buildGraphifyContextManagedSection,
-  "agent-skills": buildAgentSkillsManagedSection
+  "agent-skills": buildAgentSkillsManagedSection,
+  "session-handoff": buildSessionHandoffManagedSection
 };
 
 export function resolveComponentBuilder(componentId) {

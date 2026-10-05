@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   COMPONENT_IDS,
   DEFAULT_COMPONENT_IDS,
@@ -11,16 +14,17 @@ import {
 } from "../src/global/component-registry.js";
 import { loadComponentCatalog } from "../src/global/load-component-catalog.js";
 
-test("registry lists bundled components with optional engram, graphify, and agent-skills", () => {
+test("registry lists bundled components with optional engram, graphify, agent-skills, and session-handoff", () => {
   const components = listComponents();
 
-  assert.equal(components.length, 5);
+  assert.equal(components.length, 6);
   assert.deepEqual(COMPONENT_IDS, [
     "orchestrator",
     "sdd-core",
     "engram-memory",
     "graphify-context",
-    "agent-skills"
+    "agent-skills",
+    "session-handoff"
   ]);
   assert.deepEqual(DEFAULT_COMPONENT_IDS, ["orchestrator", "sdd-core"]);
 });
@@ -67,6 +71,49 @@ test("components expose managed section builders for optional integrations", () 
   assert.match(graphifySection, /### Graphify Context/);
   assert.match(graphifySection, /context-graph\.md/);
   assert.match(graphifySection, /graphify update/);
+
+  const handoff = resolveComponent("session-handoff");
+  const handoffSection = handoff.buildManagedSection(
+    { componentsDir: "/home/user/.harness/components" },
+    { id: "codex", assets: { configFile: ".codex/AGENTS.md" } }
+  );
+
+  assert.match(handoffSection, /### Session handoff/);
+  assert.match(handoffSection, /protocol\.md/);
+  assert.match(handoffSection, /handoff\.md/);
+  assert.match(handoffSection, /session-handoff skill/);
+  assert.equal(handoff.defaultEnabled, false);
+
+  const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const bundled = readFileSync(join(packageRoot, "global-template/components/session-handoff/protocol.md"), "utf8");
+  const repoCopy = readFileSync(join(packageRoot, "repo-template/docs/ai/session-handoff.md"), "utf8");
+  assert.equal(bundled, repoCopy);
+});
+
+test("session-handoff entry points exist for all five agents", () => {
+  const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const paths = [
+    "repo-template/.claude/skills/session-handoff/SKILL.md",
+    "repo-template/.codex/skills/session-handoff/SKILL.md",
+    "repo-template/.cursor/skills/session-handoff/SKILL.md",
+    "repo-template/.cursor/commands/session-handoff.md",
+    "repo-template/.opencode/commands/session-handoff.md",
+    "repo-template/.pi/prompts/session-handoff.md",
+    "repo-template/.pi/skills/session-handoff/SKILL.md"
+  ];
+  for (const relative of paths) {
+    const body = readFileSync(join(packageRoot, relative), "utf8");
+    assert.ok(body.trim().length > 0, relative);
+    assert.match(body, /session-handoff|handoff\.md/i);
+  }
+  assert.deepEqual(
+    resolveTargetComponents({ components: ["session-handoff"] }).map((component) => component.id),
+    ["session-handoff"]
+  );
+  assert.equal(
+    resolveTargetComponents({}).some((component) => component.id === "session-handoff"),
+    false
+  );
 });
 
 test("components expose managed section builders", () => {
@@ -136,13 +183,14 @@ test("describeComponentCatalog exposes defaults and adapter hint keys", () => {
 
   assert.deepEqual(
     entries.map((entry) => entry.id),
-    ["orchestrator", "sdd-core", "engram-memory", "graphify-context", "agent-skills"]
+    ["orchestrator", "sdd-core", "engram-memory", "graphify-context", "agent-skills", "session-handoff"]
   );
   assert.equal(entries.filter((entry) => entry.defaultEnabled).length, 2);
   assert.deepEqual(entries.filter((entry) => !entry.defaultEnabled).map((entry) => entry.id), [
     "engram-memory",
     "graphify-context",
-    "agent-skills"
+    "agent-skills",
+    "session-handoff"
   ]);
   assert.deepEqual(entries[1].adapterHints, ["cursor", "codex", "claude", "opencode", "pi"]);
 });

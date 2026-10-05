@@ -137,6 +137,27 @@
         "opencode": "- Complementary only; Gentle AI remains methodological authority. After install, run `gentle-ai skill-registry refresh` when available.",
         "pi": "- Complementary only; Gentle AI remains methodological authority. Skills load from the shared Agent Skills root when linked; do not replace Gentle AI SDD/review gates."
       }
+    },
+    {
+      "id": "session-handoff",
+      "kind": "component",
+      "label": "Session Handoff",
+      "version": "1.0.0",
+      "defaultEnabled": false,
+      "capabilities": ["context.handoff"],
+      "dependencies": [],
+      "healthChecks": [
+        { "id": "assets", "type": "assets" },
+        { "id": "drift", "type": "drift" }
+      ],
+      "assetFiles": ["protocol.md"],
+      "adapterHints": {
+        "cursor": "- Say `session handoff` or run `/session-handoff` when the repo command exists.",
+        "codex": "- Load the session-handoff skill when present; otherwise follow this contract.",
+        "claude": "- Load the session-handoff skill when present; otherwise follow this contract.",
+        "opencode": "- Run `/session-handoff` when the repo command exists.",
+        "pi": "- Use the session-handoff prompt when present; otherwise follow this contract."
+      }
     }
   ]
 }

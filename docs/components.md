@@ -4,7 +4,7 @@
 
 Opt-in custom components live in the current repo under `.harness/components/`.
 They never override bundled IDs (`orchestrator`, `sdd-core`, `engram-memory`,
-`graphify-context`) and install copies assets into `~/.harness/components/<id>/`
+`graphify-context`, `agent-skills`, `session-handoff`) and install copies assets into `~/.harness/components/<id>/`
 only when you pass `--components`.
 
 #### Component Manifest v2
@@ -38,6 +38,19 @@ load MCP; configuration evidence is not runtime-active. Receipts live under
 `~/.harness/integrations/engram/`. For Pi, positive evidence requires
 `~/.pi/agent/settings.json` packages (`npm:gentle-engram`, `npm:pi-mcp-adapter`) and
 `~/.pi/agent/mcp.json` with `mcpServers.engram`.
+
+### Session handoff
+
+`session-handoff` is optional. It injects the same context-quality budget into
+every managed agent (`cursor`, `codex`, `claude`, `opencode`, `pi`): around 60%
+is a budget, not a hard cutoff. The agent writes `handoff.md` at the repo root
+before compacting or opening a new session. The contract is
+`global-template/components/session-handoff/protocol.md`, copied into harness
+repos as `docs/ai/session-handoff.md`.
+
+```bash
+kairo install --components session-handoff
+```
 
 ### SDD Core skills
 
