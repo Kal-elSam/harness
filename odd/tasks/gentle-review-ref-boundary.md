@@ -39,7 +39,7 @@ Kairo owns routing and cost; Gentle owns RDD consent, authority, and receipts. W
 - [x] Bridge transitions documented against the live control-plane path
 - [x] `reviewRef` is read-only and separable from advisory receipts
 - [x] Offline cases green: pending, official, incompatible, unavailable, RDD off
-- [ ] Focused tests pass; selective conventional commit
+- [x] Focused tests pass; selective conventional commit
 
 ## TDD
 
@@ -52,7 +52,7 @@ Kairo owns routing and cost; Gentle owns RDD consent, authority, and receipts. W
 - [x] GR-1 Map official bridge + transitions in docs
 - [x] GR-2 `reviewRef` association API (tests first)
 - [x] GR-3 Offline cases: pending / official / incompatible / unavailable / rdd_off
-- [ ] GR-4 Commit + evidence
+- [x] GR-4 Commit + evidence
 
 ## Progress
 
@@ -62,7 +62,8 @@ Kairo owns routing and cost; Gentle owns RDD consent, authority, and receipts. W
 ## Verification evidence
 
 - `node --test test/kairo-control-plane-review-association.test.js test/kairo-control-plane-review-status.test.js`: 10 pass.
+- Commit: `d990957` feat(control-plane): associate results with read-only Gentle reviewRef
 
 ## Next step
 
-GR-4 selective commit. Later plans may attach `reviewRef` to DAG nodes / `delegations[]` without changing this contract.
+Attach `reviewRef` to DAG nodes / `delegations[]` in a later plan without changing this contract. Revisor propio Kairo remains advisory-only via `advisoryReceiptId`.
