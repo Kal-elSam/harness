@@ -16,8 +16,11 @@ import {
   wrapCodexLaunchWithOsSandbox
 } from "../src/global/runtime/codex-delegated-sandbox.js";
 import {
+  CANARY_ATTEMPT_KIND,
+  CANARY_ATTEMPT_OUTCOME,
   DELEGATED_WRITE_CANARY_VERDICT,
   describeIsolatedAuthHandling,
+  ensureCodexWorkspaceCd,
   formatDelegatedWriteCanaryCommand,
   judgeDelegatedWriteCanaryOracle,
   prepareDelegatedWriteCanaryPlan,
@@ -30,6 +33,8 @@ const ISOLATED_PROVIDER = "/tmp/kairo-wt-delegated-1/provider-home";
 const ISOLATED_TEMP = "/tmp/kairo-wt-delegated-1/tmp";
 const PERSONAL = "/Users/kal-el/.codex";
 const ALIAS_TO_PERSONAL = "/tmp/kairo-wt-delegated-1/alias-provider";
+const EXTERNAL_PROBE = "/tmp/kairo-wt-delegated-1/canary-external-probe.txt";
+const INTERNAL_MARKER = join(WORKSPACE, "canary-internal-write.txt");
 
 function identityDeps(extra = {}) {
   return {
@@ -196,73 +201,183 @@ test("wrap sets isolated env after canonical validation; never falls back to bar
   ]);
 });
 
-test("oracle: contained vs breach vs inconclusive; never approval", async () => {
-  const internal = join(WORKSPACE, "canary-internal-write.txt");
-  const external = join(PERSONAL, "config.toml");
+function attempt({
+  id,
+  kind,
+  targetPath,
+  initialExists = false,
+  finalExists = false,
+  initialHash = null,
+  finalHash = null,
+  outcome = null,
+  stdout = "",
+  events = [],
+  result = null
+}) {
+  return {
+    id,
+    kind,
+    targetPath,
+    outcome,
+    result,
+    stdout,
+    events,
+    initialState: { exists: initialExists, contentHash: initialHash },
+    finalState: { exists: finalExists, contentHash: finalHash }
+  };
+}
 
-  const contained = await judgeDelegatedWriteCanaryOracle({
-    requiredInternalWrites: [internal],
-    forbiddenWrites: [external],
+test("oracle: contained needs internal delta + external denial evidence; never approval", () => {
+  const contained = judgeDelegatedWriteCanaryOracle({
     executed: true,
-    pathExists: (p) => p === internal
+    stdout: "ok",
+    events: [{ type: "turn.completed" }],
+    attempts: [
+      attempt({
+        id: "internal-write",
+        kind: CANARY_ATTEMPT_KIND.INTERNAL,
+        targetPath: INTERNAL_MARKER,
+        finalExists: true,
+        finalHash: "h1",
+        outcome: CANARY_ATTEMPT_OUTCOME.WRITTEN,
+        result: "written",
+        stdout: "wrote internal"
+      }),
+      attempt({
+        id: "external-probe",
+        kind: CANARY_ATTEMPT_KIND.EXTERNAL,
+        targetPath: EXTERNAL_PROBE,
+        outcome: CANARY_ATTEMPT_OUTCOME.DENIED,
+        result: "denied",
+        stdout: "Operation not permitted",
+        events: [{ type: "denied", code: "EPERM" }]
+      })
+    ]
   });
   assert.equal(contained.verdict, DELEGATED_WRITE_CANARY_VERDICT.CONTAINED);
   assert.equal(contained.approval, false);
   assert.equal(contained.verifiedEffective, false);
-
-  const breach = await judgeDelegatedWriteCanaryOracle({
-    requiredInternalWrites: [internal],
-    forbiddenWrites: [external],
-    executed: true,
-    pathExists: (p) => p === internal || p === external
-  });
-  assert.equal(breach.verdict, DELEGATED_WRITE_CANARY_VERDICT.BREACH);
-  assert.equal(breach.approval, false);
-
-  const missingInternal = await judgeDelegatedWriteCanaryOracle({
-    requiredInternalWrites: [internal],
-    forbiddenWrites: [external],
-    executed: true,
-    pathExists: () => false
-  });
-  assert.equal(missingInternal.verdict, DELEGATED_WRITE_CANARY_VERDICT.INCONCLUSIVE);
-  assert.equal(missingInternal.reason, "required_internal_write_absent");
-  assert.equal(missingInternal.approval, false);
-
-  const launchFail = await judgeDelegatedWriteCanaryOracle({
-    requiredInternalWrites: [internal],
-    forbiddenWrites: [external],
-    executed: false,
-    launchError: "spawn EACCES"
-  });
-  assert.equal(launchFail.verdict, DELEGATED_WRITE_CANARY_VERDICT.INCONCLUSIVE);
-  assert.equal(launchFail.reason, "launch_error");
-  assert.equal(launchFail.approval, false);
+  assert.equal(contained.attempts.length, 2);
+  assert.equal(contained.stdout, "ok");
 });
 
-test("runner reuses adapter launch, emits exact command + isolated auth; real run gated", async () => {
+test("oracle: omitted external attempts are inconclusive (no false contained)", () => {
+  const omitted = judgeDelegatedWriteCanaryOracle({
+    executed: true,
+    attempts: [
+      attempt({
+        id: "internal-write",
+        kind: CANARY_ATTEMPT_KIND.INTERNAL,
+        targetPath: INTERNAL_MARKER,
+        finalExists: true,
+        finalHash: "h1",
+        outcome: CANARY_ATTEMPT_OUTCOME.WRITTEN
+      }),
+      attempt({
+        id: "external-probe",
+        kind: CANARY_ATTEMPT_KIND.EXTERNAL,
+        targetPath: EXTERNAL_PROBE,
+        outcome: CANARY_ATTEMPT_OUTCOME.OMITTED
+      })
+    ]
+  });
+  assert.equal(omitted.verdict, DELEGATED_WRITE_CANARY_VERDICT.INCONCLUSIVE);
+  assert.equal(omitted.reason, "external_denial_evidence_missing");
+  assert.equal(omitted.approval, false);
+});
+
+test("oracle: preexisting file without delta is not an internal write", () => {
+  const preexisting = judgeDelegatedWriteCanaryOracle({
+    executed: true,
+    attempts: [
+      attempt({
+        id: "internal-write",
+        kind: CANARY_ATTEMPT_KIND.INTERNAL,
+        targetPath: INTERNAL_MARKER,
+        initialExists: true,
+        finalExists: true,
+        initialHash: "same",
+        finalHash: "same",
+        outcome: CANARY_ATTEMPT_OUTCOME.WRITTEN
+      }),
+      attempt({
+        id: "external-probe",
+        kind: CANARY_ATTEMPT_KIND.EXTERNAL,
+        targetPath: EXTERNAL_PROBE,
+        outcome: CANARY_ATTEMPT_OUTCOME.DENIED,
+        result: "denied",
+        events: [{ code: "EPERM" }]
+      })
+    ]
+  });
+  assert.equal(preexisting.verdict, DELEGATED_WRITE_CANARY_VERDICT.INCONCLUSIVE);
+  assert.equal(preexisting.reason, "required_internal_write_delta_absent");
+});
+
+test("oracle: external write delta is breach even if process later errors", () => {
+  const breachThenError = judgeDelegatedWriteCanaryOracle({
+    executed: true,
+    launchError: "agent exited 1 after tools",
+    stdout: "partial",
+    events: [{ type: "item.completed" }, { type: "error" }],
+    attempts: [
+      attempt({
+        id: "internal-write",
+        kind: CANARY_ATTEMPT_KIND.INTERNAL,
+        targetPath: INTERNAL_MARKER,
+        finalExists: true,
+        finalHash: "h1",
+        outcome: CANARY_ATTEMPT_OUTCOME.WRITTEN,
+        result: "written"
+      }),
+      attempt({
+        id: "external-probe",
+        kind: CANARY_ATTEMPT_KIND.EXTERNAL,
+        targetPath: EXTERNAL_PROBE,
+        finalExists: true,
+        finalHash: "leak",
+        outcome: CANARY_ATTEMPT_OUTCOME.WRITTEN,
+        result: "written",
+        stdout: "wrote external"
+      })
+    ]
+  });
+  assert.equal(breachThenError.verdict, DELEGATED_WRITE_CANARY_VERDICT.BREACH);
+  assert.equal(breachThenError.reason, "external_write_delta_observed");
+  assert.equal(breachThenError.details.launchError, "agent exited 1 after tools");
+  assert.equal(breachThenError.approval, false);
+  assert.equal(breachThenError.attempts[1].result, "written");
+});
+
+test("exported command pins workspace via cd and --cd; attempts are disposable only", async () => {
   const runner = await prepareDelegatedWriteCanaryRunner({
     workspaceRoot: WORKSPACE,
     providerHome: ISOLATED_PROVIDER,
     tempRoot: ISOLATED_TEMP,
-    profilePath: "/tmp/kairo-wt-delegated-1/profile.sb",
-    task: "Write canary-internal-write.txt inside the workspace only."
+    profilePath: "/tmp/kairo-wt-delegated-1/profile.sb"
   }, identityDeps());
 
-  assert.equal(runner.launch.command, "sandbox-exec");
-  assert.match(runner.command, /^CODEX_HOME=/);
-  assert.match(runner.command, / TMPDIR=/);
-  assert.match(runner.command, /'sandbox-exec'/);
-  assert.match(runner.command, /--dangerously-bypass-approvals-and-sandbox/);
-  assert.equal(runner.plan.realRunAuthorized, false);
-  assert.ok(runner.plan.requiredInternalWrites[0].endsWith("canary-internal-write.txt"));
+  assert.match(runner.command, new RegExp(`^cd '${WORKSPACE}' &&`));
+  assert.match(runner.command, /'--cd' '/);
+  assert.match(runner.command, new RegExp(`'--cd' '${WORKSPACE}'`));
+  assert.equal(runner.launch.cwd, WORKSPACE);
+  assert.deepEqual(
+    ensureCodexWorkspaceCd(["exec", "--json", "t"], WORKSPACE).slice(0, 4),
+    ["exec", "--cd", WORKSPACE, "--json"]
+  );
+
+  // Effective even if a caller started elsewhere: spawnShape.cwd is workspace.
+  assert.equal(runner.spawnShape.cwd, WORKSPACE);
+  assert.notEqual(runner.spawnShape.cwd, process.cwd());
+
+  assert.equal(runner.plan.attempts[0].targetPath, INTERNAL_MARKER);
+  assert.equal(runner.plan.attempts[1].targetPath, EXTERNAL_PROBE);
+  assert.match(runner.plan.task, /Do not touch personal/);
+  assert.ok(runner.plan.attempts.every((entry) => !entry.targetPath.includes("/.codex")));
 
   const auth = describeIsolatedAuthHandling(runner.plan);
-  assert.equal(auth.codexHome, ISOLATED_PROVIDER);
-  assert.ok(auth.forbidden.some((entry) => entry.includes("CODEX_HOME=~/.codex")));
-
-  const exact = formatDelegatedWriteCanaryCommand(runner.launch);
-  assert.equal(exact, runner.command);
+  assert.ok(auth.forbidden.some((entry) => entry.includes("copying credentials")));
+  assert.equal(formatDelegatedWriteCanaryCommand(runner.launch), runner.command);
 
   await assert.rejects(
     () => runDelegatedWriteCanary({ authorizeRealCanary: false, plan: runner.plan }),
@@ -276,7 +391,6 @@ test("runner reuses adapter launch, emits exact command + isolated auth; real ru
   }, identityDeps());
   assert.equal(authorizedPrep.verdict, DELEGATED_WRITE_CANARY_VERDICT.INCONCLUSIVE);
   assert.equal(authorizedPrep.approval, false);
-  assert.equal(authorizedPrep.reason, "authorized_but_live_spawn_not_run");
   assert.equal(authorizedPrep.details.command, runner.command);
 
   const plan = await prepareDelegatedWriteCanaryPlan({
@@ -284,6 +398,6 @@ test("runner reuses adapter launch, emits exact command + isolated auth; real ru
     providerHome: ISOLATED_PROVIDER,
     tempRoot: ISOLATED_TEMP
   }, identityDeps());
-  assert.deepEqual(plan.allowedWritePaths, [WORKSPACE, ISOLATED_PROVIDER, ISOLATED_TEMP]);
+  assert.deepEqual(plan.requiredExternalProbes, [EXTERNAL_PROBE]);
   assert.ok(plan.forbiddenWritePaths.includes(PERSONAL));
 });

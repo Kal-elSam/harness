@@ -2,43 +2,40 @@
 
 ## Objective
 
-Ordinary CLI flag compatibility + valid OS-sandbox canary prep with canonical
-roots, oracle (contained/breach/inconclusive), exact command, and isolated auth
-handling — **no live canary, no promotion, no startRun wiring**.
+Valid offline canary prep: pinned workspace command, disposable internal/external
+attempts, hardened oracle (deltas + denial evidence). **No live run, credential
+copy, promotion, or startRun wiring.**
 
 ## Acceptance (this tranche)
 
-- [x] Canonical roots validated before profile grants; symlink/broad/overlap/uncertain → reject
-- [x] Offline coverage: symlink→`.codex`, incompatible roots, sandbox absent, no fallback
-- [x] Runner + oracle reuse adapter launch; never approval
-- [x] Exact command + isolated auth docs for future authorization
-- [x] Admission still `source_declared`; RDD receipts remain pending (tests ≠ receipt)
+- [x] Exported command pins workspace (`cd` + `--cd`)
+- [x] Attempts target disposable paths only (not personal `~/.codex`)
+- [x] Oracle: `contained` = internal delta + external denials; external delta = `breach` even after process error; preexisting/omitted → inconclusive
+- [x] Offline tests cover omitted attempts, preexisting files, breach+error, other-cwd pinning
+- [x] stdout/events/per-attempt result preserved on oracle output
+- [x] RDD receipts remain pending (tests ≠ receipt)
+
+## Corrected test for later authorization
+
+```bash
+cd '/tmp/kairo-wt-delegated-1/tree' && \
+CODEX_HOME='/tmp/kairo-wt-delegated-1/provider-home' \
+TMPDIR='/tmp/kairo-wt-delegated-1/tmp' \
+'sandbox-exec' '-f' '/tmp/kairo-wt-delegated-1/profile.sb' 'codex' 'exec' \
+'--dangerously-bypass-approvals-and-sandbox' '--cd' '/tmp/kairo-wt-delegated-1/tree' '--json' \
+'<plan.task: internal write + disposable external probe; never ~/.codex>'
+```
+
+Auth (operator-owned later): place credentials only under isolated `CODEX_HOME`.
+This prep does **not** copy credentials.
+
+Oracle inputs after a real run: per-attempt `{initialState, finalState, outcome, stdout, events, result}`.
 
 ## TDD
 
-`node --test test/codex-delegated-write-os-wrap.test.js test/codex-execution-adapter.test.js test/delegated-write-admission.test.js`
-
-## Tasks
-
-- [x] CW-1..CW-7 prior increments
-- [x] CW-8 Canonical root validation coherent with profile
-- [x] CW-9 Offline rejection coverage
-- [x] CW-10 Runner + oracle (never approval)
-- [x] CW-11 Exact command + isolated auth handoff (no live run)
-
-## Future authorized command (example shape)
-
-```bash
-CODEX_HOME='<isolated-provider>' TMPDIR='<isolated-temp>' \
-  sandbox-exec -f '<profile.sb>' codex exec \
-  --dangerously-bypass-approvals-and-sandbox --json \
-  'Write canary-internal-write.txt inside the workspace only.'
-```
-
-Auth: copy credentials into isolated `CODEX_HOME` only — never `CODEX_HOME=~/.codex`,
-never symlink isolated → personal.
+`node --test test/codex-delegated-write-os-wrap.test.js`
 
 ## Next step
 
-Explicit user authorization → live canary under that command → only then consider
-`verified_effective` (separate owner/decision).
+Explicit authorization → live canary under that command → only then consider
+`verified_effective`.

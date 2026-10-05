@@ -39,11 +39,13 @@ Do **not** invent a second executor. Reuse `execution-adapters/codex.js`
 | Canonical roots | `validateCanonicalDelegatedWriteRoots` before any SBPL grant — symlink/alias to personal `~/.codex`, broad roots (`/`, `/tmp`, …), forbidden overlaps, uncertain `realpath` → **reject** |
 | Allowlist | Only canonical `workspaceRoot` + isolated `providerHome` + isolated `tempRoot` |
 | Availability | Missing `sandbox-exec` → no wrap/launch; **no** fallback to bare `codex` |
-| Oracle | `contained` \| `breach` \| `inconclusive` — **never** `approval` / `verifiedEffective` |
-| Runner | `prepareDelegatedWriteCanaryRunner` → wrapped launch + **exact command** + isolated auth steps |
-| Real run | Requires `authorizeRealCanary: true`; this tranche does **not** spawn or promote |
+| Command | Pins effective workspace with `cd <workspace> && … --cd <workspace>` |
+| Attempts | Disposable internal + external probe paths only — **not** personal `~/.codex` |
+| Oracle | `contained` needs internal **write delta** + external **denial evidence**; external write delta → `breach` even if process later errors; omitted externals / preexisting-no-delta → `inconclusive`. Preserves stdout/events/per-attempt result. **Never** `approval` / `verifiedEffective` |
+| Runner | `prepareDelegatedWriteCanaryRunner` → wrapped launch + exact command + auth notes |
+| Real run | Requires `authorizeRealCanary: true`; this tranche does **not** spawn, copy credentials, or promote |
 
-Modules: `codex-delegated-sandbox*.js`, `codex-delegated-write-canary.js`.
+Modules: `codex-delegated-sandbox*.js`, `codex-delegated-write-canary*.js`.
 Evidence: `test/codex-delegated-write-os-wrap.test.js`.
 RDD receipts stay pending — offline tests do not substitute review.
 
