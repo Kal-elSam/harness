@@ -751,3 +751,19 @@ Checks: fork `test/kairo`; focused host tests; package/version resolution; real 
     authorization before scoping. Publishing/pinning `.4` stays blocked
     until your explicit remote authorization.
 
+
+## Reconciliation 2026-10-05 (pending-work split)
+
+Uncommitted work on this branch belongs to four separate groups. Do not mix them in commits.
+
+- **Shell (this doc)**: `package.json`, `pnpm-lock.yaml`, `.npmrc`, `src/global/host/launch-gentle-shell.js` (Pi pin `.3` -> `.4`), `src/global/host/extension/index.js` (env-gated `KAIRO_PROTOTYPE_THEME`, includes a `/tmp/proto-debug.log` debug write to remove or justify), `src/global/host/extension/kairo-prototype-theme.js`, `test/kairo-prototype-theme.test.js`, `docs/assets/`.
+- **Handoff + context-fill**: moved to `odd/tasks/session-handoff-context-fill.md`.
+- **Documentation closures**: `odd/tasks/cursor-credit-discipline.md`, `odd/tasks/plan-mode-model-agnostic.md`.
+- **Diagnostics (never in functional commits)**: `report.json`, `scripts/inspect-opencode-tier.sh`.
+
+Open shell items:
+
+- [x] R1 (2026-10-05, `npm view`, read-only) `0.87.1-kairo.4` is published (2026-09-26T16:47Z), `latest` dist-tag. Newer `0.87.1-kairo.5` also exists (2026-09-28, tag `kairo`); not adopted here, no tracker covers it. The remote-auth blocker is moot for `.4`; the pin decision (.4 vs .5) is the user's.
+- [x] R2 (2026-10-05) Prototype theme kept behind `KAIRO_PROTOTYPE_THEME=1` (not default); both debug-log writes (`index.js` block, `debugLog` helper in `kairo-prototype-theme.js`) removed. Real PTY with the flag: renders, no crash, `/tmp/proto-debug.log` not created.
+- [x] R3 (2026-10-05) Same version `0.87.1-kairo.4` in `package.json`, launcher constant, `pnpm-lock.yaml` and `.npmrc`. The `.npmrc` `minimum-release-age-exclude` for `.4` is now obsolete (published >24h ago) and its own comment says to remove it; pending user OK.
+- [x] R4 (2026-10-05, fresh evidence) Real PTY on `.4` with launcher argv/env, fresh HARNESS_HOME, no credentials: 100x30 start OK (sidebar beside chat, `session:` 1, `USAGE` 1, `Run /project analyze` 1); 60x30 sidebar hidden + compact summary + session id in status bar; live resize 100->60->100 reflows, no blank screen, `session:` 1 in every frame; welcome disappears after the first submit (`No models available` shown, welcome gone). Caveat: a submit issued ~6s after launch was not processed within a further 7s window (welcome still shown); the same early submit with a 25s wait cleared the welcome, so this looks like Pi startup latency before the input event, not the extension handler. Not root-caused further. Driver: scratchpad `pty_driver.py` (session-local, not committed). Recovery approve/reject: `team-recovery`, `orch-recovery`, `team-auto-recovery-e2e` 32/32 pass; restart persistence and no-alternative paths not separately verified in a PTY.
