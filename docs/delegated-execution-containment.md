@@ -36,17 +36,21 @@ Do **not** invent a second executor. Reuse the existing Bootstrap *mechanism*
 `execution-adapters/codex.js`’s launch:
 
 - Module: `src/global/runtime/codex-delegated-sandbox.js`
-- `buildDelegatedWriteSandboxProfile({ workspaceRoot, codexHome })` — adapted
-  allowlist: workspace/worktree (r/w), provider home (r/w), temps
-  (`/private/tmp`, `/private/var/folders`), system reads — **not** a Bootstrap
-  snapshot root and not Bootstrap evidence
-- `wrapCodexLaunchWithOsSandbox(launch, { profilePath })` — `sandbox-exec -f … codex …`
-- Inner argv must use `--dangerously-bypass-approvals-and-sandbox` (nesting
-  provider sandbox under outer SBPL breaks tool calls)
+- Allowlist (adapted, not Bootstrap copy): **workspaceRoot** + **isolated
+  `providerHome`** + **isolated `tempRoot`** only. Personal `~/.codex` is
+  **forbidden** as a writable provider home. No broad `/private/tmp` write grant.
+- `assertDelegatedWriteOsSandboxAvailable` — OS sandbox must be present before
+  wrap/launch; failure → **no execute** (`delegated_write_os_sandbox_unavailable`)
+- `wrapCodexLaunchWithOsSandbox` sets `CODEX_HOME` / `TMPDIR` to the isolated roots
+- Inner argv uses `--dangerously-bypass-approvals-and-sandbox` (no nesting)
+- Canary prep: `prepareDelegatedWriteCanaryPlan` lists explicit allowed /
+  forbidden write paths. **`runDelegatedWriteCanary` requires
+  `authorizeRealCanary: true`**; without it →
+  `delegated_write_canary_authorization_required`. A new real run needs that
+  specific authorization (not implemented as a silent pass).
 
-Track B helpers are available for a future canary → `verified_effective`
-promotion. They are **not** wired into ordinary `startRun` and do **not** by
-themselves flip the admission matrix.
+Track B helpers are **not** wired into ordinary `startRun` and do **not** flip
+the admission matrix by themselves.
 
 Evidence: `test/codex-delegated-write-os-wrap.test.js`.
 
