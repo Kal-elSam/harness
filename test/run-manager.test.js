@@ -372,9 +372,28 @@ test("recoverRuns marks orphaned active runs interrupted", async () => {
   assert.equal(state.state, RUN_STATES.INTERRUPTED);
 });
 
-test("REGRESSION: opencode-go is refused by delegated write admission until a workspace write floor is declared", async () => {
+test("REGRESSION: opencode-go remains launchable for ordinary auditable runs (strict floor is opt-in)", async () => {
   await withStubExecutables(["opencode"], async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-opencode-"));
+    const lines = [JSON.stringify({ type: "result", usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 } })];
+
+    const { completion } = await startRun({
+      homeDir,
+      agentId: "opencode-go",
+      task: "task",
+      cwd: homeDir,
+      cliVersion: "0.2.1",
+      spawnImpl: createFakeSpawn(lines)
+    });
+
+    const final = await completion;
+    assert.equal(final.state, RUN_STATES.COMPLETED);
+  });
+});
+
+test("opencode-go is refused only when requireVerifiedWriteContainment is explicit", async () => {
+  await withStubExecutables(["opencode"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-opencode-strict-"));
     const { DelegatedWriteAdmissionError } = await import("../src/global/runtime/delegated-write-admission.js");
     await assert.rejects(
       () => startRun({
@@ -383,6 +402,7 @@ test("REGRESSION: opencode-go is refused by delegated write admission until a wo
         task: "task",
         cwd: homeDir,
         cliVersion: "0.2.1",
+        requireVerifiedWriteContainment: true,
         spawnImpl: () => {
           throw new Error("spawn must not run");
         }

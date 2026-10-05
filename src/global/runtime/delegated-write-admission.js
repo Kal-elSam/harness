@@ -1,37 +1,39 @@
 /**
- * Prelaunch admission for productive delegated runs with authorized writes.
- * Separate from Bootstrap Analysis isolation (sandbox-exec / verified reads).
+ * Strict verified-write containment floor for delegated runs.
  *
- * Policy (product): writes may occur inside the bound cwd/worktree; outside is
- * forbidden. Permission tokens ≠ containment evidence. Unverified write-floor
- * adapters are not launched. Source-declared floors may launch only when their
- * listed conditions hold; they are not Bootstrap-class verified_effective.
+ * Applied ONLY when callers opt in (`requireVerifiedWriteContainment: true`).
+ * Ordinary startRun / prepareRun paths do not call this — no incidental block.
  *
- * Kernel WorkResult stays a result seam — admission failure is throw / no run,
- * never a fabricated WorkResult.
+ * Under the strict floor:
+ * - Only `verified_effective` may launch (source_declared ≠ verified).
+ * - force/yolo (and aliases) are rejected even with unsafe consent.
+ * - Failure is throw / no run — never a fabricated WorkResult.
+ *
+ * Separate from Bootstrap Analysis isolation (sandbox-exec).
  */
 import { normalizePermissions } from "./run-permissions.js";
 
 export const WRITE_CONTAINMENT_STATUS = Object.freeze({
-  /** Empirically proven effective workspace write floor (none yet). */
+  /** Empirically proven effective workspace write floor — sole launch status under the strict floor. */
   VERIFIED_EFFECTIVE: "verified_effective",
-  /** Adapter source maps normal launch to an explicit workspace write sandbox. */
+  /** Adapter source maps normal launch to a write sandbox — evidence only, NOT admission under the strict floor. */
   SOURCE_DECLARED: "source_declared",
-  /** No declared workspace write floor for productive implementation. */
+  /** No declared workspace write floor. */
   UNVERIFIED: "unverified",
-  /** Adapter only supports read-only / review — not authorized-write runs. */
+  /** Adapter only supports read-only / review. */
   READ_ONLY_ONLY: "read_only_only"
 });
+
+const UNSAFE_BYPASS = new Set(["force", "yolo"]);
 
 /**
  * @typedef {object} DelegatedWriteAdmissionEntry
  * @property {string} adapterId
  * @property {string} status
- * @property {boolean} mayLaunchAuthorizedWrite
  * @property {boolean} verifiedEffective
  * @property {string[]} conditions
  * @property {string} evidence
- * @property {string} blockedReason
+ * @property {string|null} blockedReason
  */
 
 /** @type {Readonly<Record<string, DelegatedWriteAdmissionEntry>>} */
@@ -39,61 +41,56 @@ export const DELEGATED_WRITE_ADMISSION = Object.freeze({
   codex: Object.freeze({
     adapterId: "codex",
     status: WRITE_CONTAINMENT_STATUS.SOURCE_DECLARED,
-    mayLaunchAuthorizedWrite: true,
     verifiedEffective: false,
     conditions: Object.freeze([
-      "cwd is a non-empty string (project or execution worktree treePath)",
-      "empty/normal permissions map to --sandbox workspace-write --approve-for-me",
-      "yolo / dangerously-* requires allowUnsafePermissions (or cockpit unsafe confirm)",
-      "must not claim Bootstrap sandbox-exec / verified isolation evidence"
+      "effective canary: in-cwd write succeeds; absolute path outside cwd denied",
+      "auto-approval / native config behavior accounted for in that canary",
+      "under the strict floor: no force/yolo bypass even with consent",
+      "source_declared workspace-write mapping is not sufficient alone"
     ]),
     evidence:
-      "src/global/runtime/execution-adapters/codex.js buildCodexPermissionsArgs; "
-      + "test/codex-execution-adapter.test.js; test/delegated-execution-containment.test.js",
-    blockedReason: null
+      "source mapping only today: execution-adapters/codex.js → --sandbox workspace-write "
+      + "(see test/codex-execution-adapter.test.js). No verified_effective canary recorded yet.",
+    blockedReason:
+      "Codex write containment is source_declared only — not verified_effective; strict floor will not launch"
   }),
   claude: Object.freeze({
     adapterId: "claude",
     status: WRITE_CONTAINMENT_STATUS.UNVERIFIED,
-    mayLaunchAuthorizedWrite: false,
     verifiedEffective: false,
     conditions: Object.freeze([]),
-    evidence:
-      "buildClaudeLaunch uses --permission-mode auto without a declared workspace write floor",
+    evidence: "no declared workspace-write floor on buildClaudeLaunch",
     blockedReason:
-      "Claude has no verified or source-declared workspace write containment for delegated implementation"
+      "Claude has no verified_effective workspace write containment for the strict floor"
   }),
   cursor: Object.freeze({
     adapterId: "cursor",
     status: WRITE_CONTAINMENT_STATUS.UNVERIFIED,
-    mayLaunchAuthorizedWrite: false,
     verifiedEffective: false,
     conditions: Object.freeze([]),
-    evidence: "cursor-agent launch has no declared workspace-write sandbox mapping",
+    evidence: "no declared workspace-write sandbox mapping on cursor-agent launch",
     blockedReason:
-      "Cursor has no verified or source-declared workspace write containment for delegated implementation"
+      "Cursor has no verified_effective workspace write containment for the strict floor"
   }),
   opencode: Object.freeze({
     adapterId: "opencode",
     status: WRITE_CONTAINMENT_STATUS.UNVERIFIED,
-    mayLaunchAuthorizedWrite: false,
     verifiedEffective: false,
     conditions: Object.freeze([]),
-    evidence: "opencode run has no declared workspace-write sandbox mapping",
+    evidence: "no declared workspace-write sandbox mapping on opencode run",
     blockedReason:
-      "OpenCode has no verified or source-declared workspace write containment for delegated implementation"
+      "OpenCode has no verified_effective workspace write containment for the strict floor"
   }),
   pi: Object.freeze({
     adapterId: "pi",
     status: WRITE_CONTAINMENT_STATUS.READ_ONLY_ONLY,
-    mayLaunchAuthorizedWrite: false,
     verifiedEffective: false,
     conditions: Object.freeze([
-      "read-only runs may launch with permissions [\"read-only\"] only (review / inspect)"
+      "ordinary read-only runs use permissions [\"read-only\"] outside this strict write floor"
     ]),
-    evidence: "ADAPTER_PERMISSION_MODES.pi = [read-only]; buildPiPermissionsArgs",
+    evidence: "ADAPTER_PERMISSION_MODES.pi = [read-only]",
     blockedReason:
-      "Pi supports read-only review containment only — not authorized-write delegated implementation"
+      "Pi is read_only_only — not eligible for the strict authorized-write floor"
   })
 });
 
@@ -129,10 +126,8 @@ export function listDelegatedWriteAdmissionMatrix() {
 }
 
 /**
- * Fail closed before spawn: unverified write floors do not launch.
- * Pi read-only is allowed as a non-write path. Codex source_declared launches
- * only when cwd is present (conditions otherwise enforced by permission authority
- * + adapter launch mapping).
+ * Strict floor assert — call only when requireVerifiedWriteContainment is true.
+ * source_declared is never treated as verified_effective.
  */
 export function assertDelegatedWriteAdmission(agentId, {
   cwd = null,
@@ -141,15 +136,12 @@ export function assertDelegatedWriteAdmission(agentId, {
   const entry = getDelegatedWriteAdmission(agentId);
   const normalized = normalizePermissions(permissions);
 
-  if (entry.status === WRITE_CONTAINMENT_STATUS.READ_ONLY_ONLY) {
-    if (normalized.length === 1 && normalized[0] === "read-only") {
-      return { ...entry, launchKind: "read_only" };
-    }
+  if (normalized.some((token) => UNSAFE_BYPASS.has(token))) {
     throw new DelegatedWriteAdmissionError(
-      entry.blockedReason
-        ?? `Adapter "${entry.adapterId}" cannot launch authorized-write delegated runs.`,
+      `Strict verified-write floor forbids force/yolo bypass on "${entry.adapterId}" `
+      + "(even with --allow-unsafe-permissions / cockpit unsafe confirm).",
       {
-        code: "delegated_write_admission_denied",
+        code: "delegated_write_bypass_forbidden",
         details: {
           adapterId: entry.adapterId,
           status: entry.status,
@@ -160,26 +152,9 @@ export function assertDelegatedWriteAdmission(agentId, {
     );
   }
 
-  if (!entry.mayLaunchAuthorizedWrite || entry.status === WRITE_CONTAINMENT_STATUS.UNVERIFIED) {
-    throw new DelegatedWriteAdmissionError(
-      entry.blockedReason
-        ?? `Delegated write admission denied for "${entry.adapterId}" (status=${entry.status}).`,
-      {
-        code: "delegated_write_admission_denied",
-        details: {
-          adapterId: entry.adapterId,
-          status: entry.status,
-          verifiedEffective: entry.verifiedEffective,
-          mayLaunchAuthorizedWrite: entry.mayLaunchAuthorizedWrite
-        }
-      }
-    );
-  }
-
   if (typeof cwd !== "string" || cwd.trim() === "") {
     throw new DelegatedWriteAdmissionError(
-      `Delegated write admission for "${entry.adapterId}" requires a non-empty cwd `
-      + "(project or execution worktree treePath).",
+      `Strict verified-write floor for "${entry.adapterId}" requires a non-empty cwd.`,
       {
         code: "delegated_write_admission_cwd_required",
         details: { adapterId: entry.adapterId, status: entry.status }
@@ -187,9 +162,29 @@ export function assertDelegatedWriteAdmission(agentId, {
     );
   }
 
+  const isVerified = entry.status === WRITE_CONTAINMENT_STATUS.VERIFIED_EFFECTIVE
+    && entry.verifiedEffective === true;
+
+  if (!isVerified) {
+    throw new DelegatedWriteAdmissionError(
+      entry.blockedReason
+        ?? `Strict verified-write floor denied "${entry.adapterId}" `
+        + `(status=${entry.status}; source_declared is not verified_effective).`,
+      {
+        code: "delegated_write_admission_denied",
+        details: {
+          adapterId: entry.adapterId,
+          status: entry.status,
+          verifiedEffective: entry.verifiedEffective === true,
+          requireVerifiedWriteContainment: true
+        }
+      }
+    );
+  }
+
   return {
     ...entry,
-    launchKind: "authorized_write",
-    verifiedEffective: entry.verifiedEffective === true
+    launchKind: "authorized_write_verified",
+    verifiedEffective: true
   };
 }
