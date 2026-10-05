@@ -99,6 +99,7 @@ async function prepareRun({
   allowUnsafePermissions = false,
   permissionSource = "cli",
   permissionConsentType = null,
+  requireVerifiedWriteContainment = false,
   captureTranscript = false,
   cliVersion,
   profile = null,
@@ -121,9 +122,10 @@ async function prepareRun({
     );
   }
 
-  // Containment admission before preflight/spawn: unverified write floors do not launch.
-  // Separate from Bootstrap isolation; failure is throw / no run (not a WorkResult).
-  assertDelegatedWriteAdmission(agentId, { cwd, permissions });
+  // Strict write floor is opt-in only — ordinary runs must not hit this gate.
+  if (requireVerifiedWriteContainment) {
+    assertDelegatedWriteAdmission(agentId, { cwd, permissions });
+  }
 
   await adapter.preflight({ cwd });
   // The one real, enforced budget gate this increment adds — refuses only
@@ -205,6 +207,7 @@ export async function startRun({
   allowUnsafePermissions = false,
   permissionSource = "cli",
   permissionConsentType = null,
+  requireVerifiedWriteContainment = false,
   captureTranscript = false,
   cliVersion,
   profile = null,
@@ -227,6 +230,7 @@ export async function startRun({
     allowUnsafePermissions,
     permissionSource,
     permissionConsentType,
+    requireVerifiedWriteContainment,
     captureTranscript,
     cliVersion,
     profile,
