@@ -15,6 +15,7 @@ import { assertProviderNotExhausted } from "./usage-manager.js";
 import { resolveProfileAgents } from "../profile.js";
 import { resolveRuntimeOptions } from "./run-profile.js";
 import { authorizeRunPermissions } from "./run-permissions.js";
+import { assertDelegatedWriteAdmission } from "./delegated-write-admission.js";
 import { cleanupStaleHandoffs, deleteRunHandoff, writeRunHandoff } from "./run-handoff.js";
 import { isRunAlive } from "./run-liveness.js";
 import { readSupervisorLock, writeSupervisorLock } from "./run-supervisor-lock.js";
@@ -119,6 +120,10 @@ async function prepareRun({
         ?? `${adapter.label} is not launchable for auditable Kairo runs in v1.`
     );
   }
+
+  // Containment admission before preflight/spawn: unverified write floors do not launch.
+  // Separate from Bootstrap isolation; failure is throw / no run (not a WorkResult).
+  assertDelegatedWriteAdmission(agentId, { cwd, permissions });
 
   await adapter.preflight({ cwd });
   // The one real, enforced budget gate this increment adds — refuses only

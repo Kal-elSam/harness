@@ -15,8 +15,8 @@ external SBPL profile.
 
 ## What “contained” means here
 
-Delegated execution containment is **path + authority**, not OS deny-by-default
-for the whole process tree:
+Delegated execution containment is **path + authority + admission**, not OS
+deny-by-default for the whole process tree:
 
 1. **Cwd bound to the execution worktree** — orchestrated roles call `startRun`
    with `cwd: worktree.treePath` (`~/.harness/worktrees/<id>/tree`), never the
@@ -34,41 +34,56 @@ for the whole process tree:
 5. **Kairo owns commits** — role prompts forbid agents from `git add` /
    `git commit`; `completeRoleRun` admits real diffs under policy (secrets,
    size, rogue commits between roles interrupt).
+6. **Prelaunch admission** — `assertDelegatedWriteAdmission` in `prepareRun`:
+   unverified write floors **do not launch** (throw / no run; never a fabricated
+   `WorkResult`).
 
 Honest limit: adapter `workspace-write` / permission flags are
 **application-enforced** by the provider CLI. They are not the same class of
 evidence as Bootstrap’s macOS `sandbox-exec` canary. Document the real layer;
-do not inflate it to `verified` Bootstrap isolation.
+do not inflate it to Bootstrap `verified` or to `verified_effective` here.
 
-## Adapter write posture (delegated runs)
+## Admission matrix (handoff for Claude)
 
-| Adapter | Default productive launch | Unsafe / elevated | Contained by |
-|---|---|---|---|
-| **Codex** | `--sandbox workspace-write --approve-for-me` | `yolo` → full bypass | cwd + Codex workspace-write + permission authority |
-| **Claude** | permission-mode defaults from adapter | `force` / `yolo` with consent | cwd + Claude permission modes + authority |
-| **Cursor** | adapter launch with force/yolo when authorized | `force` / `yolo` with consent | cwd + Cursor flags + authority |
-| **OpenCode** | force when authorized | `force` with consent | cwd + authority |
-| **Pi** | `read-only` only | no force/yolo | cwd + Pi `--tools` read set — **no authorized write mode** |
+Source of truth: `src/global/runtime/delegated-write-admission.js`
+(`DELEGATED_WRITE_ADMISSION`, `assertDelegatedWriteAdmission`).
 
-Pi is review/read compatible for bounded review; it does **not** offer a
-delegated “authorized write” permission mode in `ADAPTER_PERMISSION_MODES`.
+| Adapter | Status | `mayLaunchAuthorizedWrite` | `verifiedEffective` | Conditions to launch | Notes for Claude |
+|---|---|---|---|---|---|
+| **codex** | `source_declared` | **yes** | **false** | non-empty cwd; empty/normal → `workspace-write`+`approve-for-me`; yolo needs unsafe consent | Eligible under conditions. Promote to `verified_effective` only after an effective canary (writes inside cwd OK, outside denied) with auto-approval/native config accounted for |
+| **claude** | `unverified` | **no** | false | — | **Do not launch** until a declared/proven workspace write floor exists |
+| **cursor** | `unverified` | **no** | false | — | **Do not launch** for productive writes |
+| **opencode** | `unverified` | **no** | false | — | **Do not launch** (includes `opencode-go` / `opencode-zen` ids) |
+| **pi** | `read_only_only` | **no** | false | `permissions: ["read-only"]` only | Read/review path may launch; no authorized-write mode |
+
+Statuses:
+
+- `verified_effective` — empirically proven workspace write floor (none today).
+- `source_declared` — adapter source maps normal launch to an explicit write sandbox.
+- `unverified` — no declared floor → admission denied.
+- `read_only_only` — review/inspect only.
+
+Product intent (writable containment): implementation may write **inside** the
+bound project/worktree; not universal read-only; not Pi-only. Permission tokens
+and containment capabilities stay separate.
 
 ## Evidence (separate from Bootstrap)
 
 | Claim | Proof |
 |---|---|
-| Worktree paths stay under `worktreesDir` | `test/execution-worktree.test.js` (`assertWorktreeId` / traversal rejection) |
-| Orchestrated chain runs inside `treePath` | `execution-worktree-orchestrator.js` + orchestrator tests |
+| Worktree paths stay under `worktreesDir` | `test/execution-worktree.test.js` |
+| Orchestrated chain runs inside `treePath` | `execution-worktree-orchestrator.js` + tests |
 | Codex default is workspace-write, not Bootstrap SBPL | `test/codex-execution-adapter.test.js` |
 | Unsafe permissions need consent / adapter support | `test/runtime-permission-authority.test.js` |
-| Role completion polices agent writes | `test/execution-worktree.test.js` (secrets, rogue commits, size) |
-| Bootstrap matrix does not cover this path | [`bootstrap-isolation.md`](bootstrap-isolation.md) + `test/bootstrap-isolation-boundary.test.js` |
-
-Focused contract tests: `test/delegated-execution-containment.test.js`.
+| Role completion polices agent writes | `test/execution-worktree.test.js` |
+| Admission matrix + unverified do not launch | `test/delegated-write-admission.test.js` |
+| Bootstrap matrix does not cover this path | [`bootstrap-isolation.md`](bootstrap-isolation.md) |
 
 ## Related code
 
-- `src/global/runtime/run-manager.js`, `run-permissions.js`
+- `src/global/runtime/delegated-write-admission.js` (matrix + assert)
+- `src/global/runtime/run-manager.js` (`prepareRun` calls assert before preflight)
+- `src/global/runtime/run-permissions.js`
 - `src/global/runtime/execution-worktree-{manager,orchestrator,store,types}.js`
 - `src/global/paths.js` (`worktreePaths`)
 - Execution adapters under `src/global/runtime/execution-adapters/`

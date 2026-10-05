@@ -372,22 +372,24 @@ test("recoverRuns marks orphaned active runs interrupted", async () => {
   assert.equal(state.state, RUN_STATES.INTERRUPTED);
 });
 
-test("REGRESSION: opencode-go is accepted for auditable runs now — real hangs are covered by the adapter's own idle timeout, not a launchable:false gate", async () => {
+test("REGRESSION: opencode-go is refused by delegated write admission until a workspace write floor is declared", async () => {
   await withStubExecutables(["opencode"], async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-opencode-"));
-    const lines = [JSON.stringify({ type: "result", usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 } })];
-
-    const { completion } = await startRun({
-      homeDir,
-      agentId: "opencode-go",
-      task: "task",
-      cwd: homeDir,
-      cliVersion: "0.2.1",
-      spawnImpl: createFakeSpawn(lines)
-    });
-
-    const final = await completion;
-    assert.equal(final.state, RUN_STATES.COMPLETED);
+    const { DelegatedWriteAdmissionError } = await import("../src/global/runtime/delegated-write-admission.js");
+    await assert.rejects(
+      () => startRun({
+        homeDir,
+        agentId: "opencode-go",
+        task: "task",
+        cwd: homeDir,
+        cliVersion: "0.2.1",
+        spawnImpl: () => {
+          throw new Error("spawn must not run");
+        }
+      }),
+      (error) => error instanceof DelegatedWriteAdmissionError
+        && error.code === "delegated_write_admission_denied"
+    );
   });
 });
 
