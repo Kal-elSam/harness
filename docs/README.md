@@ -9,6 +9,7 @@ Guides moved out of the npm README so the package page stays short.
 | [Agents & adapters](adapters.md) | Supported agents and config roots |
 | [Bootstrap isolation](bootstrap-isolation.md) | Which adapters can confine Bootstrap Analysis, and the evidence |
 | [Delegated execution containment](delegated-execution-containment.md) | Authorized-write runs / worktrees — separate from Bootstrap |
+| [Codex delegated-write canary protocol](codex-delegated-write-canary-protocol.md) | Executable offline prep; verifiedEffective stays false |
 | [Components](components.md) | Orchestrator, Engram, SDD Core |
 | [Intelligence](intelligence.md) | Local-first routing and cloud consent |
 | [Integrations](integrations.md) | Gentle AI, Engram, Graphify |

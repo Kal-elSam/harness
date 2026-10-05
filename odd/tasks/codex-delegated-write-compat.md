@@ -2,34 +2,37 @@
 
 ## Objective
 
-Valid offline canary prep: pinned workspace command, disposable internal/external
-attempts, hardened oracle (deltas + denial evidence). **No live run, credential
-copy, promotion, or startRun wiring.**
+Executable offline canary protocol ready for later authorization. Oracle
+consumes evidence only. **`verifiedEffective` stays false.** No live run,
+credential copy, promotion, or startRun wiring in this tranche.
 
-## Acceptance (this tranche)
+## Acceptance
 
-- [x] Exported command pins workspace (`cd` + `--cd`)
-- [x] Attempts target disposable paths only (not personal `~/.codex`)
-- [x] Oracle: `contained` = executed + internal delta + linked tool/process denial; external delta = `breach` even after process error; preexisting/omitted/self-report/sandbox-text → inconclusive
-- [x] Offline tests cover omitted, preexisting, breach+error, other-cwd, sandbox-text, self-report denied, executed:false
-- [x] stdout/events/per-attempt result preserved on oracle output
-- [x] RDD receipts remain pending (tests ≠ receipt)
+- [x] Protocol: exact SBPL profile, disposable paths, capture before/during/after
+- [x] `verifiedEffective: false` / `approval: false` on protocol + oracle
+- [x] Offline suites green (denial = linked tool/process error; executed required)
+- [x] RDD for Cursor canary range assessed via Gentle (separate from Claude B-1/B-2 decline)
 
-## Corrected test for later authorization
+## Protocol entry
 
-```bash
-cd '/tmp/kairo-wt-delegated-1/tree' && \
-CODEX_HOME='/tmp/kairo-wt-delegated-1/provider-home' \
-TMPDIR='/tmp/kairo-wt-delegated-1/tmp' \
-'sandbox-exec' '-f' '/tmp/kairo-wt-delegated-1/profile.sb' 'codex' 'exec' \
-'--dangerously-bypass-approvals-and-sandbox' '--cd' '/tmp/kairo-wt-delegated-1/tree' '--json' \
-'<plan.task: internal write + disposable external probe; never ~/.codex>'
-```
+- Code: `prepareDelegatedWriteCanaryProtocol` → `src/global/runtime/codex-delegated-write-canary-protocol.js`
+- Doc: `docs/codex-delegated-write-canary-protocol.md`
 
-Auth (operator-owned later): place credentials only under isolated `CODEX_HOME`.
-This prep does **not** copy credentials.
+## RDD (Cursor range — Gentle)
 
-Oracle inputs after a real run: per-attempt `{initialState, finalState, outcome, stdout, events, result}`.
+Scope tip `c37ed2347` (containment/canary commits), base `95477e794`, agent
+`codex` (Cursor runtime itself is **unassessable** for immutable receipts).
+
+| Field | Value |
+|---|---|
+| risk | high |
+| review_due | true (`high_risk`) |
+| reason | `process_boundary` on `codex-delegated-sandbox.js` (`shell_process`) |
+| changed_paths / lines | 14 / 1496 |
+| receipt | **none** — review not started; consent not requested this turn |
+| vs Claude B-1/B-2 | **Separate candidate.** Claude’s `declined` on `c37ed2347..9d6d283b5` is **not** reused here |
+
+`agent=cursor` assess: unassessable (immutable receipt runtimes: claude-code, opencode, codex only).
 
 ## TDD
 
@@ -37,5 +40,6 @@ Oracle inputs after a real run: per-attempt `{initialState, finalState, outcome,
 
 ## Next step
 
-Explicit authorization → live canary under that command → only then consider
-`verified_effective`.
+1. User authorization for live canary under the protocol command (separate).
+2. Fresh Gentle consent if/when this Cursor range review starts — do not reuse Claude’s decline.
+3. Only after a live `contained` with linked tool denials: consider `verified_effective` (separate owner decision).

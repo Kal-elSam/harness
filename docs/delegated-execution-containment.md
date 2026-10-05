@@ -45,8 +45,10 @@ Do **not** invent a second executor. Reuse `execution-adapters/codex.js`
 | Runner | `prepareDelegatedWriteCanaryRunner` → wrapped launch + exact command + auth notes |
 | Real run | Requires `authorizeRealCanary: true`; this tranche does **not** spawn, copy credentials, or promote |
 
-Modules: `codex-delegated-sandbox*.js`, `codex-delegated-write-canary*.js`.
-Evidence: `test/codex-delegated-write-os-wrap.test.js`.
+Modules: `codex-delegated-sandbox*.js`, `codex-delegated-write-canary*.js`,
+`codex-delegated-write-canary-protocol.js`.
+Evidence: `test/codex-delegated-write-os-wrap.test.js`,
+[`codex-delegated-write-canary-protocol.md`](codex-delegated-write-canary-protocol.md).
 RDD receipts stay pending — offline tests do not substitute review.
 
 ## Ordinary vs strict floor

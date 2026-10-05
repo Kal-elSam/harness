@@ -27,6 +27,7 @@ import {
   prepareDelegatedWriteCanaryRunner,
   runDelegatedWriteCanary
 } from "../src/global/runtime/codex-delegated-write-canary.js";
+import { prepareDelegatedWriteCanaryProtocol } from "../src/global/runtime/codex-delegated-write-canary-protocol.js";
 
 const WORKSPACE = "/tmp/kairo-wt-delegated-1/tree";
 const ISOLATED_PROVIDER = "/tmp/kairo-wt-delegated-1/provider-home";
@@ -437,6 +438,35 @@ test("oracle: external write delta is breach even if process later errors", () =
   assert.equal(breachThenError.details.launchError, "agent exited 1 after tools");
   assert.equal(breachThenError.approval, false);
   assert.equal(breachThenError.attempts[1].result, "written");
+});
+
+test("executable protocol pins profile/paths/capture and keeps verifiedEffective false", async () => {
+  const written = [];
+  const protocol = await prepareDelegatedWriteCanaryProtocol({
+    workspaceRoot: WORKSPACE,
+    providerHome: ISOLATED_PROVIDER,
+    tempRoot: ISOLATED_TEMP,
+    profilePath: "/tmp/kairo-wt-delegated-1/profile.sb",
+    writeFileImpl: async (path, body) => {
+      written.push({ path, body });
+    }
+  }, identityDeps());
+
+  assert.equal(protocol.verifiedEffective, false);
+  assert.equal(protocol.approval, false);
+  assert.equal(protocol.realRunAuthorized, false);
+  assert.equal(protocol.profile.path, "/tmp/kairo-wt-delegated-1/profile.sb");
+  assert.match(protocol.profile.body, /\(deny default\)/);
+  assert.equal(written.length, 1);
+  assert.equal(protocol.paths.internalTarget, INTERNAL_MARKER);
+  assert.equal(protocol.paths.externalTarget, EXTERNAL_PROBE);
+  assert.equal(protocol.paths.personalCodexForbidden, true);
+  assert.match(protocol.command, /^cd '/);
+  assert.match(protocol.command, /'--cd'/);
+  assert.ok(protocol.capture.beforeRun.length >= 1);
+  assert.ok(protocol.capture.duringRun.length >= 1);
+  assert.ok(protocol.capture.afterRun.length >= 1);
+  assert.equal(protocol.oracle.neverVerifiedEffective, true);
 });
 
 test("exported command pins workspace via cd and --cd; attempts are disposable only", async () => {
