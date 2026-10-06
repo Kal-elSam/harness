@@ -4,6 +4,10 @@ import {
   updateExecutionLink, verifyPlanForExecution, writeExecutionLink
 } from "../architect/architect-store.js";
 import { PLAN_STATES } from "../architect/architect-types.js";
+import { composeTaskResult } from "./task-result.js";
+import { associateResultWithGentleReview } from "../control-plane/review-association.js";
+import { PROVIDER } from "../control-plane/constants.js";
+import { normalizeRunResult } from "../kernel/run-result-normalizer.js";
 import { resolveHomeDir } from "../paths.js";
 import { listRunRecords, readRunEvents, readRunState } from "../runtime/run-store.js";
 import { recoverRuns, startRun, stopRun } from "../runtime/run-manager.js";
@@ -378,6 +382,9 @@ export function createConversationService(deps = {}) {
   const inspectEngram = deps.inspectEngramIntegration ?? inspectEngramIntegration;
   const listRuns = deps.listRunRecords ?? listRunRecords;
   const readRunEventsImpl = deps.readRunEvents ?? readRunEvents;
+  // No production Gentle reader is wired yet: the result stays honest about it.
+  const readGentleContext = deps.readGentleContext
+    ?? (async () => ({ provider: PROVIDER.UNAVAILABLE, error: "gentle_reader_not_wired" }));
   const readCodexUsageImpl = deps.readCodexUsage ?? readCodexUsage;
   const readClaudeUsageImpl = deps.readClaudeUsage ?? readClaudeUsage;
   const readOpenCodeUsageImpl = deps.readOpenCodeUsage
@@ -1486,6 +1493,22 @@ export function createConversationService(deps = {}) {
         taskMarkdown: record.taskMarkdown,
         planMarkdown: record.planMarkdown
       };
+    },
+    async readTaskResult({ cwd, taskId, sessionId = null }) {
+      const projectRoot = await root(cwd);
+      const record = await readPlan(projectRoot, taskId);
+      if (!record) throw new Error(`Plan "${taskId}" not found.`);
+      assertTaskOwnedBySession(record.status, sessionId);
+      return composeTaskResult({
+        taskId,
+        projectRoot,
+        link: await readExecution(projectRoot, taskId),
+        readRun: (runId) => readRun(homeDir, runId),
+        readEvents: (runId) => readRunEventsImpl(homeDir, runId),
+        normalize: normalizeRunResult,
+        associate: associateResultWithGentleReview,
+        readGentleContext
+      });
     },
     async decidePlan({ cwd, taskId, decision, sessionId = null }) {
       if (![PLAN_STATES.APPROVED, PLAN_STATES.REJECTED].includes(decision)) {
