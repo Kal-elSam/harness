@@ -26,7 +26,8 @@ test("registry schemas + handlers + productive loaders + sanitize", async () => 
   assert.ok(KAIRO_MCP_TOOLS.includes("kairo_fleet"));
   assert.ok(KAIRO_MCP_READ_TOOLS.includes("kairo_fleet"));
   assert.deepEqual([...KAIRO_MCP_WRITE_TOOLS], [
-    "kairo_publish_work_snapshot", "kairo_execute_plan", "kairo_cancel_execution"
+    "kairo_publish_work_snapshot", "kairo_execute_plan", "kairo_cancel_execution",
+    "kairo_setup_run_analysis", "kairo_setup_approve_team", "kairo_setup_set_assignment"
   ]);
   assert.equal(mcpSchemas.runs.parse({}).limit, 20);
   assert.equal(mcpSchemas.alerts.parse({}).limit, 50);
