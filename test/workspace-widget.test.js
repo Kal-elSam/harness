@@ -754,3 +754,91 @@ test("A1 createShellWelcomeWidget forwards getColumns so the hint reflects the l
   columns = 100;
   assert.ok(/left|sidebar/i.test(component.render(100).join("\n")), "wide render should mention the sidebar hint");
 });
+
+// --- T3: the draft / active / working / blocked vocabulary and the compact
+// TASKS / SESSIONS section, fed by the shared-operations snapshot.
+
+const agentOf = (id, label, status, extra = {}) => ({
+  id, label, role: label, provider: "codex", model: "M", state: "idle", stateReason: null, status, statusReason: null, ...extra
+});
+const taskOf = (id, status, extra = {}) => ({
+  id, projectRoot: "/work/agentic-harness", sessionId: null, text: `Do ${id}`, state: "approved",
+  status, statusReason: null, role: null, provider: null, runId: null, runState: null, nextTransition: "delegated", ...extra
+});
+
+test("the HERD panel renders the new vocabulary: draft and active get their own glyphs, status wins over the legacy state", () => {
+  const lines = renderKairoWorkspaceWidget(fixtureSnapshot({
+    agents: [
+      agentOf("a", "Alma", "active"),
+      agentOf("d", "Dani", "draft"),
+      agentOf("w", "Wally", "working"),
+      agentOf("b", "Bea", "blocked", { state: "blocked", stateReason: "Run interrupted" })
+    ]
+  }), 60, IDENTITY_THEME);
+  for (const [label, glyph] of [["Alma", "●"], ["Dani", "◇"], ["Wally", "◉"], ["Bea", "✖"]]) {
+    assert.ok(herdAgentLine(lines, label)?.includes(glyph), `${label} should carry ${glyph}`);
+  }
+  const order = ["Bea", "Wally", "Alma", "Dani"].map((label) => lines.findIndex((line) => line.includes(label)));
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), "blocked, working, active, draft");
+});
+
+test("the HERD panel shows a compact TASKS and SESSIONS section with honest per-task status", () => {
+  const lines = renderKairoWorkspaceWidget(fixtureSnapshot({
+    sessions: [
+      { id: "11111111-2222", title: "Ship widget", mode: "agent", bound: true, projectRoot: "/work/agentic-harness" },
+      { id: "99999999-0000", title: null, mode: "ask", bound: false, projectRoot: "/work/agentic-harness" }
+    ],
+    tasks: [
+      taskOf("task-ok", "done"),
+      taskOf("task-run", "working", { role: "Builder", runId: "run_1", runState: "running" }),
+      taskOf("task-bad", "blocked", { statusReason: "Run evidence is interrupted." }),
+      taskOf("task-new", "draft")
+    ]
+  }), 100, IDENTITY_THEME);
+  const text = lines.join("\n");
+  assert.match(text, /SESSIONS 2/);
+  assert.match(text, /TASKS 4/);
+  assert.match(text, /1 working/);
+  assert.match(text, /1 blocked/);
+  const order = ["task-bad", "task-run", "task-new", "task-ok"].map((id) => lines.findIndex((line) => line.includes(id)));
+  assert.ok(order.every((i) => i >= 0), `all tasks listed: ${order}`);
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), "blocked first, then working, draft, done");
+  assert.ok(lines.find((line) => line.includes("task-run")).includes("◉"));
+  assert.ok(lines.find((line) => line.includes("task-bad")).includes("✖"));
+});
+
+test("the TASKS section caps its rows and says how many are hidden", () => {
+  const tasks = Array.from({ length: 9 }, (_, i) => taskOf(`task-${i}`, "draft"));
+  const text = renderKairoWorkspaceWidget(fixtureSnapshot({ tasks, sessions: [] }), 100, IDENTITY_THEME).join("\n");
+  assert.match(text, /TASKS 9/);
+  assert.match(text, /\+\d+ more/);
+});
+
+for (const width of [24, 40, 60, 100]) {
+  test(`the TASKS/SESSIONS section never exceeds width ${width}`, () => {
+    const lines = renderKairoWorkspaceWidget(fixtureSnapshot({
+      sessions: [{ id: "11111111-2222", title: "A very long session title indeed", mode: "agent", bound: true, projectRoot: "/x" }],
+      tasks: [taskOf("task-with-a-rather-long-identifier-1234567890", "blocked", { statusReason: "Run evidence is interrupted." })]
+    }), width, IDENTITY_THEME);
+    for (const line of lines) assert.ok(visibleWidth(line) <= width, `line exceeds ${width}: "${line}"`);
+    assert.ok(lines.join("\n").includes("TASKS 1"));
+  });
+}
+
+test("without tasks or sessions the HERD panel is unchanged (no empty section)", () => {
+  const text = renderKairoWorkspaceWidget(fixtureSnapshot(), 100, IDENTITY_THEME).join("\n");
+  assert.ok(!text.includes("TASKS"));
+  assert.ok(!text.includes("SESSIONS"));
+});
+
+test("an unreadable work state is shown as unknown, never as zero tasks", () => {
+  const text = renderKairoWorkspaceWidget(fixtureSnapshot({ workState: "unknown", tasks: [], sessions: [] }), 100, IDENTITY_THEME).join("\n");
+  assert.match(text, /TASKS \?/);
+});
+
+test("the compact shell summary and sidebar use the new status too", () => {
+  const snapshot = fixtureSnapshot({ agents: [agentOf("a", "Alma", "active"), agentOf("d", "Dani", "draft")] });
+  const sidebar = renderShellSidebarLines(snapshot, IDENTITY_THEME).join("\n");
+  assert.ok(sidebar.includes("● Alma"));
+  assert.ok(sidebar.includes("◇ Dani"));
+});

@@ -29,12 +29,29 @@ const HERD_PROJECT_GLYPH = "◈";
 // visibleWidth arithmetic holds on real TTYs. Only BLOCKED also prints
 // as a word (the P01.1 "no available noise, only exceptions" contract);
 // every other state reads from its glyph alone.
-const HERD_STATE_GLYPH = { blocked: "✖", working: "◉", idle: "○", done: "✔", unknown: "?" };
-const HERD_STATE_TONE = { blocked: "error", working: "success", idle: "text", done: "muted", unknown: "muted" };
+// T3: `status` (draft / active / working / blocked, see workspace-status.js)
+// supersedes the legacy `state` when a snapshot carries it; `idle` stays for
+// snapshots that predate it.
+const HERD_STATE_GLYPH = { blocked: "✖", working: "◉", active: "●", idle: "○", draft: "◇", done: "✔", unknown: "?" };
+const HERD_STATE_TONE = { blocked: "error", working: "success", active: "text", idle: "text", draft: "muted", done: "muted", unknown: "muted" };
+// Task rows: honest terminal states join the same glyph family.
+const TASK_STATUS_GLYPH = { ...HERD_STATE_GLYPH, failed: "✖", cancelled: "○", rejected: "○" };
+const TASK_STATUS_TONE = { ...HERD_STATE_TONE, failed: "error", cancelled: "muted", rejected: "muted" };
+const TASK_STATUS_RANK = { blocked: 0, failed: 0, working: 1, draft: 2, unknown: 3, done: 4, cancelled: 4, rejected: 4 };
+const TASK_ROWS_SHOWN = 4;
 // Attention order: blocked first, then working, idle, done, unknown last
 // (unknown is no evidence, never an alarm — its glyph still shows it
 // honestly). Sort is stable, so ties keep snapshot (strategy) order.
-const HERD_STATE_RANK = { blocked: 0, working: 1, idle: 2, done: 3, unknown: 4 };
+const HERD_STATE_RANK = { blocked: 0, working: 1, active: 2, idle: 2, draft: 3, done: 4, unknown: 5 };
+
+/** The state one agent is shown with: the shared `status` when present. */
+function herdState(agent) {
+  return agent?.status ?? agent?.state;
+}
+/** The reason behind a blocked row: the shared reason first, then the legacy one. */
+function herdReason(agent) {
+  return agent?.statusReason ?? agent?.stateReason ?? null;
+}
 const FOOTER_COMMAND_SEPARATOR = " · ";
 // Mirrors card.js's own FRAME_COLUMNS (left rail + space + space + right
 // rail) — every bordered panel needs exactly this many columns beyond its
@@ -62,6 +79,7 @@ function herdMeasureLines(snapshot) {
   } else {
     for (const agent of sortedHerdAgents(agents)) lines.push(herdNaturalLine(agent));
   }
+  for (const { text } of herdWorkLines(snapshot)) lines.push(text);
   return lines;
 }
 
@@ -205,8 +223,8 @@ function herdSpacesLines(snapshot) {
 /** One agent's natural (unthemed) herd line — glyph + label + short
  * provider, BLOCKED as the only state word (see HERD_STATE_GLYPH). */
 function herdNaturalLine(agent) {
-  const glyph = HERD_STATE_GLYPH[agent.state] ?? HERD_STATE_GLYPH.unknown;
-  const tail = agent.state === "blocked"
+  const glyph = HERD_STATE_GLYPH[herdState(agent)] ?? HERD_STATE_GLYPH.unknown;
+  const tail = herdState(agent) === "blocked"
     ? `${agent.provider ?? "unknown"}${HERD_SEPARATOR}BLOCKED`
     : (agent.provider ?? "unknown");
   return `${glyph} ${agent.label ?? "Unknown role"}${HERD_SEPARATOR}${tail}`;
@@ -216,7 +234,7 @@ function herdNaturalLine(agent) {
  * keep snapshot (strategy) order. */
 function sortedHerdAgents(agents) {
   return [...agents].sort(
-    (a, b) => (HERD_STATE_RANK[a.state] ?? HERD_STATE_RANK.unknown) - (HERD_STATE_RANK[b.state] ?? HERD_STATE_RANK.unknown)
+    (a, b) => (HERD_STATE_RANK[herdState(a)] ?? HERD_STATE_RANK.unknown) - (HERD_STATE_RANK[herdState(b)] ?? HERD_STATE_RANK.unknown)
   );
 }
 
@@ -225,10 +243,10 @@ function sortedHerdAgents(agents) {
  * would be actively misleading); only the provider tail shrinks, via
  * `truncateToWidth`. `cardLine` remains the final backstop. */
 function herdAgentLine(agent, theme, innerWidth) {
-  const tone = HERD_STATE_TONE[agent.state] ?? "muted";
-  const glyph = HERD_STATE_GLYPH[agent.state] ?? HERD_STATE_GLYPH.unknown;
+  const tone = HERD_STATE_TONE[herdState(agent)] ?? "muted";
+  const glyph = HERD_STATE_GLYPH[herdState(agent)] ?? HERD_STATE_GLYPH.unknown;
   const head = `${glyph} ${agent.label ?? "Unknown role"}`;
-  const tail = agent.state === "blocked"
+  const tail = herdState(agent) === "blocked"
     ? `${agent.provider ?? "unknown"}${HERD_SEPARATOR}BLOCKED`
     : (agent.provider ?? "unknown");
   const maxTail = innerWidth - visibleWidth(head) - visibleWidth(HERD_SEPARATOR);
@@ -237,13 +255,65 @@ function herdAgentLine(agent, theme, innerWidth) {
   return theme.fg(tone, `${head}${HERD_SEPARATOR}${clippedTail}`);
 }
 
+
+function shortSessionId(session) {
+  return String(session?.id ?? "").slice(0, 8);
+}
+
+/**
+ * The compact TASKS / SESSIONS section of the HERD panel — `[{text, tone}]`,
+ * unthemed and un-truncated (callers theme and fit). Absent when the
+ * snapshot carries neither (older snapshots render exactly as before); an
+ * unreadable work read is `TASKS ?`, never "no tasks". Task rows are
+ * attention-ordered (blocked, working, draft, ..., done), capped, and show
+ * the shared status word — never an inferred done.
+ */
+function herdWorkLines(snapshot) {
+  const tasks = snapshot.tasks ?? [];
+  const sessions = snapshot.sessions ?? [];
+  const lines = [];
+  if (sessions.length) {
+    const bound = sessions.find((session) => session.bound);
+    lines.push({ text: `SESSIONS ${sessions.length}${bound ? `${HERD_SEPARATOR}bound ${shortSessionId(bound)}` : ""}`, tone: "muted" });
+  }
+  if (snapshot.workState === "unknown" && tasks.length === 0) {
+    lines.push({ text: "TASKS ?", tone: "muted" });
+    return lines;
+  }
+  if (!tasks.length) return lines;
+  const count = (status) => tasks.filter((task) => task.status === status).length;
+  const parts = [`TASKS ${tasks.length}`];
+  if (count("working")) parts.push(`${count("working")} working`);
+  if (count("blocked")) parts.push(`${count("blocked")} blocked`);
+  lines.push({ text: parts.join(HERD_SEPARATOR), tone: count("blocked") ? "warning" : "muted" });
+  const ordered = [...tasks].sort(
+    (a, b) => (TASK_STATUS_RANK[a.status] ?? TASK_STATUS_RANK.unknown) - (TASK_STATUS_RANK[b.status] ?? TASK_STATUS_RANK.unknown)
+  );
+  for (const task of ordered.slice(0, TASK_ROWS_SHOWN)) {
+    const glyph = TASK_STATUS_GLYPH[task.status] ?? TASK_STATUS_GLYPH.unknown;
+    lines.push({
+      text: `${glyph} ${task.id}${HERD_SEPARATOR}${task.status ?? "unknown"}`,
+      tone: TASK_STATUS_TONE[task.status] ?? "muted"
+    });
+  }
+  if (ordered.length > TASK_ROWS_SHOWN) lines.push({ text: `+${ordered.length - TASK_ROWS_SHOWN} more`, tone: "muted" });
+  return lines;
+}
+
 function herdPanelBody(snapshot, theme, innerWidth) {
   const agents = snapshot.agents ?? [];
   const spaces = herdSpacesLines(snapshot).map((line) => theme.fg("text", line));
   if (!agents.length) {
-    return [...spaces, theme.fg("muted", "Run /project analyze to build this project's team.")];
+    return [...spaces, theme.fg("muted", "Run /project analyze to build this project's team."), ...herdWorkBody(snapshot, theme, innerWidth)];
   }
-  return [...spaces, ...sortedHerdAgents(agents).map((agent) => herdAgentLine(agent, theme, innerWidth))];
+  return [
+    ...spaces, ...sortedHerdAgents(agents).map((agent) => herdAgentLine(agent, theme, innerWidth)),
+    ...herdWorkBody(snapshot, theme, innerWidth)
+  ];
+}
+
+function herdWorkBody(snapshot, theme, innerWidth) {
+  return herdWorkLines(snapshot).map(({ text, tone }) => theme.fg(tone, truncateToWidth(text, innerWidth, "…")));
 }
 
 /** The HERD panel title — the blocked count when anything needs
@@ -256,7 +326,7 @@ function herdPanelTitle(snapshot) {
     const age = formatCacheAge(team.cacheAgeMs);
     return age ? `HERD · cached ${age}` : "HERD · cached";
   }
-  const blocked = (snapshot.agents ?? []).filter((agent) => agent.state === "blocked").length;
+  const blocked = (snapshot.agents ?? []).filter((agent) => herdState(agent) === "blocked").length;
   if (blocked === 1) return "HERD · 1 blocked";
   if (blocked > 1) return `HERD · ${blocked} blocked`;
   return `HERD · ${team?.state ?? "not_analyzed"}`;
@@ -265,8 +335,8 @@ function herdPanelTitle(snapshot) {
 function herdPanelTone(snapshot) {
   const agents = snapshot.agents ?? [];
   if (snapshot.team?.cached) return "muted";
-  if (agents.some((agent) => agent.state === "blocked")) return "warning";
-  if (agents.length && agents.every((agent) => agent.state === "unknown")) return "muted";
+  if (agents.some((agent) => herdState(agent) === "blocked")) return "warning";
+  if (agents.length && agents.every((agent) => herdState(agent) === "unknown")) return "muted";
   return "accent";
 }
 
@@ -451,14 +521,14 @@ function shortBlockedCause(stateReason) {
  * real Theme also has `bg`, so a marker is the one highlight every theme
  * can render). Both rows always stay within SHELL_SIDEBAR_COLUMNS. */
 function shellAgentLines(agent, theme, { selected = false } = {}) {
-  const tone = HERD_STATE_TONE[agent.state] ?? "muted";
-  const glyph = HERD_STATE_GLYPH[agent.state] ?? HERD_STATE_GLYPH.unknown;
+  const tone = HERD_STATE_TONE[herdState(agent)] ?? "muted";
+  const glyph = HERD_STATE_GLYPH[herdState(agent)] ?? HERD_STATE_GLYPH.unknown;
   const marker = selected ? theme.fg("accent", "▎") : " ";
   const nameBudget = SHELL_SIDEBAR_COLUMNS - 1;
   const name = truncateToWidth(`${glyph} ${agent.label ?? "Unknown role"}`, nameBudget, "…");
   const nameLine = `${marker}${theme.fg(tone, name)}`;
-  const statusText = agent.state === "blocked"
-    ? (agent.stateReason ? shortBlockedCause(agent.stateReason) : "Unavailable")
+  const statusText = herdState(agent) === "blocked"
+    ? (herdReason(agent) ? shortBlockedCause(herdReason(agent)) : "Unavailable")
     : (agent.provider ?? "unknown");
   const statusBudget = SHELL_SIDEBAR_COLUMNS - 2;
   const statusLine = `  ${theme.fg("muted", truncateToWidth(statusText, statusBudget, "…"))}`;
@@ -516,7 +586,7 @@ function wrapDetailLine(line, width) {
  * `/kairo-team` shows for the row, so mouse and keyboard reach the same
  * detail; clicking never opens a per-agent conversation or terminal. */
 function agentDetailLines(agent, theme) {
-  const cause = agent.stateReason ?? null;
+  const cause = herdReason(agent);
   const lines = [`  ${agent.model ?? "no eligible option"}`];
   if (cause) {
     lines.push(...wrapDetailLine(`  ${cause}`, SHELL_SIDEBAR_COLUMNS));
@@ -618,7 +688,7 @@ export function renderShellBottomStripLines(snapshot, theme, { extraLines = [], 
  * once under ROUTES and once under AGENTS/attention). */
 function compactAttentionLine(snapshot, theme, routeUnavailable) {
   const agents = snapshot.agents ?? [];
-  const blocked = agents.filter((agent) => agent.state === "blocked");
+  const blocked = agents.filter((agent) => herdState(agent) === "blocked");
   if (blocked.length === 1) {
     const [only] = blocked;
     const cause = only.stateReason ? shortBlockedCause(only.stateReason) : null;
@@ -629,8 +699,8 @@ function compactAttentionLine(snapshot, theme, routeUnavailable) {
   }
   const [first] = sortedHerdAgents(agents);
   if (!first) return routeUnavailable ? null : theme.fg("muted", "Run /project analyze to build this project's team.");
-  const glyph = HERD_STATE_GLYPH[first.state] ?? HERD_STATE_GLYPH.unknown;
-  return theme.fg(HERD_STATE_TONE[first.state] ?? "muted", `${glyph} ${first.label ?? "Unknown role"} ${first.state}`);
+  const glyph = HERD_STATE_GLYPH[herdState(first)] ?? HERD_STATE_GLYPH.unknown;
+  return theme.fg(HERD_STATE_TONE[herdState(first)] ?? "muted", `${glyph} ${first.label ?? "Unknown role"} ${herdState(first)}`);
 }
 
 /** Every ready usage segment that fits `maxWidth`, joined the same way the
