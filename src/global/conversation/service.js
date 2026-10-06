@@ -7,7 +7,7 @@ import {
 import { PLAN_STATES } from "../architect/architect-types.js";
 import { composeTaskResult } from "./task-result.js";
 import { associateResultWithGentleReview } from "../control-plane/review-association.js";
-import { PROVIDER } from "../control-plane/constants.js";
+import { createGentleReader } from "./gentle-reader.js";
 import { normalizeRunResult } from "../kernel/run-result-normalizer.js";
 import { resolveHomeDir } from "../paths.js";
 import { listRunRecords, readRunEvents, readRunState } from "../runtime/run-store.js";
@@ -503,9 +503,9 @@ export function createConversationService(deps = {}) {
   const inspectEngram = deps.inspectEngramIntegration ?? inspectEngramIntegration;
   const listRuns = deps.listRunRecords ?? listRunRecords;
   const readRunEventsImpl = deps.readRunEvents ?? readRunEvents;
-  // No production Gentle reader is wired yet: the result stays honest about it.
-  const readGentleContext = deps.readGentleContext
-    ?? (async () => ({ provider: PROVIDER.UNAVAILABLE, error: "gentle_reader_not_wired" }));
+  // Production default: bounded read-only Gentle status reader with typed
+  // unavailable results. Tests inject `readGentleContext` or `gentle.*`.
+  const readGentleContext = deps.readGentleContext ?? createGentleReader(deps.gentle ?? {});
   const readCodexUsageImpl = deps.readCodexUsage ?? readCodexUsage;
   const readClaudeUsageImpl = deps.readClaudeUsage ?? readClaudeUsage;
   const readOpenCodeUsageImpl = deps.readOpenCodeUsage
