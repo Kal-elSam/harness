@@ -2206,8 +2206,14 @@ export function createConversationService(deps = {}) {
         throw error;
       }
     },
-    async cancelExecution({ cwd, taskId }) {
+    async cancelExecution({ cwd, taskId, sessionId = null }) {
       const projectRoot = await root(cwd);
+      if (sessionId) {
+        // Optional ownership guard: a run of another session is refused BEFORE anything is stopped.
+        const owned = await readPlan(projectRoot, taskId);
+        if (!owned) throw new Error(`Plan "${taskId}" not found.`);
+        assertTaskOwnedBySession(owned.status, sessionId);
+      }
       const link = await readExecution(projectRoot, taskId);
       if (!link) throw new Error(`Plan "${taskId}" has no Claude execution.`);
       await cancelRun(homeDir, link.runId);
