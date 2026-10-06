@@ -194,3 +194,14 @@ test("repeated calls are identical and never launch or execute anything", async 
   assert.equal(calls.some((c) => c.name === "startRun" || c.name === "executePlan"), false);
   assert.equal(calls.length, 6);
 });
+
+test("task result and team projections expose the derived next transition and typed corrupt state only as scalars", async () => {
+  const { pubTaskResultForTest } = await import("../src/global/mcp/conversation-read-tools.js").then((m) => ({ pubTaskResultForTest: m.pubTaskResult }));
+  assert.equal(typeof pubTaskResultForTest, "function");
+  const out = pubTaskResultForTest({
+    taskId: "t-1", status: "evidence_unreadable", errorCode: "result_corrupt",
+    transitions: { state: "ok", next: "result_observed", entries: [{ kind: "delegated", evidence: "/Users/x/p", runId: "run_1" }] }
+  });
+  assert.deepEqual(out.transitions, { state: "ok", next: "result_observed", recorded: ["delegated"] });
+  assert.equal(out.errorCode, "result_corrupt");
+});

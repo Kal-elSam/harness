@@ -82,7 +82,8 @@ export function taskPaths(projectRoot, taskId) {
     taskPath: join(taskDir, "task.md"),
     planPath: join(taskDir, "plan.md"),
     statusPath: join(taskDir, "status.json"),
-    executionPath: join(taskDir, "execution.json")
+    executionPath: join(taskDir, "execution.json"),
+    transitionsPath: join(taskDir, "transitions.jsonl")
   };
 }
 

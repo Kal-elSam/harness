@@ -8,6 +8,9 @@ import { PLAN_STATES } from "../architect/architect-types.js";
 import { composeTaskResult } from "./task-result.js";
 import { associateResultWithGentleReview } from "../control-plane/review-association.js";
 import { createGentleReader } from "./gentle-reader.js";
+import {
+  EXTERNAL_TRANSITION_KINDS, TRANSITION_KINDS, fileTransitionStore
+} from "./transition-store.js";
 import { normalizeRunResult } from "../kernel/run-result-normalizer.js";
 import { resolveHomeDir } from "../paths.js";
 import { listRunRecords, readRunEvents, readRunState } from "../runtime/run-store.js";
@@ -506,6 +509,7 @@ export function createConversationService(deps = {}) {
   // Production default: bounded read-only Gentle status reader with typed
   // unavailable results. Tests inject `readGentleContext` or `gentle.*`.
   const readGentleContext = deps.readGentleContext ?? createGentleReader(deps.gentle ?? {});
+  const transitions = deps.transitionStore ?? fileTransitionStore;
   const readCodexUsageImpl = deps.readCodexUsage ?? readCodexUsage;
   const readClaudeUsageImpl = deps.readClaudeUsage ?? readClaudeUsage;
   const readOpenCodeUsageImpl = deps.readOpenCodeUsage
@@ -664,6 +668,17 @@ export function createConversationService(deps = {}) {
       updatedAt: run?.updatedAt ?? link.updatedAt ?? null,
       message: run ? `Claude run is ${run.state}.` : (link.error ?? "Claude run record is unavailable.")
     };
+  }
+
+  // Best-effort idempotent upsert of an observed transition. Reads and
+  // launches must never fail or relaunch because the record is unwritable.
+  async function noteTransition(projectRoot, taskId, input) {
+    try {
+      await transitions.append(projectRoot, taskId, input);
+      return null;
+    } catch (error) {
+      return typeof error?.code === "string" ? error.code : "TRANSITION_WRITE_FAILED";
+    }
   }
 
   // The legacy keyword-classification routeExecution() helper that used to
@@ -1398,6 +1413,10 @@ export function createConversationService(deps = {}) {
         ...(strategy.projectTeam ?? []).map((entry) => [entry?.role ?? "Unknown role", entry?.model ?? null])
       ] : [];
       const roles = entries.map(([role, model]) => teamRole(role, model, providers, intelligence));
+      const nextByTask = new Map();
+      for (const { taskId } of snap.timeline) {
+        nextByTask.set(taskId, (await transitions.read(snap.projectRoot, taskId))?.next ?? null);
+      }
       return {
         schema: CONVERSATION_SCHEMA,
         projectRoot: snap.projectRoot,
@@ -1405,7 +1424,8 @@ export function createConversationService(deps = {}) {
         roles,
         providers,
         tasks: snap.timeline.map(({ taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error }) => ({
-          taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error
+          taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error,
+          nextTransition: nextByTask.get(taskId) ?? null
         }))
       };
     },
@@ -1991,16 +2011,51 @@ export function createConversationService(deps = {}) {
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
       assertTaskOwnedBySession(record.status, sessionId);
-      return composeTaskResult({
+      const link = await readExecution(projectRoot, taskId);
+      const result = await composeTaskResult({
         taskId,
         projectRoot,
-        link: await readExecution(projectRoot, taskId),
+        link,
         readRun: (runId) => readRun(homeDir, runId),
         readEvents: (runId) => readRunEventsImpl(homeDir, runId),
         normalize: normalizeRunResult,
         associate: associateResultWithGentleReview,
         readGentleContext
       });
+      // Observed evidence only: upsert (no-op when already recorded), then read.
+      if (link && result.status !== "not_started") {
+        await noteTransition(projectRoot, taskId, { runId: link.runId, kind: "delegated", evidence: `run:${link.runId}` });
+        if (result.status === "terminal") {
+          await noteTransition(projectRoot, taskId, { runId: link.runId, kind: "result_observed", evidence: `run:${link.runId}` });
+        }
+      }
+      const { state, error, entries, next } = await transitions.read(projectRoot, taskId);
+      return { ...result, transitions: { state, error: error ?? null, entries, next } };
+    },
+    /**
+     * Append-only assertion of a review-side transition (authorized review,
+     * comments, correction). Needs an explicit task id and kind from the
+     * fixed enum plus an opaque evidence pointer; it launches nothing and
+     * never touches review authority.
+     */
+    async recordTransition({ cwd, taskId, kind, evidence, sessionId = null }) {
+      if (!TRANSITION_KINDS.includes(kind)) {
+        throw Object.assign(new Error(`Unknown transition kind "${kind}".`), { code: "TRANSITION_KIND_INVALID" });
+      }
+      if (!EXTERNAL_TRANSITION_KINDS.includes(kind)) {
+        throw Object.assign(new Error(`"${kind}" is observed by Kairo and cannot be asserted.`), { code: "TRANSITION_KIND_NOT_EXTERNAL" });
+      }
+      const projectRoot = await root(cwd);
+      const record = await readPlan(projectRoot, taskId);
+      if (!record) throw new Error(`Plan "${taskId}" not found.`);
+      assertTaskOwnedBySession(record.status, sessionId);
+      const link = await readExecution(projectRoot, taskId);
+      if (!link) {
+        throw Object.assign(new Error(`Plan "${taskId}" has no execution to attach a transition to.`), { code: "TRANSITION_NO_EXECUTION" });
+      }
+      const { recorded } = await transitions.append(projectRoot, taskId, { runId: link.runId, kind, evidence });
+      const read = await transitions.read(projectRoot, taskId);
+      return { taskId, runId: link.runId, kind, recorded, next: read.next };
     },
     async decidePlan({ cwd, taskId, decision, sessionId = null }) {
       if (![PLAN_STATES.APPROVED, PLAN_STATES.REJECTED].includes(decision)) {
@@ -2130,6 +2185,9 @@ export function createConversationService(deps = {}) {
         await updateExecution(projectRoot, taskId, {
           runId, agentId: resolvedAgentId, state: started.metadata.state, createdAt, updatedAt: new Date().toISOString()
         });
+        const transitionWarning = await noteTransition(projectRoot, taskId, {
+          runId, kind: "delegated", evidence: `run:${runId}`
+        });
         return {
           ...publicPlan(record, {
             runId, provider: resolvedAgentId, state: started.metadata.state, active: true,
@@ -2137,7 +2195,8 @@ export function createConversationService(deps = {}) {
             message: `${resolvedAgentId} run is ${started.metadata.state}.`
           }),
           projectRoot,
-          reused: false
+          reused: false,
+          ...(transitionWarning ? { transitionWarning } : {})
         };
       } catch (error) {
         await updateExecution(projectRoot, taskId, {
