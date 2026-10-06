@@ -74,16 +74,21 @@ const pubTeam = (t) => ({
   tasks: (t?.tasks ?? []).map((k) => ({
     taskId: id(k?.taskId), taskText: safeText(k?.taskText), state: scalar(k?.state ?? null),
     provider: scalar(k?.provider ?? null), model: safeText(k?.model), sessionId: id(k?.sessionId),
-    execution: pubExecution(k?.execution), artifactCount: Array.isArray(k?.artifacts) ? k.artifacts.length : 0,
+    execution: pubExecution(k?.execution), nextTransition: scalar(k?.nextTransition ?? null), artifactCount: Array.isArray(k?.artifacts) ? k.artifacts.length : 0,
     error: safeText(k?.error)
   }))
 });
-const pubTaskResult = (r) => ({
+export const pubTaskResult = (r) => ({
   taskId: id(r?.taskId), runId: id(r?.runId), provider: scalar(r?.provider ?? null),
   status: scalar(r?.status ?? null), runState: scalar(r?.runState ?? null),
   result: r?.result == null ? null : {
     ok: r.result.ok === true, status: scalar(r.result.status ?? null),
     summary: safeText(r.result.summary), error: safeText(r.result.error)
+  },
+  errorCode: scalar(r?.errorCode ?? null),
+  transitions: r?.transitions == null ? null : {
+    state: scalar(r.transitions.state ?? null), next: scalar(r.transitions.next ?? null),
+    recorded: (r.transitions.entries ?? []).map((e) => scalar(e?.kind ?? null))
   },
   gentle: r?.gentle == null ? null : {
     state: scalar(r.gentle.state ?? null), scope: scalar(r.gentle.scope ?? null),
