@@ -133,7 +133,7 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} fleet set --platform opencode|claude|codex --agent <id> --model <id> [--yes] [--json]
   ${cli} mcp --workspace-bound --cwd <abs>
   ${cli} mcp
-  ${cli} mcp install [--yes] [--json] [--client cursor]
+  ${cli} mcp install [--client cursor|claude-code|codex] [--bind <abs project>] [--project-scope] [--yes] [--json]
   ${cli} install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
   ${cli} init [--mode minimal|standard|enterprise] (workspace alias)
 
