@@ -16,6 +16,7 @@ import {
   argvFromBootstrap, bootstrapCommandFromProbe, mapOfficialReviewStatus
 } from "../control-plane/review-status.js";
 import { probeGentle, resolveGentleBinaryPath } from "../observability/gentle-probe.js";
+import { createGuardedRunner, createRddModeReader, mapRunError } from "./rdd-mode-reader.js";
 
 export const GENTLE_READ_TIMEOUT_MS = 8_000;
 
@@ -23,7 +24,7 @@ const TIMEOUT = /timeout|timed out|etimedout/i;
 const MUTATING_VERB = /^(start|grant|decline|acknowledge|consent|disable|enable|abandon|invalidate|recover|capture|capture-unachievable|finalize)/;
 
 const unavailable = (error, provider = PROVIDER.UNAVAILABLE) => ({
-  provider, mappedStatus: null, rddMode: "unknown", error
+  provider, mappedStatus: null, rddMode: "unknown", rddSource: null, error
 });
 
 function probeError(probed) {
@@ -33,19 +34,27 @@ function probeError(probed) {
   return "gentle_unavailable";
 }
 
-function runError(code) {
-  if (typeof code !== "string" || !code) return "gentle_reader_failed";
-  if (/^gentle_(nonzero_status|parse_failed|incompatible)$/.test(code)) return code;
-  if (TIMEOUT.test(code)) return "gentle_timeout";
-  return "gentle_spawn_failed";
-}
+const RDD_MODES = new Set(["on", "off"]);
 
-async function safeRddMode(readRddMode, projectRoot) {
-  if (typeof readRddMode !== "function") return "unknown";
+// `unknown` never means permission: only an exact "on"/"off" survives.
+const modeOf = (value) => (typeof value === "string" && RDD_MODES.has(value) ? value : "unknown");
+
+// Accepts the structured production result or a legacy plain string from fakes.
+async function readMode(readRddMode, input) {
+  const none = { rddMode: "unknown", rddSource: null, rddError: null };
+  if (typeof readRddMode !== "function") return none;
   try {
-    return (await readRddMode({ projectRoot })) ?? "unknown";
+    const out = await readRddMode(input);
+    if (out != null && typeof out === "object") {
+      return {
+        rddMode: modeOf(out.mode),
+        rddSource: typeof out.source === "string" ? out.source : null,
+        rddError: typeof out.error === "string" ? out.error : null
+      };
+    }
+    return { ...none, rddMode: modeOf(out) };
   } catch {
-    return "unknown";
+    return none;
   }
 }
 
@@ -60,6 +69,15 @@ export function createGentleReader(deps = {}) {
   const runCommand = deps.runCommand ?? runGentleCommand;
   const env = deps.env ?? process.env;
   const timeoutMs = deps.timeoutMs ?? GENTLE_READ_TIMEOUT_MS;
+  // Every command goes through the allow-list guard (read-only shapes only).
+  const guarded = createGuardedRunner(runCommand);
+  // The production mode reader is the default only when nothing is faked; tests
+  // that inject probe/runCommand/spawn stay offline unless they opt in.
+  const injected = deps.probe || deps.runCommand || deps.spawn;
+  const readRddMode = deps.readRddMode
+    ?? (!injected || deps.useProductionRddReader
+      ? createRddModeReader({ runCommand, env, timeoutMs, spawn: deps.spawn })
+      : undefined);
 
   return async function readGentleContext({ projectRoot } = {}) {
     try {
@@ -74,18 +92,18 @@ export function createGentleReader(deps = {}) {
       if (!parsed.ok || MUTATING_VERB.test(parsed.argv[1] ?? "") || parsed.argv[0] !== "review" || parsed.argv[1] !== "status") {
         return unavailable("gentle_incompatible", PROVIDER.INCOMPATIBLE);
       }
-      const run = runCommand([...parsed.argv], {
+      const run = guarded([...parsed.argv], {
         cwd: projectRoot, env, timeoutMs, spawn: deps.spawn, command: parsed.binary, strict: true
       });
       if (!run?.ok) {
-        return { provider, mappedStatus: null, rddMode: "unknown", error: runError(run?.error) };
+        return { provider, mappedStatus: null, rddMode: "unknown", rddSource: null, error: mapRunError(run?.error) };
       }
       const mapped = mapOfficialReviewStatus(run.payload);
       if (!mapped.ok) {
         return { provider: PROVIDER.INCOMPATIBLE, mappedStatus: null, rddMode: "unknown", error: mapped.error };
       }
       return {
-        provider, mappedStatus: mapped, rddMode: await safeRddMode(deps.readRddMode, projectRoot), error: null
+        provider, mappedStatus: mapped, ...(await readMode(readRddMode, { projectRoot, binaryPath })), error: null
       };
     } catch {
       return unavailable("gentle_reader_failed");
