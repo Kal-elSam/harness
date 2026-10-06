@@ -46,7 +46,7 @@ Envelope: `{ taskId, runId, provider, status, runState, result, gentle }`
 
 ## Tasks
 
-- [ ] T1 Pure composer `task-result.js` + `test/conversation-task-result.test.js` (statuses, interrupted, Gentle states, receipt-as-context, non-terminal never calls association). Route: delegated writer (2+ non-trivial files).
+- [x] T1 Pure composer `task-result.js` + `test/conversation-task-result.test.js` (statuses, interrupted, Gentle states, receipt-as-context, non-terminal never calls association). Route: delegated writer (2+ non-trivial files).
 - [ ] T2 `service.readTaskResult` + injected deps + service tests (repeat queries 0 launches, two independent runs, unknown task creates nothing). Route: delegated writer.
 - [ ] T3 CLI `conversation result` (`src/cli.js` parse, `conversation/cli.js` handler, `cli-help.js`) + CLI test. Route: delegated writer.
 
@@ -64,6 +64,8 @@ Envelope: `{ taskId, runId, provider, status, runState, result, gentle }`
 
 - Tracker created before code. Branch: `feat/herd-shell-layout` (not the default branch).
 - Route declaration: T1-T3 delegated to one sequential writer; trigger = writer rule (2+ non-trivial files per task set).
+
+- T1: RED `node --test test/conversation-task-result.test.js` -> ERR_MODULE_NOT_FOUND (task-result.js); GREEN same command -> 26 pass, 0 fail (first GREEN attempt failed on Set.includes, fixed to has). Decision: any unparseable event line -> evidence_unreadable. Commit sha recorded in the T2 commit.
 
 ## Next step
 
