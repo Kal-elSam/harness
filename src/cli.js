@@ -841,13 +841,13 @@ function parseConversationAction(args, options) {
     options.conversationAction = "snapshot";
     return;
   }
-  if (!new Set(["snapshot", "architect", "show", "approve", "reject", "execute", "cancel"]).has(action)) {
+  if (!new Set(["snapshot", "architect", "show", "approve", "reject", "execute", "cancel", "result"]).has(action)) {
     throw new Error(`Unknown conversation action "${action}".`);
   }
   args.shift();
   options.conversationAction = action;
   options.conversationActionExplicit = true;
-  if (["show", "approve", "reject", "execute", "cancel"].includes(action)) {
+  if (["show", "approve", "reject", "execute", "cancel", "result"].includes(action)) {
     const taskId = args.shift();
     if (!taskId || taskId.startsWith("-")) throw new Error(`Missing task id for conversation ${action}.`);
     options.taskId = taskId;
