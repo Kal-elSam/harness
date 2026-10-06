@@ -58,6 +58,18 @@ function parseCodexEventLine(line) {
   const parsed = parseNdjsonLine(line);
   if (!parsed || typeof parsed !== "object") return null;
 
+  // `codex exec --json` reports each assistant message as a completed item. Mapping it to
+  // an assistant event feeds the transcript, so the last message becomes the run summary.
+  // Other items (command_execution, ...) keep falling through to the generic system event.
+  if (
+    parsed.type === "item.completed"
+    && parsed.item?.type === "agent_message"
+    && typeof parsed.item.text === "string"
+    && parsed.item.text.trim() !== ""
+  ) {
+    return { type: "assistant", text: parsed.item.text };
+  }
+
   if (parsed.type === "tool" || parsed.type === "tool_call") {
     return {
       type: "tool_call",
