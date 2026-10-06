@@ -42,7 +42,7 @@ Mapping delegated (4+ files fired the trigger). Each implementation task: delega
 
 ## Tasks
 
-- [ ] T1 Service queries: public `listSessions` and `readTeam` (roles, providers/models, tasks, states, blockers) with ambiguous-ref rejection. Route: delegated.
+- [x] T1 Service queries: public `listSessions` and `readTeam` (roles, providers/models, tasks, states, blockers) with ambiguous-ref rejection. Route: delegated.
 - [ ] T2 MCP read tools `kairo_sessions`, `kairo_team`, `kairo_task_result` over the service, explicit project binding. Route: delegated.
 - [ ] T3 MCP delegation: preview plus confirmed execute reusing the service confirmation target; cancel; policy tests updated. Route: delegated.
 - [ ] T4 Production Gentle reader and persisted transitions, honoring Gentle permissions. Route: delegated.
@@ -59,7 +59,8 @@ Mapping delegated (4+ files fired the trigger). Each implementation task: delega
 ## Progress
 
 - Mapping complete (service, MCP, CLI, providers, sessions, Pi bindings).
+- T1 done (commit 4b253e371): `listSessions`, `resolveSession` (typed SESSION_REF_AMBIGUOUS / SESSION_REF_UNKNOWN), `readTeam` added to the service. RED observed (9 tests failing with `service.X is not a function`), GREEN 9/9. Full `npm test`: 2531 tests, 2530 pass, 0 fail, 1 skipped (pre-existing skip).
 
 ## Next step
 
-T1 RED tests for `listSessions` and `readTeam`.
+T2 RED tests for MCP read tools `kairo_sessions`, `kairo_team`, `kairo_task_result` with explicit project binding.
