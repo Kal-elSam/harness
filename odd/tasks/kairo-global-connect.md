@@ -43,7 +43,7 @@ Mapping delegated (4+ files fired the trigger). Each implementation task: delega
 ## Tasks
 
 - [x] T1 Service queries: public `listSessions` and `readTeam` (roles, providers/models, tasks, states, blockers) with ambiguous-ref rejection. Route: delegated.
-- [ ] T2 MCP read tools `kairo_sessions`, `kairo_team`, `kairo_task_result` over the service, explicit project binding. Route: delegated.
+- [x] T2 MCP read tools `kairo_sessions`, `kairo_team`, `kairo_task_result` over the service, explicit project binding. Route: delegated.
 - [ ] T3 MCP delegation: preview plus confirmed execute reusing the service confirmation target; cancel; policy tests updated. Route: delegated.
 - [ ] T4 Production Gentle reader and persisted transitions, honoring Gentle permissions. Route: delegated.
 - [ ] T5 Pi consumes the same service operations. Route: delegated.
@@ -60,7 +60,8 @@ Mapping delegated (4+ files fired the trigger). Each implementation task: delega
 
 - Mapping complete (service, MCP, CLI, providers, sessions, Pi bindings).
 - T1 done (commit 4b253e371): `listSessions`, `resolveSession` (typed SESSION_REF_AMBIGUOUS / SESSION_REF_UNKNOWN), `readTeam` added to the service. RED observed (9 tests failing with `service.X is not a function`), GREEN 9/9. Full `npm test`: 2531 tests, 2530 pass, 0 fail, 1 skipped (pre-existing skip).
+- T2 done: `kairo_sessions`, `kairo_team`, `kairo_task_result` added to the existing MCP server via `src/global/mcp/conversation-read-tools.js`. Project comes only from the explicit workspace binding (`resolveWorkspaceWriteBinding`); unbound or half-bound refuses with `workspace_*` and the service is never built or called. Service is built lazily and injectable (`deps.conversationService` / `deps.createConversationService`). Outputs are public projections with credential/path scrubbing. Registered for bound and unbound servers; not write tools. RED observed (new test file failed at import: missing export `KAIRO_MCP_CONVERSATION_READ_TOOLS`), GREEN 10/10 in `test/mcp-conversation-read.test.js`. Deliberate assertion updates in `test/mcp-readonly.test.js` and `test/workspace-binding.test.js` (bound server now also registers the three read tools; standalone VSIX entry stays publish-only). Full `npm test`: 2541 tests, 2540 pass, 0 fail, 1 skipped (pre-existing).
 
 ## Next step
 
-T2 RED tests for MCP read tools `kairo_sessions`, `kairo_team`, `kairo_task_result` with explicit project binding.
+T3 RED tests for MCP delegation: preview plus confirmed execute reusing the service confirmation target; cancel; policy tests updated.
