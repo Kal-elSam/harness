@@ -109,7 +109,7 @@ export async function supervisePreparedRun({
   });
 
   try {
-    await adapter.preflight({ cwd: handoff.cwd });
+    await adapter.preflight({ cwd: handoff.cwd, permissions: handoff.permissions ?? [] });
   } catch (error) {
     metadata = transitionRunState(metadata, RUN_STATES.FAILED, { error: error.message });
     await writeRunState(homeDir, metadata);

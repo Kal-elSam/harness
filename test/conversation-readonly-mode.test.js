@@ -16,7 +16,9 @@ const RECORD = { status: {}, taskMarkdown: "text", planMarkdown: "# Approved pla
 const STANDARD_TARGET = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: MODEL.candidateKey };
 const RO_TARGET = { ...STANDARD_TARGET, mode: "read-only" };
 
-function harness({ authorize } = {}) {
+function harness({ authorize, adapterId = "codex" } = {}) {
+  const model = { ...MODEL, adapterId, candidateKey: `${adapterId}::gpt-6-astra` };
+  const strategy = { ...STRATEGY, projectTeam: [{ ...STRATEGY.projectTeam[0], model, recommendedAssignment: { ...STRATEGY.projectTeam[0].recommendedAssignment, model } }] };
   const calls = { launches: [], reserved: 0 };
   let link = null;
   const deps = {
@@ -27,7 +29,7 @@ function harness({ authorize } = {}) {
     readExecution: async () => link,
     writeExecution: async (_r, _i, value) => { calls.reserved += 1; link = value; },
     updateExecution: async (_r, _i, value) => { link = value; },
-    readProjectStrategy: async () => STRATEGY,
+    readProjectStrategy: async () => strategy,
     startRun: async (input) => {
       calls.launches.push(input);
       return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
@@ -38,7 +40,7 @@ function harness({ authorize } = {}) {
   const realSnapshot = service.snapshot.bind(service);
   service.snapshot = async (args) => {
     const snap = await realSnapshot(args);
-    return { ...snap, modelIntelligence: { ...snap.modelIntelligence, eligibility: { codex: { ok: true } } } };
+    return { ...snap, modelIntelligence: { ...snap.modelIntelligence, eligibility: { [adapterId]: { ok: true } } } };
   };
   return { service, calls, getLink: () => link };
 }
@@ -131,11 +133,11 @@ test("repeating a read-only confirmation does not relaunch; a standard confirmat
 });
 
 test("read-only on an adapter without containment support is refused before reserve or launch (typed, no link written)", async () => {
-  assert.equal(ADAPTER_PERMISSION_MODES.codex.includes("read-only"), false, "R1 must not claim codex containment");
-  assert.equal(ADAPTER_PERMISSION_MODES.claude.includes("read-only"), false, "R1 must not claim claude containment");
-  const { service, calls, getLink } = harness(); // real authorizeRunPermissions
+  assert.equal(ADAPTER_PERMISSION_MODES.cursor.includes("read-only"), false, "cursor has no read-only containment");
+  assert.equal(ADAPTER_PERMISSION_MODES.opencode.includes("read-only"), false, "opencode has no read-only containment");
+  const { service, calls, getLink } = harness({ adapterId: "cursor" }); // real authorizeRunPermissions
   await assert.rejects(
-    () => service.executePlan({ cwd: "/repo", taskId: "t", confirmationTarget: RO_TARGET }),
+    () => service.executePlan({ cwd: "/repo", taskId: "t", confirmationTarget: { ...RO_TARGET, candidateKey: "cursor::gpt-6-astra" } }),
     { code: "read_only_unsupported" }
   );
   assert.equal(calls.launches.length, 0);
@@ -171,7 +173,7 @@ test("operations: a fresh preview whose mode differs from the confirmed target i
 });
 
 test("operations: read-only execute through a service reports read_only_unsupported", async () => {
-  const { service, calls } = harness();
+  const { service, calls } = harness({ adapterId: "cursor" });
   const ops = createConversationOperations({ cwd: "/repo", getService: () => service });
   const plan = await ops.plan({ taskId: "t", role: "Builder", mode: "read-only" });
   await assert.rejects(() => ops.execute({ taskId: "t", confirmationTarget: plan.confirmationTarget }), { code: "read_only_unsupported" });

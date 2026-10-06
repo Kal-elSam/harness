@@ -37,11 +37,12 @@ async function harness() {
   });
   const taskId = created.status.taskId;
   await transitionTask(root, taskId, "approved");
-  const counters = { startRun: 0 };
+  const counters = { startRun: 0, permissions: [] };
   const service = createConversationService({
     resolveRoot: async () => root, homeDir: home, createRunId: () => RUN,
-    startRun: async () => {
+    startRun: async (input) => {
       counters.startRun += 1;
+      counters.permissions.push(input?.permissions ?? null);
       return { metadata: { state: "running", startedAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" } };
     },
     readRun: async () => ({ runId: RUN, agentId: "codex", state: "completed", error: null }),
@@ -61,7 +62,7 @@ async function harness() {
   return { root, home, taskId, counters, service, session, mcp, mcpCall };
 }
 
-test("read-only mode over MCP: preview shows it, a standard target keeps its exact shape, a read-only confirmation is refused before launch for an adapter without containment, and an invalid mode is rejected", async () => {
+test("read-only mode over MCP: preview shows it, a standard target keeps its exact shape, a read-only confirmation launches once with permissions [read-only] on a contained adapter and is never relaunched, and an invalid mode is rejected", async () => {
   const h = await harness();
   const roPlan = await h.mcpCall("kairo_plan_execution", { taskId: h.taskId, role: "Builder", mode: "read-only" });
   assert.equal(roPlan.mode, "read-only");
@@ -70,13 +71,17 @@ test("read-only mode over MCP: preview shows it, a standard target keeps its exa
   assert.equal(stdPlan.mode, "standard");
   assert.deepEqual(stdPlan.confirmationTarget, TARGET, "standard target keeps its exact shape");
 
-  // codex has no read-only containment yet: refused before any launch or link.
-  const refused = (await h.mcp.kairo_execute_plan({ taskId: h.taskId, confirmationTarget: roPlan.confirmationTarget })).structuredContent;
-  assert.equal(refused.code, "read_only_unsupported");
-  assert.equal(h.counters.startRun, 0);
+  // codex now has real read-only containment: the confirmed read-only plan launches once, a repeat reuses it.
+  const launched = (await h.mcp.kairo_execute_plan({ taskId: h.taskId, confirmationTarget: roPlan.confirmationTarget })).structuredContent;
+  assert.equal(launched.code, "ok");
+  assert.equal(h.counters.startRun, 1);
+  assert.deepEqual(h.counters.permissions, [["read-only"]]);
+  const reused = (await h.mcp.kairo_execute_plan({ taskId: h.taskId, confirmationTarget: roPlan.confirmationTarget })).structuredContent;
+  assert.equal(reused.code, "ok");
+  assert.equal(h.counters.startRun, 1, "a repeated read-only confirmation never relaunches");
 
   // An invalid mode never reaches a launch.
   const bad = (await h.mcp.kairo_plan_execution({ taskId: h.taskId, role: "Builder", mode: "yolo" })).structuredContent;
   assert.equal(bad.code, "invalid_execution_mode");
-  assert.equal(h.counters.startRun, 0);
+  assert.equal(h.counters.startRun, 1);
 });
