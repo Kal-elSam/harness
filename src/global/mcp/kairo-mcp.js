@@ -27,16 +27,25 @@ import {
   conversationReadSchemas,
   createConversationReadHandlers
 } from "./conversation-read-tools.js";
+import {
+  KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS,
+  KAIRO_MCP_CONVERSATION_DELEGATE_WRITE_TOOLS,
+  conversationDelegateSchemas,
+  createConversationDelegateHandlers
+} from "./conversation-delegate-tools.js";
 
-export { KAIRO_MCP_CONVERSATION_READ_TOOLS };
+export { KAIRO_MCP_CONVERSATION_READ_TOOLS, KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS };
 
-/** Sole MCP write tool for companion snapshots. Bound servers only. */
-export const KAIRO_MCP_WRITE_TOOLS = Object.freeze(["kairo_publish_work_snapshot"]);
+/** MCP write tools: companion snapshot publish plus confirmed delegation/cancel. Bound servers only. */
+export const KAIRO_MCP_WRITE_TOOLS = Object.freeze([
+  "kairo_publish_work_snapshot", ...KAIRO_MCP_CONVERSATION_DELEGATE_WRITE_TOOLS
+]);
 
 export const KAIRO_MCP_READ_TOOLS = Object.freeze([
   "kairo_status", "kairo_runs", "kairo_alerts", "kairo_gentle_status",
   "kairo_graph_query", "kairo_graph_path", "kairo_context_summary", "kairo_fleet",
-  ...KAIRO_MCP_CONVERSATION_READ_TOOLS
+  ...KAIRO_MCP_CONVERSATION_READ_TOOLS,
+  ...KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS
 ]);
 
 export const KAIRO_MCP_TOOLS = Object.freeze([
@@ -69,7 +78,8 @@ export const mcpSchemas = Object.freeze({
   }),
   graphPath: z.object({ graph: z.string().min(1), from: z.string().min(1), to: z.string().min(1) }),
   workSnapshotPublish: workSnapshotPublishSchema,
-  ...conversationReadSchemas
+  ...conversationReadSchemas,
+  ...conversationDelegateSchemas
 });
 
 const CODE_RE = /^(?:[a-z][a-z0-9_]{0,48}|status=\d+)$/;
@@ -193,8 +203,13 @@ export function createToolHandlers(deps = {}) {
     binding, getService: getConversationService, mcpResult
   });
 
+  const conversationDelegates = createConversationDelegateHandlers({
+    binding, getService: getConversationService, mcpResult
+  });
+
   return {
     ...conversationReads,
+    ...conversationDelegates,
     async kairo_status() {
       try {
         const snap = await buildStatus();
@@ -316,15 +331,23 @@ export function registerKairoMcpTools(registerTool, deps = {}) {
     ["kairo_sessions", "Read-only session list or session ref resolution for the bound project", mcpSchemas.sessions],
     ["kairo_team", "Read-only project team, providers and task states for the bound project", mcpSchemas.team],
     ["kairo_task_result", "Read-only recoverable task result for the bound project", mcpSchemas.taskResult],
+    ["kairo_plan_execution", "Read-only execution preview with the confirmation target; never launches", mcpSchemas.planExecution],
     [
       "kairo_publish_work_snapshot",
       "Publish kairo.work-snapshot/v1 for the runtime workspace (enrolls conversation)",
       mcpSchemas.workSnapshotPublish
-    ]
+    ],
+    [
+      "kairo_execute_plan",
+      "Launch an approved task ONLY with the confirmationTarget from a fresh kairo_plan_execution preview; re-validated server-side",
+      mcpSchemas.executePlan
+    ],
+    ["kairo_cancel_execution", "Cancel the run linked to a task for the bound project", mcpSchemas.cancelExecution]
   ];
   const bound = deps.workspaceBound === true;
   for (const [name, description, inputSchema] of catalog) {
-    const conversationRead = KAIRO_MCP_CONVERSATION_READ_TOOLS.includes(name);
+    const conversationRead = KAIRO_MCP_CONVERSATION_READ_TOOLS.includes(name)
+      || KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS.includes(name);
     if (!conversationRead && (bound ? !KAIRO_MCP_WRITE_TOOLS.includes(name) : KAIRO_MCP_WRITE_TOOLS.includes(name))) continue;
     registerTool(name, { description, inputSchema }, h[name]);
   }

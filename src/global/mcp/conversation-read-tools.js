@@ -53,7 +53,7 @@ const pubSession = (s) => ({
   sessionId: id(s?.id), title: safeText(s?.title), mode: scalar(s?.mode ?? null),
   createdAt: scalar(s?.createdAt ?? null), updatedAt: scalar(s?.updatedAt ?? null)
 });
-const pubExecution = (e) => (e == null ? null : {
+export const pubExecution = (e) => (e == null ? null : {
   runId: id(e.runId), provider: scalar(e.provider ?? null), state: scalar(e.state ?? null),
   active: e.active === true, error: safeText(e.error), startedAt: scalar(e.startedAt ?? null),
   updatedAt: scalar(e.updatedAt ?? null)
