@@ -97,6 +97,21 @@ export function applyEventToMetadata(metadata, event) {
       }
       break;
     }
+    case RUN_EVENT_TYPES.RESULT: {
+      // Providers (Claude stream-json) report final usage on the terminal result line.
+      const usage = event.data?.usage;
+      if (usage && typeof usage === "object") {
+        next.tokenUsage = {
+          input: usage.input_tokens ?? next.tokenUsage?.input ?? null,
+          output: usage.output_tokens ?? next.tokenUsage?.output ?? null,
+          total: usage.total_tokens ?? next.tokenUsage?.total ?? null
+        };
+      }
+      if (event.data?.total_cost_usd != null) {
+        next.cost = event.data.total_cost_usd;
+      }
+      break;
+    }
     case RUN_EVENT_TYPES.STDERR:
     case RUN_EVENT_TYPES.STDOUT: {
       const command = event.data?.command;
