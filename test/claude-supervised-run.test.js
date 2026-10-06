@@ -42,7 +42,7 @@ test("detached-run path preserves reserved run id and revalidates Claude auth be
   assert.equal(launch.command, "claude");
   assert.equal(launch.args.includes("--force"), false);
   assert.equal(launch.args.includes("--dangerously-skip-permissions"), false);
-  assert.deepEqual(launch.args.slice(2, 6), ["stream-json", "--permission-mode", "auto", "--permission-prompts"]);
+  assert.deepEqual(launch.args.slice(2, 6), ["stream-json", "--verbose", "--permission-mode", "auto"]);
 });
 
 test("ordinary Claude startRun is unchanged; only explicit strict floor denies unverified containment", async () => {

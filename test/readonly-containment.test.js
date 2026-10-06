@@ -34,7 +34,7 @@ async function tempRoot() {
 test("standard argv is byte-identical to before for claude and codex", () => {
   const c = claude.buildLaunch({ task: TASK, cwd: "/repo", model: "m", permissions: [] });
   assert.equal(c.command, "claude");
-  assert.deepEqual(c.args, ["--model", "m", "-p", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "none", TASK]);
+  assert.deepEqual(c.args, ["--model", "m", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "auto", "--permission-prompts", "none", TASK]);
   const x = codex.buildLaunch({ task: TASK, cwd: "/repo", permissions: [] });
   assert.equal(x.command, "codex");
   assert.deepEqual(x.args, ["exec", "--json", "--approve-for-me", TASK]);
@@ -57,7 +57,7 @@ test("claude read-only argv: restricted, read-only allow-list, write tools denie
   assert.equal(launch.args[0], "-p");
   assert.equal(launch.args[1], buildReadOnlyWriteProfile(root));
   assert.deepEqual(launch.args.slice(2), [
-    "claude", "--model", "haiku", "-p", "--output-format", "stream-json",
+    "claude", "--model", "haiku", "-p", "--output-format", "stream-json", "--verbose",
     "--restricted", "--tools", "Read,Grep,Glob",
     "--disallowedTools", "Edit,Write,NotebookEdit,Bash",
     "--permission-mode", "dontAsk", "--permission-prompts", "none", TASK
@@ -317,7 +317,7 @@ test("e2e claude read-only: exact wrapped launch, containment args, no write fla
   const std = await e2e("claude");
   await std.service.executePlan({ cwd: std.root, taskId: "t", confirmationTarget: std.target });
   assert.equal(std.spawns[0].command, "claude");
-  assert.deepEqual(std.spawns[0].args.slice(0, 6), ["--model", "m-1", "-p", "--output-format", "stream-json", "--permission-mode"]);
+  assert.deepEqual(std.spawns[0].args.slice(0, 7), ["--model", "m-1", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode"]);
   assert.equal(std.spawns[0].args.includes("--restricted"), false);
   await std.cleanup();
 });
