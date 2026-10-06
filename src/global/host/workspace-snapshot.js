@@ -8,6 +8,8 @@ import { listProviderUsage } from "../runtime/usage-store.js";
 import { resolveAssignmentAvailability } from "../conversation/assignment-availability.js";
 import { buildUsageModel, formatSubscriptionUsageSegments } from "../conversation/usage-summary.js";
 import { createConversationService } from "../conversation/service.js";
+import { createConversationOperations } from "../conversation/operations.js";
+import { deriveWorkspaceStatus } from "./workspace-status.js";
 import { readCodexUsage } from "../observability/codex-usage.js";
 import { readClaudeUsage } from "../observability/claude-usage.js";
 import { readOpenCodeUsage } from "../observability/opencode-usage.js";
@@ -77,6 +79,38 @@ function workspaceAgents(team) {
     model: row.model ?? "no eligible option",
     state: agentState(row.availability),
     stateReason: row.availability?.warning ?? null
+  }));
+}
+
+
+/** Normalizes one herd row's availability into the shape the shared status derivation reads. */
+function statusRoles(team) {
+  return (team?.rows ?? []).map((row) => ({
+    role: row.role,
+    availability: row.availability?.state === "available" ? "available"
+      : row.availability?.state === "blocked" ? "blocked" : "unknown",
+    reason: row.availability?.warning ?? null
+  }));
+}
+
+/** The shared session list (kairo_sessions shape), each carrying its project and bound flag. */
+function workspaceSessions(work, projectRoot, session) {
+  return (work?.sessions ?? []).map((s) => ({
+    id: s.sessionId, title: s.title ?? null, mode: s.mode ?? "ask",
+    bound: session?.id != null && s.sessionId === session.id, projectRoot
+  }));
+}
+
+/** The shared task list (kairo_team tasks shape) with the derived status; every row names its project. */
+function workspaceTasks(work, statuses, projectRoot) {
+  const byId = new Map(statuses.tasks.map((t) => [t.taskId, t]));
+  return (work?.tasks ?? []).map((t) => ({
+    id: t.taskId, projectRoot, sessionId: t.sessionId ?? null, text: t.taskText ?? null,
+    state: t.state ?? null,
+    status: byId.get(t.taskId)?.status ?? "unknown", statusReason: byId.get(t.taskId)?.reason ?? null,
+    role: t.execution?.role ?? null, provider: t.execution?.provider ?? t.provider ?? null,
+    runId: t.execution?.runId ?? null, runState: t.execution?.state ?? null,
+    nextTransition: t.nextTransition ?? null
   }));
 }
 
@@ -246,6 +280,7 @@ export function buildKairoWorkspaceSnapshot({
   availabilityIntelligence = intelligence,
   usageCache = null,
   availabilityCache = null,
+  work = null,
   now = Date.now()
 } = {}) {
   if (typeof projectRoot !== "string" || projectRoot.trim() === "") {
@@ -254,6 +289,15 @@ export function buildKairoWorkspaceSnapshot({
   const project = { root: projectRoot, label: basename(projectRoot) || projectRoot };
   const sessionValue = workspaceSession(session);
   const team = workspaceTeam(strategy, availabilityIntelligence, availabilityCache, now);
+  // One derivation (workspace-status.js) over the shared task/run facts:
+  // draft / active / working / blocked, never inferred from a provider name.
+  const statuses = deriveWorkspaceStatus({ team: { state: team.state }, roles: statusRoles(team), tasks: work?.tasks ?? [] });
+  const statusByRole = new Map(statuses.agents.map((a) => [a.role, a]));
+  const agents = workspaceAgents(team).map((agent) => ({
+    ...agent,
+    status: statusByRole.get(agent.role)?.status ?? "unknown",
+    statusReason: statusByRole.get(agent.role)?.reason ?? null
+  }));
   return {
     schema: KAIRO_WORKSPACE_SNAPSHOT_SCHEMA,
     project,
@@ -264,8 +308,14 @@ export function buildKairoWorkspaceSnapshot({
     memory: { status: engram?.status ?? "unknown" },
     // Additive herd contract (H1): same team/session facts, reshaped for
     // attention ordering — old consumers keep reading team/session untouched.
-    agents: workspaceAgents(team),
-    spaces: workspaceSpaces(project, sessionValue)
+    agents,
+    spaces: workspaceSpaces(project, sessionValue),
+    // Explicit project and session ids on every snapshot (never ambient).
+    scope: { projectRoot, sessionId: session?.id ?? null },
+    status: statuses.team,
+    workState: work ? "ready" : "unknown",
+    sessions: workspaceSessions(work, projectRoot, session),
+    tasks: workspaceTasks(work, statuses, projectRoot)
   };
 }
 
@@ -293,6 +343,15 @@ export async function loadKairoWorkspaceSnapshot({
   const readUsage = deps.listProviderUsage ?? listProviderUsage;
   const inspectMemory = deps.inspectEngramIntegration ?? inspectEngramIntegration;
   const readSession = deps.getSession ?? getSession;
+  // Sessions and tasks come from the SAME shared operations MCP and the Pi
+  // tools use (operations.work -> service.readWork); read-only, no probes.
+  const readWorkImpl = deps.readWork ?? (async (args) => {
+    const createService = deps.createConversationService ?? createConversationService;
+    return createConversationOperations({
+      cwd: args.projectRoot,
+      getService: () => createService({ homeDir, resolveRoot: async () => args.projectRoot, enableProviderProbes: false })
+    }).work({ ref: args.sessionId ?? undefined });
+  });
   const readUsageCacheImpl = deps.readCachedUsage ?? readCachedUsage;
   const writeUsageCacheImpl = deps.writeCachedUsage ?? writeCachedUsage;
   const readAvailabilityCacheImpl = deps.readCachedAvailability ?? readCachedAvailability;
@@ -302,10 +361,13 @@ export async function loadKairoWorkspaceSnapshot({
     throw new Error(`Invalid Kairo host session id "${sessionId}".`);
   }
 
-  const [strategy, usage, session] = await Promise.all([
+  const [strategy, usage, session, work] = await Promise.all([
     readStrategy(homeDir, projectRoot),
     readUsage(homeDir),
-    sessionId == null ? null : readSession(homeDir, projectRoot, sessionId)
+    sessionId == null ? null : readSession(homeDir, projectRoot, sessionId),
+    // A failed work read leaves the rest of the snapshot intact and is
+    // reported as `workState: "unknown"`; never invented tasks.
+    Promise.resolve().then(() => readWorkImpl({ projectRoot, sessionId })).catch(() => null)
   ]);
 
   // P01.2 last-known cache: while a side hasn't resolved yet (`undefined`)
@@ -335,6 +397,7 @@ export async function loadKairoWorkspaceSnapshot({
     strategy,
     usage,
     session,
+    work,
     engram: inspectMemory({ homeDir }),
     usageIntelligence,
     availabilityIntelligence,

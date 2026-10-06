@@ -446,10 +446,10 @@ test("workspace snapshot exposes herd agents[] derived from team rows, additive 
   const snapshot = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY });
 
   assert.deepEqual(snapshot.agents, [
-    { id: "project-analyst", label: "Project Analyst", role: "Project Analyst", provider: "claude", model: "Claude Opus 5", state: "unknown", stateReason: null },
-    { id: "orchestrator", label: "Orchestrator", role: "Orchestrator", provider: "opencode-go", model: "Kimi K3", state: "unknown", stateReason: null },
-    { id: "builder", label: "Builder", role: "Builder", provider: "codex", model: "GPT-6 Terra", state: "unknown", stateReason: null },
-    { id: "reviewer", label: "Reviewer", role: "Reviewer", provider: "unknown", model: "no eligible option", state: "unknown", stateReason: null }
+    { id: "project-analyst", label: "Project Analyst", role: "Project Analyst", provider: "claude", model: "Claude Opus 5", state: "unknown", stateReason: null, status: "unknown", statusReason: "No availability evidence." },
+    { id: "orchestrator", label: "Orchestrator", role: "Orchestrator", provider: "opencode-go", model: "Kimi K3", state: "unknown", stateReason: null, status: "unknown", statusReason: "No availability evidence." },
+    { id: "builder", label: "Builder", role: "Builder", provider: "codex", model: "GPT-6 Terra", state: "unknown", stateReason: null, status: "unknown", statusReason: "No availability evidence." },
+    { id: "reviewer", label: "Reviewer", role: "Reviewer", provider: "unknown", model: "no eligible option", state: "unknown", stateReason: null, status: "unknown", statusReason: "No availability evidence." }
   ]);
   // Additive: the pre-existing team shape is unchanged.
   assert.equal(snapshot.team.rows.length, 4);
