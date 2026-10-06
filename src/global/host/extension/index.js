@@ -14,6 +14,7 @@ import { resolveHomeDir } from "../../paths.js";
 import { resolveProjectRoot } from "../../architect/architect-store.js";
 import { createSession, getSession, isValidSessionId } from "../../conversation/session-registry.js";
 import { lookupPiBinding, recordPiBinding } from "../../conversation/pi-session-bindings.js";
+import { registerKairoConversationTools } from "./conversation-tools.js";
 
 export function requestKernelSnapshot(deps = {}) {
   return createKernelService(deps).snapshot();
@@ -504,7 +505,8 @@ export function createKairoWorkspaceExtension(pi, {
   // every render) and the process's own stdout columns. Tests inject
   // fixed values instead of a real TTY/settings file.
   getColumns = () => process.stdout.columns,
-  getTuiMode = createLiveTuiModeReader(env)
+  getTuiMode = createLiveTuiModeReader(env),
+  conversationService = null
 } = {}) {
   let routeSignature = null;
   let routeState = "unknown";
@@ -906,6 +908,8 @@ export function createKairoWorkspaceExtension(pi, {
       return result;
     }
   });
+
+  registerKairoConversationTools(pi, { env, resolveProjectRootImpl, conversationService });
 
   return {
     registerRoutes,
