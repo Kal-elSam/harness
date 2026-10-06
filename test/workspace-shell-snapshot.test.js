@@ -524,6 +524,12 @@ test("workspace snapshot exposes herd agents[] derived from team rows, additive 
   assert.equal(snapshot.agents[2].provider, "codex");
   assert.equal(snapshot.agents[2].availability, "verificando");
   assert.equal(snapshot.agents[3].id, "reviewer");
+  // Additive contract of the shared status derivation: base keys (why, availability) are untouched.
+  for (const agent of snapshot.agents) {
+    assert.equal(agent.state, "unknown");
+    assert.equal(agent.status, "unknown");
+    assert.equal(agent.statusReason, "No availability evidence.");
+  }
   // Additive: the pre-existing team shape is unchanged.
   assert.equal(snapshot.team.rows.length, 4);
   assert.equal(snapshot.team.state, "active");
