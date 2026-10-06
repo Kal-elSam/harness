@@ -53,7 +53,7 @@ Mapping delegated (4+ files fired the trigger). Each task: one delegated writer.
 
 ## Tasks
 
-- [ ] T1 Clean-install smoke from the packed tarball (isolated `HARNESS_HOME`, outside checkout): menu/help, resources, `kairo mcp` handshake lists tools, conversation service loads, Pi fork dependency checklist. Route: delegated.
+- [x] T1 Clean-install smoke from the packed tarball (isolated `HARNESS_HOME`, outside checkout): menu/help, resources, `kairo mcp` handshake lists tools, conversation service loads, Pi fork dependency checklist. Route: delegated.
 - [ ] T2 Setup operations in shared layer: access verified vs installed, analyzer vs orchestrator labels, select analyzer, approve, edit assignment; confirmation for mutations; MCP exposes them (Pi tools excluded). Route: delegated.
 - [ ] T3 Workspace snapshot on the shared circuit: draft / active / working / blocked from team, tasks and runs; sessions and tasks in the snapshot (Pi widget omitted). Route: delegated.
 - [ ] T4 MCP install for Claude Code and Codex (JSON and TOML writers, plan by default, backup, health check, isolated-home tests). Route: delegated.
@@ -79,7 +79,8 @@ Note (kairo-consolidation): P1 (read-only containment) and P2 (review-circuit ob
 ## Progress
 
 - Mapping complete (packaging, onboarding flow, Pi host UI, MCP install, RDD reader).
+- T1 done (delegated writer). `test/clean-install-offline.test.js` (offline, in `npm test`): packs, extracts outside the checkout, checks resources, import closure (declared deps only, no escapes) and scrubbed-env `bin/kairo.js --help`. Offline limit: declared npm deps are not installed in the extracted copy, so the CLI run accepts either exit 0 or a missing DECLARED dependency; full execution is covered by `npm run smoke:clean-install` (`scripts/clean-install-smoke.sh` + `scripts/lib/clean-install-mcp-handshake.mjs`). Smoke run once: help OK, MCP initialize + tools/list OK (12 tools; kairo_sessions, kairo_team, kairo_task_result, kairo_plan_execution listed; write tools absent when unbound), createConversationService loads (34 ops), Pi fork 0.87.1-kairo.4 installed, 0 files outside HARNESS_HOME. `npm test`: 2608 tests, 2607 pass, 0 fail, 1 skipped. No README place for smoke scripts, docs skipped. (Figures are from the source branch; re-measured on the consolidation line in `odd/tasks/kairo-consolidation.md`.)
 
 ## Next step
 
-T1 RED test for the clean-install smoke.
+T2 RED tests for setup operations in the shared conversation layer.
