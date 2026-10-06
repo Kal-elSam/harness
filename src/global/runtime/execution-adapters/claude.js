@@ -1,4 +1,8 @@
 import { createExecutionAdapter, parseNdjsonLine, buildPermissionsArgs } from "./create-execution-adapter.js";
+import { assertReadOnlyExclusive } from "../run-permissions.js";
+import {
+  isReadOnlyPermissions, verifyClaudeReadOnlySandbox, wrapWithWriteSandbox
+} from "../readonly-containment.js";
 import {
   ReviewExecError, assertBoundedProcessOk, runBoundedProcess
 } from "../review/review-exec.js";
@@ -56,7 +60,25 @@ export async function verifyClaudeSubscriptionAuth({
   return { mode: "subscription", subscriptionType: status.subscriptionType };
 }
 
+// Read-only tool surface: no Edit/Write/NotebookEdit/Bash/WebFetch. `--restricted`
+// also drops code-running tools and ignores user/project settings files.
+const READ_ONLY_TOOLS = "Read,Grep,Glob";
+const READ_ONLY_DENIED_TOOLS = "Edit,Write,NotebookEdit,Bash";
+
 export function buildClaudeLaunch({ task, cwd, model, permissions = [], env = process.env }) {
+  if (isReadOnlyPermissions(permissions)) {
+    assertReadOnlyExclusive(permissions);
+    const readOnlyArgs = [
+      "-p", "--output-format", "stream-json",
+      "--restricted", "--tools", READ_ONLY_TOOLS, "--disallowedTools", READ_ONLY_DENIED_TOOLS,
+      "--permission-mode", "dontAsk", "--permission-prompts", "none", task
+    ];
+    if (model) readOnlyArgs.unshift("--model", model);
+    return wrapWithWriteSandbox(
+      { command: EXECUTABLE, args: readOnlyArgs, cwd, env: buildClaudeExecutionEnv(env) },
+      { cwd }
+    );
+  }
   const unsafeArgs = buildPermissionsArgs(permissions);
   const permissionArgs = unsafeArgs.length > 0
     ? unsafeArgs
@@ -85,6 +107,13 @@ function parseClaudeEventLine(line) {
   return parsed;
 }
 
+export async function preflightClaude(context = {}) {
+  const { verifyAuth = verifyClaudeSubscriptionAuth, verifyReadOnlySandbox = verifyClaudeReadOnlySandbox } = context;
+  // Containment first: a read-only run without verified write containment never reaches auth or launch.
+  if (isReadOnlyPermissions(context.permissions)) await verifyReadOnlySandbox({ cwd: context.cwd });
+  return verifyAuth();
+}
+
 export default createExecutionAdapter({
   id: "claude",
   label: "Claude Code",
@@ -95,5 +124,5 @@ export default createExecutionAdapter({
   },
   buildLaunch: buildClaudeLaunch,
   parseEventLine: parseClaudeEventLine,
-  preflight: verifyClaudeSubscriptionAuth
+  preflight: preflightClaude
 });
