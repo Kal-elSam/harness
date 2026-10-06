@@ -2641,3 +2641,87 @@ test("verifyAnalystAccess fails closed for an adapter with no on-demand check", 
   assert.equal(result.status, ENTITLEMENT.UNVERIFIED);
   assert.match(result.reason, /no on-demand access check/i);
 });
+
+function taskResultService(overrides = {}) {
+  const counters = { launches: 0, writes: 0, gentle: 0 };
+  const status = { taskId: "task-1", state: "approved", provider: "claude", baseHead: "a".repeat(40), artifacts: {} };
+  const runs = overrides.runs ?? {};
+  const links = overrides.links ?? { "task-1": { runId: "run-1", agentId: "claude" } };
+  const events = overrides.events ?? { "run-1": [{ type: "run.transcript", source: "claude", data: { text: "Done." } }] };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    readPlan: async (_root, id) => (id === "task-1" || id === "task-2" ? { status: { ...status, taskId: id } } : null),
+    readExecution: async (_root, id) => links[id] ?? null,
+    readRun: async (_home, id) => runs[id] ?? null,
+    readRunEvents: async (_home, id) => events[id] ?? [],
+    startRun: async () => { counters.launches += 1; },
+    writeExecution: async () => { counters.writes += 1; },
+    updateExecution: async () => { counters.writes += 1; },
+    transition: async () => { counters.writes += 1; },
+    readGentleContext: async () => { counters.gentle += 1; return { provider: "unavailable", error: "gentle_reader_not_wired" }; }
+  });
+  return { service, counters, runs, links, events };
+}
+
+test("readTaskResult is read-only and idempotent: repeated queries launch and write nothing", async () => {
+  const ctx = taskResultService({ runs: { "run-1": { runId: "run-1", state: "completed", agentId: "claude" } } });
+  const first = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  const second = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.deepEqual(second, first);
+  assert.equal(first.status, "terminal");
+  assert.equal(first.result.summary, "Done.");
+  assert.equal(first.gentle.state, "unavailable");
+  assert.equal(first.gentle.reason, "gentle_reader_not_wired");
+  assert.deepEqual({ launches: ctx.counters.launches, writes: ctx.counters.writes }, { launches: 0, writes: 0 });
+});
+
+test("readTaskResult returns each task's own run result", async () => {
+  const ctx = taskResultService({
+    links: { "task-1": { runId: "run-1" }, "task-2": { runId: "run-2" } },
+    runs: {
+      "run-1": { runId: "run-1", state: "completed", agentId: "claude" },
+      "run-2": { runId: "run-2", state: "failed", agentId: "codex", error: "boom" }
+    },
+    events: { "run-1": [{ type: "run.transcript", data: { text: "one" } }], "run-2": [] }
+  });
+  const a = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  const b = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-2" });
+  assert.equal(a.runId, "run-1");
+  assert.equal(a.result.summary, "one");
+  assert.equal(b.runId, "run-2");
+  assert.equal(b.provider, "codex");
+  assert.equal(b.result.status, "failed");
+});
+
+test("readTaskResult rejects an unknown task and creates nothing", async () => {
+  const ctx = taskResultService();
+  await assert.rejects(() => ctx.service.readTaskResult({ cwd: "/repo", taskId: "nope" }), /Plan "nope" not found/);
+  assert.deepEqual({ launches: ctx.counters.launches, writes: ctx.counters.writes }, { launches: 0, writes: 0 });
+});
+
+test("readTaskResult reports a planned task without an execution as not_started", async () => {
+  const ctx = taskResultService({ links: {} });
+  const out = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.equal(out.status, "not_started");
+  assert.equal(ctx.counters.gentle, 0);
+});
+
+test("readTaskResult sees running first and the terminal result later for the same task", async () => {
+  const ctx = taskResultService({ runs: { "run-1": { runId: "run-1", state: "running", agentId: "claude" } } });
+  const live = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.equal(live.status, "running");
+  assert.equal(live.result, null);
+  ctx.runs["run-1"] = { runId: "run-1", state: "completed", agentId: "claude" };
+  const done = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.equal(done.status, "terminal");
+  assert.equal(done.result.status, "completed");
+});
+
+test("readTaskResult enforces session ownership like its sibling readers", async () => {
+  const owned = { taskId: "task-1", sessionId: "s1", state: "approved", artifacts: {} };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", readPlan: async () => ({ status: owned }), readExecution: async () => null
+  });
+  await assert.rejects(() => service.readTaskResult({ cwd: "/repo", taskId: "task-1", sessionId: "s2" }), /different session/);
+});
