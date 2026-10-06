@@ -68,12 +68,13 @@ async function harness() {
   return { root, home, taskId, counters, service, session, tools, piCall, mcpCall, ctx };
 }
 
-test("Pi registers the six shared tools with the MCP names", async () => {
+test("Pi registers the shared tools (six conversation + five setup) with the MCP names", async () => {
   const h = await harness();
   assert.deepEqual([...h.tools.keys()].sort(), [...KAIRO_PI_CONVERSATION_TOOLS].sort());
   assert.deepEqual([...KAIRO_PI_CONVERSATION_TOOLS].sort(), [
     "kairo_cancel_execution", "kairo_execute_plan", "kairo_plan_execution",
-    "kairo_sessions", "kairo_task_result", "kairo_team"
+    "kairo_sessions", "kairo_setup", "kairo_setup_approve_team", "kairo_setup_plan",
+    "kairo_setup_run_analysis", "kairo_setup_set_assignment", "kairo_task_result", "kairo_team"
   ]);
 });
 

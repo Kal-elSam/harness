@@ -11,7 +11,9 @@ import { ConversationOperationError, createConversationOperations, operationFail
 
 export const KAIRO_PI_CONVERSATION_TOOLS = Object.freeze([
   "kairo_sessions", "kairo_team", "kairo_task_result",
-  "kairo_plan_execution", "kairo_execute_plan", "kairo_cancel_execution"
+  "kairo_plan_execution", "kairo_execute_plan", "kairo_cancel_execution",
+  "kairo_setup", "kairo_setup_plan", "kairo_setup_run_analysis",
+  "kairo_setup_approve_team", "kairo_setup_set_assignment"
 ]);
 
 const str = { type: "string" };
@@ -23,6 +25,14 @@ const target = {
     strategyFingerprint: { type: ["string", "null"] }, candidateKey: { type: ["string", "null"] }
   },
   required: ["role", "selection", "strategyFingerprint", "candidateKey"]
+};
+const setupTarget = {
+  type: "object",
+  properties: {
+    action: { enum: ["run_analysis", "approve_team", "set_assignment"] },
+    subject: { type: ["string", "null"] }, candidateKey: { type: ["string", "null"] }, stateFingerprint: str
+  },
+  required: ["action", "subject", "candidateKey", "stateFingerprint"]
 };
 const schema = (properties, required = []) => ({ type: "object", properties, required });
 
@@ -40,7 +50,18 @@ const DEFS = [
     schema({ taskId: str, confirmationTarget: target, ref }, ["taskId", "confirmationTarget"]),
     (ops, p) => ops.execute({ taskId: p.taskId, confirmationTarget: p.confirmationTarget, ref: p.ref }), "delegation_failed"],
   ["kairo_cancel_execution", "Kairo Cancel Execution", "Cancel a task's active execution (optional session ref enforces ownership).",
-    schema({ taskId: str, ref }, ["taskId"]), (ops, p) => ops.cancel({ taskId: p.taskId, ref: p.ref }), "delegation_failed"]
+    schema({ taskId: str, ref }, ["taskId"]), (ops, p) => ops.cancel({ taskId: p.taskId, ref: p.ref }), "delegation_failed"],
+  ["kairo_setup", "Kairo Setup", "Read setup state: installed vs access-verified providers, analyzer catalog, initial analyzer vs permanent orchestrator, draft/active team. Selects and starts nothing.",
+    schema({ ref }), (ops, p) => ops.setup({ ref: p.ref }), "read_failed"],
+  ["kairo_setup_plan", "Kairo Setup Plan", "Preview a setup action (run_analysis, approve_team, set_assignment); returns the confirmation target or a typed refusal. Changes nothing.",
+    schema({ action: { enum: ["run_analysis", "approve_team", "set_assignment"] }, analyzerKey: str, role: str, candidateKey: str, ref }, ["action"]),
+    (ops, p) => ops.planSetup(p), "setup_failed"],
+  ["kairo_setup_run_analysis", "Kairo Setup Run Analysis", "GENERATIVE, spends provider usage: run the initial analysis; requires the confirmationTarget of a fresh preview.",
+    schema({ confirmationTarget: setupTarget, ref }, ["confirmationTarget"]), (ops, p) => ops.runAnalysis(p), "analysis_failed"],
+  ["kairo_setup_approve_team", "Kairo Setup Approve Team", "Approve the draft team; requires the confirmationTarget of a fresh preview.",
+    schema({ confirmationTarget: setupTarget, ref }, ["confirmationTarget"]), (ops, p) => ops.approveTeam(p), "approval_failed"],
+  ["kairo_setup_set_assignment", "Kairo Setup Set Assignment", "Change one role's assignment in the draft team; requires the confirmationTarget of a fresh preview.",
+    schema({ confirmationTarget: setupTarget, ref }, ["confirmationTarget"]), (ops, p) => ops.setAssignment(p), "assignment_failed"]
 ];
 
 /**
