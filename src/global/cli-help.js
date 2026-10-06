@@ -78,6 +78,7 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} ui [--cwd <dir>] [--port <n>]       Unified workspace; --legacy-cockpit opens the legacy browser UI
   ${cli} conversation                     Unified workspace
   ${cli} conversation snapshot|architect|show|approve|reject|cancel ... [--json]
+  ${cli} conversation result <taskId> [--json]  Read-only recoverable result of an executed task (Gentle shown as project context only)
   ${cli} conversation execute <taskId> [--role <role>] [--confirm] [--model <name>] [--json]  No --confirm: preview only. --confirm: revalidate and execute the shown target.
   ${cli} run --agent <id> --task "..." [--strategy direct|orchestrated] [--model <name>] [--cwd <dir>] [--permissions force|yolo|read-only] [--allow-unsafe-permissions] [--capture-transcript] [--follow] [--no-wait] [--json]
   ${cli} runs list [--json] [--limit <n>] [--active-only]

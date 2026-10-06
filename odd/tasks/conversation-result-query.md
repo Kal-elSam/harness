@@ -48,17 +48,17 @@ Envelope: `{ taskId, runId, provider, status, runState, result, gentle }`
 
 - [x] T1 Pure composer `task-result.js` + `test/conversation-task-result.test.js` (statuses, interrupted, Gentle states, receipt-as-context, non-terminal never calls association). Route: delegated writer (2+ non-trivial files).
 - [x] T2 `service.readTaskResult` + injected deps + service tests (repeat queries 0 launches, two independent runs, unknown task creates nothing). Route: delegated writer.
-- [ ] T3 CLI `conversation result` (`src/cli.js` parse, `conversation/cli.js` handler, `cli-help.js`) + CLI test. Route: delegated writer.
+- [x] T3 CLI `conversation result` (`src/cli.js` parse, `conversation/cli.js` handler, `cli-help.js`) + CLI test. Route: delegated writer.
 
 ## Acceptance criteria
 
-- [ ] Success with summary; completed without summary (failed, "no summary produced"); failed; cancelled; interrupted (runState preserved, result failed).
-- [ ] Query while running and after finishing.
-- [ ] Two independent runs; repeated queries launch nothing.
-- [ ] Gentle pending / project_receipt / rdd_off / incompatible / unavailable; foreign receipt is not task review; no approval field.
-- [ ] Link with missing run -> evidence_missing keeps runId; corrupt record -> evidence_unreadable.
-- [ ] Unknown task rejected, no run or link created.
-- [ ] `npm test` result recorded honestly.
+- [x] Success with summary; completed without summary (failed, "no summary produced"); failed; cancelled; interrupted (runState preserved, result failed).
+- [x] Query while running and after finishing.
+- [x] Two independent runs; repeated queries launch nothing.
+- [x] Gentle pending / project_receipt / rdd_off / incompatible / unavailable; foreign receipt is not task review; no approval field.
+- [x] Link with missing run -> evidence_missing keeps runId; corrupt record -> evidence_unreadable.
+- [x] Unknown task rejected, no run or link created.
+- [x] `npm test` result recorded honestly.
 
 ## Progress / evidence
 
@@ -66,8 +66,9 @@ Envelope: `{ taskId, runId, provider, status, runState, result, gentle }`
 - Route declaration: T1-T3 delegated to one sequential writer; trigger = writer rule (2+ non-trivial files per task set).
 
 - T1: RED `node --test test/conversation-task-result.test.js` -> ERR_MODULE_NOT_FOUND (task-result.js); GREEN same command -> 26 pass, 0 fail (first GREEN attempt failed on Set.includes, fixed to has). Decision: any unparseable event line -> evidence_unreadable. T1 commit 264696748.
-- T2: RED `node --test test/conversation-service.test.js` -> 6 fail (readTaskResult is not a function), 96 pass; GREEN -> 102 pass, 0 fail. Production Gentle reader NOT wired: default returns {provider:"unavailable", error:"gentle_reader_not_wired"} (loadGentleWorkflow spawns gentle-ai and exposes no rddMode). T2 sha recorded in the T3 commit.
+- T2: RED `node --test test/conversation-service.test.js` -> 6 fail (readTaskResult is not a function), 96 pass; GREEN -> 102 pass, 0 fail. Production Gentle reader NOT wired: default returns {provider:"unavailable", error:"gentle_reader_not_wired"} (loadGentleWorkflow spawns gentle-ai and exposes no rddMode). T2 commit c44b0488b.
+- T3: RED `node --test test/conversation-cli.test.js` -> 3 fail (result action unknown), 5 pass; GREEN -> 8 pass; focused set 165 pass; full `npm test` 2522 tests, 2521 pass, 0 fail (1 skipped/other). Production Gentle reader not wired (reports gentle_reader_not_wired). T3 sha is the commit following c44b0488b.
 
 ## Next step
 
-Delegate T1 (RED first).
+Review/deliver under ordinary policy; wire a production Gentle reader as a separate decision.
