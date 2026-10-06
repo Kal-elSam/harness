@@ -65,7 +65,7 @@ async function harness() {
   const ctx = { cwd: root };
   const piCall = async (name, params) => (await tools.get(name).execute("id", params, undefined, undefined, ctx)).details;
   const mcpCall = async (name, args) => (await mcp[name](args)).structuredContent.data;
-  return { root, home, taskId, counters, service, session, tools, piCall, mcpCall, ctx };
+  return { root, home, taskId, counters, service, session, tools, mcp, piCall, mcpCall, ctx };
 }
 
 test("Pi registers the shared tools (six conversation + five setup) with the MCP names", async () => {
@@ -159,4 +159,29 @@ test("Pi cancel and unknown-task errors go through the shared service only", asy
   const out = await tools.get("kairo_cancel_execution").execute("id", { taskId: "t-1" }, undefined, undefined, { cwd: "/proj" });
   assert.deepEqual(calls, [{ cwd: "/proj", taskId: "t-1" }]);
   assert.equal(out.details.state, "cancelled");
+});
+
+test("read-only mode parity: Pi and MCP preview show it, a read-only confirmation is refused before launch for an adapter without containment, and mode changes are stale", async () => {
+  const h = await harness();
+  const roPlanPi = await h.piCall("kairo_plan_execution", { taskId: h.taskId, role: "Builder", mode: "read-only" });
+  const roPlanMcp = await h.mcpCall("kairo_plan_execution", { taskId: h.taskId, role: "Builder", mode: "read-only" });
+  assert.deepEqual(roPlanPi, roPlanMcp);
+  assert.equal(roPlanPi.mode, "read-only");
+  assert.deepEqual(roPlanPi.confirmationTarget, { ...TARGET, mode: "read-only" });
+  const stdPlan = await h.piCall("kairo_plan_execution", { taskId: h.taskId, role: "Builder" });
+  assert.equal(stdPlan.mode, "standard");
+  assert.deepEqual(stdPlan.confirmationTarget, TARGET, "standard target keeps its exact shape");
+
+  // codex has no read-only containment yet: refused before any launch or link, on both transports.
+  await assert.rejects(h.piCall("kairo_execute_plan", { taskId: h.taskId, confirmationTarget: roPlanPi.confirmationTarget }), { code: "read_only_unsupported" });
+  const refused = (await h.mcp.kairo_execute_plan({ taskId: h.taskId, confirmationTarget: roPlanPi.confirmationTarget })).structuredContent;
+  assert.equal(refused.code, "read_only_unsupported");
+  assert.equal(h.counters.startRun, 0);
+
+  // Invalid mode is rejected by both transport schemas.
+  const piPlanSchema = h.tools.get("kairo_plan_execution").parameters.properties.mode;
+  assert.deepEqual(piPlanSchema.enum, ["standard", "read-only"]);
+  assert.deepEqual(h.tools.get("kairo_execute_plan").parameters.properties.confirmationTarget.properties.mode.enum, ["standard", "read-only"]);
+  await assert.rejects(h.piCall("kairo_plan_execution", { taskId: h.taskId, role: "Builder", mode: "yolo" }), { code: "invalid_execution_mode" });
+  assert.equal(h.counters.startRun, 0);
 });

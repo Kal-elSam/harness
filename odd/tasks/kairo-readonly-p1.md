@@ -40,7 +40,7 @@ Implement real write protection for delegated executions (a `read-only` mode thr
 
 ## Tasks
 
-- [ ] R1 Propagate `read-only` mode: preview, confirmationTarget, `executePlan`, shared operations, MCP and Pi schemas, run permissions. Stale or mismatched mode refused; default behavior unchanged. Route: delegated.
+- [x] R1 Propagate `read-only` mode: preview, confirmationTarget, `executePlan`, shared operations, MCP and Pi schemas, run permissions. Stale or mismatched mode refused; default behavior unchanged. Route: delegated. Done: RED 9/10 failing in test/conversation-readonly-mode.test.js, then GREEN 11/11; mcp/pi/continuity/service suites green; full `npm test` 2750 tests, 2749 pass, 0 fail. `read-only` NOT added to claude/codex ADAPTER_PERMISSION_MODES: execute is refused before reserve/launch with `read_only_unsupported`.
 - [ ] R2 Effective containment in adapters: Codex `--sandbox read-only` without `--approve-for-me`; Claude tool allow-list plus `--restricted` plus verifiable write containment (sandbox-exec) with fail-closed `isolation_unavailable`. Route: delegated.
 - [ ] R3 Offline security tests: propagation, stale confirmation, incompatible options, missing isolation, mode changes; no-model write attempts against source and `.git` must fail under both wrappers. Route: delegated (with R2).
 - [ ] R4 Verify the two-call spend limit is enforceable (flags such as turn/token caps) before any provider run. Gate: if not enforceable, stop and ask. Route: inline analysis.
@@ -56,7 +56,8 @@ Implement real write protection for delegated executions (a `read-only` mode thr
 ## Progress
 
 - Initial state recorded, strategy backed up, execution path mapped.
+- R1 done: `mode` (standard|read-only) propagated through preview, confirmationTarget (read-only only, standard shape unchanged), executePlan (permissions, prompt, link `mode`), shared operations, MCP zod and Pi schemas, projections (`pubExecution.mode`, `pubPreview.mode`).
 
 ## Next step
 
-R1 and R2/R3 implementation (RED first).
+R2 (adapter containment: Codex `--sandbox read-only`, Claude tools plus sandbox-exec, fail-closed `isolation_unavailable`) and R3 offline security tests, RED first; then add `read-only` to the adapters' ADAPTER_PERMISSION_MODES only when containment is verified.

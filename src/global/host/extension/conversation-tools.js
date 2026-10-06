@@ -22,7 +22,8 @@ const target = {
   type: "object",
   properties: {
     role: str, selection: { enum: ["assigned", "suggested-alternative"] },
-    strategyFingerprint: { type: ["string", "null"] }, candidateKey: { type: ["string", "null"] }
+    strategyFingerprint: { type: ["string", "null"] }, candidateKey: { type: ["string", "null"] },
+    mode: { enum: ["standard", "read-only"] }
   },
   required: ["role", "selection", "strategyFingerprint", "candidateKey"]
 };
@@ -44,8 +45,8 @@ const DEFS = [
   ["kairo_task_result", "Kairo Task Result", "Read a task's run result, transitions and next transition.",
     schema({ taskId: str, ref }, ["taskId"]), (ops, p) => ops.taskResult({ taskId: p.taskId, ref: p.ref }), "read_failed"],
   ["kairo_plan_execution", "Kairo Plan Execution", "Preview an execution (read-only); returns the confirmation target.",
-    schema({ taskId: str, role: str, ref }, ["taskId", "role"]),
-    (ops, p) => ops.plan({ taskId: p.taskId, role: p.role, ref: p.ref }), "delegation_failed"],
+    schema({ taskId: str, role: str, mode: { enum: ["standard", "read-only"] }, ref }, ["taskId", "role"]),
+    (ops, p) => ops.plan({ taskId: p.taskId, role: p.role, mode: p.mode, ref: p.ref }), "delegation_failed"],
   ["kairo_execute_plan", "Kairo Execute Plan", "Launch a previewed execution; requires its confirmationTarget.",
     schema({ taskId: str, confirmationTarget: target, ref }, ["taskId", "confirmationTarget"]),
     (ops, p) => ops.execute({ taskId: p.taskId, confirmationTarget: p.confirmationTarget, ref: p.ref }), "delegation_failed"],
