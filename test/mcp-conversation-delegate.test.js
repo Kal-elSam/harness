@@ -250,3 +250,16 @@ test("cancel goes through service.cancelExecution; unknown run is a typed error"
   assert.equal(bad.structuredContent.code, "execution_not_found");
   assert.equal(bad.isError, true);
 });
+
+test("read-only mode schemas: plan and target accept optional standard|read-only; anything else is rejected; absent mode still validates", async () => {
+  const { conversationDelegateSchemas } = await import("../src/global/mcp/conversation-delegate-tools.js");
+  const plan = conversationDelegateSchemas.planExecution;
+  assert.equal(plan.safeParse({ taskId: "t-1", role: "Implementer" }).success, true);
+  assert.equal(plan.safeParse({ taskId: "t-1", role: "Implementer", mode: "read-only" }).success, true);
+  assert.equal(plan.safeParse({ taskId: "t-1", role: "Implementer", mode: "standard" }).success, true);
+  assert.equal(plan.safeParse({ taskId: "t-1", role: "Implementer", mode: "yolo" }).success, false);
+  const exec = conversationDelegateSchemas.executePlan;
+  assert.equal(exec.safeParse({ taskId: "t-1", confirmationTarget: { ...TARGET } }).success, true);
+  assert.equal(exec.safeParse({ taskId: "t-1", confirmationTarget: { ...TARGET, mode: "read-only" } }).success, true);
+  assert.equal(exec.safeParse({ taskId: "t-1", confirmationTarget: { ...TARGET, mode: "write" } }).success, false);
+});
