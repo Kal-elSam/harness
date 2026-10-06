@@ -158,9 +158,11 @@ export function createConversationOperations({ cwd, getService }) {
         cwd, taskId, confirmationTarget: preview.confirmationTarget, sessionId
       }));
     }),
-    cancel: ({ taskId } = {}) => run("delegation_failed", async (service) => pubLaunch(
-      await service.cancelExecution({ cwd, taskId })
-    ))
+    // Without `ref` the call is unchanged; with it, only that session's own task may be cancelled.
+    cancel: ({ taskId, ref } = {}) => run("delegation_failed", async (service) => {
+      const sessionId = await sessionIdFor(service, ref);
+      return pubLaunch(await service.cancelExecution({ cwd, taskId, ...(sessionId ? { sessionId } : {}) }));
+    })
   };
 }
 

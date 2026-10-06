@@ -39,8 +39,8 @@ const DEFS = [
   ["kairo_execute_plan", "Kairo Execute Plan", "Launch a previewed execution; requires its confirmationTarget.",
     schema({ taskId: str, confirmationTarget: target, ref }, ["taskId", "confirmationTarget"]),
     (ops, p) => ops.execute({ taskId: p.taskId, confirmationTarget: p.confirmationTarget, ref: p.ref }), "delegation_failed"],
-  ["kairo_cancel_execution", "Kairo Cancel Execution", "Cancel a task's active execution.",
-    schema({ taskId: str }, ["taskId"]), (ops, p) => ops.cancel({ taskId: p.taskId }), "delegation_failed"]
+  ["kairo_cancel_execution", "Kairo Cancel Execution", "Cancel a task's active execution (optional session ref enforces ownership).",
+    schema({ taskId: str, ref }, ["taskId"]), (ops, p) => ops.cancel({ taskId: p.taskId, ref: p.ref }), "delegation_failed"]
 ];
 
 /**
