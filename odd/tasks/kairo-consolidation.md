@@ -28,6 +28,8 @@ One product line: Ratatui + P1/P2. No unique work lost, no retired interface rei
 - G1 checks: `node --test test/kairo-control-plane-review-association.test.js` 14/14 pass. `pnpm test` 2302 pass / 109 fail / 6 skipped; base aa66c7c90 gives 2288 pass / 109 fail with the identical failing set (diffed by name). Failures are ERR_MODULE_NOT_FOUND because `node_modules` is absent; `pnpm install` needs network, so the full suite is unverified until deps are available.
 - G1 re-run after offline install: `pnpm test` 2605 pass / 4 fail / 6 skipped; base aa66c7c90 (same install) 2596 pass / 4 fail. Same 4 failing tests on both sides, so pre-existing, not caused by G1: T27 catalog rank order, T29 thin-evidence confidence, T23 project.verify_access wire, snapshot real provider/integration status. Tracked for T7.
 - G2 checks: `node --test test/kernel-contracts.test.js test/kernel-delegate.test.js test/worker-events.test.js` 24/24 pass. `pnpm test` 2619 pass / 4 fail / 6 skipped (2629 tests); the 4 failures are exactly the G1 baseline set (T27, T29, T23, snapshot real provider status). No new failures.
+- G3 order note: the docs commits had to precede the code commits (514ed6e05 creates `docs/delegated-execution-containment.md` and its tracker, which 1428ab0bb modifies), matching source history. Conflict on 5f56f7aac: `odd/tasks/context-fill-concurrent-persistence.md` is absent on base (modify/delete); resolved by keeping it deleted, dropping only its 2-line addendum about this docs commit.
+- G3 checks: `node --test test/bootstrap-isolation-boundary.test.js test/claude-supervised-run.test.js test/delegated-write-admission.test.js test/pi-runtime.test.js test/run-manager.test.js test/delegated-execution-containment.test.js` all pass (43/43 for the first five, containment test run separately). `pnpm test` 2639 pass / 4 fail / 6 skipped (2649 tests); the 4 failures are the same baseline set. No new failures.
 
 ## Tasks
 
@@ -37,7 +39,7 @@ One product line: Ratatui + P1/P2. No unique work lost, no retired interface rei
 - [ ] T4 Integrate current work from `feat/herd-shell-layout` in dependency order (route: delegated writer, one group at a time)
   - [x] G1 review reference: d99095707 64c0ec584 d17293c57 d8c735091 b79289f3b (picked clean with -x as d906076de 87b6f2054 3f554a57c 5fb1c1a4b 61c758d08; ticked after offline `pnpm install --offline --frozen-lockfile`, see Evidence)
   - [x] G2 WorkResult validation: 363480a0f 6ee6f3767 (picked clean with -x as ff4275501 163ba7485; see Evidence)
-  - [ ] G3 write admission: 1428ab0bb 95477e794 (+docs 5f56f7aac 514ed6e05)
+  - [x] G3 write admission: 1428ab0bb 95477e794 (+docs 5f56f7aac 514ed6e05) (picked with -x in source order 5f56f7aac 514ed6e05 1428ab0bb 95477e794 as b7a5f8476 83d703035 82bec6ac9 76a218b09; see Evidence)
   - [ ] G4 Codex flags: 197c671e6
   - [ ] G5 run-spawn bridge: 4be774e87 9d6d283b5 50097bc94
   - [ ] G6 conversation service and Global Connect
@@ -55,4 +57,4 @@ One product line: Ratatui + P1/P2. No unique work lost, no retired interface rei
 
 ## Next step
 
-T4 G3.
+T4 G4 (Codex flags: 197c671e6).
