@@ -27,6 +27,7 @@ One product line: Ratatui + P1/P2. No unique work lost, no retired interface rei
 - Classification: `_backup-20261007/classification.md`.
 - G1 checks: `node --test test/kairo-control-plane-review-association.test.js` 14/14 pass. `pnpm test` 2302 pass / 109 fail / 6 skipped; base aa66c7c90 gives 2288 pass / 109 fail with the identical failing set (diffed by name). Failures are ERR_MODULE_NOT_FOUND because `node_modules` is absent; `pnpm install` needs network, so the full suite is unverified until deps are available.
 - G1 re-run after offline install: `pnpm test` 2605 pass / 4 fail / 6 skipped; base aa66c7c90 (same install) 2596 pass / 4 fail. Same 4 failing tests on both sides, so pre-existing, not caused by G1: T27 catalog rank order, T29 thin-evidence confidence, T23 project.verify_access wire, snapshot real provider/integration status. Tracked for T7.
+- G2 checks: `node --test test/kernel-contracts.test.js test/kernel-delegate.test.js test/worker-events.test.js` 24/24 pass. `pnpm test` 2619 pass / 4 fail / 6 skipped (2629 tests); the 4 failures are exactly the G1 baseline set (T27, T29, T23, snapshot real provider status). No new failures.
 
 ## Tasks
 
@@ -35,7 +36,7 @@ One product line: Ratatui + P1/P2. No unique work lost, no retired interface rei
 - [x] T3 Classify by content
 - [ ] T4 Integrate current work from `feat/herd-shell-layout` in dependency order (route: delegated writer, one group at a time)
   - [x] G1 review reference: d99095707 64c0ec584 d17293c57 d8c735091 b79289f3b (picked clean with -x as d906076de 87b6f2054 3f554a57c 5fb1c1a4b 61c758d08; ticked after offline `pnpm install --offline --frozen-lockfile`, see Evidence)
-  - [ ] G2 WorkResult validation: 363480a0f 6ee6f3767
+  - [x] G2 WorkResult validation: 363480a0f 6ee6f3767 (picked clean with -x as ff4275501 163ba7485; see Evidence)
   - [ ] G3 write admission: 1428ab0bb 95477e794 (+docs 5f56f7aac 514ed6e05)
   - [ ] G4 Codex flags: 197c671e6
   - [ ] G5 run-spawn bridge: 4be774e87 9d6d283b5 50097bc94
@@ -54,4 +55,4 @@ One product line: Ratatui + P1/P2. No unique work lost, no retired interface rei
 
 ## Next step
 
-T4 G2.
+T4 G3.
