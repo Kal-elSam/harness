@@ -218,16 +218,18 @@ test("readTeam shows the derived pending next transition per task, read-only", a
   };
   const calls = [];
   const service = createConversationService({
-    resolveRoot: async (cwd) => cwd, listPlans: async () => [plan], readExecution: async () => null,
+    resolveRoot: async (cwd) => cwd, listPlans: async () => [plan],
+    readExecution: async () => ({ runId: "run_x", agentId: "codex" }),
+    readRun: async () => ({ runId: "run_x", agentId: "codex", state: "completed", error: null }),
     recoverRuns: async () => {}, inspectExecutionAdapters: () => [], inspectEngramIntegration: () => ({ status: "configured" }),
     readProjectStrategy: async () => null, listSessions: async () => [],
     startRun: async () => { throw new Error("no launch"); },
     transitionStore: {
-      read: async (_root, id) => { calls.push(id); return { state: "ok", entries: [{ kind: "delegated" }], next: "result_observed" }; },
+      read: async (_root, id, opts) => { calls.push([id, opts?.runId]); return { state: "ok", entries: [{ kind: "delegated" }], next: "result_observed" }; },
       append: async () => { throw new Error("readTeam must not write"); }
     }
   });
   const team = await service.readTeam({ cwd: "/repo" });
   assert.equal(team.tasks[0].nextTransition, "result_observed");
-  assert.deepEqual(calls, ["t1"]);
+  assert.deepEqual(calls, [["t1", "run_x"]], "progress is read for the current execution run only");
 });

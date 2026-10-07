@@ -37,8 +37,14 @@ async function readGentle(readGentleContext, projectRoot) {
 // was reviewed, so association's approval field is deliberately dropped.
 function projectGentle(association, input) {
   const { reviewRef, gentleContext } = association;
+  const state = GENTLE_STATE[reviewRef.association] ?? "incompatible";
+  // Observation only: Gentle's status is valid project context, but it publishes no
+  // verifiable receipt/task/run/candidate binding, so nothing may act on this task.
+  const validStatus = state === GENTLE_STATE.official || state === GENTLE_STATE.pending;
   return {
-    state: GENTLE_STATE[reviewRef.association] ?? "incompatible",
+    state,
+    diagnostics: validStatus ? ["task_binding_unavailable"] : [],
+    actionsEnabled: false,
     scope: "project_context",
     taskReview: "not_established",
     receipt: reviewRef.receipt,

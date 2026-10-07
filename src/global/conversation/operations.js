@@ -56,7 +56,11 @@ export const pubTaskResult = (r) => ({
   },
   gentle: r?.gentle == null ? null : {
     state: scalar(r.gentle.state ?? null), scope: scalar(r.gentle.scope ?? null),
-    taskReview: scalar(r.gentle.taskReview ?? null), reason: safeText(r.gentle.reason),
+    taskReview: scalar(r.gentle.taskReview ?? null),
+    // Project-level observation only; never a task approval or an executable step.
+    receipt: id(r.gentle.receipt), gate: id(r.gentle.gate),
+    diagnostics: (r.gentle.diagnostics ?? []).filter((d) => d === "task_binding_unavailable"),
+    actionsEnabled: false, reason: safeText(r.gentle.reason),
     rddMode: ["on", "off"].includes(r.gentle.rddMode) ? r.gentle.rddMode : "unknown",
     rddSource: typeof r.gentle.rddSource === "string" && /^[a-z][a-z-]{0,31}$/.test(r.gentle.rddSource) ? r.gentle.rddSource : null
   }
