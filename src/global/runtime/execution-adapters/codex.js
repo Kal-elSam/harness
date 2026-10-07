@@ -1,5 +1,6 @@
 import { createExecutionAdapter, parseNdjsonLine } from "./create-execution-adapter.js";
 import { verifyCodexSubscriptionAuth } from "../../architect/architect-codex.js";
+import { codexAgentMessageText } from "../codex-agent-message.js";
 import { assertReadOnlyExclusive } from "../run-permissions.js";
 import { isReadOnlyPermissions, verifyCodexReadOnlySandbox } from "../readonly-containment.js";
 
@@ -61,12 +62,7 @@ function parseCodexEventLine(line) {
   // `codex exec --json` reports each assistant message as a completed item. Mapping it to
   // an assistant event feeds the transcript, so the last message becomes the run summary.
   // Other items (command_execution, ...) keep falling through to the generic system event.
-  if (
-    parsed.type === "item.completed"
-    && parsed.item?.type === "agent_message"
-    && typeof parsed.item.text === "string"
-    && parsed.item.text.trim() !== ""
-  ) {
+  if (codexAgentMessageText(parsed) !== null) {
     return { type: "assistant", text: parsed.item.text };
   }
 
