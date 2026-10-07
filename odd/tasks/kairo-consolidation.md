@@ -31,6 +31,7 @@ One product line: Ratatui + P1/P2. No unique work lost, no retired interface rei
 - G3 order note: the docs commits had to precede the code commits (514ed6e05 creates `docs/delegated-execution-containment.md` and its tracker, which 1428ab0bb modifies), matching source history. Conflict on 5f56f7aac: `odd/tasks/context-fill-concurrent-persistence.md` is absent on base (modify/delete); resolved by keeping it deleted, dropping only its 2-line addendum about this docs commit.
 - G3 checks: `node --test test/bootstrap-isolation-boundary.test.js test/claude-supervised-run.test.js test/delegated-write-admission.test.js test/pi-runtime.test.js test/run-manager.test.js test/delegated-execution-containment.test.js` all pass (43/43 for the first five, containment test run separately). `pnpm test` 2639 pass / 4 fail / 6 skipped (2649 tests); the 4 failures are the same baseline set. No new failures.
 - G4 checks: `node --test test/codex-delegated-write-os-wrap.test.js test/codex-execution-adapter.test.js test/delegated-execution-containment.test.js test/delegated-write-admission.test.js` 19/19 pass; `test/codex-sandbox.test.js test/codex-models.test.js test/codex-usage.test.js` 34/34 pass. `test/codex-delegated-sandbox-startup-reads.test.js` does not exist on this base (it belongs to later canary-group commits, not integrated). The commit is self-contained (only node builtins, no canary/cfprefs files). `pnpm test` 2644 pass / 4 fail / 6 skipped (2654 tests); the 4 failures are exactly the baseline set. No new failures.
+- G5 picks (source order, all clean, -x): ae8afdf71 de5e1d3f9; 4be774e87 dc01bd770; 9d6d283b5 b8617b2e8; 3392f9e59 007aec72b; 1862eb001 3052b2c4e; 50097bc94 9dcab2bd6; 0311e2090 e95f45f63; eae5e94f6 362b4ea7e; 70e5f32fb 86c993c3f; cd7d90b08 65022cc6b. Excluded: e336bdeef (only adds a reference to the cfprefs SHM diagnostic design, which is the canary group not integrated). Note: ae8afdf71 carries a canary evidence section inside the bridge tracker as plain text; no canary code was pulled in. Checks: `node --test test/run-result-normalizer.test.js test/run-spawn-adapter.test.js test/kernel-contracts.test.js test/kernel-delegate.test.js test/worker-events.test.js` 63/63 pass. `pnpm test` 2683 pass / 4 fail / 6 skipped (2693 tests); the 4 failures are exactly the baseline set. No new failures.
 
 ## Tasks
 
@@ -42,7 +43,7 @@ One product line: Ratatui + P1/P2. No unique work lost, no retired interface rei
   - [x] G2 WorkResult validation: 363480a0f 6ee6f3767 (picked clean with -x as ff4275501 163ba7485; see Evidence)
   - [x] G3 write admission: 1428ab0bb 95477e794 (+docs 5f56f7aac 514ed6e05) (picked with -x in source order 5f56f7aac 514ed6e05 1428ab0bb 95477e794 as b7a5f8476 83d703035 82bec6ac9 76a218b09; see Evidence)
   - [x] G4 Codex flags: 197c671e6 (picked clean with -x as 571e2ec61; see Evidence)
-  - [ ] G5 run-spawn bridge: 4be774e87 9d6d283b5 50097bc94
+  - [x] G5 run-spawn bridge: 4be774e87 9d6d283b5 50097bc94 (+docs ae8afdf71 3392f9e59 1862eb001 0311e2090 eae5e94f6 70e5f32fb cd7d90b08; picked clean with -x in source order; see Evidence)
   - [ ] G6 conversation service and Global Connect
   - [ ] G7 one-window offline (review Pi-surface 0eeae04bb e5cdc7631 017c724e2 against Pi RPC consumers)
   - [ ] G8 P1 read-only containment
@@ -58,4 +59,4 @@ One product line: Ratatui + P1/P2. No unique work lost, no retired interface rei
 
 ## Next step
 
-T4 G5 (run-spawn bridge).
+T4 G6 (conversation service and Global Connect).
