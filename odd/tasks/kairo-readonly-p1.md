@@ -66,3 +66,5 @@ Implement real write protection for delegated executions (a `read-only` mode thr
 ## Next step
 
 R4 is analyzed by the controller (neither CLI has a per-request spend cap; no spend plumbing). Then R5 (prepare P1 without a generative call), gated by the R4 decision.
+
+- Historical summary recovery (commit 6c9f5940c): read-time fallback in `normalizeRunResult` recovers the last `agent_message` from pre-fix `agent.system` events (`rawType: item.completed`) only when no `run.transcript` event exists; requires source `codex`, matching agentId and runId; shared helper `src/global/runtime/codex-agent-message.js`. Route: delegated writer (4 files). RED: new test file 0 passing, then GREEN 12/12; full `npm test` 2814 tests, 2813 pass, 0 fail, 1 skipped (pre-existing). Real run run_muxb7bu3_r9ojpm: ok/completed, summary 1786 chars (projection 500 + suffix), events.jsonl sha256 unchanged. `.gitignore` now ignores `/.ai/tasks/` (mechanical, inline). P2 still pending explicit authorization.

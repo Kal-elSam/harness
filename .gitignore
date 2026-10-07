@@ -7,3 +7,4 @@ graphify-out/
 .codegraph/
 .pnpm-store/
 packages/kairo-vscode/dist/
+/.ai/tasks/
