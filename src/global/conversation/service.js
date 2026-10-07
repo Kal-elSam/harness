@@ -9,7 +9,7 @@ import { composeTaskResult } from "./task-result.js";
 import { associateResultWithGentleReview } from "../control-plane/review-association.js";
 import { createGentleReader } from "./gentle-reader.js";
 import {
-  EXTERNAL_TRANSITION_KINDS, TRANSITION_KINDS, fileTransitionStore
+  EXTERNAL_TRANSITION_KINDS, TRANSITION_KINDS, deriveNextTransition, fileTransitionStore
 } from "./transition-store.js";
 import { normalizeRunResult } from "../kernel/run-result-normalizer.js";
 import { resolveHomeDir } from "../paths.js";
@@ -722,11 +722,21 @@ export function createConversationService(deps = {}) {
     return Promise.all(plans.map(async (plan) => publicPlan(plan, await executionFor(projectRoot, plan.taskId))));
   }
 
+  // The circuit is scoped to the CURRENT execution's run. With no current run the
+  // store is still validated (corruption stays typed) but old progress from earlier
+  // runs is never presented as the current circuit.
+  async function readCircuit(projectRoot, taskId, runId) {
+    if (typeof runId === "string" && runId) return transitions.read(projectRoot, taskId, { runId });
+    const read = await transitions.read(projectRoot, taskId, { runId: null });
+    if (read?.state !== "ok") return read;
+    return { ...read, entries: [], next: deriveNextTransition([]) };
+  }
+
   // Task rows (timeline + each task's pending transition) shared by readTeam and readWork.
   async function taskRows(projectRoot, timeline) {
     const nextByTask = new Map();
-    for (const { taskId } of timeline) {
-      nextByTask.set(taskId, (await transitions.read(projectRoot, taskId))?.next ?? null);
+    for (const { taskId, execution } of timeline) {
+      nextByTask.set(taskId, (await readCircuit(projectRoot, taskId, execution?.runId))?.next ?? null);
     }
     return timeline.map(({ taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error }) => ({
       taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error,
@@ -2155,7 +2165,7 @@ export function createConversationService(deps = {}) {
           await noteTransition(projectRoot, taskId, { runId: link.runId, kind: "result_observed", evidence: `run:${link.runId}` });
         }
       }
-      const { state, error, entries, next } = await transitions.read(projectRoot, taskId);
+      const { state, error, entries, next } = await readCircuit(projectRoot, taskId, link?.runId);
       return { ...result, transitions: { state, error: error ?? null, entries, next } };
     },
     /**
@@ -2180,7 +2190,7 @@ export function createConversationService(deps = {}) {
         throw Object.assign(new Error(`Plan "${taskId}" has no execution to attach a transition to.`), { code: "TRANSITION_NO_EXECUTION" });
       }
       const { recorded } = await transitions.append(projectRoot, taskId, { runId: link.runId, kind, evidence });
-      const read = await transitions.read(projectRoot, taskId);
+      const read = await readCircuit(projectRoot, taskId, link.runId);
       return { taskId, runId: link.runId, kind, recorded, next: read.next };
     },
     async decidePlan({ cwd, taskId, decision, sessionId = null }) {
