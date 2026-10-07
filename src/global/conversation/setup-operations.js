@@ -49,6 +49,11 @@ const pubRef = (ref) => (ref == null ? null : {
   model: safeText(ref.displayName ?? ref.modelId ?? null), candidateKey: safeText(keyOf(ref))
 });
 
+const EMPTY_PLAN = Object.freeze({ pendingCount: 0, reusableCount: 0, mayConsumeQuota: false, subscriptions: [], costStatement: null });
+const planOf = (facts) => facts.verificationPlan ?? EMPTY_PLAN;
+const subscriptionOf = (facts, adapterId) => planOf(facts).subscriptions.find((sub) => sub.adapterId === adapterId) ?? null;
+const PLANNED = "planned, not run; running it needs explicit confirmation and may consume quota";
+
 const verified = (reason) => ({ status: "verified", reason });
 const access = (status, reason) => ({ status, reason: safeText(reason) });
 
@@ -60,7 +65,10 @@ function modelAccess(model, facts) {
     const status = entry?.status ?? known?.entitlement;
     if (status === ENTITLEMENT.ALLOWED) return verified("Claude plan allows this model.");
     if (status === ENTITLEMENT.DENIED) return access("denied", entry?.reason ?? "Claude plan denies this model.");
-    return access("unverified", "No fresh entitlement evidence for this model; run the access verification first.");
+    const check = subscriptionOf(facts, "claude")?.checks.find((c) => c.id === `claude::${model.modelId}`);
+    return access("unverified", check?.state === "pending"
+      ? `No fresh entitlement evidence for this model; its access check is pending (${PLANNED}).`
+      : "No fresh entitlement evidence for this model.");
   }
   if (model.adapterId === "cursor" && !isCursorAutoModel(model.modelId)) {
     const pool = facts.cursorAccess[classifyCursorPool({ id: model.modelId, displayName: model.displayName })];
@@ -73,11 +81,15 @@ function modelAccess(model, facts) {
 
 /** Provider-level access: the best evidence across its known models/pools. */
 function providerAccess(adapterId, facts) {
+  const noEvidence = (id) => {
+    const pending = subscriptionOf(facts, id)?.pendingCount ?? 0;
+    return pending > 0 ? `No access evidence yet; ${pending} access check${pending === 1 ? " is" : "s are"} pending (${PLANNED}).` : "No access evidence yet.";
+  };
   const pick = (entries, ok, exhausted, denied, reasonOf) => {
     if (entries.some((e) => e?.status === ok)) return verified(`${entries.filter((e) => e?.status === ok).length} of ${entries.length} entries verified.`);
     if (exhausted && entries.some((e) => e?.status === exhausted)) return access("exhausted", reasonOf(entries.find((e) => e?.status === exhausted)) ?? "Limit reached.");
     if (denied && entries.some((e) => e?.status === denied)) return access("denied", reasonOf(entries.find((e) => e?.status === denied)) ?? "Access denied.");
-    return access("unverified", entries.length ? (reasonOf(entries[0]) ?? "Access not verified.") : "No access evidence yet; run the access verification first.");
+    return access("unverified", entries.length ? (reasonOf(entries[0]) ?? "Access not verified.") : noEvidence(adapterId));
   };
   if (adapterId === "claude") {
     return pick(Object.values(facts.claudeEntitlement), ENTITLEMENT.ALLOWED, null, ENTITLEMENT.DENIED, (e) => e?.reason);
@@ -111,6 +123,28 @@ function pubProvider(adapter, facts) {
 
 const sameRef = (a, b) => a != null && b != null && keyOf(a) === keyOf(b);
 
+/**
+ * Projection of the EXISTING read-only access verification plan (service
+ * `verificationPlan`: pending vs reusable checks per subscription). Showing it
+ * runs nothing and establishes no access; executing the checks stays a
+ * separate, explicitly confirmed flow that may consume quota.
+ */
+function pubVerification(plan) {
+  return {
+    pendingCount: Number(plan.pendingCount) || 0, reusableCount: Number(plan.reusableCount) || 0,
+    mayConsumeQuota: plan.mayConsumeQuota === true, costStatement: plan.costStatement == null ? null : safeText(plan.costStatement),
+    executed: false,
+    subscriptions: (plan.subscriptions ?? []).map((sub) => ({
+      provider: scalar(sub.adapterId ?? null), label: safeText(sub.provider), granularity: scalar(sub.granularity ?? null),
+      pendingCount: Number(sub.pendingCount) || 0, reusableCount: Number(sub.reusableCount) || 0,
+      checks: (sub.checks ?? []).map((c) => ({
+        id: safeText(c.id), label: safeText(c.label), state: scalar(c.state ?? null),
+        reason: scalar(c.reason ?? null), cachedStatus: scalar(c.cachedStatus ?? null)
+      }))
+    }))
+  };
+}
+
 /** The public setup projection from raw service facts. */
 export function projectSetup(facts) {
   const strategy = facts.strategy ?? null;
@@ -141,6 +175,7 @@ export function projectSetup(facts) {
   ]));
   return {
     strategyStatus, editable: strategyStatus === "draft",
+    accessVerification: pubVerification(planOf(facts)),
     providers: facts.adapters.map((a) => pubProvider(a, facts)),
     analyzers, initialAnalyzer, permanentOrchestrator,
     analyzerIsOrchestrator: initialAnalyzer != null && permanentOrchestrator != null && sameRef(strategy.bootstrapAnalyst, strategy.orchestrator),

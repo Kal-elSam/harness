@@ -1476,6 +1476,8 @@ export function createConversationService(deps = {}) {
           adapterId: model.adapterId, modelId: model.modelId, entitlement: model.entitlement ?? null
         })),
         analystCatalog: analystCatalogFor(intelligence),
+        // The existing read-only plan (pending vs reusable checks); never executed here.
+        verificationPlan: intelligence.verificationPlan ?? EMPTY_VERIFICATION_PLAN,
         strategy,
         editCatalogs,
         recovery: record ? { outcome: record.outcome ?? null, pending: record.outcome === "proposed" && record.proposal != null } : null
