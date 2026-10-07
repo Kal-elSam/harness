@@ -146,6 +146,6 @@ Do not touch foreign CRT / credit-discipline / unrelated pending paths.
 
 ## Next step
 
-Wait for P1 outcome + specific P2 auth. No code for P2 until then.
+P2 observation slice is CLOSED (commits 423bed7c5, 6dd0dacef, 0b40c1453, 266ceb81f; full `npm test` 2829 tests, 2828 pass, 0 fail, 1 skipped pre-existing). Review-transition automation remains OUT of scope: it needs an official verifiable Gentle contract binding receipt, task, run and candidate, plus specific user authorization. The three P1 follow-ups (new analysis rejected with an active team, no approve/reject recovery surface, no Claude access verification) are separate and not authorized here.
 
 - Evidence (P2 surfaces): test/conversation-p2-surfaces.test.js drives the real MCP handler over the real service (service/MCP only on the consolidation line; the Pi tool half was dropped, Pi parity deferred/not applicable) with a hostile fake Gentle; project receipt/gate visible, taskReview not_established, task_binding_unavailable, no command/argv/next_transition/execute/invocation anywhere, transitions.jsonl sha256 identical, startRun 0, only read-only Gentle argv. Pure coverage (source-line result; the consolidation evidence is in odd/tasks/kairo-consolidation.md).
