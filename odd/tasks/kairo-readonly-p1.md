@@ -1,5 +1,7 @@
 # Kairo read-only execution and P1 Claude to Codex
 
+> Integration note (kairo-consolidation G8): this document was picked from the source line and is kept as context. Figures below that describe the source line (real provider runs, cost, `npm test` counts such as 2750) are NOT evidence for the consolidated branch; the consolidation evidence lives in `odd/tasks/kairo-consolidation.md`. Pi tools and the Pi schemas are not part of the integrated scope (Pi parity deferred, not applicable).
+
 Linked work: `odd/tasks/kairo-one-window-offline.md` (T1-T6 done, HEAD at start `8815c862a`) and `odd/tasks/kairo-global-connect.md`. Those tasks are not redone.
 
 ## Objective
@@ -40,7 +42,7 @@ Implement real write protection for delegated executions (a `read-only` mode thr
 
 ## Tasks
 
-- [x] R1 Propagate `read-only` mode: preview, confirmationTarget, `executePlan`, shared operations, MCP and Pi schemas, run permissions. Stale or mismatched mode refused; default behavior unchanged. Route: delegated. Done: RED 9/10 failing in test/conversation-readonly-mode.test.js, then GREEN 11/11; mcp/pi/continuity/service suites green; full `npm test` 2750 tests, 2749 pass, 0 fail. `read-only` NOT added to claude/codex ADAPTER_PERMISSION_MODES: execute is refused before reserve/launch with `read_only_unsupported`.
+- [x] R1 Propagate `read-only` mode: preview, confirmationTarget, `executePlan`, shared operations, MCP schemas, run permissions. Stale or mismatched mode refused; default behavior unchanged. Route: delegated. Source line: RED 9/10 failing in test/conversation-readonly-mode.test.js, then GREEN 11/11 (source-line observation, not claimed for this branch). Consolidated branch: see the consolidation tracker. `read-only` NOT added to claude/codex ADAPTER_PERMISSION_MODES: execute is refused before reserve/launch with `read_only_unsupported`.
 - [ ] R2 Effective containment in adapters: Codex `--sandbox read-only` without `--approve-for-me`; Claude tool allow-list plus `--restricted` plus verifiable write containment (sandbox-exec) with fail-closed `isolation_unavailable`. Route: delegated.
 - [ ] R3 Offline security tests: propagation, stale confirmation, incompatible options, missing isolation, mode changes; no-model write attempts against source and `.git` must fail under both wrappers. Route: delegated (with R2).
 - [ ] R4 Verify the two-call spend limit is enforceable (flags such as turn/token caps) before any provider run. Gate: if not enforceable, stop and ask. Route: inline analysis.
@@ -56,7 +58,7 @@ Implement real write protection for delegated executions (a `read-only` mode thr
 ## Progress
 
 - Initial state recorded, strategy backed up, execution path mapped.
-- R1 done: `mode` (standard|read-only) propagated through preview, confirmationTarget (read-only only, standard shape unchanged), executePlan (permissions, prompt, link `mode`), shared operations, MCP zod and Pi schemas, projections (`pubExecution.mode`, `pubPreview.mode`).
+- R1 done: `mode` (standard|read-only) propagated through preview, confirmationTarget (read-only only, standard shape unchanged), executePlan (permissions, prompt, link `mode`), shared operations, MCP zod schemas, projections (`pubExecution.mode`, `pubPreview.mode`).
 
 ## Next step
 
