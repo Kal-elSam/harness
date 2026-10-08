@@ -16,9 +16,15 @@ export const pubSession = (s) => ({
   createdAt: scalar(s?.createdAt ?? null), updatedAt: scalar(s?.updatedAt ?? null)
 });
 export const pubExecution = (e) => (e == null ? null : {
-  runId: id(e.runId), provider: scalar(e.provider ?? null), state: scalar(e.state ?? null),
+  runId: id(e.runId), provider: scalar(e.provider ?? null), role: safeText(e.role), state: scalar(e.state ?? null),
   active: e.active === true, error: safeText(e.error), startedAt: scalar(e.startedAt ?? null),
   updatedAt: scalar(e.updatedAt ?? null)
+});
+export const pubTask = (k) => ({
+  taskId: id(k?.taskId), taskText: safeText(k?.taskText), state: scalar(k?.state ?? null),
+  provider: scalar(k?.provider ?? null), model: safeText(k?.model), sessionId: id(k?.sessionId),
+  execution: pubExecution(k?.execution), nextTransition: scalar(k?.nextTransition ?? null), artifactCount: Array.isArray(k?.artifacts) ? k.artifacts.length : 0,
+  error: safeText(k?.error)
 });
 export const pubTeam = (t) => ({
   state: scalar(t?.state ?? null),
@@ -33,12 +39,7 @@ export const pubTeam = (t) => ({
     launchable: p?.launchable === true, reason: safeText(p?.reason),
     eligibility: p?.eligibility == null ? null : { ok: p.eligibility.ok === true, reason: safeText(p.eligibility.reason) }
   })),
-  tasks: (t?.tasks ?? []).map((k) => ({
-    taskId: id(k?.taskId), taskText: safeText(k?.taskText), state: scalar(k?.state ?? null),
-    provider: scalar(k?.provider ?? null), model: safeText(k?.model), sessionId: id(k?.sessionId),
-    execution: pubExecution(k?.execution), nextTransition: scalar(k?.nextTransition ?? null), artifactCount: Array.isArray(k?.artifacts) ? k.artifacts.length : 0,
-    error: safeText(k?.error)
-  }))
+  tasks: (t?.tasks ?? []).map(pubTask)
 });
 export const pubTaskResult = (r) => ({
   taskId: id(r?.taskId), runId: id(r?.runId), provider: scalar(r?.provider ?? null),
@@ -116,6 +117,11 @@ export function createConversationOperations({ cwd, getService }) {
     team: ({ ref } = {}) => run("read_failed", async (service) => pubTeam(
       await service.readTeam({ cwd, sessionId: await sessionIdFor(service, ref) })
     )),
+    // Light read for hosts: sessions + tasks, no provider probes (see service.readWork).
+    work: ({ ref } = {}) => run("read_failed", async (service) => {
+      const work = await service.readWork({ cwd, sessionId: await sessionIdFor(service, ref) });
+      return { sessions: (work.sessions ?? []).map(pubSession), tasks: (work.tasks ?? []).map(pubTask) };
+    }),
     taskResult: ({ taskId, ref } = {}) => run("read_failed", async (service) => pubTaskResult(
       await service.readTaskResult({ cwd, taskId, sessionId: await sessionIdFor(service, ref) })
     )),

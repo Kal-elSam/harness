@@ -70,8 +70,8 @@ function agentId(role) {
  * - `idle`: assignment available with no active run for that role.
  * - `unknown`: still checking, or the probe failed / produced no evidence.
  * `working`/`done` are deliberately NEVER emitted here: the snapshot
- * inputs expose no per-role run signal yet, so claiming them would be
- * fabrication.
+ * inputs expose no per-role run signal yet (see H3 in
+ * odd/tasks/herd-shell-layout.md) — claiming them would be fabrication.
  * @param {object} availability - a team row's `availability`
  */
 function agentState(availability) {

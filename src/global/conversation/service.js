@@ -498,6 +498,17 @@ function analystCatalogFor(intelligence = {}) {
   });
 }
 
+/** A malformed link/run record is typed corrupt evidence, never a thrown read. */
+function unreadableExecution(error) {
+  const corrupt = error instanceof SyntaxError || /Invalid execution artifact/i.test(String(error?.message ?? ""));
+  return {
+    runId: null, provider: null, role: null, active: false,
+    state: corrupt ? "result_corrupt" : "evidence_unreadable",
+    error: corrupt ? "Run evidence is corrupt." : "Run evidence is unreadable.",
+    startedAt: null, updatedAt: null, message: "Run evidence could not be read."
+  };
+}
+
 export function createConversationService(deps = {}) {
   const resolveRoot = deps.resolveRoot ?? resolveProjectRoot;
   const createPlan = deps.createPlan ?? createArchitecturePlan;
@@ -667,12 +678,23 @@ export function createConversationService(deps = {}) {
   }, claudeSubscriptionAuthTtlMs);
 
   async function executionFor(projectRoot, taskId) {
-    const link = await readExecution(projectRoot, taskId);
+    let link;
+    try {
+      link = await readExecution(projectRoot, taskId);
+    } catch (error) {
+      return unreadableExecution(error);
+    }
     if (!link) return null;
-    const run = await readRun(homeDir, link.runId);
+    let run;
+    try {
+      run = await readRun(homeDir, link.runId);
+    } catch (error) {
+      return { ...unreadableExecution(error), runId: link.runId, provider: link.agentId ?? link.provider ?? "claude", role: link.role ?? null };
+    }
     return {
       runId: link.runId,
       provider: run?.agentId ?? link.agentId ?? "claude",
+      role: link.role ?? null,
       state: run?.state ?? link.state ?? "failed",
       active: run ? isActiveRunState(run.state) : false,
       error: run?.error ?? link.error ?? null,
@@ -680,6 +702,30 @@ export function createConversationService(deps = {}) {
       updatedAt: run?.updatedAt ?? link.updatedAt ?? null,
       message: run ? `Claude run is ${run.state}.` : (link.error ?? "Claude run record is unavailable.")
     };
+  }
+
+  // The ONE timeline projection (plans + their execution evidence) shared by
+  // `snapshot`, `readTeam` and `readWork`. Recovery only marks dead runs
+  // interrupted; it never launches anything.
+  async function projectedPlans(projectRoot, sessionId = null) {
+    await recover(homeDir);
+    const allPlans = await listPlans(projectRoot);
+    const plans = sessionId
+      ? allPlans.filter((plan) => !plan.sessionId || plan.sessionId === sessionId)
+      : allPlans;
+    return Promise.all(plans.map(async (plan) => publicPlan(plan, await executionFor(projectRoot, plan.taskId))));
+  }
+
+  // Task rows (timeline + each task's pending transition) shared by readTeam and readWork.
+  async function taskRows(projectRoot, timeline) {
+    const nextByTask = new Map();
+    for (const { taskId } of timeline) {
+      nextByTask.set(taskId, (await transitions.read(projectRoot, taskId))?.next ?? null);
+    }
+    return timeline.map(({ taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error }) => ({
+      taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error,
+      nextTransition: nextByTask.get(taskId) ?? null
+    }));
   }
 
   // Best-effort idempotent upsert of an observed transition. Reads and
@@ -898,14 +944,7 @@ export function createConversationService(deps = {}) {
      */
     async snapshot({ cwd, sessionId = null }) {
       const projectRoot = await root(cwd);
-      await recover(homeDir);
-      const allPlans = await listPlans(projectRoot);
-      const plans = sessionId
-        ? allPlans.filter((plan) => !plan.sessionId || plan.sessionId === sessionId)
-        : allPlans;
-      const projected = await Promise.all(plans.map(async (plan) => publicPlan(
-        plan, await executionFor(projectRoot, plan.taskId)
-      )));
+      const projected = await projectedPlans(projectRoot, sessionId);
       const adapters = inspectAdapters({ cwd: projectRoot });
       const engram = inspectEngram();
       const recentRuns = await listRuns(homeDir, { limit: 50 });
@@ -1425,20 +1464,29 @@ export function createConversationService(deps = {}) {
         ...(strategy.projectTeam ?? []).map((entry) => [entry?.role ?? "Unknown role", entry?.model ?? null])
       ] : [];
       const roles = entries.map(([role, model]) => teamRole(role, model, providers, intelligence));
-      const nextByTask = new Map();
-      for (const { taskId } of snap.timeline) {
-        nextByTask.set(taskId, (await transitions.read(snap.projectRoot, taskId))?.next ?? null);
-      }
       return {
         schema: CONVERSATION_SCHEMA,
         projectRoot: snap.projectRoot,
         state: strategy ? (strategy.status ?? "unknown") : "not_analyzed",
         roles,
         providers,
-        tasks: snap.timeline.map(({ taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error }) => ({
-          taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error,
-          nextTransition: nextByTask.get(taskId) ?? null
-        }))
+        tasks: await taskRows(snap.projectRoot, snap.timeline)
+      };
+    },
+    /**
+     * Light read-only view of the work in one explicit project: its sessions
+     * and tasks (with run evidence and pending transitions). Same projection
+     * as `readTeam().tasks`, without the provider probes or usage reads, so a
+     * host can refresh it on every render. Never launches, writes or selects.
+     * @param {{cwd: string, sessionId?: string|null}} args
+     */
+    async readWork({ cwd, sessionId = null }) {
+      const projectRoot = await root(cwd);
+      const timeline = await projectedPlans(projectRoot, sessionId);
+      return {
+        projectRoot,
+        sessions: await listSessionsImpl(homeDir, projectRoot),
+        tasks: await taskRows(projectRoot, timeline)
       };
     },
     /**
@@ -2215,7 +2263,7 @@ export function createConversationService(deps = {}) {
       const runId = newRunId();
       const createdAt = new Date().toISOString();
       try {
-        await reserveExecution(projectRoot, taskId, { runId, agentId: resolvedAgentId, state: "reserved", createdAt, updatedAt: createdAt });
+        await reserveExecution(projectRoot, taskId, { runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, state: "reserved", createdAt, updatedAt: createdAt });
       } catch (error) {
         if (error?.code !== "EEXIST") throw error;
         const raced = await executionFor(projectRoot, taskId);
@@ -2237,14 +2285,14 @@ export function createConversationService(deps = {}) {
           captureTranscript: true, strategy: "direct", wait: false
         });
         await updateExecution(projectRoot, taskId, {
-          runId, agentId: resolvedAgentId, state: started.metadata.state, createdAt, updatedAt: new Date().toISOString()
+          runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, state: started.metadata.state, createdAt, updatedAt: new Date().toISOString()
         });
         const transitionWarning = await noteTransition(projectRoot, taskId, {
           runId, kind: "delegated", evidence: `run:${runId}`
         });
         return {
           ...publicPlan(record, {
-            runId, provider: resolvedAgentId, state: started.metadata.state, active: true,
+            runId, provider: resolvedAgentId, role: confirmationTarget.role ?? null, state: started.metadata.state, active: true,
             error: null, startedAt: started.metadata.startedAt, updatedAt: started.metadata.updatedAt,
             message: `${resolvedAgentId} run is ${started.metadata.state}.`
           }),
@@ -2254,7 +2302,7 @@ export function createConversationService(deps = {}) {
         };
       } catch (error) {
         await updateExecution(projectRoot, taskId, {
-          runId, agentId: resolvedAgentId, state: "failed", error: error.message ?? String(error), createdAt,
+          runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, state: "failed", error: error.message ?? String(error), createdAt,
           updatedAt: new Date().toISOString()
         });
         throw error;
