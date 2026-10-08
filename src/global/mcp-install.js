@@ -1,5 +1,6 @@
 /**
- * Register Kairo as an MCP server in a client config (Cursor v1).
+ * Register Kairo as an MCP server in a client config (Cursor; Claude Code and Codex
+ * are delegated to mcp/client-install.js with the same plan/--yes/backup discipline).
  * Consent-gated: plan by default, --yes applies. Atomic write + backup.
  */
 import { copyFile, mkdir, readFile } from "node:fs/promises";
@@ -19,6 +20,8 @@ import {
   resolveWorkSnapshotRulePath
 } from "./mcp/work-snapshot-rule.js";
 import { resolveHomeDir } from "./paths.js";
+import { McpInstallError } from "./mcp/client-config.js";
+import { runClientMcpInstall } from "./mcp/client-install.js";
 
 /**
  * Cursor MCP entry. `cwd: "."` is best-effort for clients that honor it.
@@ -103,12 +106,27 @@ export async function runMcpInstall({
   renameFn = null,
   ensureRule = ensureWorkSnapshotRule,
   detectAgent = detectAgentMcpRegistration,
-  now = () => Date.now()
+  now = () => Date.now(),
+  quiet = false,
+  bind,
+  projectScope = false
 } = {}) {
+  if (client === "claude-code" || client === "codex") {
+    return runClientMcpInstall({
+      client, yes, json, quiet, bind, projectScope, homeDir,
+      readFileFn, mkdirFn, copyFileFn, now
+    });
+  }
   if (client !== "cursor") {
     throw new Error(
-      `Unsupported MCP client "${client}". v1 supports --client=cursor only.`
+      `Unsupported MCP client "${client}". Supported: cursor, claude-code, codex.`
     );
+  }
+  if (bind != null) {
+    throw new McpInstallError("bind_unsupported", "--bind is not available for cursor (its entry stays read-only).");
+  }
+  if (projectScope) {
+    throw new McpInstallError("scope_unsupported", "--project-scope is only available for claude-code.");
   }
 
   const detection = await detectAgent({ client, homeDir, readFileFn });
@@ -221,6 +239,8 @@ export async function runMcpCli(options = {}) {
       client: options.mcpClient ?? "cursor",
       yes: options.yes === true,
       json: options.json === true,
+      bind: options.mcpBind,
+      projectScope: options.mcpProjectScope === true,
       homeDir: options.homeDir ?? resolveHomeDir()
     });
   }

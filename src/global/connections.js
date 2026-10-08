@@ -11,6 +11,7 @@ import { inspectEngramIntegration } from "./integrations/engram-evidence.js";
 import { resolveGitHeadSha } from "./observability/graphify-probe.js";
 import { enrichConnection } from "./connection-actions.js";
 import { buildFleetReport } from "./observability/fleet-probe.js";
+import { CLIENT_FORMATS, displayPath, inspectClientConfigText } from "./mcp/client-config.js";
 
 export const CONNECTION_ACCESS = Object.freeze({
   gentle: "Probe contract; export/import review bundles (import needs consent).",
@@ -25,6 +26,16 @@ export const MCP_CLIENTS = Object.freeze({
     id: "cursor",
     label: "Cursor",
     configRelativePath: join(".cursor", "mcp.json")
+  },
+  "claude-code": {
+    id: "claude-code",
+    label: "Claude Code",
+    configRelativePath: ".claude.json"
+  },
+  codex: {
+    id: "codex",
+    label: "Codex",
+    configRelativePath: join(".codex", "config.toml")
   }
 });
 
@@ -139,6 +150,7 @@ export async function detectAgentMcpRegistration({
   homeDir = resolveHomeDir(),
   readFileFn = readFile
 } = {}) {
+  if (client in CLIENT_FORMATS) return detectClientMcpRegistration({ client, homeDir, readFileFn });
   const path = resolveMcpConfigPath(client, { homeDir });
   try {
     const raw = await readFileFn(path, "utf8");
@@ -181,6 +193,63 @@ export async function detectAgentMcpRegistration({
       path,
       detail: `Could not read ${path}: ${error?.message ?? error}`
     };
+  }
+}
+
+/**
+ * Claude Code (JSON) and Codex (TOML): read-only health of the Kairo entry.
+ * ok -> connected; missing -> not_connected; drifted/unparseable -> error.
+ * Paths in details are home-scrubbed.
+ */
+async function detectClientMcpRegistration({ client, homeDir, readFileFn }) {
+  const path = resolveMcpConfigPath(client, { homeDir });
+  const shown = displayPath(path, homeDir);
+  const label = MCP_CLIENTS[client].label;
+  let text = null;
+  try {
+    text = await readFileFn(path, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      return {
+        connected: false,
+        state: "error",
+        path: shown,
+        detail: `Could not read ${shown}: ${error?.code ?? "read error"}`
+      };
+    }
+  }
+  const result = inspectClientConfigText(client, text);
+  const base = { path: shown, client };
+  switch (result.state) {
+    case "ok":
+      return {
+        ...base,
+        connected: true,
+        state: "connected",
+        bound: result.bound,
+        detail: `Kairo MCP registered for ${label} in ${shown}${result.bound ? " (bound to one project)" : " (read-only)"}.`
+      };
+    case "missing":
+      return {
+        ...base,
+        connected: false,
+        state: "not_connected",
+        detail: `Kairo MCP is not registered for ${label}. Run ${`kairo mcp install --client ${client}`} (plan first, --yes applies).`
+      };
+    case "drifted":
+      return {
+        ...base,
+        connected: false,
+        state: "error",
+        detail: `Kairo MCP entry for ${label} drifted from the expected command. Re-run kairo mcp install --client ${client} --yes.`
+      };
+    default:
+      return {
+        ...base,
+        connected: false,
+        state: "error",
+        detail: `Could not parse ${shown}; fix or move it, nothing was changed.`
+      };
   }
 }
 
