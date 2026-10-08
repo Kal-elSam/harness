@@ -8,7 +8,7 @@ import { isCursorAutoModel } from "../observability/cursor-models.js";
  *
  * UI-free: this is the single source of truth for whether a model ref is
  * actually usable right now, consumed by both the legacy cockpit widget
- * (cockpit/view.js re-exports it) and the Pi host's team snapshot loader.
+ * (the retired cockpit view used to re-export it) and the Pi host's team snapshot loader.
  * @param {object|null|undefined} model
  * @param {{eligibility?: Record<string, {ok: boolean, reason?: string}>, claudeEntitlement?: Record<string, {status: string, reason?: string|null}>}} [opts]
  * @returns {{available: boolean, warning: string|null}}

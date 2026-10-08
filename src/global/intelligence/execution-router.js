@@ -245,7 +245,7 @@ function windowLimited(provider, label, window, verb = "limited") {
 // A softer, earlier heads-up threshold — strictly above MIN_QUOTA_PERCENT,
 // so the human sees a warning before a provider actually gets excluded,
 // never after. Display-only: it never affects checkCandidate's own
-// eligibility verdict (see CockpitView's own status-bar consumer).
+// eligibility verdict (see the retired CockpitView's status-bar consumer).
 export const LOW_QUOTA_WARN_PERCENT = 20;
 
 /**

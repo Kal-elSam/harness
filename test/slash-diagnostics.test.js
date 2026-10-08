@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { slashDiagnosticLines } from "../src/global/conversation/slash-diagnostics.js";
 import { slashDiagnosticLines as viaSidecar } from "../src/global/host/kairo-ui-rpc-stdio.js";
-import { CockpitView } from "../src/global/cockpit/view.js";
 
 // Golden captured from the legacy CockpitView-backed implementation BEFORE the
 // extraction: the neutral module must reproduce it byte for byte.
@@ -54,13 +53,6 @@ test("slash diagnostics are byte-identical to the pre-extraction golden for ever
   }
 });
 
-test("the Ratatui sidecar re-exports the neutral implementation and the legacy view delegates to it", () => {
+test("the Ratatui sidecar re-exports the neutral implementation", () => {
   assert.equal(viaSidecar, slashDiagnosticLines);
-  const view = new CockpitView({ actions: {} });
-  view.snapshot = rich;
-  assert.deepEqual(view.providerLines(), golden.rich.providers);
-  assert.deepEqual(view.modelsExplainLines(), golden.rich.models);
-  assert.deepEqual(view.aiTeamDetailLines(), golden.rich.models_evidence);
-  assert.deepEqual(view.fitWhyLines(), golden.rich.why);
-  assert.equal(view.integrationsLine(), golden.rich.status.at(-1));
 });
