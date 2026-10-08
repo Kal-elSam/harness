@@ -72,7 +72,8 @@ test("tool classification: preview is a read tool, execute/cancel are write tool
   assert.deepEqual([...KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS], ["kairo_plan_execution"]);
   assert.ok(KAIRO_MCP_READ_TOOLS.includes("kairo_plan_execution"));
   assert.deepEqual([...KAIRO_MCP_WRITE_TOOLS], [
-    "kairo_publish_work_snapshot", "kairo_execute_plan", "kairo_cancel_execution"
+    "kairo_publish_work_snapshot", "kairo_execute_plan", "kairo_cancel_execution",
+    "kairo_setup_run_analysis", "kairo_setup_approve_team", "kairo_setup_set_assignment"
   ]);
   for (const name of ["kairo_plan_execution", "kairo_execute_plan", "kairo_cancel_execution"]) {
     assert.equal(WRITE_RE.test(name), false, name);
