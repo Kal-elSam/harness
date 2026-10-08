@@ -114,6 +114,13 @@ export async function probeCursorPoolAccess({
       }
       let parsed;
       try { parsed = JSON.parse(stdout); } catch {
+        // Non-JSON stdout/stderr that clearly names a usage/rate limit is real
+        // EXHAUSTED evidence (ActionRequiredError text, etc.). Timeout stays
+        // UNVERIFIED via the timer path — never guessed here.
+        const combined = `${stdout}\n${stderr}`.trim();
+        if (combined && LIMIT_TEXT_PATTERN.test(combined)) {
+          return finish({ pool, status: CURSOR_ACCESS_STATUS.EXHAUSTED, reason: combined, probedAt: new Date().toISOString() });
+        }
         return finish(unverifiedResult(pool, stderr.trim() || `cursor-agent exited ${code} with no parseable output`));
       }
       if (parsed?.is_error === true) {

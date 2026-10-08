@@ -11,6 +11,7 @@ import { dirname } from "node:path";
 import { harnessHomePaths } from "../paths.js";
 import { writeAtomicJson } from "../runtime/write-atomic-json.js";
 import { CURSOR_ACCESS_STATUS } from "./cursor-entitlement.js";
+import { accountEvidenceUsable, computeAccountFingerprint } from "./account-fingerprint.js";
 
 // A real probe spawns a genuine cursor-agent process — 15 minutes keeps
 // every refresh/poll tick from re-spawning one, while still being short
@@ -31,8 +32,8 @@ function isPersistableStatus(status) {
   return status === CURSOR_ACCESS_STATUS.AVAILABLE || status === CURSOR_ACCESS_STATUS.EXHAUSTED;
 }
 
-function emptyDoc(fetchedAt = new Date().toISOString()) {
-  return { fetchedAt, pools: Object.create(null) };
+function emptyDoc(fetchedAt = new Date().toISOString(), accountFingerprint = null) {
+  return { fetchedAt, accountFingerprint, pools: Object.create(null) };
 }
 
 /**
@@ -69,11 +70,14 @@ export async function writeCursorAccessCache(homeDir, doc, deps = {}) {
 
 /**
  * Pure resolver: the live access view for one real pool, from cache.
+ * When the caller passes `accountIdentifier` (key present, even null/undefined)
+ * evidence is reused only if the current account is identifiable and matches
+ * the cached `accountFingerprint`; a legacy cache without one is not reused.
  * @param {{cache: object|null, pool: string, now?: number, ttlMs?: number}} options
  * @returns {{status: string, reason: string|null, age: string|null, probedAt: string|null}}
  */
-export function resolveCursorPoolAccess({ cache, pool, now = Date.now(), ttlMs = DEFAULT_CURSOR_ACCESS_TTL_MS } = {}) {
-  const entry = cache?.pools?.[pool] ?? null;
+export function resolveCursorPoolAccess({ cache, pool, now = Date.now(), ttlMs = DEFAULT_CURSOR_ACCESS_TTL_MS, ...identity } = {}) {
+  const entry = accountEvidenceUsable(cache, identity) ? (cache?.pools?.[pool] ?? null) : null;
   if (!entry || !isPersistableStatus(entry.status)) {
     return { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null, age: null, probedAt: null };
   }
@@ -91,10 +95,14 @@ export function resolveCursorPoolAccess({ cache, pool, now = Date.now(), ttlMs =
  * @param {object|null} cache
  * @param {{pool: string, status: string, reason?: string|null, probedAt?: string}} result
  */
-export function mergeCursorAccessResult(cache, result) {
-  const base = cache && typeof cache === "object" && cache.pools && typeof cache.pools === "object"
-    ? { fetchedAt: cache.fetchedAt, pools: { ...cache.pools } }
-    : emptyDoc();
+export function mergeCursorAccessResult(cache, result, identity = {}) {
+  const enforcing = Object.hasOwn(identity, "accountIdentifier");
+  const fingerprint = enforcing ? computeAccountFingerprint(identity.accountIdentifier) : null;
+  const sameAccount = !enforcing || (fingerprint !== null && cache?.accountFingerprint === fingerprint);
+  const base = cache && typeof cache === "object" && cache.pools && typeof cache.pools === "object" && sameAccount
+    ? { fetchedAt: cache.fetchedAt, accountFingerprint: cache.accountFingerprint ?? null, pools: { ...cache.pools } }
+    : emptyDoc(undefined, fingerprint);
+  if (enforcing) base.accountFingerprint = fingerprint;
   if (result && typeof result.pool === "string" && isPersistableStatus(result.status)) {
     const probedAt = typeof result.probedAt === "string" ? result.probedAt : new Date().toISOString();
     base.pools[result.pool] = { status: result.status, reason: result.reason ?? null, probedAt };
@@ -114,5 +122,5 @@ export function invalidateCursorPoolAccess(cache, pool) {
   if (!cache?.pools || typeof cache.pools !== "object" || !(pool in cache.pools)) return cache ?? emptyDoc();
   const pools = { ...cache.pools };
   delete pools[pool];
-  return { fetchedAt: cache.fetchedAt, pools };
+  return { fetchedAt: cache.fetchedAt, accountFingerprint: cache.accountFingerprint ?? null, pools };
 }
