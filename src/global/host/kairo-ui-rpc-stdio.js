@@ -10,7 +10,7 @@
  *   { "op": "plans.decide", "taskId": "...", "decision": "approved"|"rejected" }
  *     — U4b: decidePlan + refresh list; never executePlan / planExecution
  *   { "op": "plans.preview", "taskId": "...", "role": "..." }  — U4c: planExecution preview
- *     preview only (autoExecuted is always false); executing a suggested alternative needs an explicit plans.execute
+ *     WAIT_FOR_PROJECT_TEAM + suggested-alternative auto-calls executePlan (cockpit parity)
  *   { "op": "plans.execute", "taskId": "...", "confirmationTarget": {...} }  — U4c: executePlan
  *   { "op": "plans.cancel", "taskId": "..." }  — U4c: cancelExecution
  *   { "op": "plans.transcript", "runId": "...", "sinceIndex"?: number }  — U4c: readRunTranscript
@@ -168,7 +168,7 @@ import {
   getCuratedIntegration,
   reduceSettingsAction,
   createSettingsActionState
-} from "../operations/settings-model.js";
+} from "../ink/cockpit-settings.js";
 import { listPiSessionFilesForCwd } from "./pi-rpc-sessions.js";
 import { mapPiMessagesToTranscriptRows } from "./pi-rpc-transcript.js";
 import {
@@ -1204,9 +1204,8 @@ export async function runKairoUiRpcStdio({
         });
         await emitPlansList();
       } else if (op === "plans.preview") {
-        // U4c: role → planExecution preview. Never executes: every decision,
-        // including a suggested alternative, waits for the host's explicit
-        // plans.execute with the received confirmationTarget.
+        // U4c: role → planExecution. WAIT_FOR + suggested-alternative auto-
+        // executes (cockpit parity). Everything else waits for host confirm.
         const taskId = typeof cmd.taskId === "string" ? cmd.taskId : "";
         const role = typeof cmd.role === "string" ? cmd.role : "";
         if (!taskId) {
@@ -1223,6 +1222,39 @@ export async function runKairoUiRpcStdio({
           role,
           sessionId: activeKairoSessionId
         });
+        const isAutoFallback =
+          decision?.decision === "WAIT_FOR_PROJECT_TEAM" &&
+          decision?.confirmationTarget?.selection === "suggested-alternative";
+        if (isAutoFallback) {
+          const blockedLabel =
+            decision.blockedAssignment?.model?.displayName ??
+            decision.blockedAssignment?.model?.modelId ??
+            decision.blockedAssignment?.provider ??
+            "the assigned model";
+          const alt = decision.suggestedAlternative;
+          const altLabel =
+            alt?.model?.displayName ?? alt?.model?.modelId ?? "unknown model";
+          emitPlanPreview(taskId, decision, { autoExecuted: true });
+          writeOut({
+            type: "notice",
+            message: `${blockedLabel} is unavailable for ${decision.role} — automatically falling back to ${alt?.provider} · ${altLabel}.`
+          });
+          const executed = await executePlanImpl({
+            cwd,
+            taskId,
+            confirmationTarget: decision.confirmationTarget,
+            sessionId: activeKairoSessionId
+          });
+          writeOut({
+            type: "plan_execute",
+            taskId: executed?.taskId ?? taskId,
+            execution: executed?.execution ?? null,
+            reused: executed?.reused ?? false,
+            autoExecuted: true
+          });
+          await emitPlansList();
+          return;
+        }
         emitPlanPreview(taskId, decision, { autoExecuted: false });
         if (decision?.decision === "MANUAL_HANDOFF" && decision?.taskPrompt) {
           const modelLabel =
