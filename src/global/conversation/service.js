@@ -486,6 +486,18 @@ function teamRole(role, model, providers, intelligence) {
   };
 }
 
+/** Bootstrap Analyst catalog from the snapshot's model intelligence (shared by preflight and the setup read). */
+function analystCatalogFor(intelligence = {}) {
+  const {
+    scoredAll = [], manualSelectionScoredPool = scoredAll, deniedScoredPool = [], eligibility = {}, registry = null,
+    providerCapacity = null, unscoredModels = [], analystUnscoredModels = unscoredModels
+  } = intelligence;
+  return computeBootstrapAnalystCatalog({
+    scoredAll, manualSelectionScoredPool, deniedScoredPool, eligibility, registry, providerCapacity,
+    unscoredModels: analystUnscoredModels
+  });
+}
+
 export function createConversationService(deps = {}) {
   const resolveRoot = deps.resolveRoot ?? resolveProjectRoot;
   const createPlan = deps.createPlan ?? createArchitecturePlan;
@@ -1430,6 +1442,48 @@ export function createConversationService(deps = {}) {
       };
     },
     /**
+     * Read-only raw facts for the setup projection (operations/setup-*): adapter
+     * install state, per-provider access evidence (Claude entitlement, Cursor
+     * access), eligibility, the analyst catalog, the persisted strategy, the
+     * edit catalog per role of a SUGGESTED strategy and the recovery record.
+     * Never selects a team, probes a provider, writes or launches anything.
+     * @param {{cwd: string, sessionId?: string|null}} args
+     */
+    async readSetup({ cwd, sessionId = null }) {
+      const snap = await this.snapshot({ cwd, sessionId });
+      const intelligence = snap.modelIntelligence ?? {};
+      const strategy = snap.projectStrategy ?? null;
+      const {
+        scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null, unscoredModels = []
+      } = intelligence;
+      const editCatalogs = {};
+      if (strategy?.status === "suggested") {
+        for (const entry of strategy.projectTeam ?? []) {
+          editCatalogs[entry.role] = computeProjectTeamEditCatalog(entry.role, {
+            scoredAll, manualSelectionScoredPool, eligibility, registry, unscoredModels
+          }).models;
+        }
+      }
+      const record = await readAvailabilityRecoveryImpl(homeDir, snap.projectRoot).catch(() => null);
+      return {
+        projectRoot: snap.projectRoot,
+        adapters: inspectAdapters({ cwd: snap.projectRoot }),
+        eligibility,
+        claudeEntitlement: intelligence.claudeEntitlement ?? {},
+        cursorAccess: intelligence.cursorAccess ?? {},
+        knownCandidates: [...manualSelectionScoredPool, ...unscoredModels].map((model) => ({
+          candidateKey: model.candidateKey ?? `${model.adapterId}::${model.modelId}`,
+          adapterId: model.adapterId, modelId: model.modelId, entitlement: model.entitlement ?? null
+        })),
+        analystCatalog: analystCatalogFor(intelligence),
+        // The existing read-only plan (pending vs reusable checks); never executed here.
+        verificationPlan: intelligence.verificationPlan ?? EMPTY_VERIFICATION_PLAN,
+        strategy,
+        editCatalogs,
+        recovery: record ? { outcome: record.outcome ?? null, pending: record.outcome === "proposed" && record.proposal != null } : null
+      };
+    },
+    /**
      * Exclusive cross-process lock for one real session — a second real
      * `kairo start`/`resume` process opening the SAME session gets a real,
      * clear thrown error (see session-lock.js's own contract), never a
@@ -1477,7 +1531,7 @@ export function createConversationService(deps = {}) {
         claudeEntitlement = {}, cursorAccess = {}, verificationPlan = EMPTY_VERIFICATION_PLAN
       } = snap.modelIntelligence ?? {};
       const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement, cursorAccess };
-      const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, deniedScoredPool, unscoredModels: analystUnscoredModels });
+      const analystCatalog = analystCatalogFor(snap.modelIntelligence);
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
       ).length;
