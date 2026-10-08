@@ -1,7 +1,7 @@
 import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../text-width.js";
 import { buildTaskRows, clampSelection, isActionAvailable } from "./rows.js";
 import { CARD_TONE, cardBottom, cardInnerWidth, cardLine, cardTop, renderPanel as renderPanelWithTheme } from "./card.js";
-import { theme } from "./theme.js";
+import { theme } from "../conversation/ansi-theme.js";
 import { resolveAssignmentAvailability } from "../conversation/assignment-availability.js";
 import { formatSubscriptionUsageSegments, formatSlashUsageLines, quotaWarnSuffix } from "../conversation/usage-summary.js";
 import { explainTeamDecision, ROLE_CAPABILITY_BLURB } from "../conversation/team-decision.js";

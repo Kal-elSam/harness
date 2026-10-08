@@ -12,7 +12,7 @@ import {
   previewGovernanceRollback,
   previewGovernanceSync
 } from "../governance-actions.js";
-import { isRunCancellable } from "../ink/orchestrator-state.js";
+import { isRunCancellable } from "../operations/run-cancellable.js";
 import { listAlerts } from "../runtime/alerts/alert-store.js";
 import { controlledDismissAlert } from "../runtime/alerts/controlled-alert-actions.js";
 import { stopRun } from "../runtime/run-manager.js";

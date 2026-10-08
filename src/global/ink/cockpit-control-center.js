@@ -223,12 +223,8 @@ function formatTokenHeadline(budgets) {
   return formatMeasuredBudgets(budgets) ?? "Data unavailable";
 }
 
-/** Usage surface via shared auditable model — never invent totals. */
-export function formatUsageLines({
-  snapshot = null, dashboard = null, layoutMode = undefined
-} = {}) {
-  return formatUsageLinesFromModel(adaptUsageModel({ snapshot, dashboard, layoutMode }));
-}
+// formatUsageLines lives in operations/usage-model.js; re-exported until this module is retired.
+export { formatUsageLines } from "../operations/usage-model.js";
 
 export function hasAuditableUsage({ snapshot = null, dashboard = null } = {}) {
   return adaptUsageModel({ snapshot, dashboard }).hasEvidence;

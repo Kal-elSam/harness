@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PALETTE, theme } from "../src/global/cockpit/theme.js";
+import { PALETTE, theme } from "../src/global/conversation/ansi-theme.js";
 
 // Real WCAG 2.x relative-luminance contrast ratio — the same formula a
 // real accessibility audit uses, not an approximation. Verifies the
