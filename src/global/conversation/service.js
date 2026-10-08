@@ -21,7 +21,7 @@ import { ExecutionModeError, READ_ONLY_MODE, normalizeExecutionMode } from "./ex
 import { formatTranscriptEventText } from "../runtime/run-events.js";
 import { inspectExecutionAdapters } from "../runtime/execution-adapters/index.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
-import { hasFiniteUsage } from "../ink/cockpit-usage.js";
+import { hasFiniteUsage } from "./usage-summary.js";
 import { readCodexUsage } from "../observability/codex-usage.js";
 import { readClaudeUsage } from "../observability/claude-usage.js";
 import { readOpenCodeUsage, readOpenCodeGoUsage, readOpenCodeStats } from "../observability/opencode-usage.js";

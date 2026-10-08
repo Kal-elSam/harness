@@ -155,3 +155,16 @@ export function formatSlashUsageLines(snapshot) {
     : "Go usage unknown · source unavailable");
   return lines;
 }
+
+/**
+ * True when a token-usage record carries at least one measured, finite
+ * count. UI-free; shared by the conversation service and the legacy
+ * cockpit usage formatters.
+ * @param {object|null|undefined} usage
+ */
+export function hasFiniteUsage(usage) {
+  if (!usage || typeof usage !== "object") return false;
+  return Number.isFinite(usage.total)
+    || Number.isFinite(usage.input)
+    || Number.isFinite(usage.output);
+}
