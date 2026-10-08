@@ -178,17 +178,3 @@ export function formatSettingsLines({
     `Selected · ${integrations[listIndex]?.id ?? "none"}`
   ];
 }
-
-export function buildSettingsFooterParts(phase = SETTINGS_PHASE.BROWSE) {
-  switch (phase) {
-    case SETTINGS_PHASE.PREVIEW:
-      return ["Enter Confirm", "Esc Back"];
-    case SETTINGS_PHASE.CONFIRMING:
-      return ["Y Confirm", "N/Esc Cancel"];
-    case SETTINGS_PHASE.COMPLETED:
-      return ["Esc Back", "/ Actions"];
-    case SETTINGS_PHASE.BROWSE:
-    default:
-      return ["↑↓ Select", "Enter Preview", "Esc Nav", "/ Actions"];
-  }
-}
