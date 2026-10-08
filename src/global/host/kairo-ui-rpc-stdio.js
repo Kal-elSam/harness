@@ -168,7 +168,7 @@ import {
   getCuratedIntegration,
   reduceSettingsAction,
   createSettingsActionState
-} from "../ink/cockpit-settings.js";
+} from "../operations/settings-model.js";
 import { listPiSessionFilesForCwd } from "./pi-rpc-sessions.js";
 import { mapPiMessagesToTranscriptRows } from "./pi-rpc-transcript.js";
 import {

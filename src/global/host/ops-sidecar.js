@@ -16,14 +16,14 @@ import { fileURLToPath } from "node:url";
 import { buildReadOnlyDiagnostics } from "../action-planner.js";
 import { PACKAGE_NAME } from "../brand/cli.js";
 import { buildControlPlaneSnapshot } from "../control-plane-snapshot.js";
-import { loadCockpitScanBundle } from "../ink/cockpit-scan.js";
+import { loadCockpitScanBundle } from "../operations/scan-bundle.js";
 import { formatUsageLines } from "../ink/cockpit-control-center.js";
 import { formatSystemHealthLines } from "../ink/orchestrator-state.js";
 import { resolveHomeDir } from "../paths.js";
 import { buildRuntimeDashboardData } from "../runtime/run-cli.js";
 import { buildFleetReport, formatFleetText } from "../observability/fleet-probe.js";
 import { formatSlashUsageLines } from "../conversation/usage-summary.js";
-import { listRecoverySnapshots } from "../ink/cockpit-recovery.js";
+import { listRecoverySnapshots } from "../operations/recovery-model.js";
 import {
   listOpsAlerts,
   listOpsReviews,

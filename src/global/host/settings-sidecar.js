@@ -10,8 +10,8 @@ import { buildConnectionsReport } from "../connections.js";
 import {
   formatSettingsLines,
   listCuratedIntegrations
-} from "../ink/cockpit-settings.js";
-import { loadCockpitScanBundle } from "../ink/cockpit-scan.js";
+} from "../operations/settings-model.js";
+import { loadCockpitScanBundle } from "../operations/scan-bundle.js";
 import { buildReadOnlyDiagnostics } from "../action-planner.js";
 import { buildControlPlaneSnapshot } from "../control-plane-snapshot.js";
 import { resolveHomeDir } from "../paths.js";
