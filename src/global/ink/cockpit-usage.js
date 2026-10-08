@@ -3,6 +3,10 @@
  * Shared by formatUsageLines and SemanticUsagePanel.
  */
 import { LAYOUT_MODES } from "./layout.js";
+import { hasFiniteUsage } from "../conversation/usage-summary.js";
+
+// Temporary re-export: hasFiniteUsage now lives in conversation/usage-summary.js.
+export { hasFiniteUsage };
 
 export function usageRunLimit(layoutMode = LAYOUT_MODES.COMPACT) {
   return layoutMode === LAYOUT_MODES.WIDE ? 8 : 3;
@@ -27,13 +31,6 @@ export function resolveConfiguredLimits(dashboard) {
   if (Number.isFinite(resolved.stableContextBudget)) configured.push(`stable ${resolved.stableContextBudget}`);
   if (Number.isFinite(resolved.requestContextBudget)) configured.push(`request ${resolved.requestContextBudget}`);
   return configured;
-}
-
-export function hasFiniteUsage(usage) {
-  if (!usage || typeof usage !== "object") return false;
-  return Number.isFinite(usage.total)
-    || Number.isFinite(usage.input)
-    || Number.isFinite(usage.output);
 }
 
 export function formatRunUsageLabel(run) {
