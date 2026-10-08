@@ -16,10 +16,14 @@
 // and that model has already produced the real analysis this module
 // consumes. The analyst never picks the team; it only investigates.
 
-import { buildAiTeam, buildEfficientTeam, ensureRegistry } from "../intelligence/model-intelligence.js";
+import {
+  buildAiTeam, buildEfficientTeam, ensureRegistry, modelIdentityKey, rankCandidatesByRequirements
+} from "../intelligence/model-intelligence.js";
 import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
 import { computeRoleEvaluations } from "../intelligence/capability-scoring.js";
+import { BOOTSTRAP_ANALYST_PROFILE } from "./bootstrap-analyst-profile.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
+import { QUALIFICATION, classifyAnalystCatalog, compareAnalystRows } from "./analyst-qualification.js";
 
 // The Bootstrap Analyst investigates read-only via askProvider
 // (intelligence/quick-ask.js), which only actually supports these
@@ -49,29 +53,20 @@ export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor", "ope
 // not_applicable.
 export const BLOCKED_ENTITLEMENTS = new Set([ENTITLEMENT.DENIED, ENTITLEMENT.UNVERIFIED]);
 
-/**
- * The Bootstrap Analyst as a temporary, read-only WORKFLOW — deliberately
- * NOT a RoleProfile (see role-profiles.js's ROLE_PROFILES/ROLE_CAPABILITIES,
- * the six real team roles): the analyst never joins the team, never
- * writes anything, and only exists for the duration of one real /project
- * analyze run. Shaped like a RoleProfile (same fields) purely so this
- * codebase's one established "what does doing this job actually mean"
- * shape gets reused instead of inventing a second one — capabilities is
- * the SAME required-reasoning/optional-instructionFollowing baseline the
- * old ANALYST_CAPABILITIES constant hardcoded, now declared once here and
- * consumed everywhere the analyst's own capability floor matters.
- * @type {{role: string, objective: string, responsibility: string, capabilities: {required: string[], optional: string[]}, allowedActions: string[], allowedActionIds: string[], deliverable: string, completionCriteria: string}}
- */
-export const BOOTSTRAP_ANALYST_PROFILE = {
-  role: "BootstrapAnalyst",
-  objective: "Investigate a real, not-yet-analyzed project read-only and return a structured, evidence-backed ProjectAnalysis Kairo can trust to derive this project's real role requirements from.",
-  responsibility: "Read the real project (files, history, workflow docs already collected by project-profile.js, plus anything else it reads on its own) and report real architecture traits, real risks, and which of Kairo's six roles this specific project actually needs — never a boilerplate or generic answer.",
-  capabilities: { required: ["reasoning"], optional: ["instructionFollowing"] },
-  allowedActions: ["read files", "search/grep the repository", "run read-only inspection commands (e.g. git log, git blame)"],
-  allowedActionIds: ["repo.read", "repo.search", "repo.inspect_history"],
-  deliverable: "A valid ProjectAnalysis (see project-analysis.js's PROJECT_ANALYSIS_SCHEMA) — every field backed by a real file the analyst actually read, never an invented finding.",
-  completionCriteria: "The analysis identifies this project's real architecture, its real risks, and which roles it actually needs, each with real supporting evidence — not just a subset copied from a generic checklist."
-};
+// T20 (user decision, supersedes T10's "BLOCKED_ENTITLEMENTS unchanged" for
+// UNVERIFIED only): the Bootstrap Analyst picker keeps UNVERIFIED-access
+// models as selectable rows (access is UNKNOWN, not denied). They are never
+// `available` (the safe-to-run-now flag), never starred, never a default and
+// never picked by automatic recovery; the analyze path re-verifies access on
+// selection. DENIED stays excluded everywhere. Every other surface (team edit
+// catalog, unscored list, router) keeps using BLOCKED_ENTITLEMENTS.
+const isAccessUnverified = (model) => model?.entitlement === ENTITLEMENT.UNVERIFIED;
+const isAccessDenied = (model) => model?.entitlement === ENTITLEMENT.DENIED;
+
+// The Bootstrap Analyst profile (single definition shared with the analyst
+// prompt) lives in bootstrap-analyst-profile.js; re-exported here for the
+// existing import sites.
+export { BOOTSTRAP_ANALYST_PROFILE };
 
 function modelRef(teamModel) {
   if (!teamModel) return null;
@@ -91,6 +86,58 @@ function projectModelRef(teamModel) {
   return {
     candidateKey: teamModel.candidateKey ?? null, adapterId: teamModel.adapterId, modelId: teamModel.modelId,
     displayName: teamModel.displayName ?? null, accessMode: teamModel.accessMode ?? null
+  };
+}
+
+/**
+ * Whether a team-model entry from buildAiTeam/buildEfficientTeam is usable as
+ * an operational assignment. `available === true` is the intentional ready
+ * path; a missing `available` is treated as usable only for backward
+ * compatibility with older fixtures that omit the flag. Explicit
+ * `available: false` is never operational.
+ */
+function isOperationallyUsable(teamModel) {
+  if (!teamModel) return false;
+  return teamModel.available !== false;
+}
+
+/**
+ * Pick the operational model for one efficient-team entry: usable primary,
+ * else usable fallback, else keep the preferred primary for display and mark
+ * the assignment blocked. Never invents a silent substitute outside that
+ * primary/fallback pair. qualityTeam/efficientTeam keep comparative evidence.
+ */
+function resolveOperationalAssignment(entry) {
+  const preferredPrimary = entry?.primary ?? null;
+  const preferredFallback = entry?.fallback ?? null;
+  const decisionEvidence = entry?.decisionEvidence ?? null;
+  const reason = entry?.reason ?? null;
+
+  let model = null;
+  let fallback = null;
+  let assignmentState = "blocked";
+
+  if (isOperationallyUsable(preferredPrimary)) {
+    model = projectModelRef(preferredPrimary);
+    fallback = preferredFallback ? projectModelRef(preferredFallback) : null;
+    assignmentState = "ready";
+  } else if (isOperationallyUsable(preferredFallback)) {
+    model = projectModelRef(preferredFallback);
+    fallback = null;
+    assignmentState = "ready";
+  } else {
+    model = projectModelRef(preferredPrimary);
+    fallback = preferredFallback ? projectModelRef(preferredFallback) : null;
+    assignmentState = "blocked";
+  }
+
+  return {
+    model,
+    fallback,
+    assignmentState,
+    decisionEvidence,
+    reason,
+    recommendedAssignment: { model, fallback, decisionEvidence, reason, assignmentState }
   };
 }
 
@@ -130,6 +177,88 @@ function candidateKeyOf(model) {
   return model.candidateKey ?? `${model.adapterId}::${model.modelId}`;
 }
 
+/**
+ * The analyst order, from the SHARED quality evaluator (model-intelligence.js
+ * rankCandidatesByRequirements — the machinery every team role already uses):
+ * required capabilities first, comparable evidence before thin evidence,
+ * optional capabilities only as a tie-break, a stable identifier last. Quality
+ * is never multiplied by confidence and magnitudes of different benchmarks are
+ * never mixed.
+ *
+ * Evidence is counted ONCE: routes that carry the same benchmark row (same AA
+ * slug — the same model through several subscriptions) enter the comparison as
+ * a single entry, then every route inherits that entry's evaluation and gets an
+ * adjacent rank ordered by candidateKey.
+ *
+ * Returns, per candidateKey: `{rank, qualification, identityKey, evaluation}`.
+ * A row without sufficient REQUIRED evidence has `rank: null`; nothing is
+ * invented for it.
+ * @param {object[]} pool - every non-denied, ask-supported scored candidate
+ * @param {object|null} registry
+ * @param {Set<string>|null} [rowKeys] - candidate keys that become catalog rows; the rest is evidence-only
+ * @param {typeof BOOTSTRAP_ANALYST_PROFILE} [profile]
+ * @returns {Map<string, {rank: number|null, qualification: string, identityKey: string, evaluation: object}>}
+ */
+function evaluateAnalystPool(pool, registry, rowKeys = null, profile = BOOTSTRAP_ANALYST_PROFILE) {
+  const results = new Map();
+  if (!pool.length) return results;
+  const { required, optional } = profile.capabilities;
+  const groups = new Map();
+  for (const model of [...pool].sort((a, b) => candidateKeyOf(a).localeCompare(candidateKeyOf(b)))) {
+    const evidenceKey = model.slug ?? candidateKeyOf(model);
+    groups.set(evidenceKey, [...(groups.get(evidenceKey) ?? []), model]);
+  }
+  const groupOf = new Map([...groups.values()].flatMap((routes) => routes.map((route) => [candidateKeyOf(route), routes])));
+  const representatives = [...groups.values()].map((routes) => routes[0]);
+  const { ranked, unranked } = rankCandidatesByRequirements(
+    representatives, ensureRegistry(representatives, registry), { role: profile.role, capabilities: { required, optional } }
+  );
+  const capabilityOrNull = (values, capability) => (typeof values?.[capability] === "number" ? values[capability] : null);
+  let nextRank = 1;
+  for (const entry of ranked) {
+    const evaluation = {
+      comparable: entry.comparable,
+      confidence: entry.confidence,
+      capabilities: { reasoning: capabilityOrNull(entry.capabilities, "reasoning"), coding: capabilityOrNull(entry.capabilities, "coding") },
+      benchmarkCounts: { reasoning: entry.benchmarkCounts?.reasoning ?? null, coding: entry.benchmarkCounts?.coding ?? null },
+      optionalEvidence: entry.optionalFit != null,
+      missing: []
+    };
+    for (const route of groupOf.get(candidateKeyOf(entry.model))) {
+      // Evidence-only routes (verified-denied) are compared but are never rows:
+      // they take no rank, so the rows' ranks stay contiguous.
+      const isRow = !rowKeys || rowKeys.has(candidateKeyOf(route));
+      results.set(candidateKeyOf(route), {
+        rank: isRow ? nextRank++ : null,
+        qualification: entry.comparable ? QUALIFICATION.QUALIFIED : QUALIFICATION.PARTIAL,
+        identityKey: modelIdentityKey(route), evaluation
+      });
+    }
+  }
+  for (const entry of unranked) {
+    const evaluation = {
+      comparable: null, confidence: null,
+      capabilities: { reasoning: capabilityOrNull(entry.capabilities, "reasoning"), coding: capabilityOrNull(entry.capabilities, "coding") },
+      benchmarkCounts: { reasoning: entry.benchmarkCounts?.reasoning ?? null, coding: entry.benchmarkCounts?.coding ?? null },
+      optionalEvidence: false, missing: entry.missing
+    };
+    const hasAny = entry.missing.length < required.length;
+    for (const route of groupOf.get(candidateKeyOf(entry.model))) {
+      results.set(candidateKeyOf(route), {
+        rank: null, qualification: hasAny ? QUALIFICATION.INSUFFICIENT : QUALIFICATION.NONE,
+        identityKey: modelIdentityKey(route), evaluation
+      });
+    }
+  }
+  return results;
+}
+
+/** Evaluation of a model with no benchmark at all: every field unknown. */
+const noEvaluation = () => ({
+  comparable: null, confidence: null, capabilities: { reasoning: null, coding: null },
+  benchmarkCounts: { reasoning: null, coding: null }, optionalEvidence: false, missing: [...BOOTSTRAP_ANALYST_PROFILE.capabilities.required]
+});
+
 function quotaFor(providerCapacity, adapterId) {
   return providerCapacity?.[adapterId]?.quotaRemainingPercent ?? null;
 }
@@ -141,21 +270,22 @@ function quotaFor(providerCapacity, adapterId) {
  * picks. A real, unscored model (no Artificial Analysis match) is still
  * included — honestly marked `evidenceStatus: "unscored"` — so a human
  * can still pick it manually; Kairo just never recommends one on its own.
- * Ranking itself is the SAME real Pareto/risk-floor machinery every other
- * role uses (BOOTSTRAP_ANALYST_PROFILE.capabilities, under the "Explorer"
- * role bucket — see this module's own history for why that bucket name
- * is reused rather than a new one) — this function never invents a
- * second ranking formula, it only projects the real result into a richer
- * catalog shape and tags each real candidate that happens to be the
- * Quality and/or Efficient winner.
+ * The ORDER is the shared quality evaluator's (model-intelligence.js
+ * rankCandidatesByRequirements, the machinery every team role uses) applied to
+ * BOOTSTRAP_ANALYST_PROFILE.capabilities: required capabilities first,
+ * comparable evidence before thin evidence, optional capabilities only as a
+ * tie-break. This function never invents a second ranking formula; it projects
+ * that one result (`rank`, `qualification`, `evaluation`) into the catalog and
+ * only the "efficient" tag still comes from the Explorer efficiency balance.
  * @param {object} args - `scoredAll`, `eligibility`, `registry`,
- *   `providerCapacity`, plus
+ *   `providerCapacity`, `deniedScoredPool` (verified-denied scored candidates:
+ *   comparison evidence and exclusion causes only, never rows), plus
  *   `unscoredModels` (real catalog models with no AA match — see
  *   conversation/service.js's own `unscoredModels`).
- * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, quota: number|null, recommendationTags: string[]}>}}
+ * @returns {{recommendedModel: object|null, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, evidenceStatus: string, available: boolean, accessVerified: boolean, selectable: boolean, cause: string|null, quota: number|null, rank: number|null, qualification: "qualified"|"partial_evidence"|"insufficient_evidence"|"no_evidence", identityKey: string, evaluation: {comparable: boolean|null, confidence: "high"|"medium"|"low"|null, capabilities: {reasoning: number|null, coding: number|null}, benchmarkCounts: {reasoning: number|null, coding: number|null}, optionalEvidence: boolean, missing: string[]}, recommendationTags: string[]}>, exclusions: Array<{candidateKey: string, adapterId: string, modelId: string, cause: string, reason: string|null}>}}
  */
 export function computeBootstrapAnalystCatalog({
-  scoredAll, manualSelectionScoredPool = scoredAll, eligibility, registry,
+  scoredAll, manualSelectionScoredPool = scoredAll, deniedScoredPool = [], eligibility, registry,
   providerCapacity = null, unscoredModels = []
 }) {
   // Restrict the CANDIDATE POOL itself to ask-supported adapters before
@@ -165,8 +295,8 @@ export function computeBootstrapAnalystCatalog({
   // after the fact would silently lose a genuinely real 2nd/3rd-place
   // candidate whenever the unsupported provider happened to rank #1.
   const askSupportedRecommended = scoredAll.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
-  const askSupportedScored = manualSelectionScoredPool.filter((model) => (
-    ASK_SUPPORTED_ADAPTERS.has(model.adapterId) && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
+  const askSupportedScoredAll = manualSelectionScoredPool.filter((model) => (
+    ASK_SUPPORTED_ADAPTERS.has(model.adapterId) && !isAccessDenied(model)
   ));
   // scoredAll (the Recommendation Pool) already excludes superseded
   // candidates (buildRecommendationPool); unscoredModels doesn't go
@@ -176,47 +306,119 @@ export function computeBootstrapAnalystCatalog({
   const askSupportedUnscored = unscoredModels.filter((model) => (
     ASK_SUPPORTED_ADAPTERS.has(model.adapterId)
     && model.lifecycle !== "superseded"
-    && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
+    && !isAccessDenied(model)
   ));
 
   const roleCapabilities = { Explorer: BOOTSTRAP_ANALYST_PROFILE.capabilities };
-  const aiTeam = buildAiTeam(askSupportedRecommended, eligibility, registry, roleCapabilities);
+  // ONE comparison for every route, verified or not: verification changes who
+  // may be listed, never the order.
+  // A verified-DENIED candidate is never a row, but its benchmark evidence still
+  // takes part in the comparison: the order of the usable rows must not change
+  // just because access to another model was checked (percentiles are
+  // pool-relative). `deniedScoredPool` is evidence-only.
+  const deniedAskSupported = deniedScoredPool.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
+  const evaluations = evaluateAnalystPool(
+    [...askSupportedScoredAll, ...deniedAskSupported], registry, new Set(askSupportedScoredAll.map(candidateKeyOf))
+  );
   const efficientTeam = buildEfficientTeam(askSupportedRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
-  const quality = aiTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
   const efficient = efficientTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
-  const qualityKey = quality ? candidateKeyOf(quality) : null;
   const efficientKey = efficient ? candidateKeyOf(efficient) : null;
 
-  const scoredEntries = askSupportedScored.map((model) => {
+  // Exclusion causes (machine-readable). Verified-denied models are absent
+  // from `models` by design, so their cause travels in `exclusions` instead.
+  // Unverified access (UNKNOWN, never unavailability) is selectable since T20
+  // and lives in `models` with cause "access_unknown"; only unverified
+  // UNSCORED models (hidden upstream) still surface here.
+  const entitlementCause = (entitlement) => (
+    entitlement === ENTITLEMENT.DENIED ? "unavailable_verified" : "access_unknown"
+  );
+  const scoredKeys = new Set([...askSupportedScoredAll, ...askSupportedUnscored].map(candidateKeyOf));
+  const exclusions = [];
+  const seenExcluded = new Set();
+  for (const model of [...manualSelectionScoredPool, ...deniedScoredPool, ...unscoredModels]) {
+    if (!ASK_SUPPORTED_ADAPTERS.has(model.adapterId) || !BLOCKED_ENTITLEMENTS.has(model.entitlement)) continue;
+    if (isAccessUnverified(model) && scoredKeys.has(candidateKeyOf(model))) continue;
     const key = candidateKeyOf(model);
+    if (seenExcluded.has(key)) continue;
+    seenExcluded.add(key);
+    exclusions.push({
+      candidateKey: key, adapterId: model.adapterId, modelId: model.modelId,
+      cause: entitlementCause(model.entitlement), reason: model.entitlementReason ?? null
+    });
+  }
+  // Unavailable (eligibility not ok): the router's own cause, else the
+  // verified-unavailable default (checkCandidate only says !ok on real evidence).
+  const unavailableCause = (adapterId) => eligibility[adapterId]?.cause ?? "unavailable_verified";
+
+  const scoredEntries = askSupportedScoredAll.map((model) => {
+    const key = candidateKeyOf(model);
+    const unverified = isAccessUnverified(model);
+    const providerOk = eligibility[model.adapterId]?.ok === true;
     const recommendationTags = [];
-    if (key === qualityKey) recommendationTags.push("quality");
-    if (key === efficientKey) recommendationTags.push("efficient");
+    // An unverified-access model is never starred or tagged, whatever the
+    // caller's recommendation pool says. The "quality" tag/star is assigned
+    // below, from the unified ranking (never the old Explorer/Pareto pick).
+    if (!unverified && key === efficientKey) recommendationTags.push("efficient");
+    const verdict = evaluations.get(key);
     return {
       candidateKey: key, adapterId: model.adapterId, modelId: model.modelId,
       displayName: model.modelName ?? model.displayName ?? model.modelId,
       evidenceStatus: model.evidenceStatus ?? "scored",
       entitlement: model.entitlement ?? null,
       entitlementReason: model.entitlementReason ?? null,
-      available: eligibility[model.adapterId]?.ok === true,
+      // `available` = safe to run now. Unknown access is not that.
+      available: providerOk && !unverified,
+      accessVerified: !unverified,
+      selectable: providerOk,
+      cause: !providerOk ? unavailableCause(model.adapterId) : unverified ? "access_unknown" : null,
+      causeReason: !providerOk ? (eligibility[model.adapterId]?.reason ?? null) : null,
       quota: quotaFor(providerCapacity, model.adapterId),
+      rank: verdict?.rank ?? null,
+      qualification: verdict?.qualification ?? QUALIFICATION.NONE,
+      identityKey: verdict?.identityKey ?? modelIdentityKey(model),
+      // The benchmark row the evidence comes from (AA slug): routes sharing it
+      // carry the same evidence, counted once.
+      evidenceKey: model.slug ?? null,
+      evaluation: verdict?.evaluation ?? noEvaluation(),
       recommendationTags
     };
   });
-  const unscoredEntries = askSupportedUnscored.map((model) => ({
+  const unscoredEntries = askSupportedUnscored.map((model) => {
+    const providerOk = eligibility[model.adapterId]?.ok === true;
+    const unverified = isAccessUnverified(model);
+    return {
     candidateKey: candidateKeyOf(model), adapterId: model.adapterId, modelId: model.modelId,
     displayName: model.displayName ?? model.modelId,
     evidenceStatus: "unscored",
     entitlement: model.entitlement ?? null,
     entitlementReason: model.entitlementReason ?? null,
-    available: eligibility[model.adapterId]?.ok === true,
+    // Unknown access (no benchmark AND unverified) is a manual candidate that
+    // is revalidated on confirm: selectable, never "safe to run now".
+    available: providerOk && !unverified,
+    accessVerified: !unverified,
+    selectable: providerOk,
+    // Unscored is a manual-only choice, not unavailability. When the
+    // provider itself is unavailable right now, that verified cause wins so
+    // the picker never hides why a whole provider is out.
+    cause: !providerOk ? unavailableCause(model.adapterId) : unverified ? "access_unknown" : "unscored",
+    causeReason: !providerOk ? (eligibility[model.adapterId]?.reason ?? null) : null,
     quota: quotaFor(providerCapacity, model.adapterId),
+    // No benchmark exists: no rank, no evaluation, nothing invented.
+    // Availability alone makes the model selectable (manual view).
+    rank: null, qualification: QUALIFICATION.NONE, identityKey: modelIdentityKey(model), evidenceKey: null, evaluation: noEvaluation(),
     recommendationTags: []
-  }));
+    };
+  });
 
-  const models = [...scoredEntries, ...unscoredEntries];
-  const recommendedModel = models.find((model) => model.recommendationTags.includes("quality")) ?? null;
-  return { recommendedModel, models };
+  // Deterministic order (rank, then candidateKey), whatever the input order was.
+  const models = [...scoredEntries, ...unscoredEntries].sort(compareAnalystRows);
+  // The star: the first row of the ONE classification (same function the
+  // picker curation uses) — a qualified, verified, available row, never a
+  // per-provider pick and never a name/stack preference.
+  const { star } = classifyAnalystCatalog(models);
+  if (star) star.recommendationTags = ["quality", ...star.recommendationTags.filter((tag) => tag !== "quality")];
+  const recommendedModel = star;
+  return { recommendedModel, models, exclusions };
 }
 
 /**
@@ -230,7 +432,8 @@ export function computeBootstrapAnalystCatalog({
  * because only one real candidate is accessible right now.
  * @param {object} profile - computeProjectProfile() result, with
  *   roleRequirements already replaced by project-analysis.js's
- *   deriveRoleRequirements() output (real analyst findings + mechanical floor)
+ *   deriveRoleRequirements() output (analyst-justified roles, or the
+ *   mechanical safety floor when the analyst yielded none)
  * @param {object} candidates - the real candidate pool: `scoredAll`
  *   (scoreAvailableModels output, every candidate provider), `eligibility`
  *   (checkCandidate results per adapterId), `registry` (Model Intelligence
@@ -265,11 +468,11 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
 
   const qualityTeam = activeRoles.map((role) => {
     const entry = byRoleCapability.get(role);
-    return { role, model: modelRef(entry.primary), reason: entry.reason ?? null };
+    return { role, model: modelRef(entry.primary), reason: entry.reason ?? null, selection: entry.selection ?? null };
   });
   const efficientRoles = activeRoles.map((role) => {
     const entry = byRoleEfficient.get(role);
-    return entry ? { role, model: modelRef(entry.primary), reason: entry.reason ?? null } : { role, model: null, reason: null };
+    return entry ? { role, model: modelRef(entry.primary), reason: entry.reason ?? null, selection: entry.selection ?? null } : { role, model: null, reason: null, selection: null };
   });
 
   // The OPERATIONAL team a real router resolves against (see
@@ -299,23 +502,30 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
   // and overrideEvidence records the real access/evidence state behind
   // that specific override, never reusing the original recommendation's
   // own evidence as if it justified a different model.
+  // Operational projectTeam: usable primary, else usable fallback, else a
+  // blocked preferred-primary display — never a blocked comparative leader
+  // as the live assignment when a validated fallback exists. qualityTeam /
+  // efficientTeam stay comparative evidence only.
   const projectTeam = activeRoles.map((role) => {
     const entry = byRoleEfficient.get(role);
-    const model = entry ? projectModelRef(entry.primary) : null;
-    const fallback = entry?.fallback ? projectModelRef(entry.fallback) : null;
-    const decisionEvidence = entry?.decisionEvidence ?? null;
-    // The same real, human-readable string efficientTeam's own entries
-    // already carry (see buildEfficientTeam/describeEfficiencyDecision) —
-    // never a new explanation formula, just surfaced here too so the
-    // overlay can show WHY this role got this model, not only which one.
-    const reason = entry?.reason ?? null;
+    const resolved = resolveOperationalAssignment(entry);
     return {
-      role, model, fallback, decisionEvidence, reason,
+      role,
+      model: resolved.model,
+      fallback: resolved.fallback,
+      decisionEvidence: resolved.decisionEvidence,
+      reason: resolved.reason,
+      assignmentState: resolved.assignmentState,
       assignmentSource: "recommended",
-      recommendedAssignment: { model, fallback, decisionEvidence, reason },
+      recommendedAssignment: resolved.recommendedAssignment,
       overrideEvidence: null
     };
   });
+
+  // Orchestrator follows the OPERATIONAL Architect assignment (fallback when
+  // the comparative quality primary is blocked), never quality primary alone.
+  const architectOperational = projectTeam.find((entry) => entry.role === "Architect")?.model
+    ?? modelRef(byRoleCapability.get("Architect")?.primary);
 
   return {
     status: "suggested",
@@ -323,10 +533,13 @@ export function buildProjectStrategy(profile, { scoredAll, eligibility, registry
     bootstrapAnalystChoice: bootstrapAnalyst.choice ?? null,
     bootstrapAnalystSelectionSource: bootstrapAnalyst.selectionSource ?? "recommended",
     bootstrapAnalystRecommendationTags: bootstrapAnalyst.recommendationTags ?? (bootstrapAnalyst.choice ? [bootstrapAnalyst.choice] : []),
-    orchestrator: modelRef(byRoleCapability.get("Architect")?.primary),
+    orchestrator: architectOperational
+      ? { adapterId: architectOperational.adapterId, modelId: architectOperational.modelId, displayName: architectOperational.displayName ?? null }
+      : null,
     activeRoles,
     qualityTeam,
     efficientTeam: efficientRoles,
+    providerCapacity: providerCapacity ?? null,
     projectTeam,
     profileFingerprint: profile.fingerprint,
     approvedAt: null
@@ -466,7 +679,7 @@ export function applyProjectTeamOverride(strategy, role, candidate) {
   const index = findProjectTeamEntry(strategy, role);
   const entry = strategy.projectTeam[index];
   const recommendedAssignment = entry.recommendedAssignment
-    ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null, reason: entry.reason ?? null };
+    ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null, reason: entry.reason ?? null, assignmentState: entry.assignmentState ?? "ready" };
 
   if (sameModel(recommendedAssignment.model, candidate)) {
     return resetProjectTeamAssignment(strategy, role);
@@ -489,6 +702,7 @@ export function applyProjectTeamOverride(strategy, role, candidate) {
     fallback: null,
     decisionEvidence: null,
     reason: null,
+    assignmentState: "ready",
     assignmentSource: "override",
     overrideEvidence: {
       accessMode: candidate.accessMode ?? null, available: candidate.available ?? null,
@@ -514,12 +728,13 @@ export function resetProjectTeamAssignment(strategy, role) {
   const index = findProjectTeamEntry(strategy, role);
   const entry = strategy.projectTeam[index];
   const recommendedAssignment = entry.recommendedAssignment
-    ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null, reason: entry.reason ?? null };
+    ?? { model: entry.model, fallback: entry.fallback ?? null, decisionEvidence: entry.decisionEvidence ?? null, reason: entry.reason ?? null, assignmentState: entry.assignmentState ?? "ready" };
   const updatedEntry = {
     ...entry,
     recommendedAssignment,
     model: recommendedAssignment.model, fallback: recommendedAssignment.fallback,
     decisionEvidence: recommendedAssignment.decisionEvidence, reason: recommendedAssignment.reason ?? null,
+    assignmentState: recommendedAssignment.assignmentState ?? "ready",
     assignmentSource: "recommended",
     overrideEvidence: null
   };

@@ -5,7 +5,8 @@ import {
   buildKairoWorkspaceSnapshot,
   loadKairoWorkspaceSnapshot,
   loadKairoLiveData,
-  loadKairoUsageData
+  loadKairoUsageData,
+  revalidateKairoTeamAvailability
 } from "../src/global/host/workspace-snapshot.js";
 
 const FULL_STRATEGY = {
@@ -13,7 +14,7 @@ const FULL_STRATEGY = {
   bootstrapAnalyst: { displayName: "Claude Opus 5", adapterId: "claude", modelId: "claude-opus-5", accessMode: "automatic" },
   orchestrator: { displayName: "Kimi K3", adapterId: "opencode-go", modelId: "kimi-k3", accessMode: "automatic" },
   projectTeam: [
-    { role: "Builder", model: { displayName: "GPT-6 Terra", adapterId: "codex", modelId: "gpt-6-terra", accessMode: "automatic" } },
+    { role: "Builder", model: { displayName: "GPT-6 Terra", adapterId: "codex", modelId: "gpt-6-terra", accessMode: "automatic" }, reason: "Chosen for coding throughput on this stack." },
     { role: "Reviewer", model: null }
   ]
 };
@@ -41,10 +42,15 @@ test("workspace snapshot keeps Kairo's project team, bound session, usage and me
   // Compat: the pre-existing state/assignments shape is unchanged
   // (additive change — team.rows is asserted separately below).
   assert.equal(snapshot.team.state, "active");
-  assert.deepEqual(snapshot.team.assignments, [
-    { role: "Builder", model: "GPT-6 Terra", via: "codex" },
-    { role: "Reviewer", model: "MiniMax-M3", via: "opencode-go" }
-  ]);
+  assert.equal(snapshot.team.assignments.length, 2);
+  assert.equal(snapshot.team.assignments[0].role, "Builder");
+  assert.equal(snapshot.team.assignments[0].model, "GPT-6 Terra");
+  assert.equal(snapshot.team.assignments[0].via, "codex");
+  assert.match(snapshot.team.assignments[0].reason, /Selected for coding|coding capability/i);
+  assert.equal(snapshot.team.assignments[0].availability.label, "verificando");
+  assert.equal(snapshot.team.assignments[1].role, "Reviewer");
+  assert.equal(snapshot.team.assignments[1].model, "MiniMax-M3");
+  assert.equal(snapshot.team.assignments[1].via, "opencode-go");
   assert.deepEqual(snapshot.usage, [{ provider: "codex", totalTokens: 2400 }]);
   assert.deepEqual(snapshot.memory, { status: "configured" });
 });
@@ -85,18 +91,28 @@ test("workspace loader reads each existing Kairo source without choosing an arbi
 test("workspace snapshot team rows cover Project Analyst, Orchestrator, and every project-team role, defaulting availability to checking", () => {
   const snapshot = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY });
 
-  assert.deepEqual(snapshot.team.rows, [
-    { role: "Project Analyst", model: "Claude Opus 5", via: "claude", accessMode: "automatic", availability: { state: "checking", warning: null } },
-    { role: "Orchestrator", model: "Kimi K3", via: "opencode-go", accessMode: "automatic", availability: { state: "checking", warning: null } },
-    { role: "Builder", model: "GPT-6 Terra", via: "codex", accessMode: "automatic", availability: { state: "checking", warning: null } },
-    { role: "Reviewer", model: "no eligible option", via: "unknown", accessMode: null, availability: { state: "checking", warning: null } }
-  ]);
+  assert.equal(snapshot.team.rows.length, 4);
+  assert.equal(snapshot.team.rows[0].role, "Project Analyst");
+  assert.equal(snapshot.team.rows[0].availability.state, "checking");
+  assert.equal(snapshot.team.rows[0].reason, null);
+  assert.equal(snapshot.team.rows[2].role, "Builder");
+  assert.equal(snapshot.team.rows[2].model, "GPT-6 Terra");
+  assert.equal(snapshot.team.rows[2].via, "codex");
+  assert.equal(snapshot.team.rows[2].accessMode, "automatic");
+  assert.equal(snapshot.team.rows[2].reason, "Chosen for coding throughput on this stack.");
+  assert.deepEqual(snapshot.team.rows[2].availability, { state: "checking", warning: null });
+  assert.equal(snapshot.team.rows[3].role, "Reviewer");
+  assert.equal(snapshot.team.rows[3].model, "no eligible option");
   // Existing compatible shape stays intact (additive change).
   assert.deepEqual(snapshot.team.state, "active");
-  assert.deepEqual(snapshot.team.assignments, [
-    { role: "Builder", model: "GPT-6 Terra", via: "codex" },
-    { role: "Reviewer", model: "Unavailable", via: "unknown" }
-  ]);
+  assert.equal(snapshot.team.assignments[0].role, "Builder");
+  assert.equal(snapshot.team.assignments[0].model, "GPT-6 Terra");
+  assert.equal(snapshot.team.assignments[0].via, "codex");
+  assert.equal(snapshot.team.assignments[0].reason, "Chosen for coding throughput on this stack.");
+  assert.equal(snapshot.team.assignments[0].availability.label, "verificando");
+  assert.equal(snapshot.team.assignments[1].role, "Reviewer");
+  assert.equal(snapshot.team.assignments[1].model, "Unavailable");
+  assert.equal(snapshot.team.assignments[1].via, "unknown");
 });
 
 test("workspace snapshot team rows compute real availability when intelligence is injected", () => {
@@ -196,6 +212,59 @@ test("loadKairoLiveData never reports available when the snapshot has no real el
   });
 
   assert.equal(liveData, null);
+});
+
+test("revalidateKairoTeamAvailability re-probes live and rebuilds the snapshot from that real evidence, verbatim reason text included", async () => {
+  const result = await revalidateKairoTeamAvailability({ cwd: "/repo" }, {
+    resolveProjectRoot: async () => "/repo",
+    resolveHomeDir: () => "/home/kairo",
+    readProjectStrategy: async () => FULL_STRATEGY,
+    getSession: async () => null,
+    listProviderUsage: async () => [],
+    inspectEngramIntegration: () => ({ status: "unknown" }),
+    createConversationService: () => ({
+      snapshot: async () => ({
+        modelIntelligence: {
+          eligibility: {
+            codex: { ok: true },
+            "opencode-go": { ok: false, reason: "OpenCode Go monthly window is rate-limited" }
+          },
+          claudeEntitlement: {},
+          cursorAccess: {}
+        },
+        usage: {},
+        providers: {}
+      })
+    })
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, null);
+  const orchestrator = result.snapshot.team.rows.find((row) => row.role === "Orchestrator");
+  assert.equal(orchestrator.availability.state, "blocked");
+  // Exact provider evidence, never rewritten into a fabricated quota/funds cause.
+  assert.ok(orchestrator.availability.warning.includes("OpenCode Go monthly window is rate-limited"));
+  assert.ok(!/quota|funds|billing/i.test(orchestrator.availability.warning));
+});
+
+test("revalidateKairoTeamAvailability fails closed (ok:false, real reason) when the live probe cannot run, without inventing availability", async () => {
+  const result = await revalidateKairoTeamAvailability({ cwd: "/repo" }, {
+    resolveProjectRoot: async () => "/repo",
+    resolveHomeDir: () => "/home/kairo",
+    readProjectStrategy: async () => FULL_STRATEGY,
+    getSession: async () => null,
+    listProviderUsage: async () => [],
+    inspectEngramIntegration: () => ({ status: "unknown" }),
+    createConversationService: () => ({
+      snapshot: async () => { throw new Error("provider probe failed"); }
+    })
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /Live availability/);
+  for (const row of result.snapshot.team.rows) {
+    assert.equal(row.availability.state, "unknown", "a failed revalidation never claims availability");
+  }
 });
 
 test("workspace snapshot subscriptions default to checking, then real segments, then unknown on failure", () => {
@@ -440,4 +509,97 @@ test("loadKairoUsageData never throws even when a reader rejects — a failed re
 
   assert.equal(usageData.usage.codex, null);
   assert.deepEqual(usageData.usage.claude, { status: "measured", primary: { remainingPercent: 34 } });
+});
+
+test("workspace snapshot exposes herd agents[] derived from team rows, additive to the existing shape", () => {
+  const snapshot = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY });
+
+  assert.equal(snapshot.agents.length, 4);
+  assert.equal(snapshot.agents[0].id, "project-analyst");
+  assert.equal(snapshot.agents[0].why, null);
+  assert.equal(snapshot.agents[0].availability, "verificando");
+  assert.equal(snapshot.agents[2].id, "builder");
+  assert.equal(snapshot.agents[2].why, "Chosen for coding throughput on this stack.");
+  assert.equal(snapshot.agents[2].model, "GPT-6 Terra");
+  assert.equal(snapshot.agents[2].provider, "codex");
+  assert.equal(snapshot.agents[2].availability, "verificando");
+  assert.equal(snapshot.agents[3].id, "reviewer");
+  // Additive contract of the shared status derivation: base keys (why, availability) are untouched.
+  for (const agent of snapshot.agents) {
+    assert.equal(agent.state, "unknown");
+    assert.equal(agent.status, "unknown");
+    assert.equal(agent.statusReason, "No availability evidence.");
+  }
+  // Additive: the pre-existing team shape is unchanged.
+  assert.equal(snapshot.team.rows.length, 4);
+  assert.equal(snapshot.team.state, "active");
+});
+
+test("workspace snapshot agents expose usable/bloqueado availability labels with why for the proposal table (T29)", () => {
+  const snapshot = buildKairoWorkspaceSnapshot({
+    projectRoot: "/work/agentic-harness",
+    strategy: FULL_STRATEGY,
+    intelligence: { eligibility: { codex: { ok: true } }, claudeEntitlement: { "claude-opus-5": { status: "denied", reason: "plan tier too low" } }, cursorAccess: {} }
+  });
+  const builder = snapshot.agents.find((agent) => agent.id === "builder");
+  assert.equal(builder.availability, "usable");
+  assert.equal(builder.why, "Chosen for coding throughput on this stack.");
+  assert.equal(builder.model, "GPT-6 Terra");
+  const analyst = snapshot.agents.find((agent) => agent.id === "project-analyst");
+  assert.equal(analyst.availability, "bloqueado");
+  assert.equal(snapshot.team.assignments[0].availability.label, "usable");
+});
+
+test("workspace snapshot agents map blocked to blocked with reason and available to idle, never working or done without a run signal", () => {
+  const snapshot = buildKairoWorkspaceSnapshot({
+    projectRoot: "/work/agentic-harness",
+    strategy: FULL_STRATEGY,
+    intelligence: { eligibility: { codex: { ok: true } }, claudeEntitlement: { "claude-opus-5": { status: "denied", reason: "plan tier too low" } }, cursorAccess: {} }
+  });
+
+  const analyst = snapshot.agents.find((agent) => agent.id === "project-analyst");
+  assert.equal(analyst.state, "blocked");
+  assert.equal(analyst.stateReason, "Unavailable — your Claude plan denies this model (plan tier too low)");
+
+  const builder = snapshot.agents.find((agent) => agent.id === "builder");
+  assert.equal(builder.state, "idle");
+  assert.equal(builder.stateReason, null);
+
+  for (const agent of snapshot.agents) {
+    assert.ok(agent.state !== "working" && agent.state !== "done", `no run signal exists, so ${agent.id} must not claim ${agent.state}`);
+  }
+});
+
+test("workspace snapshot agents fail closed to unknown when intelligence explicitly failed", () => {
+  const snapshot = buildKairoWorkspaceSnapshot({ projectRoot: "/work/agentic-harness", strategy: FULL_STRATEGY, intelligence: null });
+
+  assert.equal(snapshot.agents.length, 4);
+  for (const agent of snapshot.agents) {
+    assert.equal(agent.state, "unknown");
+  }
+});
+
+test("workspace snapshot agents stay empty when the project was never analyzed", () => {
+  const snapshot = buildKairoWorkspaceSnapshot({ projectRoot: "/work/empty", session: null, strategy: null });
+
+  assert.deepEqual(snapshot.agents, []);
+});
+
+test("workspace snapshot spaces carries the current project plus the bound session short id, never an invented multi-repo", () => {
+  const bound = buildKairoWorkspaceSnapshot({
+    projectRoot: "/work/agentic-harness",
+    session: { id: "11111111-1111-4111-8111-111111111111", title: "Routing overhaul", mode: "agent" },
+    strategy: FULL_STRATEGY
+  });
+
+  assert.deepEqual(bound.spaces, [
+    { kind: "project", label: "agentic-harness", root: "/work/agentic-harness" },
+    { kind: "session", id: "11111111", mode: "agent", state: "bound" }
+  ]);
+
+  const unbound = buildKairoWorkspaceSnapshot({ projectRoot: "/work/empty", session: null, strategy: null });
+  assert.deepEqual(unbound.spaces, [
+    { kind: "project", label: "empty", root: "/work/empty" },
+    { kind: "session", state: "unbound" }
+  ]);
 });

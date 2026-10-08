@@ -21,6 +21,15 @@ test("buildAnalystPrompt includes only real, already-collected evidence and expl
   assert.match(prompt, /never invent/);
 });
 
+test("buildAnalystPrompt asks for languages, structure, dependencies, constraints and risks and a repo-evidenced team justification", () => {
+  const prompt = buildAnalystPrompt(profile());
+  for (const topic of [/languages/i, /structure/i, /dependencies/i, /constraints/i, /risks/i]) assert.match(prompt, topic);
+  assert.match(prompt, /justif/i);
+  assert.match(prompt, /architecture/i);
+  assert.match(prompt, /design/i);
+  assert.match(prompt, /evidence/i);
+});
+
 test("parseProjectAnalysis accepts a real, complete, valid JSON response", () => {
   const raw = JSON.stringify({
     architectureTraits: ["monolithic"], complexitySignals: ["large src/ tree"], criticalAreas: ["auth"],
@@ -79,7 +88,7 @@ test("deriveRoleRequirements sanitizes the analyst's role/capability tokens agai
   assert.deepEqual(requirements[0].capabilities, ["reasoning"]);
 });
 
-test("deriveRoleRequirements unions the analyst's real findings with the project's mechanical floor, never dropping the floor's own roles", () => {
+test("deriveRoleRequirements: analyst-justified roles win; mechanical floor roles are not forced alongside them", () => {
   const analysis = { recommendedRoleNeeds: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "risk area" }] };
   const mechanicalFloor = [
     { role: "Explorer", capabilities: ["reasoning", "instructionFollowing"], reason: "baseline" },
@@ -87,7 +96,8 @@ test("deriveRoleRequirements unions the analyst's real findings with the project
   ];
   const requirements = deriveRoleRequirements(analysis, mechanicalFloor);
   const roles = requirements.map((r) => r.role);
-  assert.ok(roles.includes("Explorer") && roles.includes("Builder") && roles.includes("Reviewer"));
+  assert.deepEqual(roles, ["Reviewer"]);
+  assert.ok(!roles.includes("Explorer") && !roles.includes("Builder"), "floor-only roles drop when the analyst justified others");
 });
 
 test("deriveRoleRequirements merges capabilities when both the analyst and the mechanical floor name the same real role", () => {
@@ -130,7 +140,7 @@ test("deriveRoleRequirements checks evidence PER recommendedRoleNeeds entry — 
   const roles = requirements.map((r) => r.role);
   assert.ok(!roles.includes("Reviewer"), "Reviewer must be dropped — nothing IT cited was real, regardless of Debugger being well-evidenced");
   assert.ok(roles.includes("Debugger"), "Debugger must be kept — its own evidence verified against a real file");
-  assert.ok(roles.includes("Explorer"), "the mechanical floor always survives");
+  assert.ok(!roles.includes("Explorer"), "floor is not forced when the analyst justified at least one role");
 });
 
 test("deriveRoleRequirements trusts a role need with no real file list available at all (pre-sanitized-snapshot fallback) — never blocks on vocabulary alone", () => {
