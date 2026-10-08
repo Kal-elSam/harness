@@ -69,7 +69,13 @@
   ],
   "license": "MIT",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "executableFiles": [
+      "dist/kairo-ui/darwin-arm64/kairo-ui",
+      "dist/kairo-ui/darwin-x64/kairo-ui",
+      "dist/kairo-ui/linux-arm64/kairo-ui",
+      "dist/kairo-ui/linux-x64/kairo-ui"
+    ]
   },
   "engines": {
     "node": ">=22.19.0"
