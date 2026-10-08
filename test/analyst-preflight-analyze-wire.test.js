@@ -226,7 +226,7 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
   const first = out.slice(mark).find((r) => r.type === "preflight");
   assert.equal(first.verificationPlan.pendingCount, 1);
   assert.equal(first.projectContext.line, "Proyecto demo · Node.js · arquitectura modular · riesgos: sin script de test", "the local project scan reaches the host");
-  assert.ok(first.analystCatalog.models.every((row) => typeof row.explanation === "string" && row.explanation.length > 10), "every row carries its own explanation");
+  assert.ok(first.analystCatalog.models.every((row) => row.explanation === null && row.detail === null), "flat list rows carry no explanation or detail");
   assert.deepEqual(first.unverifiedSubscriptions.map((s) => s.adapterId), ["cursor"]);
 
   const mid = out.length;

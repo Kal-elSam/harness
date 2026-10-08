@@ -109,13 +109,13 @@ test("order is catalog rank best→worst, then candidateKey — display name is 
     assert.deepEqual(curated.alternatives, []);
     assert.equal(curated.recommendedModel, null);
     for (const row of curated.models) {
-      assert.match(row.explanation, /\S/);
-      assert.ok(row.detail == null || typeof row.detail === "string");
+      assert.equal(row.explanation, null, "flat list rows carry no aptitude prose");
+      assert.equal(row.detail, null, "flat list rows carry no detail line");
     }
   }
 });
 
-test("thin evidence explains confidence honestly; detail keeps counts for d (T29)", () => {
+test("thin evidence stays listed and ranked with no prose explanation or detail (T29)", () => {
   const curated = curateAnalystCatalogForPicker({
     models: [
       entry({ candidateKey: "a::ok", modelId: "ok", displayName: "Ok", rank: 1 }),
@@ -127,11 +127,17 @@ test("thin evidence explains confidence honestly; detail keeps counts for d (T29
   });
   assert.deepEqual(keys(curated.models), ["a::ok", "a::sol"]);
   const ok = curated.models.find((row) => row.modelId === "ok");
-  assert.match(ok.explanation, /apto|investigar/i);
   const sol = curated.models.find((row) => row.modelId === "sol");
-  assert.match(sol.explanation, /provisional|confianza evidencial/i);
-  assert.match(sol.explanation, /no implican menor capacidad/i);
-  assert.match(sol.detail, /provisional|menos evidencia/i);
+  for (const row of [ok, sol]) {
+    assert.equal(row.explanation, null);
+    assert.equal(row.detail, null);
+    assert.equal(row.listing, "main");
+  }
+  // Ranking and qualification survive; thin evidence is not hidden, only unexplained.
+  assert.equal(sol.qualification, "partial_evidence");
+  assert.equal(sol.rank, 2);
+  assert.equal(sol.evaluation.comparable, false);
+  assert.deepEqual(sol.evaluation.benchmarkCounts, { reasoning: 1, coding: 0 });
 });
 
 test("project context never reorders the flat list", () => {
