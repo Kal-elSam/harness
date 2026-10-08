@@ -147,3 +147,5 @@ Do not touch foreign CRT / credit-discipline / unrelated pending paths.
 ## Next step
 
 Wait for P1 outcome + specific P2 auth. No code for P2 until then.
+
+- Evidence (P2 surfaces): test/conversation-p2-surfaces.test.js drives the real MCP handler over the real service (service/MCP only on the consolidation line; the Pi tool half was dropped, Pi parity deferred/not applicable) with a hostile fake Gentle; project receipt/gate visible, taskReview not_established, task_binding_unavailable, no command/argv/next_transition/execute/invocation anywhere, transitions.jsonl sha256 identical, startRun 0, only read-only Gentle argv. Pure coverage (source-line result; the consolidation evidence is in odd/tasks/kairo-consolidation.md).
