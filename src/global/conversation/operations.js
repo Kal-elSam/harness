@@ -93,7 +93,7 @@ export function operationFailCode(error, fallback) {
   if (error instanceof ConversationOperationError) return error.code;
   const code = typeof error?.code === "string" ? error.code : "";
   const msg = String(error?.message ?? "");
-  if (code === "read_only_unsupported" || code === "invalid_execution_mode") return code;
+  if (code === "read_only_unsupported" || code === "invalid_execution_mode" || code === "isolation_unavailable") return code;
   if (code === "SESSION_REF_AMBIGUOUS") return "session_ref_ambiguous";
   if (code === "SESSION_REF_UNKNOWN") return "session_ref_unknown";
   if (/analysis is already running/i.test(msg)) return "analysis_in_progress";

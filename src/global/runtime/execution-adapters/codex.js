@@ -1,5 +1,7 @@
 import { createExecutionAdapter, parseNdjsonLine } from "./create-execution-adapter.js";
 import { verifyCodexSubscriptionAuth } from "../../architect/architect-codex.js";
+import { assertReadOnlyExclusive } from "../run-permissions.js";
+import { isReadOnlyPermissions, verifyCodexReadOnlySandbox } from "../readonly-containment.js";
 
 const EXECUTABLE = "codex";
 
@@ -23,11 +25,20 @@ function buildCodexPermissionsArgs(permissions = []) {
   return ["--approve-for-me"];
 }
 
+// Read-only: Codex's own read-only sandbox, never --approve-for-me (workspace-write)
+// and never a dangerous bypass. --ignore-user-config keeps a user config.toml from
+// loosening the policy (auth still resolves through CODEX_HOME).
+function buildCodexReadOnlyArgs() {
+  return ["--sandbox", "read-only", "--ignore-user-config"];
+}
+
 function buildCodexLaunch({ task, cwd, model, permissions = [] }) {
+  const readOnly = isReadOnlyPermissions(permissions);
+  if (readOnly) assertReadOnlyExclusive(permissions);
   const args = [
     "exec",
     "--json",
-    ...buildCodexPermissionsArgs(permissions),
+    ...(readOnly ? buildCodexReadOnlyArgs() : buildCodexPermissionsArgs(permissions)),
     task
   ];
 
@@ -69,6 +80,12 @@ function parseCodexEventLine(line) {
   return parsed;
 }
 
+export async function preflightCodex(context = {}) {
+  const { verifyAuth = verifyCodexSubscriptionAuth, verifyReadOnlySandbox = verifyCodexReadOnlySandbox } = context;
+  if (isReadOnlyPermissions(context.permissions)) await verifyReadOnlySandbox({ cwd: context.cwd });
+  return verifyAuth(context);
+}
+
 export default createExecutionAdapter({
   id: "codex",
   label: "Codex",
@@ -84,5 +101,5 @@ export default createExecutionAdapter({
   },
   buildLaunch: buildCodexLaunch,
   parseEventLine: parseCodexEventLine,
-  preflight: verifyCodexSubscriptionAuth
+  preflight: preflightCodex
 });

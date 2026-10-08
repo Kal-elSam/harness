@@ -127,7 +127,7 @@ async function prepareRun({
     assertDelegatedWriteAdmission(agentId, { cwd, permissions });
   }
 
-  await adapter.preflight({ cwd });
+  await adapter.preflight({ cwd, permissions });
   // The one real, enforced budget gate this increment adds — refuses only
   // a provider whose real, cumulative consumption already reached its own
   // configured budget (usage-manager.js). No configured
