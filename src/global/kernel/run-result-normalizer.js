@@ -1,4 +1,5 @@
 import { createWorkResult } from "./contracts.js";
+import { codexAgentMessageText } from "../runtime/codex-agent-message.js";
 import { RUN_STATES } from "../runtime/run-types.js";
 
 const TRANSCRIPT_EVENT = "run.transcript";
@@ -43,6 +44,34 @@ function lastTranscriptSummary(events) {
   return "";
 }
 
+const CODEX = "codex";
+
+/**
+ * Read-time recovery for runs persisted before Codex agent_message items were
+ * mapped to transcript events: they survive as agent.system events carrying the
+ * raw item. Only used when the run has no run.transcript event at all, and only
+ * for events that provably belong to this Codex run. Nothing is rewritten.
+ */
+function legacyCodexSummary(events, runId, metadata) {
+  if (metadata.agentId != null && metadata.agentId !== CODEX) return "";
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event == null || typeof event !== "object" || event.source !== CODEX) continue;
+    if (event.runId != null && event.runId !== runId) continue;
+    const data = event.data;
+    if (data == null || typeof data !== "object" || data.rawType !== "item.completed") continue;
+    const payload = data.payload;
+    if (payload == null || typeof payload !== "object") continue;
+    const text = codexAgentMessageText({ type: data.rawType, item: payload.item });
+    if (text !== null) return text;
+  }
+  return "";
+}
+
+function hasTranscriptEvent(events) {
+  return events.some((event) => event != null && typeof event === "object" && event.type === TRANSCRIPT_EVENT);
+}
+
 function failed(runId, error, summary = null) {
   return createWorkResult({ ok: false, workerId: runId, status: "failed", summary, error });
 }
@@ -64,7 +93,9 @@ export function normalizeRunResult({ runId, metadata, events } = {}) {
     return failed(runId, "Run events are missing or not an array.");
   }
 
-  const summary = lastTranscriptSummary(events) || null;
+  const summary = (hasTranscriptEvent(events)
+    ? lastTranscriptSummary(events)
+    : legacyCodexSummary(events, runId, metadata)) || null;
 
   switch (metadata.state) {
     case RUN_STATES.COMPLETED:
