@@ -3,7 +3,7 @@ import { formatSlashUsageLines } from "./usage-summary.js";
 import { explainTeamDecision } from "./team-decision.js";
 // ANSI tone helper shared with the legacy cockpit: slash diagnostics keep their
 // exact coloured output, so the same `theme.fg` must produce it.
-import { theme } from "../cockpit/theme.js";
+import { theme } from "./ansi-theme.js";
 
 /**
  * Slash-command diagnostics (`/usage`, `/providers`, `/status`, `/models`,
