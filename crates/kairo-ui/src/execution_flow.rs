@@ -2,8 +2,9 @@
 //! / MANUAL_HANDOFF. Nested modals own keys so list-focus `y`/`n` (approve/
 //! reject) never fire while confirming execute.
 //!
-//! WAIT_FOR_PROJECT_TEAM + suggested-alternative is auto-executed by the
-//! sidecar (cockpit parity) — the host never shows a y/n gate for that case.
+//! WAIT_FOR_PROJECT_TEAM + suggested-alternative is NEVER auto-executed: the
+//! sidecar only previews it, and this modal asks for an explicit `y` naming
+//! the concrete provider/model before `plans.execute` is sent.
 
 use serde_json::Value;
 
@@ -66,13 +67,15 @@ pub struct ConfirmExecuteState {
     pub confirmation_target: Option<Value>,
     pub task_prompt: Option<String>,
     pub model_ref_label: Option<String>,
+    /// `provider · model` of `suggestedAlternative`, shown before the `y`.
+    pub alternative_label: Option<String>,
     pub notice: Option<String>,
 }
 
 impl ConfirmExecuteState {
-    /// Build from `{ type: "plan_preview", ... }`. Returns `None` when the
-    /// sidecar already auto-executed (WAIT_FOR + suggested-alternative) —
-    /// those must never open a y/n modal.
+    /// Build from `{ type: "plan_preview", ... }`. Returns `None` only for a
+    /// record that claims it was already executed (`autoExecuted: true`); the
+    /// sidecar no longer emits that, so the guard is purely defensive.
     pub fn from_plan_preview(record: &Value) -> Option<Self> {
         if record.get("autoExecuted").and_then(|v| v.as_bool()) == Some(true) {
             return None;
@@ -98,6 +101,15 @@ impl ConfirmExecuteState {
             .pointer("/modelRef/displayName")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let alternative_label = record.get("suggestedAlternative").and_then(|alt| {
+            let provider = alt.get("provider").and_then(|v| v.as_str())?;
+            let model = alt
+                .pointer("/model/displayName")
+                .or_else(|| alt.pointer("/model/modelId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown model");
+            Some(format!("{provider} · {model}"))
+        });
         Some(Self {
             task_id,
             decision,
@@ -123,6 +135,7 @@ impl ConfirmExecuteState {
                 .and_then(|v| v.as_str())
                 .map(str::to_string),
             model_ref_label,
+            alternative_label,
             notice: None,
         })
     }
@@ -166,16 +179,22 @@ impl ConfirmExecuteState {
             ];
         }
         if self.confirmation_target.is_some() {
-            return vec![
-                format!(
-                    "Assigned model unavailable for {}",
-                    self.role.as_deref().unwrap_or("role")
-                ),
+            let role = self.role.as_deref().unwrap_or("role");
+            let mut lines = vec![format!("Assigned model unavailable for {role}")];
+            if let Some(alt) = self.alternative_label.as_deref() {
+                lines.push(format!("Suggested alternative: {alt}"));
+            }
+            lines.push(
                 self.why
                     .clone()
                     .unwrap_or_else(|| "Suggested alternative available.".into()),
-                "Confirm this alternative? (y/n)".into(),
-            ];
+            );
+            let confirm = match self.alternative_label.as_deref() {
+                Some(alt) => format!("Run {role} with {alt}? (y/n)"),
+                None => "Confirm this alternative? (y/n)".into(),
+            };
+            lines.push(confirm);
+            return lines;
         }
         vec![
             format!("Cannot auto-execute \"{}\"", self.task_id),
@@ -250,7 +269,47 @@ mod tests {
     }
 
     #[test]
-    fn auto_executed_preview_never_opens_confirm_modal() {
+    fn suggested_alternative_modal_names_role_provider_model_and_reason() {
+        let state = ConfirmExecuteState::from_plan_preview(&json!({
+            "type": "plan_preview",
+            "taskId": "task-1",
+            "decision": "WAIT_FOR_PROJECT_TEAM",
+            "role": "Builder",
+            "why": "GPT-6 Astra is unavailable",
+            "confirmationTarget": {
+                "role": "Builder",
+                "selection": "suggested-alternative",
+                "strategyFingerprint": "fp-1",
+                "candidateKey": "claude::claude-opus-5"
+            },
+            "blockedAssignment": { "provider": "codex", "model": { "displayName": "GPT-6 Astra" } },
+            "suggestedAlternative": {
+                "provider": "claude",
+                "model": { "displayName": "Claude Opus", "modelId": "claude-opus-5" }
+            },
+            "autoExecuted": false
+        }))
+        .expect("confirm");
+        assert!(state.can_confirm());
+        let text = state.prompt_lines().join("\n");
+        assert!(text.contains("Builder"), "role: {text}");
+        assert!(text.contains("claude"), "provider: {text}");
+        assert!(text.contains("Claude Opus"), "model: {text}");
+        assert!(text.contains("GPT-6 Astra is unavailable"), "reason: {text}");
+        assert!(text.contains("(y/n)"), "explicit gate: {text}");
+        assert_eq!(
+            state
+                .confirmation_target
+                .as_ref()
+                .and_then(|t| t.get("candidateKey"))
+                .and_then(|v| v.as_str()),
+            Some("claude::claude-opus-5"),
+            "confirmationTarget stays intact"
+        );
+    }
+
+    #[test]
+    fn preview_claiming_prior_execution_never_opens_confirm_modal() {
         assert!(ConfirmExecuteState::from_plan_preview(&json!({
             "taskId": "task-1",
             "decision": "WAIT_FOR_PROJECT_TEAM",

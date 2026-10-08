@@ -297,7 +297,7 @@ impl BridgeClient {
         )
     }
 
-    /// U4c: role → `planExecution` preview (may auto-execute suggested alt).
+    /// U4c: role → `planExecution` preview (preview only; never executes).
     pub fn plans_preview(&mut self, task_id: &str, role: &str) -> std::io::Result<()> {
         self.send_op(
             "plans.preview",

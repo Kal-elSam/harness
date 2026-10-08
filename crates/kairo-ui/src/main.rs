@@ -1626,7 +1626,7 @@ impl ShellApp {
         }
     }
 
-    /// U4c: apply `plan_preview` — open confirm modal, or skip if auto-executed.
+    /// U4c: apply `plan_preview` — open the confirm modal (a defensive skip applies only to a record claiming prior execution).
     fn ingest_plan_preview_record(&mut self, record: &serde_json::Value) {
         self.plans_action_pending = false;
         if record.get("autoExecuted").and_then(|v| v.as_bool()) == Some(true) {
@@ -4494,6 +4494,86 @@ mod tests {
             .messages
             .iter()
             .any(|m| m.content.contains("Do the thing")));
+    }
+
+    fn alternative_preview() -> serde_json::Value {
+        json!({
+            "type": "plan_preview",
+            "taskId": "task-1",
+            "decision": "WAIT_FOR_PROJECT_TEAM",
+            "role": "Builder",
+            "why": "GPT-6 Astra is unavailable",
+            "confirmationTarget": {
+                "role": "Builder",
+                "selection": "suggested-alternative",
+                "strategyFingerprint": "fp-1",
+                "candidateKey": "claude::claude-opus-5"
+            },
+            "blockedAssignment": { "provider": "codex", "model": { "displayName": "GPT-6 Astra" } },
+            "suggestedAlternative": {
+                "provider": "claude",
+                "model": { "displayName": "Claude Opus", "modelId": "claude-opus-5" }
+            },
+            "autoExecuted": false
+        })
+    }
+
+    fn recorded_text_settled(path: &PathBuf) -> String {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        std::fs::read_to_string(path).unwrap_or_default()
+    }
+
+    #[test]
+    fn suggested_alternative_preview_opens_modal_and_sends_nothing_until_y() {
+        let (mut app, path) = recorder_app("agent");
+        app.ingest_plan_preview_record(&alternative_preview());
+        let Some(ExecutionModal::Confirm(confirm)) = &app.execution_modal else {
+            panic!("alternative preview must open the confirm modal");
+        };
+        let text = confirm.prompt_lines().join("\n");
+        assert!(text.contains("claude") && text.contains("Claude Opus"), "{text}");
+        // Enter must not execute.
+        let _ = handle_key(&mut app, enter()).expect("enter");
+        assert!(matches!(app.execution_modal, Some(ExecutionModal::Confirm(_))));
+        assert!(!app.plans_action_pending);
+        assert!(
+            !recorded_text_settled(&path).contains("plans.execute"),
+            "nothing is sent before an explicit y"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn y_sends_exactly_the_received_target_once_and_repeated_y_does_not_duplicate() {
+        let (mut app, path) = recorder_app("agent");
+        app.ingest_plan_preview_record(&alternative_preview());
+        let _ = handle_key(&mut app, press('y')).expect("y");
+        assert!(app.plans_action_pending);
+        let _ = handle_key(&mut app, press('y')).expect("y again");
+        let ops = recorded_ops(&path, 1);
+        let text = recorded_text_settled(&path);
+        assert_eq!(text.matches("\"op\":\"plans.execute\"").count(), 1, "{ops}");
+        assert!(text.contains("\"taskId\":\"task-1\""), "{text}");
+        assert!(text.contains("\"selection\":\"suggested-alternative\""), "{text}");
+        assert!(text.contains("\"candidateKey\":\"claude::claude-opus-5\""), "{text}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn n_and_esc_on_the_alternative_modal_neither_execute_nor_decide() {
+        for cancel in [press('n'), KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)] {
+            let (mut app, path) = recorder_app("agent");
+            app.ingest_plan_preview_record(&alternative_preview());
+            let _ = handle_key(&mut app, cancel).expect("cancel");
+            assert!(app.execution_modal.is_none());
+            assert!(!app.plans_action_pending);
+            let text = recorded_text_settled(&path);
+            assert!(
+                !text.contains("plans.execute") && !text.contains("plans.decide"),
+                "cancel must send nothing: {text}"
+            );
+            let _ = std::fs::remove_file(path);
+        }
     }
 
     // ---- A3: ASK provider events, in-flight flag, Esc cancel ---------

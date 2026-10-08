@@ -3997,7 +3997,7 @@ test("U4c: plans.preview calls planExecution with role+sessionId and emits plan_
   await runPromise;
 });
 
-test("U4c: WAIT_FOR_PROJECT_TEAM + suggested-alternative auto-executes without y/n gate", async () => {
+test("U4c: WAIT_FOR_PROJECT_TEAM + suggested-alternative preview never executes; the host must confirm explicitly", async () => {
   const altTarget = {
     role: "Builder",
     selection: "suggested-alternative",
@@ -4059,16 +4059,24 @@ test("U4c: WAIT_FOR_PROJECT_TEAM + suggested-alternative auto-executes without y
   stdin.write(`${JSON.stringify({ op: "plans.preview", taskId: "task-1", role: "Builder" })}\n`);
   await new Promise((r) => setTimeout(r, 100));
 
-  assert.equal(executeCalls.length, 1, "suggested-alternative must auto-executePlan");
-  assert.deepEqual(executeCalls[0].confirmationTarget, altTarget);
+  assert.equal(executeCalls.length, 0, "a suggested-alternative preview must never executePlan");
   const preview = out.find((r) => r.type === "plan_preview");
-  assert.equal(preview?.autoExecuted, true);
-  assert.ok(out.some((r) => r.type === "plan_execute"));
+  assert.equal(preview?.autoExecuted, false);
+  assert.deepEqual(preview?.confirmationTarget, altTarget, "the target reaches the host intact for the explicit y");
+  assert.equal(preview?.suggestedAlternative?.provider, "claude");
+  assert.equal(preview?.suggestedAlternative?.model?.displayName, "Claude Opus");
+  assert.ok(!out.some((r) => r.type === "plan_execute"), "no execution event without plans.execute");
   assert.ok(
-    out.some((r) => r.type === "notice" && /falling back/i.test(r.message ?? "")),
-    "must narrate the automatic fallback"
+    !out.some((r) => r.type === "notice" && /falling back|automatically/i.test(r.message ?? "")),
+    "no automatic-fallback narration"
   );
-  assert.ok(out.some((r) => r.type === "plans"), "must refresh plans after auto-execute");
+
+  // Explicit consent: only plans.execute with the received target launches, once.
+  stdin.write(`${JSON.stringify({ op: "plans.execute", taskId: "task-1", confirmationTarget: preview.confirmationTarget })}\n`);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(executeCalls.length, 1);
+  assert.deepEqual(executeCalls[0].confirmationTarget, altTarget);
+  assert.equal(out.find((r) => r.type === "plan_execute")?.autoExecuted, false);
 
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();
