@@ -16,6 +16,8 @@ import { resolveHomeDir } from "../paths.js";
 import { listRunRecords, readRunEvents, readRunState } from "../runtime/run-store.js";
 import { recoverRuns, startRun, stopRun } from "../runtime/run-manager.js";
 import { createRunId, isActiveRunState } from "../runtime/run-types.js";
+import { authorizeRunPermissions } from "../runtime/run-permissions.js";
+import { ExecutionModeError, READ_ONLY_MODE, normalizeExecutionMode } from "./execution-mode.js";
 import { formatTranscriptEventText } from "../runtime/run-events.js";
 import { inspectExecutionAdapters } from "../runtime/execution-adapters/index.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
@@ -521,6 +523,7 @@ export function createConversationService(deps = {}) {
   const recover = deps.recoverRuns ?? recoverRuns;
   const verifyExecution = deps.verifyExecution ?? verifyPlanForExecution;
   const launchRun = deps.startRun ?? startRun;
+  const authorizeRuns = deps.authorizeRunPermissions ?? authorizeRunPermissions;
   const cancelRun = deps.stopRun ?? stopRun;
   const reserveExecution = deps.writeExecution ?? writeExecutionLink;
   const updateExecution = deps.updateExecution ?? updateExecutionLink;
@@ -695,6 +698,7 @@ export function createConversationService(deps = {}) {
       runId: link.runId,
       provider: run?.agentId ?? link.agentId ?? "claude",
       role: link.role ?? null,
+      mode: link.mode === READ_ONLY_MODE ? READ_ONLY_MODE : "standard",
       state: run?.state ?? link.state ?? "failed",
       active: run ? isActiveRunState(run.state) : false,
       error: run?.error ?? link.error ?? null,
@@ -847,7 +851,17 @@ export function createConversationService(deps = {}) {
    * manual-only provider's own chat, instead of just naming the model.
    * @param {string} planMarkdown
    */
-  function buildExecutionTaskPrompt(planMarkdown) {
+  function buildExecutionTaskPrompt(planMarkdown, mode = "standard") {
+    if (mode === READ_ONLY_MODE) {
+      // Clarity only: the prompt is NOT containment (that is the adapter's job).
+      return [
+        "Analyze the explicitly approved architecture plan below. This run is READ-ONLY analysis.",
+        "You must not modify, create, delete or move any file, and must not run commands that change the repository or the system. Report findings only.",
+        "Follow repository AGENTS.md and Gentle governance. Do not treat plan approval as any additional governance receipt.",
+        "",
+        planMarkdown
+      ].join("\n");
+    }
     return [
       "Implement the explicitly approved architecture plan below.",
       "Follow repository AGENTS.md and Gentle governance. Do not treat plan approval as any additional governance receipt.",
@@ -916,20 +930,24 @@ export function createConversationService(deps = {}) {
    *   WAIT_FOR_PROJECT_TEAM preview never needs it, since executePlan
    *   builds the real task text itself from the SAME buildExecutionTaskPrompt.
    */
-  function toExecutionPreview(route, record = null) {
+  function toExecutionPreview(route, record = null, mode = "standard") {
     let confirmationTarget = null;
+    // Standard targets stay byte-for-byte (no mode key); only read-only is bound explicitly.
+    const modeKey = mode === READ_ONLY_MODE ? { mode } : {};
     if (route.decision === "ROUTED" && route.model) {
-      confirmationTarget = { role: route.role, selection: "assigned", strategyFingerprint: route.strategyFingerprint, candidateKey: route.model.candidateKey ?? null };
+      confirmationTarget = { role: route.role, selection: "assigned", strategyFingerprint: route.strategyFingerprint, candidateKey: route.model.candidateKey ?? null, ...modeKey };
     } else if (route.decision === "WAIT_FOR_PROJECT_TEAM" && route.suggestedAlternative?.model) {
-      confirmationTarget = { role: route.role, selection: "suggested-alternative", strategyFingerprint: route.strategyFingerprint, candidateKey: route.suggestedAlternative.model.candidateKey ?? null };
+      confirmationTarget = { role: route.role, selection: "suggested-alternative", strategyFingerprint: route.strategyFingerprint, candidateKey: route.suggestedAlternative.model.candidateKey ?? null, ...modeKey };
     }
     const taskPrompt = route.decision === "MANUAL_HANDOFF" && record?.planMarkdown
-      ? buildExecutionTaskPrompt(record.planMarkdown)
+      ? buildExecutionTaskPrompt(record.planMarkdown, mode)
       : null;
     return {
+      mode,
       decision: route.decision, role: route.role,
       provider: route.provider, model: route.model?.modelId ?? null, modelRef: route.model,
-      assignmentSource: route.assignmentSource, strategyFingerprint: route.strategyFingerprint, why: route.why,
+      assignmentSource: route.assignmentSource, strategyFingerprint: route.strategyFingerprint,
+      why: mode === READ_ONLY_MODE ? `${route.why ?? ""} Mode: read-only (analysis only, no file changes).`.trim() : route.why,
       blockedAssignment: route.blockedAssignment, suggestedAlternative: route.suggestedAlternative,
       confirmationTarget, taskPrompt
     };
@@ -2211,14 +2229,16 @@ export function createConversationService(deps = {}) {
      * no active team simply returns WAIT_FOR_PROJECT_TEAM, the router's
      * own honest answer, never a silent fallback to guessing from text.
      */
-    async planExecution({ cwd, taskId, role, sessionId = null }) {
+    async planExecution({ cwd, taskId, role, sessionId = null, mode }) {
       if (!role) throw new Error("planExecution requires an explicit role — it is never inferred from the task's text.");
+      const planMode = normalizeExecutionMode(mode);
+      if (!planMode) throw new ExecutionModeError("invalid_execution_mode", `Unsupported execution mode "${mode}".`);
       const projectRoot = await root(cwd);
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
       assertTaskOwnedBySession(record.status, sessionId);
       const route = await this.routeProjectExecution(role, projectRoot);
-      return { ...toExecutionPreview(route, record), projectRoot, taskId };
+      return { ...toExecutionPreview(route, record, planMode), projectRoot, taskId };
     },
     /**
      * @param {object} args
@@ -2237,13 +2257,25 @@ export function createConversationService(deps = {}) {
      *   never silently re-routes to something else. Never accepts a
      *   MANUAL_HANDOFF candidate — that's never something Kairo launches.
      */
-    async executePlan({ cwd, taskId, confirmationTarget, sessionId = null }) {
+    async executePlan({ cwd, taskId, confirmationTarget, sessionId = null, mode }) {
       if (!confirmationTarget) throw new Error(`Cannot execute "${taskId}": a confirmationTarget from a fresh planExecution({role}) preview is required — PROJECT TEAM is the sole authority for execution.`);
+      // A target with no mode IS standard. A read-only confirmation can never
+      // launch a standard run and a standard one can never launch read-only.
+      const targetMode = normalizeExecutionMode(confirmationTarget.mode);
+      const requestedMode = mode === undefined ? targetMode : normalizeExecutionMode(mode);
+      if (!targetMode || !requestedMode || targetMode !== requestedMode) {
+        throw new Error(`Cannot execute "${taskId}": the real project team state changed since this was confirmed (execution mode) — request a new preview and confirm again.`);
+      }
       const projectRoot = await root(cwd);
       const existing = await executionFor(projectRoot, taskId);
       const record = await verifyExecution(projectRoot, taskId, { checkWorkingTree: !existing });
       assertTaskOwnedBySession(record.status, sessionId);
-      if (existing) return { ...publicPlan(record, existing), projectRoot, reused: true };
+      if (existing) {
+        if ((existing.mode ?? "standard") !== targetMode) {
+          throw new Error(`Cannot execute "${taskId}": the real project team state changed since this was confirmed (an execution in another mode already exists) — request a new preview and confirm again.`);
+        }
+        return { ...publicPlan(record, existing), projectRoot, reused: true };
+      }
 
       const route = await this.routeProjectExecution(confirmationTarget.role, projectRoot);
       const resolvedCandidate = confirmationTarget.selection === "assigned"
@@ -2266,21 +2298,36 @@ export function createConversationService(deps = {}) {
         ? toRuntimeModelRef(resolvedAgentId === "opencode-go" ? "go" : "zen", resolvedCandidate.modelId)
         : resolvedCandidate.modelId;
 
+      const runPermissions = targetMode === READ_ONLY_MODE ? [READ_ONLY_MODE] : [];
+      if (targetMode === READ_ONLY_MODE) {
+        // Fail closed BEFORE reserving or launching: the adapter must really
+        // support read-only (see ADAPTER_PERMISSION_MODES), never a prompt alone.
+        try {
+          authorizeRuns({ permissions: runPermissions, agentId: resolvedAgentId, allowUnsafePermissions: false, source: "cockpit" });
+        } catch (cause) {
+          const refusal = new Error(`Cannot execute "${taskId}" read-only: ${cause?.message ?? "adapter does not support read-only"}`);
+          refusal.code = "read_only_unsupported";
+          refusal.cause = cause;
+          throw refusal;
+        }
+      }
+      const modeKey = targetMode === READ_ONLY_MODE ? { mode: targetMode } : {};
       const runId = newRunId();
       const createdAt = new Date().toISOString();
       try {
-        await reserveExecution(projectRoot, taskId, { runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, state: "reserved", createdAt, updatedAt: createdAt });
+        await reserveExecution(projectRoot, taskId, { runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, ...modeKey, state: "reserved", createdAt, updatedAt: createdAt });
       } catch (error) {
         if (error?.code !== "EEXIST") throw error;
         const raced = await executionFor(projectRoot, taskId);
         if (!raced) throw error;
+        if ((raced.mode ?? "standard") !== targetMode) throw new Error(`Cannot execute "${taskId}": the real project team state changed since this was confirmed (an execution in another mode already exists) — request a new preview and confirm again.`);
         return { ...publicPlan(record, raced), projectRoot, reused: true };
       }
-      const task = buildExecutionTaskPrompt(record.planMarkdown);
+      const task = buildExecutionTaskPrompt(record.planMarkdown, targetMode);
       try {
         const started = await launchRun({
           homeDir, runId, agentId: resolvedAgentId, task, cwd: projectRoot, model: resolvedModel,
-          permissions: [], allowUnsafePermissions: false, permissionSource: "cockpit",
+          permissions: runPermissions, allowUnsafePermissions: false, permissionSource: "cockpit",
           // Real, un-redacted assistant/result content flows into this
           // real run's own event log only when this is true (see
           // run-redact.js's own allowTranscript gate) — the cockpit is a
@@ -2291,14 +2338,14 @@ export function createConversationService(deps = {}) {
           captureTranscript: true, strategy: "direct", wait: false
         });
         await updateExecution(projectRoot, taskId, {
-          runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, state: started.metadata.state, createdAt, updatedAt: new Date().toISOString()
+          runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, ...modeKey, state: started.metadata.state, createdAt, updatedAt: new Date().toISOString()
         });
         const transitionWarning = await noteTransition(projectRoot, taskId, {
           runId, kind: "delegated", evidence: `run:${runId}`
         });
         return {
           ...publicPlan(record, {
-            runId, provider: resolvedAgentId, role: confirmationTarget.role ?? null, state: started.metadata.state, active: true,
+            runId, provider: resolvedAgentId, role: confirmationTarget.role ?? null, mode: targetMode, state: started.metadata.state, active: true,
             error: null, startedAt: started.metadata.startedAt, updatedAt: started.metadata.updatedAt,
             message: `${resolvedAgentId} run is ${started.metadata.state}.`
           }),
@@ -2308,7 +2355,7 @@ export function createConversationService(deps = {}) {
         };
       } catch (error) {
         await updateExecution(projectRoot, taskId, {
-          runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, state: "failed", error: error.message ?? String(error), createdAt,
+          runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, ...modeKey, state: "failed", error: error.message ?? String(error), createdAt,
           updatedAt: new Date().toISOString()
         });
         throw error;
