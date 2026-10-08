@@ -190,7 +190,7 @@ import {
   saveDraft as saveDraftDefault
 } from "../conversation/session-registry.js";
 import { createConversationService } from "../conversation/service.js";
-import { CockpitView } from "../cockpit/view.js";
+import { slashDiagnosticLines } from "../conversation/slash-diagnostics.js";
 import {
   appendAskRecord,
   clearAskEvents,
@@ -201,44 +201,8 @@ import { mergeAskTurnsIntoRows } from "../conversation/ask-events-restore.js";
 /** Fail-closed WorkMode values — same set as session-registry / cockpit. */
 const WORK_MODES = new Set(["ask", "plan", "agent"]);
 
-/** Stub actions so CockpitView formatters work without a TUI (U4d slash). */
-const SLASH_VIEW_ACTIONS = {
-  onShowPlan() {},
-  onApprove() {},
-  onReject() {},
-  onRequestExecute() {},
-  onExecute() {},
-  onCancel() {},
-  onRefresh() {},
-  onQuit() {}
-};
-
-/**
- * Build cockpit-parity diagnostic lines from a conversation snapshot.
- * @param {object|null|undefined} snap
- * @param {"usage"|"providers"|"status"|"models"|"why"|"models_evidence"} kind
- * @returns {string[]}
- */
-export function slashDiagnosticLines(snap, kind) {
-  const view = new CockpitView({ actions: SLASH_VIEW_ACTIONS });
-  view.snapshot = snap ?? {};
-  switch (kind) {
-    case "usage":
-      return view.usageLines();
-    case "providers":
-      return view.providerLines();
-    case "status":
-      return [...view.providerLines(), view.integrationsLine()];
-    case "models_evidence":
-      return view.aiTeamDetailLines();
-    case "models":
-      return view.modelsExplainLines();
-    case "why":
-      return view.fitWhyLines();
-    default:
-      return [`Unknown slash diagnostics kind: ${kind}`];
-  }
-}
+// Slash diagnostics live in conversation/slash-diagnostics.js; re-exported for existing importers.
+export { slashDiagnosticLines };
 
 /**
  * `/project status` lines from a conversation snapshot.
