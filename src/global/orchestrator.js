@@ -1,45 +1,5 @@
-import { stdin as input, stdout as output } from "node:process";
-import { canUseOrchestratorShell } from "./ink/orchestrator-state.js";
-import { formatCliCommand } from "./brand/cli.js";
 import { BRAND } from "./brand/index.js";
 import { buildReadOnlyDiagnostics, shouldExecutePlan } from "./action-planner.js";
-import { launchRatatuiHost, assertProductUiNotRetired } from "./host/launch-ratatui-host.js";
-import { INITIAL_EXPERIENCE } from "./initial-experience.js";
-
-export { canUseOrchestratorShell };
-
-export function shouldOpenOrchestratorShell({
-  interactive = Boolean(input.isTTY && output.isTTY),
-  json = false,
-  hasImplicitFlags = false
-} = {}) {
-  if (!interactive || json) return false;
-  if (hasImplicitFlags) return false;
-  return canUseOrchestratorShell({ interactive });
-}
-
-/**
- * U7: `kairo shell` opens the ratatui host (Operations is key 5 inside).
- * Ink orchestrator shell is retired.
- */
-export async function runOrchestratorShell({
-  workspaceRoot,
-  interactive = Boolean(input.isTTY && output.isTTY),
-  options = {},
-  env = process.env,
-  launchRatatuiHostImpl = launchRatatuiHost
-} = {}) {
-  assertProductUiNotRetired({ options, env });
-  if (!interactive) {
-    throw new Error(
-      `Non-interactive shell requires an explicit command. Try ${formatCliCommand("help")} or ${formatCliCommand("runs list")}.`
-    );
-  }
-  return launchRatatuiHostImpl({
-    cwd: workspaceRoot,
-    interactive
-  });
-}
 
 export async function runOrchestratorDiagnostics({
   homeDir,
@@ -101,5 +61,3 @@ export function assertPlanExecution(plan, { confirmed = false } = {}) {
     throw new Error("Plan declined. No writes or installations were performed.");
   }
 }
-
-export { INITIAL_EXPERIENCE };

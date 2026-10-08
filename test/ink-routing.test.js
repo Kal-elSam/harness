@@ -7,7 +7,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runHarnessSetup, shouldUseSetupInk, shouldUseSetupWizard } from "../src/global/setup.js";
 import { harnessHomePaths } from "../src/global/paths.js";
-import { formatInkSuccessLines } from "../src/global/ink/setup-state.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const cliVersion = JSON.parse(
@@ -79,15 +78,4 @@ test("runHarnessSetup Clack wizard cancel writes nothing (U7)", async () => {
 test("simple flag routes to Clack when ink capable", () => {
   assert.equal(shouldUseSetupInk({ interactive: true, simple: true, inkCapable: true }), false);
   assert.equal(shouldUseSetupWizard({ interactive: true, simple: true, inkCapable: true }), true);
-});
-
-test("formatInkSuccessLines snapshot", () => {
-  const lines = formatInkSuccessLines({
-    stateRoot: "/tmp/.harness",
-    agents: ["cursor"],
-    components: ["orchestrator"]
-  }, { dryRun: false });
-
-  assert.match(lines.join("\n"), /Setup complete/);
-  assert.match(lines.join("\n"), /kairo status/);
 });

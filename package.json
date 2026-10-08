@@ -38,7 +38,6 @@
     "build:kairo-ui": "bash scripts/build-kairo-ui-binaries.sh",
     "smoke": "bash scripts/smoke-test.sh",
     "ux:smoke": "bash scripts/ux-smoke-test.sh",
-    "smoke:cockpit": "bash scripts/cockpit-smoke-test.sh",
     "smoke:registry": "bash scripts/registry-smoke-test.sh",
     "smoke:clean-install": "bash scripts/clean-install-smoke.sh",
     "smoke:installer": "bash scripts/installer-smoke-test.sh",
