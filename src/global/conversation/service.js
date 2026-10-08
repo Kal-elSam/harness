@@ -7,21 +7,16 @@ import {
 import { PLAN_STATES } from "../architect/architect-types.js";
 import { composeTaskResult } from "./task-result.js";
 import { associateResultWithGentleReview } from "../control-plane/review-association.js";
-import { createGentleReader } from "./gentle-reader.js";
-import {
-  EXTERNAL_TRANSITION_KINDS, TRANSITION_KINDS, deriveNextTransition, fileTransitionStore
-} from "./transition-store.js";
+import { PROVIDER } from "../control-plane/constants.js";
 import { normalizeRunResult } from "../kernel/run-result-normalizer.js";
 import { resolveHomeDir } from "../paths.js";
 import { listRunRecords, readRunEvents, readRunState } from "../runtime/run-store.js";
 import { recoverRuns, startRun, stopRun } from "../runtime/run-manager.js";
 import { createRunId, isActiveRunState } from "../runtime/run-types.js";
-import { authorizeRunPermissions } from "../runtime/run-permissions.js";
-import { ExecutionModeError, READ_ONLY_MODE, normalizeExecutionMode } from "./execution-mode.js";
 import { formatTranscriptEventText } from "../runtime/run-events.js";
 import { inspectExecutionAdapters } from "../runtime/execution-adapters/index.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
-import { hasFiniteUsage } from "./usage-summary.js";
+import { hasFiniteUsage } from "../ink/cockpit-usage.js";
 import { readCodexUsage } from "../observability/codex-usage.js";
 import { readClaudeUsage } from "../observability/claude-usage.js";
 import { readOpenCodeUsage, readOpenCodeGoUsage, readOpenCodeStats } from "../observability/opencode-usage.js";
@@ -35,8 +30,7 @@ import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { appendAskHistoryEntry, clearAskHistory, readAskHistory } from "./ask-history-store.js";
 import { readSession, writeSessionMode } from "./session-store.js";
-import { createSession, getSession, listSessions, resolveSessionRef, sessionDirFor, updateSessionMode } from "./session-registry.js";
-import { resolveAssignmentAvailability } from "./assignment-availability.js";
+import { createSession, getSession, listSessions, sessionDirFor, updateSessionMode } from "./session-registry.js";
 import { acquireSessionLock } from "./session-lock.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
@@ -53,6 +47,7 @@ import { acquireProjectAnalysisLock } from "./project-analysis-lock.js";
 import { readAvailabilityRecovery, writeAvailabilityRecovery } from "./availability-recovery-store.js";
 import { approveRecoveryProposal, rejectRecoveryProposal, runTeamRecovery } from "./team-recovery.js";
 import { resolveProjectRoute } from "./project-router.js";
+import { resolveAssignmentAvailability } from "./assignment-availability.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
@@ -312,11 +307,11 @@ function publicPlan(record, execution = null) {
 /**
  * Maps execution-adapter availability into the cockpit's `providers` shape,
  * keyed by each adapter's display label (e.g. "Codex", "Claude") so
- * the slash diagnostics' providerLine() lookups resolve to real data instead
+ * `cockpit/view.js`'s providerLine() lookups resolve to real data instead
  * of its hardcoded fallback text.
  * @param {ReturnType<typeof inspectExecutionAdapters>} adapters
  */
-// slash-diagnostics.js's providerLine() looks up "Claude" — the claude adapter's
+// cockpit/view.js's providerLine() looks up "Claude" — the claude adapter's
 // own display label is "Claude Code" (claude.js's `label`), so it needs an
 // explicit override here rather than relying on the label verbatim.
 const PROVIDER_DISPLAY_NAME = { claude: "Claude" };
@@ -452,65 +447,6 @@ function snapshot(projectRoot, plans, providers = {}, integrations = {}) {
   };
 }
 
-function sessionRefError(code, message) {
-  return Object.assign(new Error(message), { code });
-}
-
-/**
- * One team role for `readTeam`. Availability comes from the existing
- * `resolveAssignmentAvailability` plus the adapter's own install/launch
- * facts (a strategy adapterId such as "opencode-go" maps to adapter
- * "opencode") — never a second eligibility rule.
- */
-function teamRole(role, model, providers, intelligence) {
-  const adapterId = model?.adapterId ?? null;
-  const provider = adapterId
-    ? providers.find((p) => p.id === adapterId) ?? providers.find((p) => adapterId.startsWith(`${p.id}-`)) ?? null
-    : null;
-  let blockedReason = null;
-  if (!model) {
-    blockedReason = "No eligible model assigned.";
-  } else if (provider && !provider.installed) {
-    blockedReason = provider.reason ?? `${provider.label} is not installed.`;
-  } else {
-    const { available, warning } = resolveAssignmentAvailability(model, intelligence);
-    if (!available) blockedReason = warning ?? "Not available.";
-  }
-  return {
-    role,
-    provider: adapterId,
-    model: model?.displayName ?? model?.modelId ?? null,
-    modelId: model?.modelId ?? null,
-    installed: provider?.installed ?? false,
-    launchable: provider?.launchable ?? false,
-    eligible: blockedReason === null,
-    blockedReason
-  };
-}
-
-/** Bootstrap Analyst catalog from the snapshot's model intelligence (shared by preflight and the setup read). */
-function analystCatalogFor(intelligence = {}) {
-  const {
-    scoredAll = [], manualSelectionScoredPool = scoredAll, deniedScoredPool = [], eligibility = {}, registry = null,
-    providerCapacity = null, unscoredModels = [], analystUnscoredModels = unscoredModels
-  } = intelligence;
-  return computeBootstrapAnalystCatalog({
-    scoredAll, manualSelectionScoredPool, deniedScoredPool, eligibility, registry, providerCapacity,
-    unscoredModels: analystUnscoredModels
-  });
-}
-
-/** A malformed link/run record is typed corrupt evidence, never a thrown read. */
-function unreadableExecution(error) {
-  const corrupt = error instanceof SyntaxError || /Invalid execution artifact/i.test(String(error?.message ?? ""));
-  return {
-    runId: null, provider: null, role: null, active: false,
-    state: corrupt ? "result_corrupt" : "evidence_unreadable",
-    error: corrupt ? "Run evidence is corrupt." : "Run evidence is unreadable.",
-    startedAt: null, updatedAt: null, message: "Run evidence could not be read."
-  };
-}
-
 export function createConversationService(deps = {}) {
   const resolveRoot = deps.resolveRoot ?? resolveProjectRoot;
   const createPlan = deps.createPlan ?? createArchitecturePlan;
@@ -523,7 +459,6 @@ export function createConversationService(deps = {}) {
   const recover = deps.recoverRuns ?? recoverRuns;
   const verifyExecution = deps.verifyExecution ?? verifyPlanForExecution;
   const launchRun = deps.startRun ?? startRun;
-  const authorizeRuns = deps.authorizeRunPermissions ?? authorizeRunPermissions;
   const cancelRun = deps.stopRun ?? stopRun;
   const reserveExecution = deps.writeExecution ?? writeExecutionLink;
   const updateExecution = deps.updateExecution ?? updateExecutionLink;
@@ -532,10 +467,9 @@ export function createConversationService(deps = {}) {
   const inspectEngram = deps.inspectEngramIntegration ?? inspectEngramIntegration;
   const listRuns = deps.listRunRecords ?? listRunRecords;
   const readRunEventsImpl = deps.readRunEvents ?? readRunEvents;
-  // Production default: bounded read-only Gentle status reader with typed
-  // unavailable results. Tests inject `readGentleContext` or `gentle.*`.
-  const readGentleContext = deps.readGentleContext ?? createGentleReader(deps.gentle ?? {});
-  const transitions = deps.transitionStore ?? fileTransitionStore;
+  // No production Gentle reader is wired yet: the result stays honest about it.
+  const readGentleContext = deps.readGentleContext
+    ?? (async () => ({ provider: PROVIDER.UNAVAILABLE, error: "gentle_reader_not_wired" }));
   const readCodexUsageImpl = deps.readCodexUsage ?? readCodexUsage;
   const readClaudeUsageImpl = deps.readClaudeUsage ?? readClaudeUsage;
   const readOpenCodeUsageImpl = deps.readOpenCodeUsage
@@ -561,7 +495,6 @@ export function createConversationService(deps = {}) {
   const getSessionImpl = deps.getSession ?? getSession;
   const updateSessionModeImpl = deps.updateSessionMode ?? updateSessionMode;
   const listSessionsImpl = deps.listSessions ?? listSessions;
-  const resolveSessionRefImpl = deps.resolveSessionRef ?? resolveSessionRef;
   const createSessionImpl = deps.createSession ?? createSession;
   const sessionDirForImpl = deps.sessionDirFor ?? sessionDirFor;
   const acquireSessionLockImpl = deps.acquireSessionLock ?? acquireSessionLock;
@@ -681,24 +614,12 @@ export function createConversationService(deps = {}) {
   }, claudeSubscriptionAuthTtlMs);
 
   async function executionFor(projectRoot, taskId) {
-    let link;
-    try {
-      link = await readExecution(projectRoot, taskId);
-    } catch (error) {
-      return unreadableExecution(error);
-    }
+    const link = await readExecution(projectRoot, taskId);
     if (!link) return null;
-    let run;
-    try {
-      run = await readRun(homeDir, link.runId);
-    } catch (error) {
-      return { ...unreadableExecution(error), runId: link.runId, provider: link.agentId ?? link.provider ?? "claude", role: link.role ?? null };
-    }
+    const run = await readRun(homeDir, link.runId);
     return {
       runId: link.runId,
       provider: run?.agentId ?? link.agentId ?? "claude",
-      role: link.role ?? null,
-      mode: link.mode === READ_ONLY_MODE ? READ_ONLY_MODE : "standard",
       state: run?.state ?? link.state ?? "failed",
       active: run ? isActiveRunState(run.state) : false,
       error: run?.error ?? link.error ?? null,
@@ -706,53 +627,6 @@ export function createConversationService(deps = {}) {
       updatedAt: run?.updatedAt ?? link.updatedAt ?? null,
       message: run ? `Claude run is ${run.state}.` : (link.error ?? "Claude run record is unavailable.")
     };
-  }
-
-  // The ONE timeline projection (plans + their execution evidence) shared by
-  // `snapshot`, `readTeam` and `readWork`. Recovery only marks dead runs
-  // interrupted; it never launches anything.
-  async function projectedPlans(projectRoot, sessionId = null) {
-    // A corrupt run record must not take the whole team/work view down: recovery is
-    // best-effort here and the affected task shows typed unreadable evidence (executionFor).
-    await recover(homeDir).catch(() => {});
-    const allPlans = await listPlans(projectRoot);
-    const plans = sessionId
-      ? allPlans.filter((plan) => !plan.sessionId || plan.sessionId === sessionId)
-      : allPlans;
-    return Promise.all(plans.map(async (plan) => publicPlan(plan, await executionFor(projectRoot, plan.taskId))));
-  }
-
-  // The circuit is scoped to the CURRENT execution's run. With no current run the
-  // store is still validated (corruption stays typed) but old progress from earlier
-  // runs is never presented as the current circuit.
-  async function readCircuit(projectRoot, taskId, runId) {
-    if (typeof runId === "string" && runId) return transitions.read(projectRoot, taskId, { runId });
-    const read = await transitions.read(projectRoot, taskId, { runId: null });
-    if (read?.state !== "ok") return read;
-    return { ...read, entries: [], next: deriveNextTransition([]) };
-  }
-
-  // Task rows (timeline + each task's pending transition) shared by readTeam and readWork.
-  async function taskRows(projectRoot, timeline) {
-    const nextByTask = new Map();
-    for (const { taskId, execution } of timeline) {
-      nextByTask.set(taskId, (await readCircuit(projectRoot, taskId, execution?.runId))?.next ?? null);
-    }
-    return timeline.map(({ taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error }) => ({
-      taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error,
-      nextTransition: nextByTask.get(taskId) ?? null
-    }));
-  }
-
-  // Best-effort idempotent upsert of an observed transition. Reads and
-  // launches must never fail or relaunch because the record is unwritable.
-  async function noteTransition(projectRoot, taskId, input) {
-    try {
-      await transitions.append(projectRoot, taskId, input);
-      return null;
-    } catch (error) {
-      return typeof error?.code === "string" ? error.code : "TRANSITION_WRITE_FAILED";
-    }
   }
 
   // The legacy keyword-classification routeExecution() helper that used to
@@ -861,17 +735,7 @@ export function createConversationService(deps = {}) {
    * manual-only provider's own chat, instead of just naming the model.
    * @param {string} planMarkdown
    */
-  function buildExecutionTaskPrompt(planMarkdown, mode = "standard") {
-    if (mode === READ_ONLY_MODE) {
-      // Clarity only: the prompt is NOT containment (that is the adapter's job).
-      return [
-        "Analyze the explicitly approved architecture plan below. This run is READ-ONLY analysis.",
-        "You must not modify, create, delete or move any file, and must not run commands that change the repository or the system. Report findings only.",
-        "Follow repository AGENTS.md and Gentle governance. Do not treat plan approval as any additional governance receipt.",
-        "",
-        planMarkdown
-      ].join("\n");
-    }
+  function buildExecutionTaskPrompt(planMarkdown) {
     return [
       "Implement the explicitly approved architecture plan below.",
       "Follow repository AGENTS.md and Gentle governance. Do not treat plan approval as any additional governance receipt.",
@@ -940,24 +804,20 @@ export function createConversationService(deps = {}) {
    *   WAIT_FOR_PROJECT_TEAM preview never needs it, since executePlan
    *   builds the real task text itself from the SAME buildExecutionTaskPrompt.
    */
-  function toExecutionPreview(route, record = null, mode = "standard") {
+  function toExecutionPreview(route, record = null) {
     let confirmationTarget = null;
-    // Standard targets stay byte-for-byte (no mode key); only read-only is bound explicitly.
-    const modeKey = mode === READ_ONLY_MODE ? { mode } : {};
     if (route.decision === "ROUTED" && route.model) {
-      confirmationTarget = { role: route.role, selection: "assigned", strategyFingerprint: route.strategyFingerprint, candidateKey: route.model.candidateKey ?? null, ...modeKey };
+      confirmationTarget = { role: route.role, selection: "assigned", strategyFingerprint: route.strategyFingerprint, candidateKey: route.model.candidateKey ?? null };
     } else if (route.decision === "WAIT_FOR_PROJECT_TEAM" && route.suggestedAlternative?.model) {
-      confirmationTarget = { role: route.role, selection: "suggested-alternative", strategyFingerprint: route.strategyFingerprint, candidateKey: route.suggestedAlternative.model.candidateKey ?? null, ...modeKey };
+      confirmationTarget = { role: route.role, selection: "suggested-alternative", strategyFingerprint: route.strategyFingerprint, candidateKey: route.suggestedAlternative.model.candidateKey ?? null };
     }
     const taskPrompt = route.decision === "MANUAL_HANDOFF" && record?.planMarkdown
-      ? buildExecutionTaskPrompt(record.planMarkdown, mode)
+      ? buildExecutionTaskPrompt(record.planMarkdown)
       : null;
     return {
-      mode,
       decision: route.decision, role: route.role,
       provider: route.provider, model: route.model?.modelId ?? null, modelRef: route.model,
-      assignmentSource: route.assignmentSource, strategyFingerprint: route.strategyFingerprint,
-      why: mode === READ_ONLY_MODE ? `${route.why ?? ""} Mode: read-only (analysis only, no file changes).`.trim() : route.why,
+      assignmentSource: route.assignmentSource, strategyFingerprint: route.strategyFingerprint, why: route.why,
       blockedAssignment: route.blockedAssignment, suggestedAlternative: route.suggestedAlternative,
       confirmationTarget, taskPrompt
     };
@@ -974,7 +834,14 @@ export function createConversationService(deps = {}) {
      */
     async snapshot({ cwd, sessionId = null }) {
       const projectRoot = await root(cwd);
-      const projected = await projectedPlans(projectRoot, sessionId);
+      await recover(homeDir);
+      const allPlans = await listPlans(projectRoot);
+      const plans = sessionId
+        ? allPlans.filter((plan) => !plan.sessionId || plan.sessionId === sessionId)
+        : allPlans;
+      const projected = await Promise.all(plans.map(async (plan) => publicPlan(
+        plan, await executionFor(projectRoot, plan.taskId)
+      )));
       const adapters = inspectAdapters({ cwd: projectRoot });
       const engram = inspectEngram();
       const recentRuns = await listRuns(homeDir, { limit: 50 });
@@ -1442,126 +1309,6 @@ export function createConversationService(deps = {}) {
       return createSessionImpl(homeDir, projectRoot, {});
     },
     /**
-     * Read-only, idempotent: every real session of the explicitly resolved
-     * project, most recently updated first. Never creates or migrates-by-
-     * guessing a session beyond what the registry itself already does.
-     * @param {{cwd: string}} args
-     */
-    async listSessions({ cwd }) {
-      const projectRoot = await root(cwd);
-      return listSessionsImpl(homeDir, projectRoot);
-    },
-    /**
-     * Read-only session reference resolution (exact id or unique prefix).
-     * Rejects with a typed error (`code`: SESSION_REF_UNKNOWN |
-     * SESSION_REF_AMBIGUOUS) — never guesses, never creates a session.
-     * @param {{cwd: string, ref: string}} args
-     */
-    async resolveSession({ cwd, ref }) {
-      const projectRoot = await root(cwd);
-      const text = typeof ref === "string" ? ref.trim() : "";
-      if (!text) throw sessionRefError("SESSION_REF_UNKNOWN", "A session reference is required.");
-      let session;
-      try {
-        session = await resolveSessionRefImpl(homeDir, projectRoot, text);
-      } catch (error) {
-        throw sessionRefError("SESSION_REF_AMBIGUOUS", error?.message ?? `"${text}" is ambiguous.`);
-      }
-      if (!session) throw sessionRefError("SESSION_REF_UNKNOWN", `No session matches "${text}".`);
-      return session;
-    },
-    /**
-     * Read-only team query for one explicit project: roles with assigned
-     * provider/model, per-provider installed/launchable, eligibility and
-     * blocked reason, plus tasks with states and result pointers. Composes
-     * `snapshot` (same facts the cockpit/Pi show); it never selects a team,
-     * writes a strategy, or launches a run.
-     * @param {{cwd: string, sessionId?: string|null}} args
-     */
-    async readTeam({ cwd, sessionId = null }) {
-      const snap = await this.snapshot({ cwd, sessionId });
-      const adapters = inspectAdapters({ cwd: snap.projectRoot });
-      const intelligence = snap.modelIntelligence ?? {};
-      const strategy = snap.projectStrategy ?? null;
-      const providers = adapters.map((adapter) => ({
-        id: adapter.id, label: adapter.label, installed: adapter.available === true,
-        launchable: adapter.launchable === true, reason: adapter.reason ?? null,
-        eligibility: intelligence.eligibility?.[adapter.id] ?? null
-      }));
-      const entries = strategy ? [
-        ["Project Analyst", strategy.bootstrapAnalyst ?? null],
-        ["Orchestrator", strategy.orchestrator ?? null],
-        ...(strategy.projectTeam ?? []).map((entry) => [entry?.role ?? "Unknown role", entry?.model ?? null])
-      ] : [];
-      const roles = entries.map(([role, model]) => teamRole(role, model, providers, intelligence));
-      return {
-        schema: CONVERSATION_SCHEMA,
-        projectRoot: snap.projectRoot,
-        state: strategy ? (strategy.status ?? "unknown") : "not_analyzed",
-        roles,
-        providers,
-        tasks: await taskRows(snap.projectRoot, snap.timeline)
-      };
-    },
-    /**
-     * Light read-only view of the work in one explicit project: its sessions
-     * and tasks (with run evidence and pending transitions). Same projection
-     * as `readTeam().tasks`, without the provider probes or usage reads, so a
-     * host can refresh it on every render. Never launches, writes or selects.
-     * @param {{cwd: string, sessionId?: string|null}} args
-     */
-    async readWork({ cwd, sessionId = null }) {
-      const projectRoot = await root(cwd);
-      const timeline = await projectedPlans(projectRoot, sessionId);
-      return {
-        projectRoot,
-        sessions: await listSessionsImpl(homeDir, projectRoot),
-        tasks: await taskRows(projectRoot, timeline)
-      };
-    },
-    /**
-     * Read-only raw facts for the setup projection (operations/setup-*): adapter
-     * install state, per-provider access evidence (Claude entitlement, Cursor
-     * access), eligibility, the analyst catalog, the persisted strategy, the
-     * edit catalog per role of a SUGGESTED strategy and the recovery record.
-     * Never selects a team, probes a provider, writes or launches anything.
-     * @param {{cwd: string, sessionId?: string|null}} args
-     */
-    async readSetup({ cwd, sessionId = null }) {
-      const snap = await this.snapshot({ cwd, sessionId });
-      const intelligence = snap.modelIntelligence ?? {};
-      const strategy = snap.projectStrategy ?? null;
-      const {
-        scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null, unscoredModels = []
-      } = intelligence;
-      const editCatalogs = {};
-      if (strategy?.status === "suggested") {
-        for (const entry of strategy.projectTeam ?? []) {
-          editCatalogs[entry.role] = computeProjectTeamEditCatalog(entry.role, {
-            scoredAll, manualSelectionScoredPool, eligibility, registry, unscoredModels
-          }).models;
-        }
-      }
-      const record = await readAvailabilityRecoveryImpl(homeDir, snap.projectRoot).catch(() => null);
-      return {
-        projectRoot: snap.projectRoot,
-        adapters: inspectAdapters({ cwd: snap.projectRoot }),
-        eligibility,
-        claudeEntitlement: intelligence.claudeEntitlement ?? {},
-        cursorAccess: intelligence.cursorAccess ?? {},
-        knownCandidates: [...manualSelectionScoredPool, ...unscoredModels].map((model) => ({
-          candidateKey: model.candidateKey ?? `${model.adapterId}::${model.modelId}`,
-          adapterId: model.adapterId, modelId: model.modelId, entitlement: model.entitlement ?? null
-        })),
-        analystCatalog: analystCatalogFor(intelligence),
-        // The existing read-only plan (pending vs reusable checks); never executed here.
-        verificationPlan: intelligence.verificationPlan ?? EMPTY_VERIFICATION_PLAN,
-        strategy,
-        editCatalogs,
-        recovery: record ? { outcome: record.outcome ?? null, pending: record.outcome === "proposed" && record.proposal != null } : null
-      };
-    },
-    /**
      * Exclusive cross-process lock for one real session — a second real
      * `kairo start`/`resume` process opening the SAME session gets a real,
      * clear thrown error (see session-lock.js's own contract), never a
@@ -1609,7 +1356,7 @@ export function createConversationService(deps = {}) {
         claudeEntitlement = {}, cursorAccess = {}, verificationPlan = EMPTY_VERIFICATION_PLAN
       } = snap.modelIntelligence ?? {};
       const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement, cursorAccess };
-      const analystCatalog = analystCatalogFor(snap.modelIntelligence);
+      const analystCatalog = computeBootstrapAnalystCatalog({ ...candidates, manualSelectionScoredPool, deniedScoredPool, unscoredModels: analystUnscoredModels });
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
       ).length;
@@ -2143,55 +1890,16 @@ export function createConversationService(deps = {}) {
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
       assertTaskOwnedBySession(record.status, sessionId);
-      // Same liveness recovery as team/snapshot reads: a run whose process died is
-      // reported interrupted here too, never as running. It only marks, never launches.
-      // A corrupt unrelated run record must not hide this task's own (typed) evidence.
-      await recover(homeDir).catch(() => {});
-      const link = await readExecution(projectRoot, taskId);
-      const result = await composeTaskResult({
+      return composeTaskResult({
         taskId,
         projectRoot,
-        link,
+        link: await readExecution(projectRoot, taskId),
         readRun: (runId) => readRun(homeDir, runId),
         readEvents: (runId) => readRunEventsImpl(homeDir, runId),
         normalize: normalizeRunResult,
         associate: associateResultWithGentleReview,
         readGentleContext
       });
-      // Observed evidence only: upsert (no-op when already recorded), then read.
-      if (link && result.status !== "not_started") {
-        await noteTransition(projectRoot, taskId, { runId: link.runId, kind: "delegated", evidence: `run:${link.runId}` });
-        if (result.status === "terminal") {
-          await noteTransition(projectRoot, taskId, { runId: link.runId, kind: "result_observed", evidence: `run:${link.runId}` });
-        }
-      }
-      const { state, error, entries, next } = await readCircuit(projectRoot, taskId, link?.runId);
-      return { ...result, transitions: { state, error: error ?? null, entries, next } };
-    },
-    /**
-     * Append-only assertion of a review-side transition (authorized review,
-     * comments, correction). Needs an explicit task id and kind from the
-     * fixed enum plus an opaque evidence pointer; it launches nothing and
-     * never touches review authority.
-     */
-    async recordTransition({ cwd, taskId, kind, evidence, sessionId = null }) {
-      if (!TRANSITION_KINDS.includes(kind)) {
-        throw Object.assign(new Error(`Unknown transition kind "${kind}".`), { code: "TRANSITION_KIND_INVALID" });
-      }
-      if (!EXTERNAL_TRANSITION_KINDS.includes(kind)) {
-        throw Object.assign(new Error(`"${kind}" is observed by Kairo and cannot be asserted.`), { code: "TRANSITION_KIND_NOT_EXTERNAL" });
-      }
-      const projectRoot = await root(cwd);
-      const record = await readPlan(projectRoot, taskId);
-      if (!record) throw new Error(`Plan "${taskId}" not found.`);
-      assertTaskOwnedBySession(record.status, sessionId);
-      const link = await readExecution(projectRoot, taskId);
-      if (!link) {
-        throw Object.assign(new Error(`Plan "${taskId}" has no execution to attach a transition to.`), { code: "TRANSITION_NO_EXECUTION" });
-      }
-      const { recorded } = await transitions.append(projectRoot, taskId, { runId: link.runId, kind, evidence });
-      const read = await readCircuit(projectRoot, taskId, link.runId);
-      return { taskId, runId: link.runId, kind, recorded, next: read.next };
     },
     async decidePlan({ cwd, taskId, decision, sessionId = null }) {
       if (![PLAN_STATES.APPROVED, PLAN_STATES.REJECTED].includes(decision)) {
@@ -2239,16 +1947,14 @@ export function createConversationService(deps = {}) {
      * no active team simply returns WAIT_FOR_PROJECT_TEAM, the router's
      * own honest answer, never a silent fallback to guessing from text.
      */
-    async planExecution({ cwd, taskId, role, sessionId = null, mode }) {
+    async planExecution({ cwd, taskId, role, sessionId = null }) {
       if (!role) throw new Error("planExecution requires an explicit role — it is never inferred from the task's text.");
-      const planMode = normalizeExecutionMode(mode);
-      if (!planMode) throw new ExecutionModeError("invalid_execution_mode", `Unsupported execution mode "${mode}".`);
       const projectRoot = await root(cwd);
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
       assertTaskOwnedBySession(record.status, sessionId);
       const route = await this.routeProjectExecution(role, projectRoot);
-      return { ...toExecutionPreview(route, record, planMode), projectRoot, taskId };
+      return { ...toExecutionPreview(route, record), projectRoot, taskId };
     },
     /**
      * @param {object} args
@@ -2267,25 +1973,13 @@ export function createConversationService(deps = {}) {
      *   never silently re-routes to something else. Never accepts a
      *   MANUAL_HANDOFF candidate — that's never something Kairo launches.
      */
-    async executePlan({ cwd, taskId, confirmationTarget, sessionId = null, mode }) {
+    async executePlan({ cwd, taskId, confirmationTarget, sessionId = null }) {
       if (!confirmationTarget) throw new Error(`Cannot execute "${taskId}": a confirmationTarget from a fresh planExecution({role}) preview is required — PROJECT TEAM is the sole authority for execution.`);
-      // A target with no mode IS standard. A read-only confirmation can never
-      // launch a standard run and a standard one can never launch read-only.
-      const targetMode = normalizeExecutionMode(confirmationTarget.mode);
-      const requestedMode = mode === undefined ? targetMode : normalizeExecutionMode(mode);
-      if (!targetMode || !requestedMode || targetMode !== requestedMode) {
-        throw new Error(`Cannot execute "${taskId}": the real project team state changed since this was confirmed (execution mode) — request a new preview and confirm again.`);
-      }
       const projectRoot = await root(cwd);
       const existing = await executionFor(projectRoot, taskId);
       const record = await verifyExecution(projectRoot, taskId, { checkWorkingTree: !existing });
       assertTaskOwnedBySession(record.status, sessionId);
-      if (existing) {
-        if ((existing.mode ?? "standard") !== targetMode) {
-          throw new Error(`Cannot execute "${taskId}": the real project team state changed since this was confirmed (an execution in another mode already exists) — request a new preview and confirm again.`);
-        }
-        return { ...publicPlan(record, existing), projectRoot, reused: true };
-      }
+      if (existing) return { ...publicPlan(record, existing), projectRoot, reused: true };
 
       const route = await this.routeProjectExecution(confirmationTarget.role, projectRoot);
       const resolvedCandidate = confirmationTarget.selection === "assigned"
@@ -2308,36 +2002,21 @@ export function createConversationService(deps = {}) {
         ? toRuntimeModelRef(resolvedAgentId === "opencode-go" ? "go" : "zen", resolvedCandidate.modelId)
         : resolvedCandidate.modelId;
 
-      const runPermissions = targetMode === READ_ONLY_MODE ? [READ_ONLY_MODE] : [];
-      if (targetMode === READ_ONLY_MODE) {
-        // Fail closed BEFORE reserving or launching: the adapter must really
-        // support read-only (see ADAPTER_PERMISSION_MODES), never a prompt alone.
-        try {
-          authorizeRuns({ permissions: runPermissions, agentId: resolvedAgentId, allowUnsafePermissions: false, source: "cockpit" });
-        } catch (cause) {
-          const refusal = new Error(`Cannot execute "${taskId}" read-only: ${cause?.message ?? "adapter does not support read-only"}`);
-          refusal.code = "read_only_unsupported";
-          refusal.cause = cause;
-          throw refusal;
-        }
-      }
-      const modeKey = targetMode === READ_ONLY_MODE ? { mode: targetMode } : {};
       const runId = newRunId();
       const createdAt = new Date().toISOString();
       try {
-        await reserveExecution(projectRoot, taskId, { runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, ...modeKey, state: "reserved", createdAt, updatedAt: createdAt });
+        await reserveExecution(projectRoot, taskId, { runId, agentId: resolvedAgentId, state: "reserved", createdAt, updatedAt: createdAt });
       } catch (error) {
         if (error?.code !== "EEXIST") throw error;
         const raced = await executionFor(projectRoot, taskId);
         if (!raced) throw error;
-        if ((raced.mode ?? "standard") !== targetMode) throw new Error(`Cannot execute "${taskId}": the real project team state changed since this was confirmed (an execution in another mode already exists) — request a new preview and confirm again.`);
         return { ...publicPlan(record, raced), projectRoot, reused: true };
       }
-      const task = buildExecutionTaskPrompt(record.planMarkdown, targetMode);
+      const task = buildExecutionTaskPrompt(record.planMarkdown);
       try {
         const started = await launchRun({
           homeDir, runId, agentId: resolvedAgentId, task, cwd: projectRoot, model: resolvedModel,
-          permissions: runPermissions, allowUnsafePermissions: false, permissionSource: "cockpit",
+          permissions: [], allowUnsafePermissions: false, permissionSource: "cockpit",
           // Real, un-redacted assistant/result content flows into this
           // real run's own event log only when this is true (see
           // run-redact.js's own allowTranscript gate) — the cockpit is a
@@ -2348,37 +2027,27 @@ export function createConversationService(deps = {}) {
           captureTranscript: true, strategy: "direct", wait: false
         });
         await updateExecution(projectRoot, taskId, {
-          runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, ...modeKey, state: started.metadata.state, createdAt, updatedAt: new Date().toISOString()
-        });
-        const transitionWarning = await noteTransition(projectRoot, taskId, {
-          runId, kind: "delegated", evidence: `run:${runId}`
+          runId, agentId: resolvedAgentId, state: started.metadata.state, createdAt, updatedAt: new Date().toISOString()
         });
         return {
           ...publicPlan(record, {
-            runId, provider: resolvedAgentId, role: confirmationTarget.role ?? null, mode: targetMode, state: started.metadata.state, active: true,
+            runId, provider: resolvedAgentId, state: started.metadata.state, active: true,
             error: null, startedAt: started.metadata.startedAt, updatedAt: started.metadata.updatedAt,
             message: `${resolvedAgentId} run is ${started.metadata.state}.`
           }),
           projectRoot,
-          reused: false,
-          ...(transitionWarning ? { transitionWarning } : {})
+          reused: false
         };
       } catch (error) {
         await updateExecution(projectRoot, taskId, {
-          runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, ...modeKey, state: "failed", error: error.message ?? String(error), createdAt,
+          runId, agentId: resolvedAgentId, state: "failed", error: error.message ?? String(error), createdAt,
           updatedAt: new Date().toISOString()
         });
         throw error;
       }
     },
-    async cancelExecution({ cwd, taskId, sessionId = null }) {
+    async cancelExecution({ cwd, taskId }) {
       const projectRoot = await root(cwd);
-      if (sessionId) {
-        // Optional ownership guard: a run of another session is refused BEFORE anything is stopped.
-        const owned = await readPlan(projectRoot, taskId);
-        if (!owned) throw new Error(`Plan "${taskId}" not found.`);
-        assertTaskOwnedBySession(owned.status, sessionId);
-      }
       const link = await readExecution(projectRoot, taskId);
       if (!link) throw new Error(`Plan "${taskId}" has no Claude execution.`);
       await cancelRun(homeDir, link.runId);

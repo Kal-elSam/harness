@@ -61,10 +61,7 @@ test("snapshot populates real provider and integration status instead of leaving
         { id: "cursor", label: "Cursor", available: false, launchable: false, reason: "Cursor CLI is not on PATH." }
       ];
     },
-    inspectEngramIntegration: () => ({ status: "configured" }),
-    // Hermetic: without this the default reads the REAL ~/.harness runs, so any real Kairo run
-    // changes the provider line ("ENABLED · N tokens (...)") and breaks this exact-status assertion.
-    listRunRecords: async () => []
+    inspectEngramIntegration: () => ({ status: "configured" })
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });

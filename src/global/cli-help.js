@@ -133,7 +133,7 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} fleet set --platform opencode|claude|codex --agent <id> --model <id> [--yes] [--json]
   ${cli} mcp --workspace-bound --cwd <abs>
   ${cli} mcp
-  ${cli} mcp install [--client cursor|claude-code|codex] [--bind <abs project>] [--project-scope] [--yes] [--json]
+  ${cli} mcp install [--yes] [--json] [--client cursor]
   ${cli} install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
   ${cli} init [--mode minimal|standard|enterprise] (workspace alias)
 
@@ -146,7 +146,10 @@ Scopes:
 Commands:
   architect  Run subscription-authenticated Codex in bounded read-only planning mode.
   plans      Inspect and explicitly approve or reject project-local architecture plans.
-  shell      Open the unified Ratatui workspace.
+  shell      Operations cockpit (TTY). Bare ${cli} opens the Unified Kairo workspace;
+             explicit ${cli} shell keeps the legacy operations cockpit available.
+             Keys: ↑↓ · Enter · Esc back/exit · R refresh · C cancel · ? help.
+             Tab switches region only when content is interactive (runs/launch).
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
   alerts     Consent-gated alert resolve/dismiss (Permission Authority).
@@ -158,7 +161,7 @@ Commands:
              Local-first (Ollama). Cloud only with --cloud-consent.
              Ephemeral --backend/--model override preferredBackend/preferredModel.
              Credentials via env only (OPENROUTER_API_KEY, OPENCODE_API_KEY, OLLAMA_HOST). Never stored.
-  setup      Managed ecosystem setup. Clack wizard in a TTY (--simple selects it); --yes or flags run it non-interactively.
+  setup      Managed ecosystem setup. Interactive Ink UI (TTY). Use --simple for Clack prompts.
   status     Control panel: agents, components, drift, backups, next action.
   sync       Converge managed content (repair drift), then show status.
   upgrade    Preview or apply ecosystem updates (apply requires --yes).
