@@ -133,5 +133,9 @@ test("help documents runtime commands", () => {
   assert.equal(cli.status, 0);
   assert.match(cli.stdout, /kairo run --agent/);
   assert.match(cli.stdout, /runs list/);
-  assert.match(cli.stdout, /Operations cockpit/);
+  assert.match(cli.stdout, /^ {2}shell {6}Open the unified Ratatui workspace\.$/m);
+  assert.doesNotMatch(cli.stdout, /Operations cockpit/);
+  assert.doesNotMatch(cli.stdout, /legacy operations cockpit/);
+  assert.doesNotMatch(cli.stdout, /↑↓ · Enter · Esc back\/exit/);
+  assert.doesNotMatch(cli.stdout, /Tab switches region/);
 });

@@ -146,10 +146,7 @@ Scopes:
 Commands:
   architect  Run subscription-authenticated Codex in bounded read-only planning mode.
   plans      Inspect and explicitly approve or reject project-local architecture plans.
-  shell      Operations cockpit (TTY). Bare ${cli} opens the Unified Kairo workspace;
-             explicit ${cli} shell keeps the legacy operations cockpit available.
-             Keys: ↑↓ · Enter · Esc back/exit · R refresh · C cancel · ? help.
-             Tab switches region only when content is interactive (runs/launch).
+  shell      Open the unified Ratatui workspace.
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
   alerts     Consent-gated alert resolve/dismiss (Permission Authority).
