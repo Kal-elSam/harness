@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import codex from "../src/global/runtime/execution-adapters/codex.js";
 
-test("safe headless launch sandboxes to the workspace and auto-reviews approvals instead of hanging on a human that can't respond", () => {
+test("safe headless launch uses --approve-for-me only (installed CLI rejects --sandbox + --approve-for-me)", () => {
   const launch = codex.buildLaunch({ task: "Implement plan", cwd: "/repo", permissions: [] });
-  assert.deepEqual(launch.args, ["exec", "--json", "--sandbox", "workspace-write", "--approve-for-me", "Implement plan"]);
+  assert.deepEqual(launch.args, ["exec", "--json", "--approve-for-me", "Implement plan"]);
+  assert.equal(launch.args.includes("--sandbox"), false);
+  assert.equal(launch.args.includes("workspace-write"), false);
   assert.equal(launch.args.includes("--dangerously-bypass-approvals-and-sandbox"), false);
 });
 
