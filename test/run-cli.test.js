@@ -138,4 +138,6 @@ test("help documents runtime commands", () => {
   assert.doesNotMatch(cli.stdout, /legacy operations cockpit/);
   assert.doesNotMatch(cli.stdout, /↑↓ · Enter · Esc back\/exit/);
   assert.doesNotMatch(cli.stdout, /Tab switches region/);
+  assert.match(cli.stdout, /^ {2}setup {6}Managed ecosystem setup\. Clack wizard in a TTY/m);
+  assert.doesNotMatch(cli.stdout, /Ink UI/);
 });

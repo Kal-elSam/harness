@@ -16,28 +16,13 @@ inside the configs you already have, and it never writes without asking.
 npx @kal-elsam/kairo-runtime
 ```
 
-That's it. The first run walks you through setup; after that it opens the cockpit:
-
-```
-KAIRO
-
-Needs attention · 4/4 agents · drift pending
-Kairo coordinates installed AI agents for this project.
-
-→ Repair 3 changes
-  You will see the exact plan before anything is written.
-
-  Configure
-  Agents, Obsidian vault, integrations.
-```
-
-`↑↓` move · `Enter` open · `Tab` nav · `Space` details · `R` refresh · `Esc` back · `?` help
+That's it. `kairo` opens the unified Ratatui workspace for the current project. Operations (usage, settings, recovery) live inside it: press `5`. Run `kairo setup` for the managed ecosystem setup.
 
 ## Day-to-day commands
 
 | Command | What it does |
 |---|---|
-| `kairo` | Open the cockpit |
+| `kairo` | Open the Ratatui workspace |
 | `kairo status` | See how your setup is doing |
 | `kairo sync` | Repair what drifted |
 | `kairo update` | Update Kairo itself from npm |

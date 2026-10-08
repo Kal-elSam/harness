@@ -161,13 +161,13 @@ approval itself started work.
 
 ### `kairo start`
 
-`kairo start` is the terminal-first conversation cockpit. It keeps the editor at the
+`kairo start` is the terminal-first conversation workspace (Ratatui). It keeps the editor at the
 bottom of a full-screen terminal view and shows the current project, provider status,
 integration status, recent task transcript, plans, and detached executions. Provider
 quota is deliberately displayed as `unknown` unless a provider reports a measured value;
 Kairo never invents subscription percentages.
 
-For Codex, the cockpit performs a bounded read-only `codex app-server` query
+For Codex, the workspace performs a bounded read-only `codex app-server` query
 (`account/rateLimits/read`) and displays the measured five-hour and weekly windows when
 the installed CLI supports them. It sends `supportsLunaReserve: false` and never reads
 or enables credit/PAYG details. Errors and timeouts remain `unknown` (fail-closed).
@@ -191,8 +191,8 @@ invoice. Kairo labels Zen `PAYG`, keeps balance/auto-reload `unknown`, and enfor
 
 ### `kairo` / `kairo setup`
 
-Bare `kairo` opens the Ink setup UI (**Local Agent Operating System**) in a TTY. `kairo setup --simple` uses the Clack wizard instead. `kairo setup`
-is equivalent. Detects agents, shows a plan, and lets you choose agents/components before
+Bare `kairo` starts a new session in the unified Ratatui workspace (the same path as `kairo start`); the Ink setup UI is retired. `kairo setup` runs the Clack wizard in a
+terminal (`--simple` selects it explicitly). It detects agents, shows a plan, and lets you choose agents/components before
 applying. Use `--dry-run` to preview without writing, or `--yes` / flags to skip prompts.
 Use `kairo install` for explicit non-interactive configure in CI and scripts.
 Setup writes Kairo-owned `~/.harness` state and managed adapter sections — not
