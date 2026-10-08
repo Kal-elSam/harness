@@ -5,6 +5,7 @@ import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { startRun } from "../src/global/runtime/run-manager.js";
+import { DelegatedWriteAdmissionError } from "../src/global/runtime/delegated-write-admission.js";
 
 test("detached-run path preserves reserved run id and revalidates Claude auth before spawn", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-claude-supervisor-"));
@@ -42,4 +43,22 @@ test("detached-run path preserves reserved run id and revalidates Claude auth be
   assert.equal(launch.args.includes("--force"), false);
   assert.equal(launch.args.includes("--dangerously-skip-permissions"), false);
   assert.deepEqual(launch.args.slice(2, 6), ["stream-json", "--permission-mode", "auto", "--permission-prompts"]);
+});
+
+test("ordinary Claude startRun is unchanged; only explicit strict floor denies unverified containment", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-claude-strict-"));
+  await assert.rejects(
+    () => startRun({
+      homeDir,
+      agentId: "claude",
+      task: "Implement",
+      cwd: homeDir,
+      requireVerifiedWriteContainment: true,
+      spawnImpl() {
+        throw new Error("spawn must not run under strict floor");
+      }
+    }),
+    (error) => error instanceof DelegatedWriteAdmissionError
+      && error.code === "delegated_write_admission_denied"
+  );
 });
