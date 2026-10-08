@@ -22,13 +22,21 @@ import {
   WORKSPACE_BINDING_CODES,
   resolveWorkspaceWriteBinding
 } from "./workspace-binding.js";
+import {
+  KAIRO_MCP_CONVERSATION_READ_TOOLS,
+  conversationReadSchemas,
+  createConversationReadHandlers
+} from "./conversation-read-tools.js";
+
+export { KAIRO_MCP_CONVERSATION_READ_TOOLS };
 
 /** Sole MCP write tool for companion snapshots. Bound servers only. */
 export const KAIRO_MCP_WRITE_TOOLS = Object.freeze(["kairo_publish_work_snapshot"]);
 
 export const KAIRO_MCP_READ_TOOLS = Object.freeze([
   "kairo_status", "kairo_runs", "kairo_alerts", "kairo_gentle_status",
-  "kairo_graph_query", "kairo_graph_path", "kairo_context_summary", "kairo_fleet"
+  "kairo_graph_query", "kairo_graph_path", "kairo_context_summary", "kairo_fleet",
+  ...KAIRO_MCP_CONVERSATION_READ_TOOLS
 ]);
 
 export const KAIRO_MCP_TOOLS = Object.freeze([
@@ -60,7 +68,8 @@ export const mcpSchemas = Object.freeze({
     budget: z.number().int().min(1).max(8000).default(2000)
   }),
   graphPath: z.object({ graph: z.string().min(1), from: z.string().min(1), to: z.string().min(1) }),
-  workSnapshotPublish: workSnapshotPublishSchema
+  workSnapshotPublish: workSnapshotPublishSchema,
+  ...conversationReadSchemas
 });
 
 const CODE_RE = /^(?:[a-z][a-z0-9_]{0,48}|status=\d+)$/;
@@ -169,7 +178,23 @@ export function createToolHandlers(deps = {}) {
     ok: false, code: "provider_error", data: null, diagnostics: ["provider_error"], isError: true
   });
 
+  // Built only when a bound conversation tool is actually called, never at import.
+  let conversationService = deps.conversationService ?? null;
+  const getConversationService = async () => {
+    if (conversationService) return conversationService;
+    const build = deps.createConversationService ?? (async (d) => {
+      const { createConversationService } = await import("../conversation/service.js");
+      return createConversationService(d);
+    });
+    conversationService = await build({ homeDir });
+    return conversationService;
+  };
+  const conversationReads = createConversationReadHandlers({
+    binding, getService: getConversationService, mcpResult
+  });
+
   return {
+    ...conversationReads,
     async kairo_status() {
       try {
         const snap = await buildStatus();
@@ -288,6 +313,9 @@ export function registerKairoMcpTools(registerTool, deps = {}) {
     ["kairo_graph_path", "Read-only Graphify path", mcpSchemas.graphPath],
     ["kairo_context_summary", "Companion + soft links + alerts count", empty],
     ["kairo_fleet", "Declared fleet topology + OpenCode live activity", empty],
+    ["kairo_sessions", "Read-only session list or session ref resolution for the bound project", mcpSchemas.sessions],
+    ["kairo_team", "Read-only project team, providers and task states for the bound project", mcpSchemas.team],
+    ["kairo_task_result", "Read-only recoverable task result for the bound project", mcpSchemas.taskResult],
     [
       "kairo_publish_work_snapshot",
       "Publish kairo.work-snapshot/v1 for the runtime workspace (enrolls conversation)",
@@ -296,7 +324,8 @@ export function registerKairoMcpTools(registerTool, deps = {}) {
   ];
   const bound = deps.workspaceBound === true;
   for (const [name, description, inputSchema] of catalog) {
-    if (bound ? !KAIRO_MCP_WRITE_TOOLS.includes(name) : KAIRO_MCP_WRITE_TOOLS.includes(name)) continue;
+    const conversationRead = KAIRO_MCP_CONVERSATION_READ_TOOLS.includes(name);
+    if (!conversationRead && (bound ? !KAIRO_MCP_WRITE_TOOLS.includes(name) : KAIRO_MCP_WRITE_TOOLS.includes(name))) continue;
     registerTool(name, { description, inputSchema }, h[name]);
   }
   return h;
