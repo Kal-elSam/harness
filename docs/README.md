@@ -15,5 +15,6 @@ Guides moved out of the npm README so the package page stays short.
 | [Gentle companion](gentle-companion.md) | Kairo observes Gentle v2; freeze of legacy review/routing |
 | [MCP](mcp.md) | Workspace-bound Cursor MCP vs global read-only |
 | [Workspace scope](workspace.md) | Opt-in per-repo scaffolding |
+| [Terminal look](classic-look.md) | Fonts and profile tips for the Ratatui UI; the graphite-green palette Kairo paints |
 | [Contributing](contributing.md) | Release process and tags |
 | [Historical roadmap](history/roadmap.md) | v2–v6 notes |
