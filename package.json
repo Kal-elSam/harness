@@ -38,12 +38,12 @@
     "build:kairo-ui": "bash scripts/build-kairo-ui-binaries.sh",
     "smoke": "bash scripts/smoke-test.sh",
     "ux:smoke": "bash scripts/ux-smoke-test.sh",
+    "smoke:cockpit": "bash scripts/cockpit-smoke-test.sh",
     "smoke:registry": "bash scripts/registry-smoke-test.sh",
     "smoke:clean-install": "bash scripts/clean-install-smoke.sh",
     "smoke:installer": "bash scripts/installer-smoke-test.sh",
     "smoke:bridge": "bash scripts/bridge-smoke-test.sh",
     "smoke:kairo-ui-pty": "python3 scripts/kairo-ui-pty-e2e.py",
-    "smoke:kairo-ui-alternative-pty": "python3 scripts/kairo-ui-alternative-modal-pty-e2e.py",
     "smoke:kairo-ui-ask-pty": "python3 scripts/kairo-ui-ask-pty-e2e.py",
     "smoke:kairo-ui-analyst-pty": "python3 scripts/kairo-ui-analyst-picker-pty-e2e.py",
     "smoke:kairo-ui-team-flow-pty": "python3 scripts/kairo-ui-team-flow-pty-e2e.py",
@@ -69,13 +69,7 @@
   ],
   "license": "MIT",
   "publishConfig": {
-    "access": "public",
-    "executableFiles": [
-      "dist/kairo-ui/darwin-arm64/kairo-ui",
-      "dist/kairo-ui/darwin-x64/kairo-ui",
-      "dist/kairo-ui/linux-arm64/kairo-ui",
-      "dist/kairo-ui/linux-x64/kairo-ui"
-    ]
+    "access": "public"
   },
   "engines": {
     "node": ">=22.19.0"
