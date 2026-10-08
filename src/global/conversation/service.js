@@ -312,11 +312,11 @@ function publicPlan(record, execution = null) {
 /**
  * Maps execution-adapter availability into the cockpit's `providers` shape,
  * keyed by each adapter's display label (e.g. "Codex", "Claude") so
- * `cockpit/view.js`'s providerLine() lookups resolve to real data instead
+ * the slash diagnostics' providerLine() lookups resolve to real data instead
  * of its hardcoded fallback text.
  * @param {ReturnType<typeof inspectExecutionAdapters>} adapters
  */
-// cockpit/view.js's providerLine() looks up "Claude" — the claude adapter's
+// slash-diagnostics.js's providerLine() looks up "Claude" — the claude adapter's
 // own display label is "Claude Code" (claude.js's `label`), so it needs an
 // explicit override here rather than relying on the label verbatim.
 const PROVIDER_DISPLAY_NAME = { claude: "Claude" };
