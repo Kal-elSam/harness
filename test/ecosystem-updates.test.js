@@ -5,8 +5,6 @@ import {
   parseGentleUpdateOutput,
   parseHermesUpdateCheck
 } from "../src/global/observability/ecosystem-updates.js";
-import { formatEcosystemUpdateLines } from "../src/global/ink/ecosystem-updates-display.js";
-import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 import { buildCompanionSnapshot } from "../src/global/observability/build-companion-snapshot.js";
 import { CONTROL_PLANE_HEALTH } from "../src/global/control-plane-snapshot.js";
 import { parseArgs } from "../src/cli.js";
@@ -108,7 +106,7 @@ test("24h cache hit skips probes; check path has no apply flags", async () => {
   assert.ok(!calls.some((c) => /\b(upgrade|--yes)\b/.test(String(c))));
 });
 
-test("display + companion surface + CLI parse (Slice 02)", async () => {
+test("companion surface + CLI parse (Slice 02)", async () => {
   const pending = {
     state: "partial", checkedAt: "2026-08-07T12:00:00.000Z", cacheHit: false, diagnostics: [],
     tools: {
@@ -118,10 +116,6 @@ test("display + companion surface + CLI parse (Slice 02)", async () => {
       skills: { id: "skills", state: "available", updateAvailable: false, installed: "d247", latest: "d247" }
     }
   };
-  assert.match(formatEcosystemUpdateLines(pending, LAYOUT_MODES.MINIMAL)[0], /1 available/);
-  assert.ok(formatEcosystemUpdateLines(pending, LAYOUT_MODES.COMPACT).some((l) => /kairo/.test(l)));
-  assert.equal(formatEcosystemUpdateLines(null)[0], "Updates · unavailable");
-
   const snap = await buildCompanionSnapshot({
     controlPlaneHealth: CONTROL_PLANE_HEALTH.HEALTHY,
     buildObservability: async () => ({ probes: [] }),

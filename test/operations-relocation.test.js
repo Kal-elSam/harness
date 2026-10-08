@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Golden captured from the legacy locations (cockpit/theme.js, ink/orchestrator-state.js,
-// ink/cockpit-control-center.js) BEFORE the helpers moved to neutral modules.
+// ink/cockpit-control-center.js) BEFORE the helpers moved to neutral modules; the legacy
+// locations were removed afterwards, the golden remains the byte-identity witness.
 const here = dirname(fileURLToPath(import.meta.url));
 const golden = JSON.parse(
   readFileSync(join(here, "fixtures/operations-relocation/golden-before-relocation.json"), "utf8")
@@ -83,11 +84,6 @@ const LOCATIONS = {
     health: "../src/global/operations/system-health.js",
     cancel: "../src/global/operations/run-cancellable.js",
     usage: "../src/global/operations/usage-model.js"
-  },
-  legacyReexports: {
-    health: "../src/global/ink/orchestrator-state.js",
-    cancel: "../src/global/ink/orchestrator-state.js",
-    usage: "../src/global/ink/cockpit-control-center.js"
   }
 };
 

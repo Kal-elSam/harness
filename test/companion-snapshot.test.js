@@ -4,8 +4,6 @@ import { CONTROL_PLANE_HEALTH } from "../src/global/control-plane-snapshot.js";
 import {
   SOFT_LINK_WINDOW_MS, softLinkReviewToRun, buildCompanionSnapshot, summarizeCompanionProbes
 } from "../src/global/observability/build-companion-snapshot.js";
-import { buildControlCenterModel } from "../src/global/ink/cockpit-control-center.js";
-import { loadCockpitScanBundle } from "../src/global/ink/cockpit-scan.js";
 
 const t0 = Date.parse("2026-08-03T12:00:00.000Z");
 const mins = (n) => new Date(t0 + n * 60_000).toISOString();
@@ -111,37 +109,4 @@ test("companion fail-soft, isolated provider errors, stale informational", async
   assert.equal(summarizeCompanionProbes([
     { id: "graphify", state: "available", evidence: [{ kind: "graph", status: "ok" }] }
   ]).graphify.graphStatus, "ok");
-});
-
-test("control-center model keeps governance health+CTA; scan bundle fail-softs companion", async () => {
-  const companion = await buildCompanionSnapshot({
-    controlPlaneHealth: CONTROL_PLANE_HEALTH.ACTION_REQUIRED,
-    buildObservability: async () => ({ probes: [{ id: "gentle", state: "missing", evidence: [] }] }),
-    inspectEngram: () => ({ status: "missing", binary: { path: null } }),
-    loadEcosystemUpdates: stubUpdates,
-    runs: [], reviews: [], alerts: []
-  });
-  const model = buildControlCenterModel({
-    projectName: "p",
-    snapshot: {
-      health: CONTROL_PLANE_HEALTH.ACTION_REQUIRED,
-      coverage: { governedAgents: 1, detectedAgents: 2 },
-      diff: { hasChanges: true },
-      cta: { kind: "repair", title: "Review and repair drift", detail: "Preview", destination: "changes" }
-    },
-    companion
-  });
-  assert.equal(model.health.kind, CONTROL_PLANE_HEALTH.ACTION_REQUIRED);
-  assert.equal(model.cta.destination, "changes");
-  assert.equal(model.nextAction.destination, "changes");
-
-  const bundle = await loadCockpitScanBundle({
-    homeDir: "/tmp", workspaceRoot: "/tmp", packageName: "x", packageRoot: "/tmp", cliVersion: "0",
-    buildDashboard: async () => ({ recentRuns: [] }),
-    buildDiagnostics: async () => ({}),
-    buildSnapshot: async () => ({ health: CONTROL_PLANE_HEALTH.HEALTHY }),
-    buildCompanion: async () => { throw new Error("companion fail"); }
-  });
-  assert.equal(bundle.snapshot.health, CONTROL_PLANE_HEALTH.HEALTHY);
-  assert.equal(bundle.companion.ok, false);
 });
