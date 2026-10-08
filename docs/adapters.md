@@ -86,10 +86,7 @@ kairo reviews show <reviewId> [--json]
 confirm or `--yes`/`--confirm`. Exit codes: `0` ok, `1` severity threshold,
 `2` operational/stale/invalid/cancel.
 
-Cockpit: **Runs → Reviews** lists receipts and opens a read-only detail view
-(no launch from Cockpit in v1).
-
-**0.8.0 freeze:** `kairo review`, `kairo reviews`, and Cockpit Reviews stay
+**0.8.0 freeze:** `kairo review` and `kairo reviews` stay
 available but **do not** feed the Gentle workflow in `kairo control-plane`.
 Gentle authority is `gentle-ai.review-integration/v2` only — see
 [Gentle companion boundary](gentle-companion.md).
@@ -100,6 +97,5 @@ Primary governance flow:
 scan (read-only) → evidence proposals → preview → confirm → apply → re-scan → recovery
 ```
 
-Bare `kairo` opens the Control Center cockpit when the ecosystem is configured.
-Runs stay secondary until setup/repairs/verification are healthy. CLI equivalents
+Bare `kairo` opens the unified Ratatui workspace. CLI equivalents
 remain `kairo status` / `kairo diff` / `kairo sync` (or `kairo setup` explicitly).
