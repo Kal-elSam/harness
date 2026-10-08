@@ -45,7 +45,11 @@ function projectGentle(association, input) {
     gate: reviewRef.gate,
     applicability: gentleContext?.applicability ?? null,
     nextTransition: reviewRef.nextTransition,
-    reason: input.error ?? input.mappedStatus?.error ?? null
+    reason: input.error ?? input.mappedStatus?.error ?? null,
+    // User-owned switch, shown as context only: `on` is not task approval and
+    // `unknown` never means permission.
+    rddMode: ["on", "off"].includes(input.rddMode) ? input.rddMode : "unknown",
+    rddSource: typeof input.rddSource === "string" ? input.rddSource : null
   };
 }
 
