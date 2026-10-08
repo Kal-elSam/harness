@@ -100,14 +100,18 @@ export function mapOfficialReviewStatus(payload) {
   const receiptStatus = isObject(payload.receipt) && typeof payload.receipt.status === "string"
     ? payload.receipt.status
     : null;
+  const candidates = Array.isArray(payload.candidates) ? payload.candidates : null;
 
-  const review = (receipt || gate || applicability || action)
+  const review = (receipt || gate || applicability || action || candidates)
     ? {
         lineageId: null,
         state: applicability ?? action,
         status: receiptStatus,
         receipt,
-        gate
+        gate,
+        applicability,
+        action,
+        candidates
       }
     : null;
 
