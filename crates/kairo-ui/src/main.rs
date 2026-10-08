@@ -4764,8 +4764,8 @@ mod tests {
             "the sidecar's local project scan contextualizes the picker"
         );
         assert!(
-            picker.options.iter().all(|o| o.explanation.is_none() && o.description().is_empty()),
-            "flat list rows carry no explanation from the sidecar (explanation and detail are null)"
+            picker.options.iter().all(|o| o.description().chars().count() > 10),
+            "every row carries its own explanation from the sidecar"
         );
 
         handle_picker_key(&mut app, enter());
