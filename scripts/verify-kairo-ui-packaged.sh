@@ -17,6 +17,11 @@
 #   d) PTY run (KAIRO_UI_BINARY -> packaged binary, --bridge, KAIRO_UI_BRIDGE=1)
 #      with the mock sidecar at KAIRO_PTY_SIZES (default 60x30,100x30,160x48):
 #      bridge connection, output, and alt-screen enter/leave restoration.
+#   e) PTY run of the suggested-alternative confirmation modal against the
+#      packaged binary (scripts/kairo-ui-alternative-modal-pty-e2e.py).
+#
+# The packaged binary must already be executable in the tarball: the script
+# checks the mode BEFORE doing anything else and never chmods it.
 #
 # The mock sidecar does NOT prove real providers: it only proves that the
 # packaged host binary starts, talks the bridge protocol, renders, and restores
@@ -83,7 +88,9 @@ fi
 
 BIN="$PKG/dist/kairo-ui/$EXPECTED_KEY/kairo-ui"
 [ -f "$BIN" ] || die "package is missing dist/kairo-ui/$EXPECTED_KEY/kairo-ui"
-chmod +x "$BIN"
+# The binary must be executable exactly as the tarball ships it. Never chmod it
+# here: that would hide a packing step that dropped the mode (e.g. 644).
+[ -x "$BIN" ] || die "packaged binary is not executable as shipped (mode $(stat -f '%Lp' "$BIN" 2>/dev/null || stat -c '%a' "$BIN")): $BIN"
 
 # (a) + (b): resolver and launcher come from the extracted package.
 PKG_ROOT="$PKG" EXPECTED_KEY="$EXPECTED_KEY" PATH="$NOCARGO_PATH" \
@@ -135,5 +142,14 @@ PATH="$NOCARGO_PATH" \
   "$PY_BIN" "$ROOT/scripts/kairo-ui-pty-e2e.py" \
   || die "PTY e2e failed for the packaged binary"
 
-printf '\nPackaged verification PASS (%s): selection, launch without cargo, v3-capture, PTY with mock sidecar.\n' "$EXPECTED_KEY"
+# (e) suggested-alternative confirmation modal on the packaged binary (mock sidecar).
+PATH="$NOCARGO_PATH" \
+  KAIRO_UI_BINARY="$BIN" \
+  KAIRO_UI_NODE="$NODE_BIN" \
+  KAIRO_PTY_SIZES="${KAIRO_PTY_SIZES:-100x30}" \
+  KAIRO_PTY_EVIDENCE_DIR="$EVIDENCE/alternative-modal" \
+  "$PY_BIN" "$ROOT/scripts/kairo-ui-alternative-modal-pty-e2e.py" \
+  || die "alternative-modal PTY failed for the packaged binary"
+
+printf '\nPackaged verification PASS (%s): executable as shipped, selection, launch without cargo, v3-capture, PTY with mock sidecar, alternative-modal PTY.\n' "$EXPECTED_KEY"
 printf 'Note: the mock sidecar does NOT prove real providers.\n'

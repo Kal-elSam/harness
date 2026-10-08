@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -149,4 +149,61 @@ test("verify script proves selection, no-cargo launch, capture and PTY on a real
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
+});
+
+/** A minimal tarball whose only content is a shell-script "binary" with the given mode. */
+function fakePackedBinary(work, key, mode) {
+  const pkgBin = join(work, "stage", "package", "dist", "kairo-ui", key);
+  mkdirSync(pkgBin, { recursive: true });
+  const bin = join(pkgBin, "kairo-ui");
+  writeFileSync(bin, "#!/bin/sh\nexit 0\n");
+  chmodSync(bin, mode);
+  const tarball = join(work, `fake-${mode.toString(8)}.tgz`);
+  execSync(`tar -czf ${JSON.stringify(tarball)} -C ${JSON.stringify(join(work, "stage"))} package`);
+  return tarball;
+}
+
+test("verify script fails when the packaged binary ships without the executable bit (no chmod masking)", (t) => {
+  const key = hostKey();
+  if (key == null) return t.skip(`unsupported host ${process.platform}/${process.arch}`);
+  if (!has("python3")) return t.skip("python3 unavailable");
+  const work = mkdtempSync(join(tmpdir(), "kairo-ui-packaged-mode-"));
+  try {
+    const result = spawnSync("bash", [VERIFY_SCRIPT, fakePackedBinary(work, key, 0o644), key], {
+      encoding: "utf8",
+      timeout: 60000
+    });
+    const out = `${result.stdout}\n${result.stderr}`;
+    assert.notEqual(result.status, 0, out);
+    assert.match(out, /packaged binary is not executable as shipped \(mode 644\)/);
+    assert.doesNotMatch(out, /selection:/, "the gate must fire before any later check");
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test("verify script passes the executable gate for a 755 binary and then proceeds to the next checks", (t) => {
+  const key = hostKey();
+  if (key == null) return t.skip(`unsupported host ${process.platform}/${process.arch}`);
+  if (!has("python3")) return t.skip("python3 unavailable");
+  const work = mkdtempSync(join(tmpdir(), "kairo-ui-packaged-mode-"));
+  try {
+    const result = spawnSync("bash", [VERIFY_SCRIPT, fakePackedBinary(work, key, 0o755), key], {
+      encoding: "utf8",
+      timeout: 60000
+    });
+    const out = `${result.stdout}\n${result.stderr}`;
+    // The fake package has no resolver/launcher, so the script still fails later,
+    // but never on the executable gate.
+    assert.doesNotMatch(out, /not executable as shipped/);
+    assert.match(out, /resolver\/launcher selection failed|Cannot find module|ERR_MODULE_NOT_FOUND/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test("verify script wires the alternative-modal PTY check and never chmods the packaged binary", () => {
+  const script = readFileSync(VERIFY_SCRIPT, "utf8");
+  assert.match(script, /kairo-ui-alternative-modal-pty-e2e\.py/);
+  assert.equal(/^\s*chmod\b/m.test(script), false, "the verifier must not chmod the packaged binary");
 });
